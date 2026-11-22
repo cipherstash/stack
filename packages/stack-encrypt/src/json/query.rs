@@ -14,16 +14,10 @@ use serde_json::Value;
 
 use super::derive::{JsonTerms, Selectors, TermNode};
 use super::path::JsonPath;
-use super::plain::PlainJson;
-use super::{base64, JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonSubtree, Tag};
-use crate::op::{
-    Answers, AtPath, Between, ContainedBy, Contains, DefaultIndex, Eq, Gt, Gte, Input,
-    LabelledTarget, Lt, Lte, One, Op, Pair, Pathed, QueryTerm, QueryToken, Supports,
-};
-use crate::sem::{RangeQuery, TermError};
-use crate::target::{DeclaredContext, Index, Json, Owned, Pending};
-use crate::{Error, KeysetCipher, Label, NonEmpty};
-use vitaminc_protected::{Choice, Controlled, OpaqueDebug, Protected, TimingSafeEq};
+use super::{base64, JsonExtracted, JsonNode, JsonOptions, JsonSubtree, Tag};
+use crate::op::{Op, QueryTerm};
+use crate::target::Json;
+use vitaminc_protected::{Choice, OpaqueDebug, TimingSafeEq};
 
 /// One node's selector pair: its path selector `s` and its value selector
 /// `vs`. Ordered, so a set can be sorted into one spelling.
@@ -131,7 +125,9 @@ impl JsonSelectorSet {
     }
 }
 
-/// The query term of [`Contains`], [`ContainedBy`] and `AtPath<Eq>`: the
+/// The query term of [`op::Contains`](crate::op::Contains),
+/// [`op::ContainedBy`](crate::op::ContainedBy) and `AtPath<Eq>`: what a
+/// field reference's `contains`, `contained_by` and a path's `eq` derive: the
 /// [`JsonSelectorSet`] of the document the query asks about, and, for a
 /// document whose root is a scalar, the alternative set that matches a
 /// stored root array holding it. Serializes to the `query_json`
@@ -322,8 +318,8 @@ impl<'de> Deserialize<'de> for JsonQuery {
 /// The query term of `AtPath<Lt | Lte | Gt | Gte>`: the selector of the
 /// path and the leaf ordering term of the value, which the SQL compares
 /// against the stored leaf's: `col -> $1 >= $2`. Serializes to the
-/// `query_json_leaf` operand, `{"s": "…", "op": "…"}`. `Between`
-/// sends two as one [`RangeQuery`].
+/// `query_json_leaf` operand, `{"s": "…", "op": "…"}`. A field reference's
+/// path's `between(lo, hi)` derives two, low then high.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonLeafQuery {
     s: Tag,
@@ -380,6 +376,68 @@ impl<'de> Deserialize<'de> for JsonLeafQuery {
     }
 }
 
+/// One member of an [`JsonElementsQuery`]: the tokens of a read of one
+/// field's path through the array's wildcard, one per element below the
+/// bound in element order and then the probe, and the field's bounds, each
+/// a leaf operand. `gt` or `gte` is the lower bound, `lt` or `lte` the
+/// upper; equality is `gte` and `lte` at one value.
+#[derive(Clone, Serialize)]
+pub(crate) struct JsonElementsMember {
+    pub(crate) t: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) gt: Option<JsonLeafQuery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) gte: Option<JsonLeafQuery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) lt: Option<JsonLeafQuery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) lte: Option<JsonLeafQuery>,
+}
+
+/// An element-scoped predicate: true of a row where some one element of an
+/// array satisfies every member together, which two orderings at the same
+/// wildcard path cannot say (each can be answered by a different
+/// element). One member per condition, each holding the tokens of a read of
+/// the condition's path and its bounds.
+///
+/// Serializes to the `eql_v4.query_json_elements` operand, `{"m": [member,
+/// …]}`, which `eql_v4.json_tree_element_match` takes. The tokens are
+/// capabilities over the column's documents, so it prints as its shape.
+#[derive(Clone, OpaqueDebug, Serialize)]
+pub struct JsonElementsQuery {
+    m: Vec<JsonElementsMember>,
+}
+
+impl JsonElementsQuery {
+    pub(crate) fn of(m: Vec<JsonElementsMember>) -> Self {
+        Self { m }
+    }
+
+    /// How many conditions the predicate holds.
+    pub fn len(&self) -> usize {
+        self.m.len()
+    }
+
+    /// Whether the predicate holds no condition. Never, for one the engine
+    /// derived: an element predicate holds at least one.
+    pub fn is_empty(&self) -> bool {
+        self.m.is_empty()
+    }
+}
+
+/// A SQL/JSON path predicate, compiled: a boolean tree of `and`, `or` and
+/// `not` over the other JSON operands, each leaf derived as that operator
+/// derives it. True of exactly the rows `jsonb_path_match` is true of over
+/// the plaintext, within the limits the dynamic interface's `match`
+/// operator documents.
+///
+/// Serializes to the `eql_v4.query_json_predicate` operand, which
+/// `eql_v4.json_tree_match` and `col @@ $1` evaluate. It prints as its
+/// shape.
+#[derive(Clone, OpaqueDebug, Serialize)]
+#[serde(transparent)]
+pub struct JsonPredicateQuery(pub(crate) Value);
+
 /// A path selector: what `->` and the path functions take. Prints and
 /// serializes as the base64 the stored entry carries in `s`.
 ///
@@ -396,9 +454,9 @@ impl JsonSelector {
     }
 
     /// The entry `col -> selector` returned, ready to open: the only way to
-    /// open one. Opening it ([`DecryptInto<Value>`](crate::DecryptInto))
+    /// open one. Opening it ([`DecryptSource<JsonPlaintext>`](crate::DecryptSource))
     /// first checks that the entry carries this selector, and refuses any
-    /// other with [`Error::JsonWrongEntry`] before a key is retrieved: an
+    /// other with [`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry) before a key is retrieved: an
     /// entry's ciphertext is bound to the selector it carries, so a
     /// database that answers `$.salary` with the row's `$.bonus`, or with
     /// the sealed root (the whole document, whose selector is the root's),
@@ -523,7 +581,7 @@ impl JsonSubtreeKey {
     /// sealed-root fallback is evaluated under.
     ///
     /// Opening the rows checks each one against the key, and refuses the
-    /// rows with [`Error::JsonWrongEntry`] if one does not fit: a node a
+    /// rows with [`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry) if one does not fit: a node a
     /// token names, at depth `0`, must carry the self tag of one of the
     /// key's tokens (each matched once, in order) and that token's path's
     /// selector and last step (its key, its position, or the root); every
@@ -571,132 +629,8 @@ impl Serialize for JsonSubtreeKey {
     }
 }
 
-/// The terms of an accessor's input: the path it was asked at, and the
-/// index's terms of the document that holds the value there. What
-/// [`Input<Pathed<A>>`](Input) derives, and what the JSON index's
-/// [`Supports`] impls build an accessor's query from.
-#[derive(Clone, Debug)]
-pub struct AtPathTerms<T> {
-    path: JsonPath,
-    terms: T,
-}
-
-impl<T> AtPathTerms<T> {
-    /// The path the query was asked at.
-    pub fn path(&self) -> &JsonPath {
-        &self.path
-    }
-
-    /// The terms of the document holding the value, or of both documents
-    /// for a pair of bounds.
-    pub fn terms(&self) -> &T {
-        &self.terms
-    }
-}
-
 impl QueryTerm for JsonQuery {}
 impl QueryTerm for JsonLeafQuery {}
-
-// =============================================================================
-// Inputs: a path and a value, or a path and a pair of bounds
-// =============================================================================
-
-fn parse_path(text: &str) -> Result<JsonPath, Error> {
-    JsonPath::parse(text).map_err(|e| Error::Term(TermError::JsonPath(e)))
-}
-
-/// A path and a value: the input of `AtPath<Eq>` and the single-bound
-/// orderings. The index is declared over the document, so the plaintext
-/// is a [`Value`], and the term is derived over the document that holds
-/// the value at the path.
-impl<P, V> Input<Pathed<One>> for (P, V)
-where
-    P: AsRef<str> + 'static,
-    V: Into<Value> + 'static,
-{
-    type Plaintext = Value;
-    type Terms<T: 'static> = AtPathTerms<T>;
-
-    fn derive<'a, 'p, I, K>(
-        self,
-        index: &I,
-        keyset: &'p KeysetCipher<'a, K>,
-        label: Label,
-        extend: DeclaredContext,
-    ) -> Pending<'p, AtPathTerms<I::Term>, K>
-    where
-        I: Index<Value>,
-        K: 'static,
-    {
-        let (path, value) = self;
-        let path = match parse_path(path.as_ref()) {
-            Ok(path) => path,
-            Err(error) => return Pending::failed(keyset, error),
-        };
-        let holding = path.holding(value.into());
-        keyset
-            .run(
-                index.operation::<K, Owned>().under(NonEmpty::from(label)),
-                holding,
-                extend,
-            )
-            .map(move |terms| AtPathTerms { path, terms })
-    }
-}
-
-/// A path and a pair of bounds: the input of `AtPath<Between>`. Both
-/// documents' terms derive under the one label, settled together.
-impl<P, V> Input<Pathed<Pair>> for (P, (V, V))
-where
-    P: AsRef<str> + 'static,
-    V: Into<Value> + 'static,
-{
-    type Plaintext = Value;
-    type Terms<T: 'static> = AtPathTerms<(T, T)>;
-
-    fn derive<'a, 'p, I, K>(
-        self,
-        index: &I,
-        keyset: &'p KeysetCipher<'a, K>,
-        label: Label,
-        extend: DeclaredContext,
-    ) -> Pending<'p, AtPathTerms<(I::Term, I::Term)>, K>
-    where
-        I: Index<Value>,
-        K: 'static,
-    {
-        let (path, (lo, hi)) = self;
-        let path = match parse_path(path.as_ref()) {
-            Ok(path) => path,
-            Err(error) => return Pending::failed(keyset, error),
-        };
-        let lo = keyset.run(
-            index
-                .operation::<K, Owned>()
-                .under(NonEmpty::from(label.clone())),
-            path.holding(lo.into()),
-            extend.clone(),
-        );
-        let hi = keyset.run(
-            index.operation::<K, Owned>().under(NonEmpty::from(label)),
-            path.holding(hi.into()),
-            extend,
-        );
-        lo.zip(hi).map(move |terms| AtPathTerms { path, terms })
-    }
-}
-
-// =============================================================================
-// What the index answers
-// =============================================================================
-
-/// A document is sealed under the caller's context ([`json_document`]
-/// takes a [`CallerContext`](crate::target::CallerContext)), which is the
-/// label a plan names, so its terms and a query's derive under the same
-/// context and a plan typed with it answers the operators below.
-///
-/// [`json_document`]: crate::target::json_document
-impl LabelledTarget for JsonDocument {}
 
 impl Json {
     /// The operators this index answers: its one declaration, as
@@ -722,183 +656,6 @@ impl Json {
     ];
 }
 
-/// Containment, both ways: the query's selector set, which the SQL compares
-/// against the stored set in the direction the operator says.
-macro_rules! containment {
-    ($($op:ident),+ $(,)?) => {$(
-        impl Supports<$op, Value> for Json {
-            type Query = JsonQuery;
-            type Verifier = ();
-            fn prepare(&self, _: &Value) -> Result<(), Error> {
-                Ok(())
-            }
-            fn query((): (), terms: JsonTerms, _: QueryToken) -> JsonQuery {
-                JsonQuery::of_terms(terms)
-            }
-        }
-        impl Answers<$op, Value> for JsonDocument {
-            type Via = Json;
-        }
-        impl DefaultIndex<Value> for $op {
-            type Via = Json;
-        }
-    )+};
-}
-containment!(Contains, ContainedBy);
-
-/// Equality at a path: the selector set of the document that holds the
-/// value at the path, with no `alt`. For a scalar, containment of that set is
-/// equality of the value at the path. For an object or an array it would be
-/// containment (`{"x": 1}` matching `{"x": 1, "y": 2}`), so a container is
-/// refused with [`TermError::JsonValueNotScalar`] when the query is
-/// awaited. A position in the path reads as the wildcard, since selectors
-/// do not tell positions apart.
-impl<P, V> Supports<AtPath<Eq>, (P, V)> for Json
-where
-    P: AsRef<str> + 'static,
-    V: Into<Value> + Clone + 'static,
-{
-    type Query = JsonQuery;
-    type Verifier = ();
-    fn prepare(&self, (path, value): &(P, V)) -> Result<(), Error> {
-        let _ = parse_path(path.as_ref())?;
-        scalar(&copy_of(value))
-    }
-    fn query((): (), terms: AtPathTerms<JsonTerms>, _: QueryToken) -> JsonQuery {
-        JsonQuery::at_path(terms.terms)
-    }
-}
-impl<P, V> Answers<AtPath<Eq>, (P, V)> for JsonDocument
-where
-    P: AsRef<str> + 'static,
-    V: Into<Value> + Clone + 'static,
-{
-    type Via = Json;
-}
-impl<P, V> DefaultIndex<(P, V)> for AtPath<Eq>
-where
-    P: AsRef<str> + 'static,
-    V: Into<Value> + Clone + 'static,
-{
-    type Via = Json;
-}
-
-/// The copy of the caller's plaintext a check reads: wiped when it drops.
-fn copy_of<V: Into<Value> + Clone>(value: &V) -> Protected<PlainJson> {
-    PlainJson::protect(value.clone().into())
-}
-
-/// Whether `value` is a scalar, which equality at a path compares.
-fn scalar(value: &Protected<PlainJson>) -> Result<(), Error> {
-    let value = value.risky_ref().value();
-    match value {
-        Value::Object(_) | Value::Array(_) => Err(TermError::JsonValueNotScalar.into()),
-        _ => Ok(()),
-    }
-}
-
-/// Whether `value` is a leaf the index orders: a number or a string.
-fn ordered(value: &Protected<PlainJson>) -> Result<(), Error> {
-    let value = value.risky_ref().value();
-    match value {
-        Value::Number(_) | Value::String(_) => Ok(()),
-        _ => Err(TermError::JsonLeafNotOrdered.into()),
-    }
-}
-
-/// Whether the index orders the leaves at `path`: some path in its
-/// `ordered` option covers it. A path that names a position is refused
-/// first: the comparison extracts by selector, which reads the position as
-/// the wildcard, so it would compare an unspecified element at the path
-/// rather than the one named.
-fn orders(index: &Json, path: &JsonPath) -> Result<(), Error> {
-    if path.names_a_position() {
-        Err(TermError::JsonOrderingAtPosition.into())
-    } else if index.options.orders(path) {
-        Ok(())
-    } else {
-        Err(TermError::JsonPathNotOrdered.into())
-    }
-}
-
-/// The orderings at a path: the path's selector and the value's leaf
-/// ordering term. Refused, when the query is awaited, for a value that is
-/// neither a number nor a string, and for a path the index does not order
-/// ([`JsonOptions::ordered`]): no stored leaf there carries a term, so the
-/// comparison would match no row.
-macro_rules! orderings {
-    ($($op:ident),+ $(,)?) => {$(
-        impl<P, V> Supports<AtPath<$op>, (P, V)> for Json
-        where
-            P: AsRef<str> + 'static,
-            V: Into<Value> + Clone + 'static,
-        {
-            type Query = JsonLeafQuery;
-            type Verifier = ();
-            fn prepare(&self, (path, value): &(P, V)) -> Result<(), Error> {
-                let path = parse_path(path.as_ref())?;
-                orders(self, &path)?;
-                ordered(&copy_of(value))
-            }
-            fn query((): (), terms: AtPathTerms<JsonTerms>, _: QueryToken) -> JsonLeafQuery {
-                JsonLeafQuery::of_leaf(&terms.terms)
-            }
-        }
-        impl<P, V> Answers<AtPath<$op>, (P, V)> for JsonDocument
-        where
-            P: AsRef<str> + 'static,
-            V: Into<Value> + Clone + 'static,
-        {
-            type Via = Json;
-        }
-        impl<P, V> DefaultIndex<(P, V)> for AtPath<$op>
-        where
-            P: AsRef<str> + 'static,
-            V: Into<Value> + Clone + 'static,
-        {
-            type Via = Json;
-        }
-    )+};
-}
-orderings!(Lt, Lte, Gt, Gte);
-
-impl<P, V> Supports<AtPath<Between>, (P, (V, V))> for Json
-where
-    P: AsRef<str> + 'static,
-    V: Into<Value> + Clone + 'static,
-{
-    type Query = RangeQuery<JsonLeafQuery>;
-    type Verifier = ();
-    fn prepare(&self, (path, (lo, hi)): &(P, (V, V))) -> Result<(), Error> {
-        let path = parse_path(path.as_ref())?;
-        orders(self, &path)?;
-        ordered(&copy_of(lo))?;
-        ordered(&copy_of(hi))
-    }
-    fn query(
-        (): (),
-        terms: AtPathTerms<(JsonTerms, JsonTerms)>,
-        _: QueryToken,
-    ) -> RangeQuery<JsonLeafQuery> {
-        let (lo, hi) = &terms.terms;
-        RangeQuery::new(JsonLeafQuery::of_leaf(lo), JsonLeafQuery::of_leaf(hi))
-    }
-}
-impl<P, V> Answers<AtPath<Between>, (P, (V, V))> for JsonDocument
-where
-    P: AsRef<str> + 'static,
-    V: Into<Value> + Clone + 'static,
-{
-    type Via = Json;
-}
-impl<P, V> DefaultIndex<(P, (V, V))> for AtPath<Between>
-where
-    P: AsRef<str> + 'static,
-    V: Into<Value> + Clone + 'static,
-{
-    type Via = Json;
-}
-
 /// The options a query derives under must be the stored document's; a
 /// plan that declares the index carries them, and a query through it takes
 /// them from there.
@@ -918,6 +675,15 @@ mod tests {
             s: [n; 16],
             vs: [n + 100; 16],
         }
+    }
+
+    /// The engine never derives an empty element predicate, so only a
+    /// constructed one shows `is_empty` answering true.
+    #[test]
+    fn an_element_predicate_with_no_member_is_empty() {
+        let none = JsonElementsQuery::of(Vec::new());
+        assert!(none.is_empty());
+        assert_eq!(none.len(), 0);
     }
 
     /// Selector sets compare as the sets `jsonb @>` reads: the order of
@@ -1039,16 +805,6 @@ mod tests {
             "JsonSubtreeKey { tokens: 2, probes: 1, bound: 1, .. }",
             "a token is a capability: it never prints"
         );
-    }
-
-    #[test]
-    fn accessor_terms_carry_the_path_they_were_asked_at() {
-        let terms = AtPathTerms {
-            path: JsonPath::parse("$.a[*]").unwrap(),
-            terms: 7u8,
-        };
-        assert_eq!(terms.path(), &JsonPath::parse("$.a[*]").unwrap());
-        assert_eq!(terms.terms(), &7);
     }
 
     #[test]

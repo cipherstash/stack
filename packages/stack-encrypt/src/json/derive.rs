@@ -23,19 +23,21 @@ use vitaminc_protected::{AsProtectedRef, Controlled, Protected};
 use zeroize::Zeroizing;
 
 use super::cascade::{self, ChildrenDigest};
-use super::path::{key_step_len, push_key, JsonPath, Segment, ARRAY_STEP};
+use super::path::{key_step_len, push_key, IndexPath, JsonPath, Segment, ARRAY_STEP};
 use super::plain::{
     insert_member, protected_array, protected_object, push_element, read_protected, take_protected,
     PlainJson,
 };
+use super::plaintext::JsonPlaintext;
 use super::query::{group_of, JsonSelector, JsonSelectorSet, JsonSubtreeKey, Read};
 use super::shuffle;
 use super::{JsonDocument, JsonEntry, JsonExtracted, JsonHeader, JsonOptions, JsonSubtree, Tag};
 use crate::keyset::KeysetState;
 use crate::sem::TermError;
-use crate::target::{AeadContext, Decryption, Pending, Request};
+use crate::target::{AeadContext, Decryption, Pending, Request, RequiredContext};
+use crate::target::{Held, Source};
 use crate::ContextPiece;
-use crate::{DecryptInto, Descriptor, Error, KeysetCipher, NonEmpty, StackCipher};
+use crate::{DecryptSource, Descriptor, Error, KeysetCipher, NonEmpty, StackCipher};
 
 /// PAE domain of the path selector `s`.
 const SELECTOR_DOMAIN: &[u8] = b"stack-encrypt/json/selector/v1";
@@ -59,7 +61,11 @@ const ENTRY_AAD_DOMAIN: &[u8] = b"stack-encrypt/json/entry/v1";
 /// where the value is lost, to the write, where the caller still holds it.
 /// The bound is the same under either root option, so the option never
 /// changes which documents the index accepts.
-pub(crate) const MAX_DEPTH: usize = 127;
+///
+/// The value is the grammar crate's, so a predicate's paths, which
+/// `predicate!` reads at compile time with that crate, are read to the
+/// same depth.
+pub(crate) const MAX_DEPTH: usize = stack_encrypt_jsonpath::MAX_DEPTH;
 
 /// The largest number the index gives an array element's position, a
 /// node's ordinal or a node's child count: PostgreSQL's `integer`, which is
@@ -518,21 +524,18 @@ fn leaf_op(
     context: &Context<'_>,
     value: &Value,
 ) -> Result<Option<Vec<u8>>, TermError> {
-    Ok(match value {
-        Value::Number(n) => Some(
-            crate::sem::ope(prf, n.as_f64().unwrap_or(0.0), context.clone())?
-                .into_inner()
-                .as_ref()
-                .to_vec(),
-        ),
-        Value::String(s) => Some(
-            crate::sem::ope(prf, s.clone(), context.clone())?
-                .into_inner()
-                .as_ref()
-                .to_vec(),
-        ),
-        _ => None,
-    })
+    use crate::sem::{ope, order_encoding, order_error, target_of};
+    // The leaf read in place, encoded as the scalar index encodes an `f64`
+    // or a `String`.
+    let encoding = match value {
+        Value::Number(n) => order_encoding(target_of::<f64>(), n.as_f64().unwrap_or(0.0)),
+        Value::String(s) => order_encoding(target_of::<String>(), s.as_str()),
+        _ => return Ok(None),
+    }
+    .map_err(order_error)?;
+    Ok(Some(
+        ope(prf, &encoding, context.clone())?.as_ref().to_vec(),
+    ))
 }
 
 // =============================================================================
@@ -757,39 +760,75 @@ pub(crate) fn terms_pending<'a, K>(
     context: NonEmpty<ContextPiece<'static>>,
 ) -> Pending<'a, JsonTerms, K> {
     let context = context.into_prf_context().into_owned();
-    let terms = cipher
-        .cipher()
-        .json_randomness()
-        .generator()
-        .and_then(|mut rng| {
-            let walked = walk(value, options, cipher.prf(), &context, &mut rng)?;
-            let mut selectors = group_of(&walked.terms.nodes, None);
-            selectors.shuffle(&mut rng);
-            Ok(JsonTerms {
-                query_selectors: Some(selectors),
-                ..walked.terms
+    // Drawn now whether or not the keyset is loaded, so a seeded cipher
+    // draws its generators in the order of the calls.
+    let rng = match cipher.cipher().json_randomness().generator() {
+        Ok(rng) => rng,
+        Err(error) => return Pending::ready(cipher, Err(error)),
+    };
+    match cipher.loaded_state() {
+        Some(keyset) => Pending::ready(
+            cipher,
+            query_terms(value, options, &keyset.prf, &context, rng),
+        ),
+        // The keyset is loaded when the pending settles. The pending keeps
+        // its own copy of the document until then, wiped on drop.
+        None => {
+            let value = PlainJson::protect(value.clone());
+            let options = options.clone();
+            cipher.deferred(move |keyset| {
+                query_terms(
+                    value.risky_ref().value(),
+                    &options,
+                    &keyset.prf,
+                    &context,
+                    rng,
+                )
             })
-        });
-    Pending::ready(cipher, terms)
+        }
+    }
 }
 
-/// Seal `value` into a [`JsonDocument`]: one data key for the document,
+/// The terms [`terms_pending`] derives, under the keyset's `prf`.
+fn query_terms(
+    value: &Value,
+    options: &JsonOptions,
+    prf: &HmacSha256Prf,
+    context: &Context<'_>,
+    mut rng: SafeRand,
+) -> Result<JsonTerms, Error> {
+    let walked = walk(value, options, prf, context, &mut rng)?;
+    let mut selectors = group_of(&walked.terms.nodes, None);
+    selectors.shuffle(&mut rng);
+    Ok(JsonTerms {
+        query_selectors: Some(selectors),
+        ..walked.terms
+    })
+}
+
+/// Seal the document `source` holds into a [`JsonDocument`]: one data key for
+/// the document,
 /// requested under the descriptor of the stored context `stored`, and every
 /// entry sealed under it with the AAD that binds the entry to the document,
 /// the column and its ordinal. The selectors and the other terms derive
 /// under the query context `query`, as [`terms_pending`] derives a query's,
 /// so a document bound to its row is still found by a query under the
 /// scopes. The two are one context for a caller with no binding.
+///
+/// The document is read in place. A document `source` was given is wiped
+/// when this returns, or when the pending that keeps it is dropped. A
+/// borrowed document is copied only when the keyset is not loaded yet: the
+/// pending then keeps its own copy until it settles, wiped on drop.
 pub(crate) fn seal_pending<'a, K: 'static>(
-    value: Value,
+    source: Source<'_, Value>,
     options: &JsonOptions,
     cipher: &'a KeysetCipher<'_, K>,
     query: NonEmpty<ContextPiece<'static>>,
     stored: NonEmpty<ContextPiece<'static>>,
 ) -> Pending<'a, JsonDocument, K> {
-    // The caller's document, owned here: wiped when this returns, also when
-    // the context is refused below.
-    let value = PlainJson::protect(value);
+    // Guarded from here, so a document this call was given is wiped on
+    // every return below.
+    let document = Sealing::from(source);
     let piece = stored.into_context();
     let descriptor = Descriptor::from_piece(&piece);
     if let Err(error) = descriptor.check() {
@@ -803,41 +842,111 @@ pub(crate) fn seal_pending<'a, K: 'static>(
         Ok(rng) => rng,
         Err(error) => return Pending::failed(cipher, error),
     };
-    let walked = match walk(
-        value.risky_ref().value(),
-        options,
-        cipher.prf(),
-        &prf_context,
-        &mut rng,
-    ) {
-        Ok(walked) => walked,
-        Err(error) => return Pending::failed(cipher, error.into()),
+    // The walk derives every term under the keyset's index key. With the
+    // keyset loaded it runs now. With a keyset that is not loaded
+    // yet it runs when the pending settles: see the end of this function.
+    let loaded = cipher.loaded_state().cloned();
+    let walked = match &loaded {
+        Some(keyset) => match walk(
+            document.view(),
+            options,
+            &keyset.prf,
+            &prf_context,
+            &mut rng,
+        ) {
+            Ok(walked) => Some(walked),
+            Err(error) => return Pending::failed(cipher, error.into()),
+        },
+        None => None,
     };
     let whole = if options.sealed_root {
         // A document is sealed only if opening can read it back.
         let opens = |number: &serde_json::Number| {
             number_text(number).is_some_and(|text| number_text_opens(&text))
         };
-        if !every_number(value.risky_ref().value(), &opens) {
+        if !every_number(document.view(), &opens) {
             return Pending::failed(cipher, Error::Aead);
         }
-        match sealed_root_plaintext(value.risky_ref().value()) {
+        match sealed_root_plaintext(document.view()) {
             Ok(bytes) => Some(bytes),
             Err(error) => return Pending::failed(cipher, Error::Other(Box::new(error))),
         }
     } else {
         None
     };
-    let keyset_id = cipher.keyset_id();
     let sealed_root = options.sealed_root;
-    Pending::request(
-        cipher,
-        vec![Request::generate_under(descriptor)],
-        move |responses| {
-            let key = responses.next_generated_key()?;
-            seal(walked, whole, keyset_id, key, &aad, sealed_root, rng)
-        },
-    )
+    match (loaded, walked) {
+        (Some(keyset), Some(walked)) => {
+            let keyset_id = keyset.id;
+            Pending::request(
+                cipher,
+                vec![Request::generate_under(descriptor)],
+                move |responses| {
+                    let key = responses.next_generated_key()?;
+                    seal(walked, whole, keyset_id, key, &aad, sealed_root, rng)
+                },
+            )
+        }
+        // The pending asks for the keyset beside the data key. It keeps the
+        // document, wiped on drop, and walks it once the keyset is loaded.
+        _ => {
+            let value = document.into_guarded();
+            let options = options.clone();
+            Pending::request(
+                cipher,
+                vec![
+                    Request::generate_under(descriptor),
+                    Request::selected_keyset(),
+                ],
+                move |responses| {
+                    let keyset = responses.next_keyset()?;
+                    let key = responses.next_generated_key()?;
+                    let walked = walk(
+                        value.risky_ref().value(),
+                        &options,
+                        &keyset.prf,
+                        &prf_context,
+                        &mut rng,
+                    )?;
+                    seal(walked, whole, keyset.id, key, &aad, sealed_root, rng)
+                },
+            )
+        }
+    }
+}
+
+/// The document [`seal_pending`] reads: the caller's borrow, or the value it
+/// was given, guarded so that it is wiped on drop.
+enum Sealing<'b> {
+    Lent(&'b Value),
+    Given(Protected<PlainJson>),
+}
+
+impl<'b> From<Source<'b, Value>> for Sealing<'b> {
+    fn from(source: Source<'b, Value>) -> Self {
+        match source.into_held() {
+            Held::Lent(value) => Self::Lent(value),
+            Held::Given(value) => Self::Given(PlainJson::protect(value)),
+        }
+    }
+}
+
+impl Sealing<'_> {
+    /// The document, read in place.
+    fn view(&self) -> &Value {
+        match self {
+            Self::Lent(value) => value,
+            Self::Given(value) => value.risky_ref().value(),
+        }
+    }
+    /// The document for a pending to keep until it settles: the value this
+    /// was given, or a guarded copy of the borrow.
+    fn into_guarded(self) -> Protected<PlainJson> {
+        match self {
+            Self::Lent(value) => PlainJson::protect(value.clone()),
+            Self::Given(value) => value,
+        }
+    }
 }
 
 /// The AAD an entry is sealed and opened under, PAE-framed: the domain;
@@ -1215,8 +1324,8 @@ fn take_label(mut node: Opened) -> (Label, Opened) {
 
 /// The value the caller asked for, out of the `Protected` that held it:
 /// the one place an opened JSON plaintext is unwrapped.
-fn hand_over(value: Protected<PlainJson>) -> Value {
-    value.risky_unwrap().into_value()
+fn hand_over(value: Protected<PlainJson>) -> JsonPlaintext {
+    JsonPlaintext::from(value.risky_unwrap().into_value())
 }
 
 /// What opening a document's entries under the caller's context needs
@@ -1255,7 +1364,7 @@ fn open_document<'a, K>(
     doc: JsonDocument,
     cipher: &'a StackCipher<K>,
     context: AeadContext,
-) -> Pending<'a, Value, K> {
+) -> Pending<'a, JsonPlaintext, K> {
     // The key and the AAD derive under the stored context, the scopes then
     // the bindings; the token chain and the selectors under the query
     // context, the scopes alone, as they were sealed (`seal_pending`). So a
@@ -1294,7 +1403,7 @@ fn open_sealed_root(
     doc: &JsonDocument,
     aes: &Aes256Cipher,
     aad: &Context<'_>,
-) -> Result<Value, Error> {
+) -> Result<JsonPlaintext, Error> {
     let root = doc
         .entries
         .first()
@@ -1312,7 +1421,7 @@ fn open_whole_chain(
     aes: &Aes256Cipher,
     aad: &Context<'_>,
     selectors: Selectors,
-) -> Result<Value, Error> {
+) -> Result<JsonPlaintext, Error> {
     let root = JsonPath::root();
     let token = prf16(
         &selectors.keyset.prf,
@@ -1364,9 +1473,13 @@ fn open_whole_chain(
         .ok_or_else(|| shape("a document whose chain reaches its root"))
 }
 
-impl DecryptInto<Value> for JsonDocument {
-    type Context = AeadContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
+/// The whole document, as a [`JsonPlaintext`], which is wiped when it is
+/// dropped. The context is required: it is the context the document was
+/// sealed under.
+impl DecryptSource<JsonPlaintext> for JsonDocument {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
+        let context = context.into_inner();
         Decryption::from_open(move |cipher| open_document(self, cipher, context))
     }
 }
@@ -1403,9 +1516,10 @@ fn wrong(expected: &'static str) -> Error {
 /// sel)`. Every element of a wildcard path is reached through all its
 /// matches instead (`json_tree_path_query`, or a [`JsonSubtree`] read,
 /// which opens them in document order by their labels).
-impl DecryptInto<Value> for JsonExtracted {
-    type Context = AeadContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
+impl DecryptSource<JsonPlaintext> for JsonExtracted {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
+        let context = context.into_inner();
         let (node, selector) = self.into_parts();
         if node.entry.s != selector {
             return Decryption::failed(wrong("the entry at the path asked for"));
@@ -1478,9 +1592,17 @@ fn one_reached(
 /// [`Error::JsonWildcardTruncated`], never a partial list. Every row is
 /// checked against the key first ([`JsonSubtreeKey::open`]); a row that
 /// does not fit is [`Error::JsonWrongEntry`].
-impl DecryptInto<Vec<Value>> for JsonSubtree {
-    type Context = AeadContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Vec<Value>, K> {
+///
+/// Each value is a [`JsonPlaintext`], which is wiped when it is dropped.
+/// The context is required: it is the context the document was sealed
+/// under.
+impl DecryptSource<Vec<JsonPlaintext>> for JsonSubtree {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(
+        self,
+        context: Self::ContextInput,
+    ) -> Decryption<Vec<JsonPlaintext>, K> {
+        let context = context.into_inner();
         Decryption::from_open(move |cipher| {
             open_reads(self, cipher, context)
                 .map(|values| values.into_iter().map(hand_over).collect())
@@ -1495,9 +1617,13 @@ impl DecryptInto<Vec<Value>> for JsonSubtree {
 /// than one node (a wildcard that reached several) is
 /// [`Error::OpenedType`]; a probe that named a node is
 /// [`Error::JsonWildcardTruncated`].
-impl DecryptInto<Option<Value>> for JsonSubtree {
-    type Context = AeadContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Option<Value>, K> {
+impl DecryptSource<Option<JsonPlaintext>> for JsonSubtree {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(
+        self,
+        context: Self::ContextInput,
+    ) -> Decryption<Option<JsonPlaintext>, K> {
+        let context = context.into_inner();
         Decryption::from_open(move |cipher| {
             open_reads(self, cipher, context)
                 .try_map(|values| Ok(one_reached(values)?.map(hand_over)))
@@ -1507,13 +1633,14 @@ impl DecryptInto<Option<Value>> for JsonSubtree {
 
 /// Open the rows of a read into the value at the path: an object, an array
 /// or a scalar, empty containers included, as `jsonb` holds them there. No
-/// node at the path is [`Error::OpenedType`]; open as `Option<Value>` to
-/// read that as `None`. More than one node is [`Error::OpenedType`] too,
-/// and opens through [`DecryptInto<Vec<Value>>`] instead; a probe that
-/// named a node is [`Error::JsonWildcardTruncated`].
-impl DecryptInto<Value> for JsonSubtree {
-    type Context = AeadContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
+/// node at the path is [`Error::OpenedType`]; open as an
+/// `Option<JsonPlaintext>` to read that as `None`. More than one node is
+/// [`Error::OpenedType`] too, and opens as a `Vec<JsonPlaintext>` instead; a
+/// probe that named a node is [`Error::JsonWildcardTruncated`].
+impl DecryptSource<JsonPlaintext> for JsonSubtree {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
+        let context = context.into_inner();
         Decryption::from_open(move |cipher| {
             open_reads(self, cipher, context).try_map(|values| {
                 one_reached(values)?
@@ -2174,26 +2301,29 @@ impl<K> KeysetCipher<'_, K> {
         path: &JsonPath,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, JsonSelector, K> {
-        Pending::ready(self, self.json_selector_now(path, descriptor))
+        let context = descriptor.into_prf_context().into_owned();
+        let path = path.selector_bytes();
+        match self.loaded_state() {
+            Some(keyset) => Pending::ready(self, selector_of(keyset, &path, &context)),
+            None => self.deferred(move |keyset| selector_of(keyset, &path, &context)),
+        }
     }
 
     /// [`json_selector`](Self::json_selector), derived and returned now:
     /// for the engine's own callers, which derive locally and want a
     /// refusal as a plain error.
+    ///
+    /// For a keyset that is loaded: a caller reads
+    /// [`loaded_state`](Self::loaded_state) first, and goes through
+    /// [`json_selector`](Self::json_selector) otherwise.
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
     pub(crate) fn json_selector_now<'c>(
         &self,
         path: &JsonPath,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Result<JsonSelector, Error> {
         let context = descriptor.into_prf_context().into_owned();
-        prf16(
-            self.prf(),
-            SELECTOR_DOMAIN,
-            &context,
-            &path.selector_bytes(),
-        )
-        .map(JsonSelector)
-        .map_err(Error::from)
+        selector_of(self.loaded_now()?, &path.selector_bytes(), &context)
     }
 
     /// The key that reads the node at `path`, under the field `descriptor`
@@ -2244,14 +2374,35 @@ impl<K> KeysetCipher<'_, K> {
         bound: u32,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, JsonSubtreeKey, K> {
-        Pending::ready(
-            self,
-            self.json_subtree_key_now(path, options, bound, descriptor),
-        )
+        let context = descriptor.into_prf_context().into_owned();
+        match self.loaded_state() {
+            Some(keyset) => {
+                let selectors = Selectors::new(Arc::clone(keyset), context);
+                Pending::ready(
+                    self,
+                    subtree_key_for(selectors, options, path, bound).map_err(Error::from),
+                )
+            }
+            None => {
+                let (path, options) = (path.clone(), options.clone());
+                self.deferred(move |keyset| {
+                    let selectors = Selectors::new(Arc::clone(keyset), context);
+                    subtree_key_for(selectors, &options, &path, bound).map_err(Error::from)
+                })
+            }
+        }
     }
 
     /// [`json_subtree_key_with_bound`](Self::json_subtree_key_with_bound),
     /// derived and returned now, for the engine's own callers.
+    ///
+    /// For a keyset that is loaded, as
+    /// [`json_selector_now`](Self::json_selector_now).
+    ///
+    /// # Errors
+    ///
+    /// As that method.
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
     pub(crate) fn json_subtree_key_now<'c>(
         &self,
         path: &JsonPath,
@@ -2260,9 +2411,21 @@ impl<K> KeysetCipher<'_, K> {
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Result<JsonSubtreeKey, Error> {
         let context = descriptor.into_prf_context().into_owned();
-        let selectors = Selectors::new(Arc::clone(self.state()), context);
+        let selectors = Selectors::new(Arc::clone(self.loaded_now()?), context);
         subtree_key_for(selectors, options, path, bound).map_err(Error::from)
     }
+}
+
+/// The selector of the path whose bytes are `path`, under `keyset`'s index
+/// key and the field `context`.
+fn selector_of(
+    keyset: &KeysetState,
+    path: &[u8],
+    context: &Context<'_>,
+) -> Result<JsonSelector, Error> {
+    prf16(&keyset.prf, SELECTOR_DOMAIN, context, path)
+        .map(JsonSelector)
+        .map_err(Error::from)
 }
 
 #[cfg(test)]
@@ -3039,7 +3202,14 @@ mod tests {
         let opened = decode_node(&plain).unwrap();
         assert!(matches!(opened.label, Label::Root));
         assert_eq!(opened.kind, Kind::Object);
-        assert_eq!(opened.whole.map(hand_over), Some(value));
+        assert_eq!(
+            opened
+                .whole
+                .map(hand_over)
+                .as_ref()
+                .map(JsonPlaintext::value),
+            Some(&value)
+        );
     }
 
     #[test]
@@ -3223,6 +3393,7 @@ mod tests {
         )
         .unwrap();
         open_whole_chain(doc, &aes, &context, Selectors::for_tests())
+            .map(|opened| opened.value().clone())
     }
 
     #[test]

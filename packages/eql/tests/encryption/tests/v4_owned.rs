@@ -1,16 +1,19 @@
-//! The EQL v4 types through Stack Encrypt's owned API: `EncryptTarget` and
+//! The EQL v4 types through Stack Encrypt's API: `EncryptTarget` and
 //! `DecryptSource`, called as `value.encrypt_into_with_context(..)` and
 //! `P::decrypt_from(..)`.
 //!
-//! Data written through either API goes into the same columns, and is queried
-//! by the same terms. So the two APIs must agree. `v4_terms.rs` checks the
-//! bytes that each type writes against known answers. This file checks what a
-//! known answer cannot, for every stored type and every derived query type:
+//! `v4_terms.rs` checks the bytes that each type writes against known answers.
+//! This file checks what a known answer cannot, for every stored type and
+//! every derived query type:
 //!
-//! - The ciphertext `c` written by each API opens through the other API. `c` is
-//!   sealed under a new nonce each time, so its bytes differ every time.
+//! - The ciphertext `c` opens, under the column the value stores and under the
+//!   column the reader expects. `c` is sealed under a new nonce each time, so
+//!   its bytes differ every time.
 //! - The block ORE (order-revealing encryption) term `ob` also contains a
-//!   nonce. The test compares it by order, not by its bytes.
+//!   nonce. Two terms of one value have different bytes. The test checks that
+//!   they still order as equal.
+//! - Every other term is the same each time a value is written, and so is
+//!   every query operand.
 //! - Both forms of null behave as before. A type encrypted from an `Option`
 //!   seals a null. An `Option` of a type stores a database NULL for `None`.
 //! - A value is refused under another column before any key is requested.
@@ -19,7 +22,6 @@ mod common;
 
 use std::str::FromStr;
 
-use chrono::{DateTime, NaiveDate, Utc};
 use eql_bindings::v4::plaintext::{
     Date as DateValue, Decimal as DecimalValue, Timestamp as TimestampValue,
 };
@@ -27,6 +29,7 @@ use eql_bindings::v4::{
     bigint, boolean, date, double, integer, numeric, real, smallint, text, timestamp,
 };
 use eql_bindings::Identifier;
+use jiff::civil::Date as CivilDate;
 use serde::Serialize;
 use stack_encrypt::sem::OreBlockTerm;
 use stack_encrypt::{DecryptFrom, EncryptInto, NonEmpty};
@@ -54,32 +57,32 @@ fn terms_of<T: Serialize>(stored: &T) -> serde_json::Value {
 /// The right half of the term contains a random nonce, as the ciphertext
 /// does. So one value gives different bytes each time. Two terms of one value
 /// still compare as equal.
-fn assert_same_terms<T: Serialize>(owned: &T, structural: &T, name: &str) {
-    let mut owned = terms_of(owned);
-    let mut structural = terms_of(structural);
+fn assert_same_terms<T: Serialize>(first: &T, second: &T, name: &str) {
+    let mut first = terms_of(first);
+    let mut second = terms_of(second);
     let ob = |json: &mut serde_json::Value| {
         json.as_object_mut()
             .unwrap()
             .remove("ob")
             .map(|ob| serde_json::from_value::<OreBlockTerm<String>>(ob).unwrap())
     };
-    match (ob(&mut owned), ob(&mut structural)) {
+    match (ob(&mut first), ob(&mut second)) {
         (Some(a), Some(b)) => assert!(a == b, "{name}: the block ORE terms order equal"),
         (None, None) => {}
-        _ => panic!("{name}: only one path wrote a block ORE term"),
+        _ => panic!("{name}: only one write has a block ORE term"),
     }
     assert_eq!(
-        owned, structural,
-        "{name}: the owned API derives the terms the structural API does"
+        first, second,
+        "{name}: one value under one column derives the same terms each time"
     );
 }
 
 fn date(text: &str) -> DateValue {
-    DateValue::from(NaiveDate::from_str(text).unwrap())
+    DateValue::from(text.parse::<CivilDate>().unwrap())
 }
 
 fn timestamp(text: &str) -> TimestampValue {
-    let instant: DateTime<Utc> = DateTime::parse_from_rfc3339(text).unwrap().to_utc();
+    let instant: jiff::Timestamp = text.parse().unwrap();
     TimestampValue::try_from(instant).unwrap()
 }
 
@@ -89,7 +92,7 @@ fn decimal(text: &str) -> DecimalValue {
 
 /// A plaintext as a value that can be compared. The date, timestamp, and
 /// decimal plaintexts do not implement `PartialEq`. The test compares them as
-/// the chrono and rust_decimal values they convert to.
+/// the jiff and rust_decimal values they convert to.
 trait Seen {
     type View: PartialEq + std::fmt::Debug;
     fn view(&self) -> Self::View;
@@ -112,68 +115,70 @@ impl<T: Seen> Seen for Option<T> {
     }
 }
 impl Seen for DateValue {
-    type View = NaiveDate;
-    fn view(&self) -> NaiveDate {
-        NaiveDate::from(self)
+    type View = CivilDate;
+    fn view(&self) -> CivilDate {
+        self.to_jiff()
     }
 }
 impl Seen for TimestampValue {
-    type View = DateTime<Utc>;
-    fn view(&self) -> DateTime<Utc> {
-        DateTime::<Utc>::from(self)
+    type View = jiff::Timestamp;
+    fn view(&self) -> jiff::Timestamp {
+        self.to_jiff()
     }
 }
 impl Seen for DecimalValue {
     type View = String;
     fn view(&self) -> String {
-        rust_decimal::Decimal::from(self).to_string()
+        self.to_decimal().to_string()
     }
 }
 
-/// Writes each stored type through both APIs, from the same plaintext under
-/// the same column. Checks that the terms match, and that each ciphertext
-/// opens through the other API.
-macro_rules! stored_agrees {
-    ($cipher:expr, $keyset:expr, $plaintext:ty, $value:expr, [$($ty:ty),+ $(,)?]) => {$({
+/// Writes each stored type twice, from the same plaintext under the same
+/// column. The plaintext is built again for each write: it is not `Clone`. Checks that the terms match, and that each ciphertext opens: under
+/// the column it stores, and under the column the reader expects.
+macro_rules! stored_round_trips {
+    ($keyset:expr, $plaintext:ty, $value:expr, [$($ty:ty),+ $(,)?]) => {$({
         let value: $plaintext = $value;
-        let structural: $ty = $keyset.encrypt_as(&value, column()).await.unwrap();
-        let owned: $ty = value
-            .clone()
+        let again: $plaintext = $value;
+        let first: $ty = again
             .encrypt_into_with_context(&$keyset, column())
             .await
             .unwrap();
-        assert_same_terms(&owned, &structural, stringify!($ty));
-
-        let opened = <$plaintext>::decrypt_from(structural, &$keyset).await.unwrap();
-        assert_eq!(opened.view(), value.view(), "{}: the owned API opens structural output", stringify!($ty));
-        let opened: $plaintext = $cipher
-            .decrypt_as(owned.clone(), column().into())
+        let again: $plaintext = $value;
+        let second: $ty = again
+            .encrypt_into_with_context(&$keyset, column())
             .await
             .unwrap();
-        assert_eq!(opened.view(), value.view(), "{}: the structural API opens owned output", stringify!($ty));
-        let opened = <$plaintext>::decrypt_from_with_context(owned, &$keyset, column())
+        assert_same_terms(&first, &second, stringify!($ty));
+
+        let opened = <$plaintext>::decrypt_from(first, &$keyset).await.unwrap();
+        assert_eq!(opened.view(), value.view(), "{}: opens under the stored column", stringify!($ty));
+        let opened = <$plaintext>::decrypt_from_with_context(second, &$keyset, column())
             .await
             .unwrap();
         assert_eq!(opened.view(), value.view(), "{}: the stored column is the one expected", stringify!($ty));
     })+};
 }
 
-/// Builds each query type through both APIs, and checks that the operands
-/// match. A query operand contains no ciphertext, so the whole payload must
-/// match.
-macro_rules! query_agrees {
+/// Builds each query type twice, and checks that the operands match. A query
+/// operand contains no ciphertext, so the whole payload must match. A block
+/// ORE operand is compared by the ORE scheme, as the type's `PartialEq` does.
+macro_rules! query_is_stable {
     ($keyset:expr, $plaintext:ty, $value:expr, [$($ty:ty),+ $(,)?]) => {$({
-        let value: $plaintext = $value;
-        let structural: $ty = $keyset.encrypt_as(&value, column()).await.unwrap();
-        let owned: $ty = value
-            .clone()
+        let again: $plaintext = $value;
+        let first: $ty = again
+            .encrypt_into_with_context(&$keyset, column())
+            .await
+            .unwrap();
+        let again: $plaintext = $value;
+        let second: $ty = again
             .encrypt_into_with_context(&$keyset, column())
             .await
             .unwrap();
         assert_eq!(
-            owned,
-            structural,
-            "{}: the owned API builds the operand the structural API does",
+            first,
+            second,
+            "{}: one value under one column builds the same operand each time",
             stringify!($ty)
         );
     })+};
@@ -187,8 +192,7 @@ mod every_stored_type {
         let (cipher, _) = common::cipher().await;
         let keyset = cipher.default_keyset();
         use text::*;
-        stored_agrees!(
-            cipher,
+        stored_round_trips!(
             keyset,
             String,
             "Ada Lovelace".to_owned(),
@@ -211,8 +215,7 @@ mod every_stored_type {
         let keyset = cipher.default_keyset();
         {
             use integer::*;
-            stored_agrees!(
-                cipher,
+            stored_round_trips!(
                 keyset,
                 i32,
                 -42,
@@ -221,8 +224,7 @@ mod every_stored_type {
         }
         {
             use smallint::*;
-            stored_agrees!(
-                cipher,
+            stored_round_trips!(
                 keyset,
                 i16,
                 7,
@@ -237,8 +239,7 @@ mod every_stored_type {
         }
         {
             use bigint::*;
-            stored_agrees!(
-                cipher,
+            stored_round_trips!(
                 keyset,
                 i64,
                 1 << 40,
@@ -253,8 +254,7 @@ mod every_stored_type {
         let keyset = cipher.default_keyset();
         {
             use double::*;
-            stored_agrees!(
-                cipher,
+            stored_round_trips!(
                 keyset,
                 f64,
                 -2.5,
@@ -263,15 +263,14 @@ mod every_stored_type {
         }
         {
             use real::*;
-            stored_agrees!(
-                cipher,
+            stored_round_trips!(
                 keyset,
                 f32,
                 0.25,
                 [Real, RealEq, RealOrdOre, RealOrd, RealOrdOpe]
             );
         }
-        stored_agrees!(cipher, keyset, bool, true, [boolean::Boolean]);
+        stored_round_trips!(keyset, bool, true, [boolean::Boolean]);
     }
 
     #[tokio::test]
@@ -280,8 +279,7 @@ mod every_stored_type {
         let keyset = cipher.default_keyset();
         {
             use date::*;
-            stored_agrees!(
-                cipher,
+            stored_round_trips!(
                 keyset,
                 DateValue,
                 date("2024-02-29"),
@@ -290,8 +288,7 @@ mod every_stored_type {
         }
         {
             use timestamp::*;
-            stored_agrees!(
-                cipher,
+            stored_round_trips!(
                 keyset,
                 TimestampValue,
                 timestamp("2024-02-29T12:34:56.123456789Z"),
@@ -306,8 +303,7 @@ mod every_stored_type {
         }
         {
             use numeric::*;
-            stored_agrees!(
-                cipher,
+            stored_round_trips!(
                 keyset,
                 DecimalValue,
                 decimal("-1234.5600"),
@@ -325,7 +321,7 @@ mod every_query_type {
         let (cipher, _) = common::cipher().await;
         let keyset = cipher.default_keyset();
         use text::*;
-        query_agrees!(
+        query_is_stable!(
             keyset,
             String,
             "Ada Lovelace".to_owned(),
@@ -351,7 +347,7 @@ mod every_query_type {
         let keyset = cipher.default_keyset();
         {
             use integer::*;
-            query_agrees!(
+            query_is_stable!(
                 keyset,
                 i32,
                 -42,
@@ -365,7 +361,7 @@ mod every_query_type {
         }
         {
             use smallint::*;
-            query_agrees!(
+            query_is_stable!(
                 keyset,
                 i16,
                 7,
@@ -379,7 +375,7 @@ mod every_query_type {
         }
         {
             use bigint::*;
-            query_agrees!(
+            query_is_stable!(
                 keyset,
                 i64,
                 1 << 40,
@@ -393,7 +389,7 @@ mod every_query_type {
         }
         {
             use double::*;
-            query_agrees!(
+            query_is_stable!(
                 keyset,
                 f64,
                 -2.5,
@@ -407,7 +403,7 @@ mod every_query_type {
         }
         {
             use real::*;
-            query_agrees!(
+            query_is_stable!(
                 keyset,
                 f32,
                 0.25,
@@ -422,7 +418,7 @@ mod every_query_type {
         let keyset = cipher.default_keyset();
         {
             use date::*;
-            query_agrees!(
+            query_is_stable!(
                 keyset,
                 DateValue,
                 date("2024-02-29"),
@@ -431,7 +427,7 @@ mod every_query_type {
         }
         {
             use timestamp::*;
-            query_agrees!(
+            query_is_stable!(
                 keyset,
                 TimestampValue,
                 timestamp("2024-02-29T12:34:56.123456789Z"),
@@ -445,7 +441,7 @@ mod every_query_type {
         }
         {
             use numeric::*;
-            query_agrees!(
+            query_is_stable!(
                 keyset,
                 DecimalValue,
                 decimal("-1234.5600"),
@@ -466,87 +462,63 @@ mod a_null {
     // A type encrypted from an `Option` seals a null: a stored value, under a
     // key, with the terms of a null.
     #[tokio::test]
-    async fn sealed_by_a_type_over_an_option_matches_the_structural_api() {
+    async fn sealed_by_a_type_over_an_option_has_stable_terms_and_opens_as_none() {
         let (cipher, _) = common::cipher().await;
         let keyset = cipher.default_keyset();
-        stored_agrees!(
-            cipher,
-            keyset,
-            Option<String>,
-            None,
-            [text::Text, text::TextEq]
-        );
-        stored_agrees!(
-            cipher,
+        stored_round_trips!(keyset, Option<String>, None, [text::Text, text::TextEq]);
+        stored_round_trips!(
             keyset,
             Option<i32>,
             None,
             [integer::Integer, integer::IntegerEq]
         );
-        stored_agrees!(
-            cipher,
+        stored_round_trips!(
             keyset,
             Option<i16>,
             None,
             [smallint::Smallint, smallint::SmallintEq]
         );
-        stored_agrees!(
-            cipher,
+        stored_round_trips!(
             keyset,
             Option<i64>,
             None,
             [bigint::Bigint, bigint::BigintEq]
         );
-        stored_agrees!(
-            cipher,
+        stored_round_trips!(
             keyset,
             Option<f64>,
             None,
             [double::Double, double::DoubleEq]
         );
-        stored_agrees!(
-            cipher,
-            keyset,
-            Option<f32>,
-            None,
-            [real::Real, real::RealEq]
-        );
-        stored_agrees!(cipher, keyset, Option<bool>, None, [boolean::Boolean]);
-        stored_agrees!(
-            cipher,
-            keyset,
-            Option<DateValue>,
-            None,
-            [date::Date, date::DateEq]
-        );
-        stored_agrees!(
-            cipher,
+        stored_round_trips!(keyset, Option<f32>, None, [real::Real, real::RealEq]);
+        stored_round_trips!(keyset, Option<bool>, None, [boolean::Boolean]);
+        stored_round_trips!(keyset, Option<DateValue>, None, [date::Date, date::DateEq]);
+        stored_round_trips!(
             keyset,
             Option<TimestampValue>,
             None,
             [timestamp::Timestamp, timestamp::TimestampEq]
         );
-        stored_agrees!(
-            cipher,
+        stored_round_trips!(
             keyset,
             Option<DecimalValue>,
             None,
             [numeric::Numeric, numeric::NumericEq]
         );
-        query_agrees!(keyset, Option<String>, None, [text::TextEqQuery]);
-        query_agrees!(keyset, Option<i32>, None, [integer::IntegerEqQuery]);
-        query_agrees!(keyset, Option<i16>, None, [smallint::SmallintEqQuery]);
-        query_agrees!(keyset, Option<i64>, None, [bigint::BigintEqQuery]);
-        query_agrees!(keyset, Option<f64>, None, [double::DoubleEqQuery]);
-        query_agrees!(keyset, Option<f32>, None, [real::RealEqQuery]);
-        query_agrees!(keyset, Option<DateValue>, None, [date::DateEqQuery]);
-        query_agrees!(
+        query_is_stable!(keyset, Option<String>, None, [text::TextEqQuery]);
+        query_is_stable!(keyset, Option<i32>, None, [integer::IntegerEqQuery]);
+        query_is_stable!(keyset, Option<i16>, None, [smallint::SmallintEqQuery]);
+        query_is_stable!(keyset, Option<i64>, None, [bigint::BigintEqQuery]);
+        query_is_stable!(keyset, Option<f64>, None, [double::DoubleEqQuery]);
+        query_is_stable!(keyset, Option<f32>, None, [real::RealEqQuery]);
+        query_is_stable!(keyset, Option<DateValue>, None, [date::DateEqQuery]);
+        query_is_stable!(
             keyset,
             Option<TimestampValue>,
             None,
             [timestamp::TimestampEqQuery]
         );
-        query_agrees!(
+        query_is_stable!(
             keyset,
             Option<DecimalValue>,
             None,
@@ -653,10 +625,136 @@ async fn a_value_is_refused_under_another_column_before_any_key_is_requested() {
 #[test]
 fn the_traits_the_compile_fail_examples_refuse_exist_for_the_right_shapes() {
     use eql_bindings::Identifier;
-    use stack_encrypt::target::{DecryptSource, EncryptTarget, RequiredContext};
+    use stack_encrypt::target::{AcceptsContext, DecryptSource, EncryptTarget};
     fn decrypts<T: DecryptSource<String>>() {}
-    fn encrypts<T: EncryptTarget<String, ContextInput = RequiredContext<NonEmpty<Identifier>>>>() {}
+    // The context a caller passes is the column identifier.
+    fn encrypts<T>()
+    where
+        T: EncryptTarget<String>,
+        T::ContextInput: AcceptsContext<Value = NonEmpty<Identifier>>,
+    {
+    }
     decrypts::<text::TextEq>();
     encrypts::<text::TextEq>();
     encrypts::<text::TextEqQuery>();
+}
+
+/// How many copies of the plaintext the ciphertext `c` makes: none. The
+/// owned form that `encrypt_into` runs moves the plaintext into the seal.
+/// The borrowed form, which a collection runs for each element, reads it in
+/// place.
+mod the_ciphertext {
+    use super::*;
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use eql_bindings::v4::terms::Ciphertext;
+    use stack_encrypt::target::{AeadContext, EncryptTarget, RequiredContext};
+    use stack_encrypt::{nonempty, Encrypt};
+    use vitaminc_aead::plaintext::Sink;
+    use zeroize::Zeroize;
+
+    /// A `String` that counts its clones.
+    struct Counted {
+        text: String,
+        clones: Arc<AtomicUsize>,
+    }
+    impl Clone for Counted {
+        fn clone(&self) -> Self {
+            let _ = self.clones.fetch_add(1, Ordering::SeqCst);
+            Self {
+                text: self.text.clone(),
+                clones: self.clones.clone(),
+            }
+        }
+    }
+    impl Encrypt for Counted {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            self.text.visit(sink)
+        }
+    }
+    /// Sealing a borrowed value reads the text in place.
+    impl Encrypt for &Counted {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            self.text.as_str().visit(sink)
+        }
+    }
+    /// The counter is not secret.
+    impl Zeroize for Counted {
+        fn zeroize(&mut self) {
+            self.text.zeroize();
+        }
+    }
+
+    fn counted() -> (Counted, Arc<AtomicUsize>) {
+        let clones = Arc::new(AtomicUsize::new(0));
+        let value = Counted {
+            text: "ada@example.com".to_owned(),
+            clones: clones.clone(),
+        };
+        (value, clones)
+    }
+
+    fn aead() -> RequiredContext<AeadContext> {
+        RequiredContext::from(AeadContext::from(nonempty!("users").with("email")))
+    }
+
+    #[tokio::test]
+    async fn neither_the_owned_form_nor_the_borrowed_form_copies_the_plaintext() {
+        let (cipher, _) = common::cipher().await;
+        let keyset = cipher.default_keyset();
+
+        let (value, clones) = counted();
+        let owned: Ciphertext = keyset
+            .run(
+                <Ciphertext as EncryptTarget<Counted>>::owned_encryption(),
+                value,
+                aead(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(clones.load(Ordering::SeqCst), 0, "the owned form");
+        let opened: String = String::decrypt_from_with_context(owned, &cipher, aead())
+            .await
+            .unwrap();
+        assert_eq!(
+            opened, "ada@example.com",
+            "the moved value is what is sealed"
+        );
+
+        let (value, clones) = counted();
+        let borrowed: Ciphertext = keyset
+            .run(
+                <Ciphertext as EncryptTarget<Counted>>::encryption(),
+                &value,
+                aead(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(clones.load(Ordering::SeqCst), 0, "the borrowed form");
+        let opened: String = String::decrypt_from_with_context(borrowed, &cipher, aead())
+            .await
+            .unwrap();
+        assert_eq!(opened, "ada@example.com", "the borrowed value is sealed");
+    }
+
+    /// A refused context requests no key.
+    #[tokio::test]
+    async fn the_owned_form_refuses_an_empty_part_before_any_key_is_requested() {
+        use stack_encrypt::target::Scope;
+        let (cipher, calls) = common::cipher().await;
+        let keyset = cipher.default_keyset();
+        let (value, clones) = counted();
+        let refused = keyset
+            .run(
+                <Ciphertext as EncryptTarget<Counted>>::owned_encryption(),
+                value,
+                RequiredContext::from(AeadContext::from(Scope::new(String::new()))),
+            )
+            .await;
+        assert!(refused.is_err(), "an empty scope is refused");
+        assert_eq!(clones.load(Ordering::SeqCst), 0);
+        assert!(calls.lock().unwrap().generate.is_empty(), "no key");
+    }
 }

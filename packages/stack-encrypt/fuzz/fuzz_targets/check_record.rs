@@ -5,7 +5,7 @@
 //!
 //! This is the walk a binding's decrypt runs before any key is requested:
 //! it decides whether a stored tree fits its plan, and it is the only thing
-//! standing between a tree an attacker rewrote and `decrypt_as`, which
+//! standing between a tree an attacker rewrote and the decrypt, which
 //! opens no AEAD for a passthrough and would hand forged plaintext back as
 //! a successful decrypt. So the input is not bytes but a *structure*: an
 //! `Arbitrary`-derived mirror of a plan value and of a ciphertext tree,
@@ -89,6 +89,7 @@ impl TargetResolver for Fixed {
         _: Option<&TargetOptions>,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
+        _: &stack_encrypt::target::DeclaredContext,
         _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("check_record runs no cipher")
@@ -98,6 +99,7 @@ impl TargetResolver for Fixed {
         _: &str,
         _: &'a StackCipher<K>,
         _: &Label,
+        _: &stack_encrypt::target::DeclaredContext,
         _: &[u8],
     ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
         unreachable!("check_record runs no cipher")
@@ -108,6 +110,7 @@ impl TargetResolver for Fixed {
         _: &stack_encrypt::target::IndexSpec,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
+        _: &stack_encrypt::target::DeclaredContext,
         _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("check_record runs no cipher")

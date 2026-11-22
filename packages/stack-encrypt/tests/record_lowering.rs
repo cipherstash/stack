@@ -1,19 +1,31 @@
 //! The record fixture is the proof of the lowering (ADR-0007, amended
-//! 2026-10-06): a Rust chain and the data-plan lowering each open the
-//! records the other sealed, and both derive the same bytes for each term.
-//! The chain's fields are `dynamic::ValueFrame`s, the plaintext type a binding's
-//! values have, so the two authors write one declaration over one type; a
-//! chain over bare `u32`/`String` fields seals the same tagged leaves (see
+//! 2026-10-06): the combinators of `stack_encrypt::target`, composed by
+//! hand, and the data-plan lowering each open the records the other sealed,
+//! and both derive the same bytes for each term. The combinators run over
+//! `dynamic::ValueFrame` fields, the plaintext type a binding's values have,
+//! so the two authors write one declaration over one type; combinators over
+//! bare `u32`/`String` fields seal the same tagged leaves (see
 //! `dynamic::record`). `tests/fixtures/record_lowering.json` holds one
 //! record from each author, sealed under a deterministic key source so the
 //! bytes open in any process, and its README gives the schema a Go test
 //! reads later.
 //!
+//! The fixture names the first author `typed_chain`, and the tests here
+//! say "the chain". The committed records of that author were sealed by the
+//! plan builder's chain, which is removed. The chain added no operation of
+//! its own: `encrypt_index` was `indexed(..).under(label)`, `encrypt` was
+//! `ciphertext().under(label)`, `passthrough` was `passthrough()`, and an
+//! open was `open` for each field. Those combinators remain, so they seal
+//! and open in the chain's place. The fixture and the test names keep the
+//! old word, because the Go module reads the file and the fixture
+//! enrollment index lists the tests by name.
+//!
 //! The fixture holds a second case under its `context_field` key: the same
-//! proof for a plan that takes its context from a field of the record
-//! (`FieldsBuilder::context_field`, the data grammar's `"context_field"`),
-//! sealed by each author and opened by the other under the context the
-//! record stores, and refused by both under another.
+//! proof for a plan that takes its context from a field of the record (the
+//! data grammar's `"context_field"`). The combinators read the context from
+//! the record and run the sealed field under it. Each author seals the
+//! record, and the other opens it under the context the record stores. A
+//! reader that names another context opens neither author's record.
 //!
 //! Regenerate the fixture with `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test
 //! --test record_lowering --all-features`; every other run reads it. Each
@@ -32,10 +44,15 @@ use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
 use stack_encrypt::dynamic::{TermBytes, ValueFrame, ValueKind};
-use stack_encrypt::plan::{pick, FieldValues};
+use stack_encrypt::plan::IntoLabel;
 use stack_encrypt::sem::MatchOptions;
-use stack_encrypt::target::{Encrypted, IndexSpec};
-use stack_encrypt::{CipherText, Error, Label, Plan, SealedValue, StackCipher, StackCipherText};
+use stack_encrypt::target::{
+    ciphertext, indexed, open, passthrough as carried, Borrowed, DeclaredContext, Encrypted,
+    Encryption, IndexSpec, Owned,
+};
+use stack_encrypt::{
+    nonempty, CipherText, Error, Label, NonEmpty, SealedValue, StackCipher, StackCipherText,
+};
 use vitaminc_aead_frame::serde::from_slice;
 
 const SEED: [u8; 32] = *b"stack-encrypt record fixture v1 ";
@@ -56,25 +73,40 @@ fn user() -> User {
     }
 }
 
-/// The one declaration, as the Rust chain writes it over `ValueFrame` fields.
-fn typed_plan() -> Plan<User, DeterministicSource> {
-    Plan::context("users")
-        .fields()
-        .encrypt_index(
-            pick("age", |u: &User| &u.age),
-            (IndexSpec::Equality, IndexSpec::Ore),
-        )
-        .encrypt_index(
-            pick("email", |u: &User| &u.email),
-            (
+/// What the combinators write for a user: `age` and `email` each sealed
+/// with two terms beside it, `notes` sealed alone, and `id` as it is.
+type TypedUser = (
+    (
+        (
+            Encrypted<(TermBytes, TermBytes)>,
+            Encrypted<(TermBytes, TermBytes)>,
+        ),
+        StackCipherText,
+    ),
+    u32,
+);
+
+/// The one declaration, as the combinators write it over `ValueFrame`
+/// fields: each sealed field under `users/<field>`.
+fn typed_declaration<'s>() -> Encryption<'s, User, TypedUser, DeterministicSource, DeclaredContext>
+{
+    indexed::<ValueFrame, _, Borrowed, _>((IndexSpec::Equality, IndexSpec::Ore))
+        .under(nonempty!("users").with("age"))
+        .project(|u: &User| &u.age)
+        .zip(
+            indexed::<ValueFrame, _, Borrowed, _>((
                 IndexSpec::Equality,
                 IndexSpec::Match(MatchOptions::default()),
-            ),
+            ))
+            .under(nonempty!("users").with("email"))
+            .project(|u: &User| &u.email),
         )
-        .encrypt(pick("notes", |u: &User| &u.notes))
-        .passthrough(pick("id", |u: &User| &u.id))
-        .build()
-        .expect("the typed plan builds")
+        .zip(
+            ciphertext::<ValueFrame, _, Borrowed>()
+                .under(nonempty!("users").with("notes"))
+                .project(|u: &User| &u.notes),
+        )
+        .zip(carried::<u32, _, Borrowed, DeclaredContext>().project(|u: &User| &u.id))
 }
 
 /// The same declaration as a binding sends it: the fixture's `plan`.
@@ -254,13 +286,9 @@ fn record_of_json(record: &Json) -> StackCipherText {
     )
 }
 
-/// The typed chain's record, shaped as the stored tree, by hand: what a Go
+/// The combinators' record, shaped as the stored tree, by hand: what a Go
 /// program assembles from the engine's standard outputs.
-fn record_of_typed(mut values: FieldValues) -> StackCipherText {
-    let age: Encrypted<(TermBytes, TermBytes)> = values.take("age").expect("age");
-    let email: Encrypted<(TermBytes, TermBytes)> = values.take("email").expect("email");
-    let notes: StackCipherText = values.take("notes").expect("notes");
-    let id: u32 = values.take("id").expect("id");
+fn record_of_typed((((age, email), notes), id): TypedUser) -> StackCipherText {
     let term = |bytes: Vec<u8>| -> StackCipherText { passthrough(bytes) };
     CipherText::Map(vec![
         (
@@ -287,35 +315,66 @@ fn record_of_typed(mut values: FieldValues) -> StackCipherText {
     ])
 }
 
-/// A stored tree as the typed chain's record, for `open`: each sealed field
-/// as its bare ciphertext, the passthrough as its value.
-fn typed_of_record(tree: StackCipherText) -> FieldValues {
-    let CipherText::Map(fields) = tree else {
-        panic!("a record is a map");
-    };
-    let mut values = FieldValues::new();
-    for (name, node) in fields {
-        let CipherText::Map(outputs) = node else {
-            panic!("a field is a map of outputs");
+/// What the combinators read of a stored tree: each sealed field's bare
+/// ciphertext by name, and each passthrough's payload by name. The terms
+/// are not read: a term opens nothing.
+struct StoredFields {
+    sealed: BTreeMap<String, StackCipherText>,
+    carried: BTreeMap<String, Vec<u8>>,
+}
+
+impl StoredFields {
+    fn of(tree: StackCipherText) -> Self {
+        let CipherText::Map(fields) = tree else {
+            panic!("a record is a map");
         };
-        for (key, node) in outputs {
-            match key.as_str() {
-                "c" => {
-                    let _ = values.insert(&name, node);
+        let mut stored = Self {
+            sealed: BTreeMap::new(),
+            carried: BTreeMap::new(),
+        };
+        for (name, node) in fields {
+            let CipherText::Map(outputs) = node else {
+                panic!("a field is a map of outputs");
+            };
+            for (key, node) in outputs {
+                match key.as_str() {
+                    "c" => {
+                        let _ = stored.sealed.insert(name.clone(), node);
+                    }
+                    "passthrough" => {
+                        let CipherText::Passthrough(payload) = node else {
+                            panic!("a passthrough node");
+                        };
+                        let _ = stored.carried.insert(name.clone(), payload.0);
+                    }
+                    _ => {}
                 }
-                "passthrough" => {
-                    let CipherText::Passthrough(payload) = node else {
-                        panic!("a passthrough node");
-                    };
-                    let id: u32 = from_slice(&payload.0).expect("a u32");
-                    assert_eq!(payload.0, common::frames::payload(id), "the id is a u32");
-                    let _ = values.insert(&name, id);
-                }
-                _ => {}
             }
         }
+        stored
     }
-    values
+
+    /// The ciphertext of the sealed field `name`.
+    fn sealed(&mut self, name: &str) -> StackCipherText {
+        self.sealed.remove(name).expect(name)
+    }
+
+    /// The passthrough field `name`, which must be a `u32` in its frame.
+    fn id(&mut self, name: &str) -> u32 {
+        let payload = self.carried.remove(name).expect(name);
+        let id: u32 = from_slice(&payload).expect("a u32");
+        assert_eq!(payload, common::frames::payload(id), "the id is a u32");
+        id
+    }
+
+    /// The passthrough field `name`, which must be text in its frame.
+    fn text(&mut self, name: &str) -> ValueFrame {
+        let payload = self.carried.remove(name).expect(name);
+        let text = ValueFrame::from_bytes(Protected::new(payload).as_protected_ref().as_deref())
+            .expect("a value");
+        assert_eq!(text.kind(), Some(ValueKind::String), "{name} is text");
+        text
+    }
 }
 
 /// Every term of a record, by `field/key`, so two records' terms compare
@@ -340,12 +399,12 @@ fn fixture_path() -> PathBuf {
 }
 
 async fn seal_typed(cipher: &StackCipher<DeterministicSource>) -> StackCipherText {
-    let values = cipher
-        .encrypt(&user())
-        .using(&typed_plan())
+    let sealed = cipher
+        .default_keyset()
+        .run(typed_declaration(), &user(), DeclaredContext::default())
         .await
-        .expect("the typed chain seals");
-    record_of_typed(values)
+        .expect("the combinators seal");
+    record_of_typed(sealed)
 }
 
 async fn seal_lowered(
@@ -362,19 +421,28 @@ async fn seal_lowered(
     .expect("the lowering seals")
 }
 
+/// Open through the combinators: `open` for each sealed field under the
+/// label the declaration seals it under, all in one request.
 async fn open_typed(cipher: &StackCipher<DeterministicSource>, tree: StackCipherText) -> Json {
-    let mut opened = cipher
-        .open(typed_of_record(tree))
-        .using(&typed_plan())
+    let mut stored = StoredFields::of(tree);
+    let opening = open::<ValueFrame, _>(stored.sealed("age"), nonempty!("users").with("age"))
+        .zip(open::<ValueFrame, _>(
+            stored.sealed("email"),
+            nonempty!("users").with("email"),
+        ))
+        .zip(open::<ValueFrame, _>(
+            stored.sealed("notes"),
+            nonempty!("users").with("notes"),
+        ));
+    let ((age, email), notes) = cipher
+        .run_decryption(opening)
         .await
-        .expect("the typed chain opens it");
-    let mut value = |name: &str| json_of_opened(opened.take::<ValueFrame>(name).expect(name));
-    let (age, email, notes) = (value("age"), value("email"), value("notes"));
+        .expect("the combinators open it");
     json!({
-        "age": age,
-        "email": email,
-        "notes": notes,
-        "id": opened.take::<u32>("id").expect("id"),
+        "age": json_of_opened(age),
+        "email": json_of_opened(email),
+        "notes": json_of_opened(notes),
+        "id": stored.id("id"),
     })
 }
 
@@ -391,7 +459,7 @@ async fn open_lowered(
     )
 }
 
-/// The typed chain and the lowering, run now under the same declaration:
+/// The combinators and the lowering, run now under the same declaration:
 /// the same terms, and each opens the other's record.
 #[tokio::test]
 async fn the_chain_and_the_lowering_are_one_engine_today() {
@@ -411,17 +479,19 @@ async fn the_chain_and_the_lowering_are_one_engine_today() {
     assert_eq!(
         open_lowered(&cipher, record_of_json(&typed), &plan).await,
         plaintext_json(),
-        "the lowering opens the chain's record"
+        "the lowering opens the combinators' record"
     );
     assert_eq!(
         open_typed(&cipher, record_of_json(&lowered)).await,
         plaintext_json(),
-        "the chain opens the lowering's record"
+        "the combinators open the lowering's record"
     );
 }
 
 /// The committed fixture: records each author sealed in an earlier run,
-/// opened by the other now, their terms the ones derived now. With
+/// opened by the other now, their terms the ones derived now. The
+/// `typed_chain` record was sealed by the chain, and the combinators open
+/// it; an update seals that record with the combinators. With
 /// `STACK_ENCRYPT_UPDATE_FIXTURES=1` the records are sealed afresh and
 /// written; the terms and the plaintext never change. Updates panic when
 /// `STACK_CONFORMANCE_REQUIRED=1`.
@@ -436,14 +506,22 @@ async fn the_committed_fixture_opens_both_ways() {
     if update {
         let mut fixture = committed_fixture(&path);
         let entries = fixture.as_object_mut().expect("an object");
-        let _ = entries.insert("_comment".into(), json!("Records sealed by the typed Rust chain and by the data-plan lowering under one declaration (ADR-0007). Read by tests/record_lowering.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand."));
+        // The comment and the `typed_chain` key are written as they are
+        // committed, so that an update changes the sealed bytes and nothing
+        // else in the file the Go module reads.
+        let _ = entries.insert("_comment".into(), json!("Records sealed by typed Rust code and by the data-plan lowering under one declaration (ADR-0007). The typed_chain record was written by the plan chain until that chain was removed; since then, an update writes it with the engine's target combinators (seal_typed in tests/record_lowering.rs), and the key keeps its name for the Go reader. Read by tests/record_lowering.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand."));
         let _ = entries.insert(
             "key_source".into(),
             json!({ "kind": "deterministic-sha256", "seed": hex(&SEED) }),
         );
         let _ = entries.insert(
             "keyset_id".into(),
-            json!(cipher.default_keyset().keyset_id().to_string()),
+            json!(cipher
+                .default_keyset()
+                .keyset_id()
+                .await
+                .unwrap()
+                .to_string()),
         );
         let _ = entries.insert("plan".into(), data_plan_json());
         let _ = entries.insert("plaintext".into(), plaintext_json());
@@ -463,7 +541,12 @@ async fn the_committed_fixture_opens_both_ways() {
     assert_eq!(fixture["key_source"]["seed"], json!(hex(&SEED)));
     assert_eq!(
         fixture["keyset_id"],
-        json!(cipher.default_keyset().keyset_id().to_string())
+        json!(cipher
+            .default_keyset()
+            .keyset_id()
+            .await
+            .unwrap()
+            .to_string())
     );
     assert_eq!(
         fixture["plan"],
@@ -494,12 +577,12 @@ async fn the_committed_fixture_opens_both_ways() {
     assert_eq!(
         open_typed(&cipher, record_of_json(lowered)).await,
         plaintext_json(),
-        "the chain opens the lowering's committed record"
+        "the combinators open the lowering's committed record"
     );
     assert_eq!(
         open_typed(&cipher, record_of_json(typed)).await,
         plaintext_json(),
-        "and each opens its own"
+        "and each opens its own author's"
     );
     assert_eq!(
         open_lowered(&cipher, record_of_json(lowered), &plan).await,
@@ -542,15 +625,39 @@ fn note() -> Note {
     }
 }
 
-/// The declaration as the Rust chain writes it: `context_field` in place
-/// of `Plan::context(..)`.
-fn note_plan() -> Plan<Note, DeterministicSource> {
-    Plan::fields()
-        .context_field(pick("tenant", |n: &Note| &n.tenant))
-        .encrypt_index(pick("text", |n: &Note| &n.text), IndexSpec::Equality)
-        .passthrough(pick("id", |n: &Note| &n.id))
-        .build()
-        .expect("the note plan builds")
+/// What the combinators write for a note: the tenant as it is, `text`
+/// sealed with its equality term beside it, and `id` as it is.
+type TypedNote = ((ValueFrame, Encrypted<TermBytes>), u32);
+
+/// The label a note's `text` is sealed under: the context the note names,
+/// then the field.
+fn text_label(tenant: &ValueFrame) -> Label {
+    let context = tenant.into_label().expect("the tenant is a label");
+    Label::new(context.segments().chain(["text"])).expect("a label")
+}
+
+/// The declaration as the combinators write it for one note: the tenant
+/// is carried as it is, and `text` runs under the label read from it. The
+/// label is in the record, so the description is composed for each record.
+///
+/// The description is handed the note itself. A frame is not `Clone`, so the
+/// tenant is moved into the output, as a data plan moves a passthrough field.
+fn note_declaration<'s>(
+    note: &Note,
+) -> Encryption<'s, Note, TypedNote, DeterministicSource, DeclaredContext, Owned> {
+    carried::<ValueFrame, _, Owned, DeclaredContext>()
+        .split(
+            indexed::<ValueFrame, _, Owned, _>(IndexSpec::Equality)
+                .under(NonEmpty::from(text_label(&note.tenant)))
+                .split(
+                    carried::<u32, _, Owned, DeclaredContext>(),
+                    |parts: (ValueFrame, u32)| parts,
+                    |_| {},
+                ),
+            |n: Note| (n.tenant, (n.text, n.id)),
+            |_| {},
+        )
+        .map(|(tenant, (text, id))| ((tenant, text), id))
 }
 
 /// The same declaration as a binding sends it: the plan-level
@@ -576,11 +683,8 @@ fn globex() -> Label {
     Label::parse("tenants/globex").expect("a label")
 }
 
-/// The typed chain's note record, shaped as the stored tree.
-fn record_of_note(mut values: FieldValues) -> StackCipherText {
-    let tenant: ValueFrame = values.take("tenant").expect("tenant");
-    let text: Encrypted<TermBytes> = values.take("text").expect("text");
-    let id: u32 = values.take("id").expect("id");
+/// The combinators' note record, shaped as the stored tree.
+fn record_of_note(((tenant, text), id): TypedNote) -> StackCipherText {
     CipherText::Map(vec![
         (
             "tenant".into(),
@@ -600,57 +704,14 @@ fn record_of_note(mut values: FieldValues) -> StackCipherText {
     ])
 }
 
-/// A stored tree as the typed chain's note record, for `open`.
-fn note_of_record(tree: StackCipherText) -> FieldValues {
-    let CipherText::Map(fields) = tree else {
-        panic!("a record is a map");
-    };
-    let mut values = FieldValues::new();
-    for (name, node) in fields {
-        let CipherText::Map(outputs) = node else {
-            panic!("a field is a map of outputs");
-        };
-        for (key, node) in outputs {
-            match key.as_str() {
-                "c" => {
-                    let _ = values.insert(&name, node);
-                }
-                "passthrough" => {
-                    let CipherText::Passthrough(payload) = node else {
-                        panic!("a passthrough node");
-                    };
-                    // The id is a u32; the tenant is text, kept as its frame.
-                    match from_slice::<u32>(&payload.0) {
-                        Ok(id) => {
-                            assert_eq!(payload.0, common::frames::payload(id), "the id is a u32");
-                            let _ = values.insert(&name, id);
-                        }
-                        Err(_) => {
-                            let text = ValueFrame::from_bytes(
-                                Protected::new(payload.0.clone())
-                                    .as_protected_ref()
-                                    .as_deref(),
-                            )
-                            .expect("a value");
-                            assert_eq!(text.kind(), Some(ValueKind::String), "the tenant is text");
-                            let _ = values.insert(&name, text);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    values
-}
-
 async fn seal_note_typed(cipher: &StackCipher<DeterministicSource>) -> StackCipherText {
+    let note = note();
     record_of_note(
         cipher
-            .encrypt(&note())
-            .using(&note_plan())
+            .default_keyset()
+            .run(note_declaration(&note), note, DeclaredContext::default())
             .await
-            .expect("the typed chain seals the note"),
+            .expect("the combinators seal the note"),
     )
 }
 
@@ -668,20 +729,33 @@ async fn seal_note_lowered(
     .expect("the lowering seals the note")
 }
 
-/// Open through the typed chain, under the context `expected` if given.
+/// Open through the combinators: `open` for `text`, under the context
+/// `named` if given, or else under the context the record stores. The
+/// combinators compare no stored context with an expected one, as a plan
+/// does. A reader that names a context opens the field under it, and the
+/// key source refuses a leaf that was sealed under another.
 async fn open_note_typed(
     cipher: &StackCipher<DeterministicSource>,
     tree: StackCipherText,
-    expected: Option<Label>,
+    named: Option<Label>,
 ) -> Result<Json, Error> {
-    let open = cipher.open(note_of_record(tree));
-    let mut opened = match expected {
-        Some(expected) => open.context(expected).using(&note_plan()).await?,
-        None => open.using(&note_plan()).await?,
+    let mut stored = StoredFields::of(tree);
+    let tenant = stored.text("tenant");
+    let label = match named {
+        Some(context) => Label::new(context.segments().chain(["text"])).expect("a label"),
+        None => text_label(&tenant),
     };
-    let mut value = |name: &str| json_of_opened(opened.take::<ValueFrame>(name).expect(name));
-    let (tenant, text) = (value("tenant"), value("text"));
-    Ok(json!({ "tenant": tenant, "text": text, "id": opened.take::<u32>("id").expect("id") }))
+    let text = cipher
+        .run_decryption(open::<ValueFrame, _>(
+            stored.sealed("text"),
+            NonEmpty::from(label),
+        ))
+        .await?;
+    Ok(json!({
+        "tenant": json_of_opened(tenant),
+        "text": json_of_opened(text),
+        "id": stored.id("id"),
+    }))
 }
 
 async fn open_note_lowered(
@@ -697,9 +771,12 @@ async fn open_note_lowered(
     ))
 }
 
-/// The two authors under a context field, run now: the same term, each
-/// opens the other's record under the context it stores, and each refuses
-/// the other's record under another context before any key is requested.
+/// The two authors under a context field, run now: the same term, and each
+/// opens the other's record under the context it stores. Neither opens the
+/// other's record under another context. The lowering compares the stored
+/// context with the expected one and refuses before any key is requested.
+/// The combinators ask for the key under the context the reader names, and
+/// the key source refuses.
 #[tokio::test]
 async fn the_chain_and_the_lowering_agree_on_a_context_field_today() {
     let cipher = deterministic_cipher(SEED).await;
@@ -724,13 +801,13 @@ async fn the_chain_and_the_lowering_agree_on_a_context_field_today() {
         assert_eq!(
             open_note_lowered(&cipher, record_of_json(&typed), &plan, expected.clone())
                 .await
-                .expect("the lowering opens the chain's note"),
+                .expect("the lowering opens the combinators' note"),
             note_json()
         );
         assert_eq!(
             open_note_typed(&cipher, record_of_json(&lowered), expected)
                 .await
-                .expect("the chain opens the lowering's note"),
+                .expect("the combinators open the lowering's note"),
             note_json()
         );
     }
@@ -740,12 +817,14 @@ async fn the_chain_and_the_lowering_agree_on_a_context_field_today() {
     ));
     assert!(matches!(
         open_note_typed(&cipher, record_of_json(&lowered), Some(globex())).await,
-        Err(Error::ContextMismatch { .. })
+        Err(Error::Kms(_))
     ));
 }
 
 /// The committed context-field case, under the fixture's `context_field`
 /// key: sealed by each author in an earlier run, opened by the other now.
+/// The `typed_chain` note was sealed by the chain, and an update seals it
+/// with the combinators.
 /// With `STACK_ENCRYPT_UPDATE_FIXTURES=1` this test rewrites that key and
 /// nothing else in the file. Updates panic when `STACK_CONFORMANCE_REQUIRED=1`.
 #[tokio::test]
@@ -806,7 +885,7 @@ async fn the_committed_context_field_case_opens_both_ways() {
     assert_eq!(
         open_note_typed(&cipher, record_of_json(lowered), Some(acme()))
             .await
-            .expect("the chain opens the lowering's committed note"),
+            .expect("the combinators open the lowering's committed note"),
         note_json()
     );
     assert!(matches!(
@@ -815,7 +894,7 @@ async fn the_committed_context_field_case_opens_both_ways() {
     ));
     assert!(matches!(
         open_note_typed(&cipher, record_of_json(lowered), Some(globex())).await,
-        Err(Error::ContextMismatch { .. })
+        Err(Error::Kms(_))
     ));
 }
 

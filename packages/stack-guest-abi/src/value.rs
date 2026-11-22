@@ -253,7 +253,10 @@ impl<O: Put> Sink for ValueSink<O> {
     }
 
     /// A guest never hands its host a passthrough.
-    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<O::Ok, DecodeError> {
+    fn passthrough<P: ?Sized + vitaminc_aead::EncryptRef>(
+        self,
+        _: &P,
+    ) -> Result<O::Ok, DecodeError> {
         Err(DecodeError::Scalar)
     }
 }

@@ -9,13 +9,18 @@
 //! document ([`stack_encrypt::json::JsonDocument`], whose wire form is the
 //! `h` and `sv` here) and the query operands; these types are the SQL
 //! contract around them, with the `v` and `i` envelope, and the
-//! [`EncryptFrom`] / [`DecryptInto`] impls that let a Rust program name
-//! [`JsonTreeDocument`] as a target: `encrypt_as::<JsonTreeDocument>` under
-//! an [`Identifier`]. A query derives through the engine's own document
-//! target under the same context as a label, `Plan::value::<Value>()
-//! .context("users/profile").encrypt_into::<JsonDocument>()`, and converts
-//! into the operand types here; the identifier and the two-segment label
-//! are one context, so the selectors agree (see [`crate::encryption`]). The
+//! [`EncryptTarget`] / [`DecryptSource`] impls that let a Rust program name
+//! [`JsonTreeDocument`] as a target:
+//! `document.encrypt_into_with_context(&keyset, column)` under an
+//! [`Identifier`]. As a field of a derived record, its field reference has the
+//! JSON queries (`contains`, `at`, `elements`, `predicate`, `children`),
+//! which return the query types here
+//! ([`JsonQueries`](stack_encrypt::json::JsonQueries)), under the options
+//! the field's `#[stash(json(..))]` names
+//! ([`JsonTarget`](stack_encrypt::json::JsonTarget)). A document with
+//! no record is queried through a data plan that names the type
+//! (`JsonSearch`) under the same column, and its operand converts into the
+//! operand types here (see [`crate::encryption`]). The
 //! design is `docs/plans/2026-10-17-json-tree-index.md` at
 //! the repository root.
 
@@ -23,14 +28,17 @@ use schemars::{schema_for, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stack_encrypt::json::{
-    JsonDocument, JsonLeafQuery, JsonNode, JsonOptions, JsonPath, JsonQuery, JsonSelector,
-    JsonSubtree, JsonSubtreeKey,
+    JsonDocument, JsonElementsQuery, JsonLeafQuery, JsonNode, JsonOptions, JsonPath, JsonPlaintext,
+    JsonPredicateQuery, JsonQueries, JsonQuery, JsonSelector, JsonSubtree, JsonSubtreeKey,
+    JsonTarget,
 };
-use stack_encrypt::target::{AeadContext, ExpectedContext, IndexSpec, Json, Layout};
-use stack_encrypt::{
-    DecryptField, DecryptInto, Decryptable, Decryption, EncryptFrom, Encryption, Error, NonEmpty,
+use stack_encrypt::target::{
+    json_document, AeadContext, Borrowed, DecryptSource, EncryptTarget, ExpectedContext, Index,
+    IndexSpec, Json, Owned, RequiredContext, StoredContext,
 };
+use stack_encrypt::{DecryptField, Decryptable, Decryption, Encryption, Error, NonEmpty};
 use ts_rs::TS;
+use zeroize::Zeroize;
 
 use crate::encoding::{Base64Text, Base85Text};
 use crate::v4::{DomainType, SchemaVersion};
@@ -456,153 +464,311 @@ impl JsonTreeEntry {
 // =============================================================================
 
 /// The `json_tree` layout under the JSON index's options: what seals a
-/// value into a [`JsonTreeDocument`] under options other than the
+/// document into a [`JsonTreeDocument`] under options other than the
 /// defaults, such as the paths that carry an ordering term
-/// ([`JsonOptions::ordered`]). A [`Layout`], so a Rust program runs it as
-/// `keyset.run(JsonTree::new(options).encryption(), &value, column)`, and
-/// its index is the engine's [`Json`] under the same options, which a
-/// query derives through. [`JsonTreeDocument`]'s own [`EncryptFrom`] is
-/// this layout under the defaults.
+/// ([`JsonOptions::ordered`]). A Rust program runs it as
+/// `keyset.run(JsonTree::new(options).encryption(), &value, column)`. Its
+/// index is the engine's [`Json`] under the same options, which a query
+/// derives through. [`JsonTreeDocument`]'s own [`EncryptTarget`] is this
+/// layout under the defaults.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct JsonTree {
-    index: Json,
+    options: JsonOptions,
 }
 
 impl JsonTree {
     /// The layout under `options`.
     pub fn new(options: JsonOptions) -> Self {
-        Self {
-            index: Json::new(options),
-        }
+        Self { options }
     }
 
     /// The index the layout seals under, with its options.
-    pub fn index(&self) -> &Json {
-        &self.index
+    pub fn index(&self) -> Json {
+        Json::new(self.options.clone())
     }
-}
 
-/// A document seals as the JSON index lays it out under the layout's
-/// options, under the column it is stored in: the [`Identifier`] is the
-/// context the data key is minted under and every selector derives
-/// under, and is written to `i`.
-impl Layout<Value> for JsonTree {
-    type Target = JsonTreeDocument;
-    type Index = Json;
-    fn encryption<'s, K: 'static>(
+    /// The index the layout declares, as data: the JSON index under its
+    /// options.
+    pub fn specs(&self) -> Vec<IndexSpec> {
+        vec![Index::<Value>::spec(&self.index())]
+    }
+
+    /// Seal a document as the JSON index lays it out under these options,
+    /// under the column it is stored in. The [`Identifier`] is the context
+    /// the data key is requested under and every selector derives under.
+    /// It is written to `i`.
+    pub fn encryption<'s, K: 'static>(
         &self,
     ) -> Encryption<'s, Value, JsonTreeDocument, K, NonEmpty<Identifier>> {
-        Layout::<Value>::encryption::<K>(&self.index)
-            .accepting::<NonEmpty<Identifier>>()
-            .map_with_context(|document, i: NonEmpty<Identifier>| (i, document))
-            .try_map(|(i, document)| JsonTreeDocument::envelope(i.into_inner(), &document))
+        self.sealing().accepting()
     }
-    fn index(&self) -> &Json {
-        &self.index
+
+    /// Seal a document under these options, and write its column to `i`.
+    ///
+    /// On its own, the document stores the column the caller passes, and
+    /// seals under it. As a field of a record, it stores the field's own
+    /// column, and seals under the scopes and bindings of the record too.
+    ///
+    /// The document is borrowed, so it is copied once to be sealed, and the
+    /// copy is wiped. [`owned_sealing`](Self::owned_sealing) moves it in
+    /// instead.
+    pub(crate) fn sealing<'s, K: 'static>(
+        &self,
+    ) -> Encryption<'s, Value, JsonTreeDocument, K, StoredContext<Identifier>> {
+        json_document::<K, Borrowed>(self.options.clone())
+            .storing(|document, column: Identifier| (column, document))
+            .try_map(|(column, document)| JsonTreeDocument::envelope(column, &document))
+    }
+
+    /// [`sealing`](Self::sealing), for a document passed by value. The
+    /// document is moved out of the [`JsonPlaintext`] into the seal, with no
+    /// copy.
+    ///
+    /// The stored column is checked while the document is still a
+    /// `JsonPlaintext`, so a column that cannot be stored drops the
+    /// `JsonPlaintext`, which wipes the document. After that the document
+    /// is the seal's, which wipes it when it has been sealed, and when the
+    /// context is refused.
+    pub(crate) fn owned_sealing<'s, K: 'static>(
+        &self,
+    ) -> Encryption<'s, JsonPlaintext, JsonTreeDocument, K, StoredContext<Identifier>, Owned> {
+        json_document::<K, Owned>(self.options.clone())
+            .over_json_plaintext()
+            .storing(|document, column: Identifier| (column, document))
+            .try_map(|(column, document)| JsonTreeDocument::envelope(column, &document))
     }
 }
 
-/// A document seals as the JSON index lays it out under the default
-/// options ([`JsonTree::default`]): no path ordered, the root sealed.
-impl EncryptFrom<Value> for JsonTreeDocument {
-    type Context = NonEmpty<Identifier>;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, Value, Self, K, Self::Context> {
-        JsonTree::default().encryption()
+impl JsonTreeDocument {
+    /// Open the document, once its stored column has passed the caller's
+    /// check. The check runs before any key is requested.
+    ///
+    /// On its own, the document opens under the stored column. As a field
+    /// of a record, it opens under the scopes and bindings of the record
+    /// too.
+    fn open<K: 'static>(
+        self,
+        context: ExpectedContext<Identifier>,
+    ) -> Decryption<JsonPlaintext, K> {
+        let context = match context.decryption_context(self.i.clone()) {
+            Ok(context) => context,
+            Err(error) => return Decryption::failed(error),
+        };
+        match self.document() {
+            Ok(document) => DecryptSource::decryption(document, AeadContext::from(context).into()),
+            Err(error) => Decryption::failed(error),
+        }
+    }
+}
+
+/// A [`JsonPlaintext`] seals into a document as a `serde_json::Value` does,
+/// under the default options ([`JsonTree::default`]), with the column as
+/// its context.
+///
+/// The code below is executed by `cargo test -p eql-encryption-tests --test
+/// json_example`. It is not one of this crate's doctests, for the reason
+/// the [encryption example](crate::encryption#example) gives: the test key
+/// source and the runtime it needs stay in the encryption test crate.
+#[doc = concat!("```rust,ignore\n", include_str!("../encryption/json_example.rs"), "\n```")]
+///
+/// It can be a field of a derived `struct = ..` record. The field's column
+/// is then the record's scope and the field's name. A scope or a binding
+/// that the record lists is not stored in the document: the reader supplies
+/// it again.
+///
+/// `encrypt_into` moves the document into the seal, with no copy, and the
+/// document is wiped when it has been sealed or the context is refused.
+/// Sealing a borrowed plaintext, such as an element of a collection, reads
+/// the document through one copy, which is wiped too.
+impl EncryptTarget<JsonPlaintext> for JsonTreeDocument {
+    type ContextInput = StoredContext<Identifier>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput>
+    where
+        JsonPlaintext: 's,
+    {
+        JsonTree::default().sealing().project(JsonPlaintext::value)
+    }
+    fn owned_encryption<'s, K: 'static>(
+    ) -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput, Owned>
+    where
+        JsonPlaintext: 's,
+    {
+        JsonTree::default().owned_sealing()
     }
     fn indexes() -> Vec<IndexSpec> {
         JsonTree::default().specs()
     }
 }
 
-/// Decrypts to the plaintext document, under the stored identifier.
+/// A document field sealed under the options its record's
+/// `#[stash(json(..))]` names, which order the paths its queries compare.
 ///
-/// - If you pass the column you expect, as a `NonEmpty<Identifier>`, the
-///   stored identifier must equal it. The check runs before any key is
-///   requested.
-/// - If you pass nothing, the document decrypts under the stored
-///   identifier, without that check.
-impl DecryptInto<Value> for JsonTreeDocument {
-    type Context = ExpectedContext<Identifier>;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
-        let column = match context.validate(self.i.clone()) {
-            Ok(column) => column,
-            Err(error) => return Decryption::failed(error),
-        };
-        match self.document() {
-            Ok(document) => document.decryption(AeadContext::from(column)),
-            Err(error) => Decryption::failed(error),
+/// A derived record seals each such field through the owned form, which
+/// moves the document into the seal, with no copy.
+impl JsonTarget<JsonPlaintext> for JsonTreeDocument {
+    fn json_encryption<'s, K: 'static>(
+        options: JsonOptions,
+    ) -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput>
+    where
+        JsonPlaintext: 's,
+    {
+        JsonTree::new(options)
+            .sealing()
+            .project(JsonPlaintext::value)
+    }
+    fn json_owned_encryption<'s, K: 'static>(
+        options: JsonOptions,
+    ) -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput, Owned>
+    where
+        JsonPlaintext: 's,
+    {
+        JsonTree::new(options).owned_sealing()
+    }
+}
+
+/// A document field's reference queries return the EQL query types a
+/// parameter binds as: `JsonTreeQuery` for `@>` and `<@`
+/// (`eql_v4.query_json`), `JsonTreeLeafQuery` for an ordering at a path
+/// (`eql_v4.query_json_leaf`), `JsonTreeElementsQuery` for
+/// `eql_v4.json_tree_element_match`, `JsonTreePredicateQuery` for `@@`, the
+/// selector `->` takes, and the token the child functions take.
+impl JsonQueries for JsonTreeDocument {
+    type Query = JsonTreeQuery;
+    type LeafQuery = JsonTreeLeafQuery;
+    type ElementsQuery = JsonTreeElementsQuery;
+    type PredicateQuery = JsonTreePredicateQuery;
+    type Selector = JsonTreeSelector;
+    type Token = JsonTreeToken;
+    fn query(query: JsonQuery) -> Result<JsonTreeQuery, Error> {
+        JsonTreeQuery::try_from(query)
+    }
+    fn leaf_query(query: JsonLeafQuery) -> Result<JsonTreeLeafQuery, Error> {
+        JsonTreeLeafQuery::try_from(&query)
+    }
+    fn elements_query(query: JsonElementsQuery) -> Result<JsonTreeElementsQuery, Error> {
+        transcode(&query)
+    }
+    fn predicate_query(query: JsonPredicateQuery) -> Result<JsonTreePredicateQuery, Error> {
+        transcode(&query)
+    }
+    fn selector(selector: JsonSelector) -> Result<JsonTreeSelector, Error> {
+        transcode(&selector)
+    }
+    fn token(key: JsonSubtreeKey) -> Result<JsonTreeToken, Error> {
+        match key.tokens().as_slice() {
+            [token] => transcode(token),
+            _ => Err(Error::Other(
+                "a path with no wildcard names one node".into(),
+            )),
         }
+    }
+}
+
+/// Decrypts to the plaintext document, under the stored column.
+///
+/// - `decrypt_from_with_context(document, &keyset, column)` checks that the
+///   stored column is `column`. The check runs before any key is
+///   requested.
+/// - `decrypt_from(document, &keyset)` opens the document under the column
+///   it stores, without that check.
+impl DecryptSource<JsonPlaintext> for JsonTreeDocument {
+    type ContextInput = ExpectedContext<Identifier>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
+        self.open(context)
     }
 }
 
 impl Decryptable for JsonTreeDocument {
     const DECRYPTABLE: bool = true;
 }
-impl<P, Ctx> DecryptField<P, Ctx> for JsonTreeDocument
+impl<P: Zeroize, Ctx> DecryptField<P, Ctx> for JsonTreeDocument
 where
-    Self: DecryptInto<P>,
-    Ctx: Into<<Self as DecryptInto<P>>::Context>,
+    Self: DecryptSource<P>,
+    Ctx: Into<<Self as DecryptSource<P>>::ContextInput>,
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
-        Some(self.decryption(context.into()))
+        Some(<Self as DecryptSource<P>>::decryption(self, context.into()))
     }
 }
 
-/// An extracted entry opens to the scalar it holds, or to the whole
-/// document for a sealed root asked for at `$`, under the column it was
-/// extracted from, once it is shown to carry the selector asked for. A
-/// container node holds no value of its own; its subtree opens through
-/// [`JsonTreeSubtree`].
-impl DecryptInto<Value> for JsonTreeExtracted {
-    type Context = NonEmpty<Identifier>;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
+/// An extracted entry opens to a [`JsonPlaintext`], which is wiped when it
+/// is dropped: the scalar the entry holds, or the whole document for a
+/// sealed root asked for at `$`. A container node holds no value of its
+/// own. Its subtree opens through [`JsonTreeSubtree`].
+///
+/// The context is required. It is the context the document was sealed
+/// under:
+///
+/// - For a document stored on its own, pass its column:
+///   `JsonPlaintext::decrypt_from_with_context(extracted, &keyset, column)`.
+/// - For a document that is a field of a record with scopes or bindings,
+///   pass the field's column, then those scopes and bindings.
+///
+/// An entry that does not carry the selector asked for is refused before
+/// any key is requested.
+impl DecryptSource<JsonPlaintext> for JsonTreeExtracted {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
         match self.entry.node() {
-            Ok(node) => self
-                .selector
-                .open(node)
-                .decryption(AeadContext::from(context)),
+            Ok(node) => DecryptSource::decryption(self.selector.open(node), context),
             Err(error) => Decryption::failed(error),
         }
     }
 }
 
-/// The rows of a read open to the value at its path; no node there is an
-/// error, which `Option<Value>` reads as `None`.
-impl DecryptInto<Value> for JsonTreeSubtree {
-    type Context = NonEmpty<Identifier>;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
-        match self.subtree() {
-            Ok(subtree) => subtree.decryption(AeadContext::from(context)),
-            Err(error) => Decryption::failed(error),
-        }
+/// The rows of a read open to the value at its path, as a
+/// [`JsonPlaintext`], which is wiped when it is dropped. No node at the
+/// path is an error: open as an `Option<JsonPlaintext>` to read that as
+/// `None`.
+///
+/// The context is required. It is the context the document was sealed
+/// under, as for [`JsonTreeExtracted`].
+impl DecryptSource<JsonPlaintext> for JsonTreeSubtree {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
+        self.read(context)
     }
 }
 
-/// The rows of a read open to the value at its path, or `None` where the
-/// row has no node there: the four answers `jsonb #>` gives.
-impl DecryptInto<Option<Value>> for JsonTreeSubtree {
-    type Context = NonEmpty<Identifier>;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Option<Value>, K> {
-        match self.subtree() {
-            Ok(subtree) => subtree.decryption(AeadContext::from(context)),
-            Err(error) => Decryption::failed(error),
-        }
+/// The rows of a read open to the value at its path, or to `None` where
+/// the row has no node there.
+impl DecryptSource<Option<JsonPlaintext>> for JsonTreeSubtree {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(
+        self,
+        context: Self::ContextInput,
+    ) -> Decryption<Option<JsonPlaintext>, K> {
+        self.read(context)
     }
 }
 
 /// The rows of a read open to a list: one value per concrete path the key
-/// named that the row has, in order.
-impl DecryptInto<Vec<Value>> for JsonTreeSubtree {
-    type Context = NonEmpty<Identifier>;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Vec<Value>, K> {
-        match self.subtree() {
-            Ok(subtree) => subtree.decryption(AeadContext::from(context)),
-            Err(error) => Decryption::failed(error),
-        }
+/// named that the row has, in document order.
+impl DecryptSource<Vec<JsonPlaintext>> for JsonTreeSubtree {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(
+        self,
+        context: Self::ContextInput,
+    ) -> Decryption<Vec<JsonPlaintext>, K> {
+        self.read(context)
     }
 }
 
 impl JsonTreeSubtree {
+    /// Open the rows as the engine's subtree opens them, once every row is
+    /// shown to carry the header and the slot an extractor adds.
+    fn read<P, K>(self, context: RequiredContext<AeadContext>) -> Decryption<P, K>
+    where
+        P: Zeroize + 'static,
+        K: 'static,
+        JsonSubtree: DecryptSource<P, ContextInput = RequiredContext<AeadContext>>,
+    {
+        match self.subtree() {
+            Ok(subtree) => DecryptSource::decryption(subtree, context),
+            Err(error) => Decryption::failed(error),
+        }
+    }
+
     fn subtree(&self) -> Result<JsonSubtree, Error> {
         Ok(self.key.open(
             self.rows

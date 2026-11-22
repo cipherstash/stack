@@ -1964,8 +1964,8 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "vitaminc 0.9.0",
- "vitaminc-protected 0.9.1",
+ "vitaminc 0.10.0",
+ "vitaminc-protected 0.10.0",
  "web-time",
  "zeroize",
  "zerokms-protocol",
@@ -1992,8 +1992,8 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "vitaminc 0.9.0",
- "vitaminc-protected 0.9.1",
+ "vitaminc 0.10.0",
+ "vitaminc-protected 0.10.0",
  "zeroize",
  "zerokms-protocol",
 ]
@@ -2412,16 +2412,16 @@ dependencies = [
 
 [[package]]
 name = "vitaminc"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7aa53d696a9e1af61b36a60b92cc0dde7421f8f58787333d3c425a176af241c"
+checksum = "60ae27c0d0e6980d2f30683384ed591a9dafa943b18faaa6bfb456757b5e10ef"
 dependencies = [
- "vitaminc-aead 0.9.0",
- "vitaminc-context 0.9.0",
- "vitaminc-encrypt 0.9.0",
- "vitaminc-protected 0.9.1",
- "vitaminc-random 0.9.0",
- "vitaminc-traits 0.9.0",
+ "vitaminc-aead 0.10.0",
+ "vitaminc-context 0.10.0",
+ "vitaminc-encrypt 0.10.0",
+ "vitaminc-protected 0.10.0",
+ "vitaminc-random 0.10.0",
+ "vitaminc-traits 0.10.0",
 ]
 
 [[package]]
@@ -2441,18 +2441,18 @@ dependencies = [
 
 [[package]]
 name = "vitaminc-aead"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efba1dac1efc04ffc09cba49e343e0fe656c88c32472a4206f2a6df284add33d"
+checksum = "6fcccedca9d80812af295cba43dc2ac388f4fbb0415faa3ebec783d072d014d8"
 dependencies = [
  "bytes",
  "futures-util",
  "serde",
  "thiserror 2.0.18",
- "vitaminc-aead-derive 0.9.0",
- "vitaminc-context 0.9.0",
- "vitaminc-protected 0.9.1",
- "vitaminc-random 0.9.0",
+ "vitaminc-aead-derive 0.10.0",
+ "vitaminc-context 0.10.0",
+ "vitaminc-protected 0.10.0",
+ "vitaminc-random 0.10.0",
  "zeroize",
 ]
 
@@ -2469,9 +2469,9 @@ dependencies = [
 
 [[package]]
 name = "vitaminc-aead-derive"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3c6575dac7701e578b375d16a0b693294d73847ed275c9b9962cf20c423ea10"
+checksum = "3de85a0ff50572db91a5528b72775f63d57a2b24b8263fb8e728baf6a7731502"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2490,12 +2490,12 @@ dependencies = [
 
 [[package]]
 name = "vitaminc-context"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b407b3127be198a8da7d4d914c11215e1eae1b467cdf89eca8a7a296055e863"
+checksum = "431a7fb023688dba855e52b9c4e44c942418dde8ea08a2b115cf6a7f762fa5b9"
 dependencies = [
  "mutants",
- "vitaminc-protected 0.9.1",
+ "vitaminc-protected 0.10.0",
 ]
 
 [[package]]
@@ -2514,15 +2514,15 @@ dependencies = [
 
 [[package]]
 name = "vitaminc-encrypt"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fa0a3493624afd1490085448d6d09d22bf061954e9ab0db08837f423db3a58d"
+checksum = "e68d89e2587529db55a10fa59cb11be8a7505b4af473c8a0bec238c803190ec5"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
- "vitaminc-aead 0.9.0",
- "vitaminc-protected 0.9.1",
- "vitaminc-random 0.9.0",
+ "vitaminc-aead 0.10.0",
+ "vitaminc-protected 0.10.0",
+ "vitaminc-random 0.10.0",
  "zeroize",
 ]
 
@@ -2545,9 +2545,9 @@ dependencies = [
 
 [[package]]
 name = "vitaminc-protected"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67a44502e43de42fbd95c12a35efbaea903eedcc7a3922fceacea93054f44485"
+checksum = "2153981f290343dffa8f618277c46a13b5a1e8131b4120760e9a1795ae1cb55b"
 dependencies = [
  "bitvec",
  "digest 0.11.3",
@@ -2556,7 +2556,7 @@ dependencies = [
  "serde_bytes",
  "subtle",
  "thiserror 2.0.18",
- "vitaminc-protected-derive 0.9.1",
+ "vitaminc-protected-derive 0.10.0",
  "zeroize",
 ]
 
@@ -2573,9 +2573,9 @@ dependencies = [
 
 [[package]]
 name = "vitaminc-protected-derive"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4315341c559af17bd773e8b4e32125a2025d7fbe3e31cbae49120ee1dcab02e"
+checksum = "32eb239bc9aae16ef0320076934f3f592606960d42d0b5fdadafc0298f635221"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -2600,16 +2600,16 @@ dependencies = [
 
 [[package]]
 name = "vitaminc-random"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71e32850b739b58a7064b50eb3db655de323f57f21c1fe74d5ccd4d308560563"
+checksum = "fae7eccb46ddc6f199cf5c934469fd5b199514f42e11579c46882b784ed992c8"
 dependencies = [
  "chacha20",
  "getrandom 0.4.2",
  "rand 0.10.1",
  "thiserror 2.0.18",
- "vitaminc-protected 0.9.1",
- "vitaminc-random-derives 0.9.0",
+ "vitaminc-protected 0.10.0",
+ "vitaminc-random-derives 0.10.0",
  "zeroize",
 ]
 
@@ -2626,9 +2626,9 @@ dependencies = [
 
 [[package]]
 name = "vitaminc-random-derives"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1863fe02de3945047dc9094d3cadbde06becafa49aa95d5e475bf903c8d83981"
+checksum = "e48c940c93c9ddb04a66d81ca42ca574826ddbbeece6a7c87c5d1ab31893e692"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2653,17 +2653,17 @@ dependencies = [
 
 [[package]]
 name = "vitaminc-traits"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a715ef503b1b41801a6c23e9756ed3d5a1201fa632609bccfa2a7a41ab5386cf"
+checksum = "31fba5af175073f24768a8b06dd054ad696c7e6051dda1316c3814043a36d8e0"
 dependencies = [
  "anyhow",
  "bytes",
  "rmp-serde",
  "serde",
  "thiserror 2.0.18",
- "vitaminc-protected 0.9.1",
- "vitaminc-random 0.9.0",
+ "vitaminc-protected 0.10.0",
+ "vitaminc-random 0.10.0",
  "zeroize",
 ]
 

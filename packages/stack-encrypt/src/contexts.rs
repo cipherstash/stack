@@ -19,7 +19,7 @@
 //!   It lists the contexts of each field of a declaration. A part the caller
 //!   supplies when the declaration runs appears as a typed
 //!   [`Placeholder`]. The derives emit `contexts()` on every record, and a
-//!   [`Plan`](crate::Plan) has it too.
+//!   plan that is data (`dynamic::record::Plan`) has it too.
 //! - [`CallContexts`], from [`Pending::context`](crate::Pending::context).
 //!   It lists the exact contexts a prepared call will use, with the caller's
 //!   values filled in. No key has been requested yet.
@@ -585,10 +585,14 @@ impl fmt::Display for Contexts {
 ///
 /// ```
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-/// use stack_encrypt::kms::FakeDataKeySource;
 /// use stack_encrypt::{nonempty, EncryptInto, StackCipher, StackCipherText};
 ///
-/// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+/// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+/// // the environment, or from the profile that `npx stash auth login` writes.
+/// let cipher = StackCipher::builder()
+/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+///     .init()
+///     .await?;
 /// let keyset = cipher.default_keyset();
 ///
 /// let call = String::from("ada@example.com")
@@ -739,8 +743,8 @@ impl CallerShape {
 /// What the caller supplies to a declaration whose context input is this
 /// type: the placeholders that stand for its parts in [`Contexts`].
 ///
-/// Implemented for the context inputs of the crate. The derives and the
-/// plan builder use it to render the root of a declaration. Sealed: a
+/// Implemented for the context inputs of the crate. The derives use it to
+/// render the root of a declaration. Sealed: a
 /// context input is one of this crate's types.
 pub trait SuppliedContext: sealed::Sealed {
     /// The placeholders for the caller's parts.
@@ -750,9 +754,10 @@ pub trait SuppliedContext: sealed::Sealed {
 mod sealed {
     use crate::target::{
         AeadContext, CallerContext, DeclaredContext, DeclaredScopes, NoCallerContext,
-        OptionalContext, RequiredContext,
+        OptionalContext, RequiredContext, StoredContext,
     };
     pub trait Sealed {}
+    impl<T> Sealed for StoredContext<T> {}
     impl Sealed for NoCallerContext {}
     impl Sealed for DeclaredScopes {}
     impl Sealed for DeclaredContext {}
@@ -780,6 +785,12 @@ impl SuppliedContext for DeclaredContext {
 impl<C: PartsShape> SuppliedContext for RequiredContext<C> {
     fn supplies() -> CallerShape {
         C::parts_shape()
+    }
+}
+/// A record that stores its context takes it as a `NonEmpty<T>`.
+impl<T> SuppliedContext for crate::target::StoredContext<T> {
+    fn supplies() -> CallerShape {
+        NonEmpty::<T>::parts_shape()
     }
 }
 impl<C: PartsShape> SuppliedContext for OptionalContext<C> {
@@ -942,8 +953,9 @@ pub(crate) enum Shape {
     /// `own`, extended by `by`: what `DeclaredContext::under` and
     /// `Extends::extend` build.
     Under { own: Box<Shape>, by: Box<Shape> },
-    /// A list of parts, some of them not known yet: a label the call names
-    /// joined to a field's identity.
+    /// A list of parts, some of them not known yet: a label a field of the
+    /// record holds, joined to a field's identity.
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
     List(Vec<Shape>),
     /// Known caller parts, applied one after another: what a data plan
     /// carries as its extension and its bindings.
@@ -1028,6 +1040,7 @@ impl Shape {
     /// The shape of a subtree run under a label that is not known yet,
     /// joined to `identity` when the field has one, and extended by the
     /// context the subtree is handed.
+    #[cfg(any(test, feature = "dynamic"))]
     pub(crate) fn under_label(placeholder: Placeholder, identity: Option<&str>) -> Shape {
         let own = match identity {
             None => Shape::Placeholder(placeholder),
@@ -1150,13 +1163,13 @@ impl LeafShape {
 }
 
 /// One named leaf under a context known when the declaration is written,
-/// and extended by nothing: a data plan's EQL field, sealed under its label
-/// by the resolver.
+/// then the context it is handed: a data plan's EQL field, which the
+/// resolver runs under its label and the plan's parts.
 #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
-pub(crate) fn known_leaf(name: &str, piece: ContextPiece<'static>) -> LeafShape {
+pub(crate) fn leaf_under(name: &str, piece: ContextPiece<'static>) -> LeafShape {
     LeafShape {
         name: Some(Arc::from(name)),
-        shape: Shape::Known(piece),
+        shape: Shape::under(piece),
     }
 }
 

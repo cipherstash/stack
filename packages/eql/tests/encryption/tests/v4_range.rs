@@ -23,7 +23,6 @@ use eql_bindings::v4::{self, integer, text, DomainType};
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::target::IndexSpec;
-use stack_encrypt::value::{Date, Decimal, Timestamp};
 use stack_encrypt::{Encrypt, KeysetCipher, Label};
 
 fn identifier() -> Value {
@@ -42,7 +41,7 @@ fn frame<T: Encrypt>(value: T) -> ValueFrame {
 /// JSON text a driver binds: its order term (`ob` or `op`) is what `between`
 /// compares a bound against.
 async fn stored(
-    keyset: &KeysetCipher<'_, common::Observed>,
+    keyset: &KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
     value: ValueFrame,
 ) -> String {
@@ -58,7 +57,7 @@ async fn stored(
 /// CLLW OPE one): what a range holds under `lo` and `hi`, the same value the
 /// single-bound query domain holds under `ob` or `op`.
 async fn bound(
-    keyset: &KeysetCipher<'_, common::Observed>,
+    keyset: &KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
     index: &str,
     value: ValueFrame,
@@ -705,9 +704,9 @@ fn frame_of(family: &str, value: &Value) -> ValueFrame {
         "real" => frame(value.as_f64().unwrap() as f32),
         "double" => frame(value.as_f64().unwrap()),
         "text" => frame(value.as_str().unwrap().to_owned()),
-        "date" => frame(Date::from_days_since_epoch(value.as_i64().unwrap() as i32).unwrap()),
-        "timestamp" => frame(Timestamp::new(value.as_i64().unwrap(), 0).unwrap()),
-        "numeric" => frame(Decimal::new(i128::from(value.as_i64().unwrap()), 2).unwrap()),
+        "date" => frame(common::date_of_days(value.as_i64().unwrap() as i32)),
+        "timestamp" => frame(common::timestamp_of(value.as_i64().unwrap(), 0)),
+        "numeric" => frame(common::decimal_of(i128::from(value.as_i64().unwrap()), 2)),
         other => panic!("no plaintext for the ordered family {other:?}"),
     }
 }

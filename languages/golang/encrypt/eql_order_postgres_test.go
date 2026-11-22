@@ -532,10 +532,13 @@ func eqlTextOrder() eqlOrderGen[string] {
 }
 
 var (
-	eqlDateMin = time.Date(-262143, 1, 1, 0, 0, 0, 0, time.UTC)
-	eqlDateMax = time.Date(262142, 12, 31, 0, 0, 0, 0, time.UTC)
-	// The latest instant a timestamp holds: chrono's.
-	eqlTimestampMax = time.Date(262142, 12, 31, 23, 59, 59, 999_999_999, time.UTC)
+	eqlDateMin = time.Date(-9999, 1, 1, 0, 0, 0, 0, time.UTC)
+	eqlDateMax = time.Date(9999, 12, 31, 0, 0, 0, 0, time.UTC)
+	// The earliest and latest instants a timestamp holds: jiff's. They
+	// stop short of the dates' ends, so that any of them is a date in
+	// range at any UTC offset.
+	eqlTimestampMin = time.Date(-9999, 1, 2, 1, 59, 59, 0, time.UTC)
+	eqlTimestampMax = time.Date(9999, 12, 30, 22, 0, 0, 999_999_999, time.UTC)
 )
 
 func eqlDateOf(days int64) encrypt.Date {
@@ -588,7 +591,7 @@ func eqlMicros(t time.Time) int64 {
 // 2100, neighbouring microseconds, and instants less than a microsecond
 // apart, which tie.
 func eqlTimestampOrder() eqlOrderGen[time.Time] {
-	minMicro, maxMicro := eqlMicros(eqlDateMin), eqlMicros(eqlTimestampMax)
+	minMicro, maxMicro := eqlMicros(eqlTimestampMin), eqlMicros(eqlTimestampMax)
 	at := func(micros, nanos int64) time.Time {
 		return time.UnixMicro(micros).Add(time.Duration(nanos)).UTC()
 	}
@@ -613,7 +616,7 @@ func eqlTimestampOrder() eqlOrderGen[time.Time] {
 	}
 	epoch := time.Unix(0, 0).UTC()
 	edges := []time.Time{
-		eqlDateMin, eqlTimestampMax, eqlTimestampMax.Add(-999),
+		eqlTimestampMin, eqlTimestampMax, eqlTimestampMax.Add(-999),
 		epoch.Add(-time.Microsecond), epoch.Add(-1), epoch, epoch.Add(999), epoch.Add(time.Microsecond),
 		time.Date(2000, 2, 29, 23, 59, 59, 999_999_000, time.UTC),
 	}

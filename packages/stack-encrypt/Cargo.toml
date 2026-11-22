@@ -22,8 +22,11 @@ stack-kms = { path = "../stack-kms", version = "0.2.0", default-features = false
 # `StackCipher::new()` builds a ZeroKMS client from the environment, so its
 # return type names the auto-detected auth strategy. Only needed with `http`.
 stack-auth = { workspace = true, optional = true }
-# `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`, re-exported from `target`.
+# `#[derive(EncryptTarget)]` / `#[derive(DecryptSource)]`, re-exported from `target`.
 stack-encrypt-derive = { path = "../stack-encrypt-derive", version = "0.3.0" }
+# The JSONPath grammar the JSON index addresses, re-exported at
+# `stack_encrypt::json`. The derive reads declared paths with the same crate.
+stack-encrypt-jsonpath = { path = "../stack-encrypt-jsonpath", version = "0.3.0", features = ["diagnostics"] }
 
 # The workspace vitaminc: one canonical context encoding shared by
 # the AEAD and PRF derivations (`IntoContext`, cipherstash/vitaminc#339),
@@ -53,7 +56,10 @@ vitaminc = { workspace = true }
 rand = { version = "0.10.1", default-features = false }
 # `future::join` and `join_all`: a pending's dispatch loads the keysets its
 # JSON documents need beside the data-key retrieval, in one await.
-futures = { version = "0.3.25", default-features = false }
+# `lock::Mutex` (behind `std`): a deferred cipher holds it while the first
+# credential loads the default keyset, so callers arriving together make
+# one load between them.
+futures = { version = "0.3.25", default-features = false, features = ["std"] }
 # Two things: the storage profile (`storage`, behind `serde`) that
 # `OpaqueBlob<T>` encodes a whole value with before sealing it as one leaf,
 # the same versioned bytes the Go SDK writes through `vcffi.MarshalStorage`;
@@ -98,13 +104,9 @@ serde_json = { workspace = true, features = ["float_roundtrip"] }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true }
-# `value::{Date, Timestamp}` to and from chrono's types (the `chrono`
-# feature), and `value::Decimal` to and from rust_decimal's (`rust_decimal`).
-chrono = { version = "0.4.44", optional = true, default-features = false }
-rust_decimal = { version = "1", optional = true, default-features = false }
 
 [features]
-default = ["http"]
+default = ["http", "jiff", "rust_decimal"]
 # `StackCipher::new()` / `StackCipher::builder().init()` from the environment:
 # the default HTTP transport in stack-kms and the auto-detected auth strategy
 # in stack-auth. Off, a cipher is built over an explicit `DataKeySource`
@@ -115,13 +117,19 @@ http = ["dep:stack-auth", "stack-auth/http", "stack-kms/http"]
 # only at runtime, as an FFI binding's are. Off by default — it is only of
 # use to a binding author. Its transport frames are vitaminc-aead's own, and
 # the crate they come from is always built (the storage profile `OpaqueBlob`
-# uses lives there), so the feature adds no dependency.
-dynamic = []
-# Conversions between chrono's `NaiveDate` / `DateTime<Utc>` and
-# `value::Date` / `value::Timestamp`.
-chrono = ["dep:chrono", "vitaminc-aead/chrono"]
-# Conversions between rust_decimal's `Decimal` and `value::Decimal`.
-rust_decimal = ["dep:rust_decimal", "vitaminc-aead/rust_decimal"]
+# uses lives there).
+#
+# It turns on `jiff` and `rust_decimal`: a binding is handed every kind of
+# value, and an order term over a date, a timestamp or a decimal is derived
+# from vitaminc's type for it.
+dynamic = ["jiff", "rust_decimal"]
+# `value::Date` and `value::Timestamp`: vitaminc's wipeable date and UTC
+# instant, built from jiff's `civil::Date` and `Timestamp`, and their order
+# terms. On by default.
+jiff = ["vitaminc-aead/jiff", "vitaminc-ore/jiff"]
+# `value::Decimal`: vitaminc's wipeable decimal, built from rust_decimal's
+# `Decimal`, and its order terms. On by default.
+rust_decimal = ["vitaminc-aead/rust_decimal", "vitaminc-ore/rust_decimal"]
 # `stack_encrypt::kms::FakeDataKeySource`: the in-memory key source for tests
 # with no ZeroKMS, so a caller's dev-dependency on stack-encrypt is enough and
 # no direct stack-kms dependency has to agree with this crate's.
@@ -132,6 +140,10 @@ test-support = ["stack-kms/test-support"]
 testing = []
 
 [dev-dependencies]
+# The types `value::{Date, Timestamp, Decimal}` are built from, for the
+# tests and doc examples that build one.
+jiff = { version = "1.0.0", default-features = false }
+rust_decimal = { version = "1", default-features = false }
 # Preserve JSON number spellings for the shared declaration projection.
 serde_json = { workspace = true, features = ["raw_value"] }
 # `default-features = false` here too: dev-dependency features unify into the

@@ -103,6 +103,68 @@ where
     }
 }
 
+/// Stands where the [`OidcProvider`] would be, in a strategy that takes its
+/// JWT with each call and has no callback to find one.
+///
+/// A server that makes each request as the end user who signed in already
+/// holds that user's JWT in the request handler. It passes the JWT with the
+/// call
+/// ([`CredentialAuthStrategy::get_token_with_credential`](crate::CredentialAuthStrategy::get_token_with_credential)).
+/// The strategy then needs no callback to find the JWT, and the application
+/// needs no task-local variable for a callback to read.
+///
+/// You rarely name this type.
+/// [`OidcFederationStrategy::credential_per_call`](crate::OidcFederationStrategy::credential_per_call)
+/// builds the strategy from a workspace CRN alone. Name the type to use
+/// another constructor, such as
+/// [`with_detected_workspace`](crate::OidcFederationStrategy::with_detected_workspace).
+///
+/// `CredentialPerCall` is not an [`OidcProvider`]. So a strategy built with
+/// it has no [`get_token`](crate::AuthStrategy::get_token): a call that
+/// brings no JWT does not compile. The strategy never falls back to the JWT
+/// of another call.
+///
+// The examples build a strategy over the bundled HTTP transport, so they
+// are in the docs only with `http`. Without it, a strategy is given a
+// transport.
+#[cfg_attr(
+    feature = "http",
+    doc = r#"# Example
+
+```
+use stack_auth::{CredentialAuthStrategy, OidcFederationStrategy, SecretToken};
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse()?;
+// Built once, at startup. No request is made, and no JWT is needed.
+let strategy = OidcFederationStrategy::credential_per_call(crn)?;
+
+// A request handler passes the JWT of the user who signed in.
+let jwt = SecretToken::new("header.payload.signature");
+let token = (&strategy).get_token_with_credential(jwt);
+# drop(token);
+# Ok(())
+# }
+```
+
+A call with no JWT does not compile:
+
+```compile_fail,E0599
+use stack_auth::{AuthStrategy, OidcFederationStrategy};
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse()?;
+let strategy = OidcFederationStrategy::credential_per_call(crn)?;
+
+let token = (&strategy).get_token();
+# drop(token);
+# Ok(())
+# }
+```"#
+)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CredentialPerCall;
+
 /// The identity of a provider JWT inside
 /// [`OidcFederationStrategy`](crate::OidcFederationStrategy): the SHA-256 of
 /// the whole token.

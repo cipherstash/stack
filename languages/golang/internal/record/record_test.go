@@ -105,16 +105,18 @@ func TestTargetFieldWiresItsTypeInsteadOfOutputs(t *testing.T) {
 	if err := both.Validate(); err == nil {
 		t.Fatal("a field with a target and outputs was accepted")
 	}
-	// An EQL column is a table and a column: a two-segment context, or an
-	// extension, leaves the target field no column, and the refusal names
-	// the field — before the guest is asked.
+	// An EQL column is a table and a column: a two-segment context leaves
+	// the target field no column, and the refusal names the field — before
+	// the guest is asked.
 	deep := &Plan{Context: []string{"app", "users"}, Fields: []Field{{Name: "email", Kind: String, Target: "TextEq"}}}
 	if err := deep.Validate(); err == nil || !strings.Contains(err.Error(), `field "email"`) || !strings.Contains(err.Error(), `"app/users" has 2 segments`) {
 		t.Fatalf("a target under app/users: %v", err)
 	}
-	extended := &Plan{Context: []string{"users"}, Extension: []any{uint64(7)}, Fields: []Field{{Name: "email", Kind: String, Target: "TextEq"}}}
-	if err := extended.Validate(); err == nil || !strings.Contains(err.Error(), "extended context has no column") {
-		t.Fatalf("an extended target: %v", err)
+	// A scope and a binding come after the column, so a target field takes
+	// both. The EQL value stores the column alone.
+	scoped := &Plan{Context: []string{"users"}, Extension: []any{uint64(7)}, Bind: []any{uint64(9)}, Fields: []Field{{Name: "email", Kind: String, Target: "TextEq"}}}
+	if err := scoped.Validate(); err != nil {
+		t.Fatalf("a target under a scope and a binding: %v", err)
 	}
 	// The same context seals a plain field as before.
 	plain := &Plan{Context: []string{"app", "users"}, Fields: []Field{{Name: "email", Kind: String, Outputs: []Output{Ciphertext}}}}

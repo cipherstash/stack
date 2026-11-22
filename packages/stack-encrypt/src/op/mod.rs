@@ -3,28 +3,49 @@
 //! A query names an *operator* ([`Eq`](struct@Eq), [`Lt`], [`Lte`],
 //! [`Gt`], [`Gte`], [`Between`], [`Matches`](struct@Matches), and the
 //! JSON operators [`Contains`], [`ContainedBy`] and [`AtPath`]), and the
-//! plan it runs on finds the index that answers it. The operator is a unit
-//! type passed by value, as an index is (`.via(Ore)`), and it decides what
-//! the query takes: one value for most, a pair of bounds for `Between`, a
-//! path and the leaf operator's input for `AtPath`. The JSON operators are
-//! answered by the [`Json`](struct@crate::target::Json) index, over a
-//! `serde_json::Value`.
+//! field it runs on names the index that answers it. The operator decides
+//! what the query takes: one value for most, a pair of bounds for
+//! `Between`, a path and the leaf operator's input for `AtPath`. The JSON
+//! operators are answered by the [`Json`](struct@crate::target::Json)
+//! index, over a `serde_json::Value`.
+//!
+//! A typed query is a method of a field's [`FieldReference`](crate::FieldReference), one
+//! method for each operator the field's indexes answer. A query whose
+//! declaration is data names the operator by its wire name ([`Op`]), with
+//! the `dynamic` feature.
 //!
 //! ```
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
-//! use stack_encrypt::kms::FakeDataKeySource;
-//! use stack_encrypt::{op, Equality, Match, Ore, Plan, StackCipher};
+//! use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
+//! use stack_encrypt::target::EncryptTarget;
+//! use stack_encrypt::{Encrypted, StackCipher};
+//! use zeroize::Zeroize;
 //!
-//! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
-//! let email_plan = Plan::context("users/email")
-//!     .with::<String, _>((Equality, Match))
-//!     .build()?;
-//! let age_plan = Plan::context("users/age").with::<u32, _>(Ore).build()?;
+//! #[derive(Zeroize)]
+//! struct User {
+//!     email: String,
+//!     age: u32,
+//! }
 //!
-//! let exact = cipher.query(op::Eq, "bob@example.com").on(&email_plan).await?;
-//! let search = cipher.query(op::Matches, "bob").on(&email_plan).await?;
-//! let under = cipher.query(op::Lt, &40u32).on(&age_plan).await?;
-//! let range = cipher.query(op::Between, &(18u32, 65)).on(&age_plan).await?;
+//! #[derive(EncryptTarget)]
+//! #[stash(struct = User, scope = "users")]
+//! struct EncryptedUser {
+//!     email: Encrypted<(EqualityTerm, MatchTerms)>,
+//!     age: Encrypted<OreTerm<u32>>,
+//! }
+//!
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
+//! let cipher = StackCipher::builder()
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
+//! let keyset = cipher.default_keyset();
+//!
+//! let exact = EncryptedUser::EMAIL.eq("bob@example.com").encrypt(&keyset).await?;
+//! let search = EncryptedUser::EMAIL.matches("bob").encrypt(&keyset).await?;
+//! let under = EncryptedUser::AGE.lt(40u32).encrypt(&keyset).await?;
+//! let range = EncryptedUser::AGE.between(18u32, 65).encrypt(&keyset).await?;
 //! # let _ = (exact, search, under, range);
 //! # Ok(())
 //! # }
@@ -34,11 +55,15 @@
 //! Every operator is declared once, with its type, its arity and its wire
 //! name ([`Op`], the dynamic vocabulary): `op::Eq`, `Op::Eq` and `"eq"`
 //! are three faces of one operator. Every index declares the operators it
-//! answers once as well (`Equality::OPERATORS`, `Ore::OPERATORS`, …), and
-//! a plan reads that declaration: a field declares at most one index per
-//! operator, so `(Equality, Ore)` is allowed and `(Ore, Ope)` is refused
-//! when the plan is built ([`PlanError::IndexOverlap`](crate::PlanError::IndexOverlap);
-//! two match indexes are one index twice, [`PlanError::DuplicateIndex`](crate::PlanError::DuplicateIndex)).
+//! answers once as well (`Equality::OPERATORS`, `Ore::OPERATORS`, …). A
+//! field declares at most one index per operator, so `(Equality, Ore)` is
+//! allowed and `(Ore, Ope)` is not. A typed field that declares two is
+//! refused when it is encrypted, before any key is requested
+//! ([`PlanError::IndexOverlap`](crate::PlanError::IndexOverlap); two match
+//! indexes are one index twice,
+//! [`PlanError::DuplicateIndex`](crate::PlanError::DuplicateIndex)). Its
+//! field reference has no method for the operator. A plan that is data refuses such
+//! a field when it is parsed.
 //!
 //! Three traits connect an operator to an index:
 //!
@@ -54,24 +79,21 @@
 //! - [`Answers<Op, In>`] is on a target type, a domain type such as an EQL
 //!   type, and names the index that answers `Op` for it. It is written by
 //!   hand per type, because the choice decides what the query term reveals.
-//! - [`DefaultIndex<In>`] is on an operator, and names the index a plan that
-//!   declares its indexes, rather than a target type, answers it with.
 //!
 //! What a query takes is the operator's [`Arity`]: [`One`] plaintext, a
 //! [`Pair`] of them as a tuple, or for an accessor a path and its leaf
 //! operator's input ([`Pathed<A>`](Pathed), where `A` is the leaf's arity).
 //! [`Input<A>`] says, for the value a query is given, which plaintext the
-//! index is declared over (`S` for `(S, S)`), so the plan's type is checked
+//! index is declared over (`S` for `(S, S)`), so the field's type is checked
 //! against it. An input of a `Pathed` arity is a path and the leaf's input,
 //! `("$.address.city", "Sydney")`, over the JSON index's document.
 //!
 //! What the types can see is checked at compile time: a match query on an
-//! integer, an ordering on bytes, an operator a target type does not answer,
-//! and, on a one-value plan, an index the plan does not hold. A field of a
-//! fields plan is data, so there an index the field does not declare, or
-//! declares with other options, is refused when the query is awaited,
+//! integer, an ordering on bytes, and an operator a target type does not
+//! answer. A field of a plan that is data is data, so there an operator no
+//! index of the field answers is refused when the query plan is made,
 //! before any key is requested. So are the values a query refuses, which
-//! the `sem` module states once for the typed chain and the dynamic path:
+//! the `sem` module states once for the typed query and the dynamic path:
 //! match text that cuts no token under the index's tokenizer, whose filter
 //! would match every row ([`TermError::EmptyTermText`]), and text an
 //! equality or order index cannot normalize. The stored side has no
@@ -101,11 +123,11 @@ pub(crate) mod stats;
 pub use stats::{Limit, Stats, DEFAULT_CONFIDENCE, MAX_ROWS};
 
 use crate::sem::{
-    query, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, OpeTerm, Orderable, OreBlockTerm,
-    OreTerm, QueryTokens, RangeQuery,
+    query, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, OpeTerm, OreBlockTerm, OreTerm,
+    QueryTokens, RangeQuery,
 };
 use crate::target::{DeclaredContext, Equality, Index, Match, Ope, Ore, OreBlock, Owned, Pending};
-use crate::{Error, KeysetCipher, Label, NonEmpty};
+use crate::{Error, KeysetCipher, Label, NonEmpty, Orderable};
 
 /// A query operator: a unit type naming what a query asks of the server,
 /// and how many plaintexts it asks about ([`Arity`]).
@@ -147,7 +169,7 @@ pub struct Gt;
 pub struct Gte;
 
 /// A range: rows whose value is between the query's two bounds, inclusive
-/// at both ends. It takes a [`Pair`], `cipher.query(op::Between, &(lo, hi))`,
+/// at both ends. It takes a [`Pair`], as a field reference's `between(lo, hi)` does,
 /// derives both bounds under one context, and sends them as one term
 /// ([`RangeQuery`]), so no statement can pair the
 /// low bound of one query with the high bound of another. One value is
@@ -435,7 +457,7 @@ impl fmt::Display for Op {
 
 /// How many plaintexts a query for an operator takes: [`One`] or a
 /// [`Pair`], or for an accessor a path and its leaf's input ([`Pathed`]).
-/// Sealed: the chain derives a term per plaintext and joins them as the
+/// Sealed: a query derives a term per plaintext and joins them as the
 /// arity says, so there are exactly these.
 pub trait Arity: sealed::Sealed + 'static {}
 
@@ -468,18 +490,18 @@ impl LeafArity for Pair {}
 
 /// What a query of arity `A` is given, and the plaintext its index is
 /// declared over: an `S` is an input of [`One`] over `S`, and an `(S, S)`
-/// an input of [`Pair`] over `S`. The chain's value type is the input, and
-/// the plan is checked against the plaintext.
+/// an input of [`Pair`] over `S`. A query's value type is the input, and
+/// the field's index is checked against the plaintext.
 ///
-/// A `(P, V)` is an input of [`Pathed<One>`] over a `serde_json::Value`,
-/// and a `(P, (V, V))` of [`Pathed<Pair>`]: the path and the value become
-/// the document that holds the value at the path, and the JSON index's
-/// terms of it. The arity decides how the chain derives terms from the
-/// input, which is what [`derive`](Self::derive) does.
+/// No input of [`Pathed`] is implemented: a JSON query at a path is a
+/// document field's reference query, [`at()`](crate::field_reference::FieldReference::at),
+/// which builds the JSON operators' own inputs. The arity decides how a
+/// query derives terms from the input, which is what
+/// [`derive`](Self::derive) does.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not what a query of arity `{A}` takes",
     label = "the operator takes another input",
-    note = "an operator of arity `One` takes one value, `op::Between` (arity `Pair`) takes a pair, `&(lo, hi)`, and `op::AtPath` (arity `Pathed`) takes a path and the leaf's input, `&(\"$.a\", value)` or `&(\"$.a\", (lo, hi))`"
+    note = "an operator of arity `One` takes one value, and `op::Between` (arity `Pair`) takes a pair, `(lo, hi)`; a JSON query at a path is a document field's reference query: `at().age()` for a path the field declares, or `at_text_path(\"$.a\")` for a path given as text"
 )]
 pub trait Input<A: Arity>: Sized + 'static {
     /// The plaintext the index is declared over.
@@ -488,7 +510,7 @@ pub trait Input<A: Arity>: Sized + 'static {
     type Terms<T: 'static>: 'static;
 
     /// Derive the index's term for each plaintext of the input under
-    /// `label`, as one pending. Only a query chain calls this.
+    /// `label`, as one pending. Only a field query calls this.
     #[doc(hidden)]
     fn derive<'a, 'p, I, K>(
         self,
@@ -502,7 +524,7 @@ pub trait Input<A: Arity>: Sized + 'static {
         K: 'static;
 }
 
-impl<S: 'static> Input<One> for S {
+impl<S: zeroize::Zeroize + 'static> Input<One> for S {
     type Plaintext = S;
     type Terms<T: 'static> = T;
 
@@ -518,7 +540,9 @@ impl<S: 'static> Input<One> for S {
         K: 'static,
     {
         keyset.run(
-            index.operation::<K, Owned>().under(NonEmpty::from(label)),
+            index
+                .operation::<K, Owned>()
+                .under_field(NonEmpty::from(label)),
             self,
             extend,
         )
@@ -526,7 +550,7 @@ impl<S: 'static> Input<One> for S {
 }
 
 /// Both bounds under the one label, settled together.
-impl<S: 'static> Input<Pair> for (S, S) {
+impl<S: zeroize::Zeroize + 'static> Input<Pair> for (S, S) {
     type Plaintext = S;
     type Terms<T: 'static> = (T, T);
 
@@ -545,76 +569,20 @@ impl<S: 'static> Input<Pair> for (S, S) {
         let lo = keyset.run(
             index
                 .operation::<K, Owned>()
-                .under(NonEmpty::from(label.clone())),
+                .under_field(NonEmpty::from(label.clone())),
             lo,
             extend.clone(),
         );
         let hi = keyset.run(
-            index.operation::<K, Owned>().under(NonEmpty::from(label)),
+            index
+                .operation::<K, Owned>()
+                .under_field(NonEmpty::from(label)),
             hi,
             extend,
         );
         lo.zip(hi)
     }
 }
-
-/// A plaintext the ordering operators ([`Lt`], [`Lte`], [`Gt`], [`Gte`],
-/// [`Between`]) are answered over: the integers of 16 bits and wider, the
-/// floats (`f32` and `f64`), text (`String`), and dates, timestamps and
-/// decimals ([`value`](crate::value)). Not `u8` or `i8`, which have no
-/// order term ([`Orderable`] says why), as `bool` has none. Each is encoded
-/// as its [`Orderable`] target and its terms order as clww-ore orders that
-/// encoding: integers as numbers; floats as Postgres's `float8` does,
-/// `-0.0` tied with `0.0` and every NaN one value above `+Infinity`, an
-/// `f32` as the `f64` it widens to; text by its fold,
-/// Unicode 16 NFC with case and accents folded, so `Café`, `cafe` and
-/// `CAFÉ` tie and `alice` orders before `Zoe`; dates by day;
-/// timestamps by the microsecond, so instants within one microsecond tie;
-/// and decimals by value, so `1.5` ties `1.50`.
-///
-/// Sealed: a type joins only when the order its terms compare in is the
-/// one its operators promise, so a type whose terms could order otherwise
-/// (a newtype over folded text, say) must not be able to join. A type that
-/// meets every other bound is still refused:
-///
-/// ```compile_fail
-/// use stack_encrypt::op::Ordered;
-///
-/// struct Folded(u32);
-///
-/// impl Ordered for Folded {} // `Ordered` is sealed
-/// ```
-///
-/// [`Orderable`]: crate::sem::Orderable
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals",
-    label = "no ordering operator over this type",
-    note = "`Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term"
-)]
-pub trait Ordered: sealed::Sealed + Orderable {}
-
-macro_rules! ordered {
-    ($($ty:ty),+ $(,)?) => {$(
-        impl sealed::Sealed for $ty {}
-        impl Ordered for $ty {}
-    )+};
-}
-ordered!(
-    u16,
-    u32,
-    u64,
-    u128,
-    i16,
-    i32,
-    i64,
-    i128,
-    f32,
-    f64,
-    String,
-    crate::value::Date,
-    crate::value::Timestamp,
-    crate::value::Decimal,
-);
 
 mod sealed {
     pub trait Sealed {}
@@ -755,8 +723,8 @@ pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
     /// before the input is consumed; an index that refuses nothing and
     /// keeps nothing returns `Ok(())`.
     ///
-    /// A query chain calls this once, when the query is awaited, before any
-    /// keyset is resolved, and keeps the verifier until the term is
+    /// A field query calls this once, when it is encrypted, before
+    /// any key is requested, and keeps the verifier until the term is
     /// derived. So a verifier exists only for an input the index accepted,
     /// and a refused query costs no key request. The refusals are the
     /// `sem` module's, one function per index, which the dynamic path
@@ -768,22 +736,22 @@ pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
     /// (`.extend(..)`) when `extended` is true: for an index whose query term
     /// records the context it was derived under, a context it cannot record.
     /// An EQL query value stores the column it queries, so its index refuses
-    /// a label that names no column, and any extension, which the column
-    /// cannot hold. Run when the query is awaited, before [`prepare`](Self::prepare)
+    /// a label that names no column. It takes a scope: the stored value does
+    /// not store one either. Run when the query is awaited, before [`prepare`](Self::prepare)
     /// and before any keyset is resolved; every index in this crate takes
     /// any context and returns `Ok(())`.
     fn check_label(&self, _label: &Label, _extended: bool) -> Result<(), Error> {
         Ok(())
     }
     /// The query term, from the verifier and the terms the index derived
-    /// for the input's plaintexts. Only a query chain calls this:
+    /// for the input's plaintexts. Only a field query calls this:
     /// `QueryToken` cannot be made outside this crate, so no caller can
     /// pair one query's tokens with another value's filter, or pass a
     /// stored term off as a query.
     ///
     /// The token carries the context the terms were derived under
     /// ([`QueryToken::label`], [`QueryToken::is_extended`]), for a query
-    /// term that records it beside its terms. The chain calls this only
+    /// term that records it beside its terms. The query calls this only
     /// after [`check_label`](Self::check_label) accepted that context, so a
     /// term built from it need not refuse it again.
     fn query(
@@ -793,7 +761,7 @@ pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
     ) -> Self::Query;
 }
 
-/// Proof that [`Supports::query`] is called by a query chain, and the
+/// Proof that [`Supports::query`] is called by a field query, and the
 /// context the query's terms were derived under. Only this crate can make
 /// one, so an index in another crate can implement [`Supports`] but no
 /// caller can turn a term into a query term by hand, or name a context its
@@ -828,16 +796,15 @@ impl QueryToken {
 /// The equality index answers `Eq` over any plaintext with an equality
 /// domain, and refuses text it cannot normalize (a code point unassigned
 /// in Unicode 16) before any keyset is resolved, as the dynamic path does.
-/// The check normalizes a copy of the value, which vitaminc wipes as it
-/// reads it, so the plaintext is `Clone`, as every scalar is.
+/// The check reads the value in place, so nothing is copied.
 impl<S> Supports<Eq, S> for Equality
 where
-    S: crate::Encrypt + Clone + 'static,
+    S: crate::Encrypt + vitaminc_aead::EncryptRef + zeroize::Zeroize + 'static,
 {
     type Query = EqualityTerm;
     type Verifier = ();
     fn prepare(&self, value: &S) -> Result<(), Error> {
-        Ok(query::equality(value.clone())?)
+        Ok(query::equality(vitaminc_aead::EncryptRef::lend(value))?)
     }
     fn query((): (), term: EqualityTerm, _: QueryToken) -> EqualityTerm {
         term
@@ -852,7 +819,7 @@ impl Equality {
 
 impl<S, O> Supports<Matches, S> for Match<O>
 where
-    S: AsRef<str> + 'static,
+    S: AsRef<str> + zeroize::Zeroize + 'static,
     O: MatchConfig,
 {
     type Query = MatchQuery<O>;
@@ -876,7 +843,7 @@ impl<O> Match<O> {
 }
 
 /// The ordering operators on the ORE, OPE and block ORE indexes, over the
-/// [`Ordered`] types. The query term for a comparison is the index's own
+/// types vitaminc-ore orders ([`Orderable`]). The query term for a comparison is the index's own
 /// term for the value. CLLW ORE's ciphertext has no left half to send
 /// alone, so what is sent is what is stored, as for an HMAC. Block ORE's
 /// does, but EQL v4's comparator reads the right half of the operand a
@@ -886,7 +853,7 @@ impl<O> Match<O> {
 macro_rules! orders {
     ($($index:ident => $term:ident, block: $block:literal),+ $(,)?) => {$(
         orders!(@one $index => $term, $block; Lt, Lte, Gt, Gte);
-        impl<S: Ordered> Supports<Between, (S, S)> for $index {
+        impl<S: Orderable + vitaminc_aead::EncryptRef + zeroize::Zeroize + 'static> Supports<Between, (S, S)> for $index {
             type Query = RangeQuery<$term<S>>;
             type Verifier = ();
             fn prepare(&self, (lo, hi): &(S, S)) -> Result<(), Error> {
@@ -897,7 +864,7 @@ macro_rules! orders {
                 RangeQuery::new(lo, hi)
             }
         }
-        impl<S: Ordered> Answers<Between, (S, S)> for $term<S> {
+        impl<S: Orderable + vitaminc_aead::EncryptRef + zeroize::Zeroize + 'static> Answers<Between, (S, S)> for $term<S> {
             type Via = $index;
         }
         impl $index {
@@ -907,7 +874,7 @@ macro_rules! orders {
         }
     )+};
     (@one $index:ident => $term:ident, $block:literal; $($op:ident),+) => {$(
-        impl<S: Ordered> Supports<$op, S> for $index {
+        impl<S: Orderable + vitaminc_aead::EncryptRef + zeroize::Zeroize + 'static> Supports<$op, S> for $index {
             type Query = $term<S>;
             type Verifier = ();
             fn prepare(&self, value: &S) -> Result<(), Error> {
@@ -917,27 +884,12 @@ macro_rules! orders {
                 term
             }
         }
-        impl<S: Ordered> Answers<$op, S> for $term<S> {
+        impl<S: Orderable + vitaminc_aead::EncryptRef + zeroize::Zeroize + 'static> Answers<$op, S> for $term<S> {
             type Via = $index;
         }
     )+};
 }
 orders!(Ore => OreTerm, block: false, Ope => OpeTerm, block: false, OreBlock => OreBlockTerm, block: true);
-
-/// The ordering operators default to the ORE index; an OPE or block ORE
-/// index is named with `.via(Ope)` or `.via(OreBlock)`.
-macro_rules! default_ore {
-    ($($op:ident),+ $(,)?) => {$(
-        impl<S: Ordered> DefaultIndex<S> for $op {
-            type Via = Ore;
-        }
-    )+};
-}
-default_ore!(Lt, Lte, Gt, Gte);
-
-impl<S: Ordered> DefaultIndex<(S, S)> for Between {
-    type Via = Ore;
-}
 
 /// A target type that answers the operator `Op` for the input `In`, and
 /// the index it answers it with.
@@ -950,13 +902,13 @@ impl<S: Ordered> DefaultIndex<(S, S)> for Between {
 /// the one term that answers the operator ([`OperatorAnswer`]), and an
 /// `Option` answers what a present value answers.
 ///
-/// To be queried on a typed plan (`Plan::value::<S>().encrypt_into::<T>()`),
-/// the type must also implement [`LabelledTarget`], whatever context it is
-/// sealed under: an `Answers` impl alone answers no query.
+/// To be queried from a field reference, the type must also implement
+/// [`LabelledTarget`], whatever context it is sealed under: an `Answers`
+/// impl alone answers no query.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not answer `{Op}` given `{In}`",
     label = "this target type does not answer the operator",
-    note = "a target answers the operators its type implements `Answers` for, and a tuple of terms answers each operator exactly one of its terms answers; on a plan's query chain, `.via(index)` names an index the target declares"
+    note = "a target answers the operators its type implements `Answers` for, and a tuple of terms answers each operator exactly one of its terms answers"
 )]
 pub trait Answers<Op: Operator, In: Input<Op::Arity>> {
     /// The index that answers `Op` for this type. An index is a unit type,
@@ -965,9 +917,8 @@ pub trait Answers<Op: Operator, In: Input<Op::Arity>> {
 }
 
 /// A target type whose stored terms were derived under the context a
-/// query's label names, so a plan for it
-/// (`Plan::value::<S>().encrypt_into::<T>()`) answers the operators its
-/// [`Answers`] impls name, with each query derived under the plan's label.
+/// query's label names, so a field of that type answers the operators its
+/// [`Answers`] impls name, with each query derived under the field's label.
 ///
 /// Implementing it is a claim about the stored values: a query term derived
 /// under the label equals the stored term only if the stored term was
@@ -979,17 +930,17 @@ pub trait Answers<Op: Operator, In: Input<Op::Arity>> {
 /// v4 type is sealed under the column it stores, which a two-segment label
 /// names, and its index refuses any other label
 /// ([`Supports::check_label`]). A type sealed under a context no label
-/// names, such as an integer tenant id, must not implement it: a query on
-/// its plan would match nothing, with no error.
+/// names, such as an integer tenant id, must not implement it: a query of
+/// a field of that type would match nothing, with no error.
 ///
-/// A query on such a plan derives through the index alone and never runs
-/// the target's own encryption, so the target need not accept the label as
-/// its context: an EQL type, sealed under a column identifier, cannot be
-/// encrypted through its plan and is queried through it all the same.
+/// A query derives through the index alone and never runs the target's own
+/// encryption, so the target need not accept the label as its context: an
+/// EQL type, sealed under a column identifier, is queried under the label
+/// of the same two names.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not queried under a plan's label",
-    label = "a typed plan for this target type answers no query",
-    note = "a target type answers queries on its plan when it implements `op::LabelledTarget`: its stored terms were derived under the context the plan's label names"
+    message = "`{Self}` is not queried under a field's label",
+    label = "a field of this target type answers no query",
+    note = "a target type answers queries when it implements `op::LabelledTarget`: its stored terms were derived under the context the field's label names"
 )]
 pub trait LabelledTarget {}
 
@@ -1005,14 +956,14 @@ impl<T: LabelledTarget> LabelledTarget for crate::target::Encrypted<T> {}
 
 impl<S> Answers<Eq, S> for EqualityTerm
 where
-    S: crate::Encrypt + Clone + 'static,
+    S: crate::Encrypt + vitaminc_aead::EncryptRef + zeroize::Zeroize + 'static,
 {
     type Via = Equality;
 }
 
 impl<S, O> Answers<Matches, S> for MatchTerms<O>
 where
-    S: AsRef<str> + 'static,
+    S: AsRef<str> + zeroize::Zeroize + 'static,
     O: MatchConfig,
 {
     type Via = Match<O>;
@@ -1064,8 +1015,9 @@ impl<T: LabelledTarget> LabelledTarget for Option<T> {}
 ///
 /// When no term of a tuple answers `Op`, the tuple does not answer it.
 /// When two do, it does not either: which one a query used would decide
-/// what the query reveals. A plan refuses such a field
-/// ([`PlanError::IndexOverlap`](crate::PlanError::IndexOverlap)).
+/// what the query reveals. Such a field is refused when it is encrypted
+/// ([`PlanError::IndexOverlap`](crate::PlanError::IndexOverlap)), and a
+/// plan that is data refuses it when it is parsed.
 ///
 /// Implemented for this crate's terms and the operators [`Eq`](struct@Eq),
 /// [`Lt`], [`Lte`], [`Gt`], [`Gte`], [`Between`] and
@@ -1102,8 +1054,10 @@ impl Answer for No {}
 
 /// The one term of a tuple of terms that answers an operator, given the
 /// tuple of their answers ([`OperatorAnswer`]). Implemented for each tuple
-/// of two to five terms and each list of answers with exactly one
-/// [`Yes`], so a tuple where none answers, or two do, has no impl.
+/// of two or three terms and each list of answers with exactly one
+/// [`Yes`], so a tuple where none answers, or two do, has no impl. A tuple
+/// of terms has at most three, as [`TermSet`](crate::target::TermSet)
+/// says.
 #[diagnostic::on_unimplemented(
     message = "the terms `{Self}` do not answer the operator through exactly one term",
     label = "their answers are `{Answers}`",
@@ -1149,17 +1103,6 @@ macro_rules! answered_by {
 answered_by! {
     (A, B): (Yes, No) => A, (No, Yes) => B;
     (A, B, C): (Yes, No, No) => A, (No, Yes, No) => B, (No, No, Yes) => C;
-    (A, B, C, D):
-        (Yes, No, No, No) => A,
-        (No, Yes, No, No) => B,
-        (No, No, Yes, No) => C,
-        (No, No, No, Yes) => D;
-    (A, B, C, D, E):
-        (Yes, No, No, No, No) => A,
-        (No, Yes, No, No, No) => B,
-        (No, No, Yes, No, No) => C,
-        (No, No, No, Yes, No) => D,
-        (No, No, No, No, Yes) => E;
 }
 
 /// A tuple of terms answers `Op` through the one term that answers it
@@ -1192,39 +1135,7 @@ mod term_tuples {
     tuple_answers! {
         (A, B);
         (A, B, C);
-        (A, B, C, D);
-        (A, B, C, D, E);
     }
-}
-
-/// The index a plan that declares its indexes answers an operator with:
-/// a field of a fields plan, or a one-value plan built `with` indexes.
-///
-/// A plan that declares a different index for the operator, such as a
-/// match index with its own configuration, names it with `.via(index)`.
-/// So does a typed field of a fields plan (`encrypt_into::<T, _>(name)`):
-/// the field's type is not known where the query is written, so its
-/// [`Answers`] impl is not consulted, and a field whose type answers
-/// through another index needs `via`.
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` has no default index given `{In}`",
-    label = "no default index answers this operator here",
-    note = "`op::Eq` defaults to `Equality`; `op::Matches` defaults to `Match` with the default configuration, which is case-insensitive and over text only; `op::Lt`, `Lte`, `Gt`, `Gte` and `Between` default to `Ore` over an integer, and `Between` takes a pair; name another index, such as `Ope`, with `.via(index)`; `op::Contains`, `op::ContainedBy` and `op::AtPath` default to `Json` over a `serde_json::Value`"
-)]
-pub trait DefaultIndex<In: Input<Self::Arity>>: Operator {
-    /// The index. An index is a unit type, so its `Default` is the index.
-    type Via: Supports<Self, In> + Default;
-}
-
-impl<S> DefaultIndex<S> for Eq
-where
-    S: crate::Encrypt + Clone + 'static,
-{
-    type Via = Equality;
-}
-
-impl<S: AsRef<str> + 'static> DefaultIndex<S> for Matches {
-    type Via = Match;
 }
 
 #[cfg(test)]
@@ -1233,8 +1144,8 @@ mod tests {
     use crate::sem::DefaultMatch;
 
     /// A match index's verifier is the query's tokens: a query built from
-    /// it verifies a row that holds them and no other. A query chain takes
-    /// them through `prepare`, once.
+    /// it verifies a row that holds them and no other. A field reference's
+    /// query takes them through `prepare`, once.
     #[test]
     fn a_match_verifier_is_the_query_tokens() {
         let index = Match::<DefaultMatch>::default();
@@ -1347,18 +1258,45 @@ mod tests {
         declared::<_, Gt, u32>(&OreBlock, OreBlock::OPERATORS);
         declared::<_, Gte, u32>(&OreBlock, OreBlock::OPERATORS);
         declared::<_, Between, (u32, u32)>(&OreBlock, OreBlock::OPERATORS);
+        // The JSON index answers through the shared JSON inputs, which a
+        // field reference's JSON queries and the dynamic path both build, not
+        // through `Supports`: each typed JSON operator's wire name is in
+        // its declaration, with the six reads the dynamic path alone names.
         use crate::target::Json;
-        use serde_json::Value;
-        declared::<_, Contains, Value>(&Json, Json::OPERATORS);
-        declared::<_, ContainedBy, Value>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Eq>, (String, Value)>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Lt>, (String, Value)>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Lte>, (String, Value)>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Gt>, (String, Value)>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Gte>, (String, Value)>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Between>, (String, (Value, Value))>(&Json, Json::OPERATORS);
-        // The six reads, named by the dynamic path alone.
-        assert_eq!(Json::OPERATORS.len(), 8 + 6);
+        for op in [
+            Contains::OP,
+            ContainedBy::OP,
+            AtPath::<Eq>::OP,
+            AtPath::<Lt>::OP,
+            AtPath::<Lte>::OP,
+            AtPath::<Gt>::OP,
+            AtPath::<Gte>::OP,
+            AtPath::<Between>::OP,
+        ] {
+            let op = op.expect("a typed JSON operator with a wire name");
+            assert!(Json::OPERATORS.contains(&op), "{op} is not declared");
+        }
+        // The whole declaration, each operator once: the eight above, then
+        // the six only the shared JSON inputs build.
+        assert_eq!(
+            Json::OPERATORS,
+            [
+                Op::Contains,
+                Op::ContainedBy,
+                Op::EqAt,
+                Op::LtAt,
+                Op::LteAt,
+                Op::GtAt,
+                Op::GteAt,
+                Op::BetweenAt,
+                Op::Selector,
+                Op::Subtree,
+                Op::Children,
+                Op::ChildCount,
+                Op::ElementMatch,
+                Op::Match,
+            ]
+        );
     }
 
     /// An accessor is held to its leaf's requirement: an exact term
@@ -1432,6 +1370,7 @@ mod tests {
 
     /// A date, a timestamp and a decimal are ordered, through every order
     /// index, and `Between` takes a pair of each.
+    #[cfg(all(feature = "jiff", feature = "rust_decimal"))]
     #[test]
     fn dates_timestamps_and_decimals_are_ordered() {
         use crate::value::{Date, Decimal, Timestamp};
@@ -1439,9 +1378,12 @@ mod tests {
         answers::<Lt, OreTerm<Date>>();
         answers::<Gte, OpeTerm<Timestamp>>();
         answers::<Between, RangeQuery<OreTerm<Decimal>>>();
-        let day = || Date::from_days_since_epoch(19_782).expect("in range");
-        let at = || Timestamp::new(1_700_000_000, 5).expect("in range");
-        let price = || Decimal::new(150, 2).expect("in range");
+        let day = || Date::new(jiff::civil::date(2024, 2, 29));
+        let at = || {
+            let instant = jiff::Timestamp::new(1_700_000_000, 5).expect("in range");
+            Timestamp::new(instant).expect("in range")
+        };
+        let price = || Decimal::new(rust_decimal::Decimal::new(150, 2));
         assert!(Supports::<Lt, Date>::prepare(&Ore, &day()).is_ok());
         assert!(Supports::<Lte, Timestamp>::prepare(&Ope, &at()).is_ok());
         assert!(Supports::<Gt, Decimal>::prepare(&OreBlock, &price()).is_ok());

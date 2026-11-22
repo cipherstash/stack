@@ -1,15 +1,15 @@
 //! Queries named by operator, for a binding.
 //!
-//! A Rust caller names an operator as a type, `cipher.query(op::Matches,
-//! "ali").on(&plan)`, and the compiler finds the index that answers it. A
+//! A Rust caller queries a field through its field reference,
+//! `EncryptedUser::NAME.matches("ali")`, and the compiler finds the index
+//! that answers the operator. A
 //! binding has no type to name: its plan arrives as data and its operator
 //! as a string. This module is the runtime form of that query, written once
 //! here rather than once per language binding:
 //!
 //! - [`Op`] names an operator, as [`IndexSpec`] names an index, and
-//!   [`Op::answered_by`] is the table the typed path's `DefaultIndex`
-//!   impls state: which declared index answers the operator for a field of
-//!   a kind, if any does.
+//!   [`Op::answered_by`] is the table of which declared index answers the
+//!   operator for a field of a kind, if any does.
 //! - [`query_term`] derives the query term for a plan field, an operator and
 //!   its input: the field's own index term for the input, or, for a field
 //!   that names an EQL type, that type's query value. It refuses an operator
@@ -37,12 +37,12 @@
 //! `between`) through an ORE index over an integer of 16 bits or wider, a
 //! float, text, a date, a timestamp or a decimal, else a block ORE index,
 //! else an OPE index. The typed
-//! path's default for an ordering is ORE, and block ORE and OPE are the
-//! typed path's `.via(OreBlock)` and `.via(Ope)`; here a field that
+//! path's field names its order term by type (`OreTerm`, `OreBlockTerm` or
+//! `OpeTerm`); here a field that
 //! declares only one of them is answered through it. Every order term is
 //! derived over the value's order key: a float's ties `-0.0` with
 //! `0.0` and sorts every NaN last, and text's is its fold. An ordering over
-//! bytes is not answered, as `op::Ordered` does not cover them. Nor is one
+//! bytes is not answered, as `Orderable` does not cover them. Nor is one
 //! over an 8-bit integer, which has no order term. A timestamp orders by the
 //! microsecond and a decimal by value, so `1.5` ties `1.50`.
 //!
@@ -76,8 +76,6 @@ use serde::{Serialize, Serializer};
 
 use super::WireBytes;
 use std::fmt;
-
-use stack_kms::DataKeySource;
 
 use super::record::{FieldPlan, Plan};
 use super::term::derive;
@@ -191,12 +189,8 @@ impl Op {
         // answers is the one. A document field's JSON index answers the
         // document operators over a document alone; every other index
         // answers over the kinds it is defined for.
-        // An order index over bytes stores a term and answers no ordering:
-        // the orderings are answered over the integers, the floats, text,
-        // decimals, dates and timestamps.
-        if self.is_ordering() && !ordered(kind) {
-            return None;
-        }
+        // Bytes have no order term, so `admits` refuses an order index over
+        // them, and no ordering is answered there.
         indexes.iter().find(|index| {
             index.answers(self)
                 && match index {
@@ -205,38 +199,6 @@ impl Op {
                 }
         })
     }
-
-    /// Whether this is an ordering operator over a scalar: `lt`, `lte`,
-    /// `gt`, `gte` or `between`.
-    fn is_ordering(self) -> bool {
-        matches!(self, Op::Lt | Op::Lte | Op::Gt | Op::Gte | Op::Between)
-    }
-}
-
-/// The kinds the ordering operators are answered over: the integers of 16
-/// bits and wider, `int16` to `uint128`, the floats, text, and dates,
-/// timestamps and decimals, as [`op::Ordered`](crate::op::Ordered) covers
-/// them in the typed path. Not `int8` or `uint8`, which have no order term.
-/// Each orders by its order key; a `float32` is ordered as the
-/// `f64` it widens to, as the typed path asks.
-fn ordered(kind: ValueKind) -> bool {
-    matches!(
-        kind,
-        ValueKind::Int16
-            | ValueKind::Int32
-            | ValueKind::Int64
-            | ValueKind::Int128
-            | ValueKind::UInt16
-            | ValueKind::UInt32
-            | ValueKind::UInt64
-            | ValueKind::UInt128
-            | ValueKind::Float32
-            | ValueKind::Float64
-            | ValueKind::String
-            | ValueKind::Decimal
-            | ValueKind::Date
-            | ValueKind::Timestamp
-    )
 }
 
 /// How far the server's answer to an operator can be trusted, as a catalog
@@ -616,9 +578,9 @@ impl OperatorEntry {
     }
 }
 
-/// Refuse a plan whose context is a field of each record: a term derives
-/// under a context, and such a plan has none until a record names it, so a
-/// binding sends the plan under the context its query names.
+/// Refuse a plan a query cannot derive under. One is a plan with a
+/// binding: a term derives under the query context, which holds no
+/// binding. The other is a plan [`names_its_context`] refuses.
 /// [`verify`] and [`target_limit`] derive nothing and take such a plan.
 fn has_context(plan: &Plan, field: &str) -> Result<(), Error> {
     if !plan.bindings().is_empty() {
@@ -627,6 +589,17 @@ fn has_context(plan: &Plan, field: &str) -> Result<(), Error> {
             reason: Reason::BindInQuery,
         });
     }
+    names_its_context(plan, field)
+}
+
+/// Refuse a plan whose context is a field of each record: a term derives
+/// under a context, and such a plan has none until a record names it, so a
+/// binding sends the plan under the context its query names.
+///
+/// A read is checked by this alone. It takes a plan with a binding: the
+/// entries it opens were sealed under the binding, so the reader supplies
+/// it again.
+fn names_its_context(plan: &Plan, field: &str) -> Result<(), Error> {
     match plan.context_field() {
         Some(_) => Err(Error::Plan {
             field: Some(field.to_owned()),
@@ -688,8 +661,8 @@ fn not_a_range(field: &str) -> Error {
 }
 
 /// What a query of `input` through `index` is refused for before any term
-/// exists, and what it keeps: the `sem` module's rules, which the typed
-/// chain's [`Supports::prepare`](crate::op::Supports::prepare) applies to
+/// exists, and what it keeps: the `sem` module's rules, which a typed
+/// query's [`Supports::prepare`](crate::op::Supports::prepare) applies to
 /// the same effect. A binding asks at its boundary ([`check_query`]), and
 /// [`query_term`] and [`verify`] ask before they derive anything, so the
 /// three refuse exactly the same inputs. A match query keeps its tokens.
@@ -762,7 +735,7 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
     value
         .visit(OneScalar::new(
             |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
-                // The query chain's rule, from the same function.
+                // The typed query's rule, from the same function.
                 (None, Physical::Text(text)) => Ok(crate::sem::query::match_tokens(text, options)
                     .map_err(|error| Error::Cipher(error.into()))),
                 _ => Err(None),
@@ -784,7 +757,7 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
 /// use stack_encrypt::dynamic::{check_query, frame, record, Op, Reason, ValueFrame};
 /// use stack_encrypt::AsProtectedRef;
 /// # use stack_encrypt::dynamic::{TargetDescriptor, TargetError, TargetOptions, TargetResolver, ValueKind};
-/// # use stack_encrypt::target::IndexSpec;
+/// # use stack_encrypt::target::{DeclaredContext, IndexSpec};
 /// # use stack_encrypt::{KeysetCipher, Label, Pending, StackCipher};
 /// # /// A host whose `JsonSearch` names the compiled predicate's domain.
 /// # struct Documents;
@@ -798,12 +771,13 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
 /// #         .with_predicate_query_sql_domain("eql_v4.query_json_predicate")]
 /// #     }
 /// #     fn encrypt<'a, K: 'static>(&self, _: &str, _: Option<&TargetOptions>,
-/// #         _: &'a KeysetCipher<'_, K>, _: &Label, _: ValueFrame,
+/// #         _: &'a KeysetCipher<'_, K>, _: &Label, _: &DeclaredContext, _: ValueFrame,
 /// #     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> { unreachable!() }
-/// #     fn decrypt<'a, K: 'static>(&self, _: &str, _: &'a StackCipher<K>, _: &Label, _: &[u8],
+/// #     fn decrypt<'a, K: 'static>(&self, _: &str, _: &'a StackCipher<K>, _: &Label,
+/// #         _: &DeclaredContext, _: &[u8],
 /// #     ) -> Result<Pending<'a, ValueFrame, K>, TargetError> { unreachable!() }
 /// #     fn query<'a, K: 'static>(&self, _: &str, _: &IndexSpec, _: &'a KeysetCipher<'_, K>,
-/// #         _: &Label, _: ValueFrame,
+/// #         _: &Label, _: &DeclaredContext, _: ValueFrame,
 /// #     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> { unreachable!() }
 /// # }
 /// // A document field that orders `$.age`.
@@ -814,9 +788,14 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
 /// let plan = record::plan_with(declaration.as_protected_ref(), &Documents)?;
 /// // What `jsonb_path_match(col, $1, $2)` takes: the predicate, and its
 /// // variables as the JSON text of one object.
+/// // Each part goes straight into a protected frame, so no plain buffer
+/// // holds the query's values.
 /// let input = |predicate: &str| -> ValueFrame {
-///     let input = json!({"predicate": predicate, "vars": r#"{"min": 18, "r": "sibling"}"#});
-///     ValueFrame::from_bytes(frame::serde::to_vec(&input).unwrap().as_protected_ref()).unwrap()
+///     let parts = std::collections::BTreeMap::from([
+///         ("predicate", ValueFrame::of(predicate).unwrap()),
+///         ("vars", ValueFrame::of(r#"{"min": 18, "r": "sibling"}"#).unwrap()),
+///     ]);
+///     ValueFrame::of(&parts).unwrap()
 /// };
 /// let check = |predicate: &str| {
 ///     check_query(&plan, "profile", Op::Match, input(predicate), &Documents)
@@ -877,6 +856,7 @@ fn json_input(field: &str) -> Error {
 /// derives, bound as the type its target names for it.
 fn json_term<'a, K: 'static>(
     cipher: &'a KeysetCipher<'_, K>,
+    plan: &Plan,
     answer: Answer<'_>,
     operator: Op,
     input: impl Encrypt,
@@ -893,14 +873,12 @@ fn json_term<'a, K: 'static>(
         })
     })?;
     let index = answer.index.clone();
-    let derived = super::json_query::derive(
-        cipher,
-        answer.field.label(),
-        json_options(&answer)?,
-        operator,
-        &input,
-    )
-    .map_err(|error| error.in_field(field))?;
+    // Under the field's label, then the plan's scopes, as the document's
+    // terms were derived when it was sealed.
+    let under = super::json_query::Under::new(answer.field.label(), plan.declared_context());
+    let derived =
+        super::json_query::derive(cipher, &under, json_options(&answer)?, operator, &input)
+            .map_err(|error| error.in_field(field))?;
     Ok(derived.map(move |operand| QueryTerm {
         operator,
         index,
@@ -924,7 +902,7 @@ pub fn check_json_open(
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<(), Error> {
     let _ = answer(plan, field, Op::Selector, resolver)?;
-    has_context(plan, field)?;
+    names_its_context(plan, field)?;
     let request = ValueFrame::of(request).map_err(|_| json_input(field))?;
     let rows = ValueFrame::of(rows).map_err(|_| json_input(field))?;
     super::json_query::check_open(&request, &rows).map_err(|error| error.in_field(field))
@@ -947,6 +925,16 @@ pub fn check_json_open(
 /// one value per concrete path the read named that the row has, in
 /// document order. One key request for every row.
 ///
+/// The read runs under the contexts the document was sealed under. The
+/// selector or the read key derives under the field's column, then the
+/// plan's scopes, as a query's term does. Every entry opens under the
+/// plan's bindings too. So a read takes a plan with a binding, where a
+/// query refuses one, and every row of one call opens under that binding.
+/// For example, a document sealed for the tenant 7 and the row 9 is read
+/// through a plan with the scope 7 and the binding 9. A plan with another
+/// tenant derives a selector that names no entry. A plan with another row,
+/// or none, finds the entry and does not open it.
+///
 /// [`JsonSelector::open`]: crate::json::JsonSelector::open
 /// [`JsonSubtreeKey::open`]: crate::json::JsonSubtreeKey::open
 ///
@@ -955,7 +943,8 @@ pub fn check_json_open(
 /// As [`query_term`] refuses a field that does not answer the read's
 /// operator, and a plan whose context comes from a field of each record
 /// ([`Reason::QueryContextField`]): a read names no record, so it has no
-/// context to derive under. [`Error::Source`] names the field for a
+/// context to derive under. A plan with a binding is not refused.
+/// [`Error::Source`] names the field for a
 /// request or rows that do not parse ([`Reason::JsonInput`]). A row that
 /// is not one the read asked for fails the pending
 /// ([`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry)), as does a
@@ -974,21 +963,18 @@ pub fn json_open<'a, K>(
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<Pending<'a, ValueFrame, K>, Error>
 where
-    K: DataKeySource + Sync + 'static,
+    K: Sync + 'static,
 {
     // Answering `selector` is what makes a field a document field.
     let answer = answer(plan, field, Op::Selector, resolver)?;
-    has_context(plan, field)?;
+    names_its_context(plan, field)?;
     let request = ValueFrame::of(request).map_err(|_| json_input(field))?;
     let rows = ValueFrame::of(rows).map_err(|_| json_input(field))?;
-    super::json_query::open(
-        cipher,
-        answer.field.label(),
-        json_options(&answer)?,
-        &request,
-        &rows,
-    )
-    .map_err(|error| error.in_field(field))
+    // Under the field's label, then the plan's scopes and bindings, as
+    // the document was sealed.
+    let under = super::json_query::Under::new(answer.field.label(), plan.declared_context());
+    super::json_query::open(cipher, &under, json_options(&answer)?, &request, &rows)
+        .map_err(|error| error.in_field(field))
 }
 
 /// Derive the query term for one field of a plan, an operator and its
@@ -1005,18 +991,40 @@ where
 /// operator ([`Op::answered_by`]) under the field's context, by the
 /// derivation its stored terms came from; a range derives one term per
 /// bound under that one context. A field that names an EQL type runs the
-/// type's query twin through `resolver`. Nothing is requested: the pending
-/// settles without I/O, as a typed query's does.
+/// type's query twin through `resolver`. A document's operand derives
+/// under the field's column, then the plan's scopes, as the document's
+/// terms did when it was sealed. So a query through a plan with the scope
+/// 7 finds the documents sealed under the scope 7, and no others. Nothing
+/// is requested: the pending settles without I/O, as a typed query's does.
 ///
 /// # Examples
 ///
 /// ```
 /// use stack_encrypt::dynamic::{query_term, record, NoTargets, Op, Operand};
-/// use stack_encrypt::kms::FakeDataKeySource;
-/// use stack_encrypt::{op, AsProtectedRef, Ore, Plan, StackCipher};
+/// use stack_encrypt::sem::OreTerm;
+/// use stack_encrypt::target::EncryptTarget;
+/// use stack_encrypt::{AsProtectedRef, Encrypted, StackCipher};
+/// use zeroize::Zeroize;
+///
+/// #[derive(Zeroize)]
+/// struct User {
+///     age: u32,
+/// }
+///
+/// // The typed record that declares the same field.
+/// #[derive(EncryptTarget)]
+/// #[stash(struct = User, scope = "users")]
+/// struct EncryptedUser {
+///     age: Encrypted<OreTerm<u32>>,
+/// }
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-/// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+/// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+/// // the environment, or from the profile that `npx stash auth login` writes.
+/// let cipher = StackCipher::builder()
+/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+///     .init()
+///     .await?;
 /// let keyset = cipher.default_keyset();
 /// let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
 ///     "age": { "context": ["users", "age"], "outputs": ["c", "ore"], "type": "uint32" },
@@ -1025,9 +1033,8 @@ where
 ///
 /// let term = query_term(&keyset, &plan, "age", Op::Lt, 40u32, &NoTargets)?.await?;
 ///
-/// // The typed path's term for the same query.
-/// let typed_plan = Plan::context("users/age").with::<u32, _>(Ore).build()?;
-/// let typed = cipher.query(op::Lt, &40u32).on(&typed_plan).await?;
+/// // The typed query of the same field, from its field reference, is the same term.
+/// let typed = EncryptedUser::AGE.lt(40u32).encrypt(&keyset).await?;
 /// assert_eq!(term.operand(), &Operand::One(typed.to_bytes()));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// # }).unwrap();
@@ -1068,7 +1075,7 @@ pub fn query_term<'a, K: 'static>(
     let answer = answer(plan, field, operator, resolver)?;
     has_context(plan, field)?;
     if operator.is_json() {
-        return json_term(cipher, answer, operator, input);
+        return json_term(cipher, plan, answer, operator, input);
     }
     let input = read_input(&answer, operator, input)?;
     // Prepared once, here: the derivation below refuses nothing a query
@@ -1360,10 +1367,21 @@ mod tests {
         )
     }
     use crate::dynamic::{record, NoTargets, TargetError};
-    use crate::op::{self, Probabilistic as _};
-    use crate::sem::MatchTerms;
-    use crate::{Equality, Label, Match, Ope, Ore, StackCipher};
+    use crate::field_reference::{FieldReference, Root};
+    use crate::op::Probabilistic as _;
+    use crate::sem::{EqualityTerm, MatchTerms, OpeTerm, OreTerm};
+    use crate::{Label, StackCipher};
     use stack_kms::FakeDataKeySource;
+
+    /// The reference to the field `name` of a record with `scope = "users"`,
+    /// whose target is `T`, as the derive emits it. A typed query starts
+    /// from it, and derives under the label `users/<name>`, which is the
+    /// label the data plan of [`users`] gives the field.
+    fn reference<T>(name: &'static str) -> FieldReference<Root<()>, T> {
+        FieldReference::new(name, "users", name, || {
+            unreachable!("these tests do not read a field reference's contexts")
+        })
+    }
 
     async fn cipher() -> StackCipher<FakeDataKeySource> {
         StackCipher::builder()
@@ -1593,13 +1611,9 @@ mod tests {
         let term = query(&keyset, "email", Op::Eq, text("bob@example.com"))
             .await
             .unwrap();
-        let plan = crate::Plan::context("users/email")
-            .with::<String, _>(Equality)
-            .build()
-            .unwrap();
-        let typed = cipher
-            .query(op::Eq, "bob@example.com")
-            .on(&plan)
+        let typed = reference::<EqualityTerm>("email")
+            .eq("bob@example.com")
+            .encrypt(&keyset)
             .await
             .unwrap();
         assert_eq!(term.operand(), &Operand::One(typed.to_bytes()));
@@ -1613,11 +1627,11 @@ mod tests {
     async fn an_ordering_derives_the_typed_paths_ore_term_and_reads_the_input_as_the_fields_kind() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let plan = crate::Plan::context("users/age")
-            .with::<u32, _>(Ore)
-            .build()
+        let typed = reference::<OreTerm<u32>>("age")
+            .lt(40u32)
+            .encrypt(&keyset)
+            .await
             .unwrap();
-        let typed = cipher.query(op::Lt, &40u32).on(&plan).await.unwrap();
         for input in [Tree::UInt32(40), Tree::Float64(40.0), Tree::Int64(40)] {
             let term = query(&keyset, "age", Op::Lt, input).await.unwrap();
             assert_eq!(term.operand(), &Operand::One(typed.to_bytes()));
@@ -1629,13 +1643,9 @@ mod tests {
     async fn between_derives_both_bounds_under_one_context_as_the_typed_range() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let plan = crate::Plan::context("users/age")
-            .with::<u32, _>(Ore)
-            .build()
-            .unwrap();
-        let typed = cipher
-            .query(op::Between, &(18u32, 65))
-            .on(&plan)
+        let typed = reference::<OreTerm<u32>>("age")
+            .between(18u32, 65)
+            .encrypt(&keyset)
             .await
             .unwrap();
         let term = query(
@@ -1662,14 +1672,9 @@ mod tests {
         .await;
         assert!(one.is_ok(), "(v, v) is one value: {one:?}");
 
-        let plan = crate::Plan::context("users/score")
-            .with::<i64, _>(Ope)
-            .build()
-            .unwrap();
-        let typed = cipher
-            .query(op::Between, &(-5i64, 5))
-            .via(Ope)
-            .on(&plan)
+        let typed = reference::<OpeTerm<i64>>("score")
+            .between(-5i64, 5)
+            .encrypt(&keyset)
             .await
             .unwrap();
         let term = query(
@@ -1698,11 +1703,11 @@ mod tests {
     async fn matches_derives_the_typed_paths_filter() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let plan = crate::Plan::context("users/name")
-            .with::<String, _>(Match::default())
-            .build()
+        let typed = reference::<MatchTerms>("name")
+            .matches("alice")
+            .encrypt(&keyset)
+            .await
             .unwrap();
-        let typed = cipher.query(op::Matches, "alice").on(&plan).await.unwrap();
         let term = query(&keyset, "name", Op::Matches, text("alice"))
             .await
             .unwrap();
@@ -1832,11 +1837,12 @@ mod tests {
     #[tokio::test]
     async fn verify_answers_as_the_typed_match_query() {
         let cipher = cipher().await;
-        let plan = crate::Plan::context("users/name")
-            .with::<String, _>(Match::default())
-            .build()
+        let keyset = cipher.default_keyset();
+        let typed = reference::<MatchTerms>("name")
+            .matches("alice")
+            .encrypt(&keyset)
+            .await
             .unwrap();
-        let typed = cipher.query(op::Matches, "alice").on(&plan).await.unwrap();
         let page = ["Alice Smith", "alicia", "Bob", "MALICE", "", "ali ce"];
         let values: Vec<Tree> = page.iter().map(|v| text(v)).collect();
         let verified = verify(
@@ -1939,7 +1945,7 @@ mod tests {
     }
 
     /// Match options on a field plan built by hand are not checked when the
-    /// plan is, so the query chain refuses them before it cuts a token: an
+    /// plan is, so the query refuses them before it cuts a token: an
     /// n-gram length of zero would otherwise panic in the tokenizer.
     #[test]
     fn invalid_match_options_are_refused_before_tokenising() {
@@ -1987,11 +1993,11 @@ mod tests {
     async fn target_limit_answers_as_the_typed_match_query() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let plan = crate::Plan::context("users/name")
-            .with::<String, _>(Match::default())
-            .build()
+        let typed = reference::<MatchTerms>("name")
+            .matches("ali")
+            .encrypt(&keyset)
+            .await
             .unwrap();
-        let typed = cipher.query(op::Matches, "ali").on(&plan).await.unwrap();
         let term = query(&keyset, "name", Op::Matches, text("ali"))
             .await
             .unwrap();
@@ -2195,11 +2201,11 @@ mod tests {
             }
         };
 
-        let tiny = crate::Plan::context("users/tiny")
-            .with::<i16, _>(Ore)
-            .build()
+        let typed = reference::<OreTerm<i16>>("tiny")
+            .lt(-8i16)
+            .encrypt(&keyset)
+            .await
             .unwrap();
-        let typed = cipher.query(op::Lt, &-8i16).on(&tiny).await.unwrap();
         for input in [
             int(Int::I8(-8)),
             vf(&Tree::Int64(-8)),
@@ -2214,14 +2220,9 @@ mod tests {
             "70000 is no int16: {refused:?}"
         );
 
-        let huge = crate::Plan::context("users/huge")
-            .with::<i128, _>(Ope)
-            .build()
-            .unwrap();
-        let typed = cipher
-            .query(op::Between, &(i128::MIN, i128::MAX))
-            .via(Ope)
-            .on(&huge)
+        let typed = reference::<OpeTerm<i128>>("huge")
+            .between(i128::MIN, i128::MAX)
+            .encrypt(&keyset)
             .await
             .unwrap();
         let bounds = ValueFrame::of(vec![
@@ -2255,7 +2256,8 @@ mod tests {
                     .as_protected_ref(),
             )
             .expect("context");
-            let value = value.clone();
+            // A frame is not `Clone`: the future owns a frame of the same bytes.
+            let value = ValueFrame::from_bytes(value.as_protected_ref()).expect("a frame");
             async move {
                 super::super::term(keyset, &value, &IndexSpec::Equality, ctx)
                     .await
@@ -2263,14 +2265,16 @@ mod tests {
             }
         };
         let day = frame(Some(Logical::Date), Physical::Int(Int::I32(19_782)));
-        let term = ask("day", Op::Eq, day.clone()).await.unwrap();
-        assert_eq!(term.operand(), &Operand::One(stored(&day, "day").await));
+        let expected = stored(&day, "day").await;
+        let term = ask("day", Op::Eq, day).await.unwrap();
+        assert_eq!(term.operand(), &Operand::One(expected));
         let at = frame(
             Some(Logical::Timestamp(TimeUnit::Nanos)),
             Physical::Int(Int::I128(1_760_662_923_123_456_789)),
         );
-        let term = ask("at", Op::Eq, at.clone()).await.unwrap();
-        assert_eq!(term.operand(), &Operand::One(stored(&at, "at").await));
+        let expected = stored(&at, "at").await;
+        let term = ask("at", Op::Eq, at).await.unwrap();
+        assert_eq!(term.operand(), &Operand::One(expected));
         let price = frame(
             Some(Logical::Decimal { scale: 2 }),
             Physical::Int(Int::I64(3400)),
@@ -2630,6 +2634,7 @@ mod tests {
             _: Option<&crate::dynamic::TargetOptions>,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("a query encrypts nothing")
@@ -2639,6 +2644,7 @@ mod tests {
             _: &str,
             _: &'a crate::StackCipher<K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: &[u8],
         ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
             unreachable!("a query decrypts nothing")
@@ -2649,6 +2655,7 @@ mod tests {
             _: &IndexSpec,
             keyset: &'a KeysetCipher<'_, K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             Ok(Pending::ready(keyset, Ok(br#"{"bf":[1,5,2047]}"#.to_vec())))
@@ -2788,6 +2795,7 @@ mod tests {
             _: Option<&crate::dynamic::TargetOptions>,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("a query encrypts nothing")
@@ -2797,6 +2805,7 @@ mod tests {
             _: &str,
             _: &'a crate::StackCipher<K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: &[u8],
         ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
             unreachable!("a query decrypts nothing")
@@ -2807,6 +2816,7 @@ mod tests {
             _: &IndexSpec,
             keyset: &'a KeysetCipher<'_, K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             Ok(Pending::ready(keyset, Ok(br#"{"hm":"00"}"#.to_vec())))

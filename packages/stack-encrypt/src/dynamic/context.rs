@@ -20,7 +20,7 @@ use crate::{ContextPiece, NonEmpty};
 /// x.into_prf_context() == x.into_context().into_prf_context()
 /// ```
 ///
-/// So a `#[derive(EncryptFrom)]` row sealed with
+/// So a `#[derive(EncryptTarget)]` row sealed with
 /// `encrypt_into_with_context(row, 7u64)`, which binds each field under
 /// `(("users", "age"), 7u64)` — the inferred pair, extended — and a binding
 /// that spells the same context as `[["users", "age"], 7u64]` agree byte for

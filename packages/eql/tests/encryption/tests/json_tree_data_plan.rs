@@ -1,6 +1,8 @@
 //! An encrypted JSON document through a data plan: the path a language SDK
-//! takes (the Go guest installs the same resolver), against the typed Rust
-//! path it must agree with.
+//! takes (the Go guest installs the same resolver), and the path a Rust
+//! program queries a document by, since an EQL type has no typed JSON
+//! query. Sealing is held to the typed Rust path, `JsonTree::new(options)`,
+//! which it must agree with.
 //!
 //! A data-plan field names the target `JsonSearch`, declares the `json`
 //! type, and hands its document over as JSON text. The engine parses it by
@@ -14,7 +16,14 @@
 //!   (selectors, ordering terms, the containment selector set) for the same
 //!   document under the same column, and each opens what the other sealed;
 //! - text that is not a document is refused before any key is requested,
-//!   naming the field and a code, never a byte of the text.
+//!   naming the field and a code, never a byte of the text;
+//! - each operator's operand reads as the EQL type the SQL binds it as
+//!   (`JsonTreeQuery`, `JsonTreeLeafQuery`, a selector, a list of tokens),
+//!   is bound as the domain the target names for it, and finds the stored
+//!   documents it should, decided here with no database;
+//! - rows open against the request that prepared them;
+//! - a document sealed under a scope and a binding is found by a query
+//!   under the scope, and read under the scope and the binding.
 
 mod common;
 
@@ -23,13 +32,12 @@ use std::collections::BTreeMap;
 
 use eql_bindings::encryption::targets as eql_targets;
 use eql_bindings::encryption::EqlTargets;
-use eql_bindings::v4::json_tree::{JsonTree, JsonTreeDocument};
+use eql_bindings::v4::json_tree::{JsonTree, JsonTreeDocument, JsonTreeLeafQuery, JsonTreeQuery};
 use eql_bindings::Identifier;
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::{self, record, TargetError, ValueFrame};
-use stack_encrypt::json::{JsonDocument, JsonOptions, JsonQuery};
-use stack_encrypt::target::Layout;
-use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, NonEmpty};
+use stack_encrypt::json::{JsonDocument, JsonOptions, JsonPlaintext, JsonQuery};
+use stack_encrypt::{CipherText, DecryptFrom, Encrypt, KeysetCipher, Label, NonEmpty};
 
 /// The options the documents are sealed under on both paths.
 fn options() -> JsonOptions {
@@ -209,11 +217,7 @@ async fn the_data_plan_and_the_typed_layout_agree() {
             .unwrap();
         let data = stored(&sealed);
         let typed: JsonTreeDocument = keyset
-            .run(
-                Layout::<Value>::encryption::<common::Observed>(&JsonTree::new(options())),
-                &document,
-                column(),
-            )
+            .run(JsonTree::new(options()).encryption(), &document, column())
             .await
             .unwrap();
         assert_eq!(data.i, typed.i, "{text}: the column");
@@ -230,11 +234,10 @@ async fn the_data_plan_and_the_typed_layout_agree() {
         );
 
         // The typed path opens the data plan's document...
-        let opened: Value = cipher
-            .decrypt_as::<Value, JsonTreeDocument>(data, column().into())
+        let opened = JsonPlaintext::decrypt_from_with_context(data, &cipher, column())
             .await
             .unwrap();
-        assert_eq!(opened, document);
+        assert_eq!(opened.value(), &document);
         // ...and the data plan opens the typed path's.
         let record = CipherText::Map(vec![(
             "profile".to_owned(),
@@ -402,22 +405,8 @@ async fn text_that_is_not_a_document_is_refused_before_any_key() {
 }
 
 // =============================================================================
-// Operators: the data path's operands against the typed chain's
+// Operators: each operand's shape, and what it finds
 // =============================================================================
-
-/// A typed plan over the same column and options, as a Rust program
-/// queries a document: the engine's document target under the label
-/// `users/profile`, the same context as the EQL identifier.
-fn typed_plan() -> stack_encrypt::plan::ValuePlan<
-    Value,
-    stack_encrypt::plan::Laid<stack_encrypt::target::Json, stack_encrypt::json::JsonDocument>,
-> {
-    stack_encrypt::Plan::value::<Value>()
-        .context("users/profile")
-        .encrypt_with_layout(stack_encrypt::target::Json::new(options()))
-        .build()
-        .unwrap()
-}
 
 /// An operator's input as a binding writes it: an object of named inputs.
 fn input(entries: &[(&str, Value)]) -> ValueFrame {
@@ -435,7 +424,7 @@ fn input(entries: &[(&str, Value)]) -> ValueFrame {
 
 /// The data path's term for one operator and input on `profile`.
 async fn data_term(
-    keyset: &KeysetCipher<'_, common::Observed>,
+    keyset: &KeysetCipher<'_, common::RecordingKeySource>,
     plan: &record::Plan,
     operator: &str,
     entries: &[(&str, Value)],
@@ -529,47 +518,119 @@ fn a_document_field_answers_the_json_operators() {
     );
 }
 
-/// Every operand the data path derives is the typed chain's, in the EQL
-/// wire form, bound as the domain the target names for it. A containment
-/// or equality operand is the same selector set, in its own random order.
+/// A document sealed through the plan, as the engine's document: what an
+/// operand is decided against here, with no database.
+async fn sealed(
+    keyset: &KeysetCipher<'_, common::RecordingKeySource>,
+    plan: &record::Plan,
+    document: &Value,
+) -> JsonDocument {
+    let text = document.to_string();
+    let row = record::encrypt_with(
+        keyset,
+        frame(BTreeMap::from([("profile", text.as_str())])),
+        plan,
+        &EqlTargets,
+    )
+    .unwrap()
+    .await
+    .unwrap();
+    engine_document(&stored(&row))
+}
+
+/// The ordering term the document stores at a selector, as the SQL's
+/// `col -> selector` reads it: bytes, which order as the plaintexts do.
+fn stored_ordering_term(document: &JsonDocument, selector: &str) -> Vec<u8> {
+    use base64::Engine;
+    let selector: [u8; 16] = base64::engine::general_purpose::STANDARD
+        .decode(selector)
+        .unwrap()
+        .try_into()
+        .unwrap();
+    document
+        .entries()
+        .iter()
+        .find(|entry| entry.selector() == &selector)
+        .expect("the document has a node at the selector")
+        .ordering_term()
+        .expect("the path is ordered")
+        .to_vec()
+}
+
+/// Every operand the data path derives is in the EQL wire form: it reads
+/// as the type the SQL binds it as, and is bound as the domain the target
+/// names for it. Each finds the stored documents it should: a containment
+/// or equality operand as `jsonb @>` decides it over the stored selector
+/// sets, and an ordering operand as the SQL compares ordering terms.
 #[tokio::test]
-async fn every_operand_is_the_typed_chains() {
-    use stack_encrypt::op;
+async fn every_operand_is_in_the_eql_wire_form_and_finds_what_it_should() {
+    use base64::Engine;
     let (cipher, calls) = common::cipher().await;
     let keyset = cipher.default_keyset();
     let plan = plan();
-    let typed = typed_plan();
     let document = json!({"visits": [{"at": 3}], "name": "Alice"});
+    // Three stored documents: one that holds `document` and more, one that
+    // is part of it, and one that differs from it.
+    let more = sealed(
+        &keyset,
+        &plan,
+        &json!({"visits": [{"at": 3}, {"at": 1}], "name": "Alice", "age": 34}),
+    )
+    .await;
+    let part = sealed(&keyset, &plan, &json!({"name": "Alice"})).await;
+    let other = sealed(
+        &keyset,
+        &plan,
+        &json!({"visits": [{"at": 4}], "name": "Bob", "age": 52}),
+    )
+    .await;
+    calls.lock().unwrap().generate.clear();
 
-    for (operator, typed_op) in [("contains", true), ("contained_by", false)] {
-        let term = data_term(
-            &keyset,
-            &plan,
-            operator,
-            &[("json", json!(document.to_string()))],
-        )
-        .await;
-        let typed = if typed_op {
-            cipher
-                .query(op::Contains, &document)
-                .on(&typed)
-                .await
-                .unwrap()
-        } else {
-            cipher
-                .query(op::ContainedBy, &document)
-                .on(&typed)
-                .await
-                .unwrap()
-        };
+    // A needle reads as the EQL type, and writes back as the operand.
+    let needle = |term: &dynamic::QueryTerm| -> JsonQuery {
+        let operand = one(term);
+        let typed: JsonTreeQuery = serde_json::from_value(operand.clone()).unwrap();
         assert_eq!(
-            containment(one(&term)),
-            containment(serde_json::to_value(&typed).unwrap()),
-            "{operator}"
+            serde_json::to_value(&typed).unwrap(),
+            operand,
+            "{}",
+            term.operator()
         );
         assert_eq!(term.domain(), Some("eql_v4.query_json"));
         assert_eq!(term.encoding(), "eql");
-    }
+        containment(operand)
+    };
+
+    let contains = needle(
+        &data_term(
+            &keyset,
+            &plan,
+            "contains",
+            &[("json", json!(document.to_string()))],
+        )
+        .await,
+    );
+    assert!(contains.matches(more.selector_set()), "@> a superset");
+    assert!(!contains.matches(part.selector_set()), "@> a part");
+    assert!(!contains.matches(other.selector_set()), "@> another");
+
+    // `<@` sends the same needle, and the SQL reads it the other way: the
+    // stored document's selector set is inside the needle's.
+    let contained_by = needle(
+        &data_term(
+            &keyset,
+            &plan,
+            "contained_by",
+            &[("json", json!(document.to_string()))],
+        )
+        .await,
+    );
+    assert_eq!(contained_by, contains, "one needle for both directions");
+    let within =
+        |stored: &JsonDocument| contained_by.selector_set().contains(stored.selector_set());
+    assert!(within(&part), "<@ a part");
+    assert!(!within(&more), "<@ a superset");
+    assert!(!within(&other), "<@ another");
 
     let eq = data_term(
         &keyset,
@@ -578,16 +639,10 @@ async fn every_operand_is_the_typed_chains() {
         &[("path", json!("$.name")), ("json", json!("\"Alice\""))],
     )
     .await;
-    let typed_eq = cipher
-        .query(op::AtPath(op::Eq), &("$.name", "Alice"))
-        .on(&typed)
-        .await
-        .unwrap();
-    assert_eq!(
-        containment(one(&eq)),
-        containment(serde_json::to_value(&typed_eq).unwrap())
-    );
-    assert_eq!(eq.domain(), Some("eql_v4.query_json"));
+    let eq = needle(&eq);
+    assert!(eq.matches(more.selector_set()), "$.name == Alice");
+    assert!(eq.matches(part.selector_set()), "$.name == Alice");
+    assert!(!eq.matches(other.selector_set()), "$.name == Alice");
 
     let lt = data_term(
         &keyset,
@@ -596,13 +651,26 @@ async fn every_operand_is_the_typed_chains() {
         &[("path", json!("$.age")), ("json", json!("40"))],
     )
     .await;
-    let typed_lt = cipher
-        .query(op::AtPath(op::Lt), &("$.age", 40))
-        .on(&typed)
-        .await
-        .unwrap();
-    assert_eq!(one(&lt), serde_json::to_value(&typed_lt).unwrap());
     assert_eq!(lt.domain(), Some("eql_v4.query_json_leaf"));
+    assert_eq!(lt.encoding(), "eql");
+    // A bound reads as the EQL type: the path's selector, which `->` takes,
+    // and the value's ordering term.
+    let bound: JsonTreeLeafQuery = serde_json::from_value(one(&lt)).unwrap();
+    assert_eq!(serde_json::to_value(&bound).unwrap(), one(&lt));
+    let age = keyset
+        .json_selector(
+            &stack_encrypt::json::JsonPath::parse("$.age").unwrap(),
+            column(),
+        )
+        .await
+        .unwrap()
+        .to_string();
+    assert_eq!(bound.s.0.as_str(), age);
+    let forty = base64::engine::general_purpose::STANDARD
+        .decode(bound.op.0.as_str())
+        .unwrap();
+    assert!(stored_ordering_term(&more, &age) < forty, "34 < 40");
+    assert!(stored_ordering_term(&other, &age) > forty, "52 > 40");
 
     let between = data_term(
         &keyset,
@@ -727,8 +795,8 @@ fn a_json_operator_refuses_what_it_cannot_answer() {
         let error = check(operator, entries).unwrap_err();
         assert!(!format!("{error}").contains("secret"), "{error}");
         match error.reason() {
-            // An input refusal names the field; the engine's own (a term
-            // error) is the same refusal the typed chain makes.
+            // An input refusal names the field and a reason; the engine's
+            // own refusal is a term error, which carries no reason.
             Some(reason) => {
                 assert_eq!(error.field(), Some("profile"), "{error}");
                 reason.as_str()
@@ -846,7 +914,7 @@ fn extracted_row(doc: &stack_encrypt::json::JsonDocument, selector: &str) -> Opt
 }
 
 async fn open(
-    keyset: &KeysetCipher<'_, common::Observed>,
+    keyset: &KeysetCipher<'_, common::RecordingKeySource>,
     plan: &record::Plan,
     request: Value,
     groups: Vec<Vec<String>>,
@@ -1048,6 +1116,116 @@ async fn reads_open_against_the_request_that_prepared_them() {
 /// The stored document a sealed row holds for `profile`.
 fn stored_of(row: &stack_encrypt::StackCipherText) -> JsonTreeDocument {
     stored(row)
+}
+
+/// [`plan`], as a binding sends it for a caller that added a tenant as a
+/// scope and, for a seal or a read, a row ID as a binding. The scope
+/// extends the field's context, and `"bind"` carries the binding. A query
+/// takes no binding.
+fn scoped_plan(tenant: u64, row: Option<u64>) -> record::Plan {
+    let mut wire = json!({
+        "profile": {
+            "context": [["users", "profile"], tenant],
+            "type": "json",
+            "null": "sql",
+            "target": {
+                "name": "JsonSearch",
+                "options": {"ordered": ["$.age", "$.visits[*].at"]}
+            }
+        }
+    });
+    if let Some(row) = row {
+        wire["bind"] = json!([row]);
+    }
+    record::plan_with(
+        dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
+        &EqlTargets,
+    )
+    .unwrap()
+}
+
+/// A document sealed under a tenant and a row, through the resolver a
+/// language SDK installs. Its `i` is the column alone. A query under the
+/// tenant finds it, and a query under another tenant, or none, does not. A
+/// read finds its entry under the tenant, and opens it under the tenant and
+/// the row.
+#[tokio::test]
+async fn a_scoped_document_is_found_and_read_under_its_scope() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let sealing = scoped_plan(7, Some(9));
+    let text = json!({"name": "Alice", "age": 34, "visits": [{"at": 3}, {"at": 1}]}).to_string();
+    let sealed = record::encrypt_with(
+        &keyset,
+        frame(BTreeMap::from([("profile", text.as_str())])),
+        &sealing,
+        &EqlTargets,
+    )
+    .unwrap()
+    .await
+    .unwrap();
+    let stored = stored_of(&sealed);
+    assert_eq!(stored.i, *column().get(), "`i` is the column alone");
+    let document = engine_document(&stored);
+
+    // A containment query.
+    let alice = json!(json!({"name": "Alice"}).to_string());
+    let contains = |plan: record::Plan| {
+        let (keyset, alice) = (&keyset, alice.clone());
+        async move {
+            containment(one(&data_term(
+                keyset,
+                &plan,
+                "contains",
+                &[("json", alice)],
+            )
+            .await))
+        }
+    };
+    assert!(
+        contains(scoped_plan(7, None))
+            .await
+            .matches(document.selector_set()),
+        "the tenant's query finds the tenant's document"
+    );
+    for (other, whose) in [
+        (scoped_plan(8, None), "another tenant"),
+        (plan(), "no tenant"),
+    ] {
+        assert!(
+            !contains(other).await.matches(document.selector_set()),
+            "{whose}"
+        );
+    }
+
+    // A read: `->` by selector, then the entry opened.
+    let name = data_term(
+        &keyset,
+        &scoped_plan(7, None),
+        "selector",
+        &[("path", json!("$.name"))],
+    )
+    .await;
+    let dynamic::Operand::Text(name) = name.operand() else {
+        panic!("a selector is text")
+    };
+    let entry = extracted_row(&document, name).expect("the tenant's selector names an entry");
+    let request = || json!({"operation": "selector", "path": "$.name"});
+    let names = open(&keyset, &sealing, request(), vec![vec![entry.clone()]])
+        .await
+        .unwrap();
+    assert_eq!(names, [vec![json!("Alice")]]);
+    for (other, whose) in [
+        (scoped_plan(7, Some(10)), "another row"),
+        (scoped_plan(7, None), "no row"),
+        (scoped_plan(8, Some(9)), "another tenant"),
+        (plan(), "no tenant"),
+    ] {
+        let refused = open(&keyset, &other, request(), vec![vec![entry.clone()]]).await;
+        assert!(refused.is_err(), "{whose}");
+    }
 }
 
 /// A document is queried by a JSON operator, which the engine derives

@@ -141,10 +141,7 @@ async fn elements_are_authenticated_on_their_own_not_as_a_sequence() {
 async fn a_foreign_keyset_element_is_refused_before_retrieval() {
     let (cipher, _, retrieves) = common::counting_cipher().await;
     let keyset = cipher.default_keyset();
-    let other = cipher
-        .keyset(stack_encrypt::kms::IdentifiedBy::Uuid(uuid::Uuid::new_v4()))
-        .await
-        .unwrap();
+    let other = cipher.keyset(stack_encrypt::kms::IdentifiedBy::Uuid(uuid::Uuid::new_v4()));
     let column: Vec<Ciphertext> = vec![1i32, 2].encrypt_into(&keyset).await.unwrap();
     assert!(matches!(
         Vec::<i32>::decrypt_from(column, &other).await,
@@ -526,59 +523,6 @@ fn a_panicking_element_conversion_wipes_the_plaintext_recovered_before_it() {
     );
 }
 
-// --- The structural `Vec` declarations wipe what they recovered too --------
-
-/// The same column, declared the structural way (`DecryptInto`). So the test
-/// covers the structural `Vec<T>: DecryptInto<Vec<P>>` path.
-impl stack_encrypt::DecryptInto<Tracked> for TrackedCiphertext {
-    type Context = stack_encrypt::target::AeadContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Tracked, K> {
-        let wiped = self.wiped;
-        self.ciphertext
-            .decryption(OptionalContext::<ScalarContext>::supplied(context.into()))
-            .map(move |value: String| Tracked { value, wiped })
-    }
-}
-
-#[tokio::test]
-async fn a_late_element_failure_wipes_the_recovered_prefix_on_the_structural_path_too() {
-    let (cipher, _, retrieves) = common::counting_cipher().await;
-    let keyset = cipher.default_keyset();
-    let context = stack_encrypt::nonempty!("rows");
-    let first = keyset
-        .encrypt_with_context("recovered first".to_owned(), context)
-        .await
-        .unwrap();
-    // This element is sealed under another context. It fails
-    // authentication only once its key arrives, and by then the first
-    // element has been recovered.
-    let second = keyset
-        .encrypt_with_context("never recovered".to_owned(), "elsewhere")
-        .await
-        .unwrap();
-    let column = vec![
-        TrackedCiphertext::new(first),
-        TrackedCiphertext::new(second),
-    ];
-    let wiped: Vec<_> = column.iter().map(|t| t.wiped.clone()).collect();
-    // `Tracked::drop` fails the test if the recovered elements are dropped
-    // without being wiped. The structural path did that before it decrypted
-    // through the wiping collection.
-    let result = cipher
-        .decrypt_as::<Vec<Tracked>, _>(column, stack_encrypt::target::AeadContext::from(context))
-        .await;
-    assert!(matches!(result, Err(Error::Aead)), "{:?}", result.err());
-    assert!(
-        wiped[0].load(Ordering::SeqCst),
-        "the recovered prefix is wiped"
-    );
-    assert!(
-        !wiped[1].load(Ordering::SeqCst),
-        "nothing was recovered to wipe"
-    );
-    assert_eq!(retrieves.load(Ordering::SeqCst), 1, "both keys in one call");
-}
-
 /// Seals a `Flagged`, and panics while declaring the element whose
 /// plaintext is `"panics"`.
 // The declaration panics before a ciphertext exists, so the ciphertext is
@@ -619,16 +563,21 @@ async fn a_panicking_element_declaration_wipes_the_elements_after_it() {
     );
 }
 
-// --- A structural record with a column field wipes its recovered prefix ----
+// --- A record with a column field wipes its recovered prefix ---------------
 
+// What a hand-written target needs to be a field of a derived record: it
+// says that it holds ciphertext, and it opens under the field's context.
 impl stack_encrypt::target::Decryptable for TrackedCiphertext {
     const DECRYPTABLE: bool = true;
 }
-impl<Ctx: Into<stack_encrypt::target::AeadContext>>
-    stack_encrypt::target::DecryptField<Tracked, Ctx> for TrackedCiphertext
+impl<Ctx: Into<ScalarContext>> stack_encrypt::target::DecryptField<Tracked, Ctx>
+    for TrackedCiphertext
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<Tracked, K>> {
-        Some(stack_encrypt::DecryptInto::decryption(self, context.into()))
+        Some(DecryptSource::decryption(
+            self,
+            OptionalContext::<ScalarContext>::supplied(context.into()),
+        ))
     }
 }
 
@@ -637,9 +586,14 @@ struct Rows {
     #[allow(dead_code)]
     items: Vec<Tracked>,
 }
-/// A column as a field. The structural `Vec<T>: DecryptField<Vec<P>, _>` impl
-/// decrypts `items`.
-#[derive(stack_encrypt::DecryptInto)]
+impl zeroize::Zeroize for Rows {
+    fn zeroize(&mut self) {
+        self.items.zeroize();
+    }
+}
+/// A column as a field. The `Vec<T>: DecryptField<Vec<P>, _>` impl decrypts
+/// `items`.
+#[derive(DecryptSource)]
 #[stash(struct = Rows, scope = "rows")]
 struct StoredRows {
     items: Vec<TrackedCiphertext>,
@@ -669,9 +623,7 @@ async fn a_late_element_failure_in_a_column_field_wipes_the_recovered_prefix() {
     let wiped: Vec<_> = stored.items.iter().map(|t| t.wiped.clone()).collect();
     // `Tracked::drop` fails the test if the recovered elements are dropped
     // without being wiped.
-    let result = cipher
-        .decrypt_as::<Rows, _>(stored, stack_encrypt::target::DeclaredContext::default())
-        .await;
+    let result = Rows::decrypt_from(stored, &cipher).await;
     assert!(matches!(result, Err(Error::Aead)), "{:?}", result.err());
     assert!(
         wiped[0].load(Ordering::SeqCst),

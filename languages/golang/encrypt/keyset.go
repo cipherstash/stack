@@ -3,6 +3,8 @@ package encrypt
 import (
 	"encoding/hex"
 	"fmt"
+
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
 // KeysetSelector names the keyset a call binds to, as Rust's IdentifiedBy
@@ -76,13 +78,47 @@ type anyKeyset struct{}
 
 func (anyKeyset) selector() map[string]any { return map[string]any{"any": map[string]any{}} }
 
-// options renders the per-call options object the guest parses: the keyset
-// selector and, on an open with a context named, the context the guest
-// checks each record's context field against.
-func options(sel KeysetSelector, context string) map[string]any {
-	opts := map[string]any{"keyset": sel.selector()}
-	if context != "" {
-		opts["context"] = context
+// callOptions is what one guest call takes beside its inputs: the options
+// object the guest parses. Every call that touches a keyset sends one.
+type callOptions struct {
+	// keyset is the keyset the call binds to.
+	keyset KeysetSelector
+	// context is the context the guest checks each record's context field
+	// against, on an open; "" names none.
+	context string
+	// audit is the audit metadata the guest sends with the call's data-key
+	// requests; nil sends none. The guest refuses it on a call that derives
+	// a term, so those calls leave it nil: see [Cipher.termCall].
+	audit auditFacts
+}
+
+// wire renders the options object as the guest reads it. A key with nothing
+// to say is left out.
+func (o callOptions) wire() map[string]any {
+	opts := map[string]any{"keyset": o.keyset.selector()}
+	if o.context != "" {
+		opts["context"] = o.context
+	}
+	if o.audit != nil {
+		opts["audit"] = o.audit()
 	}
 	return opts
+}
+
+// marshal is the options object in the transport codec.
+func (o callOptions) marshal() ([]byte, error) {
+	return vcffi.Marshal(o.wire())
+}
+
+// dataKeyCall is the options of a call through this cipher that asks
+// ZeroKMS for data keys: its keyset, and its audit metadata.
+func (cph *Cipher) dataKeyCall() callOptions {
+	return callOptions{keyset: cph.keyset, audit: cph.audit}
+}
+
+// termCall is the options of a call through this cipher that derives a
+// term. A term is derived from the index key of the keyset, so the call
+// asks ZeroKMS for no data key, and sends no audit metadata.
+func (cph *Cipher) termCall() callOptions {
+	return callOptions{keyset: cph.keyset}
 }

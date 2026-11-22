@@ -26,7 +26,7 @@ import (
 // The query fixture holds the guest's query exports to the Rust results:
 // packages/stack-encrypt/tests/fixtures/query_operators.json records, for one
 // declaration, the term each query by operator derives (each equal to the
-// typed Rust query chain's), a page of verified values and a few fetch
+// typed Rust query's), a page of verified values and a few fetch
 // limits. These tests derive, verify and size the same queries through the
 // deterministic test build of the guest and compare. A missing build skips
 // ordinary tests, but fails when STACK_CONFORMANCE_REQUIRED=1.

@@ -432,7 +432,10 @@ fn query(kind: Ordered) -> impl Strategy<Value = Query> {
             object(prop::collection::vec(object(leaf(), 1..2), 1..2).prop_map(Value::Array), 1..2),
         ]
         .prop_map(move |v| Query::Contains(kind.fix(v))),
-        1 => (prop::sample::select(vec!["$.a", "$.tags[0]", "$.list[*].b"]),
+        // Equality at a path takes no position: its operand is a selector
+        // set, which reads a position as the wildcard, so the query is
+        // refused rather than answered for whichever element is found.
+        1 => (prop::sample::select(vec!["$.a", "$.tags[*]", "$.list[*].b"]),
               prop_oneof![(-3i64..6).prop_map(Value::from), prop::sample::select(vec!["x", "ab"]).prop_map(Value::from)])
             .prop_map(|(p, v)| Query::Equals(p.into(), v)),
         1 => kind.query(),

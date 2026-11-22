@@ -13,6 +13,81 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Added
+
+- **Audit metadata for the ZeroKMS audit log** (#1067). ZeroKMS logs every
+  data-key request with the identity that made it. `encrypt.AuditMetadata`
+  adds facts about the call to that log, such as its purpose or a request
+  ID. `cipher.Audit(metadata)` returns a cipher that sends the facts with
+  every data-key request. `client.Audit(metadata)` returns a `Decrypter`
+  that does the same for rows from any keyset.
+  - Build the metadata with `encrypt.NewAuditMetadata()` and one method for
+    each fact: `Text`, `Bool`, `Int`, `Int64`, `Float`, `Time`, `Null`,
+    `TextList`, `List`, and `Map`. The parameter type of each method is the
+    type of its value, so the compiler refuses a value of another type.
+    There is no method for a `[]byte` or a `uint64`: send each one as text.
+  - Every `Encrypt` and `Decrypt` through the cipher sends the facts. So
+    does every read of an encrypted JSON document. A query asks ZeroKMS for
+    no data key, so a query sends none. Refused metadata fails a query too.
+  - `Audit` adds to the facts the cipher has. A fact replaces one that has
+    the same key.
+  - A time is sent as RFC 3339 text in UTC. A time outside the years 0 to
+    9999 is refused with `ErrEncoding`. So is a key or a text that is not
+    valid UTF-8.
+  - Printing an `AuditMetadata` shows its keys, quoted, and never a value.
+  - ZeroKMS does not verify the facts, and a decrypt does not need them.
+    ZeroKMS writes them to its logs. Do not send plaintext, anything
+    derived from plaintext, or secrets.
+
+### Breaking
+
+- **Dates and timestamps must be in years -9999 to 9999.** The range was
+  years -262143 to 262142. The engine now uses vitaminc 0.10, whose range
+  is the `jiff` crate's. Every language's binding uses the same range, so
+  every binding can decrypt a value any binding encrypts. The exact limits:
+  - an `encrypt.Date` from `-9999-01-01` to `9999-12-31`;
+  - a `time.Time` from `-009999-01-02T01:59:59Z` to
+    `9999-12-30T22:00:00.999999999Z`.
+
+  A date or instant outside the range is refused with `ErrEncoding`,
+  naming the field, when it is encrypted or queried. The stored format is
+  unchanged: a value in range has the same ciphertext and the same terms as
+  before.
+
+  A row stored earlier with a date or instant outside the range still
+  passes authentication, but no longer decrypts. It is reported as
+  `ErrAuthentication`, the error for a damaged ciphertext, because the
+  engine reads its value as malformed. cipherstash/vitaminc#630 tracks a
+  clearer error. PostgreSQL's `date` and `timestamptz` allow years after
+  9999. If you might have stored one, check before you upgrade. Decrypt
+  the column with the release you run now, or check its plaintext source.
+
+- **An order index on bytes is refused** (#1577). A `[]byte` field tagged
+  `index=ore` or `index=ope` is now a field error from `stashgen`. A plan
+  built by hand with an `ore`, `ope` or `ore_block` output on a `bytes`
+  field is refused by the guest (`index_not_admitted`) before any key is
+  requested. No ordering operator
+  is answered over bytes, so the field stored an order term that anyone
+  who read the column could compare and that no query could use.
+  `stashgen`'s notice for an index no generated method queries is gone
+  with the case it described.
+  - Code that rc.6 or earlier generated for such a field still compiles,
+    but the guest refuses its plan when it is parsed. Until the tag is
+    edited and `stashgen` is run again, `Encrypt` and `Decrypt` of that
+    record type fail with `index_not_admitted`, as does its bytes field's
+    `Field.Encrypt`. That includes rows that were stored correctly.
+  - To upgrade, remove the index from the tag and generate again. Once the
+    code is generated again, rows stored with the term still open: opening
+    ignores a stored term the plan does not declare. The stored terms stay
+    in the database until the row is written again or the column is
+    dropped.
+
+### Changed
+
+- `vcffi` and `vcvalue` move to vitaminc `f1fc9ae74`, the commit vitaminc
+  0.10.0 was released from. The host now checks the same date and
+  timestamp range as the guests.
+
 ## [0.1.0-rc.6] - 2026-11-18
 
 ### Upgrading from rc.5
@@ -219,6 +294,32 @@ sends queries:
   frees them** (#1643). The copies were in the match index's lowercasing,
   the decoding of JSON paths and predicates, and the opening of a sealed
   JSON document. Stored values and query terms do not change.
+
+### Changed
+
+- **An `encrypt_into` field takes a scope and a binding.** A cipher with a
+  scope or a binding refused a struct with a field that names an EQL type,
+  as `ErrEncoding`. It now seals the field as it seals any other. The scope
+  and the binding come after the column in the field's context: the search
+  terms derive under the column and the scope, and the value is sealed
+  under the binding too. The EQL value stores the table and the column
+  alone, in `i`. Open it through a cipher with the same scope and binding,
+  and query it through a cipher with the same scope. `Plan.Validate` takes
+  a plan with `Extension` or `Bind` and a target field. Values stored
+  through a cipher with no scope and no binding do not change.
+  - A `JsonSearch` document is found and read in the same way. A query,
+    and a read prepared with `Selector` or `Subtree`, derive under the
+    column and the scope.
+  - `Cipher.JSONOpen` opens a read's rows through a cipher with a binding,
+    where it refused one. Every row of one call opens under that binding.
+  - `Selector` and `Subtree` take a cipher with a binding, where they
+    refused one as `ErrEncoding`. The selector or the tokens derive under
+    the cipher's scopes alone, so they are the ones a cipher with the same
+    scopes and no binding derives. The entries open under the scopes and
+    the binding. So a read through a cipher with a binding reads that
+    binding's row. `Cipher.QueryTerm` takes a binding for the `selector`
+    and `subtree` operators for this. A query still refuses a binding,
+    and so do `Children` and `ChildCount`, whose tokens open nothing.
 
 ## [0.1.0-rc.4] - 2026-11-13
 

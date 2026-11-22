@@ -121,11 +121,11 @@ func TestQueryRefusalConformance(t *testing.T) {
 				switch c.Typed.Refusal {
 				case "none":
 					if c.ExpectedError != nil {
-						t.Fatal("the typed chain accepts only what the binding accepts")
+						t.Fatal("the typed query accepts only what the binding accepts")
 					}
 				case "before_keyset", "after_keyset":
 					if c.ExpectedError == nil || c.ExpectedError.Class != "term" {
-						t.Fatal("the typed chain's stage is recorded for term refusals alone")
+						t.Fatal("the typed query's stage is recorded for term refusals alone")
 					}
 				default:
 					t.Fatalf("unknown typed stage %q", c.Typed.Refusal)

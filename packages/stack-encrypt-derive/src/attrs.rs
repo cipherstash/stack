@@ -1,6 +1,7 @@
 //! Parsing of the `#[stash(...)]` container and field attributes.
 
-use syn::{Attribute, Expr, Ident, LitStr, Member, Path, Result, Type};
+use stack_encrypt_jsonpath::JsonPath;
+use syn::{Attribute, Expr, Ident, LitBool, LitStr, Member, Path, Result, Token, Type};
 
 /// Container-level options, from `#[stash(...)]` on the struct itself.
 pub(crate) struct ContainerAttrs {
@@ -194,14 +195,14 @@ impl ContainerAttrs {
                     let plaintext: Type = meta.value()?.parse()?;
                     // The type is spliced into the impl header as
                     // written, where a reference has no lifetime to
-                    // name. The generic impl (no `plaintext` at all)
-                    // already accepts `&str` and friends.
+                    // name. A plaintext is also passed by value and wiped,
+                    // which a reference cannot be.
                     if let Type::Reference(_) = plaintext {
                         return Err(syn::Error::new_spanned(
                             &plaintext,
                             "`plaintext` must be an owned type: a reference plaintext has no \
-                             lifetime the generated impl can name. Omit `plaintext` for an impl \
-                             generic over the source, which accepts references too.",
+                             lifetime the generated impl can name, and a plaintext is passed by \
+                             value and wiped. Name the owned type, such as `String` for `&str`.",
                         ));
                     }
                     if plaintexts.contains(&plaintext) {
@@ -321,8 +322,7 @@ pub(crate) struct FieldAttrs {
     pub(crate) context_field: bool,
     /// `#[stash(identity = "...")]`: with `struct = ..`, the label segment
     /// this field is keyed under, in place of the plaintext field's name:
-    /// the field is derived under `("<scope>", "<identity>")`. The plan
-    /// builder's `.identity(segment)`.
+    /// the field is derived under `("<scope>", "<identity>")`.
     pub(crate) identity: Option<LitStr>,
     /// `#[stash(from = field)]` / `#[stash(from = 0)]`: with `struct = ..`,
     /// derive this field from a plaintext field whose name differs from its
@@ -338,11 +338,222 @@ pub(crate) struct FieldAttrs {
     /// clear, not encrypted, and moved back when the record is decrypted.
     pub(crate) passthrough: bool,
     /// `#[stash(query = String)]`: with `struct = ..`, the type a query of
-    /// this field takes, so its marker's methods take that type alone. The
+    /// this field takes, so its field reference's methods take that type alone. The
     /// derive checks it against the plaintext field, which is that type or
-    /// an `Option` of it. On a field whose marker has no operator method
+    /// an `Option` of it. On a field whose field reference has no operator method
     /// (a record field, a ciphertext alone), only the check applies.
     pub(crate) query: Option<Type>,
+    /// `#[stash(json(ordered = { "$.age": u32 }, sealed_root = false))]`:
+    /// with `struct = ..`, the JSON index's options of a field that stores a
+    /// document. The field is sealed under them, its field reference's JSON
+    /// queries derive under them, and each ordered path gets a typed
+    /// accessor.
+    pub(crate) json: Option<JsonAttr>,
+}
+
+/// The JSON index's options a field's `json(..)` names.
+#[cfg_attr(test, derive(Debug))]
+pub(crate) struct JsonAttr {
+    /// Where `json` is written, for errors.
+    pub(crate) span: proc_macro2::Span,
+    /// `ordered = { "$.age": u32, .. }`: the paths whose leaves carry an
+    /// ordering term, each with the type of the values at it, in the order
+    /// written. Each path is parsed here, with the engine's grammar.
+    pub(crate) ordered: Vec<TypedPath>,
+    /// `paths = { "$.name": String, .. }`: paths given a type and no
+    /// ordering term, in the order written: each gets a typed accessor
+    /// under `at()` for equality, and adds nothing to the field's options.
+    pub(crate) paths: Vec<TypedPath>,
+    /// `names = { "first-name": first_name, .. }`: the word a JSON key
+    /// gives an accessor name, for a key the naming rule cannot turn into
+    /// one, or whose word another key gives too.
+    pub(crate) names: Vec<(LitStr, Ident)>,
+    /// `sealed_root = false`: turn off the sealed root, which is on by
+    /// default.
+    pub(crate) sealed_root: Option<LitBool>,
+}
+
+/// One entry of `ordered = { .. }` or `paths = { .. }`: a path and the type
+/// its values hold.
+#[cfg_attr(test, derive(Debug))]
+pub(crate) struct TypedPath {
+    /// The path as written, which the field's options are built from.
+    pub(crate) text: LitStr,
+    /// The path, parsed.
+    pub(crate) path: JsonPath,
+    /// The type of the values at the path.
+    pub(crate) ty: Type,
+    /// Whether the entry is under `ordered`: its leaves carry an ordering
+    /// term, and its accessor has the orderings.
+    pub(crate) ordered: bool,
+}
+
+/// What `ordered` is now, for a field that still writes the list form.
+const ORDERED_IS_A_MAP: &str = "`ordered` maps each path to the type of the values at it: \
+     `ordered = { \"$.age\": u32, \"$.visits[*].place\": String }`. The type is a number \
+     type or `String`, and gives the path a typed accessor under `at()`";
+
+impl JsonAttr {
+    fn parse(meta: &syn::meta::ParseNestedMeta<'_>) -> Result<Self> {
+        let mut json = Self {
+            span: syn::spanned::Spanned::span(&meta.path),
+            ordered: Vec::new(),
+            paths: Vec::new(),
+            names: Vec::new(),
+            sealed_root: None,
+        };
+        let mut ordered = false;
+        let mut paths = false;
+        let mut names = false;
+        meta.parse_nested_meta(|inner| {
+            if inner.path.is_ident("ordered") {
+                if ordered {
+                    return Err(inner.error("`ordered` is given twice"));
+                }
+                ordered = true;
+                let value = inner.value()?;
+                if value.peek(syn::token::Bracket) {
+                    return Err(value.error(ORDERED_IS_A_MAP));
+                }
+                let content;
+                syn::braced!(content in value);
+                json.ordered = parse_typed_paths(&content, true, &json.paths)?;
+                return Ok(());
+            }
+            if inner.path.is_ident("paths") {
+                if paths {
+                    return Err(inner.error("`paths` is given twice"));
+                }
+                paths = true;
+                let value = inner.value()?;
+                let content;
+                syn::braced!(content in value);
+                json.paths = parse_typed_paths(&content, false, &json.ordered)?;
+                return Ok(());
+            }
+            if inner.path.is_ident("names") {
+                if names {
+                    return Err(inner.error("`names` is given twice"));
+                }
+                names = true;
+                let value = inner.value()?;
+                let content;
+                syn::braced!(content in value);
+                json.names = parse_names(&content)?;
+                return Ok(());
+            }
+            if inner.path.is_ident("sealed_root") {
+                if json.sealed_root.is_some() {
+                    return Err(inner.error("`sealed_root` is given twice"));
+                }
+                json.sealed_root = Some(inner.value()?.parse()?);
+                return Ok(());
+            }
+            Err(inner.error(
+                "unsupported `json(..)` option; expected `ordered = { \"$.path\": Type, .. }`, \
+                 `paths = { \"$.path\": Type, .. }`, `names = { \"key\": name, .. }` or \
+                 `sealed_root = false`",
+            ))
+        })?;
+        Ok(json)
+    }
+}
+
+/// The entries of `ordered = { .. }` (`ordered`) or `paths = { .. }`:
+/// `"path": Type`, comma separated. Each path is parsed with the engine's
+/// grammar. A path that does not parse, names an array position, repeats
+/// an earlier path, or is one of `other`, the entries of the other key, is
+/// refused at its literal.
+fn parse_typed_paths(
+    content: syn::parse::ParseStream<'_>,
+    ordered: bool,
+    other: &[TypedPath],
+) -> Result<Vec<TypedPath>> {
+    let key = if ordered { "ordered" } else { "paths" };
+    let other_key = if ordered { "paths" } else { "ordered" };
+    let mut entries: Vec<TypedPath> = Vec::new();
+    while !content.is_empty() {
+        let text: LitStr = content.parse()?;
+        let _: Token![:] = content.parse()?;
+        let ty: Type = content.parse()?;
+        let path = JsonPath::parse(&text.value()).map_err(|error| {
+            syn::Error::new(
+                text.span(),
+                format!(
+                    "{error}. A path starts with `$` and continues with `.name`, `[\"name\"]` or \
+                     `[*]` steps, as in `$.age` or `$.visits[*].place`"
+                ),
+            )
+        })?;
+        if path.names_a_position() {
+            return Err(syn::Error::new(
+                text.span(),
+                if ordered {
+                    "an ordered path names no array position (`[2]`): an ordering compares the \
+                     value its selector reads, and a selector reads every element of an array \
+                     alike. Write `[*]` to order every element"
+                } else {
+                    "a declared path names no array position (`[2]`): a query reads every \
+                     element of an array alike. Write `[*]` for every element"
+                },
+            ));
+        }
+        if let Some(earlier) = entries.iter().find(|entry| entry.path == path) {
+            let mut error = syn::Error::new(
+                text.span(),
+                format!("this path is given twice in `{key}`; each path is declared once"),
+            );
+            error.combine(syn::Error::new(earlier.text.span(), "given here first"));
+            return Err(error);
+        }
+        if let Some(earlier) = other.iter().find(|entry| entry.path == path) {
+            let mut error = syn::Error::new(
+                text.span(),
+                format!(
+                    "this path is given in `{other_key}` too; declare a path once: under \
+                     `ordered` to compare it, or under `paths` for equality alone"
+                ),
+            );
+            error.combine(syn::Error::new(earlier.text.span(), "given here first"));
+            return Err(error);
+        }
+        entries.push(TypedPath {
+            text,
+            path,
+            ty,
+            ordered,
+        });
+        if content.is_empty() {
+            break;
+        }
+        let _: Token![,] = content.parse()?;
+    }
+    Ok(entries)
+}
+
+/// The entries of `names = { .. }`: `"key": name`, comma separated.
+fn parse_names(content: syn::parse::ParseStream<'_>) -> Result<Vec<(LitStr, Ident)>> {
+    let mut names: Vec<(LitStr, Ident)> = Vec::new();
+    while !content.is_empty() {
+        let key: LitStr = content.parse()?;
+        let _: Token![:] = content.parse()?;
+        let name: Ident = content.parse()?;
+        if names
+            .iter()
+            .any(|(earlier, _)| earlier.value() == key.value())
+        {
+            return Err(syn::Error::new(
+                key.span(),
+                "this key is given twice in `names`; a key has one name",
+            ));
+        }
+        names.push((key, name));
+        if content.is_empty() {
+            break;
+        }
+        let _: Token![,] = content.parse()?;
+    }
+    Ok(names)
 }
 
 impl FieldAttrs {
@@ -359,9 +570,8 @@ impl FieldAttrs {
                     return Ok(());
                 }
                 // Removed rather than unknown, so the message can say what
-                // to write instead. A plan has exactly one context source,
-                // and every field sits under it: a field sealed under a
-                // literal of its own has no plan form.
+                // to write instead. A record has exactly one context source,
+                // and every field sits under it.
                 if meta.path.is_ident("context") {
                     return Err(meta.error(
                         "a field-level `context = \"..\"` is no longer accepted (0.2.0 accepted \
@@ -370,9 +580,9 @@ impl FieldAttrs {
                          record's context, so key it under another segment with \
                          `identity = \"..\"`. Either replacement is a different context from the \
                          old literal: data written with the literal does not decrypt under it and \
-                         its terms do not match, so re-encrypt that data. Writing one value under \
-                         two contexts (a dual write) is a fields plan that picks the same source \
-                         twice, not a derive",
+                         its terms do not match, so re-encrypt that data. To write one value \
+                         under two contexts (a dual write), encrypt it twice, once under each \
+                         context",
                     ));
                 }
                 // Each of these is singular by meaning, so a repeat is a
@@ -423,6 +633,15 @@ impl FieldAttrs {
                     parsed.passthrough = true;
                     return Ok(());
                 }
+                if meta.path.is_ident("json") {
+                    if parsed.json.is_some() {
+                        return Err(meta.error(
+                            "`json(..)` is given twice; a field's JSON options are one list",
+                        ));
+                    }
+                    parsed.json = Some(JsonAttr::parse(&meta)?);
+                    return Ok(());
+                }
                 if meta.path.is_ident("query") {
                     if parsed.query.is_some() {
                         return Err(
@@ -447,7 +666,7 @@ impl FieldAttrs {
                 Err(meta.error(
                     "unsupported field attribute; expected `context_field`, \
                      `identity = \"...\"`, `from = field`, `default`, `default = expr`, \
-                     `decrypt`, `passthrough` or `query = Type`",
+                     `decrypt`, `passthrough`, `query = Type` or `json(..)`",
                 ))
             })?;
         }

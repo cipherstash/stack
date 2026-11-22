@@ -18,7 +18,7 @@ import (
 // so two instants in the same microsecond match each other.
 
 // Date is a calendar date, with no time of day and no time zone: Year, Month
-// and Day, in the proleptic Gregorian calendar, years -262143 to 262142.
+// and Day, in the proleptic Gregorian calendar, years -9999 to 9999.
 // Validate reports a date that does not exist (February 30).
 //
 // The zero Date (year 0, month 0, day 0) is not a date: a Date field must be

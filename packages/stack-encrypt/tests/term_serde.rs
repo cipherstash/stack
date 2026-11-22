@@ -4,10 +4,10 @@
 
 use serde_json::{json, Value};
 use stack_encrypt::nonempty;
-use stack_encrypt::sem::{OpeTerm, Orderable, OreBlockTerm, OreTerm, TermBytesError};
+use stack_encrypt::sem::{OpeTerm, OreBlockTerm, OreTerm, TermBytesError};
+use stack_encrypt::Orderable;
 
-use stack_encrypt::target::legacy::EncryptInto;
-use stack_encrypt::{KeysetCipher, StackCipher};
+use stack_encrypt::{EncryptInto, KeysetCipher, StackCipher};
 use stack_kms::FakeDataKeySource;
 
 async fn cipher() -> StackCipher<FakeDataKeySource> {
@@ -22,7 +22,7 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-async fn block<T: Orderable>(
+async fn block<T: Orderable + 'static>(
     keyset: &KeysetCipher<'_, FakeDataKeySource>,
     value: T,
 ) -> OreBlockTerm<T> {

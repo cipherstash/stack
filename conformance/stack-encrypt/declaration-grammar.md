@@ -149,7 +149,8 @@ With `bind`:
   part, a list inside the list, is refused (`bind`).
 - Every field's stored context is its label, extended, then the parts in
   order. No query context includes them, so a query on the plan is refused
-  (`bind_in_query`). No target field is admitted.
+  (`bind_in_query`). A target field is bound as any other field is: its
+  EQL value stores the label's column, and not the parts.
 - The key is reserved, like `context_field`: a field named `bind` is refused
   (`bind`).
 
@@ -175,8 +176,13 @@ select a different leaf encoding.
 | Other integer widths | Admitted | Refused | Admitted |
 | float32, float64, decimal, date, timestamp | Admitted | Refused | Admitted |
 | string | Admitted | Admitted | Admitted |
-| bytes | Admitted | Refused | Admitted |
+| bytes | Admitted | Refused | Refused |
 | array, object, json | Refused | Refused | Refused |
+
+An index is admitted only over a kind one of its operators answers. Bytes
+have no order term: no ordering operator compares them, so a term would be
+stored and never queried. The order indexes are refused on bytes as
+`index_not_admitted`.
 
 The corpus explicitly tests all 21 kinds against all five scalar indexes.
 `array` and `object` may still be sealed without indexes. A `json` field requires
@@ -223,7 +229,9 @@ must never silently turn into a ciphertext-only field.
 
 For a resolver that supplies EQL types, additional existing rules apply: the
 target must be producible, its column label has exactly two segments, and the
-plan has neither extensions nor a context field. An explicit kind matches the
+plan has no context field. Extensions and `bind` parts come after a target
+field's label, as they do for any other field; the EQL value stores the
+label's column alone. An explicit kind matches the
 target's plaintext kind; otherwise that kind is inferred. Only a document target
 accepts JSON options. Sealed-null rules include the target's own indexes.
 Those resolver-dependent outcomes and normalization need an EQL profile; this

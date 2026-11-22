@@ -1,7 +1,8 @@
 //! EQL types as plan field targets, reached by name: the dispatch in
-//! `eql_bindings::encryption::targets` must run the same plan the typed
-//! `encrypt_as::<TextEq>` call runs, refuse what the table says it cannot
-//! produce, and the table must be the catalog.
+//! `eql_bindings::encryption::targets` must run the same encryption the
+//! typed call runs (`value.encrypt_into_with_context::<TextEq, _>(..)`),
+//! refuse what the table says it cannot produce, and the table must be the
+//! catalog.
 
 mod common;
 
@@ -10,7 +11,7 @@ use eql_bindings::v4::text::{TextEq, TextEqQuery};
 use eql_bindings::{v4, Identifier};
 use eql_domains::{Term, CATALOG};
 use stack_encrypt::dynamic::{ValueFrame, ValueKind};
-use stack_encrypt::{Decrypt, Encrypt, Label};
+use stack_encrypt::{Decrypt, DecryptFrom, Encrypt, EncryptInto, Label};
 
 /// A Rust value as the engine's runtime plaintext: its frame.
 fn frame<T: Encrypt>(value: T) -> ValueFrame {
@@ -49,12 +50,12 @@ fn refused<T>(result: Result<T, TargetError>) -> TargetError {
 mod given_text_eq {
     use super::*;
 
-    /// The dispatch and the typed call are the same plan: same identifier,
-    /// same equality term, and each side's value opens through the other.
-    /// The ciphertexts differ because every write seals under a fresh key,
-    /// so byte identity is asserted on everything but `c`.
+    /// The dispatch and the typed call run the same encryption: same
+    /// identifier, same equality term, and each side's value opens through
+    /// the other. The ciphertexts differ because every write seals under a
+    /// fresh key, so byte identity is asserted on everything but `c`.
     #[tokio::test]
-    async fn produces_what_encrypt_as_produces() {
+    async fn produces_what_the_typed_call_produces() {
         let (cipher, calls) = common::cipher().await;
         let keyset = cipher.default_keyset();
         for value in ["alice@example.com", "", "雪☃", "cafe\u{301}"] {
@@ -63,8 +64,9 @@ mod given_text_eq {
                 .await
                 .unwrap();
             let by_name: TextEq = serde_json::from_slice(&by_name).unwrap();
-            let typed: TextEq = keyset
-                .encrypt_as(&value.to_owned(), column())
+            let typed: TextEq = value
+                .to_owned()
+                .encrypt_into_with_context(&keyset, column())
                 .await
                 .unwrap();
             assert_eq!(by_name.v, typed.v, "{value:?}: same envelope version");
@@ -78,10 +80,10 @@ mod given_text_eq {
                 "{value:?}: each write seals under a fresh key"
             );
 
-            let typed_opened: String = cipher
-                .decrypt_as(by_name.clone(), column().into())
-                .await
-                .unwrap();
+            let typed_opened =
+                String::decrypt_from_with_context(by_name.clone(), &cipher, column())
+                    .await
+                    .unwrap();
             assert_eq!(
                 typed_opened, value,
                 "{value:?}: the typed path opens the named value"
@@ -150,8 +152,8 @@ mod given_text_eq {
         use stack_kms::IdentifiedBy;
         let (cipher, calls) = common::cipher().await;
         let named = |n: &str| IdentifiedBy::Name(n.to_string().into());
-        let acme = cipher.keyset(named("acme")).await.unwrap();
-        let globex = cipher.keyset(named("globex")).await.unwrap();
+        let acme = cipher.keyset(named("acme"));
+        let globex = cipher.keyset(named("globex"));
         let stored = targets::encrypt("TextEq", &acme, &email(), text("secret"))
             .unwrap()
             .await
@@ -194,8 +196,9 @@ mod given_text_eq {
         .unwrap()
         .await
         .unwrap();
-        let typed: TextEqQuery = keyset
-            .encrypt_as(&"alice@example.com".to_owned(), column())
+        let typed: TextEqQuery = "alice@example.com"
+            .to_owned()
+            .encrypt_into_with_context(&keyset, column())
             .await
             .unwrap();
         assert_eq!(
@@ -782,8 +785,9 @@ mod the_cross_language_fixture {
             committed, rendered,
             "the committed fixture is what the dispatch derives today"
         );
-        let typed: TextEqQuery = keyset
-            .encrypt_as(&PLAINTEXT.to_owned(), column())
+        let typed: TextEqQuery = PLAINTEXT
+            .to_owned()
+            .encrypt_into_with_context(&keyset, column())
             .await
             .unwrap();
         assert_eq!(

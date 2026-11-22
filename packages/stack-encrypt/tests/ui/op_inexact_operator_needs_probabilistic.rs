@@ -3,7 +3,7 @@
 //! it.
 use stack_encrypt::op;
 use stack_encrypt::sem::EqualityTerm;
-use stack_encrypt::target::{CallerContext, ConsumeSource, Encryption, Index, IndexSpec};
+use stack_encrypt::target::{CallerContext, WipeSource, Encryption, Index, IndexSpec};
 use stack_encrypt::Equality;
 
 struct Shortcut;
@@ -13,7 +13,7 @@ impl Index<String> for Shortcut {
     fn spec(&self) -> IndexSpec {
         IndexSpec::Equality
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, String>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, String>>(
         &self,
     ) -> Encryption<'s, String, EqualityTerm, K, CallerContext, M> {
         Index::<String>::operation(&Equality)

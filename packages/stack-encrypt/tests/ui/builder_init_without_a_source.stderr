@@ -1,14 +1,9 @@
-error[E0599]: the method `init` exists for struct `StackCipherBuilder`, but its trait bounds were not satisfied
+error[E0599]: no method named `init` found for struct `StackCipherBuilder` in the current scope
   --> tests/ui/builder_init_without_a_source.rs:10:36
    |
 10 |     let _ = StackCipher::builder().init().await;
-   |                                    ^^^^ method cannot be called on `StackCipherBuilder` due to unsatisfied trait bounds
+   |                                    ^^^^ method not found in `StackCipherBuilder`
    |
-  ::: src/cipher.rs
-   |
-   | pub struct NoKms;
-   | ---------------- doesn't satisfy `NoKms: DataKeySource` or `NoKms: IndexKeySource`
-   |
-   = note: the following trait bounds were not satisfied:
-           `NoKms: DataKeySource`
-           `NoKms: IndexKeySource`
+   = note: the method was found for
+           - `StackCipherBuilder<WithAuthStrategy<C, P>>`
+           - `StackCipherBuilder<WithKeySource<K>>`

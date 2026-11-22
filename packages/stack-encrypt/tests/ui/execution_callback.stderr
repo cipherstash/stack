@@ -8,15 +8,8 @@ error: cannot construct `Encryption<'_, _, _, _, _, _>` with struct literal synt
 8 | |         }),
   | |__________- private field
   |
-  = note: ...and other private field `shapes` that was not provided
+  = note: ...and other private fields `shapes` and `mode` that were not provided
 help: you might have meant to use an associated function to build this type
-  |
-5 -     let _: Encryption<'_, u32, StackCipherText, (), CallerContext> = Encryption {
-6 -         build: Box::new(|_, cipher, _| {
-7 -             stack_encrypt::Pending::failed(cipher, stack_encrypt::Error::Aead)
-8 -         }),
-9 -     };
-5 +     let _: Encryption<'_, u32, StackCipherText, (), CallerContext> = Encryption::from_build(_, _);
   |
 5 -     let _: Encryption<'_, u32, StackCipherText, (), CallerContext> = Encryption {
 6 -         build: Box::new(|_, cipher, _| {
@@ -31,4 +24,11 @@ help: you might have meant to use an associated function to build this type
 8 -         }),
 9 -     };
 5 +     let _: Encryption<'_, u32, StackCipherText, (), CallerContext> = Encryption::failed(_);
+  |
+5 -     let _: Encryption<'_, u32, StackCipherText, (), CallerContext> = Encryption {
+6 -         build: Box::new(|_, cipher, _| {
+7 -             stack_encrypt::Pending::failed(cipher, stack_encrypt::Error::Aead)
+8 -         }),
+9 -     };
+5 +     let _: Encryption<'_, u32, StackCipherText, (), CallerContext> = Encryption::from_build(_, _);
   |

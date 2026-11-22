@@ -321,9 +321,9 @@ impl Row {
 impl Encrypt for Row {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         let mut map = sink.map(None)?;
-        map.entry("id")?.passthrough(self.id)?;
+        map.entry("id")?.passthrough(&self.id)?;
         if self.repeat_id {
-            map.entry("id")?.passthrough(self.id)?;
+            map.entry("id")?.passthrough(&self.id)?;
         }
         self.email.visit(map.entry("email")?)?;
         map.end()

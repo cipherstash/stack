@@ -22,7 +22,6 @@
 //!   included.
 
 use super::*;
-use stack_encrypt::AsProtectedRef as _;
 
 use eql_bindings::encryption::EqlTargets;
 use stack_encrypt::dynamic::{self, record, Op, Operand, ValueFrame};
@@ -72,7 +71,7 @@ pub(super) fn frame_of(value: &Value) -> ValueFrame {
 /// it: an EQL operand's JSON text, or a list of tokens.
 pub(super) fn derive(
     runtime: &tokio::runtime::Runtime,
-    keyset: &KeysetCipher<'_, common::Observed>,
+    keyset: &KeysetCipher<'_, common::RecordingKeySource>,
     plan: &record::Plan,
     operator: &str,
     input: Value,
@@ -157,7 +156,7 @@ fn contacts_document(list: Vec<Value>) -> Value {
 /// The `element_match` operand over the contacts at `bound`, as JSON text.
 fn element_match(
     runtime: &tokio::runtime::Runtime,
-    keyset: &KeysetCipher<'_, common::Observed>,
+    keyset: &KeysetCipher<'_, common::RecordingKeySource>,
     plan: &record::Plan,
     bound: u32,
     predicates: Value,
@@ -174,7 +173,7 @@ fn element_match(
 /// "relationship is Sibling and more than five calls", read to `bound`.
 fn sibling_with_more_than_five_calls(
     runtime: &tokio::runtime::Runtime,
-    keyset: &KeysetCipher<'_, common::Observed>,
+    keyset: &KeysetCipher<'_, common::RecordingKeySource>,
     plan: &record::Plan,
     bound: u32,
 ) -> String {
@@ -223,7 +222,7 @@ fn sqlstate(
 /// The one token of a read of the concrete `path` under `options`.
 fn token(
     runtime: &tokio::runtime::Runtime,
-    keyset: &KeysetCipher<'_, common::Observed>,
+    keyset: &KeysetCipher<'_, common::RecordingKeySource>,
     options: &JsonOptions,
     path: &str,
 ) -> String {

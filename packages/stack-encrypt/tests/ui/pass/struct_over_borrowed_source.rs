@@ -1,37 +1,44 @@
-//! A `struct = ..` derive over a source that borrows: the source's lifetime
-//! is the record's (a derived record is `'static`, so the source is borrowed
-//! for `'static`, as it was before the derive emitted a plan), and the
-//! fields it derives from are owned. A borrowed field is refused: see
-//! `../struct_field_must_open.rs`.
-use std::marker::PhantomData;
-
+//! A `struct = ..` record over a plaintext that borrows. A derived record
+//! is `'static`, so the record states that its lifetime is, and the
+//! plaintext borrows for `'static`. The borrowed field is passed through in
+//! the clear, and the fields the record seals are owned.
 use stack_encrypt::sem::EqualityTerm;
-use stack_encrypt::target::DeclaredContext;
-use stack_encrypt::{EncryptFrom, Encrypted, StackCipher, StackCipherText};
+use stack_encrypt::target::{DecryptSource, EncryptTarget};
+use stack_encrypt::{DecryptFrom, EncryptInto, Encrypted, StackCipher, StackCipherText};
 use stack_kms::FakeDataKeySource;
+use zeroize::Zeroize;
 
+#[derive(Zeroize)]
 struct User<'a> {
     email: String,
     age: u32,
-    #[allow(dead_code)] // carried, never encrypted
+    // Carried, never encrypted. A borrow has nothing to wipe.
+    #[zeroize(skip)]
     note: &'a str,
 }
 
-#[derive(EncryptFrom)]
+#[derive(EncryptTarget, DecryptSource)]
 #[stash(struct = User<'a>, scope = "users")]
-struct EncryptedUser<'a> {
+struct EncryptedUser<'a>
+where
+    'a: 'static,
+{
     email: Encrypted<EqualityTerm>,
     age: StackCipherText,
-    #[stash(default)]
-    source: PhantomData<&'a ()>,
+    #[stash(passthrough)]
+    note: &'a str,
 }
 
 async fn round_trip(cipher: &StackCipher<FakeDataKeySource>) {
     let keyset = cipher.default_keyset();
-    let user = User { email: "bob@example.com".into(), age: 34, note: "static" };
-    let record: EncryptedUser<'_> = keyset.encrypt_as(&user, DeclaredContext::default()).await.unwrap();
-    let _ = EncryptedUser::plan::<FakeDataKeySource>().unwrap();
-    let _ = record;
+    let user = User {
+        email: "bob@example.com".into(),
+        age: 34,
+        note: "static",
+    };
+    let record: EncryptedUser<'_> = user.encrypt_into(&keyset).await.unwrap();
+    let _ = EncryptedUser::EMAIL;
+    let _: User<'_> = User::decrypt_from(record, cipher).await.unwrap();
 }
 
 fn main() {

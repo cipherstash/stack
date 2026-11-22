@@ -1,5 +1,5 @@
-error[E0080]: evaluation panicked: `Rec` has no decryptable field: every derived field is a one-way index term, so there is nothing for DecryptInto to open
- --> tests/ui/decrypt_no_decryptable_field.rs:4:10
+error[E0080]: evaluation panicked: `Rec` has no decryptable field: every derived field is a one-way index term, so there is nothing for DecryptSource to open
+ --> tests/ui/decrypt_no_decryptable_field.rs:6:10
   |
-4 | #[derive(DecryptInto)]
-  |          ^^^^^^^^^^^ evaluation of `_` failed here
+6 | #[derive(DecryptSource)]
+  |          ^^^^^^^^^^^^^ evaluation of `_` failed here

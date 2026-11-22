@@ -37,7 +37,7 @@ use vitaminc_aead::plaintext::{
     Error as _, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
     TimeUnit, Width,
 };
-use vitaminc_aead::{DecodeError, Decrypt, Encrypt};
+use vitaminc_aead::{DecodeError, Decrypt, Encrypt, EncryptRef};
 use vitaminc_protected::{
     AsProtectedRef, Buffer, Controlled, Equatable, OpaqueDebug, Protected, ProtectedRef,
     TimingSafeEq,
@@ -285,8 +285,8 @@ impl Sink for Check {
         Ok(Check)
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<(), DecodeError> {
-        value.visit(Check)
+    fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<(), DecodeError> {
+        value.visit_ref(Check)
     }
 }
 
@@ -367,14 +367,6 @@ impl Decrypt for ValueFrame {
     }
 }
 
-/// A deep copy into a fresh [`Protected`] buffer, which wipes on drop as the
-/// original does.
-impl Clone for ValueFrame {
-    fn clone(&self) -> Self {
-        Self(Equatable::new(self.0.risky_ref().to_vec()))
-    }
-}
-
 /// Two frames are equal when their bytes are. The bytes are compared in
 /// constant time, so the comparison does not reveal where two frames first
 /// differ. Frames of different lengths are unequal at once, which reveals
@@ -404,8 +396,8 @@ impl PartialEq for ValueFrame {
 }
 
 /// A text value read as a plan's context: what a data plan's
-/// `"context_field"` holds (`"tenants/acme"`), parsed as a Rust chain's
-/// `String` context field is ([`Label::parse`]). Anything else is
+/// `"context_field"` holds (`"tenants/acme"`), parsed as a label
+/// ([`Label::parse`]). Anything else is
 /// [`LabelError::NotText`]. The frame is read in place: a record's context
 /// field is read once per sealed field, and nothing is copied for it.
 impl IntoLabel for &ValueFrame {
@@ -606,10 +598,10 @@ impl<'o> Sink for Modeled<FrameWriter<'o>> {
         }
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<(), DecodeError> {
+    fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<(), DecodeError> {
         let Self { inner, field } = self;
         inner
-            .passthrough(ModeledSource(value))
+            .passthrough(&ModeledSource(value))
             .map_err(|error| Modeled { inner: (), field }.written(error))
     }
 }
@@ -670,12 +662,11 @@ impl MapSink for Modeled<FrameMap<'_>> {
 
 /// A passthrough subtree, walked through the value model too: what it
 /// carries is held to the same rules as what is sealed beside it.
-#[derive(Clone)]
-struct ModeledSource<P>(P);
+struct ModeledSource<'a, P: ?Sized>(&'a P);
 
-impl<P: Encrypt> Encrypt for ModeledSource<P> {
+impl<P: ?Sized + EncryptRef> Encrypt for &ModeledSource<'_, P> {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        self.0.visit(ModelOnly(sink))
+        self.0.visit_ref(ModelOnly(sink))
     }
 }
 
@@ -727,8 +718,8 @@ impl<S: Sink> Sink for ModelOnly<S> {
         })
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<S::Ok, S::Error> {
-        self.0.passthrough(ModeledSource(value))
+    fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<S::Ok, S::Error> {
+        self.0.passthrough(&ModeledSource(value))
     }
 }
 
@@ -816,7 +807,7 @@ impl Sink for Split {
         Ok(Skip::ending(Parts::Map, false))
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<Parts, DecodeError> {
+    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<Parts, DecodeError> {
         Ok(Parts::Passthrough)
     }
 }
@@ -943,7 +934,7 @@ impl Sink for Opening {
         Ok(Children::new(true, join))
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<ValueFrame, DecodeError> {
+    fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<ValueFrame, DecodeError> {
         write(|writer| Modeled::new(writer).passthrough(value))
     }
 }
@@ -1034,7 +1025,7 @@ impl<T> Sink for Skip<T> {
         Ok(self)
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<T, DecodeError> {
+    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<T, DecodeError> {
         if self.refuse_passthrough {
             return Err(DecodeError::Expected("no passthrough"));
         }
@@ -1103,7 +1094,7 @@ impl Sink for KindOf {
         Ok(Skip::ending(Some(ValueKind::Object), false))
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<Self::Ok, DecodeError> {
+    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<Self::Ok, DecodeError> {
         Ok(None)
     }
 }
@@ -1214,7 +1205,7 @@ impl Sink for RowsSink {
         Ok(RowMap::new(TopRow))
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<SourceRows, DecodeError> {
+    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<SourceRows, DecodeError> {
         Ok(SourceRows::One(None))
     }
 }
@@ -1267,7 +1258,7 @@ impl<'s> Sink for RowSink<'s> {
         Ok(RowMap::new(self.0))
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<(), DecodeError> {
+    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<(), DecodeError> {
         self.0.put(None);
         Ok(())
     }
@@ -1352,7 +1343,6 @@ mod tests {
         #[test]
         fn frames_with_the_same_bytes_are_equal() {
             let frame = ValueFrame::of("alice").unwrap();
-            assert_eq!(frame, frame.clone());
             assert_eq!(
                 frame,
                 ValueFrame::from_bytes(frame.as_protected_ref()).unwrap()
@@ -1418,12 +1408,17 @@ mod tests {
 
     /// A null that says what it stands in for, as vitaminc walks a `None`
     /// of a fixed-width type and as a host may send one in a frame.
-    #[derive(Clone)]
     struct TypedNull(FixedType);
+
+    impl Encrypt for &TypedNull {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            sink.typed_null(self.0)
+        }
+    }
 
     impl Encrypt for TypedNull {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-            sink.typed_null(self.0)
+            (&self).visit(sink)
         }
     }
 
@@ -1593,13 +1588,11 @@ mod tests {
         );
         let back = Tree::from_frame(frame.risky_ref()).expect("reads back");
         assert_eq!(back, value);
-        let copy = frame.clone();
-        assert_eq!(copy.risky_ref(), frame.risky_ref());
-        assert_ne!(copy.risky_ref().as_ptr(), frame.risky_ref().as_ptr());
-        let bytes = copy.into_inner();
+        let expected = value.to_frame().expect("frames");
+        let bytes = frame.into_inner();
         assert_eq!(
             bytes.risky_ref(),
-            frame.risky_ref(),
+            expected.risky_ref(),
             "the frame, still protected"
         );
     }
@@ -1724,12 +1717,11 @@ mod tests {
     }
 
     /// A value that travels as a passthrough subtree.
-    #[derive(Clone)]
     struct Hidden<P>(P);
 
-    impl<P: Encrypt + Clone> Encrypt for Hidden<P> {
+    impl<P: EncryptRef> Encrypt for Hidden<P> {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-            sink.passthrough(self.0)
+            sink.passthrough(&self.0)
         }
     }
 

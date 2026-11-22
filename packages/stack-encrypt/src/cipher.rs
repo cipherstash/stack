@@ -1,7 +1,7 @@
 //! Implementation of [`StackCipher`]. For usage, start at the crate docs; this
 //! module documents the internals.
 //!
-//! `StackCipher` is scoped to one ZeroKMS client; a [`KeysetCipher`] — the
+//! `StackCipher` belongs to one ZeroKMS client; a [`KeysetCipher`] — the
 //! cipher bound to one of that client's keysets — seals values whose
 //! per-leaf keys are ZeroKMS data keys, minted under that keyset, rather
 //! than one fixed key. The value side is vitaminc's: a value describes
@@ -12,7 +12,7 @@
 //! `AesCipherText`) whose leaves ([`SealedValue`]) each carry the ZeroKMS
 //! metadata for their own data key — the keyset it was minted under
 //! included, which is why decrypting needs no keyset named and lives on the
-//! client-scoped `StackCipher`.
+//! client's `StackCipher`.
 //!
 //! ## Batching the key fetch
 //!
@@ -23,7 +23,7 @@
 //!
 //! * **Encrypt** — [`PendingStackCipherText::plan`] walks the value into
 //!   vitaminc's pending tree and does no I/O. A single
-//!   [`PendingStackCipherText::seal`] (or the [`KeysetCipher::encrypt_tree`]
+//!   [`PendingStackCipherText::into_pending`] (or the [`KeysetCipher::encrypt_tree`]
 //!   convenience) then batches **one** `generate_keys` call for the whole
 //!   tree, under the handle's keyset, and seals every leaf through
 //!   `MintedKeys`, the sealing half of this crate's [`Cipher`], one key per
@@ -93,11 +93,11 @@
 
 use std::cell::RefCell;
 use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use stack_kms::{DataKey, DataKeySource, DataKeyWithTag, IdentifiedBy, IndexKeySource};
+use stack_kms::{DataKey, DataKeyWithTag, IdentifiedBy};
 #[cfg(feature = "http")]
 use stack_kms::{EnvKeyProvider, KeyProvider, StackKms, StackKmsBuilder};
 #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
@@ -111,7 +111,8 @@ use vitaminc_aead::{
 use vitaminc_encrypt::{Aes256Cipher, Key as AesKey};
 use vitaminc_protected::Protected;
 
-use crate::keyset::{KeysetCache, KeysetCipher, KeysetState, Lookup, DEFAULT_NAME_TTL};
+use crate::credential::KeySource;
+use crate::keyset::{KeysetCache, KeysetCipher, KeysetState, Lookup, Selected, DEFAULT_NAME_TTL};
 use crate::Descriptor;
 
 /// The recursive ciphertext container produced by [`StackCipher`]: vitaminc's
@@ -277,8 +278,8 @@ pub enum Error {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Term(#[from] crate::sem::TermError),
-    /// A third-party [`EncryptFrom`](crate::target::EncryptFrom) /
-    /// [`DecryptInto`](crate::target::DecryptInto) implementation failed
+    /// A third-party [`EncryptTarget`](crate::target::EncryptTarget) /
+    /// [`DecryptSource`](crate::target::DecryptSource) implementation failed
     /// for a reason of its own.
     ///
     /// Its message is the implementation's, shown as given: an
@@ -288,6 +289,22 @@ pub enum Error {
     #[error(transparent)]
     #[diagnostic(code(stack_encrypt::other))]
     Other(Box<dyn std::error::Error + Send + Sync + 'static>),
+    /// The caller's input was refused before any key was requested: a
+    /// field marker's JSON query whose input has the wrong shape (an
+    /// `elements` path with no wildcard, a predicate the grammar does not
+    /// read), or a data plan's source that does not fit the plan, run
+    /// through `dynamic::Planned`.
+    ///
+    /// The refusal is the dynamic interface's own
+    /// ([`refusal::Error`](crate::refusal::Error)), and it shows through:
+    /// its message, its code (`stack_encrypt::dynamic_source`,
+    /// `stack_encrypt::dynamic_predicate` and the rest) and its payload
+    /// (`reason`, and `field`, `construct` and `at` where it has them) are
+    /// the ones the dynamic interface reports. It is always the caller's
+    /// input at fault, never the engine.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Input(Box<crate::refusal::Error>),
     /// A [`transcode::Visitor`](crate::target::transcode::Visitor) was handed
     /// an encrypted output shape its destination does not accept: a scalar
     /// destination offered a sequence, say. Raised by the visitor's default
@@ -318,17 +335,17 @@ pub enum Error {
     /// A [`Pending`](crate::target::Pending) fulfilment's requests and
     /// responses did not line up: it drew more responses — or a different
     /// kind — than its requests asked for, or left some of them unconsumed.
-    /// Always a composition bug in an `EncryptFrom`/`DecryptInto`
+    /// Always a composition bug in an `EncryptTarget`/`DecryptSource`
     /// implementation, never a data error.
     #[error("a pending fulfilment's responses did not match its requests")]
     #[diagnostic(code(stack_encrypt::response_shape))]
     ResponseShape,
-    /// [`Pending`](crate::target::Pending)s scoped to different keysets were
+    /// [`Pending`](crate::target::Pending)s confined to different keysets were
     /// merged (`zip` / `all`): one built through a [`KeysetCipher`] for one
     /// keyset, the other for another. A row belongs to one tenant; an
     /// assembly that spans two is a composition bug, caught before any
     /// I/O. (Opening leaves from several keysets in one batch is allowed —
-    /// through the [`StackCipher`], which is scoped to none.)
+    /// through the [`StackCipher`], which is confined to none.)
     ///
     /// The keyset is the *whole* merge rule: two pendings built through two
     /// different [`StackCipher`] values merge freely as long as they agree
@@ -338,7 +355,7 @@ pub enum Error {
     /// pointer equality of the two ciphers; it tested object identity
     /// rather than client identity, and so refused two ciphers over the
     /// same client and the same keyset.)
-    #[error("merged pendings were scoped to different keysets ({left} and {right})")]
+    #[error("merged pendings were confined to different keysets ({left} and {right})")]
     #[diagnostic(
         code(stack_encrypt::keyset_mismatch),
         help("Build every part of one record or batch through the same keyset.")
@@ -362,7 +379,7 @@ pub enum Error {
     },
     /// A leaf sealed under one keyset was handed to a [`KeysetCipher`] for
     /// another. The handle's keyset is a constraint the caller asked for —
-    /// a tenant-scoped request handler must not open another tenant's row
+    /// a request handler for one tenant must not open another tenant's row
     /// — so this is refused before any key is retrieved. To open leaves
     /// from any keyset, decrypt through the [`StackCipher`].
     #[error("leaf was sealed under keyset {found}, not the handle's keyset {expected}")]
@@ -375,8 +392,8 @@ pub enum Error {
     ForeignKeyset { expected: Uuid, found: Uuid },
     /// A data key was requested through a [`StackCipher`] rather than a
     /// [`KeysetCipher`]: a [`Request::generate_data_key`] needs a keyset
-    /// to mint under, and only a keyset-scoped pending has one. Always a
-    /// composition bug in a hand-written `EncryptFrom`, caught before any
+    /// to mint under, and only a pending built through a keyset has one. Always a
+    /// composition bug in a hand-written `EncryptTarget`, caught before any
     /// I/O.
     ///
     /// [`Request::generate_data_key`]: crate::target::Request::generate_data_key
@@ -394,10 +411,8 @@ pub enum Error {
     #[diagnostic(code(stack_encrypt::not_opened))]
     NotOpened,
     /// A [plan](crate::plan) was refused: it did not validate when it was
-    /// built, or the value, record or query it was run with does not match
-    /// it. A refusal at build or when a plan runs is raised before any key
-    /// is requested; [`FieldValues::take`](crate::plan::FieldValues::take)
-    /// also returns one for a record already in hand.
+    /// parsed, or the value, record or query it was run with does not match
+    /// it. A refusal is raised before any key is requested.
     #[error(transparent)]
     #[diagnostic(transparent)]
     Plan(#[from] crate::plan::PlanError),
@@ -463,6 +478,7 @@ impl crate::ErrorPayload for Error {
                 .unwrap_or_default(),
             #[cfg(not(feature = "http"))]
             Self::Config(_) => serde_json::Map::new(),
+            Self::Input(refusal) => refusal.payload(),
             Self::Aead
             | Self::JsonNotALeaf
             | Self::Other(_)
@@ -496,8 +512,8 @@ impl From<crate::json::JsonPathError> for Error {
     }
 }
 
-/// The CipherStash cipher, scoped to one client: a ZeroKMS client (a
-/// [`DataKeySource`] — production: [`kms::StackKms`](crate::kms::StackKms); tests:
+/// The CipherStash cipher, for one client: a ZeroKMS client (a
+/// [`DataKeySource`](stack_kms::DataKeySource) — production: [`kms::StackKms`](crate::kms::StackKms); tests:
 /// `stack_encrypt::kms::FakeDataKeySource`) and the keysets that client uses.
 ///
 /// Per-leaf keying is deliberate: every value access requires its own data-key
@@ -508,7 +524,7 @@ impl From<crate::json::JsonPathError> for Error {
 ///
 /// Sealing values, sealing records and deriving index terms all happen
 /// under a keyset, and a client may use many — one per tenant, say. So
-/// those operations bind to a [`KeysetCipher`], the cipher scoped to one
+/// those operations bind to a [`KeysetCipher`], the cipher bound to one
 /// keyset: [`default_keyset`](Self::default_keyset) for the client's
 /// default — the keyset a ZeroKMS administrator set for this client —
 /// [`keyset`](Self::keyset) for any other, by id or by name. Keysets load lazily, through a bounded
@@ -519,7 +535,7 @@ impl From<crate::json::JsonPathError> for Error {
 /// key is not a Stack Encrypt backend; plain AEAD with no indexing is what
 /// `vitaminc` alone provides.
 ///
-/// Decrypting is not keyset-scoped: a sealed leaf carries the id of the
+/// Decrypting is not bound to a keyset: a sealed leaf carries the id of the
 /// keyset it was sealed under, and retrieving its data key needs nothing
 /// more than that and the client. So [`decrypt`](Self::decrypt) lives here
 /// and opens leaves from any keyset the client is authorised for, in one
@@ -571,22 +587,57 @@ To name the credentials yourself, or to set other options, use
 /// # }
 /// ```
 ///
+/// This example passes `FakeDataKeySource`, the in-memory source for tests.
+/// Do not use it for real data.
+#[cfg_attr(
+    feature = "http",
+    doc = "Without `.kms(..)`, [`init`](StackCipherBuilder::init) uses ZeroKMS."
+)]
+///
 /// Construction is async because it resolves the client's default keyset
 /// and loads its index key — one ZeroKMS round-trip, paid once, so a
 /// misconfigured client fails here rather than on first use.
+///
+/// A key source that takes a credential with each call cannot make that
+/// round trip at startup, because no call has brought one yet. `init` then
+/// makes no request, and each keyset is loaded by the first call on it
+/// that is awaited, with that call's credential. The default keyset is
+/// loaded the same way. See [`init`](StackCipherBuilder::init),
+/// and [`Pending::with_credential`](crate::Pending::with_credential) for a
+/// call made with a credential. Such a key source has no other way to
+/// make a call: see [`KeySource`].
 pub struct StackCipher<K> {
     kms: K,
-    /// The client's default keyset, loaded eagerly by `init` and never
-    /// evicted. Not the caller's to choose — see
-    /// [`default_keyset`](Self::default_keyset).
-    default: Arc<KeysetState>,
-    /// Every other keyset this cipher has selected, least recently used
-    /// first out. See [`keyset`](Self::keyset).
+    /// The client's default keyset, set once by its load: by `init`, or by
+    /// the first call on the default keyset when `init` had no credential
+    /// to load it with. It is never evicted. Not the caller's to choose:
+    /// see [`StackCipher::default_keyset`].
+    default: OnceLock<Arc<KeysetState>>,
+    /// Held across the load of the default keyset, so that callers that
+    /// arrive together make one load between them: the first loads, and
+    /// the rest find it loaded. A load that fails, or a caller that stops
+    /// waiting for it, leaves the cipher as it was for the next caller.
+    loading: futures::lock::Mutex<()>,
+    /// Every keyset this cipher has selected, least recently used first
+    /// out. See [`StackCipher::keyset`]. It is there from the start, so a
+    /// keyset selected by id or by name is loaded without the default
+    /// keyset. Once the default keyset is loaded the cache holds it too,
+    /// apart from the bound.
     keysets: Mutex<KeysetCache>,
     /// Where the JSON index draws its permutations from (a document's stored
     /// order, the order a query's selectors are sent in): fresh entropy per
     /// document or query, outside tests.
     json_randomness: crate::json::Randomness,
+}
+
+impl<K> StackCipher<K> {
+    fn keysets(&self) -> std::sync::MutexGuard<'_, KeysetCache> {
+        // The cache holds no invariant a panic mid-update could break (an
+        // insert is two map writes, and a stale name entry only points at
+        // a still-valid state), so a poisoned lock is recovered, not
+        // propagated.
+        self.keysets.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 #[cfg(feature = "http")]
@@ -668,34 +719,27 @@ impl StackCipher<NoKms> {
     }
 }
 
-/// Opaque: the default keyset's identity and the data-key source's type
-/// name, and nothing else. A cipher reaches the whole keyset cache — every
+/// Opaque: the default keyset's identity (`None` until it is loaded) and
+/// the data-key source's type name, and nothing else. A cipher reaches the
+/// whole keyset cache — every
 /// loaded keyset's index-key PRF — and, through its backend, the client key
 /// and access token; none of that is printable, and a `Debug` that walked
 /// the cache would also take its lock.
 impl<K> std::fmt::Debug for StackCipher<K> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let default = self.default.get();
         f.debug_struct("StackCipher")
-            .field("default_keyset_id", &self.default.id)
-            .field("default_keyset_name", &self.default.name)
+            .field("default_keyset_id", &default.map(|default| default.id))
+            .field(
+                "default_keyset_name",
+                &default.and_then(|default| default.name.as_deref()),
+            )
             .field("kms", &std::any::type_name::<K>())
             .finish_non_exhaustive()
     }
 }
 
 impl<K> StackCipher<K> {
-    /// The cipher bound to the client's default keyset: the one a ZeroKMS
-    /// administrator set for this client, which is what naming no keyset
-    /// resolves to. Loaded at `init`, so this never touches ZeroKMS.
-    ///
-    /// Always that keyset, whatever else the cipher has selected — the
-    /// default is the workspace's statement about this client, not a
-    /// preference a caller can override. To work under another keyset,
-    /// select it with [`keyset`](Self::keyset).
-    pub fn default_keyset(&self) -> KeysetCipher<'_, K> {
-        KeysetCipher::new(self, Arc::clone(&self.default))
-    }
-
     /// The underlying data-key source.
     pub fn kms(&self) -> &K {
         &self.kms
@@ -705,36 +749,57 @@ impl<K> StackCipher<K> {
     pub(crate) fn json_randomness(&self) -> &crate::json::Randomness {
         &self.json_randomness
     }
-
-    fn keysets(&self) -> std::sync::MutexGuard<'_, KeysetCache> {
-        // The cache holds no invariant a panic mid-update could break (an
-        // insert is two map writes, and a stale name entry only points at
-        // a still-valid state), so a poisoned lock is recovered, not
-        // propagated.
-        self.keysets.lock().unwrap_or_else(PoisonError::into_inner)
-    }
 }
 
-impl<K: IndexKeySource> StackCipher<K> {
+impl<K> StackCipher<K> {
+    /// The cipher bound to the client's default keyset: the one a ZeroKMS
+    /// administrator set for this client, which is what naming no keyset
+    /// resolves to.
+    ///
+    /// Always that keyset, whatever else the cipher has selected — the
+    /// default is the workspace's statement about this client, not a
+    /// preference a caller can override. To work under another keyset,
+    /// select it with [`keyset`](Self::keyset).
+    ///
+    /// This makes no request and cannot fail.
+    /// [`init`](StackCipherBuilder::init) loads the default keyset, so the
+    /// handle is on a loaded keyset.
+    ///
+    /// The exception is a key source that takes a credential with each
+    /// call, such as one over a `stack_auth::OidcFederationStrategy` built
+    /// with `credential_per_call`. `init` has no credential to load the
+    /// keyset with, so it loads nothing. This method still returns the
+    /// handle. The first call on it that is awaited loads the keyset, with
+    /// one request to ZeroKMS, made with the credential of that call
+    /// ([`Pending::with_credential`](crate::Pending::with_credential)).
+    /// See [`KeysetCipher`] for what the handle offers before the keyset
+    /// is loaded.
+    pub fn default_keyset(&self) -> KeysetCipher<'_, K> {
+        KeysetCipher::selected(self, Selected::Default)
+    }
+
     /// The cipher bound to a keyset, by id or by name.
     ///
-    /// The one async point of keyset selection: a keyset this cipher has
-    /// not seen (or has evicted) is loaded from ZeroKMS here — its id
-    /// resolved and its index key fetched — and cached; every later
-    /// selection is a lookup. The returned handle keeps that keyset loaded
-    /// for as long as it is held, so a request handler that selects its
-    /// tenant's keyset once never pays again within the request.
+    /// This makes no request and cannot fail. A keyset this cipher has not
+    /// seen (or has evicted) is loaded from ZeroKMS by the first call on
+    /// the handle that is awaited: its id resolved and its index key
+    /// fetched, and cached. Every later call finds it loaded. The handle
+    /// keeps that keyset loaded for as long as it is held, so a request
+    /// handler that selects its tenant's keyset once pays once within the
+    /// request.
     ///
     /// ```
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
     /// use stack_encrypt::{nonempty, StackCipher};
-    /// use stack_encrypt::kms::{FakeDataKeySource, IdentifiedBy};
+    /// use stack_encrypt::kms::IdentifiedBy;
     ///
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
     /// let cipher = StackCipher::builder()
-    ///     .kms(FakeDataKeySource::new())
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
     ///     .init()
     ///     .await?;
-    /// let tenant = cipher.keyset(IdentifiedBy::Name("acme".to_string().into())).await?;
+    /// let tenant = cipher.keyset(IdentifiedBy::Name("acme".to_string().into()));
     /// let sealed = tenant.encrypt_tree("hello".to_string(), nonempty!("greeting")).await?;
     /// # Ok(())
     /// # }
@@ -742,27 +807,99 @@ impl<K: IndexKeySource> StackCipher<K> {
     /// ```
     ///
     /// A keyset ZeroKMS does not know, or has disabled, is
-    /// [`Error::Kms`]. The name-to-id resolution is ZeroKMS's: a keyset
-    /// selected by name reports the resolved id from
-    /// [`KeysetCipher::keyset_id`], and a name the cipher resolved earlier
-    /// is trusted for a bounded window
+    /// [`Error::Kms`], from the call that loads it. The name-to-id
+    /// resolution is ZeroKMS's: a keyset selected by name reports the
+    /// resolved id from [`KeysetCipher::keyset_id`], and a name the cipher
+    /// resolved earlier is trusted for a bounded window
     /// ([`keyset_name_ttl`](StackCipherBuilder::keyset_name_ttl)) before it
     /// is asked again — ZeroKMS allows renames, and a running process
-    /// notices one within that window. Selecting by id never asks twice.
+    /// notices one within that window. A keyset selected by id is never
+    /// asked for twice.
     ///
-    /// The cache belongs to the cipher, not to the user a token is for.
-    /// With a per-user auth strategy, such as
-    /// `stack_auth::OidcFederationStrategy`, a selection that finds the
-    /// keyset in the cache does not ask ZeroKMS, so ZeroKMS does not check
-    /// that user's grant on the keyset. The user can then make the keyset's
-    /// query terms, but cannot encrypt or decrypt under it.
-    pub async fn keyset(
+    /// The cache belongs to the cipher, and a call that finds the keyset in
+    /// the cache does not ask ZeroKMS for it. So with a per-user auth
+    /// strategy, such as `stack_auth::OidcFederationStrategy`, the ZeroKMS
+    /// log shows the load of a keyset once, under the caller that needed
+    /// it first. Access does not differ between users: ZeroKMS grants a
+    /// keyset to a client, and a cipher has one client.
+    pub fn keyset(&self, keyset: impl Into<IdentifiedBy>) -> KeysetCipher<'_, K> {
+        KeysetCipher::selected(self, Selected::By(keyset.into()))
+    }
+
+    /// The loaded state of the default keyset, or `None` if no call has
+    /// loaded it yet.
+    pub(crate) fn loaded_default(&self) -> Option<&Arc<KeysetState>> {
+        self.default.get()
+    }
+
+    /// The loaded state of the keyset `keyset`, or `None` if the cipher
+    /// has to ask ZeroKMS for it: the keyset is not in the cache, or its
+    /// name is past the window it is trusted for.
+    pub(crate) fn loaded_keyset(&self, keyset: &IdentifiedBy) -> Option<Arc<KeysetState>> {
+        match self.keysets().get(keyset) {
+            Lookup::Hit(state) => Some(state),
+            // The ticket is not used: the call that loads the keyset takes
+            // its own.
+            Lookup::Stale(_) | Lookup::Miss(_) => None,
+        }
+    }
+}
+
+impl<K> StackCipher<K> {
+    /// The loaded state of the default keyset. If no call has loaded it
+    /// yet, this call loads it, as `identity`.
+    pub(crate) async fn default_state<I>(&self, identity: &I) -> Result<&Arc<KeysetState>, Error>
+    where
+        K: KeySource<I>,
+    {
+        if let Some(default) = self.default.get() {
+            return Ok(default);
+        }
+        let _loading = self.loading.lock().await;
+        // A caller that held the lock first may have loaded it.
+        if let Some(default) = self.default.get() {
+            return Ok(default);
+        }
+        // Boxed: see `keyset_state`.
+        let default = Box::pin(load_default_keyset(&self.kms, identity)).await?;
+        // The cache holds it from here on, so a selection of its id finds
+        // the default keyset and does not load it again.
+        self.keysets().hold_default(Arc::clone(&default));
+        Ok(self.default.get_or_init(|| default))
+    }
+
+    /// The loaded state of the keyset `selected`: the default keyset's, or
+    /// that of a keyset selected by id or by name. A keyset that is not
+    /// loaded is loaded here, as `identity`.
+    pub(crate) async fn selected_state<I>(
         &self,
-        keyset: impl Into<IdentifiedBy>,
-    ) -> Result<KeysetCipher<'_, K>, Error> {
-        let keyset = keyset.into();
-        let resolution = match self.keysets().get(&keyset) {
-            Lookup::Hit(state) => return Ok(KeysetCipher::new(self, state)),
+        selected: &Selected,
+        identity: &I,
+    ) -> Result<Arc<KeysetState>, Error>
+    where
+        K: KeySource<I>,
+    {
+        match selected {
+            Selected::Default => Ok(Arc::clone(self.default_state(identity).await?)),
+            Selected::By(keyset) => self.keyset_state_for(keyset.clone(), identity).await,
+        }
+    }
+
+    /// The loaded state of the keyset `keyset`, by id or by name: from the
+    /// cache, or loaded from ZeroKMS and cached on a miss. What the first
+    /// call on a handle from [`keyset`](Self::keyset) settles through.
+    async fn keyset_state_for<I>(
+        &self,
+        keyset: IdentifiedBy,
+        identity: &I,
+    ) -> Result<Arc<KeysetState>, Error>
+    where
+        K: KeySource<I>,
+    {
+        // Bound first, so the cache's lock is released before the await.
+        let lookup = self.keysets().get(&keyset);
+        let resolution = match lookup {
+            Lookup::Hit(state) => return Ok(state),
             // A name past its window: the keyset is still loaded, but
             // whether the name still means it is ZeroKMS's to say.
             Lookup::Stale(resolution) | Lookup::Miss(resolution) => resolution,
@@ -776,7 +913,8 @@ impl<K: IndexKeySource> StackCipher<K> {
             IdentifiedBy::Name(name) => Some(name.to_string()),
             IdentifiedBy::Uuid(_) => None,
         };
-        let state = match load_keyset(&self.kms, keyset).await {
+        // Boxed: see `keyset_state`.
+        let state = match Box::pin(load_keyset(&self.kms, keyset, identity)).await {
             Ok(state) => state,
             Err(error) => {
                 // ZeroKMS's own answer that no keyset has this name is an
@@ -791,15 +929,22 @@ impl<K: IndexKeySource> StackCipher<K> {
                 return Err(error);
             }
         };
-        let state = self.keysets().insert(state, resolution);
-        Ok(KeysetCipher::new(self, state))
+        Ok(self.keysets().insert(state, resolution))
     }
 
     /// The loaded state of the keyset `id`: from the cache, or loaded from
     /// ZeroKMS and cached on a miss, as [`keyset`](Self::keyset) selects a
     /// keyset by id. What a keyset request settles to
-    /// ([`Request::load_keyset`](crate::target::Request)).
-    pub(crate) async fn keyset_state(&self, id: Uuid) -> Result<Arc<KeysetState>, Error> {
+    /// ([`Request::load_keyset`](crate::target::Request)). A load is made
+    /// as `identity`, the one of the pending that asked.
+    pub(crate) async fn keyset_state<I>(
+        &self,
+        id: Uuid,
+        identity: &I,
+    ) -> Result<Arc<KeysetState>, Error>
+    where
+        K: KeySource<I>,
+    {
         // Bound first, so the cache's lock is released before the await.
         let lookup = self.keysets().get(&IdentifiedBy::Uuid(id));
         let resolution = match lookup {
@@ -809,7 +954,7 @@ impl<K: IndexKeySource> StackCipher<K> {
         // Boxed: this runs after a batch's data keys have been through the
         // stack, and a future is built on the stack and moved with every
         // byte it does not initialise (see `dispatch`).
-        let state = Box::pin(load_keyset(&self.kms, IdentifiedBy::Uuid(id))).await?;
+        let state = Box::pin(load_keyset(&self.kms, IdentifiedBy::Uuid(id), identity)).await?;
         // Asked by id, ZeroKMS answers for that id. A source that answers for
         // another would have the document walked under another keyset's PRF,
         // and cached under an id no later lookup asks for.
@@ -840,15 +985,16 @@ fn is_keyset_not_found(error: &Error) -> bool {
     )
 }
 
-async fn load_keyset<K: IndexKeySource>(
+async fn load_keyset<K: KeySource<I>, I>(
     kms: &K,
     keyset: IdentifiedBy,
+    identity: &I,
 ) -> Result<Arc<KeysetState>, Error> {
     let name = match &keyset {
         IdentifiedBy::Name(name) => Some(name.to_string()),
         IdentifiedBy::Uuid(_) => None,
     };
-    let (id, index_key) = kms.load_index_key(Some(keyset)).await?;
+    let (id, index_key) = crate::credential::load_index_key(kms, identity, Some(keyset)).await?;
     Ok(keyset_state_of(id, name, &index_key))
 }
 
@@ -868,11 +1014,16 @@ fn keyset_state_of(
 }
 
 /// The client's own default keyset — the one a ZeroKMS administrator set for
-/// this client — asked for by naming nothing. Loaded once, by
-/// [`init`](StackCipherBuilder::init); it is not the caller's to choose, so
-/// there is no id or name to carry.
-async fn load_default_keyset<K: IndexKeySource>(kms: &K) -> Result<Arc<KeysetState>, Error> {
-    let (id, index_key) = kms.load_index_key(None).await?;
+/// this client — asked for by naming nothing. Loaded once: by
+/// [`init`](StackCipherBuilder::init) as the key source's own identity, or
+/// by the first call on the default keyset, with that call's credential,
+/// when `init` had none. It is not the caller's to choose, so there is no id or
+/// name to carry.
+async fn load_default_keyset<K: KeySource<I>, I>(
+    kms: &K,
+    identity: &I,
+) -> Result<Arc<KeysetState>, Error> {
+    let (id, index_key) = crate::credential::load_index_key(kms, identity, None).await?;
     Ok(keyset_state_of(id, None, &index_key))
 }
 
@@ -881,6 +1032,13 @@ async fn load_default_keyset<K: IndexKeySource>(kms: &K) -> Result<Arc<KeysetSta
 /// with [`kms`](StackCipherBuilder::kms) or, with the `http` feature,
 /// `auth_strategy`.
 pub struct NoKms;
+
+/// The state of a [`StackCipherBuilder`] after
+/// [`kms`](StackCipherBuilder::kms): `K` is the key source the cipher will
+/// make its key requests through.
+pub struct WithKeySource<K> {
+    key_source: K,
+}
 
 /// The state of a [`StackCipherBuilder`] after
 /// [`auth_strategy`](StackCipherBuilder::auth_strategy).
@@ -996,9 +1154,14 @@ impl StackCipherBuilder<NoKms> {
     /// with your host's own transport. To choose only the auth strategy and
     /// the client key, use `auth_strategy` (with the `http` feature). Tests
     /// pass a `stack_encrypt::kms::FakeDataKeySource` here.
-    pub fn kms<K>(self, kms: K) -> StackCipherBuilder<K> {
+    pub fn kms<K>(self, kms: K) -> StackCipherBuilder<WithKeySource<K>> {
+        self.with_state(WithKeySource { key_source: kms })
+    }
+
+    /// This builder's options, in the state `state`.
+    fn with_state<S>(self, state: S) -> StackCipherBuilder<S> {
         StackCipherBuilder {
-            kms,
+            kms: state,
             cache_size: self.cache_size,
             name_ttl: self.name_ttl,
             #[cfg(feature = "test-support")]
@@ -1033,6 +1196,17 @@ impl StackCipherBuilder<NoKms> {
     /// who made the current request. Call `init` for such a strategy while
     /// your program handles a request.
     ///
+    /// A strategy that takes a credential with each call does not need
+    /// that. An
+    /// [`OidcFederationStrategy`](stack_auth::OidcFederationStrategy) built
+    /// with `credential_per_call` is one. For such a strategy, `init` makes
+    /// no request, so call `init` at startup. Then attach each caller's
+    /// credential to the call
+    /// ([`Pending::with_credential`](crate::Pending::with_credential)). A
+    /// call without one does not compile. The first call on a keyset that
+    /// is awaited loads that keyset, with the credential of that call. The
+    /// default keyset is loaded the same way.
+    ///
     /// After `init`, the cipher asks the strategy for a token on every
     /// ZeroKMS request. ZeroKMS therefore receives each data key request as
     /// the user that the strategy returns a token for.
@@ -1043,12 +1217,12 @@ impl StackCipherBuilder<NoKms> {
     /// keyset loads that keyset's index key, and the cipher keeps it. See
     /// [`StackCipher::keyset`].
     ///
-    /// So ZeroKMS checks a user's grant on a keyset only when it hands out
-    /// that keyset's data keys, not its index key. A user with no grant on
-    /// a keyset cannot encrypt or decrypt under it. But once any user has
-    /// loaded the keyset, every other user of the cipher can make its query
-    /// terms, which match its stored values by equality and order. If grants
-    /// must also limit queries, build one cipher for each user.
+    /// So the ZeroKMS log shows each data key request under its own user,
+    /// and the load of a keyset's index key once, under the user that
+    /// needed it first. Query terms are derived locally from that key and
+    /// make no request. Which keysets can be used does not differ between
+    /// users: ZeroKMS grants a keyset to a client, and a cipher has one
+    /// client.
     ///
     /// # Example
     ///
@@ -1084,9 +1258,8 @@ impl StackCipherBuilder<NoKms> {
     pub fn auth_strategy<C>(self, strategy: C) -> StackCipherBuilder<WithAuthStrategy<C>>
     where
         C: stack_auth::AuthStrategyBounds,
-        for<'a> &'a C: stack_auth::AuthStrategy,
     {
-        self.kms(WithAuthStrategy {
+        self.with_state(WithAuthStrategy {
             strategy,
             key_provider: (),
         })
@@ -1132,7 +1305,6 @@ impl<C> StackCipherBuilder<WithAuthStrategy<C>> {
 impl<C, P> StackCipherBuilder<WithAuthStrategy<C, P>>
 where
     C: stack_auth::AuthStrategyBounds,
-    for<'a> &'a C: stack_auth::AuthStrategy,
     P: KeyProvider,
 {
     /// Build a ZeroKMS client from the
@@ -1145,8 +1317,16 @@ where
     /// - [`Error::Config`] if the key provider cannot load a client key, or
     ///   if `CS_ZEROKMS_HOST` is set to a URL that cannot be used.
     /// - [`Error::Kms`] if the strategy cannot return a token, or if ZeroKMS
-    ///   refuses the request that loads the default keyset.
-    pub async fn init(self) -> Result<StackCipher<StackKms<C>>, Error> {
+    ///   refuses the request that loads the default keyset. A strategy that
+    ///   takes a credential with each call makes no request here: see
+    ///   [`init`](StackCipherBuilder::init) on a key source.
+    ///
+    /// `I` is never written: it follows from the strategy. See
+    /// [`KeySource`].
+    pub async fn init<I>(self) -> Result<StackCipher<StackKms<C>>, Error>
+    where
+        StackKms<C>: KeySource<I>,
+    {
         let WithAuthStrategy {
             strategy,
             key_provider,
@@ -1156,7 +1336,7 @@ where
             .build()
             .await?;
         StackCipherBuilder {
-            kms,
+            kms: WithKeySource { key_source: kms },
             cache_size: self.cache_size,
             name_ttl: self.name_ttl,
             #[cfg(feature = "test-support")]
@@ -1179,24 +1359,71 @@ impl<K> StackCipherBuilder<K> {
     }
 }
 
-impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
-    /// Resolve the default keyset and load its index key, producing a
-    /// cipher whose [`default_keyset`](StackCipher::default_keyset) can both
-    /// seal values and derive index terms. The one round trip a cipher
-    /// always pays; every other keyset loads on first selection.
-    pub async fn init(self) -> Result<StackCipher<K>, Error> {
-        let default = load_default_keyset(&self.kms).await?;
+impl<K> StackCipherBuilder<WithKeySource<K>> {
+    /// Build the cipher, and load the index key of the client's default
+    /// keyset. The load is one request to ZeroKMS. Every other keyset loads
+    /// when it is first selected.
+    ///
+    /// The request is made as the key source's own identity, so it checks
+    /// the credentials too: a wrong access key fails here, at startup.
+    ///
+    /// `I` is never written: it follows from the key source. See
+    /// [`KeySource`].
+    ///
+    /// # A key source that takes a credential with each call
+    ///
+    /// Some key sources have no identity of their own, because every call
+    /// brings a credential
+    /// ([`CredentialKeySource`](stack_kms::CredentialKeySource)). One over a
+    /// `stack_auth::OidcFederationStrategy` built with
+    /// `credential_per_call` is an example: a web server that works as its
+    /// signed-in users has no user when it starts.
+    ///
+    /// For such a key source, `init` makes no request and returns the
+    /// cipher. The first call on the default keyset that is awaited loads
+    /// it, with the credential of that call
+    /// ([`with_credential`](crate::Pending::with_credential)). A call on a
+    /// keyset selected by id or by name loads that keyset only. Callers
+    /// that arrive together make one load of the default keyset between
+    /// them. A load that fails
+    /// leaves the cipher as it was, and the next call tries again.
+    ///
+    /// So for such a key source, `init` does not check the credentials or
+    /// the default keyset. A mistake in the configuration shows up on the
+    /// first call. A program that holds a credential at startup can run
+    /// the check then: await
+    /// `cipher.default_keyset().keyset_id().with_credential(credential)`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Kms`] if the default keyset cannot be loaded. A key source
+    /// that takes a credential with each call loads nothing, so it does
+    /// not return this error.
+    pub async fn init<I>(self) -> Result<StackCipher<K>, Error>
+    where
+        K: KeySource<I>,
+    {
+        let cipher = self.build();
+        // With no identity to load the default keyset as, the first call
+        // that brings a credential loads it.
+        if let Some(identity) = K::identity_at_init() {
+            let _ = cipher.default_state(&identity).await?;
+        }
+        Ok(cipher)
+    }
+}
+
+impl<K> StackCipherBuilder<WithKeySource<K>> {
+    /// The cipher, with no keyset loaded.
+    fn build(self) -> StackCipher<K> {
         let json_randomness = self.json_randomness();
-        Ok(StackCipher {
-            kms: self.kms,
-            keysets: Mutex::new(KeysetCache::new(
-                self.cache_size,
-                self.name_ttl,
-                Arc::clone(&default),
-            )),
-            default,
+        StackCipher {
+            kms: self.kms.key_source,
+            default: OnceLock::new(),
+            loading: futures::lock::Mutex::new(()),
+            keysets: Mutex::new(KeysetCache::new(self.cache_size, self.name_ttl)),
             json_randomness,
-        })
+        }
     }
 }
 
@@ -1214,7 +1441,7 @@ fn hmac_prf_from_index_key(index_key: &stack_kms::IndexKey) -> vitaminc_hmac::Hm
     prf
 }
 
-impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
+impl<K> KeysetCipher<'_, K> {
     /// Encrypt a value into a tree of individually sealed leaves.
     ///
     /// For one opaque scalar use
@@ -1223,18 +1450,24 @@ impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
     /// Encrypt a value, binding `context`, and seal it against fresh ZeroKMS
     /// data keys in a single batched `generate_keys` call under this keyset.
     /// Every key is requested under the [`Descriptor`] of `context`.
-    pub async fn encrypt_tree<'a, T, A>(
+    ///
+    /// Returns a [`Pending`](crate::Pending): await it, or first attach
+    /// [audit metadata](crate::Pending::audit) for the key request. A value
+    /// that cannot be planned fails when awaited, before any request.
+    pub fn encrypt_tree<'a, T, A>(
         &self,
         value: T,
         context: A,
-    ) -> Result<StackCipherText, Error>
+    ) -> crate::target::Pending<'_, StackCipherText, K>
     where
         T: Encrypt,
         A: IntoContext<'a>,
     {
         let context = context.into_context();
-        let pending = PendingStackCipherText::plan(value, context.clone())?;
-        pending.seal(self, context).await
+        match PendingStackCipherText::plan(value, context.clone()) {
+            Ok(pending) => pending.into_pending(self, context),
+            Err(error) => crate::target::Pending::failed(self, error),
+        }
     }
 
     /// Decrypt a tree of individually sealed leaves.
@@ -1242,23 +1475,58 @@ impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
     /// Like [`StackCipher::decrypt`], constrained to this keyset: a leaf sealed
     /// under any other is [`Error::ForeignKeyset`], refused before any key
     /// is retrieved.
-    pub async fn decrypt_tree<'a, T, A>(
-        &self,
+    ///
+    /// # Audit metadata
+    ///
+    /// ZeroKMS logs every key request with the identity that made it. To
+    /// provide additional context for the audit log, call `.audit(..)`
+    /// before you await the result. `.audit(..)` takes an
+    /// [`AuditMetadata`](crate::AuditMetadata): facts about the call, such
+    /// as its purpose or a request id.
+    ///
+    /// ```
+    /// use stack_encrypt::{AuditMetadata, Controlled, Protected, StackCipher};
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
+    /// let keyset = cipher.default_keyset();
+    /// let stored = keyset.encrypt_tree(String::from("alice"), "users/name").await?;
+    ///
+    /// let name: Protected<String> = keyset
+    ///     .decrypt_tree(stored, "users/name")
+    ///     .audit(AuditMetadata::new().with("purpose", "profile page"))
+    ///     .await?;
+    /// assert_eq!(name.risky_ref(), "alice");
+    /// # Ok::<(), stack_encrypt::Error>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// ZeroKMS records the facts as given and does not verify them. The
+    /// decrypt does not need them. The facts can differ from those sent
+    /// with the encrypt. ZeroKMS writes the facts to its logs, so do not
+    /// send plaintext or secrets.
+    pub fn decrypt_tree<'s, 'a, T, A>(
+        &'s self,
         ciphertext: StackCipherText,
         context: A,
-    ) -> Result<T, Error>
+    ) -> crate::target::Pending<'s, T, K>
     where
-        T: Decrypt,
+        T: Decrypt + 's,
         A: IntoContext<'a>,
     {
-        decrypt_through(self.into(), ciphertext, context).await
+        decrypt_through(self.into(), ciphertext, context)
     }
 }
 
-/// `decrypt`, for either scope: retrieve every leaf's data key under
+/// `decrypt`, for either cipher: retrieve every leaf's data key under
 /// `aad`'s descriptor, bind them onto the ciphertext, and open it into `T`
-/// under the same `aad`. The work is the same on both scopes — one
-/// descriptor, one pending, one settle — and the scope is the whole
+/// under the same `aad`. The work is the same through both — one
+/// descriptor, one pending, one settle — and the cipher is the whole
 /// difference: a [`KeysetCipher`] constrains the leaves to its keyset, a
 /// [`StackCipher`] constrains nothing.
 ///
@@ -1266,22 +1534,20 @@ impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
 /// is a derivation of the descriptor its key was minted under —
 /// `for_sequence_element`, `for_map_entry`, `for_leaf` — and that
 /// derivation is the library's to compute, never the caller's to supply.
-async fn decrypt_through<'s, 'a, T, K: DataKeySource + IndexKeySource + 's>(
-    scope: crate::target::CipherRef<'s, K>,
+pub(crate) fn decrypt_through<'s, 'a, T, K: 's>(
+    cipher_ref: crate::target::CipherRef<'s, K>,
     ciphertext: StackCipherText,
     aad: impl IntoContext<'a>,
-) -> Result<T, Error>
+) -> crate::target::Pending<'s, T, K>
 where
-    T: Decrypt,
+    T: Decrypt + 's,
 {
-    let context = aad.into_context();
-    let keyed = crate::target::bind_pending(scope, ciphertext, Descriptor::of(context.clone()))
-        .settle()
-        .await?;
-    open_keyed(keyed, context)
+    let context = aad.into_context().into_owned();
+    crate::target::bind_pending(cipher_ref, ciphertext, Descriptor::of(context.clone()))
+        .try_map(move |keyed| open_keyed(keyed, context))
 }
 
-impl<K: DataKeySource + IndexKeySource> StackCipher<K> {
+impl<K> StackCipher<K> {
     /// Decrypt a [`StackCipherText`] into `T`, authenticating against
     /// `context`.
     ///
@@ -1293,7 +1559,7 @@ impl<K: DataKeySource + IndexKeySource> StackCipher<K> {
     /// and every leaf's AAD derived from it; there is no form of this call
     /// that takes two.
     ///
-    /// Not keyset-scoped: each leaf carries the id of the keyset it was
+    /// Not bound to a keyset: each leaf carries the id of the keyset it was
     /// sealed under, and this opens leaves from any keyset the client is
     /// authorised for. To insist on one keyset, decrypt through its
     /// [`KeysetCipher::decrypt_tree`] instead. For an owned scalar
@@ -1312,16 +1578,54 @@ impl<K: DataKeySource + IndexKeySource> StackCipher<K> {
     /// trust — one tenant's data at a time — should hold that tenant's
     /// [`KeysetCipher::decrypt_tree`], which is one round trip at most and refuses
     /// a foreign leaf before any.
-    pub async fn decrypt<'a, T, A>(
-        &self,
+    ///
+    /// # Audit metadata
+    ///
+    /// ZeroKMS logs every key request with the identity that made it. To
+    /// provide additional context for the audit log, call `.audit(..)`
+    /// before you await the result. `.audit(..)` takes an
+    /// [`AuditMetadata`](crate::AuditMetadata): facts about the call, such
+    /// as its purpose or a request id.
+    ///
+    /// ```
+    /// use stack_encrypt::{AuditMetadata, Controlled, Protected, StackCipher};
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
+    /// let keyset = cipher.default_keyset();
+    /// let stored = keyset.encrypt_tree(String::from("alice"), "users/name").await?;
+    ///
+    /// let name: Protected<String> = cipher
+    ///     .decrypt(stored, "users/name")
+    ///     .audit(AuditMetadata::new().with("purpose", "profile page"))
+    ///     .await?;
+    /// assert_eq!(name.risky_ref(), "alice");
+    /// # Ok::<(), stack_encrypt::Error>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// ZeroKMS records the facts as given and does not verify them. The
+    /// decrypt does not need them. The facts can differ from those sent
+    /// with the encrypt. ZeroKMS writes the facts to its logs, so do not
+    /// send plaintext or secrets.
+    ///
+    /// This call makes one key request for each keyset the leaves were sealed
+    /// under. Each request is sent with the same facts.
+    pub fn decrypt<'s, 'a, T, A>(
+        &'s self,
         ciphertext: StackCipherText,
         context: A,
-    ) -> Result<T, Error>
+    ) -> crate::target::Pending<'s, T, K>
     where
-        T: Decrypt,
+        T: Decrypt + 's,
         A: IntoContext<'a>,
     {
-        decrypt_through(self.into(), ciphertext, context).await
+        decrypt_through(self.into(), ciphertext, context)
     }
 }
 
@@ -1424,7 +1728,7 @@ pub enum LeafBytesError {
     /// The key tag does not fit the format's `u16` length field. Every
     /// construction site rejects an oversized tag — [`SealedValue::from_parts`]
     /// and `serde` deserialisation with this error, and the seal path (where a
-    /// custom [`DataKeySource`] could return one; real ZeroKMS tags are tens
+    /// custom [`DataKeySource`](stack_kms::DataKeySource) could return one; real ZeroKMS tags are tens
     /// of bytes) by failing the encrypt — so a live `SealedValue` always
     /// encodes.
     #[error("key tag of {0} bytes exceeds the format's u16 length field")]
@@ -1680,8 +1984,8 @@ pub(crate) fn bind_keys(
 
 /// A value planned for sealing: vitaminc's tree of pending leaves, each
 /// holding its tagged plaintext and the AAD its place in the value derives,
-/// with no ZeroKMS I/O done yet. [`seal`](Self::seal) turns it into a
-/// [`StackCipherText`].
+/// with no ZeroKMS I/O done yet. [`into_pending`](Self::into_pending)
+/// turns it into a [`StackCipherText`].
 ///
 /// [`plan`](Self::plan) walks the value once, through vitaminc's
 /// `EncryptSink`, which owns every container rule (element and entry AAD,
@@ -1716,9 +2020,11 @@ impl PendingStackCipherText {
         count(&self.0)
     }
 
-    /// Generate one data key per keyed leaf (one batched ZeroKMS call — none
-    /// for a passthrough-only tree), every key under the [`Descriptor`] of
-    /// `context`, and seal the whole tree.
+    /// Seal the whole tree. The result is a
+    /// [`Pending`](crate::target::Pending). Awaiting it generates one data
+    /// key for each keyed leaf, then seals every leaf. All the keys come
+    /// from one batched ZeroKMS call, under the [`Descriptor`] of `context`.
+    /// A tree that has only passthrough leaves makes no call.
     ///
     /// `context` is the context the tree was planned under — the value passed to
     /// [`plan`](Self::plan), in the same shape (see the
@@ -1727,36 +2033,26 @@ impl PendingStackCipherText {
     /// check that the two agree, which is why [`KeysetCipher::encrypt_tree`], which
     /// does both steps from one value, is the form to prefer.
     ///
-    /// Settles through the target layer's request carrier
-    /// ([`seal_pending`](crate::target)), so this and
-    /// `encrypt_into_with_context` into a `StackCipherText` share one definition of how a tree
-    /// is sealed and one path to ZeroKMS.
-    pub async fn seal<'a, K: DataKeySource + IndexKeySource>(
-        self,
-        cipher: &KeysetCipher<'_, K>,
-        context: impl IntoContext<'a>,
-    ) -> Result<StackCipherText, Error> {
-        self.into_pending(cipher, context).settle().await
-    }
-
-    /// Turn this tree into a [`Pending`](crate::target::Pending) request
-    /// carrier without settling it.
+    /// Await the result. To send audit metadata with the key request, call
+    /// [`.audit(..)`](crate::Pending::audit) on the result first.
     ///
-    /// [`seal`](Self::seal) is this plus an immediate settle — one ZeroKMS
-    /// call per tree. `into_pending` exists for callers that hold *several*
-    /// independently planned trees (one per record field in a language
-    /// binding, say) and want them merged with
-    /// [`Pending::zip`](crate::target::Pending::zip) /
-    /// [`Pending::all`](crate::target::Pending::all) so the whole assembly
-    /// seals in **one** batched `generate_keys` call. Same sealing path
-    /// either way.
+    /// A caller can have *several* trees that were planned independently,
+    /// such as one for each record field in a language binding. Merge them
+    /// with [`Pending::zip`](crate::target::Pending::zip) or
+    /// [`Pending::all`](crate::target::Pending::all). The whole assembly
+    /// then seals in **one** batched `generate_keys` call.
+    ///
+    /// This method settles through [`seal_pending`](crate::target), the
+    /// request carrier of the target layer. `encrypt_into_with_context`
+    /// into a `StackCipherText` settles through it too. So a tree is sealed
+    /// in one way, through one path to ZeroKMS.
     ///
     /// **Context contract.** The cipher-directed path deliberately accepts
     /// *any* AAD, including none at all (`()`) — it mirrors
     /// `Aes256Cipher`, where AAD-less sealing is a legitimate AEAD use,
     /// opened symmetrically by [`StackCipher::decrypt`]. But a tree that
     /// will be opened through the target layer's
-    /// [`decrypt_into`](crate::target::DecryptInto) — a per-field record
+    /// [`DecryptSource`](crate::target::DecryptSource) — a per-field record
     /// assembly in an FFI front-end, say — is bound by that layer's rule: it
     /// opens only under a [`NonEmpty`](crate::NonEmpty) context, so seal
     /// under one here (a `NonEmpty<T>` is an [`IntoContext`] like any other, and
@@ -1885,7 +2181,7 @@ fn open_leaf(keyed: KeyedLeaf, aad: &Context<'_>) -> Result<Protected<Vec<u8>>, 
 /// in the order vitaminc's [`seal_all`] visits the leaves.
 ///
 /// The batch is fetched before the walk, in one `generate_keys` call per
-/// pending (see [`PendingStackCipherText::seal`]), so the walk itself is
+/// pending (see [`PendingStackCipherText::into_pending`]), so the walk itself is
 /// synchronous. A leaf for which no key is left is refused.
 struct MintedKeys<'k, I> {
     keyset_id: Uuid,
@@ -2202,6 +2498,128 @@ mod credential_tests {
         }
     }
 
+    mod auth_strategy_that_takes_a_credential {
+        use super::*;
+        use stack_auth::{CredentialAuthStrategy, SecretToken};
+
+        /// What a [`TakesCredential`] strategy was asked for.
+        #[derive(Default)]
+        struct Asks {
+            with_credential: Mutex<Vec<String>>,
+        }
+
+        impl Asks {
+            fn with_credential(&self) -> Vec<String> {
+                self.with_credential.lock().unwrap().clone()
+            }
+        }
+
+        /// A strategy with no credential of its own: each call brings one,
+        /// and there is no way to ask it for a token without one. It
+        /// records every ask. It never has a token, so a cipher built from
+        /// it stops at its first ZeroKMS request.
+        struct TakesCredential(Arc<Asks>);
+
+        impl stack_auth::StrategyKind for &TakesCredential {
+            type Kind = stack_auth::CredentialPerCall;
+        }
+
+        impl CredentialAuthStrategy for &TakesCredential {
+            async fn get_token_with_credential(
+                self,
+                credential: SecretToken,
+            ) -> Result<ServiceToken, AuthError> {
+                self.0
+                    .with_credential
+                    .lock()
+                    .unwrap()
+                    .push(credential.as_str().to_string());
+                Err(AuthError::NotAuthenticated(stack_auth::NotAuthenticated))
+            }
+        }
+
+        fn takes_credential() -> (Arc<Asks>, TakesCredential) {
+            let asks = Arc::new(Asks::default());
+            (Arc::clone(&asks), TakesCredential(asks))
+        }
+
+        /// A key provider that has a key, and counts how often it is asked
+        /// for one.
+        struct HasKey(Arc<AtomicUsize>);
+
+        impl KeyProvider for HasKey {
+            async fn client_key(&self) -> Result<ClientKey, KeyProviderError> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(ClientKey::generate_for_test())
+            }
+        }
+
+        #[test]
+        fn init_returns_a_cipher_that_has_loaded_no_keyset() {
+            let (asks, strategy) = takes_credential();
+            let key_asked = Arc::new(AtomicUsize::new(0));
+            let provider = HasKey(Arc::clone(&key_asked));
+
+            let cipher = run_with_env(None, None, || {
+                StackCipher::builder()
+                    .auth_strategy(strategy)
+                    .key_provider(provider)
+                    .init()
+            })
+            .expect("init needs no token from a strategy that has none of its own");
+
+            assert!(
+                format!("{cipher:?}").contains("default_keyset_id: None"),
+                "no keyset is loaded yet, got: {cipher:?}"
+            );
+            assert_eq!(
+                key_asked.load(Ordering::SeqCst),
+                1,
+                "the provider is asked once"
+            );
+            assert!(
+                asks.with_credential().is_empty(),
+                "init has no credential, so it asks for no token"
+            );
+        }
+
+        #[test]
+        fn the_first_credential_is_the_one_the_strategy_is_asked_with() {
+            let (asks, strategy) = takes_credential();
+            let provider = StaticKeyProvider::new(ClientKey::generate_for_test());
+
+            let (result, debug) = run_with_env(None, None, || async move {
+                let cipher = StackCipher::builder()
+                    .auth_strategy(strategy)
+                    .key_provider(provider)
+                    .init()
+                    .await
+                    .expect("init needs no token from a strategy that has none of its own");
+                let result = cipher
+                    .default_keyset()
+                    .keyset_id()
+                    .with_credential(SecretToken::new("alice.jwt"))
+                    .await
+                    .map(|_| ());
+                (result, format!("{cipher:?}"))
+            });
+
+            assert!(
+                is_the_strategys_refusal(&result),
+                "the strategy's refusal must be returned, got: {result:?}"
+            );
+            assert_eq!(
+                asks.with_credential(),
+                ["alice.jwt"],
+                "the default keyset is loaded with the credential given"
+            );
+            assert!(
+                debug.contains("default_keyset_id: None"),
+                "a refused load leaves the default keyset unloaded, got: {debug}"
+            );
+        }
+    }
+
     mod with_detected_credentials {
         use super::*;
 
@@ -2316,7 +2734,7 @@ mod tests {
             .await
             .unwrap();
         let keyset = cipher.default_keyset();
-        let keyset_id = keyset.keyset_id().to_string();
+        let keyset_id = keyset.keyset_id().await.unwrap().to_string();
 
         for (debug, type_name) in [
             (format!("{cipher:?}"), "StackCipher {"),

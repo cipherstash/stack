@@ -4,7 +4,7 @@
 # `manifest_path: Cargo.toml` and `config: release-plz.toml`. The EQL workspace
 # has its own file at packages/eql/release-plz.toml.
 #
-# Five crates publish from here, in three version groups:
+# Six crates publish from here, in three version groups:
 #
 # - `stack-auth` and `stack-profile` (the 0.43 line). In cipherstash-suite
 #   they shared a group with `cipherstash-client`, which stays there.
@@ -13,8 +13,10 @@
 #   usable without stack-encrypt. stack-encrypt depends on it publicly and
 #   re-exports it as `stack_encrypt::kms`, so its callers always get the
 #   version stack-encrypt was built against.
-# - `stack-encrypt` and `stack-encrypt-derive` (from 0.1.0). The derive emits
-#   code against `stack-encrypt`'s paths and traits, so the two move as one.
+# - `stack-encrypt` and `stack-encrypt-derive` (from 0.1.0), and
+#   `stack-encrypt-jsonpath` (from 0.3.0). The derive emits code against
+#   `stack-encrypt`'s paths and traits, and both read JSON paths through
+#   `stack-encrypt-jsonpath`'s grammar, so the three move as one.
 #   `eql-bindings` depends on `stack-encrypt` (its optional `stack-encrypt`
 #   feature), so a crates.io release of `eql-bindings` needs the matching
 #   `stack-encrypt` published first.
@@ -55,6 +57,10 @@ version_group = "stack-encrypt"
 
 [[package]]
 name = "stack-encrypt-derive"
+version_group = "stack-encrypt"
+
+[[package]]
+name = "stack-encrypt-jsonpath"
 version_group = "stack-encrypt"
 
 [[package]]

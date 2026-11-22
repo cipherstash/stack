@@ -68,6 +68,11 @@ mod tests {
             Error::Config(_) => Error::Config(cause()),
             Error::Term(_) => Error::Term(TermError::EmptyTermText),
             Error::Other(_) => Error::Other(cause()),
+            // The same refusal as the dynamic `Error::Source` row, whose
+            // code it shows through.
+            Error::Input(_) => Error::Input(Box::new(crate::refusal::Error::bad_source(
+                crate::refusal::Reason::FieldMissing,
+            ))),
             Error::UnsupportedShape => Error::UnsupportedShape,
             Error::ContextMismatch { .. } => Error::ContextMismatch {
                 stored: Descriptor::of("users"),
@@ -123,6 +128,7 @@ mod tests {
             TermError::JsonPathNotOrdered => TermError::JsonPathNotOrdered,
             TermError::JsonOrderingAtPosition => TermError::JsonOrderingAtPosition,
             TermError::JsonValueNotScalar => TermError::JsonValueNotScalar,
+            TermError::JsonNumberNotFinite => TermError::JsonNumberNotFinite,
         ]));
         errors.extend(boxed(variants![
             TermBytesError::WrongEqualityTermLength(_) => {
@@ -175,6 +181,9 @@ mod tests {
             },
             PlanError::EmptyIndexes => PlanError::EmptyIndexes,
             PlanError::EmptyPart => PlanError::EmptyPart,
+            PlanError::ContextNotStorable { .. } => PlanError::ContextNotStorable {
+                field: "users/email".into(),
+            },
             PlanError::NotInPlan { .. } => PlanError::NotInPlan { field: field() },
             PlanError::NotInValue { .. } => PlanError::NotInValue { field: field() },
             PlanError::FieldType { .. } => PlanError::FieldType {
@@ -248,10 +257,6 @@ mod tests {
                 reason: "block ORE".into(),
             },
             TargetError::NoQuery { .. } => TargetError::NoQuery { name: target() },
-            TargetError::Extended { .. } => TargetError::Extended {
-                name: name(),
-                label: "users/email".into(),
-            },
             TargetError::ContextField { .. } => TargetError::ContextField {
                 name: name(),
                 context_field: "tenant".into(),
@@ -405,6 +410,15 @@ mod tests {
                     field: "age".into(),
                 })),
                 json!({ "field": "age" }),
+            ),
+            (
+                Box::new(Error::Input(Box::new(crate::refusal::Error::Predicate {
+                    field: None,
+                    reason: crate::refusal::Reason::JsonPredicateSyntax,
+                    construct: "a path",
+                    at: 3,
+                }))),
+                json!({ "reason": "json_predicate_syntax", "construct": "a path", "at": 3 }),
             ),
             (
                 Box::new(Error::KeyCountMismatch {
@@ -650,19 +664,19 @@ mod tests {
                 json!({ "target": "TextEq", "reason": "block ORE" }),
             ),
             (
-                Box::new(TargetError::Extended {
+                Box::new(TargetError::ContextField {
                     name: name(),
-                    label: "users/email".into(),
+                    context_field: "tenant".into(),
                 }),
-                json!({ "field": "email", "label": "users/email" }),
+                json!({ "field": "email", "context_field": "tenant" }),
             ),
             // Before the lowering names the field, there is none to give.
             (
-                Box::new(TargetError::Extended {
+                Box::new(TargetError::ContextField {
                     name: String::new(),
-                    label: "users/email".into(),
+                    context_field: "tenant".into(),
                 }),
-                json!({ "label": "users/email" }),
+                json!({ "context_field": "tenant" }),
             ),
             (
                 Box::new(TargetError::Kind {

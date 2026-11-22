@@ -12,7 +12,7 @@
 //! Go caller can distinguish a bad token from a tampered ciphertext without
 //! parsing strings; 11 is a term-derivation failure (a caller-input
 //! condition, e.g. match text that yields no tokens); 12 is a keyset-scoped
-//! open refusing a leaf whose keyset id is not the scope's — a host's own
+//! open refusing a leaf whose keyset id is not the caller's — a host's own
 //! constraint, checked before the leaf is authenticated and so not a
 //! statement about tampering.
 //!
@@ -155,6 +155,10 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
         // children asked for as a scalar, or an altered entry. The client
         // cannot tell which, so neither STATUS_AUTH nor a claim of either.
         stack_encrypt::Error::JsonNotALeaf => STATUS_ENCODING,
+        // A refusal of the caller's input, reported through the crate's
+        // error by a path whose failure can only be that: the dynamic
+        // refusal it holds is classified as the dynamic path classifies it.
+        stack_encrypt::Error::Input(refusal) => status_for_dynamic(refusal),
         _ => STATUS_INTERNAL,
     }
 }
@@ -192,9 +196,10 @@ pub fn status_for_dynamic(error: &stack_encrypt::dynamic::Error) -> u32 {
         | Error::Predicate { .. } => STATUS_ENCODING,
         Error::Cipher(e) => status_for_error(e),
         // A target refusal is a statement about the plan, the label or the
-        // value (an unknown or unproducible type, an extended plan, a value
-        // of another kind, stored bytes that are not the type) — malformed
-        // input, like the rest — save the resolver's own failure.
+        // value (an unknown or unproducible type, a label that is not a
+        // column, a value of another kind, stored bytes that are not the
+        // type) — malformed input, like the rest — save the resolver's own
+        // failure.
         Error::Target(stack_encrypt::dynamic::TargetError::Other(_)) => STATUS_INTERNAL,
         Error::Target(_) => STATUS_ENCODING,
         Error::Internal => STATUS_INTERNAL,
@@ -421,6 +426,21 @@ mod tests {
         );
     }
 
+    /// A refusal of the caller's input that arrives in the crate's error is
+    /// classified as the dynamic path classifies it.
+    #[test]
+    fn an_input_refusal_is_the_callers_input() {
+        use stack_encrypt::refusal::{Error, Reason};
+        let refused = Error::Source {
+            field: None,
+            reason: Reason::JsonPathNoWildcard,
+        };
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::Input(Box::new(refused))),
+            STATUS_ENCODING
+        );
+    }
+
     #[test]
     fn a_context_mismatch_is_its_own_status() {
         use stack_encrypt::Describe;
@@ -470,10 +490,6 @@ mod tests {
             TargetError::Unproducible {
                 name: "DateOrdOre".into(),
                 reason: "no kind for this family".into(),
-            },
-            TargetError::Extended {
-                name: "email".into(),
-                label: "users/email".into(),
             },
             TargetError::ContextField {
                 name: "email".into(),

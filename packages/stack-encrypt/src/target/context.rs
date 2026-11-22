@@ -69,6 +69,13 @@ pub struct CallerContext {
     /// binding spelled as data ([`from_piece`](Self::from_piece)) is not
     /// checked here: the dynamic grammar allows an empty extension part.
     empty_part: bool,
+    /// The field's own context, when a record built this context for one
+    /// of its fields: the record's scope and the field's name, as
+    /// [`DeclaredContext::under`] and [`extend`](Self::extend) were given
+    /// them, before any scope or binding. It is the part that a field type
+    /// which stores its context stores ([`ContextFromField`]). `None` for a
+    /// context the caller built.
+    own: Option<ContextPiece<'static>>,
 }
 impl<'c, T> From<NonEmpty<T>> for CallerContext
 where
@@ -97,6 +104,7 @@ impl<S: ScopePart, B: BindPart> From<Parts<S, B>> for CallerContext {
             scopes,
             bindings: binding.into_iter().collect(),
             empty_part: empty_scope || empty_bind,
+            own: None,
         }
     }
 }
@@ -132,6 +140,7 @@ impl CallerContext {
             scopes: Some(piece),
             bindings: Vec::new(),
             empty_part: false,
+            own: None,
         }
     }
     /// Refuse an empty part. A context with no scope passes: a record
@@ -212,6 +221,7 @@ impl CallerContext {
             scopes: None,
             bindings: vec![piece],
             empty_part: false,
+            own: None,
         }
     }
     /// The parts a record stores in its row, as the caller context the
@@ -223,6 +233,7 @@ impl CallerContext {
             scopes: stored.scope,
             bindings: stored.bind.into_iter().collect(),
             empty_part: stored.empty_part,
+            own: None,
         }
     }
     /// The own context `own`, extended by this caller context: the field's
@@ -234,6 +245,7 @@ impl CallerContext {
     pub fn extend<'c, O: IntoContext<'c>>(self, own: NonEmpty<O>) -> Self {
         let own = own.into_context().into_owned();
         Self {
+            own: Some(own.clone()),
             scopes: Some(match self.scopes {
                 Some(scopes) => nest(own, scopes),
                 None => own,
@@ -255,6 +267,33 @@ impl CallerContext {
         self.bindings.extend(part.bindings);
         self.empty_part |= part.empty_part;
         self
+    }
+    /// The context a field type that stores its context stores for this
+    /// field: the field's own context, as `T`.
+    ///
+    /// `None` when `T` cannot store the own context, when `T` stores a
+    /// context that encodes differently from it, or when no record built
+    /// this context for a field. A stored context that encoded differently
+    /// would name one context in the row while the field ran under
+    /// another.
+    fn stored_as<'c, T>(&self) -> Option<NonEmpty<T>>
+    where
+        T: ContextFromField + Clone + IntoContext<'c>,
+    {
+        let own = self.own.as_ref()?;
+        let stored = T::from_field(own)?;
+        (stored.get().clone().into_context() == *own).then_some(stored)
+    }
+    /// The refusal of a field whose type cannot store this context's own
+    /// part. It names the field by its own context, `members/email`. A
+    /// context that no record built for a field has no own part, so the
+    /// refusal names the whole query context.
+    fn not_storable(&self) -> Error {
+        let named = self.own.clone().unwrap_or_else(|| self.query());
+        crate::plan::PlanError::ContextNotStorable {
+            field: Descriptor::from_piece(&named).as_str().to_owned(),
+        }
+        .into()
     }
     /// The scopes and the bindings, for [`Contexts`](crate::Contexts).
     #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
@@ -456,7 +495,7 @@ impl<T> Scope<T> {
 /// ```
 ///
 /// Pass the result to
-/// [`MarkedQuery::scope`](crate::marker::MarkedQuery::scope). You do not
+/// [`FieldQuery::scope`](crate::field_reference::FieldQuery::scope). You do not
 /// need to write this type's name: `Outer` is a [`Scope`] or another
 /// `Scopes`, and `Inner` is the [`Scope`] of the innermost record.
 ///
@@ -725,6 +764,7 @@ impl StoredParts {
             scopes: None,
             bindings: Vec::new(),
             empty_part: empty_scope || empty_bind,
+            own: None,
         };
         match (&self.scope, scope) {
             (Some(stored), Some(passed)) if *stored != passed => {
@@ -825,8 +865,8 @@ impl<'a, T: Clone + IntoContext<'a>> From<&NonEmpty<T>> for DeclaredContext {
     }
 }
 /// A scope the call adds. A query takes a scope and no binding, so this is
-/// the one conversion from a caller's part: a `Bind` does not convert, and
-/// a query chain's `.extend(Bind::new(..))` does not compile.
+/// the one conversion from a caller's part: a `Bind` does not convert, so
+/// a query's `.scope(Bind::new(..))` does not compile.
 impl<'c, T: IntoContext<'c> + MaybeEmpty> From<Scope<T>> for DeclaredContext {
     fn from(scope: Scope<T>) -> Self {
         Self(vec![scope.into()])
@@ -846,6 +886,7 @@ impl DeclaredContext {
 
     /// Whether any part carries a binding. A query refuses such a context
     /// before any key is requested: a binding is in no query context.
+    #[cfg(any(test, feature = "dynamic"))]
     pub(crate) fn has_bindings(&self) -> bool {
         self.0.iter().any(CallerContext::has_bindings)
     }
@@ -868,9 +909,10 @@ impl DeclaredContext {
     /// `((("users", "age"), id), region)` under `id` then `region`. The
     /// bindings of every part follow the scopes, in order.
     pub fn under<'c, O: IntoContext<'c>>(self, own: NonEmpty<O>) -> CallerContext {
-        self.0
-            .into_iter()
-            .fold(CallerContext::from(own), CallerContext::then)
+        let own = own.into_context().into_owned();
+        let mut context = CallerContext::scopes(own.clone());
+        context.own = Some(own);
+        self.0.into_iter().fold(context, CallerContext::then)
     }
 
     /// [`under`](Self::under), refusing a part the caller passed empty.
@@ -921,10 +963,28 @@ impl DeclaredContext {
 // both still showed the type.
 #[doc(hidden)]
 #[derive(Clone, Debug)]
-pub struct ExpectedContext<T>(Option<NonEmpty<T>>);
+pub struct ExpectedContext<T>(Expected<T>);
+
+/// What [`ExpectedContext`] checks the stored context against.
+#[derive(Clone, Debug)]
+enum Expected<T> {
+    /// Any nonempty stored context.
+    Any,
+    /// A stored context equal to this one.
+    Exactly(NonEmpty<T>),
+    /// The context of a record field. The stored context must be the
+    /// field's own context, `own`. The field then opens under `context`:
+    /// its own context, then the scopes and bindings of the record, which
+    /// the field does not store. `own` is `None` when the field's type
+    /// cannot store the own context. Nothing opens then.
+    Field {
+        own: Option<NonEmpty<T>>,
+        context: CallerContext,
+    },
+}
 impl<T> Default for ExpectedContext<T> {
     fn default() -> Self {
-        Self(None)
+        Self(Expected::Any)
     }
 }
 impl<T> From<()> for ExpectedContext<T> {
@@ -934,22 +994,48 @@ impl<T> From<()> for ExpectedContext<T> {
 }
 impl<T> From<NonEmpty<T>> for ExpectedContext<T> {
     fn from(value: NonEmpty<T>) -> Self {
-        Self(Some(value))
+        Self(Expected::Exactly(value))
+    }
+}
+/// A record field whose type stores its context expects the field's own
+/// context in the row: the record's scope and the field's name. The field
+/// opens under that context, then the scopes and bindings of the record.
+/// The field does not store those, so the reader supplies them again.
+impl<'c, T> From<CallerContext> for ExpectedContext<T>
+where
+    T: ContextFromField + Clone + IntoContext<'c>,
+{
+    fn from(context: CallerContext) -> Self {
+        Self(Expected::Field {
+            own: context.stored_as(),
+            context,
+        })
     }
 }
 impl<'c, T: MaybeEmpty + PartialEq + IntoContext<'c>> ExpectedContext<T> {
     /// Check the stored context against this expectation and prove it
-    /// nonempty, yielding the context the record is opened under.
+    /// nonempty. It returns the stored context alone. A record decrypts
+    /// under the context [`decryption_context`](Self::decryption_context)
+    /// returns: a record field also decrypts under the scopes and bindings
+    /// of its record.
     ///
     /// # Errors
     ///
     /// [`Error::ContextMismatch`] if an expected context was given and the
     /// stored one differs from it; the error carries the stored context's
-    /// descriptor. Otherwise fails if the stored context is empty. A stored
+    /// descriptor. [`PlanError::ContextNotStorable`](crate::PlanError::ContextNotStorable)
+    /// if the record is a field whose type cannot store the field's own
+    /// context. Otherwise fails if the stored context is empty. A stored
     /// context is data the record was handed, not something the cipher has
-    /// authenticated yet: both checks happen before any key is requested.
+    /// authenticated yet: every check happens before any key is requested.
     pub fn validate(self, stored: T) -> Result<NonEmpty<T>, Error> {
-        if let Some(expected) = self.0 {
+        let expected = match self.0 {
+            Expected::Any => None,
+            Expected::Exactly(expected) => Some(expected),
+            Expected::Field { own: Some(own), .. } => Some(own),
+            Expected::Field { own: None, context } => return Err(context.not_storable()),
+        };
+        if let Some(expected) = expected {
             if expected.into_inner() != stored {
                 let stored = Descriptor::from_piece(&stored.into_context());
                 return Err(Error::ContextMismatch { stored });
@@ -957,6 +1043,303 @@ impl<'c, T: MaybeEmpty + PartialEq + IntoContext<'c>> ExpectedContext<T> {
         }
         nonempty(stored)
     }
+
+    /// Check the context that a row stores, and return the context the
+    /// record decrypts under.
+    ///
+    /// The two contexts are the same for a record on its own. They differ
+    /// for a record that is a field of another record.
+    ///
+    /// For example, take a `TextEq` value in the column `email` of the
+    /// table `members`. Its row stores `i = {"t": "members", "c": "email"}`.
+    ///
+    /// - **On its own**, the value decrypts under what the row stores:
+    ///   `members/email`.
+    ///   - If the reader passes the column it expects, a row that stores
+    ///     another column is refused.
+    ///   - If the reader passes no column, any stored column is accepted.
+    ///     So a row written before the column was renamed still decrypts.
+    /// - **As the field `email` of a record** with
+    ///   `scope = "members", scope(tenant: u64), bind(row: u128)`, the row
+    ///   stores the same `i`. The tenant and the row ID are not in it.
+    ///   - The reader passes them again, such as tenant 7 and row 9. The
+    ///     value decrypts under `members/email`, then tenant 7, then row 9.
+    ///   - The row must store the field's own column. A row that stores
+    ///     `members/name` is refused: it was written for another field.
+    ///   - So a renamed field does not decrypt the rows written under its
+    ///     old name. That is true of a field of any type, because the name
+    ///     is part of the field's context. Keep the old name with
+    ///     `#[stash(identity = "old_name")]`.
+    ///
+    /// [`validate`](Self::validate) makes the same check, and returns the
+    /// stored context in place of the context to decrypt under.
+    ///
+    /// # Example
+    ///
+    /// `Column` stores a table and a column, as an EQL type does. It is the
+    /// type in the example on [`ContextFromField`].
+    ///
+    /// ```
+    /// use stack_encrypt::target::{ContextFromField, DeclaredContext, ExpectedContext, Scope};
+    /// use stack_encrypt::{
+    ///     nonempty, CallerContext, ContextPiece, Descriptor, Error, IntoContext, MaybeEmpty,
+    ///     NonEmpty,
+    /// };
+    ///
+    /// #[derive(Clone, Debug, PartialEq)]
+    /// struct Column {
+    ///     table: String,
+    ///     column: String,
+    /// }
+    /// # impl MaybeEmpty for Column {
+    /// #     fn is_empty(&self) -> bool {
+    /// #         self.table.is_empty() || self.column.is_empty()
+    /// #     }
+    /// # }
+    /// # impl<'a> IntoContext<'a> for Column {
+    /// #     fn into_context(self) -> ContextPiece<'a> {
+    /// #         ContextPiece::List(vec![
+    /// #             ContextPiece::Text(self.table.into()),
+    /// #             ContextPiece::Text(self.column.into()),
+    /// #         ])
+    /// #     }
+    /// # }
+    /// # impl ContextFromField for Column {
+    /// #     fn from_field(own: &ContextPiece<'_>) -> Option<NonEmpty<Self>> {
+    /// #         let ContextPiece::List(parts) = own else {
+    /// #             return None;
+    /// #         };
+    /// #         let [ContextPiece::Text(table), ContextPiece::Text(column)] = parts.as_slice() else {
+    /// #             return None;
+    /// #         };
+    /// #         NonEmpty::new(Self {
+    /// #             table: table.to_string(),
+    /// #             column: column.to_string(),
+    /// #         })
+    /// #         .ok()
+    /// #     }
+    /// # }
+    /// // What a row of `members` stores in a column of this type.
+    /// fn stored_in(column: &str) -> Column {
+    ///     Column {
+    ///         table: "members".into(),
+    ///         column: column.into(),
+    ///     }
+    /// }
+    /// // A context, as the descriptor that names it.
+    /// fn named(context: &ContextPiece<'_>) -> String {
+    ///     Descriptor::from_piece(context).as_str().to_owned()
+    /// }
+    ///
+    /// // On its own: the reader expects `members/email`. The row stores
+    /// // it, and the value decrypts under it.
+    /// let expected = ExpectedContext::from(NonEmpty::new(stored_in("email"))?);
+    /// let context = expected.decryption_context(stored_in("email"))?;
+    /// assert_eq!(named(&context.stored()), "members/email");
+    ///
+    /// // On its own, with no expected column: a row written before the
+    /// // column was renamed decrypts under the name it stores.
+    /// let context = ExpectedContext::default().decryption_context(stored_in("old_email"))?;
+    /// assert_eq!(named(&context.stored()), "members/old_email");
+    ///
+    /// // As the field `email` of a record with the scope `members`, a
+    /// // tenant scope and a row binding. The reader passes tenant 7 and
+    /// // row 9 again.
+    /// let field = DeclaredContext::default()
+    ///     .with(CallerContext::from(Scope::new(7u64).bind(9u128)))
+    ///     .under(nonempty!("members").with("email"));
+    /// let expected = ExpectedContext::<Column>::from(field);
+    ///
+    /// // The row stores `members/email` alone. The value decrypts under
+    /// // more. Its search terms derive under the column, then the tenant.
+    /// // Its ciphertext is sealed under the row too.
+    /// let context = expected.clone().decryption_context(stored_in("email"))?;
+    /// assert_eq!(named(&context.query()), "(members/email)/7u64");
+    /// assert_eq!(named(&context.stored()), "((members/email)/7u64)/9u128");
+    ///
+    /// // A row that stores another column was written for another field.
+    /// let refused = expected.decryption_context(stored_in("name"));
+    /// assert!(matches!(refused, Err(Error::ContextMismatch { .. })));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// As [`validate`](Self::validate), before any key is requested.
+    pub fn decryption_context(self, stored: T) -> Result<CallerContext, Error> {
+        let context = match &self.0 {
+            Expected::Field { context, .. } => Some(context.clone()),
+            Expected::Any | Expected::Exactly(_) => None,
+        };
+        let stored = self.validate(stored)?;
+        Ok(context.unwrap_or_else(|| CallerContext::from(stored)))
+    }
+}
+
+/// What a record that stores its context is given when it encrypts: the
+/// context it stores, and the context its fields run under.
+///
+/// A `#[stash(context_field)]` record, such as an EQL type, writes its
+/// context into the row.
+///
+/// - On its own, the caller passes that context as a `NonEmpty<T>`. It is
+///   the whole context.
+/// - As a field of a `struct = ..` record, it stores the field's own
+///   context: the record's scope and the field's name
+///   ([`ContextFromField`]). The scopes and bindings of the record come
+///   after it. They are not stored in the field. The reader supplies them
+///   again, as for a field of any other type.
+// `#[doc(hidden)]` is on the definition for the reason given on
+// `ExpectedContext`.
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct StoredContext<T> {
+    /// The context the record stores. `None` when the record is a field
+    /// whose type cannot store the field's own context.
+    stored: Option<NonEmpty<T>>,
+    /// The context the record's fields run under: the stored context, then
+    /// the scopes and bindings that are not stored.
+    context: CallerContext,
+}
+impl<'c, T: Clone + IntoContext<'c>> From<NonEmpty<T>> for StoredContext<T> {
+    fn from(stored: NonEmpty<T>) -> Self {
+        Self {
+            context: CallerContext::from(stored.clone()),
+            stored: Some(stored),
+        }
+    }
+}
+/// A record field whose type stores its context stores the field's own
+/// context, and runs under the whole context the record gives the field.
+impl<'c, T> From<CallerContext> for StoredContext<T>
+where
+    T: ContextFromField + Clone + IntoContext<'c>,
+{
+    fn from(context: CallerContext) -> Self {
+        Self {
+            stored: context.stored_as(),
+            context,
+        }
+    }
+}
+impl<T> StoredContext<T> {
+    /// The context to store, and the context the record's fields run
+    /// under.
+    ///
+    /// # Errors
+    ///
+    /// [`PlanError::ContextNotStorable`](crate::PlanError::ContextNotStorable)
+    /// when the record is a field whose type cannot store the field's own
+    /// context.
+    pub(super) fn into_parts(self) -> Result<(T, CallerContext), Error> {
+        match self.stored {
+            Some(stored) => Ok((stored.into_inner(), self.context)),
+            None => Err(self.context.not_storable()),
+        }
+    }
+}
+
+/// A context type that a field's type stores in the row, built from the
+/// field's own context.
+///
+/// A `struct = ..` record gives each field a context of its own: the
+/// record's scope, then the field's name, such as `("members", "email")`.
+/// A field type that stores its context writes that own context into the
+/// row, as the type it stores. For example, a type that stores a table and
+/// a column stores the table `members` and the column `email`. Implement
+/// this trait for the stored type. A type that stores it can then be a
+/// field of a record.
+///
+/// Only the own context is stored. A record can also list scopes and
+/// bindings, such as a tenant or a row ID. They come after the own
+/// context, as they do for a field of any other type:
+///
+/// - the search terms derive under the query context: the own context,
+///   then the scopes. A binding is not in it, so a binding does not
+///   separate search terms;
+/// - the data key and the AAD derive under the stored context: the query
+///   context, then the bindings.
+///
+/// The scopes and the bindings are not stored in the field, so whoever
+/// reads the field supplies them again. The names of a record that holds
+/// this record as a field come after the own context as scopes do.
+///
+/// The context that `from_field` returns must encode as `own` does
+/// ([`IntoContext`]). The field then writes the terms that its type writes
+/// on its own under that context. A context that encodes differently is
+/// refused, as `None` is, with
+/// [`PlanError::ContextNotStorable`](crate::PlanError::ContextNotStorable),
+/// before any key is requested.
+///
+/// # Example
+///
+/// A type that stores a table and a column, as an EQL type does:
+///
+/// ```
+/// use stack_encrypt::target::ContextFromField;
+/// use stack_encrypt::{nonempty, ContextPiece, IntoContext, MaybeEmpty, NonEmpty};
+///
+/// #[derive(Clone, Debug, PartialEq)]
+/// struct Column {
+///     table: String,
+///     column: String,
+/// }
+///
+/// impl MaybeEmpty for Column {
+///     fn is_empty(&self) -> bool {
+///         self.table.is_empty() || self.column.is_empty()
+///     }
+/// }
+///
+/// // The context of a column: its table, then its column.
+/// impl<'a> IntoContext<'a> for Column {
+///     fn into_context(self) -> ContextPiece<'a> {
+///         ContextPiece::List(vec![
+///             ContextPiece::Text(self.table.into()),
+///             ContextPiece::Text(self.column.into()),
+///         ])
+///     }
+/// }
+///
+/// // A field's own context is the record's scope, then the field's name.
+/// // A column stores the scope as its table and the name as its column.
+/// impl ContextFromField for Column {
+///     fn from_field(own: &ContextPiece<'_>) -> Option<NonEmpty<Self>> {
+///         let ContextPiece::List(parts) = own else {
+///             return None;
+///         };
+///         let [ContextPiece::Text(table), ContextPiece::Text(column)] = parts.as_slice() else {
+///             return None;
+///         };
+///         NonEmpty::new(Self {
+///             table: table.to_string(),
+///             column: column.to_string(),
+///         })
+///         .ok()
+///     }
+/// }
+///
+/// // The field `email` of a record whose scope is `members`.
+/// let own = nonempty!("members").with("email").into_context();
+/// let stored = Column::from_field(&own).expect("a table and a column");
+/// assert_eq!(stored.get().table, "members");
+/// assert_eq!(stored.get().column, "email");
+/// // The stored column encodes as the field's own context does.
+/// assert_eq!(stored.into_inner().into_context(), own);
+///
+/// // A column cannot store a context of three parts.
+/// let longer = nonempty!("members").with("email").with("work").into_context();
+/// assert!(Column::from_field(&longer).is_none());
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "a field whose type stores a `{Self}` as its context cannot be a field of a `struct = ..` record",
+    label = "a `{Self}` cannot be built from the field's own context",
+    note = "the record gives each field a context of its own: the record's scope, then the field's name. Implement `ContextFromField` for `{Self}` to store that context"
+)]
+pub trait ContextFromField: Sized {
+    /// The context this type stores for a field whose own context is
+    /// `own`, or `None` when this type cannot store `own`.
+    fn from_field(own: &ContextPiece<'_>) -> Option<NonEmpty<Self>>;
 }
 
 macro_rules! integer_contexts {
@@ -1009,6 +1392,171 @@ mod tests {
             AeadContext::from(Scope::new(7u64)).extend(own()).piece(),
             scope.stored()
         );
+    }
+
+    /// A stored context of two text parts, for the tests of a field type
+    /// that stores its context.
+    #[derive(Clone, Debug, PartialEq)]
+    struct Pair(String, String);
+    impl MaybeEmpty for Pair {
+        fn is_empty(&self) -> bool {
+            self.0.is_empty() || self.1.is_empty()
+        }
+    }
+    impl<'a> IntoContext<'a> for Pair {
+        fn into_context(self) -> ContextPiece<'a> {
+            ContextPiece::List(vec![text(&self.0), text(&self.1)])
+        }
+    }
+    fn pair_of(own: &ContextPiece<'_>) -> Option<(String, String)> {
+        let ContextPiece::List(parts) = own else {
+            return None;
+        };
+        let [ContextPiece::Text(first), ContextPiece::Text(second)] = parts.as_slice() else {
+            return None;
+        };
+        Some((first.to_string(), second.to_string()))
+    }
+    impl ContextFromField for Pair {
+        fn from_field(own: &ContextPiece<'_>) -> Option<NonEmpty<Self>> {
+            let (first, second) = pair_of(own)?;
+            NonEmpty::new(Self(first, second)).ok()
+        }
+    }
+
+    /// A stored context that does not encode as the field's own context
+    /// does: it swaps the two parts.
+    #[derive(Clone, Debug, PartialEq)]
+    struct Swapped(Pair);
+    impl MaybeEmpty for Swapped {
+        fn is_empty(&self) -> bool {
+            self.0.is_empty()
+        }
+    }
+    impl<'a> IntoContext<'a> for Swapped {
+        fn into_context(self) -> ContextPiece<'a> {
+            self.0.into_context()
+        }
+    }
+    impl ContextFromField for Swapped {
+        fn from_field(own: &ContextPiece<'_>) -> Option<NonEmpty<Self>> {
+            let (first, second) = pair_of(own)?;
+            NonEmpty::new(Self(Pair(second, first))).ok()
+        }
+    }
+
+    fn not_storable(error: Error) -> String {
+        match error {
+            Error::Plan(crate::plan::PlanError::ContextNotStorable { field }) => field,
+            other => panic!("expected ContextNotStorable, got {other:?}"),
+        }
+    }
+
+    /// A field stores its own context, and runs under the whole context
+    /// the record gives it: the scopes and the bindings come after the own
+    /// context, and are not stored.
+    #[test]
+    fn a_field_stores_its_own_context_and_runs_under_the_whole_one() {
+        let own = || nonempty!("users").with("email");
+        let field = DeclaredContext::default()
+            .with(CallerContext::from(Scope::new(7u64).bind(9u128)))
+            .under(own());
+        let (stored, context) = StoredContext::<Pair>::from(field.clone())
+            .into_parts()
+            .unwrap();
+        assert_eq!(stored, Pair("users".into(), "email".into()));
+        assert_eq!(context.query(), field.query());
+        assert_eq!(context.stored(), field.stored());
+        assert_ne!(context.stored(), stored.clone().into_context());
+
+        // On decrypt the stored context must be the field's own, and the
+        // field opens under the same whole context.
+        let decrypts_under = ExpectedContext::<Pair>::from(field.clone())
+            .decryption_context(stored)
+            .unwrap();
+        assert_eq!(decrypts_under.stored(), field.stored());
+        let elsewhere = ExpectedContext::<Pair>::from(field)
+            .decryption_context(Pair("users".into(), "name".into()))
+            .unwrap_err();
+        assert!(matches!(elsewhere, Error::ContextMismatch { .. }));
+    }
+
+    /// On its own, a record stores the context the caller passes, and runs
+    /// under it.
+    #[test]
+    fn a_context_passed_on_its_own_is_stored_and_is_the_whole_context() {
+        let passed = NonEmpty::new(Pair("users".into(), "email".into())).unwrap();
+        let (stored, context) = StoredContext::from(passed.clone()).into_parts().unwrap();
+        assert_eq!(stored, *passed.get());
+        assert_eq!(context.stored(), passed.clone().into_context());
+
+        let decrypts_under = ExpectedContext::from(passed.clone())
+            .decryption_context(stored)
+            .unwrap();
+        assert_eq!(decrypts_under.stored(), passed.into_context());
+    }
+
+    /// A type that cannot store the field's own context is refused, and the
+    /// refusal names that context. So is a type whose stored context
+    /// encodes differently from it: the row would name one context while
+    /// the field ran under another.
+    #[test]
+    fn an_own_context_the_type_cannot_store_is_refused() {
+        let three = DeclaredContext::default().under(nonempty!("users").with("email").with("x"));
+        let refused = StoredContext::<Pair>::from(three.clone())
+            .into_parts()
+            .unwrap_err();
+        assert_eq!(not_storable(refused), "(users/email)/x");
+        let stored = Pair("users".into(), "email".into());
+        let refused = ExpectedContext::<Pair>::from(three)
+            .decryption_context(stored.clone())
+            .unwrap_err();
+        assert_eq!(not_storable(refused), "(users/email)/x");
+
+        let field = DeclaredContext::default().under(nonempty!("users").with("email"));
+        let refused = StoredContext::<Swapped>::from(field.clone())
+            .into_parts()
+            .unwrap_err();
+        assert_eq!(not_storable(refused), "users/email");
+        let refused = ExpectedContext::<Swapped>::from(field)
+            .decryption_context(Swapped(stored))
+            .unwrap_err();
+        assert_eq!(not_storable(refused), "users/email");
+    }
+
+    /// A context that no record built for a field has no own part to store.
+    /// The refusal names the context the type was given.
+    #[test]
+    fn a_context_not_built_for_a_field_has_nothing_to_store() {
+        let caller = CallerContext::from(Scope::new(7u64));
+        let refused = StoredContext::<Pair>::from(caller)
+            .into_parts()
+            .unwrap_err();
+        assert_eq!(not_storable(refused), "7u64");
+    }
+
+    /// The own context is the field's, whatever the parts that follow it
+    /// were built for: a record nested in another passes its fields the
+    /// outer field's context, which has an own part too.
+    #[test]
+    fn the_own_context_of_a_nested_field_is_the_inner_one() {
+        let outer = DeclaredContext::default().under(nonempty!("teams").with("lead"));
+        let inner = DeclaredContext::from(outer).under(nonempty!("users").with("email"));
+        let (stored, context) = StoredContext::<Pair>::from(inner).into_parts().unwrap();
+        assert_eq!(stored, Pair("users".into(), "email".into()));
+        assert_eq!(
+            context.query(),
+            nest(
+                nonempty!("users").with("email").into_context().into_owned(),
+                nonempty!("teams").with("lead").into_context().into_owned(),
+            )
+        );
+
+        // `extend` puts its own context first too.
+        let extended =
+            CallerContext::from(Scope::new(7u64)).extend(nonempty!("users").with("email"));
+        let (stored, _) = StoredContext::<Pair>::from(extended).into_parts().unwrap();
+        assert_eq!(stored, Pair("users".into(), "email".into()));
     }
 
     #[test]

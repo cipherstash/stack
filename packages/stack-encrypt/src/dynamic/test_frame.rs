@@ -12,7 +12,7 @@ use vitaminc_aead::plaintext::{
     visit_map, visit_seq, Error as _, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink,
     Sink, SourceError,
 };
-use vitaminc_aead::{to_frame, DecodeError, Decrypt, Encrypt, Frame};
+use vitaminc_aead::{to_frame, DecodeError, Decrypt, Encrypt, EncryptRef, Frame};
 use vitaminc_protected::Controlled;
 
 /// A value as a test spells it: each scalar at its own width, a logical
@@ -289,8 +289,8 @@ impl<O: Put> Sink for TreeSink<O> {
         })
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<O::Ok, DecodeError> {
-        let inner = value.visit(TreeSink(Root))?;
+    fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<O::Ok, DecodeError> {
+        let inner = value.visit_ref(TreeSink(Root))?;
         Ok(self.0.put(Tree::Passthrough(Box::new(inner))))
     }
 }

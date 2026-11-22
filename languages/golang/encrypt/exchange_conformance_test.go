@@ -227,10 +227,8 @@ func exchangeOperator(t testing.TB, index string) string {
 
 // checkExchangeTerms checks that every stored term is the term this
 // runner's own query of the same value derives: the query semantics of the
-// artifact, independent of who wrote it. An index the corpus lists as
-// unanswered has no operator to compare with, so only its presence is
-// checked.
-func checkExchangeTerms(t testing.TB, ctx context.Context, cipher *encrypt.Cipher, plan *record.Plan, field string, stored exchangeStored, declared, unanswered []string, input any, equal *conformanceInput, what string) {
+// artifact, independent of who wrote it.
+func checkExchangeTerms(t testing.TB, ctx context.Context, cipher *encrypt.Cipher, plan *record.Plan, field string, stored exchangeStored, declared []string, input any, equal *conformanceInput, what string) {
 	t.Helper()
 	if len(stored.Terms) != len(declared)-1 {
 		t.Fatalf("%s: stored %d terms for %v", what, len(stored.Terms), declared[1:])
@@ -239,13 +237,6 @@ func checkExchangeTerms(t testing.TB, ctx context.Context, cipher *encrypt.Ciphe
 		term, ok := stored.Terms[index]
 		if !ok {
 			t.Fatalf("%s: no %s term", what, index)
-		}
-		skip := false
-		for _, u := range unanswered {
-			skip = skip || u == index
-		}
-		if skip {
-			continue
 		}
 		probes := []any{input}
 		if index == "eq" && equal != nil {
@@ -482,7 +473,7 @@ func consumeExchange(t testing.TB, ctx context.Context, cipher *encrypt.Cipher, 
 				t.Fatalf("%s: a SQL null stores no term", what)
 			}
 		} else {
-			checkExchangeTerms(t, ctx, cipher, plan, corpus.Values.Field, stored, c.Outputs, c.Unanswered, input, c.EqualQuery, what)
+			checkExchangeTerms(t, ctx, cipher, plan, corpus.Values.Field, stored, c.Outputs, input, c.EqualQuery, what)
 			sealed[corpus.Values.Field] = exchangeOutputsOf(t, stored, what)
 		}
 		opened, err := cipher.Open(ctx, plan, []record.Sealed{sealed})
@@ -529,7 +520,7 @@ func consumeExchange(t testing.TB, ctx context.Context, cipher *encrypt.Cipher, 
 				}
 				continue
 			}
-			checkExchangeTerms(t, ctx, cipher, plan, f.Name, outputs, f.Outputs, nil, conformanceValue(t, input), nil, what+": "+f.Name)
+			checkExchangeTerms(t, ctx, cipher, plan, f.Name, outputs, f.Outputs, conformanceValue(t, input), nil, what+": "+f.Name)
 			sealed[f.Name] = exchangeOutputsOf(t, outputs, what+": "+f.Name)
 		}
 		if len(stored.Passthrough) != passthroughs {

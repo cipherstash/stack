@@ -106,7 +106,7 @@ that holds one ciphertext.
 
 `serde_json::Value` does not implement `Zeroize`, and Rust's orphan rule
 stops this crate adding it. `JsonPlaintext` holds the `Value` and wipes it
-when it is dropped, as `value::Date` stands in for chrono's date.
+when it is dropped, as `value::Date` stands in for jiff's date.
 
 ### An absent document is not a document
 
