@@ -261,9 +261,9 @@ pub(super) fn target_operators(target: &TargetDescriptor) -> Vec<(Op, IndexSpec)
         .collect()
 }
 
-/// The indexes an EQL type answers through, in its order: each it carries,
-/// the match index under the type's match options, and no match index when
-/// they are not known.
+/// The searchable-encryption indexes the target type has, in the type's
+/// order. A match index takes the type's match options. If the type does
+/// not state its match options, its match index is left out.
 fn target_indexes(target: &TargetDescriptor) -> Vec<IndexSpec> {
     target
         .indexes

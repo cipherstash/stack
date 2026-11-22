@@ -194,7 +194,8 @@
 //!
 //! let _ = EncryptedUser::AGE.eq(42i32);
 //! ```
-//! nor `between`, which no EQL type answers from a field reference:
+//! nor `between`. A range query sends both bounds in one operand, and a
+//! field reference cannot build that operand yet:
 //! ```compile_fail
 //! use eql_bindings::v4::integer::IntegerOrd;
 //! use stack_encrypt::EncryptTarget;

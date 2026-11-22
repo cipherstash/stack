@@ -57,8 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Stack Encrypt says which types' twins carry every term
     (`Target::query_carries_every_term`), so a data plan refuses the same
     queries at the same point.
-  - No type answers `between` from a field reference, as a data plan
-    answers no `between` on an EQL type.
+  - A field reference has no `between` yet. A range query sends both
+    bounds in one operand, and no SDK builds that operand. A data plan
+    refuses `between` on an EQL type for the same reason. #1286 tracks it.
 
 - **A `JsonTreeDocument` field is queried from its field reference** (#1459,
   #1687). As a field of a derived record, a `JsonTreeDocument` (and an
