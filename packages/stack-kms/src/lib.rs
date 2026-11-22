@@ -134,11 +134,11 @@ pub use stack_auth::{diagnostic, ErrorPayload};
 /// dependency on `stack-auth` to pass one.
 pub use stack_auth::SecretToken;
 
-/// The identity of a key source that has one of its own
-/// ([`DataKeySource`] and [`IndexKeySource`]). It is stack-auth's type, for
-/// a strategy of that kind, re-exported so that code generic over the two
-/// kinds of key source needs no direct dependency on `stack-auth`.
-pub use stack_auth::OwnIdentity;
+/// The two kinds of key source ([`KeySourceKind`]): one with an identity of
+/// its own, and one that takes a credential with each call. They are
+/// stack-auth's types, for the two kinds of strategy, re-exported so that a
+/// key source needs no direct dependency on `stack-auth` to state its kind.
+pub use stack_auth::{CredentialPerCall, OwnIdentity};
 
 // Key material
 pub use key::{ClientKey, DataKey, DataKeyWithTag, IndexKey, V1KeySet};
@@ -146,7 +146,7 @@ pub use key::{ClientKey, DataKey, DataKeyWithTag, IndexKey, V1KeySet};
 // Key source abstractions (production = `StackKms`; tests = `FakeDataKeySource`)
 #[cfg(feature = "test-support")]
 pub use key_source::DeterministicSource;
-pub use key_source::{CredentialKeySource, DataKeySource, IndexKeySource};
+pub use key_source::{CredentialKeySource, DataKeySource, IndexKeySource, KeySourceKind};
 #[cfg(feature = "test-support")]
 pub use key_source::{FakeCredentialKeySource, FakeDataKeySource};
 

@@ -29,6 +29,10 @@ pub struct RecordingKeySource {
     inner: FakeDataKeySource,
     calls: Arc<Mutex<Calls>>,
 }
+impl stack_kms::KeySourceKind for RecordingKeySource {
+    type Kind = stack_kms::OwnIdentity;
+}
+
 impl DataKeySource for RecordingKeySource {
     async fn generate_keys(
         &self,

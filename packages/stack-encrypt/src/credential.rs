@@ -108,7 +108,9 @@ mod sealed {
 /// compiler works it out from the key source.
 ///
 /// Sealed: it is implemented for every key source of either kind, and for
-/// nothing else. To supply a key source, implement the traits of its kind.
+/// nothing else. To supply a key source, implement the traits of its kind,
+/// and state the kind ([`KeySourceKind`](stack_kms::KeySourceKind)). A key
+/// source states one kind, so it is never both. That rule is Stack KMS's.
 pub trait KeySource<I>: sealed::Sealed<I> {
     /// The identity to load the default keyset as when the cipher is
     /// built, when no caller is present: the key source's own, or `None`

@@ -1398,6 +1398,10 @@ mod cancellation {
         }
     }
 
+    impl stack_kms::KeySourceKind for Stalling {
+        type Kind = stack_kms::OwnIdentity;
+    }
+
     impl DataKeySource for Stalling {
         async fn generate_keys(
             &self,
@@ -2183,6 +2187,10 @@ mod json_index {
             .unwrap()
             .get_or_insert([0; 32])
             .copy_from_slice(key.key());
+    }
+
+    impl stack_kms::KeySourceKind for Recorded {
+        type Kind = stack_kms::OwnIdentity;
     }
 
     impl DataKeySource for Recorded {
