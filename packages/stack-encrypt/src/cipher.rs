@@ -1294,9 +1294,9 @@ impl<C> StackCipherBuilder<WithAuthStrategy<C>> {
     /// tokens are for.
     ///
     /// The builder still reads one setting from the environment: the
-    /// ZeroKMS endpoint, from `CS_ZEROKMS_HOST`, if it is set. The token and
-    /// the client key go to that endpoint. To choose the endpoint in code,
-    /// build a [`StackKms`] with
+    /// ZeroKMS endpoint, from `CS_ZEROKMS_HOST`, if it is set. Each request
+    /// sends the token to that endpoint. The client key stays in your
+    /// program. To choose the endpoint in code, build a [`StackKms`] with
     /// [`with_base_url`](crate::kms::StackKmsBuilder::with_base_url) and pass
     /// it to [`kms`](StackCipherBuilder::kms).
     pub fn key_provider<P: KeyProvider>(
