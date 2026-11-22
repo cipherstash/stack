@@ -130,8 +130,14 @@ func (s *ProfileStore) OIDC(ctx context.Context, crn string, provider OIDCProvid
 // by `stash auth login`. Only the workspace is read from that session:
 // every token still comes from exchanging the JWT that provider returns.
 //
+// s must be the profile root that [Resolve] or [Open] returns: the CLI's
+// current workspace is the root's, and a workspace store has none.
+//
 // The errors are:
 //
+//   - [ErrConfig] if s is a workspace store, from [ProfileStore.WorkspaceStore]
+//     or [ProfileStore.CurrentWorkspaceStore]. Use OIDC with that
+//     workspace's CRN instead.
 //   - [ErrConfig] if CS_WORKSPACE_CRN is set to a value that is not a CRN.
 //     The profile is not read in that case.
 //   - [ErrNotAuthenticated] if CS_WORKSPACE_CRN is not set and there is no
@@ -139,13 +145,14 @@ func (s *ProfileStore) OIDC(ctx context.Context, crn string, provider OIDCProvid
 //     in it, or a session that records no region. The error says to set
 //     CS_WORKSPACE_CRN or run `stash auth login`.
 //   - The profile's own error if the current workspace or its session cannot
-//     be read: [ErrIO] for a file that cannot be read, [ErrInvalid] for one
-//     that is not JSON, [ErrInvalidWorkspaceID] for a current workspace that
-//     is not a workspace id. A broken profile is never reported as not
-//     logged in.
+//     be read: [ErrIO] for a file that cannot be read, [ErrInvalidWorkspaceID]
+//     for a current workspace that is not a workspace id, and [ErrInvalid]
+//     for a session that is not JSON, whose token is not a JWT naming a
+//     workspace, or whose region is not a region. A broken profile is never
+//     reported as not logged in.
 //   - Any error OIDC returns.
 func (s *ProfileStore) OIDCWithDetectedWorkspace(ctx context.Context, provider OIDCProvider, opts ...StrategyOption) (*Strategy, error) {
-	if provider == nil {
+	if provider == nil || s.dir != guestRoot {
 		return nil, ErrConfig
 	}
 	crn, err := s.detectWorkspaceCRN(ctx)

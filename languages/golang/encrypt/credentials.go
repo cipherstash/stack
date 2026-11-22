@@ -48,12 +48,14 @@ type Credentials interface {
 // material of its own can do so under the client's settings.
 type resolveOptions struct {
 	// Transport is the client's RoundTripper (never nil). AutoCredentials,
-	// AccessKeyCredentials, and OIDCFederation send their authentication
-	// requests through it too.
+	// AccessKeyCredentials, OIDCFederation, and
+	// OIDCFederationWithDetectedWorkspace send their authentication requests
+	// through it too.
 	Transport http.RoundTripper
 	// RequireLockedMemory is the client's setting. AutoCredentials,
-	// AccessKeyCredentials, and OIDCFederation apply it to the credential
-	// guest. That guest contains the token strategy for the life of the
+	// AccessKeyCredentials, OIDCFederation, and
+	// OIDCFederationWithDetectedWorkspace apply it to the credential guest.
+	// That guest contains the token strategy for the life of the
 	// client. Under AutoCredentials it also contains the client key while
 	// AutoCredentials reads it.
 	RequireLockedMemory bool
@@ -71,17 +73,19 @@ type resolvedCredentials struct {
 	// strategy, outside the package's own tests.
 	Token tokenSource
 	// Close, when not nil, releases what the credentials keep open. For
-	// AutoCredentials, AccessKeyCredentials, and OIDCFederation, that is the
-	// credential guest and its token strategy.
+	// AutoCredentials, AccessKeyCredentials, OIDCFederation, and
+	// OIDCFederationWithDetectedWorkspace, that is the credential guest and
+	// its token strategy.
 	// The client calls it from Client.Close, or from NewClient when the
 	// client is not made. A Token that outlives it must not be asked again.
 	Close func() error
 	// MemoryLockError, when not nil, reports why memory the credentials
 	// hold key material in is not locked in RAM: the credential guest's,
-	// which the token strategy lives in and (for AutoCredentials and
-	// OIDCFederation) the client key passed through. AutoCredentials,
-	// AccessKeyCredentials, and OIDCFederation pass on their store's
-	// ProfileStore.MemoryLockError;
+	// which the token strategy lives in and (for AutoCredentials,
+	// OIDCFederation, and OIDCFederationWithDetectedWorkspace) the client
+	// key passed through. AutoCredentials, AccessKeyCredentials,
+	// OIDCFederation, and OIDCFederationWithDetectedWorkspace pass on their
+	// store's ProfileStore.MemoryLockError;
 	// NewCredentials, the caller's strategy's Strategy.MemoryLockError,
 	// which is its store's. It is asked each time, not once: under
 	// best-effort locking a guest's memory can become unlocked later, when
@@ -296,7 +300,9 @@ func (c oidcCredentials) resolve(ctx context.Context, opts resolveOptions) (*res
 //     no saved session to read. The error says to set CS_WORKSPACE_CRN or
 //     run `stash auth login`.
 //   - The profile's own error if its current workspace or session cannot be
-//     read. A broken profile is never reported as not logged in.
+//     read: auth.ErrIO, auth.ErrInvalidWorkspaceID, or auth.ErrInvalid for
+//     a session whose token is not a JWT naming a workspace or whose region
+//     is not a region. A broken profile is never reported as not logged in.
 //
 // auth.ProfileStore.OIDCWithDetectedWorkspace documents each case.
 func OIDCFederationWithDetectedWorkspace(provider auth.OIDCProvider, opts ...auth.StrategyOption) Credentials {

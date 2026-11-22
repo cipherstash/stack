@@ -159,8 +159,9 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	if cfg.requireLockedMemory && resolved.MemoryLockError != nil {
 		// The credentials' own guest held the key, and holds the token
 		// strategy: under the strict policy its memory must be locked too.
-		// AutoCredentials, AccessKeyCredentials, and OIDCFederation open it
-		// strict and cannot get here unlocked; NewCredentials' store is the caller's, opened
+		// AutoCredentials, AccessKeyCredentials, OIDCFederation, and
+		// OIDCFederationWithDetectedWorkspace open it strict and cannot get
+		// here unlocked; NewCredentials' store is the caller's, opened
 		// however the caller chose.
 		if lockErr := resolved.MemoryLockError(); lockErr != nil {
 			return nil, fmt.Errorf("encrypt: the credentials' memory: %w", lockErr)
@@ -265,8 +266,9 @@ func newClient(inst *instance, t *transport) *Client {
 // MemoryLocked reports whether the memory the client's key material lives
 // in — this guest's, where the client key and every loaded index key are,
 // and whatever the credentials held it in on the way (auth's
-// credential guest, for [AutoCredentials], [AccessKeyCredentials], and
-// [OIDCFederation]) — is locked in RAM and, on
+// credential guest, for [AutoCredentials], [AccessKeyCredentials],
+// [OIDCFederation], and [OIDCFederationWithDetectedWorkspace]) — is locked
+// in RAM and, on
 // Linux, excluded from core dumps. False means a lock was refused (on
 // Linux, most often RLIMIT_MEMLOCK, which defaults to 64 KiB on many
 // hosts) or is not available on this platform, and the client is working

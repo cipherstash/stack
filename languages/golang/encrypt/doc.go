@@ -331,9 +331,10 @@
 // which sends it with any [net/http.RoundTripper] and resumes the operation
 // with the response. What crosses per ZeroKMS call is what would cross TLS
 // anyway; derived key material never leaves the guest. Under
-// [AutoCredentials], [AccessKeyCredentials], and [OIDCFederation] the same
-// RoundTripper also carries the authentication requests to CTS, so one
-// scoped to the ZeroKMS host alone is not enough. Under [NewCredentials]
+// [AutoCredentials], [AccessKeyCredentials], [OIDCFederation], and
+// [OIDCFederationWithDetectedWorkspace] the same RoundTripper also carries
+// the authentication requests to CTS, so one scoped to the ZeroKMS host
+// alone is not enough. Under [NewCredentials]
 // those requests go through the store the caller opened the strategy from.
 //
 // # Credentials

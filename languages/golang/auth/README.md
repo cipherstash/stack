@@ -88,7 +88,9 @@ takes. `Auto` checks `CS_CLIENT_ACCESS_KEY` and
 you do not name: `CS_WORKSPACE_CRN` if it is set, else the workspace of the
 session `stash auth login` saved for the CLI's current workspace. A
 `CS_WORKSPACE_CRN` that is not a CRN is `ErrConfig`, and the profile is not
-read. With neither, the error is `ErrNotAuthenticated`.
+read. With neither, the error is `ErrNotAuthenticated`. A saved session that
+cannot be read is reported as itself, never as not logged in. Call it on the
+profile root: a workspace store has no current workspace, and is `ErrConfig`.
 The OIDC provider is a one-method `Token(context.Context) (string, error)`
 interface, called on every token fetch for the JWT of the user the call is
 for; each distinct JWT is exchanged once while its CTS token lasts. Use

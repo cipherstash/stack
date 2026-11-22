@@ -250,6 +250,13 @@ func TestOIDCWithDetectedWorkspaceReportsABrokenProfileAsItself(t *testing.T) {
 		{"a saved session that is not JSON", func(t *testing.T) string {
 			return loggedInProfile(t, "{")
 		}, ErrInvalid, "stack_profile::json"},
+		{"a saved session whose token is not a JWT", func(t *testing.T) string {
+			return loggedInProfile(t, fmt.Sprintf(`{"access_token":"not-a-jwt","token_type":"Bearer","expires_at":%d,"region":"ap-southeast-2.aws"}`,
+				time.Now().Add(time.Hour).Unix()))
+		}, ErrInvalid, "stack_auth::invalid_token"},
+		{"a saved session whose region is not a region", func(t *testing.T) string {
+			return loggedInProfile(t, sessionJSON(t, "nowhere"))
+		}, ErrInvalid, "stack_auth::invalid_region"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -283,5 +290,28 @@ func TestOIDCWithDetectedWorkspaceNeedsAProvider(t *testing.T) {
 	t.Setenv("CS_WORKSPACE_CRN", testCRN)
 	if _, err := profile.OIDCWithDetectedWorkspace(context.Background(), nil); !errors.Is(err, ErrConfig) {
 		t.Fatalf("nil provider: error = %v, want %v", err, ErrConfig)
+	}
+}
+
+// A workspace store has no current workspace of its own, so it cannot detect
+// one; it is refused rather than reported as not logged in.
+func TestOIDCWithDetectedWorkspaceRefusesAWorkspaceStore(t *testing.T) {
+	guestOrSkip(t)
+	unsetEnv(t, "CS_WORKSPACE_CRN")
+	profile := openProfile(t, loggedInProfile(t, sessionJSON(t, "ap-southeast-2.aws")))
+	ctx := context.Background()
+	current, err := profile.CurrentWorkspaceStore(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	named, err := profile.WorkspaceStore(ctx, wsA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, store := range map[string]*ProfileStore{"CurrentWorkspaceStore": current, "WorkspaceStore": named} {
+		_, err := store.OIDCWithDetectedWorkspace(ctx, anyIdPToken, WithBaseURL("https://cts.example.com"))
+		if !errors.Is(err, ErrConfig) {
+			t.Errorf("%s: error = %v, want %v", name, err, ErrConfig)
+		}
 	}
 }

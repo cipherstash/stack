@@ -28,15 +28,16 @@
 //! memory lives in linear memory the host locks, excludes from dumps and
 //! wipes on release, and nowhere else.
 
+use cts_common::{Crn, Region};
 use serde::Deserialize;
-use stack_auth::Token;
+use stack_auth::{ErrorPayload, Token};
 use stack_guest_abi::value::HostValue;
 use stack_profile::{DeviceIdentity, ProfileError, ProfileStore};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use stack_guest_abi::last_error::{internal, malformed};
+use stack_guest_abi::last_error::{self, internal, malformed};
 
-use crate::status::{fail_auth, fail_profile};
+use crate::status::{fail_auth, fail_profile, STATUS_PROFILE_JSON};
 
 /// The file `secretkey.json`, as `stack-auth`'s device client writes it
 /// and `stack-kms`'s `SecretKey` reads it: the ZeroKMS client id and the
@@ -219,11 +220,17 @@ pub fn has_token(dir: &[u8]) -> Result<Vec<u8>, u32> {
 ///
 /// Only a missing `current_workspace` file, or a current workspace with no
 /// saved session, means "not logged in": both are
-/// [`stack_auth::NotAuthenticated`]. A `current_workspace` file that cannot
-/// be read or names an invalid workspace is reported as itself. A session
-/// that records no region is `NotAuthenticated` too, as
-/// [`Token::workspace_crn`] reports it. This is the order stack-auth's own
-/// detection follows on a native target.
+/// [`stack_auth::NotAuthenticated`]. A session that records no region is
+/// `NotAuthenticated` too, as [`Token::workspace_crn`] reports it. This is
+/// the order stack-auth's own detection follows on a native target.
+///
+/// A broken profile is reported as itself, never as "not logged in": a
+/// `current_workspace` or `auth.json` that cannot be read, or a
+/// `current_workspace` that names an invalid workspace, is its profile
+/// error. A saved session whose token is not a JWT naming a workspace, or
+/// whose region does not parse, is [`STATUS_PROFILE_JSON`]: the file is not
+/// the session its type expects. `Token::workspace_crn` would report the
+/// first as a configuration error and the second as a server error.
 ///
 /// Only the CRN crosses: the token stays here.
 pub fn session_crn(dir: &[u8]) -> Result<Vec<u8>, u32> {
@@ -233,12 +240,26 @@ pub fn session_crn(dir: &[u8]) -> Result<Vec<u8>, u32> {
         Err(ProfileError::NoCurrentWorkspace) => return Err(not_authenticated()),
         Err(e) => return Err(fail_profile(&e)),
     };
-    if !session.exists_profile::<Token>() {
+    let token: Token = match session.load_profile() {
+        Ok(token) => token,
+        Err(ProfileError::NotFound { .. }) => return Err(not_authenticated()),
+        Err(e) => return Err(fail_profile(&e)),
+    };
+    let workspace = token.workspace_id().map_err(|e| broken_session(&e))?;
+    let Some(region) = token.region() else {
         return Err(not_authenticated());
-    }
-    let token: Token = session.load_profile().map_err(|e| fail_profile(&e))?;
-    let crn = token.workspace_crn().map_err(|e| fail_auth(&e))?;
-    Ok(crn.to_string().into_bytes())
+    };
+    let region: Region = region
+        .parse()
+        .map_err(|e| broken_session(&stack_auth::UnsupportedRegion(e).into()))?;
+    Ok(Crn::new(region, workspace).to_string().into_bytes())
+}
+
+/// A saved session that loaded but does not hold what a session must: the
+/// error itself is recorded, under the status of a profile file that is not
+/// the JSON its type expects.
+fn broken_session(error: &stack_auth::AuthError) -> u32 {
+    last_error::record(error, error.payload(), STATUS_PROFILE_JSON)
 }
 
 /// `device.json` in this store, read-only, as a codec object
@@ -538,12 +559,50 @@ mod tests {
         current_session(&t, "{");
         assert_eq!(session_crn(&dir(&t)).unwrap_err(), STATUS_PROFILE_JSON);
 
+        // A saved session that is JSON but not a session: a token that is
+        // not a JWT, a JWT that names no workspace, or a region that does
+        // not parse. None of these is a configuration or network error.
+        let no_workspace_jwt =
+            "e30.eyJpc3MiOiJodHRwczovL2N0cy5leGFtcGxlIiwic3ViIjoiQ1N8dGVzdCJ9.c2ln";
+        for (access_token, region) in [
+            ("not-a-jwt", "ap-southeast-2.aws"),
+            (no_workspace_jwt, "ap-southeast-2.aws"),
+            (SESSION_JWT, "nowhere"),
+        ] {
+            let t = tempfile::tempdir().unwrap();
+            current_session(
+                &t,
+                &format!(
+                    r#"{{"access_token":"{access_token}","token_type":"Bearer","expires_at":1800000000,"region":"{region}"}}"#
+                ),
+            );
+            assert_eq!(
+                session_crn(&dir(&t)).unwrap_err(),
+                STATUS_PROFILE_JSON,
+                "{access_token} in {region}"
+            );
+        }
+    }
+
+    /// An `auth.json` whose metadata cannot be read is an I/O error, not
+    /// "not logged in": only a missing file is.
+    #[cfg(unix)]
+    #[test]
+    fn session_crn_reports_an_unreadable_session_as_io() {
+        use std::os::unix::fs::PermissionsExt;
+
         let t = tempfile::tempdir().unwrap();
-        current_session(
-            &t,
-            r#"{"access_token":"not-a-jwt","token_type":"Bearer","expires_at":1800000000,"region":"ap-southeast-2.aws"}"#,
-        );
-        assert_eq!(session_crn(&dir(&t)).unwrap_err(), STATUS_AUTH_CONFIG);
+        current_session(&t, &session(Some("ap-southeast-2.aws")));
+        let ws = t.path().join("workspaces").join(WS_A);
+        std::fs::set_permissions(&ws, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let unreadable = std::fs::metadata(ws.join(AUTH_FILENAME)).is_err();
+        let result = session_crn(&dir(&t));
+        std::fs::set_permissions(&ws, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if !unreadable {
+            // Run as root: permissions do not stop the read.
+            return;
+        }
+        assert_eq!(result.unwrap_err(), STATUS_PROFILE_IO);
     }
 
     #[test]
