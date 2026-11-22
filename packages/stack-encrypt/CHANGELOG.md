@@ -452,9 +452,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     options such as `keyset_cache_size`, write
     `.auth_strategy(AutoStrategy::detect()?)` and
     `.key_provider(FallbackKeyProvider::new(EnvKeyProvider, ProfileKeyProvider::for_detected_workspace()))`
-    before `init()`. That builds the same cipher.
+    before `init()`. That builds the same cipher on a native target.
+    `ProfileKeyProvider` exists on native targets only, so on wasm32 write
+    `.key_provider(EnvKeyProvider)`.
   - The builder state `FromEnv` is renamed `NoKms`, since the builder no
     longer reads the environment in it.
+  - `Error::Config` reads "could not build a ZeroKMS client", without
+    "from the environment": a builder given an auth strategy and a key
+    provider reports its errors there too.
 
 - **A key source of your own states its kind.** `kms::DataKeySource`,
   `kms::IndexKeySource` and `kms::CredentialKeySource` each require

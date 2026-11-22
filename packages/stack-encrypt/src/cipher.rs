@@ -254,8 +254,8 @@ pub enum Error {
         )
     )]
     DescriptorTooLong { len: usize },
-    /// Building a ZeroKMS client from the environment failed: credentials or
-    /// client key missing or malformed.
+    /// Building a ZeroKMS client failed: a credential or the client key is
+    /// missing or malformed, or `CS_ZEROKMS_HOST` cannot be used.
     ///
     /// Boxed rather than naming `stack_encrypt::kms::StackKmsBuilderError` directly:
     /// that type only exists with `http`, and a variant whose presence tracks
@@ -268,10 +268,10 @@ pub enum Error {
     ///
     /// Its payload is the builder error's (the variable at fault, say). Its
     /// code stays this one; the builder error's own is on the source.
-    #[error("could not build a ZeroKMS client from the environment: {0}")]
+    #[error("could not build a ZeroKMS client: {0}")]
     #[diagnostic(
         code(stack_encrypt::config),
-        help("The message says which setting failed. Check `CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY` and `CS_ZEROKMS_HOST`, or log in with `stash auth login`.")
+        help("The message says which setting failed. Check the auth strategy and key provider you named, and `CS_ZEROKMS_HOST` if it is set. `with_detected_credentials` reads `CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY` and `CS_CLIENT_ACCESS_KEY`, or the login `stash auth login` saved.")
     )]
     Config(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
     /// An index term failed to derive.
@@ -667,8 +667,9 @@ impl StackCipher<StackKms<stack_auth::AutoStrategy>> {
     /// [`StackCipherBuilder::auth_strategy`] and
     /// [`StackCipherBuilder::key_provider`]. That builder also takes the
     /// other options, such as
-    /// [`keyset_cache_size`](StackCipherBuilder::keyset_cache_size). This
-    /// builds the same cipher as `with_detected_credentials`:
+    /// [`keyset_cache_size`](StackCipherBuilder::keyset_cache_size). On a
+    /// native target, this builds the same cipher as
+    /// `with_detected_credentials`:
     ///
     /// ```no_run
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -687,6 +688,13 @@ impl StackCipher<StackKms<stack_auth::AutoStrategy>> {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// `ProfileKeyProvider` exists on native targets only. On wasm32 there is
+    /// no profile, so the same cipher is `.key_provider(EnvKeyProvider)`.
+    ///
+    /// Both forms take the ZeroKMS endpoint from `CS_ZEROKMS_HOST` if it is
+    /// set. To choose it in code, see
+    /// [`auth_strategy`](StackCipherBuilder::auth_strategy).
     ///
     /// The cipher uses the client's default keyset.
     ///
@@ -1284,6 +1292,13 @@ impl<C> StackCipherBuilder<WithAuthStrategy<C>> {
     ///
     /// The client key must belong to the workspace that the strategy's
     /// tokens are for.
+    ///
+    /// The builder still reads one setting from the environment: the
+    /// ZeroKMS endpoint, from `CS_ZEROKMS_HOST`, if it is set. The token and
+    /// the client key go to that endpoint. To choose the endpoint in code,
+    /// build a [`StackKms`] with
+    /// [`with_base_url`](crate::kms::StackKmsBuilder::with_base_url) and pass
+    /// it to [`kms`](StackCipherBuilder::kms).
     pub fn key_provider<P: KeyProvider>(
         self,
         provider: P,

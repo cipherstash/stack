@@ -562,8 +562,9 @@ jobs:
   # Round trips through real ZeroKMS. The Go live tests skip without their
   # STACK_ENCRYPT_TEST_* variables, so the secrets pre-flight runs first and
   # turns a missing credential into a failure rather than a silent skip. The
-  # stack-encrypt examples read CS_* through `StackCipher::new()`; tests-crates
-  # builds them, and this job runs them.
+  # stack-encrypt examples read CS_* through
+  # `StackCipher::with_detected_credentials()`; tests-crates builds them, and
+  # this job runs them.
   live:
     name: Go live tests and stack-encrypt examples
     needs: wasi-check

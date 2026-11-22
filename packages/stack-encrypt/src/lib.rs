@@ -120,6 +120,11 @@ directory (`~/.cipherstash`), which `npx stash auth login` writes. A
 logged-in developer machine has both there, so it works with nothing else
 set.
 
+The ZeroKMS endpoint is a setting, not a credential, and every cipher over
+ZeroKMS reads it from `CS_ZEROKMS_HOST` if that is set. The credentials go to
+that endpoint. To choose it in code, pass [`kms`](StackCipherBuilder::kms) a
+`StackKms` built with `with_base_url`.
+
 Where there is no profile — CI, a container, wasm — the environment carries
 them. `CS_CLIENT_ID` + `CS_CLIENT_KEY` are the client key.
 `CS_CLIENT_ACCESS_KEY` is the auth strategy `AutoStrategy` detects, and it
