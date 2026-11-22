@@ -802,10 +802,11 @@ wiped.
 The serialised `Planned`'s shape is not part of the stored format. It can change
 with the dynamic grammar, and a change to it moves no stored byte.
 
-Below `Planned`, `stack_encrypt::dynamic::record` has the functions that
+Beside `Planned`, `stack_encrypt::dynamic::record` has the functions that
 take a declaration as a frame: `plan_with`, `encrypt_with`, `query`, and
-`decrypt_with`. `Planned` calls them. Each takes a `TargetResolver`. The
-resolver runs the EQL type that a field names.
+`decrypt_with`. `encrypt_with` and `decrypt_with` build a `Planned` and run
+it. Each takes a `TargetResolver`. The resolver runs the EQL type that a
+field names.
 
 `eql-bindings` provides the resolver: `eql_bindings::encryption::EqlTargets`.
 See [A ready-made EQL resolver](#a-ready-made-eql-resolver).
@@ -1737,10 +1738,10 @@ Decided on 7 November 2026, as area one of the query design review.
 - **Done already.** `Planned`, the query plan, the field handle,
   `QueryTerm` and `contexts()` on a `Plan` and a `Planned` (#1595,
   merged: `src/dynamic/planned.rs`, `tests/planned.rs`). The chain and
-  the builder are removed (#1666). `Planned` calls `encrypt_with`,
-  `query_term` and `decrypt_with` in `dynamic::record` and
-  `dynamic::query`, under the plan extended by the caller's parts; the
-  reverse, those functions building a `Planned`, is not done (#1669).
+  the builder are removed (#1666). `Planned` runs the lowering under the
+  plan extended by the caller's parts, and calls `query_term` in
+  `dynamic::query`; `encrypt_with` and `decrypt_with` in
+  `dynamic::record` build a `Planned` and run it (#1669).
   The guest still sends the engine a plan frame, then a value frame for
   each call. The serialised `Planned` names and groups what those
   functions already receive, and is not built yet.
@@ -2112,9 +2113,9 @@ table.
   `dynamic::planned::compose` and `opening` build each field's combinator
   from the parsed plan, and `encrypt_with`, `decrypt_with`, `contexts()`
   and the checks read them. The dynamic path no longer uses the plan
-  builder. Those functions do not yet build a `Planned`: they run the
-  lowering themselves. That inversion and `Label` are still to be
-  removed. The helpers in `target::legacy` are removed, in the fourth pull
+  builder. `encrypt_with` and `decrypt_with` build a `Planned` and run
+  it, so `Planned` is the one entry to the lowering (#1669). `Label` is
+  still to be removed. The helpers in `target::legacy` are removed, in the fourth pull
   request for #1488. The builder, the chain, `EncryptFrom`, `DecryptInto`,
   their derives, `encrypt_as` and `decrypt_as` are removed (#1661, #1662).
   EQL, the Go guest, the examples and every test use the owned API, field

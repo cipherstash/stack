@@ -515,10 +515,11 @@ impl crate::ErrorPayload for TargetError {
 ///
 /// A host installs one implementation: the guest build linked with the EQL
 /// types implements it over `eql-bindings`' by-name dispatch; the build
-/// without them installs [`NoTargets`]. The lowering
-/// ([`record::encrypt_with`](super::record::encrypt_with) and its siblings)
-/// calls it once per target field, with the field's label and value, and
-/// zips the returned [`Pending`] into the record's.
+/// without them installs [`NoTargets`]. The lowering of a
+/// [`Planned`](super::Planned) record, which
+/// [`record::encrypt_with`](super::record::encrypt_with) and its siblings
+/// build, calls it once per target field, with the field's label and
+/// value, and zips the returned [`Pending`] into the record's.
 ///
 /// The three operations take the field's **label**, and the **parts** that
 /// come after it.

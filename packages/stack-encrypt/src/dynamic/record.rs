@@ -158,10 +158,10 @@ use vitaminc_aead::plaintext::{Logical, MapSink, Physical, SeqSink, Sink};
 use vitaminc_aead::{DecodeError, Encrypt};
 use vitaminc_protected::{Controlled, Protected};
 
-use super::planned::{check_stored, check_values, compose, opening, opening_base};
+use super::planned::{check_stored, check_values, compose, opening_base, Planned};
 use super::{not_admitted, Error, NoTargets, Reason, TargetError, TargetResolver, TermBytes};
 use crate::plan::FieldValues;
-use crate::target::{CallerContext, DeclaredContext, Decryption, Encrypted, IndexSpec};
+use crate::target::{CallerContext, DeclaredContext, Encrypted, IndexSpec};
 use crate::{
     CipherRef, CipherText, ContextPiece, KeysetCipher, Label, NonEmpty, PassthroughFrame, Pending,
     StackCipherText,
@@ -1169,12 +1169,12 @@ impl Plan {
             })
     }
 
-    fn shape(&self) -> Vec<FieldShape> {
+    pub(super) fn shape(&self) -> Vec<FieldShape> {
         self.fields.iter().map(FieldPlan::shape).collect()
     }
 
     /// The fields that name a target, in plan order: the resolver's.
-    fn target_fields(&self) -> impl Iterator<Item = &FieldPlan> + '_ {
+    pub(super) fn target_fields(&self) -> impl Iterator<Item = &FieldPlan> + '_ {
         self.fields.iter().filter(|field| field.is_target())
     }
 }
@@ -1790,6 +1790,12 @@ pub fn encrypt<'a, K: 'static>(
 /// record's, so a record with target fields is still one ZeroKMS request.
 /// A target field's value rides under [`EQL_KEY`] in the result.
 ///
+/// This builds a [`Planned`] record and runs its lowering: the stored row is
+/// the one [`Planned::with_resolver`] encrypts to with no caller context.
+/// What differs is where a refusal of the input comes back: here, as the
+/// dynamic [`Error`], before the pending exists, where the owned entry point
+/// fails its pending with it.
+///
 /// # Errors
 ///
 /// As [`encrypt`], plus [`Error::Target`] for a target value of another
@@ -1800,133 +1806,7 @@ pub fn encrypt_with<'a, K: 'static>(
     plan: &Plan,
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<Pending<'a, StackCipherText, K>, Error> {
-    let rows = source_rows(source, plan)?;
-    let extend = plan.declared_context();
-    let shape = plan.shape();
-    // Every target field of every row, in row-major order, run by the
-    // resolver; `all` merges their requests with the lowered plan's below.
-    // A row runs the target fields it does not leave out, so each row's
-    // count is its own.
-    let mut pendings = Vec::new();
-    let mut targets = |row: Row| -> Result<(Absent, FieldValues, usize), Error> {
-        let fields = plan
-            .target_fields()
-            .filter(|field| !row.absent.contains(&field.name));
-        let mut count = 0;
-        for (field, value) in fields.zip(row.targets) {
-            let name = field.target().unwrap_or_default();
-            pendings.push(
-                resolver
-                    .encrypt(
-                        name,
-                        field.target_options(),
-                        cipher,
-                        field.label(),
-                        &extend,
-                        value,
-                    )
-                    .map_err(|error| Error::Target(name_target(error, &field.name)))?,
-            );
-            count += 1;
-        }
-        Ok((row.absent, row.values, count))
-    };
-    Ok(match rows {
-        Rows::One(row) => {
-            let (absent, values, _) = targets(row)?;
-            let description = compose::<K>(plan, &absent).map_err(|_| Error::Internal)?;
-            let eql = Pending::all(cipher, pendings);
-            cipher
-                .run(description, values, extend)
-                .zip(eql)
-                .try_map(move |(values, eql)| shape_record(values, eql, &shape, &absent))
-        }
-        Rows::Batch(rows) => {
-            let rows = rows
-                .into_iter()
-                .map(&mut targets)
-                .collect::<Result<Vec<_>, Error>>()?;
-            let len = rows.len();
-            let mut per_row = Vec::with_capacity(len);
-            let groups = by_absent(
-                rows.into_iter()
-                    .map(|(absent, values, count)| {
-                        per_row.push((absent.clone(), count));
-                        (absent, values)
-                    })
-                    .collect(),
-            );
-            // One lowered plan per group of rows that leave out the same
-            // fields, every group's requests merged into the one call.
-            let mut runs = Vec::with_capacity(groups.len());
-            let mut positions = Vec::with_capacity(groups.len());
-            for (absent, at, values) in groups {
-                let mut rows = Vec::with_capacity(values.len());
-                for values in values {
-                    let description = compose::<K>(plan, &absent).map_err(|_| Error::Internal)?;
-                    rows.push(cipher.run(description, values, extend.clone()));
-                }
-                runs.push(Pending::all(cipher, rows));
-                positions.push(at);
-            }
-            let eql = Pending::all(cipher, pendings);
-            Pending::all(cipher, runs)
-                .zip(eql)
-                .try_map(move |(groups, eql)| {
-                    let rows = in_row_order(len, positions.into_iter().zip(groups))?;
-                    let mut eql = eql.into_iter();
-                    rows.into_iter()
-                        .zip(per_row)
-                        .map(|(values, (absent, count))| {
-                            let own: Vec<Vec<u8>> = eql.by_ref().take(count).collect();
-                            shape_record(values, own, &shape, &absent)
-                        })
-                        .collect::<Result<Vec<_>, _>>()
-                        .map(CipherText::Sequence)
-                })
-        }
-    })
-}
-
-/// The rows of a batch grouped by the fields they leave out, each group
-/// with the positions of its rows in the batch, in the order each group
-/// first appears: one composed description runs each group
-/// (`super::planned::compose`). A batch with no `"null": "sql"` field is one
-/// group, as it was one plan before.
-fn by_absent<R>(rows: Vec<(Absent, R)>) -> Vec<(Absent, Vec<usize>, Vec<R>)> {
-    let mut groups: Vec<(Absent, Vec<usize>, Vec<R>)> = Vec::new();
-    for (at, (absent, row)) in rows.into_iter().enumerate() {
-        match groups.iter_mut().find(|(seen, _, _)| *seen == absent) {
-            Some((_, positions, members)) => {
-                positions.push(at);
-                members.push(row);
-            }
-            None => groups.push((absent, vec![at], vec![row])),
-        }
-    }
-    groups
-}
-
-/// Each group's results back in batch order, the inverse of [`by_absent`].
-/// A group that answers with another count than it was given is the engine
-/// answering with another shape than it was asked.
-fn in_row_order<T>(
-    len: usize,
-    groups: impl IntoIterator<Item = (Vec<usize>, Vec<T>)>,
-) -> Result<Vec<T>, crate::Error> {
-    let mut rows: Vec<Option<T>> = std::iter::repeat_with(|| None).take(len).collect();
-    for (positions, results) in groups {
-        if positions.len() != results.len() {
-            return Err(crate::Error::ResponseShape);
-        }
-        for (at, result) in positions.into_iter().zip(results) {
-            let slot = rows.get_mut(at).ok_or(crate::Error::ResponseShape)?;
-            *slot = Some(result);
-        }
-    }
-    rows.into_iter()
-        .map(|row| row.ok_or(crate::Error::ResponseShape))
-        .collect()
+    Planned::with_resolver(plan, source, resolver).run_encrypt(cipher)
 }
 
 /// Derive the EQL query value of one target field for one plaintext: the
@@ -1992,7 +1872,7 @@ pub fn query<'a, K: 'static>(
 /// A resolver's refusal, with the field named where the resolver could not
 /// name it: a resolver sees a type and a label, the lowering knows the
 /// field.
-fn name_target(error: TargetError, field: &str) -> TargetError {
+pub(super) fn name_target(error: TargetError, field: &str) -> TargetError {
     match error {
         TargetError::Column { label, reason, .. } => TargetError::Column {
             name: field.to_owned(),
@@ -2087,6 +1967,12 @@ pub fn decrypt<'a, K: 'static>(
 /// column, zipped into the record's pending and confined to the caller's
 /// keyset as every other leaf is.
 ///
+/// This builds a [`Planned`] stored row and runs its lowering: the values
+/// are the ones `Planned<Plan, StackCipherText>` decrypts to with no caller
+/// context, and `expected` is checked as [`decrypt`] describes. A refusal of
+/// the stored tree comes back here, as the dynamic [`Error`], before the
+/// pending exists.
+///
 /// # Errors
 ///
 /// As [`decrypt`], plus [`Error::Target`] for a stored value that is not
@@ -2098,101 +1984,7 @@ pub fn decrypt_with<'a, K: 'static>(
     expected: Option<Label>,
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<Pending<'a, ValueFrame, K>, Error> {
-    let cipher_ref: CipherRef<'a, K> = cipher_ref.into();
-    let rows = record_rows(record, plan)?;
-    let extend = plan.declared_context();
-    let shape = plan.shape();
-    let cipher = cipher_ref.cipher();
-    let mut pendings = Vec::new();
-    let mut targets = |row: StoredRow| -> Result<(Absent, FieldValues, usize), Error> {
-        let fields = plan
-            .target_fields()
-            .filter(|field| !row.absent.contains(&field.name));
-        let mut count = 0;
-        for (field, stored) in fields.zip(row.targets) {
-            let name = field.target().unwrap_or_default();
-            // Confined to the caller's keyset, as the lowered plan's leaves
-            // are: a target value sealed under another keyset is refused
-            // before any key is retrieved.
-            pendings.push(confine(
-                resolver
-                    .decrypt(name, cipher, field.label(), &extend, &stored)
-                    .map_err(|error| Error::Target(name_target(error, &field.name)))?,
-                &cipher_ref,
-            ));
-            count += 1;
-        }
-        Ok((row.absent, row.values, count))
-    };
-    Ok(match rows {
-        Rows::One(row) => {
-            let (absent, values, _) = targets(row)?;
-            let eql = Pending::all(cipher, pendings);
-            confine(
-                cipher.run_decryption(opening::<K>(plan, values, expected, extend, &absent)),
-                &cipher_ref,
-            )
-            .zip(eql)
-            .try_map(move |(values, eql)| {
-                write_record(Rows::One(open_record(values, eql, &shape, &absent)?))
-            })
-        }
-        Rows::Batch(rows) => {
-            let rows = rows
-                .into_iter()
-                .map(&mut targets)
-                .collect::<Result<Vec<_>, Error>>()?;
-            let len = rows.len();
-            let mut per_row = Vec::with_capacity(len);
-            let groups = by_absent(
-                rows.into_iter()
-                    .map(|(absent, values, count)| {
-                        per_row.push((absent.clone(), count));
-                        (absent, values)
-                    })
-                    .collect(),
-            );
-            let mut opens = Vec::with_capacity(groups.len());
-            let mut positions = Vec::with_capacity(groups.len());
-            for (absent, at, values) in groups {
-                let rows = values.into_iter().map(|values| {
-                    opening::<K>(plan, values, expected.clone(), extend.clone(), &absent)
-                });
-                opens.push(confine(
-                    cipher.run_decryption(Decryption::all(rows)),
-                    &cipher_ref,
-                ));
-                positions.push(at);
-            }
-            let eql = Pending::all(cipher, pendings);
-            Pending::all(cipher, opens)
-                .zip(eql)
-                .try_map(move |(groups, eql)| {
-                    let rows = in_row_order(len, positions.into_iter().zip(groups))?;
-                    let mut eql = eql.into_iter();
-                    let rows = rows
-                        .into_iter()
-                        .zip(per_row)
-                        .map(|(values, (absent, count))| {
-                            let own: Vec<ValueFrame> = eql.by_ref().take(count).collect();
-                            open_record(values, own, &shape, &absent)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    write_record(Rows::Batch(rows))
-                })
-        }
-    })
-}
-
-/// A pending the client built, confined to the keyset the caller ran it
-/// through, when the caller ran it through one: the client opens leaves
-/// from any of its keysets, and a keyset cipher refuses a foreign one
-/// before any key is retrieved.
-fn confine<'a, T: 'a, K>(
-    pending: Pending<'a, T, K>,
-    cipher_ref: &CipherRef<'a, K>,
-) -> Pending<'a, T, K> {
-    pending.confined_to(cipher_ref.keyset())
+    Planned::with_resolver(plan, record, resolver).run_decrypt(cipher_ref, expected)
 }
 
 /// Check a source against a plan without encrypting it — everything
@@ -2318,26 +2110,26 @@ impl RecordTree for StackCipherText {
 
 /// The rows of a call, as the engine's records: one, or a batch, so the
 /// result takes the shape the input had.
-enum Rows<R> {
+pub(super) enum Rows<R> {
     One(R),
     Batch(Vec<R>),
 }
 
 /// One source row: the lowered plan's values, each target field's value in
 /// plan order, for the resolver, and the fields the row leaves out.
-struct Row {
-    values: FieldValues,
-    targets: Vec<ValueFrame>,
-    absent: Absent,
+pub(super) struct Row {
+    pub(super) values: FieldValues,
+    pub(super) targets: Vec<ValueFrame>,
+    pub(super) absent: Absent,
 }
 
 /// One stored row: the lowered plan's ciphertexts, each target field's EQL
 /// bytes in plan order, for the resolver, and the fields the row leaves
 /// out.
-struct StoredRow {
-    values: FieldValues,
-    targets: Vec<Vec<u8>>,
-    absent: Absent,
+pub(super) struct StoredRow {
+    pub(super) values: FieldValues,
+    pub(super) targets: Vec<Vec<u8>>,
+    pub(super) absent: Absent,
 }
 
 /// The `"null": "sql"` fields a row leaves out: null in a source, or with
@@ -2429,7 +2221,7 @@ fn check_tree<T: RecordTree>(tree: &T, field: &str) -> Result<(), Error> {
 /// into a [`ValueFrame`] of its own as the walk reaches it, and nothing else
 /// is copied. A value the frame cannot carry, or that holds a repeated key,
 /// is refused naming its field.
-fn source_rows(source: impl Encrypt, plan: &Plan) -> Result<Rows<Row>, Error> {
+pub(super) fn source_rows(source: impl Encrypt, plan: &Plan) -> Result<Rows<Row>, Error> {
     let not_an_object = || Error::bad_source(Reason::NotAnObject);
     let row = |row: SourceRow| source_row(row.ok_or_else(not_an_object)?, plan);
     match split_rows(source).map_err(split_refusal)? {
@@ -2582,7 +2374,7 @@ fn check_field(value: &ValueFrame, field: &FieldPlan) -> Result<(), Error> {
 
 /// What the adapters know of a field once the engine has run.
 #[derive(Clone, Debug)]
-struct FieldShape {
+pub(super) struct FieldShape {
     name: String,
     verb: Verb,
     keys: Vec<&'static str>,
@@ -2644,7 +2436,7 @@ fn passthrough_bytes(payload: &PassthroughFrame) -> Option<Vec<u8>> {
 
 /// The record the plan produced, in the stored shape: per field, in plan
 /// order, its output map.
-fn shape_record(
+pub(super) fn shape_record(
     mut values: FieldValues,
     eql: Vec<Vec<u8>>,
     shape: &[FieldShape],
@@ -2710,7 +2502,7 @@ fn take_leaf(values: &mut FieldValues, name: &str) -> Result<ValueFrame, crate::
 /// each as the frame it was opened into and checked against its declared
 /// kind. The tag is authenticated, so a mismatch is not tampering: the row
 /// was sealed as another type than the plan now declares.
-fn open_record(
+pub(super) fn open_record(
     mut values: FieldValues,
     eql: Vec<ValueFrame>,
     shape: &[FieldShape],
@@ -2751,7 +2543,9 @@ fn open_record(
 /// straight into its entry of the record's [`FrameWriter`], and dropped,
 /// which wipes it; the result is the only copy of the record's plaintext
 /// left.
-fn write_record(rows: Rows<Vec<(String, ValueFrame)>>) -> Result<ValueFrame, crate::Error> {
+pub(super) fn write_record(
+    rows: Rows<Vec<(String, ValueFrame)>>,
+) -> Result<ValueFrame, crate::Error> {
     fn row<S: MapSink<Error = vitaminc_aead::frame::FrameWriteError>>(
         mut map: S,
         fields: Vec<(String, ValueFrame)>,
@@ -2794,7 +2588,7 @@ fn write_record(rows: Rows<Vec<(String, ValueFrame)>>) -> Result<ValueFrame, cra
 /// each passthrough field is present exactly once with exactly one
 /// `"passthrough"` node carrying a value of the field's kind. Terms, and
 /// entries the plan does not open, are ignored: comparands, not ciphertext.
-fn record_rows(tree: StackCipherText, plan: &Plan) -> Result<Rows<StoredRow>, Error> {
+pub(super) fn record_rows(tree: StackCipherText, plan: &Plan) -> Result<Rows<StoredRow>, Error> {
     match tree {
         CipherText::Map(row) => Ok(Rows::One(record_row(row, plan)?)),
         CipherText::Sequence(items) => Ok(Rows::Batch(
