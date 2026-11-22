@@ -803,7 +803,7 @@ The guests' ABI (the `(ptr, len)` checks, which compile only for wasm32) is
 fuzzed from Go instead: `Fuzz*` targets in `languages/golang/encrypt` and
 `languages/golang/auth` call the real guests through wazero, `go test`
 replays their seeds, and `mise run go:fuzz` fuzzes them (nightly in
-`fuzz.yml`'s `go-fuzz-campaign`).
+`fuzz.yml`'s `go-fuzz-campaign`, one matrix row per target).
 Full walkthrough — layout, adding a target, the CI split — in
 [`docs/fuzzing.md`](docs/fuzzing.md). For cargo-fuzz mechanics (sanitizers,
 corpus, crash triage) use the Trail of Bits `cargo-fuzz` skill rather than a

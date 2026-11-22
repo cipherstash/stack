@@ -44,6 +44,9 @@ var fuzzAuthExports = []fuzzAuthExport{
 	{"sa_lock_path", func(i *instance) api.Function { return i.lockPath }, "pp", bufParams(guestRoot, "auth.json")},
 }
 
+// newFuzzStore opens a store over dir. The caller closes it: the fuzz
+// target keeps one store across its inputs, and replaces it when an input
+// breaks it, so its lifetime is the target's, not an input's.
 func newFuzzStore(tb testing.TB, dir string) *ProfileStore {
 	tb.Helper()
 	if _, err := embeddedGuest(); err != nil {
@@ -53,7 +56,6 @@ func newFuzzStore(tb testing.TB, dir string) *ProfileStore {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	tb.Cleanup(func() { _ = store.Close() })
 	return store
 }
 
@@ -78,6 +80,7 @@ func fuzzAuthCall(store *ProfileStore, which uint8, in guest.FuzzInput) error {
 func FuzzAuthGuestExportPairs(f *testing.F) {
 	dir := f.TempDir()
 	store := newFuzzStore(f, dir)
+	f.Cleanup(func() { _ = store.Close() })
 	for which := range uint8(len(fuzzAuthExports)) {
 		x := fuzzAuthExports[which]
 		for slot := range uint8(len(x.params)) {
@@ -95,7 +98,9 @@ func FuzzAuthGuestExportPairs(f *testing.F) {
 	f.Fuzz(func(t *testing.T, which, slot, mode uint8, a, b uint32, data []byte) {
 		in := guest.FuzzInput{Slot: slot, Mode: mode, A: a, B: b, Data: data}
 		if err := fuzzAuthCall(store, which, in); err != nil {
-			// A broken instance would fail every input after this one.
+			// A broken instance would fail every input after this one:
+			// close it and open another in its place.
+			_ = store.Close()
 			store = newFuzzStore(t, dir)
 			t.Fatal(err)
 		}

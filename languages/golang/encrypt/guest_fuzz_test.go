@@ -20,14 +20,17 @@ import (
 // The guest is the deterministic-kms test build, seeded, so a call that
 // gets past its input checks runs the engine to the end with no network.
 
-// fuzzExport is one export, the layout of its parameters, and a valid
-// call to start from.
+// fuzzExport is one export of one instance, the layout of its parameters,
+// and a valid call to start from.
 type fuzzExport struct {
 	name   string
-	fn     func(*instance) api.Function
+	fn     api.Function
 	layout guest.Layout
 	params []guest.Param
 }
+
+// fuzzSeed seeds the deterministic client the fuzz tests run.
+var fuzzSeed = [32]byte{7}
 
 // fuzzClient is a seeded client and the exports the fuzz tests call, each
 // with the parameters the public API sent it.
@@ -37,10 +40,14 @@ type fuzzClient struct {
 	exports []fuzzExport
 }
 
+// newFuzzClient opens a client and records its exports. The caller closes
+// it: a fuzz target keeps one client across its inputs, and replaces it
+// when an input breaks it, so its lifetime is the target's, not an
+// input's.
 func newFuzzClient(tb testing.TB) *fuzzClient {
 	tb.Helper()
 	ctx := context.Background()
-	c, err := NewDeterministicClient(ctx, [32]byte{7})
+	c, err := NewDeterministicClient(ctx, fuzzSeed)
 	if errors.Is(err, ErrDeterministicGuestNotBuilt) {
 		tb.Skip(err)
 	}
@@ -58,9 +65,10 @@ func newFuzzClient(tb testing.TB) *fuzzClient {
 		defer func() { *slot = real }()
 		_ = call()
 		if len(rec.Got) != len(layout) {
+			_ = c.Close()
 			tb.Fatalf("%s: recorded %d parameters, want %d", name, len(rec.Got), len(layout))
 		}
-		fc.exports = append(fc.exports, fuzzExport{name: name, layout: layout, params: rec.Got, fn: exportOf(name)})
+		fc.exports = append(fc.exports, fuzzExport{name: name, layout: layout, params: rec.Got, fn: real})
 	}
 	def := c.DefaultKeyset()
 	var sealed []record.Sealed
@@ -69,6 +77,7 @@ func newFuzzClient(tb testing.TB) *fuzzClient {
 		return err
 	})
 	if len(sealed) != 1 {
+		_ = c.Close()
 		tb.Fatalf("the seeded client sealed %d rows, want 1", len(sealed))
 	}
 	capture("se_decrypt_record", &inst.decryptRecord, "ppp", func() error { _, err := def.Open(ctx, fc.plan, sealed); return err })
@@ -78,41 +87,44 @@ func newFuzzClient(tb testing.TB) *fuzzClient {
 	})
 	capture("se_plan_check", &inst.planCheck, "p", func() error { return (&Checker{c: c}).Check(ctx, fc.plan) })
 	capture("se_keyset", &inst.keyset, "p", func() error { _, err := c.Keyset(KeysetName("acme")).KeysetID(ctx); return err })
-	// se_cipher_init (which wipes its input in place) is called once, by
-	// NewDeterministicClient, and se_resume (which takes its input as
-	// plaintext) only after a pause, which this build never makes: both
-	// start from what the client sends them.
-	seed, err := vcffi.Marshal(make([]byte, 32))
+	// Two exports are not recorded. se_cipher_init (which wipes its input
+	// in place) runs once, inside NewDeterministicClient, before a
+	// recorder can be put in place; its parameter is built here as
+	// seededClient builds it, from the same seed, so a valid call
+	// re-initialises the same cipher. se_resume (which takes its input as
+	// plaintext) runs only after a pause, which this build never makes; it
+	// starts from handle 1 and an empty answer. It takes and decodes the
+	// answer before it looks at the handle, so the fuzzed pair is read in
+	// full, and then answers STATUS_STATE: handle 1 names no paused step.
+	seed, err := vcffi.Marshal(fuzzSeed[:])
 	if err != nil {
+		_ = c.Close()
 		tb.Fatal(err)
 	}
 	fc.exports = append(fc.exports,
-		fuzzExport{name: "se_cipher_init", fn: exportOf("se_cipher_init"), layout: "p", params: []guest.Param{{Data: seed, IsBuf: true}}},
-		fuzzExport{name: "se_resume", fn: exportOf("se_resume"), layout: "sp", params: []guest.Param{{Scalar: 1}, {Data: []byte{}, IsBuf: true}}},
+		fuzzExport{name: "se_cipher_init", fn: inst.cipherInit, layout: "p", params: []guest.Param{{Data: seed, IsBuf: true}}},
+		fuzzExport{name: "se_resume", fn: inst.resume, layout: "sp", params: []guest.Param{{Scalar: 1}, {Data: []byte{}, IsBuf: true}}},
 	)
-	tb.Cleanup(func() { _ = c.Close() })
 	return fc
 }
 
-func exportOf(name string) func(*instance) api.Function {
-	return func(inst *instance) api.Function {
-		switch name {
-		case "se_encrypt_record":
-			return inst.encryptRecord
-		case "se_decrypt_record":
-			return inst.decryptRecord
-		case "se_term":
-			return inst.term
-		case "se_plan_check":
-			return inst.planCheck
-		case "se_keyset":
-			return inst.keyset
-		case "se_cipher_init":
-			return inst.cipherInit
-		default:
-			return inst.resume
-		}
-	}
+// keptClient is the client a fuzz target keeps across its inputs: closed
+// when the target ends, not when an input does, and replaced when an input
+// breaks it.
+type keptClient struct{ *fuzzClient }
+
+func keepFuzzClient(f *testing.F) *keptClient {
+	k := &keptClient{newFuzzClient(f)}
+	f.Cleanup(func() { _ = k.c.Close() })
+	return k
+}
+
+// replace closes the broken client and opens a new one in its place, so a
+// failing input does not fail every input after it.
+func (k *keptClient) replace(t *testing.T) {
+	t.Helper()
+	_ = k.c.Close()
+	k.fuzzClient = newFuzzClient(t)
 }
 
 // alive is a plan check, which every instance state answers: the guest
@@ -131,7 +143,7 @@ func (fc *fuzzClient) call(in guest.FuzzInput, which uint8) error {
 			_, _ = inst.call(ctx, inst.abort, scalar(step.handle))
 		}
 	}
-	if err := guest.FuzzCall(ctx, inst.mem, inst.module, inst.exports, x.fn(inst), x.layout, x.params, in, onPause); err != nil {
+	if err := guest.FuzzCall(ctx, inst.mem, inst.module, inst.exports, x.fn, x.layout, x.params, in, onPause); err != nil {
 		return errors.Join(errors.New(x.name), err)
 	}
 	if err := fc.alive(); err != nil {
@@ -147,20 +159,25 @@ func (fc *fuzzClient) call(in guest.FuzzInput, which uint8) error {
 // borrowed and then wiped in place (se_cipher_init), and taken as
 // plaintext and wiped first (se_term, se_encrypt_record, se_resume).
 func FuzzGuestExportPairs(f *testing.F) {
-	fc := newFuzzClient(f)
+	fc := keepFuzzClient(f)
 	plan, err := vcffi.Marshal(fc.plan.Wire())
 	if err != nil {
 		f.Fatal(err)
 	}
-	for which := range uint8(len(fc.exports)) {
-		x := fc.exports[which]
-		for slot := range uint8(len(x.layout)) {
+	for which, x := range fc.exports {
+		which := uint8(which) //nolint:gosec // a handful of exports
+		// FuzzInput.Slot counts the (ptr, len) pairs, not the parameters,
+		// so each pair is seeded with its own recorded bytes.
+		var pairs [][]byte
+		for _, p := range x.params {
+			if p.IsBuf {
+				pairs = append(pairs, p.Data)
+			}
+		}
+		for slot, data := range pairs {
+			slot := uint8(slot) //nolint:gosec // at most three pairs
 			// The recorded parameter itself, a sub-range of it, and each
 			// kind of pair outside memory.
-			var data []byte
-			if int(slot) < len(x.params) {
-				data = x.params[slot].Data
-			}
 			f.Add(which, slot, uint8(guest.PairExact), uint32(0), uint32(0), uint64(0), false, data)
 			f.Add(which, slot, uint8(guest.PairInside), uint32(1), uint32(7), uint64(0), false, data)
 			for kind := range uint32(4) {
@@ -174,8 +191,7 @@ func FuzzGuestExportPairs(f *testing.F) {
 	f.Fuzz(func(t *testing.T, which, slot, mode uint8, a, b uint32, scalar uint64, replace bool, data []byte) {
 		in := guest.FuzzInput{Slot: slot, Mode: mode, A: a, B: b, Scalar: scalar, ReplaceScalars: replace, Data: data}
 		if err := fc.call(in, which); err != nil {
-			// A broken instance would fail every input after this one.
-			fc = newFuzzClient(t)
+			fc.replace(t)
 			t.Fatal(err)
 		}
 	})
@@ -186,7 +202,7 @@ func FuzzGuestExportPairs(f *testing.F) {
 // live buffer's start, a pointer outside memory; and allocations too large
 // to make. Every live buffer must stay allocated and unchanged.
 func FuzzGuestBufferRegistry(f *testing.F) {
-	fc := newFuzzClient(f)
+	fc := keepFuzzClient(f)
 	f.Add([]byte{0, 0, 16, 0, 1, 0, 1, 0, 0, 2, 0, 5, 3, 0, 0, 4, 0, 3})
 	f.Add([]byte{0, 15, 255, 0, 0, 0, 1, 1, 0, 3, 0, 0, 0, 0, 0, 4, 1, 0, 4, 1, 15})
 	f.Add([]byte{5, 0, 0, 5, 0, 255, 5, 1, 0, 5, 1, 255})
@@ -195,11 +211,11 @@ func FuzzGuestBufferRegistry(f *testing.F) {
 		ctx := context.Background()
 		inst := fc.c.inst
 		if err := guest.ExerciseBuffers(ctx, inst.mem, inst.module, inst.exports, program); err != nil {
-			fc = newFuzzClient(t)
+			fc.replace(t)
 			t.Fatal(err)
 		}
 		if err := fc.alive(); err != nil {
-			fc = newFuzzClient(t)
+			fc.replace(t)
 			t.Fatalf("the instance did not survive: %v", err)
 		}
 	})

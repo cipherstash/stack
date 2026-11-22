@@ -129,8 +129,9 @@ Two jobs with deliberately different roles:
   to stay small, and any crash reproducer is uploaded as an artifact.
 
 - **go-fuzz-campaign** (`schedule` nightly + `workflow_dispatch`,
-  **non-blocking**): the same for the Go fuzz targets (see below). Their
-  regression replay is plain `go test`, in `tests-golang.yml`.
+  **non-blocking**): the same for the Go fuzz targets (see below), one job
+  per target. Their regression replay is plain `go test`, in
+  `tests-golang.yml`.
 
 The `pull_request` trigger is path-filtered to `packages/stack-auth/**`,
 `packages/stack-kms/**`, `packages/stack-encrypt/**`, the root `Cargo.toml`,
@@ -182,8 +183,11 @@ GO_FUZZ=FuzzGuestBufferRegistry GO_FUZZTIME=5m mise run go:fuzz
 Plain `go test` replays each target's seeds and its committed corpus under
 `testdata/fuzz/<target>/`, so `go:test` is the regression run on every pull
 request. A failing input is written there; commit it once the bug is fixed.
-The nightly `go-fuzz-campaign` job in `fuzz.yml` runs `go:fuzz` and keeps
-the generated corpus (`$(go env GOCACHE)/fuzz`) in the Actions cache.
+The nightly `go-fuzz-campaign` job in `fuzz.yml` runs `go:fuzz` once per
+target, with `GO_FUZZ` set from its matrix, and keeps each target's
+generated corpus (`$(go env GOCACHE)/fuzz`) in the Actions cache. A new
+`Fuzz*` function needs a row in that matrix;
+`scripts/__tests__/crates-ci.test.mjs` fails until it has one.
 
 ## Adding a new target
 

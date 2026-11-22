@@ -389,7 +389,10 @@ set -euo pipefail
 fuzztime=${GO_FUZZTIME:-60s}
 found=0
 for pkg in $(go list ./...); do
-  for target in $(CGO_ENABLED=0 go test -list '^Fuzz' "$pkg" | grep '^Fuzz' || true); do
+  # A package whose tests do not build fails here, rather than adding no
+  # targets while another package's run passes.
+  listed=$(CGO_ENABLED=0 go test -list '^Fuzz' "$pkg")
+  for target in $(grep '^Fuzz' <<<"$listed" || true); do
     if [ -n "${GO_FUZZ:-}" ] && [ "$target" != "$GO_FUZZ" ]; then
       continue
     fi

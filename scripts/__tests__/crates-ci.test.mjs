@@ -572,6 +572,46 @@ describe('the Go jobs test the guest the Linux job built and checked', () => {
   })
 })
 
+/**
+ * `fuzz.yml`'s Go campaign runs one job per fuzz target, so each target has
+ * the whole job timeout to itself. `mise run go:fuzz` finds the targets on
+ * its own, but the matrix is written down: a new `Fuzz*` function would be
+ * replayed by `go test` and never fuzzed. This holds the two together.
+ */
+describe('the Go fuzz campaign fuzzes every Go fuzz target', () => {
+  const wf = readWorkflow(`${WORKFLOW_DIR}/fuzz.yml`)
+  const job = wf?.jobs?.['go-fuzz-campaign']
+  const rows = job?.strategy?.matrix?.include ?? []
+  const declared = execFileSync(
+    'git',
+    ['ls-files', '--', ':(glob)languages/golang/**/*_test.go'],
+    { cwd: REPO_ROOT, encoding: 'utf8' },
+  )
+    .split('\n')
+    .filter(Boolean)
+    .flatMap((file) => [
+      ...readRepo(file).matchAll(/^func (Fuzz\w+)\(\w+ \*testing\.F\)/gm),
+    ])
+    .map(([, name]) => name)
+    .sort()
+
+  it('finds the Go fuzz targets', () => {
+    expect(declared).toContain('FuzzGuestExportPairs')
+  })
+
+  it('has one matrix row for each target, and none for a target that has gone', () => {
+    expect(rows.map((row) => row.target).sort()).toEqual(declared)
+  })
+
+  it('runs go:fuzz on the target the matrix row names', () => {
+    const fuzz = jobSteps(job).find((step) =>
+      invokes(String(step?.run ?? ''), 'go:fuzz'),
+    )
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Actions expression
+    expect(fuzz?.env?.GO_FUZZ).toBe('${{ matrix.target }}')
+  })
+})
+
 describe('napi builds leave the hand-written typings alone', () => {
   // `napi build` writes its generated typings to `index.d.ts` unless `--dts`
   // names another file. Both bindings' `index.d.ts` are hand-written (auth's

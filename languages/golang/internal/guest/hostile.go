@@ -152,6 +152,9 @@ func FuzzCall(ctx context.Context, mem *Allocator, m api.Module, e Exports, fn a
 	mode := PairMode(in.Mode % uint8(pairModes))
 	raw := make([]uint64, 0, 2*len(params))
 	pair := 0
+	// Where the outside pair goes in raw. It is placed after every other
+	// pair is staged, because staging can grow the memory.
+	outsideAt := -1
 	for i, c := range layout {
 		if c == 's' {
 			v := params[i].Scalar
@@ -174,7 +177,7 @@ func FuzzCall(ctx context.Context, mem *Allocator, m api.Module, e Exports, fn a
 		var ptr, n uint32
 		switch mode {
 		case PairOutside:
-			ptr, n = OutsidePair(m.Memory().Size(), in.A, in.B)
+			outsideAt = len(raw)
 		default:
 			b, err := stage(in.Data)
 			if err != nil {
@@ -187,6 +190,11 @@ func FuzzCall(ctx context.Context, mem *Allocator, m api.Module, e Exports, fn a
 		}
 		raw = append(raw, uint64(ptr), uint64(n))
 	}
+	var outside Buf
+	if outsideAt >= 0 {
+		outside.Ptr, outside.Len = OutsidePair(m.Memory().Size(), in.A, in.B)
+		raw[outsideAt], raw[outsideAt+1] = uint64(outside.Ptr), uint64(outside.Len)
+	}
 	res, err := fn.Call(ctx, raw...)
 	if err != nil {
 		return fmt.Errorf("%w: %s pair %d trapped: %w", ErrBroken, modeName(mode), target, err)
@@ -195,7 +203,16 @@ func FuzzCall(ctx context.Context, mem *Allocator, m api.Module, e Exports, fn a
 		return fmt.Errorf("%w: no result", ErrBroken)
 	}
 	ptr, n, status := PackedResult(res[0])
-	if mode == PairOutside && target >= 0 {
+	if outsideAt >= 0 {
+		// An export may copy its earlier inputs before it checks a later
+		// one, and grow the memory doing so. If the growth reached the
+		// end of the outside pair, the guest was right to read it, and
+		// the input tested nothing: say so, rather than blame the guest.
+		if outside.Ptr != 0 {
+			if _, ok := m.Memory().Read(outside.Ptr, outside.Len); ok {
+				return fmt.Errorf("the call grew the memory past the outside pair (%#x, %d); OutsidePair needs a wider margin", outside.Ptr, outside.Len)
+			}
+		}
 		if !errors.Is(status, ErrEncoding) {
 			return fmt.Errorf("%w: pair %d outside memory answered %v, want %v", ErrBroken, target, status, ErrEncoding)
 		}
@@ -247,6 +264,15 @@ func upTo(v, limit uint32) uint32 {
 	return v % (limit + 1)
 }
 
+// OutsideMargin is how far past the end of memory OutsidePair's range
+// that ends past the memory runs, at least. A call can grow the memory
+// before it checks the pair (an export copies its earlier inputs first),
+// so a range one byte past the end could be inside memory by the time the
+// guest reads it. 16 MiB is far more than one call over the recorded
+// inputs grows; FuzzCall fails loudly, as the harness's fault, if a call
+// ever grows that far.
+const OutsideMargin = 16 << 20
+
 // OutsidePair is a pair no export may read, for a memory of size bytes,
 // chosen by a: null with a nonzero length, a range that ends past the
 // memory, a range that wraps the 32-bit address space, or a length over
@@ -262,11 +288,11 @@ func OutsidePair(size, a, b uint32) (ptr, n uint32) {
 	case 0:
 		return 0, b | 1
 	case 1:
-		// Start up to 64 KiB before the end, and run at least one byte past
-		// it.
+		// Start up to 64 KiB before the end, and run at least
+		// OutsideMargin bytes past it.
 		back := a % (min(size, 1<<16) + 1)
 		start := size - back
-		n := uint64(back) + 1 + uint64(b%(1<<20))
+		n := uint64(back) + OutsideMargin + uint64(b%(1<<20))
 		return start, uint32(min(n, math.MaxUint32))
 	case 2:
 		// Start in the last 4 KiB of the address space, and wrap past it.
@@ -288,8 +314,9 @@ const BufferOps = 3
 // promise: no call traps; a small allocation succeeds and overlaps no
 // live buffer; one past isize::MAX fails with a null pointer; a free with
 // the wrong length, a double free, and a free of a pointer inside or near
-// a live buffer leave every live buffer allocated and unwiped. Every
-// buffer still live at the end is freed.
+// a live buffer leave every live buffer allocated and unwiped. Each buffer
+// is checked when the program frees it and, if it is still live, at the
+// end, where it is freed.
 func ExerciseBuffers(ctx context.Context, mem *Allocator, m api.Module, e Exports, program []byte) (err error) {
 	mem.Enter()
 	defer mem.Exit()
@@ -303,17 +330,41 @@ func ExerciseBuffers(ctx context.Context, mem *Allocator, m api.Module, e Export
 			e.Free(ctx, l.b)
 		}
 	}()
+	// intact checks a live buffer still holds its fill: no free that
+	// should have been refused wiped it or let it be reused.
+	intact := func(l entry) error {
+		view, ok := m.Memory().Read(l.b.Ptr, l.b.Len)
+		if !ok {
+			return fmt.Errorf("%w: live (%#x, %d) is outside memory", ErrBroken, l.b.Ptr, l.b.Len)
+		}
+		for j, v := range view {
+			if v != l.fill {
+				return fmt.Errorf("%w: live (%#x, %d) changed at byte %d: %#x, want %#x", ErrBroken, l.b.Ptr, l.b.Len, j, v, l.fill)
+			}
+		}
+		return nil
+	}
 	dealloc := func(ptr, n uint32) error {
+		// The registry frees an exact match and nothing else. A buffer is
+		// checked before its own free, which wipes it, so a refused free
+		// that corrupted it earlier cannot be hidden by the free that
+		// follows.
+		match := -1
+		for i, l := range live {
+			if l.b.Ptr == ptr && l.b.Len == n {
+				if err := intact(l); err != nil {
+					return err
+				}
+				match = i
+				break
+			}
+		}
 		if _, err := e.Dealloc.Call(ctx, uint64(ptr), uint64(n)); err != nil {
 			return fmt.Errorf("%w: se_dealloc(%#x, %d) trapped: %w", ErrBroken, ptr, n, err)
 		}
-		// The registry frees an exact match and nothing else.
-		for i, l := range live {
-			if l.b.Ptr == ptr && l.b.Len == n {
-				freed = append(freed, l)
-				live = append(live[:i], live[i+1:]...)
-				break
-			}
+		if match >= 0 {
+			freed = append(freed, live[match])
+			live = append(live[:match], live[match+1:]...)
 		}
 		return nil
 	}
@@ -391,14 +442,8 @@ func ExerciseBuffers(ctx context.Context, mem *Allocator, m api.Module, e Export
 		}
 	}
 	for _, l := range live {
-		view, ok := m.Memory().Read(l.b.Ptr, l.b.Len)
-		if !ok {
-			return fmt.Errorf("%w: live (%#x, %d) is outside memory", ErrBroken, l.b.Ptr, l.b.Len)
-		}
-		for j, v := range view {
-			if v != l.fill {
-				return fmt.Errorf("%w: live (%#x, %d) changed at byte %d: %#x, want %#x", ErrBroken, l.b.Ptr, l.b.Len, j, v, l.fill)
-			}
+		if err := intact(l); err != nil {
+			return err
 		}
 	}
 	return nil

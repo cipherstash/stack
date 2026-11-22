@@ -197,7 +197,7 @@ jobs:
       # most recent prior corpus by prefix. The committed seeds come from the
       # checkout and merge with the restored corpus at run time.
       - name: Restore the corpus
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ matrix.dir }}/fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.slug }}-${{ github.run_id }}
@@ -222,7 +222,7 @@ jobs:
       # crash input lives in artifacts/, not corpus/.
       - name: Save the corpus
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ matrix.dir }}/fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.slug }}-${{ github.run_id }}
@@ -240,14 +240,26 @@ jobs:
   # registry driven with frees one never makes (internal/guest/hostile.go).
   # Their seeds and committed corpus replay in every `go test`, which
   # tests-golang.yml runs on pull requests, so this job is the campaign only.
-  # Each target's generated corpus lives in GOCACHE/fuzz and persists across
-  # runs in the Actions cache, as the cargo-fuzz corpora above do. A failing
-  # input is written to the package's testdata/fuzz/ and uploaded.
+  # One job per target, as the cargo campaign has, so each gets the whole
+  # timeout whatever max_total_time a dispatch asks for.
+  # scripts/__tests__/crates-ci.test.mjs fails when a Fuzz* function in
+  # languages/golang is missing from the matrix. Each target's generated
+  # corpus lives in GOCACHE/fuzz and persists across runs in the Actions
+  # cache. A failing input is written to the package's testdata/fuzz/ and
+  # uploaded.
   go-fuzz-campaign:
-    name: go fuzz campaign
+    name: go fuzz campaign (${{ matrix.slug }})
     if: github.event_name != 'pull_request'
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 45
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # `guest` is the build the target's package runs.
+        include:
+          - { target: FuzzGuestExportPairs,     slug: encrypt-export-pairs,    guest: "wasm:guest:build:deterministic" }
+          - { target: FuzzGuestBufferRegistry,  slug: encrypt-buffer-registry, guest: "wasm:guest:build:deterministic" }
+          - { target: FuzzAuthGuestExportPairs, slug: auth-export-pairs,       guest: "wasm:auth-guest:build" }
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -267,42 +279,39 @@ jobs:
           workspaces: |
             languages/golang/encrypt/guest
             languages/golang/auth/guest
-          key: go-fuzz
+          key: go-fuzz-${{ matrix.slug }}
 
-      # The fuzz tests run the deterministic test build of the stack-encrypt
-      # guest and the credential guest.
-      - name: Build the guests
-        run: |
-          mise run wasm:guest:build:deterministic
-          mise run wasm:auth-guest:build
+      - name: Build the guest (${{ matrix.slug }})
+        run: mise run ${{ matrix.guest }}
 
       - name: Find the Go fuzz cache
         id: gocache
         run: echo "dir=$(cd languages/golang && go env GOCACHE)/fuzz" >> "$GITHUB_OUTPUT"
 
       - name: Restore the corpus
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ steps.gocache.outputs.dir }}
-          key: go-fuzz-corpus-${{ github.run_id }}
-          restore-keys: go-fuzz-corpus-
+          key: go-fuzz-corpus-${{ matrix.slug }}-${{ github.run_id }}
+          restore-keys: go-fuzz-corpus-${{ matrix.slug }}-
 
-      - name: Fuzz every Go target
+      - name: Fuzz ${{ matrix.slug }}
         env:
+          GO_FUZZ: ${{ matrix.target }}
           GO_FUZZTIME: ${{ github.event.inputs.max_total_time || '120' }}s
         run: mise run go:fuzz
 
       - name: Save the corpus
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ steps.gocache.outputs.dir }}
-          key: go-fuzz-corpus-${{ github.run_id }}
+          key: go-fuzz-corpus-${{ matrix.slug }}-${{ github.run_id }}
 
       - name: Upload the failing input
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: go-fuzz-failures
+          name: go-fuzz-failures-${{ matrix.slug }}
           path: languages/golang/**/testdata/fuzz/**
           if-no-files-found: ignore
