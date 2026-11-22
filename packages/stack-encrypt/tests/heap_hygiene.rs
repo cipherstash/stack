@@ -106,6 +106,11 @@ static LIVE: Mutex<Live> = Mutex::new(Live {
 /// wherever it is freed.
 static TRACKING: AtomicBool = AtomicBool::new(false);
 
+/// The size of block [`allocations_of`] counts, or 0 when nothing is
+/// counted; and how many blocks of that size the watched thread allocated.
+static COUNT_SIZE: AtomicUsize = AtomicUsize::new(0);
+static COUNTED: AtomicUsize = AtomicUsize::new(0);
+
 /// The vitaminc frame whose free is excluded (see the module docs).
 const UPSTREAM_SEAL: &str = "vitaminc_encrypt::backend::aws_lc::CipherKey::seal";
 
@@ -178,6 +183,13 @@ unsafe impl GlobalAlloc for Spy {
         // future's state, a `Vec`'s spare capacity) would otherwise show
         // what an earlier, excluded free left there and be blamed for it.
         let ptr = System.alloc_zeroed(layout);
+        if !ptr.is_null()
+            && layout.size() == COUNT_SIZE.load(Ordering::SeqCst)
+            && WATCHING.with(Cell::get)
+            && !BUSY.with(Cell::get)
+        {
+            COUNTED.fetch_add(1, Ordering::SeqCst);
+        }
         if !ptr.is_null()
             && TRACKING.load(Ordering::SeqCst)
             && WATCHING.with(Cell::get)
@@ -337,6 +349,22 @@ fn watched_for_leaks(what: &str, f: impl FnOnce()) {
         "{what}: {} heap blocks allocated during the watch are still live with plaintext in them (sizes {leaked:?})",
         leaked.len()
     );
+}
+
+/// [`watched`], and count the blocks of exactly `size` bytes the watched
+/// thread allocated meanwhile.
+///
+/// A copy of a string allocates a block of the string's length. So with a
+/// string of a length nothing else allocates, two runs of one operation, one
+/// that copies the string and one that does not, differ by one block.
+fn allocations_of(size: usize, what: &str, f: impl FnOnce()) -> usize {
+    assert_ne!(size, 0, "a block size to count");
+    let _gate = gate();
+    COUNTED.store(0, Ordering::SeqCst);
+    COUNT_SIZE.store(size, Ordering::SeqCst);
+    watched_in_gate(what, f);
+    COUNT_SIZE.store(0, Ordering::SeqCst);
+    COUNTED.load(Ordering::SeqCst)
 }
 
 fn marked(tail: &str) -> String {
@@ -1799,6 +1827,99 @@ mod json_plaintext {
         });
     }
 
+    /// A field marked `#[stash(json(..))]` is sealed through
+    /// `JsonTarget::json_owned_encryption`, which moves the document out of
+    /// the `JsonPlaintext` into the seal.
+    #[test]
+    fn a_json_plaintext_sealed_into_a_document_field_leaves_no_plaintext_on_the_heap() {
+        use stack_encrypt::json::{JsonDocument, JsonOptions, JsonTarget};
+        use stack_encrypt::target::{CallerContext, RequiredContext};
+        let rt = runtime();
+        let (cipher, generates, _) = rt.block_on(common::counting_cipher());
+        let keyset = cipher.default_keyset();
+        let source = JsonPlaintext::from(document());
+        watched_for_leaks("JsonPlaintext -> JsonDocument field", || {
+            let description = <JsonDocument as JsonTarget<JsonPlaintext>>::json_owned_encryption(
+                JsonOptions::default(),
+            );
+            let context =
+                RequiredContext::from(CallerContext::from(nonempty!("docs").with("body")));
+            let _: JsonDocument =
+                rt.block_on(async { keyset.run(description, source, context).await.unwrap() });
+        });
+        assert_eq!(generates.load(Ordering::SeqCst), 1, "one data key");
+    }
+
+    /// A refused context: the document moved out of the `JsonPlaintext` is
+    /// wiped with the refusal, and no key is requested.
+    #[test]
+    fn a_json_plaintext_refused_a_document_field_leaves_no_plaintext_on_the_heap() {
+        use stack_encrypt::json::{JsonDocument, JsonOptions, JsonTarget};
+        use stack_encrypt::plan::PlanError;
+        use stack_encrypt::target::{CallerContext, RequiredContext, Scope};
+        let rt = runtime();
+        let (cipher, generates, _) = rt.block_on(common::counting_cipher());
+        let keyset = cipher.default_keyset();
+        let source = JsonPlaintext::from(document());
+        watched_for_leaks("JsonPlaintext -> JsonDocument field, refused", || {
+            let description = <JsonDocument as JsonTarget<JsonPlaintext>>::json_owned_encryption(
+                JsonOptions::default(),
+            );
+            let context = RequiredContext::from(CallerContext::from(Scope::new(String::new())));
+            let refused: Result<JsonDocument, _> =
+                rt.block_on(async { keyset.run(description, source, context).await });
+            assert!(
+                matches!(refused, Err(Error::Plan(PlanError::EmptyPart))),
+                "an empty scope is refused: {refused:?}"
+            );
+        });
+        assert_eq!(generates.load(Ordering::SeqCst), 0, "no key is requested");
+    }
+
+    /// The owned form of a document field does not copy the document: it
+    /// makes one block fewer of the length of the document's one long
+    /// string than the borrowed form, which copies the document once.
+    #[test]
+    fn a_json_plaintext_sealed_into_a_document_field_is_not_copied() {
+        use stack_encrypt::json::{JsonDocument, JsonOptions, JsonTarget};
+        use stack_encrypt::target::{CallerContext, RequiredContext};
+        // A length no other block in the seal has.
+        const LONG: usize = 12_289;
+        let long = || {
+            let mut text = marked("long");
+            text.extend(std::iter::repeat_n('y', LONG - text.len()));
+            json!({"long": text, "short": marked("short")})
+        };
+        let context = || RequiredContext::from(CallerContext::from(nonempty!("docs").with("body")));
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+
+        let source = JsonPlaintext::from(long());
+        let borrowed = allocations_of(LONG, "JsonDocument field, borrowed", || {
+            let description = <JsonDocument as JsonTarget<JsonPlaintext>>::json_encryption(
+                JsonOptions::default(),
+            );
+            let _: JsonDocument =
+                rt.block_on(async { keyset.run(description, &source, context()).await.unwrap() });
+        });
+        drop(source);
+        let source = JsonPlaintext::from(long());
+        let owned = allocations_of(LONG, "JsonDocument field, owned", || {
+            let description = <JsonDocument as JsonTarget<JsonPlaintext>>::json_owned_encryption(
+                JsonOptions::default(),
+            );
+            let _: JsonDocument =
+                rt.block_on(async { keyset.run(description, source, context()).await.unwrap() });
+        });
+        assert_eq!(
+            borrowed,
+            owned + 1,
+            "the borrowed form copies the document once and the owned form does not \
+             (borrowed {borrowed}, owned {owned})"
+        );
+    }
+
     #[test]
     fn a_json_plaintext_decrypted_leaves_no_plaintext_on_the_heap() {
         let rt = runtime();
@@ -1866,6 +1987,87 @@ mod json_plaintext {
                 assert!(matches!(refused, Err(Error::OpenedType { .. })));
             },
         );
+    }
+}
+
+/// A `plaintext = T` record with one field derived from the plaintext moves
+/// the value into that field's owned form. When the record's indexes are
+/// refused, the value it was handed is wiped with the refusal.
+mod one_field_record {
+    use super::*;
+
+    use stack_encrypt::plan::PlanError;
+    use stack_encrypt::sem::EqualityTerm;
+    use stack_encrypt::target::{
+        equality, CallerContext, Decryptable, EncryptTarget, Encryption, IndexSpec, RequiredContext,
+    };
+    use stack_encrypt::{EncryptInto, Error, StackCipherText};
+
+    /// A field type that declares one index twice, so a record holding it
+    /// is refused before any key is requested.
+    struct Twice(#[allow(dead_code)] EqualityTerm);
+    impl EncryptTarget<String> for Twice {
+        type ContextInput = RequiredContext<CallerContext>;
+        fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::ContextInput> {
+            equality().map(Twice).accepting()
+        }
+        fn indexes() -> Vec<IndexSpec> {
+            vec![IndexSpec::Equality, IndexSpec::Equality]
+        }
+    }
+    impl Decryptable for Twice {
+        const DECRYPTABLE: bool = false;
+    }
+
+    #[derive(EncryptTarget)]
+    #[stash(plaintext = String)]
+    struct Refused {
+        #[allow(dead_code)]
+        twice: Twice,
+    }
+
+    #[derive(EncryptTarget)]
+    #[stash(plaintext = String)]
+    struct Sealed {
+        #[allow(dead_code)]
+        c: StackCipherText,
+    }
+
+    #[test]
+    fn a_value_sealed_into_its_one_field_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+        let source = marked("one-field");
+        watched_for_leaks("one-field record", || {
+            let _: Sealed = rt.block_on(async {
+                source
+                    .encrypt_into_with_context(&keyset, nonempty!("docs").with("body"))
+                    .await
+                    .unwrap()
+            });
+        });
+    }
+
+    #[test]
+    fn a_record_whose_indexes_are_refused_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let (cipher, generates, _) = rt.block_on(common::counting_cipher());
+        let keyset = cipher.default_keyset();
+        let source = marked("refused-indexes");
+        watched_for_leaks("one-field record, indexes refused", || {
+            let refused: Result<Refused, _> = rt.block_on(async {
+                source
+                    .encrypt_into_with_context(&keyset, nonempty!("docs").with("body"))
+                    .await
+            });
+            assert!(
+                matches!(refused, Err(Error::Plan(PlanError::DuplicateIndex { .. }))),
+                "one index declared twice is refused: {:?}",
+                refused.err()
+            );
+        });
+        assert_eq!(generates.load(Ordering::SeqCst), 0, "no key is requested");
     }
 }
 

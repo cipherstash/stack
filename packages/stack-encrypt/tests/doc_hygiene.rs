@@ -1,12 +1,12 @@
-//! The rustdoc of `stack-encrypt` and `stack-encrypt-derive` names no
-//! design record or plan.
+//! The rustdoc of `stack-encrypt`, `stack-encrypt-derive` and
+//! `stack-encrypt-jsonpath` names no design record or plan.
 //!
 //! A doc comment is what a user reads on docs.rs and in an editor. The
 //! design records and plans are for the people who maintain the crates and
 //! are not published with them, so a doc comment states the rule itself. A
 //! maintainer's pointer to a record belongs in a plain `//` comment.
 //!
-//! The scan covers every `///` and `//!` line under both crates' `src`,
+//! The scan covers every `///` and `//!` line under the three crates' `src`,
 //! and every file a `doc = include_str!(..)` attribute there pulls into the
 //! rustdoc.
 
@@ -14,16 +14,21 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// The repository's `packages` directory, which holds both crates.
+/// The repository's `packages` directory, which holds the three crates.
 fn packages() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("the crate sits in `packages`")
 }
 
-/// The `src` directories of both crates.
-fn sources() -> [PathBuf; 2] {
-    ["stack-encrypt/src", "stack-encrypt-derive/src"].map(|dir| packages().join(dir))
+/// The `src` directories of the three crates.
+fn sources() -> [PathBuf; 3] {
+    [
+        "stack-encrypt/src",
+        "stack-encrypt-derive/src",
+        "stack-encrypt-jsonpath/src",
+    ]
+    .map(|dir| packages().join(dir))
 }
 
 /// Every `.rs` file under `dir`, recursively.

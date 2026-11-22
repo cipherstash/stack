@@ -21,11 +21,15 @@ use stack_encrypt::sem::{EqualityTerm, MatchTerms};
 use stack_encrypt::target::{
     ciphertext, equality, matching, AeadContext, Borrowed, CallerContext, Encryption, Owned,
 };
-use stack_encrypt::{nonempty, DecryptFrom, Encrypt, NonEmpty, StackCipherText};
+use stack_encrypt::target::{EncryptTarget, RequiredContext, StoredContext};
+use stack_encrypt::{
+    nonempty, DecryptFrom, Encrypt, EncryptInto, Label, NonEmpty, StackCipherText,
+};
 use stack_kms::FakeDataKeySource;
 use vitaminc_aead::plaintext::Sink;
 use vitaminc_prf::{IntoPrfContext, Prf, PrfValue, PrfVisitor};
 use vitaminc_protected::{Controlled, Protected};
+use zeroize::Zeroize;
 
 mod common;
 use common::stack_cipher;
@@ -117,6 +121,13 @@ impl PrfValue for Counted {
 impl AsRef<str> for Counted {
     fn as_ref(&self) -> &str {
         &self.text
+    }
+}
+/// The source of an [`EncryptTarget`] must be `Zeroize`. The counter is
+/// not secret.
+impl Zeroize for Counted {
+    fn zeroize(&mut self) {
+        self.text.zeroize();
     }
 }
 
@@ -319,6 +330,131 @@ async fn a_match_term_never_copies_its_text() {
         0,
         "a match term reads its text in either mode"
     );
+}
+
+// --- How many copies a derived `plaintext = T` record makes ----------------
+
+/// A record with one field derived from the plaintext: its owned form moves
+/// the value into that field's owned form.
+#[derive(EncryptTarget)]
+#[stash(plaintext = Counted)]
+struct SealedOnly {
+    c: StackCipherText,
+}
+
+/// The same, storing the context it was sealed under.
+#[derive(EncryptTarget)]
+#[stash(plaintext = Counted)]
+struct SealedWithContext {
+    #[stash(context_field)]
+    scope: Label,
+    c: StackCipherText,
+}
+
+/// A record with two fields derived from the plaintext: its owned form is the
+/// default, which reads the value through the borrowed form.
+#[derive(EncryptTarget)]
+#[stash(plaintext = Counted)]
+struct SealedAndEqual {
+    c: StackCipherText,
+    hm: EqualityTerm,
+}
+
+fn scope() -> NonEmpty<Label> {
+    NonEmpty::from(Label::parse("cards/number").unwrap())
+}
+
+#[tokio::test]
+async fn a_record_with_one_derived_field_moves_the_value_into_it() {
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+
+    let (value, clones) = Counted::new(NUMBER);
+    let owned: SealedOnly = value
+        .encrypt_into_with_context(&keyset, context())
+        .await
+        .unwrap();
+    assert_eq!(
+        clones.load(Ordering::SeqCst),
+        0,
+        "the owned form copies nothing"
+    );
+    let opened: String = String::decrypt_from_with_context(owned.c, &cipher, aead())
+        .await
+        .unwrap();
+    assert_eq!(opened, NUMBER, "the moved value is what is sealed");
+
+    // The borrowed form, which a collection runs for each element, copies
+    // the value once to seal it.
+    let (value, clones) = Counted::new(NUMBER);
+    let _: SealedOnly = keyset
+        .run(
+            <SealedOnly as EncryptTarget<Counted>>::encryption(),
+            &value,
+            RequiredContext::from(caller()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        clones.load(Ordering::SeqCst),
+        1,
+        "the borrowed form copies once"
+    );
+
+    // A record that stores its context moves the value too.
+    let (value, clones) = Counted::new(NUMBER);
+    let stored: SealedWithContext = value
+        .encrypt_into_with_context(&keyset, scope())
+        .await
+        .unwrap();
+    assert_eq!(
+        clones.load(Ordering::SeqCst),
+        0,
+        "the owned form copies nothing"
+    );
+    assert_eq!(stored.scope, scope().into_inner());
+    let opened: String =
+        String::decrypt_from_with_context(stored.c, &cipher, AeadContext::from(scope()))
+            .await
+            .unwrap();
+    assert_eq!(opened, NUMBER, "the moved value is what is sealed");
+    let (value, clones) = Counted::new(NUMBER);
+    let _: SealedWithContext = keyset
+        .run(
+            <SealedWithContext as EncryptTarget<Counted>>::encryption(),
+            &value,
+            StoredContext::from(scope()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        clones.load(Ordering::SeqCst),
+        1,
+        "the borrowed form copies once"
+    );
+}
+
+#[tokio::test]
+async fn a_record_with_two_derived_fields_copies_the_value_for_each() {
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+
+    let (value, clones) = Counted::new(NUMBER);
+    let record: SealedAndEqual = value
+        .encrypt_into_with_context(&keyset, context())
+        .await
+        .unwrap();
+    assert_eq!(
+        clones.load(Ordering::SeqCst),
+        2,
+        "the default owned form reads the value through the borrowed form"
+    );
+    let opened: String = String::decrypt_from_with_context(record.c, &cipher, aead())
+        .await
+        .unwrap();
+    assert_eq!(opened, NUMBER);
+    let expected = keyset.equality_term(NUMBER, context()).await.unwrap();
+    assert_eq!(record.hm, expected);
 }
 
 // --- When an owned plaintext is dropped -------------------------------------

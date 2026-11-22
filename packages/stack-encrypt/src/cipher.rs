@@ -288,6 +288,22 @@ pub enum Error {
     #[error(transparent)]
     #[diagnostic(code(stack_encrypt::other))]
     Other(Box<dyn std::error::Error + Send + Sync + 'static>),
+    /// The caller's input was refused before any key was requested: a
+    /// field marker's JSON query whose input has the wrong shape (an
+    /// `elements` path with no wildcard, a predicate the grammar does not
+    /// read), or a data plan's source that does not fit the plan, run
+    /// through `dynamic::Planned`.
+    ///
+    /// The refusal is the dynamic interface's own
+    /// ([`refusal::Error`](crate::refusal::Error)), and it shows through:
+    /// its message, its code (`stack_encrypt::dynamic_source`,
+    /// `stack_encrypt::dynamic_predicate` and the rest) and its payload
+    /// (`reason`, and `field`, `construct` and `at` where it has them) are
+    /// the ones the dynamic interface reports. It is always the caller's
+    /// input at fault, never the engine.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Input(Box<crate::refusal::Error>),
     /// A [`transcode::Visitor`](crate::target::transcode::Visitor) was handed
     /// an encrypted output shape its destination does not accept: a scalar
     /// destination offered a sequence, say. Raised by the visitor's default
@@ -461,6 +477,7 @@ impl crate::ErrorPayload for Error {
                 .unwrap_or_default(),
             #[cfg(not(feature = "http"))]
             Self::Config(_) => serde_json::Map::new(),
+            Self::Input(refusal) => refusal.payload(),
             Self::Aead
             | Self::JsonNotALeaf
             | Self::Other(_)

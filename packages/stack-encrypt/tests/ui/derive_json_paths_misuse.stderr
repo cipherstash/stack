@@ -1,0 +1,91 @@
+error: this path is given in `ordered` too; declare a path once: under `ordered` to compare it, or under `paths` for equality alone
+  --> tests/ui/derive_json_paths_misuse.rs:16:56
+   |
+16 |     #[stash(json(ordered = { "$.age": u32 }, paths = { "$.age": u32 }))]
+   |                                                        ^^^^^^^
+
+error: given here first
+  --> tests/ui/derive_json_paths_misuse.rs:16:30
+   |
+16 |     #[stash(json(ordered = { "$.age": u32 }, paths = { "$.age": u32 }))]
+   |                              ^^^^^^^
+
+error: a declared path names no array position (`[2]`): a query reads every element of an array alike. Write `[*]` for every element
+  --> tests/ui/derive_json_paths_misuse.rs:23:28
+   |
+23 |     #[stash(json(paths = { "$.tags[0]": String }))]
+   |                            ^^^^^^^^^^^
+
+error: this path is given twice in `paths`; each path is declared once
+  --> tests/ui/derive_json_paths_misuse.rs:30:46
+   |
+30 |     #[stash(json(paths = { "$.name": String, "$.name": String }))]
+   |                                              ^^^^^^^^
+
+error: given here first
+  --> tests/ui/derive_json_paths_misuse.rs:30:28
+   |
+30 |     #[stash(json(paths = { "$.name": String, "$.name": String }))]
+   |                            ^^^^^^^^
+
+error: this path gives the accessor `at().first_name()`, which `$.first_name` gives too. Name a key with `names = { "key": word }` in the field's `json(..)`
+  --> tests/ui/derive_json_paths_misuse.rs:51:66
+   |
+51 |     #[stash(json(ordered = { "$.first_name": String }, paths = { "$.firstName": String }))]
+   |                                                                  ^^^^^^^^^^^^^
+
+error: the accessor's first path
+  --> tests/ui/derive_json_paths_misuse.rs:51:30
+   |
+51 |     #[stash(json(ordered = { "$.first_name": String }, paths = { "$.firstName": String }))]
+   |                              ^^^^^^^^^^^^^^
+
+error[E0277]: `Vec<std::string::String>` is not a type a declared path can hold
+  --> tests/ui/derive_json_paths_misuse.rs:37:38
+   |
+37 |     #[stash(json(paths = { "$.tags": Vec<String> }))]
+   |                                      ^^^^^^^^^^^ the type a `paths = {..}` entry declares
+   |
+   = help: the trait `JsonScalarType` is not implemented for `Vec<std::string::String>`
+   = note: a declared path holds a boolean, a number or a string: declare `bool`, `i8` to `i64`, `u8` to `u64`, `f64` or `String`. For a float held as `f32`, declare `f64` and query with `f64::from(x)`
+   = help: the following other types implement trait `JsonScalarType`:
+             bool
+             f64
+             i16
+             i32
+             i64
+             i8
+             std::string::String
+             u16
+           and $N others
+note: required by a bound in `_::unordered`
+  --> tests/ui/derive_json_paths_misuse.rs:34:10
+   |
+34 | #[derive(EncryptTarget)]
+   |          ^^^^^^^^^^^^^ required by this bound in `unordered`
+   = note: this error originates in the derive macro `EncryptTarget` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `bool` is not a type an ordered path can hold
+  --> tests/ui/derive_json_paths_misuse.rs:44:39
+   |
+44 |     #[stash(json(ordered = { "$.vip": bool }))]
+   |                                       ^^^^ the type an `ordered = {..}` entry declares
+   |
+   = help: the trait `JsonPathType` is not implemented for `bool`
+   = note: an ordered path holds a number or a string: declare `i8` to `i64`, `u8` to `u64`, `f64` or `String`. For a boolean, declare the path under `paths = {..}`, which equality compares. For a float held as `f32`, declare `f64` and query with `f64::from(x)`
+   = help: the following other types implement trait `JsonPathType`:
+             f64
+             i16
+             i32
+             i64
+             i8
+             std::string::String
+             u16
+             u32
+           and $N others
+note: required by a bound in `_::ordered`
+  --> tests/ui/derive_json_paths_misuse.rs:41:10
+   |
+41 | #[derive(EncryptTarget)]
+   |          ^^^^^^^^^^^^^ required by this bound in `ordered`
+   = note: this error originates in the derive macro `EncryptTarget` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -19,9 +19,12 @@ use zeroize::Zeroize;
 ///   value**. [`EncryptInto`] runs this form. By default, it guards the value
 ///   with [`Protected`], runs the borrowed description over it, and wipes it
 ///   before the pending request is returned. The value is wiped even when
-///   building or running the description fails. A record overrides this form,
-///   field by field ([`Encryption::split`]). It moves the fields it stores in
-///   the clear into its output, and guards the fields it seals.
+///   building or running the description fails. A `struct = ..` record
+///   overrides this form, field by field ([`Encryption::split`]). It moves
+///   the fields it stores in the clear into its output, and guards the
+///   fields it seals. A `plaintext = T` record with one field moves the
+///   value into that field's owned form. A ciphertext moves the value into
+///   the seal, with no copy.
 ///
 /// Neither form is given the cipher and the plaintext together. The source
 /// does not need to implement `Clone`.

@@ -34,6 +34,7 @@
 //! and never a byte of the text.
 
 use serde_json::{Map, Number, Value};
+use stack_encrypt_jsonpath::json_string::{self, raw_len};
 use zeroize::{Zeroize, Zeroizing};
 
 /// Why JSON text was refused at the boundary. Each says what kind of
@@ -128,27 +129,6 @@ pub fn parse_text(text: &[u8]) -> Result<Value, JsonTextError> {
 /// None in practice: every `Value` serializes. The `Result` is serde_json's.
 pub fn to_text(value: &Value) -> Result<Vec<u8>, serde_json::Error> {
     to_wiped_text(value).map(|mut text| std::mem::take(&mut *text))
-}
-
-/// The text of one JSON string, quotes included, decoded; `None` for text
-/// that is not exactly one string. The decoded text is wiped when it is
-/// dropped. Its buffer is sized to the raw text before anything is written,
-/// so it never grows, and it is wiped on a refusal.
-pub(crate) fn string_text(text: &[u8]) -> Option<Zeroizing<String>> {
-    let mut parser = Parser { text, rest: text };
-    if parser.peek() != Some(b'"') {
-        return None;
-    }
-    let decoded = Zeroizing::new(parser.string().ok()?);
-    parser.rest.is_empty().then_some(decoded)
-}
-
-/// Where the JSON string at the front of `text` ends: the offset of its
-/// closing quote. `text` starts at the opening quote. `None` for a string
-/// with no closing quote. An escaped quote does not close it.
-pub(crate) fn string_end(text: &[u8]) -> Option<usize> {
-    let end = 1 + raw_len(text.get(1..)?);
-    (end < text.len()).then_some(end)
 }
 
 /// [`to_text`] into a buffer that is wiped when it is dropped: the text a
@@ -390,100 +370,18 @@ impl<'t> Parser<'t> {
 
     /// A string, from its opening quote. Its decoded text is never longer
     /// than its raw text, so the buffer is sized to that before anything is
-    /// written and never grows; on a refusal it is wiped.
+    /// written and never grows; on a refusal it is wiped. The decoder is the
+    /// one a path's quoted names are read with.
     fn string(&mut self) -> Result<String, JsonTextError> {
         self.bump();
         let mut out = String::with_capacity(raw_len(self.rest));
-        match self.decode(&mut out) {
+        match json_string::decode(&mut self.rest, &mut out) {
             Ok(()) => Ok(out),
-            Err(error) => {
+            Err(json_string::StringSyntaxError) => {
                 out.zeroize();
-                Err(error)
+                Err(self.syntax())
             }
         }
-    }
-
-    fn decode(&mut self, out: &mut String) -> Result<(), JsonTextError> {
-        loop {
-            // A run of plain bytes, copied as one checked UTF-8 slice.
-            let run = self
-                .rest
-                .iter()
-                .take_while(|&&b| b != b'"' && b != b'\\' && b >= 0x20)
-                .count();
-            let (plain, tail) = self.rest.split_at(run);
-            let plain = std::str::from_utf8(plain).map_err(|_| self.syntax())?;
-            out.push_str(plain);
-            self.rest = tail;
-            match self.peek() {
-                Some(b'"') => {
-                    self.bump();
-                    return Ok(());
-                }
-                Some(b'\\') => {
-                    self.bump();
-                    out.push(self.escape()?);
-                }
-                // A control character, or the end of the text.
-                _ => return Err(self.syntax()),
-            }
-        }
-    }
-
-    /// The character an escape names, after its backslash.
-    fn escape(&mut self) -> Result<char, JsonTextError> {
-        let c = match self.peek() {
-            Some(b'"') => '"',
-            Some(b'\\') => '\\',
-            Some(b'/') => '/',
-            Some(b'b') => '\u{8}',
-            Some(b'f') => '\u{c}',
-            Some(b'n') => '\n',
-            Some(b'r') => '\r',
-            Some(b't') => '\t',
-            Some(b'u') => {
-                self.bump();
-                return self.unicode();
-            }
-            _ => return Err(self.syntax()),
-        };
-        self.bump();
-        Ok(c)
-    }
-
-    /// `\uXXXX`, after its `u`: one code point, or a surrogate pair. An
-    /// unpaired surrogate is refused.
-    fn unicode(&mut self) -> Result<char, JsonTextError> {
-        let high = self.hex4()?;
-        let code = if (0xD800..0xDC00).contains(&high) {
-            let Some(tail) = self.rest.strip_prefix(b"\\u") else {
-                return Err(self.syntax());
-            };
-            self.rest = tail;
-            let low = self.hex4()?;
-            if !(0xDC00..0xE000).contains(&low) {
-                return Err(self.syntax());
-            }
-            0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00)
-        } else {
-            high
-        };
-        char::from_u32(code).ok_or_else(|| self.syntax())
-    }
-
-    fn hex4(&mut self) -> Result<u32, JsonTextError> {
-        let Some((digits, tail)) = self.rest.split_first_chunk::<4>() else {
-            return Err(self.syntax());
-        };
-        let mut code = 0;
-        for &d in digits {
-            let Some(v) = char::from(d).to_digit(16) else {
-                return Err(self.syntax());
-            };
-            code = code * 16 + v;
-        }
-        self.rest = tail;
-        Ok(code)
     }
 
     /// A number, read from the text in place: an integer literal is a
@@ -559,20 +457,6 @@ impl<'t> Parser<'t> {
     }
 }
 
-/// The length of a string's raw text, from after its opening quote to
-/// before its closing one (or to the end, when it has none): an escaped
-/// quote does not end it.
-fn raw_len(rest: &[u8]) -> usize {
-    let mut escaped = false;
-    rest.iter()
-        .take_while(|&&b| {
-            let end = b == b'"' && !escaped;
-            escaped = !escaped && b == b'\\';
-            !end
-        })
-        .count()
-}
-
 /// Push onto `items`, wiping the old buffer when it is replaced by a larger
 /// one: the values it held were moved, but their bytes (a number, the
 /// pointer and length of a string) stay in the freed block otherwise.
@@ -593,74 +477,6 @@ fn push_wiping(items: &mut Vec<Value>, value: Value) {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn string_end_is_the_offset_of_the_closing_quote() {
-        for (text, end) in [
-            (r#""""#, Some(1)),
-            (r#""ab" rest"#, Some(3)),
-            (r#""a\"b" rest"#, Some(5)),
-            (r#""a\\" rest"#, Some(4)),
-            (r#""a\\\"b""#, Some(7)),
-            (r#""unterminated"#, None),
-            (r#""ends in an escape\""#, None),
-            (r#"""#, None),
-            ("", None),
-        ] {
-            assert_eq!(string_end(text.as_bytes()), end, "{text:?}");
-        }
-    }
-
-    #[test]
-    fn string_text_decodes_exactly_one_json_string() {
-        let decoded = |text: &str| string_text(text.as_bytes()).map(|text| text.to_string());
-        assert_eq!(decoded(r#""plain""#).as_deref(), Some("plain"));
-        assert_eq!(decoded(r#""""#).as_deref(), Some(""));
-        assert_eq!(
-            decoded(r#""a\n\"b\" é 😀""#).as_deref(),
-            Some("a\n\"b\" é 😀")
-        );
-        for refused in [
-            "",
-            "plain",
-            r#" "leading space""#,
-            r#""unterminated"#,
-            r#""one" "two""#,
-            r#""trailing" "#,
-            r#""bad \x escape""#,
-            r#""lone \ud83d surrogate""#,
-            "\"raw\nnewline\"",
-            "1",
-            "null",
-        ] {
-            assert_eq!(decoded(refused), None, "{refused:?}");
-        }
-    }
-
-    /// A predicate's literals and a path's quoted keys are JSON strings by
-    /// `serde_json`'s rules: every string it reads is read the same here,
-    /// and every one it refuses is refused.
-    #[test]
-    fn string_text_reads_what_serde_json_reads() {
-        for text in [
-            r#""""#,
-            r#""a""#,
-            r#""\"\\\/\b\f\n\r\t""#,
-            r#""Aé中""#,
-            r#""😀""#,
-            r#""\ude00\ud83d""#,
-            r#""\ud83d""#,
-            r#""\u12""#,
-            r#""\q""#,
-            "\"\u{1}\"",
-            "\"é中😀\"",
-            r#""a"b""#,
-        ] {
-            let ours = string_text(text.as_bytes()).map(|text| text.to_string());
-            let theirs = serde_json::from_str::<String>(text).ok();
-            assert_eq!(ours, theirs, "{text:?}");
-        }
-    }
 
     #[test]
     fn reads_every_kind_of_value() {

@@ -356,7 +356,7 @@ pub enum TermError {
     #[error("an ordering at a JSON path takes a number or a string")]
     #[diagnostic(
         code(stack_encrypt::json_leaf_not_ordered),
-        help("The JSON index derives an ordering term for number and string leaves only: query `op::AtPath(op::Eq)` for a boolean or a null.")
+        help("The JSON index derives an ordering term for number and string leaves only. Ask for a boolean or a null with equality at the path: a field reference's path query, `at().age().eq(v)` or `at().age().is_null()`, or the dynamic interface's `eq_at`.")
     )]
     JsonLeafNotOrdered,
     /// An ordering was asked at a JSON path the index does not order: no
@@ -383,9 +383,19 @@ pub enum TermError {
     #[error("equality at a JSON path takes a scalar")]
     #[diagnostic(
         code(stack_encrypt::json_value_not_scalar),
-        help("`op::AtPath(op::Eq)` compares one value at a path: a string, a number, a boolean or a null. To ask whether the value at a path holds an object or an array, query `op::Contains` with the document that holds it there.")
+        help("Equality at a path (a field reference's `at().age().eq(v)`, or the dynamic interface's `eq_at`) compares one value: a string, a number, a boolean or a null. To ask whether the value at a path holds an object or an array, query containment (`contains(doc)`, or `contains`) with the document that holds it there.")
     )]
     JsonValueNotScalar,
+    /// A JSON query was given a NaN or an infinity, which no JSON number
+    /// is: no stored document holds one, and JSON has no way to write one.
+    /// Refused before any key is requested, where a conversion to JSON would
+    /// otherwise turn it into `null` and match the documents holding `null`.
+    #[error("a JSON query takes no NaN or infinity")]
+    #[diagnostic(
+        code(stack_encrypt::json_number_not_finite),
+        help("A JSON number is finite. Ask for a JSON `null` with a path's `is_null()`.")
+    )]
+    JsonNumberNotFinite,
 }
 
 impl crate::ErrorPayload for TermError {
@@ -408,7 +418,8 @@ impl crate::ErrorPayload for TermError {
             | Self::JsonLeafNotOrdered
             | Self::JsonPathNotOrdered
             | Self::JsonOrderingAtPosition
-            | Self::JsonValueNotScalar => serde_json::Map::new(),
+            | Self::JsonValueNotScalar
+            | Self::JsonNumberNotFinite => serde_json::Map::new(),
         }
     }
 }

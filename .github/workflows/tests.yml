@@ -105,6 +105,7 @@ jobs:
               - '!languages/golang/**'
               - '!packages/stack-encrypt/**'
               - '!packages/stack-encrypt-derive/**'
+              - '!packages/stack-encrypt-jsonpath/**'
               - '!packages/stack-kms/**'
               - '!packages/stack-guest-abi/**'
               - '!packages/stack-auth/fuzz/**'

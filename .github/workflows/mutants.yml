@@ -1,7 +1,8 @@
 name: Mutants
 
 # Gates pull requests on mutation testing of the lines they change in
-# stack-auth and stack-encrypt. Ported from cipherstash-suite's `mutants.yml`.
+# stack-auth, stack-encrypt and stack-encrypt-jsonpath (the path grammar,
+# moved out of stack-encrypt). Ported from cipherstash-suite's `mutants.yml`.
 #
 # cargo-mutants rewrites small pieces of logic (flip `<` to `<=`, replace a
 # body with `Default::default()`) and reruns the tests; a mutant that survives
@@ -11,7 +12,7 @@ name: Mutants
 # filter (which drops the trybuild `ui` binary), excludes and timeouts live in
 # .cargo/mutants.toml, so the gate and the local tasks agree.
 #
-# Scoped to the two crates with `-p`: the baseline runs the unmutated tests of
+# Scoped to those crates with `-p`: the baseline runs the unmutated tests of
 # those packages only. A diff touching only other crates yields no mutants and
 # passes.
 #
@@ -27,6 +28,7 @@ on:
     paths:
       - packages/stack-auth/**
       - packages/stack-encrypt/**
+      - packages/stack-encrypt-jsonpath/**
       - Cargo.toml
       - Cargo.lock
       - mise.toml
@@ -140,7 +142,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set +e
-          crates=(-p stack-auth -p stack-encrypt)
+          crates=(-p stack-auth -p stack-encrypt -p stack-encrypt-jsonpath)
           if [ "$EVENT_NAME" = "pull_request" ]; then
             cargo mutants --no-shuffle -vV "${crates[@]}" --in-diff pr.diff
           else
@@ -161,7 +163,7 @@ jobs:
           timeout=$(count timeout.txt)
           {
             echo '<!-- cargo-mutants-report -->'
-            echo "## Mutation testing (cargo-mutants, \`--in-diff\`, stack-auth + stack-encrypt)"
+            echo "## Mutation testing (cargo-mutants, \`--in-diff\`, stack-auth + stack-encrypt + stack-encrypt-jsonpath)"
             echo
             if [ ! -d "$out" ]; then
               # No output dir: either nothing to mutate (exit 0) or the run

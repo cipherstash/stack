@@ -12,6 +12,7 @@ includes = [
   "packages/stack-kms/tasks.toml",
   "packages/stack-profile/tasks.toml",
   "packages/stack-encrypt/tasks.toml",
+  "packages/stack-encrypt-jsonpath/tasks.toml",
   "packages/stack-guest-abi/tasks.toml",
 ]
 

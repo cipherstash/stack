@@ -11,6 +11,7 @@ members = [
   "packages/stack-kms",
   "packages/stack-encrypt",
   "packages/stack-encrypt-derive",
+  "packages/stack-encrypt-jsonpath",
   "packages/stack-guest-abi",
   "languages/typescript/packages/auth",
   "languages/typescript/packages/profile",
@@ -34,7 +35,7 @@ exclude = [
 [workspace.package]
 # Used by the node binding crates, which take `version.workspace`. The
 # published crates (stack-auth, stack-profile, stack-kms, stack-encrypt,
-# stack-encrypt-derive) carry their own version.
+# stack-encrypt-derive, stack-encrypt-jsonpath) carry their own version.
 version = "0.35.0"
 edition = "2021"
 authors = [

@@ -6,7 +6,7 @@
 
 - Every type keeps `EncryptTarget` and `DecryptSource`. Write with `value.encrypt_into_with_context(&keyset, column)` and read with `P::decrypt_from_with_context(stored, &keyset, column)`.
 - A typed query is a field reference of a derived record, such as `EncryptedMember::EMAIL.eq("bob").encrypt(&keyset)`.
-- A JSON document is a `JsonPlaintext`, not a `serde_json::Value`. A typed JSON query has no replacement yet: derive the operand through a data plan that names `JsonSearch`.
+- A JSON document is a `JsonPlaintext`, not a `serde_json::Value`. A typed JSON query is a document field's reference query, such as `EncryptedCustomer::PROFILE.at().age().gt(30).encrypt(&keyset)`.
 - `JsonTree` no longer implements `stack_encrypt::target::Layout`. `encryption()`, `index()` and `specs()` are its own methods.
 
 The stored format, the SQL bundle, and the TypeScript types do not change.

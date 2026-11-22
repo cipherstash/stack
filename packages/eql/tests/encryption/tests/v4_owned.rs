@@ -639,3 +639,112 @@ fn the_traits_the_compile_fail_examples_refuse_exist_for_the_right_shapes() {
     encrypts::<text::TextEq>();
     encrypts::<text::TextEqQuery>();
 }
+
+/// How many copies of the plaintext the ciphertext `c` makes. The owned form
+/// that `encrypt_into` runs moves the plaintext into the seal. The borrowed
+/// form, which a collection runs for each element, copies it once.
+mod the_ciphertext {
+    use super::*;
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use eql_bindings::v4::terms::Ciphertext;
+    use stack_encrypt::target::{AeadContext, EncryptTarget, RequiredContext};
+    use stack_encrypt::{nonempty, Encrypt};
+    use vitaminc_aead::plaintext::Sink;
+    use zeroize::Zeroize;
+
+    /// A `String` that counts its clones.
+    struct Counted {
+        text: String,
+        clones: Arc<AtomicUsize>,
+    }
+    impl Clone for Counted {
+        fn clone(&self) -> Self {
+            let _ = self.clones.fetch_add(1, Ordering::SeqCst);
+            Self {
+                text: self.text.clone(),
+                clones: self.clones.clone(),
+            }
+        }
+    }
+    impl Encrypt for Counted {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            self.text.visit(sink)
+        }
+    }
+    /// The counter is not secret.
+    impl Zeroize for Counted {
+        fn zeroize(&mut self) {
+            self.text.zeroize();
+        }
+    }
+
+    fn counted() -> (Counted, Arc<AtomicUsize>) {
+        let clones = Arc::new(AtomicUsize::new(0));
+        let value = Counted {
+            text: "ada@example.com".to_owned(),
+            clones: clones.clone(),
+        };
+        (value, clones)
+    }
+
+    fn aead() -> RequiredContext<AeadContext> {
+        RequiredContext::from(AeadContext::from(nonempty!("users").with("email")))
+    }
+
+    #[tokio::test]
+    async fn the_owned_form_copies_nothing_and_the_borrowed_form_copies_once() {
+        let (cipher, _) = common::cipher().await;
+        let keyset = cipher.default_keyset();
+
+        let (value, clones) = counted();
+        let owned: Ciphertext = keyset
+            .run(
+                <Ciphertext as EncryptTarget<Counted>>::owned_encryption(),
+                value,
+                aead(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(clones.load(Ordering::SeqCst), 0, "the owned form");
+        let opened: String = String::decrypt_from_with_context(owned, &cipher, aead())
+            .await
+            .unwrap();
+        assert_eq!(
+            opened, "ada@example.com",
+            "the moved value is what is sealed"
+        );
+
+        let (value, clones) = counted();
+        let _: Ciphertext = keyset
+            .run(
+                <Ciphertext as EncryptTarget<Counted>>::encryption(),
+                &value,
+                aead(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(clones.load(Ordering::SeqCst), 1, "the borrowed form");
+    }
+
+    /// A refused context requests no key.
+    #[tokio::test]
+    async fn the_owned_form_refuses_an_empty_part_before_any_key_is_requested() {
+        use stack_encrypt::target::Scope;
+        let (cipher, calls) = common::cipher().await;
+        let keyset = cipher.default_keyset();
+        let (value, clones) = counted();
+        let refused = keyset
+            .run(
+                <Ciphertext as EncryptTarget<Counted>>::owned_encryption(),
+                value,
+                RequiredContext::from(AeadContext::from(Scope::new(String::new()))),
+            )
+            .await;
+        assert!(refused.is_err(), "an empty scope is refused");
+        assert_eq!(clones.load(Ordering::SeqCst), 0);
+        assert!(calls.lock().unwrap().generate.is_empty(), "no key");
+    }
+}

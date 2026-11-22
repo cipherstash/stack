@@ -294,8 +294,20 @@ operator through the one index that answers it. A nullable field answers
 what a present value answers. A record field's reference reaches the inner
 record's field references with `.field(..)`, under the outer field's context.
 `#[stash(query = T)]` gives a field reference the type its queries take.
-_Avoid_: marker (its old name), field handle (that is the dynamic form),
+_Avoid_: field reference (its old name), field handle (that is the dynamic form),
 column, accessor
+
+**Declared path**:
+A path into a JSON document field that the field's
+`#[stash(json(ordered = { "$.age": u32 }, paths = { "$.name": String }))]`
+names, with the type of the values at it. An `ordered` path's values carry
+an ordering term; a `paths` path is compared with equality alone and adds
+nothing to the field's options. The derive parses it at compile time and
+gives it a method under the field reference's `at()`, and, for an ordered
+member of an array, one under `elements()` (`DeclaredPath`,
+`ElementMember`). A path given as text at run time (`at_text_path`) is not
+a declared path.
+_Avoid_: typed path (that is the target-directed form), static path
 
 **Planned**:
 A value under a plan that is data, `Planned::new(&plan, value)`. The

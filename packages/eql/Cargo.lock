@@ -4235,6 +4235,7 @@ dependencies = [
  "serdect",
  "sha2 0.11.0",
  "stack-encrypt-derive",
+ "stack-encrypt-jsonpath",
  "stack-kms",
  "thiserror 1.0.69",
  "uuid",
@@ -4256,7 +4257,20 @@ version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "stack-encrypt-jsonpath",
  "syn 3.0.3",
+]
+
+[[package]]
+name = "stack-encrypt-jsonpath"
+version = "0.3.0"
+dependencies = [
+ "miette",
+ "serde",
+ "serde_json",
+ "stack-auth 0.44.0",
+ "thiserror 1.0.69",
+ "zeroize",
 ]
 
 [[package]]

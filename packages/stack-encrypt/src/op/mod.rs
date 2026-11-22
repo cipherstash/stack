@@ -493,15 +493,15 @@ impl LeafArity for Pair {}
 /// an input of [`Pair`] over `S`. A query's value type is the input, and
 /// the field's index is checked against the plaintext.
 ///
-/// A `(P, V)` is an input of [`Pathed<One>`] over a `serde_json::Value`,
-/// and a `(P, (V, V))` of [`Pathed<Pair>`]: the path and the value become
-/// the document that holds the value at the path, and the JSON index's
-/// terms of it. The arity decides how a query derives terms from the
-/// input, which is what [`derive`](Self::derive) does.
+/// No input of [`Pathed`] is implemented: a JSON query at a path is a
+/// document field's reference query, [`at()`](crate::field_reference::FieldReference::at),
+/// which builds the JSON operators' own inputs. The arity decides how a
+/// query derives terms from the input, which is what
+/// [`derive`](Self::derive) does.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not what a query of arity `{A}` takes",
     label = "the operator takes another input",
-    note = "an operator of arity `One` takes one value, `op::Between` (arity `Pair`) takes a pair, `&(lo, hi)`, and `op::AtPath` (arity `Pathed`) takes a path and the leaf's input, `&(\"$.a\", value)` or `&(\"$.a\", (lo, hi))`"
+    note = "an operator of arity `One` takes one value, and `op::Between` (arity `Pair`) takes a pair, `(lo, hi)`; a JSON query at a path is a document field's reference query: `at().age()` for a path the field declares, or `at_text_path(\"$.a\")` for a path given as text"
 )]
 pub trait Input<A: Arity>: Sized + 'static {
     /// The plaintext the index is declared over.
@@ -1313,18 +1313,45 @@ mod tests {
         declared::<_, Gt, u32>(&OreBlock, OreBlock::OPERATORS);
         declared::<_, Gte, u32>(&OreBlock, OreBlock::OPERATORS);
         declared::<_, Between, (u32, u32)>(&OreBlock, OreBlock::OPERATORS);
+        // The JSON index answers through the shared JSON inputs, which a
+        // field reference's JSON queries and the dynamic path both build, not
+        // through `Supports`: each typed JSON operator's wire name is in
+        // its declaration, with the six reads the dynamic path alone names.
         use crate::target::Json;
-        use serde_json::Value;
-        declared::<_, Contains, Value>(&Json, Json::OPERATORS);
-        declared::<_, ContainedBy, Value>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Eq>, (String, Value)>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Lt>, (String, Value)>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Lte>, (String, Value)>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Gt>, (String, Value)>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Gte>, (String, Value)>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Between>, (String, (Value, Value))>(&Json, Json::OPERATORS);
-        // The six reads, named by the dynamic path alone.
-        assert_eq!(Json::OPERATORS.len(), 8 + 6);
+        for op in [
+            Contains::OP,
+            ContainedBy::OP,
+            AtPath::<Eq>::OP,
+            AtPath::<Lt>::OP,
+            AtPath::<Lte>::OP,
+            AtPath::<Gt>::OP,
+            AtPath::<Gte>::OP,
+            AtPath::<Between>::OP,
+        ] {
+            let op = op.expect("a typed JSON operator with a wire name");
+            assert!(Json::OPERATORS.contains(&op), "{op} is not declared");
+        }
+        // The whole declaration, each operator once: the eight above, then
+        // the six only the shared JSON inputs build.
+        assert_eq!(
+            Json::OPERATORS,
+            [
+                Op::Contains,
+                Op::ContainedBy,
+                Op::EqAt,
+                Op::LtAt,
+                Op::LteAt,
+                Op::GtAt,
+                Op::GteAt,
+                Op::BetweenAt,
+                Op::Selector,
+                Op::Subtree,
+                Op::Children,
+                Op::ChildCount,
+                Op::ElementMatch,
+                Op::Match,
+            ]
+        );
     }
 
     /// An accessor is held to its leaf's requirement: an exact term
