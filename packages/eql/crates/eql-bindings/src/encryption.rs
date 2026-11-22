@@ -405,20 +405,22 @@ impl MatchConfig for EqlMatch {
 }
 
 /// Builds EQL's bloom filter, the set bit positions as `smallint`s, from the
-/// native match terms built under [`EqlMatch`]. Stored values and queries
-/// take it from the same type, so they always agree; matching
+/// native match terms built under [`EqlMatch`]: `TextMatch`'s stored
+/// filter. Every stored filter and every query filter is cut under
+/// [`EqlMatch`], so they agree on every token a query keeps; a query keeps
+/// fewer tokens than the same text stores, and its filter is
+/// [`QueryBloomFilter`] ([`QueryMatchVisitor`]). Matching
 /// cipherstash-client's parameters is not a goal, because cipherstash-client
 /// never writes an `eql_v4` column.
 ///
 /// Text that cuts no token (empty, separator-only, or shorter than a 3-gram
 /// with no two-letter word, such as one letter) is refused with
-/// [`TermError::EmptyTermText`], stored or queried. Stack
-/// Encrypt stores such a value as the empty filter, but this type is the
-/// filter of every match query, and a query's filter must never be empty;
-/// it is also `TextMatch`'s stored filter, and a `TextMatch` value with an
-/// empty filter is a row no operator can find. A search domain's stored
-/// filter, which `=` and `<` find through its other terms, is
-/// [`SearchBloomFilter`] and takes the empty filter ([`SearchMatchVisitor`]).
+/// [`TermError::EmptyTermText`]. Stack Encrypt stores such a value as the
+/// empty filter, but a `TextMatch` value with an empty filter is a row no
+/// operator can find. A query's filter is refused for such text too, since
+/// it must never be empty. A search domain's stored filter, which `=` and
+/// `<` find through its other terms, is [`SearchBloomFilter`] and takes the
+/// empty filter ([`SearchMatchVisitor`]).
 #[doc(hidden)]
 pub struct MatchVisitor;
 impl Visitor for MatchVisitor {

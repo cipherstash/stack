@@ -181,6 +181,25 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
             mode: PhantomData,
         }
     }
+    /// Reject the declaration as [`failed`](Self::failed) does, and let go
+    /// of the plaintext it is handed through [`WipeSource`]: in
+    /// [`Owned`] mode the value is wiped, and a borrow is left
+    /// with the caller. A description that refuses before any operation has
+    /// taken its plaintext uses this, so the refusal does not free the value
+    /// unwiped.
+    pub(crate) fn failed_wiping(error: Error) -> Self
+    where
+        M: WipeSource<'s, S>,
+    {
+        Self {
+            build: Box::new(move |source, cipher, _| {
+                M::wipe(source);
+                Pending::failed(cipher, error)
+            }),
+            shapes: Vec::new(),
+            mode: PhantomData,
+        }
+    }
     /// Reject this declaration as [`failed`](Self::failed) does, but keep
     /// the contexts of its leaves. [`contexts`](Self::contexts) then still
     /// shows each field the declaration names, and running it yields
@@ -1231,13 +1250,15 @@ term_operation!(
     /// short words are tokens of the filter only when it cuts no n-gram:
     /// "Ng" asks for the word `ng`, and "Mike Ng" for its trigrams alone, so
     /// it finds "Mike Nguyen" as well as "Mike Ng". With the option off it
-    /// is [`matching`]'s term.
+    /// is [`matching`]'s term of any text that cuts a token.
     ///
     /// What a field query of a match index derives
-    /// ([`Index::query_operation`](super::Index::query_operation)). It
-    /// refuses nothing [`matching`] does not: a query is prepared first
-    /// ([`Supports::prepare`](crate::op::Supports::prepare)), which refuses
-    /// text that cuts no token.
+    /// ([`Index::query_operation`](super::Index::query_operation)). Text
+    /// that cuts no token is refused
+    /// ([`TermError::EmptyTermText`](crate::sem::TermError::EmptyTermText)),
+    /// since its empty filter would match every row; [`matching`] stores
+    /// such text as the empty filter. A field query refuses it earlier,
+    /// when it is prepared ([`Supports::prepare`](crate::op::Supports::prepare)).
     matching_query, crate::sem::MatchTerms<O>,
     view(crate::sem::match_query),
     [O: crate::sem::MatchConfig + 'static], [S: AsRef<str>]

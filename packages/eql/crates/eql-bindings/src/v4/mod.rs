@@ -109,10 +109,11 @@ pub mod terms {
     /// query's, and an EQL v4 search query's filter is never empty (the
     /// match projection refuses such text, and the SQL refuses `"bf": []`).
     ///
-    /// [`BloomFilter`], the filter of `TextMatch` and of every query, still
-    /// refuses such text: `TextMatch` has no other term to find it by. The
-    /// JSON is [`BloomFilter`]'s, and so is the JSON Schema; only what Stack
-    /// Encrypt derives into it differs.
+    /// [`BloomFilter`], `TextMatch`'s stored filter, still refuses such
+    /// text, since `TextMatch` has no other term to find it by, and so does
+    /// [`QueryBloomFilter`], the filter of every query. The JSON is
+    /// [`BloomFilter`]'s, and so is the JSON Schema; only what Stack Encrypt
+    /// derives into it differs.
     #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
     #[serde(transparent)]
     pub struct SearchBloomFilter(pub BloomFilter);

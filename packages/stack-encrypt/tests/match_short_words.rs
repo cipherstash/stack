@@ -233,6 +233,95 @@ mod given_short_words {
         );
     }
 
+    /// The query cut run on its own, as a binding or an index defined
+    /// elsewhere runs it, refuses text that cuts no token as a field query
+    /// does: its empty filter would match every row. The stored cut keeps
+    /// such text as the empty filter.
+    mod given_the_query_cut_alone {
+        use super::*;
+        use stack_encrypt::sem::DefaultMatch;
+        use stack_encrypt::target::{matching, matching_query, Borrowed, CallerContext};
+
+        fn caller() -> CallerContext {
+            CallerContext::from(nonempty!("people/name"))
+        }
+
+        async fn derive_query<O: MatchConfig>(
+            keyset: &Keyset<'_>,
+            text: &str,
+        ) -> Result<MatchTerms<O>, Error> {
+            keyset
+                .run(
+                    matching_query::<_, _, Borrowed, O>(),
+                    &text.to_owned(),
+                    caller(),
+                )
+                .await
+        }
+
+        #[tokio::test]
+        async fn text_that_cuts_no_token_is_refused() {
+            let cipher = stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            for text in ["", "a", "Ng", "  "] {
+                assertions::refused_as_empty(
+                    text,
+                    derive_query::<DefaultMatch>(&keyset, text).await,
+                );
+            }
+            for text in ["", "N", "n "] {
+                assertions::refused_as_empty(text, derive_query::<ShortWords>(&keyset, text).await);
+            }
+        }
+
+        #[tokio::test]
+        async fn the_stored_cut_of_that_text_is_the_empty_filter() {
+            let cipher = stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            let stored: MatchTerms = keyset
+                .run(
+                    matching::<_, _, Borrowed, DefaultMatch>(),
+                    &"Ng".to_owned(),
+                    caller(),
+                )
+                .await
+                .expect("a stored value of short text derives");
+            assert!(
+                stored.positions().is_empty(),
+                "\"Ng\" stores the empty filter under the default index: {:?}",
+                stored.positions()
+            );
+        }
+
+        #[tokio::test]
+        async fn text_that_cuts_a_token_derives_its_filter() {
+            let cipher = stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            let queried = derive_query::<ShortWords>(&keyset, "Ng")
+                .await
+                .expect("a short word is a token of the short-word index");
+            assert!(
+                !queried.positions().is_empty(),
+                "the word token sets positions"
+            );
+        }
+
+        mod assertions {
+            use super::*;
+
+            pub(super) fn refused_as_empty<O: MatchConfig>(
+                text: &str,
+                derived: Result<MatchTerms<O>, Error>,
+            ) {
+                assert!(
+                    matches!(derived, Err(Error::Term(TermError::EmptyTermText))),
+                    "{text:?} cuts no token, and its query is refused: {:?}",
+                    derived.map(|terms| terms.positions().to_vec())
+                );
+            }
+        }
+    }
+
     /// A person with one name under each index: the short-word index on
     /// `name`, the default on `alias`.
     #[derive(Clone, Zeroize)]

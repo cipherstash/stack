@@ -690,6 +690,96 @@ mod given_a_set_holding_a_match_index_with_short_words {
     }
 }
 
+/// An empty `Vec` of indexes handed a plaintext by value: the refusal is the
+/// operation that lets go of it, so it wipes it, for a stored value and for a
+/// query alike.
+mod given_an_owned_plaintext_and_an_empty_vec_of_indexes {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+    use zeroize::Zeroize;
+
+    /// Text that counts the times it is wiped.
+    struct Counted {
+        text: String,
+        wipes: Arc<AtomicUsize>,
+    }
+    impl AsRef<str> for Counted {
+        fn as_ref(&self) -> &str {
+            &self.text
+        }
+    }
+    impl Zeroize for Counted {
+        fn zeroize(&mut self) {
+            self.text.zeroize();
+            let _ = self.wipes.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// The text, its wipe counter, and an empty set of match indexes.
+    fn scenario() -> (Counted, Arc<AtomicUsize>, Vec<Match>) {
+        let wipes = Arc::new(AtomicUsize::new(0));
+        let text = Counted {
+            text: "Mike Ng".to_owned(),
+            wipes: wipes.clone(),
+        };
+        (text, wipes, Vec::new())
+    }
+
+    #[tokio::test]
+    async fn the_stored_terms_refusal_wipes_the_value() {
+        let cipher = stack_cipher().await;
+        let keyset = cipher.default_keyset();
+        let (text, wipes, none) = scenario();
+        let refused: Result<Vec<MatchTerms>, _> = keyset
+            .run(
+                Indexes::<Counted>::operations::<_, Owned>(&none),
+                text,
+                caller(),
+            )
+            .await;
+        assertions::refused_and_wiped(&refused, &wipes);
+    }
+
+    #[tokio::test]
+    async fn the_query_terms_refusal_wipes_the_value() {
+        let cipher = stack_cipher().await;
+        let keyset = cipher.default_keyset();
+        let (text, wipes, none) = scenario();
+        let refused: Result<Vec<MatchTerms>, _> = keyset
+            .run(
+                Indexes::<Counted>::query_operations::<_, Owned>(&none),
+                text,
+                caller(),
+            )
+            .await;
+        assertions::refused_and_wiped(&refused, &wipes);
+    }
+
+    mod assertions {
+        use super::*;
+
+        /// Refused as an empty set, with the value wiped exactly once.
+        pub(super) fn refused_and_wiped(
+            refused: &Result<Vec<MatchTerms>, Error>,
+            wipes: &AtomicUsize,
+        ) {
+            assert!(
+                matches!(
+                    refused,
+                    Err(Error::Plan(stack_encrypt::PlanError::EmptyIndexes))
+                ),
+                "an empty set derives nothing: {refused:?}"
+            );
+            assert_eq!(
+                wipes.load(Ordering::SeqCst),
+                1,
+                "the refusal wipes the owned value once"
+            );
+        }
+    }
+}
+
 mod given_a_passthrough {
     use super::*;
 

@@ -208,6 +208,14 @@ cannot tell which they are producing.
 > differs from the stored term, and ADR-0009 makes the operator, not the
 > index, the thing a caller names.
 
+> **Amended 2026-11-23 (#1398).** `match_terms` is no longer a match
+> query's path when `MatchOptions::short_words` is on. It derives a stored
+> value's filter, and a query keeps its short words only when it cuts no
+> n-gram, so the `match_terms` filter of "Mike Ng" asks for the word `ng`
+> and misses "Mike Nguyen". A match query comes from the field's reference,
+> or from `target::matching_query`. ADR-0009's amendment of the same date
+> has the rule.
+
 ### 6. Targets declare their sources; `FfiValue` is not one
 
 A target names the plaintext it accepts (`TextEq` from `Protected<String>`), and

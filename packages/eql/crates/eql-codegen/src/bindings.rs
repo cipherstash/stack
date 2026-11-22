@@ -452,8 +452,9 @@ fn render_range_query_struct(family: &DomainFamily, term: Term) -> TokenStream {
 /// `SearchBloomFilter`, the same JSON as `BloomFilter`, into which Stack
 /// Encrypt derives the empty filter for text too short for a 3-gram instead
 /// of refusing it. Such a value is still found by `=` and `<` through its
-/// other terms; a query, and `TextMatch`, which has no other term, keep
-/// `BloomFilter` and keep refusing that text.
+/// other terms. `TextMatch`, which has no other term, keeps `BloomFilter`
+/// and keeps refusing that text; a query's filter is `QueryBloomFilter`
+/// ([`query_term_newtype`]), which refuses it too.
 pub fn stored_term_newtype(eql: EqlVersion, domain: &Domain, term: Term) -> &'static str {
     if eql == EqlVersion::V4 && term == Term::Bloom && v4_optional_query_terms(domain) {
         "SearchBloomFilter"

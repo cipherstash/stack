@@ -1325,3 +1325,41 @@ the parser, as `passthrough_with_outputs` and `outputs_with_target`.
 
 Where decision 1 and decision 7 write `.via(Ore)` and `.via(Ope)`, read: the
 index the field declares for the operator.
+
+## Amended 2026-11-23 (#1398)
+
+A match query is now cut differently from the value it would store, so an
+index states the term a query sends beside the term it stores.
+
+- **A query keeps its short words only when it cuts no n-gram.** With
+  `MatchOptions::short_words` on, a stored value holds every n-gram and
+  each short word whole. A query that also asked for its short words would
+  need the word whole in the row, so "Mike Ng" would miss "Mike Nguyen". A
+  query that cuts an n-gram is its n-grams alone; a query of one short word
+  ("Ng") is that word's token. The stored side does not change. The rule
+  lives once, in the tokenizer, and every query path cuts through it: the
+  typed verifier, the field query, and the `dynamic` query, term and verify
+  paths. The leakage is one token per short word in every stored value
+  that holds one.
+- **`Index` has two required methods, `operation` and
+  `query_operation`.** `operation` derives the term a value stores, and
+  `query_operation` the term a query sends. A field query derives through
+  `query_operation`. Most indexes return the same description from both.
+  `Match<O>` returns `target::matching_query` from `query_operation`, the
+  filter of the tokens a query keeps. Neither method has a default: with a
+  default of `operation`, a wrapper that forwarded only `operation` would
+  compile and send the stored cut, which misses rows. So an index that
+  wraps another, such as eql-bindings' `TwinIndex`, forwards both.
+- **`Indexes` has `query_operations` beside `operations`,** also required.
+  It derives each index's `query_operation` in one batch, for one index, a
+  tuple and a `Vec`, as `operations` derives each `operation`.
+- **`target::matching_query` is the query cut on its own.** It refuses text
+  that keeps no token (`TermError::EmptyTermText`), whose empty filter
+  would match every row, so a caller that runs it outside a field query
+  gets the refusal a field query's `prepare` gives. `matching` stores such
+  text as the empty filter. `KeysetCipher::match_terms` derives the stored
+  filter, so with short words on it is not a query's path.
+- **EQL v4's query twins carry `QueryBloomFilter`,** `BloomFilter`'s JSON
+  and schema, whose `EncryptTarget` derives through `matching_query`. So a
+  query twin built directly, from a field reference, or by the by-name
+  query dispatch follows the one rule.

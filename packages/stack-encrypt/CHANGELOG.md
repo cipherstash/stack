@@ -481,6 +481,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`Index` and `Indexes` each gain a required method** (#1398).
+  `Index::query_operation` derives the term a query of the index sends, and
+  `Indexes::query_operations` derives each index's query term in one batch.
+  A field query derives through them. Neither has a default: a default of
+  the stored term would let an index that wraps a match index forward only
+  `operation` and send the stored cut, which misses rows. To upgrade, an
+  index defined outside this crate adds `query_operation`, returning the
+  same description as `operation` when it sends what it stores, and
+  forwarding to the wrapped index's `query_operation` when it wraps one. A
+  set of indexes defined outside this crate adds `query_operations`, built
+  from each index's `query_operation`. No stored byte changes.
+
 - **Seven `PlanError` variants that nothing raised are removed** (#1671).
   Only the plan builder and `plan::all` raised them, and both are gone,
   so no call returned them: `IdentityWithoutField`, `IndexNotDeclared`,
@@ -1377,15 +1389,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     derives), `dynamic::query_term`, `dynamic::term`, `dynamic::verify`, and
     `MatchQuery::verify`.
   - A field query now derives its term through the new
-    `Index::query_operation`, which by default is `Index::operation`. A
-    match index overrides it with the new `target::matching_query`, the
-    query's filter. An index that wraps another forwards both methods.
+    `Index::query_operation` (see Breaking). A match index's is the new
+    `target::matching_query`, the query's filter; every other index's is
+    its `operation`. An index that wraps another forwards both methods.
   - A set of indexes derives a query's terms through the new
     `Indexes::query_operations`, each index's `query_operation`, as
     `Indexes::operations` derives the stored terms through each index's
-    `operation`. One index, a tuple and a `Vec` implement it; by default it
-    is `Indexes::operations`, so a set defined elsewhere that holds a match
-    index overrides it.
+    `operation`. One index, a tuple and a `Vec` implement it.
+  - `target::matching_query` refuses text that keeps no token
+    (`TermError::EmptyTermText`), since its empty filter would match every
+    row: run on its own, it refuses what a field query's `prepare` does.
+    `target::matching` still stores such text as the empty filter.
   - What it reveals: one more token per short word in every stored value
     that holds one, unique to the word, so rows holding "Ng" can be told
     from rows holding "Nguyen" and counted. A query of one short word
@@ -1450,6 +1464,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     with `with_query_carrying_every_term()`. It is not on the wire. A
     descriptor without it is taken to carry the answering index's term
     alone, as before.
+
+- **An empty `Vec` of indexes wipes an owned plaintext when it refuses
+  it** (#1398). `Indexes::operations` and `Indexes::query_operations` on an
+  empty `Vec` refuse with `PlanError::EmptyIndexes`, and in `Owned` mode
+  the refusal dropped the plaintext without wiping it. The refusal now lets
+  go of it as an operation does: an owned value is wiped, and a borrow is
+  left with the caller.
 
 - **`Pending::zip` and `Pending::all` wipe the plaintext they recovered
   before a later failure** (#1666). When one decrypt in a batch failed

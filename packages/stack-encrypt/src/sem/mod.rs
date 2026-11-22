@@ -820,9 +820,13 @@ impl MatchOptions {
 /// that index. A filter derived directly, with
 /// [`match_terms`](crate::KeysetCipher::match_terms) or a `Match<O>` the
 /// caller names, is cut under whatever configuration it is given, and
-/// matches a stored filter only when that configuration is the field's. A
-/// plan that is data has one match index per field, and its stored filter
-/// and its query both read that index's options.
+/// matches a stored filter only when that configuration is the field's.
+/// `match_terms` and `Match<O>`'s [`operation`](crate::target::Index::operation)
+/// cut a stored value; with [`MatchOptions::short_words`] on, a query is
+/// cut by [`matching_query`](crate::target::matching_query), which keeps
+/// its short words only when it cuts no n-gram. A plan that is data has one
+/// match index per field, and its stored filter and its query both read
+/// that index's options.
 pub trait MatchConfig: Send + Sync + 'static {
     fn options() -> MatchOptions;
 
@@ -1299,12 +1303,13 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for BloomVisitor {
 /// and both fold into the one filter.
 ///
 /// Text that cuts no token (empty, separator-only, or shorter than the
-/// n-gram length with no short word) is the empty filter: no position set,
-/// no PRF call. Stored,
-/// it is a value no query matches, since a query always has at least one
-/// token and the empty filter holds none of its positions. This is the
-/// *stored* side's answer; a query of such text is refused before it gets
-/// here ([`TermError::EmptyTermText`]).
+/// n-gram length with no short word) is the empty filter when stored: no
+/// position set, no PRF call, and a value no query matches, since a query
+/// always has at least one token and the empty filter holds none of its
+/// positions. A query of such text is refused
+/// ([`TermError::EmptyTermText`]), because its empty filter would match
+/// every row. A field query refuses it earlier, when it is prepared; this
+/// refuses it for every other caller of the query cut.
 fn match_term<O>(
     prf: &HmacSha256Prf,
     text: &str,
@@ -1316,10 +1321,14 @@ fn match_term<O>(
     // The PRF takes the tokens by value and moves each `String`'s buffer
     // into a `Protected`, which zeroizes it on drop: the tokens are wiped
     // there, not here. The `Vec`s themselves hold only their pointers.
+    let tokens = tokenize::tokens(text, &options, side)?;
+    if side == Side::Query && tokens.is_empty() {
+        return Err(TermError::EmptyTermText);
+    }
     let tokenize::Tokens {
         tokenizer,
         short_words,
-    } = tokenize::tokens(text, &options, side)?;
+    } = tokens;
     // Held wiped-on-drop until the PRF takes them, so a failure deriving
     // the tokenizer's tokens does not free the words unwiped.
     let mut short_words = Zeroizing::new(short_words);
@@ -1408,7 +1417,8 @@ where
 /// filter of the tokens the query keeps ([`Side::Query`]), the tokens its
 /// [`QueryTokens`] verify a row by. What a field query of a match index
 /// derives ([`matching_query`](crate::target::matching_query)), called as
-/// [`Term::encrypt_from`] is.
+/// [`Term::encrypt_from`] is. Text that keeps no token is refused
+/// ([`TermError::EmptyTermText`]).
 pub(crate) fn match_query<'a, 'c, K, O>(
     source: impl AsRef<str>,
     cipher: &'a KeysetCipher<'_, K>,
@@ -2088,6 +2098,14 @@ order_term! {
 /// identical either way; what differs is whether anything holds the two in
 /// agreement.
 ///
+/// [`match_terms`](Self::match_terms) is the exception: it derives a stored
+/// value's filter, which is a query's only while
+/// [`MatchOptions::short_words`] is off. With the option on, a query keeps
+/// its short words only when it cuts no n-gram, so the filter of "Mike Ng"
+/// from `match_terms` asks for the word `ng` and misses "Mike Nguyen". A
+/// match query comes from the field's reference (`matches(..)`), or from
+/// [`matching_query`](crate::target::matching_query) run on its own.
+///
 /// The descriptor is a context
 /// as the target-directed leaves take it — a [`NonEmpty<T>`]:
 /// `nonempty!("users").with("email")`, `NonEmpty::new(column)?`,
@@ -2589,17 +2607,29 @@ mod tests {
 
             proptest! {
                 /// A query's filter is the filter of exactly the tokens it
-                /// verifies by, so no row the filter rejects would verify.
+                /// verifies by, so no row the filter rejects would verify;
+                /// a query that keeps no token has no filter.
                 #[test]
                 fn the_filter_is_the_filter_of_the_tokens_it_verifies_by(query in text()) {
                     let prf = prf();
                     let tokens = QueryTokens::under(&query, &options()).expect("normalizes");
-                    prop_assert_eq!(
-                        derive(&query, Side::Query),
-                        filter_of(&prf, &tokens.0),
-                        "the filter of {:?}",
-                        query
-                    );
+                    let derived: Result<MatchTerms, TermError> =
+                        match_term(&prf, &query, context(), options(), Side::Query);
+                    if tokens.0.is_empty() {
+                        prop_assert!(
+                            matches!(derived, Err(TermError::EmptyTermText)),
+                            "{:?} keeps no token, and is refused: {:?}",
+                            query,
+                            derived
+                        );
+                    } else {
+                        prop_assert_eq!(
+                            derived.expect("a query that keeps a token derives"),
+                            filter_of(&prf, &tokens.0),
+                            "the filter of {:?}",
+                            query
+                        );
+                    }
                 }
 
                 /// No false negative: a row that verifies holds the query's
