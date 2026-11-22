@@ -2,8 +2,7 @@
 
 How to reach Stack Encrypt from a language other than Rust: what crosses
 between your code and the engine, what the engine expects of you, and how
-to prove you got it right. The Go SDK in `languages/golang` is the reference
-integration, and every rule below names where in it the rule is kept.
+to prove you got it right.
 
 Stack Encrypt is CipherStash's encryption engine. It encrypts each value of a
 record under its own data key from ZeroKMS, the key service, and derives the
@@ -13,13 +12,18 @@ text search) and the terms of a JSON document. Rust programs call it
 directly. Every other language calls it through the `dynamic` module, which
 this guide is about.
 
+The Go SDK in `languages/golang` is the reference for what a language SDK
+does, and every rule below names where in it the rule is kept. Its binding
+is a WebAssembly guest, which is right for Go and wrong for a language that
+can link Rust natively. Section 2 says which kind of binding to build.
+
 ## 1. A binding and a language SDK are two things
 
 - The **engine** is this crate: the Rust code that encrypts, decrypts and
   derives terms.
 - A **binding** is the interface between the engine and a language: a native
-  library loaded through FFI, or a WebAssembly module. What crosses it is
-  data: a declaration, a value, a result.
+  extension that links this crate, or a WebAssembly module. What crosses it
+  is data: a declaration, a value, a result.
 - A **language SDK** is what users of the language work with: the types,
   decorators, struct tags or generators they write against. It sits on the
   binding.
@@ -38,44 +42,55 @@ The one sentence to carry from them: the engine does all the work, an SDK
 declares what to do and sends it across as data, and the bytes are the same
 in every language because every language runs the same code.
 
-## 2. Native or WebAssembly
+## 2. Link the engine natively
 
-Build a native library by default. Build a WebAssembly (WASI) guest only
-where WebAssembly is the reason you are there:
+Build a native extension that links this crate with the `dynamic` feature,
+through the language's own Rust binding tool:
 
-- the host language cannot load a native library cleanly (Go, whose cgo-free
-  story is why its binding is a wazero guest);
-- the code runs where native libraries are not allowed (an edge runtime, a
-  browser);
-- you want the sandbox: a guest's memory is a single buffer the host owns,
-  can lock in RAM and can wipe as a whole.
+- Python: PyO3.
+- Elixir and Erlang: Rustler.
+- Node.js: napi-rs.
 
-The engine is the same either way. What differs is how bytes cross and who
-owns memory, which sections 6 and 7 cover. A native library links this
-crate with the `dynamic` feature and calls the functions in section 3
-directly. A guest wraps the same functions in exports, as
-`languages/golang/encrypt/guest/src/abi.rs` does, over the conventions in
-the `stack-guest-abi` crate (`packages/stack-guest-abi`), which every guest
-shares so a host reads two guests the same way.
+The engine then runs in the host's process, on the host's threads. It makes
+its own requests to ZeroKMS, its errors are Rust values the extension turns
+into the language's own, and the extension calls the Rust API in section 3
+directly. There is no buffer registry to manage, no step loop and no status
+table.
+
+Build a WebAssembly (WASI) guest only for a language that cannot link a
+native library cleanly. Go is the one today: the Go SDK is free of cgo, so
+its binding is a guest that the wazero runtime runs. C and C++ may be
+another case. A language with a good native binding story never uses the
+guest.
+
+The engine is the same either way. A guest wraps the same `dynamic` API in
+exports, as `languages/golang/encrypt/guest/src/abi.rs` does, over the
+conventions in the `stack-guest-abi` crate (`packages/stack-guest-abi`).
+Where this guide describes the guest, it says so; skip those parts for a
+native extension.
 
 ## 3. The operations
 
 A binding does three things: encrypt a record, derive a query term, and
-decrypt a record. Each is one function in [`crate::dynamic`], and each is
-one export in the Go guest. Everything else a guest exports exists to serve
-those three.
+decrypt a record. It does each through [`crate::dynamic::Planned`]: a plan
+paired with one value. A `Planned` is a target in the sense of the Rust
+API, so it runs through the same `encrypt_into` and `decrypt_from` entry
+points as a typed Rust record, and its scopes and bindings are the same
+context argument.
 
-### What a record operation needs
+### What an operation needs
 
 - A **plan**: the declaration of what each field is, as data. Section 4 has
-  the grammar. [`crate::dynamic::record::plan`] reads one from its frame;
+  the grammar. Read it once, when the language SDK loads a declaration, and
+  keep it. [`crate::dynamic::record::plan`] reads one from its frame;
   [`crate::dynamic::record::plan_with`] reads one that may name EQL types
   (see "EQL types" below). Both take the frame as a
   [`vitaminc_protected::ProtectedRef`]; call
   [`crate::AsProtectedRef::as_protected_ref`] on the bytes.
-- A **value**: the record, as one frame. A binding never builds a tree of
-  values; it hands the engine the bytes and the engine walks them in place.
-  [`crate::dynamic::ValueFrame`] is the engine's hold on such a value.
+- A **value**: the record, as one frame in a
+  [`crate::dynamic::ValueFrame`]. A binding never builds a tree of values; it
+  writes the host value straight into a frame, which holds the bytes in a
+  buffer wiped when it drops, and the engine walks them in place.
 - A **keyset cipher**: which ZeroKMS keyset mints and opens the keys.
   [`crate::StackCipher::default_keyset`] gives the default one;
   [`crate::StackCipher::keyset`] names another.
@@ -88,44 +103,38 @@ call as one caller, and section 7 says when a binding needs it.
 
 ### Encrypt a record
 
-[`crate::dynamic::record::encrypt`]`(&keyset, &frame, &plan)` returns a
-`Pending` that settles to the stored record, as a frame. A batch is a
-sequence of records in one frame, and is still one ZeroKMS call. With a
-plan that names EQL types, call [`crate::dynamic::record::encrypt_with`]
-and pass the resolver.
-
-The Go guest's export is `se_encrypt_record(value, plan, options)` in
-`languages/golang/encrypt/guest/src/abi.rs`. The options object names the
-keyset and may carry audit metadata
-(`languages/golang/encrypt/guest/src/options.rs`).
+`Planned::new(&plan, row).encrypt_into(&keyset)` settles to the stored
+record, a [`crate::StackCipherText`]. A batch is a sequence of records in
+one frame, and is still one ZeroKMS call. With a scope or a binding, the
+call is `encrypt_into_with_context(&keyset, Scope::new(7u64).bind(9u64))`
+(see "Scopes and bindings" below). The row is moved in, and wiped when the
+call is done with it.
 
 ### Derive a query term
 
-[`crate::dynamic::query_term`]`(&keyset, &plan, field, operator, input, &resolver)`
-takes the plan, the field's name, an operator ([`crate::dynamic::Op`]) and
-the operator's input, and returns a [`crate::dynamic::QueryTerm`]: the
-operand the database compares against. An operator is named by its wire
-name: `eq`, `lt`, `lte`, `gt`, `gte`, `between` and `matches` for a single
-value, and the JSON operators below for a document. The engine reads the
-input as the field's declared type, finds the index that answers the
-operator ([`crate::dynamic::Op::answered_by`]), and derives the term the
-same way the stored term was derived. An operator the field does not answer
-is refused before any key is touched.
+A query is planned before any value exists:
+[`crate::dynamic::record::Plan::query`]`(field, operator)` returns a
+[`crate::dynamic::QueryPlan`], or refuses an operator no index of the field
+answers. Keep it beside the plan. A query value then runs under it:
+`Planned::new(&query_plan, value).encrypt_into(&keyset)` settles to a
+[`crate::dynamic::QueryTerm`], the operand the database compares against.
+A query takes a scope and no binding.
 
-Two more functions serve a probabilistic term, which is what a match index
-gives. [`crate::dynamic::verify`] answers, for a page of decrypted values,
-which ones the query matches. [`crate::dynamic::target_limit`] says how many
-rows to fetch. Neither needs a key. [`crate::dynamic::field_operators`]
-lists the operators a plan field answers, so a generator can ask the engine
-instead of keeping a copy of the table.
+[`crate::dynamic::record::Plan::field`] gives the same query as a chain, for
+an SDK that builds queries one at a time:
+`plan.field("email")?.eq(value)?.scope(Scope::new(7u64)).encrypt(&keyset)`.
 
-The Go guest's exports are `se_query_term`, `se_verify`, `se_target_limit`
-and `se_operators`.
+An operator ([`crate::dynamic::Op`]) is named by its wire name: `eq`, `lt`,
+`lte`, `gt`, `gte`, `between` and `matches` for a single value, and the JSON
+operators below for a document. The engine reads the value as the field's
+declared type, finds the index that answers the operator
+([`crate::dynamic::Op::answered_by`]), and derives the term the same way
+the stored term was derived.
 
 ### Decrypt a record
 
-[`crate::dynamic::record::decrypt`]`(cipher_ref, stored, &plan, expected)`
-returns a `Pending` that opens to the record's frame. The first argument
+`ValueFrame::decrypt_from(Planned::new(&plan, stored), cipher)` settles to
+the record's frame, in a buffer wiped when it drops. The `cipher` argument
 says which cipher opens ([`crate::CipherRef`]):
 
 - pass `&cipher`, the client, to open a value sealed under any of its
@@ -133,13 +142,8 @@ says which cipher opens ([`crate::CipherRef`]):
 - pass `&keyset` to open only values sealed under that keyset. A value
   sealed under another is refused before any key is fetched.
 
-`expected` is the context the caller expects, for a plan that takes its
-context from a field of each record (section 4). With EQL types, use
-[`crate::dynamic::record::decrypt_with`].
-
-The Go guest's export is `se_decrypt_record(stored, plan, options)`. Its
-options take the keyset selector `{"any": {}}` to open under whichever
-keyset each value names, the data form of passing `&cipher`.
+A record encrypted with a scope or a binding is decrypted with the same
+ones, through `decrypt_from_with_context`.
 
 ### Scopes and bindings
 
@@ -152,16 +156,38 @@ that context in two ways:
 - A **binding** is added to the stored context only, after every scope:
   a row ID, say. It decides the data key and the authenticated data, so a
   value moved to another row does not open. A query takes no binding: its
-  terms derive under the label and the scopes, and a query on a bound plan
-  is refused.
+  terms derive under the label and the scopes, and a query with a binding
+  is refused before any key is requested.
 
-The stored value holds neither; whoever reads it supplies them again. In a
-plan, a scope is written into each field's context and a binding is the
-plan-level `"bind"` key (section 4). In the owned API, they are the
-context argument of [`crate::dynamic::Planned`]:
-`Planned::new(&plan, row).encrypt_into_with_context(&keyset, Scope::new(7u64).bind(9u64))`.
-The full rules, with the cases both languages run, are in
-`conformance/stack-encrypt/context-contract.md`.
+The stored value holds neither; whoever reads it supplies them again. A
+`Planned` call takes them as its context argument, built from
+[`crate::target::Scope`] and [`crate::target::Bind`]. A plan can also carry
+them itself: a scope written into each field's context and a binding in
+the plan-level `"bind"` key (section 4). The full rules, with the cases
+every binding runs, are in `conformance/stack-encrypt/context-contract.md`.
+
+### Questions asked of the plan
+
+Some questions take a plan and no record, so they are functions of the
+plan rather than `Planned` calls:
+
+- [`crate::dynamic::field_operators`] lists the operators a plan field
+  answers, so a generator can ask the engine instead of keeping a copy of
+  the table.
+- [`crate::dynamic::verify`] answers, for a page of decrypted values,
+  which ones a probabilistic query matches (a match index gives a
+  probabilistic term), and [`crate::dynamic::target_limit`] says how many
+  rows to fetch. Neither needs a key.
+- [`crate::dynamic::json_open`] opens the rows a read of a JSON document
+  returned (see "JSON documents" below).
+- `Planned::contexts` and [`crate::dynamic::QueryPlan::contexts`] say which
+  contexts each field is sealed and queried under, with placeholders for
+  the caller's scope and binding, so a test can pin them.
+
+One case still needs the record function underneath `Planned`: a plan that
+takes its context from a field of each record (section 4), decrypted with a
+check that each record names the context the caller expects. That check is
+the `expected` argument of [`crate::dynamic::record::decrypt`].
 
 ### JSON documents
 
@@ -175,10 +201,9 @@ document is one text leaf.
 A document answers its own operators: `contains` and `contained_by`; `eq_at`,
 `lt_at` and the other comparisons at a path; `element_match`; `match`, a
 jsonpath predicate; and the reads `selector`, `subtree`, `children` and
-`child_count`. [`crate::dynamic::Op::input`] names each one's input.
-[`crate::dynamic::query_term`] derives the operand for all of them, and
-[`crate::dynamic::json_open`] opens the rows a read returned. The Go guest's
-export for that is `se_json_open`.
+`child_count`. [`crate::dynamic::Op::input`] names each one's input. A
+query plan derives the operand for every one of them, and
+[`crate::dynamic::json_open`] opens the rows a read returned.
 
 ### EQL types
 
@@ -187,27 +212,42 @@ outputs: `{"context": ["profiles", "age"], "target": "IntegerEq"}`. EQL is
 the SQL library installed into a customer's PostgreSQL, and an EQL type is
 the JSON value one of its column types stores. The engine does not know the
 EQL types; the crate that does, `eql-bindings`, depends on this one. So the
-binding that links the EQL types installs a [`crate::dynamic::TargetResolver`],
-which the engine calls once per target field to run the named type's own
-plan. [`crate::dynamic::NoTargets`] is the resolver of a build without them;
-it refuses every name when the plan is read. The by-name dispatch, generated
+binding that links the EQL types passes a
+[`crate::dynamic::TargetResolver`], which the engine calls once per target
+field to run the named type's own plan: to
+[`crate::dynamic::record::plan_with`], to `Planned::with_resolver`, and to
+[`crate::dynamic::record::Plan::query_with`] and
+[`crate::dynamic::record::Plan::field_with`].
+[`crate::dynamic::NoTargets`] is the resolver of a build without them; it
+refuses every name when the plan is read. The by-name dispatch, generated
 from the EQL catalog, is `eql_bindings::encryption::targets` under its
-`targets` feature. The Go module ships two guest builds, one with the EQL
-types and one without, and `se_targets` lists the types a build holds.
+`targets` feature.
 
-### The other guest exports
+### The Go guest's exports
 
-The Go guest's remaining exports, for a reader of `abi.rs`:
+This part is for a guest. The Go guest exports the same operations as
+functions of a plan and a value, which `Planned` runs underneath
+([`crate::dynamic::record::encrypt_with`],
+[`crate::dynamic::record::decrypt_with`] and
+[`crate::dynamic::query_term`]), because a host across a WebAssembly
+boundary hands over the plan's bytes on every call:
 
+- `se_encrypt_record(value, plan, options)`, `se_decrypt_record(stored, plan, options)`
+  and `se_query_term`. The options object names the keyset and may carry
+  audit metadata (`languages/golang/encrypt/guest/src/options.rs`); the
+  selector `{"any": {}}` opens under whichever keyset each value names, the
+  data form of passing `&cipher`.
+- `se_verify`, `se_target_limit`, `se_operators` and `se_json_open`, the
+  questions of the plan.
 - `se_cipher_init` builds the cipher from a configuration object (section 7)
-  and runs once per instance.
-- `se_keyset` loads a keyset by name or id.
+  and runs once per instance; `se_keyset` loads a keyset by name or id.
 - `se_term` derives one index term under an explicit context, kept for one
   host need the file explains.
 - `se_plan_check` reads a plan and reports its refusal with no cipher, so a
-  generator can check a declaration before the program runs.
-- `se_contexts` prints the context each field of a plan is sealed under, the
-  same text a Rust record's `contexts()` prints, so a test can pin it.
+  generator can check a declaration before the program runs; `se_contexts`
+  prints the context each field of a plan is sealed under; `se_targets`
+  lists the EQL types a build holds. The Go module ships two guest builds,
+  one with the EQL types and one without.
 - `se_shutdown` drops every key and wipes every buffer.
 - `se_io`, `se_resume` and `se_abort` are the step loop of section 7.
 - `se_alloc`, `se_dealloc` and `se_last_error` come from `stack-guest-abi`
@@ -276,9 +316,10 @@ with the cases every binding runs. The shape:
 
 The plan is read from a frame, not from JSON. The Go SDK's generator writes
 the plan from struct tags (`languages/golang/encrypt/gensupport/declaration.go`
-turns a declaration into one), and `se_plan_check` checks the plan's frame
-at `go generate`, so a mistake is found before the program runs. A refusal
-names the field and a reason (section 8).
+turns a declaration into one), and the guest's `se_plan_check` checks the
+plan's frame at `go generate`, so a mistake is found before the program
+runs. A native SDK gets the same check by reading the plan when it loads a
+declaration. A refusal names the field and a reason (section 8).
 
 ## 5. Control messages and plaintext
 
@@ -293,39 +334,59 @@ holds one value of the value model, and [`crate::dynamic::ValueFrame::check`]
 checks a record source in place. A decrypted record comes back as a frame
 too, in a buffer wiped on drop.
 
-**Control messages** are everything else: the plan, a context, the options
-object, a configuration, query statistics, a step's requests and responses,
-an error. They cross as frames as well, and the engine reads each straight
-into a typed message with serde (`vitaminc_aead_frame::serde`), with no
-intermediate tree. There is no type a binding can use to hold plaintext as
-a tree, by design. If you find yourself building one, you are building a
-second value model.
+**Control messages** are everything else: the plan, a context, query
+statistics, an error, and for a guest the options object, a configuration
+and a step's requests and responses. They cross as frames as well, and the
+engine reads each straight into a typed message with serde
+(`vitaminc_aead_frame::serde`), with no intermediate tree. There is no type
+a binding can use to hold plaintext as a tree, by design. If you find
+yourself building one, you are building a second value model.
 
 The frame format itself is documented in the crate that owns it,
 [`vitaminc-aead-frame`](https://docs.rs/vitaminc-aead-frame/0.10.0): the
 byte layout, the tag table, and the depth and length limits. This guide
 does not restate it. This crate re-exports it as
-[`crate::dynamic::frame`], so a native binding builds against the same
-version the engine does.
+[`crate::dynamic::frame`], so a binding builds against the same version the
+engine does.
 
-A binding either writes frames itself or links the crate that does:
-
-- **A binding with a codec of its own** writes and reads frames in its own
-  language. The Go SDK does, in `languages/golang/internal/guest`, because Go
-  does not link Rust. Its codec targets one version of the frame format and
-  says which.
-- **A native binding that links the crate** has no codec: the crate writes
-  and reads every frame, on both sides. The version it pins in its
-  `Cargo.toml` is the statement of which frame format it speaks. What the
-  binding adds is the conversion from a value of its language to a frame
-  and back, and that conversion is what its tests must cover (section 11).
+- **A native extension links the crate** and has no codec of its own: the
+  crate writes and reads every frame, on both sides. The version it pins in
+  its `Cargo.toml` is the statement of which frame format it speaks. What
+  the extension adds is the conversion from a value of its language to a
+  frame and back, and that conversion is what its tests must cover
+  (section 11).
+- **A guest's host has a codec of its own**, because the host cannot link
+  Rust. The Go SDK's is in `languages/golang/internal/guest`. It targets one
+  version of the frame format and says which.
 
 ## 6. Plaintext hygiene
 
 The engine's rule is that plaintext lives in one place, for as long as the
 operation needs it, and is wiped on every path out, including failure. A
-binding inherits the rule for every copy it makes. What the Go guest does,
-from `languages/golang/encrypt/guest/src/abi.rs` and
+binding inherits the rule for every copy it makes.
+
+What the engine does for every binding:
+
+- The engine holds a value as a [`crate::dynamic::ValueFrame`] in a
+  `Protected` buffer, and an opened value as the same, so the one copy is
+  wiped by the type, not by a line someone has to remember. A `Planned`
+  value is moved in and wiped when the call is done with it.
+- **Keys never leave the engine.** Key material derived from a ZeroKMS
+  response stays in it.
+- **Errors carry no values** (section 8).
+
+What a native extension does:
+
+- **Write a host value straight into a frame**, and read a decrypted frame
+  straight into the host value. Do not stage plaintext in a second buffer
+  on the way. A frame is wiped when it drops; the host language's own
+  objects (a Python `str`, a JavaScript string) usually cannot be, so the
+  fewer of them the extension makes, the better.
+- **Drop runs destructors.** The cipher wipes its keys when it drops; make
+  sure the host releases it, and does not keep it alive in a global after
+  the program is done with it.
+
+What a guest adds, from `languages/golang/encrypt/guest/src/abi.rs` and
 `packages/stack-guest-abi/src/abi.rs`:
 
 - **Every buffer the host hands the guest is wiped before the export
@@ -339,18 +400,10 @@ from `languages/golang/encrypt/guest/src/abi.rs` and
   frees. A decrypted record, and a step's requests (they hold the bearer
   token), are the host's to copy out and release at once.
 - **A paused operation owns its inputs** (section 7) and wipes them when it
-  finishes or is aborted. The engine holds a value as a
-  [`crate::dynamic::ValueFrame`] in a `Protected` buffer, and an opened
-  value as the same, so the one copy is wiped by the type, not by a line
-  someone has to remember.
+  finishes or is aborted.
 - **Shutdown runs destructors.** Closing a WebAssembly instance frees its
   memory without running Rust's drop code, so a guest needs an explicit
-  shutdown export that drops the cipher and wipes every buffer. A native
-  library gets this from drop; make sure your host calls it.
-- **Keys never cross.** Key material derived from a ZeroKMS response stays
-  in the engine; what crosses to the host is the request and the response
-  bytes that would cross the network anyway.
-- **Errors carry no values** (section 8).
+  shutdown export that drops the cipher and wipes every buffer.
 
 The proof is a test, not a review. `packages/stack-encrypt/tests/heap_hygiene.rs`
 runs each operation under an allocator that watches every freed block for a
@@ -369,15 +422,14 @@ your binding's own copies: it is item 4 of the checklist.
 
 ## 7. Keys and authentication
 
-The engine fetches data keys from ZeroKMS with a bearer token. How a
-binding gets the token, and who performs the HTTP request, depends on the
-kind of binding.
+The engine fetches data keys from ZeroKMS with a bearer token, from an
+auth strategy in `stack-auth`.
 
-### A native binding
+### A native extension
 
-A native library builds a [`crate::StackCipher`] over a ZeroKMS client and
-an auth strategy from `stack-auth`, and the engine makes its own requests.
-Choose the strategy as a Rust program would:
+The extension builds a [`crate::StackCipher`] over a ZeroKMS client and an
+auth strategy, as a Rust program would, and the engine makes its own
+requests. Choose the strategy by who the calls are for:
 
 - A strategy that holds its own credential, such as an access key, serves
   every call.
@@ -391,13 +443,23 @@ Choose the strategy as a Rust program would:
 One cipher serves every caller of a service. A cipher and a keyset hold no
 credential; the call does.
 
-### A WebAssembly guest
+`.audit(metadata)` adds facts about a call to the ZeroKMS audit log. A time
+in it crosses as RFC 3339 text in UTC, so every language SDK logs one form;
+`languages/golang/encrypt/guest/src/options.rs` gives the rules. A term
+derives from the index key and requests no data key, so a query has no
+request to send audit metadata with.
 
-**The guest never waits on the network: it steps.** An export that may
-reach ZeroKMS runs its work as a future and polls it once. If the work needs
-a request, the export returns `STATUS_NEEDS_IO` with a handle instead of a
-result. The host takes the handle's requests with `se_io`, performs them
-however it likes (a goroutine, `fetch`), and hands the responses to
+A `Pending` is a Rust future. Run it on the async runtime your binding
+tool provides, or on a runtime the extension owns. Dropping it before it
+settles cancels it, and wipes what it held.
+
+### A guest
+
+This part is for a guest. **The guest never waits on the network: it
+steps.** An export that may reach ZeroKMS runs its work as a future and
+polls it once. If the work needs a request, the export returns
+`STATUS_NEEDS_IO` with a handle instead of a result. The host takes the
+handle's requests with `se_io`, performs them, and hands the responses to
 `se_resume`, which polls again and returns the same three ways: done,
 needs more I/O, or failed. A host that gives up calls `se_abort`. The loop
 is `stack_guest_abi::step`; the wire form of a step is in
@@ -416,11 +478,6 @@ future dropped between two polls, and everything it held is wiped. At most
 and queues callers rather than failing them (`maxPaused` in
 `languages/golang/encrypt/client.go`).
 
-This shape is what lets the same guest run under wazero, where a host
-function may block, and on an edge runtime, where it may not. A native
-binding can do the same, or run the `Pending` to completion on a thread it
-owns.
-
 **The token comes through one import.** The guest imports exactly one host
 function, `token_get` in module `cipherstash_transport`
 (`languages/golang/encrypt/guest/src/host.rs`). The host holds a fresh
@@ -438,37 +495,47 @@ keyset: the default keyset is the one ZeroKMS set for the client, and every
 other keyset is chosen per call in the options object. Unknown keys are
 refused, so a typo cannot silently fall back to a default.
 
-**Audit metadata.** The options object of `se_encrypt_record`,
-`se_decrypt_record` and `se_json_open` takes `audit`: an object of facts
-the engine sends with each data-key request, the data form of a Rust
-call's `.audit(metadata)`. A time crosses as RFC 3339 text in UTC, so every
-language SDK logs one form; `options.rs` gives the rules. A term derives
-from the index key and requests no data key, so the term exports refuse
-`audit`.
+**Audit metadata** is the options object's `audit` key, on
+`se_encrypt_record`, `se_decrypt_record` and `se_json_open`. The term
+exports refuse it.
 
 ### Cancellation
 
-**Cancellation is the host's contract to keep.** The Go SDK's rule, from
-`languages/golang/encrypt/doc.go`: a call whose context ends fails with the
-context's error, and only that call fails. One client is shared by every
-request in a service, and one request giving up must not close it for the
-rest. A step runs under a context the caller cannot end
-(`Detach` in `languages/golang/internal/guest/lock.go`), and the client
-closes itself only when the guest's state is unknown: the guest trapped, or
-a call ran on for 30 seconds after its context ended, which is a bug rather
-than an impatient caller. A call that succeeds after its context ended
-returns the context's error and its output is wiped. Write the same
-contract for your language, and the tests in
-`languages/golang/encrypt/cancel_test.go` are the list of cases to cover.
+**Cancellation is the language SDK's contract to keep.** The Go SDK's rule,
+from `languages/golang/encrypt/doc.go`: a call whose context ends fails
+with the context's error, and only that call fails. One client is shared by
+every request in a service, and one request giving up must not close it for
+the rest. A call that succeeds after its context ended returns the
+context's error and its output is wiped. Write the same contract for your
+language, and the tests in `languages/golang/encrypt/cancel_test.go` are the
+list of cases to cover.
+
+For the guest, a step runs under a context the caller cannot end (`Detach`
+in `languages/golang/internal/guest/lock.go`), and the client closes itself
+only when the guest's state is unknown: the guest trapped, or a call ran on
+for 30 seconds after its context ended, which is a bug rather than an
+impatient caller.
 
 ## 8. Errors
 
-A failure crosses a binding in two parts, and a binding passes both on.
+**A native extension** gets the engine's error as a Rust value:
+[`crate::Error`], or the [`crate::dynamic::Error`] that a plan or a value
+was refused with. Turn it into the language's own exception, keeping what
+the error carries. Every engine error implements [`crate::ErrorPayload`]:
+a code, a message, help, structured fields and causes. Every input error
+from the `dynamic` module names the field it is about and a
+[`crate::dynamic::Reason`] (`no_such_field`, `operator_not_answered`,
+`field_type`, `bind_in_query`, and so on) as fields, so a caller tells a
+bad plan from a bad value without parsing text. The conformance cases
+assert the code, the reason and the field, never the message.
 
-**A status number** is the fast path a host acts on. The table is
-`stack_guest_abi::status` (`packages/stack-guest-abi/src/status.rs`), one
-numbering for every guest, and a code keeps its value for good. The ones a
-binding author meets first:
+**A guest** reports a failure in two parts, and its host passes both on.
+The full error, as above, is behind `se_last_error`, encoded as a frame
+(`packages/stack-guest-abi/src/last_error.rs`). A host asks for it after a
+non-zero status; a call that succeeds pays nothing. The status number is
+the fast path a host acts on. The table is `stack_guest_abi::status`
+(`packages/stack-guest-abi/src/status.rs`), one numbering for every guest,
+and a code keeps its value for good. The ones a host meets first:
 
 | code | name | what a host does |
 |---|---|---|
@@ -485,21 +552,12 @@ binding author meets first:
 | 29 | `NEEDS_IO` | not a failure: the step loop of section 7 |
 
 Codes 13 to 27 belong to the credential guest (profile files and sign-in).
-How this guest maps the engine's errors onto those numbers, and what
+How the Go guest maps the engine's errors onto those numbers, and what
 `FOREIGN_KEYSET` and `CONTEXT_MISMATCH` do not prove, is
-`languages/golang/encrypt/guest/src/status.rs`.
-
-**The full error** is behind `se_last_error`: the engine's error as a frame,
-with its code, message, help, structured fields and causes
-(`packages/stack-guest-abi/src/last_error.rs`). A host asks for it after a
-non-zero status; a call that succeeds pays nothing. The engine's errors
-implement [`crate::ErrorPayload`], which is what makes them encodable. Every
-input error from the `dynamic` module names the field it is about and a
-[`crate::dynamic::Reason`] (`no_such_field`, `operator_not_answered`,
-`field_type`, `bind_in_query`, and so on) as fields, so a caller tells a bad
-plan from a bad value without parsing text. A native binding gets the same
-error as a Rust value and encodes it the same way. The conformance cases
-assert the code, the reason and the field, never the message.
+`languages/golang/encrypt/guest/src/status.rs`. The same distinctions hold
+for a native extension's exceptions: a refused credential, a wrong keyset
+and a tampered value are different failures, and a caller acts on each
+differently.
 
 **Never a value.** No error, warning or log line holds a plaintext value, a
 key, a token, a ciphertext or a context value. The guest's configuration
@@ -511,16 +569,15 @@ prints when a user prints a struct.
 
 Three things have versions, and a binding ties them together.
 
-- **The engine.** This crate is on crates.io. A native binding pins its
-  version in its build; a guest builds against a path in this repository.
-  The Go module's guest depends on `stack-encrypt` by path
-  (`languages/golang/encrypt/guest/Cargo.toml`), and the Go package embeds
-  the guest built from the same commit, so host and engine cannot drift: a
-  tagged Go release carries the guest built at that tag
+- **The engine.** This crate is on crates.io. A native extension pins its
+  version in its `Cargo.toml`. The Go guest depends on `stack-encrypt` by
+  path (`languages/golang/encrypt/guest/Cargo.toml`), and the Go package
+  embeds the guest built from the same commit, so host and engine cannot
+  drift: a tagged Go release carries the guest built at that tag
   (`languages/golang/encrypt/README.md`, "Building").
-- **The wire.** The frame format is `vitaminc-aead-frame`'s. A codec in
-  another language targets one version of it; a native binding gets the
-  version this crate depends on (section 5).
+- **The wire.** The frame format is `vitaminc-aead-frame`'s. A native
+  extension gets the version this crate depends on; a guest's host codec
+  targets one version of it (section 5).
 - **The stored record.** A record's map keys (`c`, `eq`, `match`, `ore`,
   `ope`, `passthrough`, `eql`), a plan's `type` names and the operator
   names are wire format, fixed in [`crate::dynamic`]. A row written under
@@ -661,13 +718,14 @@ different key sources, the deterministic guest and the test
 the dispatch derives.) The Go SDK derives the same bytes through
 `se_query_term` and asserts them in its own tests.
 
-The outputs form of the same query runs in this crate alone, and the opened
-record is the frame that went in:
+The outputs form of the same field runs in this crate alone, through
+`Planned`, as a native extension would run it. The opened record is the
+frame that went in:
 
 ```
 use std::collections::BTreeMap;
-use stack_encrypt::dynamic::{query_term, record, NoTargets, Op, Operand, ValueFrame};
-use stack_encrypt::{AsProtectedRef, StackCipher};
+use stack_encrypt::dynamic::{record, Op, Operand, Planned, QueryTerm, ValueFrame};
+use stack_encrypt::{AsProtectedRef, DecryptFrom, EncryptInto, StackCipher, StackCipherText};
 
 # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
@@ -678,23 +736,30 @@ let cipher = StackCipher::builder()
     .await?;
 let keyset = cipher.default_keyset();
 
+// Read once, when the SDK loads the declaration.
 let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
     "age": { "context": ["profiles", "age"], "outputs": ["c", "eq"], "type": "int32" },
 }))?;
 let plan = record::plan(declaration.as_protected_ref())?;
-let row = ValueFrame::of(BTreeMap::from([("age", 42i32)]))?;
+let by_age = plan.query("age", Op::Eq)?;
 
-// Encrypt: one pending, one ZeroKMS request, the stored record as a frame.
-let stored = record::encrypt(&keyset, &row, &plan)?.await?;
+// A frame is moved into each call and wiped by it, so the row is written
+// once for each call that takes it.
+let row = || ValueFrame::of(BTreeMap::from([("age", 42i32)]));
+
+// Encrypt: one ZeroKMS request, the stored record.
+let stored: StackCipherText = Planned::new(&plan, row()?).encrypt_into(&keyset).await?;
 
 // Query: the equality term for 42, the bytes the stored `eq` term holds.
-let term = query_term(&keyset, &plan, "age", Op::Eq, 42i32, &NoTargets)?.await?;
+let term: QueryTerm = Planned::new(&by_age, ValueFrame::of(42i32)?)
+    .encrypt_into(&keyset)
+    .await?;
 assert!(matches!(term.operand(), Operand::One(bytes) if bytes.len() == 32));
 
 // Decrypt through the keyset: the record's frame, equal to what went in,
 // in a buffer wiped when it drops.
-let opened = record::decrypt(&keyset, stored, &plan, None)?.await?;
-assert_eq!(opened, row);
+let opened = ValueFrame::decrypt_from(Planned::new(&plan, stored), &keyset).await?;
+assert_eq!(opened, row()?);
 # Ok::<(), Box<dyn std::error::Error>>(())
 # }).unwrap();
 ```
@@ -728,16 +793,15 @@ done:
    what Rust wrote in the same run, and Rust open what your binding wrote,
    for every value kind at its edges. Enrol your runner in
    `scripts/stack-exchange-conformance.mjs`.
-3. **Your value conversion is tested and fuzzed.** For a binding with a
-   codec of its own, the codec writes and reads every frame of the
-   raw-frame profile and refuses every frame it says to refuse; add a
-   fuzz target that feeds your codec's output to the engine's reader and
-   the engine's output to your codec's reader. For a native binding that
-   links the crate, the frame is the crate's, and what you test is the
-   conversion from a value of your language to a frame and back: run the
-   value profile against it, and fuzz the conversion of a host value to a
-   frame and back against [`crate::dynamic::ValueFrame::of`] for the same
-   value. The engine's own fuzz targets are in
+3. **Your value conversion is tested and fuzzed.** For a native extension,
+   the frame is the crate's, and what you test is the conversion from a
+   value of your language to a frame and back: run the value profile
+   against it, and fuzz the conversion of a host value to a frame and back
+   against [`crate::dynamic::ValueFrame::of`] for the same value. For a
+   guest, the host's codec writes and reads every frame of the raw-frame
+   profile and refuses every frame it says to refuse; add a fuzz target
+   that feeds the codec's output to the engine's reader and the engine's
+   output to the codec's reader. The engine's own fuzz targets are in
    `packages/stack-encrypt/fuzz/fuzz_targets` (`check_record`, `json_text`,
    `json_wire_decode`, `label_parse`, `sealed_value_decode`, `term_decode`),
    run as `docs/fuzzing.md` describes.
@@ -755,15 +819,14 @@ done:
 ## 12. Where the rest is
 
 - The frame format: [`vitaminc-aead-frame` on docs.rs](https://docs.rs/vitaminc-aead-frame/0.10.0).
-- The `dynamic` API: [`crate::dynamic`], and `src/dynamic/record.rs` for
-  the plan grammar in full.
+- The `dynamic` API: [`crate::dynamic`], [`crate::dynamic::Planned`] for
+  the operations, and `src/dynamic/record.rs` for the plan grammar in full.
 - The binding contract and its cases: `conformance/stack-encrypt`, starting
   at `README.md` and `declaration-grammar.md`.
-- The guest conventions every WebAssembly binding shares:
-  `packages/stack-guest-abi`.
-- The reference integration: `languages/golang/encrypt` (SDK),
-  `languages/golang/encrypt/guest` (binding) and
-  `languages/golang/internal/guest` (the host side of the binding).
+- The reference SDK: `languages/golang/encrypt`. Its binding, for a guest
+  only: `languages/golang/encrypt/guest` and
+  `languages/golang/internal/guest` (the host side), over the conventions
+  in `packages/stack-guest-abi`.
 - The design rules: `docs/sdk-design-principles.md`, and in
   `packages/stack-encrypt/docs/adr` ADR-0007 (bindings enter through a
   plan), ADR-0008 (the SDK design principles), ADR-0009 (operators select

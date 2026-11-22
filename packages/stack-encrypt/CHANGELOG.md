@@ -54,16 +54,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A guide to building a language integration**, `dynamic::guide`
   (`docs/language-integration.md`, in the crate docs under the `dynamic`
-  feature). It covers the binding versus the language SDK, native versus
-  WebAssembly, the operations with the Go guest's exports, scopes and
-  bindings, JSON documents, the plan grammar, control messages versus
-  plaintext, plaintext hygiene and the tests that prove it, credentials,
-  audit metadata and the step loop, the status table and `se_last_error`,
-  and versioning. It traces one `int32` stored as EQL v4 `IntegerEq` through
-  encrypt, query and decrypt, with the bytes from the committed fixtures,
-  and ends with a checklist built on `conformance/stack-encrypt`. The frame
-  format stays in `vitaminc-aead-frame`'s documentation and is linked, not
-  restated.
+  feature). It covers the binding versus the language SDK; linking the
+  engine natively (PyO3, Rustler, napi-rs), with a WebAssembly guest only
+  for a language that cannot, such as Go; the operations through
+  `dynamic::Planned`; scopes and bindings; JSON documents; the plan
+  grammar; control messages versus plaintext; plaintext hygiene and the
+  tests that prove it; credentials and audit metadata; errors; and
+  versioning. The Go guest's exports, step loop and status table are
+  described as the guest path. It traces one `int32` stored as EQL v4
+  `IntegerEq` through encrypt, query and decrypt, with the bytes from the
+  committed fixtures, and ends with a checklist built on
+  `conformance/stack-encrypt`. The frame format stays in
+  `vitaminc-aead-frame`'s documentation and is linked, not restated.
 - **A credential with each call** (#1708). A server that decrypts as the end
   user who signed in had to build its cipher inside the first request,
   because `init` needs a token and a server starting up has no user. It also
