@@ -438,6 +438,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **Seven `PlanError` variants that nothing raised are removed** (#1671).
+  Only the plan builder and `plan::all` raised them, and both are gone,
+  so no call returned them: `IdentityWithoutField`, `IndexNotDeclared`,
+  `IndexOptions`, `MixedCiphers`, `NoContext`, `PassthroughIndexed` and
+  `TargetWithVerbs`. `plan::all` raised `MixedCiphers`; the builder raised
+  the other six.
+  Their error codes go with them (`stack_encrypt::plan_identity_without_field`,
+  `plan_index_not_declared`, `plan_index_options`, `plan_mixed_ciphers`,
+  `plan_no_context`, `plan_passthrough_indexed` and
+  `plan_target_with_verbs`). The other variants keep their codes. No
+  `dynamic::Reason` is removed: a data plan with a passthrough beside
+  another output, or with both outputs and a target, is still refused as
+  `passthrough_with_outputs` or `outputs_with_target`. To upgrade, delete
+  match arms that name a removed variant; `PlanError` is
+  `#[non_exhaustive]`, so a wildcard arm already covers the rest. No
+  stored byte changes.
+
 - **A cipher no longer reads credentials you did not name** (#1722).
   `StackCipher::new()` and `init()` on the bare builder read
   `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`,
@@ -1297,6 +1314,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still comes back before the pending exists, as a `dynamic::Error`.
   `decrypt_with`'s `expected` context is checked inside the `Planned`
   lowering. No stored byte changes.
+- **The `MatchConfig` and `Match` documentation says how a field and its
+  query agree** (#1671), where it said they agree "by construction". A
+  query made from the field's reference answers through the field's own
+  `Match<O>`, and a data plan's query reads the field's one match index. A
+  filter derived directly with `match_terms` matches a stored one only
+  under the field's configuration.
 - **The context parameter of the cipher-directed methods is named
   `context`, not `aad`** (#1568): `KeysetCipher::encrypt_tree`,
   `KeysetCipher::decrypt_tree`, `StackCipher::decrypt`,

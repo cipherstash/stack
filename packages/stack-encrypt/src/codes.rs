@@ -9,8 +9,7 @@ mod tests {
     use uuid::Uuid;
 
     use crate::diagnostic::is_code_of;
-    use crate::sem::{MatchOptions, TermBytesError, TermError};
-    use crate::target::IndexSpec;
+    use crate::sem::{TermBytesError, TermError};
     use crate::{BlobError, Descriptor, Error, LabelError, LeafBytesError, PlanError};
 
     /// One row per variant of an enum, written `pattern => value`. The
@@ -89,7 +88,7 @@ mod tests {
             },
             Error::NoKeyset => Error::NoKeyset,
             Error::NotOpened => Error::NotOpened,
-            Error::Plan(_) => Error::Plan(PlanError::NoContext),
+            Error::Plan(_) => Error::Plan(PlanError::BindInQuery),
             Error::Blob(_) => Error::Blob(BlobError::NotABlob),
         ]));
         errors.extend(boxed(variants![
@@ -165,15 +164,11 @@ mod tests {
                 field: field(),
                 source: LabelError::Empty,
             },
-            PlanError::IdentityWithoutField => PlanError::IdentityWithoutField,
             PlanError::DuplicateField { .. } => PlanError::DuplicateField { field: field() },
             PlanError::SharedIdentity { .. } => PlanError::SharedIdentity {
                 identity: "age".into(),
                 first: "age".into(),
                 second: "years".into(),
-            },
-            PlanError::PassthroughIndexed { .. } => {
-                PlanError::PassthroughIndexed { field: field() }
             },
             PlanError::DuplicateIndex { .. } => PlanError::DuplicateIndex {
                 at: field(),
@@ -191,19 +186,6 @@ mod tests {
                 expected: "int64",
             },
             PlanError::NoSuchField { .. } => PlanError::NoSuchField { field: field() },
-            PlanError::MixedCiphers => PlanError::MixedCiphers,
-            PlanError::IndexNotDeclared { .. } => PlanError::IndexNotDeclared {
-                field: field(),
-                index: "ore",
-            },
-            PlanError::IndexOptions { .. } => PlanError::IndexOptions {
-                field: field(),
-                declared: IndexSpec::Match(MatchOptions::default()),
-                asked: IndexSpec::Match(MatchOptions {
-                    downcase: false,
-                    ..MatchOptions::default()
-                }),
-            },
             PlanError::IndexOverlap { .. } => PlanError::IndexOverlap {
                 at: field(),
                 first: "ore",
@@ -214,9 +196,7 @@ mod tests {
                 first: "the plan",
                 second: "the call",
             },
-            PlanError::NoContext => PlanError::NoContext,
             PlanError::BindInQuery => PlanError::BindInQuery,
-            PlanError::TargetWithVerbs { .. } => PlanError::TargetWithVerbs { field: field() },
         ]));
         #[cfg(feature = "dynamic")]
         errors.extend(dynamic_variants());
@@ -226,6 +206,7 @@ mod tests {
     #[cfg(feature = "dynamic")]
     fn dynamic_variants() -> Vec<Row> {
         use crate::dynamic::{Error, Reason, TargetError, ValueKind};
+        use crate::target::IndexSpec;
         let name = || "email".to_string();
         let target = || "TextEq".to_string();
         let mut errors = Vec::new();
@@ -384,11 +365,6 @@ mod tests {
     fn every_payload() -> Vec<(Box<dyn crate::ErrorPayload>, serde_json::Value)> {
         use serde_json::json;
         let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
-        let declared = IndexSpec::Match(MatchOptions::default());
-        let asked = IndexSpec::Match(MatchOptions {
-            downcase: false,
-            ..MatchOptions::default()
-        });
         let payloads: Vec<(Box<dyn crate::ErrorPayload>, serde_json::Value)> = vec![
             (
                 Box::new(Error::Kms(crate::kms::Error::GenerateKey(
@@ -549,33 +525,13 @@ mod tests {
                 json!({ "field": "age", "expected": "int64" }),
             ),
             (
-                Box::new(PlanError::IndexNotDeclared {
-                    field: "age".into(),
-                    index: "ore",
-                }),
-                json!({ "field": "age", "index": "ore" }),
-            ),
-            (
-                Box::new(PlanError::IndexOptions {
-                    field: "age".into(),
-                    declared: declared.clone(),
-                    asked: asked.clone(),
-                }),
-                json!({
-                    "field": "age",
-                    "index": "match",
-                    "declared": { "match": { "tokenizer": { "ngram": 3 }, "downcase": true, "k": 3, "m": 256 } },
-                    "asked": { "match": { "tokenizer": { "ngram": 3 }, "downcase": false, "k": 3, "m": 256 } },
-                }),
-            ),
-            (
                 Box::new(PlanError::TwoContextSources {
                     first: "the plan",
                     second: "the call",
                 }),
                 json!({ "first": "the plan", "second": "the call" }),
             ),
-            (Box::new(PlanError::NoContext), json!({})),
+            (Box::new(PlanError::BindInQuery), json!({})),
         ];
         // The builder error's fields come through the box.
         #[cfg(feature = "http")]
@@ -600,6 +556,7 @@ mod tests {
     #[cfg(feature = "dynamic")]
     fn dynamic_payloads() -> Vec<(Box<dyn crate::ErrorPayload>, serde_json::Value)> {
         use crate::dynamic::{Error, Reason, TargetError, ValueKind};
+        use crate::target::IndexSpec;
         use serde_json::json;
         let name = || "email".to_string();
         let target = || "TextEq".to_string();
