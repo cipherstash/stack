@@ -61,6 +61,11 @@ exclude_globs = ["packages/stack-encrypt-derive/**"]
 # same reason. The future that a native `into_future` returns has no
 # `Default`, so the native mutant does not compile.
 exclude_re = [
+  # stack-encrypt — equivalent. `predicate!`'s finders return the type of a
+  # path's values as a `PhantomData`, a zero-sized type with one value, so
+  # `PhantomData::from(Default::default())` is the same value. (Nothing calls
+  # them at run time either: the macro's checks are type-checked, never run.)
+  'stack-encrypt/src/field_reference/json/predicate_checks\.rs:\d+:\d+: replace .* -> PhantomData<[^>]*> with PhantomData::from\(Default::default\(\)\)$',
   # stack-auth — unreachable under the native test build.
   'stack-auth/src/transport\.rs:\d+:\d+: replace <impl std::fmt::Display for NoTransport>::fmt ',
   'stack-auth/src/transport\.rs:\d+:\d+: replace <impl DynTransport for T>::send_dyn -> std::pin::Pin<Box<dyn Future<Output = Result<HttpResponse, RequestError>>\+\x27a>> ',

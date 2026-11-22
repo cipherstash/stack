@@ -516,7 +516,7 @@ The kinds of JSON query, the field reference method for each, and what each find
 | Comparison at a path | `at().age().gt(v)`, `.lt(v)`, `.between(a, b)`, and the rest | Rows where the value at an ordered path orders against, or lies between, the given values | `JsonTreeLeafQuery`; two for `between`, low then high |
 | A path's selector | `at().age().selector()` | The selector `->` and `ORDER BY eql_v4.ord_term(col -> $1)` take | `JsonTreeSelector` |
 | Element match | `elements().visits().place().eq(v).and().at().gt(v)` | Rows where one element of an array meets several conditions together | `JsonTreeElementsQuery` |
-| Jsonpath predicate | `predicate(text)`, with `.var(name, v)` for each variable | Rows where a SQL/JSON path predicate is true | `JsonTreePredicateQuery` |
+| Jsonpath predicate | `predicate!(FIELD, "text", name = v, ..)`, checked when the program compiles, and `predicate(text)`, with `.var(name, v)` for each variable, for text built at run time | Rows where a SQL/JSON path predicate is true | `JsonTreePredicateQuery` |
 | Children and child count | `children(path)` | The entries directly below one node, or how many there are | `JsonTreeToken` |
 
 Paths are typed, from the attribute. Decided by Dan on 21 November 2026:
@@ -547,8 +547,14 @@ Paths are typed, from the attribute. Decided by Dan on 21 November 2026:
   path and value. A field that declares no paths has only these.
 - A predicate's variables are given one at a time: `.var(name, v)`, with
   `v` a scalar, and `.var_null(name)`. A repeated name, a NaN and an
-  infinity are refused before any key is fetched. The predicate text is
-  checked when the query is encrypted.
+  infinity are refused before any key is fetched. The text of
+  `predicate(text)` is checked when the query is encrypted.
+- `predicate!(FIELD, "text", name = v, ..)` checks a predicate written in
+  the program when the program compiles: that the text parses, that the
+  index can answer it, that each variable is given once and used, that the
+  field declares each path and member, and that each value, a variable's or
+  a literal's, is of the path's type. It sends the same text, so its
+  operand is the one `predicate(text)` derives.
 
 Two limits of the SQL stay, from the reference page's sections on
 comparing a value at a path and on what the SQL cannot do. Sorting rows by a path through an array
@@ -1627,13 +1633,17 @@ Base64.
   form's operand and to the data plan's, the compile-fail cases under
   `packages/stack-encrypt/tests/ui` hold the refusals, and the [JSON query
   example](#query-a-json-document) runs.
-- **Not done.** Checking a predicate's text at compile time (a
-  `predicate!` macro built on the typed paths), which a following pull
-  request adds. Until then the predicate text is checked when the query is
-  encrypted.
-- **Tracked in.** Issue #1459 is open until the predicate pull request
-  merges; #1687 refers to it. Issue #1677 is open for opening one child.
-  Issue #1486 is closed.
+- **Done** too: `predicate!(FIELD, "text", name = value, ..)` checks a
+  predicate's text at compile time, in the pull request stacked on #1687
+  (22 November 2026). It reads the text with the engine's parser, which
+  moved into `stack-encrypt-jsonpath`; refuses what the parser and the
+  index refuse whatever the variables hold; matches the variables with
+  the text's `$name`s; and checks each path, member and value through the
+  accessors the derive generated, found by the path's text. When the
+  program runs it is `predicate(text).var(..)`, so the operand is the text
+  form's and the data plan's `match` operand.
+- **Tracked in.** Issue #1459 closes with the `predicate!` pull request.
+  Issue #1677 is open for opening one child. Issue #1486 is closed.
 - **Finished when** these are all true:
   - the [JSON query example](#query-a-json-document) compiles;
   - a path, a member or a value type the field does not declare does not

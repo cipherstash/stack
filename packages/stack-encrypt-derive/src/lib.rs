@@ -325,6 +325,7 @@ mod attrs;
 mod json_paths;
 mod owned_decrypt;
 mod owned_encrypt;
+mod predicate;
 mod shape;
 
 /// Derive the owned `EncryptTarget` declaration for a record struct. See
@@ -353,6 +354,17 @@ pub fn derive_encrypt_target(input: TokenStream) -> TokenStream {
 pub fn derive_decrypt_source(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     owned_decrypt::derive(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// `stack_encrypt::predicate!`, given the path `stack-encrypt` is reached by:
+/// `predicate_with_crate!($crate; reference, "text", variables…)`. Called
+/// by that macro, which passes its `$crate`, and by nothing else.
+#[doc(hidden)]
+#[proc_macro]
+pub fn predicate_with_crate(input: TokenStream) -> TokenStream {
+    predicate::expand(input.into())
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

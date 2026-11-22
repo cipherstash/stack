@@ -1,6 +1,5 @@
 //! `match`'s predicate: the SQL/JSON path predicates the JSON index can
-//! answer, parsed from the caller's text and compiled onto the inputs of
-//! the other JSON operators.
+//! answer, compiled onto the inputs of the other JSON operators.
 //!
 //! The text is PostgreSQL's SQL/JSON path language, as `jsonb_path_match`
 //! takes it ([SQL/JSON path language](https://www.postgresql.org/docs/current/functions-json.html#FUNCTIONS-SQLJSON-PATH)),
@@ -16,16 +15,17 @@
 //!                                                 one element satisfies both
 //! ```
 //!
-//! The dynamic interface's `match` operator and a field reference's
-//! `predicate` both compile through it. The grammar and the compilation are
-//! documented with the operator, in the dynamic interface's JSON operators
-//! (`stack_encrypt::dynamic`, with the `dynamic` feature). This module holds the
-//! parser ([`parse`]), which reads the text into an [`Ast`] and refuses
-//! what the grammar does not read at the byte where it stops, and the
-//! compiler ([`compile`]), which binds the values and maps each comparison
-//! onto the inputs `eq_at`, `selector`, the orderings and `element_match`
-//! take, so that every leaf is derived by that operator's own code
-//! ([`derive`]).
+//! The dynamic interface's `match` operator, a field reference's
+//! `predicate` and the `predicate!` macro all compile through it. The
+//! grammar and the compilation are documented with the operator, in the
+//! dynamic interface's JSON operators (`stack_encrypt::dynamic`, with the
+//! `dynamic` feature). The grammar itself is `stack-encrypt-jsonpath`'s
+//! ([`predicate::parse`]), which `predicate!` reads the text with when a
+//! program compiles, so the two read one grammar: it refuses what it does
+//! not read at the byte where it stops. This module holds the compiler
+//! ([`compile`]), which binds the values and maps each comparison onto the
+//! inputs `eq_at`, `selector`, the orderings and `element_match` take, so
+//! that every leaf is derived by that operator's own code ([`derive`]).
 //!
 //! A refusal names a construct in the grammar's words and an offset, never
 //! a slice of the text: a key name or a value in it can be customer data.
@@ -34,757 +34,59 @@
 //! and the values in [`Parsed`], which wipes them.
 
 use serde_json::Value;
-use zeroize::Zeroizing;
+use stack_encrypt_jsonpath::predicate::{
+    self, check_filter, construct, single_equality, Comparison, Expression, Operator, PathAt,
+    PredicateError, PredicateErrorKind, ValueAt,
+};
 
 use super::inputs::{
     derive as derive_input, json_reason, leaf, member_of, ordered_path_of, Bounds, Compare,
     Derived, Input, Parsed, Predicate, Under,
 };
-use super::{
-    parse_text, string_end, string_text, IndexPath, JsonOptions, JsonPath, JsonPredicateQuery,
-    Segment, MAX_DEPTH,
-};
+use super::{parse_text, IndexPath, JsonOptions, JsonPath, JsonPredicateQuery};
 use crate::refusal::{Error, Reason};
 use crate::{KeysetCipher, Pending};
 
-/// How deeply a predicate may nest parentheses, `!` and `exists`. The
-/// parser descends once per level, so the bound keeps a hostile predicate
-/// from overflowing the stack; the SQL evaluates the compiled tree by
-/// recursion too.
-pub(crate) const MAX_NESTING: usize = 32;
-
-// The constructs a refusal names, in the grammar's own words.
-const C_TEXT: &str = "text the grammar does not read";
-const C_TRAILING: &str = "text after the predicate";
-const C_STRING: &str = "a string literal";
-const C_NUMBER: &str = "a numeric literal";
-const C_MODE: &str = "a mode (`strict`, `lax`)";
-const C_ARITHMETIC: &str = "arithmetic (`+`, `-`, `*`, `/`, `%`)";
-const C_LIKE_REGEX: &str = "`like_regex`";
-const C_STARTS_WITH: &str = "`starts with`";
-const C_IS_UNKNOWN: &str = "`is unknown`";
-const C_METHOD: &str = "a method (`.name()`)";
-const C_ANY_MEMBER: &str = "`.*`";
-const C_ANY_DEPTH: &str = "`.**`";
-const C_SLICE: &str = "an array slice or list (`[a to b]`, `[a, b]`)";
-const C_LAST: &str = "`last`";
-const C_SUBSCRIPT: &str = "a subscript other than `[*]`";
-const C_POSITION: &str = "a position (`[2]`)";
-const C_AT_OUTSIDE: &str = "`@` outside a filter";
-const C_DOLLAR_IN_FILTER: &str = "a `$` path in a filter";
-const C_VARIABLE_PATH: &str = "an accessor on a variable";
-const C_TWO_PATHS: &str = "a comparison of two paths";
-const C_TWO_VALUES: &str = "a comparison of two values";
-const C_ALONE: &str = "an operand with no comparison";
-const C_FILTER_OUTSIDE: &str = "a filter outside `exists`";
-const C_AFTER_FILTER: &str = "an accessor after a filter";
-const C_IN_EXISTS: &str = "a comparison inside `exists`";
-const C_OR_IN_FILTER: &str = "`||` in a filter";
-const C_NOT_IN_FILTER: &str = "`!` in a filter";
-const C_NE_IN_FILTER: &str = "`!=` in a filter";
-const C_EXISTS_IN_FILTER: &str = "`exists` in a filter";
-const C_ELEMENTS_THEMSELVES: &str = "an ordering of an array's elements themselves";
-const C_WHOLE_ELEMENT: &str = "`@` beside another condition";
-const C_FILTER_WILDCARD: &str = "a filter on a path with no wildcard";
-const C_MEMBER_WILDCARD: &str = "a wildcard in a filter's member";
-const C_NOT_EQUAL: &str = "`!=` at a path with a wildcard";
-const C_VALUE: &str = "a value";
-const C_VARIABLE: &str = "a variable";
-const C_NESTING: &str = "nesting";
-
-/// A refusal at a byte of the predicate's text.
-#[derive(Debug, PartialEq, Eq)]
-struct Refusal {
-    reason: Reason,
-    construct: &'static str,
-    at: usize,
-}
-
-impl Refusal {
-    fn syntax(construct: &'static str, at: usize) -> Self {
-        Self {
-            reason: Reason::JsonPredicateSyntax,
-            construct,
-            at,
-        }
-    }
-
-    fn unsupported(construct: &'static str, at: usize) -> Self {
-        Self {
-            reason: Reason::JsonPredicateUnsupported,
-            construct,
-            at,
-        }
-    }
-}
-
-impl From<Refusal> for Error {
-    fn from(refusal: Refusal) -> Self {
-        Error::Predicate {
-            field: None,
-            reason: refusal.reason,
-            construct: refusal.construct,
-            at: refusal.at,
-        }
-    }
-}
-
-/// A comparison operator, as the text spells it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PredicateOp {
-    Eq,
-    Ne,
-    Lt,
-    Lte,
-    Gt,
-    Gte,
-}
-
-impl PredicateOp {
-    /// The operator with its operands swapped: `1 < $.a` is `$.a > 1`.
-    fn flipped(self) -> Self {
-        match self {
-            PredicateOp::Lt => PredicateOp::Gt,
-            PredicateOp::Lte => PredicateOp::Gte,
-            PredicateOp::Gt => PredicateOp::Lt,
-            PredicateOp::Gte => PredicateOp::Lte,
-            same => same,
-        }
-    }
-
-    /// How an element-scoped filter's condition compares; `None` for
-    /// `!=`, which a filter does not take.
-    fn compare(self) -> Option<Compare> {
-        match self {
-            PredicateOp::Eq => Some(Compare::Eq),
-            PredicateOp::Lt => Some(Compare::Lt),
-            PredicateOp::Lte => Some(Compare::Lte),
-            PredicateOp::Gt => Some(Compare::Gt),
-            PredicateOp::Gte => Some(Compare::Gte),
-            PredicateOp::Ne => None,
-        }
-    }
-}
-
-/// A path in the text: `$` or `@` and the steps after it, and where it
-/// starts.
-#[derive(Debug)]
-struct PathAt {
-    path: JsonPath,
-    at: usize,
-}
-
-/// A value in the text: a literal, by its bytes, or a variable, by name.
-#[derive(Debug, PartialEq, Eq)]
-enum ValueAt {
-    /// `"…"`, a number, `true`, `false` or `null`: the literal's bytes,
-    /// `start..end`, which are JSON text.
-    Literal { start: usize, end: usize },
-    /// `$name` or `$"name"`.
-    Variable { name: Zeroizing<String>, at: usize },
-}
-
-impl ValueAt {
-    fn at(&self) -> usize {
-        match self {
-            ValueAt::Literal { start, .. } => *start,
-            ValueAt::Variable { at, .. } => *at,
-        }
-    }
-}
-
-/// One side of a comparison.
-#[derive(Debug)]
-enum Side {
-    /// A path from `$`.
-    Root(PathAt),
-    /// A path from `@`, inside a filter.
-    Current(PathAt),
-    Value(ValueAt),
-}
-
-/// A comparison of a path with a value, the path on the left.
-#[derive(Debug)]
-struct Comparison {
-    path: PathAt,
-    op: PredicateOp,
-    value: ValueAt,
-    /// Where the operator is.
-    at: usize,
-}
-
-/// A predicate as the text writes it.
-#[derive(Debug)]
-enum Ast {
-    And(Vec<Ast>),
-    Or(Vec<Ast>),
-    Not(Box<Ast>),
-    Compare(Comparison),
-    /// `exists(path)`, or `exists(path ? (conditions))`, each condition a
-    /// comparison of a path from `@`.
-    Exists {
-        path: PathAt,
-        filter: Option<Vec<Comparison>>,
-    },
-}
-
-/// The characters that end a name and are not a name's: what
-/// PostgreSQL's jsonpath scanner reads as punctuation.
-fn special(c: char) -> bool {
-    c.is_whitespace() || "?%$.[]{}()|&!=<>@#,*:-+/\\\"'".contains(c)
-}
-
-/// A recursive descent over the text, holding the offset it has read to.
-struct Parser<'t> {
-    text: &'t str,
-    pos: usize,
-    depth: usize,
-}
-
-impl<'t> Parser<'t> {
-    fn rest(&self) -> &'t str {
-        &self.text[self.pos..]
-    }
-
-    /// Skip whitespace and `/* … */` comments.
-    fn space(&mut self) -> Result<(), Refusal> {
-        loop {
-            let rest = self.rest();
-            let trimmed = rest.trim_start();
-            self.pos += rest.len() - trimmed.len();
-            if let Some(comment) = trimmed.strip_prefix("/*") {
-                let Some(end) = comment.find("*/") else {
-                    return Err(Refusal::syntax(C_TEXT, self.pos));
-                };
-                self.pos += 2 + end + 2;
-            } else {
-                return Ok(());
-            }
-        }
-    }
-
-    /// The next character after any space, unread.
-    fn peek(&mut self) -> Result<Option<char>, Refusal> {
-        self.space()?;
-        Ok(self.rest().chars().next())
-    }
-
-    /// Read `token` if it is next.
-    fn eat(&mut self, token: &str) -> Result<bool, Refusal> {
-        self.space()?;
-        if self.rest().starts_with(token) {
-            self.pos += token.len();
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-
-    fn expect(&mut self, token: &str) -> Result<(), Refusal> {
-        if self.eat(token)? {
-            Ok(())
-        } else {
-            Err(Refusal::syntax(C_TEXT, self.pos))
-        }
-    }
-
-    /// The name at the cursor, unread: a run of characters that are not
-    /// punctuation, not starting with a digit.
-    fn word(&mut self) -> Result<Option<&'t str>, Refusal> {
-        self.space()?;
-        let rest = self.rest();
-        if rest.starts_with(|c: char| c.is_ascii_digit()) {
-            return Ok(None);
-        }
-        let end = rest.find(special).unwrap_or(rest.len());
-        Ok((end > 0).then(|| &rest[..end]))
-    }
-
-    /// One more level of nesting, refused past [`MAX_NESTING`].
-    fn descend(&mut self) -> Result<(), Refusal> {
-        self.depth += 1;
-        if self.depth > MAX_NESTING {
-            return Err(Refusal {
-                reason: Reason::JsonPredicateTooDeep,
-                construct: C_NESTING,
-                at: self.pos,
-            });
-        }
-        Ok(())
-    }
-
-    fn ascend(&mut self) {
-        self.depth -= 1;
-    }
-
-    /// `or := and ('||' and)*`.
-    fn or(&mut self) -> Result<Ast, Refusal> {
-        let mut terms = vec![self.and()?];
-        while self.eat("||")? {
-            terms.push(self.and()?);
-        }
-        Ok(if terms.len() == 1 {
-            terms.remove(0)
-        } else {
-            Ast::Or(terms)
-        })
-    }
-
-    /// `and := unary ('&&' unary)*`.
-    fn and(&mut self) -> Result<Ast, Refusal> {
-        let mut terms = vec![self.unary()?];
-        while self.eat("&&")? {
-            terms.push(self.unary()?);
-        }
-        Ok(if terms.len() == 1 {
-            terms.remove(0)
-        } else {
-            Ast::And(terms)
-        })
-    }
-
-    /// `unary := '!' primary | primary`. As in PostgreSQL, `!` takes a
-    /// parenthesised predicate or `exists`, not a bare comparison.
-    fn unary(&mut self) -> Result<Ast, Refusal> {
-        self.space()?;
-        if self.rest().starts_with('!') && !self.rest().starts_with("!=") {
-            self.pos += 1;
-            self.descend()?;
-            let at = self.pos;
-            let negated = match self.peek()? {
-                Some('(') => self.primary()?,
-                _ if self.keyword("exists")? => self.primary()?,
-                _ => return Err(Refusal::syntax(C_TEXT, at)),
-            };
-            self.ascend();
-            return Ok(Ast::Not(Box::new(negated)));
-        }
-        self.primary()
-    }
-
-    /// Whether the word at the cursor is `keyword`, in any case, as
-    /// PostgreSQL reads `exists`.
-    fn keyword(&mut self, keyword: &str) -> Result<bool, Refusal> {
-        Ok(self
-            .word()?
-            .is_some_and(|word| word.eq_ignore_ascii_case(keyword)))
-    }
-
-    /// `primary := '(' or ')' | 'exists' '(' path filter? ')' | comparison`.
-    fn primary(&mut self) -> Result<Ast, Refusal> {
-        if self.eat("(")? {
-            self.descend()?;
-            let inner = self.or()?;
-            self.expect(")")?;
-            self.ascend();
-            return Ok(inner);
-        }
-        if self.keyword("exists")? {
-            self.pos += "exists".len();
-            if self.eat("(")? {
-                return self.exists();
-            }
-            return Err(Refusal::syntax(C_TEXT, self.pos));
-        }
-        let comparison = self.comparison(false)?;
-        Ok(Ast::Compare(comparison))
-    }
-
-    /// The inside of `exists(…)`, the `(` read.
-    fn exists(&mut self) -> Result<Ast, Refusal> {
-        self.descend()?;
-        self.space()?;
-        let at = self.pos;
-        let path = match self.operand(false)? {
-            Side::Root(path) => path,
-            Side::Current(_) => return Err(Refusal::unsupported(C_AT_OUTSIDE, at)),
-            Side::Value(_) => return Err(Refusal::syntax(C_TEXT, at)),
+/// A grammar refusal as the crate's refusal: the same construct and
+/// offset, under the [`Reason`] the dynamic interface reports for it.
+impl From<PredicateError> for Error {
+    fn from(refusal: PredicateError) -> Self {
+        let reason = match refusal.kind {
+            PredicateErrorKind::Syntax => Reason::JsonPredicateSyntax,
+            PredicateErrorKind::TooDeep => Reason::JsonPredicateTooDeep,
+            PredicateErrorKind::Position => Reason::JsonPathPosition,
+            PredicateErrorKind::NotEqualAtWildcard => Reason::JsonPredicateNotEqualAtWildcard,
+            PredicateErrorKind::FilterWithoutWildcard => Reason::JsonPathNoWildcard,
+            PredicateErrorKind::MemberWildcard => Reason::JsonPathWildcard,
+            // `Unsupported`, and any kind the grammar adds: a construct
+            // the index cannot answer.
+            _ => Reason::JsonPredicateUnsupported,
         };
-        let filter = if self.eat("?")? {
-            self.expect("(")?;
-            self.descend()?;
-            let conditions = self.conditions()?;
-            self.expect(")")?;
-            self.ascend();
-            let at = self.pos;
-            match self.peek()? {
-                Some('.' | '[') => return Err(Refusal::unsupported(C_AFTER_FILTER, at)),
-                Some('?') => return Err(Refusal::unsupported(C_FILTER_OUTSIDE, at)),
-                _ => {}
-            }
-            Some(conditions)
-        } else {
-            None
-        };
-        if let Some(refusal) = self.after_operand()? {
-            return Err(refusal);
-        }
-        self.space()?;
-        if self.op()?.is_some() {
-            return Err(Refusal::unsupported(C_IN_EXISTS, at));
-        }
-        self.expect(")")?;
-        self.ascend();
-        Ok(Ast::Exists { path, filter })
-    }
-
-    /// A filter's conditions: comparisons of a path from `@`, joined by
-    /// `&&`, with parentheses.
-    fn conditions(&mut self) -> Result<Vec<Comparison>, Refusal> {
-        let mut conditions = Vec::new();
-        loop {
-            self.space()?;
-            let at = self.pos;
-            if self.rest().starts_with('!') && !self.rest().starts_with("!=") {
-                return Err(Refusal::unsupported(C_NOT_IN_FILTER, at));
-            }
-            if self.keyword("exists")? {
-                return Err(Refusal::unsupported(C_EXISTS_IN_FILTER, at));
-            }
-            if self.eat("(")? {
-                self.descend()?;
-                conditions.extend(self.conditions()?);
-                self.expect(")")?;
-                self.ascend();
-            } else {
-                conditions.push(self.comparison(true)?);
-            }
-            self.space()?;
-            if self.rest().starts_with("||") {
-                return Err(Refusal::unsupported(C_OR_IN_FILTER, self.pos));
-            }
-            if !self.eat("&&")? {
-                return Ok(conditions);
-            }
-        }
-    }
-
-    /// A comparison operator at the cursor, read, and where it was.
-    fn op(&mut self) -> Result<Option<(PredicateOp, usize)>, Refusal> {
-        self.space()?;
-        let at = self.pos;
-        let rest = self.rest();
-        let (op, len) = if rest.starts_with("==") {
-            (PredicateOp::Eq, 2)
-        } else if rest.starts_with("!=") || rest.starts_with("<>") {
-            (PredicateOp::Ne, 2)
-        } else if rest.starts_with("<=") {
-            (PredicateOp::Lte, 2)
-        } else if rest.starts_with(">=") {
-            (PredicateOp::Gte, 2)
-        } else if rest.starts_with('<') {
-            (PredicateOp::Lt, 1)
-        } else if rest.starts_with('>') {
-            (PredicateOp::Gt, 1)
-        } else {
-            return Ok(None);
-        };
-        self.pos += len;
-        Ok(Some((op, at)))
-    }
-
-    /// The construct at the cursor that follows an operand and that the
-    /// index cannot answer, if one is there.
-    fn after_operand(&mut self) -> Result<Option<Refusal>, Refusal> {
-        self.space()?;
-        let at = self.pos;
-        let rest = self.rest();
-        if rest.starts_with(['+', '-', '*', '/', '%']) {
-            return Ok(Some(Refusal::unsupported(C_ARITHMETIC, at)));
-        }
-        if rest.starts_with('?') {
-            return Ok(Some(Refusal::unsupported(C_FILTER_OUTSIDE, at)));
-        }
-        let word = self.word()?.unwrap_or_default();
-        Ok(if word.eq_ignore_ascii_case("like_regex") {
-            Some(Refusal::unsupported(C_LIKE_REGEX, at))
-        } else if word.eq_ignore_ascii_case("starts") {
-            Some(Refusal::unsupported(C_STARTS_WITH, at))
-        } else if word.eq_ignore_ascii_case("is") {
-            Some(Refusal::unsupported(C_IS_UNKNOWN, at))
-        } else {
-            None
-        })
-    }
-
-    /// `comparison := operand op operand`, one side a path and the other a
-    /// value; in a filter the path is from `@`.
-    fn comparison(&mut self, in_filter: bool) -> Result<Comparison, Refusal> {
-        self.space()?;
-        let left = self.operand(in_filter)?;
-        if let Some(refusal) = self.after_operand()? {
-            return Err(refusal);
-        }
-        let Some((op, at)) = self.op()? else {
-            self.space()?;
-            let at = self.pos;
-            let ends = self.rest().is_empty() || self.rest().starts_with([')', '&', '|']);
-            return Err(if ends {
-                Refusal::unsupported(C_ALONE, at)
-            } else {
-                Refusal::syntax(C_TEXT, at)
-            });
-        };
-        if in_filter && op == PredicateOp::Ne {
-            return Err(Refusal::unsupported(C_NE_IN_FILTER, at));
-        }
-        self.space()?;
-        let right = self.operand(in_filter)?;
-        if let Some(refusal) = self.after_operand()? {
-            return Err(refusal);
-        }
-        let (path, op, value) = match (left, right) {
-            (Side::Root(path) | Side::Current(path), Side::Value(value)) => (path, op, value),
-            (Side::Value(value), Side::Root(path) | Side::Current(path)) => {
-                (path, op.flipped(), value)
-            }
-            (Side::Value(_), Side::Value(_)) => return Err(Refusal::unsupported(C_TWO_VALUES, at)),
-            _ => return Err(Refusal::unsupported(C_TWO_PATHS, at)),
-        };
-        Ok(Comparison {
-            path,
-            op,
-            value,
-            at,
-        })
-    }
-
-    /// A path, a variable or a literal. In a filter a path is from `@`;
-    /// outside one, from `$`.
-    fn operand(&mut self, in_filter: bool) -> Result<Side, Refusal> {
-        self.space()?;
-        let at = self.pos;
-        let rest = self.rest();
-        let Some(first) = rest.chars().next() else {
-            return Err(Refusal::syntax(C_TEXT, at));
-        };
-        match first {
-            '$' => {
-                let after = &rest[1..];
-                if after.starts_with('"') {
-                    let (name, len) = self.string_at(at + 1)?;
-                    self.pos = at + 1 + len;
-                    return self.variable(name, at);
-                }
-                if after.starts_with(|c: char| !special(c)) {
-                    self.pos += 1;
-                    let Some(name) = self.word()? else {
-                        return Err(Refusal::syntax(C_TEXT, self.pos));
-                    };
-                    self.pos += name.len();
-                    return self.variable(Zeroizing::new(name.to_owned()), at);
-                }
-                if in_filter {
-                    return Err(Refusal::unsupported(C_DOLLAR_IN_FILTER, at));
-                }
-                self.pos += 1;
-                Ok(Side::Root(self.steps(at)?))
-            }
-            '@' => {
-                if !in_filter {
-                    return Err(Refusal::unsupported(C_AT_OUTSIDE, at));
-                }
-                self.pos += 1;
-                Ok(Side::Current(self.steps(at)?))
-            }
-            '"' => {
-                let (_, len) = self.string_at(at)?;
-                self.pos += len;
-                Ok(Side::Value(ValueAt::Literal {
-                    start: at,
-                    end: at + len,
-                }))
-            }
-            '-' | '0'..='9' => {
-                let len = number_len(rest).ok_or(Refusal::syntax(C_NUMBER, at))?;
-                self.pos += len;
-                Ok(Side::Value(ValueAt::Literal {
-                    start: at,
-                    end: at + len,
-                }))
-            }
-            '+' => Err(Refusal::unsupported(C_ARITHMETIC, at)),
-            _ => match self.word()? {
-                Some(word @ ("true" | "false" | "null")) => {
-                    self.pos += word.len();
-                    Ok(Side::Value(ValueAt::Literal {
-                        start: at,
-                        end: at + word.len(),
-                    }))
-                }
-                Some(word) if word.eq_ignore_ascii_case("last") => {
-                    Err(Refusal::unsupported(C_LAST, at))
-                }
-                Some(word) if is_mode(word) => Err(Refusal::unsupported(C_MODE, at)),
-                _ => Err(Refusal::syntax(C_TEXT, at)),
-            },
-        }
-    }
-
-    /// A variable named `name`, which takes no accessor. The name is the
-    /// caller's text, and is wiped when the predicate is dropped.
-    fn variable(&mut self, name: Zeroizing<String>, at: usize) -> Result<Side, Refusal> {
-        self.space()?;
-        if self.rest().starts_with(['.', '[']) {
-            return Err(Refusal::unsupported(C_VARIABLE_PATH, self.pos));
-        }
-        Ok(Side::Value(ValueAt::Variable { name, at }))
-    }
-
-    /// The JSON string at `at`, decoded, and its length in the text. Its
-    /// escapes are JSON's. The decoded text is wiped when it drops: a
-    /// literal's is a value, read only to check it, and a key's is moved
-    /// into its path, which wipes it.
-    fn string_at(&self, at: usize) -> Result<(Zeroizing<String>, usize), Refusal> {
-        let text = &self.text.as_bytes()[at..];
-        string_end(text)
-            .and_then(|end| Some((string_text(&text[..=end])?, end + 1)))
-            .ok_or_else(|| Refusal::syntax(C_STRING, at))
-    }
-
-    /// The steps after `$` or `@`: `.name`, `."name"`, `[*]`, and the
-    /// accessors refused by name. A step past a document's depth is
-    /// refused before it is read, so the path held is never deeper than
-    /// [`MAX_DEPTH`].
-    ///
-    /// The steps are read into the path itself, so a refusal part way
-    /// drops a path, which wipes the keys already read.
-    fn steps(&mut self, start: usize) -> Result<PathAt, Refusal> {
-        let mut path = JsonPath::root();
-        loop {
-            self.space()?;
-            let at = self.pos;
-            let rest = self.rest();
-            if !rest.starts_with(['.', '[']) {
-                break;
-            }
-            if path.segments().len() >= MAX_DEPTH {
-                return Err(Refusal {
-                    reason: Reason::JsonPredicateTooDeep,
-                    construct: C_NESTING,
-                    at: start,
-                });
-            }
-            if let Some(after) = rest.strip_prefix('.') {
-                let after_space = after.trim_start();
-                let gap = after.len() - after_space.len();
-                if after_space.starts_with("**") {
-                    return Err(Refusal::unsupported(C_ANY_DEPTH, at));
-                }
-                if after_space.starts_with('*') {
-                    return Err(Refusal::unsupported(C_ANY_MEMBER, at));
-                }
-                if after_space.starts_with('"') {
-                    let (mut key, len) = self.string_at(at + 1 + gap)?;
-                    self.pos = at + 1 + gap + len;
-                    path.push(Segment::Key(std::mem::take(&mut *key)));
-                    continue;
-                }
-                self.pos = at + 1;
-                let Some(name) = self.word()? else {
-                    return Err(Refusal::syntax(C_TEXT, self.pos));
-                };
-                self.pos += name.len();
-                if self.peek()? == Some('(') {
-                    return Err(Refusal::unsupported(C_METHOD, at));
-                }
-                path.push(Segment::Key(name.to_owned()));
-            } else {
-                self.pos += 1;
-                self.space()?;
-                if self.eat("*")? {
-                    self.expect("]")?;
-                    path.push(Segment::Wildcard);
-                } else if self.rest().starts_with(|c: char| c.is_ascii_digit()) {
-                    let digits = self
-                        .rest()
-                        .find(|c: char| !c.is_ascii_digit())
-                        .unwrap_or(self.rest().len());
-                    self.pos += digits;
-                    self.space()?;
-                    if self.rest().starts_with(']') {
-                        return Err(Refusal {
-                            reason: Reason::JsonPathPosition,
-                            construct: C_POSITION,
-                            at,
-                        });
-                    }
-                    return Err(Refusal::unsupported(C_SLICE, at));
-                } else if self.keyword("last")? {
-                    return Err(Refusal::unsupported(C_LAST, at));
-                } else {
-                    return Err(Refusal::unsupported(C_SUBSCRIPT, at));
-                }
-            }
-        }
-        Ok(PathAt { path, at: start })
+        refusal_at(reason, refusal.construct, refusal.at)
     }
 }
 
-/// The length of the JSON number at the front of `text`:
-/// `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`, followed by
-/// something that does not continue it. `None` for text that is not one.
-fn number_len(text: &str) -> Option<usize> {
-    let bytes = text.as_bytes();
-    let mut i = usize::from(bytes.first() == Some(&b'-'));
-    let digits = |from: usize| {
-        bytes[from..]
-            .iter()
-            .take_while(|b| b.is_ascii_digit())
-            .count()
-    };
-    match bytes.get(i) {
-        Some(b'0') => i += 1,
-        Some(b'1'..=b'9') => i += digits(i),
-        _ => return None,
-    }
-    if bytes.get(i) == Some(&b'.') {
-        let fraction = digits(i + 1);
-        if fraction == 0 {
-            return None;
-        }
-        i += 1 + fraction;
-    }
-    if matches!(bytes.get(i), Some(b'e' | b'E')) {
-        let mut j = i + 1;
-        if matches!(bytes.get(j), Some(b'+' | b'-')) {
-            j += 1;
-        }
-        let exponent = digits(j);
-        if exponent == 0 {
-            return None;
-        }
-        i = j + exponent;
-    }
-    match text[i..].chars().next() {
-        Some(c) if !special(c) || c == '.' => None,
-        _ => Some(i),
+/// A refusal of the construct `construct` at the byte `at`, for `reason`.
+fn refusal_at(reason: Reason, construct: &'static str, at: usize) -> Error {
+    Error::Predicate {
+        field: None,
+        reason,
+        construct,
+        at,
     }
 }
 
-/// Whether `word` is a mode word, `strict` or `lax`, in any case.
-fn is_mode(word: &str) -> bool {
-    word.eq_ignore_ascii_case("strict") || word.eq_ignore_ascii_case("lax")
-}
-
-/// Parse a predicate's text.
-fn parse(text: &str) -> Result<Ast, Refusal> {
-    let mut parser = Parser {
-        text,
-        pos: 0,
-        depth: 0,
-    };
-    parser.space()?;
-    let at = parser.pos;
-    if parser.word()?.is_some_and(is_mode) {
-        return Err(Refusal::unsupported(C_MODE, at));
+/// How an element-scoped condition compares; `None` for `!=`, which a
+/// filter does not take.
+fn compare_of(operator: Operator) -> Option<Compare> {
+    match operator {
+        Operator::Equal => Some(Compare::Eq),
+        Operator::Less => Some(Compare::Lt),
+        Operator::LessOrEqual => Some(Compare::Lte),
+        Operator::Greater => Some(Compare::Gt),
+        Operator::GreaterOrEqual => Some(Compare::Gte),
+        Operator::NotEqual => None,
     }
-    let ast = parser.or()?;
-    parser.space()?;
-    if !parser.rest().is_empty() {
-        return Err(Refusal::syntax(C_TRAILING, parser.pos));
-    }
-    Ok(ast)
 }
 
 /// A predicate compiled: a tree of the inputs of the operators whose
@@ -843,8 +145,8 @@ pub(crate) fn compile(
         options,
         bound,
     };
-    let ast = parse(text)?;
-    Ok(simplify(compiler.node(ast, false)?))
+    let expression = predicate::parse(text)?;
+    Ok(simplify(compiler.node(expression, false)?))
 }
 
 impl Compiler<'_> {
@@ -852,24 +154,24 @@ impl Compiler<'_> {
     /// `negated`. `and` and `or` are monotone in each child, so only a `!`
     /// turns a child's NULL into a different row set than its false; see
     /// [`Compiler::comparison`].
-    fn node(&self, ast: Ast, negated: bool) -> Result<Node, Error> {
-        Ok(match ast {
-            Ast::And(terms) => Node::And(
+    fn node(&self, expression: Expression, negated: bool) -> Result<Node, Error> {
+        Ok(match expression {
+            Expression::And(terms) => Node::And(
                 terms
                     .into_iter()
                     .map(|t| self.node(t, negated))
                     .collect::<Result<_, _>>()?,
             ),
-            Ast::Or(terms) => Node::Or(
+            Expression::Or(terms) => Node::Or(
                 terms
                     .into_iter()
                     .map(|t| self.node(t, negated))
                     .collect::<Result<_, _>>()?,
             ),
-            Ast::Not(inner) => Node::Not(Box::new(self.node(*inner, !negated)?)),
-            Ast::Compare(comparison) => self.comparison(comparison, negated)?,
-            Ast::Exists { path, filter: None } => Node::Leaf(Input::Selector(path.path)),
-            Ast::Exists {
+            Expression::Not(inner) => Node::Not(Box::new(self.node(*inner, !negated)?)),
+            Expression::Compare(comparison) => self.comparison(comparison, negated)?,
+            Expression::Exists { path, filter: None } => Node::Leaf(Input::Selector(path.path)),
+            Expression::Exists {
                 path,
                 filter: Some(conditions),
             } => self.filter(path, conditions)?,
@@ -881,25 +183,17 @@ impl Compiler<'_> {
         match value {
             ValueAt::Literal { start, end } => parse_text(&self.text.as_bytes()[*start..*end])
                 .map(Parsed)
-                .map_err(|error| {
-                    Refusal {
-                        reason: json_reason(error),
-                        construct: C_VALUE,
-                        at: *start,
-                    }
-                    .into()
-                }),
+                .map_err(|error| refusal_at(json_reason(error), construct::VALUE, *start)),
             ValueAt::Variable { name, at } => self
                 .vars
                 .get(name.as_str())
                 .map(|value| Parsed(value.clone()))
                 .ok_or_else(|| {
-                    Refusal {
-                        reason: Reason::JsonPredicateUnknownVariable,
-                        construct: C_VARIABLE,
-                        at: *at,
-                    }
-                    .into()
+                    refusal_at(
+                        Reason::JsonPredicateUnknownVariable,
+                        construct::VARIABLE,
+                        *at,
+                    )
                 }),
         }
     }
@@ -943,56 +237,36 @@ impl Compiler<'_> {
 
     /// `path op value`, under an odd number of `!` when `negated`.
     fn comparison(&self, comparison: Comparison, negated: bool) -> Result<Node, Error> {
+        // `!=` over several elements is true when one differs, which
+        // containment cannot say.
+        comparison.refuse_not_equal_at_wildcard()?;
         let Comparison {
             path,
-            op,
+            operator,
             value,
             at,
         } = comparison;
-        let wild = !path.path.is_positional();
-        let compare = match op {
+        let compare = match operator {
             // `==`: containment of the value at the path, exact; at a
             // wildcard, of any element.
-            PredicateOp::Eq => return Ok(Node::Leaf(Input::EqAt(path.path, self.scalar(&value)?))),
-            // `!=` over several elements is true when one differs, which
-            // containment cannot say.
-            PredicateOp::Ne if wild => {
-                return Err(Refusal {
-                    reason: Reason::JsonPredicateNotEqualAtWildcard,
-                    construct: C_NOT_EQUAL,
-                    at,
-                }
-                .into())
-            }
+            Operator::Equal => return Ok(Node::Leaf(Input::EqAt(path.path, self.scalar(&value)?))),
             // `!=` at one node: a node there that is not the value.
-            PredicateOp::Ne => {
+            Operator::NotEqual => {
                 let value = self.scalar(&value)?;
                 return Ok(Node::And(vec![
                     Node::Leaf(Input::Selector(path.path.clone())),
                     Node::Not(Box::new(Node::Leaf(Input::EqAt(path.path, value)))),
                 ]));
             }
-            PredicateOp::Lt => Compare::Lt,
-            PredicateOp::Lte => Compare::Lte,
-            PredicateOp::Gt => Compare::Gt,
-            PredicateOp::Gte => Compare::Gte,
+            Operator::Less => Compare::Lt,
+            Operator::LessOrEqual => Compare::Lte,
+            Operator::Greater => Compare::Gt,
+            Operator::GreaterOrEqual => Compare::Gte,
         };
-        Ok(if wild {
+        let value = self.ordered(&value)?;
+        Ok(if let Some((base, member)) = path.element_member(at)? {
             // An ordering at a wildcard: some element's field, which is
             // `element_match` on the array through the last wildcard.
-            let value = self.ordered(&value)?;
-            let steps = path.path.segments();
-            let last = steps
-                .iter()
-                .rposition(|segment| *segment == Segment::Wildcard)
-                .unwrap_or_default();
-            // Each half is copied straight into a path, which wipes its
-            // keys, before anything can refuse.
-            let (base, member) = steps.split_at(last + 1);
-            let (base, member) = (JsonPath::of(base.to_vec()), JsonPath::of(member.to_vec()));
-            if member.segments().is_empty() {
-                return Err(Refusal::unsupported(C_ELEMENTS_THEMSELVES, at).into());
-            }
             let predicate = self.member(&base, member, compare, value)?;
             Node::Leaf(Input::Elements(self.bound, vec![predicate]))
         } else {
@@ -1005,7 +279,6 @@ impl Compiler<'_> {
             // into true and NULL into NULL, so the tree also asks that the
             // node is not null. That `null` needle tells the database which
             // rows hold null at the path, so it is sent only there.
-            let value = self.ordered(&value)?;
             let path = ordered_path_of(self.options, path.path)?;
             let mut leaves = vec![Node::Leaf(Input::Selector(path.clone()))];
             if negated {
@@ -1039,61 +312,27 @@ impl Compiler<'_> {
     /// path, exact; anything else is `element_match`, every condition on a
     /// field of one element.
     fn filter(&self, path: PathAt, conditions: Vec<Comparison>) -> Result<Node, Error> {
-        if path.path.is_positional() {
-            return Err(Refusal {
-                reason: Reason::JsonPathNoWildcard,
-                construct: C_FILTER_WILDCARD,
-                at: path.at,
-            }
-            .into());
-        }
+        check_filter(&path, &conditions)?;
         let base = path.path;
-        for condition in &conditions {
-            if base.segments().len() + condition.path.path.segments().len() > MAX_DEPTH {
-                return Err(Refusal {
-                    reason: Reason::JsonPredicateTooDeep,
-                    construct: C_NESTING,
-                    at: path.at,
-                }
-                .into());
-            }
-            if !condition.path.path.is_positional() {
-                return Err(Refusal {
-                    reason: Reason::JsonPathWildcard,
-                    construct: C_MEMBER_WILDCARD,
-                    at: condition.path.at,
-                }
-                .into());
-            }
-        }
-        if let [only] = conditions.as_slice() {
-            if only.op == PredicateOp::Eq {
-                let full = only.path.path.segments().iter().fold(
-                    base.segments().to_vec(),
-                    |mut at, segment| {
-                        at.push(segment.clone());
-                        at
-                    },
-                );
-                return Ok(Node::Leaf(Input::EqAt(
-                    JsonPath::of(full),
-                    self.scalar(&only.value)?,
-                )));
-            }
+        if let Some(only) = single_equality(&conditions) {
+            let full = only.path.path.segments().iter().fold(
+                base.segments().to_vec(),
+                |mut at, segment| {
+                    at.push(segment.clone());
+                    at
+                },
+            );
+            return Ok(Node::Leaf(Input::EqAt(
+                JsonPath::of(full),
+                self.scalar(&only.value)?,
+            )));
         }
         let mut predicates = Vec::with_capacity(conditions.len());
         for condition in conditions {
-            let Some(compare) = condition.op.compare() else {
-                return Err(Refusal::unsupported(C_NE_IN_FILTER, condition.at).into());
+            condition.check_filter_condition()?;
+            let Some(compare) = compare_of(condition.operator) else {
+                return Err(Error::Internal);
             };
-            if condition.path.path.segments().is_empty() {
-                let construct = if compare == Compare::Eq {
-                    C_WHOLE_ELEMENT
-                } else {
-                    C_ELEMENTS_THEMSELVES
-                };
-                return Err(Refusal::unsupported(construct, condition.path.at).into());
-            }
             let value = self.ordered(&condition.value)?;
             predicates.push(self.member(&base, condition.path.path, compare, value)?);
         }
@@ -1102,12 +341,7 @@ impl Compiler<'_> {
 }
 
 fn value_type(at: &ValueAt) -> Error {
-    Refusal {
-        reason: Reason::JsonPredicateValueType,
-        construct: C_VALUE,
-        at: at.at(),
-    }
-    .into()
+    refusal_at(Reason::JsonPredicateValueType, construct::VALUE, at.at())
 }
 
 /// The tree with every `and` in an `and` and every `or` in an `or` lifted
@@ -1271,7 +505,9 @@ pub(crate) fn derive<'a, K: 'static>(
 mod tests {
     use super::*;
 
+    use crate::json::MAX_DEPTH;
     use crate::sem::TermError;
+    use stack_encrypt_jsonpath::predicate::MAX_NESTING;
 
     use serde_json::json;
 
@@ -1570,69 +806,89 @@ mod tests {
         #[test]
         fn names_each_unsupported_construct_at_its_offset() {
             for (text, construct, at) in [
-                ("strict $.a == 1", C_MODE, 0),
-                ("STRICT $.a == 1", C_MODE, 0),
-                ("$.a == Lax", C_MODE, 7),
-                (r#"$.a LIKE_REGEX "x""#, C_LIKE_REGEX, 4),
-                (r#"$.a Starts with "x""#, C_STARTS_WITH, 4),
-                ("$.a IS unknown", C_IS_UNKNOWN, 4),
-                ("$.a[LAST] == 1", C_LAST, 3),
-                ("$.a == LAST", C_LAST, 7),
-                (r#"exists($.a like_regex "x")"#, C_LIKE_REGEX, 11),
-                ("exists($.a + 1)", C_ARITHMETIC, 11),
+                ("strict $.a == 1", construct::MODE, 0),
+                ("STRICT $.a == 1", construct::MODE, 0),
+                ("$.a == Lax", construct::MODE, 7),
+                (r#"$.a LIKE_REGEX "x""#, construct::LIKE_REGEX, 4),
+                (r#"$.a Starts with "x""#, construct::STARTS_WITH, 4),
+                ("$.a IS unknown", construct::IS_UNKNOWN, 4),
+                ("$.a[LAST] == 1", construct::LAST, 3),
+                ("$.a == LAST", construct::LAST, 7),
+                (r#"exists($.a like_regex "x")"#, construct::LIKE_REGEX, 11),
+                ("exists($.a + 1)", construct::ARITHMETIC, 11),
                 (
                     "exists($.a[*] ? (@ == 1) starts with \"x\")",
-                    C_STARTS_WITH,
+                    construct::STARTS_WITH,
                     25,
                 ),
-                ("  lax $.a == 1", C_MODE, 2),
-                ("$.a + 1 == 2", C_ARITHMETIC, 4),
-                ("$.a == 1 - 2", C_ARITHMETIC, 9),
-                ("$.a == +1", C_ARITHMETIC, 7),
-                (r#"$.a like_regex "x""#, C_LIKE_REGEX, 4),
-                (r#"$.a starts with "x""#, C_STARTS_WITH, 4),
-                ("$.a is unknown", C_IS_UNKNOWN, 4),
-                ("$.a.size() == 1", C_METHOD, 3),
-                ("$.a.type () == 1", C_METHOD, 3),
-                ("$.* == 1", C_ANY_MEMBER, 1),
-                ("$.** == 1", C_ANY_DEPTH, 1),
-                ("$.a[1 to 2] == 1", C_SLICE, 3),
-                ("$.a[1, 2] == 1", C_SLICE, 3),
-                ("$.a[last] == 1", C_LAST, 3),
-                ("$.a == last", C_LAST, 7),
-                ("$.a == lax", C_MODE, 7),
-                ("$.a[$i] == 1", C_SUBSCRIPT, 3),
-                ("@ == 1", C_AT_OUTSIDE, 0),
-                ("$.a == $.b", C_TWO_PATHS, 4),
-                ("1 == 1", C_TWO_VALUES, 2),
-                ("$x == $y", C_TWO_VALUES, 3),
-                ("$.a", C_ALONE, 3),
-                ("$.a && $.b == 1", C_ALONE, 4),
-                ("true", C_ALONE, 4),
-                ("$.a[*] ? (@ == 1) == 1", C_FILTER_OUTSIDE, 7),
-                ("exists($.a[*] ? (@ == 1).b)", C_AFTER_FILTER, 24),
-                ("exists($.a[*] ? (@ == 1) ? (@ == 2))", C_FILTER_OUTSIDE, 24),
-                ("exists($.a == 1)", C_IN_EXISTS, 7),
-                ("exists(@)", C_AT_OUTSIDE, 7),
+                ("  lax $.a == 1", construct::MODE, 2),
+                ("$.a + 1 == 2", construct::ARITHMETIC, 4),
+                ("$.a == 1 - 2", construct::ARITHMETIC, 9),
+                ("$.a == +1", construct::ARITHMETIC, 7),
+                (r#"$.a like_regex "x""#, construct::LIKE_REGEX, 4),
+                (r#"$.a starts with "x""#, construct::STARTS_WITH, 4),
+                ("$.a is unknown", construct::IS_UNKNOWN, 4),
+                ("$.a.size() == 1", construct::METHOD, 3),
+                ("$.a.type () == 1", construct::METHOD, 3),
+                ("$.* == 1", construct::ANY_MEMBER, 1),
+                ("$.** == 1", construct::ANY_DEPTH, 1),
+                ("$.a[1 to 2] == 1", construct::SLICE, 3),
+                ("$.a[1, 2] == 1", construct::SLICE, 3),
+                ("$.a[last] == 1", construct::LAST, 3),
+                ("$.a == last", construct::LAST, 7),
+                ("$.a == lax", construct::MODE, 7),
+                ("$.a[$i] == 1", construct::SUBSCRIPT, 3),
+                ("@ == 1", construct::AT_OUTSIDE, 0),
+                ("$.a == $.b", construct::TWO_PATHS, 4),
+                ("1 == 1", construct::TWO_VALUES, 2),
+                ("$x == $y", construct::TWO_VALUES, 3),
+                ("$.a", construct::ALONE, 3),
+                ("$.a && $.b == 1", construct::ALONE, 4),
+                ("true", construct::ALONE, 4),
+                ("$.a[*] ? (@ == 1) == 1", construct::FILTER_OUTSIDE, 7),
+                ("exists($.a[*] ? (@ == 1).b)", construct::AFTER_FILTER, 24),
+                (
+                    "exists($.a[*] ? (@ == 1) ? (@ == 2))",
+                    construct::FILTER_OUTSIDE,
+                    24,
+                ),
+                ("exists($.a == 1)", construct::IN_EXISTS, 7),
+                ("exists(@)", construct::AT_OUTSIDE, 7),
                 (
                     "exists($.a[*] ? (@.b == 1 || @.c == 2))",
-                    C_OR_IN_FILTER,
+                    construct::OR_IN_FILTER,
                     26,
                 ),
-                ("exists($.a[*] ? (!(@.b == 1)))", C_NOT_IN_FILTER, 17),
-                ("exists($.a[*] ? (@.b != 1))", C_NE_IN_FILTER, 21),
-                ("exists($.a[*] ? (exists(@.b)))", C_EXISTS_IN_FILTER, 17),
-                ("exists($.a[*] ? ($.b == 1))", C_DOLLAR_IN_FILTER, 17),
-                ("$.v == $x.y", C_VARIABLE_PATH, 9),
-                ("$.tags[*] < 1", C_ELEMENTS_THEMSELVES, 10),
+                (
+                    "exists($.a[*] ? (!(@.b == 1)))",
+                    construct::NOT_IN_FILTER,
+                    17,
+                ),
+                (
+                    "exists($.a[*] ? (@.b != 1))",
+                    construct::NOT_EQUAL_IN_FILTER,
+                    21,
+                ),
+                (
+                    "exists($.a[*] ? (exists(@.b)))",
+                    construct::EXISTS_IN_FILTER,
+                    17,
+                ),
+                (
+                    "exists($.a[*] ? ($.b == 1))",
+                    construct::DOLLAR_IN_FILTER,
+                    17,
+                ),
+                ("$.v == $x.y", construct::VARIABLE_PATH, 9),
+                ("$.tags[*] < 1", construct::ELEMENTS_THEMSELVES, 10),
                 (
                     "exists($.contacts[*] ? (@ > 1 && @.calls < 2))",
-                    C_ELEMENTS_THEMSELVES,
+                    construct::ELEMENTS_THEMSELVES,
                     24,
                 ),
                 (
                     "exists($.contacts[*] ? (@ == 1 && @.calls < 2))",
-                    C_WHOLE_ELEMENT,
+                    construct::WHOLE_ELEMENT,
                     24,
                 ),
             ] {
@@ -1648,29 +904,29 @@ mod tests {
         #[test]
         fn refuses_text_that_is_not_a_predicate_where_reading_stops() {
             for (text, construct, at) in [
-                ("", C_TEXT, 0),
-                ("$.a == 1 &&", C_TEXT, 11),
-                ("$.a = 1", C_TEXT, 4),
-                ("$.a === 1", C_TEXT, 6),
-                ("$.a > 1 > 2", C_TRAILING, 8),
-                ("$.a == 1 2", C_TRAILING, 9),
-                ("($.a == 1) is unknown", C_TRAILING, 11),
-                ("!$.a == 1", C_TEXT, 1),
-                ("!!($.a == 1)", C_TEXT, 1),
-                ("($.a == 1", C_TEXT, 9),
-                ("$.a == 01", C_NUMBER, 7),
-                ("$.a == 1.", C_NUMBER, 7),
-                ("$.a == 1e", C_NUMBER, 7),
-                ("$.a == .5", C_TEXT, 7),
-                ("$.a == 'x'", C_TEXT, 7),
-                (r#"$.a == "x"#, C_STRING, 7),
-                (r#"$."a == 1"#, C_STRING, 2),
-                ("$.a == TRUE", C_TEXT, 7),
-                ("$.1a == 1", C_TEXT, 2),
-                ("$. == 1", C_TEXT, 3),
-                ("$.a == 1 /* open", C_TEXT, 9),
-                ("exists $.a", C_TEXT, 7),
-                ("$.a == $1", C_TEXT, 8),
+                ("", construct::TEXT, 0),
+                ("$.a == 1 &&", construct::TEXT, 11),
+                ("$.a = 1", construct::TEXT, 4),
+                ("$.a === 1", construct::TEXT, 6),
+                ("$.a > 1 > 2", construct::TRAILING, 8),
+                ("$.a == 1 2", construct::TRAILING, 9),
+                ("($.a == 1) is unknown", construct::TRAILING, 11),
+                ("!$.a == 1", construct::TEXT, 1),
+                ("!!($.a == 1)", construct::TEXT, 1),
+                ("($.a == 1", construct::TEXT, 9),
+                ("$.a == 01", construct::NUMBER, 7),
+                ("$.a == 1.", construct::NUMBER, 7),
+                ("$.a == 1e", construct::NUMBER, 7),
+                ("$.a == .5", construct::TEXT, 7),
+                ("$.a == 'x'", construct::TEXT, 7),
+                (r#"$.a == "x"#, construct::STRING, 7),
+                (r#"$."a == 1"#, construct::STRING, 2),
+                ("$.a == TRUE", construct::TEXT, 7),
+                ("$.1a == 1", construct::TEXT, 2),
+                ("$. == 1", construct::TEXT, 3),
+                ("$.a == 1 /* open", construct::TEXT, 9),
+                ("exists $.a", construct::TEXT, 7),
+                ("$.a == $1", construct::TEXT, 8),
             ] {
                 assert_eq!(
                     refusal(text, json!({})),
@@ -1721,29 +977,32 @@ mod tests {
             );
             let long = format!("$.{} == 1", vec!["a"; MAX_DEPTH + 1].join("."));
             for (text, want) in [
-                ("$.a[2] == 1", (JsonPathPosition, C_POSITION, 3)),
-                ("exists($.a[ 0 ])", (JsonPathPosition, C_POSITION, 10)),
+                ("$.a[2] == 1", (JsonPathPosition, construct::POSITION, 3)),
+                (
+                    "exists($.a[ 0 ])",
+                    (JsonPathPosition, construct::POSITION, 10),
+                ),
                 (
                     "$.a[*] != 1",
-                    (JsonPredicateNotEqualAtWildcard, C_NOT_EQUAL, 7),
+                    (JsonPredicateNotEqualAtWildcard, construct::NOT_EQUAL, 7),
                 ),
                 (
                     "$.a[*].b != null",
-                    (JsonPredicateNotEqualAtWildcard, C_NOT_EQUAL, 9),
+                    (JsonPredicateNotEqualAtWildcard, construct::NOT_EQUAL, 9),
                 ),
                 (
                     "exists($.a ? (@ == 1))",
-                    (JsonPathNoWildcard, C_FILTER_WILDCARD, 7),
+                    (JsonPathNoWildcard, construct::FILTER_WILDCARD, 7),
                 ),
                 (
                     "exists($.a[*] ? (@.b[*] == 1))",
-                    (JsonPathWildcard, C_MEMBER_WILDCARD, 17),
+                    (JsonPathWildcard, construct::MEMBER_WILDCARD, 17),
                 ),
                 (
                     deep.as_str(),
-                    (JsonPredicateTooDeep, C_NESTING, MAX_NESTING + 1),
+                    (JsonPredicateTooDeep, construct::NESTING, MAX_NESTING + 1),
                 ),
-                (long.as_str(), (JsonPredicateTooDeep, C_NESTING, 0)),
+                (long.as_str(), (JsonPredicateTooDeep, construct::NESTING, 0)),
             ] {
                 assert_eq!(refusal(text, json!({})), want, "{text}");
             }
@@ -1763,7 +1022,7 @@ mod tests {
             );
             assert_eq!(
                 refusal(&member(MAX_DEPTH - 1), json!({})),
-                (JsonPredicateTooDeep, C_NESTING, 7),
+                (JsonPredicateTooDeep, construct::NESTING, 7),
                 "one equality: a filter's full path deeper than a document"
             );
             let members = |steps: usize| {
@@ -1774,7 +1033,7 @@ mod tests {
             };
             assert_eq!(
                 refusal(&members(MAX_DEPTH - 1), json!({})),
-                (JsonPredicateTooDeep, C_NESTING, 7),
+                (JsonPredicateTooDeep, construct::NESTING, 7),
                 "two conditions: a member's full path deeper than a document"
             );
             assert!(
@@ -1795,7 +1054,7 @@ mod tests {
             let past = format!("$.{}.** == 1", vec!["a"; MAX_DEPTH].join("."));
             assert_eq!(
                 refusal(&past, json!({})),
-                (JsonPredicateTooDeep, C_NESTING, 0),
+                (JsonPredicateTooDeep, construct::NESTING, 0),
                 "the step past the depth is not read"
             );
             // Nesting is depth, not count: siblings past the limit, each

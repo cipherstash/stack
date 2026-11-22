@@ -194,6 +194,156 @@ use crate::sem::TermError;
 use crate::target::Pending;
 use crate::KeysetCipher;
 
+#[doc(hidden)]
+pub mod predicate_checks;
+
+/// A SQL/JSON path predicate on a document field, checked when the program
+/// compiles and sent as written when it runs.
+///
+/// ```text
+/// predicate!(FIELD_REFERENCE, "PREDICATE", name = value, …)
+/// ```
+///
+/// The first argument is a document field's reference, such as
+/// `EncryptedCustomer::PROFILE`, or one reached through an outer record
+/// with [`field`](crate::FieldReference::field). The second is the
+/// predicate's text, a string literal in the grammar
+/// [`predicate(text)`](FieldReference::predicate) reads. Then each variable
+/// the text names as `$name`: `name = value`, a local variable's name alone
+/// for `name = name`, or `"any name" = value` for a `$"any name"` that is
+/// not a Rust identifier. Each value is evaluated once, in the order given,
+/// and moved into the query: a local given by its name alone is moved, as
+/// [`var`](JsonFieldQuery::var) takes its value, so pass `name.clone()` or
+/// `name.as_str()` to keep a `String`.
+///
+/// It returns what `predicate(text)` returns, with each variable given by
+/// [`var`](JsonFieldQuery::var): a query whose
+/// [`scope`](JsonFieldQuery::scope), [`wildcard_bound`](JsonFieldQuery::wildcard_bound)
+/// and [`encrypt`](JsonFieldQuery::encrypt) work as they do there, and
+/// whose operand is the one `predicate(text)` and the dynamic interface's
+/// `match` operator derive for the same text and values.
+///
+/// The compiler refuses, at the predicate or at the variable:
+///
+/// - text the grammar does not read, and a construct the JSON index cannot
+///   answer, with the construct and its byte offset;
+/// - a variable the text uses and that is not given, one given and not
+///   used, and one given twice;
+/// - a path the field does not declare, under `ordered = {..}` or
+///   `paths = {..}`; an ordering of a path declared under `paths`; and a
+///   condition, in a filter of more than one, on a member its array does
+///   not order (such a filter compares each member by its ordering term;
+///   a filter of one equality is containment at the member's path, which
+///   any declared path answers);
+/// - a value of another type than the path's: a variable's value, a
+///   literal in the text (`$.age > "x"`), a number literal the path's type
+///   does not hold (`$.age > 1.5`, `$.age >= -1` and `$.age == 99999999999`
+///   for a `u32`; an `f64` path takes any number), and an ordering's
+///   `true`, `false` or `null`.
+///
+/// So every path the text names must be declared. A predicate on a path
+/// the field does not declare, or one built at run time from a user's
+/// input, is [`predicate(text)`](FieldReference::predicate), which checks
+/// the same rules when the query is encrypted. A JSON `null` is the
+/// literal `null` in the text (`$.note == null`); a variable cannot be
+/// one here, but can with [`var_null`](JsonFieldQuery::var_null).
+///
+/// For example, a café keeps each customer's profile encrypted under
+/// `customers/profile`, ordering the age and each visit's time and place,
+/// and declaring the name for equality. It looks for Ada's profile if she
+/// is 30 or more and once visited from home after 10 o'clock:
+///
+/// ```
+/// use serde_json::json;
+/// use stack_encrypt::json::{JsonDocument, JsonPlaintext};
+/// use stack_encrypt::target::EncryptTarget;
+/// use stack_encrypt::{predicate, EncryptInto, StackCipher};
+/// use zeroize::Zeroize;
+///
+/// #[derive(Zeroize)]
+/// struct Customer {
+///     profile: JsonPlaintext,
+/// }
+///
+/// #[derive(EncryptTarget)]
+/// #[stash(struct = Customer, scope = "customers")]
+/// struct EncryptedCustomer {
+///     #[stash(json(
+///         ordered = { "$.age": u32, "$.visits[*].at": u64, "$.visits[*].place": String },
+///         paths = { "$.name": String },
+///     ))]
+///     profile: JsonDocument,
+/// }
+///
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+/// let cipher = StackCipher::builder()
+/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+///     .init()
+///     .await?;
+/// let keyset = cipher.default_keyset();
+/// let stored: EncryptedCustomer = Customer {
+///     profile: json!({"name": "Ada", "age": 35, "visits": [{"place": "home", "at": 15}]}).into(),
+/// }
+/// .encrypt_into(&keyset)
+/// .await?;
+///
+/// let min_age: u32 = 30;
+/// let after: u64 = 10;
+/// // `col @@ $1`, which `eql_v4.json_tree_match` evaluates.
+/// let regulars = predicate!(
+///     EncryptedCustomer::PROFILE,
+///     r#"$.name == "Ada" && $.age >= $min_age && exists($.visits[*] ? (@.place == "home" && @.at > $after))"#,
+///     min_age,
+///     after,
+/// )
+/// .encrypt(&keyset)
+/// .await?;
+///
+/// // The operand `predicate(text)` derives for the same text and values.
+/// let from_text = EncryptedCustomer::PROFILE
+///     .predicate(r#"$.name == "Ada" && $.age >= $min_age && exists($.visits[*] ? (@.place == "home" && @.at > $after))"#)
+///     .var("min_age", min_age)
+///     .var("after", after)
+///     .encrypt(&keyset)
+///     .await?;
+/// // An equality is a containment needle, which sends its selectors in a
+/// // random order: compare the two with every selector set (`sv`) sorted.
+/// fn sorted(value: &mut serde_json::Value) {
+///     match value {
+///         serde_json::Value::Object(map) => {
+///             for (key, inner) in map.iter_mut() {
+///                 if let (true, serde_json::Value::Array(items)) = (key == "sv", &mut *inner) {
+///                     items.sort_by_key(|item| item.to_string());
+///                 }
+///                 sorted(inner);
+///             }
+///         }
+///         serde_json::Value::Array(items) => items.iter_mut().for_each(sorted),
+///         _ => {}
+///     }
+/// }
+/// let (mut regulars, mut from_text) = (serde_json::to_value(&regulars)?, serde_json::to_value(&from_text)?);
+/// sorted(&mut regulars);
+/// sorted(&mut from_text);
+/// assert_eq!(regulars, from_text);
+/// # let _ = stored;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// # }).unwrap();
+/// ```
+///
+/// These do not compile, each with a message that names the mistake
+/// (`tests/ui/predicate_*.rs`): `"$.agee >= $min"` (no such path),
+/// `"$.name > \"A\""` (a path declared for equality alone),
+/// `min = "thirty"` for `$.age` (a `u32` path), `"$.age >= $min"` with no
+/// `min`, `limit = 5` that the text does not use, and
+/// `"$.age like_regex \"^3\""` (a construct the index cannot answer).
+#[macro_export]
+macro_rules! predicate {
+    ($($input:tt)*) => {
+        $crate::field_reference::json::predicate_checks::predicate_with_crate!($crate; $($input)*)
+    };
+}
+
 /// The kind of a JSON query from a field reference that returns a path's selector:
 /// [`ValueAt::selector`]. A type tag, with no values.
 pub enum Selector {}

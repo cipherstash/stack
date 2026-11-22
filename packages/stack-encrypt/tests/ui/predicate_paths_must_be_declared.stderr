@@ -1,0 +1,144 @@
+error[E0277]: this field declares no path `$.agee`
+  --> tests/ui/predicate_paths_must_be_declared.rs:35:52
+   |
+35 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.agee >= 30");
+   |                                                    ^^^^^^^^^^^^^^ `$.agee` is not one of the field's declared paths
+   |
+help: the trait `DeclaresLine35Column52Check0` is not implemented for `EncryptedCustomerProfilePaths`
+  --> tests/ui/predicate_paths_must_be_declared.rs:16:10
+   |
+16 | #[derive(EncryptTarget)]
+   |          ^^^^^^^^^^^^^
+   = note: `predicate!` checks each path against the field's `#[stash(json(..))]`. Declare `$.agee` with its type under `ordered = {..}` to compare it, or under `paths = {..}` for equality alone, or build this query at run time with `predicate(text)`
+note: required by a bound in `main::{closure#0}::declared`
+  --> tests/ui/predicate_paths_must_be_declared.rs:35:13
+   |
+35 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.agee >= 30");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `declared`
+   = note: this error originates in the macro `$crate::field_reference::json::predicate_checks::predicate_with_crate` which comes from the expansion of the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: this field declares no path `$.email`
+  --> tests/ui/predicate_paths_must_be_declared.rs:37:52
+   |
+37 |     let _ = predicate!(EncryptedCustomer::PROFILE, r#"$.email == "ada@example.com""#);
+   |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `$.email` is not one of the field's declared paths
+   |
+help: the trait `DeclaresLine37Column52Check0` is not implemented for `EncryptedCustomerProfilePaths`
+  --> tests/ui/predicate_paths_must_be_declared.rs:16:10
+   |
+16 | #[derive(EncryptTarget)]
+   |          ^^^^^^^^^^^^^
+   = note: `predicate!` checks each path against the field's `#[stash(json(..))]`. Declare `$.email` with its type under `ordered = {..}` to compare it, or under `paths = {..}` for equality alone, or build this query at run time with `predicate(text)`
+note: required by a bound in `main::{closure#1}::declared`
+  --> tests/ui/predicate_paths_must_be_declared.rs:37:13
+   |
+37 |     let _ = predicate!(EncryptedCustomer::PROFILE, r#"$.email == "ada@example.com""#);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `declared`
+   = note: this error originates in the macro `$crate::field_reference::json::predicate_checks::predicate_with_crate` which comes from the expansion of the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: this path is not ordered: declare it under `ordered` to compare it
+  --> tests/ui/predicate_paths_must_be_declared.rs:39:52
+   |
+39 |     let _ = predicate!(EncryptedCustomer::PROFILE, r#"$.name > "A""#);
+   |                                                    ^^^^^^^^^^^^^^^^^ an ordering of a path declared under `paths`
+   |
+   = help: the trait `OrderedPathKind` is not implemented for `EqualityPath`
+   = note: a path under `paths = {..}` is compared with `eq` and `is_null`; one under `ordered = {..}` with the orderings too, and its values carry an ordering term
+help: the trait `OrderedPathKind` is implemented for `OrderedPath`
+  --> src/field_reference/json.rs
+   |
+   | impl OrderedPathKind for OrderedPath {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `DeclaredPath::<W, T, C, P, V, O>::gt`
+  --> src/field_reference/json.rs
+   |
+   |     pub fn gt(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Gt>, C::Start>
+   |            -- required by a bound in this associated function
+   |     where
+   |         O: OrderedPathKind,
+   |            ^^^^^^^^^^^^^^^ required by this bound in `DeclaredPath::<W, T, C, P, V, O>::gt`
+   = note: this error originates in the macro `$crate::field_reference::json::predicate_checks::predicate_with_crate` which comes from the expansion of the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: this field declares no array `$.visits[*]` whose elements have the ordered member `@.kind`
+  --> tests/ui/predicate_paths_must_be_declared.rs:44:9
+   |
+44 |         r#"exists($.visits[*] ? (@.place == "home" && @.kind == "walk-in"))"#
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `$.visits[*].kind` is not one of the field's ordered paths
+   |
+help: the trait `DeclaresLine44Column9Check2` is not implemented for `EncryptedCustomerProfilePaths`
+  --> tests/ui/predicate_paths_must_be_declared.rs:16:10
+   |
+16 | #[derive(EncryptTarget)]
+   |          ^^^^^^^^^^^^^
+   = note: a filter with more than one condition compares each member by its ordering term. Declare `$.visits[*].kind` with its type under `ordered = {..}` in the field's `#[stash(json(..))]`, or build this query at run time with `predicate(text)`
+note: required by a bound in `main::{closure#3}::declared`
+  --> tests/ui/predicate_paths_must_be_declared.rs:42:13
+   |
+42 |       let _ = predicate!(
+   |  _____________^
+43 | |         EncryptedCustomer::PROFILE,
+44 | |         r#"exists($.visits[*] ? (@.place == "home" && @.kind == "walk-in"))"#
+45 | |     );
+   | |_____^ required by this bound in `declared`
+   = note: this error originates in the macro `$crate::field_reference::json::predicate_checks::predicate_with_crate` which comes from the expansion of the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: this field declares no array `$.visits[*]` whose elements have the ordered member `@.at`
+  --> tests/ui/predicate_paths_must_be_declared.rs:49:9
+   |
+49 |         r#"exists($.visits[*] ? (@.place == "home" && @.at > 10))"#
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `$.visits[*].at` is not one of the field's ordered paths
+   |
+help: the trait `DeclaresLine49Column9Check2` is not implemented for `EncryptedCustomerProfilePaths`
+  --> tests/ui/predicate_paths_must_be_declared.rs:16:10
+   |
+16 | #[derive(EncryptTarget)]
+   |          ^^^^^^^^^^^^^
+   = note: a filter with more than one condition compares each member by its ordering term. Declare `$.visits[*].at` with its type under `ordered = {..}` in the field's `#[stash(json(..))]`, or build this query at run time with `predicate(text)`
+note: required by a bound in `main::{closure#4}::declared`
+  --> tests/ui/predicate_paths_must_be_declared.rs:47:13
+   |
+47 |       let _ = predicate!(
+   |  _____________^
+48 | |         EncryptedCustomer::PROFILE,
+49 | |         r#"exists($.visits[*] ? (@.place == "home" && @.at > 10))"#
+50 | |     );
+   | |_____^ required by this bound in `declared`
+   = note: this error originates in the macro `$crate::field_reference::json::predicate_checks::predicate_with_crate` which comes from the expansion of the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: this field declares no array `$.visits[*]` whose elements have the ordered member `@.calls`
+  --> tests/ui/predicate_paths_must_be_declared.rs:54:9
+   |
+54 |         r#"exists($.visits[*] ? (@.place == "home" && @.calls > 5))"#
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `$.visits[*].calls` is not one of the field's ordered paths
+   |
+help: the trait `DeclaresLine54Column9Check2` is not implemented for `EncryptedCustomerProfilePaths`
+  --> tests/ui/predicate_paths_must_be_declared.rs:16:10
+   |
+16 | #[derive(EncryptTarget)]
+   |          ^^^^^^^^^^^^^
+   = note: a filter with more than one condition compares each member by its ordering term. Declare `$.visits[*].calls` with its type under `ordered = {..}` in the field's `#[stash(json(..))]`, or build this query at run time with `predicate(text)`
+note: required by a bound in `main::{closure#5}::declared`
+  --> tests/ui/predicate_paths_must_be_declared.rs:52:13
+   |
+52 |       let _ = predicate!(
+   |  _____________^
+53 | |         EncryptedCustomer::PROFILE,
+54 | |         r#"exists($.visits[*] ? (@.place == "home" && @.calls > 5))"#
+55 | |     );
+   | |_____^ required by this bound in `declared`
+   = note: this error originates in the macro `$crate::field_reference::json::predicate_checks::predicate_with_crate` which comes from the expansion of the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: this field declares no path `$.age`
+  --> tests/ui/predicate_paths_must_be_declared.rs:57:53
+   |
+57 |     let _ = predicate!(UndeclaredCustomer::PROFILE, "$.age >= 30");
+   |                                                     ^^^^^^^^^^^^^ `$.age` is not one of the field's declared paths
+   |
+   = help: the trait `DeclaresLine57Column53Check0` is not implemented for `TextPaths`
+   = note: `predicate!` checks each path against the field's `#[stash(json(..))]`. Declare `$.age` with its type under `ordered = {..}` to compare it, or under `paths = {..}` for equality alone, or build this query at run time with `predicate(text)`
+note: required by a bound in `main::{closure#6}::declared`
+  --> tests/ui/predicate_paths_must_be_declared.rs:57:13
+   |
+57 |     let _ = predicate!(UndeclaredCustomer::PROFILE, "$.age >= 30");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `declared`
+   = note: this error originates in the macro `$crate::field_reference::json::predicate_checks::predicate_with_crate` which comes from the expansion of the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)

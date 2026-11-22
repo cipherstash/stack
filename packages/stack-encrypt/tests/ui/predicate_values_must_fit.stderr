@@ -1,0 +1,139 @@
+error[E0277]: `$.age` holds `u32`, and `&str` is not one
+  --> tests/ui/predicate_values_must_fit.rs:26:75
+   |
+26 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age >= $min", min = "thirty");
+   |                                                                           ^^^^^^^^ the value of `$min`
+   |
+   = help: the trait `FitsLine26Column52Check1<u32>` is not implemented for `&str`
+   = note: a declared path takes the type its `ordered = {..}` or `paths = {..}` entry names; a `String` path takes a `&str` or a `&String` too
+note: required by a bound in `main::{closure#0}::fits`
+  --> tests/ui/predicate_values_must_fit.rs:26:13
+   |
+26 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age >= $min", min = "thirty");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `fits`
+   = note: this error originates in the macro `$crate::field_reference::json::predicate_checks::predicate_with_crate` which comes from the expansion of the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `$.visits[*].place` holds `std::string::String`, and `u8` is not one
+  --> tests/ui/predicate_values_must_fit.rs:31:9
+   |
+31 |         place
+   |         ^^^^^ the value of `$place`
+   |
+   = help: the trait `FitsLine30Column9Check1<std::string::String>` is not implemented for `u8`
+   = note: a declared path takes the type its `ordered = {..}` or `paths = {..}` entry names; a `String` path takes a `&str` or a `&String` too
+note: required by a bound in `main::{closure#1}::fits`
+  --> tests/ui/predicate_values_must_fit.rs:28:13
+   |
+28 |       let _ = predicate!(
+   |  _____________^
+29 | |         EncryptedCustomer::PROFILE,
+30 | |         "exists($.visits[*] ? (@.place == $place))",
+31 | |         place
+32 | |     );
+   | |_____^ required by this bound in `fits`
+   = note: this error originates in the macro `$crate::field_reference::json::predicate_checks::predicate_with_crate` which comes from the expansion of the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `$.age` holds `u32`, and the literal `"x"` is a string
+  --> tests/ui/predicate_values_must_fit.rs:34:52
+   |
+34 |     let _ = predicate!(EncryptedCustomer::PROFILE, r#"$.age > "x""#);
+   |                                                    ^^^^^^^^^^^^^^^^ this predicate compares `$.age` with `"x"`
+   |
+   = help: the trait `FitsLine34Column52Check1` is not implemented for `u32`
+   = note: a string literal fits a `String` path
+note: required by a bound in `main::{closure#2}::fits`
+  --> tests/ui/predicate_values_must_fit.rs:34:13
+   |
+34 |     let _ = predicate!(EncryptedCustomer::PROFILE, r#"$.age > "x""#);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `fits`
+   = note: this error originates in the macro `$crate::field_reference::json::predicate_checks::predicate_with_crate` which comes from the expansion of the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `$.visits[*].place` holds `std::string::String`, and the literal `3` is a number it does not hold
+  --> tests/ui/predicate_values_must_fit.rs:35:52
+   |
+35 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.visits[*].place == 3");
+   |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^ this predicate compares `$.visits[*].place` with `3`
+   |
+   = help: the trait `FitsLine35Column52Check1` is not implemented for `std::string::String`
+   = note: an integer path holds the integers of its type, and an `f64` path any number
+note: required by a bound in `main::{closure#3}::fits`
+  --> tests/ui/predicate_values_must_fit.rs:35:13
+   |
+35 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.visits[*].place == 3");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `fits`
+   = note: this error originates in the macro `$crate::field_reference::json::predicate_checks::predicate_with_crate` which comes from the expansion of the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `$.age` holds `u32`, and the literal `true` is a boolean
+  --> tests/ui/predicate_values_must_fit.rs:36:52
+   |
+36 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age == true");
+   |                                                    ^^^^^^^^^^^^^^^ this predicate compares `$.age` with `true`
+   |
+   = help: the trait `FitsLine36Column52Check1` is not implemented for `u32`
+   = note: `true` and `false` fit a `bool` path, which `paths = {..}` can declare
+note: required by a bound in `main::{closure#4}::fits`
+  --> tests/ui/predicate_values_must_fit.rs:36:13
+   |
+36 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age == true");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `fits`
+   = note: this error originates in the macro `$crate::field_reference::json::predicate_checks::predicate_with_crate` which comes from the expansion of the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `$.age` holds `u32`, and the literal `1.5` is a number it does not hold
+  --> tests/ui/predicate_values_must_fit.rs:39:52
+   |
+39 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age > 1.5");
+   |                                                    ^^^^^^^^^^^^^ this predicate compares `$.age` with `1.5`
+   |
+   = help: the trait `FitsLine39Column52Check1` is not implemented for `u32`
+   = note: an integer path holds the integers of its type, and an `f64` path any number
+note: required by a bound in `main::{closure#5}::fits`
+  --> tests/ui/predicate_values_must_fit.rs:39:13
+   |
+39 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age > 1.5");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `fits`
+   = note: this error originates in the macro `$crate::field_reference::json::predicate_checks::predicate_with_crate` which comes from the expansion of the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `$.age` holds `u32`, and the literal `-1` is a number it does not hold
+  --> tests/ui/predicate_values_must_fit.rs:40:52
+   |
+40 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age >= -1");
+   |                                                    ^^^^^^^^^^^^^ this predicate compares `$.age` with `-1`
+   |
+   = help: the trait `FitsLine40Column52Check1` is not implemented for `u32`
+   = note: an integer path holds the integers of its type, and an `f64` path any number
+note: required by a bound in `main::{closure#6}::fits`
+  --> tests/ui/predicate_values_must_fit.rs:40:13
+   |
+40 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age >= -1");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `fits`
+   = note: this error originates in the macro `$crate::field_reference::json::predicate_checks::predicate_with_crate` which comes from the expansion of the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `$.age` holds `u32`, and the literal `4294967296` is a number it does not hold
+  --> tests/ui/predicate_values_must_fit.rs:41:52
+   |
+41 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age == 4294967296");
+   |                                                    ^^^^^^^^^^^^^^^^^^^^^ this predicate compares `$.age` with `4294967296`
+   |
+   = help: the trait `FitsLine41Column52Check1` is not implemented for `u32`
+   = note: an integer path holds the integers of its type, and an `f64` path any number
+note: required by a bound in `main::{closure#7}::fits`
+  --> tests/ui/predicate_values_must_fit.rs:41:13
+   |
+41 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age == 4294967296");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `fits`
+   = note: this error originates in the macro `$crate::field_reference::json::predicate_checks::predicate_with_crate` which comes from the expansion of the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `$.balance` holds `i16`, and the literal `-32769` is a number it does not hold
+  --> tests/ui/predicate_values_must_fit.rs:42:52
+   |
+42 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.balance < -32769");
+   |                                                    ^^^^^^^^^^^^^^^^^^^^ this predicate compares `$.balance` with `-32769`
+   |
+   = help: the trait `FitsLine42Column52Check1` is not implemented for `i16`
+   = note: an integer path holds the integers of its type, and an `f64` path any number
+note: required by a bound in `main::{closure#8}::fits`
+  --> tests/ui/predicate_values_must_fit.rs:42:13
+   |
+42 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.balance < -32769");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `fits`
+   = note: this error originates in the macro `$crate::field_reference::json::predicate_checks::predicate_with_crate` which comes from the expansion of the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)
