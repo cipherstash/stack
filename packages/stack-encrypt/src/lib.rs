@@ -776,6 +776,15 @@ pub use vitaminc_aead::{
 /// in place, so it also asks for [`EncryptRef`], and in `Owned` mode for
 /// `Zeroize` ([`target::WipeSource`]).
 ///
+/// vitaminc-ore's table also has jiff's `civil::Date` and `Timestamp`, and
+/// rust_decimal's `Decimal`. Those types are `Copy` and are not `Zeroize`,
+/// so nothing wipes them. A target and an owned index need `Zeroize`, so
+/// neither takes them. The keyset's term functions
+/// ([`KeysetCipher::ore_term`] and the others) and a borrowed index do take
+/// them: a value passed by value is a copy the caller still holds. To have
+/// the plaintext wiped, use `value::Date`, `value::Timestamp`, or
+/// `value::Decimal`.
+///
 /// Bytes have no order term. No ordering operator compares bytes, so such
 /// a term would answer no query, and would still reveal the order of the
 /// rows. vitaminc-ore orders bytes only into a target that is named, and

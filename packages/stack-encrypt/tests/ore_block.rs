@@ -493,3 +493,21 @@ async fn decoding_checks_the_shape() {
     assert_eq!(a.compare(&b), None);
     assert!(a != b);
 }
+
+/// A reference to a local value takes a term too, read in place, and it
+/// orders equal to the term of the value itself.
+#[tokio::test]
+async fn a_borrowed_value_takes_the_term_its_value_takes() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let local = String::from("ada");
+    let borrowed = keyset
+        .ore_block_term(&local, nonempty!("users/n"))
+        .await
+        .unwrap();
+    let owned = term(&keyset, String::from("ada")).await;
+    // The term of a `&String` is an `OreBlockTerm<&String>`; read its bytes
+    // back as a `String`'s to compare them.
+    let borrowed = OreBlockTerm::<String>::try_from(borrowed.into_bytes()).unwrap();
+    assert_eq!(borrowed.compare(&owned), Some(Ordering::Equal));
+}

@@ -762,8 +762,9 @@ async fn each_owned_operation_wipes_its_value_once() {
 
 // --- An owned value is wiped when a reader panics ------------------------------
 
-/// A plaintext whose text cannot be read: `as_ref` panics. It counts its
-/// wipes, as [`Wiped`] does, and seals through its text by reference.
+/// A plaintext that cannot be read in place: `as_ref` and the by-reference
+/// `Encrypt` panic. It counts its wipes, as [`Wiped`] does, and seals by
+/// value.
 struct Exploding {
     text: String,
     wipes: Arc<AtomicUsize>,
@@ -793,8 +794,8 @@ impl Encrypt for Exploding {
     }
 }
 impl Encrypt for &Exploding {
-    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        self.text.as_str().visit(sink)
+    fn visit<S: Sink>(self, _: S) -> Result<S::Ok, S::Error> {
+        panic!("the value cannot be read in place")
     }
 }
 impl AsRef<str> for Exploding {
@@ -828,4 +829,103 @@ async fn an_owned_value_is_wiped_once_when_a_reader_panics() {
     }));
     assert!(unwound.is_err(), "the match term panicked");
     assert_eq!(wipes.load(Ordering::SeqCst), 1, "matching: one wipe");
+
+    // A target's equality term reads the value by reference beside the
+    // ciphertext that takes it.
+    let (value, wipes) = Exploding::new();
+    let unwound = catch_unwind(AssertUnwindSafe(|| {
+        let indexed = stack_encrypt::target::indexed::<_, _, Owned, _>(stack_encrypt::Equality);
+        drop(keyset.run(indexed, value, caller()));
+    }));
+    assert!(unwound.is_err(), "the equality term panicked");
+    assert_eq!(wipes.load(Ordering::SeqCst), 1, "indexed: one wipe");
+}
+
+// --- A query value is wiped when its context is refused ------------------------
+
+/// A record whose one field is a [`Wiped`], so a query of it counts wipes.
+#[derive(Zeroize)]
+struct Card {
+    number: Wiped,
+}
+
+/// A query takes a `Wiped` as it is, as it takes a `String`.
+impl stack_encrypt::field_reference::QueryInput for Wiped {
+    type Value = Wiped;
+    fn into_value(self) -> Wiped {
+        self
+    }
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Card, scope = "cards", scope(region: String))]
+#[allow(dead_code)]
+struct EncryptedCard {
+    number: Encrypted<EqualityTerm>,
+}
+
+/// A typed query hands its value to the index by value. A scope with an
+/// empty part is refused, and the value is wiped once.
+#[tokio::test]
+async fn a_query_value_refused_for_its_scope_is_wiped_once() {
+    use stack_encrypt::target::Scope;
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let (value, wipes) = Wiped::new(NUMBER);
+    let refused = EncryptedCard::NUMBER
+        .eq(value)
+        .scope(Scope::new(String::new()))
+        .encrypt(&keyset)
+        .await;
+    assert!(refused.is_err(), "an empty scope is refused");
+    assert_eq!(wipes.load(Ordering::SeqCst), 1, "one wipe");
+}
+
+// --- A date with a ciphertext and several terms ------------------------------
+
+/// A date is not `Clone`, so sealing it with a ciphertext, an equality term
+/// and an order term cannot copy it. The owned form gives the same terms
+/// as the borrowed form, and the ciphertext opens to the date.
+#[cfg(feature = "jiff")]
+#[tokio::test]
+async fn a_date_with_a_ciphertext_and_two_terms_is_not_copied() {
+    use stack_encrypt::sem::{OreBlockTerm, OreTerm};
+    use stack_encrypt::value::Date;
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let date = || Date::new(jiff::civil::date(2024, 2, 29));
+
+    let sealed: Encrypted<(EqualityTerm, OreTerm<Date>)> = date()
+        .encrypt_into_with_context(&keyset, context())
+        .await
+        .unwrap();
+    let borrowed: Encrypted<(EqualityTerm, OreTerm<Date>)> = keyset
+        .run(
+            <Encrypted<(EqualityTerm, OreTerm<Date>)> as EncryptTarget<Date>>::encryption(),
+            &date(),
+            RequiredContext::from(caller()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(sealed.terms.0, borrowed.terms.0, "the equality term");
+    assert_eq!(sealed.terms.1, borrowed.terms.1, "the order term");
+    let opened = Date::decrypt_from_with_context(sealed.ciphertext, &cipher, aead())
+        .await
+        .unwrap();
+    assert_eq!(opened.to_jiff(), date().to_jiff());
+
+    // Block ORE, the scheme EQL v4 stores, the same way.
+    let sealed: Encrypted<(EqualityTerm, OreBlockTerm<Date>)> = date()
+        .encrypt_into_with_context(&keyset, context())
+        .await
+        .unwrap();
+    let later = keyset
+        .ore_block_term(Date::new(jiff::civil::date(2024, 3, 1)), context())
+        .await
+        .unwrap();
+    assert_eq!(
+        sealed.terms.1.compare(&later),
+        Some(std::cmp::Ordering::Less),
+        "the term orders as the date"
+    );
 }

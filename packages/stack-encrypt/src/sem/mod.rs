@@ -2175,7 +2175,7 @@ impl<K> KeysetCipher<'_, K> {
     /// [`OreBlockTerm`] for which scheme a type is encrypted with and what
     /// is refused. Byte-identical to the target-directed path's left half
     /// for the same descriptor; the right half carries a random nonce.
-    pub fn ore_block_term<'c, T: Orderable + 'static>(
+    pub fn ore_block_term<'c, T: Orderable>(
         &self,
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,

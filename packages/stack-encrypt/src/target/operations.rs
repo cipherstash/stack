@@ -85,9 +85,9 @@ type Open<T, K> = Box<dyn for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K
 /// `M` is how the description is handed its plaintext ([`SourceMode`]):
 /// by reference in the default [`Borrowed`] mode, which a declaration that
 /// takes a field out of a borrowed struct runs in, or by value in
-/// [`Owned`] mode, which [`EncryptInto`](super::EncryptInto) runs. In owned mode
-/// a single operation consumes the plaintext without copying it, so `S` need
-/// not be `Clone`; [`zip`](Self::zip) is the one place that asks for it.
+/// [`Owned`] mode, which [`EncryptInto`](super::EncryptInto) runs. Every
+/// operation reads the plaintext in place, so in neither mode does `S` need
+/// to be `Clone`. In owned mode the operation handed the value wipes it.
 #[must_use = "an encryption description does nothing until a keyset cipher executes it"]
 pub struct Encryption<'s, S: 's, T, K, Ctx, M: SourceMode<'s, S> = Borrowed> {
     build: Build<'s, S, T, K, Ctx>,
@@ -356,8 +356,10 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
         })
     }
     /// The body of [`under`](Self::under). `refused` is given the source
-    /// when the context is refused, before the subtree has seen it.
-    fn under_refusing(
+    /// when the context is refused, before the subtree has seen it. The
+    /// JSON index's query passes one that wipes a document through its own
+    /// guard.
+    pub(crate) fn under_refusing(
         mut self,
         own: NonEmpty<impl IntoContext<'static> + MaybeSend + 's>,
         refused: for<'b> fn(Source<'b, S>),
@@ -1335,8 +1337,10 @@ pub fn json_document<'s, K: 'static, M: SourceMode<'s, serde_json::Value>>(
 /// ```
 ///
 /// The plaintext is wiped when the document has been sealed, and when the
-/// context is refused. `encrypt_into` moves the document into the sealing.
-/// Sealing reads the document through one copy, which is wiped too.
+/// context is refused. `encrypt_into` moves the document into the sealing,
+/// and the sealing reads it in place. A borrowed document is read in place
+/// too. It is copied only when the keyset is not loaded yet: the sealing
+/// then keeps one copy until the keyset arrives, and wipes it.
 impl EncryptTarget<JsonPlaintext> for JsonDocument {
     type ContextInput = RequiredContext<CallerContext>;
     fn encryption<'s, K: 'static>() -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput>
@@ -1547,9 +1551,9 @@ impl<K: 'static> KeysetCipher<'_, K> {
     ///
     /// `source` is what the description's mode hands its operations: `&S`
     /// for a [`Borrowed`]-mode description (the default), or `S` itself for
-    /// an [`Owned`]-mode one. Owned mode is how a plaintext
-    /// that is not `Clone` reaches an operation: a single operation consumes
-    /// it without a copy.
+    /// an [`Owned`]-mode one. Neither mode copies the plaintext. In owned
+    /// mode the description takes the value, and wipes it once it is read.
+    /// A caller that keeps the value after the call runs it borrowed.
     ///
     /// ```
     /// # async fn example() -> Result<(), stack_encrypt::Error> {

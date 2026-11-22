@@ -540,7 +540,9 @@ impl<S: zeroize::Zeroize + 'static> Input<One> for S {
         K: 'static,
     {
         keyset.run(
-            index.operation::<K, Owned>().under(NonEmpty::from(label)),
+            index
+                .operation::<K, Owned>()
+                .under_field(NonEmpty::from(label)),
             self,
             extend,
         )
@@ -567,12 +569,14 @@ impl<S: zeroize::Zeroize + 'static> Input<Pair> for (S, S) {
         let lo = keyset.run(
             index
                 .operation::<K, Owned>()
-                .under(NonEmpty::from(label.clone())),
+                .under_field(NonEmpty::from(label.clone())),
             lo,
             extend.clone(),
         );
         let hi = keyset.run(
-            index.operation::<K, Owned>().under(NonEmpty::from(label)),
+            index
+                .operation::<K, Owned>()
+                .under_field(NonEmpty::from(label)),
             hi,
             extend,
         );

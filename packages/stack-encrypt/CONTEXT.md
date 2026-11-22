@@ -235,6 +235,8 @@ _Avoid_: plaintext field, skipped field, excluded field
 An operation that reads its plaintext through a reference: sealing a
 ciphertext, deriving a term, the JSON index, and a query's value. A
 declaration has any number of them over one value, and none copies it.
+One exception: sealing a borrowed JSON document on a keyset that is not
+loaded yet keeps one copy until the keyset arrives, and wipes it.
 _Avoid_: borrower, viewer
 
 **Taker**:
