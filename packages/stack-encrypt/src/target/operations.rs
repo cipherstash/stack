@@ -20,7 +20,7 @@ use super::context::{
 use super::conversion::{DecryptSource, EncryptTarget};
 use super::core::{encrypt_native, open_native, Term};
 use super::input::{AcceptsContext, NoCallerContext, RequiredContext};
-use super::source::{Borrowed, ConsumeSource, Held, Owned, Source, SourceMode};
+use super::source::{Borrowed, ConsumeSource, Held, Owned, Source, SourceMode, WipeSource};
 use super::{CipherRef, Pending};
 use crate::contexts::{self, Contexts, Placeholder, Shape, Shapes, SuppliedContext};
 use crate::json::{JsonDocument, JsonOptions, JsonPlaintext, JsonTerms};
@@ -1035,31 +1035,10 @@ where
 /// owns when the walk is done. A source is `Encrypt` both by value and by
 /// reference, which is what the two bounds ask.
 ///
-/// The context is checked before the plaintext is read. In [`Owned`] mode a
-/// refused context drops the value without wiping it, because `S` need not
-/// be `Zeroize`. The owned declarations of this crate's leaves wipe it
-/// instead.
-pub fn ciphertext<'s, S, K: 'static, M: SourceMode<'s, S>>(
-) -> Encryption<'s, S, StackCipherText, K, AeadContext, M>
-where
-    S: crate::Encrypt + EncryptRef + 's,
-{
-    sealing(|source| drop(source))
-}
-/// [`ciphertext`] for a plaintext that is wiped when the context is refused.
-/// The owned declarations of [`StackCipherText`] and
-/// [`Encrypted`](crate::Encrypted) run this form.
-pub(crate) fn wiping_ciphertext<'s, S, K: 'static, M: SourceMode<'s, S>>(
-) -> Encryption<'s, S, StackCipherText, K, AeadContext, M>
-where
-    S: crate::Encrypt + EncryptRef + zeroize::Zeroize + 's,
-{
-    sealing(|source| source.release(|value| drop(vitaminc_protected::Protected::new(value))))
-}
-/// The body of [`ciphertext`]. `refused` is given the source when the context
-/// is refused.
-fn sealing<'s, S, K: 'static, M: SourceMode<'s, S>>(
-    refused: for<'b> fn(Source<'b, S>),
+/// The context is checked before the plaintext is read. In [`Owned`] mode
+/// a refused context wipes the value, so there `S` is `Zeroize`
+/// ([`WipeSource`]).
+pub fn ciphertext<'s, S, K: 'static, M: WipeSource<'s, S>>(
 ) -> Encryption<'s, S, StackCipherText, K, AeadContext, M>
 where
     S: crate::Encrypt + EncryptRef + 's,
@@ -1071,7 +1050,7 @@ where
                 Held::Given(source) => encrypt_native(source, cipher, ctx),
             },
             Err(e) => {
-                refused(source);
+                M::wipe(source);
                 Pending::failed(cipher, e)
             }
         }),
@@ -1142,15 +1121,16 @@ where
 /// Every term reads the plaintext in place, so it runs in either mode
 /// without a copy. `$lend` is how a borrow of `S` becomes the source its
 /// scheme reads. In [`Owned`] mode a `wipe` term hands the value to its
-/// scheme, which wipes it. A `view` term (match) is handed a borrow in either
-/// mode, and an owned value is dropped as it is.
+/// scheme, which wipes it. A `view` term (match) reads a borrow in either
+/// mode, and then wipes a value it was handed. Either kind wipes a value it
+/// was handed when the context is refused ([`WipeSource`]).
 macro_rules! term_operation {
     (
         $(#[$doc:meta])*
         $function:ident, $output:ty, wipe($lend:expr), [$($generics:tt)*], [$($bounds:tt)*]
     ) => {
         $(#[$doc])*
-        pub fn $function<'s, S, K: 'static, M: SourceMode<'s, S>, $($generics)*>(
+        pub fn $function<'s, S, K: 'static, M: WipeSource<'s, S>, $($generics)*>(
         ) -> Encryption<'s, S, $output, K, CallerContext, M>
         where
             S: 's,
@@ -1174,7 +1154,10 @@ macro_rules! term_operation {
                             }
                             .under_context(query, stored)
                         }
-                        Err(e) => Pending::failed(cipher, e),
+                        Err(e) => {
+                            M::wipe(source);
+                            Pending::failed(cipher, e)
+                        }
                     }
                 }),
                 shapes: contexts::caller_leaf(),
@@ -1187,7 +1170,7 @@ macro_rules! term_operation {
         $function:ident, $output:ty, view, [$($generics:tt)*], [$($bounds:tt)*]
     ) => {
         $(#[$doc])*
-        pub fn $function<'s, S, K: 'static, M: SourceMode<'s, S>, $($generics)*>(
+        pub fn $function<'s, S, K: 'static, M: WipeSource<'s, S>, $($generics)*>(
         ) -> Encryption<'s, S, $output, K, CallerContext, M>
         where
             S: 's,
@@ -1196,7 +1179,7 @@ macro_rules! term_operation {
             Encryption {
                 build: Box::new(move |source, cipher, cx: CallerContext| {
                     let (query, stored) = (cx.query(), cx.stored());
-                    match cx.validated() {
+                    let pending = match cx.validated() {
                         Ok(ctx) => <$output as Term<&S, K, _>>::encrypt_from(
                             source.view(),
                             cipher,
@@ -1204,7 +1187,9 @@ macro_rules! term_operation {
                         )
                         .under_context(query, stored),
                         Err(e) => Pending::failed(cipher, e),
-                    }
+                    };
+                    M::wipe(source);
+                    pending
                 }),
                 shapes: contexts::caller_leaf(),
                 mode: PhantomData,
@@ -1681,7 +1666,7 @@ impl<S: crate::Encrypt + EncryptRef + zeroize::Zeroize> EncryptTarget<S> for Sta
     where
         S: 's,
     {
-        wiping_ciphertext().accepting()
+        ciphertext().accepting()
     }
 }
 impl<P: crate::Decrypt + zeroize::Zeroize + Send + 'static> DecryptSource<P> for StackCipherText {

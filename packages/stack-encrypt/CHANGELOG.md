@@ -498,6 +498,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `target::ShareSource` is removed. `target::ConsumeSource` stays for
     `passthrough` only.
   - `dynamic::ValueFrame` and `json::JsonPlaintext` are no longer `Clone`.
+- **An operation in `Owned` mode wipes the value it is handed** (#1734).
+  `ciphertext` dropped a value whose context was refused without wiping
+  it. A match term dropped every value it was handed without wiping it.
+  Both wipe the value now, as every other operation does.
+  - `ciphertext`, `equality`, `matching`, `ore`, `ope`, `ore_block`, and
+    `indexed` are bounded by the new `target::WipeSource`, where they
+    were bounded by `SourceMode`. `Borrowed` implements it for every
+    plaintext. `Owned` implements it for a plaintext that is `Zeroize`.
+    So a value sealed or indexed in `Owned` mode must be `Zeroize`.
+  - `Index::operation` and `Indexes::operations` are bounded by
+    `WipeSource`. An `Index` implemented outside this crate changes
+    `M: SourceMode<'s, S>` to `M: WipeSource<'s, S>`.
+  - A query's value is handed to its index by value, so it must be
+    `Zeroize` too. Every query value this crate and `eql-bindings`
+    accept already is.
+  - A JSON document keeps its own guard and needs no `Zeroize`.
+    `json_terms` and `json_document` stay bounded by `SourceMode`.
   - A call on a keyset that is not loaded yet keeps no borrow of the
     plaintext. The call keeps what it derived without the keyset: a
     term's normalized form or order encoding, wiped on drop. A borrowed

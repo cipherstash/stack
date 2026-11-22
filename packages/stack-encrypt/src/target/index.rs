@@ -62,10 +62,8 @@ use std::fmt;
 use std::marker::PhantomData;
 
 use super::context::{AeadContext, CallerContext};
-use super::operations::{
-    ciphertext, equality, json_terms, matching, ope, open, ore, ore_block, wiping_ciphertext,
-};
-use super::source::{Owned, SourceMode};
+use super::operations::{ciphertext, equality, json_terms, matching, ope, open, ore, ore_block};
+use super::source::{Owned, WipeSource};
 use super::{
     DecryptField, DecryptSource, Decryptable, Decryption, EncryptTarget, Encryption,
     RequiredContext,
@@ -268,7 +266,7 @@ pub trait Index<S> {
     ///
     /// A fresh description per call: a description is single-use, and an
     /// index is not, so a saved plan asks again each time it runs.
-    fn operation<'s, K: 'static, M: SourceMode<'s, S>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -386,7 +384,7 @@ impl<S: crate::Encrypt + vitaminc_aead::EncryptRef> Index<S> for Equality {
     fn spec(&self) -> IndexSpec {
         IndexSpec::Equality
     }
-    fn operation<'s, K: 'static, M: SourceMode<'s, S>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -400,7 +398,7 @@ impl<S: AsRef<str>, O: MatchConfig + 'static> Index<S> for Match<O> {
     fn spec(&self) -> IndexSpec {
         IndexSpec::Match(O::options())
     }
-    fn operation<'s, K: 'static, M: SourceMode<'s, S>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -417,7 +415,7 @@ where
     fn spec(&self) -> IndexSpec {
         IndexSpec::Ore
     }
-    fn operation<'s, K: 'static, M: SourceMode<'s, S>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -434,7 +432,7 @@ where
     fn spec(&self) -> IndexSpec {
         IndexSpec::Ope
     }
-    fn operation<'s, K: 'static, M: SourceMode<'s, S>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -451,7 +449,7 @@ where
     fn spec(&self) -> IndexSpec {
         IndexSpec::OreBlock
     }
-    fn operation<'s, K: 'static, M: SourceMode<'s, S>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -469,7 +467,7 @@ impl Index<serde_json::Value> for Json {
     fn spec(&self) -> IndexSpec {
         IndexSpec::Json(self.options.clone())
     }
-    fn operation<'s, K: 'static, M: SourceMode<'s, serde_json::Value>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, serde_json::Value>>(
         &self,
     ) -> Encryption<'s, serde_json::Value, Self::Term, K, CallerContext, M> {
         json_terms::<K, M>(self.options.clone())
@@ -504,7 +502,7 @@ pub trait Indexes<S> {
     fn operations<'s, K: 'static, M>(&self) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
     where
         S: 's,
-        M: SourceMode<'s, S>;
+        M: WipeSource<'s, S>;
     /// The one index of type `I` in this set, for the query side, where a
     /// query asks one index for one term and needs no ciphertext; its
     /// [`operation`](Index::operation) is that term alone.
@@ -588,7 +586,7 @@ macro_rules! single_index {
             ) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
             where
                 S: 's,
-                M: SourceMode<'s, S>,
+                M: WipeSource<'s, S>,
             {
                 self.operation()
             }
@@ -611,7 +609,7 @@ macro_rules! tuple_of_indexes {
             ) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
             where
                 S: 's,
-                M: SourceMode<'s, S>,
+                M: WipeSource<'s, S>,
             {
                 tuple_of_indexes!(@zip self, $($at),+)
                     .map(|$nested| ($($name,)+))
@@ -664,7 +662,7 @@ impl<S, I: Index<S>> Indexes<S> for Vec<I> {
     fn operations<'s, K: 'static, M>(&self) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
     where
         S: 's,
-        M: SourceMode<'s, S>,
+        M: WipeSource<'s, S>,
     {
         let mut indexes = self.iter();
         let Some(first) = indexes.next() else {
@@ -735,18 +733,11 @@ where
     where
         S: 's,
     {
-        let described =
-            indexed_beside(wiping_ciphertext::<S, K, Owned>(), Terms::INDEXES).accepting();
+        let described = indexed::<S, K, Owned, _>(Terms::INDEXES).accepting();
         if let Err(error) = check_indexes(&Terms::INDEXES.specs()) {
             // The refused value is the description's to wipe. The leaves'
             // contexts are kept, as in the borrowed form.
-            return Encryption::from_owned_build(
-                described.shapes(),
-                move |mut source: S, cipher, _| {
-                    zeroize::Zeroize::zeroize(&mut source);
-                    super::Pending::failed(cipher, error)
-                },
-            );
+            return described.refused_wiping(error);
         }
         described
     }
@@ -881,25 +872,10 @@ pub fn indexed<'s, S, K, M, X>(
 where
     S: crate::Encrypt + vitaminc_aead::EncryptRef + 's,
     K: 'static,
-    M: SourceMode<'s, S>,
+    M: WipeSource<'s, S>,
     X: Indexes<S>,
 {
-    indexed_beside(ciphertext::<S, K, M>(), indexes)
-}
-/// The terms of `indexes` beside the ciphertext that `sealed` describes. This
-/// is the body of [`indexed`]. The owned declaration of [`Encrypted`] passes a
-/// ciphertext that wipes its plaintext when the context is refused.
-fn indexed_beside<'s, S, K, M, X>(
-    sealed: Encryption<'s, S, StackCipherText, K, AeadContext, M>,
-    indexes: X,
-) -> Encryption<'s, S, Encrypted<X::Terms>, K, CallerContext, M>
-where
-    S: crate::Encrypt + vitaminc_aead::EncryptRef + 's,
-    K: 'static,
-    M: SourceMode<'s, S>,
-    X: Indexes<S>,
-{
-    sealed
+    ciphertext::<S, K, M>()
         .accepting::<CallerContext>()
         .zip(indexes.operations::<K, super::Borrowed>())
         .map(|(ciphertext, terms)| Encrypted { ciphertext, terms })

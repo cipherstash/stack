@@ -524,7 +524,7 @@ pub trait Input<A: Arity>: Sized + 'static {
         K: 'static;
 }
 
-impl<S: 'static> Input<One> for S {
+impl<S: zeroize::Zeroize + 'static> Input<One> for S {
     type Plaintext = S;
     type Terms<T: 'static> = T;
 
@@ -548,7 +548,7 @@ impl<S: 'static> Input<One> for S {
 }
 
 /// Both bounds under the one label, settled together.
-impl<S: 'static> Input<Pair> for (S, S) {
+impl<S: zeroize::Zeroize + 'static> Input<Pair> for (S, S) {
     type Plaintext = S;
     type Terms<T: 'static> = (T, T);
 
@@ -842,7 +842,7 @@ impl QueryToken {
 /// The check reads the value in place, so nothing is copied.
 impl<S> Supports<Eq, S> for Equality
 where
-    S: crate::Encrypt + vitaminc_aead::EncryptRef + 'static,
+    S: crate::Encrypt + vitaminc_aead::EncryptRef + zeroize::Zeroize + 'static,
 {
     type Query = EqualityTerm;
     type Verifier = ();
@@ -862,7 +862,7 @@ impl Equality {
 
 impl<S, O> Supports<Matches, S> for Match<O>
 where
-    S: AsRef<str> + 'static,
+    S: AsRef<str> + zeroize::Zeroize + 'static,
     O: MatchConfig,
 {
     type Query = MatchQuery<O>;
@@ -999,14 +999,14 @@ impl<T: LabelledTarget> LabelledTarget for crate::target::Encrypted<T> {}
 
 impl<S> Answers<Eq, S> for EqualityTerm
 where
-    S: crate::Encrypt + vitaminc_aead::EncryptRef + 'static,
+    S: crate::Encrypt + vitaminc_aead::EncryptRef + zeroize::Zeroize + 'static,
 {
     type Via = Equality;
 }
 
 impl<S, O> Answers<Matches, S> for MatchTerms<O>
 where
-    S: AsRef<str> + 'static,
+    S: AsRef<str> + zeroize::Zeroize + 'static,
     O: MatchConfig,
 {
     type Via = Match<O>;

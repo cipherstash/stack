@@ -50,7 +50,7 @@ use super::{Error, Reason};
 use crate::json::{JsonOptions, JsonPath};
 use crate::sem::{DefaultMatch, MatchOptions, Orderable, TermError, Tokenizer};
 use crate::target::{
-    chosen, CallerContext, Encryption, Index, IndexSpec, Pending, Source, SourceMode,
+    chosen, CallerContext, Encryption, Index, IndexSpec, Pending, Source, WipeSource,
 };
 use crate::value::{Date, Decimal, Timestamp};
 use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
@@ -876,7 +876,7 @@ impl Index<ValueFrame> for IndexSpec {
     fn spec(&self) -> IndexSpec {
         self.clone()
     }
-    fn operation<'s, K: 'static, M: SourceMode<'s, ValueFrame>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, ValueFrame>>(
         &self,
     ) -> Encryption<'s, ValueFrame, TermBytes, K, CallerContext, M> {
         let spec = self.clone();

@@ -1,27 +1,30 @@
 //! An operation in owned mode asks nothing of the plaintext beyond the
-//! operation's own capability: no `Clone`, so a value that is moved and
-//! wiped can be sealed or indexed. A ciphertext and an equality term read
-//! the value by reference as well as by value, which is `EncryptRef`.
+//! operation's own capability and `Zeroize`: no `Clone`, so a value that is
+//! moved and wiped can be sealed or indexed. A ciphertext and an equality
+//! term read the value by reference as well as by value, which is
+//! `EncryptRef`. The operation wipes the value it is handed, which is
+//! `Zeroize`.
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OpeTerm, Orderable, OreTerm};
 use stack_encrypt::target::{
     ciphertext, equality, matching, ope, ore, CallerContext, Owned, Pending,
 };
 use stack_encrypt::{nonempty, Encrypt, EncryptRef, KeysetCipher, StackCipherText};
 use stack_kms::FakeDataKeySource;
+use zeroize::Zeroize;
 
-fn seal<'a, S: Encrypt + EncryptRef>(
+fn seal<'a, S: Encrypt + EncryptRef + Zeroize>(
     keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
     value: S,
 ) -> Pending<'a, StackCipherText, FakeDataKeySource> {
     keyset.run(ciphertext::<_, _, Owned>(), value, nonempty!("column").into())
 }
-fn index<'a, S: Encrypt + EncryptRef>(
+fn index<'a, S: Encrypt + EncryptRef + Zeroize>(
     keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
     value: S,
 ) -> Pending<'a, EqualityTerm, FakeDataKeySource> {
     keyset.run(equality::<_, _, Owned>(), value, CallerContext::from(nonempty!("column")))
 }
-fn search<'a, S: AsRef<str>>(
+fn search<'a, S: AsRef<str> + Zeroize>(
     keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
     value: S,
 ) -> Pending<'a, MatchTerms, FakeDataKeySource> {

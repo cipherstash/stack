@@ -24,7 +24,7 @@ use stack_encrypt::sem::{
 };
 use stack_encrypt::target::{
     CallerContext, DecryptSource, EncryptTarget, Encryption, Index, IndexSpec, NoScope, Scope,
-    SourceMode,
+    WipeSource,
 };
 use stack_encrypt::{
     nonempty, DecryptFrom, EncryptInto, Encrypted, Equality, Error, FieldReference, Label,
@@ -460,7 +460,7 @@ impl Index<String> for Labelled {
     fn spec(&self) -> IndexSpec {
         Index::<String>::spec(&Equality)
     }
-    fn operation<'s, K: 'static, M: SourceMode<'s, String>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, String>>(
         &self,
     ) -> Encryption<'s, String, EqualityTerm, K, CallerContext, M> {
         Index::<String>::operation(&Equality)
@@ -515,7 +515,7 @@ impl Index<String> for Unextendable {
     fn spec(&self) -> IndexSpec {
         Index::<String>::spec(&Equality)
     }
-    fn operation<'s, K: 'static, M: SourceMode<'s, String>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, String>>(
         &self,
     ) -> Encryption<'s, String, EqualityTerm, K, CallerContext, M> {
         Index::<String>::operation(&Equality)

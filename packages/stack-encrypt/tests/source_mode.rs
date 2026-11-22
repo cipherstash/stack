@@ -15,9 +15,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use stack_encrypt::sem::{EqualityTerm, MatchTerms};
+use stack_encrypt::sem::{DefaultMatch, EqualityTerm, MatchTerms};
 use stack_encrypt::target::{
-    ciphertext, equality, matching, AeadContext, Borrowed, CallerContext, Encryption, Owned,
+    ciphertext, equality, matching, AeadContext, Borrowed, CallerContext, Encrypted, Encryption,
+    Owned,
 };
 use stack_encrypt::target::{EncryptTarget, RequiredContext, StoredContext};
 use stack_encrypt::{
@@ -72,6 +73,12 @@ impl PrfValue for Secret {
         C: IntoPrfContext<'a>,
     {
         self.0.prf_visit_with_context(prf, context, visitor)
+    }
+}
+/// Replacing the guard drops the old one, which wipes the text.
+impl Zeroize for Secret {
+    fn zeroize(&mut self) {
+        self.0 = Protected::new(String::new());
     }
 }
 impl AsRef<str> for Secret {
@@ -248,8 +255,8 @@ async fn one_owned_operation_makes_no_copy() {
 fn sealed_and_indexed<'s, S, M>(
 ) -> Encryption<'s, S, (StackCipherText, EqualityTerm), FakeDataKeySource, CallerContext, M>
 where
-    S: Encrypt + vitaminc_aead::EncryptRef + 's,
-    M: stack_encrypt::target::SourceMode<'s, S>,
+    S: Encrypt + vitaminc_aead::EncryptRef + Zeroize + 's,
+    M: stack_encrypt::target::WipeSource<'s, S>,
 {
     ciphertext().accepting().zip(equality())
 }
@@ -540,6 +547,11 @@ impl PrfValue for Dropped {
         std::mem::take(&mut self.text).prf_visit_with_context(prf, context, visitor)
     }
 }
+impl Zeroize for Dropped {
+    fn zeroize(&mut self) {
+        self.text.zeroize();
+    }
+}
 impl AsRef<str> for Dropped {
     fn as_ref(&self) -> &str {
         &self.text
@@ -606,4 +618,144 @@ async fn an_owned_plaintext_is_dropped_before_its_key_request_is_sent() {
     );
     let expected: MatchTerms = keyset.match_terms(NUMBER, context()).await.unwrap();
     assert_eq!(term, expected, "the term is the text's term");
+}
+
+// --- An owned value is wiped once ---------------------------------------------
+
+/// A plaintext that counts its wipes, and is not `Clone`. Walked by value,
+/// it reads its text and then wipes itself, as a Vitamin C type does. So a
+/// wipe is counted whether the value was sealed or let go unread.
+struct Wiped {
+    text: String,
+    wipes: Arc<AtomicUsize>,
+}
+
+impl Wiped {
+    fn new(text: &str) -> (Self, Arc<AtomicUsize>) {
+        let wipes = Arc::new(AtomicUsize::new(0));
+        let value = Self {
+            text: text.to_string(),
+            wipes: wipes.clone(),
+        };
+        (value, wipes)
+    }
+}
+impl Zeroize for Wiped {
+    fn zeroize(&mut self) {
+        let _ = self.wipes.fetch_add(1, Ordering::SeqCst);
+        self.text.zeroize();
+    }
+}
+impl Encrypt for Wiped {
+    fn visit<S: Sink>(mut self, sink: S) -> Result<S::Ok, S::Error> {
+        let walked = self.text.as_str().visit(sink);
+        self.zeroize();
+        walked
+    }
+}
+impl Encrypt for &Wiped {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.text.as_str().visit(sink)
+    }
+}
+impl AsRef<str> for Wiped {
+    fn as_ref(&self) -> &str {
+        &self.text
+    }
+}
+
+/// A ciphertext and two terms over one value.
+type SealedEqualAndMatched = Encrypted<(EqualityTerm, MatchTerms)>;
+
+fn an_empty_scope() -> RequiredContext<CallerContext> {
+    RequiredContext::from(CallerContext::from(stack_encrypt::target::Scope::new(
+        String::new(),
+    )))
+}
+
+/// `encrypt_into` hands the value to the one operation written first. The
+/// two terms read it in place, the ciphertext seals it, and the value is
+/// wiped once. A refused context wipes it once too, and seals nothing.
+#[tokio::test]
+async fn a_value_with_a_ciphertext_and_two_terms_is_wiped_once() {
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+
+    let (value, wipes) = Wiped::new(NUMBER);
+    let sealed: SealedEqualAndMatched = value
+        .encrypt_into_with_context(&keyset, context())
+        .await
+        .unwrap();
+    assert_eq!(wipes.load(Ordering::SeqCst), 1, "sealed: one wipe");
+    let opened: String = String::decrypt_from_with_context(sealed.ciphertext, &cipher, aead())
+        .await
+        .unwrap();
+    assert_eq!(opened, NUMBER);
+    let (equal, matched) = sealed.terms;
+    assert_eq!(
+        equal,
+        keyset.equality_term(NUMBER, context()).await.unwrap()
+    );
+    let expected: MatchTerms = keyset.match_terms(NUMBER, context()).await.unwrap();
+    assert_eq!(matched, expected);
+
+    let (value, wipes) = Wiped::new(NUMBER);
+    let refused = keyset
+        .run(
+            <SealedEqualAndMatched as EncryptTarget<Wiped>>::owned_encryption(),
+            value,
+            an_empty_scope(),
+        )
+        .await;
+    assert!(refused.is_err(), "an empty scope is refused");
+    assert_eq!(wipes.load(Ordering::SeqCst), 1, "refused: one wipe");
+
+    // The borrowed form leaves the value with the caller.
+    let (value, wipes) = Wiped::new(NUMBER);
+    let _: SealedEqualAndMatched = keyset
+        .run(
+            <SealedEqualAndMatched as EncryptTarget<Wiped>>::encryption(),
+            &value,
+            RequiredContext::from(caller()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wipes.load(Ordering::SeqCst), 0, "borrowed: the caller's");
+    drop(value);
+}
+
+/// Each public operation, composed by hand in `Owned` mode, wipes the value
+/// it is handed once: after it is read, and when the context is refused.
+#[tokio::test]
+async fn each_owned_operation_wipes_its_value_once() {
+    use stack_encrypt::target::Scope;
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let empty = || CallerContext::from(Scope::new(String::new()));
+
+    macro_rules! wiped_once {
+        ($operation:expr, $context:expr, $what:literal) => {{
+            let (value, wipes) = Wiped::new(NUMBER);
+            let _ = keyset.run($operation, value, $context).await;
+            assert_eq!(wipes.load(Ordering::SeqCst), 1, $what);
+        }};
+    }
+    wiped_once!(ciphertext::<_, _, Owned>(), aead(), "ciphertext, sealed");
+    wiped_once!(
+        ciphertext::<_, _, Owned>(),
+        AeadContext::from(Scope::new(String::new())),
+        "ciphertext, refused"
+    );
+    wiped_once!(equality::<_, _, Owned>(), caller(), "equality, derived");
+    wiped_once!(equality::<_, _, Owned>(), empty(), "equality, refused");
+    wiped_once!(
+        matching::<_, _, Owned, DefaultMatch>(),
+        caller(),
+        "matching, derived"
+    );
+    wiped_once!(
+        matching::<_, _, Owned, DefaultMatch>(),
+        empty(),
+        "matching, refused"
+    );
 }

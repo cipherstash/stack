@@ -43,8 +43,8 @@ mod sealed {
 ///   handed the value reads it and then lets go of it: a ciphertext and a
 ///   term wipe it through Vitamin C, and a passthrough moves it into the
 ///   output. Several operations over one owned value
-///   ([`zip`](super::Encryption::zip)) read it in place first, and the last
-///   one is handed the value.
+///   ([`zip`](super::Encryption::zip)) read it in place first, and the one
+///   written first is handed the value.
 ///
 /// The trait is sealed: these two modes are the only ones.
 pub trait SourceMode<'s, S: 's>: sealed::Sealed + 's {
@@ -135,6 +135,35 @@ impl<'s, S: 's> SourceMode<'s, S> for Owned {
     type Source = S;
     fn source(source: Self::Source) -> Source<'s, S> {
         Source::given(source)
+    }
+}
+
+/// A mode in which an operation that seals or indexes the plaintext can let
+/// go of it. Every such operation asks for it, and
+/// [`passthrough`](super::passthrough) does not.
+///
+/// - [`Borrowed`] always can: the plaintext is the caller's, and the
+///   operation leaves it there.
+/// - [`Owned`] can when `S` is `Zeroize`. The operation that is handed the
+///   value wipes it on every path: once it has read the value, and when the
+///   context is refused or an operation fails.
+///
+/// So in `Owned` mode a plaintext that is sealed or indexed is `Zeroize`,
+/// and in `Borrowed` mode it need not be.
+pub trait WipeSource<'s, S: 's>: SourceMode<'s, S> {
+    /// Let go of the plaintext. A value is wiped, and a borrow is left with
+    /// the caller.
+    #[doc(hidden)]
+    fn wipe(source: Source<'_, S>);
+}
+impl<'s, S: 's> WipeSource<'s, S> for Borrowed {
+    fn wipe(source: Source<'_, S>) {
+        drop(source);
+    }
+}
+impl<'s, S: zeroize::Zeroize + 's> WipeSource<'s, S> for Owned {
+    fn wipe(source: Source<'_, S>) {
+        source.release(|value| drop(vitaminc_protected::Protected::new(value)));
     }
 }
 

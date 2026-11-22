@@ -24,7 +24,7 @@ use super::{
 };
 use crate::refusal::{Error, Reason};
 use crate::sem::TermError;
-use crate::target::{AeadContext, CallerContext, DeclaredContext, Index, Json, Owned};
+use crate::target::{AeadContext, CallerContext, DeclaredContext, Owned};
 use crate::{ContextPiece, KeysetCipher, Label, NonEmpty, Pending};
 
 /// A document parsed from an input, wiped when it drops.
@@ -449,7 +449,7 @@ fn terms<'a, K: 'static>(
     value: Value,
 ) -> Pending<'a, crate::json::JsonTerms, K> {
     keyset.run(
-        Index::<Value>::operation::<K, Owned>(&Json::new(options.clone())).under(under.column()),
+        crate::target::json_terms::<K, Owned>(options.clone()).under(under.column()),
         value,
         under.parts.clone(),
     )

@@ -8,10 +8,12 @@ use stack_encrypt::target::{
 };
 use stack_encrypt::{nonempty, Encrypt, EncryptRef, KeysetCipher, StackCipherText};
 use stack_kms::FakeDataKeySource;
+use zeroize::Zeroize;
 
-// Bounded only by what the operations read. `Clone` returning to `zip`, or to
-// either operation, fails this file.
-fn seal_and_index<'a, S: Encrypt + EncryptRef + AsRef<str>>(
+// Bounded only by what the operations read, and `Zeroize` for the one that is
+// handed the value. `Clone` returning to `zip`, or to either operation, fails
+// this file.
+fn seal_and_index<'a, S: Encrypt + EncryptRef + AsRef<str> + Zeroize>(
     keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
     value: S,
 ) -> Pending<'a, ((StackCipherText, EqualityTerm), MatchTerms), FakeDataKeySource> {
@@ -23,7 +25,7 @@ fn seal_and_index<'a, S: Encrypt + EncryptRef + AsRef<str>>(
 }
 
 // The same through `indexed`, as a target with terms composes it.
-fn indexed_owned<'a, S: Encrypt + EncryptRef + AsRef<str>>(
+fn indexed_owned<'a, S: Encrypt + EncryptRef + AsRef<str> + Zeroize>(
     keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
     value: S,
 ) -> Pending<'a, Encrypted<(EqualityTerm, MatchTerms)>, FakeDataKeySource> {

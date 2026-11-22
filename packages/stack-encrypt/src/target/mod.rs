@@ -205,7 +205,7 @@ pub(crate) use pending::KeysetSelector;
 pub use pending::{CipherRef, Pending, PendingFuture};
 pub use request::{Request, Responses};
 pub(crate) use source::Held;
-pub use source::{Borrowed, ConsumeSource, Owned, Source, SourceMode};
+pub use source::{Borrowed, ConsumeSource, Owned, Source, SourceMode, WipeSource};
 pub use stack_encrypt_derive::{DecryptSource, EncryptTarget};
 /// The cleanup trait that every owned plaintext must implement. It is
 /// re-exported here so that the derives can name it, even when the caller's
