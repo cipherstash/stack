@@ -4,11 +4,11 @@
 //! term read the value by reference as well as by value, which is
 //! `EncryptRef`. The operation wipes the value it is handed, which is
 //! `Zeroize`.
-use stack_encrypt::sem::{EqualityTerm, MatchTerms, OpeTerm, Orderable, OreTerm};
+use stack_encrypt::sem::{EqualityTerm, MatchTerms, OpeTerm, OreTerm};
 use stack_encrypt::target::{
     ciphertext, equality, matching, ope, ore, CallerContext, Owned, Pending,
 };
-use stack_encrypt::{nonempty, Encrypt, EncryptRef, KeysetCipher, StackCipherText};
+use stack_encrypt::{nonempty, Encrypt, EncryptRef, KeysetCipher, Orderable, StackCipherText};
 use stack_kms::FakeDataKeySource;
 use zeroize::Zeroize;
 
@@ -30,15 +30,15 @@ fn search<'a, S: AsRef<str> + Zeroize>(
 ) -> Pending<'a, MatchTerms, FakeDataKeySource> {
     keyset.run(matching::<_, _, Owned, _>(), value, CallerContext::from(nonempty!("column")))
 }
-// Bounded only by the order terms' own trait: `Orderable` does not imply
-// `Clone`, so `Clone` returning to either constructor's bounds fails this
-// file.
+// Bounded by vitaminc-ore's `Orderable`, read in place (`EncryptRef`), and
+// wiped (`Zeroize`). `Orderable` does not imply `Clone`, so `Clone`
+// returning to either constructor's bounds fails this file.
 fn order<'a, S>(
     keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
     value: S,
 ) -> Pending<'a, OreTerm<S>, FakeDataKeySource>
 where
-    S: Orderable,
+    S: Orderable + EncryptRef + Zeroize + 'static,
 {
     keyset.run(ore::<_, _, Owned>(), value, CallerContext::from(nonempty!("column")))
 }
@@ -47,7 +47,7 @@ fn order_preserving<'a, S>(
     value: S,
 ) -> Pending<'a, OpeTerm<S>, FakeDataKeySource>
 where
-    S: Orderable,
+    S: Orderable + EncryptRef + Zeroize + 'static,
 {
     keyset.run(ope::<_, _, Owned>(), value, CallerContext::from(nonempty!("column")))
 }

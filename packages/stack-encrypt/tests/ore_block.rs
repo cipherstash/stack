@@ -14,9 +14,10 @@
 
 use std::cmp::Ordering;
 
-use stack_encrypt::sem::{Orderable, OreBlockTerm, TermBytesError, TermError};
+use stack_encrypt::sem::{OreBlockTerm, TermBytesError, TermError};
 #[cfg(all(feature = "jiff", feature = "rust_decimal"))]
 use stack_encrypt::value::{Date, Decimal, Timestamp};
+use stack_encrypt::Orderable;
 use stack_encrypt::{nonempty, Error, KeysetCipher, StackCipher};
 use stack_kms::FakeDataKeySource;
 
@@ -32,7 +33,7 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-async fn term<T: Orderable>(
+async fn term<T: Orderable + 'static>(
     keyset: &KeysetCipher<'_, FakeDataKeySource>,
     value: T,
 ) -> OreBlockTerm<T> {
@@ -306,44 +307,6 @@ async fn text_orders_by_its_fold_shortest_first() {
     }
 }
 
-/// Bytes are the chained scheme unpadded, ordered as bytes: a trailing zero
-/// byte is kept, and the empty value still makes a keyed block.
-#[tokio::test]
-async fn bytes_order_as_bytes() {
-    let cipher = cipher().await;
-    let keyset = cipher.default_keyset();
-    let ordered: Vec<Vec<u8>> = vec![vec![], vec![0], vec![0, 0], vec![1], vec![1, 0], vec![255]];
-    let mut terms = Vec::new();
-    for value in ordered {
-        let term = term(&keyset, value).await;
-        assert_eq!(&term.as_bytes()[4..7], &[0, 0, 0], "bytes are not padded");
-        assert!(
-            blocks(term.as_bytes()) >= 2,
-            "the marker byte is two blocks"
-        );
-        terms.push(term);
-    }
-    assert_sorted(&terms, "bytes");
-}
-
-/// Bytes take a term up to 1023 bytes, as text's fold does: ore-rs's
-/// 1024-byte ceiling counts the marker byte in front of them.
-#[tokio::test]
-async fn bytes_of_more_than_1023_bytes_have_no_term() {
-    let cipher = cipher().await;
-    let keyset = cipher.default_keyset();
-    let longest = term(&keyset, vec![7u8; 1023]).await;
-    assert!(blocks(longest.as_bytes()) > 1023, "every byte is ordered");
-    let too_long = keyset
-        .ore_block_term(vec![7u8; 1024], nonempty!("users/n"))
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(too_long, Error::Term(TermError::OreBlockTooLong)),
-        "{too_long:?}"
-    );
-}
-
 /// One value encrypts to different bytes each time (the right half's
 /// nonce), and those terms compare equal; the left half is deterministic.
 #[tokio::test]
@@ -493,7 +456,7 @@ async fn refusals_name_no_part_of_the_value() {
     );
     // A boolean and an 8-bit integer have no block ORE term, as they have
     // no ORE or OPE term: `ore_block_term(true, ..)` and
-    // `ore_block_term(7u8, ..)` do not compile (`sem::Orderable`).
+    // `ore_block_term(7u8, ..)` do not compile (`Orderable`).
 }
 
 /// Decoding is structural: a ciphertext of either scheme decodes, and

@@ -947,16 +947,6 @@ fn an_order_term_of_owned_text_or_bytes_leaves_no_plaintext_on_the_heap() {
         rt.block_on(async { keyset.ope_term(text, nonempty!("users/surname")).await })
             .unwrap();
     });
-    let bytes = marked("order").into_bytes();
-    watched("ore_term (Vec<u8>)", || {
-        rt.block_on(async { keyset.ore_term(bytes, nonempty!("users/blob")).await })
-            .unwrap();
-    });
-    let bytes = marked("order").into_bytes();
-    watched("ope_term (Vec<u8>)", || {
-        rt.block_on(async { keyset.ope_term(bytes, nonempty!("users/blob")).await })
-            .unwrap();
-    });
 }
 
 #[test]

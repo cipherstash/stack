@@ -30,8 +30,9 @@ use std::cmp::Ordering;
 
 use eql_bindings::encryption::targets;
 use stack_encrypt::dynamic::ValueFrame;
-use stack_encrypt::sem::{Orderable, OreBlockTerm};
+use stack_encrypt::sem::OreBlockTerm;
 use stack_encrypt::value::{Date, Decimal, Timestamp};
+use stack_encrypt::Orderable;
 use stack_encrypt::{Encrypt, Label};
 
 type Keyset<'a> = stack_encrypt::KeysetCipher<'a, common::RecordingKeySource>;

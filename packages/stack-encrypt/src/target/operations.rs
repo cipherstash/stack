@@ -1212,19 +1212,19 @@ term_operation!(
     /// The order-revealing term of `S` under the context the tree hands it.
     /// The bound is the leaf's own: it says which `S` has an order target.
     ore, crate::sem::OreTerm<S>, wipe(std::convert::identity), [],
-    [S: crate::sem::Orderable]
+    [S: crate::Orderable + EncryptRef + 'static]
 );
 term_operation!(
     /// The order-preserving term of `S` under the context the tree hands it,
     /// with the same bounds as [`ore`].
     ope, crate::sem::OpeTerm<S>, wipe(std::convert::identity), [],
-    [S: crate::sem::Orderable]
+    [S: crate::Orderable + EncryptRef + 'static]
 );
 term_operation!(
     /// The block ORE term of `S` under the context the tree hands it, with
     /// the same bounds as [`ore`].
     ore_block, crate::sem::OreBlockTerm<S>, wipe(std::convert::identity), [],
-    [S: crate::sem::Orderable]
+    [S: crate::Orderable + EncryptRef + 'static]
 );
 
 /// The JSON index's terms of a document under the context the tree hands
@@ -1705,7 +1705,9 @@ impl<S: AsRef<str> + zeroize::Zeroize, O: crate::sem::MatchConfig + 'static> Enc
 }
 macro_rules! owned_order_term {
     ($($ty:ident, $operation:ident, $spec:ident;)+) => {$(
-        impl<S: crate::sem::Orderable + zeroize::Zeroize> EncryptTarget<S> for crate::sem::$ty<S> {
+        impl<S: crate::Orderable + EncryptRef + zeroize::Zeroize + 'static> EncryptTarget<S>
+            for crate::sem::$ty<S>
+        {
             type ContextInput = RequiredContext<CallerContext>;
             fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
             where

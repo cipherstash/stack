@@ -432,3 +432,8 @@ Decision 4 left the form of the `Zeroize` bound to the implementation.
   `Index`.
 - A typed query hands its value to the index by value, so a query value
   is `Zeroize`.
+- #1737 also lands decision 5. The typed path has no order term of bytes.
+  A data plan can still declare an order index on bytes until #1611 refuses
+  it. Until then the dynamic path derives that term by naming the `Bytes`
+  target. So the stored rows and the conformance corpus do not change in
+  #1737.

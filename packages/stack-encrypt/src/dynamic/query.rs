@@ -42,7 +42,7 @@
 //! declares only one of them is answered through it. Every order term is
 //! derived over the value's order key: a float's ties `-0.0` with
 //! `0.0` and sorts every NaN last, and text's is its fold. An ordering over
-//! bytes is not answered, as `op::Ordered` does not cover them. Nor is one
+//! bytes is not answered, as `Orderable` does not cover them. Nor is one
 //! over an 8-bit integer, which has no order term. A timestamp orders by the
 //! microsecond and a decimal by value, so `1.5` ties `1.50`.
 //!
@@ -213,7 +213,7 @@ impl Op {
 
 /// The kinds the ordering operators are answered over: the integers of 16
 /// bits and wider, `int16` to `uint128`, the floats, text, and dates,
-/// timestamps and decimals, as [`op::Ordered`](crate::op::Ordered) covers
+/// timestamps and decimals, as [`Orderable`](crate::Orderable) covers
 /// them in the typed path. Not `int8` or `uint8`, which have no order term.
 /// Each orders by its order key; a `float32` is ordered as the
 /// `f64` it widens to, as the typed path asks.

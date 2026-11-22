@@ -526,13 +526,13 @@ fn leaf_op(
 ) -> Result<Option<Vec<u8>>, TermError> {
     Ok(match value {
         Value::Number(n) => Some(
-            crate::sem::ope(prf, n.as_f64().unwrap_or(0.0), context.clone())?
+            crate::sem::ope_of::<f64, _>(prf, n.as_f64().unwrap_or(0.0), context.clone())?
                 .into_inner()
                 .as_ref()
                 .to_vec(),
         ),
         Value::String(s) => Some(
-            crate::sem::ope(prf, s.clone(), context.clone())?
+            crate::sem::ope_of::<String, _>(prf, s.as_str(), context.clone())?
                 .into_inner()
                 .as_ref()
                 .to_vec(),

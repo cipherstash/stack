@@ -520,6 +520,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     term's normalized form or order encoding, wiped on drop. A borrowed
     JSON document is the one plaintext that is copied. That copy is made
     once, and wiped.
+- **An order index is bounded by vitaminc-ore's `Orderable`** (#1734).
+  `sem::Orderable` and `op::Ordered` are removed. `stack_encrypt::Orderable`
+  re-exports vitaminc-ore's trait, and its table is vitaminc-ore's.
+  - It covers the integers of 16 bits and wider, `f32`, `f64`, `String`,
+    `&str`, and `value::Date`, `value::Timestamp`, and `value::Decimal`. It
+    covers a reference to each. It does not cover bytes, an 8-bit integer,
+    or a `bool`.
+  - An order term, an order index, or an ordering operator over bytes does
+    not compile. Before, `OreTerm<Vec<u8>>` compiled, but no ordering
+    operator answered it. Its term revealed the order of the rows.
+  - To upgrade a record with an order index on bytes, remove the index.
+    Rows stored before stay readable. Opening reads only the ciphertext
+    and ignores the stored order term, so name the field
+    `StackCipherText`, or `Encrypted<..>` over the terms it keeps.
+  - `KeysetCipher::ore_term`, `ope_term`, and `ore_block_term` no longer
+    take bytes. They take a reference such as `&String` or `&str`, as well
+    as a value.
+  - An order index reads its value in place, so it is bounded by
+    `Orderable + EncryptRef`. A target or a query value of it is also
+    `Zeroize` and `'static`.
+  - A data plan still accepts an order index on bytes, and derives its term
+    as before. Stored rows and the conformance corpus do not change.
+  - The JSON index derives a string leaf's OPE term from the document in
+    place, and a data plan derives a text field's order term from the
+    frame in place. Each copied the text before.
 - **`value::Date`, `value::Timestamp`, and `value::Decimal` are vitaminc's
   types** (#1734). Stack Encrypt's own copies are removed. The stored
   format is unchanged.

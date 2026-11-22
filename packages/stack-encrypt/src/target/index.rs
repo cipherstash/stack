@@ -409,7 +409,7 @@ impl<S: AsRef<str>, O: MatchConfig + 'static> Index<S> for Match<O> {
 }
 impl<S> Index<S> for Ore
 where
-    S: crate::sem::Orderable,
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
 {
     type Term = OreTerm<S>;
     fn spec(&self) -> IndexSpec {
@@ -426,7 +426,7 @@ where
 }
 impl<S> Index<S> for Ope
 where
-    S: crate::sem::Orderable,
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
 {
     type Term = OpeTerm<S>;
     fn spec(&self) -> IndexSpec {
@@ -443,7 +443,7 @@ where
 }
 impl<S> Index<S> for OreBlock
 where
-    S: crate::sem::Orderable,
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
 {
     type Term = OreBlockTerm<S>;
     fn spec(&self) -> IndexSpec {
@@ -800,21 +800,21 @@ impl<S: AsRef<str>, O: MatchConfig + 'static> TermSet<S> for MatchTerms<O> {
 }
 impl<S> TermSet<S> for OreTerm<S>
 where
-    S: crate::sem::Orderable,
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
 {
     type Indexes = Ore;
     const INDEXES: Ore = Ore;
 }
 impl<S> TermSet<S> for OpeTerm<S>
 where
-    S: crate::sem::Orderable,
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
 {
     type Indexes = Ope;
     const INDEXES: Ope = Ope;
 }
 impl<S> TermSet<S> for OreBlockTerm<S>
 where
-    S: crate::sem::Orderable,
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
 {
     type Indexes = OreBlock;
     const INDEXES: OreBlock = OreBlock;

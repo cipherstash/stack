@@ -48,12 +48,17 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use super::{Error, Reason};
 use crate::json::{JsonOptions, JsonPath};
-use crate::sem::{DefaultMatch, MatchOptions, Orderable, TermError, Tokenizer};
+use crate::sem::{
+    ope_raw, order_error, order_pending, ore_block_error, ore_block_raw, ore_raw, target_of,
+    DefaultMatch, MatchOptions, TermError, Tokenizer,
+};
 use crate::target::{
     chosen, CallerContext, Encryption, Index, IndexSpec, Pending, Source, WipeSource,
 };
 use crate::value::{Date, Decimal, Timestamp};
+use crate::Orderable;
 use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
+use vitaminc_ore::OrderTarget;
 
 /// The runtime half of [`IndexSpec`]: the domain table, and the index's wire
 /// form in a record plan.
@@ -637,12 +642,10 @@ enum OrderIndex {
 /// Rust type the typed path would have named; `None` for a scalar it does
 /// not order ([`ordered`]).
 ///
-/// Text and bytes are copied out of the walk into an owned `String` or
-/// `Vec<u8>` and moved to the encryptor, which wraps the one copy in a
-/// `Zeroizing` on receipt: the order term takes its value by ownership
-/// (the visitor carries it) and wipes it, so nothing is freed with the
-/// plaintext still in it, in a guest's linear memory, where the host can
-/// read it.
+/// Text and bytes are read where the walk holds them, and not copied:
+/// each term makes the scalar's order encoding first, under `Protected`,
+/// so nothing is freed with the plaintext still in it, in a guest's linear
+/// memory, where the host can read it.
 ///
 /// Each scalar is encoded at the target of the Rust type named here
 /// ([`Orderable`]), as on the typed path: text by its case and accent
@@ -693,14 +696,14 @@ where
         Physical::Int(Int::U128(v)) => order(cipher, index, v, context),
         Physical::Float(Float::F32(v)) => order(cipher, index, v, context),
         Physical::Float(Float::F64(v)) => order(cipher, index, v, context),
-        Physical::Text(t) => order(cipher, index, t.to_owned(), context),
-        Physical::Bytes(b) => order(cipher, index, b.to_vec(), context),
+        Physical::Text(t) => order(cipher, index, t, context),
+        Physical::Bytes(b) => order_at(cipher, index, OrderTarget::Bytes, b, context),
         _ => return None,
     })
 }
 
-/// The term of `value` under `index`. The term's bytes are its frozen
-/// encoding: the raw CLLW ciphertext, or the serialised block ORE one.
+/// The term of `value` under `index`, encoded at the target of its own
+/// type ([`Orderable`]).
 fn order<'a, 'c, K: 'static, T, D>(
     cipher: &'a KeysetCipher<'_, K>,
     index: OrderIndex,
@@ -711,16 +714,60 @@ where
     T: Orderable,
     D: IntoPrfContext<'c>,
 {
+    order_at(cipher, index, target_of::<T>(), value, context)
+}
+
+/// The term of `value` under `index`, encoded as `target`. The term's
+/// bytes are its frozen encoding: the raw CLLW ciphertext, or the
+/// serialised block ORE one.
+///
+/// Bytes are not [`Orderable`]: no ordering operator compares them, so the
+/// typed path has no order term of bytes. A data plan can still declare an
+/// order index on bytes, and the rows it stored carry the term, so this path
+/// derives it as it did, by naming the `Bytes` target.
+fn order_at<'a, 'c, K: 'static, V, D>(
+    cipher: &'a KeysetCipher<'_, K>,
+    index: OrderIndex,
+    target: OrderTarget,
+    value: V,
+    context: NonEmpty<D>,
+) -> Pending<'a, TermBytes, K>
+where
+    V: Encrypt,
+    D: IntoPrfContext<'c>,
+{
+    let context = context.into_prf_context().into_owned();
     match index {
-        OrderIndex::Ore => cipher
-            .ore_term(value, context)
-            .map(|term| TermBytes(term.as_ref().to_vec())),
-        OrderIndex::Ope => cipher
-            .ope_term(value, context)
-            .map(|term| TermBytes(term.as_ref().to_vec())),
-        OrderIndex::OreBlock => cipher
-            .ore_block_term(value, context)
-            .map(|term| TermBytes(term.into_bytes())),
+        OrderIndex::Ore => order_pending(
+            cipher,
+            target,
+            value,
+            context,
+            order_error,
+            |prf, encoding, context| {
+                ore_raw(prf, encoding, context).map(|term| TermBytes(term.as_ref().to_vec()))
+            },
+        ),
+        OrderIndex::Ope => order_pending(
+            cipher,
+            target,
+            value,
+            context,
+            order_error,
+            |prf, encoding, context| {
+                ope_raw(prf, encoding, context).map(|term| TermBytes(term.as_ref().to_vec()))
+            },
+        ),
+        OrderIndex::OreBlock => order_pending(
+            cipher,
+            target,
+            value,
+            context,
+            ore_block_error,
+            |prf, encoding, context| {
+                ore_block_raw(prf, encoding, context).map(|term| TermBytes(term.into_bytes()))
+            },
+        ),
     }
 }
 
@@ -1260,7 +1307,6 @@ mod tests {
             ordered!(1.5f32, Tree::Float32(1.5), "f32");
             ordered!(2.5f64, Tree::Float64(2.5), "f64");
             ordered!("alice".to_string(), s("alice"), "text");
-            ordered!(b"ab".to_vec(), bytes(b"ab"), "bytes");
             // A date, a timestamp and a decimal, as their `value` types.
             ordered!(
                 crate::value::Date::new(jiff::civil::date(2024, 2, 29)),

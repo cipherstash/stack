@@ -101,11 +101,11 @@ it and the engine stores an order term, but no dynamic operator reads it.
 This is a leak, not only a gap. Anyone who holds the stored rows can
 compare the order terms without a key. No query uses them.
 
-The typed Rust path has the same fault. An order index needs only
-`Orderable`, but its operators need `Ordered`, and `Vec<u8>` is not
-`Ordered`. The fix is to refuse an order index on `bytes` when it is
-declared, at compile time on the typed path. Data that Go rc.3 stored must
-stay readable. Until then, this entry keeps the behaviour visible.
+The typed Rust path refuses it. An order index is bounded by vitaminc-ore's
+`Orderable`, which does not cover `Vec<u8>`, so an order index on bytes
+does not compile. The fix for the declaration is to refuse an order index
+on `bytes` there too. Data that Go rc.3 stored must stay readable. Until
+then, this entry keeps the behaviour visible.
 
 `expected_error` cases are refused before any pending operation, with the
 structured diagnostic `code`, `reason` and `field`, and no key call. They

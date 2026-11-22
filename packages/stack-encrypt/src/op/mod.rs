@@ -123,11 +123,11 @@ pub(crate) mod stats;
 pub use stats::{Limit, Stats, DEFAULT_CONFIDENCE, MAX_ROWS};
 
 use crate::sem::{
-    query, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, OpeTerm, Orderable, OreBlockTerm,
-    OreTerm, QueryTokens, RangeQuery,
+    query, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, OpeTerm, OreBlockTerm, OreTerm,
+    QueryTokens, RangeQuery,
 };
 use crate::target::{DeclaredContext, Equality, Index, Match, Ope, Ore, OreBlock, Owned, Pending};
-use crate::{Error, KeysetCipher, Label, NonEmpty};
+use crate::{Error, KeysetCipher, Label, NonEmpty, Orderable};
 
 /// A query operator: a unit type naming what a query asks of the server,
 /// and how many plaintexts it asks about ([`Arity`]).
@@ -580,53 +580,6 @@ impl<S: zeroize::Zeroize + 'static> Input<Pair> for (S, S) {
     }
 }
 
-/// A plaintext the ordering operators ([`Lt`], [`Lte`], [`Gt`], [`Gte`],
-/// [`Between`]) are answered over: the integers of 16 bits and wider, the
-/// floats (`f32` and `f64`), text (`String`), and dates, timestamps and
-/// decimals ([`value`](crate::value)). Not `u8` or `i8`, which have no
-/// order term ([`Orderable`] says why), as `bool` has none. Each is encoded
-/// as its [`Orderable`] target and its terms order as clww-ore orders that
-/// encoding: integers as numbers; floats as Postgres's `float8` does,
-/// `-0.0` tied with `0.0` and every NaN one value above `+Infinity`, an
-/// `f32` as the `f64` it widens to; text by its fold,
-/// Unicode 16 NFC with case and accents folded, so `Café`, `cafe` and
-/// `CAFÉ` tie and `alice` orders before `Zoe`; dates by day;
-/// timestamps by the microsecond, so instants within one microsecond tie;
-/// and decimals by value, so `1.5` ties `1.50`.
-///
-/// Sealed: a type joins only when the order its terms compare in is the
-/// one its operators promise, so a type whose terms could order otherwise
-/// (a newtype over folded text, say) must not be able to join. A type that
-/// meets every other bound is still refused:
-///
-/// ```compile_fail
-/// use stack_encrypt::op::Ordered;
-///
-/// struct Folded(u32);
-///
-/// impl Ordered for Folded {} // `Ordered` is sealed
-/// ```
-///
-/// [`Orderable`]: crate::sem::Orderable
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals",
-    label = "no ordering operator over this type",
-    note = "`Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term"
-)]
-pub trait Ordered: sealed::Sealed + Orderable {}
-
-macro_rules! ordered {
-    ($($ty:ty),+ $(,)?) => {$(
-        impl sealed::Sealed for $ty {}
-        impl Ordered for $ty {}
-    )+};
-}
-ordered!(u16, u32, u64, u128, i16, i32, i64, i128, f32, f64, String,);
-#[cfg(feature = "jiff")]
-ordered!(crate::value::Date, crate::value::Timestamp);
-#[cfg(feature = "rust_decimal")]
-ordered!(crate::value::Decimal);
-
 mod sealed {
     pub trait Sealed {}
     impl Sealed for super::One {}
@@ -886,7 +839,7 @@ impl<O> Match<O> {
 }
 
 /// The ordering operators on the ORE, OPE and block ORE indexes, over the
-/// [`Ordered`] types. The query term for a comparison is the index's own
+/// types vitaminc-ore orders ([`Orderable`]). The query term for a comparison is the index's own
 /// term for the value. CLLW ORE's ciphertext has no left half to send
 /// alone, so what is sent is what is stored, as for an HMAC. Block ORE's
 /// does, but EQL v4's comparator reads the right half of the operand a
@@ -896,7 +849,7 @@ impl<O> Match<O> {
 macro_rules! orders {
     ($($index:ident => $term:ident, block: $block:literal),+ $(,)?) => {$(
         orders!(@one $index => $term, $block; Lt, Lte, Gt, Gte);
-        impl<S: Ordered> Supports<Between, (S, S)> for $index {
+        impl<S: Orderable + vitaminc_aead::EncryptRef + zeroize::Zeroize + 'static> Supports<Between, (S, S)> for $index {
             type Query = RangeQuery<$term<S>>;
             type Verifier = ();
             fn prepare(&self, (lo, hi): &(S, S)) -> Result<(), Error> {
@@ -907,7 +860,7 @@ macro_rules! orders {
                 RangeQuery::new(lo, hi)
             }
         }
-        impl<S: Ordered> Answers<Between, (S, S)> for $term<S> {
+        impl<S: Orderable + vitaminc_aead::EncryptRef + zeroize::Zeroize + 'static> Answers<Between, (S, S)> for $term<S> {
             type Via = $index;
         }
         impl $index {
@@ -917,7 +870,7 @@ macro_rules! orders {
         }
     )+};
     (@one $index:ident => $term:ident, $block:literal; $($op:ident),+) => {$(
-        impl<S: Ordered> Supports<$op, S> for $index {
+        impl<S: Orderable + vitaminc_aead::EncryptRef + zeroize::Zeroize + 'static> Supports<$op, S> for $index {
             type Query = $term<S>;
             type Verifier = ();
             fn prepare(&self, value: &S) -> Result<(), Error> {
@@ -927,7 +880,7 @@ macro_rules! orders {
                 term
             }
         }
-        impl<S: Ordered> Answers<$op, S> for $term<S> {
+        impl<S: Orderable + vitaminc_aead::EncryptRef + zeroize::Zeroize + 'static> Answers<$op, S> for $term<S> {
             type Via = $index;
         }
     )+};
