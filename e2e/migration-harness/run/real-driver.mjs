@@ -350,6 +350,9 @@ export function createRealDriver({
       await cp(workspace, oracleWorkspace, {
         recursive: true,
         force: true,
+        // As in installUnmigrated: a relative symlink must stay relative, or
+        // it names a host path that does not exist under /workspace.
+        verbatimSymlinks: true,
         filter: (source) =>
           !relative(workspace, source)
             .split(sep)

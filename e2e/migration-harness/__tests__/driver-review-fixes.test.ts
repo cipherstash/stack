@@ -186,6 +186,19 @@ test('F10 the oracle copy keeps relative symlinks relative', async () => {
   ).toBe('../tool/cli.js')
 })
 
+test('F10 the App Host copy keeps relative symlinks relative', async () => {
+  const { driver, output } = await setup()
+  const workspace = join(output, 'migrator')
+  await mkdir(join(workspace, 'lib'), { recursive: true })
+  await writeFile(join(workspace, 'lib', 'v3.mjs'), '')
+  await symlink('./lib/v3.mjs', join(workspace, 'current.mjs'))
+  await driver.installAppHost()
+  await driver.close()
+  expect(await readlink(join(output, 'app-host', 'current.mjs'))).toBe(
+    './lib/v3.mjs',
+  )
+})
+
 test('F11 a rejected Migrator exposes its partial transcript and tool calls', async () => {
   const failure = await runMigrator({
     command: await adapter(protocolViolation),
