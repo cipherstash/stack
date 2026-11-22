@@ -57,6 +57,16 @@ into the language's own, and the extension calls the Rust API in section 3
 directly. There is no buffer registry to manage, no step loop and no status
 table.
 
+An edge runtime or a browser is not a reason for a guest. JavaScript there
+cannot load a native library, so build the same extension crate for the
+`wasm32-unknown-unknown` target with `wasm-bindgen`, as the
+`@cipherstash/stack/wasm-inline` entry is built (the `build:wasm` script of
+`languages/typescript/packages/protect-ffi`). The extension then exports a
+JavaScript API, and the engine's requests to ZeroKMS go out through the
+runtime's `fetch` (stack-kms's HTTP connection on that target). It is the
+native extension's code and the native extension's API, compiled to
+another target; nothing in the guest sections of this guide applies to it.
+
 Build a WebAssembly (WASI) guest only for a language that cannot link a
 native library cleanly. Go is the one today: the Go SDK is free of cgo, so
 its binding is a guest that the wazero runtime runs. C and C++ may be
