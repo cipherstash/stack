@@ -28,13 +28,13 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
     There is no method for a `[]byte` or a `uint64`: send each one as text.
   - Every `Encrypt` and `Decrypt` through the cipher sends the facts. So
     does every read of an encrypted JSON document. A query asks ZeroKMS for
-    no data key, so a query sends none.
+    no data key, so a query sends none. Refused metadata fails a query too.
   - `Audit` adds to the facts the cipher has. A fact replaces one that has
     the same key.
   - A time is sent as RFC 3339 text in UTC. A time outside the years 0 to
     9999 is refused with `ErrEncoding`. So is a key or a text that is not
     valid UTF-8.
-  - Printing an `AuditMetadata` shows its keys and never a value.
+  - Printing an `AuditMetadata` shows its keys, quoted, and never a value.
   - ZeroKMS does not verify the facts, and a decrypt does not need them.
     ZeroKMS writes them to its logs. Do not send plaintext, anything
     derived from plaintext, or secrets.

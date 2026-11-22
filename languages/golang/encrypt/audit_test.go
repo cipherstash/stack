@@ -146,6 +146,36 @@ func TestAMethodReturnsNewMetadata(t *testing.T) {
 	}
 }
 
+// A fact that replaces another takes nothing from it: not its refusal, and
+// not its depth. The metadata the refused fact was set on keeps its refusal.
+func TestAReplacedFactTakesNothingFromTheFactItReplaces(t *testing.T) {
+	client := &encrypt.Client{}
+	refused := encrypt.NewAuditMetadata().Text("fact", "\xff")
+	replaced := refused.Text("fact", "ok")
+	if got, err := client.DefaultKeyset().Audit(replaced).AuditFactsForTest(); err != nil {
+		t.Errorf("a refused fact, replaced: %v, want no refusal", err)
+	} else if want := object(field("fact", "ok")); !reflect.DeepEqual(got, want) {
+		t.Errorf("a refused fact, replaced, sends %#v, want %#v", got, want)
+	}
+	if _, err := client.DefaultKeyset().Audit(refused).AuditFactsForTest(); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Errorf("the metadata before the replacement: %v, want ErrEncoding", err)
+	}
+
+	// 32 levels are taken. A map that holds a fact 32 levels deep, with
+	// that fact replaced by text, nests 1 level, so 31 more levels fit.
+	deep := encrypt.NewAuditMetadata().Text("leaf", "x")
+	for range 31 {
+		deep = encrypt.NewAuditMetadata().Map("inner", deep)
+	}
+	shallow := encrypt.NewAuditMetadata().Map("fact", deep).Text("fact", "x")
+	for range 31 {
+		shallow = encrypt.NewAuditMetadata().Map("inner", shallow)
+	}
+	if _, err := client.DefaultKeyset().Audit(shallow).AuditFactsForTest(); err != nil {
+		t.Errorf("a deep fact, replaced, then nested 31 levels: %v, want no refusal", err)
+	}
+}
+
 // Audit adds to the facts a cipher has, a later fact replaces an earlier
 // one that has the same key, and the cipher Audit was called on is unchanged.
 func TestAuditAddsFactsAndALaterFactReplaces(t *testing.T) {
@@ -178,17 +208,26 @@ func TestAuditAddsFactsAndALaterFactReplaces(t *testing.T) {
 	}
 }
 
-// Printing metadata shows its keys, in order, and never a value. Printing
-// a list or a cipher shows no fact at all. A fact can be personal data, and
-// a debug log is not the audit log.
+// Printing metadata shows its keys, quoted and in order, and never a
+// value. Printing a list or a cipher shows no fact at all. A fact can be
+// personal data, and a debug log is not the audit log.
 func TestPrintingShowsNoValue(t *testing.T) {
 	list := encrypt.NewAuditList().Text("alice@example.com")
 	metadata := encrypt.NewAuditMetadata().
 		Text("purpose", "export").
 		Text("actor", "alice@example.com").
 		List("seen_by", list)
-	if got, want := metadata.String(), "AuditMetadata{keys: [actor purpose seen_by]}"; got != want {
+	if got, want := metadata.String(), `AuditMetadata{keys: ["actor" "purpose" "seen_by"]}`; got != want {
 		t.Errorf("String() = %q, want %q", got, want)
+	}
+	// Each key is quoted, so keys that hold a space cannot read as others.
+	oneSplit := encrypt.NewAuditMetadata().Bool("a", true).Bool("b c", true)
+	otherSplit := encrypt.NewAuditMetadata().Bool("a b", true).Bool("c", true)
+	if oneSplit.String() == otherSplit.String() {
+		t.Errorf("keys a, b c and keys a b, c both print %q", oneSplit.String())
+	}
+	if got, want := encrypt.NewAuditMetadata().Bool("\xff", true).String(), `AuditMetadata{keys: ["\xff"]}`; got != want {
+		t.Errorf("String() of a key that is not UTF-8 = %q, want %q", got, want)
 	}
 	if got, want := encrypt.NewAuditMetadata().String(), "AuditMetadata{keys: []}"; got != want {
 		t.Errorf("String() of no facts = %q, want %q", got, want)
@@ -210,8 +249,8 @@ func TestPrintingShowsNoValue(t *testing.T) {
 	}
 }
 
-// What the compiler cannot check is reported by the first call, as
-// ErrEncoding, and never by a panic. The error names Audit and the fact,
+// What the compiler cannot check is reported by the first call, a query
+// included, as ErrEncoding, and never by a panic. The error names Audit and the fact,
 // and shows no value. The first refusal is the one reported.
 func TestAValueTheCompilerCannotCheckIsReportedByTheFirstCall(t *testing.T) {
 	ctx := context.Background()
@@ -271,6 +310,8 @@ func TestAValueTheCompilerCannotCheckIsReportedByTheFirstCall(t *testing.T) {
 				"Decrypt through the client": second(testusers.Decrypt(ctx, client.Audit(tc.metadata), nil)),
 				// A later Audit of good facts does not clear the refusal.
 				"Encrypt after a later Audit": second(testusers.Encrypt(ctx, cipher.Audit(listIssues()), people)),
+				// A query sends no metadata, but the refusal fails it too.
+				"a query": second(testusers.Fields.Email.Eq(ctx, cipher, "bob@example.com")),
 			} {
 				switch {
 				case !errors.Is(err, encrypt.ErrEncoding):

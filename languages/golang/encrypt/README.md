@@ -283,7 +283,8 @@ other facts, or none.
 
 A query sends no audit metadata. A query term is derived from the index key
 of the keyset, so a query asks ZeroKMS for no data key. A query through a
-cipher that has metadata still works.
+cipher that has metadata still works. But refused metadata fails every call
+through the cipher, a query included.
 
 #### The values of a fact
 
@@ -309,7 +310,8 @@ hex form. ZeroKMS reads an integer as an `int64`, so there is no method for a
 `uint64`: convert it, or send it as text.
 
 Each method returns new metadata and leaves its own unchanged. A later fact
-replaces an earlier one that has the same key.
+replaces an earlier one that has the same key. A refusal of the earlier fact
+goes with it.
 
 ZeroKMS records each value as you give it, with two exceptions:
 
@@ -325,7 +327,7 @@ The first call through the cipher refuses each one with `ErrEncoding`:
 - a time outside the years 0 to 9999, because RFC 3339 has no form for it;
 - maps and lists nested more than 32 levels deep.
 
-Printing an `AuditMetadata` shows its keys and never a value.
+Printing an `AuditMetadata` shows its keys, quoted, and never a value.
 
 `go test` compiles the examples in this section: see `ExampleCipher_Audit`
 and `ExampleClient_Audit`. The example program in `encrypt/example` runs a

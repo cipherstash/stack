@@ -100,13 +100,14 @@ pub(crate) type Unverified = Option<Arc<UnverifiedContext>>;
 /// # Ok::<(), serde_json::Error>(())
 /// ```
 ///
-/// A value in the data follows the rules of [`AuditValue`]. Four kinds of
+/// A value in the data follows the rules of [`AuditValue`]. Five kinds of
 /// data are refused, because ZeroKMS has no form for them:
 ///
 /// - data that is not a map, at the top level;
 /// - bytes;
 /// - an integer that does not fit a signed 64-bit integer;
-/// - a key that is not text, or that appears twice in one map.
+/// - a key that is not text;
+/// - a key that appears twice in one map.
 ///
 /// The message of this reader names the kind of data that was refused. The
 /// message does not show a key or a value.

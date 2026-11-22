@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -44,7 +45,8 @@ import (
 //     what you pass, and adds nothing.
 //   - A query sends none. A query term is derived from the index key of
 //     the keyset, so a query asks ZeroKMS for no data key. A query through
-//     a cipher that has metadata still works.
+//     a cipher that has metadata still works. But refused metadata fails
+//     every call through the cipher, a query included.
 //   - A call that asks for no data key sends none. An Encrypt or a Decrypt
 //     of no rows is one such call.
 //
@@ -90,16 +92,30 @@ import (
 // the one it was called on unchanged. So a program can build a base once,
 // and add to it for each request. The zero value has no facts, as
 // [NewAuditMetadata] gives.
+//
+// A fact replaces one that has the same key, and takes nothing from it. So
+// a refused value that is replaced is not reported.
 type AuditMetadata struct {
-	// facts is every fact, by key; nil is none. See [auditFacts] for why it
-	// is a function.
-	facts auditFacts
-	// depth is how many levels of maps and lists the facts nest.
+	// facts is every fact, by key; nil is none. It is a function for the
+	// reason [auditFacts] gives.
+	facts func() map[string]auditFact
+	// added counts the facts set so far, so that [AuditMetadata.refused]
+	// can report the first refusal.
+	added int
+}
+
+// auditFact is one fact of [AuditMetadata], with what the checks need to
+// know of it. A fact that replaces another takes nothing from it.
+type auditFact struct {
+	// value is the fact as the cipher sends it.
+	value any
+	// depth is how many levels of maps and lists the value nests: 0 for a
+	// value that is neither.
 	depth int
-	// err is the first value that was refused. A method cannot return an
-	// error and still chain, so [Cipher.Audit] passes it to the cipher,
-	// and the first call through the cipher reports it.
-	err error
+	// refused is why the fact cannot be sent, naming its key, or nil.
+	refused error
+	// order is when the fact was set, among the facts of its metadata.
+	order int
 }
 
 // NewAuditMetadata is metadata with no facts. A cipher given it sends
@@ -152,32 +168,64 @@ var errNotUTF8 = errors.New("text that is not valid UTF-8")
 // set is this metadata with the fact key set to value. The value nests
 // depth levels below it. refused is why the value cannot be sent, or nil.
 //
-// The first refusal is kept. It names the key of its fact and never a
-// value: a key is a name the program chose, and a value can be personal
-// data. A key that is not valid UTF-8 is refused without being shown.
+// A refusal names the key of its fact and never a value: a key is a name
+// the program chose, and a value can be personal data. A key that is not
+// valid UTF-8 is refused without being shown.
 func (m AuditMetadata) set(key string, value any, depth int, refused error) AuditMetadata {
-	next := AuditMetadata{depth: max(m.depth, depth+1), err: m.err}
-	facts := make(map[string]any, 1)
-	if m.facts != nil {
-		facts = make(map[string]any, len(m.facts())+1)
-		for k, v := range m.facts() {
-			facts[k] = v
-		}
-	}
-	facts[key] = value
-	next.facts = func() map[string]any { return facts }
-	if next.err != nil {
-		return next
-	}
 	switch {
 	case !utf8.ValidString(key):
-		next.err = errors.New("a key is not valid UTF-8")
+		refused = errors.New("a key is not valid UTF-8")
 	case refused != nil:
-		next.err = fmt.Errorf("the fact %q: %w", key, refused)
-	case next.depth > maxAuditDepth:
-		next.err = errAuditDepth
+		refused = fmt.Errorf("the fact %q: %w", key, refused)
 	}
-	return next
+	facts := make(map[string]auditFact, m.len()+1)
+	if m.facts != nil {
+		for k, fact := range m.facts() {
+			facts[k] = fact
+		}
+	}
+	facts[key] = auditFact{value: value, depth: depth, refused: refused, order: m.added}
+	return AuditMetadata{facts: func() map[string]auditFact { return facts }, added: m.added + 1}
+}
+
+// len is the number of facts.
+func (m AuditMetadata) len() int {
+	if m.facts == nil {
+		return 0
+	}
+	return len(m.facts())
+}
+
+// depth is how many levels of maps and lists the facts nest, the map that
+// holds them included: 0 for no facts.
+func (m AuditMetadata) depth() int {
+	depth := 0
+	if m.facts != nil {
+		for _, fact := range m.facts() {
+			depth = max(depth, fact.depth+1)
+		}
+	}
+	return depth
+}
+
+// refused is why the facts cannot be sent, or nil: the refusal of the first
+// fact set that has one, then a nesting deeper than [maxAuditDepth].
+func (m AuditMetadata) refused() error {
+	var first *auditFact
+	if m.facts != nil {
+		for _, fact := range m.facts() {
+			if fact.refused != nil && (first == nil || fact.order < first.order) {
+				first = &fact
+			}
+		}
+	}
+	switch {
+	case first != nil:
+		return first.refused
+	case m.depth() > maxAuditDepth:
+		return errAuditDepth
+	}
+	return nil
 }
 
 // Text adds the fact key with a text value. A fact already under that key
@@ -244,24 +292,27 @@ func (m AuditMetadata) List(key string, values AuditList) AuditMetadata {
 // Map adds the fact key with a nested map of facts. A fact already under
 // that key is replaced.
 func (m AuditMetadata) Map(key string, nested AuditMetadata) AuditMetadata {
-	return m.set(key, nested.sent(), max(nested.depth, 1), nested.err)
+	return m.set(key, nested.sent(), max(nested.depth(), 1), nested.refused())
 }
 
 // sent is the facts as one value of an outer map or list: a map, empty for
 // no facts.
 func (m AuditMetadata) sent() map[string]any {
-	if m.facts == nil {
-		return map[string]any{}
+	facts := make(map[string]any, m.len())
+	if m.facts != nil {
+		for key, fact := range m.facts() {
+			facts[key] = fact.value
+		}
 	}
-	return m.facts()
+	return facts
 }
 
-// String shows the keys of the facts, in order, and never a value. A value
-// can be personal data. A debug log is not the audit log.
+// String shows the keys of the facts, quoted and in order, and never a
+// value. A value can be personal data. A debug log is not the audit log.
 func (m AuditMetadata) String() string {
-	keys := make([]string, 0, len(m.sent()))
+	keys := make([]string, 0, m.len())
 	for key := range m.sent() {
-		keys = append(keys, key)
+		keys = append(keys, strconv.Quote(key))
 	}
 	sort.Strings(keys)
 	return "AuditMetadata{keys: [" + strings.Join(keys, " ") + "]}"
@@ -386,7 +437,7 @@ func (l AuditList) List(nested AuditList) AuditList {
 
 // Map appends one nested map of facts.
 func (l AuditList) Map(nested AuditMetadata) AuditList {
-	return l.add(max(nested.depth, 1), nested.err, nested.sent())
+	return l.add(max(nested.depth(), 1), nested.refused(), nested.sent())
 }
 
 // auditText is value as the cipher sends it, or the refusal of text that
@@ -413,10 +464,14 @@ func auditTime(value time.Time) (any, error) {
 // checked is the facts of metadata, or an [ErrEncoding] that names Audit
 // for a value that metadata refused.
 func (m AuditMetadata) checked() (auditFacts, error) {
-	if m.err != nil {
-		return nil, fmt.Errorf("%w: Audit: %v", ErrEncoding, m.err)
+	if err := m.refused(); err != nil {
+		return nil, fmt.Errorf("%w: Audit: %v", ErrEncoding, err)
 	}
-	return m.facts, nil
+	if m.facts == nil {
+		return nil, nil
+	}
+	facts := m.sent()
+	return func() map[string]any { return facts }, nil
 }
 
 // Audit returns a cipher that sends metadata to ZeroKMS with every data-key

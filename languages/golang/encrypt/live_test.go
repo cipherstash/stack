@@ -161,6 +161,12 @@ func TestLiveAuditMetadataReachesZeroKMS(t *testing.T) {
 	}
 
 	// No metadata: the request carries no facts.
+	if _, err := testusers.Encrypt(ctx, plain, livePeople); err != nil {
+		t.Fatal(err)
+	}
+	if got := unverified("an Encrypt with no metadata", "generate-data-key"); len(got) != 0 {
+		t.Errorf("an Encrypt with no metadata sent %v, want no facts", got)
+	}
 	if _, err := testusers.Decrypt(ctx, plain, encrypted); err != nil {
 		t.Fatal(err)
 	}

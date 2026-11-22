@@ -50,19 +50,19 @@
 //! sends nothing, as an absent key does. ZeroKMS does not verify the facts,
 //! and no key depends on them.
 //!
-//! ZeroKMS has no type for a time, so a time crosses as text. A binding
-//! that takes its language's time type in audit metadata sends this text,
-//! so that every language SDK logs one form:
+//! ZeroKMS has no type for a time, so a time crosses as text. A language
+//! SDK that takes its language's time type in audit metadata sends this
+//! text, so that every language SDK logs one form:
 //!
 //! - RFC 3339, in UTC, with the suffix `Z`;
 //! - a fraction of a second only when it is not zero, with no trailing
 //!   zeros and at most nine digits;
-//! - a year from 0000 to 9999. The binding refuses a time outside those
-//!   years.
+//! - a year from 0000 to 9999. The language SDK refuses a time outside
+//!   those years.
 //!
 //! For example, `2026-11-20T10:00:00Z` and `2026-11-20T10:00:00.5Z`. The
-//! guest cannot hold a binding to this rule, because the text arrives as
-//! any other text does.
+//! guest cannot hold a language SDK to this rule, because the text arrives
+//! as any other text does.
 //!
 //! `audit` is accepted where the call requests data keys:
 //! `se_encrypt_record`, `se_decrypt_record` and `se_json_open`. On `se_term`
