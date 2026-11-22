@@ -1,6 +1,7 @@
 ---
 status: proposed
 date: 2026-11-21
+revised: 2026-11-22
 extends: ADR-0012
 ---
 
@@ -8,23 +9,32 @@ extends: ADR-0012
 
 ## Summary
 
-This ADR proposes how a declaration hands its plaintext to the operations
+This ADR decides how a declaration hands its plaintext to the operations
 that encrypt it. It is the design for #1734, which asks that no plaintext
 is ever copied.
 
 - An operation that seals a value, or derives a term from it, reads the
   plaintext through a reference. Such an operation is a **reader**.
-- An operation that needs the plaintext by value is a **taker**. A
-  declaration has at most one, and it runs last, after every reader.
-- No implementation turns "take the value" into "clone the value". A
-  declaration that would need a second copy of the plaintext does not
-  compile. A caller who wants a copy asks for one by name.
-- The owned conversion, `encrypt_into`, holds the one value. It lends the
-  value to the readers. Then it hands the value to the taker, or wipes it
-  when there is none.
+- An operation whose output is the plaintext itself is a **taker**.
+  `passthrough` is the only one.
+- A declaration has any number of readers and at most one operation that
+  is handed the value. The compiler checks this through the position of
+  each operation in `zip`.
+- No implementation copies a plaintext that is sealed or indexed. A
+  plaintext type does not need `Clone`.
+- The owned conversion, `encrypt_into`, holds the one value. Whichever
+  operation is handed it wipes it, or moves it into the output.
+- An order index is bounded by Vitamin C's `Orderable`. Stack Encrypt's
+  `Date`, `Timestamp` and `Decimal`, and its two order traits, are
+  removed.
 
-The status is `proposed`. Four questions are open, and a prototype answers
-them before this is accepted. They are listed at the end.
+**Revised on 22 November 2026.** The first version proposed that the
+compiler infer each operation's role from its type, through a marker
+parameter, as the axum web framework does. #1737 was written at the same
+time and reaches the same rule a simpler way, by position. This revision
+adopts that mechanism, and settles each point where the two disagreed.
+[What changed in this revision](#what-changed-in-this-revision) lists
+them. The status is `proposed` until the revision is confirmed.
 
 ## Context
 
@@ -50,9 +60,9 @@ operation.
 
 1. `ConsumeSource for Borrowed` requires `S: Clone`, and implements `take`
    as `clone`. So an operation that takes the value clones it whenever the
-   description is borrowed. Six operations take the value: `ciphertext`,
-   `equality`, `ore`, `ope`, `ore_block` and `json_document`. Two only
-   read it: `matching` and `json_terms`.
+   description is borrowed. Seven operations take the value:
+   `ciphertext`, `equality`, `ore`, `ope`, `ore_block`, `json_document`
+   and `passthrough`. Two only read it: `matching` and `json_terms`.
 2. `ShareSource for Owned` requires `S: Clone`. `zip` hands a clone to
    every operation but the last.
 3. `EncryptTarget::owned_encryption` has a default. It guards the value,
@@ -74,7 +84,7 @@ sealed, and one more wipe that must be correct.
 |---|---|
 | `TextEq` (`c` and `hm`), from Rust or Go | 3: the value, a clone for `c`, a clone for `hm` |
 | `TextMatch` (`c` and `bf`) | 2: the bloom filter only reads |
-| A storage-only EQL type (`Integer`, `Text`, …, 11 types) | 2 |
+| A storage-only EQL type (`Integer`, `Text`, …: 10 types besides `Json`) | 2 |
 | `JsonTreeDocument`, the storage-only `Json`, a Go `JsonSearch` field | 2 copies of the whole document |
 
 The same defect has been found three times in review, each time in a
@@ -129,73 +139,159 @@ extractor, does not implement `Handler`. No check runs at run time. The
 plaintext is in the position of the request: many operations read it, and
 at most one may consume it.
 
+Position does the work in axum. The last argument is the one taker, so
+the compiler never has to choose which argument that is.
+
 ## Decision
 
 ### 1. An operation is a reader or a taker
 
-A **reader** is built from `&S`. These are readers:
+A **reader** reads the plaintext through a reference. These are readers:
 
 - sealing a ciphertext, through `EncryptRef`;
-- every term: equality, match, and the order terms;
+- the equality term, through `EncryptRef`;
+- the match term, which reads the text as a `&str`;
+- the order terms. `SchemeVisitor` keys the scheme without the value,
+  and Vitamin C's `Orderable` is implemented for a reference to each
+  type it orders;
 - the JSON index, which walks the document through a reference to seal
-  its entries and derive its terms.
+  its entries and derive its terms;
+- a query's value, and the checks made on it before a key is requested.
+  This covers a typed query (`op`), a term the dynamic interface derives
+  (`dynamic/term.rs`), and the query targets of `eql-bindings`.
 
-A **taker** is built from `S` by value. A taker is for a value that moves
-into the output, such as a field stored in the clear, and for a plaintext
-type that Vitamin C cannot encrypt through a reference.
+A reader can also be handed the value itself. It then reads the value
+where it is, and wipes it when it is done. It never needs a second copy.
 
-A reader can stand where a taker is expected, by the blanket
-implementation and marker that axum uses.
+A **taker** is an operation whose output is the plaintext.
+`passthrough` is the only taker. Its value is stored in the clear.
 
-### 2. A declaration has any number of readers and at most one taker
+A plaintext that is sealed or indexed is `Encrypt + EncryptRef`. Vitamin
+C's own types and its derive provide both. A type with only a by-value
+`Encrypt` adds `impl Encrypt for &T`. The first version kept the taker
+for such a type. That is withdrawn: every plaintext has the same bound,
+in both source modes.
 
-One combinator composes the operations over one plaintext. It runs every
-reader over a reference to the value. Then it moves the value into the
-taker, if there is one.
+### 2. A declaration has any number of readers, and one operation is handed the value
 
-- Two takers over one value have no implementation, so the declaration
-  does not compile.
-- The role comes from the operation's type, not from its position. The
-  derive cannot use position, because the fields of an EQL type are in
-  the order of the stored payload (`c` comes before `hm`). Each field
-  type has one role, and the compiler infers it through the marker
-  parameter. The derive emits the same call for every field.
+The source mode of ADR-0012 stays. A `Borrowed` description is handed
+`&S`, and an `Owned` description is handed `S`.
+
+`first.zip(second)` composes two operations over one plaintext:
+
+- `second` is always a `Borrowed` description. It reads the plaintext
+  through a reference, and it runs first.
+- `first` is then handed what it would be handed alone: the same borrow
+  in a `Borrowed` description, or the value in an `Owned` one.
+- The output is `(first, second)`, in the order written.
+
+So in an owned description, only the operation written first is handed
+the value. Every other operation reads a borrow. An owned description is
+not accepted as the argument of `zip`, because its mode is a different
+type. Two operations that both take the value therefore do not compile.
+
+- **The role comes from position, and nothing is inferred.** The derive
+  emits the same chain for every type: the first field's operation,
+  zipped with the rest.
+- **The stored order does not limit this.** The first version rejected
+  position because the fields of an EQL type are in the order of the
+  stored payload (`c` comes before `hm`). `zip` runs its argument first
+  and still returns the outputs in the order written, so the order of
+  the payload and the order of running are separate.
+- **Why not infer the role.** The first version made every reader a
+  taker through a blanket implementation, and took the role from the
+  operation's type. A declaration of two readers then matches more than
+  one implementation, and the compiler asks for a type annotation. The
+  review of the first version reports that a prototype of `TextEq`'s
+  shape (`c` and `hm`) fails this way. axum does not have the problem,
+  because position fixes its one taker.
 - A record that divides its plaintext between its fields (`split`,
   ADR-0012) is unchanged. Each field receives a different part of the
   value. This decision is about several operations over the same value.
 
-### 3. No implementation copies the plaintext
+### 3. No implementation copies a plaintext that is sealed or indexed
 
-- `ConsumeSource for Borrowed` and `ShareSource for Owned`, the two
-  implementations that clone, are removed.
-- No public bound in Stack Encrypt or `eql-bindings` requires a plaintext
-  to be `Clone`.
-- A declaration that needs a second copy says so with a named adapter.
-  The copy is then visible where the declaration is written.
+- `ShareSource` is removed. `zip` lends the value.
+- `ConsumeSource` stays, for `passthrough` alone. No other operation
+  asks for it. The public `Index` trait's `operation` is bounded by
+  `SourceMode`, where it was `ConsumeSource`.
+- **A borrowed `passthrough` still copies its value, so that value is
+  `Clone`.** This is ADR-0012's rule for a field stored in the clear,
+  and it stands. The value is not sealed, so the copy is not a copy of a
+  secret. The first version removed this implementation, and said a
+  declaration with a taker has no borrowed form. That would take the
+  required `EncryptTarget::encryption()` away from every record with a
+  passthrough field, and with it borrowed runs, borrowed parents, and
+  the borrowed `Vec` and `Option` forms. It is withdrawn.
+- No other public bound in Stack Encrypt or `eql-bindings` requires a
+  plaintext to be `Clone`. `ValueFrame` and `JsonPlaintext` are not
+  `Clone`.
+- There is no adapter that copies a plaintext by name. The first version
+  proposed one. Nothing needs it, and #1734 asks for no copies.
 
-### 4. The owned conversion holds the one value
+### 4. Whoever is handed the value wipes it
 
-`encrypt_into` guards the value, lends it to the readers, and then hands
-it to the taker or wipes it. A refused context wipes it too.
+- `encrypt_into` guards the value with `Protected` while it builds the
+  declaration and the context. Either step can panic. The owned
+  description then takes over the value.
+- The default owned form of ADR-0012 stays: guard the value, run the
+  borrowed description over a reference, wipe. It no longer copies,
+  because a borrowed reader does not clone. So a target that writes only
+  the borrowed form is correct without an owned override, and every
+  declaration has both forms.
+- An owned description wipes the value on every path:
+  - after it is read: Vitamin C wipes a value that is walked by value,
+    and a term's scheme does the same;
+  - when the context is refused, or an operation fails;
+  - when the stack unwinds, through the `Protected` guard.
+- **A gap on `next` is closed.** The public `ciphertext` operation in
+  `Owned` mode drops a refused value without wiping it, because its `S`
+  need not be `Zeroize`. A match term that is handed an owned value
+  drops it as it is. The targets and the derive of this crate avoid both
+  with their own wiping forms, but a caller who composes the public
+  operations does not get them. An operation that seals or indexes in
+  `Owned` mode now requires `S: Zeroize`, and wipes the value when the
+  context is refused and when it has only read it. A JSON document keeps
+  its own guard (`PlainJson`). How the bound is written is left to the
+  implementation.
 
-The default owned form of ADR-0012 stays: guard the value, run the
-description over a reference, wipe. It no longer copies, because no
-operation run over a reference can clone. So a target that writes only
-the borrowed form is correct without an owned override.
+### 5. An order index is bounded by Vitamin C's `Orderable`
 
-A declaration with a taker has no borrowed form. It can only be run with
-the value.
+- Stack Encrypt's `value::Date`, `value::Timestamp` and `value::Decimal`
+  are removed. They existed only to be `Clone`. Callers use Vitamin C's
+  types, which `stack_encrypt::value` re-exports.
+- An order index, an order term's target and an ordering operator are
+  bounded by vitaminc-ore's `Orderable`. Stack Encrypt's `sem::Orderable`
+  and `op::Ordered` are removed.
+- Vitamin C's `Orderable` covers the types `op::Ordered` lists today: the
+  integers of 16 bits and wider, `f32`, `f64`, `String`, and Vitamin C's
+  date, timestamp and decimal. It covers a reference to each. It does
+  not cover bytes or an 8-bit integer.
+- **So an order index on bytes does not compile, with no trait of Stack
+  Encrypt's own.** That is the typed half of #1611. On `next`,
+  `sem::Orderable` covers `Vec<u8>` and `op::Ordered` does not, and #1611
+  moves each bound from the first to the second. With both traits gone
+  there is one list, and it is Vitamin C's.
+- Vitamin C orders bytes only into a target that is named
+  (`scheme.target(Bytes)`). Whether Stack Encrypt keeps a bytes order
+  term at the term level, for a caller who names that target, is
+  decided in #1611. No record, index or data plan names one.
 
 ## What is not claimed
 
 - **An encoding is not a copy in this sense.** Sealing writes the value's
   encoding into a buffer, and `OpaqueBlob` encodes a whole value
   (ADR-0011). Those buffers are part of the work, and are wiped.
-- **A decoded frame is a second value.** The dynamic interface decodes a
-  `ValueFrame` into a typed value before it runs a target. This decision
-  does not remove that step. It stops the further copy that follows it.
+- **A decoded frame is a second value.** The dynamic interface decodes
+  the caller's frame into one owned `ValueFrame` for each field before it
+  runs a target. This decision does not remove that step. It stops the
+  further copy that follows it: each field's value is read in place and
+  wiped once, and a passthrough field's value is moved into the output.
+- **A passthrough value can be copied.** It is stored in the clear, and a
+  borrowed description copies it (decision 3).
 - **The stored format does not change.** Every operation derives the
-  bytes it derives today.
+  bytes it derives today. The frozen vectors, the stored-row fixtures
+  and the conformance corpus pass unchanged.
 
 ## Options considered
 
@@ -207,39 +303,98 @@ the value.
   ciphertext and a term then needs a clone for all but one of them, which
   is the `Clone` bound again. Rejected.
 - **Readers only, with no taker.** Simpler, and enough for every sealed
-  field. A field stored in the clear moves into the output, and a
-  plaintext type with no by-reference encoding needs the value. Rejected,
-  because it would bring the copy back for those two cases.
-- **Readers, and at most one taker, checked by the compiler.** Chosen.
+  field. A field stored in the clear moves into the output. Rejected,
+  because an owned record would then copy every passthrough field.
+- **Infer each operation's role from its type, through a marker
+  parameter.** The first version of this ADR. Rejected: it is ambiguous
+  for two readers (decision 2), and position needs no inference.
+- **Remove the borrowed `passthrough`.** It would leave no `Clone` bound
+  at all. Rejected: it breaks the borrowed form of every record with a
+  field stored in the clear (decision 3).
+- **Readers by reference, and one operation handed the value, by
+  position.** Chosen.
 
 ## Consequences
 
-- A write holds one copy of the plaintext: the caller's. A `TextEq`
-  write drops from three, and a document is no longer copied.
-- Stack Encrypt's `Date`, `Timestamp` and `Decimal` can be removed, and an
-  order index can be bounded by Vitamin C's `Orderable` (#1734).
-- It is a breaking change to the published crate. The operations'
-  bounds change from `Encrypt + Clone` to `EncryptRef`, two public trait
-  implementations are removed, and a hand-written `EncryptTarget` that
-  relied on a clone must be rewritten.
-- Fewer wipes need to be right. The heap hygiene tests stay, and one new
-  test shows that a value with a ciphertext and several terms is not
-  copied.
+- **A typed Rust write holds one copy of the plaintext: the caller's
+  value, moved in.** A `TextEq` write drops from three, and a document
+  is no longer copied.
+- **A write through the dynamic interface, which the Go SDK uses, holds
+  the decoded frame of each field and no further copy.** It dropped one
+  clone for each sealed or indexed field.
+- It is a breaking change to the published crates:
+  - a sealed or indexed plaintext is bounded by `Encrypt + EncryptRef`,
+    where it was `Encrypt + Clone`. A plaintext with only a by-value
+    `Encrypt` adds `impl Encrypt for &T`;
+  - `zip` takes a borrowed description as its argument, and runs it
+    first;
+  - `ShareSource`, `Clone for ValueFrame` and `Clone for JsonPlaintext`
+    are removed, and `Index::operation` has a new bound;
+  - `Date`, `Timestamp` and `Decimal` are Vitamin C's. They are built
+    from jiff's and rust_decimal's values, and none is `Clone`. The
+    `jiff` and `rust_decimal` features are on by default, and a build
+    with `default-features = false` names them to get the three types;
+  - `sem::Orderable` and `op::Ordered` are removed;
+  - an operation in `Owned` mode requires `S: Zeroize` (decision 4).
+- The Go guest links jiff and rust_decimal in its plain build. Its size
+  is measured before #1737 merges.
+- Fewer wipes need to be right. The heap hygiene tests stay. One test
+  asserts that a value with a ciphertext and several terms is not
+  cloned, and one counts a single wipe for it.
 - The owned overrides added in #1664 and #1687 are no longer needed for
   correctness. They can stay or be removed.
-- A wrong declaration fails as "the trait is not implemented". axum has
-  the same weakness, and ships a macro to explain it. The traits need
-  `#[diagnostic::on_unimplemented]` messages that say what went wrong.
+- A taker written as the argument of `zip` is refused as a mismatch of
+  the source mode, not with a message of our own. The documentation of
+  `zip` says which operation is handed the value.
+- "Reader" and "taker" are defined in `packages/stack-encrypt/CONTEXT.md`.
 
-## To confirm with a prototype
+## How the work lands
 
-1. **Role inference through the derive.** Does the marker parameter
-   resolve for a generic field type, and for a field of several terms
-   such as `Encrypted<(EqualityTerm, MatchTerms)>`?
-2. **Readable errors.** What does the compiler print for two takers, and
-   for a taker in a declaration that is only lent the value?
-3. **Every operation as a reader.** Do `equality`, the order terms and
-   the JSON index derive the same bytes from a reference? Which plaintext
-   types have no `EncryptRef`, and so need the taker?
-4. **The dynamic interface.** Does the record path, which reads a
-   `ValueFrame`, fit the same two roles?
+Three pull requests touch the same code. They land in this order:
+
+1. **#1737** does items 1, 2 and 3 of #1734: every operation reads in
+   place, and Vitamin C's `Date`, `Timestamp` and `Decimal` replace
+   Stack Encrypt's. It is rebased onto `next`, which now has the typed
+   JSON queries. It also takes on decision 4's wipe rule, the test that
+   counts one wipe, and the measurement of the Go guest.
+2. **The order bound** (item 4 of #1734, decision 5) removes
+   `sem::Orderable` and `op::Ordered`. It goes in #1737 or in a pull
+   request stacked on it.
+3. **#1611** is rebased on top. Its commits that move each bound from
+   `sem::Orderable` to `op::Ordered` are dropped, because the bound in
+   step 2 replaces them. It keeps what only it has: a data plan refuses
+   an order index on bytes, the Go generator refuses the tag, the
+   conformance corpus and its documents follow, an old row with a bytes
+   order term still opens, and the compile-fail tests, recorded again
+   with Vitamin C's message.
+
+## What changed in this revision
+
+| Point | First version | Now | Why |
+|---|---|---|---|
+| How the one taker is checked | The role is inferred from each operation's type, through a marker | Position in `zip`: the first operation is handed the value | Inference is ambiguous for two readers. Position needs none, and `zip` keeps the written order |
+| What a taker is | `passthrough`, and a plaintext with no by-reference encoding | `passthrough` alone | Every sealed or indexed plaintext is `Encrypt + EncryptRef` |
+| Borrowed `passthrough` | Removed: a declaration with a taker has no borrowed form | Kept, with `Clone` on a value stored in the clear | Removing it breaks ADR-0012's borrowed forms |
+| A named adapter that copies | Proposed | Dropped | Nothing needs it |
+| Wiping an owned value | Stated, with no mechanism | The operation handed the value wipes it on every path, and `Owned` mode requires `Zeroize` | The public operations dropped a refused value unwiped |
+| Queries and their checks | Not covered | Readers | #1734 names them, and they kept `Clone` |
+| The dynamic interface | "A write holds one copy" | One decoded frame for each field, and no further copy | The first claim was true of the typed path only |
+| `Date`, `Timestamp`, `Decimal`, and the order traits | "Can be removed" | Removed, and the order bound is Vitamin C's | #1734 asks for it, and it gives #1611 its typed refusal |
+
+## The questions the first version left for a prototype
+
+#1737 answers them in code.
+
+1. **Role inference through the derive.** Not needed. The derive emits
+   one chain, and position decides.
+2. **Readable errors.** Two takers are a mismatch of the source mode at
+   `zip`. A plaintext with no `EncryptRef` is refused by the bound, with
+   the message of the `plaintext_needs_encrypt` compile-fail test.
+3. **Every operation as a reader.** Each one reads a borrow in #1737:
+   the ciphertext, the equality term, the order terms and the JSON
+   index. #1737 reports that the frozen vectors and the conformance
+   corpus pass unchanged. No plaintext type of Stack Encrypt lacks
+   `EncryptRef`.
+4. **The dynamic interface.** It fits. A data plan's sealed and indexed
+   fields read their `ValueFrame` in place, and a passthrough field's
+   value is moved into the output.
