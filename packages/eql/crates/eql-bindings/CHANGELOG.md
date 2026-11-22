@@ -27,11 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the `JsonTreeToken` to send. The call also returns the key that
     decrypts what the query returns.
   - The stored format and the SQL do not change.
-  `JsonSubtreeKey` of its parent's path, and opens
-  (`DecryptSource<JsonPlaintext>`) to the child's value. It is checked
-  against the parent as Stack Encrypt's `JsonSubtreeKey::open_child`
-  checks it. A child with members of its own does not open alone: read it
-  through `JsonTreeSubtree`. The stored format and the SQL do not change.
 - **Order queries from a field reference** (#1668). The field reference of a
   field typed with an ordered EQL v4 type has `lt`, `lte`, `gt` and `gte`:
   `EncryptedMember::AGE.gt(30).encrypt(&keyset)` returns the type's query
