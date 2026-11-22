@@ -29,6 +29,7 @@ uses the current name. The Rust crates of the TypeScript SDK are named
 - [Plaintext hygiene](#plaintext-hygiene)
 - [Promises and cancellation](#promises-and-cancellation)
 - [The adapters](#the-adapters)
+- [Room for EQL v3 and v2](#room-for-eql-v3-and-v2)
 - [Tests](#tests)
 - [Packaging and release](#packaging-and-release)
 - [Documentation and skills](#documentation-and-skills)
@@ -72,8 +73,9 @@ In scope:
 Not in scope:
 
 - A change to a declaration over time. The principles leave it undecided.
-- Reading data the current adapters wrote. See
-  [Decisions needed](#decisions-needed).
+- EQL v3 and v2. A separate crate, `recipher-compat`, is planned to read
+  and write them. This plan does not design it, but leaves room for it:
+  see [Room for EQL v3 and v2](#room-for-eql-v3-and-v2).
 
 ## Before starting
 
@@ -361,6 +363,25 @@ new major version that depends on it and drops `@cipherstash/stack`.
   `stash-dynamodb`, `stash-encryption` and `stash-indexing` change with
   their adapters, in the same pull requests.
 
+## Room for EQL v3 and v2
+
+`recipher-compat` is planned to read and write EQL v3 and v2 on the same
+engine. When it exists, `@cipherstash/recipher` should take it on without
+a new call shape. So this plan holds to three rules:
+
+- **The EQL version is in the column's type, never in a call.** A
+  declaration names an EQL v4 type from the catalog. A v3 type would be
+  another type in the same declaration, through the same `encrypt`,
+  `query` and `decrypt`.
+- **The core crate passes the EQL resolver in one place.** The resolver
+  that runs a named type is built once, in `recipher-js`, so a resolver
+  that also knows the v3 and v2 types replaces it there.
+- **Nothing outside the generated catalog knows a type's version.** Query
+  terms carry their SQL domain, and adapters write casts from it, so an
+  adapter does not branch on the version.
+
+These rules are checked when `recipher-compat` is designed, not before.
+
 ## Tests
 
 - **Conformance.** A Vitest runner for every profile in
@@ -435,12 +456,11 @@ Each step is one pull request, and each ends with its tests passing in CI.
 
 ## Decisions needed
 
-1. **Data the current adapters wrote.** The new majors read EQL v4 only.
-   A customer with rows the current majors wrote either stays on those
-   majors, or re-encrypts the rows. `@cipherstash/migrate` could do that by
-   reading with `@cipherstash/stack` and writing with
-   `@cipherstash/recipher`. Whether to offer that, and how long the current
-   majors are supported, is a product decision.
+1. **Data the current adapters wrote.** The new majors read EQL v4 only
+   until `recipher-compat` exists. Until then, a customer with rows the
+   current majors wrote stays on those majors. Whether the new majors wait
+   for `recipher-compat`, or ship first and gain v3 support later, is a
+   product decision.
 2. **Dates and times.** A JavaScript `Date` has millisecond precision; the
    engine's timestamp has nanosecond precision. `Temporal` is the newer
    standard date and time API with nanosecond instants and plain dates. It
