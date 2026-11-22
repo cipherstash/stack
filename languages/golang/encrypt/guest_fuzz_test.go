@@ -90,12 +90,14 @@ func newFuzzClient(tb testing.TB) *fuzzClient {
 	// Two exports are not recorded. se_cipher_init (which wipes its input
 	// in place) runs once, inside NewDeterministicClient, before a
 	// recorder can be put in place; its parameter is built here as
-	// seededClient builds it, from the same seed, so a valid call
-	// re-initialises the same cipher. se_resume (which takes its input as
-	// plaintext) runs only after a pause, which this build never makes; it
-	// starts from handle 1 and an empty answer. It takes and decodes the
-	// answer before it looks at the handle, so the fuzzed pair is read in
-	// full, and then answers STATUS_STATE: handle 1 names no paused step.
+	// seededClient builds it, from the same seed. The instance already
+	// has a cipher, so a valid call is refused with STATUS_STATE, but
+	// only after the pair is checked, parsed and wiped. se_resume (which
+	// takes its input as plaintext) runs only after a pause, which this
+	// build never makes; it starts from handle 1 and an empty answer. It
+	// takes and decodes the answer before it looks at the handle, so the
+	// fuzzed pair is read in full, and then answers STATUS_STATE: handle 1
+	// names no paused step.
 	seed, err := vcffi.Marshal(fuzzSeed[:])
 	if err != nil {
 		_ = c.Close()
