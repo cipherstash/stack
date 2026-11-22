@@ -130,10 +130,11 @@ func (l Limit) FetchOr(page uint64) uint64 {
 // refused: it matches no row, as SQL's BETWEEN does.
 //
 // A query through a cipher with a binding is refused as [ErrEncoding]: a
-// binding is in no query context. The three operators that prepare a read
-// of a document, selector, subtree and children, are not refused. Their
-// operand derives under the cipher's scopes alone, as a query's term does,
-// and the cipher's binding is used when the read opens ([Cipher.JSONOpen]).
+// binding is in no query context. Three operators prepare a read of a
+// document: selector, subtree, and children. A cipher with a binding does
+// not refuse them. Their operand derives under the cipher's scopes alone,
+// as a query's term does. The read uses the cipher's binding when it opens
+// ([Cipher.JSONOpen]).
 // No data key is minted. For generated code.
 func (cph *Cipher) QueryTerm(ctx context.Context, plan *record.Plan, field, operator string, input any) (QueryTerm, error) {
 	p, err := cph.operandPlan(plan, field, operator)

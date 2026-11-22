@@ -9,35 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Open one child of a JSON node, bound to its parent** (#1677).
-  `JsonSubtreeKey::open_child(node)` takes one entry `json_tree_children`
-  returned for the key's token, and gives a `JsonChild`. A read of one
-  child no longer needs the parent's subtree.
-  - A `JsonChild` opens (`DecryptSource<JsonChildPlaintext>`) to a
-    `JsonChildPlaintext`. Its `key()` is a member's key, and its `index()`
-    an element's index. Its `value()` is a scalar, or `{}` or `[]` for an
-    empty container.
-  - The key or index is decrypted with the value and authenticated.
-    `json_tree_children` returns an object's members in a random order,
-    and the key names each one. The key, the index and the value are wiped
-    on drop, and `Debug` is redacted.
-  - Opening makes the parent-link check a subtree read makes. The entry
-    carries a parent tag and sits one level down. It carries the selector
-    of the parent's path extended by its key or index. It carries the self
-    tag that key or index derives under the parent's token.
-  - An entry that fails a check is `Error::JsonWrongEntry`. A container
-    with children does not open alone (`Error::JsonNotALeaf`).
-  - Two refusals come before any key is retrieved. A key of a path with a
+- **Read one child of a JSON node, checked against its parent** (#1677).
+  Your app can now read one level of a document without fetching the
+  parent's whole subtree. The read takes three steps.
+  1. Your app derives the parent's token and key, for example with
+     `children(path).encrypt_keyed(&keyset)`. Deriving asks ZeroKMS for
+     nothing.
+  2. The database (EQL) runs `eql_v4.json_tree_children(doc, $1)` with the
+     token. The database returns the parent's direct children as encrypted
+     entries.
+  3. Your app passes each entry to `JsonSubtreeKey::open_child(node)`, and
+     decrypts the `JsonChild` it gets back.
+
+  More detail:
+
+  - A `JsonChild` decrypts into a `JsonPlaintext` for the child's value
+    alone. A `JsonChild` also decrypts into a `JsonChildPlaintext` for the
+    value with the member's `key()` or the element's `index()`.
+  - The database returns an object's members in a random order. So use
+    `JsonChildPlaintext` when your app needs to know which member a value
+    is.
+  - The key or index is encrypted with the value, and authenticated. The
+    key, the index, and the value are wiped on drop. `Debug` hides all
+    three.
+  - Decrypting checks the entry's link to its parent, as a subtree read
+    does. The entry must have a parent tag and sit one level down. The
+    entry's selector must be the parent's path extended by its key or
+    index. The entry's self tag must be the one that key or index gives
+    under the parent's token.
+  - An entry that fails a check is `Error::JsonWrongEntry`. A child with
+    children of its own does not decrypt alone (`Error::JsonNotALeaf`).
+  - Two refusals come before any key is fetched. A key for a path with a
     wildcard is `Error::Input`, with reason `JsonPathWildcard`. An entry
     with no parent tag is `JsonWrongEntry`.
   - For a `JsonDocument` field, the field reference's `children(path)`
-    returns the key, so the token sent and the key that opens are one
-    value. For a field of another type, `children(path).encrypt_keyed`
-    returns the token and the key from one derivation.
-  - `dynamic::json_open` takes the operation `"children"`, with the path of
-    the parent and one entry or none per group. Each child opens to a map,
-    `{"key", "json"}` or `{"index", "json"}`. `dynamic::check_json_open`
-    checks the request.
+    returns the key, so the token sent and the key are one value. For a
+    field of another type, `children(path).encrypt_keyed` returns the
+    token and the key from one derivation.
+  - `dynamic::json_open` takes the operation `"children"`, with the
+    parent's path and one entry or none per group. Each child opens to a
+    map: `{"key", "json"}` for a member, or `{"index", "json"}` for an
+    element. `dynamic::check_json_open` checks the request.
   - The stored format is unchanged.
 
 - **A credential with each call** (#1708). A server that decrypts as the end

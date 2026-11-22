@@ -208,6 +208,22 @@ mod assertions {
         }
     }
 
+    /// Both reads were refused, with the same error: `case` names the entry.
+    pub(crate) fn same_refusal<A: std::fmt::Debug, B: std::fmt::Debug>(
+        case: &str,
+        alone: Result<A, Error>,
+        labelled: Result<B, Error>,
+    ) {
+        match (alone, labelled) {
+            (Err(alone), Err(labelled)) => assert_eq!(
+                format!("{alone:?}"),
+                format!("{labelled:?}"),
+                "{case}: the value alone and the labelled child are refused alike"
+            ),
+            other => panic!("{case}: expected two refusals, got {other:?}"),
+        }
+    }
+
     /// The read was refused by the cipher: some node did not open under the
     /// digest of the children the chain gave it, or under its own AAD.
     pub(crate) fn aead<T: std::fmt::Debug>(result: Result<T, Error>) {
@@ -1076,6 +1092,123 @@ mod given_one_child_of_a_node {
             Opened::Element(2, json!(30)),
             "the third element"
         );
+    }
+
+    /// The same entries decrypted into a `JsonPlaintext`: the value alone,
+    /// after the same checks as a `JsonChildPlaintext`.
+    mod given_the_value_alone {
+        use super::*;
+
+        async fn open_alone(cipher: &Cipher, child: JsonChild) -> Result<Value, Error> {
+            JsonPlaintext::decrypt_from_with_context(child, cipher, aead())
+                .await
+                .map(document)
+        }
+
+        /// Entries that are not a leaf child of `$.a` or `$.arr`, each with
+        /// the key it is opened against: one per refusal.
+        async fn refused(cipher: &Cipher, doc: &JsonDocument) -> Vec<(&'static str, JsonChild)> {
+            let a = key(cipher, "$.a").await;
+            let arr = key(cipher, "$.arr").await;
+            let root = key(cipher, "$").await;
+            let first = key(cipher, "$.arr[0]").await;
+            let second = child_row(cipher, doc, "$.arr[1]").await;
+            let as_first = with_x(vec![second], 0, x_of(doc, &first));
+            let at = slot(cipher, doc, "$.a.s").await;
+            vec![
+                (
+                    "a child of another node",
+                    a.open_child(child_row(cipher, doc, "$.b.s").await),
+                ),
+                (
+                    "an element read as another position",
+                    arr.open_child(as_first.into_iter().next().unwrap()),
+                ),
+                (
+                    "a row at another depth",
+                    a.open_child(row(doc, at, Some(2))),
+                ),
+                (
+                    "a chain head",
+                    root.open_child(child_row(cipher, doc, "$.arr").await),
+                ),
+                (
+                    "a key with a wildcard",
+                    key(cipher, "$.arr[*]")
+                        .await
+                        .open_child(child_row(cipher, doc, "$.arr[0]").await),
+                ),
+                (
+                    "a member with children",
+                    a.open_child(child_row(cipher, doc, "$.a.full").await),
+                ),
+            ]
+        }
+
+        #[tokio::test]
+        async fn each_element_opens_to_its_value() {
+            let (cipher, _) = cipher().await;
+            let doc = seal(&cipher, &tree()).await;
+            let arr = key(&cipher, "$.arr").await;
+            let mut values = Vec::new();
+            for node in children(&doc, &arr) {
+                values.push(open_alone(&cipher, arr.open_child(node)).await.unwrap());
+            }
+            assert_eq!(
+                values,
+                vec![json!(10), json!(20), json!(30)],
+                "each element's value, in the order the database returned them"
+            );
+        }
+
+        #[tokio::test]
+        async fn each_leaf_member_opens_to_its_value() {
+            let (cipher, _) = cipher().await;
+            let doc = seal(&cipher, &tree()).await;
+            let a = key(&cipher, "$.a").await;
+            let mut values = Vec::new();
+            for node in children(&doc, &a) {
+                match open_alone(&cipher, a.open_child(node)).await {
+                    Ok(value) => values.push(value.to_string()),
+                    Err(Error::JsonNotALeaf) => {}
+                    Err(error) => panic!("a child of $.a: {error:?}"),
+                }
+            }
+            values.sort();
+            assert_eq!(
+                values,
+                ["\"text\"", "1", "[]", "null", "{}"],
+                "every leaf member's value, without its key"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_wrong_entry_is_refused_as_for_a_child_plaintext() {
+            let (cipher, _) = cipher().await;
+            let doc = seal(&cipher, &tree()).await;
+            for (case, child) in refused(&cipher, &doc).await {
+                let alone = open_alone(&cipher, child.clone()).await;
+                let labelled = open(&cipher, child).await;
+                assertions::same_refusal(case, alone, labelled);
+            }
+        }
+
+        #[tokio::test]
+        async fn a_chain_head_is_refused_before_any_key_is_retrieved() {
+            let (cipher, retrieved) = cipher().await;
+            let doc = seal(&cipher, &tree()).await;
+            let root = key(&cipher, "$").await;
+            let head = child_row(&cipher, &doc, "$.arr").await;
+            assertions::wrong_entry(
+                open_alone(&cipher, root.open_child(head)).await,
+                "a child of the node the key names",
+            );
+            assert_eq!(
+                retrieved.load(Ordering::SeqCst),
+                0,
+                "the refusal retrieved no key"
+            );
+        }
     }
 }
 

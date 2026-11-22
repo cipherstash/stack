@@ -110,9 +110,10 @@ cleanup gaps and unobserved behavior alongside the passing requirements.
 ## EQL and JSON operations
 
 The [EQL/JSON contract](eql-json-contract.md) enrolls resolver capabilities,
-document writes, queries, extraction/subtree reads, one child opened against
-its parent, element-match and predicate matching. It reuses the native, Go and independent PostgreSQL suites and shares
-write/predicate case data. Run `mise run test:conformance:eql` and the separate
+document writes, queries, extraction reads, subtree reads, reads of one
+child checked against its parent, element-match, and predicate matching. The
+contract reuses the native, Go, and independent PostgreSQL suites. The
+contract also shares write and predicate case data. Run `mise run test:conformance:eql` and the separate
 required `test:conformance:eql:postgres` task; see the contract for guest builds,
 disposable database setup, intentional SQL differences and version reports.
 

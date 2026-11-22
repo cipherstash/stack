@@ -402,8 +402,8 @@ operators! {
         /// ([`KeysetCipher::json_subtree_key_with_bound`](crate::KeysetCipher::json_subtree_key_with_bound)).
         Subtree = "subtree",
         /// `"children"`: the token of the node at a path with no wildcard,
-        /// which `json_tree_children` takes. Each entry it returns opens
-        /// on its own, checked against that node
+        /// which `json_tree_children` takes. Your app decrypts each entry
+        /// it returns on its own, checked against that node
         /// ([`JsonSubtreeKey::open_child`](crate::json::JsonSubtreeKey::open_child)).
         Children = "children",
         /// `"child_count"`: the same token, which `json_tree_child_count`

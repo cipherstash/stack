@@ -386,11 +386,37 @@ async fn a_child_opens_through_the_key_of_its_parent() {
         "the child's key and value"
     );
 
+    let alone = JsonPlaintext::decrypt_from_with_context(
+        JsonTreeChild::from_key(&nested, entry.clone()),
+        &cipher,
+        column(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        alone.value(),
+        &json!("constant"),
+        "the child's value alone, after the same checks"
+    );
+
     let hello = key("$.hello").await;
     let refused = open_child(&cipher, &hello, entry.clone()).await;
     assert!(
         matches!(refused, Err(stack_encrypt::Error::JsonWrongEntry { .. })),
         "a child of another node: {refused:?}"
+    );
+    let refused_alone = JsonPlaintext::decrypt_from_with_context(
+        JsonTreeChild::from_key(&hello, entry.clone()),
+        &cipher,
+        column(),
+    )
+    .await;
+    assert!(
+        matches!(
+            refused_alone,
+            Err(stack_encrypt::Error::JsonWrongEntry { .. })
+        ),
+        "a child of another node, decrypted to its value alone: {refused_alone:?}"
     );
     let retrieved = calls.lock().unwrap().retrieve.len();
     let bare = stored.sv[at].clone();

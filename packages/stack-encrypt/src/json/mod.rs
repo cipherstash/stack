@@ -61,16 +61,19 @@
 //! extraction is [`JsonNode`] rows, which open only through what the
 //! client derived for the read: [`JsonSelector::open`] for the one entry
 //! `->` returns ([`JsonExtracted`]), [`JsonSubtreeKey::open`] for the rows
-//! of a walk ([`JsonSubtree`]), and [`JsonSubtreeKey::open_child`] for one
-//! entry `json_tree_children` returns ([`JsonChild`], which opens to a
-//! [`JsonChildPlaintext`]: the child's key or index, and its value). Each
-//! checks that the rows are the ones the read asked for. Every entry's AAD
-//! binds its selector, the slot it is stored at and the digest of its
-//! children's AEAD tags (the cascade), so the rows beneath the node a read
-//! names open only as they were sealed;
+//! of a walk ([`JsonSubtree`]). Each checks that the rows are the ones the
+//! read asked for. Every entry's AAD binds its selector, the slot it is
+//! stored at and the digest of its children's AEAD tags (the cascade), so
+//! the rows beneath the node a read names open only as they were sealed;
 //! the node itself is checked against the path the client derived, since
 //! nothing above it is read. The entries are stored in a random order, root
 //! first, and no check reads a slot as a position in the document.
+//!
+//! Your app can also read one level of a document. It passes each entry
+//! `json_tree_children` returns to [`JsonSubtreeKey::open_child`], with the
+//! parent's key. The [`JsonChild`] it gets back decrypts to the child's
+//! value ([`JsonPlaintext`]). The child can also decrypt to its value with
+//! its key or index ([`JsonChildPlaintext`]).
 //!
 //! # A document with no index
 //!
@@ -743,13 +746,13 @@ where
     }
 }
 
-/// One entry `json_tree_children(doc, token)` returned, with the key of the
-/// node whose token it was: what
-/// [`DecryptSource<JsonChildPlaintext>`](crate::DecryptSource) opens to the
-/// child's key or index under its parent and its value, which are wiped
-/// when they are dropped. Built only by [`JsonSubtreeKey::open_child`], so
-/// it always carries the parent's key, and opening checks the entry against
-/// it (see that method for the checks).
+/// One entry that `eql_v4.json_tree_children` returned, paired with the key
+/// of its parent node. Decrypt it into a [`JsonPlaintext`] for the child's
+/// value. Decrypt it into a [`JsonChildPlaintext`] for its key or index too.
+///
+/// [`JsonSubtreeKey::open_child`] is the only way to build one, so a
+/// `JsonChild` always contains the parent's key. That method shows the
+/// whole read, step by step. It also lists what decrypting checks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonChild {
     node: JsonNode,
@@ -761,12 +764,13 @@ impl JsonChild {
         Self { node, parent }
     }
 
-    /// The row, as the database returned it.
+    /// The entry, as the database returned it.
     pub fn node(&self) -> &JsonNode {
         &self.node
     }
 
-    /// The path of the parent the child is checked against.
+    /// The path of the parent node that decrypting checks the entry
+    /// against.
     pub fn parent_path(&self) -> &JsonPath {
         &self.parent.path
     }

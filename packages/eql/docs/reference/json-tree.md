@@ -234,18 +234,40 @@ chain from nothing. Do not convert
 NULL to `0`. The count is a count of stored entries: it is not an
 authenticated proof that no child was withheld.
 
-The client opens each entry `json_tree_children` returns on its own,
-against the path whose token it sent, so a read of one child transfers that
-child's entry and not the parent's subtree. The client checks that the
-entry is a child of that node: its selector is the parent's path extended
-by its decrypted key or position, and its self tag is the one that key or
-position derives under the parent's token. Each child opens to its key, for
-a member of an object, or its position, for an element of an array, with
-its value. The key is authenticated with the value, so it names each member
-whatever order the rows come back in. A scalar child's value is the scalar,
-and an empty object or array's is `{}` or `[]`. A child with members of its
-own does not open alone, because its authentication tag covers its
-children's tags: read it with a subtree read of its own path.
+### Reading one child
+
+Your app can read one level of a document without fetching the parent's
+whole subtree. It takes three steps.
+
+1. **Your app** derives the parent node's token and key from the parent's
+   path, through the SDK. A token is a value the database uses to find a
+   node's entry. Deriving it asks ZeroKMS for nothing. Your app keeps the
+   key and sends the token.
+2. **The database (EQL)** runs `eql_v4.json_tree_children(e, $1::text)`,
+   with the token as `$1`. In each row, it finds the parent's entry and
+   returns the parent's direct children as encrypted entries. It never
+   decrypts anything, and it never receives a key.
+3. **Your app** passes each returned entry to the SDK, with the parent's
+   key. The SDK checks that the entry is a child of that parent. Then it
+   fetches the data key from ZeroKMS and decrypts the child.
+
+Each child decrypts to its value. Your app can also get the child's key,
+for a member of an object, or its index, for an element of an array. The
+key or index is encrypted with the value, so the check covers it too. The
+database returns an object's members in a random order, so the key is how
+your app tells them apart.
+
+The SDK checks two values stored in each entry:
+
+- The selector, a keyed hash of the entry's path, must be the parent's
+  path extended by the child's key or index.
+- The self tag, the tag the database finds an entry by, must be the one
+  the child's key or index gives under the parent's token.
+
+A scalar child decrypts to the scalar. An empty object or array decrypts
+to `{}` or `[]`. A child with members of its own does not decrypt alone,
+because its ciphertext is sealed over its children's. Read it with a
+subtree read of its own path.
 
 ## One array element, and a whole predicate
 

@@ -1402,7 +1402,7 @@ func (w *writer) jsonEntry(g genField, pathsVar string) {
 	}
 	if answered["children"] {
 		w.nl()
-		w.b.WriteString(wrapComment("Children prepares eql_v4.json_tree_children at path, a path with no wildcard. Bind Token() as eql_v4.json_tree_children(col, $1::text). Open opens each entry it returns to the child's key or index and its value. encrypt.DecodeJSON reads a value into a Go type. A child with members of its own does not open alone: read it with Subtree.", 80))
+		w.b.WriteString(wrapComment("Children prepares a read of the children of the node at path, a path with no wildcard. Bind Token() as $1 in eql_v4.json_tree_children(col, $1::text). Pass the entries the database returns to Open. Open decrypts each one to the child's key or index and its value. encrypt.DecodeJSON reads a value into a Go type. A child with members of its own does not decrypt alone: read it with Subtree.", 80))
 		w.p("%sChildren(ctx context.Context, c *encrypt.Cipher, path string) (encrypt.JSONChildren[%s], error) {", recv, entry)
 		w.p("\treturn gensupport.JSONChildren[%s](ctx, f.field, c, path)", entry)
 		w.p("}")

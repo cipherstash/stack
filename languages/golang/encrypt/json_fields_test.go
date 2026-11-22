@@ -211,7 +211,7 @@ func TestACustomersFieldsDeriveEachQuery(t *testing.T) {
 }
 
 // A token is a capability and a path's keys can be a customer's data: the
-// read types print and log neither, under any verb or through slog. A
+// read types print and log neither, under any fmt verb, or through slog. A
 // child a read opened is plaintext, its key included, and prints and logs
 // redacted too. The three prepared reads print through one embedded type,
 // each with its own name and operand.
@@ -335,12 +335,14 @@ func subtreeLeafRow(t *testing.T, entry []byte) eql.JSONEntry {
 }
 
 // A document sealed through a cipher with a binding is read in part through
-// the same cipher: Selector, Subtree and Children prepare the read under
-// the cipher's scopes alone, so their selector and tokens are those of a
-// cipher with the same scopes and no binding, and open what the database
-// returns under the scopes and the binding. A cipher with another binding, or none, finds the
-// same entries and does not open them. A document sealed with no binding
-// reads through a cipher with no binding, as before.
+// the same cipher. Selector, Subtree, and Children prepare the read under
+// the cipher's scopes alone. So their selector and tokens are those of a
+// cipher with the same scopes and no binding. The read opens what the
+// database returns under the scopes and the binding.
+//
+// A cipher with another binding, or none, finds the same entries and does
+// not open them. A document sealed with no binding reads through a cipher
+// with no binding, as before.
 func TestACustomersDocumentReadsThroughACipherWithABinding(t *testing.T) {
 	c := deterministicEQLClient(t)
 	ctx := context.Background()
@@ -510,7 +512,7 @@ func TestACustomersDocumentReadsThroughACipherWithABinding(t *testing.T) {
 
 			// A query opens nothing, so it has no use for a binding, and a
 			// query through a cipher with one is still refused. So is a
-			// child count's token, which is a query's operand too.
+			// child count's token. That token is a query's operand too.
 			for name, err := range map[string]error{
 				"Contains":    func() error { _, err := f.Contains(ctx, bound, json.RawMessage(`{"name":"Alice"}`)); return err }(),
 				"ContainedBy": func() error { _, err := f.ContainedBy(ctx, bound, json.RawMessage(`{"name":"Alice"}`)); return err }(),

@@ -850,15 +850,16 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P, D> FieldReference<W, T, C, P, D
         })
     }
 
-    /// The token of the node at `path`, a path with no wildcard, which
-    /// `eql_v4.json_tree_children` and `eql_v4.json_tree_child_count` take
-    /// to find the node's children in every row. For a [`JsonDocument`]
-    /// field it is the [`JsonSubtreeKey`] that holds the token, which also
-    /// opens each entry `json_tree_children` returns, one child at a time,
-    /// checked against the node at `path`
-    /// ([`JsonSubtreeKey::open_child`]). For a field of another type,
-    /// [`encrypt_keyed`](JsonFieldQuery::encrypt_keyed) gives the token
-    /// and that key from one derivation.
+    /// The token of the node at `path`, a path with no wildcard. The
+    /// database passes it to `eql_v4.json_tree_children` or
+    /// `eql_v4.json_tree_child_count` to find the node's children in every
+    /// row.
+    ///
+    /// For a [`JsonDocument`] field, this derives a [`JsonSubtreeKey`]. The
+    /// key holds the token to send. Your app keeps the key to decrypt each
+    /// child the database returns ([`JsonSubtreeKey::open_child`]). For a
+    /// field of another type, [`encrypt_keyed`](JsonFieldQuery::encrypt_keyed)
+    /// returns the token and the key together.
     ///
     /// [`JsonDocument`]: crate::json::JsonDocument
     /// [`JsonSubtreeKey::open_child`]: crate::json::JsonSubtreeKey::open_child
@@ -1467,16 +1468,16 @@ json_encrypt! {
 }
 
 impl<T: JsonQueries> JsonFieldQuery<T, Children, Ready> {
-    /// Derives the node's token, as the field's type stores it, with the
-    /// key that holds it: [`encrypt`](Self::encrypt)'s token, and the key
-    /// that opens each entry `json_tree_children` returns for it
+    /// Derives the node's token and its key together. The token is the one
+    /// [`encrypt`](Self::encrypt) returns, in the field's own token type.
+    /// Your app sends the token to the database, and keeps the key to
+    /// decrypt each child the database returns
     /// ([`JsonSubtreeKey::open_child`]). Both come from one derivation, so
-    /// the key is the key of the token sent. Bind the token, and keep the
-    /// key to open what the query returns.
+    /// the key always matches the token sent.
     ///
-    /// The query is checked under the field's options before any key is
-    /// requested, and its path is wiped when it is derived, refused or
-    /// dropped. The operand is derived locally: it requests no key.
+    /// The query is checked against the field's options first. The query's
+    /// path is wiped when the query is derived, refused, or dropped. The
+    /// derivation runs in your app and asks ZeroKMS for nothing.
     ///
     /// [`JsonSubtreeKey::open_child`]: crate::json::JsonSubtreeKey::open_child
     pub fn encrypt_keyed<'a, K: 'static>(

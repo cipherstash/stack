@@ -185,13 +185,13 @@
 //! prepared the read: the operator, the path and the bound. The engine
 //! derives the selector or the read key again from that request, the
 //! field's definition and the keyset, and checks every row against it with
-//! the index's own checks ([`JsonSelector::open`],
+//! the index's own checks: [`JsonSelector::open`],
 //! [`JsonSubtreeKey::open`](crate::json::JsonSubtreeKey::open), and
-//! [`JsonSubtreeKey::open_child`](crate::json::JsonSubtreeKey::open_child)
-//! for one entry `json_tree_children` returned, checked against the parent
-//! the `children` operator's path names). The rows never say which path
-//! they are for. Each group of rows is one database row's, and opens on its
-//! own: entries of two documents are never one walk.
+//! [`JsonSubtreeKey::open_child`](crate::json::JsonSubtreeKey::open_child).
+//! For a `children` read, each entry must be a child of the node at the
+//! request's path. The rows never say which path they are for. Each group
+//! of rows opens on its own, so entries of two documents are never one
+//! walk.
 //!
 //! What opening proves is limited, as the index documents: a row of the
 //! column other than the one asked for can answer, an element under one
@@ -610,13 +610,13 @@ struct Groups(Vec<Vec<JsonText>>);
 enum Read {
     Selector(JsonPath),
     Subtree(JsonPath, u32),
-    /// `children`: the path of the parent, which names one node.
+    /// `children`: the parent's path. The path names one node.
     Child(JsonPath),
 }
 
-/// Read and check a read's request and its rows: everything [`open`]
-/// refuses before it derives anything. A selector's group and a child's
-/// hold one entry or none.
+/// Reads and checks a read's request and its rows: everything [`open`]
+/// refuses before it derives anything. A `selector` group and a `children`
+/// group each contain one entry or none.
 fn read_open(request: &ValueFrame, rows: &ValueFrame) -> Result<(Read, Vec<Vec<JsonNode>>), Error> {
     let request: ReadRequest = read_frame(request)?;
     let read = match Op::parse(&request.operation) {
@@ -661,8 +661,8 @@ pub(super) fn check_open(request: &ValueFrame, rows: &ValueFrame) -> Result<(), 
 }
 
 /// What a read opens with: the selector or the subtree key, derived again
-/// from the request. A `children` read opens with the key of the
-/// children's parent ([`open_children`]).
+/// from the request. A `children` read opens with its parent's key
+/// instead ([`open_children`]).
 enum Opener {
     Selector(crate::json::JsonSelector),
     Subtree(JsonSubtreeKey),
@@ -674,32 +674,29 @@ enum Opener {
 /// sealed under another is refused before any key is retrieved. The
 /// selector or the read key derives under the field's query context, and
 /// every entry opens under its stored context, so under the plan's
-/// bindings too. Each
-/// group of rows is one database row's: for `selector`, the entry `->`
-/// returned or none (SQL `NULL`); for `subtree`, the rows
-/// `json_tree_subtree` returned; for `children`, one entry
-/// `json_tree_children` returned for the token of the node at the path, or
-/// none. Every group opens to a list: for `selector`, the scalar's JSON
-/// text or none; for `subtree`, the JSON text of one value per concrete
-/// path the read named that the row has, in document order; and for
-/// `children`, the child or none. A child is a map: `{"key": text, "json":
-/// bytes}` for a member of an object, and `{"index": u64, "json": bytes}`
-/// for an element of an array, where `json` is the child's value (a
-/// scalar, `{}` or `[]`) as JSON text. One key request for every group.
+/// bindings too. [`json_open`](super::json_open) lists what each group
+/// contains, and what each group opens to. One key request serves every
+/// group.
 ///
 /// # Errors
 ///
-/// [`Error::Source`] ([`Reason::JsonInput`]) for a request or rows that
-/// do not parse, an operation that is not `selector`, `subtree` or
-/// `children`, a `wildcard_bound` on a `selector` or a `children`, or a
-/// selector or child group of more than one entry; [`Reason::JsonPathWildcard`]
-/// for a `children` path with a wildcard; [`Error::Cipher`] for the read's
-/// own refusals (a path that does not parse, a wildcard that expands too
-/// far). A row that is not the one the read asked for fails the pending
-/// ([`crate::Error::JsonWrongEntry`]), as does a wildcard read of an array
-/// longer than the bound ([`crate::Error::JsonWildcardTruncated`]). A
-/// `selector` or `children` entry that does not open alone, a container
-/// with members or an altered entry, is [`crate::Error::JsonNotALeaf`].
+/// [`Error::Source`] with [`Reason::JsonInput`] for:
+///
+/// - a request or rows that do not parse;
+/// - an operation that is not `selector`, `subtree`, or `children`;
+/// - a `wildcard_bound` on a `selector` or a `children`;
+/// - a `selector` or `children` group of more than one entry.
+///
+/// [`Reason::JsonPathWildcard`] for a `children` path with a wildcard.
+/// [`Error::Cipher`] for the read's own refusals, such as a path that does
+/// not parse, or a wildcard that expands too far.
+///
+/// The pending fails with [`crate::Error::JsonWrongEntry`] for an entry
+/// the read did not ask for. It fails with
+/// [`crate::Error::JsonWildcardTruncated`] for a wildcard read of an array
+/// longer than the bound. It fails with [`crate::Error::JsonNotALeaf`] for
+/// a `selector` or `children` entry that does not decrypt alone: a
+/// container with members, or an altered entry.
 pub(super) fn open<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     under: &Under<'_>,
@@ -783,9 +780,9 @@ fn open_read<'a, K: 'static>(
     Ok(Pending::all(keyset, pendings).try_map(opened_frame))
 }
 
-/// [`open_read`] for `children`: each group's one entry opens against the
-/// key of the parent at `path`, to the child's key or index and its value,
-/// as [`open_read`] opens a selector's entry.
+/// [`open_read`] for `children`. Each group's one entry opens against the
+/// key of the parent at `path`. It opens to the child's key or index and
+/// its value.
 fn open_children<'a, K: 'static>(
     keyset: &KeysetCipher<'a, K>,
     under: &Under<'_>,
@@ -793,8 +790,8 @@ fn open_children<'a, K: 'static>(
     path: &JsonPath,
     groups: Vec<Vec<JsonNode>>,
 ) -> Result<Pending<'a, ValueFrame, K>, Error> {
-    // A path with no wildcard: the key holds the parent's one token, and
-    // the bound is never used.
+    // The path has no wildcard, so the key holds one token, the parent's.
+    // The bound is never used.
     let parent = keyset.json_subtree_key_now(
         path,
         options,
@@ -814,17 +811,18 @@ fn open_children<'a, K: 'static>(
             )
             .map(|child| vec![child])
             .confined_to(&confine),
-            // `read_open` allows a child's group one entry or none.
+            // `read_open` allows a `children` group one entry or none.
             Err(_) => Pending::ready(keyset, Ok(Vec::new())),
         });
     }
     Ok(Pending::all(keyset, pendings).try_map(children_frame))
 }
 
-/// The opened children as a frame: a list per group of each child's map,
-/// `{"key", "json"}` or `{"index", "json"}`. Each child is wiped when it is
-/// dropped, here, once its text is written, and each text once the frame
-/// holds it.
+/// The opened children as a frame, with one list per group. Each list
+/// contains one map per child, either `{"key", "json"}` or
+/// `{"index", "json"}`. Each child is
+/// wiped when it is dropped here, once its text is written. Each text is
+/// wiped once the frame holds it.
 fn children_frame(groups: Vec<Vec<JsonChildPlaintext>>) -> Result<ValueFrame, crate::Error> {
     let opened: Result<Vec<Vec<OpenedChild<'_>>>, crate::Error> = groups
         .iter()
@@ -835,8 +833,8 @@ fn children_frame(groups: Vec<Vec<JsonChildPlaintext>>) -> Result<ValueFrame, cr
     frame
 }
 
-/// One opened child as the frame carries it: its key or its index, and its
-/// value's JSON text, which is wiped when it is dropped.
+/// One opened child as the frame carries it: its key or index, and its
+/// value's JSON text. The text is wiped when it is dropped.
 struct OpenedChild<'c> {
     child: &'c JsonChildPlaintext,
     json: Protected<Vec<u8>>,

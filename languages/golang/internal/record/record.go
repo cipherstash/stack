@@ -664,13 +664,13 @@ const (
 	Probabilistic Fidelity = "probabilistic"
 )
 
-// The operators of a field that stores a JSON document that derive a
-// node's selector or token. The first three prepare a read: the read's
-// operand derives under a cipher's scopes alone, and se_json_open takes the
-// operator's name as the "operation" that opens what the database returns
-// for it. JSONChildCount derives the token JSONChildren derives, for a
-// query, which opens nothing. The spellings are wire format, stack-encrypt's
-// dynamic::Op.
+// The operators of a JSON document field that derive a node's selector or
+// token. The spellings are wire format: stack-encrypt's dynamic::Op.
+//
+// The first three prepare a read. A read's operand derives under a cipher's
+// scopes alone. se_json_open takes the operator's name as the "operation"
+// of the read it opens. JSONChildCount derives the same token as
+// JSONChildren, but for a query. A query opens nothing.
 const (
 	JSONSelector   = "selector"
 	JSONSubtree    = "subtree"

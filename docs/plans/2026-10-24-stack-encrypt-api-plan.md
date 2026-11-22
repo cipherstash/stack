@@ -968,16 +968,18 @@ method. The generator keeps its output identical for unchanged input. So
 an upgrade alone does not change a committed `*_stash.go` file.
 
 A regeneration picks up two changes to the generated code. The handle
-rename is the one a program needs. The other is the new `Children`, which
-returns `encrypt.JSONChildren` and opens each child. A file generated
-before it still compiles and runs, and its `Children` returns the token
-alone.
+rename is the one a program needs. The other is the new `Children`. The
+new `Children` returns `encrypt.JSONChildren`, and that type opens each
+child.
+
+A file generated before this change still compiles and runs. That file's
+`Children` returns the token alone.
 
 One part of the target state is not in Go yet:
 
 - A Go program cannot set match options.
 
-It is in [Remaining work](#remaining-work).
+[Remaining work](#remaining-work) lists it.
 
 ### Rules in the target state
 
@@ -1289,17 +1291,21 @@ release leaves behind.
 - **Why.** Today a program must read and open the parent's whole subtree to
   see one child. That transfers more data and reveals a different set of
   tokens.
-- **Done already.** The engine opens one entry `json_tree_children`
-  returned against the key of its parent's path
-  (`JsonSubtreeKey::open_child`, a `JsonChild`), checking the parent link
-  the subtree rebuild checks. Each child opens to its authenticated key or
-  index and its value (`JsonChildPlaintext`; Go's `JSONChildValue`).
-  `eql-bindings` has `JsonTreeChild`, and `children(path).encrypt_keyed`
-  gives the token with the key that opens it. The dynamic interface's
-  `json_open` takes the `children` operation, and Go's generated
-  `Children` returns an `encrypt.JSONChildren`, whose `Open` opens each
-  entry. The `eql-json-v1` profile enrolls it as
-  `json-child-v1`, with Rust, Go and PostgreSQL evidence.
+- **Done already.**
+  - The engine opens one entry that `json_tree_children` returned. The
+    engine checks the entry against the key of the parent's path, with
+    the same parent-link checks as a subtree read
+    (`JsonSubtreeKey::open_child`, a `JsonChild`).
+  - A child opens to its value (`JsonPlaintext`). A child also opens to
+    its value with its authenticated key or index (`JsonChildPlaintext`;
+    Go's `JSONChildValue`).
+  - `eql-bindings` has `JsonTreeChild`. `children(path).encrypt_keyed`
+    returns the token with the key that opens what the query returns.
+  - The dynamic interface's `json_open` takes the `children` operation.
+  - Go's generated `Children` returns an `encrypt.JSONChildren`.
+    `JSONChildren.Open` opens each entry.
+  - The `eql-json-v1` profile enrolls the read as `json-child-v1`, with
+    Rust, Go, and PostgreSQL evidence.
 - **Tracked in.** Issue #1677. Pull request #1353, the Go JSON plan document, lists it as remaining.
 - **Finished when** Go can open one child, and the `eql-json-v1`
   conformance profile covers it.
@@ -1769,7 +1775,7 @@ Decided on 7 November 2026, as area one of the query design review.
   - a Go program generated for rc.3 runs against the module that sends
     serialised `Planned` values, apart from the one regeneration the
     handle rename needs. That regeneration also changes `Children` to
-    return `encrypt.JSONChildren`, which keeps binding as the token;
+    return `encrypt.JSONChildren`. That type still binds as the token;
   - the chain in `plan/chain.rs` and the builder in `plan/build.rs`
     are gone.
 
