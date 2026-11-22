@@ -1,4 +1,4 @@
-# Fuzzing (cargo-fuzz / libFuzzer)
+# Fuzzing (cargo-fuzz / libFuzzer, and Go)
 
 How the repo fuzzes its public, untrusted-input parsers, how to run a
 target locally, and how to add a new one. The short-form recipe lives in
@@ -128,10 +128,62 @@ Two jobs with deliberately different roles:
   `restore-keys`) so coverage compounds, minimized with `cargo fuzz cmin`
   to stay small, and any crash reproducer is uploaded as an artifact.
 
+- **go-fuzz-campaign** (`schedule` nightly + `workflow_dispatch`,
+  **non-blocking**): the same for the Go fuzz targets (see below). Their
+  regression replay is plain `go test`, in `tests-golang.yml`.
+
 The `pull_request` trigger is path-filtered to `packages/stack-auth/**`,
 `packages/stack-kms/**`, `packages/stack-encrypt/**`, the root `Cargo.toml`,
 `Cargo.lock` and `mise.toml`, and the workflow file, with `!**.md` / `!**.example` excludes last so docs-only changes are
 skipped.
+
+## Go: fuzzing the guests' ABI from the host
+
+The Go module in `languages/golang` runs two WASI guests (the stack-encrypt
+guest and the credential guest). Every export reads its input through a
+`(ptr, len)` pair, and the guests share one rule for those pairs, in
+`packages/stack-guest-abi/src/abi.rs`: a pair outside linear memory is
+refused with `STATUS_ENCODING` before anything reads it, and a pair inside
+a buffer the host owns is read as bytes, whatever they hold. The code that
+checks the pairs only compiles for wasm32, so cargo-fuzz and Miri cannot
+reach it. Go's native fuzzing calls the real guests through wazero instead.
+
+| Go fuzz target | package | what it calls |
+|---|---|---|
+| `FuzzGuestExportPairs` | `encrypt` | one export of the stack-encrypt guest (the deterministic-kms test build), with one pair replaced by the fuzzed bytes, a sub-range of them, or a pair outside memory. The exports cover each way the guest reads input: borrowed (`se_plan_check`, `se_keyset`, `se_decrypt_record`), borrowed then wiped (`se_cipher_init`), and taken as plaintext (`se_term`, `se_encrypt_record`, `se_resume`). The other parameters are what the public API sent, recorded through it, so a fuzzed call gets past the checks it did not change. |
+| `FuzzGuestBufferRegistry` | `encrypt` | `se_alloc` and `se_dealloc` against a model of the buffer registry: frees with the wrong length, double frees, pointers beside a live buffer, pointers outside memory, and allocations too large to make. Every live buffer must stay allocated and unchanged. |
+| `FuzzAuthGuestExportPairs` | `auth` | the credential guest's one- and two-input exports (`sa_auth_validate_crn`, `sa_has_token`, `sa_workspace_dir`, `sa_lock_path`), as above. None writes to the profile. |
+
+Each call must not trap, must answer `STATUS_ENCODING` for a pair outside
+memory and a defined status (not `STATUS_INTERNAL`) or an output inside
+memory otherwise, and must leave an instance that still answers. The shared
+rules live in `languages/golang/internal/guest/hostile.go`.
+
+Go's fuzzer is guided by coverage of Go code only. wazero compiles the
+guest to native code it does not instrument, so the fuzzer cannot see which
+of the guest's branches an input reached, and mutates close to blindly
+there. That is why every target starts from a valid call: the seeds, and
+the parameters recorded through the public API, put each input one change
+away from a call the guest accepts.
+
+The fuzz tests never pass a pair inside memory but outside the host's own
+buffers. That breaks the host's side of the contract: an export that wipes
+its input would zero the guest's own memory.
+
+Run them with mise, after building the guests:
+
+```bash
+mise run wasm:guest:build:deterministic
+mise run wasm:auth-guest:build
+mise run go:fuzz                                   # every target, 60s each
+GO_FUZZ=FuzzGuestBufferRegistry GO_FUZZTIME=5m mise run go:fuzz
+```
+
+Plain `go test` replays each target's seeds and its committed corpus under
+`testdata/fuzz/<target>/`, so `go:test` is the regression run on every pull
+request. A failing input is written there; commit it once the bug is fixed.
+The nightly `go-fuzz-campaign` job in `fuzz.yml` runs `go:fuzz` and keeps
+the generated corpus (`$(go env GOCACHE)/fuzz`) in the Actions cache.
 
 ## Adding a new target
 
