@@ -33,14 +33,18 @@ Keep the two apart in code and in words. The user-facing library is never
 WebAssembly guest in `languages/golang/encrypt/guest` and the Go code in
 `languages/golang/internal/guest` that runs it.
 
-Three documents fix what a language SDK may and may not do, and this guide
-does not repeat them: `docs/sdk-design-principles.md` (adopted by ADR-0008),
-ADR-0007, *bindings enter the engine through a plan, never through a second
-executor*, and ADR-0009, *operators select the index, and a query term is
-not the stored term*. The ADRs are in `packages/stack-encrypt/docs/adr`.
-The one sentence to carry from them: the engine does all the work, an SDK
-declares what to do and sends it across as data, and the bytes are the same
-in every language because every language runs the same code.
+`docs/sdk-design-principles.md` fixes what a language SDK may and may not
+do, and this guide does not repeat it. Two of the engine's rules matter
+most here:
+
+- A binding enters the engine through a plan, never through an executor of
+  its own. It has no loop over fields, no batching and no sealing.
+- An operator selects the index that answers it, and a query term is
+  derived for that operator. It is not the stored term.
+
+The one sentence to carry: the engine does all the work, an SDK declares
+what to do and sends it across as data, and the bytes are the same in
+every language because every language runs the same code.
 
 ## 2. Link the engine natively
 
@@ -205,8 +209,8 @@ A field of type `"json"` stores a JSON document, which the language SDK
 hands over as UTF-8 JSON text. It names a target that stores a document
 (`JsonSearch`), and its options say which paths are ordered. The engine
 parses the text by one set of rules ([`crate::dynamic::read_json`]) and
-gives it back as text ([`crate::dynamic::json_frame`]). ADR-0013 says why a
-document is one text leaf.
+gives it back as text ([`crate::dynamic::json_frame`]). The whole document
+is sealed as one leaf, its JSON text.
 
 A document answers its own operators: `contains` and `contained_by`; `eq_at`,
 `lt_at` and the other comparisons at a path; `element_match`; `match`, a
@@ -493,7 +497,8 @@ function, `token_get` in module `cipherstash_transport`
 (`languages/golang/encrypt/guest/src/host.rs`). The host holds a fresh
 bearer token before each step, so the import never waits. Minting and
 refreshing tokens stay on the host side; in Go that is the `auth` package
-and its credential guest, a separate module by ADR-0005. During an export,
+and its credential guest, a separate module that reads the profile and
+signs in, so the encryption guest holds none of that code. During an export,
 a host import may re-enter the guest only through `se_alloc`, to place the
 token. Calling any other export from inside an import is undefined
 behaviour of the embedding.
@@ -837,10 +842,4 @@ done:
   only: `languages/golang/encrypt/guest` and
   `languages/golang/internal/guest` (the host side), over the conventions
   in `packages/stack-guest-abi`.
-- The design rules: `docs/sdk-design-principles.md`, and in
-  `packages/stack-encrypt/docs/adr` ADR-0007 (bindings enter through a
-  plan), ADR-0008 (the SDK design principles), ADR-0009 (operators select
-  the index), ADR-0010 (what a stored value authenticates), ADR-0013 (a JSON
-  document is one text leaf) and ADR-0014 (operations read the plaintext,
-  and at most one takes it). ADR-0002 in `docs/adr` is the value model and
-  the EQL v4 envelope.
+- The design rules for a language SDK: `docs/sdk-design-principles.md`.
