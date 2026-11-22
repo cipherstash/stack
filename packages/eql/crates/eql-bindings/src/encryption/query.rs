@@ -40,11 +40,12 @@
 //!
 //! The twin carries what the type's query domain requires, as the data
 //! path's does. The twin of an ordered type other than text carries its one
-//! order term. A `TextOrd` twin carries the equality term and the order term whatever the
-//! operator, since `eql_v4.query_text_ord` requires both: the query derives
-//! the two terms for the one value. A text search twin's terms are
-//! optional, so its query carries the term of the index that answers the
-//! operator alone.
+//! order term. A `TextOrd` twin carries the equality term and the order
+//! term whatever the operator, since `eql_v4.query_text_ord` requires both:
+//! the query derives the two terms for the one value, and is refused,
+//! before any key is requested, for text either index refuses. A text
+//! search twin's terms are optional, so its query carries the term of the
+//! index that answers the operator alone.
 //!
 //! The query is derived under the field reference's label: the record's scope, then
 //! the field's name (or its `identity`). That is the column the field
@@ -296,9 +297,10 @@ pub trait QueryTwin<T>: Sized {
 /// `TwinIndex<Equality, TextOrdQuery, (Equality, Ope)>`.
 ///
 /// It derives the terms of `D`, under the label of the field's field
-/// reference and any scope the query carries, and checks and refuses what
-/// `I` refuses, as well as a label that names no column; it then writes the
-/// terms into the twin, with the column the label names. It is declared as
+/// reference and any scope the query carries. Before any key is requested
+/// it refuses what each index of `D` refuses for the value, as the data
+/// path does, and a label that names no column; it then writes the terms
+/// into the twin, with the column the label names. It is declared as
 /// `I` is ([`Index::spec`]). It answers for the twin's own plaintext
 /// ([`QueryTwin::Plaintext`]) only. `TextEq` answers [`op::Eq`](struct@op::Eq) through
 /// `TwinIndex<Equality, TextEqQuery>`, `IntegerOrd` answers [`op::Gt`]
@@ -445,23 +447,31 @@ where
 /// derives, hex encoded as the stored value's is, and the term the order
 /// index `O` derives for the same value, under the same context,
 /// since the type's query domain requires both. Refuses what the equality
-/// index refuses, as the data path does for `=`. Only for the plaintext
-/// the twin's type is produced from.
+/// index refuses, then what `O` refuses, as the data path does for `=` on a
+/// field that names the type: the query derives both terms. An order index
+/// refuses the same values for every ordering, so its `Lt` stands for
+/// them. Only for the plaintext the twin's type is produced from.
 impl<Q, O, P> Supports<op::Eq, P> for TwinIndex<Equality, Q, (Equality, O)>
 where
-    O: Index<P>,
-    Q: QueryTwin<(Hmac256, O::Term), Plaintext = P> + QueryTerm + MaybeSend + 'static,
-    P: Encrypt + EncryptRef + Zeroize + 'static,
+    O: Supports<op::Lt, P, Verifier = ()> + Index<P>,
+    Q: QueryTwin<(Hmac256, <O as Index<P>>::Term), Plaintext = P> + QueryTerm + MaybeSend + 'static,
+    P: Orderable + Encrypt + EncryptRef + Zeroize + 'static,
 {
     type Query = Q;
     type Verifier = ();
     fn prepare(&self, value: &P) -> Result<(), Error> {
-        Supports::<op::Eq, P>::prepare(&self.index, value)
+        let (equality, order) = &self.terms;
+        Supports::<op::Eq, P>::prepare(equality, value)?;
+        Supports::<op::Lt, P>::prepare(order, value)
     }
     fn check_label(&self, label: &Label, _extended: bool) -> Result<(), Error> {
         check_column(label)
     }
-    fn query((): (), (equality, order): (EqualityTerm, O::Term), token: QueryToken) -> Q {
+    fn query(
+        (): (),
+        (equality, order): (EqualityTerm, <O as Index<P>>::Term),
+        token: QueryToken,
+    ) -> Q {
         Q::assemble(column(&token), (hmac256(&equality), order))
     }
 }
@@ -472,8 +482,9 @@ where
 // `(Equality, O)`), as the pair's equality impl does. The term is the one
 // `O` sends for the operator, which is what it stores, so the twin compares
 // against the stored value's term under the same column. Refuses what `O`
-// refuses for the operator. Only for the plaintext the twin's type is
-// produced from.
+// refuses for the operator; on the pair, what the equality index refuses
+// first, since the query derives both terms. Only for the plaintext the
+// twin's type is produced from.
 macro_rules! twin_orderings {
     ($($operator:ident),+ $(,)?) => {$(
         #[doc = concat!("`op::", stringify!($operator), "` on a twin that carries the order index's term alone.")]
@@ -513,7 +524,9 @@ macro_rules! twin_orderings {
             type Query = Q;
             type Verifier = ();
             fn prepare(&self, value: &P) -> Result<(), Error> {
-                Supports::<op::$operator, P>::prepare(&self.index, value)
+                let (equality, order) = &self.terms;
+                Supports::<op::Eq, P>::prepare(equality, value)?;
+                Supports::<op::$operator, P>::prepare(order, value)
             }
             fn check_label(&self, label: &Label, _extended: bool) -> Result<(), Error> {
                 check_column(label)

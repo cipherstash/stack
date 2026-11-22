@@ -242,17 +242,7 @@ pub(super) fn target_operators(target: &TargetDescriptor) -> Vec<(Op, IndexSpec)
     else {
         return Vec::new();
     };
-    let indexes: Vec<IndexSpec> = target
-        .indexes
-        .iter()
-        .filter_map(
-            |key| match (IndexSpec::parse(key)?, &target.match_options) {
-                (IndexSpec::Match(_), Some(options)) => Some(IndexSpec::Match(options.clone())),
-                (IndexSpec::Match(_), None) => None,
-                (index, _) => Some(index),
-            },
-        )
-        .collect();
+    let indexes = target_indexes(target);
     // `between` through an EQL type is not answered yet; `between_at` on a
     // document is (its bounds are two leaf operands). A JSON operator is
     // listed only when the type names the SQL type its operand binds as,
@@ -268,6 +258,23 @@ pub(super) fn target_operators(target: &TargetDescriptor) -> Vec<(Op, IndexSpec)
             op.answered_by(kind, &indexes)
                 .map(|index| (op, index.clone()))
         })
+        .collect()
+}
+
+/// The indexes an EQL type answers through, in its order: each it carries,
+/// the match index under the type's match options, and no match index when
+/// they are not known.
+fn target_indexes(target: &TargetDescriptor) -> Vec<IndexSpec> {
+    target
+        .indexes
+        .iter()
+        .filter_map(
+            |key| match (IndexSpec::parse(key)?, &target.match_options) {
+                (IndexSpec::Match(_), Some(options)) => Some(IndexSpec::Match(options.clone())),
+                (IndexSpec::Match(_), None) => None,
+                (index, _) => Some(index),
+            },
+        )
         .collect()
 }
 
@@ -704,6 +711,25 @@ fn prepare_input(index: &IndexSpec, input: &Input) -> Result<Option<QueryTokens>
     Ok(None)
 }
 
+/// [`prepare_input`] for every index a query of `answer` derives a term
+/// through: the index that answers the operator, and on a type whose query
+/// twin carries every index's term
+/// ([`TargetDescriptor::query_carries_every_term`]), each index the type
+/// answers through, in the type's order, as a typed query of the type
+/// prepares them. The first refusal is returned.
+fn prepare_answer(answer: &Answer<'_>, input: &Input) -> Result<(), Error> {
+    match answer
+        .target
+        .as_ref()
+        .filter(|target| target.query_carries_every_term)
+    {
+        Some(target) => target_indexes(target)
+            .iter()
+            .try_for_each(|index| prepare_input(index, input).map(drop)),
+        None => prepare_input(&answer.index, input).map(drop),
+    }
+}
+
 /// Whether `value`, if it is order text, has an order encoding the index
 /// takes ([`crate::sem::query::order_text`]): the fold exists, and under
 /// block ORE (`block`) fits the scheme and does not end in NUL. Anything
@@ -832,7 +858,7 @@ pub fn check_query(
             .map_err(|error| error.in_field(field));
     }
     let input = read_input(&answer, operator, input)?;
-    prepare_input(&answer.index, &input).map(drop)
+    prepare_answer(&answer, &input)
 }
 
 /// The JSON index options a document field's plan resolved.
@@ -1101,10 +1127,11 @@ pub fn query_term<'a, K: 'static>(
         return json_term(cipher, plan, answer, operator, input);
     }
     let input = read_input(&answer, operator, input)?;
-    // Prepared once, here: the derivation below refuses nothing a query
-    // refuses, so what passes is derived. A match query's tokens are
-    // plaintext the caller cuts again for `verify`; they cross no binding.
-    let _ = prepare_input(&answer.index, &input)?;
+    // Prepared once, here, through every index whose term the query
+    // derives: the derivation below refuses nothing a query refuses, so
+    // what passes is derived. A match query's tokens are plaintext the
+    // caller cuts again for `verify`; they cross no binding.
+    prepare_answer(&answer, &input)?;
     let index = answer.index.clone();
     let made = move |domain: Option<String>, operand| QueryTerm {
         operator,
@@ -2901,6 +2928,145 @@ mod tests {
             reason_of(&error),
             (Some("email"), Some(Reason::ExactOperator))
         );
+    }
+
+    /// A resolver holding one text type with an equality and a block ORE
+    /// index, whose query twin carries both terms when `every_term` is set
+    /// and the answering index's alone otherwise.
+    struct OrderedText {
+        every_term: bool,
+    }
+
+    impl TargetResolver for OrderedText {
+        fn targets(&self) -> Vec<TargetDescriptor> {
+            let descriptor = descriptor(Some(ValueKind::String), &["eq", "ore_block"], true, true);
+            vec![if self.every_term {
+                descriptor.with_query_carrying_every_term()
+            } else {
+                descriptor
+            }]
+        }
+        fn encrypt<'a, K: 'static>(
+            &self,
+            _: &str,
+            _: Option<&crate::dynamic::TargetOptions>,
+            _: &'a KeysetCipher<'_, K>,
+            _: &Label,
+            _: &crate::target::DeclaredContext,
+            _: ValueFrame,
+        ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+            unreachable!("a query encrypts nothing")
+        }
+        fn decrypt<'a, K: 'static>(
+            &self,
+            _: &str,
+            _: &'a crate::StackCipher<K>,
+            _: &Label,
+            _: &crate::target::DeclaredContext,
+            _: &[u8],
+        ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+            unreachable!("a query decrypts nothing")
+        }
+        fn query<'a, K: 'static>(
+            &self,
+            _: &str,
+            _: &IndexSpec,
+            keyset: &'a KeysetCipher<'_, K>,
+            _: &Label,
+            _: &crate::target::DeclaredContext,
+            _: ValueFrame,
+        ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+            Ok(Pending::ready(
+                keyset,
+                Ok(br#"{"hm":"00","ob":"00"}"#.to_vec()),
+            ))
+        }
+    }
+
+    /// A plan with one field, `email`, naming [`OrderedText`]'s type.
+    fn ordered_text_plan(resolver: &OrderedText) -> Plan {
+        record::plan_with(
+            frame_of(&Tree::Object(vec![(
+                "email".into(),
+                Tree::Object(vec![
+                    (
+                        "context".into(),
+                        Tree::Array(vec![text("users"), text("email")]),
+                    ),
+                    ("target".into(), text("Some")),
+                ]),
+            )]))
+            .as_protected_ref()
+            .as_deref(),
+            resolver,
+        )
+        .unwrap()
+    }
+
+    mod given_a_twin_that_carries_every_term {
+        use super::*;
+
+        /// `eq` derives the block ORE term too, so text block ORE cannot
+        /// order is refused at a binding's boundary and before the twin is
+        /// asked for, as for an ordering.
+        #[tokio::test]
+        async fn eq_is_refused_for_what_the_order_index_refuses() {
+            let resolver = OrderedText { every_term: true };
+            let plan = ordered_text_plan(&resolver);
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            for op in [Op::Eq, Op::Lt] {
+                let checked = check_query(&plan, "email", op, text("ab\0"), &resolver);
+                ordered_text_assertions::trailing_nul(&checked, &format!("{op} at the boundary"));
+                let derived =
+                    query_term(&keyset, &plan, "email", op, text("ab\0"), &resolver).map(drop);
+                ordered_text_assertions::trailing_nul(&derived, &format!("{op} before the twin"));
+                assert!(
+                    check_query(&plan, "email", op, text("bob"), &resolver).is_ok(),
+                    "{op}: text both indexes take is a query"
+                );
+            }
+        }
+    }
+
+    mod given_a_twin_that_carries_the_answering_term_alone {
+        use super::*;
+
+        /// Nothing derives a block ORE term for `eq`, so text block ORE
+        /// cannot order is an `eq` query, and still no ordering.
+        #[tokio::test]
+        async fn eq_is_answered_for_text_the_order_index_refuses() {
+            let resolver = OrderedText { every_term: false };
+            let plan = ordered_text_plan(&resolver);
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            assert!(
+                check_query(&plan, "email", Op::Eq, text("ab\0"), &resolver).is_ok(),
+                "the boundary passes `eq`"
+            );
+            assert!(
+                query_term(&keyset, &plan, "email", Op::Eq, text("ab\0"), &resolver).is_ok(),
+                "`eq` is derived"
+            );
+            let checked = check_query(&plan, "email", Op::Lt, text("ab\0"), &resolver);
+            ordered_text_assertions::trailing_nul(&checked, "lt at the boundary");
+        }
+    }
+
+    mod ordered_text_assertions {
+        use super::*;
+
+        pub(super) fn trailing_nul<T: fmt::Debug>(result: &Result<T, Error>, what: &str) {
+            assert!(
+                matches!(
+                    result,
+                    Err(Error::Cipher(crate::Error::Term(
+                        TermError::OreBlockTrailingNul
+                    )))
+                ),
+                "{what}: refused as block ORE text ending in NUL: {result:?}"
+            );
+        }
     }
 }
 

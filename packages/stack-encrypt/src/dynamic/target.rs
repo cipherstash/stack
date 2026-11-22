@@ -123,6 +123,15 @@ pub struct TargetDescriptor {
     /// what `match` binds as. Not on the wire; a type that names none does
     /// not answer `match`.
     pub predicate_query_sql_domain: Option<String>,
+    /// Whether the query twin carries the term of every index the type
+    /// carries, whatever index answers the operator
+    /// ([`with_query_carrying_every_term`](Self::with_query_carrying_every_term)):
+    /// EQL v4's `query_text_ord_ore` requires its `hm` and its `ob`
+    /// together. A query on such a type derives every term, so it is
+    /// refused, before any term exists, for what any of those indexes
+    /// refuses, rather than for what the answering index refuses alone.
+    /// Not on the wire.
+    pub query_carries_every_term: bool,
 }
 
 /// The descriptor in its wire form: the object a guest's `se_targets`
@@ -193,6 +202,7 @@ impl TargetDescriptor {
             leaf_query_sql_domain: None,
             elements_query_sql_domain: None,
             predicate_query_sql_domain: None,
+            query_carries_every_term: false,
         }
     }
 
@@ -228,6 +238,19 @@ impl TargetDescriptor {
     #[must_use]
     pub fn with_match_options(mut self, options: MatchOptions) -> Self {
         self.match_options = Some(options);
+        self
+    }
+
+    /// The descriptor of a type whose query twin carries the term of every
+    /// index the type carries, whatever index answers the operator. A
+    /// query on it is refused for what any of the type's indexes refuses
+    /// for the value ([`check_query`](super::check_query),
+    /// [`query_term`](super::query_term())). Without it, a twin is taken to
+    /// carry the answering index's term alone, as EQL v4's
+    /// `query_text_search` does.
+    #[must_use]
+    pub fn with_query_carrying_every_term(mut self) -> Self {
+        self.query_carries_every_term = true;
         self
     }
 

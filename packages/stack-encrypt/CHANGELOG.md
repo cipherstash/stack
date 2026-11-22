@@ -1408,6 +1408,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A query on an EQL type whose twin carries every term is refused for
+  what any of its indexes refuses, before any key is requested** (#1668).
+  `eql_v4.query_text_ord_ore` requires its `hm` and its `ob` together, so
+  an `eq` query on a `TextOrdOre` field derives both. `dynamic::check_query`
+  and `dynamic::query_term` checked the equality index alone, so `eq` of
+  text that ends in NUL, or is too long for block ORE, passed a binding's
+  boundary and was refused only while its term was derived, after the
+  keyset's index key was loaded. Both now refuse it first, with
+  `TermError::OreBlockTrailingNul` or `TermError::OreBlockTooLong`, as for
+  an ordering.
+  - `TargetDescriptor::query_carries_every_term` says which types do, set
+    with `with_query_carrying_every_term()`. It is not on the wire. A
+    descriptor without it is taken to carry the answering index's term
+    alone, as before.
+
 - **`Pending::zip` and `Pending::all` wipe the plaintext they recovered
   before a later failure** (#1666). When one decrypt in a batch failed
   after its key arrived, for example with the wrong context or another

@@ -445,12 +445,14 @@ for an EQL type.
 
 A twin carries what its query domain requires. The twin of an ordered
 type other than text carries its one order term (`op` or `ob`). A
-`TextOrd` twin carries both
-its `hm` and its order term whatever the operator, because
-`eql_v4.query_text_ord` requires both, so a field query derives the two
-terms for the one value. A text search twin's terms are optional, so its
-query carries only the term of the index that answers the operator: `hm`
-for `eq`, `op` or `ob` for an ordering, `bf` for `matches`.
+`TextOrd` twin carries both its `hm` and its order term whatever the
+operator, because `eql_v4.query_text_ord` requires both, so a field query
+derives the two terms for the one value. It is refused, before any key is
+requested, for text either index refuses: `TextOrdOre.eq(..)` of text that
+ends in NUL or is too long for block ORE, as the data path refuses it. A
+text search twin's terms are optional, so its query carries only the term
+of the index that answers the operator: `hm` for `eq`, `op` or `ob` for an
+ordering, `bf` for `matches`.
 
 The query is derived under the field reference's label: the record's scope, then the
 field's name (or its `identity`). That is the column the field stores in

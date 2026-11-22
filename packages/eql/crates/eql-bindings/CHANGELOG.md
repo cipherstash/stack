@@ -55,6 +55,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `OreBlockTerm<S>`), for a pair `(Hmac256, OpeTerm<String>)` or
     `(Hmac256, OreBlockTerm<String>)`, and, for a twin whose terms are
     optional, once per term.
+  - A query on a twin that carries an order term beside its `hm` is
+    refused, before any key is requested, for what either index refuses:
+    `TextOrdOre` `eq` of text that ends in NUL or is too long for block ORE
+    is refused as an ordering of it is. The descriptor `EqlTargets` gives
+    Stack Encrypt says which types' twins carry every term
+    (`Target::query_carries_every_term`), so a data plan refuses the same
+    queries at the same point.
   - No type answers `between` from a field reference, as a data plan
     answers no `between` on an EQL type.
 

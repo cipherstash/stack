@@ -62,12 +62,145 @@ const TARGET_VERSION: EqlVersion = EqlVersion::V4;
 /// 6-bit schemes), not its `ore` index, which is CLLW ORE and has no EQL
 /// domain.
 pub fn index_key(term: Term) -> &'static str {
-    match term {
-        Term::Hm => "eq",
-        Term::Bloom => "match",
-        Term::Ore => "ore_block",
-        Term::Ope => "ope",
+    IndexKey::of_term(term).as_str()
+}
+
+/// An engine index a catalog term rides under, named by its
+/// `IndexSpec::key()` ([`as_str`](Self::as_str)). Each rule the typed query
+/// generator applies to an index matches on it exhaustively, so a new index
+/// is a compile error in every rule rather than a missing arm. A row's
+/// indexes stay strings, as the table spells them; [`parse`](Self::parse)
+/// reads one back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum IndexKey {
+    /// `eq`: the equality index, EQL's `hm`.
+    Eq,
+    /// `match`: the match index, EQL's `bf`.
+    Match,
+    /// `ore_block`: block ORE, EQL's `ob`.
+    OreBlock,
+    /// `ope`: OPE, EQL's `op`.
+    Ope,
+}
+
+impl IndexKey {
+    /// Every index, in the order `answers.rs` imports them.
+    const ALL: [IndexKey; 4] = [
+        IndexKey::Eq,
+        IndexKey::Match,
+        IndexKey::Ope,
+        IndexKey::OreBlock,
+    ];
+
+    /// The index a catalog term rides under.
+    fn of_term(term: Term) -> Self {
+        match term {
+            Term::Hm => IndexKey::Eq,
+            Term::Bloom => IndexKey::Match,
+            Term::Ore => IndexKey::OreBlock,
+            Term::Ope => IndexKey::Ope,
+        }
     }
+
+    /// The catalog term the index derives: the inverse of
+    /// [`of_term`](Self::of_term).
+    fn term(self) -> Term {
+        match self {
+            IndexKey::Eq => Term::Hm,
+            IndexKey::Match => Term::Bloom,
+            IndexKey::OreBlock => Term::Ore,
+            IndexKey::Ope => Term::Ope,
+        }
+    }
+
+    /// The key `IndexSpec::key()` spells.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            IndexKey::Eq => "eq",
+            IndexKey::Match => "match",
+            IndexKey::OreBlock => "ore_block",
+            IndexKey::Ope => "ope",
+        }
+    }
+
+    /// The index a row's key names.
+    ///
+    /// # Panics
+    ///
+    /// On a key no catalog term rides under, such as a document's `json`:
+    /// a typed query has no rule for it.
+    fn parse(type_name: &str, key: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|index| index.as_str() == key)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{type_name}: a typed query has no rule for the {key} index; extend \
+                     eql-codegen's IndexKey"
+                )
+            })
+    }
+
+    /// Stack Encrypt's index type, as `answers.rs` names it.
+    fn index_type(self) -> TokenStream {
+        match self {
+            IndexKey::Eq => quote!(Equality),
+            IndexKey::Match => quote!(Match<EqlMatch>),
+            IndexKey::Ope => quote!(Ope),
+            IndexKey::OreBlock => quote!(OreBlock),
+        }
+    }
+
+    /// The name `answers.rs` imports Stack Encrypt's index type by.
+    fn index_import(self) -> &'static str {
+        match self {
+            IndexKey::Eq => "Equality",
+            IndexKey::Match => "Match",
+            IndexKey::Ope => "Ope",
+            IndexKey::OreBlock => "OreBlock",
+        }
+    }
+
+    /// The type a query twin stores the index's term in, over the type's
+    /// plaintext `source`: the EQL newtype of an `hm` or a `bf`, Stack
+    /// Encrypt's own term of an `op` or an `ob`.
+    fn twin_term_type(self, source: &syn::Path) -> TokenStream {
+        match self {
+            IndexKey::Eq => quote!(Hmac256),
+            IndexKey::Match => quote!(BloomFilter),
+            IndexKey::Ope => quote!(OpeTerm<#source>),
+            IndexKey::OreBlock => quote!(OreBlockTerm<#source>),
+        }
+    }
+
+    /// The name `answers.rs` imports the twin's term type by, and where
+    /// from.
+    fn term_import(self) -> TermImport {
+        match self {
+            IndexKey::Eq => TermImport::Newtype("Hmac256"),
+            IndexKey::Match => TermImport::Newtype("BloomFilter"),
+            IndexKey::Ope => TermImport::OrderTerm("OpeTerm"),
+            IndexKey::OreBlock => TermImport::OrderTerm("OreBlockTerm"),
+        }
+    }
+
+    /// How the index is named in the generated docs.
+    fn doc(self) -> &'static str {
+        match self {
+            IndexKey::Eq => "equality",
+            IndexKey::Match => "match",
+            IndexKey::Ope => "OPE",
+            IndexKey::OreBlock => "block ORE",
+        }
+    }
+}
+
+/// Where `answers.rs` imports a twin's term type from.
+enum TermImport {
+    /// An EQL newtype, from `crate::v4::terms`.
+    Newtype(&'static str),
+    /// Stack Encrypt's order term, from `stack_encrypt::sem`.
+    OrderTerm(&'static str),
 }
 
 /// An operator a producible EQL type answers in a Stack Encrypt typed
@@ -123,50 +256,31 @@ impl Answer {
         self != Answer::Matches
     }
 
-    /// The operators the index under `key` ([`index_key`]) answers: the
-    /// engine's declarations (`Equality::OPERATORS`, `Ope::OPERATORS`, …)
-    /// less `between`, which the data path answers for no EQL type.
-    ///
-    /// # Panics
-    ///
-    /// On an index key the generator does not know: a new catalog term must
-    /// say what a typed query does with it.
-    fn of_index(type_name: &str, key: &str) -> &'static [Answer] {
-        match key {
-            "eq" => &[Answer::Eq],
-            "match" => &[Answer::Matches],
-            "ope" | "ore_block" => &[Answer::Lt, Answer::Lte, Answer::Gt, Answer::Gte],
-            other => panic!(
-                "{type_name}: a typed query has no rule for the {other} index; extend \
-                 eql-codegen's Answer::of_index"
-            ),
+    /// The operators `index` answers: the engine's declarations
+    /// (`Equality::OPERATORS`, `Ope::OPERATORS`, …) less `between`, which
+    /// the data path answers for no EQL type.
+    fn of_index(index: IndexKey) -> &'static [Answer] {
+        match index {
+            IndexKey::Eq => &[Answer::Eq],
+            IndexKey::Match => &[Answer::Matches],
+            IndexKey::Ope | IndexKey::OreBlock => {
+                &[Answer::Lt, Answer::Lte, Answer::Gt, Answer::Gte]
+            }
         }
     }
 
-    /// The key of the index among `indexes` that answers this operator.
-    fn index<'i>(self, indexes: &[&'i str]) -> &'i str {
+    /// The index among `indexes` that answers this operator.
+    fn index(self, indexes: &[IndexKey]) -> IndexKey {
         indexes
             .iter()
             .copied()
-            .find(|key| Answer::of_index("", key).contains(&self))
+            .find(|index| Answer::of_index(*index).contains(&self))
             .expect("an answer comes from one of the type's indexes")
     }
 }
 
-/// The catalog term an index derives, by its [`index_key`]: the inverse of
-/// that function.
-fn term_of_key(key: &str) -> Term {
-    match key {
-        "eq" => Term::Hm,
-        "match" => Term::Bloom,
-        "ore_block" => Term::Ore,
-        "ope" => Term::Ope,
-        other => panic!("no catalog term rides under the {other} index"),
-    }
-}
-
 /// The operators a producible type with a query twin answers, given the
-/// indexes it carries by [`index_key`] name, the same input the engine's
+/// indexes it carries, the same input the engine's
 /// table reads: `Eq` for the `"eq"` index, `Matches` for the `"match"`
 /// index and the orderings (`Lt`, `Lte`, `Gt`, `Gte`) for the `"ope"` or
 /// `"ore_block"` index, as `Op::answered_by` answers a field that names the
@@ -180,16 +294,15 @@ fn term_of_key(key: &str) -> Term {
 ///
 /// # Panics
 ///
-/// On an index key the generator does not know, and on a twin that carries
-/// a match term beside another term that it requires: its `matches` query
-/// would carry them all, and a typed query has no rule to assemble a
-/// verifying query from several terms.
+/// On a twin that carries a match term beside another term that it
+/// requires: its `matches` query would carry them all, and a typed query
+/// has no rule to assemble a verifying query from several terms.
 pub(crate) fn answers_for_indexes(
     name: &str,
-    indexes: &[&str],
+    indexes: &[IndexKey],
     optional_terms: bool,
 ) -> Vec<Answer> {
-    if indexes.len() > 1 && indexes.contains(&"match") && !optional_terms {
+    if indexes.len() > 1 && indexes.contains(&IndexKey::Match) && !optional_terms {
         panic!(
             "{name}: its twin requires a match term beside another term; a typed query \
              assembles a match twin from the match term alone"
@@ -197,7 +310,7 @@ pub(crate) fn answers_for_indexes(
     }
     let mut answers: Vec<Answer> = indexes
         .iter()
-        .flat_map(|key| Answer::of_index(name, key).iter().copied())
+        .flat_map(|index| Answer::of_index(*index).iter().copied())
         .collect();
     answers.sort_unstable();
     answers
@@ -303,10 +416,11 @@ fn suffix(domain: &Domain) -> String {
 }
 
 fn row(family: &'static DomainFamily, domain: &'static Domain) -> Row {
-    let indexes: Vec<&'static str> = Term::payload_terms(domain.terms)
+    let keys: Vec<IndexKey> = Term::payload_terms(domain.terms)
         .into_iter()
-        .map(index_key)
+        .map(IndexKey::of_term)
         .collect();
+    let indexes: Vec<&'static str> = keys.iter().map(|key| key.as_str()).collect();
     let query = if domain.terms.is_empty() {
         None
     } else {
@@ -323,7 +437,7 @@ fn row(family: &'static DomainFamily, domain: &'static Domain) -> Row {
     let reason = target_gap(family, domain);
     let optional_terms = v4_optional_query_terms(domain);
     let answers = if reason.is_none() && query.is_some() {
-        answers_for_indexes(&name, &indexes, optional_terms)
+        answers_for_indexes(&name, &keys, optional_terms)
     } else {
         Vec::new()
     };
@@ -358,41 +472,6 @@ fn row(family: &'static DomainFamily, domain: &'static Domain) -> Row {
     }
 }
 
-/// Stack Encrypt's index type for an index key, as `answers.rs` names it.
-fn index_type(key: &str) -> TokenStream {
-    match key {
-        "eq" => quote!(Equality),
-        "match" => quote!(Match<EqlMatch>),
-        "ope" => quote!(Ope),
-        "ore_block" => quote!(OreBlock),
-        other => panic!("no Stack Encrypt index for the {other} index"),
-    }
-}
-
-/// The type a query twin stores the term of an index in, over the type's
-/// plaintext `source`: the EQL newtype of an `hm` or a `bf`, Stack
-/// Encrypt's own term of an `op` or an `ob`.
-fn twin_term_type(key: &str, source: &syn::Path) -> TokenStream {
-    match key {
-        "eq" => quote!(Hmac256),
-        "match" => quote!(BloomFilter),
-        "ope" => quote!(OpeTerm<#source>),
-        "ore_block" => quote!(OreBlockTerm<#source>),
-        other => panic!("no query twin term for the {other} index"),
-    }
-}
-
-/// How an index is named in the generated docs.
-fn index_doc(key: &str) -> &'static str {
-    match key {
-        "eq" => "equality",
-        "match" => "match",
-        "ope" => "OPE",
-        "ore_block" => "block ORE",
-        other => panic!("no name for the {other} index"),
-    }
-}
-
 /// A typed query's impls for one type that answers an operator: its query
 /// twin's assembly from the terms it carries (every index's, or for a twin
 /// whose terms are optional, one assembly per index from that index's term
@@ -410,7 +489,12 @@ fn answer_impls(r: &Row) -> TokenStream {
     let twin = format_ident!("{twin_name}");
     let (_, rust) = plaintext_of(r.family).expect("a producible family has a specified plaintext");
     let source: syn::Path = syn::parse_str(rust).expect("a family's Rust plaintext is a type path");
-    let field = |key: &str| format_ident!("{}", term_of_key(key).json_key());
+    let keys: Vec<IndexKey> = r
+        .indexes
+        .iter()
+        .map(|key| IndexKey::parse(name, key))
+        .collect();
+    let field = |key: IndexKey| format_ident!("{}", key.term().json_key());
     let optional_terms = !r.projections.is_empty();
     let labelled_doc = format!(
         " `{name}` is sealed under the column a two-segment label names, so a field of this \
@@ -422,14 +506,14 @@ fn answer_impls(r: &Row) -> TokenStream {
     };
     if optional_terms {
         // One assembly per index, each setting that index's term alone.
-        for key in &r.indexes {
+        for &key in &keys {
             let set = field(key);
-            let term = twin_term_type(key, &source);
-            let unset = r.indexes.iter().filter(|k| *k != key).map(|k| field(k));
+            let term = key.twin_term_type(&source);
+            let unset = keys.iter().filter(|k| **k != key).map(|k| field(*k));
             let doc = format!(
                 " `{twin_name}` from the column it queries and its `{set}` term alone, at \
                  version 4: the query through its {} index.",
-                index_doc(key)
+                key.doc()
             );
             out.extend(quote! {
                 #[doc = #doc]
@@ -442,12 +526,8 @@ fn answer_impls(r: &Row) -> TokenStream {
             });
         }
     } else {
-        let fields: Vec<_> = r.indexes.iter().map(|key| field(key)).collect();
-        let terms: Vec<_> = r
-            .indexes
-            .iter()
-            .map(|key| twin_term_type(key, &source))
-            .collect();
+        let fields: Vec<_> = keys.iter().map(|key| field(*key)).collect();
+        let terms: Vec<_> = keys.iter().map(|key| key.twin_term_type(&source)).collect();
         let named: Vec<String> = fields.iter().map(|f| format!("`{f}`")).collect();
         let doc = format!(
             " `{twin_name}` from the column it queries and its {} {}, at version 4.",
@@ -486,8 +566,8 @@ fn answer_impls(r: &Row) -> TokenStream {
     }
     // A twin that requires every term derives them all, whichever index
     // answers; one whose terms are optional derives the answering index's.
-    let derived = (!optional_terms && r.indexes.len() > 1).then(|| {
-        let all = r.indexes.iter().map(|key| index_type(key));
+    let derived = (!optional_terms && keys.len() > 1).then(|| {
+        let all = keys.iter().map(|key| key.index_type());
         quote!(, (#(#all),*))
     });
     let carries = if derived.is_some() {
@@ -498,8 +578,8 @@ fn answer_impls(r: &Row) -> TokenStream {
         ""
     };
     for answer in &r.answers {
-        let key = answer.index(&r.indexes);
-        let index = index_type(key);
+        let key = answer.index(&keys);
+        let index = key.index_type();
         let op = format_ident!("{}", answer.operator());
         let (via, doc) = match answer {
             Answer::Matches => (
@@ -516,7 +596,7 @@ fn answer_impls(r: &Row) -> TokenStream {
                     " `{name}` answers `op::{}` through its {} index. The query term is \
                      `{twin_name}`, bound as `{twin_domain}`{carries}.",
                     exact.operator(),
-                    index_doc(key)
+                    key.doc()
                 ),
             ),
         };
@@ -604,7 +684,10 @@ fn render_targets_from(rows: &[Row]) -> String {
     // plaintext does, and a null as a null with a null's terms (#1298).
     // Whether a field may hold one is its plan's.
     let stored_source = |r: &Row, source: TokenStream| {
-        if r.indexes.iter().all(|index| *index == "eq") {
+        if r.indexes
+            .iter()
+            .all(|index| *index == IndexKey::Eq.as_str())
+        {
             quote!(Option<#source>)
         } else {
             source
@@ -802,24 +885,24 @@ fn render_answers_from(rows: &[Row]) -> String {
     // Every index an answering type carries is named in its impls: as the
     // index an operator answers through, in the indexes a twin's terms are
     // derived by, and as the type of the term the twin stores.
-    let carries = |key: &str| answering.iter().any(|r| r.indexes.contains(&key));
+    let carries = |key: IndexKey| answering.iter().any(|r| r.indexes.contains(&key.as_str()));
     let mut answer_imports = TokenStream::new();
     if !answering.is_empty() {
-        let pick = |names: &[(&str, &'static str)]| -> Vec<proc_macro2::Ident> {
-            names
-                .iter()
-                .filter(|(key, _)| carries(key))
-                .map(|(_, name)| format_ident!("{name}"))
-                .collect()
-        };
-        let newtypes = pick(&[("match", "BloomFilter"), ("eq", "Hmac256")]);
-        let indexes = pick(&[
-            ("eq", "Equality"),
-            ("match", "Match"),
-            ("ope", "Ope"),
-            ("ore_block", "OreBlock"),
-        ]);
-        let order_terms = pick(&[("ope", "OpeTerm"), ("ore_block", "OreBlockTerm")]);
+        let carried: Vec<IndexKey> = IndexKey::ALL
+            .into_iter()
+            .filter(|key| carries(*key))
+            .collect();
+        let indexes: Vec<_> = carried
+            .iter()
+            .map(|key| format_ident!("{}", key.index_import()))
+            .collect();
+        let (mut newtypes, mut order_terms) = (Vec::new(), Vec::new());
+        for key in &carried {
+            match key.term_import() {
+                TermImport::Newtype(name) => newtypes.push(format_ident!("{name}")),
+                TermImport::OrderTerm(name) => order_terms.push(format_ident!("{name}")),
+            }
+        }
         answer_imports.extend(quote! {
             use crate::encryption::query::{QueryTwin, TwinIndex};
             use crate::Identifier;
@@ -831,7 +914,7 @@ fn render_answers_from(rows: &[Row]) -> String {
         if !order_terms.is_empty() {
             answer_imports.extend(quote!(use stack_encrypt::sem::{#(#order_terms),*};));
         }
-        if carries("match") {
+        if carries(IndexKey::Match) {
             answer_imports.extend(quote!(
                 use crate::encryption::EqlMatch;
             ));
@@ -1117,17 +1200,17 @@ mod tests {
                 continue;
             }
             let mut expected: Vec<&str> = Vec::new();
-            if row.indexes.contains(&"eq") {
+            if row.indexes.contains(&IndexKey::Eq.as_str()) {
                 expected.push("eq");
             }
             if row
                 .indexes
                 .iter()
-                .any(|key| matches!(*key, "ope" | "ore_block"))
+                .any(|key| [IndexKey::Ope.as_str(), IndexKey::OreBlock.as_str()].contains(key))
             {
                 expected.extend(ORDERINGS);
             }
-            if row.indexes.contains(&"match") {
+            if row.indexes.contains(&IndexKey::Match.as_str()) {
                 expected.push("matches");
             }
             assert_eq!(answers, expected, "{}", row.name);
@@ -1178,23 +1261,27 @@ mod tests {
     #[test]
     fn answers_for_indexes_maps_each_index_to_its_operators() {
         use Answer::*;
+        use IndexKey as Key;
         assert_eq!(answers_for_indexes("T", &[], false), Vec::<Answer>::new());
-        assert_eq!(answers_for_indexes("T", &["eq"], false), vec![Eq]);
-        assert_eq!(answers_for_indexes("T", &["match"], false), vec![Matches]);
+        assert_eq!(answers_for_indexes("T", &[Key::Eq], false), vec![Eq]);
         assert_eq!(
-            answers_for_indexes("T", &["ope"], false),
+            answers_for_indexes("T", &[Key::Match], false),
+            vec![Matches]
+        );
+        assert_eq!(
+            answers_for_indexes("T", &[Key::Ope], false),
             vec![Lt, Lte, Gt, Gte]
         );
         assert_eq!(
-            answers_for_indexes("T", &["ore_block"], false),
+            answers_for_indexes("T", &[Key::OreBlock], false),
             vec![Lt, Lte, Gt, Gte]
         );
         assert_eq!(
-            answers_for_indexes("T", &["ope", "eq"], false),
+            answers_for_indexes("T", &[Key::Ope, Key::Eq], false),
             vec![Eq, Lt, Lte, Gt, Gte]
         );
         assert_eq!(
-            answers_for_indexes("T", &["match", "ore_block", "eq"], true),
+            answers_for_indexes("T", &[Key::Match, Key::OreBlock, Key::Eq], true),
             vec![Eq, Lt, Lte, Gt, Gte, Matches]
         );
         let names: Vec<&str> = [Eq, Lt, Lte, Gt, Gte, Matches]
@@ -1210,20 +1297,36 @@ mod tests {
         assert!(!Matches.is_exact(), "a match query verifies its rows");
         assert!([Eq, Lt, Lte, Gt, Gte].iter().all(|a| a.is_exact()));
         for (key, answer) in [
-            ("eq", Eq),
-            ("ope", Lt),
-            ("ore_block", Gte),
-            ("match", Matches),
+            (Key::Eq, Eq),
+            (Key::Ope, Lt),
+            (Key::OreBlock, Gte),
+            (Key::Match, Matches),
         ] {
-            assert_eq!(answer.index(&["match", key]), key, "{answer:?}");
-            assert_eq!(index_key(term_of_key(key)), key, "{key}");
+            assert_eq!(answer.index(&[Key::Match, key]), key, "{answer:?}");
+        }
+    }
+
+    /// Every index round-trips through its catalog term and its key, and
+    /// `ALL` lists each once.
+    #[test]
+    fn every_index_key_round_trips() {
+        for key in IndexKey::ALL {
+            assert_eq!(IndexKey::of_term(key.term()), key, "{key:?}: its term");
+            assert_eq!(index_key(key.term()), key.as_str(), "{key:?}: its key");
+            assert_eq!(IndexKey::parse("T", key.as_str()), key, "{key:?}: parsed");
+        }
+        for term in [Term::Hm, Term::Bloom, Term::Ore, Term::Ope] {
+            assert!(
+                IndexKey::ALL.contains(&IndexKey::of_term(term)),
+                "{term:?}: its index is listed"
+            );
         }
     }
 
     #[test]
     #[should_panic(expected = "no rule for the json index")]
     fn an_unknown_index_stops_the_generator() {
-        answers_for_indexes("SteVecDocument", &["json"], false);
+        IndexKey::parse("SteVecDocument", "json");
     }
 
     /// A twin that requires a match term beside another stops the
@@ -1232,7 +1335,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "requires a match term beside another term")]
     fn a_twin_requiring_a_match_term_and_another_stops_the_generator() {
-        answers_for_indexes("TextEqMatch", &["eq", "match"], false);
+        answers_for_indexes("TextEqMatch", &[IndexKey::Eq, IndexKey::Match], false);
     }
 
     /// The rendered file implements `op::Answers` once per answered
@@ -1273,11 +1376,15 @@ mod tests {
                 "{name}: its ANSWERS row"
             );
             let optional = !row.projections.is_empty();
-            let derived = if !optional && row.indexes.len() > 1 {
-                let all: Vec<String> = row
-                    .indexes
+            let keys: Vec<IndexKey> = row
+                .indexes
+                .iter()
+                .map(|key| IndexKey::parse(name, key))
+                .collect();
+            let derived = if !optional && keys.len() > 1 {
+                let all: Vec<String> = keys
                     .iter()
-                    .map(|key| index_type(key).to_string().replace(' ', ""))
+                    .map(|key| key.index_type().to_string().replace(' ', ""))
                     .collect();
                 format!(",({})", all.join(","))
             } else {
@@ -1285,7 +1392,9 @@ mod tests {
             };
             for answer in &row.answers {
                 let op = answer.operator();
-                let index = index_type(answer.index(&row.indexes))
+                let index = answer
+                    .index(&keys)
+                    .index_type()
                     .to_string()
                     .replace(' ', "");
                 let derived = if answer.is_exact() {

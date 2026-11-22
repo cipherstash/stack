@@ -16,8 +16,11 @@
 mod common;
 
 use eql_bindings::encryption::EqlTargets;
-use eql_bindings::v4::integer::{IntegerOrd, IntegerOrdOre};
-use eql_bindings::v4::text::{TextOrd, TextOrdOre, TextSearch, TextSearchOre};
+use eql_bindings::v4::integer::{IntegerOrd, IntegerOrdOre, IntegerOrdOreQuery, IntegerOrdQuery};
+use eql_bindings::v4::text::{
+    TextOrd, TextOrdOre, TextOrdOreQuery, TextOrdQuery, TextSearch, TextSearchOre,
+    TextSearchOreQuery, TextSearchQuery,
+};
 use eql_bindings::v4::DomainType;
 use serde::Serialize;
 use stack_encrypt::dynamic::{self, record, FieldPlan, Op, Operand, ValueFrame};
@@ -27,46 +30,10 @@ use zeroize::Zeroize;
 
 type Cipher = StackCipher<common::RecordingKeySource>;
 
-/// One row's plaintexts: a value for each ordered column.
-#[derive(Zeroize)]
-struct Ranking {
-    level: i32,
-    level_ore: i32,
-    title: String,
-    title_ore: String,
-    name: String,
-    name_ore: String,
-}
-
-/// The table `rankings`, with a column of each shape of ordered twin.
-#[derive(EncryptTarget)]
-#[stash(struct = Ranking, scope = "rankings")]
-struct EncryptedRanking {
-    level: IntegerOrd,
-    level_ore: IntegerOrdOre,
-    title: TextOrd,
-    title_ore: TextOrdOre,
-    name: TextSearch,
-    name_ore: TextSearchOre,
-}
-
 /// The integers the rows hold, ascending, and the texts, ascending by
 /// their fold.
 const LEVELS: [i32; 5] = [-200, -1, 0, 7, 1_000_000];
 const TEXTS: [&str; 5] = ["Alpha", "bravo", "Charlie", "delta", "Echo"];
-
-/// The row at `at`: each column holds the `at`th value, so the rows ascend
-/// in every column.
-fn ranking(at: usize) -> Ranking {
-    Ranking {
-        level: LEVELS[at],
-        level_ore: LEVELS[at],
-        title: TEXTS[at].to_owned(),
-        title_ore: TEXTS[at].to_owned(),
-        name: TEXTS[at].to_owned(),
-        name_ore: TEXTS[at].to_owned(),
-    }
-}
 
 /// The row whose values every query below asks for: the middle one, so
 /// each ordering finds rows on both sides.
@@ -81,112 +48,105 @@ struct Column {
     query_domain: &'static str,
 }
 
-const fn column(
-    field: &'static str,
-    name: &'static str,
-    domain: &'static str,
-    query_domain: &'static str,
-) -> Column {
-    Column {
-        field,
-        name,
-        domain,
-        query_domain,
-    }
+/// Everything the tests below know of each column, written once per
+/// column: the EQL type it names and that type's query twin, its field and
+/// the field's reference, the plaintext and the values the rows hold, and
+/// the operators it answers from a field reference. Each row becomes a
+/// field of the plaintext record and of the encrypted one, a value of each
+/// row, an entry of `columns()`, and an arm of `typed`, `asked_input` and
+/// `stored_row`.
+macro_rules! ranking_columns {
+    ($(
+        $name:ident ($query:path): $field:ident / $reference:ident, $plaintext:ty = $values:ident,
+            [$($op:ident),+];
+    )+) => {
+        /// One row's plaintexts: a value for each ordered column.
+        #[derive(Zeroize)]
+        struct Ranking {
+            $($field: $plaintext,)+
+        }
+
+        /// The table `rankings`, with a column of each shape of ordered twin.
+        #[derive(EncryptTarget)]
+        #[stash(struct = Ranking, scope = "rankings")]
+        struct EncryptedRanking {
+            $($field: $name,)+
+        }
+
+        /// The row at `at`: each column holds the `at`th value, so the rows
+        /// ascend in every column.
+        fn ranking(at: usize) -> Ranking {
+            Ranking {
+                $($field: <$plaintext>::from($values[at]),)+
+            }
+        }
+
+        /// Every column, and the operators each answers from a field
+        /// reference.
+        fn columns() -> Vec<(Column, &'static [&'static str])> {
+            vec![$((
+                Column {
+                    field: stringify!($field),
+                    name: stringify!($name),
+                    domain: $name::sql_domain_static(),
+                    query_domain: <$query>::sql_domain_static(),
+                },
+                &[$(stringify!($op)),+],
+            ),)+]
+        }
+
+        /// The field reference's query on `field` for `operator`, for the
+        /// value of the [asked](ASKED) row.
+        async fn typed(keyset: &Keyset<'_>, field: &str, operator: &str) -> serde_json::Value {
+            match field {
+                $(stringify!($field) => match operator {
+                    $(stringify!($op) => json(
+                        &EncryptedRanking::$reference
+                            .$op(ranking(ASKED).$field)
+                            .encrypt(keyset)
+                            .await
+                            .unwrap(),
+                    ),)+
+                    other => panic!("{field} answers no `{other}`"),
+                },)+
+                other => panic!("no column {other}"),
+            }
+        }
+
+        /// The data path's input for the [asked](ASKED) row's value of
+        /// `field`.
+        fn asked_input(field: &str) -> ValueFrame {
+            match field {
+                $(stringify!($field) => ValueFrame::of($values[ASKED]).unwrap(),)+
+                other => panic!("no column {other}"),
+            }
+        }
+
+        /// A stored row, as JSON, by column.
+        fn stored_row(stored: &EncryptedRanking) -> serde_json::Map<String, serde_json::Value> {
+            let mut row = serde_json::Map::new();
+            $(row.insert(
+                stringify!($field).to_owned(),
+                serde_json::to_value(&stored.$field).unwrap(),
+            );)+
+            row
+        }
+    };
 }
 
-/// Every column, and the operators each answers from a field reference.
-fn columns() -> [(Column, &'static [&'static str]); 6] {
-    const ORDERINGS: &[&str] = &["lt", "lte", "gt", "gte"];
-    const TEXT: &[&str] = &["eq", "lt", "lte", "gt", "gte"];
-    [
-        (
-            column(
-                "level",
-                "IntegerOrd",
-                IntegerOrd::sql_domain_static(),
-                eql_bindings::v4::integer::IntegerOrdQuery::sql_domain_static(),
-            ),
-            ORDERINGS,
-        ),
-        (
-            column(
-                "level_ore",
-                "IntegerOrdOre",
-                IntegerOrdOre::sql_domain_static(),
-                eql_bindings::v4::integer::IntegerOrdOreQuery::sql_domain_static(),
-            ),
-            ORDERINGS,
-        ),
-        (
-            column(
-                "title",
-                "TextOrd",
-                TextOrd::sql_domain_static(),
-                eql_bindings::v4::text::TextOrdQuery::sql_domain_static(),
-            ),
-            TEXT,
-        ),
-        (
-            column(
-                "title_ore",
-                "TextOrdOre",
-                TextOrdOre::sql_domain_static(),
-                eql_bindings::v4::text::TextOrdOreQuery::sql_domain_static(),
-            ),
-            TEXT,
-        ),
-        (
-            column(
-                "name",
-                "TextSearch",
-                TextSearch::sql_domain_static(),
-                eql_bindings::v4::text::TextSearchQuery::sql_domain_static(),
-            ),
-            TEXT,
-        ),
-        (
-            column(
-                "name_ore",
-                "TextSearchOre",
-                TextSearchOre::sql_domain_static(),
-                eql_bindings::v4::text::TextSearchOreQuery::sql_domain_static(),
-            ),
-            TEXT,
-        ),
-    ]
+ranking_columns! {
+    IntegerOrd(IntegerOrdQuery): level / LEVEL, i32 = LEVELS, [lt, lte, gt, gte];
+    IntegerOrdOre(IntegerOrdOreQuery): level_ore / LEVEL_ORE, i32 = LEVELS, [lt, lte, gt, gte];
+    TextOrd(TextOrdQuery): title / TITLE, String = TEXTS, [eq, lt, lte, gt, gte];
+    TextOrdOre(TextOrdOreQuery): title_ore / TITLE_ORE, String = TEXTS, [eq, lt, lte, gt, gte];
+    TextSearch(TextSearchQuery): name / NAME, String = TEXTS, [eq, lt, lte, gt, gte];
+    TextSearchOre(TextSearchOreQuery): name_ore / NAME_ORE, String = TEXTS,
+        [eq, lt, lte, gt, gte];
 }
 
 /// The JSON a query binds.
 fn json<Q: Serialize>(query: &Q) -> serde_json::Value {
     serde_json::to_value(query).unwrap()
-}
-
-/// The field reference's query on `column` for `operator`, for the value
-/// of the [asked](ASKED) row.
-async fn typed(keyset: &Keyset<'_>, field: &str, operator: &str) -> serde_json::Value {
-    let row = || ranking(ASKED);
-    macro_rules! query {
-        ($reference:expr, $value:ident, [$($op:ident),+]) => {
-            match operator {
-                $(stringify!($op) => json(&$reference.$op(row().$value).encrypt(keyset).await.unwrap()),)+
-                other => panic!("{field} answers no `{other}`"),
-            }
-        };
-    }
-    match field {
-        "level" => query!(EncryptedRanking::LEVEL, level, [lt, lte, gt, gte]),
-        "level_ore" => query!(EncryptedRanking::LEVEL_ORE, level_ore, [lt, lte, gt, gte]),
-        "title" => query!(EncryptedRanking::TITLE, title, [eq, lt, lte, gt, gte]),
-        "title_ore" => query!(
-            EncryptedRanking::TITLE_ORE,
-            title_ore,
-            [eq, lt, lte, gt, gte]
-        ),
-        "name" => query!(EncryptedRanking::NAME, name, [eq, lt, lte, gt, gte]),
-        "name_ore" => query!(EncryptedRanking::NAME_ORE, name_ore, [eq, lt, lte, gt, gte]),
-        other => panic!("no column {other}"),
-    }
 }
 
 type Keyset<'k> = stack_encrypt::KeysetCipher<'k, common::RecordingKeySource>;
@@ -205,11 +165,7 @@ async fn data(cipher: &Cipher, column: &Column, operator: &str) -> serde_json::V
         &EqlTargets,
     )
     .unwrap();
-    let input: ValueFrame = if column.name.starts_with("Integer") {
-        ValueFrame::of(LEVELS[ASKED]).unwrap()
-    } else {
-        ValueFrame::of(TEXTS[ASKED]).unwrap()
-    };
+    let input = asked_input(column.field);
     let term = dynamic::query_term(
         &cipher.default_keyset(),
         &plan,
@@ -294,17 +250,7 @@ async fn scenario() -> Scenario {
     let mut rows = Vec::new();
     for at in 0..LEVELS.len() {
         let stored: EncryptedRanking = ranking(at).encrypt_into(&keyset).await.unwrap();
-        let row = serde_json::json!({
-            "level": stored.level,
-            "level_ore": stored.level_ore,
-            "title": stored.title,
-            "title_ore": stored.title_ore,
-            "name": stored.name,
-            "name_ore": stored.name_ore,
-        });
-        let serde_json::Value::Object(row) = row else {
-            unreachable!("a row is an object")
-        };
+        let row = stored_row(&stored);
         rows.push(row);
     }
     Scenario { cipher, rows }

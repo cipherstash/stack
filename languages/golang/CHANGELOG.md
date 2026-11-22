@@ -143,6 +143,10 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ### Changed
 
+- An `eq` query on a `TextOrdOre` field of text that ends in NUL, or is too
+  long for block ORE, is refused before any key is requested, as an
+  ordering of the same text is (#1668). It was refused with the same error
+  after the keyset's index key was loaded.
 - `Children` through a cipher with a binding now prepares the read, as
   `Selector` and `Subtree` do (#1677). Before, the cipher refused it. The
   token derives under the cipher's scopes alone. The children open under

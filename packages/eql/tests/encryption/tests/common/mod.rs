@@ -145,29 +145,18 @@ pub fn ob_order(name: &str, a: &serde_json::Value, b: &serde_json::Value) -> std
             .collect()
     };
     let (a, b) = (unhex(a), unhex(b));
-    let family = [
-        "Integer",
-        "Smallint",
-        "Bigint",
-        "Date",
-        "Timestamp",
-        "Numeric",
-        "Text",
-        "Real",
-        "Double",
-    ]
-    .into_iter()
-    .find(|family| name.starts_with(family))
-    .unwrap_or_else(|| panic!("{name}: no family"));
-    match family {
-        "Integer" => compare::<i32>(&a, &b),
-        "Smallint" => compare::<i16>(&a, &b),
-        "Bigint" => compare::<i64>(&a, &b),
-        "Date" => compare::<eql_bindings::v4::plaintext::Date>(&a, &b),
-        "Timestamp" => compare::<eql_bindings::v4::plaintext::Timestamp>(&a, &b),
-        "Numeric" => compare::<eql_bindings::v4::plaintext::Decimal>(&a, &b),
-        "Text" => compare::<String>(&a, &b),
-        "Real" => compare::<f32>(&a, &b),
-        _ => compare::<f64>(&a, &b),
+    let target = eql_bindings::encryption::targets::target(name)
+        .unwrap_or_else(|| panic!("{name}: no such EQL type"));
+    match target.family {
+        "integer" => compare::<i32>(&a, &b),
+        "smallint" => compare::<i16>(&a, &b),
+        "bigint" => compare::<i64>(&a, &b),
+        "date" => compare::<eql_bindings::v4::plaintext::Date>(&a, &b),
+        "timestamp" => compare::<eql_bindings::v4::plaintext::Timestamp>(&a, &b),
+        "numeric" => compare::<eql_bindings::v4::plaintext::Decimal>(&a, &b),
+        "text" => compare::<String>(&a, &b),
+        "real" => compare::<f32>(&a, &b),
+        "double" => compare::<f64>(&a, &b),
+        other => panic!("{name}: no block ORE plaintext for the family {other}"),
     }
 }
