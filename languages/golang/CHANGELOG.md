@@ -13,6 +13,32 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Added
+
+- **Audit metadata for the ZeroKMS audit log** (#1067). ZeroKMS logs every
+  data-key request with the identity that made it. `encrypt.AuditMetadata`
+  adds facts about the call to that log, such as its purpose or a request
+  ID. `cipher.Audit(metadata)` returns a cipher that sends the facts with
+  every data-key request. `client.Audit(metadata)` returns a `Decrypter`
+  that does the same for rows from any keyset.
+  - Build the metadata with `encrypt.NewAuditMetadata()` and one method for
+    each fact: `Text`, `Bool`, `Int`, `Int64`, `Float`, `Time`, `Null`,
+    `TextList`, `List`, and `Map`. The parameter type of each method is the
+    type of its value, so the compiler refuses a value of another type.
+    There is no method for a `[]byte` or a `uint64`: send each one as text.
+  - Every `Encrypt` and `Decrypt` through the cipher sends the facts. So
+    does every read of an encrypted JSON document. A query asks ZeroKMS for
+    no data key, so a query sends none. Refused metadata fails a query too.
+  - `Audit` adds to the facts the cipher has. A fact replaces one that has
+    the same key.
+  - A time is sent as RFC 3339 text in UTC. A time outside the years 0 to
+    9999 is refused with `ErrEncoding`. So is a key or a text that is not
+    valid UTF-8.
+  - Printing an `AuditMetadata` shows its keys, quoted, and never a value.
+  - ZeroKMS does not verify the facts, and a decrypt does not need them.
+    ZeroKMS writes them to its logs. Do not send plaintext, anything
+    derived from plaintext, or secrets.
+
 ### Breaking
 
 - **Dates and timestamps must be in years -9999 to 9999.** The range was

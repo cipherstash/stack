@@ -107,6 +107,10 @@
 // records; the [Client] opens records from any of its keysets. Both are a
 // [Decrypter], which the generated Decrypt functions take.
 //
+// [Cipher.Audit] gives a cipher audit metadata: facts about the calls made
+// through it, which ZeroKMS writes to its audit log with each data-key
+// request. See [AuditMetadata].
+//
 // # Declarations
 //
 // A struct's stash tags declare how each field is encrypted: the context of

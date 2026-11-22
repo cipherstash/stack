@@ -26,8 +26,8 @@ mod support;
 
 use stack_encrypt::dynamic::frame::encode_ciphertext;
 use stack_encrypt::dynamic::plaintext::Logical;
-use stack_encrypt::{CipherText, Descriptor, Node, PassthroughFrame, StackCipher};
-use stack_encrypt_guest::options::{parse_options, Side};
+use stack_encrypt::{AuditMetadata, CipherText, Descriptor, Node, PassthroughFrame, StackCipher};
+use stack_encrypt_guest::options::{parse_options, Export};
 use stack_encrypt_guest::status::fail_error;
 use stack_encrypt_guest::{config, ops};
 use stack_guest_abi::call;
@@ -45,8 +45,10 @@ const CIPHERTEXT: &[u8] = b"leak-marker-ciphertext";
 const CLIENT_KEY: &str = "leak-marker-client-key";
 const ACCESS_TOKEN: &str = "leak-marker-access-token";
 const ZEROKMS_BODY: &str = "leak-marker-zerokms-body";
+const AUDIT_FACT: &str = "leak-marker-audit-fact";
 
 const MARKERS: &[&[u8]] = &[
+    AUDIT_FACT.as_bytes(),
     PLAINTEXT.as_bytes(),
     CONTEXT.as_bytes(),
     CIPHERTEXT,
@@ -198,6 +200,7 @@ fn sealed(cipher: &StackCipher<FakeDataKeySource>, plan: &[u8]) -> Vec<u8> {
         &cipher.default_keyset(),
         &protect(&encode(row(PLAINTEXT))),
         &protect(plan),
+        AuditMetadata::new(),
     ))
     .expect("seal")
 }
@@ -430,6 +433,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                     &keyset,
                     &protect(&encode(obj(vec![("age", s(PLAINTEXT))]))),
                     &protect(&plan),
+                    AuditMetadata::new(),
                 ))
             }),
         ),
@@ -444,6 +448,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                         &keyset,
                         &protect(&encode(source)),
                         &protect(&plan_under(label("email"))),
+                        AuditMetadata::new(),
                     ))
                 },
             ),
@@ -458,6 +463,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                         &keyset,
                         &protect(&encode(row(PLAINTEXT))),
                         &protect(&plan_under(extended("email", &long_context))),
+                        AuditMetadata::new(),
                     ))
                 },
             ),
@@ -473,6 +479,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                         CIPHERTEXT,
                         &protect(&plan_under(label("email"))),
                         None,
+                        AuditMetadata::new(),
                     ))
                 },
             ),
@@ -486,6 +493,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                     &record,
                     &protect(&plan_under(label("email"))),
                     None,
+                    AuditMetadata::new(),
                 ))
             }),
         ),
@@ -501,6 +509,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                         &record,
                         &protect(&plan_under(label("email"))),
                         None,
+                        AuditMetadata::new(),
                     ))
                 },
             ),
@@ -513,7 +522,13 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                     ("nick", field(label("nick"), &["c"], None)),
                 ]));
                 let record = sealed(&cipher, &plan_under(label("email")));
-                block_on(ops::decrypt_record(&cipher, &record, &protect(&plan), None))
+                block_on(ops::decrypt_record(
+                    &cipher,
+                    &record,
+                    &protect(&plan),
+                    None,
+                    AuditMetadata::new(),
+                ))
             }),
         ),
         (
@@ -525,6 +540,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                     &record,
                     &protect(&plan_under(extended("email", CONTEXT))),
                     None,
+                    AuditMetadata::new(),
                 ))
             }),
         ),
@@ -538,6 +554,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                     &record,
                     &protect(&plan_under(label("email"))),
                     None,
+                    AuditMetadata::new(),
                 ))
             }),
         ),
@@ -545,7 +562,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
         (
             "options that are not an object",
             failure("options", &["stack_guest_abi::malformed_input"], || {
-                parse_options(&encode(s(CONTEXT)), Side::Open)
+                parse_options(&encode(s(CONTEXT)), Export::DecryptRecord)
             }),
         ),
         // -- ZeroKMS, through a key source whose answers carry the body ---
@@ -556,6 +573,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                     &failing.default_keyset(),
                     &protect(&encode(row(PLAINTEXT))),
                     &protect(&plan_under(label("email"))),
+                    AuditMetadata::new(),
                 ))
             }),
         ),
@@ -568,6 +586,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                     &record,
                     &protect(&plan_under(label("email"))),
                     None,
+                    AuditMetadata::new(),
                 ))
             }),
         ),
@@ -576,9 +595,34 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             failure("keyset", &["stack_kms::keyset_not_found"], || {
                 let options = parse_options(
                     &encode(obj(vec![("keyset", obj(vec![("name", s("tenant"))]))])),
-                    Side::Mint,
+                    Export::EncryptRecord,
                 )?;
                 block_on(options.keyset.resolve(&failing)).map(drop)
+            }),
+        ),
+        // -- audit metadata, which holds the caller's facts ------------------
+        (
+            "an audit fact ZeroKMS has no form for",
+            failure("audit", &["stack_guest_abi::malformed_input"], || {
+                let facts = obj(vec![
+                    ("purpose", s(AUDIT_FACT)),
+                    (AUDIT_FACT, Tree::Bytes(AUDIT_FACT.as_bytes().to_vec())),
+                ]);
+                let options = obj(vec![
+                    ("keyset", obj(vec![("default", obj(vec![]))])),
+                    ("audit", facts),
+                ]);
+                parse_options(&encode(options), Export::EncryptRecord).map(drop)
+            }),
+        ),
+        (
+            "an audit fact on a call that derives a term",
+            failure("audit", &["stack_guest_abi::malformed_input"], || {
+                let options = obj(vec![
+                    ("keyset", obj(vec![("default", obj(vec![]))])),
+                    ("audit", obj(vec![(AUDIT_FACT, s(AUDIT_FACT))])),
+                ]);
+                parse_options(&encode(options), Export::Term).map(drop)
             }),
         ),
         // -- the access token ----------------------------------------------
@@ -751,7 +795,13 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             )]);
             let mut record = Vec::new();
             encode_ciphertext(&tree, &mut record).expect("encode tree");
-            block_on(ops::decrypt_record(&cipher, &record, &protect(&plan), None))
+            block_on(ops::decrypt_record(
+                &cipher,
+                &record,
+                &protect(&plan),
+                None,
+                AuditMetadata::new(),
+            ))
         }),
     ));
     // A cause from another library this guest does not vouch for: the PRF
@@ -816,7 +866,7 @@ fn a_keyset_not_found_carries_its_help_and_request_kind() {
     let error = failure("keyset", &["stack_kms::keyset_not_found"], || {
         let options = parse_options(
             &encode(obj(vec![("keyset", obj(vec![("name", s("tenant"))]))])),
-            Side::Mint,
+            Export::EncryptRecord,
         )?;
         block_on(options.keyset.resolve(&failing)).map(drop)
     });
@@ -865,6 +915,7 @@ fn a_foreign_keyset_carries_both_keyset_ids() {
             &record,
             &protect(&plan_under(label("email"))),
             None,
+            AuditMetadata::new(),
         ))
     });
     let fields = get(&error, "fields").expect("fields");
