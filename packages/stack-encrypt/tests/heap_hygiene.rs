@@ -852,6 +852,80 @@ fn a_typed_query_leaves_no_plaintext_on_the_heap() {
     );
 }
 
+/// A call built through a default keyset that the cipher has not loaded
+/// yet keeps what it needs of its plaintext until the pending has loaded
+/// the keyset: a normalized scalar, a copy of a match text, an order
+/// term's value, a document. Each is wiped when the pending is done with
+/// it, as on a loaded keyset. Each case takes a cipher of its own, so its
+/// call is the one that loads the keyset.
+#[test]
+fn a_call_through_a_keyset_that_is_not_loaded_leaves_no_plaintext_on_the_heap() {
+    use stack_encrypt::kms::{FakeCredentialKeySource, SecretToken};
+    use stack_encrypt::sem::DefaultMatch;
+    use stack_encrypt::{Ciphertext, StackCipher};
+    let rt = runtime();
+    let not_loaded = || {
+        rt.block_on(
+            StackCipher::builder()
+                .kms(FakeCredentialKeySource::new())
+                .init(),
+        )
+        .unwrap()
+    };
+    let credential = || SecretToken::new("alice.jwt");
+
+    let cipher = not_loaded();
+    let keyset = cipher.default_keyset();
+    let text = marked("equality");
+    watched("equality_term (keyset not loaded)", || {
+        rt.block_on(async {
+            keyset
+                .equality_term(text, nonempty!("users/email"))
+                .with_credential(credential())
+                .await
+        })
+        .unwrap();
+    });
+
+    let cipher = not_loaded();
+    let keyset = cipher.default_keyset();
+    // The caller's own text stays alive across the watch: the pending
+    // works on its copy.
+    let text = marked("match these words");
+    watched("match_terms (keyset not loaded)", || {
+        rt.block_on(async {
+            keyset
+                .match_terms::<DefaultMatch>(&text, nonempty!("users/bio"))
+                .with_credential(credential())
+                .await
+        })
+        .unwrap();
+    });
+    drop(text);
+
+    let cipher = not_loaded();
+    let keyset = cipher.default_keyset();
+    let text = marked("order");
+    watched("ore_term (keyset not loaded)", || {
+        rt.block_on(async {
+            keyset
+                .ore_term(text, nonempty!("users/surname"))
+                .with_credential(credential())
+                .await
+        })
+        .unwrap();
+    });
+
+    let cipher = not_loaded();
+    let keyset = cipher.default_keyset();
+    let text = marked("scalar");
+    watched("encrypt (keyset not loaded)", || {
+        let _: Ciphertext = rt
+            .block_on(async { keyset.encrypt(text).with_credential(credential()).await })
+            .unwrap();
+    });
+}
+
 /// An order term takes its plaintext by value, so the engine owns the
 /// `String` or `Vec<u8>` it is handed (a clone of the caller's, on the
 /// target path) and must wipe it. Both paths hand a bare one; the engine

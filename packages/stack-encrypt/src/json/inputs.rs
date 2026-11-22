@@ -413,6 +413,13 @@ impl<'p> Under<'p> {
         NonEmpty::from(self.label.clone())
     }
 
+    /// The label and the parts, owned: what a pending that is built when
+    /// it settles keeps, to name the field again with [`Under::new`].
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+    pub(crate) fn owned(&self) -> (Label, DeclaredContext) {
+        (self.label.clone(), self.parts.clone())
+    }
+
     /// The field's context: its label, then the plan's scopes and
     /// bindings.
     pub(crate) fn context(&self) -> CallerContext {
@@ -504,28 +511,53 @@ pub(crate) fn derive<'a, K: 'static>(
                     Derived::Range(JsonLeafQuery::of_leaf(&lo), JsonLeafQuery::of_leaf(&hi))
                 })
         }
-        Input::Selector(path) => {
-            let selector = keyset.json_selector_now(&path, under.query()?)?;
-            Pending::ready(keyset, Ok(Derived::Selector(selector)))
-        }
-        Input::Node(path) => {
-            // A path with no wildcard names one node: its key holds the
-            // one token, and nothing that covers a node above it.
-            let key = keyset.json_subtree_key_now(
-                &path,
-                options,
-                JsonSubtreeKey::DEFAULT_BOUND,
-                under.query()?,
-            )?;
-            if key.tokens().len() != 1 {
-                return Err(Error::Internal);
+        // The three below derive under the keyset's index key. With the
+        // keyset loaded they derive now, so a refusal is this call's own
+        // error. With a keyset that is not loaded yet, the pending
+        // derives when it has loaded the keyset, and a refusal is its
+        // error.
+        Input::Selector(path) => match keyset.loaded_state() {
+            Some(_) => {
+                let selector = keyset.json_selector_now(&path, under.query()?)?;
+                Pending::ready(keyset, Ok(Derived::Selector(selector)))
             }
-            Pending::ready(keyset, Ok(Derived::Node(key)))
-        }
-        Input::Read(path, bound) => {
-            let key = keyset.json_subtree_key_now(&path, options, bound, under.query()?)?;
-            Pending::ready(keyset, Ok(Derived::Read(key)))
-        }
+            None => keyset
+                .json_selector(&path, under.query()?)
+                .map(Derived::Selector),
+        },
+        Input::Node(path) => match keyset.loaded_state() {
+            Some(_) => {
+                // A path with no wildcard names one node: its key holds the
+                // one token, and nothing that covers a node above it.
+                let key = keyset.json_subtree_key_now(
+                    &path,
+                    options,
+                    JsonSubtreeKey::DEFAULT_BOUND,
+                    under.query()?,
+                )?;
+                if key.tokens().len() != 1 {
+                    return Err(Error::Internal);
+                }
+                Pending::ready(keyset, Ok(Derived::Node(key)))
+            }
+            None => keyset
+                .json_subtree_key(&path, options, under.query()?)
+                .try_map(|key| {
+                    if key.tokens().len() != 1 {
+                        return Err(crate::Error::Other(Box::new(Error::Internal)));
+                    }
+                    Ok(Derived::Node(key))
+                }),
+        },
+        Input::Read(path, bound) => match keyset.loaded_state() {
+            Some(_) => {
+                let key = keyset.json_subtree_key_now(&path, options, bound, under.query()?)?;
+                Pending::ready(keyset, Ok(Derived::Read(key)))
+            }
+            None => keyset
+                .json_subtree_key_with_bound(&path, options, bound, under.query()?)
+                .map(Derived::Read),
+        },
         Input::Elements(bound, predicates) => elements(keyset, under, options, bound, &predicates)?,
         Input::Predicate(node) => {
             super::predicate::derive(keyset, under, options, *node)?.map(Derived::Predicate)
@@ -548,9 +580,17 @@ pub(crate) fn elements_operand<'a, K: 'static>(
 ) -> Result<Pending<'a, JsonElementsQuery, K>, Error> {
     let mut members = Vec::with_capacity(predicates.len());
     for predicate in predicates {
-        let tokens = keyset
-            .json_subtree_key_now(&predicate.path, options, bound, under.query()?)?
-            .tokens();
+        // With the keyset loaded, the read's tokens are derived now, as
+        // they always were. With a keyset that is not loaded yet,
+        // the member's pending derives them when it has loaded the keyset.
+        let tokens = match keyset.loaded_state() {
+            Some(_) => Some(
+                keyset
+                    .json_subtree_key_now(&predicate.path, options, bound, under.query()?)?
+                    .tokens(),
+            ),
+            None => None,
+        };
         let leaf = |value: &Parsed| {
             terms(
                 keyset,
@@ -564,8 +604,15 @@ pub(crate) fn elements_operand<'a, K: 'static>(
             Bounds::One(compare, value) => (Some(*compare), vec![leaf(value)]),
             Bounds::Between(low, high) => (None, vec![leaf(low), leaf(high)]),
         };
-        members
-            .push(Pending::all(keyset, leaves).map(move |leaves| member(tokens, compare, leaves)));
+        members.push(match tokens {
+            Some(tokens) => {
+                Pending::all(keyset, leaves).map(move |leaves| member(tokens, compare, leaves))
+            }
+            None => keyset
+                .json_subtree_key_with_bound(&predicate.path, options, bound, under.query()?)
+                .zip(Pending::all(keyset, leaves))
+                .map(move |(key, leaves)| member(key.tokens(), compare, leaves)),
+        });
     }
     Ok(Pending::all(keyset, members).map(JsonElementsQuery::of))
 }

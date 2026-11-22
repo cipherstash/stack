@@ -22,7 +22,7 @@
 #![cfg_attr(test, allow(unused_results))]
 //! Encrypt Rust values under per-value ZeroKMS data keys.
 //!
-//! A [`StackCipher`] is scoped to one ZeroKMS client, and a [`KeysetCipher`] —
+//! A [`StackCipher`] belongs to one ZeroKMS client, and a [`KeysetCipher`] —
 //! the cipher bound to one of that client's keysets, from
 //! [`default_keyset`](StackCipher::default_keyset) or
 //! [`keyset`](StackCipher::keyset) — consumes a scalar with
@@ -141,9 +141,9 @@ handles a request.
 
 After `init`, ZeroKMS receives each data key request as the user that the
 strategy returns a token for. The cipher loads the default keyset's index key
-once, in `init`, and uses that key for every user. So a user's grant on a
-keyset limits its data keys, not its query terms: see
-[`auth_strategy`](StackCipherBuilder::auth_strategy).
+once, in `init`, and uses that key for every user. So the ZeroKMS log shows
+that one load under the caller who made it, and each data key request under
+its own caller: see [`auth_strategy`](StackCipherBuilder::auth_strategy).
 
 ```no_run
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -212,7 +212,64 @@ To choose the transport settings as well, build a
 [`StackKms`](crate::kms::StackKms) with `StackKmsBuilder` and pass it to
 [`kms`](StackCipherBuilder::kms).
 
-`examples/zerokms_auth.rs` runs this end to end against a live ZeroKMS,
+## A credential with each call
+
+A server that decrypts as the end user who signed in has no identity of its
+own. At startup there is no user, and each request has a different one.
+[`credential`] covers this case. The code differs from the access key path
+in two places:
+
+- The strategy is an `OidcFederationStrategy` built with
+  `credential_per_call`. It needs no callback to find the JWT, so the
+  application needs no task-local variable for a callback to read.
+- Each request handler attaches its user's JWT to the call, with
+  [`with_credential`](Pending::with_credential). Every request that the
+  call makes is made as that user.
+
+[`init`](StackCipherBuilder::init) is the same call. With an access key it
+loads the default keyset, so wrong credentials fail at startup. With this
+strategy it has no credential to load the keyset with, so it makes no
+request. The first call on the default keyset that is awaited loads it, with
+the credential of that call. A call on a keyset selected by id or by name
+loads that keyset only.
+
+```
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+use stack_auth::OidcFederationStrategy;
+use stack_encrypt::kms::StaticKeyProvider;
+use stack_encrypt::StackCipher;
+
+# // A generated key stands in for the client key.
+# let client_key = stack_encrypt::kms::ClientKey::generate_for_test();
+let crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse()?;
+let strategy = OidcFederationStrategy::credential_per_call(crn)?;
+
+// Once, at startup. No request goes to ZeroKMS, so no user is needed.
+let cipher = StackCipher::builder()
+    .auth_strategy(strategy)
+    // `EnvKeyProvider` reads `CS_CLIENT_ID` and `CS_CLIENT_KEY` instead.
+    .key_provider(StaticKeyProvider::new(client_key))
+    .init()
+    .await?;
+# let _ = cipher;
+# Ok(())
+# }
+# tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+```
+
+A request handler then works as usual, and ends each call with the
+credential: `keyset.encrypt(..).with_credential(SecretToken::new(jwt)).await`.
+A record, a query and a zipped call take it the same way. [`WithCredential`]
+has that half as an example that runs, over a key source that needs no
+network.
+
+A call on this cipher is not a future until it has a credential, so a
+handler that forgets `.with_credential(..)` does not compile. A call on a
+cipher with an identity of its own is the other way round: it is awaited
+as it is, and has no `with_credential`. That covers an access key, a saved
+login, and an `OidcFederationStrategy` built with a provider callback.
+
+`examples/zerokms_auth.rs` runs the access-key path end to end against a live ZeroKMS,
 alongside the default path and the errors each half fails with. The
 transport knobs — timeouts, batch size, concurrency, an alternate ZeroKMS
 endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
@@ -624,10 +681,21 @@ pub mod audit;
 pub mod blob;
 pub mod cipher;
 pub mod contexts;
+pub mod credential;
 mod scalar;
 pub use audit::{AuditMetadata, AuditValue, Audited};
 pub use blob::{BlobError, OpaqueBlob};
+pub use credential::{KeySource, WithCredential};
 pub use scalar::{Ciphertext, OpaqueDecode, OpaqueEncode};
+/// The identity of a key source that has one of its own: an access key, a
+/// saved login, or a test double. It is stack-auth's type.
+///
+/// A cipher over such a key source makes every key request as that
+/// identity, so its calls are awaited as they are. You do not name this
+/// type. It appears in the bound of
+/// [`StackCipherBuilder::init`], where the compiler works it out from the
+/// key source.
+pub use stack_kms::OwnIdentity;
 #[cfg(test)]
 mod codes;
 pub mod descriptor;
@@ -649,7 +717,7 @@ pub mod value;
 pub use cipher::WithAuthStrategy;
 pub use cipher::{
     Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue, StackCipher,
-    StackCipherBuilder, StackCipherText,
+    StackCipherBuilder, StackCipherText, WithKeySource,
 };
 pub use contexts::{
     CallContexts, CallerShape, ContextTree, Contexts, FieldContext, Kind, LeafContext, Placeholder,

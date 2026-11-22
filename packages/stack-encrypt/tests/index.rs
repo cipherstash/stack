@@ -582,14 +582,8 @@ mod given_a_decryption_held_in_a_variable {
     #[tokio::test]
     async fn a_keyset_refuses_another_keysets_leaf_and_the_client_opens_it() {
         let cipher = stack_cipher().await;
-        let acme = cipher
-            .keyset(IdentifiedBy::Name("acme".to_string().into()))
-            .await
-            .unwrap();
-        let globex = cipher
-            .keyset(IdentifiedBy::Name("globex".to_string().into()))
-            .await
-            .unwrap();
+        let acme = cipher.keyset(IdentifiedBy::Name("acme".to_string().into()));
+        let globex = cipher.keyset(IdentifiedBy::Name("globex".to_string().into()));
         let sealed: StackCipherText = "secret"
             .to_string()
             .encrypt_into_with_context(&acme, aead())

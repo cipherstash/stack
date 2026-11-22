@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Terms bind to a keyset: this handle derives every term under the
     // default keyset's index key.
     let terms = cipher.default_keyset();
-    println!("cipher ready on keyset {}", terms.keyset_id());
+    println!("cipher ready on keyset {}", terms.keyset_id().await?);
 
     // One cipher serves write time and query time; terms are deterministic
     // under the same index key + context, which is what makes them queryable.

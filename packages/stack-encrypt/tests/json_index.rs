@@ -3020,10 +3020,7 @@ mod given_an_accessor {
         // The same query with a path the index takes passes the check, and
         // deriving it loads the keyset.
         query::check_at(&plan, Op::EqAt, "$.address.city", &json!("Sydney")).unwrap();
-        let tenant = cipher
-            .keyset(stack_kms::IdentifiedBy::Name("tenant".to_string().into()))
-            .await
-            .unwrap();
+        let tenant = cipher.keyset(stack_kms::IdentifiedBy::Name("tenant".to_string().into()));
         let _ = query::eq_at(&tenant, &plan, "$.address.city", &json!("Sydney"))
             .await
             .unwrap();

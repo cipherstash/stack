@@ -7,7 +7,7 @@ use zerokms_protocol::{
 };
 
 use recipher::key::Iv;
-use stack_auth::{AuthStrategy, AuthStrategyBounds};
+use stack_auth::{AuthStrategy, AuthStrategyBounds, CredentialAuthStrategy, SecretToken};
 use vitaminc::random::{Generatable, SafeRand};
 
 #[cfg(feature = "http")]
@@ -426,7 +426,6 @@ pub struct StackKms<C, Conn> {
 impl<C, Conn> StackKms<C, Conn>
 where
     C: AuthStrategyBounds,
-    for<'a> &'a C: AuthStrategy,
     Conn: ZeroKMSConnection + Send + Sync,
 {
     /// Build a client over an explicit transport.
@@ -456,11 +455,10 @@ where
         })
     }
 
-    /// Fetch a token from the credentials provider and ensure the ZeroKMS base
-    /// URL has been resolved on the connection (from the token's `services`
-    /// claim). The URL is only resolved once; subsequent calls skip resolution.
-    async fn get_token(&self) -> Result<stack_auth::ServiceToken, Error> {
-        let token = (&self.credentials).get_token().await?;
+    /// Ensure the ZeroKMS base URL has been resolved on the connection, from
+    /// `token`'s `services` claim. Resolved once: every token of a workspace
+    /// names the same endpoint, whichever caller it was issued for.
+    fn resolve_endpoint(&self, token: &stack_auth::ServiceToken) -> Result<(), Error> {
         if !self.client.connection().has_base_url() {
             let endpoint = crate::endpoint::ZeroKmsEndpoint::try_from(token.zerokms_url()?)?;
             tracing::debug!(
@@ -470,12 +468,37 @@ where
             );
             self.client.connection().ensure_base_url(endpoint);
         }
-        Ok(token)
+        Ok(())
     }
 
     /// The [`ClientKey`] this client uses to derive data keys.
     pub fn client_key(&self) -> &ClientKey {
         &self.client_key
+    }
+}
+
+/// Key requests made as the auth strategy's own identity
+/// ([`AuthStrategy`]): an access key, a saved login, or the caller that an
+/// [`OidcFederationStrategy`]'s provider names.
+///
+/// A client over a strategy that takes a credential with each call has none
+/// of these methods, so a request cannot be made without one. It has the
+/// `_with_credential` methods instead.
+///
+/// [`OidcFederationStrategy`]: stack_auth::OidcFederationStrategy
+impl<C, Conn> StackKms<C, Conn>
+where
+    C: AuthStrategyBounds,
+    for<'a> &'a C: AuthStrategy,
+    Conn: ZeroKMSConnection + Send + Sync,
+{
+    /// Fetch a token from the credentials provider and ensure the ZeroKMS base
+    /// URL has been resolved on the connection (from the token's `services`
+    /// claim). The URL is only resolved once; subsequent calls skip resolution.
+    async fn get_token(&self) -> Result<stack_auth::ServiceToken, Error> {
+        let token = (&self.credentials).get_token().await?;
+        self.resolve_endpoint(&token)?;
+        Ok(token)
     }
 
     /// Generate multiple data keys for an iterator of [`GenerateKeyPayload`].
@@ -561,6 +584,102 @@ where
             )
             .await
             .map_err(Error::from)
+    }
+}
+
+/// Key requests made with a credential that comes with the call, for an auth
+/// strategy that issues a token per credential
+/// ([`CredentialAuthStrategy`]): an [`OidcFederationStrategy`] built with
+/// `credential_per_call`, whose credential is the JWT of an end user. Each
+/// method is its plain counterpart with one difference: the access token is
+/// the one the strategy issues for `credential`, so ZeroKMS serves and logs
+/// the request as that caller.
+///
+/// A client whose strategy has an identity of its own has none of these
+/// methods, so a credential is never dropped on the way to a request.
+///
+/// [`OidcFederationStrategy`]: stack_auth::OidcFederationStrategy
+impl<C, Conn> StackKms<C, Conn>
+where
+    C: AuthStrategyBounds,
+    for<'a> &'a C: CredentialAuthStrategy,
+    Conn: ZeroKMSConnection + Send + Sync,
+{
+    /// The access token the strategy issues for `credential`, with the
+    /// ZeroKMS endpoint resolved from it on first use.
+    async fn get_token_with_credential(
+        &self,
+        credential: &SecretToken,
+    ) -> Result<stack_auth::ServiceToken, Error> {
+        // The strategy takes the credential by value, and keys its cache on
+        // it. The copy wipes itself when the strategy drops it.
+        let token = (&self.credentials)
+            .get_token_with_credential(credential.clone())
+            .await?;
+        self.resolve_endpoint(&token)?;
+        Ok(token)
+    }
+
+    /// [`generate_keys`](Self::generate_keys), made with `credential`.
+    pub async fn generate_keys_with_credential<'a>(
+        &self,
+        credential: &SecretToken,
+        payloads: impl IntoIterator<Item = GenerateKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<Cow<'a, UnverifiedContext>>,
+    ) -> Result<Vec<DataKeyWithTag>, Error> {
+        let token = self.get_token_with_credential(credential).await?;
+
+        self.client
+            .generate_keys(
+                payloads,
+                &self.client_key,
+                keyset_id,
+                token.as_str(),
+                unverified_context,
+            )
+            .await
+            .map_err(Error::from)
+    }
+
+    /// [`retrieve_keys`](Self::retrieve_keys), made with `credential`.
+    pub async fn retrieve_keys_with_credential(
+        &self,
+        credential: &SecretToken,
+        payloads: impl IntoIterator<Item = RetrieveKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<&UnverifiedContext>,
+    ) -> Result<Vec<DataKey>, Error> {
+        let token = self.get_token_with_credential(credential).await?;
+
+        self.client
+            .retrieve_keys(
+                payloads,
+                &self.client_key,
+                keyset_id,
+                token.as_str(),
+                unverified_context,
+            )
+            .await
+            .map_err(Error::from)
+    }
+
+    /// [`load_keyset`](Self::load_keyset), made with `credential`.
+    pub async fn load_keyset_with_credential(
+        &self,
+        credential: &SecretToken,
+        keyset_id: Option<IdentifiedBy>,
+    ) -> Result<(Keyset, IndexKey), Error> {
+        let token = self.get_token_with_credential(credential).await?;
+
+        let (keyset, index_key) = self
+            .client
+            .load_keyset(&self.client_key, keyset_id, token.as_str())
+            .await?;
+
+        tracing::debug!(target: "stack_kms::load_keyset", "loaded keyset: [{}]({})", keyset.id, keyset.name);
+
+        Ok((keyset, index_key))
     }
 }
 
@@ -705,6 +824,169 @@ mod tests {
             assert_eq!(keys.len(), 2);
             assert_eq!(keys[0].tag, vec![1]);
             assert_eq!(keys[1].tag, vec![2]);
+        }
+    }
+
+    /// Key requests that carry a credential: the access token on each
+    /// request is the one the strategy issued for that request's credential.
+    mod with_credential {
+        use super::*;
+        use crate::key_source::CredentialKeySource;
+        use stack_auth::{
+            AuthError, CredentialAuthStrategy, CredentialPerCall, SecretToken, ServiceToken,
+            StrategyKind,
+        };
+        use std::sync::Mutex;
+
+        /// A strategy with no identity of its own. It issues a token that
+        /// names the credential it was handed, and records each credential.
+        #[derive(Default)]
+        struct PerCredential {
+            asked_for: Mutex<Vec<String>>,
+        }
+
+        impl PerCredential {
+            fn asked_for(&self) -> Vec<String> {
+                self.asked_for.lock().unwrap().clone()
+            }
+        }
+
+        impl StrategyKind for &PerCredential {
+            type Kind = CredentialPerCall;
+        }
+
+        impl CredentialAuthStrategy for &PerCredential {
+            async fn get_token_with_credential(
+                self,
+                credential: SecretToken,
+            ) -> Result<ServiceToken, AuthError> {
+                self.asked_for
+                    .lock()
+                    .unwrap()
+                    .push(credential.as_str().to_string());
+                Ok(ServiceToken::new(SecretToken::new(format!(
+                    "token-for-{}",
+                    credential.as_str()
+                ))))
+            }
+        }
+
+        fn load_keyset_response() -> LoadKeysetResponse {
+            LoadKeysetResponse {
+                partial_index_key: RetrievedKey {
+                    key_material: key_material(),
+                },
+                keyset: Keyset {
+                    id: uuid!("11111111-1111-1111-1111-111111111111"),
+                    name: "default".to_string(),
+                    description: String::new(),
+                    is_disabled: false,
+                    is_default: true,
+                },
+            }
+        }
+
+        fn kms(builder: TestConnectionBuilder) -> StackKms<PerCredential, TestConnection> {
+            StackKms::connect(
+                ClientOpts::new(builder),
+                PerCredential::default(),
+                random_client_key(),
+            )
+            .expect("connect over a test connection")
+        }
+
+        fn credential(name: &str) -> SecretToken {
+            SecretToken::new(name)
+        }
+
+        /// Two callers interleaved on one client. Every kind of key request
+        /// goes out under the token of the credential it was made with.
+        #[tokio::test]
+        async fn each_request_is_sent_with_the_token_of_its_own_credential() {
+            let kms = kms(TestConnectionBuilder::new()
+                .add_success_response::<LoadKeysetRequest>(load_keyset_response())
+                .add_success_response::<GenerateKeyRequest>(GenerateKeyResponse {
+                    keys: vec![generated_key(vec![1])],
+                })
+                .add_success_response::<RetrieveKeyRequest>(RetrieveKeyResponse {
+                    keys: vec![RetrievedKey {
+                        key_material: key_material(),
+                    }],
+                })
+                .add_success_response::<GenerateKeyRequest>(GenerateKeyResponse {
+                    keys: vec![generated_key(vec![2])],
+                })
+                .add_success_response::<RetrieveKeyRequest>(RetrieveKeyResponse {
+                    keys: vec![RetrievedKey {
+                        key_material: key_material(),
+                    }],
+                }));
+            let (alice, bob) = (credential("alice"), credential("bob"));
+            let generate = || vec![GenerateKeyPayload::new("a", Cow::Owned(vec![]))];
+            let retrieve = || vec![RetrieveKeyPayload::new(Iv::default(), "a", &[1])];
+
+            // Through the trait, as Stack Encrypt calls it.
+            let _ = kms
+                .load_index_key_with_credential(&alice, None)
+                .await
+                .expect("alice loads the keyset");
+            let _ = CredentialKeySource::generate_keys_with_credential(
+                &kms,
+                &bob,
+                generate(),
+                None,
+                None,
+            )
+            .await
+            .expect("bob generates");
+            let _ = CredentialKeySource::retrieve_keys_with_credential(
+                &kms,
+                &alice,
+                retrieve(),
+                None,
+                None,
+            )
+            .await
+            .expect("alice retrieves");
+            let _ = CredentialKeySource::generate_keys_with_credential(
+                &kms,
+                &alice,
+                generate(),
+                None,
+                None,
+            )
+            .await
+            .expect("alice generates");
+            let _ = CredentialKeySource::retrieve_keys_with_credential(
+                &kms,
+                &bob,
+                retrieve(),
+                None,
+                None,
+            )
+            .await
+            .expect("bob retrieves");
+
+            let sent = kms.client.connection().sent().await;
+            let sent: Vec<(&str, &str)> = sent
+                .iter()
+                .map(|(endpoint, token)| (endpoint.as_str(), token.as_str()))
+                .collect();
+            assert_eq!(
+                sent,
+                vec![
+                    (LoadKeysetRequest::ENDPOINT, "token-for-alice"),
+                    (GenerateKeyRequest::ENDPOINT, "token-for-bob"),
+                    (RetrieveKeyRequest::ENDPOINT, "token-for-alice"),
+                    (GenerateKeyRequest::ENDPOINT, "token-for-alice"),
+                    (RetrieveKeyRequest::ENDPOINT, "token-for-bob"),
+                ]
+            );
+            assert_eq!(
+                kms.credentials.asked_for(),
+                ["alice", "bob", "alice", "alice", "bob"],
+                "the strategy is asked once per request, for that request's credential"
+            );
         }
     }
 

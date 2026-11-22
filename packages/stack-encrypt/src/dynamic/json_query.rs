@@ -688,6 +688,42 @@ pub(super) fn open<'a, K: 'static>(
     rows: &ValueFrame,
 ) -> Result<Pending<'a, ValueFrame, K>, Error> {
     let (read, groups) = read_open(request, rows)?;
+    if keyset.loaded_state().is_some() {
+        return open_read(keyset, under, options, read, groups);
+    }
+    // A read opens its rows with a key derived under the keyset's index
+    // key, and the rows' key requests are built from it. With a default
+    // keyset that is not loaded yet, there is nothing to build from. So
+    // the pending is built when it settles and has loaded the keyset. A
+    // refusal of the read is then the pending's error.
+    let (label, parts) = under.owned();
+    let options = options.clone();
+    Ok(Pending::after_load(keyset, move |keyset| {
+        match open_read(keyset, &Under::new(&label, parts), &options, read, groups) {
+            Ok(pending) => pending,
+            Err(error) => Pending::failed(keyset, pending_error(error)),
+        }
+    }))
+}
+
+/// An error raised while a pending is built or fulfilled, as the pending's
+/// own error: the engine's error itself, or the input error inside one.
+fn pending_error(error: Error) -> crate::Error {
+    match error {
+        Error::Cipher(error) => error,
+        other => crate::Error::Other(Box::new(other)),
+    }
+}
+
+/// [`open`], for a read already read and checked, through a keyset that is
+/// loaded.
+fn open_read<'a, K: 'static>(
+    keyset: &KeysetCipher<'a, K>,
+    under: &Under<'_>,
+    options: &JsonOptions,
+    read: Read,
+    groups: Vec<Vec<JsonNode>>,
+) -> Result<Pending<'a, ValueFrame, K>, Error> {
     let opener = match read {
         Read::Selector(path) => Opener::Selector(keyset.json_selector_now(&path, under.query()?)?),
         Read::Subtree(path, bound) => {
@@ -699,8 +735,8 @@ pub(super) fn open<'a, K: 'static>(
     // record's leaves are through a keyset reference: the read's key is that
     // keyset's, so a document sealed under another cannot answer it.
     let opener_cipher = keyset.cipher();
-    let confine = keyset.keyset_id();
-    let confined = |pending: Pending<'a, Vec<JsonPlaintext>, K>| pending.scoped_to(confine);
+    let confine = keyset.selector();
+    let confined = |pending: Pending<'a, Vec<JsonPlaintext>, K>| pending.confined_to(&confine);
     let mut pendings: Vec<Pending<'a, Vec<JsonPlaintext>, K>> = Vec::with_capacity(groups.len());
     for nodes in groups {
         pendings.push(match &opener {
