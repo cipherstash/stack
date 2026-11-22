@@ -121,8 +121,6 @@ pub use json::{json_frame, read_json, JsonValueError};
 /// a kind means to this engine.
 pub use kind::{admits, not_admitted, read, ParseValueKindError, ValueKind};
 pub use planned::{DynamicQuery, FieldHandle, Planned, QueryPlan};
-#[allow(deprecated)]
-pub use query::OpSpec;
 pub use query::{
     check_json_open, check_query, field_operators, json_open, query_term, target_limit, verify,
     Fidelity, Op, Operand, OperatorEntry, QueryTerm,

@@ -1223,7 +1223,7 @@ the plan enforces.
 
 **Every operator is declared once.** The `op` module has one list of the
 operators, with each one's type, arity and wire name. The dynamic enum
-`Op` (`OpSpec` until now, which stays as a deprecated alias), each type's
+`Op` (`OpSpec` until now; the old name is removed), each type's
 `Operator::OP`, and `Op::name` are generated from it. So `op::Eq`, `Op::Eq`
 and `"eq"` are three faces of one operator, and a test holds them together.
 Rust is the superset: an operator with no wire form, such as one defined in

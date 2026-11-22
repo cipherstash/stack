@@ -1034,9 +1034,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Every operator is declared once, and `op::Supports` has one method**
   (#1279, #1318). The `op` module lists each operator with its type, its
   arity and its wire name; the dynamic enum `Op` (`dynamic::OpSpec` until
-  now, kept as a deprecated alias), each type's `Operator::OP` and
-  `Op::name` are generated from that list, so `op::Eq`, `Op::Eq` and
-  `"eq"` cannot drift apart. `Leaf` gains `AT`, the operator's path form.
+  now; the old name is removed, so rename it to `Op`), each type's
+  `Operator::OP` and `Op::name` are generated from that list, so `op::Eq`,
+  `Op::Eq` and `"eq"` cannot drift apart. `Leaf` gains `AT`, the operator's path form.
   - `Supports::check`, `verifier` and `admit` are one
     `prepare(&self, input) -> Result<Self::Verifier, Error>`, called once
     per query, when the query is awaited and before any keyset is

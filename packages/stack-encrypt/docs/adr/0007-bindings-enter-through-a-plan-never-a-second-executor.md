@@ -231,7 +231,7 @@ high. The engine reads the input as the field's declared type first
 (`dynamic::read`), so a host's float `34.0` queries a `uint64` field as the
 `u64` the field stored. It then finds the index that answers the operator by
 the table the typed path's `DefaultIndex` impls state, written over a type
-and the indexes a field declares (`dynamic::OpSpec::answered_by`): `eq`
+and the indexes a field declares (`dynamic::Op::answered_by`): `eq`
 through an equality index, `matches` through a match index over text, the
 orderings through an ORE index over an integer, or OPE when the field
 declares no ORE. A field that does not answer the operator is refused with

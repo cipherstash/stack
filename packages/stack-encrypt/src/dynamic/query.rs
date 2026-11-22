@@ -95,13 +95,6 @@ use vitaminc_aead::Encrypt;
 
 pub use crate::op::Op;
 
-/// The former name of [`Op`].
-#[deprecated(
-    since = "0.4.0",
-    note = "renamed to `Op`; the variants and their names are unchanged"
-)]
-pub type OpSpec = Op;
-
 impl Op {
     /// Whether the JSON index answers this operator: the document
     /// operators, whose input is an object of named JSON inputs
