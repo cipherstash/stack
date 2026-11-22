@@ -164,6 +164,8 @@
           "a_late_read_type_failure_leaves_no_plaintext_on_the_heap",
           "a_late_type_failure_in_an_owned_column_leaves_no_plaintext_on_the_heap",
           "opaque_blob::an_opaque_blob_of_another_shape_leaves_no_plaintext_on_the_heap",
+          "opaque_blob::given_a_blob_refused_after_fields_are_built::the_fields_built_before_it_are_wiped",
+          "opaque_blob::given_a_blob_refused_after_fields_are_built::a_nested_field_and_whole_elements_built_before_it_are_wiped",
           "json_plaintext::text_that_is_not_a_document_leaves_no_plaintext_on_the_heap"
         ],
         "collections": [
@@ -173,6 +175,9 @@
         ],
         "owned-records": [
           "a_field_opened_before_a_later_field_is_refused_is_wiped"
+        ],
+        "opaque": [
+          "given_a_decrypted_blob::a_field_read_before_a_refusal_is_wiped"
         ],
         "contexts": ["shared_context_boundaries"],
         "go": [
@@ -326,9 +331,9 @@
       "evidence": "packages/stack-encrypt/tests/heap_hygiene.rs"
     },
     {
-      "id": "native-partial-decode-fields",
+      "id": "native-partial-decode-inside-whole-values",
       "status": "known-gap",
-      "evidence": "packages/stack-encrypt/tests/heap_hygiene.rs::opaque_blob::a_partial_decode_drops_the_fields_it_built_unwiped"
+      "evidence": "packages/stack-encrypt/tests/heap_hygiene.rs::opaque_blob::given_a_blob_refused_after_fields_are_built::a_refusal_inside_a_sequence_element_drops_what_the_element_built"
     },
     {
       "id": "caller-owned-host-values",

@@ -1460,7 +1460,7 @@ mod cancellation {
         drop(future);
     }
 
-    #[derive(serde::Serialize, serde::Deserialize, zeroize::Zeroize)]
+    #[derive(serde::Serialize, serde::Deserialize, zeroize::Zeroize, Default)]
     struct Note {
         title: String,
         /// Written after the marked field, so the blob's buffer regrows
@@ -1665,9 +1665,9 @@ fn the_spy_sees_a_leaked_block() {
 /// (which grows past its first allocation while it already holds the
 /// marker), the planned leaf, and on decrypt the opened buffer the blob
 /// is read from, all freed wiped, and none of them leaked rather than
-/// freed. The opened value is the caller's and is wiped by hand before the
-/// watch ends; a refusal of another shape, found before any field is
-/// built, leaves nothing to wipe.
+/// freed. The opened value is wiped when it is dropped, before the watch
+/// ends. A refusal of another shape found before any field is built leaves
+/// nothing to wipe; one found after some fields are built wipes them.
 mod opaque_blob {
     use super::*;
 
@@ -1675,7 +1675,7 @@ mod opaque_blob {
     use stack_encrypt::{Error, OpaqueBlob};
     use zeroize::Zeroize;
 
-    #[derive(Serialize, Deserialize, Zeroize)]
+    #[derive(Serialize, Deserialize, Zeroize, Default)]
     struct Doc {
         title: String,
         notes: Vec<String>,
@@ -1755,7 +1755,7 @@ mod opaque_blob {
                 .await
                 .unwrap()
         });
-        #[derive(Deserialize, Zeroize)]
+        #[derive(Deserialize, Zeroize, Default)]
         #[allow(dead_code)]
         struct Other {
             title: u32,
@@ -1773,42 +1773,186 @@ mod opaque_blob {
         });
     }
 
-    /// The limit the blob docs state, held as a negative control: a derived
-    /// `Deserialize` that built a `String` field and then refuses a later
-    /// field drops that `String` as an ordinary value, unwiped, because no
-    /// `T` was ever constructed to wipe. The opened buffer itself is wiped;
-    /// what leaks is serde's partial value. A type whose fields wipe on drop
-    /// closes it; this test documents that the library does not.
-    #[test]
-    #[should_panic(expected = "freed with plaintext in them")]
-    fn a_partial_decode_drops_the_fields_it_built_unwiped() {
-        let rt = runtime();
-        let cipher = rt.block_on(common::stack_cipher());
-        let keyset = cipher.default_keyset();
-        let sealed = rt.block_on(async {
-            keyset
-                .encrypt_with_context(doc(), "docs/body")
-                .await
-                .unwrap()
-        });
-        #[derive(Deserialize, Zeroize)]
-        #[allow(dead_code)]
-        struct Later {
-            title: String,
-            notes: Vec<String>,
-            body: u32,
+    /// A blob that reads part-way as the type it is opened as and is then
+    /// refused. The decode fills a `T::default()` in place, so every field
+    /// built before the refusal is in that value, and the refusal wipes it.
+    mod given_a_blob_refused_after_fields_are_built {
+        use super::*;
+
+        use stack_encrypt::kms::FakeDataKeySource;
+        use stack_encrypt::{BlobError, Ciphertext, StackCipher};
+
+        #[derive(Serialize, Zeroize)]
+        struct Shelf {
+            label: String,
+            sections: Vec<Section>,
+            owner: Owner,
         }
-        watched("OpaqueBlob decrypt (partial)", || {
-            let result = rt.block_on(async {
-                keyset
-                    .decrypt_with_context::<OpaqueBlob<Later>>(sealed, "docs/body")
+
+        #[derive(Serialize, Zeroize)]
+        struct Section {
+            name: String,
+            pages: u32,
+        }
+
+        #[derive(Serialize, Zeroize)]
+        struct Owner {
+            name: String,
+            id: String,
+        }
+
+        /// Every text but the owner's id is marked; the id is read as a
+        /// number, so a reader of that shape is refused last of all.
+        fn shelf() -> OpaqueBlob<Shelf> {
+            OpaqueBlob::new(Shelf {
+                label: marked("label"),
+                sections: vec![
+                    Section {
+                        name: marked("section-1"),
+                        pages: 3,
+                    },
+                    Section {
+                        name: marked("section-2"),
+                        pages: 5,
+                    },
+                ],
+                owner: Owner {
+                    name: marked("owner"),
+                    id: "not-a-number".to_owned(),
+                },
+            })
+        }
+
+        /// The runtime, a cipher, and `source` sealed under it.
+        fn scenario<T>(
+            source: OpaqueBlob<T>,
+        ) -> (
+            tokio::runtime::Runtime,
+            StackCipher<FakeDataKeySource>,
+            Ciphertext,
+        )
+        where
+            T: Serialize + Zeroize + Send + 'static,
+        {
+            let rt = runtime();
+            let cipher = rt.block_on(common::stack_cipher());
+            let sealed = rt.block_on(async {
+                cipher
+                    .default_keyset()
+                    .encrypt_with_context(source, "docs/body")
                     .await
+                    .expect("the source seals")
             });
-            assert!(matches!(
-                result,
-                Err(Error::Blob(stack_encrypt::BlobError::Mismatch(_)))
-            ));
-        });
+            (rt, cipher, sealed)
+        }
+
+        /// Open `sealed` as an `OpaqueBlob<T>` while watched for marked
+        /// frees and leaks, and check it is refused as another shape.
+        fn opened_as<T>(
+            what: &str,
+            source: (
+                tokio::runtime::Runtime,
+                StackCipher<FakeDataKeySource>,
+                Ciphertext,
+            ),
+        ) where
+            T: serde::de::DeserializeOwned + Default + Zeroize + Send + 'static,
+        {
+            let (rt, cipher, sealed) = source;
+            let keyset = cipher.default_keyset();
+            watched_for_leaks(what, || {
+                let result = rt.block_on(async {
+                    keyset
+                        .decrypt_with_context::<OpaqueBlob<T>>(sealed, "docs/body")
+                        .await
+                });
+                assertions::is_a_mismatch(&result);
+            });
+        }
+
+        /// The `String` and the `Vec<String>` read before the `u32` that
+        /// refuses the text it finds.
+        #[test]
+        fn the_fields_built_before_it_are_wiped() {
+            #[derive(Deserialize, Zeroize, Default)]
+            #[allow(dead_code)]
+            struct Later {
+                title: String,
+                notes: Vec<String>,
+                body: u32,
+            }
+            opened_as::<Later>("OpaqueBlob decrypt (refused after fields)", scenario(doc()));
+        }
+
+        /// A refusal inside a nested struct: the outer field, both whole
+        /// elements of the sequence, and the nested struct's own field read
+        /// before it are wiped.
+        #[test]
+        fn a_nested_field_and_whole_elements_built_before_it_are_wiped() {
+            #[derive(Deserialize, Zeroize, Default)]
+            #[allow(dead_code)]
+            struct ShelfRead {
+                label: String,
+                sections: Vec<SectionRead>,
+                owner: OwnerRead,
+            }
+            #[derive(Deserialize, Zeroize, Default)]
+            #[allow(dead_code)]
+            struct SectionRead {
+                name: String,
+                pages: u32,
+            }
+            #[derive(Deserialize, Zeroize, Default)]
+            #[allow(dead_code)]
+            struct OwnerRead {
+                name: String,
+                id: u32,
+            }
+            opened_as::<ShelfRead>(
+                "OpaqueBlob decrypt (refused in a nested field)",
+                scenario(shelf()),
+            );
+        }
+
+        /// The limit that remains, held as a negative control. serde fills
+        /// a struct's fields in place, but builds each element of a
+        /// sequence whole before it stores it. A refusal inside an element
+        /// drops the fields that element built as ordinary values,
+        /// unwiped. The elements stored before it are wiped.
+        #[test]
+        #[should_panic(expected = "freed with plaintext in them")]
+        fn a_refusal_inside_a_sequence_element_drops_what_the_element_built() {
+            #[derive(Deserialize, Zeroize, Default)]
+            #[allow(dead_code)]
+            struct ShelfRead {
+                label: String,
+                sections: Vec<SectionRead>,
+            }
+            #[derive(Deserialize, Zeroize, Default)]
+            #[allow(dead_code)]
+            struct SectionRead {
+                name: String,
+                pages: String,
+            }
+            opened_as::<ShelfRead>(
+                "OpaqueBlob decrypt (refused inside an element)",
+                scenario(shelf()),
+            );
+        }
+
+        mod assertions {
+            use super::*;
+
+            pub(super) fn is_a_mismatch<T>(result: &Result<OpaqueBlob<T>, Error>)
+            where
+                T: Zeroize,
+            {
+                assert!(
+                    matches!(result, Err(Error::Blob(BlobError::Mismatch(_)))),
+                    "a blob of another shape is refused as a mismatch: {result:?}"
+                );
+            }
+        }
     }
 }
 

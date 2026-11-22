@@ -3465,6 +3465,7 @@ dependencies = [
  "rmp-serde",
  "rust_decimal",
  "serde",
+ "serde_derive",
  "serde_json",
  "serdect",
  "sha2 0.11.0",

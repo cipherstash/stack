@@ -1209,7 +1209,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   key. Encrypt with `keyset.encrypt(OpaqueBlob::new(value))`, for any
   `Serialize + Zeroize` value. Decrypt with
   `keyset.decrypt::<OpaqueBlob<T>>(ct)`, for any
-  `DeserializeOwned + Zeroize` type, then call `into_inner()`.
+  `DeserializeOwned + Default + Zeroize` type, then call `into_inner()`.
   - The value is encoded with version 1 of Vitamin C's storage profile
     (`vitaminc_aead_frame::storage`). The encoded bytes start with a `VCS`
     header and a version byte, inside the plaintext. The profile has a
@@ -1238,6 +1238,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Zeroizing<T>`, so the value is still wiped on drop after it leaves the
   blob. `Zeroizing<T>` derefs to `T`. A decrypted scalar is still an ordinary owned value, and nothing
   wipes it on drop.
+- **A blob refused part-way through reading wipes the fields it read**
+  (#1676). A valid blob of another shape can be refused after some of its
+  fields are read, for example when a later field is missing or has another
+  type. Those fields used to be dropped unwiped, because serde holds them
+  until the whole `T` is built. Decrypting now reads the blob in place
+  into a `T::default()` held in a `Zeroizing<T>`, through serde's
+  `Deserialize::deserialize_in_place`, and a refusal wipes that value. This
+  covers the fields of a struct, the fields of a struct nested in it, and
+  the elements of a `Vec` stored before the refusal.
+  - Decrypting an `OpaqueBlob<T>` now needs `T: Default`. Add
+    `#[derive(Default)]` to the type.
+  - stack-encrypt turns on serde_derive's `deserialize_in_place` feature.
+    Cargo shares a crate's features across a build, so every
+    `#[derive(Deserialize)]` in a build with stack-encrypt also writes
+    `deserialize_in_place`. `deserialize` does not change.
+  - A field serde skips (`#[serde(skip)]`) keeps the value `T::default()`
+    gives it.
+  - serde builds an element of a sequence, an entry of a map, an `Option`,
+    a `Box` and an enum whole. A refusal inside one of those still drops
+    what it built unwiped. A part that wipes itself on drop, such as a
+    `Zeroizing<String>`, closes that gap for that part.
 - **Encrypting an `OpaqueBlob` wipes the value in every case.** The value is
   wiped before `encrypt` returns the pending request, both on success and
   when the value cannot be encoded. A failed encoding requests no key. A

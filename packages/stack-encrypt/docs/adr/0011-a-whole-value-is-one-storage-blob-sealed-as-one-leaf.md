@@ -103,7 +103,8 @@ own versions apart, it stores a version in the value.
 
 ### Cleanup follows the scalar API's rules
 
-`T: Zeroize` is required to encrypt and to decrypt.
+`T: Zeroize` is required to encrypt and to decrypt. Decrypting also
+requires `T: Default`, for the value the blob is read into.
 
 On encrypt, these steps happen before the pending request is returned:
 
@@ -117,6 +118,17 @@ If encoding fails, the source is wiped too. No key is requested.
 
 On decrypt, the opened bytes are held in a `Protected` buffer until the
 reader returns.
+
+The blob is read into a `T::default()` in a `Zeroizing<T>`, in place,
+through serde's `Deserialize::deserialize_in_place`. A derived
+`Deserialize` for a struct stores each field in that value as it reads it.
+A valid blob of another shape can be refused after some fields are read;
+the refusal drops the `Zeroizing<T>`, so those fields are wiped. Without
+this, serde holds them as locals of its own and drops them unwiped,
+because no `T` exists yet. The derive writes `deserialize_in_place` only
+with serde_derive's `deserialize_in_place` feature, which this crate turns
+on. Cargo unifies features, so every derive in the build writes it.
+`Deserialize::deserialize` does not change.
 
 The returned `OpaqueBlob<T>` stores its value in a `Zeroizing<T>`, so **the
 value is wiped on drop**. `into_inner` returns that `Zeroizing<T>`, not a
@@ -144,9 +156,11 @@ Vitamin C.
   number of elements, and whether each `Option` is present. A `String`
   scalar shows its length in the same way. Padding is the application's
   job.
-- **Complete erasure.** A derived `Deserialize` might build some fields and
-  then refuse a later one. It drops those fields without wiping them,
-  because no `T` existed to wipe. `tests/heap_hygiene.rs` records this as a
+- **Complete erasure.** serde reads some values whole and stores them only
+  when they are complete: an element of a sequence, an entry of a map, an
+  `Option`, a `Box`, an enum, and a type whose `Deserialize` is not derived
+  for a struct. A refusal inside one of these drops the parts of it already
+  read without wiping them. `tests/heap_hygiene.rs` records this as a
   negative control, so the gap stays visible. A `Copy` value that is moved
   leaves its bytes behind. Compiler temporaries are not wiped. The
   promise covers the owned source, the encoded buffer, the opened buffer,

@@ -6,7 +6,7 @@
 //! The file has two parts: the types, constants and helpers the tests
 //! share, then the tests, in one module per scenario.
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use stack_encrypt::blob::{HEADER, VERSION};
@@ -23,7 +23,7 @@ mod common;
 // ---------------------------------------------------------------------------
 
 /// The value most tests encrypt.
-#[derive(Serialize, Deserialize, Zeroize, Clone, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Zeroize, Clone, PartialEq, Debug, Default)]
 struct Profile {
     name: String,
     age: u32,
@@ -50,7 +50,7 @@ fn grace() -> Profile {
 }
 
 /// A value of a different shape from [`Profile`].
-#[derive(Serialize, Deserialize, Zeroize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Zeroize, PartialEq, Debug, Default)]
 struct Pair {
     left: String,
     right: u32,
@@ -58,7 +58,7 @@ struct Pair {
 
 /// A later version of [`Profile`] that still reads an old blob: a wider
 /// integer, a renamed field with an alias, and two new fields with defaults.
-#[derive(Deserialize, Zeroize, PartialEq, Debug)]
+#[derive(Deserialize, Zeroize, PartialEq, Debug, Default)]
 struct ProfileV2 {
     name: String,
     age: u64,
@@ -73,7 +73,7 @@ struct ProfileV2 {
 
 /// A later version of [`Profile`] with a new field and no default, so it
 /// cannot read an old blob.
-#[derive(Deserialize, Zeroize)]
+#[derive(Deserialize, Zeroize, Default)]
 #[allow(dead_code)]
 struct ProfileWithRequiredField {
     name: String,
@@ -84,7 +84,7 @@ struct ProfileWithRequiredField {
 }
 
 /// [`Profile`] with fewer fields and a narrower integer.
-#[derive(Deserialize, Zeroize)]
+#[derive(Deserialize, Zeroize, Default)]
 #[allow(dead_code)]
 struct NarrowProfile {
     name: String,
@@ -92,7 +92,7 @@ struct NarrowProfile {
 }
 
 /// A byte string written as bytes, not as a sequence of `u8`.
-#[derive(Serialize, Deserialize, Zeroize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Zeroize, PartialEq, Debug, Default)]
 struct RawBytes(#[serde(with = "serde_bytes_shim")] Vec<u8>);
 
 /// `serde_bytes` without the dependency: write and read a `Vec<u8>` as bytes.
@@ -192,7 +192,7 @@ fn tracked() -> (OpaqueBlob<Tracked>, Arc<AtomicBool>) {
 }
 
 /// [`Tracked`] as it decrypts.
-#[derive(Deserialize, Zeroize)]
+#[derive(Deserialize, Zeroize, Default)]
 struct TrackedRead {
     value: String,
 }
@@ -202,7 +202,7 @@ struct TrackedRead {
 static WITNESS_WIPES: AtomicUsize = AtomicUsize::new(0);
 
 /// A value that counts its wipes in [`WITNESS_WIPES`].
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 struct Witness {
     value: String,
 }
@@ -211,6 +211,30 @@ impl Zeroize for Witness {
     fn zeroize(&mut self) {
         self.value.zeroize();
         WITNESS_WIPES.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// What a [`WitnessThenMore`] held each time it was wiped. Only one test
+/// uses it.
+static WIPED_BEFORE_REFUSAL: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// [`Witness`] read as a type with a later field the blob does not have.
+/// `value` reads, then `more` is refused as missing. Its wipe records what
+/// `value` held in [`WIPED_BEFORE_REFUSAL`] before it wipes it.
+#[derive(Deserialize, Default)]
+#[allow(dead_code)]
+struct WitnessThenMore {
+    value: String,
+    more: u32,
+}
+
+impl Zeroize for WitnessThenMore {
+    fn zeroize(&mut self) {
+        WIPED_BEFORE_REFUSAL
+            .lock()
+            .expect("the record of wipes")
+            .push(self.value.clone());
+        self.value.zeroize();
     }
 }
 
@@ -1163,6 +1187,33 @@ mod given_a_decrypted_blob {
             WITNESS_WIPES.load(Ordering::SeqCst),
             before + 2,
             "dropping the guard should wipe the value once"
+        );
+    }
+
+    /// A blob refused after `T` has read a field: the field was read into
+    /// the value decrypting fills in place, and the refusal wipes that
+    /// value once, with the field in it.
+    #[tokio::test]
+    async fn a_field_read_before_a_refusal_is_wiped() {
+        let cipher = common::stack_cipher().await;
+        let keyset = cipher.default_keyset();
+        let ct = keyset
+            .encrypt(OpaqueBlob::new(Witness {
+                value: "secret".into(),
+            }))
+            .await
+            .unwrap();
+
+        let refused = keyset.decrypt::<OpaqueBlob<WitnessThenMore>>(ct).await;
+        assert!(
+            matches!(refused, Err(Error::Blob(BlobError::Mismatch(_)))),
+            "a missing field is a mismatch: {refused:?}"
+        );
+        let wiped = std::mem::take(&mut *WIPED_BEFORE_REFUSAL.lock().unwrap());
+        assert_eq!(
+            wiped,
+            ["secret"],
+            "the refusal should wipe the field read before it, once"
         );
     }
 

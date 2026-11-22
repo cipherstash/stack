@@ -15,7 +15,7 @@
 //! use stack_encrypt::{OpaqueBlob, StackCipher};
 //! use zeroize::Zeroize;
 //!
-//! #[derive(Serialize, Deserialize, Zeroize, PartialEq, Debug)]
+//! #[derive(Serialize, Deserialize, Zeroize, Default, PartialEq, Debug)]
 //! struct Profile {
 //!     name: String,
 //!     age: u32,
@@ -113,9 +113,9 @@
 //! ## Supported types
 //!
 //! To encrypt, `T` must implement `serde::Serialize` and [`Zeroize`]. To
-//! decrypt, `T` must implement `serde::de::DeserializeOwned` and `Zeroize`.
-//! [Cleanup](#cleanup) explains why `Zeroize` is needed. Each serde type is
-//! written as follows:
+//! decrypt, `T` must implement `serde::de::DeserializeOwned`, `Default` and
+//! `Zeroize`. [Cleanup](#cleanup) explains why `Zeroize` and `Default` are
+//! needed. Each serde type is written as follows:
 //!
 //! | serde type                         | Written as                                          |
 //! |------------------------------------|-----------------------------------------------------|
@@ -295,16 +295,31 @@
 //!
 //! [`into_inner`]: OpaqueBlob::into_inner
 //!
-//! One gap comes from serde and is not closed here. A derived
-//! `Deserialize` might read some fields and then refuse a later one. It
-//! then drops the fields it built as ordinary values, without
-//! `T::zeroize`, because no `T` was ever built to wipe. The reader checks
-//! the blob first, so this happens only for a valid blob of another shape
-//! ([`BlobError::Mismatch`]), never for a malformed one.
+//! A blob can be refused after `T` has read some of it: a valid blob of
+//! another shape ([`BlobError::Mismatch`]) whose first fields read and a
+//! later one does not. The reader checks the whole blob first, so a
+//! malformed blob is refused before `T` reads anything. To wipe what `T`
+//! read before such a refusal, decrypting starts from `T::default()` in a
+//! `Zeroizing<T>` and reads the blob into it in place, with serde's
+//! `Deserialize::deserialize_in_place`. A derived `Deserialize` for a struct
+//! reads each field straight into that value, so a refusal wipes every
+//! field read before it, through `T::zeroize`. This holds at every level of
+//! nested structs, tuples and arrays, and for every element of a `Vec`
+//! stored before the refusal. This crate turns on serde's
+//! `deserialize_in_place` derive feature for that, so every derive in the
+//! build writes the method.
 //!
-//! The bytes those fields were copied from are wiped with the buffer. A
-//! field that wipes itself on drop closes the gap for that field. Examples
+//! serde reads some values whole and stores them only when they are
+//! complete: an element of a sequence, an entry of a map, an `Option`, a
+//! `Box`, an enum, and a type whose `Deserialize` is not derived for a
+//! struct. If the refusal happens inside one of these, the parts of it
+//! already read are dropped as ordinary values, without `T::zeroize`. A
+//! part that wipes itself on drop closes that gap for that part. Examples
 //! are a `Zeroizing<String>` field, or a type that derives `ZeroizeOnDrop`.
+//! The bytes those parts were copied from are wiped with the opened buffer.
+//!
+//! A field serde skips (`#[serde(skip)]`) keeps the value `T::default()`
+//! gives it, rather than the field's own default.
 //!
 //! A Rust move does not erase memory. A `Copy` field leaves its bytes
 //! where it was moved from. Compiler temporaries are not wiped. This module
@@ -350,8 +365,8 @@
 
 use std::fmt;
 
-use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::de::{DeserializeOwned, Deserializer};
+use serde::{Deserialize, Serialize};
 use vitaminc_aead_frame::serde::PathSegment;
 use vitaminc_aead_frame::storage::{self, ErrorKind};
 use vitaminc_protected::{AsProtectedRef, Buffer, Controlled, Protected};
@@ -445,19 +460,42 @@ impl<T: Serialize + Zeroize> OpaqueBlob<T> {
     }
 }
 
-impl<T: DeserializeOwned + Zeroize> OpaqueBlob<T> {
+impl<T: DeserializeOwned + Default + Zeroize> OpaqueBlob<T> {
     /// Read a value from a storage blob: what decrypting does to the opened
     /// bytes. The caller's `bytes` are borrowed and not wiped; the opened
     /// buffer decrypting reads from is.
+    ///
+    /// The value is read in place into a `T::default()` that is wiped if
+    /// the blob is refused, so the fields read before a refusal are wiped
+    /// with it. [Cleanup](self#cleanup) in the module docs says which parts
+    /// are not.
     ///
     /// # Errors
     ///
     /// One [`BlobError`] per class: not a blob, a later version, malformed,
     /// or a well-formed blob that is not a `T`.
     pub fn decode(bytes: &[u8]) -> Result<Self, BlobError> {
-        storage::from_slice::<T>(bytes)
-            .map(Self::new)
+        storage::from_slice::<ReadInPlace<T>>(bytes)
+            .map(|ReadInPlace(value)| Self(value))
             .map_err(|error| BlobError::reading(error, bytes))
+    }
+}
+
+/// A `T` read into a `T::default()` in place, inside a [`Zeroizing`]. A
+/// derived `Deserialize` for a struct stores each field in that value as
+/// it reads it, so a field read before a later one is refused is wiped
+/// when the refusal drops the value.
+struct ReadInPlace<T: Zeroize>(Zeroizing<T>);
+
+impl<'de, T: Deserialize<'de> + Default + Zeroize> Deserialize<'de> for ReadInPlace<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut place = Zeroizing::new(T::default());
+        // `deserialize_in_place` is hidden from serde's rustdoc, which says
+        // it is a stable, public API all the same. Its default reads a
+        // whole `T` and assigns it, so a type the derive writes no in-place
+        // read for behaves as `deserialize` does.
+        T::deserialize_in_place(deserializer, &mut place)?;
+        Ok(Self(place))
     }
 }
 
@@ -487,7 +525,7 @@ impl<T: Serialize + Zeroize + Send + 'static> sealed::Encode for OpaqueBlob<T> {
 }
 impl<T: Serialize + Zeroize + Send + 'static> OpaqueEncode for OpaqueBlob<T> {}
 
-impl<T: DeserializeOwned + Zeroize + Send + 'static> sealed::Decode for OpaqueBlob<T> {
+impl<T: DeserializeOwned + Default + Zeroize + Send + 'static> sealed::Decode for OpaqueBlob<T> {
     fn open<'a, K: 'static>(
         leaf: SealedValue,
         cipher: &'a StackCipher<K>,
@@ -505,7 +543,7 @@ impl<T: DeserializeOwned + Zeroize + Send + 'static> sealed::Decode for OpaqueBl
         .try_map(|bytes| Self::decode(bytes.risky_ref()).map_err(crate::Error::from))
     }
 }
-impl<T: DeserializeOwned + Zeroize + Send + 'static> OpaqueDecode for OpaqueBlob<T> {}
+impl<T: DeserializeOwned + Default + Zeroize + Send + 'static> OpaqueDecode for OpaqueBlob<T> {}
 
 /// Why an [`OpaqueBlob`] could not be written, or why an authentic
 /// ciphertext did not read as one. Each class of refusal has its own
@@ -631,7 +669,7 @@ mod tests {
     use crate::ErrorPayload;
     use serde::Deserialize;
 
-    #[derive(Serialize, Deserialize, Zeroize, PartialEq, Debug)]
+    #[derive(Serialize, Deserialize, Zeroize, PartialEq, Debug, Default)]
     struct Pair {
         left: String,
         right: u32,

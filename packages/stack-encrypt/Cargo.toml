@@ -12,6 +12,12 @@ license-file = "LICENSE"
 # Published to crates.io by release-plz.yml; release-plz.toml puts it in the
 # `stack-encrypt` version group.
 
+# `serde_derive` is named only to turn on a feature of the derive every
+# crate in the build shares (see the dependency), so no code names it and
+# `cargo-udeps` reports it as unused. Ignore it.
+[package.metadata.cargo-udeps.ignore]
+normal = ["serde_derive"]
+
 [dependencies]
 # `profile` (native only; stack-kms gates it off wasm32 itself) lets
 # `StackCipher::with_detected_credentials()` fall back to the client key
@@ -68,6 +74,15 @@ futures = { version = "0.3.25", default-features = false, features = ["std"] }
 # control data (statistics, options, a plan) into typed messages.
 vitaminc-aead-frame = { workspace = true, features = ["serde"] }
 serde = { workspace = true }
+# `deserialize_in_place`: `#[derive(Deserialize)]` also writes
+# `Deserialize::deserialize_in_place` for a struct, which reads each field
+# straight into a value the caller already holds. A decrypted
+# `OpaqueBlob<T>` is read that way into a `T::default()` it wipes, so a
+# field read before a later one is refused is wiped with it, rather than
+# dropped as serde's local. Cargo unifies a crate's features across the
+# build, so every derive in a build with stack-encrypt writes the method;
+# `Deserialize::deserialize` is unchanged.
+serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 # The order terms' serde: lowercase hex in JSON, raw bytes in a binary
 # format, through serdect's constant-time hex.
 serdect = { workspace = true }

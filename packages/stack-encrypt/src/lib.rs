@@ -479,7 +479,7 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! ```
 //! # use serde::{Deserialize, Serialize};
 //! # use zeroize::Zeroize;
-//! # #[derive(Serialize, Deserialize, Zeroize)]
+//! # #[derive(Serialize, Deserialize, Zeroize, Default)]
 //! # struct Card { number: String, expiry: (u8, u16) }
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
 //! use stack_encrypt::{OpaqueBlob, StackCipher};
