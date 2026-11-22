@@ -10,7 +10,6 @@ mod tests {
 
     use crate::diagnostic::is_code_of;
     use crate::sem::{TermBytesError, TermError};
-    use crate::target::IndexSpec;
     use crate::{BlobError, Descriptor, Error, LabelError, LeafBytesError, PlanError};
 
     /// One row per variant of an enum, written `pattern => value`. The
@@ -207,6 +206,7 @@ mod tests {
     #[cfg(feature = "dynamic")]
     fn dynamic_variants() -> Vec<Row> {
         use crate::dynamic::{Error, Reason, TargetError, ValueKind};
+        use crate::target::IndexSpec;
         let name = || "email".to_string();
         let target = || "TextEq".to_string();
         let mut errors = Vec::new();
@@ -556,6 +556,7 @@ mod tests {
     #[cfg(feature = "dynamic")]
     fn dynamic_payloads() -> Vec<(Box<dyn crate::ErrorPayload>, serde_json::Value)> {
         use crate::dynamic::{Error, Reason, TargetError, ValueKind};
+        use crate::target::IndexSpec;
         use serde_json::json;
         let name = || "email".to_string();
         let target = || "TextEq".to_string();

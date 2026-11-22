@@ -439,9 +439,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking
 
 - **Seven `PlanError` variants that nothing raised are removed** (#1671).
-  Only the plan builder raised them, and it is gone, so no call returned
-  them: `IdentityWithoutField`, `IndexNotDeclared`, `IndexOptions`,
-  `MixedCiphers`, `NoContext`, `PassthroughIndexed` and `TargetWithVerbs`.
+  Only the plan builder and `plan::all` raised them, and both are gone,
+  so no call returned them: `IdentityWithoutField`, `IndexNotDeclared`,
+  `IndexOptions`, `MixedCiphers`, `NoContext`, `PassthroughIndexed` and
+  `TargetWithVerbs`. `plan::all` raised `MixedCiphers`; the builder raised
+  the other six.
   Their error codes go with them (`stack_encrypt::plan_identity_without_field`,
   `plan_index_not_declared`, `plan_index_options`, `plan_mixed_ciphers`,
   `plan_no_context`, `plan_passthrough_indexed` and

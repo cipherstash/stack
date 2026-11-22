@@ -2072,10 +2072,11 @@ impl<K> KeysetCipher<'_, K> {
     /// filter's type says which configuration cut it. A filter cut under
     /// one config is not comparable with one cut under another: a query
     /// would miss rows it should match, with no error. So a filter derived
-    /// here matches a stored one only when `O` is the field's own. A query made from the field's reference takes the
-    /// field's `O` ([`MatchConfig`] says how). Byte-identical to the
-    /// target-directed path for the same `O`. For custom options, define a
-    /// marker type implementing [`MatchConfig`].
+    /// here matches a stored one only when `O` is the field's own. A query
+    /// made from the field's reference takes the field's `O` ([`MatchConfig`]
+    /// says how). Byte-identical to the target-directed path for the same
+    /// `O`. For custom options, define a marker type implementing
+    /// [`MatchConfig`].
     ///
     /// This derives the *stored* filter. Text that yields no tokens (empty
     /// or separator-only text, or text shorter than the n-gram length; see

@@ -2465,4 +2465,4 @@ renames.
 | `scope(..)`, `bind(..)`, `bind(claim = ..)`, `keyset(name(field = ..))` | The declaration attributes. Confirmed |
 | `stack-kms` to `stack-zerokms` | Not decided. The crate rename is part of the crate layout question, which stays open |
 | `scope = ".."`, Go `scope=` | The record's name is its first scope, so the attribute and the Go tag both say `scope`. Today they say `context = ".."` and `context=`. The builder's `Plan::scope(..)` was part of this decision and goes with the builder. Decided by Dan on 8 November 2026 |
-| `plan.query(field, op)`, `plan.field(name)`, `IndexNotDeclared`, `FieldIndexes`, `StageSpec`, `Match<Dynamic>`, `NotPortable` | The dynamic interface names. Confirmed |
+| `plan.query(field, op)`, `plan.field(name)`, `FieldIndexes`, `StageSpec`, `Match<Dynamic>`, `NotPortable` | The dynamic interface names. Confirmed. `IndexNotDeclared` was on this list and is removed (#1671): no query takes an index from the caller |

@@ -1,7 +1,7 @@
 ---
 status: proposed
 date: 2026-10-13
-amended: 2026-11-10
+amended: 2026-11-23
 supersedes: ADR-0004 (decision 5)
 extends: ADR-0003, ADR-0007
 ---
@@ -251,7 +251,7 @@ pub trait DefaultIndex<S>: Operator {
 
 *Amended 2026-11-23:* `DefaultIndex` and `.via` are removed. A field's
 target type answers through `Answers`, and a plan that is data through
-`Op::answered_by`. See [Amended 2026-11-23](#amended-2026-11-23-1671).
+`dynamic::Op::answered_by`. See [Amended 2026-11-23](#amended-2026-11-23-1671).
 
 ### 4. A query term is one of three things, and the trait it implements is its fidelity
 
@@ -1304,23 +1304,24 @@ has nothing to choose.
   name another index or other options. A field whose type has no
   `Answers` impl for an operator has no method for it, and the query does
   not compile.
-- **A plan that is data answers through `Op::answered_by`.** A field of a
-  data plan lists its indexes as `IndexSpec` values. `Op::answered_by(kind,
-  indexes)` returns the one that answers the operator for the field's kind,
-  from each index's own declaration of its operators (`IndexSpec::answers`).
-  The query derives its term under that index's options, which are the
-  options the stored term was derived under. `Plan::query` refuses an
-  operator no index answers before any key is requested.
+- **A plan that is data answers through `dynamic::Op::answered_by`.** A
+  field of a data plan lists its indexes as `IndexSpec` values.
+  `dynamic::Op::answered_by(kind, indexes)` returns the one that answers
+  the operator for the field's kind, from each index's own declaration of
+  its operators (`IndexSpec::answers`). The query derives its term under
+  that index's options, which are the options the stored term was derived
+  under. `Plan::query` refuses an operator no index answers before any key
+  is requested.
 
 Neither path takes an index from the caller, so the refusals that guarded a
 caller's choice are removed with it: `PlanError::IndexNotDeclared` (an index
 the field does not declare) and `PlanError::IndexOptions` (a match index
-under other options). Five more variants that only the plan builder raised
-go with them: `IdentityWithoutField`, `MixedCiphers`, `NoContext`,
-`PassthroughIndexed` and `TargetWithVerbs`. A data plan that declares a
-passthrough field with outputs, or a field with both outputs and a target,
-is still refused, by the parser, as `passthrough_with_outputs` and
-`outputs_with_target`.
+under other options). Five more variants that only removed code raised go
+with them: `IdentityWithoutField`, `NoContext`, `PassthroughIndexed` and
+`TargetWithVerbs`, which the plan builder raised, and `MixedCiphers`, which
+`plan::all` raised. A data plan that declares a passthrough field with
+outputs, or a field with both outputs and a target, is still refused, by
+the parser, as `passthrough_with_outputs` and `outputs_with_target`.
 
 Where decision 1 and decision 7 write `.via(Ore)` and `.via(Ope)`, read: the
 index the field declares for the operator.
