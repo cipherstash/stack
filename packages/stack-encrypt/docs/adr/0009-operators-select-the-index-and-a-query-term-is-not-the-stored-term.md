@@ -1335,8 +1335,9 @@ index states the term a query sends beside the term it stores.
   `MatchOptions::short_words` on, a stored value holds every n-gram and
   each short word whole. A query that also asked for its short words would
   need the word whole in the row, so "Mike Ng" would miss "Mike Nguyen". A
-  query that cuts an n-gram is its n-grams alone; a query of one short word
-  ("Ng") is that word's token. The stored side does not change. The rule
+  query that cuts an n-gram is its n-grams alone; a query that cuts none,
+  because its whole text is shorter than the n-gram length ("Ng" under
+  trigrams, "Ng Wu" under 6-grams), is its word tokens. The stored side does not change. The rule
   lives once, in the tokenizer, and every query path cuts through it: the
   typed verifier, the field query, and the `dynamic` query, term and verify
   paths. The leakage is one token per short word in every stored value

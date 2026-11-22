@@ -1380,8 +1380,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the row: "Mike Ng" no longer found "Mike Nguyen", and "san fr" no longer
   found "San Francisco". Now a query that cuts an n-gram sends its n-grams
   alone, as it does with the option off, and finds those rows again. A
-  query that cuts no n-gram, which is a query of one short word, is that
-  word's token: "Ng" finds "Ng" and "Mike Ng", and not "Nguyen".
+  query that cuts no n-gram (its whole text is shorter than the n-gram
+  length) asks for its word tokens: "Ng" finds "Ng" and "Mike Ng", and not
+  "Nguyen". With trigrams that is one short word; with longer n-grams it
+  can be several words, such as "Ng Wu" under 6-grams.
   - The stored side does not change: a stored value keeps its word tokens,
     so no stored filter moves and nothing needs re-encrypting.
   - Every query path cuts a query by the one rule, so a filter and its
@@ -1402,8 +1404,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `target::matching` still stores such text as the empty filter.
   - What it reveals: one more token per short word in every stored value
     that holds one, unique to the word, so rows holding "Ng" can be told
-    from rows holding "Nguyen" and counted. A query of one short word
-    shows the word token it asks for; a longer query sends no word token.
+    from rows holding "Nguyen" and counted. A query shorter than the
+    n-gram length shows the word tokens it asks for; a query that cuts an
+    n-gram sends no word token.
 - **The JSON path grammar is its own crate, `stack-encrypt-jsonpath`**
   (#1687). `JsonPath`, `Segment` and `JsonPathError` moved there unchanged,
   so that the derive can parse a field's declared paths at compile time

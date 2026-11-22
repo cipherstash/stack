@@ -726,8 +726,10 @@ pub struct MatchOptions {
     /// `ng`.
     ///
     /// A query keeps its word tokens only when it cuts no n-gram, which is
-    /// when the whole query is one short word. "Ng" is one word token and is
-    /// accepted: it finds the rows holding the word "Ng" ("Ng", "Mike Ng"),
+    /// when the whole query is shorter than the n-gram length. With trigrams
+    /// that is one short word; with longer n-grams it can be several, so
+    /// under 6-grams "Ng Wu" asks for both its words. "Ng" is one word token
+    /// and is accepted: it finds the rows holding the word "Ng" ("Ng", "Mike Ng"),
     /// and not "Nguyen". "Mike Ng" cuts trigrams, so it asks for its
     /// trigrams alone, as with the option off: it finds "Mike Ng", and "Mike
     /// Nguyen" too, so a name typed in part still finds its row. So does
