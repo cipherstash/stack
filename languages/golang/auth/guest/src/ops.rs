@@ -28,11 +28,10 @@
 //! memory lives in linear memory the host locks, excludes from dumps and
 //! wipes on release, and nowhere else.
 
-use cts_common::{Crn, Region};
 use serde::Deserialize;
-use stack_auth::{ErrorPayload, Token};
+use stack_auth::{AuthError, ErrorPayload, Token};
 use stack_guest_abi::value::HostValue;
-use stack_profile::{DeviceIdentity, ProfileError, ProfileStore};
+use stack_profile::{DeviceIdentity, ProfileStore};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use stack_guest_abi::last_error::{self, internal, malformed};
@@ -212,54 +211,28 @@ pub fn has_token(dir: &[u8]) -> Result<Vec<u8>, u32> {
 }
 
 /// The CRN of the session `stash auth login` saved for the current
-/// workspace of the store at `dir`, as text: the region the session
-/// records and the workspace its token names. An OIDC federation strategy
-/// whose caller names no workspace takes this one, when
-/// `CS_WORKSPACE_CRN` is unset. The host reads that variable; this guest
-/// has no environment.
+/// workspace of the store at `dir`, as text, from
+/// [`stack_auth::profile_workspace_crn`]. An OIDC federation strategy whose
+/// caller names no workspace takes this one, when `CS_WORKSPACE_CRN` is
+/// unset. The host reads that variable; this guest has no environment.
 ///
-/// Only a missing `current_workspace` file, or a current workspace with no
-/// saved session, means "not logged in": both are
-/// [`stack_auth::NotAuthenticated`]. A session that records no region is
-/// `NotAuthenticated` too, as [`Token::workspace_crn`] reports it. This is
-/// the order stack-auth's own detection follows on a native target.
-///
-/// A broken profile is reported as itself, never as "not logged in": a
-/// `current_workspace` or `auth.json` that cannot be read, or a
-/// `current_workspace` that names an invalid workspace, is its profile
-/// error. A saved session whose token is not a JWT naming a workspace, or
-/// whose region does not parse, is [`STATUS_PROFILE_JSON`]: the file is not
-/// the session its type expects. `Token::workspace_crn` would report the
-/// first as a configuration error and the second as a server error.
+/// stack-auth decides what is "not logged in" and what is a broken
+/// profile. This only gives each error its status. A saved session whose
+/// token is not a JWT naming a workspace, or whose region is not a region,
+/// is [`STATUS_PROFILE_JSON`]: the file is not the session its type
+/// expects. [`status_for_auth`](crate::status::status_for_auth) would make
+/// those a configuration error, which on this path would blame
+/// `CS_WORKSPACE_CRN`.
 ///
 /// Only the CRN crosses: the token stays here.
 pub fn session_crn(dir: &[u8]) -> Result<Vec<u8>, u32> {
-    let not_authenticated = || fail_auth(&stack_auth::NotAuthenticated.into());
-    let session = match store(dir)?.current_workspace_store() {
-        Ok(session) => session,
-        Err(ProfileError::NoCurrentWorkspace) => return Err(not_authenticated()),
-        Err(e) => return Err(fail_profile(&e)),
-    };
-    let token: Token = match session.load_profile() {
-        Ok(token) => token,
-        Err(ProfileError::NotFound { .. }) => return Err(not_authenticated()),
-        Err(e) => return Err(fail_profile(&e)),
-    };
-    let workspace = token.workspace_id().map_err(|e| broken_session(&e))?;
-    let Some(region) = token.region() else {
-        return Err(not_authenticated());
-    };
-    let region: Region = region
-        .parse()
-        .map_err(|e| broken_session(&stack_auth::UnsupportedRegion(e).into()))?;
-    Ok(Crn::new(region, workspace).to_string().into_bytes())
-}
-
-/// A saved session that loaded but does not hold what a session must: the
-/// error itself is recorded, under the status of a profile file that is not
-/// the JSON its type expects.
-fn broken_session(error: &stack_auth::AuthError) -> u32 {
-    last_error::record(error, error.payload(), STATUS_PROFILE_JSON)
+    match stack_auth::profile_workspace_crn(&store(dir)?) {
+        Ok(crn) => Ok(crn.to_string().into_bytes()),
+        Err(e @ (AuthError::InvalidToken(_) | AuthError::Region(_))) => {
+            Err(last_error::record(&e, e.payload(), STATUS_PROFILE_JSON))
+        }
+        Err(e) => Err(fail_auth(&e)),
+    }
 }
 
 /// `device.json` in this store, read-only, as a codec object

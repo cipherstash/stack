@@ -31,8 +31,51 @@ fn crn_from(
     if let Some(crn) = env_crn {
         return crn.parse::<Crn>().map_err(AuthError::from);
     }
+    let store = store().ok_or(AuthError::NotAuthenticated(crate::error::NotAuthenticated))?;
+    profile_workspace_crn(&store)
+}
+
+/// Returns the workspace CRN of the session that `stash auth login` saved
+/// for the CLI's current workspace in `store`: the region the session
+/// records and the workspace its token names.
+///
+/// This is where [`OidcFederationStrategy::with_detected_workspace`](super::OidcFederationStrategy::with_detected_workspace)
+/// looks when `CS_WORKSPACE_CRN` is not set. Use it when the profile
+/// directory is not the one `CS_CONFIG_PATH` or the home directory names,
+/// or when the process has no environment to read.
+///
+/// `store` is the profile root, the directory that holds
+/// `current_workspace`, not a workspace's own directory.
+///
+/// # Errors
+///
+/// Only a profile with nothing saved means "not logged in". A profile that
+/// cannot be read is reported as itself.
+///
+/// - [`AuthError::NotAuthenticated`] if there is no current workspace, the
+///   current workspace has no saved session, or the session records no
+///   region.
+/// - [`AuthError::Store`] if `current_workspace` or the session's
+///   `auth.json` cannot be read or parsed, or `current_workspace` does not
+///   hold a valid workspace id.
+/// - [`AuthError::InvalidToken`] if the session's token is not a JWT with a
+///   `workspace` claim.
+/// - [`AuthError::Region`] if the session records a region this crate does
+///   not know.
+///
+/// # Example
+///
+/// ```
+/// use stack_auth::{profile_workspace_crn, AuthError};
+/// use stack_profile::ProfileStore;
+///
+/// let dir = tempfile::tempdir().unwrap();
+/// let result = profile_workspace_crn(&ProfileStore::new(dir.path()));
+/// // An empty profile has no login.
+/// assert!(matches!(result, Err(AuthError::NotAuthenticated(_))));
+/// ```
+pub fn profile_workspace_crn(store: &ProfileStore) -> Result<Crn, AuthError> {
     let not_authenticated = || AuthError::NotAuthenticated(crate::error::NotAuthenticated);
-    let store = store().ok_or_else(not_authenticated)?;
     // Only a missing `current_workspace` file means "not logged in". A file
     // that cannot be read, or that names an invalid workspace, is reported
     // as itself, as `ProfileKeyProvider` reports it.
@@ -41,10 +84,14 @@ fn crn_from(
         Err(ProfileError::NoCurrentWorkspace) => return Err(not_authenticated()),
         Err(e) => return Err(e.into()),
     };
-    if !session.exists_profile::<Token>() {
-        return Err(not_authenticated());
-    }
-    session.load_profile::<Token>()?.workspace_crn()
+    // Likewise only a missing `auth.json`. An existence check first would
+    // read an unreadable file as a missing one.
+    let token = match session.load_profile::<Token>() {
+        Ok(token) => token,
+        Err(ProfileError::NotFound { .. }) => return Err(not_authenticated()),
+        Err(e) => return Err(e.into()),
+    };
+    token.workspace_crn()
 }
 
 #[cfg(test)]
@@ -170,6 +217,58 @@ mod tests {
                 assert!(
                     matches!(result, Err(AuthError::NotAuthenticated(_))),
                     "expected NotAuthenticated, got: {result:?}"
+                );
+            }
+
+            #[test]
+            fn a_session_recording_an_unknown_region_is_a_region_error() {
+                let dir = tempfile::tempdir().unwrap();
+                let store = ProfileStore::new(dir.path());
+                store.init_workspace(SESSION_WORKSPACE).unwrap();
+                let mut token = jwt_token(claims_with_workspace(SESSION_WORKSPACE));
+                token.region = Some("nowhere".to_string());
+                store
+                    .current_workspace_store()
+                    .unwrap()
+                    .save_profile(&token)
+                    .unwrap();
+
+                let result = crn_from(None, || Some(store));
+
+                assert!(
+                    matches!(result, Err(AuthError::Region(_))),
+                    "a broken session must not read as a server error, got: {result:?}"
+                );
+            }
+
+            /// An `auth.json` that cannot be reached is a store error. Only a
+            /// missing one means "not logged in".
+            #[cfg(unix)]
+            #[test]
+            fn an_unreadable_session_is_a_store_error() {
+                use std::os::unix::fs::PermissionsExt;
+
+                let dir = tempfile::tempdir().unwrap();
+                let store = profile_with_session(dir.path());
+                let ws = dir.path().join("workspaces").join(SESSION_WORKSPACE);
+                std::fs::set_permissions(&ws, std::fs::Permissions::from_mode(0o000)).unwrap();
+                let unreadable = std::fs::metadata(ws.join("auth.json")).is_err();
+
+                let result = crn_from(None, || Some(store));
+
+                std::fs::set_permissions(&ws, std::fs::Permissions::from_mode(0o755)).unwrap();
+                if !unreadable {
+                    // Run as root: permissions do not stop the read.
+                    return;
+                }
+                assert!(
+                    matches!(
+                        result,
+                        Err(AuthError::Store(crate::error::StoreError(
+                            ProfileError::Io(_)
+                        )))
+                    ),
+                    "an unreadable session must not read as not logged in, got: {result:?}"
                 );
             }
         }

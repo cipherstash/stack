@@ -117,7 +117,9 @@ pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
 pub use auth_strategy_fn::AuthStrategyFn;
 pub use auto_strategy::{AutoStrategy, AutoStrategyBuilder};
 pub use device_session_strategy::{DeviceSessionStrategy, DeviceSessionStrategyBuilder};
-pub use oidc_federation_strategy::{OidcFederationStrategy, OidcFederationStrategyBuilder};
+pub use oidc_federation_strategy::{
+    profile_workspace_crn, OidcFederationStrategy, OidcFederationStrategyBuilder,
+};
 pub use oidc_refresher::{CredentialPerCall, OidcProvider, OidcProviderFn};
 pub use service_token::ServiceToken;
 #[cfg(any(test, feature = "test-utils"))]

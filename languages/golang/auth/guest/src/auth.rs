@@ -5,7 +5,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
-use cts_common::Crn;
+use stack_auth::Crn;
 // Sound on wasm32 only. There stack-auth runs a token refresh inline, so a
 // plain executor can drive `get_token` to completion. On a native target
 // stack-auth spawns the refresh onto the current Tokio runtime, and

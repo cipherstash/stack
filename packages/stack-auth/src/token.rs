@@ -201,15 +201,21 @@ impl Token {
     ///
     /// The region is set during the device code flow, and the workspace ID is
     /// extracted from the JWT `workspace` claim.
+    ///
+    /// # Errors
+    ///
+    /// - [`AuthError::InvalidToken`] if the access token is not a JWT with a
+    ///   `workspace` claim.
+    /// - [`AuthError::NotAuthenticated`] if the token records no region.
+    /// - [`AuthError::Region`] if the recorded region is not one this crate
+    ///   knows.
     pub fn workspace_crn(&self) -> Result<Crn, AuthError> {
         let workspace_id = self.workspace_id()?;
         let region: Region = self
             .region()
             .ok_or(AuthError::NotAuthenticated(crate::error::NotAuthenticated))?
             .parse()
-            .map_err(|e: cts_common::RegionError| {
-                AuthError::Server(crate::error::ServerError(e.to_string()))
-            })?;
+            .map_err(|e: cts_common::RegionError| AuthError::from(e))?;
         Ok(Crn::new(region, workspace_id))
     }
 
@@ -928,7 +934,7 @@ mod tests {
         let mut token = jwt_token(valid_claims_json());
         token.region = Some("invalid-region".into());
         let err = token.workspace_crn().unwrap_err();
-        assert!(matches!(err, AuthError::Server(_)));
+        assert!(matches!(err, AuthError::Region(_)), "got: {err:?}");
     }
 
     /// `org_id` is required *server-side*, where the signature is verified

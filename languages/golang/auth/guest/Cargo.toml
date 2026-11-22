@@ -27,7 +27,6 @@ crate-type = ["cdylib", "rlib"]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 futures = "0.3"
-cts-common = { version = "=0.43.0", default-features = false }
 url = "2"
 # Strategies and `Token`, the typed shape of `auth.json`, with default
 # features off: no reqwest, no native TLS.
@@ -45,6 +44,8 @@ stack-profile = { path = "../../../../packages/stack-profile" }
 zeroize = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
+# The tests build the parse errors of a CRN, a region and a workspace id.
+cts-common = { version = "=0.43.0", default-features = false }
 serde_json = "1"
 tempfile = "3"
 # Native stack-auth refreshes run in a Tokio task, including with a mock transport.
