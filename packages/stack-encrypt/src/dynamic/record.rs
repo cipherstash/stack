@@ -1790,11 +1790,13 @@ pub fn encrypt<'a, K: 'static>(
 /// record's, so a record with target fields is still one ZeroKMS request.
 /// A target field's value rides under [`EQL_KEY`] in the result.
 ///
-/// This builds a [`Planned`] record and runs its lowering: the stored row is
-/// the one [`Planned::with_resolver`] encrypts to with no caller context.
-/// What differs is where a refusal of the input comes back: here, as the
-/// dynamic [`Error`], before the pending exists, where the owned entry point
-/// fails its pending with it.
+/// This builds a [`Planned`] record and runs its lowering: the stored row
+/// is the one [`Planned::with_resolver`] encrypts to with no caller
+/// context, given the same resolver by value. That entry point takes an
+/// owned `R: TargetResolver`; this borrows any resolver, a
+/// `dyn TargetResolver` included. A refusal of the input also comes back
+/// at another place: here, as the dynamic [`Error`], before the pending
+/// exists, where the owned entry point fails its pending with it.
 ///
 /// # Errors
 ///
@@ -1967,11 +1969,15 @@ pub fn decrypt<'a, K: 'static>(
 /// column, zipped into the record's pending and confined to the caller's
 /// keyset as every other leaf is.
 ///
-/// This builds a [`Planned`] stored row and runs its lowering: the values
-/// are the ones `Planned<Plan, StackCipherText>` decrypts to with no caller
-/// context, and `expected` is checked as [`decrypt`] describes. A refusal of
-/// the stored tree comes back here, as the dynamic [`Error`], before the
-/// pending exists.
+/// This builds a [`Planned`] stored row and runs its lowering, and
+/// `expected` is checked as [`decrypt`] describes. The values are the ones
+/// `Planned<Plan, StackCipherText, R>` decrypts to with no caller context,
+/// given the same resolver by value. That entry point opens the row in a
+/// closure the cipher runs later, so it takes an owned
+/// `R: TargetResolver + Send + Sync + 'static`; this runs the resolver
+/// before it returns, so it borrows any resolver, a `dyn TargetResolver`
+/// included. A refusal of the stored tree comes back here, as the dynamic
+/// [`Error`], before the pending exists.
 ///
 /// # Errors
 ///
@@ -7743,6 +7749,79 @@ mod tests {
                 other => panic!("{other}"),
             }
             let _ = keyset;
+        }
+
+        /// The record functions and the owned entry point on a [`Planned`]
+        /// are one lowering, so a row either one seals, the target field's
+        /// included, opens through the other.
+        mod given_a_row_sealed_by_one_entry_and_opened_by_the_other {
+            use super::*;
+
+            const AGE: u32 = 34;
+            const EMAIL: &str = "ada@example.com";
+
+            /// The plan with a target field, and the cipher it runs under.
+            async fn scenario() -> (StackCipher<Counting>, Plan) {
+                (cipher().await, mixed_plan())
+            }
+
+            /// The row as a binding hands it to the owned entry point.
+            fn row_frame() -> ValueFrame {
+                ValueFrame::from_bytes(
+                    crate::dynamic::test_frame::frame_of(&mixed_row(AGE, EMAIL))
+                        .as_protected_ref()
+                        .as_deref(),
+                )
+                .expect("the row is a frame")
+            }
+
+            #[tokio::test]
+            async fn a_row_sealed_by_encrypt_with_opens_through_planned() {
+                let (cipher, plan) = scenario().await;
+                let keyset = cipher.default_keyset();
+                let sealed = encrypt_with(&keyset, mixed_row(AGE, EMAIL), &plan, &FakeEql)
+                    .expect("the row fits the plan")
+                    .await
+                    .expect("encrypt_with seals the row");
+
+                let opened = ValueFrame::decrypt_from(
+                    Planned::with_resolver(&plan, sealed, FakeEql),
+                    &keyset,
+                )
+                .await
+                .expect("Planned opens what encrypt_with sealed");
+
+                assertions::opens_to_the_row(&opened, mixed_row(AGE, EMAIL));
+            }
+
+            #[tokio::test]
+            async fn a_row_sealed_through_planned_opens_with_decrypt_with() {
+                let (cipher, plan) = scenario().await;
+                let keyset = cipher.default_keyset();
+                let sealed: StackCipherText = Planned::with_resolver(&plan, row_frame(), FakeEql)
+                    .encrypt_into(&keyset)
+                    .await
+                    .expect("Planned seals the row");
+
+                let opened = decrypt_with(&cipher, sealed, &plan, None, &FakeEql)
+                    .expect("the stored row fits the plan")
+                    .await
+                    .expect("decrypt_with opens what Planned sealed");
+
+                assertions::opens_to_the_row(&opened, mixed_row(AGE, EMAIL));
+            }
+
+            mod assertions {
+                use super::*;
+
+                pub(super) fn opens_to_the_row(opened: &ValueFrame, row: Tree) {
+                    assert_eq!(
+                        Tree::from_frame(opened.risky_ref()).expect("the opened row is a frame"),
+                        row,
+                        "the row, its target field's value included, opens to what was sealed"
+                    );
+                }
+            }
         }
     }
 

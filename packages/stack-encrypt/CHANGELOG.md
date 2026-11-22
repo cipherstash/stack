@@ -1290,8 +1290,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   builder's lowering produced, and the conformance vectors pin them.
 - **`dynamic::record::encrypt_with` and `decrypt_with` build a `Planned`**
   (#1669). They were a second caller of the lowering beside `Planned`. Now
-  each builds a `Planned` record or stored row and runs it, so `Planned` is
-  the one way into the lowering of a data plan. Their signatures, their
+  each builds a `Planned` record or stored row and runs it, so a record is
+  encrypted and opened only through `Planned`. `Plan::contexts()` still
+  composes the plan itself, to read the contexts. Their signatures, their
   refusals and when they report them are unchanged: a refusal of the input
   still comes back before the pending exists, as a `dynamic::Error`.
   `decrypt_with`'s `expected` context is checked inside the `Planned`

@@ -2114,10 +2114,12 @@ table.
   from the parsed plan, and `encrypt_with`, `decrypt_with`, `contexts()`
   and the checks read them. The dynamic path no longer uses the plan
   builder. `encrypt_with` and `decrypt_with` build a `Planned` and run
-  it, so `Planned` is the one entry to the lowering (#1669). `Label` is
-  still to be removed. The helpers in `target::legacy` are removed, in the fourth pull
-  request for #1488. The builder, the chain, `EncryptFrom`, `DecryptInto`,
-  their derives, `encrypt_as` and `decrypt_as` are removed (#1661, #1662).
+  it, so a record is encrypted and opened only through `Planned`;
+  `contexts()` still composes the plan, to read the contexts (#1669).
+  `Label` is still to be removed. The helpers in `target::legacy` are
+  removed, in the fourth pull request for #1488. The builder, the chain,
+  `EncryptFrom`, `DecryptInto`, their derives, `encrypt_as` and
+  `decrypt_as` are removed (#1661, #1662).
   EQL, the Go guest, the examples and every test use the owned API, field
   references or `Planned`.
   Every JSON target has the new traits over `JsonPlaintext` (#1658 for

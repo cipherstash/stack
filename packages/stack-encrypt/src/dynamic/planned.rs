@@ -340,9 +340,9 @@ impl Plan {
 }
 
 /// A record under a plan encrypts to the stored row: every field under its
-/// own context,
-/// the caller's scope and then its bindings after the plan's own. The
-/// borrowed form reads the frame in place; the owned form consumes it.
+/// own context, the caller's scope and then its bindings after the plan's
+/// own. The borrowed form reads the frame in place; the owned form
+/// consumes it.
 impl<'p, R> EncryptTarget<Planned<'p, Plan, ValueFrame, R>> for StackCipherText
 where
     R: TargetResolver + 'p,
@@ -407,10 +407,10 @@ fn encrypt_record<'a, K: 'static>(
 }
 
 /// A stored row under a plan decrypts to its values, under the caller's
-/// scope and bindings. A row from another keyset than the one the call names is
-/// refused before any key is retrieved. The opening is a closure the
-/// cipher runs later, which owns the plan, the row and the resolver, so
-/// the resolver is `Send + Sync + 'static` here where the encrypt side
+/// scope and bindings. A row from another keyset than the one the call
+/// names is refused before any key is retrieved. The opening is a closure
+/// the cipher runs later, which owns the plan, the row and the resolver,
+/// so the resolver is `Send + Sync + 'static` here where the encrypt side
 /// borrows it.
 impl<'p, R> DecryptSource<ValueFrame> for Planned<'p, Plan, StackCipherText, R>
 where
