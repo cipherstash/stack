@@ -10,7 +10,7 @@ use zeroize::Zeroize;
 /// An ordinary application struct. `Serialize` and `Deserialize` give it a
 /// storage encoding; `Zeroize` lets the library wipe the owned source once
 /// it has been encoded, and lets a caller wipe a decrypted copy.
-#[derive(Serialize, Deserialize, Zeroize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Zeroize, PartialEq, Debug, Default)]
 struct Profile {
     name: String,
     age: u32,
@@ -20,7 +20,7 @@ struct Profile {
 
 /// The same data in a later shape: a field added with a default and one
 /// renamed under an alias. An old blob still reads into it.
-#[derive(Serialize, Deserialize, Zeroize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Zeroize, PartialEq, Debug, Default)]
 struct ProfileV2 {
     name: String,
     age: u32,
@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // The errors tell an authentic blob of another shape from tampering.
     // A type the blob does not fit is a mismatch after authentication...
-    #[derive(Deserialize, Zeroize)]
+    #[derive(Deserialize, Zeroize, Default)]
     struct Other {
         #[allow(dead_code)]
         id: u64,

@@ -2209,6 +2209,7 @@ dependencies = [
  "ore-rs",
  "rand 0.10.1",
  "serde",
+ "serde_derive",
  "serde_json",
  "serdect",
  "sha2 0.11.0",

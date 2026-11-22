@@ -166,8 +166,8 @@ error[E0277]: the trait bound `OpaqueBlob<Unwiped>: OpaqueDecode` is not satisfi
 help: the trait `OpaqueDecode` is implemented for `OpaqueBlob<T>`
   --> src/blob.rs
    |
-   | impl<T: DeserializeOwned + Zeroize + Send + 'static> OpaqueDecode for OpaqueBlob<T> {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | impl<T: DeserializeOwned + Default + Zeroize + Send + 'static> OpaqueDecode for OpaqueBlob<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt`
   --> src/scalar.rs
    |

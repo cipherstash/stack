@@ -93,7 +93,7 @@ struct BlobCase {
 
 /// The blob's shape. The Go runner's struct carries the same field names
 /// as `vc` tags; a nil `tags` there reads back as an empty `Vec` here.
-#[derive(Serialize, Deserialize, Zeroize, Clone, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Zeroize, Clone, PartialEq, Debug, Default)]
 #[serde(deny_unknown_fields)]
 struct Profile {
     name: String,
