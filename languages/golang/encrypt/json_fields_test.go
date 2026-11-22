@@ -14,6 +14,7 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/eql"
+	"github.com/cipherstash/stack/languages/golang/encrypt/gensupport"
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
 )
 
@@ -167,9 +168,20 @@ func TestACustomersFieldsDeriveEachQuery(t *testing.T) {
 	if fmt.Sprint(zero) != "encrypt.JSONChildren{}" || zero.LogValue().String() != "[]" {
 		t.Fatalf("a zero children read prints %v and logs %v", zero, zero.LogValue())
 	}
+	// A zero child has neither a key nor an index, and prints as nothing.
+	var zeroChild encrypt.JSONChildValue
+	if _, ok := zeroChild.Key(); ok {
+		t.Fatal("a zero child has a key")
+	}
+	if _, ok := zeroChild.Index(); ok {
+		t.Fatal("a zero child has an index")
+	}
+	if fmt.Sprint(zeroChild) != "encrypt.JSONChildValue{}" {
+		t.Fatalf("a zero child prints %v", zeroChild)
+	}
 	// No entries open to no values without a request.
 	if values, err := children.Open(ctx, nil); err != nil || values == nil || len(values) != 0 {
-		t.Fatalf("no entries: %q %v", values, err)
+		t.Fatalf("no entries: %d values, %v", len(values), err)
 	}
 	// A selection over rows with no entry opens to no value without a
 	// request.
@@ -199,7 +211,10 @@ func TestACustomersFieldsDeriveEachQuery(t *testing.T) {
 }
 
 // A token is a capability and a path's keys can be a customer's data: the
-// read types print and log neither, under any verb or through slog.
+// read types print and log neither, under any verb or through slog. A
+// child a read opened is plaintext, its key included, and prints and logs
+// redacted too. The three prepared reads print through one embedded type,
+// each with its own name and operand.
 func TestJSONReadTypesPrintAndLogRedacted(t *testing.T) {
 	c := deterministicEQLClient(t)
 	ctx := context.Background()
@@ -217,10 +232,38 @@ func TestJSONReadTypesPrintAndLogRedacted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hidden := append([]string{"secretkey", string(sel.Selector()), string(children.Token())}, read.Tokens()...)
+	for name, got := range map[string]string{
+		`encrypt.JSONSelection{field: "profile", path: [redacted], selector: [redacted]}`: fmt.Sprint(sel),
+		`encrypt.JSONRead{field: "profile", path: [redacted], tokens: 3}`:                 fmt.Sprint(read),
+		`encrypt.JSONChildren{field: "profile", path: [redacted], token: [redacted]}`:     fmt.Sprint(children),
+	} {
+		if got != name {
+			t.Errorf("printed %s, want %s", got, name)
+		}
+	}
+	// A child of $.secretkey, opened: a member whose key and value are
+	// both plaintext.
+	encrypted, err := testusers.EncryptCustomer(ctx, cipher, []testusers.Customer{{ID: 1, Profile: json.RawMessage(`{"secretkey":{"swordfishkey":"hunter2secret"}}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := f.Selector(ctx, cipher, "$.secretkey.swordfishkey")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := jsonEntry(t, []byte(encrypted[0].Profile), string(member.Selector()))
+	opened, err := children.Open(ctx, []eql.JSONEntry{eql.JSONEntry(entry)})
+	if err != nil || len(opened) != 1 {
+		t.Fatalf("the child of $.secretkey: %d values, %v", len(opened), err)
+	}
+	child := opened[0]
+	if key, ok := child.Key(); !ok || key != "swordfishkey" || string(child.JSON) != `"hunter2secret"` {
+		t.Fatalf("the child opened to the key %q (%v)", key, ok)
+	}
+	hidden := append([]string{"secretkey", "swordfishkey", "hunter2secret", string(sel.Selector()), string(children.Token())}, read.Tokens()...)
 	var logged bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logged, nil))
-	for name, v := range map[string]any{"selection": sel, "read": read, "children": children, "token": children.Token(), "tokens": read.Tokens()} {
+	for name, v := range map[string]any{"selection": sel, "read": read, "children": children, "token": children.Token(), "tokens": read.Tokens(), "child": child} {
 		logger.Info(name, "v", v)
 		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d"} {
 			out := fmt.Sprintf(verb, v)
@@ -241,6 +284,36 @@ func TestJSONReadTypesPrintAndLogRedacted(t *testing.T) {
 	}
 	if !strings.Contains(logged.String(), `"field":"profile"`) || !strings.Contains(logged.String(), `"tokens":3`) {
 		t.Errorf("slog records no field or token count: %s", logged.String())
+	}
+}
+
+// A file generated before gensupport.JSONChildren derives a children token
+// with JSONNodeToken. It is the token Children binds, and still a query's
+// operand: refused through a cipher with a binding, as ChildCount is.
+func TestAnOlderGeneratedChildrenTokenIsAQueryOperand(t *testing.T) {
+	c := deterministicEQLClient(t)
+	ctx := context.Background()
+	cipher := c.DefaultKeyset()
+	// The customer's profile field, declared as its generated file declares
+	// it.
+	declaration := gensupport.Declare("customers").
+		Passthrough("id").
+		EncryptInto("profile", gensupport.JSON, "JsonSearch").
+		Options("profile", gensupport.TargetOptions{Ordered: []string{"$.age", "$.visits[*].at"}})
+	field := gensupport.NewField[json.RawMessage](declaration, "profile")
+	token, err := gensupport.JSONNodeToken(ctx, field, cipher, "children", "$.visits")
+	if err != nil {
+		t.Fatal(err)
+	}
+	children, err := testusers.CustomerFields.Profile.Children(ctx, cipher, "$.visits")
+	if err != nil || children.Token() != token {
+		t.Fatalf("the older file's token is not the one Children binds: %v", err)
+	}
+	if _, err := gensupport.JSONNodeToken(ctx, field, cipher.Bind(uint64(9)), "children", "$.visits"); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Errorf("an older file's children token through a cipher with a binding: %v, want ErrEncoding", err)
+	}
+	if _, err := gensupport.JSONNodeToken(ctx, field, cipher, "selector", "$.visits"); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Errorf("a selector as a node token: %v, want ErrEncoding", err)
 	}
 }
 
@@ -345,8 +418,11 @@ func TestACustomersDocumentReadsThroughACipherWithABinding(t *testing.T) {
 		if err != nil {
 			return children.Token(), err
 		}
-		if len(values) != 1 || string(values[0]) != `"vip"` {
-			t.Fatalf("the child opened %q", values)
+		if len(values) != 1 || string(values[0].JSON) != `"vip"` {
+			t.Fatalf("the child opened %d values", len(values))
+		}
+		if index, ok := values[0].Index(); !ok || index != 0 {
+			t.Fatalf("the child is not the first element: %d %v", index, ok)
 		}
 		return children.Token(), nil
 	}

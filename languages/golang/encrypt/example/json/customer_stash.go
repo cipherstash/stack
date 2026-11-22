@@ -193,11 +193,11 @@ func (f ProfileField) Subtree(ctx context.Context, c *encrypt.Cipher, path strin
 	return gensupport.JSONSubtree[eql.JSONEntry](ctx, f.field, c, path, opts)
 }
 
-// Children prepares eql_v4.json_tree_children at path, a path with no wildcard:
-// bind Token() as eql_v4.json_tree_children(col, $1::text), and open the
-// entries it returns, one child each, with Open; encrypt.DecodeJSON reads each
-// value into a Go type. A child with members of its own does not open alone;
-// read it with Subtree.
+// Children prepares eql_v4.json_tree_children at path, a path with no wildcard.
+// Bind Token() as eql_v4.json_tree_children(col, $1::text). Open opens each
+// entry it returns to the child's key or index and its value.
+// encrypt.DecodeJSON reads a value into a Go type. A child with members of its
+// own does not open alone: read it with Subtree.
 func (f ProfileField) Children(ctx context.Context, c *encrypt.Cipher, path string) (encrypt.JSONChildren[eql.JSONEntry], error) {
 	return gensupport.JSONChildren[eql.JSONEntry](ctx, f.field, c, path)
 }

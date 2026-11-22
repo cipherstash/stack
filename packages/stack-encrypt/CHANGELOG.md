@@ -11,25 +11,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Open one child of a JSON node, bound to its parent** (#1677).
   `JsonSubtreeKey::open_child(node)` takes one entry `json_tree_children`
-  returned for the key's token and gives a `JsonChild`, which opens
-  (`DecryptSource<JsonPlaintext>`) to the child's value: a scalar, or `{}`
-  or `[]` for an empty container. A read of one child no longer needs the
-  parent's subtree.
-  - Opening checks the entry is a child of the node the key names, with
-    the parent-link check a subtree read makes: the entry carries a parent
-    tag, sits one level down, carries the selector of the parent's path
-    extended by its decrypted label, and carries the self tag that label
-    derives under the parent's token. Anything else is
-    `Error::JsonWrongEntry`. A container with children does not open alone
-    (`Error::JsonNotALeaf`). A key of a path with a wildcard is refused
-    with `Error::Input` (reason `JsonPathWildcard`), and an entry with no
-    parent tag with `JsonWrongEntry`, both before any key is retrieved.
-  - For a `JsonDocument` field, the key is what the field reference's
-    `children(path)` returns, so the token sent and the key that opens are
-    one value.
+  returned for the key's token, and gives a `JsonChild`. A read of one
+  child no longer needs the parent's subtree.
+  - A `JsonChild` opens (`DecryptSource<JsonChildPlaintext>`) to a
+    `JsonChildPlaintext`. Its `key()` is a member's key, and its `index()`
+    an element's index. Its `value()` is a scalar, or `{}` or `[]` for an
+    empty container.
+  - The key or index is decrypted with the value and authenticated.
+    `json_tree_children` returns an object's members in a random order,
+    and the key names each one. The key, the index and the value are wiped
+    on drop, and `Debug` is redacted.
+  - Opening makes the parent-link check a subtree read makes. The entry
+    carries a parent tag and sits one level down. It carries the selector
+    of the parent's path extended by its key or index. It carries the self
+    tag that key or index derives under the parent's token.
+  - An entry that fails a check is `Error::JsonWrongEntry`. A container
+    with children does not open alone (`Error::JsonNotALeaf`).
+  - Two refusals come before any key is retrieved. A key of a path with a
+    wildcard is `Error::Input`, with reason `JsonPathWildcard`. An entry
+    with no parent tag is `JsonWrongEntry`.
+  - For a `JsonDocument` field, the field reference's `children(path)`
+    returns the key, so the token sent and the key that opens are one
+    value. For a field of another type, `children(path).encrypt_keyed`
+    returns the token and the key from one derivation.
   - `dynamic::json_open` takes the operation `"children"`, with the path of
-    the parent and one entry or none per group. `dynamic::check_json_open`
-    checks it.
+    the parent and one entry or none per group. Each child opens to a map,
+    `{"key", "json"}` or `{"index", "json"}`. `dynamic::check_json_open`
+    checks the request.
   - The stored format is unchanged.
 
 - **A credential with each call** (#1708). A server that decrypts as the end

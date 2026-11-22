@@ -371,8 +371,13 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	ats, err := firstVisit.Open(ctx, childEntries(firstVisit))
-	if err != nil || len(ats) != 2 || string(ats[0]) != "3" || string(ats[1]) != "5" {
-		t.Errorf("the children of $.visits[0]: %q %v", ats, err)
+	if err != nil || len(ats) != 2 || string(ats[0].JSON) != "3" || string(ats[1].JSON) != "5" {
+		t.Errorf("the children of $.visits[0]: %d values, %v", len(ats), err)
+	}
+	for _, at := range ats {
+		if key, ok := at.Key(); !ok || key != "at" {
+			t.Errorf("a child of $.visits[0] opened with the key %q (%v), not at", key, ok)
+		}
 	}
 	var d *encrypt.Diagnostic
 	if _, err := children.Open(ctx, childEntries(children)); !errors.As(err, &d) || d.Code != "stack_encrypt::json_not_a_leaf" {

@@ -188,7 +188,7 @@ use crate::json::inputs::{
     self, elements_base, member_predicate, node_path, selector_path, Bounds, Compare, Derived,
     Input, Parsed, Under,
 };
-use crate::json::{FieldOptions, JsonOptions, JsonPlaintext, JsonQueries};
+use crate::json::{FieldOptions, JsonOptions, JsonPlaintext, JsonQueries, JsonSubtreeKey};
 use crate::op::{AtPath, Between, ContainedBy, Contains, Eq, Gt, Gte, Lt, Lte};
 use crate::sem::TermError;
 use crate::target::Pending;
@@ -856,10 +856,11 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P, D> FieldReference<W, T, C, P, D
     /// field it is the [`JsonSubtreeKey`] that holds the token, which also
     /// opens each entry `json_tree_children` returns, one child at a time,
     /// checked against the node at `path`
-    /// ([`JsonSubtreeKey::open_child`]).
+    /// ([`JsonSubtreeKey::open_child`]). For a field of another type,
+    /// [`encrypt_keyed`](JsonFieldQuery::encrypt_keyed) gives the token
+    /// and that key from one derivation.
     ///
     /// [`JsonDocument`]: crate::json::JsonDocument
-    /// [`JsonSubtreeKey`]: crate::json::JsonSubtreeKey
     /// [`JsonSubtreeKey::open_child`]: crate::json::JsonSubtreeKey::open_child
     pub fn children(self, path: &str) -> JsonFieldQuery<T, Children, C::Start> {
         self.json(Body::Children(path_text(path)))
@@ -1463,6 +1464,30 @@ json_encrypt! {
         Derived::Node(key) => T::token(key),
         _ => Err(mismatched()),
     };
+}
+
+impl<T: JsonQueries> JsonFieldQuery<T, Children, Ready> {
+    /// Derives the node's token, as the field's type stores it, with the
+    /// key that holds it: [`encrypt`](Self::encrypt)'s token, and the key
+    /// that opens each entry `json_tree_children` returns for it
+    /// ([`JsonSubtreeKey::open_child`]). Both come from one derivation, so
+    /// the key is the key of the token sent. Bind the token, and keep the
+    /// key to open what the query returns.
+    ///
+    /// The query is checked under the field's options before any key is
+    /// requested, and its path is wiped when it is derived, refused or
+    /// dropped. The operand is derived locally: it requests no key.
+    ///
+    /// [`JsonSubtreeKey::open_child`]: crate::json::JsonSubtreeKey::open_child
+    pub fn encrypt_keyed<'a, K: 'static>(
+        mut self,
+        keyset: &'a KeysetCipher<'_, K>,
+    ) -> Pending<'a, (T::Token, JsonSubtreeKey), K> {
+        self.derive_json(keyset).try_map(|derived| match derived {
+            Derived::Node(key) => Ok((T::token(key.clone())?, key)),
+            _ => Err(mismatched()),
+        })
+    }
 }
 
 impl<T: JsonQueries, A> JsonFieldQuery<T, ElementMatch<A>, Ready> {

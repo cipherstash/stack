@@ -18,26 +18,25 @@ import (
 
 // JSONOpen opens the rows a read of a field that stores a JSON document
 // returned (the guest's se_json_open), against the request that prepared
-// the read: {"operation": "selector" | "subtree" | "children", "path",
+// the read: {"operation": "selector" | "subtree", "path",
 // "wildcard_bound"}. rows holds one group per database row: for selector,
 // the entry col -> selector returned, or none for SQL NULL; for subtree,
-// the rows eql_v4.json_tree_subtree returned; for children, one entry
-// eql_v4.json_tree_children returned for the token of the node at the
-// path, or none. Each entry is the public.eql_v4_json_entry JSON the
-// database sent.
+// the rows eql_v4.json_tree_subtree returned. Each entry is the
+// public.eql_v4_json_entry JSON the database sent. A children read opens
+// with [JSONChildren.Open], which returns each child's key or index with
+// its value, and is refused here as [ErrEncoding].
 //
 // The engine derives the selector or the read's key again from the request,
 // the field's declaration and this cipher's keyset, and checks every row
 // against it; the rows never say which path they are for. A row that is not
 // one the read asked for is [ErrEncoding]; a wildcard read of an array
-// longer than its bound is too, and so is a selector or child entry that
-// does not open alone: a container with members, whose entry commits to
-// children col -> and json_tree_children do not return, or an altered
-// entry, which the client cannot tell apart (code
-// stack_encrypt::json_not_a_leaf). Read a container with a subtree read.
-// What comes back is, per group, the JSON text of each value the read
-// reached, in document order: plaintext, which the caller owns. One ZeroKMS
-// request for every group. For generated code.
+// longer than its bound is too, and so is a selector entry that does not
+// open alone: a container with members, whose entry commits to children
+// col -> does not return, or an altered entry, which the client cannot tell
+// apart (code stack_encrypt::json_not_a_leaf). Read a container with a
+// subtree read. What comes back is, per group, the JSON text of each value
+// the read reached, in document order: plaintext, which the caller owns.
+// One ZeroKMS request for every group. For generated code.
 //
 // The rows open under the contexts their document was sealed under. So a
 // document sealed through a cipher with a scope opens through a cipher with
@@ -54,6 +53,37 @@ import (
 // for, or rows of the database row the caller meant: see the EQL json_tree
 // leakage reference.
 func (cph *Cipher) JSONOpen(ctx context.Context, plan *record.Plan, field string, request vcvalue.Object, rows [][][]byte) ([][][]byte, error) {
+	for _, f := range request {
+		if f.Key == "operation" && f.Value == record.JSONChildren {
+			return nil, fmt.Errorf("%w: a children read opens with JSONChildren.Open, which returns each child's key or index", ErrEncoding)
+		}
+	}
+	list, err := cph.jsonOpen(ctx, plan, field, request, rows)
+	if err != nil {
+		return nil, err
+	}
+	opened := make([][][]byte, len(list))
+	for i, item := range list {
+		values, ok := item.([]any)
+		if !ok {
+			return nil, fmt.Errorf("%w: se_json_open group %d is %T", ErrInternal, i, item)
+		}
+		opened[i] = make([][]byte, len(values))
+		for j, v := range values {
+			text, ok := v.([]byte)
+			if !ok {
+				return nil, fmt.Errorf("%w: se_json_open value %d.%d is %T", ErrInternal, i, j, v)
+			}
+			opened[i][j] = text
+		}
+	}
+	return opened, nil
+}
+
+// jsonOpen calls se_json_open with the request and the rows, and returns
+// its list, one item per group of rows, decoded: what each read's Open
+// reads its values from.
+func (cph *Cipher) jsonOpen(ctx context.Context, plan *record.Plan, field string, request vcvalue.Object, rows [][][]byte) ([]any, error) {
 	p, err := cph.readPlan(plan, field)
 	if err != nil {
 		return nil, err
@@ -89,7 +119,7 @@ func (cph *Cipher) JSONOpen(ctx context.Context, plan *record.Plan, field string
 		return nil, err
 	}
 	// The output is plaintext: wiped once it is decoded into the caller's
-	// slices.
+	// values.
 	defer wipe(out)
 	decoded, err := vcffi.Unmarshal(out)
 	if err != nil {
@@ -99,22 +129,7 @@ func (cph *Cipher) JSONOpen(ctx context.Context, plan *record.Plan, field string
 	if !ok || len(list) != len(rows) {
 		return nil, fmt.Errorf("%w: se_json_open returned %T for %d groups", ErrInternal, decoded, len(rows))
 	}
-	opened := make([][][]byte, len(list))
-	for i, item := range list {
-		values, ok := item.([]any)
-		if !ok {
-			return nil, fmt.Errorf("%w: se_json_open group %d is %T", ErrInternal, i, item)
-		}
-		opened[i] = make([][]byte, len(values))
-		for j, v := range values {
-			text, ok := v.([]byte)
-			if !ok {
-				return nil, fmt.Errorf("%w: se_json_open value %d.%d is %T", ErrInternal, i, j, v)
-			}
-			opened[i][j] = text
-		}
-	}
-	return opened, nil
+	return list, nil
 }
 
 // JSONSelector is a JSON path's selector: what `->`, `->>` and the path
@@ -151,6 +166,81 @@ func (t JSONToken) Value() (driver.Value, error) {
 // redacted stands in for a token, a selector or a path in what the JSON
 // read types print and log. It also stands in for a [Secret].
 const redacted = "[redacted]"
+
+// readKind names a prepared read's type and the operand it binds, for what
+// [redactedRead] prints.
+type readKind interface {
+	typeName() string
+	// operand is the name of what the read binds: its selector, its token
+	// or its tokens.
+	operand() string
+	// counted says the read prints how many tokens it binds, where the
+	// others print [redacted] for their operand.
+	counted() bool
+}
+
+// The kinds of prepared read: [JSONSelection], [JSONRead] and
+// [JSONChildren].
+type (
+	selectionRead struct{}
+	subtreeRead   struct{}
+	childrenRead  struct{}
+)
+
+func (selectionRead) typeName() string { return "encrypt.JSONSelection" }
+func (selectionRead) operand() string  { return "selector" }
+func (selectionRead) counted() bool    { return false }
+func (subtreeRead) typeName() string   { return "encrypt.JSONRead" }
+func (subtreeRead) operand() string    { return "tokens" }
+func (subtreeRead) counted() bool      { return true }
+func (childrenRead) typeName() string  { return "encrypt.JSONChildren" }
+func (childrenRead) operand() string   { return "token" }
+func (childrenRead) counted() bool     { return false }
+
+// redactedRead is embedded in each prepared read of a JSONSearch field, and
+// prints and logs it. It names the read's type and its field, and hides the
+// path and the operand: a path's keys can be a customer's data, and a
+// selector or a token is a capability. A subtree read shows how many tokens
+// it binds instead. A zero read prints as its type with nothing in it.
+type redactedRead[K readKind] struct {
+	field string
+	// count is how many tokens a subtree read binds.
+	count int
+}
+
+// String names the read's type and field, and hides its path and operand.
+func (r redactedRead[K]) String() string {
+	var kind K
+	if r.field == "" {
+		return kind.typeName() + "{}"
+	}
+	return fmt.Sprintf("%s{field: %q, path: %s, %s: %s}", kind.typeName(), r.field, redacted, kind.operand(), r.operandValue())
+}
+
+// GoString is what %#v prints: String.
+func (r redactedRead[K]) GoString() string { return r.String() }
+
+// Format prints String for every verb fmt hands it.
+func (r redactedRead[K]) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, r.String()) }
+
+// LogValue is what slog records: the field, [redacted] for the path, and
+// the operand as String shows it.
+func (r redactedRead[K]) LogValue() slog.Value {
+	if r.field == "" {
+		return slog.GroupValue()
+	}
+	var kind K
+	return slog.GroupValue(slog.String("field", r.field), slog.String("path", redacted), slog.Attr{Key: kind.operand(), Value: r.operandValue()})
+}
+
+// operandValue is what the read shows for its operand.
+func (r redactedRead[K]) operandValue() slog.Value {
+	var kind K
+	if kind.counted() {
+		return slog.IntValue(r.count)
+	}
+	return slog.StringValue(redacted)
+}
 
 // String hides the token: it is a capability, so it does not print.
 func (t JSONToken) String() string {
@@ -254,9 +344,9 @@ type JSONRange[Q ~[]byte] struct {
 // scopes and no binding derives, and the entries open under the scopes and
 // the binding.
 type JSONSelection[E ~[]byte] struct {
+	redactedRead[selectionRead]
 	cipher   *Cipher
 	plan     *record.Plan
-	field    string
 	path     string
 	selector JSONSelector
 }
@@ -265,35 +355,11 @@ type JSONSelection[E ~[]byte] struct {
 // selector operator on field of the record type that declaration
 // declares, at path. For generated code.
 func NewJSONSelection[E ~[]byte](c *Cipher, declaration *record.Plan, field, path, selector string) JSONSelection[E] {
-	return JSONSelection[E]{cipher: c, plan: declaration, field: field, path: path, selector: JSONSelector(selector)}
+	return JSONSelection[E]{redactedRead: redactedRead[selectionRead]{field: field}, cipher: c, plan: declaration, path: path, selector: JSONSelector(selector)}
 }
 
 // Selector is the selector to bind: `col -> $1::text`.
 func (s JSONSelection[E]) Selector() JSONSelector { return s.selector }
-
-// String names the field and hides the path and the selector: a path's
-// keys can be a customer's data.
-func (s JSONSelection[E]) String() string {
-	if s.cipher == nil {
-		return "encrypt.JSONSelection{}"
-	}
-	return fmt.Sprintf("encrypt.JSONSelection{field: %q, path: %s, selector: %s}", s.field, redacted, redacted)
-}
-
-// GoString is what %#v prints: [JSONSelection.String].
-func (s JSONSelection[E]) GoString() string { return s.String() }
-
-// Format prints [JSONSelection.String] for every verb fmt hands it.
-func (s JSONSelection[E]) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, s.String()) }
-
-// LogValue is what slog records: the field, and [redacted] for the path
-// and the selector.
-func (s JSONSelection[E]) LogValue() slog.Value {
-	if s.cipher == nil {
-		return slog.GroupValue()
-	}
-	return slog.GroupValue(slog.String("field", s.field), slog.String("path", redacted), slog.String("selector", redacted))
-}
 
 // Open opens the entries `col -> selector` returned, one per database row,
 // nil for a row where it returned SQL NULL, with one ZeroKMS request. Each
@@ -323,7 +389,7 @@ func (s JSONSelection[E]) Open(ctx context.Context, rows []*E) ([]JSONValue, err
 	if !entries {
 		return make([]JSONValue, len(rows)), nil
 	}
-	opened, err := s.cipher.JSONOpen(ctx, s.plan, s.field, vcvalue.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: s.path}}, groups)
+	opened, err := s.cipher.JSONOpen(ctx, s.plan, s.field, vcvalue.Object{{Key: "operation", Value: record.JSONSelector}, {Key: "path", Value: s.path}}, groups)
 	if err != nil {
 		return nil, err
 	}
@@ -352,9 +418,9 @@ func (s JSONSelection[E]) Open(ctx context.Context, rows []*E) ([]JSONValue, err
 // those of the cipher's scopes alone, and the rows open under the scopes
 // and the binding.
 type JSONRead[E ~[]byte] struct {
+	redactedRead[subtreeRead]
 	cipher *Cipher
 	plan   *record.Plan
-	field  string
 	// input is the subtree operator's input the tokens were derived from;
 	// opening sends it back as the read's request, unchanged.
 	input  vcvalue.Object
@@ -365,37 +431,12 @@ type JSONRead[E ~[]byte] struct {
 // on field of the record type that declaration declares, from input, its
 // {"path", "wildcard_bound"?} object. For generated code.
 func NewJSONRead[E ~[]byte](c *Cipher, declaration *record.Plan, field string, input vcvalue.Object, tokens []string) JSONRead[E] {
-	return JSONRead[E]{cipher: c, plan: declaration, field: field, input: input, tokens: JSONTokens(tokens)}
+	return JSONRead[E]{redactedRead: redactedRead[subtreeRead]{field: field, count: len(tokens)}, cipher: c, plan: declaration, input: input, tokens: JSONTokens(tokens)}
 }
 
 // Tokens are the tokens to bind:
 // `eql_v4.json_tree_subtree(col, $1::text[], 64)`.
 func (r JSONRead[E]) Tokens() JSONTokens { return r.tokens }
-
-// String names the field and counts the tokens, and hides the path and
-// the tokens: a path's keys can be a customer's data, and a token is a
-// capability.
-func (r JSONRead[E]) String() string {
-	if r.cipher == nil {
-		return "encrypt.JSONRead{}"
-	}
-	return fmt.Sprintf("encrypt.JSONRead{field: %q, path: %s, tokens: %d}", r.field, redacted, len(r.tokens))
-}
-
-// GoString is what %#v prints: [JSONRead.String].
-func (r JSONRead[E]) GoString() string { return r.String() }
-
-// Format prints [JSONRead.String] for every verb fmt hands it.
-func (r JSONRead[E]) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, r.String()) }
-
-// LogValue is what slog records: the field, [redacted] for the path, and
-// how many tokens.
-func (r JSONRead[E]) LogValue() slog.Value {
-	if r.cipher == nil {
-		return slog.GroupValue()
-	}
-	return slog.GroupValue(slog.String("field", r.field), slog.String("path", redacted), slog.Int("tokens", len(r.tokens)))
-}
 
 // Open opens the rows the read returned, one group per database row, with
 // one ZeroKMS request: per row, the value at each concrete path the read
@@ -426,7 +467,7 @@ func (r JSONRead[E]) Open(ctx context.Context, rows [][]E) ([][]json.RawMessage,
 			groups[i][j] = []byte(entry)
 		}
 	}
-	request := append(vcvalue.Object{{Key: "operation", Value: "subtree"}}, r.input...)
+	request := append(vcvalue.Object{{Key: "operation", Value: record.JSONSubtree}}, r.input...)
 	opened, err := r.cipher.JSONOpen(ctx, r.plan, r.field, request, groups)
 	if err != nil {
 		return nil, err
@@ -487,9 +528,9 @@ func (r JSONRead[E]) OpenOne(ctx context.Context, entries []E) (JSONValue, error
 // of the cipher's scopes alone, and the entries open under the scopes and
 // the binding.
 type JSONChildren[E ~[]byte] struct {
+	redactedRead[childrenRead]
 	cipher *Cipher
 	plan   *record.Plan
-	field  string
 	path   string
 	token  JSONToken
 }
@@ -498,7 +539,7 @@ type JSONChildren[E ~[]byte] struct {
 // operator on field of the record type that declaration declares, at path.
 // For generated code.
 func NewJSONChildren[E ~[]byte](c *Cipher, declaration *record.Plan, field, path, token string) JSONChildren[E] {
-	return JSONChildren[E]{cipher: c, plan: declaration, field: field, path: path, token: JSONToken(token)}
+	return JSONChildren[E]{redactedRead: redactedRead[childrenRead]{field: field}, cipher: c, plan: declaration, path: path, token: JSONToken(token)}
 }
 
 // Token is the parent's token to bind:
@@ -511,48 +552,26 @@ func (c JSONChildren[E]) Token() JSONToken { return c.token }
 // JSONChildren is refused, as a zero [JSONToken] is.
 func (c JSONChildren[E]) Value() (driver.Value, error) { return c.token.Value() }
 
-// String names the field and hides the path and the token: a path's keys
-// can be a customer's data, and a token is a capability.
-func (c JSONChildren[E]) String() string {
-	if c.cipher == nil {
-		return "encrypt.JSONChildren{}"
-	}
-	return fmt.Sprintf("encrypt.JSONChildren{field: %q, path: %s, token: %s}", c.field, redacted, redacted)
-}
-
-// GoString is what %#v prints: [JSONChildren.String].
-func (c JSONChildren[E]) GoString() string { return c.String() }
-
-// Format prints [JSONChildren.String] for every verb fmt hands it.
-func (c JSONChildren[E]) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, c.String()) }
-
-// LogValue is what slog records: the field, and [redacted] for the path
-// and the token.
-func (c JSONChildren[E]) LogValue() slog.Value {
-	if c.cipher == nil {
-		return slog.GroupValue()
-	}
-	return slog.GroupValue(slog.String("field", c.field), slog.String("path", redacted), slog.String("token", redacted))
-}
-
 // Open opens entries eql_v4.json_tree_children returned for the token,
-// each on its own, with one ZeroKMS request for all of them: per entry,
-// the child's JSON text, a scalar, or {} or [] for an empty container. The
-// entries may come from many database rows: each is checked as a child of
-// the node at the path in its own row. Only the entries asked for travel:
-// a read of one child returns that child's entry, not the parent's
-// subtree.
+// each on its own, with one ZeroKMS request for all of them. Each entry
+// opens to one [JSONChildValue]: the child's key, for a member of an
+// object, or its index, for an element of an array, and its value as JSON
+// text. The database returns an object's members in a random order, and
+// the key says which member each one is. The entries may come from many
+// database rows: each is checked as a child of the node at the path in its
+// own row. Only the entries asked for travel: a read of one child returns
+// that child's entry, not the parent's subtree.
 //
-// Each entry is checked against the parent the read was prepared for: it
-// must carry a parent tag, the selector of the parent's path extended by
-// its decrypted key or position, and the self tag that key or position
-// derives under the parent's token. An entry that is not a child of the
-// node at the path is [ErrEncoding] (code stack_encrypt::json_wrong_entry).
-// So is a child that is an object or an array with members, whose entry
-// commits to children json_tree_children does not return, or an altered
-// entry, which the client cannot tell apart (code
-// stack_encrypt::json_not_a_leaf): read such a child with a subtree read
-// of its own path.
+// Each entry is checked against the parent the read was prepared for. It
+// must carry a parent tag and the selector of the parent's path extended by
+// its decrypted key or index. It must also carry the self tag that key or
+// index derives under the parent's token. An entry that is not a child of
+// the node at the path is [ErrEncoding] (code
+// stack_encrypt::json_wrong_entry). So is a child that is an object or an
+// array with members, whose entry commits to children json_tree_children
+// does not return, or an altered entry, which the client cannot tell apart
+// (code stack_encrypt::json_not_a_leaf). Read such a child with a subtree
+// read of its own path.
 //
 // Every entry of one call opens under the binding of the cipher the read
 // was prepared through. So through a cipher with a binding, pass only the
@@ -565,29 +584,124 @@ func (c JSONChildren[E]) LogValue() slog.Value {
 // meant, nor, where the database forges the tags it can compute from the
 // token it was sent, which element of an array the parent's path names:
 // see the EQL json_tree leakage reference.
-func (c JSONChildren[E]) Open(ctx context.Context, entries []E) ([]json.RawMessage, error) {
+func (c JSONChildren[E]) Open(ctx context.Context, entries []E) ([]JSONChildValue, error) {
 	if c.cipher == nil {
 		return nil, fmt.Errorf("%w: a zero JSONChildren has no request to open against", ErrEncoding)
 	}
 	if len(entries) == 0 {
-		return []json.RawMessage{}, nil
+		return []JSONChildValue{}, nil
 	}
 	groups := make([][][]byte, len(entries))
 	for i, entry := range entries {
 		groups[i] = [][]byte{[]byte(entry)}
 	}
-	opened, err := c.cipher.JSONOpen(ctx, c.plan, c.field, vcvalue.Object{{Key: "operation", Value: "children"}, {Key: "path", Value: c.path}}, groups)
+	request := vcvalue.Object{{Key: "operation", Value: record.JSONChildren}, {Key: "path", Value: c.path}}
+	list, err := c.cipher.jsonOpen(ctx, c.plan, c.field, request, groups)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]json.RawMessage, len(opened))
-	for i, values := range opened {
-		if len(values) != 1 {
-			return nil, fmt.Errorf("%w: se_json_open opened %d values for child %d", ErrInternal, len(values), i)
+	out := make([]JSONChildValue, len(list))
+	for i, item := range list {
+		children, ok := item.([]any)
+		if !ok || len(children) != 1 {
+			return nil, fmt.Errorf("%w: se_json_open opened %T for child %d", ErrInternal, item, i)
 		}
-		out[i] = values[0]
+		if out[i], err = jsonChildValue(children[0]); err != nil {
+			return nil, fmt.Errorf("%w: se_json_open child %d: %v", ErrInternal, i, err)
+		}
 	}
 	return out, nil
+}
+
+// JSONChildValue is one child [JSONChildren.Open] opened: which child of
+// the parent it is, and its value. A member of an object has a key
+// ([JSONChildValue.Key]), and an element of an array has an index
+// ([JSONChildValue.Index]). The key or index is decrypted with the value
+// and authenticated with it.
+//
+// The key, the index and the value are plaintext, which the caller owns.
+// A member's key can be a customer's data. So a JSONChildValue prints and
+// logs redacted: read its parts through its methods and its JSON field.
+type JSONChildValue struct {
+	// JSON is the child's value as JSON text: a scalar, or {} or [] for an
+	// empty container. [DecodeJSON] reads it into a Go type.
+	JSON json.RawMessage
+
+	label childLabel
+	key   string
+	index uint64
+}
+
+// childLabel says which of a JSONChildValue's key and index is set: none,
+// for a zero JSONChildValue.
+type childLabel uint8
+
+const (
+	noLabel childLabel = iota
+	memberKey
+	elementIndex
+)
+
+// Key is the member's key and true, for a child of an object. It is "" and
+// false for an element of an array.
+func (v JSONChildValue) Key() (string, bool) { return v.key, v.label == memberKey }
+
+// Index is the element's index and true, for a child of an array. It is 0
+// and false for a member of an object.
+func (v JSONChildValue) Index() (uint64, bool) { return v.index, v.label == elementIndex }
+
+// String hides the key, the index and the value: each is plaintext.
+func (v JSONChildValue) String() string {
+	if v.label == noLabel && v.JSON == nil {
+		return "encrypt.JSONChildValue{}"
+	}
+	return "encrypt.JSONChildValue{" + redacted + "}"
+}
+
+// GoString is what %#v prints: [JSONChildValue.String].
+func (v JSONChildValue) GoString() string { return v.String() }
+
+// Format prints [JSONChildValue.String] for every verb fmt hands it.
+func (v JSONChildValue) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, v.String()) }
+
+// LogValue is what slog records: [redacted], never the key, the index or
+// the value.
+func (v JSONChildValue) LogValue() slog.Value { return slog.StringValue(redacted) }
+
+// jsonChildValue reads one child as se_json_open writes it:
+// {"key": string, "json": bytes} for a member, {"index": uint64, "json":
+// bytes} for an element. The error names what is wrong, never a value.
+func jsonChildValue(item any) (JSONChildValue, error) {
+	fields, ok := item.(vcvalue.Object)
+	if !ok || len(fields) != 2 {
+		return JSONChildValue{}, fmt.Errorf("a child is %T, not a map of a key or an index and json", item)
+	}
+	var child JSONChildValue
+	for _, field := range fields {
+		switch value := field.Value.(type) {
+		case string:
+			if field.Key != "key" {
+				return JSONChildValue{}, fmt.Errorf("text at %q", field.Key)
+			}
+			child.label, child.key = memberKey, value
+		case uint64:
+			if field.Key != "index" {
+				return JSONChildValue{}, fmt.Errorf("an integer at %q", field.Key)
+			}
+			child.label, child.index = elementIndex, value
+		case []byte:
+			if field.Key != "json" {
+				return JSONChildValue{}, fmt.Errorf("bytes at %q", field.Key)
+			}
+			child.JSON = value
+		default:
+			return JSONChildValue{}, fmt.Errorf("a %T at %q", value, field.Key)
+		}
+	}
+	if child.label == noLabel || child.JSON == nil {
+		return JSONChildValue{}, errors.New("a child has no key or index, or no json")
+	}
+	return child, nil
 }
 
 // DecodeJSON reads JSON text a read opened, a [JSONValue]'s JSON or one

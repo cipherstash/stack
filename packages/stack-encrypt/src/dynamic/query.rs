@@ -923,11 +923,14 @@ pub fn check_json_open(
 /// and options, and checks every row against it; for `children`, that the
 /// entry is a child of the node at the path. The rows open through that
 /// keyset alone, so a document sealed under another is refused before any
-/// key is retrieved. The result is a list per group of JSON texts, as
-/// bytes: for `selector` the scalar or nothing, for `subtree` one value per
-/// concrete path the read named that the row has, in document order, and
-/// for `children` the child's value or nothing. One key request for every
-/// group.
+/// key is retrieved. The result is a list per group: for `selector` the
+/// scalar's JSON text or nothing, and for `subtree` the JSON text of one
+/// value per concrete path the read named that the row has, in document
+/// order, each as bytes. For `children` it is the child or nothing. A
+/// child is a map, `{"key": text, "json": bytes}` for a member of an
+/// object or `{"index": u64, "json": bytes}` for an element of an array:
+/// its key or index under the parent, which is authenticated, and its
+/// value's JSON text. One key request for every group.
 ///
 /// The read runs under the contexts the document was sealed under. The
 /// selector or the read key derives under the field's column, then the

@@ -738,11 +738,11 @@ The EQL value stores the table and the column alone, in `i`, so:
 - open the value through a cipher with the same scope and binding;
 - query it through a cipher with the same scope. A binding is in no query;
 - read part of a `JsonSearch` document (`Selector`, `Subtree`, `Children`)
-  through a cipher with the same scope and binding. The selector or the tokens derive
-  under the scope alone, as a query does, and the entries open under the
-  scope and the binding. Every row of one `Open` call opens under that
-  binding, so a read through a cipher with a binding reads that binding's
-  row.
+  through a cipher with the same scope and binding. The selector or the
+  tokens derive under the scope alone, as a query does, and the entries
+  open under the scope and the binding. Every row of one `Open` call opens
+  under that binding, so a read through a cipher with a binding reads that
+  binding's row.
 
 ### Encrypted JSON documents
 
@@ -779,17 +779,25 @@ read, err := users.Fields.Profile.Subtree(ctx, cipher, "$.visits[*].at", encrypt
 values, err := read.Open(ctx, entriesPerRow)
 at, err := encrypt.DecodeJSON[int64](values[0][0])
 
-children, err := users.Fields.Profile.Children(ctx, cipher, "$.tags")
+children, err := users.Fields.Profile.Children(ctx, cipher, "$.address")
 // SELECT e FROM users, eql_v4.json_tree_children(profile, $1::text) AS e WHERE id = $2
 // with children.Token() as $1: one entry per child, then:
-tags, err := children.Open(ctx, entries)
+members, err := children.Open(ctx, entries)
+for _, member := range members {
+	key, _ := member.Key() // "city", "street", ...
+	value, err := encrypt.DecodeJSON[string](member.JSON)
+}
 ```
 
-`Children` reads one level: each entry `json_tree_children` returns opens on
-its own, checked against the node at the path, so a program that wants one
-child sends the parent's token and receives that child's entry, not the
-parent's subtree. A child that is an object or an array with members does
-not open alone; read it with `Subtree` at its own path.
+`Children` reads one level of the document. Each entry `json_tree_children`
+returns opens on its own. It is checked against the node at the path. A
+program that wants one child sends the parent's token. It receives that
+child's entry, not the parent's subtree.
+
+Each opened child has a key, for a member of an object, or an index, for an
+element of an array. The database returns an object's members in a random
+order, and the key names each one. A child that is an object or an array
+with members does not open alone. Read it with `Subtree` at its own path.
 
 A needle or a value is a `json.RawMessage` of JSON text, or any Go value
 `encoding/json` writes. A document contains a needle when it holds every
@@ -810,8 +818,10 @@ PostgreSQL picks EQL's operator and not `jsonb`'s; a zero one is refused
 rather than bound. A token is a capability over its node's subtree in every
 row of the column, and a path's keys can be your customer's data, so
 `JSONToken`, `JSONTokens`, `JSONSelection`, `JSONRead` and `JSONChildren`
-print and log with the tokens, the selector and the path redacted. A `JSONValue` holds the
-plaintext a read opened, and prints it. Numbers order as `float64`,
+print and log with the tokens, the selector and the path redacted. A
+`JSONValue` holds the plaintext a read opened, and prints it. A
+`JSONChildValue` holds a child's key or index and its value, and prints
+and logs redacted, since a key can be your customer's data. Numbers order as `float64`,
 so integers past 2^53 can tie at an ordered path; containment and `EqAt`
 compare them exactly. At a wildcard path, `->` returns an unspecified
 element of each row, so an ordering over every element is written over

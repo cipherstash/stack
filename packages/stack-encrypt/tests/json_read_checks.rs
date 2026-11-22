@@ -24,8 +24,8 @@ use std::sync::atomic::Ordering;
 use common::CountingSource;
 use serde_json::{json, Value};
 use stack_encrypt::json::{
-    JsonChild, JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonPath, JsonPlaintext,
-    JsonSelector, JsonSubtree, JsonSubtreeKey,
+    JsonChild, JsonChildPlaintext, JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonPath,
+    JsonPlaintext, JsonSelector, JsonSubtree, JsonSubtreeKey,
 };
 use stack_encrypt::refusal::Reason;
 use stack_encrypt::target::{AeadContext, CallerContext};
@@ -854,18 +854,39 @@ mod given_one_child_of_a_node {
         row(doc, slot(cipher, doc, path).await, Some(1))
     }
 
-    async fn open(cipher: &Cipher, child: JsonChild) -> Result<Value, Error> {
-        JsonPlaintext::decrypt_from_with_context(child, cipher, aead())
-            .await
-            .map(document)
+    /// What a child opened to: an object's member by its key, or an
+    /// array's element by its index, with its value.
+    #[derive(Debug, PartialEq)]
+    enum Opened {
+        Member(String, Value),
+        Element(u64, Value),
     }
 
+    async fn open(cipher: &Cipher, child: JsonChild) -> Result<Opened, Error> {
+        JsonChildPlaintext::decrypt_from_with_context(child, cipher, aead())
+            .await
+            .map(opened)
+    }
+
+    /// The child a plaintext holds: exactly one of a key and an index.
+    fn opened(child: JsonChildPlaintext) -> Opened {
+        let value = child.value().clone();
+        match (child.key(), child.index()) {
+            (Some(key), None) => Opened::Member(key.to_owned(), value),
+            (None, Some(index)) => Opened::Element(index, value),
+            other => panic!("a child has a key or an index, not {other:?}"),
+        }
+    }
+
+    /// Each member opens with its own key, in whatever order the ordinals
+    /// put them, so no member is found by its value.
     #[tokio::test]
-    async fn each_leaf_child_opens_to_its_value() {
+    async fn each_leaf_member_opens_to_its_key_and_value() {
         let (cipher, _) = cipher().await;
         let doc = seal(&cipher, &tree()).await;
         let a = key(&cipher, "$.a").await;
-        let mut opened = serde_json::Map::new();
+        let mut members = serde_json::Map::new();
+        let mut not_leaves = 0;
         for node in children(&doc, &a) {
             let child = a.open_child(node);
             assert_eq!(
@@ -874,35 +895,42 @@ mod given_one_child_of_a_node {
                 "the parent asked about"
             );
             match open(&cipher, child).await {
-                Ok(value) => {
-                    let _ = opened.insert(value_key(&tree()["a"], &value), value);
+                Ok(Opened::Member(key, value)) => {
+                    assert!(
+                        members.insert(key.clone(), value).is_none(),
+                        "{key} opens once"
+                    );
                 }
-                Err(Error::JsonNotALeaf) => {
-                    let _ = opened.insert("full".into(), json!("not a leaf"));
-                }
+                Ok(element) => panic!("a member of $.a opened as {element:?}"),
+                Err(Error::JsonNotALeaf) => not_leaves += 1,
                 Err(error) => panic!("a child of $.a: {error:?}"),
             }
         }
         assert_eq!(
-            Value::Object(opened),
-            json!({"s": "text", "n": 1, "z": null, "o": {}, "e": [], "full": "not a leaf"}),
-            "every child opens to its value, and the container with children to JsonNotALeaf"
+            Value::Object(members),
+            json!({"s": "text", "n": 1, "z": null, "o": {}, "e": []}),
+            "every leaf member opens to its key and its value"
         );
+        assert_eq!(not_leaves, 1, "the member with children is JsonNotALeaf");
     }
 
     #[tokio::test]
-    async fn each_element_opens_to_its_value_in_position_order() {
+    async fn each_element_opens_to_its_index_and_value_in_position_order() {
         let (cipher, _) = cipher().await;
         let doc = seal(&cipher, &tree()).await;
         let arr = key(&cipher, "$.arr").await;
-        let mut opened = Vec::new();
+        let mut elements = Vec::new();
         for node in children(&doc, &arr) {
-            opened.push(open(&cipher, arr.open_child(node)).await.unwrap());
+            elements.push(open(&cipher, arr.open_child(node)).await.unwrap());
         }
         assert_eq!(
-            opened,
-            vec![json!(10), json!(20), json!(30)],
-            "the elements in order"
+            elements,
+            vec![
+                Opened::Element(0, json!(10)),
+                Opened::Element(1, json!(20)),
+                Opened::Element(2, json!(30)),
+            ],
+            "the elements in order, each with its index"
         );
     }
 
@@ -962,7 +990,7 @@ mod given_one_child_of_a_node {
         let undepthed = open(&cipher, a.open_child(row(&doc, at, None))).await;
         assert_eq!(
             undepthed.unwrap(),
-            json!("text"),
+            Opened::Member("s".into(), json!("text")),
             "a row with no depth is placed by the key"
         );
     }
@@ -1035,7 +1063,7 @@ mod given_one_child_of_a_node {
         let slot = element.slot();
         let child = arr.open_child(element);
         assert_eq!(child.node().slot(), slot, "the row as returned");
-        let opening = JsonPlaintext::decrypt_from_with_context(child, &cipher, aead());
+        let opening = JsonChildPlaintext::decrypt_from_with_context(child, &cipher, aead());
         let shown = opening.context();
         assert!(!shown.has_failed(), "the opening has not failed: {shown}");
         assert_eq!(
@@ -1044,20 +1072,10 @@ mod given_one_child_of_a_node {
             "the column it opens under"
         );
         assert_eq!(
-            document(opening.await.unwrap()),
-            json!(30),
+            opened(opening.await.unwrap()),
+            Opened::Element(2, json!(30)),
             "the third element"
         );
-    }
-
-    /// The key of the member `$.a` whose value is `value`, for a test that
-    /// reads members in their random ordinal order.
-    fn value_key(object: &Value, value: &Value) -> String {
-        object
-            .as_object()
-            .and_then(|members| members.iter().find(|(_, v)| *v == value))
-            .map(|(k, _)| k.clone())
-            .unwrap_or_else(|| panic!("{value} is a member of {object}"))
     }
 }
 

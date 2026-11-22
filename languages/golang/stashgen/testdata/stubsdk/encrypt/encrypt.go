@@ -177,8 +177,11 @@ func (JSONSelection[E]) Open(context.Context, []*E) ([]JSONValue, error) { retur
 // JSONChildren is a prepared json_tree_children on a JSONSearch field.
 type JSONChildren[E ~[]byte] struct{ _ E }
 
-func (JSONChildren[E]) Token() JSONToken                                     { return "" }
-func (JSONChildren[E]) Open(context.Context, []E) ([]json.RawMessage, error) { return nil, nil }
+func (JSONChildren[E]) Token() JSONToken                                    { return "" }
+func (JSONChildren[E]) Open(context.Context, []E) ([]JSONChildValue, error) { return nil, nil }
+
+// JSONChildValue is one child a JSONChildren read opened.
+type JSONChildValue struct{ JSON json.RawMessage }
 
 // JSONRead is a prepared subtree read on a JSONSearch field.
 type JSONRead[E ~[]byte] struct{ _ E }

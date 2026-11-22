@@ -11,11 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Open one child of a JSON tree node** (#1677). `JsonTreeChild::from_key(&key,
   entry)` takes one entry `eql_v4.json_tree_children` returned and the
-  `JsonSubtreeKey` of its parent's path, and opens
-  (`DecryptSource<JsonPlaintext>`) to the child's value. It is checked
-  against the parent as Stack Encrypt's `JsonSubtreeKey::open_child`
-  checks it. A child with members of its own does not open alone: read it
-  through `JsonTreeSubtree`. The stored format and the SQL do not change.
+  `JsonSubtreeKey` of its parent's path.
+  - It opens (`DecryptSource<JsonChildPlaintext>`) to the child's key or
+    index and its value. The key names each member, whatever order the
+    database returns them in.
+  - It is checked against the parent as Stack Encrypt's
+    `JsonSubtreeKey::open_child` checks it.
+  - A child with members of its own does not open alone. Read it through
+    `JsonTreeSubtree`.
+  - A field reference's `children(path).encrypt_keyed(&keyset)` returns the
+    `JsonTreeToken` to bind with the key that opens what it returns.
+  - The stored format and the SQL do not change.
 
 - **A `JsonTreeDocument` field is queried from its field reference** (#1459,
   #1687). As a field of a derived record, a `JsonTreeDocument` (and an

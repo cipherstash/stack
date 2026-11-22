@@ -17,22 +17,30 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 - **Open one child of a JSON node** (#1677). `Children(ctx, c, path)` on a
   `JsonSearch` field now returns an `encrypt.JSONChildren`. Bind its
-  `Token()` as `eql_v4.json_tree_children(col, $1::text)`, and open the
-  entries the function returns with `Open(ctx, entries)`: one JSON text per
-  entry, the child's value, or `{}` or `[]` for an empty container. Only
-  the child entries travel, not the parent's whole subtree.
-  - Each entry is checked against the node at `path`: its selector, and
-    the self tag its decrypted key or position derives under the parent's
-    token. An entry that is not a child of that node is `ErrEncoding`
-    (code `stack_encrypt::json_wrong_entry`). A child that is an object or
-    an array with members does not open alone (`ErrEncoding`, code
-    `stack_encrypt::json_not_a_leaf`); read it with `Subtree` at its own
-    path.
-  - `Cipher.JSONOpen` takes the request
-    `{"operation": "children", "path": path}`, with one entry or none per
-    group. No guest export is added: `se_json_open` takes the operation.
-  - `JSONChildren` prints and logs with the path and the token redacted,
-    as `JSONSelection` and `JSONRead` do.
+  `Token()` as `eql_v4.json_tree_children(col, $1::text)`. Open the entries
+  the function returns with `Open(ctx, entries)`. Only the child entries
+  travel, not the parent's whole subtree.
+  - Each entry opens to an `encrypt.JSONChildValue`. `Key()` gives a
+    member's key, and `Index()` an element's index. `JSON` is the child's
+    value as JSON text, or `{}` or `[]` for an empty container.
+  - The key or index is decrypted with the value and authenticated. The
+    database returns an object's members in a random order, and the key
+    names each one.
+  - Each entry is checked against the node at `path`. It must carry the
+    selector of that path extended by its key or index. It must carry the
+    self tag that key or index derives under the parent's token.
+  - An entry that is not a child of that node is `ErrEncoding`, with code
+    `stack_encrypt::json_wrong_entry`.
+  - A child that is an object or an array with members does not open
+    alone. It is `ErrEncoding`, with code `stack_encrypt::json_not_a_leaf`.
+    Read it with `Subtree` at its own path.
+  - No guest export is added. `se_json_open` takes the operation
+    `"children"`, and returns each child's key or index with its value.
+    `Cipher.JSONOpen` refuses that operation: open it with
+    `JSONChildren.Open`.
+  - `JSONChildren` prints and logs with the path and the token redacted, as
+    `JSONSelection` and `JSONRead` do. `JSONChildValue` prints and logs
+    redacted, since a key can be a customer's data.
 
 - **Audit metadata for the ZeroKMS audit log** (#1067). ZeroKMS logs every
   data-key request with the identity that made it. `encrypt.AuditMetadata`
@@ -112,18 +120,23 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
     dropped.
 
 - **`Children` returns `encrypt.JSONChildren`, not `encrypt.JSONToken`**
-  (#1677). It holds the token and opens the children. Code that passes
-  the result to a query keeps working: `JSONChildren` binds as its token.
-  Code that keeps it as a `JSONToken` takes `.Token()`. `ChildCount` still
-  returns a `JSONToken`. Regenerate with `stashgen`.
+  (#1677). It holds the token and opens the children. Regenerate with
+  `stashgen` to get it.
+  - Code that passes the result to a query keeps working: `JSONChildren`
+    binds as its token.
+  - Code that keeps the result as a `JSONToken` takes `.Token()`.
+  - `ChildCount` still returns a `JSONToken`.
+  - A `*_stash.go` generated before this release still compiles and runs.
+    Its `Children` returns a `JSONToken`, and is still refused through a
+    cipher with a binding.
 
 ### Changed
 
 - `Children` through a cipher with a binding prepares the read, as
-  `Selector` and `Subtree` do, where it was refused (#1677). The token
-  derives under the cipher's scopes alone, and the children open under
-  the scopes and the binding. `ChildCount` through such a cipher is still
-  refused: a count opens nothing.
+  `Selector` and `Subtree` do (#1677). It was refused. The token derives
+  under the cipher's scopes alone. The children open under the scopes and
+  the binding. `ChildCount` through such a cipher is still refused, since
+  a count opens nothing.
 - `vcffi` and `vcvalue` move to vitaminc `f1fc9ae74`, the commit vitaminc
   0.10.0 was released from. The host now checks the same date and
   timestamp range as the guests.

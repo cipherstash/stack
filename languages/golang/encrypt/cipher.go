@@ -84,9 +84,9 @@ func (cph *Cipher) Scope(parts ...any) *Cipher {
 // through cipher.Bind(rowID) opens only through a cipher with the same
 // binding. It is in no query context, so a query through a cipher with a
 // binding is refused as [ErrEncoding]: a query by column or by tenant still
-// finds the row. A read of part of a JSON document (a field's Selector or
-// Subtree) is not refused: it prepares under the scopes alone and opens
-// under the binding, so it reads that binding's row. The parts are those
+// finds the row. A read of part of a JSON document (a field's Selector,
+// Subtree or Children) is not refused: it prepares under the scopes alone
+// and opens under the binding, so it reads that binding's row. The parts are those
 // [Cipher.Scope] takes, and an empty string or byte slice is refused: an
 // unassigned row ID would bind every such row to one context.
 func (cph *Cipher) Bind(parts ...any) *Cipher {

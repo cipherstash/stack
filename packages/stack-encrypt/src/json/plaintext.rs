@@ -5,6 +5,7 @@ use std::fmt;
 use serde_json::Value;
 use vitaminc_aead::plaintext::{depth, Error as _, Scalar, SourceError};
 use vitaminc_aead::{FixedType, FromScalar, Logical, Physical, Sink};
+use vitaminc_protected::{Controlled, Protected};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use super::text::{nests_within, parse_text, to_wiped_text, MAX_DEPTH};
@@ -227,6 +228,146 @@ impl ZeroizeOnDrop for JsonPlaintext {}
 impl fmt::Debug for JsonPlaintext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("JsonPlaintext(<redacted>)")
+    }
+}
+
+/// One child of a JSON node, opened on its own: which child of its parent
+/// it is, and its value. What a [`JsonChild`](super::JsonChild) opens to.
+///
+/// An object's member has a [`key`](Self::key) and no
+/// [`index`](Self::index). An array's element has an index and no key. The
+/// key or the index is decrypted with the value and authenticated with it,
+/// and opening checks it against the parent's path
+/// ([`JsonSubtreeKey::open_child`](super::JsonSubtreeKey::open_child)). So
+/// each child says which member or element it is, in whatever order the
+/// database returns the children.
+///
+/// ```
+/// # async fn example() -> Result<(), stack_encrypt::Error> {
+/// use serde_json::json;
+/// use stack_encrypt::json::{
+///     JsonChildPlaintext, JsonDocument, JsonOptions, JsonPath, JsonPlaintext,
+/// };
+/// use stack_encrypt::target::{AeadContext, CallerContext};
+/// use stack_encrypt::{nonempty, DecryptFrom, EncryptInto, StackCipher};
+///
+/// let cipher = StackCipher::builder()
+/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+///     .init()
+///     .await?;
+/// let keyset = cipher.default_keyset();
+/// let stored: JsonDocument = JsonPlaintext::from(json!({"tags": {"plan": "pro"}}))
+///     .encrypt_into_with_context(&keyset, CallerContext::from(nonempty!("users").with("profile")))
+///     .await?;
+///
+/// // The key of the parent. Bind its one token to
+/// // `eql_v4.json_tree_children(doc, $1::text)`.
+/// let parent = keyset
+///     .json_subtree_key(
+///         &JsonPath::parse("$.tags").unwrap(),
+///         &JsonOptions::default(),
+///         nonempty!("users").with("profile"),
+///     )
+///     .await?;
+/// // The entries the database returns, here read from the stored document.
+/// for (slot, _, _) in stored.children(&parent.token_bytes()[0]) {
+///     let node = stored.node(slot).unwrap();
+///     let child = JsonChildPlaintext::decrypt_from_with_context(
+///         parent.open_child(node),
+///         &cipher,
+///         AeadContext::from(nonempty!("users").with("profile")),
+///     )
+///     .await?;
+///     assert_eq!(child.key(), Some("plan"));
+///     assert_eq!(child.index(), None);
+///     assert_eq!(child.value(), &json!("pro"));
+/// }
+/// # Ok(())
+/// # }
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+/// ```
+///
+/// The key, the index and the value are plaintext. Each is wiped when the
+/// child is dropped. `Debug` is redacted, and there is no `PartialEq`, as
+/// for [`JsonPlaintext`].
+pub struct JsonChildPlaintext {
+    label: ChildLabel,
+    value: JsonPlaintext,
+}
+
+/// Which child of its parent a child is. Each wipes itself when it is
+/// dropped.
+pub(crate) enum ChildLabel {
+    Key(Protected<String>),
+    Index(Protected<u64>),
+}
+
+impl JsonChildPlaintext {
+    /// An object's member, by its key.
+    pub(crate) fn member(key: Protected<String>, value: JsonPlaintext) -> Self {
+        Self {
+            label: ChildLabel::Key(key),
+            value,
+        }
+    }
+
+    /// An array's element, by its index.
+    pub(crate) fn element(index: u64, value: JsonPlaintext) -> Self {
+        Self {
+            label: ChildLabel::Index(Protected::new(index)),
+            value,
+        }
+    }
+
+    /// The member's key, for a child of an object; `None` for an element
+    /// of an array.
+    pub fn key(&self) -> Option<&str> {
+        match &self.label {
+            ChildLabel::Key(key) => Some(key.risky_ref()),
+            ChildLabel::Index(_) => None,
+        }
+    }
+
+    /// The element's index, for a child of an array; `None` for a member
+    /// of an object.
+    pub fn index(&self) -> Option<u64> {
+        match &self.label {
+            ChildLabel::Index(index) => Some(*index.risky_ref()),
+            ChildLabel::Key(_) => None,
+        }
+    }
+
+    /// The child's value: a scalar, or `{}` or `[]` for an empty container.
+    pub fn value(&self) -> &Value {
+        self.value.value()
+    }
+
+    /// The key or the index, for a binding that writes the child out.
+    #[cfg(feature = "dynamic")]
+    pub(crate) fn label(&self) -> &ChildLabel {
+        &self.label
+    }
+}
+
+impl Zeroize for JsonChildPlaintext {
+    /// Wipe the key or the index, and the value. What is left is an empty
+    /// key or the index 0, and a JSON `null`.
+    fn zeroize(&mut self) {
+        match &mut self.label {
+            ChildLabel::Key(key) => key.zeroize(),
+            ChildLabel::Index(index) => index.zeroize(),
+        }
+        self.value.zeroize();
+    }
+}
+
+/// Every field wipes itself when it is dropped: the key and the index are
+/// `Protected`, and the value is a [`JsonPlaintext`].
+impl ZeroizeOnDrop for JsonChildPlaintext {}
+
+impl fmt::Debug for JsonChildPlaintext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("JsonChildPlaintext(<redacted>)")
     }
 }
 
@@ -457,5 +598,63 @@ mod tests {
     fn debug_never_shows_the_document() {
         let document = JsonPlaintext::from(json!({"secret": "hunter2"}));
         assert_eq!(format!("{document:?}"), "JsonPlaintext(<redacted>)");
+    }
+
+    mod given_an_opened_child {
+        use super::*;
+
+        fn member() -> JsonChildPlaintext {
+            JsonChildPlaintext::member(
+                Protected::new("secret".to_owned()),
+                JsonPlaintext::from(json!("hunter2")),
+            )
+        }
+
+        fn element() -> JsonChildPlaintext {
+            JsonChildPlaintext::element(7, JsonPlaintext::from(json!(1234)))
+        }
+
+        #[test]
+        fn a_member_has_its_key_and_no_index() {
+            let child = member();
+            assert_eq!(child.key(), Some("secret"), "the member's key");
+            assert_eq!(child.index(), None, "a member has no index");
+            assert_eq!(child.value(), &json!("hunter2"), "the member's value");
+        }
+
+        #[test]
+        fn an_element_has_its_index_and_no_key() {
+            let child = element();
+            assert_eq!(child.index(), Some(7), "the element's index");
+            assert_eq!(child.key(), None, "an element has no key");
+            assert_eq!(child.value(), &json!(1234), "the element's value");
+        }
+
+        #[test]
+        fn zeroize_wipes_the_key_and_the_value() {
+            let mut child = member();
+            child.zeroize();
+            assert_eq!(child.key(), Some(""), "the key is wiped");
+            assert_eq!(child.value(), &Value::Null, "the value is wiped");
+        }
+
+        #[test]
+        fn zeroize_wipes_the_index_and_the_value() {
+            let mut child = element();
+            child.zeroize();
+            assert_eq!(child.index(), Some(0), "the index is wiped");
+            assert_eq!(child.value(), &Value::Null, "the value is wiped");
+        }
+
+        #[test]
+        fn debug_shows_neither_label_nor_value() {
+            for child in [member(), element()] {
+                assert_eq!(
+                    format!("{child:?}"),
+                    "JsonChildPlaintext(<redacted>)",
+                    "the key, the index and the value are plaintext"
+                );
+            }
+        }
     }
 }

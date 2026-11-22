@@ -615,10 +615,16 @@ impl JsonSubtreeKey {
     /// so a read of one child sends the parent's token and returns that
     /// child's entry, not the parent's whole subtree.
     ///
-    /// Opening it ([`DecryptSource<JsonPlaintext>`](crate::DecryptSource))
-    /// checks that the entry is a child of the node the key names, and
-    /// refuses it with [`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry)
-    /// if not: the entry must carry a parent tag (the root and, under the
+    /// Opening it ([`DecryptSource<JsonChildPlaintext>`](crate::DecryptSource))
+    /// gives the child's key, for a member of an object, or its index, for
+    /// an element of an array, with its value. `json_tree_children`
+    /// returns an object's members in a random order, and the key says
+    /// which member each one is.
+    ///
+    /// Opening checks that the entry is a child of the node the key names,
+    /// and refuses it with
+    /// [`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry) if not: the
+    /// entry must carry a parent tag (the root and, under the
     /// sealed root, the top-level fields carry none, as no node's child),
     /// sit one level below the parent where the server reported a depth,
     /// carry the selector of the parent's path extended by its decrypted

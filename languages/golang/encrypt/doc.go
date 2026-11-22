@@ -244,13 +244,15 @@
 // the query.
 //
 // A selection or a subtree read opens values as JSON text ([JSONValue],
-// [JSONRead.Open]). [DecodeJSON] reads one into a Go type.
+// [JSONRead.Open]). A children read opens each child to its key or index
+// and its JSON text ([JSONChildValue]). [DecodeJSON] reads JSON text into a
+// Go type.
 //
 // A document sealed through a cipher with a binding ([Cipher.Bind]) is read
 // through a cipher with the same scopes and binding. Selector, Subtree and
-// Children take such a cipher: the selector or the tokens derive under its scopes
-// alone, as a query's term does, and the entries open under the scopes and
-// the binding. Every row of one Open call opens under that binding, so a
+// Children take such a cipher: the selector or the tokens derive under its
+// scopes alone, as a query's term does, and the entries open under the
+// scopes and the binding. Every row of one Open call opens under that binding, so a
 // read through a cipher with a binding reads that binding's row. A query
 // (Contains, EqAt, Match and the rest) opens nothing, so it takes no
 // binding, and a query through a cipher with one is refused.

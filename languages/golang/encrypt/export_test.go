@@ -14,6 +14,7 @@ import (
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
+	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 	"github.com/tetratelabs/wazero/api"
 )
 
@@ -51,6 +52,14 @@ func withZeroKMSURL(url string) ClientOption {
 
 // WithZeroKMSURL is withZeroKMSURL for the external tests.
 func WithZeroKMSURL(url string) ClientOption { return withZeroKMSURL(url) }
+
+// JSONOpensForTest asks se_json_open to open no rows of a read whose request
+// names operator as its operation, at path: nil when the engine opens a
+// read of that operation.
+func (cph *Cipher) JSONOpensForTest(ctx context.Context, plan *record.Plan, field, operator, path string) error {
+	_, err := cph.jsonOpen(ctx, plan, field, vcvalue.Object{{Key: "operation", Value: operator}, {Key: "path", Value: path}}, nil)
+	return err
+}
 
 // Sends is how many ZeroKMS requests the client has made.
 func Sends(c *Client) int64 { return c.transport.sends.Load() }

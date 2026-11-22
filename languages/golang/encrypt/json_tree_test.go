@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"reflect"
 	"slices"
@@ -281,9 +282,10 @@ func TestJSONSelectorReadsOpenAgainstTheirRequest(t *testing.T) {
 }
 
 // A child read through the guest: each entry eql_v4.json_tree_children
-// returns opens on its own against the parent the request names, one group
-// each. Another parent's child, a child with members of its own, and a
-// parent path with a wildcard are refused.
+// returns opens on its own against the parent the read names, to its key
+// or index and its value. Another parent's child, a child with members of
+// its own, and a parent path with a wildcard are refused. Cipher.JSONOpen
+// refuses a children request: its values carry no key or index.
 func TestJSONChildrenOpenAgainstTheirParent(t *testing.T) {
 	c := deterministicEQLClient(t)
 	ctx := context.Background()
@@ -293,45 +295,69 @@ func TestJSONChildrenOpenAgainstTheirParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	document := sealed[0]["profile"].EQL
-	selector := func(path string) string {
+	term := func(operator, path string) string {
 		t.Helper()
-		term, err := cipher.QueryTerm(ctx, jsonPlan(), "profile", "selector", vcvalue.Object{{Key: "path", Value: path}})
+		term, err := cipher.QueryTerm(ctx, jsonPlan(), "profile", operator, vcvalue.Object{{Key: "path", Value: path}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return term.Text[0]
 	}
-	// The children of $.tags and of $.visits, as json_tree_children returns
-	// them, one group each: every entry carrying the elements' selector.
-	children := func(path string) [][][]byte {
+	// The read of the children of the node at path, prepared as the
+	// generated Children prepares it.
+	read := func(path, token string) encrypt.JSONChildren[eql.JSONEntry] {
+		return encrypt.NewJSONChildren[eql.JSONEntry](cipher, jsonPlan(), "profile", path, token)
+	}
+	// The children of $.tags, of $.visits and of $.visits[1], as
+	// json_tree_children returns them: every entry carrying the children's
+	// selector.
+	entries := func(selector string, want int) []eql.JSONEntry {
 		t.Helper()
-		entries := jsonEntries(t, document, selector(path+"[*]"))
-		if len(entries) != 2 {
-			t.Fatalf("%s has %d elements, want 2", path, len(entries))
+		found := jsonEntries(t, document, term(record.JSONSelector, selector))
+		if len(found) != want {
+			t.Fatalf("%s names %d entries, want %d", selector, len(found), want)
 		}
-		groups := make([][][]byte, len(entries))
-		for i, entry := range entries {
-			groups[i] = [][]byte{entry}
+		out := make([]eql.JSONEntry, len(found))
+		for i, entry := range found {
+			out[i] = eql.JSONEntry(entry)
 		}
-		return groups
+		return out
 	}
-	request := func(path string) vcvalue.Object {
-		return vcvalue.Object{{Key: "operation", Value: "children"}, {Key: "path", Value: path}}
+	// Each child as its index or key and its JSON text, sorted: the
+	// entries come in the document's stored order.
+	labelled := func(children []encrypt.JSONChildValue) []string {
+		var out []string
+		for _, child := range children {
+			if key, ok := child.Key(); ok {
+				out = append(out, fmt.Sprintf("%q: %s", key, child.JSON))
+			} else if index, ok := child.Index(); ok {
+				out = append(out, fmt.Sprintf("[%d] %s", index, child.JSON))
+			}
+		}
+		slices.Sort(out)
+		return out
 	}
-	opened, err := cipher.JSONOpen(ctx, jsonPlan(), "profile", request("$.tags"), append(children("$.tags"), nil))
+	tags := read("$.tags", term(record.JSONChildren, "$.tags"))
+	opened, err := tags.Open(ctx, entries("$.tags[*]", 2))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got []string
-	for _, values := range opened[:2] {
-		if len(values) != 1 {
-			t.Fatalf("a child opened to %q", values)
-		}
-		got = append(got, string(values[0]))
+	if got := labelled(opened); !slices.Equal(got, []string{`[0] "a"`, `[1] "b"`}) {
+		t.Fatalf("the children of $.tags opened %q", got)
 	}
-	slices.Sort(got)
-	if !slices.Equal(got, []string{`"a"`, `"b"`}) || len(opened) != 3 || len(opened[2]) != 0 {
-		t.Fatalf("the children of $.tags opened %q", opened)
+	second := read("$.visits[1]", term(record.JSONChildren, "$.visits[1]"))
+	members := append(entries("$.visits[*].at", 2), entries("$.visits[*].where", 1)...)
+	// Of the two at members, the one under $.visits[1] opens; the other is
+	// $.visits[0]'s, and is refused.
+	var children []encrypt.JSONChildValue
+	for _, entry := range members {
+		child, err := second.Open(ctx, []eql.JSONEntry{entry})
+		if err == nil {
+			children = append(children, child...)
+		}
+	}
+	if got := labelled(children); !slices.Equal(got, []string{`"at": 1`, `"where": "x"`}) {
+		t.Fatalf("the children of $.visits[1] opened %q", got)
 	}
 	diagnostic := func(name string, err error, code string) {
 		t.Helper()
@@ -340,18 +366,57 @@ func TestJSONChildrenOpenAgainstTheirParent(t *testing.T) {
 			t.Fatalf("%s: %v, want ErrEncoding with %s", name, err, code)
 		}
 	}
-	_, err = cipher.JSONOpen(ctx, jsonPlan(), "profile", request("$.visits"), children("$.tags"))
+	visits := read("$.visits", term(record.JSONChildren, "$.visits"))
+	_, err = visits.Open(ctx, entries("$.tags[*]", 2))
 	diagnostic("$.tags' children under $.visits", err, "stack_encrypt::json_wrong_entry")
-	_, err = cipher.JSONOpen(ctx, jsonPlan(), "profile", request("$.visits"), children("$.visits"))
+	_, err = visits.Open(ctx, entries("$.visits[*]", 2))
 	diagnostic("a child with members", err, "stack_encrypt::json_not_a_leaf")
-	_, err = cipher.JSONOpen(ctx, jsonPlan(), "profile", request("$.tags[*]"), children("$.tags"))
+	_, err = read("$.tags[*]", "unused").Open(ctx, entries("$.tags[*]", 2))
 	var d *encrypt.Diagnostic
 	if !errors.Is(err, encrypt.ErrEncoding) || !errors.As(err, &d) || d.Reason() != "json_path_wildcard" || d.Field() != "profile" {
 		t.Fatalf("a parent path with a wildcard: %v", err)
 	}
-	bounded := append(request("$.tags"), vcvalue.Field{Key: "wildcard_bound", Value: uint32(2)})
-	if _, err := cipher.JSONOpen(ctx, jsonPlan(), "profile", bounded, children("$.tags")); !errors.Is(err, encrypt.ErrEncoding) {
-		t.Fatalf("a children read with a bound: %v", err)
+	request := vcvalue.Object{{Key: "operation", Value: record.JSONChildren}, {Key: "path", Value: "$.tags"}}
+	if _, err := cipher.JSONOpen(ctx, jsonPlan(), "profile", request, [][][]byte{{[]byte(entries("$.tags[*]", 2)[0])}}); !errors.Is(err, encrypt.ErrEncoding) || errors.As(err, &d) {
+		t.Fatalf("JSONOpen of a children read: %v, want ErrEncoding before the guest", err)
+	}
+}
+
+// The operators that prepare a read, which a cipher with a binding prepares
+// under its scopes alone, are exactly the operators the engine opens a read
+// of: every operator the engine answers for a document field opens as a
+// read when record.IsJSONRead names it, and is refused when it does not.
+func TestTheReadOperatorsAreTheOnesTheEngineOpens(t *testing.T) {
+	c := deterministicEQLClient(t)
+	ctx := context.Background()
+	wasm, err := encrypt.EmbeddedGuest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checker, err := encrypt.NewCheckerOver(ctx, wasm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = checker.Close() }()
+	operators, err := checker.Operators(ctx, jsonPlan(), "profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	for _, op := range operators {
+		err := c.DefaultKeyset().JSONOpensForTest(ctx, jsonPlan(), "profile", op.Name, "$.name")
+		switch {
+		case record.IsJSONRead(op.Name) && err != nil:
+			t.Errorf("%s is a read here, and the engine does not open it: %v", op.Name, err)
+		case !record.IsJSONRead(op.Name) && !errors.Is(err, encrypt.ErrEncoding):
+			t.Errorf("%s is no read here, and the engine opens it: %v", op.Name, err)
+		}
+		if record.IsJSONRead(op.Name) {
+			reads++
+		}
+	}
+	if reads != 3 {
+		t.Errorf("the engine answers %d of the three read operators: %v", reads, operators)
 	}
 }
 

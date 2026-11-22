@@ -321,6 +321,51 @@ fn opened_values(opened: &ValueFrame) -> Vec<Vec<Value>> {
         .collect()
 }
 
+/// A `children` read of the `profile` field over `groups`: per group, the
+/// children it opened.
+async fn open_children<K: Source>(
+    keyset: &KeysetCipher<'_, K>,
+    plan: &record::Plan,
+    request: Value,
+    groups: Vec<Vec<String>>,
+) -> Result<Vec<Vec<Opened>>, stack_encrypt::Error> {
+    let opened = open_pending(keyset, plan, &request, &groups).await?;
+    let groups: Vec<Vec<ChildMap>> = dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
+    Ok(groups
+        .into_iter()
+        .map(|group| group.into_iter().map(ChildMap::opened).collect())
+        .collect())
+}
+
+/// One child as the frame carries it: its key or its index, and its
+/// value's JSON text.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChildMap {
+    key: Option<String>,
+    index: Option<u64>,
+    json: bytes::Bytes,
+}
+
+impl ChildMap {
+    fn opened(self) -> Opened {
+        let value = serde_json::from_slice(&self.json.0).unwrap();
+        match (self.key, self.index) {
+            (Some(key), None) => Opened::Member(key, value),
+            (None, Some(index)) => Opened::Element(index, value),
+            (key, index) => panic!("a child has a key or an index: {key:?}, {index:?}"),
+        }
+    }
+}
+
+/// What a child opened to: an object's member by its key, or an array's
+/// element by its index, with its value.
+#[derive(Debug, PartialEq)]
+enum Opened {
+    Member(String, Value),
+    Element(u64, Value),
+}
+
 /// A byte string read out of a frame.
 mod bytes {
     pub struct Bytes(pub Vec<u8>);
@@ -763,7 +808,7 @@ async fn a_child_opens_against_the_parent_its_request_names() {
         other => panic!("{other:?}"),
     };
     let tags = token(term(&keyset, &plan, "children", json!({"path": "$.tags"})).await);
-    let opened = open(
+    let opened = open_children(
         &keyset,
         &plan,
         json!({"operation": "children", "path": "$.tags"}),
@@ -773,25 +818,36 @@ async fn a_child_opens_against_the_parent_its_request_names() {
     .unwrap();
     assert_eq!(
         opened,
-        [vec![json!("a")], vec![json!("b")]],
-        "each element, in position order"
+        [
+            vec![Opened::Element(0, json!("a"))],
+            vec![Opened::Element(1, json!("b"))]
+        ],
+        "each element with its index, in position order"
     );
     let second = token(term(&keyset, &plan, "children", json!({"path": "$.visits[1]"})).await);
-    let mut members: Vec<Vec<Value>> = open(
+    let mut members: Vec<Opened> = open_children(
         &keyset,
         &plan,
         json!({"operation": "children", "path": "$.visits[1]"}),
         children(&doc, &second),
     )
     .await
-    .unwrap();
-    members.sort_by_key(|values| values[0].to_string());
+    .unwrap()
+    .into_iter()
+    .flatten()
+    .collect();
+    // The members come back in their random ordinal order; each names
+    // itself.
+    members.sort_by_key(|child| format!("{child:?}"));
     assert_eq!(
         members,
-        [vec![json!("x")], vec![json!(1)]],
-        "each member of the second visit"
+        [
+            Opened::Member("at".into(), json!(1)),
+            Opened::Member("where".into(), json!("x"))
+        ],
+        "each member of the second visit, with its key"
     );
-    let none = open(
+    let none = open_children(
         &keyset,
         &plan,
         json!({"operation": "children", "path": "$.tags"}),
@@ -801,12 +857,12 @@ async fn a_child_opens_against_the_parent_its_request_names() {
     .unwrap();
     assert_eq!(
         none,
-        [Vec::<Value>::new()],
+        [Vec::<Opened>::new()],
         "a group with no entry opens to none"
     );
 
     // `$.tags`' elements answered for `$.visits[1]`'s members.
-    let wrong = open(
+    let wrong = open_children(
         &keyset,
         &plan,
         json!({"operation": "children", "path": "$.visits[1]"}),
@@ -819,7 +875,7 @@ async fn a_child_opens_against_the_parent_its_request_names() {
     );
     // A container with children does not open on its own.
     let visits = token(term(&keyset, &plan, "children", json!({"path": "$.visits"})).await);
-    let container = open(
+    let container = open_children(
         &keyset,
         &plan,
         json!({"operation": "children", "path": "$.visits"}),

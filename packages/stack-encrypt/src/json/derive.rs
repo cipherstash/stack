@@ -32,7 +32,8 @@ use super::plaintext::JsonPlaintext;
 use super::query::{group_of, JsonSelector, JsonSelectorSet, JsonSubtreeKey, Read};
 use super::shuffle;
 use super::{
-    JsonChild, JsonDocument, JsonEntry, JsonExtracted, JsonHeader, JsonOptions, JsonSubtree, Tag,
+    JsonChild, JsonChildPlaintext, JsonDocument, JsonEntry, JsonExtracted, JsonHeader, JsonOptions,
+    JsonSubtree, Tag,
 };
 use crate::keyset::KeysetState;
 use crate::sem::TermError;
@@ -1330,6 +1331,16 @@ fn hand_over(value: Protected<PlainJson>) -> JsonPlaintext {
     JsonPlaintext::from(value.risky_unwrap().into_value())
 }
 
+/// An opened child as the caller receives it: its label under its parent,
+/// a key or an index, with its value. The root's label names no child.
+fn child_plaintext(label: Label, value: JsonPlaintext) -> Result<JsonChildPlaintext, Error> {
+    match label {
+        Label::Key(key) => Ok(JsonChildPlaintext::member(key, value)),
+        Label::Index(index) => Ok(JsonChildPlaintext::element(index, value)),
+        Label::Root => Err(wrong("a child of the node the key names")),
+    }
+}
+
 /// What opening a document's entries under the caller's context needs
 /// from ZeroKMS and from the context: the request that retrieves the
 /// document's one data key (its `iv`, its tag and its keyset from the
@@ -1556,13 +1567,17 @@ impl DecryptSource<JsonPlaintext> for JsonExtracted {
     }
 }
 
-/// One child's entry opens to its value: a scalar, or `{}` or `[]` for an
-/// empty container. See [`JsonSubtreeKey::open_child`] for the checks. The
-/// value is wiped when it is dropped. The context is required: it is the
-/// context the document was sealed under.
-impl DecryptSource<JsonPlaintext> for JsonChild {
+/// One child's entry opens to its key or index under its parent and its
+/// value: a scalar, or `{}` or `[]` for an empty container. See
+/// [`JsonSubtreeKey::open_child`] for the checks. Both are wiped when they
+/// are dropped. The context is required: it is the context the document
+/// was sealed under.
+impl DecryptSource<JsonChildPlaintext> for JsonChild {
     type ContextInput = RequiredContext<AeadContext>;
-    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
+    fn decryption<K: 'static>(
+        self,
+        context: Self::ContextInput,
+    ) -> Decryption<JsonChildPlaintext, K> {
         let context = context.into_inner();
         let (node, key) = self.into_parts();
         // A path with no wildcard derives one token, its node's, and no
@@ -1601,9 +1616,9 @@ impl DecryptSource<JsonPlaintext> for JsonChild {
                     slot: node.slot,
                     depth: node.depth,
                 };
-                ChainWalk::new(vec![row], &selectors, &opening)
-                    .lone_child(&parent)
-                    .map(hand_over)
+                let (value, label) =
+                    ChainWalk::new(vec![row], &selectors, &opening).lone_child(&parent)?;
+                child_plaintext(label, hand_over(value))
             })
             .under_context(shown.clone(), shown)
         })
@@ -2073,7 +2088,9 @@ impl<'k> ChainWalk<'k> {
     /// ([`Error::JsonNotALeaf`]). Its selector must be the parent's path
     /// extended by its decrypted label, and its self tag that of the token
     /// the label derives under the parent's ([`check_parent_link`]).
-    fn lone_child(&mut self, parent: &Read) -> Result<Protected<PlainJson>, Error> {
+    /// Returns the child's value and its label, which says which child of
+    /// the parent it is.
+    fn lone_child(&mut self, parent: &Read) -> Result<(Protected<PlainJson>, Label), Error> {
         let parent_bytes = parent.path.protected_selector_bytes();
         self.place_row(0, 1)?;
         let (opened, label, bytes) = self
@@ -2094,7 +2111,8 @@ impl<'k> ChainWalk<'k> {
         let child_token = hit_token(&self.opening.header.iv, &parent.token, entry, ordinal)
             .ok_or_else(|| wrong("a child the member or element rule names"))?;
         check_parent_link(&parent.token, &entry.s, &label, &child_token)?;
-        self.value(opened, &child_token, Vec::new(), &bytes, 1)
+        let value = self.value(opened, &child_token, Vec::new(), &bytes, 1)?;
+        Ok((value, label))
     }
 }
 

@@ -27,8 +27,8 @@ use eql_bindings::Identifier;
 use serde_json::{json, Map, Value};
 use stack_encrypt::dynamic::{self, record, Op, Operand, ValueFrame};
 use stack_encrypt::json::{
-    JsonDocument, JsonLeafQuery, JsonOptions, JsonPath, JsonPlaintext, JsonQuery, JsonSelector,
-    JsonSubtreeKey, Segment,
+    JsonChildPlaintext, JsonDocument, JsonLeafQuery, JsonOptions, JsonPath, JsonPlaintext,
+    JsonQuery, JsonSelector, JsonSubtreeKey, Segment,
 };
 use stack_encrypt::target::{json_document, Borrowed, CallerContext};
 use stack_encrypt::{AsProtectedRef as _, DecryptFrom, Label, NonEmpty};
@@ -197,20 +197,39 @@ async fn read_list(
     .map(|opened| opened.iter().map(|value| value.value().clone()).collect())
 }
 
-/// The value one entry `json_tree_children` returned opens to under the
-/// column, through the key of its parent's path.
+/// What one entry `json_tree_children` returned opens to under the column,
+/// through the key of its parent's path.
 async fn open_child(
     cipher: &Cipher,
     parent: &JsonSubtreeKey,
     entry: JsonTreeEntry,
-) -> Result<Value, stack_encrypt::Error> {
-    JsonPlaintext::decrypt_from_with_context(
+) -> Result<Child, stack_encrypt::Error> {
+    JsonChildPlaintext::decrypt_from_with_context(
         JsonTreeChild::from_key(parent, entry),
         cipher,
         column(),
     )
     .await
-    .map(|opened| opened.value().clone())
+    .map(|opened| Child::of(&opened))
+}
+
+/// An opened child: an object's member by its key, or an array's element
+/// by its index, with its value.
+#[derive(Clone, Debug, PartialEq)]
+enum Child {
+    Member(String, Value),
+    Element(u64, Value),
+}
+
+impl Child {
+    fn of(opened: &JsonChildPlaintext) -> Self {
+        let value = opened.value().clone();
+        match (opened.key(), opened.index()) {
+            (Some(key), None) => Child::Member(key.to_owned(), value),
+            (None, Some(index)) => Child::Element(index, value),
+            other => panic!("a child has a key or an index, not {other:?}"),
+        }
+    }
 }
 
 /// Padded standard base64, as the wire spells a selector.
@@ -361,7 +380,11 @@ async fn a_child_opens_through_the_key_of_its_parent() {
         "the parent it is checked against"
     );
     let opened = open_child(&cipher, &nested, entry.clone()).await.unwrap();
-    assert_eq!(opened, json!("constant"), "the child's value");
+    assert_eq!(
+        opened,
+        Child::Member("deep".into(), json!("constant")),
+        "the child's key and value"
+    );
 
     let hello = key("$.hello").await;
     let refused = open_child(&cipher, &hello, entry.clone()).await;
@@ -1922,6 +1945,13 @@ fn postgres_each_child_opens_against_its_parent() {
         Value::Array(items) if !items.is_empty() => None,
         other => Some(other.clone()),
     };
+    // What a child opens to: its key or index with its value, or `None`.
+    let member = |(key, value): (&String, &Value)| {
+        leaf(value).map(|value| Child::Member(key.clone(), value))
+    };
+    let element = |(index, value): (usize, &Value)| {
+        leaf(value).map(|value| Child::Element(index as u64, value))
+    };
     let mut opened = [0usize; 2];
     for sealed_root in [true, false] {
         let options = JsonOptions {
@@ -1950,12 +1980,12 @@ fn postgres_each_child_opens_against_its_parent() {
                     continue;
                 }
                 let plain = jsonb_first(&mut db, table, id, path);
-                let mut expected: Vec<Option<Value>> = match &plain {
-                    Some(Value::Array(items)) => items.iter().map(leaf).collect(),
-                    Some(Value::Object(members)) => members.values().map(leaf).collect(),
+                let mut expected: Vec<Option<Child>> = match &plain {
+                    Some(Value::Array(items)) => items.iter().enumerate().map(element).collect(),
+                    Some(Value::Object(members)) => members.iter().map(member).collect(),
                     _ => Vec::new(),
                 };
-                let mut got: Vec<Option<Value>> = rows
+                let mut got: Vec<Option<Child>> = rows
                     .into_iter()
                     .map(
                         |entry| match wait(&runtime, open_child(&cipher, &parent, entry)) {
@@ -1972,12 +2002,17 @@ fn postgres_each_child_opens_against_its_parent() {
                     )
                     .collect();
                 // An object's members come back in the random order their
-                // ordinals were drawn in.
+                // ordinals were drawn in, each with its key. A member with
+                // children does not open, so its key is not known: those
+                // are compared by count.
                 if matches!(plain, Some(Value::Object(_))) {
                     expected.sort_by_key(|child| format!("{child:?}"));
                     got.sort_by_key(|child| format!("{child:?}"));
                 }
-                assert_eq!(got, expected, "{at}: each child opens to its value");
+                assert_eq!(
+                    got, expected,
+                    "{at}: each child opens to its key or index and its value"
+                );
             }
         }
 

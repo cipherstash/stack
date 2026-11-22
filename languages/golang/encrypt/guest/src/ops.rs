@@ -307,9 +307,9 @@ where
 /// entries the SQL returned (`public.eql_v4_json_entry` JSON, text or
 /// bytes), the plan, the field's name and the codec-encoded read request
 /// (`{"operation": "selector" | "subtree" | "children", "path",
-/// "wildcard_bound"?}`) in;
-/// a codec-encoded list per row of JSON texts (bytes) out, which is
-/// **plaintext**. The selector or the read key is derived again from the
+/// "wildcard_bound"?}`) in; a codec-encoded list per row out, which is
+/// **plaintext**: JSON texts (bytes) for `selector` and `subtree`, and for
+/// `children` one map per child, `{"key" | "index", "json"}`. The selector or the read key is derived again from the
 /// request under `keyset`, which the host names as it named it to prepare
 /// the read, and the rows open through that keyset only: a document sealed
 /// under another is refused before any key is retrieved. One batched key

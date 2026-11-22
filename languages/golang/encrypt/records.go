@@ -200,7 +200,7 @@ func (cph *Cipher) queryPlan(plan *record.Plan, field string) (*record.Plan, err
 // is a query's, which opens nothing: [Cipher.queryPlan] refuses it through
 // a cipher with a binding.
 func (cph *Cipher) operandPlan(plan *record.Plan, field, operator string) (*record.Plan, error) {
-	if operator == "selector" || operator == "subtree" || operator == "children" {
+	if record.IsJSONRead(operator) {
 		// The copy keeps the cipher's error, so a binding part Bind refused
 		// is reported here, before the read is prepared.
 		scopes := cph.copy()

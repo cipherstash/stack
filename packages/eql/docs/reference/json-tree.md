@@ -239,9 +239,12 @@ against the path whose token it sent, so a read of one child transfers that
 child's entry and not the parent's subtree. The client checks that the
 entry is a child of that node: its selector is the parent's path extended
 by its decrypted key or position, and its self tag is the one that key or
-position derives under the parent's token. A scalar child opens to its
-value, and an empty object or array to `{}` or `[]`. A child with members
-of its own does not open alone, because its authentication tag covers its
+position derives under the parent's token. Each child opens to its key, for
+a member of an object, or its position, for an element of an array, with
+its value. The key is authenticated with the value, so it names each member
+whatever order the rows come back in. A scalar child's value is the scalar,
+and an empty object or array's is `{}` or `[]`. A child with members of its
+own does not open alone, because its authentication tag covers its
 children's tags: read it with a subtree read of its own path.
 
 ## One array element, and a whole predicate

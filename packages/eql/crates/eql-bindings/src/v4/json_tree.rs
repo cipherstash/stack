@@ -28,9 +28,9 @@ use schemars::{schema_for, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stack_encrypt::json::{
-    JsonDocument, JsonElementsQuery, JsonLeafQuery, JsonNode, JsonOptions, JsonPath, JsonPlaintext,
-    JsonPredicateQuery, JsonQueries, JsonQuery, JsonSelector, JsonSubtree, JsonSubtreeKey,
-    JsonTarget,
+    JsonChildPlaintext, JsonDocument, JsonElementsQuery, JsonLeafQuery, JsonNode, JsonOptions,
+    JsonPath, JsonPlaintext, JsonPredicateQuery, JsonQueries, JsonQuery, JsonSelector, JsonSubtree,
+    JsonSubtreeKey, JsonTarget,
 };
 use stack_encrypt::target::{
     json_document, AeadContext, Borrowed, DecryptSource, EncryptTarget, ExpectedContext, Index,
@@ -360,18 +360,20 @@ impl JsonTreeSubtree {
 }
 
 /// One entry `eql_v4.json_tree_children(doc, token)` returned, with the key
-/// of the node whose token it was: opens to the child's value, a scalar,
-/// or `{}` or `[]` for an empty container, without the parent's subtree.
-/// The only constructor, [`from_key`](Self::from_key), takes the parent's
-/// key, and opening checks the entry is a child of the node the key names,
-/// as [`JsonSubtreeKey::open_child`] describes: its selector, its depth,
-/// and the self tag its decrypted label derives under the parent's token.
-/// A container with children does not open on its own
+/// of the node whose token it was. It opens to a [`JsonChildPlaintext`]:
+/// the child's key, for a member of an object, or its index, for an
+/// element of an array, and its value, a scalar, or `{}` or `[]` for an
+/// empty container. The parent's subtree is not read. The only
+/// constructor, [`from_key`](Self::from_key), takes the parent's key.
+/// Opening checks the entry is a child of the node the key names, as
+/// [`JsonSubtreeKey::open_child`] describes: its selector, its depth, and
+/// the self tag its decrypted key or index derives under the parent's
+/// token. A container with children does not open on its own
 /// ([`Error::JsonNotALeaf`]): read it through [`JsonTreeSubtree`].
 ///
-/// The key is the one whose token the query took: for a path with no
-/// wildcard it holds that path's one token, which is what
-/// `children(path)` derives as a [`JsonTreeToken`].
+/// The key is the one whose token the query took. A field reference's
+/// `children(path).encrypt_keyed(&keyset)` gives the [`JsonTreeToken`] to
+/// bind and that key, from one derivation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct JsonTreeChild {
     entry: JsonTreeEntry,
@@ -758,15 +760,19 @@ impl DecryptSource<JsonPlaintext> for JsonTreeExtracted {
     }
 }
 
-/// A child's entry opens to a [`JsonPlaintext`], which is wiped when it is
-/// dropped: the child's scalar, or `{}` or `[]` for an empty container.
+/// A child's entry opens to a [`JsonChildPlaintext`], which is wiped when
+/// it is dropped: the child's key or index under its parent, and its
+/// scalar, or `{}` or `[]` for an empty container.
 ///
 /// The context is required. It is the context the document was sealed
 /// under, as for [`JsonTreeExtracted`]. An entry with no parent tag, and a
 /// key of a path with a wildcard, are refused before any key is requested.
-impl DecryptSource<JsonPlaintext> for JsonTreeChild {
+impl DecryptSource<JsonChildPlaintext> for JsonTreeChild {
     type ContextInput = RequiredContext<AeadContext>;
-    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
+    fn decryption<K: 'static>(
+        self,
+        context: Self::ContextInput,
+    ) -> Decryption<JsonChildPlaintext, K> {
         match self.entry.node() {
             Ok(node) => DecryptSource::decryption(self.parent.open_child(node), context),
             Err(error) => Decryption::failed(error),

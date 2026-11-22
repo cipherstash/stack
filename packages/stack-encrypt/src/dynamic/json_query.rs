@@ -202,7 +202,9 @@
 use serde::de::{self, Deserializer, Visitor};
 use serde::Deserialize;
 use serde_json::Value;
-use vitaminc_protected::Protected;
+use vitaminc_aead::plaintext::visit_map;
+use vitaminc_aead::Sink;
+use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroizing;
 
 use super::query::{Op, Operand};
@@ -212,8 +214,11 @@ use crate::json::inputs::{
     elements_base, json_reason, leaf, member_path, node_path, ordered_path, path, scalar,
     selector_path, wildcard_bound, Bounds, Compare, Derived, Input, Parsed, Predicate,
 };
-use crate::json::{parse_text, JsonNode, JsonOptions, JsonPath, JsonPlaintext, JsonSubtreeKey};
-use crate::{DecryptFrom, KeysetCipher, Pending};
+use crate::json::{
+    parse_text, ChildLabel, JsonChildPlaintext, JsonNode, JsonOptions, JsonPath, JsonPlaintext,
+    JsonSubtreeKey,
+};
+use crate::{DecryptFrom, Encrypt, KeysetCipher, Pending};
 
 /// The SQL type a JSON operand binds as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -655,12 +660,12 @@ pub(super) fn check_open(request: &ValueFrame, rows: &ValueFrame) -> Result<(), 
     read_open(request, rows).map(drop)
 }
 
-/// What a read opens with: the selector, the subtree key, or the key of
-/// the children's parent, derived again from the request.
+/// What a read opens with: the selector or the subtree key, derived again
+/// from the request. A `children` read opens with the key of the
+/// children's parent ([`open_children`]).
 enum Opener {
     Selector(crate::json::JsonSelector),
     Subtree(JsonSubtreeKey),
-    Child(JsonSubtreeKey),
 }
 
 /// Open the rows a read returned against the request that prepared it,
@@ -674,11 +679,13 @@ enum Opener {
 /// returned or none (SQL `NULL`); for `subtree`, the rows
 /// `json_tree_subtree` returned; for `children`, one entry
 /// `json_tree_children` returned for the token of the node at the path, or
-/// none. Every group opens to a list of JSON texts: for `selector`, the
-/// scalar or none; for `subtree`, one value per concrete path the read
-/// named that the row has, in document order; and for `children`, the
-/// child's value (a scalar, `{}` or `[]`) or none. One key request for
-/// every group.
+/// none. Every group opens to a list: for `selector`, the scalar's JSON
+/// text or none; for `subtree`, the JSON text of one value per concrete
+/// path the read named that the row has, in document order; and for
+/// `children`, the child or none. A child is a map: `{"key": text, "json":
+/// bytes}` for a member of an object, and `{"index": u64, "json": bytes}`
+/// for an element of an array, where `json` is the child's value (a
+/// scalar, `{}` or `[]`) as JSON text. One key request for every group.
 ///
 /// # Errors
 ///
@@ -742,14 +749,7 @@ fn open_read<'a, K: 'static>(
         Read::Subtree(path, bound) => {
             Opener::Subtree(keyset.json_subtree_key_now(&path, options, bound, under.query()?)?)
         }
-        // A path with no wildcard: the key holds the parent's one token,
-        // and the bound is never used.
-        Read::Child(path) => Opener::Child(keyset.json_subtree_key_now(
-            &path,
-            options,
-            JsonSubtreeKey::DEFAULT_BOUND,
-            under.query()?,
-        )?),
+        Read::Child(path) => return open_children(keyset, under, options, &path, groups),
     };
     let context = || under.stored();
     // Opened through the client, confined to the deriving keyset, as a
@@ -778,21 +778,110 @@ fn open_read<'a, K: 'static>(
                 opener_cipher,
                 context(),
             )),
-            Opener::Child(key) => match <[JsonNode; 1]>::try_from(nodes) {
-                Ok([node]) => confined(
-                    JsonPlaintext::decrypt_from_with_context(
-                        key.open_child(node),
-                        opener_cipher,
-                        context(),
-                    )
-                    .map(|value| vec![value]),
-                ),
-                // `read_open` allows a child's group one entry or none.
-                Err(_) => Pending::ready(keyset, Ok(Vec::new())),
-            },
         });
     }
     Ok(Pending::all(keyset, pendings).try_map(opened_frame))
+}
+
+/// [`open_read`] for `children`: each group's one entry opens against the
+/// key of the parent at `path`, to the child's key or index and its value,
+/// as [`open_read`] opens a selector's entry.
+fn open_children<'a, K: 'static>(
+    keyset: &KeysetCipher<'a, K>,
+    under: &Under<'_>,
+    options: &JsonOptions,
+    path: &JsonPath,
+    groups: Vec<Vec<JsonNode>>,
+) -> Result<Pending<'a, ValueFrame, K>, Error> {
+    // A path with no wildcard: the key holds the parent's one token, and
+    // the bound is never used.
+    let parent = keyset.json_subtree_key_now(
+        path,
+        options,
+        JsonSubtreeKey::DEFAULT_BOUND,
+        under.query()?,
+    )?;
+    let opener_cipher = keyset.cipher();
+    let confine = keyset.selector();
+    let mut pendings: Vec<Pending<'a, Vec<JsonChildPlaintext>, K>> =
+        Vec::with_capacity(groups.len());
+    for nodes in groups {
+        pendings.push(match <[JsonNode; 1]>::try_from(nodes) {
+            Ok([node]) => JsonChildPlaintext::decrypt_from_with_context(
+                parent.open_child(node),
+                opener_cipher,
+                under.stored(),
+            )
+            .map(|child| vec![child])
+            .confined_to(&confine),
+            // `read_open` allows a child's group one entry or none.
+            Err(_) => Pending::ready(keyset, Ok(Vec::new())),
+        });
+    }
+    Ok(Pending::all(keyset, pendings).try_map(children_frame))
+}
+
+/// The opened children as a frame: a list per group of each child's map,
+/// `{"key", "json"}` or `{"index", "json"}`. Each child is wiped when it is
+/// dropped, here, once its text is written, and each text once the frame
+/// holds it.
+fn children_frame(groups: Vec<Vec<JsonChildPlaintext>>) -> Result<ValueFrame, crate::Error> {
+    let opened: Result<Vec<Vec<OpenedChild<'_>>>, crate::Error> = groups
+        .iter()
+        .map(|group| group.iter().map(OpenedChild::of).collect())
+        .collect();
+    let frame = ValueFrame::of(&opened?).map_err(|error| crate::Error::Other(Box::new(error)));
+    drop(groups);
+    frame
+}
+
+/// One opened child as the frame carries it: its key or its index, and its
+/// value's JSON text, which is wiped when it is dropped.
+struct OpenedChild<'c> {
+    child: &'c JsonChildPlaintext,
+    json: Protected<Vec<u8>>,
+}
+
+impl<'c> OpenedChild<'c> {
+    fn of(child: &'c JsonChildPlaintext) -> Result<Self, crate::Error> {
+        let json = crate::json::to_text(child.value())
+            .map(Protected::new)
+            .map_err(|error| crate::Error::Other(Box::new(error)))?;
+        Ok(Self { child, json })
+    }
+}
+
+/// One entry of an [`OpenedChild`]'s map.
+enum ChildField<'c> {
+    Key(&'c str),
+    Index(u64),
+    Json(&'c Protected<Vec<u8>>),
+}
+
+impl Encrypt for ChildField<'_> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        match self {
+            ChildField::Key(key) => key.visit(sink),
+            ChildField::Index(index) => index.visit(sink),
+            ChildField::Json(json) => json.visit(sink),
+        }
+    }
+}
+
+/// `{"key": text, "json": bytes}` for a member, `{"index": u64, "json":
+/// bytes}` for an element.
+impl Encrypt for &OpenedChild<'_> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        let label = match self.child.label() {
+            ChildLabel::Key(key) => ("key", ChildField::Key(key.risky_ref())),
+            ChildLabel::Index(index) => ("index", ChildField::Index(*index.risky_ref())),
+        };
+        visit_map(
+            sink,
+            Some(2),
+            [label, ("json", ChildField::Json(&self.json))],
+        )
+    }
 }
 
 /// The opened groups as a frame: a list per group of each value's JSON

@@ -62,10 +62,12 @@
 //! client derived for the read: [`JsonSelector::open`] for the one entry
 //! `->` returns ([`JsonExtracted`]), [`JsonSubtreeKey::open`] for the rows
 //! of a walk ([`JsonSubtree`]), and [`JsonSubtreeKey::open_child`] for one
-//! entry `json_tree_children` returns ([`JsonChild`]). Each checks that the
-//! rows are the ones the read asked for. Every entry's AAD binds its selector, the slot it is
-//! stored at and the digest of its children's AEAD tags (the cascade), so
-//! the rows beneath the node a read names open only as they were sealed;
+//! entry `json_tree_children` returns ([`JsonChild`], which opens to a
+//! [`JsonChildPlaintext`]: the child's key or index, and its value). Each
+//! checks that the rows are the ones the read asked for. Every entry's AAD
+//! binds its selector, the slot it is stored at and the digest of its
+//! children's AEAD tags (the cascade), so the rows beneath the node a read
+//! names open only as they were sealed;
 //! the node itself is checked against the path the client derived, since
 //! nothing above it is read. The entries are stored in a random order, root
 //! first, and no check reads a slot as a position in the document.
@@ -147,7 +149,9 @@ mod text;
 pub use derive::JsonTerms;
 pub(crate) use path::IndexPath;
 pub use path::{JsonPath, JsonPathError, Segment};
-pub use plaintext::JsonPlaintext;
+#[cfg(feature = "dynamic")]
+pub(crate) use plaintext::ChildLabel;
+pub use plaintext::{JsonChildPlaintext, JsonPlaintext};
 pub(crate) use query::JsonElementsMember;
 pub use query::{
     JsonElementsQuery, JsonLeafQuery, JsonPredicateQuery, JsonQuery, JsonSelector, JsonSelectorSet,
@@ -741,11 +745,11 @@ where
 
 /// One entry `json_tree_children(doc, token)` returned, with the key of the
 /// node whose token it was: what
-/// [`DecryptSource<JsonPlaintext>`](crate::DecryptSource) opens to the
-/// child's value, which is wiped when it is dropped. Built only by
-/// [`JsonSubtreeKey::open_child`], so it always carries the parent's key,
-/// and opening checks the entry against it (see that method for the
-/// checks).
+/// [`DecryptSource<JsonChildPlaintext>`](crate::DecryptSource) opens to the
+/// child's key or index under its parent and its value, which are wiped
+/// when they are dropped. Built only by [`JsonSubtreeKey::open_child`], so
+/// it always carries the parent's key, and opening checks the entry against
+/// it (see that method for the checks).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonChild {
     node: JsonNode,
