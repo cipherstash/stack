@@ -2,7 +2,9 @@
 
 Date: 8 November 2026. Checked against `next` at commit `e4990e49b`.
 Revised 9 November 2026: the derive emits the combinators, not the plan
-builder, and `Planned` is a target (ADR-0007, amended).
+builder, and `Planned` is a target (ADR-0007, amended). Tracking lines
+refreshed on 15 November 2026, against `next` at `360530276` and the open
+stack of pull requests #1613, #1659, #1664 and #1666.
 
 Stack Encrypt encrypts each value under its own data key from ZeroKMS,
 CipherStash's key service. It also makes the search terms that let
@@ -66,7 +68,7 @@ decision.
 | Dynamic interface | The engine's interface for languages other than Rust. It takes a declaration and values as data, not as Rust types |
 | EQL (Encrypt Query Language) | The PostgreSQL types and functions in `packages/eql` that store encrypted values and answer queries on them |
 | Executor | The combinators in `target/`: the one engine path that runs every declaration. The derive's generated code and `Planned` both compose them. The executor derives each field's context, requests the keys in one batch, and seals or opens every value |
-| Field marker | A constant the derive emits for each field of a record, such as `EncryptedMember::EMAIL`. It names the field, its plaintext type, its accessor, and its indexes. A typed query starts from it |
+| Field reference | A constant the derive emits for each field of a record, such as `EncryptedMember::EMAIL`. It names the field, its plaintext type, its accessor, and its indexes. A typed query starts from it |
 | Guest | The Rust engine compiled to WebAssembly. The Go SDK runs it inside the Go process |
 | Key tag | The HMAC ZeroKMS returns with a data key. A reader must present it to get the key again. Stack Encrypt binds it into every leaf's AAD |
 | Keyset | A set of keys in ZeroKMS. Every data key belongs to one keyset. A tenant can have its own keyset. In Rust, `Keyset` is also the handle bound to one keyset, which encrypt and query calls take. Today `KeysetCipher` |
@@ -253,7 +255,8 @@ The field is then stored as one EQL column, such as
 
 Go records already do this through the dynamic interface. A field there
 names its EQL type, such as `"target": "TextEq"`, and the engine runs that
-type for the field. The Rust record derive does not support it yet.
+type for the field. The Rust record derive does the same (#1658). The
+field's column is the record's scope and the field's name.
 
 ```rust
 use eql_bindings::v4::{integer::IntegerOrd, text::TextEq};
@@ -265,8 +268,6 @@ struct Member {
     age: i32,
 }
 
-// Not on `next` yet in Rust: EQL types as fields of a derived record.
-// Go records do this today through the dynamic interface.
 #[derive(EncryptTarget, DecryptSource)]
 #[stash(struct = Member, scope = "members")]
 struct EncryptedMember {
@@ -292,9 +293,9 @@ use eql_bindings::Identifier;
 let email = Identifier::for_column("members", "email")?;
 let age = Identifier::for_column("members", "age")?;
 
-// Not on `next` yet: the new traits for EQL types, and a borrowed value
-// and context. Today this needs `target::legacy::EncryptInto`, an owned
-// value, and an owned context.
+// Not on `next` yet: a borrowed value, and a context built with
+// `Scope::new`. Today this needs an owned value and an owned context:
+// `"alice@example.com".to_owned().encrypt_into_with_context(&keyset, email.clone())`.
 let by_email: TextEqQuery = "alice@example.com"
     .encrypt_into_with_context(&keyset, Scope::new(&email))
     .await?;
@@ -311,7 +312,7 @@ SELECT id, email, age FROM members WHERE age > $1::eql_v4.query_integer_ord;
 The context `Identifier::for_column("members", "email")` is the same as the
 context that the record derive gives the `email` field of
 `EncryptedMember`. So the query matches the stored values. A field of a
-record is queried through its marker instead, so that the operator is
+record is queried through its field reference instead, so that the operator is
 checked at compile time. See [Query a record field](#query-a-record-field).
 
 A match query works in the same way, on a field with a match index. Its
@@ -320,32 +321,32 @@ and checks each one.
 
 #### Query a record field
 
-The derive emits one marker for each field of a record, such as
-`EncryptedMember::EMAIL`. A marker names the field, the context the
+The derive emits one field reference for each field of a record, such as
+`EncryptedMember::EMAIL`. A field reference names the field, the context the
 derive sealed it under (the record's scope, then the field's identity),
 and the field's target type, whose `Answers` impls are the field's index
 list. It is the value a query starts from. The derive emits no plan: the
-marker is enough for a query, and a binding sends a plan of its own.
-Built on 10 November 2026 (pull request #1595): the marker has no
+field reference is enough for a query, and a binding sends a plan of its own.
+Built on 10 November 2026 (pull request #1595): the field reference has no
 plaintext type and no accessor, because the derive sees the record's
 field types and not the plaintext struct's, and a query value converts
 from the borrowed form a caller has (`&str` to `String`) through
-`ToOwned`. So an equality marker takes a value of any type its index
+`ToOwned`. So an equality field reference takes a value of any type its index
 accepts, unless the field states its query type with
 `#[stash(query = String)]`. A field whose type is several indexes, a
 nullable field, and a record field (through `.field(..)`) have operator
 methods too (#1596).
 
-A typed query starts from the marker, and has one method for each
+A typed query starts from the field reference, and has one method for each
 operator the field's indexes answer. A missing operator is a compile
 error: "no method named `gt`", with a message that names the field's
-indexes. A record that lists a caller scope gives its markers the
+indexes. A record that lists a caller scope gives its field references the
 scope's type, and the query has no `encrypt` until `.scope(..)` is given
 once, with a value of that type; a record with no caller scope gives a
 query that is ready at once. A binding cannot be given, because the
 query type has no `bind` method, so a query accepts its scope only, by
 type. The query ends with `encrypt(&keyset)`, and its output type is the
-EQL query type the marker fixes. Decided on 7 November 2026.
+EQL query type the field reference fixes. Decided on 7 November 2026.
 
 ```rust
 // On `next` since pull request #1595, with the index's query term as
@@ -363,7 +364,7 @@ let adults: IntegerOrdQuery = EncryptedMember::AGE
     .encrypt(&keyset)
     .await?;
 
-// error: `TextEq` has no order index, so the marker has no `gt`
+// error: `TextEq` has no order index, so the field reference has no `gt`
 EncryptedMember::EMAIL.gt("alice@example.com")
 // error: the query builder has no `bind`
 EncryptedMember::EMAIL.eq("alice@example.com").bind(row_id)
@@ -377,8 +378,8 @@ A chained scope is allowed on a query because a query has one field and
 one value, so a scope cannot mean anything else. The rule that no chain state offers context, in [One context argument, and paired entry points](#one-context-argument-and-paired-entry-points), was about `.extend(..)` after `.fields()` on a record. There, a part added late looked per-field
 and was not.
 
-A typed query lowers from its marker to the term combinator, under the
-marker's context. A dynamic query lowers a [query plan](#a-query-plan)
+A typed query lowers from its field reference to the term combinator, under the
+field reference's context. A dynamic query lowers a [query plan](#a-query-plan)
 to the same combinator through `Planned`. The equivalence suite checks
 that the two agree (ADR-0007, amended 9 November 2026).
 
@@ -401,9 +402,8 @@ use stack_encrypt::json::JsonPlaintext;
 
 let column = Identifier::for_column("customers", "profile")?;
 
-// Not on `next` yet: the new traits for EQL types, and the public
-// `JsonPlaintext`. Today this needs `target::legacy::EncryptInto`, a
-// `serde_json::Value`, and an owned context.
+// Not on `next` yet: a context built with `Scope::new`. Today this
+// passes the column itself: `.encrypt_into_with_context(&keyset, column.clone())`.
 let profile: JsonPlaintext = json!({ "name": "Ada", "age": 35 }).into();
 let encrypted: JsonTreeDocument = profile
     .encrypt_into_with_context(&keyset, Scope::new(&column))
@@ -421,34 +421,37 @@ the strict checks on JSON input. A program can also encrypt a borrowed
 any [borrowed value](#encrypt-borrowed-values).
 
 With the default options, no path has an ordering term. So a query cannot
-compare the order of the values at a path. To order some paths, declare a
-named type with typed Rust options:
+compare the order of the values at a path. To order some paths, a record
+field names them with `#[stash(json(..))]`, as Go's struct tag does
+(`encrypt_into=JsonSearch(ordered=$.age)`). Decided by Dan on 16 November
+2026, in place of a named type with options in a `target(..)` attribute:
 
 ```rust
-use stack_encrypt::json::JsonOptions;
-
-fn profile_options() -> Result<JsonOptions, TermError> {
-    JsonOptions::new().ordering(["$.age", "$.visits[*].at"])
+#[derive(Zeroize)]
+struct Customer {
+    profile: JsonPlaintext,
 }
 
-// Not on `next` yet: a JSON target with typed options.
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(
-    plaintext = JsonPlaintext,
-    transparent,
-    target(column = ("customers", "profile"), options = profile_options)
-)]
-struct EncryptedProfile(JsonTreeDocument);
+#[stash(struct = Customer, scope = "customers")]
+struct EncryptedCustomer {
+    #[stash(json(ordered = { "$.age": u32, "$.visits[*].at": u64, "$.visits[*].place": String }))]
+    profile: JsonTreeDocument,
+}
 
-let profile = JsonPlaintext::parse(r#"{"name":"Ada","age":35}"#)?;
-let encrypted: EncryptedProfile = profile.encrypt_into(&keyset).await?;
-let opened = JsonPlaintext::decrypt_from(encrypted, &keyset).await?;
+let customer = Customer { profile: JsonPlaintext::parse(r#"{"name":"Ada","age":35}"#)? };
+let encrypted: EncryptedCustomer = customer.encrypt_into(&keyset).await?;
+let opened = Customer::decrypt_from(encrypted, &keyset).await?;
 ```
+
+The field is sealed under the options, and its field queries under them.
+`ordered` maps each ordered path to the type of the values at it.
+`sealed_root = false` in the same list turns off the sealed root.
 
 #### Query a JSON document
 
-A JSON query is a query on the document's field marker. The marker has
-one method for each kind of query. A scalar field's marker has one method
+A JSON query is a query on the document's field reference. The field reference has
+one method for each kind of query. A scalar field's reference has one method
 for each operator in the same way (see [Query a record
 field](#query-a-record-field)). A query needs two things from the field's
 declaration:
@@ -459,33 +462,35 @@ declaration:
   wildcard such as `[*]` expands. An order query on a path without order
   terms would find no rows, so Stack Encrypt refuses it.
 
-The marker carries both, so the query names only its kind and its
-values. The output type is the EQL query type, fixed by the marker.
-Decided on 7 November 2026.
+The field reference carries both, so the query names only its kind and its
+values. The output type is the EQL query type, fixed by the field reference.
+Decided on 7 November 2026. Built in #1459; this example runs as
+`packages/eql/tests/encryption/tests/json_tree_field_references.rs`.
 
 ```rust
 use eql_bindings::v4::json_tree::{JsonTreeElementsQuery, JsonTreeLeafQuery, JsonTreeQuery};
 
-// Not on `next` yet: field markers and their query methods. The method
-// names are proposals.
-let ada: JsonTreeQuery = EncryptedProfile::DOCUMENT
+let ada: JsonTreeQuery = EncryptedCustomer::PROFILE
     .contains(json!({ "name": "Ada" }))
     .encrypt(&keyset)
     .await?;
-let older: JsonTreeLeafQuery = EncryptedProfile::DOCUMENT
-    .at("$.age")
+let older: JsonTreeLeafQuery = EncryptedCustomer::PROFILE
+    .at()
+    .age()
     .gt(30)
     .encrypt(&keyset)
     .await?;
-let adults: JsonTreeLeafQuery = EncryptedProfile::DOCUMENT
-    .at("$.age")
+let (low, high): (JsonTreeLeafQuery, JsonTreeLeafQuery) = EncryptedCustomer::PROFILE
+    .at()
+    .age()
     .between(18, 65)
     .encrypt(&keyset)
     .await?;
-let home: JsonTreeElementsQuery = EncryptedProfile::DOCUMENT
-    .elements("$.visits[*]")
-    .eq("place", "home")
-    .gt("at", 15)
+let home: JsonTreeElementsQuery = EncryptedCustomer::PROFILE
+    .elements()
+    .visits()
+    .place().eq("home")
+    .and().at().gt(15)
     .encrypt(&keyset)
     .await?;
 ```
@@ -503,18 +508,53 @@ SELECT id FROM customers
 WHERE eql_v4.json_tree_element_match(profile, $1::eql_v4.query_json_elements);
 ```
 
-The kinds of JSON query, the marker method for each, and what each finds:
+The kinds of JSON query, the field reference method for each, and what each finds:
 
-| Query | Marker method | What it finds | EQL query type |
+| Query | Field reference method | What it finds | EQL query type |
 | --- | --- | --- | --- |
-| Containment | `contains(doc)`, `contained_by(doc)`, and `at(path).eq(v)` | Rows whose document contains the given document, or is contained by it. Equality of a scalar at a path is containment of a one-entry document, so `at(path).eq(v)` lowers to it | `JsonTreeQuery` |
-| Comparison at a path | `at(path).gt(v)`, `.lt(v)`, `.between(a, b)`, and the rest | Rows where the value at an ordered path orders against, or lies between, the given values | `JsonTreeLeafQuery` |
-| Element match | `elements(path).eq(member, v).gt(member, v)` | Rows where one element of an array meets several conditions together | `JsonTreeElementsQuery` |
-| Jsonpath predicate | `predicate(text)` | Rows where a SQL/JSON path predicate is true | `JsonTreePredicateQuery` |
-| Children and child count | `children(path)` | The entries directly below one node, or how many there are | A node token |
+| Containment | `contains(doc)`, `contained_by(doc)`, and `at().age().eq(v)` | Rows whose document contains the given document, or is contained by it. Equality of a scalar at a path is containment of a one-entry document, so a path's `eq(v)` lowers to it | `JsonTreeQuery` |
+| Comparison at a path | `at().age().gt(v)`, `.lt(v)`, `.between(a, b)`, and the rest | Rows where the value at an ordered path orders against, or lies between, the given values | `JsonTreeLeafQuery`; two for `between`, low then high |
+| A path's selector | `at().age().selector()` | The selector `->` and `ORDER BY eql_v4.ord_term(col -> $1)` take | `JsonTreeSelector` |
+| Element match | `elements().visits().place().eq(v).and().at().gt(v)` | Rows where one element of an array meets several conditions together | `JsonTreeElementsQuery` |
+| Jsonpath predicate | `predicate!(FIELD, "text", name = v, ..)`, checked when the program compiles, and `predicate(text)`, with `.var(name, v)` for each variable, for text built at run time | Rows where a SQL/JSON path predicate is true | `JsonTreePredicateQuery` |
+| Children and child count | `children(path)` | The entries directly below one node, or how many there are | `JsonTreeToken` |
 
-A path is text. So an order query on a path the options do not order is
-refused at run time, before any key is fetched.
+Paths are typed, from the attribute. Decided by Dan on 21 November 2026:
+
+- `ordered = { "$.age": u32, .. }` names each ordered path and the type of
+  the values at it. The derive parses every path at compile time with the
+  engine's grammar, from the `stack-encrypt-jsonpath` crate that
+  `stack-encrypt` and its derive share. A path that does not parse, names
+  an array position, or is given twice does not compile.
+- `paths = { "$.name": String, .. }` names a path compared with equality
+  alone, and its type: a number, a string or a boolean. It adds nothing to
+  the field's options, so the field stores no ordering term for it, and
+  an ordering of it does not compile. A path given under both keys does
+  not compile. Decided by Dan on 22 November 2026.
+- The derive gives each path a method under `at()`, and each array whose
+  elements have an ordered member a method under `elements()`, whose
+  methods are the members. The names come from the path's keys
+  (`$.visits[*].at` is `at().visits_at()`), and `names = { "key": word }`
+  names a key that gives no Rust name. Each method takes the path's
+  type. So a path or a member the field does not declare, a value of
+  another type, a member of another array, and an element match on a path
+  that is not an array do not compile. These are the Go SDK's generated
+  `At`, `Elements` and `Paths`.
+- A filter a program builds at run time names its paths as text:
+  `at_text_path(path)` and `elements_text_path(path)`, whose members are
+  text. A text path is checked when the query is encrypted, before any key
+  is fetched, and derives the operand the typed method derives for the same
+  path and value. A field that declares no paths has only these.
+- A predicate's variables are given one at a time: `.var(name, v)`, with
+  `v` a scalar, and `.var_null(name)`. A repeated name, a NaN and an
+  infinity are refused before any key is fetched. The text of
+  `predicate(text)` is checked when the query is encrypted.
+- `predicate!(FIELD, "text", name = v, ..)` checks a predicate written in
+  the program when the program compiles: that the text parses, that the
+  index can answer it, that each variable is given once and used, that the
+  field declares each path and member, and that each value, a variable's or
+  a literal's, is of the path's type. It sends the same text, so its
+  operand is the one `predicate(text)` derives.
 
 Two limits of the SQL stay, from the reference page's sections on
 comparing a value at a path and on what the SQL cannot do. Sorting rows by a path through an array
@@ -525,16 +565,23 @@ page](../../packages/eql/docs/reference/json-tree.md) gives the SQL for
 each query. A scope chains on a JSON
 query as on a scalar one: `.contains(doc).scope(tenant)`.
 
-The engine already has one private input type for each JSON operator,
-in `stack_encrypt::dynamic`. `DocumentInput` is for containment, `AtInput`
-for a comparison at a path, and `ElementsInput` for element match. The marker
-methods build those same inputs, so the typed form and the dynamic form
-share one set of input rules. The operand types `Contains`, `AtPath`,
+The field reference methods build the same inputs the dynamic interface reads a
+binding's frames into (`json::inputs`, compiled without the `dynamic`
+feature), so the typed form and the dynamic form share one set of input
+rules and derive the same operands. The operand types `Contains`, `AtPath`,
 `ElementMatch`, `Predicate`, and `Children` that the plan proposed earlier
-are retired, replaced by these methods, on 7 November 2026.
+were retired as operands a caller builds, on 7 November 2026: a caller
+writes the methods above. The query a method returns,
+`field_reference::json::JsonFieldQuery<T, Op, S>`, names its kind as a type with no
+values, `Op`: `op::Contains`, `op::ContainedBy`, or `op::AtPath` of a
+comparison, which the dynamic `Op` enum is generated from, and, for the
+kinds that have no operator type, `field_reference::json::Selector`,
+`ElementMatch`, `Predicate` and `Children`. That kind decides what
+`encrypt` returns. Recorded on 16 November 2026, in #1459's pull
+request.
 
 A document encrypted straight into `JsonTreeDocument`, with no record,
-has no marker. It is queried through a [query plan](#a-query-plan), as any
+has no field reference. It is queried through a [query plan](#a-query-plan), as any
 value under a plan that is data.
 
 #### Encrypt a whole value as one ciphertext
@@ -789,9 +836,9 @@ operator, and the value. They are grouped differently.
 
 The result on the dynamic path is a `QueryTerm`: the operand bytes, and
 the EQL type they bind as, known at run time. A typed query returns the
-EQL query type instead, because its marker fixes it.
+EQL query type instead, because its field reference fixes it.
 
-A typed query from a field marker lowers to the term combinator
+A typed query from a field reference lowers to the term combinator
 directly, with no plan. The dynamic form lowers its query plan to the
 same combinator through `Planned`. [Query a record
 field](#query-a-record-field) shows the typed form.
@@ -1161,7 +1208,7 @@ NEW.body := eql_v4.label_tag(NEW.body, 'row_id', NEW.id::text);
   that, and the stored bytes are the same either way.
 - **`encrypt` or `encrypt_into`.** `encrypt_into` is for the case where
   the caller names the output type. `encrypt` is for the case where a
-  marker or a plan fixes it: a query from a marker, or a `Planned` value.
+  field reference or a plan fixes it: a query from a field reference, or a `Planned` value.
   `keyset.encrypt(value)` and `value.encrypt_into::<T>` follow this rule
   on `next` today.
 - **Rust is the superset.** The plain serialised plan is checked at run
@@ -1181,8 +1228,10 @@ NEW.body := eql_v4.label_tag(NEW.body, 'row_id', NEW.id::text);
 ## Remaining work
 
 Everything in this section is work to implement. Each item ends with the
-issues and pull requests that track it, checked on 8 November 2026.
-`next` was still at `e4990e49b`, the plan's last check.
+issues and pull requests that track it, checked on 15 November 2026,
+against `next` at `360530276`. Every issue named in this section is in
+the milestone "Stable Stack Encrypt Rust release". An item marked
+**Done** is kept so that its decisions stay on record.
 
 An issue that a merged pull request says it closes can stay open,
 because GitHub closes issues only on the default branch. So an open
@@ -1210,10 +1259,12 @@ release leaves behind.
   - stored reads and context;
   - queries;
   - EQL and JSON;
-  - the lifecycle of values and keys.  The profiles are experimental. They do not certify a whole SDK. Three pull requests are in review. Pull request #1505 adds value,
-  refusal, and raw-frame corpora. Pull request #1506 adds a fresh Rust
-  and Go artifact exchange. Pull request #1507 consolidates the tests.
-- **Tracked in.** Issues #1477, #1478, #1479, #1481, #1490, and #1314 are open. Issue #1512 is open for cross-language queries through PostgreSQL. Issues #1471 to #1476 and #1480 are closed. Pull requests #1505, #1506, and #1507 are open, stacked on #1503. Pull request #1506 adds `conformance/stack-encrypt/exchange-contract.md` and a placeholder for the released-version matrix.
+  - the lifecycle of values and keys.  The profiles are experimental. They do not certify a whole SDK. Pull request #1505 added value,
+  refusal, and raw-frame corpora. Pull request #1506 added a fresh Rust
+  and Go artifact exchange, with `conformance/stack-encrypt/exchange-contract.md`
+  and a placeholder for the released-version matrix. Pull request #1507
+  consolidated the tests. All three are merged.
+- **Tracked in.** Issue #1678 is open for the JSON Schemas and the protocol version identifiers. Issue #1490 is open for the stable gates and the version matrix. Issue #1314 is open for the compatibility policy, #1479 for a TypeScript runner, and #1512 for cross-language queries through PostgreSQL. Issues #1471 to #1478, #1480 and #1481 are closed.
 - **Finished when** these are all true:
   - the profiles are no longer experimental;
   - the schemas exist;
@@ -1233,7 +1284,7 @@ release leaves behind.
   see one child. That transfers more data and reveals a different set of
   tokens.
 - **Done already.** Nothing.
-- **Tracked in.** No issue. Pull request #1353, the Go JSON plan document, lists it as remaining.
+- **Tracked in.** Issue #1677 is open. Pull request #1353, the Go JSON plan document, lists it as remaining.
 - **Finished when** Go can open one child, and the `eql-json-v1`
   conformance profile covers it.
 
@@ -1246,7 +1297,7 @@ release leaves behind.
   has the design.
 - **Why.** Today Go uses only the default match options.
 - **Done already.** Words of two letters can be searched (#1397).
-- **Tracked in.** Issue #1112 is open. Issues #1398 and #1399 are open for match-index follow-ups. Issue #1299 is an open question on short substrings. Issue #1396 is closed. Pull request #1397 is merged.
+- **Tracked in.** Issue #1112 is open for the generator. Issue #1673 is open for the analyzer that defines the options. Issues #1398 and #1399 are open for match-index follow-ups. Issue #1299 is an open question on short substrings. Issue #1396 is closed. Pull request #1397 is merged.
 - **Finished when** a Go field can declare match options, and its queries
   use the same options as its stored terms.
 
@@ -1260,7 +1311,7 @@ release leaves behind.
   frozen: `stored_rows_v1.json` since 18 October 2026, and the Go rows
   that `eql_v4_test.go` never regenerates. Both predate the rc.3 tag of
   2 November 2026, so neither is labelled rc.3.
-- **Tracked in.** No dedicated issue. Issue #1119 is closed. It froze `stored_rows_v1.json` on 18 October 2026. Issue #1490 is open. It covers stable gates and supported conformance versions.
+- **Tracked in.** Issue #1490 is open, and lists this item as a task. Issue #1119 is closed. It froze `stored_rows_v1.json` on 18 October 2026.
 - **Finished when** CI fails on any change to the stored bytes of rc.3
   data.
 
@@ -1270,7 +1321,7 @@ release leaves behind.
   with released module tags.
 - **Why.** A final Go release cannot depend on unreleased commits.
 - **Done already.** Prereleases can keep the pins, so rc.3 uses them.
-- **Tracked in.** No direct issue. Pull request #1369, merged, introduced the pin. Issue #1253 is open. It would bring the frame codec into the Go module and remove the dependency instead.
+- **Tracked in.** Issue #1679 is open. Pull request #1369, merged, introduced the pin. Issue #1253 is open. It would bring the frame codec into the Go module and remove the dependency instead.
 - **Finished when** the release workflow accepts a final version.
 
 ### 2. The stored format
@@ -1289,7 +1340,7 @@ format version beside it.
 | Configurable match options | The terms of columns written with the rc.3 defaults |
 | Context parts as key request items | The descriptor a key is derived under, and so the data key itself. A new envelope version marks the new form |
 
-- **Tracked in.** Draft pull request #1524 defines a version 2 leaf header of its own. The next item records the conflict.
+- **Tracked in.** Each change has its own item below. Draft pull request #1524, which defined a version 2 leaf header of its own, was closed on 12 November 2026.
 
 #### Context parts as key request items
 
@@ -1307,19 +1358,17 @@ has the design.
   logs it and cannot parse it. Items are structured. They have no size
   limit. Claims use the same channel, so a scope, a binding, and a
   claim travel the same way.
-- **Conflict.** Draft pull request #1524, from the key-vendor work on
-  `main`, defines its own version 2 leaf. It starts with `0x02`, then the
-  key backend, the key mode, the keyset ID, the IV, the tag, and the
-  ciphertext. Two
-  changes cannot both own `0x02`. Either they merge into one version 2
-  header that carries both, or one takes the next byte. Decide with the
-  key-vendor work before either lands.
+- **No conflict over `0x02` now.** Draft pull request #1524, from the
+  key-vendor work, defined its own version 2 leaf. It was closed on
+  12 November 2026, when the key-vendor work dropped the version 2 leaf:
+  every leaf stays version 1, and the key router sends a leaf to its
+  backend by its keyset ID. So this item can take `0x02`.
 - **Stored format.** Version 1 values keep the rc.3 descriptor rendering. That rendering stays in the engine until the last such
   value is gone. The change is additive: nothing written by rc.3 is re-encrypted.
 - **Done already.** `SealedValue` has the version byte, bound into the
   leaf AAD, and the rendering of a context into a descriptor is frozen
   and documented in `packages/stack-encrypt/src/descriptor.rs`.
-- **Tracked in.** No issue. Related: issue #1067, open, says Stack Encrypt never sends key request items to ZeroKMS. Issue #1487 is open. Draft pull request #1524 claims the same version byte, `0x02`.
+- **Tracked in.** Issue #1566 is open. Related: issue #1067, open, says Stack Encrypt never sends key request items to ZeroKMS. Issue #1487 is closed.
 - **Finished when** these are all true:
   - a version 2 value round-trips, and a version 1 value from the rc.3
     vectors still decrypts;
@@ -1355,9 +1404,10 @@ has the design.
   already a dependency, for its exact guarantees and whether any of them
   apply to the blob codec. Its guarantees for encoding bytes do not extend
   to arbitrary objects.
-- **Done already.** Go writes and reads the format (#1369, #1370). #1503
-  adds `OpaqueBlob`, and is in review.
-- **Tracked in.** Issue #1484 is open. It closes when #1503 merges. Issues #1367 and #1113 are closed. Pull request #1503 is open. Pull requests #1369 and #1370 are merged. Pull request #1506 adds the Rust and Go exchange of sealed blobs.
+- **Done.** Go writes and reads the format (#1369, #1370). `OpaqueBlob`
+  is merged (#1503), and the Rust and Go exchange of sealed blobs is
+  merged (#1506).
+- **Tracked in.** Issues #1484, #1367 and #1113 are closed. Pull requests #1369, #1370, #1503 and #1506 are merged.
 - **Finished when** Rust and Go each open blobs that the other wrote, and
   the conformance profiles cover it.
 
@@ -1394,7 +1444,7 @@ labels](2026-11-08-stack-encrypt-key-policy.md#labels) has the design.
   section records the thinking.
 - **Done already.** `Ciphertext::key_tag` reads the tag in Rust (#1404).
   The leaf AAD already binds the original tag.
-- **Tracked in.** No issue. Related: issue #1067, open.
+- **Tracked in.** Issue #1567 is open. Related: issue #1067, open, and issue #1485, the key header.
 - **Finished when** these are all true:
   - the example in the key policy document round-trips through a
     trigger, in Rust and in Go;
@@ -1469,11 +1519,12 @@ Base64.
 - **Why.** The derives give the [record example](#encrypt-a-record). The
   encrypted struct is what goes in the row, so a developer reads the
   stored shape, and adds `Serialize` or `sqlx` derives, in one place.
-- **Done already.** One value (#1404) and collections (#1501). #1504 adds
-  the record derives, and is in review. `#[stash(from = "..")]` already
-  renames the source field of an encrypted field
+- **Done.** One value (#1404), collections (#1501), and the record
+  derives (#1504), which emit the combinators (ADR-0007, amended
+  9 November 2026) and land `scope = ".."` and `DeclaredScopes`.
+  `#[stash(from = "..")]` renames the source field of an encrypted field
   (`stack-encrypt-derive/src/attrs.rs`).
-- **Tracked in.** Issue #1483 is open. It closes when #1504 merges. Issue #1482 is still open although #1501 merged with "Closes #1482". It needs a manual close. Pull request #1504 is open. Pull requests #1404 and #1501 are merged. Pull request #1504 lands `scope = ".."` and `DeclaredScopes`, the names the naming review chose. Its record derives emit the combinators (ADR-0007, amended 9 November 2026).
+- **Tracked in.** Issues #1482 and #1483 are closed. Pull requests #1404, #1501 and #1504 are merged.
 - **Finished when** these are both true:
   - a mixed record, with passthrough and encrypted fields, and a searchable
     record round-trip as tests;
@@ -1483,31 +1534,51 @@ Base64.
 #### EQL types as fields
 
 - **What to build.** EQL types such as `TextEq` and `JsonTreeDocument` as
-  field types of the Rust record derive. In Rust today, an EQL type works
-  only on its own, through the older structural API, with a
-  `NonEmpty<Identifier>` context. The EQL types do derive the structural
-  `EncryptFrom` and `DecryptInto`. A record still cannot use them as
-  fields.
-  A record with a `TextEq` field, built against `next` on 7 November 2026,
-  fails with three errors. `NonEmpty<Identifier>` and
-  `ExpectedContext<Identifier>` do not implement `From<CallerContext>`, and
-  the record derive gives each field a `CallerContext`.
-- **The smallest fix.** Convert a `CallerContext` of two parts into an
-  `Identifier`, with the table first and the column second. `Identifier`
-  already gives the same context as that pair, so the stored bytes do not
-  change.
+  field types of the Rust record derive.
+- **How it works.** The record derive gives each field a context of its
+  own: the record's scope, then the field's name. A field type that stores
+  its context stores that own context, as the type it stores. The stored
+  type implements `target::ContextFromField`. `Identifier` takes an own
+  context of two parts, the table first and the column second, and gives
+  the same context as that pair, so the stored bytes do not change.
+- **What `i` stores.** The declared names only: the table and the column.
+  A record can also list a scope or a binding, supplied by the caller or
+  stored in the row. The terms of an EQL field derive under the query
+  context: the column, then the scope. The ciphertext is sealed under the
+  stored context: the column, then the scope, then the binding. A field
+  of any other type works the same way. `i` does not store the scope or
+  the binding, so the reader supplies them again, and a query supplies
+  the scope. An EQL field of a record nested in another stores its own
+  column in the same way.
 - **Why.** This gives the [EQL field example](#store-a-field-as-an-eql-type)
   and the [JSON example](#encrypt-a-json-document).
-- **Done already.** The dynamic interface supports EQL fields, so Go
-  records use them today. A field there names its EQL type, and the engine
-  looks the type up by name through `eql-bindings` (the `TargetResolver`
-  in `dynamic/record.rs`). `Identifier` already gives the same context as
-  the `(table, column)` pair that a record derive builds.
-- **Tracked in.** Issue #1486 is open, in part. No dedicated issue. Pull request #1504 defers the EQL owned implementations. `eql-bindings` builds against the crates.io `stack-encrypt`, so a `stack-encrypt` release must come first.
+- **Done already.** In #1658:
+  - A Rust record with EQL fields encrypts and decrypts through the new
+    API, with or without a scope and a binding, and when it is nested in
+    another record.
+  - For a field of each kind (equality, storage only, order, and a JSON
+    document), a record with no scope writes the terms that a data plan
+    writes for the same declaration. A data plan is the path Go takes.
+    Each path opens the other's values
+    (`packages/eql/tests/encryption/tests/record_fields.rs`).
+  - `JsonTreeDocument` implements `EncryptTarget<JsonPlaintext>` and
+    `DecryptSource<JsonPlaintext>`.
+  - A query from a field reference works for the equality and match
+    types, with the record's scope. A data plan's query for an EQL type
+    takes a scope too. The order types do not implement `Answers` yet, so
+    a field reference cannot query them (#1668).
+  - A data plan that names an EQL type takes a scope and a binding too.
+    `TargetResolver` receives them after the field's label, and
+    `TargetError::Extended` is removed. Under the same scope and binding,
+    a data plan and a derived record write the same terms, and each
+    opens the other's values. A Go struct with an `encrypt_into` field
+    seals through `cipher.Scope(..).Bind(..)`.
+- **Tracked in.** Issue #1658 is open. Pull request #1659, open, closes it. Issue #1668 is open for order queries from a field reference. `eql-bindings` builds against the crates.io `stack-encrypt`, so a `stack-encrypt` release with `ContextFromField` must come before the `eql-bindings` release that uses it.
 - **Finished when** these are all true:
   - a Rust record with EQL fields encrypts, decrypts, and queries through
-    the new API;
-  - it writes the same bytes as a Go record with the same declaration.
+    the new API, including order queries;
+  - it writes the same terms as a Go record with the same declaration,
+    with and without a scope.
 
 #### A ready-made EQL resolver
 
@@ -1520,88 +1591,118 @@ Base64.
 - **Done already.** The functions it calls exist in `eql-bindings`:
   `encrypt_with`, `decrypt`, and `query` in `v4::targets` and
   `encryption::targets`.
-- **Tracked in.** #1571. Done: the resolver is
-  `eql_bindings::encryption::EqlTargets`.
+- **Done.** The resolver is `eql_bindings::encryption::EqlTargets`, on
+  `next`. The EQL tests and the Go guest use it, and no other
+  `TargetResolver` impl remains.
+- **Tracked in.** Issue #1571 is still open, and can be closed.
 - **Finished when** the tests and the Go guest use the resolver from
   `eql-bindings`, and their own copies are deleted.
 
 #### Static JSON queries
 
 - **What to build.** One method for each kind of JSON query on a JSON
-  document's field marker. The methods are `contains` and `contained_by`;
-  `at(path)` with the comparison operators; `elements(path)` with its
-  member conditions; `predicate`; and `children`. Each method builds the input type the
+  document's field reference. The methods are `contains` and `contained_by`;
+  `at()` with a method per declared path and the comparison operators;
+  `elements()` with a method per declared array and its member conditions;
+  `predicate` with its variables; and `children`. Paths are typed from the
+  attribute, and `at_text_path` and `elements_text_path` take paths built
+  at run time (decided on 21 November 2026, see [Query a JSON
+  document](#query-a-json-document)). Each method builds the input type the
   dynamic interface already has for that operator, and `encrypt(&keyset)`
-  returns the EQL query type. The marker supplies the column and the
+  returns the EQL query type. The field reference supplies the column and the
   options. The dynamic parser keeps reading into the same input types, so
   there is one definition of each input.
-- **Names.** The method names above are proposals. The operand types
-  `Contains`, `AtPath`, `ElementMatch`, `Predicate`, and `Children` that
-  this plan proposed earlier are retired, on 7 November 2026.
+- **Names.** The method names above were confirmed in the naming review
+  of 8 November 2026. The operand types `Contains`, `AtPath`,
+  `ElementMatch`, `Predicate`, and `Children` that this plan proposed
+  earlier were retired as operands a caller builds, on 7 November 2026;
+  the query a method returns names its kind with value-free type tags of
+  those names (see [Query a JSON document](#query-a-json-document)).
 - **Why.** On `next`, a Rust program needs a plan for any JSON query, and
   needs the dynamic interface for element match, predicates, and children.
   Go already has typed methods for these.
-- **Done already.** The input types and their parsing rules, as private
-  types in `stack_encrypt::dynamic::json_query`. Typed containment and
-  comparison at a path, through a plan (`op::Contains`, `op::AtPath`). The
-  EQL query types exist in `eql-bindings`.
-- **Tracked in.** Issue #1459 is open. It is exactly this item. Issue #1486 is open.
-- **Finished when** these are both true:
+- **Done** in the pull request for #1459. Each method builds the input
+  the dynamic parser reads into (`json::inputs`, out of the `dynamic`
+  feature), and returns the field type's query type (`JsonQueries`):
+  the EQL types for `JsonTreeDocument`. A field's options are its
+  `#[stash(json(..))]`, decided on 16 November 2026. Pull request #1687
+  types the paths: `ordered = { "$.age": u32, .. }`, parsed at compile time
+  through `stack-encrypt-jsonpath`, with a typed method per path, array
+  and member (21 November 2026), and `paths = { "$.name": String, .. }`
+  for a path compared with equality alone (22 November 2026). Tests hold every typed query to the text
+  form's operand and to the data plan's, the compile-fail cases under
+  `packages/stack-encrypt/tests/ui` hold the refusals, and the [JSON query
+  example](#query-a-json-document) runs.
+- **Done** too: `predicate!(FIELD, "text", name = value, ..)` checks a
+  predicate's text at compile time, in the pull request stacked on #1687
+  (22 November 2026). It reads the text with the engine's parser, which
+  moved into `stack-encrypt-jsonpath`; refuses what the parser and the
+  index refuse whatever the variables hold; matches the variables with
+  the text's `$name`s; and checks each path, member and value through the
+  accessors the derive generated, found by the path's text. When the
+  program runs it is `predicate(text).var(..)`, so the operand is the text
+  form's and the data plan's `match` operand.
+- **Tracked in.** Issue #1459 closes with the `predicate!` pull request.
+  Issue #1677 is open for opening one child. Issue #1486 is closed.
+- **Finished when** these are all true:
   - the [JSON query example](#query-a-json-document) compiles;
-  - an order query on a path the options do not order is refused before
-    any key is fetched.
+  - a path, a member or a value type the field does not declare does not
+    compile;
+  - a text path the options do not order is refused before any key is
+    fetched;
+  - a predicate's text is checked at compile time.
 
-#### Field markers and the encryption plan
+#### Field references and the encryption plan
 
 Decided on 7 November 2026, as difference six of the context artifact
 review.
 
-- **What to build.** The derive emits one marker for each field, as an
-  associated constant such as `EncryptedMember::EMAIL`. The marker has
+- **What to build.** The derive emits one field reference for each field, as an
+  associated constant such as `EncryptedMember::EMAIL`. The field reference has
   the field's name, its plaintext type, its accessor, and its index
   list. It is the value a query starts from. The index list is what lets
-  the marker offer one method per operator, resolved at compile time. A
-  query from a marker lowers to the term combinator under the marker's
+  the field reference offer one method per operator, resolved at compile time. A
+  query from a field reference lowers to the term combinator under the field reference's
   context. Typed Rust option factories, and the same options read from
   data in the dynamic interface.
 - **Why.** A query must use the same declaration as the stored values.
-  The caller must not write a second plan by hand. The marker holds the
+  The caller must not write a second plan by hand. The field reference holds the
   declaration the derive wrote, so the query term and the stored term
   come from one source.
 - **Done already.** `Answers` on a target type is the compile-time
-  lookup of the index for an operator; a marker's methods are bound by
-  it, so the marker's index list is its target type's `Answers` impls.
-  Pull request #1595 lands the markers, their query methods and
-  `assert_context!` over a marker (`src/marker.rs`, `tests/markers.rs`,
-  `tests/ui/marker_*.rs`). Pull request #1599 gives a field of several
+  lookup of the index for an operator; a field reference's methods are bound by
+  it, so the field reference's index list is its target type's `Answers` impls.
+  Pull request #1595 lands the field references, their query methods and
+  `assert_context!` over a field reference (`src/field_reference.rs`, `tests/field_references.rs`,
+  `tests/ui/field_reference_*.rs` and `tests/ui/field_query_*.rs`). Pull request #1599 gives a field of several
   indexes, a nullable field and a record field their operator methods,
   and a field its query type (`#[stash(query = ..)]`). The chain query
-  `cipher.query(op, value).on(&plan)` still exists until #1488 removes
-  it.
+  `cipher.query(op, value).on(&plan)` is removed (#1662). It was the only
+  typed JSON query; a document field's reference methods replace it (#1459).
 - **No hand-built plan.** The review of 7 November 2026 gave a
-  hand-built plan the same markers, through `Plan::<Member>::scope(..)`
+  hand-built plan the same field references, through `Plan::<Member>::scope(..)`
   with `pick!`. That is withdrawn. No Rust program builds a plan by hand.
   A program whose declaration is data uses `Planned`. The builder is
   removed with the structural API (ADR-0007, amended 9 November 2026).
 - **Cannot fail.** The derive sees every field, so it refuses a repeated
   field name or a shared name scope at compile time. A typed index set
   that repeats an index, `(Equality, Equality)`, is refused at compile
-  time too. Today the builder refuses it at run time, so that check
-  lands with the builder's removal. The dynamic grammar keeps its
-  run-time checks.
-- **Tracked in.** Issue #1486 is open; pull request #1595 closes it.
-  Issue #1596, the operator methods the markers lacked, is closed by
-  pull request #1599.
+  time too. The builder refused it at run time. With the builder gone
+  (#1662), `Encrypted<Terms>` and a derived `plaintext` record refuse it
+  at run time, before any key is requested. The compile-time check is
+  not built (#1670). The dynamic grammar keeps its run-time checks.
+- **Tracked in.** Issues #1486 and #1596 are closed: pull requests #1595
+  and #1599 are merged. Issue #1670 is open for the compile-time check.
 - **Finished when** these are all true:
-  - the [marker example](#query-a-record-field) compiles, with the
+  - the [field reference example](#query-a-record-field) compiles, with the
     index's query term as the output type; the EQL query types come
     with the EQL owned implementations;
   - the compile-fail cases in `tests/ui` cover an operator the field's
-    indexes do not answer (`marker_operator_not_answered`), a binding
-    on a query (`marker_query_has_no_bind`), and a missing, mistyped or
-    repeated scope (`marker_query_needs_its_scope`);
+    indexes do not answer (`field_reference_operator_not_answered`), a binding
+    on a query (`field_query_has_no_bind`), and a missing, mistyped or
+    repeated scope (`field_query_needs_its_scope`);
   - tests show that a query cannot run without its plan or its required
-    context (`tests/markers.rs`, `tests/planned.rs`).
+    context (`tests/field_references.rs`, `tests/planned.rs`).
 
 #### `Planned` and its serialised form
 
@@ -1634,16 +1735,16 @@ Decided on 7 November 2026, as area one of the query design review.
   form, because its value is plaintext. It is never logged or written to disk. Its shape
   is not part of the stored format.
 - **Done already.** `Planned`, the query plan, the field handle,
-  `QueryTerm` and `contexts()` on a `Plan` and a `Planned` are on pull
-  request #1595 (`src/dynamic/planned.rs`, `tests/planned.rs`). `Planned` calls `encrypt_with`, `query_term` and
-  `decrypt_with` in `dynamic::record` and `dynamic::query`, under the
-  plan extended by the caller's parts. The guest still sends the engine
-  a plan frame, then a value frame for each call. The serialised
-  `Planned` names and groups what those functions already receive, and
-  is not built yet.
-- **Tracked in.** Issue #1486 is open, in part. Issue #1594 is the
-  serialised `Planned`, the Go module sending it, and the corpus
-  rewrite, split from pull request #1595. On the Go side, issue #1116 is open to hide or rename `record.Plan`. Issue #1307 is open for a Go plan-building API, for types `stashgen` cannot tag. It builds a data plan, so the Rust builder's removal does not affect it.
+  `QueryTerm` and `contexts()` on a `Plan` and a `Planned` (#1595,
+  merged: `src/dynamic/planned.rs`, `tests/planned.rs`). The chain and
+  the builder are removed (#1666). `Planned` calls `encrypt_with`,
+  `query_term` and `decrypt_with` in `dynamic::record` and
+  `dynamic::query`, under the plan extended by the caller's parts; the
+  reverse, those functions building a `Planned`, is not done (#1669).
+  The guest still sends the engine a plan frame, then a value frame for
+  each call. The serialised `Planned` names and groups what those
+  functions already receive, and is not built yet.
+- **Tracked in.** Issue #1594 is open: the serialised `Planned`, the Go module sending it, and the corpus rewrite. Issue #1669 is open. Issue #1486 is closed. On the Go side, issue #1116 is open to hide or rename `record.Plan`. Issue #1307 is open for a Go plan-building API, for types `stashgen` cannot tag. It builds a data plan, so the Rust builder's removal does not affect it.
 - **Finished when** these are all true:
   - every case in the conformance corpus is a serialised `Plan` or
     `Planned` with the engine's expected answer beside it;
@@ -1680,9 +1781,10 @@ Decided on 7 November 2026, as area one of the query design review.
   could open without the plaintext.
 - **Done already.** The order in which parts are joined is fixed and
   tested in Rust and Go (#1491). The context inputs `RequiredContext`,
-  `NoCallerContext`, and `OptionalContext` exist (#1404). `ExpectedContext` exists on `next`, in `target/context.rs`. #1504 adds
-  `DeclaredScopes`, makes `ExpectedContext` a context input, and is in
-  review.
+  `NoCallerContext`, and `OptionalContext` exist (#1404). #1504 added
+  `DeclaredScopes` and made `ExpectedContext` a context input, and #1612
+  hid `ExpectedContext` from the API. Scopes and bindings are separate
+  kinds of part (#1487).
   The naming review of 8 November 2026 decided that `ContextExtension`
   goes: the `Scope::new(..).bind(..)` chain is the input. The plan builder's
   `.context(..)` and `.context_field(..)` and the derive's
@@ -1694,7 +1796,7 @@ Decided on 7 November 2026, as area one of the query design review.
   default stays "any", and the Go generator requires a declared part at
   compile time. `RequiredContext`, `OptionalContext`, and `NoCallerContext`
   (#1404) are the three states this keeps.
-- **Tracked in.** Issue #1487 is open. Issue #1120 is open: a second `.extend()` replaces the first. It closes when the chain goes. Issue #1308 is open for Go identity independent of the column. Issue #1475 is closed. Pull request #1491 is merged. Pull request #1504 is open.
+- **Tracked in.** Issue #1308 is open for Go identity independent of the column. Issues #1120, #1475 and #1487 are closed. Pull requests #1491 and #1504 are merged.
 - **Finished when** these are both true:
   - all eight scenarios run as tests in Rust and Go, on both paths: the
     derive, and `Planned`;
@@ -1717,8 +1819,10 @@ Decided on 7 November 2026, as area one of the query design review.
   to Go. The context contract and the conformance README say "scope"
   instead of "extension". The frozen vectors do not change, because no key
   on the wire names the operation.
-- **Done already.** Nothing. Today every part is in both contexts.
-- **Tracked in.** Issue #1487 is open. It is exactly this item. Its pull request adds the binding kind to the derive, the dynamic grammar, and Go, and the `record-bindings-v1` conformance profile. Issue #1067 is open and related.
+- **Done.** Issue #1487 added the binding kind to the derive, the
+  dynamic grammar, and Go, and the `record-bindings-v1` conformance
+  profile.
+- **Tracked in.** Issue #1487 is closed. Issue #1067 is open and related.
 - **Finished when** these are all true, in Rust and in Go:
   - a record with a binding row ID encrypts;
   - a column query finds it;
@@ -1742,8 +1846,9 @@ records only the work.
   does today. It stops being a public type. That last step is done
   (#1612): the type is hidden from the documentation and from compile
   errors, and is public only so that code the derives emit can name it.
-  A caller passes a `NonEmpty<T>` or nothing. The rest of this item is
-  not done.
+  A caller passes a `NonEmpty<T>` or nothing. The chain is removed
+  (#1662): a data plan runs as `Planned`, and a typed record runs through
+  the derives and its field references.
 - **Why.** The typed API already pairs its entry points (#1404). A value
   for the context reads the same on both layers. A builder state for the
   context, and a part added later in a chain, are the mistakes the context
@@ -1762,7 +1867,7 @@ records only the work.
   the Go guest builds one from its keyset selector. A `Keyset` reference
   refuses a foreign leaf with `ForeignKeyset`. A `Cipher` reference opens leaves from any keyset the client has.
   Done, in the second pull request for #1488.
-- **Tracked in.** Issue #1488 is open. It is the chain removal. Issue #1120 is closed. Pull request #1504 is merged and added the record pairs.
+- **Tracked in.** Issue #1488 is open. Its sub-issue #1662 is the chain removal, done in pull request #1666. Issue #1120 is closed. Pull request #1504 is merged and added the record pairs.
 - **Finished when** these are all true:
   - the examples in [Target state](#target-state) compile;
   - the compile-fail cases in `tests/ui` cover a binding in a query, and
@@ -1788,7 +1893,7 @@ Decided on 7 November 2026.
   interface has the same two forms. So `stashgen` can print a Go record's
   contexts. A Go call can show its context.
 - **Assertions for tests.** A `testing` feature of `stack-encrypt`, with
-  `assert_context!` over a field marker, a plan, or a prepared call. It
+  `assert_context!` over a field reference, a plan, or a prepared call. It
   compares the query context and the stored context, with types, against
   what the test states, and names the first part that differs. The Go
   module has the same in a testing package, such as `encrypttest`, so a
@@ -1799,14 +1904,10 @@ Decided on 7 November 2026.
   context matches nothing and gives no error. A developer who cannot see
   the context cannot find the mistake. A test that cannot state the
   context cannot catch a change to it.
-- **Done already.** `Descriptor` renders a context as text, and
-  `ContextMismatch` reports the stored descriptor. Neither shows the
-  types, and neither is reachable from a plan or a call.
-- **Tracked in.** Issue #1568, with the two items below. Its first pull
-  request lands `contexts()`, `context()`, `assert_context!`, and the Go
-  `encrypttest` package for the declarations that exist today. The
-  scenarios that need `scope(..)` and `bind(..)` land with #1487, and the
-  field-marker form with #1486.
+- **Done.** `contexts()`, `context()`, `assert_context!`, and the Go
+  `encrypttest` package (#1568), the scenarios that need `scope(..)` and
+  `bind(..)` (#1487), and the field-reference form (#1486).
+- **Tracked in.** Issues #1568, #1487 and #1486 are closed.
 - **Finished when** these are all true:
   - a test pins the output of `contexts()` for each of the [context
     scenarios](2026-10-24-stack-encrypt-context-examples.md);
@@ -1833,7 +1934,7 @@ not change the stored format. Renaming Vitamin C's `IntoAad` trait is a
 follow-up in Vitamin C. The Go SDK and the dynamic interface have no public
 parameter named `aad`.
 
-- **Tracked in.** Issue #1568.
+- **Done** (#1568, closed).
 
 #### Pass context by reference
 
@@ -1847,10 +1948,10 @@ parameter named `aad`.
   the old context path type that [Apply the naming
   review](#apply-the-naming-review) removes.
   The context inputs, such as `RequiredContext`, still need an owned value.
-- **Tracked in.** Issue #1568. A stored EQL type still takes its
-  `NonEmpty<Identifier>` by value: Rust's orphan rule keeps
+- **Tracked in.** Issue #1568 is closed. A stored EQL type still takes
+  its `NonEmpty<Identifier>` by value: Rust's orphan rule keeps
   `From<&NonEmpty<T>>` for `NonEmpty<T>` out of this repository, so that
-  impl is a follow-up in Vitamin C.
+  impl is a follow-up in Vitamin C, tracked in issue #1684.
 - **Finished when** the examples in this plan pass a context by reference,
   without moving it, and compile. The parts are cloned into the call.
 
@@ -1867,7 +1968,7 @@ parameter named `aad`.
   `'static`, so `&str` does not meet it. A borrowed value needs its own
   bound, and the request borrows the value for as long as it runs.
 - **Done already.** Owned single values (#1404).
-- **Tracked in.** No issue. Issue #1468, open, a Vitamin C buffer type, is adjacent.
+- **Tracked in.** Issue #1569 is open. It also covers the newtype derive below. Issue #1468, a Vitamin C buffer type, is closed.
 - **Finished when** `keyset.encrypt("secret")` compiles, and a test shows
   that Stack Encrypt wipes its own copies of a borrowed value.
 
@@ -1885,11 +1986,13 @@ parameter named `aad`.
   stops this repository adding that, so a wrapper is needed. A program
   that already has a `serde_json::Value` must not have to print it and
   parse it again.
-- **Done already.** `stack_encrypt::dynamic::json::JsonPlaintext` wraps a
-  `serde_json::Value`, and wipes it when it is dropped. It is part of the
-  dynamic interface. It has only `value()`. The strict parser exists as
-  `stack_encrypt::json::parse_text`.
-- **Tracked in.** No issue. Pull request #1504 names `serde_json::Value` not being `Zeroize` as what blocks configured nested targets. This item unblocks them.
+- **Done already.** `stack_encrypt::json::JsonPlaintext` is public on
+  `next` (#1636), with `From<serde_json::Value>`, `parse(&str)` and
+  `value()`, and wipes the value when it is dropped. Every JSON target
+  encrypts from a `JsonPlaintext` or decrypts to one through the new
+  traits: the document, one entry of it, and the rows of a read (#1658,
+  #1660). Encrypting from a borrowed `&serde_json::Value` is not built.
+- **Tracked in.** Issue #1636 is closed. Issue #1569 is open for borrowed values, including `&serde_json::Value`.
 - **Finished when** the JSON examples in this plan compile, and a test
   shows that a dropped `JsonPlaintext` leaves no plaintext behind.
 
@@ -1912,7 +2015,7 @@ parameter named `aad`.
 - **Done already.** Today's `StackCipher::keyset` takes
   `impl Into<IdentifiedBy>`,
   and `IdentifiedBy` implements `From<Uuid>` and `From<Name>`.
-- **Tracked in.** No GitHub issue. The `cipherstash-suite` repository has issues disabled. It is where `zerokms-protocol` lives.
+- **Tracked in.** Issue #1675 is open. The `cipherstash-suite` repository, where `zerokms-protocol` lives, has issues disabled, so the issue is here.
 - **Finished when** a released `zerokms-protocol` has both constructors,
   and the examples in this plan compile.
 
@@ -1927,7 +2030,7 @@ parameter named `aad`.
   sequence whose order matters, such as the steps of a workflow. ADR-0010
   says this is opt-in, by type. It does not exist yet.
 - **Done already.** Nothing. The default collection (#1501).
-- **Tracked in.** No issue.
+- **Tracked in.** Issue #1570 is open.
 - **Finished when** a test shows that each of swapping, dropping, and
   adding an element fails to open, in Rust and in Go.
 
@@ -1945,7 +2048,7 @@ parameter named `aad`.
 - **Done already.** `OpaqueEncode` and `OpaqueDecode` already accept any
   type that meets those bounds. Vitamin C documents a hand-written
   `Blob(Vec<u8>)` newtype.
-- **Tracked in.** No issue.
+- **Tracked in.** Issue #1569 is open. It covers the newtype case.
 - **Finished when** the [byte example](#encrypt-a-byte-string) compiles
   with the derive and no hand-written implementation.
 
@@ -1978,17 +2081,20 @@ table.
 - **Why.** The plan used placeholders so that the review could change a
   name without changing a design. The review is done, so the code can
   follow.
-- **Done already.** Nothing. Every name above is still the old one on
-  `next`.
-- **Tracked in.** Issue #1489 is open for naming and packaging. Issues #1116 and #1307 are open for the Go names. Pull request #1504 is open. It lands `scope = ".."` and `DeclaredScopes`, as the review decided.
+- **Done already.** `OpSpec` is `Op`. `CipherScope` and `dynamic::Scope`
+  are `CipherRef`. `scope = ".."` replaced `context = ".."` (#1504).
+  `ContextExtension` is gone. The rest are still the old names:
+  `StackCipher`, `KeysetCipher`, the Go `Client` and `Cipher`, `Label`,
+  a public `Request`, `op::QueryTerm` and `LabelledTarget`.
+- **Tracked in.** Issue #1489 is open for naming and packaging. Issue #1663 is open for `Label`, and on hold: the context naming work may give the declared path, which `Label` holds today, a new name and mode, so it is not renamed or removed until that settles. Issues #1116 and #1307 are open for the Go names. Pull request #1504 is merged.
 - **Finished when** no old name remains in the public API, the examples
   in [Target state](#target-state) compile under the new names, and the
   packaging glossary matches.
 
 #### Remove the structural API
 
-- **What to build.** Remove `EncryptFrom`, `DecryptInto`, `encrypt_as`, and
-  the helpers in `target::legacy`. Remove the plan builder:
+- **What to build.** Remove `EncryptFrom`, `DecryptInto`, `encrypt_as` and
+  `decrypt_as`. Remove the plan builder:
   `plan/build.rs`, `plan/chain.rs`, `plan/value.rs`, and
   `plan/field_ref.rs`, with `pick!`, `FieldRef`, `Runs`, and `Opens`.
   `Plan::encryption` moves into `Planned` (ADR-0007, amended 9 November
@@ -2001,17 +2107,32 @@ table.
   The removal of `Label` is also listed in [Apply the naming
   review](#apply-the-naming-review); it happens once, here.
 - **Why.** Two APIs for the same job make the right one hard to find.
-- **Done already.** The new API exists beside the old one. The first
+- **Done already.** The first
   pull request for #1488 makes `Planned` the one lowering of a data plan:
   `dynamic::planned::compose` and `opening` build each field's combinator
   from the parsed plan, and `encrypt_with`, `decrypt_with`, `contexts()`
   and the checks read them. The dynamic path no longer uses the plan
   builder. Those functions do not yet build a `Planned`: they run the
-  lowering themselves. That inversion, the builder, the chain, the old
-  traits and `Label` are still to be removed.
+  lowering themselves. That inversion and `Label` are still to be
+  removed. The helpers in `target::legacy` are removed, in the fourth pull
+  request for #1488. The builder, the chain, `EncryptFrom`, `DecryptInto`,
+  their derives, `encrypt_as` and `decrypt_as` are removed (#1661, #1662).
+  EQL, the Go guest, the examples and every test use the owned API, field
+  references or `Planned`.
+  Every JSON target has the new traits over `JsonPlaintext` (#1658 for
+  `JsonTreeDocument`, #1660 for the other five), so no target needs the
+  old traits any more.
 - **Tracked in.** Issue #1488 is open. Its first pull request is the
   lowering. Its second replaces `CipherScope` and `dynamic::Scope` with
-  `CipherRef`. The removals follow.
+  `CipherRef`. Its third hides `ExpectedContext` (#1612, merged). Its
+  fourth removes `target::legacy` (#1613, open). The other removals are
+  its sub-issues, in this order: #1660 gives the remaining JSON targets
+  the new traits (#1664, open); #1662 removes the chain and the builder,
+  and #1661 removes `EncryptFrom`, `DecryptInto`, `encrypt_as` and
+  `decrypt_as` (both in #1666, open); #1663 removes `Label` and
+  `IntoLabel`, on hold until the context naming work settles what the
+  declared path is called; and #1669 makes `encrypt_with` and `decrypt_with` build a
+  `Planned`.
 - **Finished when** the old API is gone, and every consumer uses the new
   API.
 
@@ -2023,7 +2144,7 @@ table.
 - **Why.** Plaintext must not stay in freed memory.
 - **Done already.** Collections wipe the values decoded before a failure.
   Cancellation and drop are tested (#1493, #1501).
-- **Tracked in.** Issue #1468 is open: a Vitamin C buffer type. Issue #1458 is open: data keys by reference. Issue #1480 is closed. Pull request #1503 is open. A decrypted `OpaqueBlob<T>` wipes its value when it is dropped, and its `into_inner` returns a `Zeroizing<T>`. The pull request records the partial Serde decode as a known gap. A drop-wiping adapter for a single value, such as `Zeroizing<String>`, needs Vitamin C to implement `FromScalar` for `Zeroizing<T>`. Pull requests #1493 and #1501 are merged.
+- **Tracked in.** Issue #1676 is open for the partial Serde decode, which pull request #1503 recorded as a known gap. Issue #1684 is open for the drop-wiping adapter for a single value, such as `Zeroizing<String>`, which needs Vitamin C to implement `FromScalar` for `Zeroizing<T>`. Issue #1458 is open: data keys by reference. Issues #1468 and #1480 are closed. Pull requests #1493, #1501 and #1503 are merged; a decrypted `OpaqueBlob<T>` wipes its value when it is dropped, and its `into_inner` returns a `Zeroizing<T>`.
 - **Finished when** the conformance profile for the lifecycle covers both cases.
 
 ### 4. The query engine
@@ -2034,7 +2155,7 @@ Decided on 7 November 2026, as area two of the query design review.
 
 - **What to build.** Each operator exists once, as its `op` type, such as
   `op::Eq` and `op::Between`. One macro generates the dynamic enum and
-  its wire names from those types. A marker's query method, the dynamic
+  its wire names from those types. A field query method, the dynamic
   handle's method, and a query plan's operator all resolve to the same
   type. So `eq`, `"eq"`, and `op::Eq` are three faces of one operator.
 - **The dynamic enum's name.** It is public, because a program building a
@@ -2050,7 +2171,7 @@ Decided on 7 November 2026, as area two of the query design review.
   does not know which bound the caller meant. The `InvertedRange` error
   asked for in #1279 predates that commit and is dropped.
 - **Stored format and wire.** Unchanged. A query sends the operator's wire name. That name does not change.
-- **Tracked in.** The pull request for #1279, #1318, #1317, #1321 and #1233 does this area's `Op` enum and the `Matches` case change. Issues #1319 and #1321 were open; #1321 closes with that pull request. Issue #1320, the inverted-range rule, is closed: this plan's decision superseded it.
+- **Tracked in.** Issues #1279, #1318, #1317 and #1233 are closed: their pull request made `Op` and removed `Matches`'s case parameter. Issue #1321 is still open and may already be fixed by it. Issue #1319 is open. Issue #1320, the inverted-range rule, is closed: this plan's decision superseded it.
 - **Finished when** these are all true:
   - the dynamic enum is generated from the `op` types;
   - `Matches` has no type parameter;
@@ -2105,7 +2226,7 @@ design is the query artifact's; the adjustments below are the plan's.
   7 November 2026.
 - **Breaking.** Every hand-written `MatchConfig` changes shape. This lands
   as a `!` commit with a changelog entry.
-- **Tracked in.** Issues #1319, #1112, #1398, #1399, and #1299 are open. Issue #1309 is closed. Pull request #1397 is merged.
+- **Tracked in.** Issue #1673 is open for the analyzer. Issues #1319, #1112, #1398, #1399, and #1299 are open. Issue #1309 is closed. Pull request #1397 is merged.
 - **Finished when** these are all true:
   - the conformance case for the rc.3 mapping passes in Rust and Go;
   - a `tests/ui` case shows a stemmer after n-grams fails to compile;
@@ -2121,7 +2242,7 @@ review. The rules are the query artifact's.
 - **Six rules.**
   1. A query runs on the field's own index, with that index's
      configuration. There is no default index and no `.via`. A query starts from the
-     field's marker, so the rule is true by construction.
+     field's reference, so the rule is true by construction.
   2. A field declares at most one index per operator. `(Equality, Ore)`
      is allowed, because they answer different operators. `(Ore, Ope)`,
      `(Ore, OreBlock)`, and two match indexes are refused when the plan is
@@ -2159,12 +2280,21 @@ review. The rules are the query artifact's.
      generated from the `op` types. Each index declares its operators and admitted
      plaintexts once, and `index_for` reads them. Overlap is refused on
      both paths. A test shows the typed and dynamic faces agree.
+     An index admits exactly the plaintexts one of its operators
+     answers. The typed path enforces this with a trait bound, not a
+     test: each order index, order term and ordering operator is bounded
+     by vitaminc-ore's `Orderable`, which does not cover bytes. So an
+     order index on bytes does not compile. The dynamic path refuses the
+     declaration, in `dynamic::admits`, as `index_not_admitted`. A row
+     stored under such a declaration still opens once the index is removed
+     from the plan, because opening ignores a stored term the plan does
+     not declare.
   2. Derivation once, refusals once. The `sem` query functions, the
      analyzer in place of `MatchCase`, and `Match<Dynamic>` arrive.
      `check`, `verifier`, `admit`, `QueryToken`, `check_input`, and the
      second tokenisation go. This is the `!` commit. It closes #1318 and
      #1279, with #1279's `InvertedRange` item dropped.
-  3. Typed field markers with their index lists, the per-operator query
+  3. Typed field references with their index lists, the per-operator query
      methods, `Planned`, and the removal of `DefaultIndex`, `.via`,
      `PlanError::IndexOptions`, and `PlanError::MatchCase`.
   4. `FieldIndexes` on the dynamic plan. The dynamic path then shares
@@ -2179,7 +2309,7 @@ review. The rules are the query artifact's.
   `.via`. The `MatchConfig` documentation says a field and its query agree "by
   construction". That is true only for one-value plans today. Both
   are amended, not contradicted in silence.
-- **Tracked in.** Steps 1 and 2 are one pull request, which closes #1279, #1318, #1317, #1321 and #1233 (rule 2, the second order index). It brings `prepare`, the `sem::query` rules and `Op`, and drops `Matches`'s case parameter; the analyzer of "Match configuration: one analyzer" is its own work (#1319). Steps 3 and 4 are #1486 and #1488.
+- **Tracked in.** Steps 1 and 2 are done: #1279, #1318, #1317 and #1233 are closed. They brought `prepare`, the `sem::query` rules and `Op`, and dropped `Matches`'s case parameter. The analyzer of "Match configuration: one analyzer" is its own work (#1673). Step 3 is done apart from its clean-up: the field references and `Planned` (#1486, closed), and the removal of `DefaultIndex` and `.via` (#1666). Issue #1671 is open to remove `PlanError::IndexOptions` and the other variants nothing raises, and to amend ADR-0009 and the `MatchConfig` documentation. Step 4 is issue #1672, open.
 - **Finished when** these are all true:
   - every index's operators appear in one declaration, and a test shows
     the typed and dynamic lookups agree on every index;
@@ -2212,7 +2342,7 @@ internal adapter in some other way. Decide this separately from the
 [retirement of `AsyncCipher`](2026-10-25-stack-encrypt-packaging.md#retire-asynccipher)
 in the packaging document.
 
-- **Tracked in.** No issue. Draft pull request #1522 reworks the stack-kms key source traits. It is adjacent.
+- **Tracked in.** Issue #1489 is open, and asks how to split it. Draft pull request #1522, which reworked the stack-kms key source traits, was closed.
 
 #### Choose the keyset from the data
 
@@ -2250,7 +2380,7 @@ Rules for the proposal:
 - If the caller passes a keyset and the record selects one, the two must
   match, or the call is refused. Neither wins silently.
 
-- **Tracked in.** No Rust issue. Related open issues: #1048, the Go eager keyset; #735, a keyset mismatch is silently unsearchable; #561, a per-operation keyset in TypeScript; #1312, Go control-plane keysets. Issue #832 is closed. Pull request #1407, open, is the Go control SDK.
+- **Tracked in.** Issue #1572 is open. Related open issues: #1048, the Go eager keyset; #735, a keyset mismatch is silently unsearchable; #561, a per-operation keyset in TypeScript; #1312, Go control-plane keysets. Issue #832 is closed. Pull request #1407, open, is the Go control SDK.
 
 #### Claims the key provider resolves
 
@@ -2290,7 +2420,7 @@ let encrypted: EncryptedNote = note.encrypt_into(&keyset).await?;
 let note = Note::decrypt_from(encrypted, &keyset).await?;
 ```
 
-- **Tracked in.** Issue #1565 is open. Issue #1067 is open: Stack Encrypt never sends key request items to ZeroKMS. That is the prerequisite. Issue #1045 is closed.
+- **Tracked in.** Issue #1683 is open. Issue #1566, context parts as key request items, is the prerequisite, with issue #1067. Issue #1565 is open for the TypeScript entry. Issue #1045 is closed.
 
 ## Open questions and decisions to be made
 
@@ -2301,7 +2431,7 @@ The lead who approves this plan decides each question.
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
 | Should a record choose its keyset from a plaintext field? | The declaration in [Choose the keyset from the data](#choose-the-keyset-from-the-data). Or the caller keeps resolving the keyset by hand | The declaration |
 | Should this plan ask ZeroKMS version 2 to derive the data key over the key request items, not only the descriptor? | Yes, so a bind or a claim is enforced by derivation. Or keep the tag check as the only enforcement. The version 2 work decides | Yes. The [key policy document](2026-11-08-stack-encrypt-key-policy.md#what-zerokms-must-do) asks for it |
-| Which change owns envelope version `0x02`: this plan's key request items, or #1524's key backend header? | One version 2 header that carries both, shared with the EQL key header `h`. Or separate bytes | One header. Decide with the key-vendor work before either lands |
+| Which change owns envelope version `0x02`: this plan's key request items, or #1524's key backend header? | One version 2 header that carries both, shared with the EQL key header `h`. Or separate bytes | Settled: #1524 was closed on 12 November 2026 and the key-vendor work keeps every leaf at version 1, so key request items (#1566) take `0x02` |
 | What privacy claim can be made for match terms of short words? | Accept what they reveal, and document it. Or change how short words are stored | No recommendation yet. Merging #1397 did not show that they reveal nothing new |
 | Which Vitamin C crate should own `Base64Text` and `Base85Text`? | A new Vitamin C types crate that also holds key types. Or a small encoding crate | Vitamin C owns them, decided by Dan on 8 November 2026. The crate is to be confirmed, probably the types crate |
 | What crate layout should the final API use? | The proposal in the packaging document | Review the layout proposal when the crate moves begin. The names are decided |
@@ -2327,7 +2457,7 @@ renames.
 | The chain `Scope::new(..)`, `Bind::new(..)`, `Scope::new(..).bind(..)` | The caller-supplied context input. No separate type; `ContextExtension` from #1504 goes. A trait bound, `impl ContextParts`, names what an entry point accepts |
 | `JsonTreeDocument`, `JsonTreeQuery`, `JsonTreeLeafQuery`, `JsonTreeElementsQuery`, `JsonTreePredicateQuery` | Kept. The SQL domain `eql_v4_json_search` and the dynamic target `JsonSearch` are the other two names of the one stored type |
 | `Planned`, `Positioned<Vec<T>>`, `Claim`, `ResolvesClaims`, `#[derive(Scalar)]`, `Base64Ciphertext` | Confirmed. `Base64Ciphertext` is the text form of a bare `Ciphertext`, which keeps its header inside. EQL payloads instead carry a Base64 key header `h` beside a Base85 `c`, as the JSON tree does. There is no `Base85Ciphertext` target |
-| `contains`, `at`, `elements`, `predicate`, `children` | The JSON query methods on a document's marker. Confirmed |
+| `contains`, `at`, `elements`, `predicate`, `children` | The JSON query methods on a document's field reference. Confirmed |
 | `contexts()`, `context()`, `assert_context!`, the `testing` feature, `encrypttest` | Showing and asserting a context, in Rust and Go. Confirmed |
 | `scope(..)`, `bind(..)`, `bind(claim = ..)`, `keyset(name(field = ..))` | The declaration attributes. Confirmed |
 | `stack-kms` to `stack-zerokms` | Not decided. The crate rename is part of the crate layout question, which stays open |

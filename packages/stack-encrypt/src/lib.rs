@@ -22,7 +22,7 @@
 #![cfg_attr(test, allow(unused_results))]
 //! Encrypt Rust values under per-value ZeroKMS data keys.
 //!
-//! A [`StackCipher`] is scoped to one ZeroKMS client, and a [`KeysetCipher`] —
+//! A [`StackCipher`] belongs to one ZeroKMS client, and a [`KeysetCipher`] —
 //! the cipher bound to one of that client's keysets, from
 //! [`default_keyset`](StackCipher::default_keyset) or
 //! [`keyset`](StackCipher::keyset) — consumes a scalar with
@@ -37,8 +37,8 @@
 //!
 //! # Quick start
 //!
-// `StackCipher::new()` builds a ZeroKMS client from the environment, so it
-// only exists with `http`. Without it the entry point is
+// `StackCipher::with_detected_credentials()` builds a ZeroKMS client from the
+// environment, so it only exists with `http`. Without it the entry point is
 // `StackCipher::builder().kms(..)` over an explicit data-key source — the
 // shape the WASI/wazero guest builds against; see "Testing without ZeroKMS"
 // below for the same call over the in-memory stub.
@@ -48,9 +48,10 @@
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 use stack_encrypt::StackCipher;
 
-// Credentials: `npx stash auth login` on a developer machine, or
-// CS_CLIENT_ID / CS_CLIENT_KEY + CS_CLIENT_ACCESS_KEY / CS_WORKSPACE_CRN in CI.
-let cipher = StackCipher::new().await?;
+// Reads the credentials from CS_CLIENT_ID / CS_CLIENT_KEY and
+// CS_CLIENT_ACCESS_KEY / CS_WORKSPACE_CRN, or else from the login that
+// `npx stash auth login` saved.
+let cipher = StackCipher::with_detected_credentials().await?;
 let keyset = cipher.default_keyset();
 
 // Encryption consumes and wipes the owned plaintext.
@@ -65,8 +66,9 @@ assert_eq!(plaintext, "secret message");
     not(feature = "http"),
     doc = "Without the `http` feature a cipher is built over an explicit\
  data-key source — `StackCipher::builder().kms(..).init()` — rather than from\
- the environment. Enable `http` for `StackCipher::new()`, which discovers\
- ZeroKMS credentials itself."
+ the environment. Enable `http` for\
+ `StackCipher::with_detected_credentials()`, which reads ZeroKMS credentials\
+ from the environment or the CLI's login."
 )]
 //!
 //! Encrypting binds to a keyset (every data key is minted under one); decrypting
@@ -93,7 +95,8 @@ assert_eq!(plaintext, "secret message");
 //! # async fn example<K: stack_encrypt::kms::DataKeySource + stack_encrypt::kms::IndexKeySource + Sync + 'static>(cipher: stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
 //! # let keyset = cipher.default_keyset();
 //! let ct = keyset.encrypt_with_context("4111 1111 1111 1111".to_owned(), "users/42/card").await?;
-//! let card: String = keyset.decrypt_with_context(ct, "users/42/card").await?; // ok
+//! let card: stack_encrypt::Protected<String> =
+//!     keyset.decrypt_with_context(ct, "users/42/card").await?; // ok
 //! # Ok(())
 //! # }
 //! ```
@@ -110,10 +113,18 @@ A cipher needs two credentials, resolved independently of each other:
   against; and
 - an **auth strategy** — whatever obtains a token ZeroKMS will accept.
 
-Each is looked for in the environment first, then in the current workspace of
-the CLI's profile directory (`~/.cipherstash`), which `npx stash auth login`
-writes. A logged-in developer machine has both there, so
-`StackCipher::new()` usually just works with nothing else set.
+A cipher reads credentials only from where your code says.
+[`StackCipher::with_detected_credentials`] is the one constructor that looks
+for them itself. It looks in the environment first, then in the CLI's profile
+directory (`~/.cipherstash`), which `npx stash auth login` writes. A
+logged-in developer machine has both there, so it works with nothing else
+set.
+
+The ZeroKMS endpoint is a setting, not a credential, and every cipher over
+ZeroKMS reads it from `CS_ZEROKMS_HOST` if that is set. Each request sends the
+token to that endpoint; the client key stays in your program. To choose it in
+code, pass [`kms`](StackCipherBuilder::kms) a `StackKms` built with
+`with_base_url`.
 
 Where there is no profile — CI, a container, wasm — the environment carries
 them. `CS_CLIENT_ID` + `CS_CLIENT_KEY` are the client key.
@@ -122,53 +133,154 @@ needs a workspace CRN (`CS_WORKSPACE_CRN`) alongside it: the profile is what
 supplies that otherwise, and its region drives service discovery while its
 workspace id verifies every token issued.
 
-An access key is not the only way to authenticate, and often not the one a
-service wants. A `stack_auth::OidcFederationStrategy` federates a
-third-party OIDC JWT (Clerk, Supabase, Auth0) into a CipherStash token, so
-the deployment holds no long-lived CipherStash credential of its own. What
-`AutoStrategy` detects is only the two above — access key, then profile — so
-any other strategy is named explicitly, and that is what
-[`kms`](StackCipherBuilder::kms) is for: build the
-[`StackKms`](crate::kms::StackKms) over the strategy you want and hand it to
-the builder.
+`AutoStrategy` detects an access key or a CLI login, and nothing else. To
+authenticate any other way, pass the strategy to
+[`auth_strategy`](StackCipherBuilder::auth_strategy). Then name the source of
+the client key with [`key_provider`](StackCipherBuilder::key_provider). After
+`auth_strategy`, the builder only reads a client key from the provider you
+name.
+
+For example, a `stack_auth::OidcFederationStrategy` exchanges a JWT from your
+identity provider (Clerk, Supabase, Auth0) for a CipherStash token. Your
+deployment then needs no long-lived CipherStash credential of its own.
+ZeroKMS receives each request as the user that the JWT names.
+
+`init` loads the index key of the default keyset, with one request to
+ZeroKMS. Call `init` where the strategy can return a token. If the provider
+returns the JWT of the current request's user, call `init` while your program
+handles a request.
+
+After `init`, ZeroKMS receives each data key request as the user that the
+strategy returns a token for. The cipher loads the default keyset's index key
+once, in `init`, and uses that key for every user. So the ZeroKMS log shows
+that one load under the caller who made it, and each data key request under
+its own caller: see [`auth_strategy`](StackCipherBuilder::auth_strategy).
+
+```no_run
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+use stack_auth::{AuthError, OidcFederationStrategy, OidcProviderFn, SecretToken};
+use stack_encrypt::StackCipher;
+use stack_encrypt::kms::EnvKeyProvider;
+
+// `OidcProviderFn` wraps a closure. Any type that implements
+// `stack_auth::OidcProvider` works in its place.
+let provider = OidcProviderFn::new(|| async {
+    // Return the JWT of the user who made the current request.
+    Ok::<_, AuthError>(SecretToken::new("header.payload.signature".to_string()))
+});
+// The workspace is `CS_WORKSPACE_CRN`, or the CLI's current workspace.
+let strategy = OidcFederationStrategy::with_detected_workspace(provider)?;
+
+// Run this while your program handles a request.
+let cipher = StackCipher::builder()
+    .auth_strategy(strategy)
+    // `EnvKeyProvider` reads `CS_CLIENT_ID` and `CS_CLIENT_KEY`.
+    .key_provider(EnvKeyProvider)
+    .init()
+    .await?;
+# Ok(())
+# }
+```
+
+To name the workspace yourself, build the strategy with
+`OidcFederationStrategy::new(crn, provider)`. `crn` is a `stack_auth::Crn`.
+
+Any other `AuthStrategy` goes to the builder the same way: an
+`AccessKeyStrategy`, a `DeviceSessionStrategy`, or an `AuthStrategyFn` that
+calls a function of your own.
 
 ```no_run
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 use stack_auth::{AuthError, AuthStrategyFn, SecretToken, ServiceToken};
 use stack_encrypt::StackCipher;
-use stack_encrypt::kms::{EnvKeyProvider, StackKmsBuilder};
+use stack_encrypt::kms::EnvKeyProvider;
 
-// Any `AuthStrategy` goes in this slot — `AccessKeyStrategy`,
-// `OidcFederationStrategy`, `DeviceSessionStrategy`, or, as here,
-// `AuthStrategyFn` over a closure of your own. The closure is called
-// whenever ZeroKMS needs a fresh token, so refresh belongs inside it. Note
-// what holds the token: `SecretToken` is zeroized on drop and prints as
-// `***`, so a long-lived credential neither lingers in freed memory nor
-// lands in a log line.
+// The cipher calls the closure whenever a ZeroKMS request needs a token, so
+// refresh the token inside the closure. `SecretToken` wipes the token when
+// it is dropped and prints as `***`. The token therefore stays out of freed
+// memory and out of logs.
 let token = SecretToken::new(std::env::var("MY_SERVICE_TOKEN")?);
 let strategy = AuthStrategyFn::new(move || {
     let token = token.clone();
     async move { Ok::<_, AuthError>(ServiceToken::new(token)) }
 });
 
-// The client key is the other half, and has its own provider: `EnvKeyProvider`
-// reads CS_CLIENT_ID / CS_CLIENT_KEY, or supply a `KeyProvider` of your own.
-let kms = StackKmsBuilder::new(strategy)
-    .with_key_provider(EnvKeyProvider)
-    .build()
+let cipher = StackCipher::builder()
+    .auth_strategy(strategy)
+    .key_provider(EnvKeyProvider)
+    .init()
     .await?;
-
-let cipher = StackCipher::builder().kms(kms).init().await?;
 # Ok(())
 # }
 ```
 
-The built-in strategies are constructed from a workspace CRN
-(`stack_auth::Crn`) rather than read from the environment —
-`OidcFederationStrategy::new(crn, provider)` — and otherwise reach the
-builder through the same `kms` seam.
+The key providers are in [`kms`]. `EnvKeyProvider` reads `CS_CLIENT_ID` and
+`CS_CLIENT_KEY`. On native targets, `ProfileKeyProvider` reads the key that
+`npx stash auth login` saved. `FallbackKeyProvider` tries one provider, then
+another. You can also implement `KeyProvider` yourself.
 
-`examples/zerokms_auth.rs` runs this end to end against a live ZeroKMS,
+To choose the transport settings as well, build a
+[`StackKms`](crate::kms::StackKms) with `StackKmsBuilder` and pass it to
+[`kms`](StackCipherBuilder::kms).
+
+## A credential with each call
+
+A server that decrypts as the end user who signed in has no identity of its
+own. At startup there is no user, and each request has a different one.
+[`credential`] covers this case. The code differs from the access key path
+in two places:
+
+- The strategy is an `OidcFederationStrategy` built with
+  `credential_per_call`. It needs no callback to find the JWT, so the
+  application needs no task-local variable for a callback to read.
+- Each request handler attaches its user's JWT to the call, with
+  [`with_credential`](Pending::with_credential). Every request that the
+  call makes is made as that user.
+
+[`init`](StackCipherBuilder::init) is the same call. With an access key it
+loads the default keyset, so wrong credentials fail at startup. With this
+strategy it has no credential to load the keyset with, so it makes no
+request. The first call on the default keyset that is awaited loads it, with
+the credential of that call. A call on a keyset selected by id or by name
+loads that keyset only.
+
+```
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+use stack_auth::OidcFederationStrategy;
+use stack_encrypt::kms::StaticKeyProvider;
+use stack_encrypt::StackCipher;
+
+# // A generated key stands in for the client key.
+# let client_key = stack_encrypt::kms::ClientKey::generate_for_test();
+let crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse()?;
+let strategy = OidcFederationStrategy::credential_per_call(crn)?;
+
+// Once, at startup. No request goes to ZeroKMS, so no user is needed.
+let cipher = StackCipher::builder()
+    .auth_strategy(strategy)
+    // `EnvKeyProvider` reads `CS_CLIENT_ID` and `CS_CLIENT_KEY` instead.
+    .key_provider(StaticKeyProvider::new(client_key))
+    .init()
+    .await?;
+# let _ = cipher;
+# Ok(())
+# }
+# tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+```
+
+A request handler then works as usual, and ends each call with the
+credential: `keyset.encrypt(..).with_credential(SecretToken::new(jwt)).await`.
+A record, a query and a zipped call take it the same way. [`WithCredential`]
+has that half as an example that runs, over a key source that needs no
+network.
+
+A call on this cipher is not a future until it has a credential, so a
+handler that forgets `.with_credential(..)` does not compile. A call on a
+cipher with an identity of its own is the other way round: it is awaited
+as it is, and has no `with_credential`. That covers an access key, a saved
+login, and an `OidcFederationStrategy` built with a provider callback.
+
+`examples/zerokms_auth.rs` runs the access-key path end to end against a live ZeroKMS,
 alongside the default path and the errors each half fails with. The
 transport knobs — timeouts, batch size, concurrency, an alternate ZeroKMS
 endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
@@ -213,7 +325,8 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! A wrong context loses data silently: a query under the wrong context
 //! matches nothing, and gives no error. So every declaration and every call
 //! can show the context it uses, before any key is requested. A derived
-//! record has `contexts()`, a [`Plan`] has [`Plan::contexts`], and a
+//! record has `contexts()`, a plan that is data has
+//! `dynamic::record::Plan::contexts` (with the `dynamic` feature), and a
 //! prepared call has [`Pending::context`](target::Pending::context). The
 //! `testing` feature adds `assert_context!`, which pins a context in a
 //! test. See [`contexts`] for the rendering. A field with a binding shows
@@ -521,19 +634,13 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! attribute. The [`target`] module describes the traits a hand-written
 //! target implements, and how the context of a record field is built.
 //!
-//! The older structural plans and derives (`#[derive(EncryptFrom,
-//! DecryptInto)]`) encrypt a borrowed plaintext into a [`StackCipherText`].
-//! A `StackCipherText` is a tree of sealed leaves. The low-level entry
-//! points of the structural API are [`KeysetCipher::encrypt_tree`] and
-//! [`KeysetCipher::decrypt_tree`]. Its conversion helpers are in
-//! [`target::legacy`]. The structural API is separate from the owned scalar
-//! API.
+//! A [`StackCipherText`] is a tree of sealed leaves, one for each field of
+//! the value. [`KeysetCipher::encrypt_tree`] seals a whole value as a tree,
+//! under one context, and [`KeysetCipher::decrypt_tree`] opens it. A derived
+//! record's ciphertext fields are trees of the same leaves.
 //!
-//! The owned derives also implement the structural traits. So an owned
-//! record can be a field of a structural record, or a typed field of a plan.
-//!
-//! A struct sealed through the structural API, or as an owned record, is one
-//! ciphertext per field. A struct in an [`OpaqueBlob`] is one ciphertext.
+//! A struct sealed as a tree, or as a derived record, is one ciphertext per
+//! field. A struct in an [`OpaqueBlob`] is one ciphertext.
 //!
 //! # What is authenticated
 //!
@@ -557,7 +664,7 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! # Relationship to vitaminc
 //!
 //! A `KeysetCipher` seals through a vitaminc `Cipher`; everything vitaminc
-//! can encrypt remains available through the structural engine. Its data model, AAD derivations and
+//! can encrypt remains available through [`KeysetCipher::encrypt_tree`]. Its data model, AAD derivations and
 //! the leaf wire format are vitaminc's (`vitaminc_encrypt::Aes256Cipher`, AES-256-GCM under a random
 //! per-leaf nonce vitaminc generates itself). The ZeroKMS `iv` a [`SealedValue`]
 //! carries is *not* that nonce: it identifies the data key, and is sent back to
@@ -581,40 +688,58 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 /// makes its requests.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod audit;
 pub mod blob;
 pub mod cipher;
 pub mod contexts;
+pub mod credential;
 mod scalar;
+pub use audit::{AuditMetadata, AuditValue, Audited};
 pub use blob::{BlobError, OpaqueBlob};
+pub use credential::{KeySource, WithCredential};
 pub use scalar::{Ciphertext, OpaqueDecode, OpaqueEncode};
+/// The identity of a key source that has one of its own: an access key, a
+/// saved login, or a test double. It is stack-auth's type.
+///
+/// A cipher over such a key source makes every key request as that
+/// identity, so its calls are awaited as they are. You do not name this
+/// type. It appears in the bound of
+/// [`StackCipherBuilder::init`], where the compiler works it out from the
+/// key source.
+pub use stack_kms::OwnIdentity;
 #[cfg(test)]
 mod codes;
 pub mod descriptor;
 #[cfg(feature = "dynamic")]
 pub mod dynamic;
+pub mod field_reference;
 pub mod json;
 pub mod keyset;
-pub mod marker;
 pub mod op;
 pub mod plan;
+pub mod refusal;
 pub mod sem;
 pub mod target;
 #[cfg(feature = "testing")]
 pub mod testing;
 pub mod value;
 
+#[cfg(feature = "http")]
+pub use cipher::WithAuthStrategy;
 pub use cipher::{
-    Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue, StackCipher,
-    StackCipherBuilder, StackCipherText,
+    Error, LeafBytesError, NoKms, PendingStackCipherText, SealedValue, StackCipher,
+    StackCipherBuilder, StackCipherText, WithKeySource,
 };
 pub use contexts::{
     CallContexts, CallerShape, ContextTree, Contexts, FieldContext, Kind, LeafContext, Placeholder,
     SuppliedContext,
 };
 pub use descriptor::{Describe, Description, Descriptor, Label, LabelError};
+pub use field_reference::{
+    BetweenQuery, FieldQuery, FieldReference, Needs, QueryInput, Ready, ScopeInput,
+};
 pub use keyset::KeysetCipher;
-pub use marker::{BetweenQuery, MarkedQuery, Marker, Needs, QueryInput, Ready, ScopeInput};
-pub use plan::{all, Plan, PlanError};
+pub use plan::PlanError;
 // stack-kms is a public dependency: `StackCipher` is generic over its
 // `DataKeySource`, and `StackCipherBuilder::kms` takes its `StackKms`. It is
 // versioned on its own (release-plz.toml), so a caller reaches it through
@@ -627,10 +752,9 @@ pub use stack_kms as kms;
 /// crate, so a binding encodes an error from any of them the same way.
 pub use stack_kms::{diagnostic, ErrorPayload};
 pub use target::{
-    CallerContext, CipherRef, DecryptField, DecryptFrom, DecryptInto, DecryptSource, Decryptable,
-    Decryption, EncryptFrom, EncryptInto, EncryptTarget, Encrypted, Encryption, Equality, Index,
-    IndexSpec, Indexes, Json, Match, Ope, Ore, OreBlock, Pending, PendingFuture, Request,
-    Responses, TermSet,
+    CallerContext, CipherRef, DecryptField, DecryptFrom, DecryptSource, Decryptable, Decryption,
+    EncryptInto, EncryptTarget, Encrypted, Encryption, Equality, Index, IndexSpec, Indexes, Json,
+    Match, Ope, Ore, OreBlock, Pending, PendingFuture, Request, Responses, TermSet,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they
@@ -640,9 +764,66 @@ pub use target::{
 // `IntoAad` and `IntoPrfContext` are vitaminc's blankets over it, so both
 // derivations see the same bytes.
 pub use vitaminc_aead::{
-    CipherText, Context, ContextPiece, ContextTag, DecodeError, Decrypt, Encrypt, IntoAad,
-    IntoContext, Node, PassthroughFrame, Unspecified,
+    CipherText, Context, ContextPiece, ContextTag, DecodeError, Decrypt, Encrypt, EncryptRef,
+    IntoAad, IntoContext, Node, PassthroughFrame, Unspecified,
 };
+/// A type with an order target of its own: what an order index
+/// ([`Ore`], [`Ope`], [`OreBlock`]), an order term ([`sem::OreTerm`],
+/// [`sem::OpeTerm`], [`sem::OreBlockTerm`]) and the ordering operators
+/// ([`op::Lt`] and the others) are bounded by. It is vitaminc-ore's trait,
+/// and its table is vitaminc-ore's. This crate names no target.
+///
+/// | Type | Target |
+/// | --- | --- |
+/// | `u16` to `u128`, `i16` to `i128` | the integer at its own width |
+/// | `f32`, `f64` | `F64`: an `f32` widens to it exactly, `-0.0` ties `0.0`, every NaN is one value after `+Infinity` |
+/// | `String`, `&str` | `Text`: Unicode 16 NFC with case and accents folded |
+/// | `value::Date` | `Date`: the day |
+/// | `value::Timestamp` | `Timestamp`: the instant truncated to the microsecond, so instants in one microsecond tie |
+/// | `value::Decimal` | `Decimal`: the number with its scale normalised, so `1.5` ties `1.50` |
+///
+/// A reference to each is `Orderable` too. An order index reads its value
+/// in place, so it also asks for [`EncryptRef`], and in `Owned` mode for
+/// `Zeroize` ([`target::WipeSource`]).
+///
+/// vitaminc-ore's table also has jiff's `civil::Date` and `Timestamp`, and
+/// rust_decimal's `Decimal`. Those types are `Copy` and are not `Zeroize`,
+/// so nothing wipes them. A target and an owned index need `Zeroize`, so
+/// neither takes them. The keyset's term functions
+/// ([`KeysetCipher::ore_term`] and the others) and a borrowed index do take
+/// them: a value passed by value is a copy the caller still holds. To have
+/// the plaintext wiped, use `value::Date`, `value::Timestamp`, or
+/// `value::Decimal`.
+///
+/// Bytes have no order term. No ordering operator compares bytes, so such
+/// a term would answer no query, and would still reveal the order of the
+/// rows. vitaminc-ore orders bytes only into a target that is named, and
+/// this crate does not name one.
+///
+/// A `bool`, a `u8` and an `i8` have no target. An order term over a domain
+/// that small tells anyone holding the column too much: with two values it
+/// says which rows are `true`, and with 256 it puts every row in one of
+/// 256 ranks, which a few known rows resolve to the values. Each keeps its
+/// equality term.
+///
+/// ```compile_fail
+/// use stack_encrypt::sem::OreTerm;
+///
+/// let _: Option<OreTerm<bool>> = None; // `bool` is not `Orderable`
+/// ```
+///
+/// ```compile_fail
+/// use stack_encrypt::sem::OpeTerm;
+///
+/// let _: Option<OpeTerm<u8>> = None; // `u8` is not `Orderable`
+/// ```
+///
+/// ```compile_fail
+/// use stack_encrypt::sem::OreTerm;
+///
+/// let _: Option<OreTerm<Vec<u8>>> = None; // bytes are not `Orderable`
+/// ```
+pub use vitaminc_ore::Orderable;
 // The vitaminc 0.4 names, deprecated there; re-exported for one transition so
 // a caller that spelled them keeps compiling with a warning.
 #[allow(deprecated)]
@@ -654,11 +835,10 @@ pub use vitaminc_prf::IntoPrfContext;
 #[allow(deprecated)]
 pub use vitaminc_prf::PrfContext;
 
-// The nonempty proof used by searchable targets and legacy declarations,
-// built with `nonempty!`
+// The nonempty proof used by searchable targets, built with `nonempty!`
 // (a literal, checked at compile time) or `NonEmpty::new` (a runtime value,
 // checked once); `MaybeEmpty` is what a context type of your own implements
-// to be wrapped. `#[derive(EncryptFrom)]` names these through this crate.
+// to be wrapped. `#[derive(EncryptTarget)]` names these through this crate.
 pub use vitaminc_protected::{nonempty, nonempty_bytes, EmptyError, MaybeEmpty, NonEmpty};
 
 // And the wrapper plaintext comes back in (`ValueFrame::into_inner`, a

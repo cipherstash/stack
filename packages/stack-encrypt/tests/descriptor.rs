@@ -10,29 +10,39 @@ mod common;
 
 use common::recording_cipher;
 use stack_encrypt::sem::EqualityTerm;
-use stack_encrypt::target::legacy::{DecryptFrom, EncryptInto};
-use stack_encrypt::target::Encrypted;
+use stack_encrypt::target::{DecryptSource, EncryptTarget, Encrypted, Scope};
 use stack_encrypt::{
-    nonempty, DecryptInto, Describe, Descriptor, EncryptFrom, Error, Label, NonEmpty,
+    nonempty, DecryptFrom, Describe, Descriptor, EncryptInto, Error, Label, NonEmpty,
     StackCipherText,
 };
+use zeroize::Zeroize;
 
-#[derive(EncryptFrom, DecryptInto)]
+#[derive(EncryptTarget, DecryptSource)]
 #[stash(plaintext = u32)]
 struct EncryptedAge {
     c: StackCipherText,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Zeroize)]
 struct User {
     email: String,
     name: String,
     age: u32,
 }
 
-#[derive(EncryptFrom, DecryptInto)]
+#[derive(EncryptTarget, DecryptSource)]
 #[stash(struct = User, scope = "users")]
 struct EncryptedUser {
+    email: Encrypted<EqualityTerm>,
+    #[stash(identity = "nickname")]
+    name: StackCipherText,
+    age: EncryptedAge,
+}
+
+/// The same record, with a scope that its caller supplies: a tenant.
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = User, scope = "users", scope(tenant: u64))]
+struct TenantUser {
     email: Encrypted<EqualityTerm>,
     #[stash(identity = "nickname")]
     name: StackCipherText,
@@ -53,11 +63,11 @@ async fn a_leaf_sends_its_context_as_the_descriptor_both_ways() -> Result<(), Er
     let keyset = cipher.default_keyset();
 
     let ct: StackCipherText = "alice"
+        .to_string()
         .encrypt_into_with_context(&keyset, nonempty!("users").with("email"))
         .await?;
-    let _: String = ct
-        .decrypt_into(&cipher, nonempty!("users").with("email"))
-        .await?;
+    let _: String =
+        String::decrypt_from_with_context(ct, &cipher, nonempty!("users").with("email")).await?;
 
     let sent = sent.lock().expect("lock").clone();
     assert_eq!(sent.generated(), ["users/email"]);
@@ -75,18 +85,21 @@ async fn a_label_is_sealed_under_the_descriptor_it_spells() -> Result<(), Error>
     let email = Label::parse("users/email").expect("a plain label");
     assert_eq!(email.descriptor().as_str(), "users/email");
     let ct: StackCipherText = "alice"
+        .to_string()
         .encrypt_into_with_context(&keyset, NonEmpty::from(email.clone()))
         .await?;
-    let _: String = ct
-        .decrypt_into(&cipher, nonempty!("users").with("email"))
-        .await?;
+    let _: String =
+        String::decrypt_from_with_context(ct, &cipher, nonempty!("users").with("email")).await?;
 
     // Extended by a row id like any context head.
     let row = NonEmpty::from(email).with(7u64);
-    let ct: StackCipherText = "alice".encrypt_into_with_context(&keyset, row).await?;
-    let _: String = ct
-        .decrypt_into(&cipher, nonempty!("users").with("email").with(7u64))
+    let ct: StackCipherText = "alice"
+        .to_string()
+        .encrypt_into_with_context(&keyset, row)
         .await?;
+    let _: String =
+        String::decrypt_from_with_context(ct, &cipher, nonempty!("users").with("email").with(7u64))
+            .await?;
 
     let sent = sent.lock().expect("lock").clone();
     assert_eq!(sent.generated(), ["users/email", "(users/email)/7u64"]);
@@ -125,8 +138,12 @@ async fn a_callers_context_extends_every_fields_descriptor() -> Result<(), Error
     let (cipher, sent) = recording_cipher().await;
     let keyset = cipher.default_keyset();
 
-    let row: EncryptedUser = user().encrypt_into_with_context(&keyset, 7u64).await?;
-    let back = User::decrypt_from_with_context(row, &cipher, 7u64).await?;
+    // The record lists a scope that its caller supplies. The caller's scope
+    // extends the context of every field.
+    let row: TenantUser = user()
+        .encrypt_into_with_context(&keyset, Scope::new(7u64))
+        .await?;
+    let back = User::decrypt_from_with_context(row, &cipher, Scope::new(7u64)).await?;
     assert_eq!(back, user());
 
     // The extended contexts are composites, rendered part by part — the
@@ -162,9 +179,9 @@ async fn every_leaf_of_a_tree_shares_the_root_descriptor() -> Result<(), Error> 
     let column: Vec<StackCipherText> = vec![1u32, 2, 3]
         .encrypt_into_with_context(&keyset, nonempty!("users").with("age"))
         .await?;
-    let _: Vec<u32> = column
-        .decrypt_into(&cipher, nonempty!("users").with("age"))
-        .await?;
+    let _: Vec<u32> =
+        Vec::<u32>::decrypt_from_with_context(column, &cipher, nonempty!("users").with("age"))
+            .await?;
 
     // Per-element AAD derivation is vitaminc's and stays inside the AEAD;
     // ZeroKMS sees the field, not the element.
@@ -238,7 +255,8 @@ async fn a_column_renders_an_over_long_context_once() -> Result<(), Error> {
     let column: Vec<StackCipherText> = vec![1u32, 2, 3]
         .encrypt_into_with_context(&keyset, nonempty!("users").with("age"))
         .await?;
-    let opened: Result<Vec<u32>, Error> = column.decrypt_into(&cipher, context).await;
+    let opened: Result<Vec<u32>, Error> =
+        Vec::<u32>::decrypt_from_with_context(column, &cipher, context).await;
     assert!(
         matches!(opened, Err(Error::DescriptorTooLong { .. })),
         "{opened:?}"
@@ -279,7 +297,7 @@ async fn a_column_with_nothing_to_bind_takes_any_context() -> Result<(), Error> 
         .encrypt_into_with_context(&keyset, long.clone())
         .await?;
     assert!(sealed.is_empty());
-    let opened: Vec<u32> = sealed.decrypt_into(&cipher, long).await?;
+    let opened: Vec<u32> = Vec::<u32>::decrypt_from_with_context(sealed, &cipher, long).await?;
     assert!(opened.is_empty());
 
     let sent = sent.lock().expect("lock").clone();
@@ -308,7 +326,7 @@ async fn an_over_long_context_is_refused_before_any_request_on_either_path() -> 
     let sealed: StackCipherText = 7u32
         .encrypt_into_with_context(&keyset, nonempty!("users").with("age"))
         .await?;
-    let opened: Result<u32, Error> = sealed.decrypt_into(&cipher, long).await;
+    let opened: Result<u32, Error> = u32::decrypt_from_with_context(sealed, &cipher, long).await;
     assert!(
         matches!(opened, Err(Error::DescriptorTooLong { .. })),
         "{opened:?}"

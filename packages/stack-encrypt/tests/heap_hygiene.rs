@@ -4,10 +4,11 @@
 //!
 //! The JSON index's tests ([`json_index`]) cover sealing under either root
 //! option, opening a document whole, a subtree read, an extraction and the
-//! containment and equality needles. One thing they leave out: the path a
-//! caller hands `AtPath` as an owned `String` is cloned by the query
-//! builder and dropped by the plan chain unwiped, since the chain only knows
-//! `P: AsRef<str>`; the test passes a `&'static str`.
+//! containment and equality needles. A needle is derived as a binding
+//! derives it, through a data plan: the needle's text and the path of an
+//! equality are the input's, and both carry the marker. The engine parses
+//! them into a document and a path of its own and wipes each, so the path
+//! is held to the rule as the needle is.
 //!
 //! This binary installs its own global allocator: a spy that, while a test
 //! watches its own thread, scans every block freed on that thread for a
@@ -105,6 +106,11 @@ static LIVE: Mutex<Live> = Mutex::new(Live {
 /// wherever it is freed.
 static TRACKING: AtomicBool = AtomicBool::new(false);
 
+/// The size of block [`allocations_of`] counts, or 0 when nothing is
+/// counted; and how many blocks of that size the watched thread allocated.
+static COUNT_SIZE: AtomicUsize = AtomicUsize::new(0);
+static COUNTED: AtomicUsize = AtomicUsize::new(0);
+
 /// The vitaminc frame whose free is excluded (see the module docs).
 const UPSTREAM_SEAL: &str = "vitaminc_encrypt::backend::aws_lc::CipherKey::seal";
 
@@ -177,6 +183,13 @@ unsafe impl GlobalAlloc for Spy {
         // future's state, a `Vec`'s spare capacity) would otherwise show
         // what an earlier, excluded free left there and be blamed for it.
         let ptr = System.alloc_zeroed(layout);
+        if !ptr.is_null()
+            && layout.size() == COUNT_SIZE.load(Ordering::SeqCst)
+            && WATCHING.with(Cell::get)
+            && !BUSY.with(Cell::get)
+        {
+            COUNTED.fetch_add(1, Ordering::SeqCst);
+        }
         if !ptr.is_null()
             && TRACKING.load(Ordering::SeqCst)
             && WATCHING.with(Cell::get)
@@ -336,6 +349,22 @@ fn watched_for_leaks(what: &str, f: impl FnOnce()) {
         "{what}: {} heap blocks allocated during the watch are still live with plaintext in them (sizes {leaked:?})",
         leaked.len()
     );
+}
+
+/// [`watched`], and count the blocks of exactly `size` bytes the watched
+/// thread allocated meanwhile.
+///
+/// A copy of a string allocates a block of the string's length. So with a
+/// string of a length nothing else allocates, two runs of one operation, one
+/// that copies the string and one that does not, differ by one block.
+fn allocations_of(size: usize, what: &str, f: impl FnOnce()) -> usize {
+    assert_ne!(size, 0, "a block size to count");
+    let _gate = gate();
+    COUNTED.store(0, Ordering::SeqCst);
+    COUNT_SIZE.store(size, Ordering::SeqCst);
+    watched_in_gate(what, f);
+    COUNT_SIZE.store(0, Ordering::SeqCst);
+    COUNTED.load(Ordering::SeqCst)
 }
 
 fn marked(tail: &str) -> String {
@@ -541,6 +570,213 @@ fn a_late_type_failure_in_an_owned_column_leaves_no_plaintext_on_the_heap() {
     );
 }
 
+/// Three decrypts joined with `Pending::zip`, the last of which fails after
+/// its key arrived. The plaintext the first two recovered is wiped, not
+/// dropped as it is. The second opens under a context, so both `DecryptFrom`
+/// calls are covered.
+#[test]
+fn a_late_failure_in_a_zip_of_decrypts_leaves_no_plaintext_on_the_heap() {
+    use stack_encrypt::DecryptFrom;
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let (first, second, third) = rt.block_on(async {
+        (
+            keyset.encrypt(marked("first")).await.unwrap(),
+            keyset
+                .encrypt_with_context(marked("second"), "users/second")
+                .await
+                .unwrap(),
+            keyset.encrypt(true).await.unwrap(),
+        )
+    });
+    watched("late type failure in a zip of decrypts", || {
+        let result = rt.block_on(async {
+            String::decrypt_from(first, &keyset)
+                .zip(keyset.decrypt_with_context::<String>(second, "users/second"))
+                .zip(String::decrypt_from(third, &keyset))
+                .await
+        });
+        assert!(matches!(
+            result,
+            Err(stack_encrypt::Error::OpenedType { .. })
+        ));
+    });
+}
+
+/// Three decrypts collected with `Pending::all`, the last of which fails
+/// after its key arrived. The plaintext the first two recovered is wiped,
+/// not dropped as it is. The same holds when the failure is a decrypt
+/// zipped after the collection.
+#[test]
+fn a_late_failure_in_all_of_decrypts_leaves_no_plaintext_on_the_heap() {
+    use stack_encrypt::{Ciphertext, DecryptFrom, Pending};
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let column = || -> Vec<Ciphertext> {
+        rt.block_on(async {
+            vec![
+                keyset.encrypt(marked("first")).await.unwrap(),
+                keyset.encrypt(marked("second")).await.unwrap(),
+                keyset.encrypt(true).await.unwrap(),
+            ]
+        })
+    };
+    let decrypts = |rows: Vec<Ciphertext>| {
+        rows.into_iter()
+            .map(|row| String::decrypt_from(row, &keyset))
+            .collect::<Vec<_>>()
+    };
+
+    let rows = column();
+    watched("late type failure in all of decrypts", || {
+        let result = rt.block_on(async { Pending::all(&keyset, decrypts(rows)).await });
+        assert!(matches!(
+            result,
+            Err(stack_encrypt::Error::OpenedType { .. })
+        ));
+    });
+
+    let mut rows = column();
+    let last = rows.pop().unwrap();
+    watched("late type failure zipped after all of decrypts", || {
+        let result = rt.block_on(async {
+            Pending::all(&keyset, decrypts(rows))
+                .zip(String::decrypt_from(last, &keyset))
+                .await
+        });
+        assert!(matches!(
+            result,
+            Err(stack_encrypt::Error::OpenedType { .. })
+        ));
+    });
+}
+
+/// Three stored leaves a hand-written target opens with `Decryption::zip`,
+/// the third sealed from a `bool` so that it fails after its key arrived.
+/// No derive or `DecryptFrom` builds the pair: the target's own
+/// description does, through `target::open`.
+struct ThreeLeaves {
+    first: stack_encrypt::StackCipherText,
+    second: stack_encrypt::StackCipherText,
+    third: stack_encrypt::StackCipherText,
+}
+
+#[derive(zeroize::Zeroize)]
+struct ThreeTexts {
+    first: String,
+    second: String,
+    third: String,
+}
+
+impl stack_encrypt::target::DecryptSource<ThreeTexts> for ThreeLeaves {
+    type ContextInput = stack_encrypt::target::RequiredContext<stack_encrypt::target::AeadContext>;
+    fn decryption<K: 'static>(
+        self,
+        context: Self::ContextInput,
+    ) -> stack_encrypt::target::Decryption<ThreeTexts, K> {
+        use stack_encrypt::target::open;
+        let context = context.into_inner();
+        open::<String, K>(self.first, context.clone())
+            .zip(open::<String, K>(self.second, context.clone()))
+            .zip(open::<String, K>(self.third, context))
+            .map(|((first, second), third)| ThreeTexts {
+                first,
+                second,
+                third,
+            })
+    }
+}
+
+/// A hand-written target that joins its leaves with `Decryption::zip`,
+/// whose last leaf fails after its key arrived. The plaintext the first
+/// two recovered is wiped, not dropped as it is.
+#[test]
+fn a_late_failure_in_a_hand_written_zip_leaves_no_plaintext_on_the_heap() {
+    use stack_encrypt::target::AeadContext;
+    use stack_encrypt::{DecryptFrom, EncryptInto, StackCipherText};
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let context = || AeadContext::from(nonempty!("notes"));
+    let leaves = rt.block_on(async {
+        let first: StackCipherText = marked("first")
+            .encrypt_into_with_context(&keyset, context())
+            .await
+            .unwrap();
+        let second: StackCipherText = marked("second")
+            .encrypt_into_with_context(&keyset, context())
+            .await
+            .unwrap();
+        let third: StackCipherText = true
+            .encrypt_into_with_context(&keyset, context())
+            .await
+            .unwrap();
+        ThreeLeaves {
+            first,
+            second,
+            third,
+        }
+    });
+    watched("late type failure in a hand-written zip", || {
+        let result = rt.block_on(async {
+            ThreeTexts::decrypt_from_with_context(leaves, &keyset, context()).await
+        });
+        assert!(matches!(
+            result,
+            Err(stack_encrypt::Error::OpenedType { .. })
+        ));
+    });
+}
+
+/// A column a hand-written target opens with `Decryption::all`, one scalar
+/// ciphertext per row.
+struct Column(Vec<stack_encrypt::Ciphertext>);
+
+impl stack_encrypt::target::DecryptSource<Vec<String>> for Column {
+    type ContextInput =
+        stack_encrypt::target::OptionalContext<stack_encrypt::target::ScalarContext>;
+    fn decryption<K: 'static>(
+        self,
+        context: Self::ContextInput,
+    ) -> stack_encrypt::target::Decryption<Vec<String>, K> {
+        use stack_encrypt::target::{AllowsNoContext, DecryptSource, Decryption};
+        let _ = context;
+        Decryption::all(self.0.into_iter().map(|row| {
+            <stack_encrypt::Ciphertext as DecryptSource<String>>::decryption(
+                row,
+                AllowsNoContext::omitted(),
+            )
+        }))
+    }
+}
+
+/// A hand-written target that collects its rows with `Decryption::all`,
+/// whose last row fails after its key arrived. The plaintext the first two
+/// rows recovered is wiped, not dropped as it is.
+#[test]
+fn a_late_failure_in_a_hand_written_all_leaves_no_plaintext_on_the_heap() {
+    use stack_encrypt::DecryptFrom;
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let column = rt.block_on(async {
+        Column(vec![
+            keyset.encrypt(marked("first")).await.unwrap(),
+            keyset.encrypt(marked("second")).await.unwrap(),
+            keyset.encrypt(true).await.unwrap(),
+        ])
+    });
+    watched("late type failure in a hand-written all", || {
+        let result = rt.block_on(async { Vec::<String>::decrypt_from(column, &keyset).await });
+        assert!(matches!(
+            result,
+            Err(stack_encrypt::Error::OpenedType { .. })
+        ));
+    });
+}
+
 #[test]
 fn a_query_term_leaves_no_plaintext_on_the_heap() {
     let rt = runtime();
@@ -563,28 +799,131 @@ fn a_query_term_leaves_no_plaintext_on_the_heap() {
     }
 }
 
-/// The typed chain prepares an equality query before any key is requested
-/// by normalizing a copy of the value (`Supports<Eq, S>` is `S: Clone`).
-/// The copy is wiped as it is read, so nothing of the query reaches freed
-/// memory. A typed `Matches` query is not watched here: `matching` views
-/// its owned text and drops it unwiped, which #1593 tracks.
+/// A record with one field that answers equality, for the marker query
+/// below: `EncryptedAccount::EMAIL`, under `users/email`.
+#[derive(Clone, zeroize::Zeroize)]
+struct Account {
+    email: String,
+}
+
+#[derive(stack_encrypt::target::EncryptTarget)]
+#[stash(struct = Account, scope = "users")]
+struct EncryptedAccount {
+    email: stack_encrypt::Encrypted<stack_encrypt::sem::EqualityTerm>,
+}
+
+/// A query from a field's marker copies the value it is handed by
+/// reference and owns the copy. The equality index prepares the query
+/// before any key is requested, by normalizing a copy of its own, and then
+/// derives the term from the marker's. Each copy is wiped, so nothing of
+/// the query reaches freed memory. A `matches` query from a marker is not
+/// watched here: `matching` views the copy the marker hands it and drops
+/// it unwiped, which is a known gap in the engine.
 #[test]
 fn a_typed_query_leaves_no_plaintext_on_the_heap() {
-    use stack_encrypt::{op, Equality, Plan};
+    use stack_encrypt::EncryptInto;
     let rt = runtime();
     let cipher = rt.block_on(common::stack_cipher());
-    let plan = Plan::context("users/email")
-        .with::<String, _>(Equality)
-        .build()
+    let keyset = cipher.default_keyset();
+    // A stored record, sealed before the watch, to hold the query to.
+    let account = Account {
+        email: marked("query"),
+    };
+    let stored: EncryptedAccount = rt
+        .block_on(async { account.encrypt_into(&keyset).await })
         .unwrap();
-    // The caller's own value stays alive across the watch: the chain works
+    // The caller's own value stays alive across the watch: the marker works
     // on its copy, and what the test owns is the test's residue, not the
     // engine's.
     let query = marked("query");
-    watched("typed query (Eq)", || {
-        rt.block_on(async { cipher.query(op::Eq, &query).on(&plan).await.unwrap() });
+    let term = watched("marker query (Eq)", || {
+        rt.block_on(async {
+            EncryptedAccount::EMAIL
+                .eq(&query)
+                .encrypt(&keyset)
+                .await
+                .unwrap()
+        })
     });
     drop(query);
+    assert_eq!(
+        term, stored.email.terms,
+        "the watched query derived the term the field stores"
+    );
+}
+
+/// A call built through a default keyset that the cipher has not loaded
+/// yet keeps what it needs of its plaintext until the pending has loaded
+/// the keyset: a normalized scalar, a copy of a match text, an order
+/// term's value, a document. Each is wiped when the pending is done with
+/// it, as on a loaded keyset. Each case takes a cipher of its own, so its
+/// call is the one that loads the keyset.
+#[test]
+fn a_call_through_a_keyset_that_is_not_loaded_leaves_no_plaintext_on_the_heap() {
+    use stack_encrypt::kms::{FakeCredentialKeySource, SecretToken};
+    use stack_encrypt::sem::DefaultMatch;
+    use stack_encrypt::{Ciphertext, StackCipher};
+    let rt = runtime();
+    let not_loaded = || {
+        rt.block_on(
+            StackCipher::builder()
+                .kms(FakeCredentialKeySource::new())
+                .init(),
+        )
+        .unwrap()
+    };
+    let credential = || SecretToken::new("alice.jwt");
+
+    let cipher = not_loaded();
+    let keyset = cipher.default_keyset();
+    let text = marked("equality");
+    watched("equality_term (keyset not loaded)", || {
+        rt.block_on(async {
+            keyset
+                .equality_term(text, nonempty!("users/email"))
+                .with_credential(credential())
+                .await
+        })
+        .unwrap();
+    });
+
+    let cipher = not_loaded();
+    let keyset = cipher.default_keyset();
+    // The caller's own text stays alive across the watch: the pending
+    // works on its copy.
+    let text = marked("match these words");
+    watched("match_terms (keyset not loaded)", || {
+        rt.block_on(async {
+            keyset
+                .match_terms::<DefaultMatch>(&text, nonempty!("users/bio"))
+                .with_credential(credential())
+                .await
+        })
+        .unwrap();
+    });
+    drop(text);
+
+    let cipher = not_loaded();
+    let keyset = cipher.default_keyset();
+    let text = marked("order");
+    watched("ore_term (keyset not loaded)", || {
+        rt.block_on(async {
+            keyset
+                .ore_term(text, nonempty!("users/surname"))
+                .with_credential(credential())
+                .await
+        })
+        .unwrap();
+    });
+
+    let cipher = not_loaded();
+    let keyset = cipher.default_keyset();
+    let text = marked("scalar");
+    watched("encrypt (keyset not loaded)", || {
+        let _: Ciphertext = rt
+            .block_on(async { keyset.encrypt(text).with_credential(credential()).await })
+            .unwrap();
+    });
 }
 
 /// An order term takes its plaintext by value, so the engine owns the
@@ -606,16 +945,6 @@ fn an_order_term_of_owned_text_or_bytes_leaves_no_plaintext_on_the_heap() {
     let text = marked("order");
     watched("ope_term (String)", || {
         rt.block_on(async { keyset.ope_term(text, nonempty!("users/surname")).await })
-            .unwrap();
-    });
-    let bytes = marked("order").into_bytes();
-    watched("ore_term (Vec<u8>)", || {
-        rt.block_on(async { keyset.ore_term(bytes, nonempty!("users/blob")).await })
-            .unwrap();
-    });
-    let bytes = marked("order").into_bytes();
-    watched("ope_term (Vec<u8>)", || {
-        rt.block_on(async { keyset.ope_term(bytes, nonempty!("users/blob")).await })
             .unwrap();
     });
 }
@@ -662,6 +991,7 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
         _: Option<&stack_encrypt::dynamic::TargetOptions>,
         _: &'a stack_encrypt::KeysetCipher<'_, K>,
         _: &stack_encrypt::Label,
+        _: &stack_encrypt::target::DeclaredContext,
         _: ValueFrame,
     ) -> Result<stack_encrypt::Pending<'a, Vec<u8>, K>, stack_encrypt::dynamic::TargetError> {
         unreachable!("a check seals nothing")
@@ -671,6 +1001,7 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
         _: &str,
         _: &'a stack_encrypt::StackCipher<K>,
         _: &stack_encrypt::Label,
+        _: &stack_encrypt::target::DeclaredContext,
         _: &[u8],
     ) -> Result<stack_encrypt::Pending<'a, ValueFrame, K>, stack_encrypt::dynamic::TargetError>
     {
@@ -682,6 +1013,7 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
         _: &stack_encrypt::target::IndexSpec,
         _: &'a stack_encrypt::KeysetCipher<'_, K>,
         _: &stack_encrypt::Label,
+        _: &stack_encrypt::target::DeclaredContext,
         _: ValueFrame,
     ) -> Result<stack_encrypt::Pending<'a, Vec<u8>, K>, stack_encrypt::dynamic::TargetError> {
         unreachable!("a document's operators are the engine's")
@@ -1054,6 +1386,10 @@ mod cancellation {
                 std::future::pending::<()>().await;
             }
         }
+    }
+
+    impl stack_kms::KeySourceKind for Stalling {
+        type Kind = stack_kms::OwnIdentity;
     }
 
     impl DataKeySource for Stalling {
@@ -1516,6 +1852,140 @@ mod json_plaintext {
         });
     }
 
+    /// `encrypt_into` hands the document to the JSON index by value: it is
+    /// moved out of the `JsonPlaintext`, sealed and wiped.
+    #[test]
+    fn a_json_plaintext_sealed_into_a_document_leaves_no_plaintext_on_the_heap() {
+        use stack_encrypt::json::JsonDocument;
+        use stack_encrypt::EncryptInto;
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+        let source = JsonPlaintext::from(document());
+        watched_for_leaks("JsonPlaintext -> JsonDocument", || {
+            let _: JsonDocument = rt.block_on(async {
+                source
+                    .encrypt_into_with_context(&keyset, nonempty!("docs").with("body"))
+                    .await
+                    .unwrap()
+            });
+        });
+    }
+
+    /// A refused context: the document moved out of the `JsonPlaintext`
+    /// is wiped with the refusal, not dropped as it is.
+    #[test]
+    fn a_json_plaintext_refused_a_document_leaves_no_plaintext_on_the_heap() {
+        use stack_encrypt::json::JsonDocument;
+        use stack_encrypt::plan::PlanError;
+        use stack_encrypt::target::{CallerContext, Scope};
+        use stack_encrypt::EncryptInto;
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+        let source = JsonPlaintext::from(document());
+        let empty = CallerContext::from(Scope::new(String::new()));
+        watched_for_leaks("JsonPlaintext -> JsonDocument, refused", || {
+            let refused: Result<JsonDocument, _> =
+                rt.block_on(async { source.encrypt_into_with_context(&keyset, empty).await });
+            assert!(
+                matches!(refused, Err(Error::Plan(PlanError::EmptyPart))),
+                "an empty scope is refused: {refused:?}"
+            );
+        });
+    }
+
+    /// A field marked `#[stash(json(..))]` is sealed through
+    /// `JsonTarget::json_owned_encryption`, which moves the document out of
+    /// the `JsonPlaintext` into the seal.
+    #[test]
+    fn a_json_plaintext_sealed_into_a_document_field_leaves_no_plaintext_on_the_heap() {
+        use stack_encrypt::json::{JsonDocument, JsonOptions, JsonTarget};
+        use stack_encrypt::target::{CallerContext, RequiredContext};
+        let rt = runtime();
+        let (cipher, generates, _) = rt.block_on(common::counting_cipher());
+        let keyset = cipher.default_keyset();
+        let source = JsonPlaintext::from(document());
+        watched_for_leaks("JsonPlaintext -> JsonDocument field", || {
+            let description = <JsonDocument as JsonTarget<JsonPlaintext>>::json_owned_encryption(
+                JsonOptions::default(),
+            );
+            let context =
+                RequiredContext::from(CallerContext::from(nonempty!("docs").with("body")));
+            let _: JsonDocument =
+                rt.block_on(async { keyset.run(description, source, context).await.unwrap() });
+        });
+        assert_eq!(generates.load(Ordering::SeqCst), 1, "one data key");
+    }
+
+    /// A refused context: the document moved out of the `JsonPlaintext` is
+    /// wiped with the refusal, and no key is requested.
+    #[test]
+    fn a_json_plaintext_refused_a_document_field_leaves_no_plaintext_on_the_heap() {
+        use stack_encrypt::json::{JsonDocument, JsonOptions, JsonTarget};
+        use stack_encrypt::plan::PlanError;
+        use stack_encrypt::target::{CallerContext, RequiredContext, Scope};
+        let rt = runtime();
+        let (cipher, generates, _) = rt.block_on(common::counting_cipher());
+        let keyset = cipher.default_keyset();
+        let source = JsonPlaintext::from(document());
+        watched_for_leaks("JsonPlaintext -> JsonDocument field, refused", || {
+            let description = <JsonDocument as JsonTarget<JsonPlaintext>>::json_owned_encryption(
+                JsonOptions::default(),
+            );
+            let context = RequiredContext::from(CallerContext::from(Scope::new(String::new())));
+            let refused: Result<JsonDocument, _> =
+                rt.block_on(async { keyset.run(description, source, context).await });
+            assert!(
+                matches!(refused, Err(Error::Plan(PlanError::EmptyPart))),
+                "an empty scope is refused: {refused:?}"
+            );
+        });
+        assert_eq!(generates.load(Ordering::SeqCst), 0, "no key is requested");
+    }
+
+    /// Neither form of a document field copies the document: the owned
+    /// form and the borrowed form make the same number of blocks of the
+    /// length of the document's one long string.
+    #[test]
+    fn a_json_plaintext_sealed_into_a_document_field_is_not_copied() {
+        use stack_encrypt::json::{JsonDocument, JsonOptions, JsonTarget};
+        use stack_encrypt::target::{CallerContext, RequiredContext};
+        // A length no other block in the seal has.
+        const LONG: usize = 12_289;
+        let long = || {
+            let mut text = marked("long");
+            text.extend(std::iter::repeat_n('y', LONG - text.len()));
+            json!({"long": text, "short": marked("short")})
+        };
+        let context = || RequiredContext::from(CallerContext::from(nonempty!("docs").with("body")));
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+
+        let source = JsonPlaintext::from(long());
+        let borrowed = allocations_of(LONG, "JsonDocument field, borrowed", || {
+            let description = <JsonDocument as JsonTarget<JsonPlaintext>>::json_encryption(
+                JsonOptions::default(),
+            );
+            let _: JsonDocument =
+                rt.block_on(async { keyset.run(description, &source, context()).await.unwrap() });
+        });
+        drop(source);
+        let source = JsonPlaintext::from(long());
+        let owned = allocations_of(LONG, "JsonDocument field, owned", || {
+            let description = <JsonDocument as JsonTarget<JsonPlaintext>>::json_owned_encryption(
+                JsonOptions::default(),
+            );
+            let _: JsonDocument =
+                rt.block_on(async { keyset.run(description, source, context()).await.unwrap() });
+        });
+        assert_eq!(
+            borrowed, owned,
+            "neither form copies the document (borrowed {borrowed}, owned {owned})"
+        );
+    }
+
     #[test]
     fn a_json_plaintext_decrypted_leaves_no_plaintext_on_the_heap() {
         let rt = runtime();
@@ -1586,6 +2056,87 @@ mod json_plaintext {
     }
 }
 
+/// A `plaintext = T` record with one field derived from the plaintext moves
+/// the value into that field's owned form. When the record's indexes are
+/// refused, the value it was handed is wiped with the refusal.
+mod one_field_record {
+    use super::*;
+
+    use stack_encrypt::plan::PlanError;
+    use stack_encrypt::sem::EqualityTerm;
+    use stack_encrypt::target::{
+        equality, CallerContext, Decryptable, EncryptTarget, Encryption, IndexSpec, RequiredContext,
+    };
+    use stack_encrypt::{EncryptInto, Error, StackCipherText};
+
+    /// A field type that declares one index twice, so a record holding it
+    /// is refused before any key is requested.
+    struct Twice(#[allow(dead_code)] EqualityTerm);
+    impl EncryptTarget<String> for Twice {
+        type ContextInput = RequiredContext<CallerContext>;
+        fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::ContextInput> {
+            equality().map(Twice).accepting()
+        }
+        fn indexes() -> Vec<IndexSpec> {
+            vec![IndexSpec::Equality, IndexSpec::Equality]
+        }
+    }
+    impl Decryptable for Twice {
+        const DECRYPTABLE: bool = false;
+    }
+
+    #[derive(EncryptTarget)]
+    #[stash(plaintext = String)]
+    struct Refused {
+        #[allow(dead_code)]
+        twice: Twice,
+    }
+
+    #[derive(EncryptTarget)]
+    #[stash(plaintext = String)]
+    struct Sealed {
+        #[allow(dead_code)]
+        c: StackCipherText,
+    }
+
+    #[test]
+    fn a_value_sealed_into_its_one_field_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+        let source = marked("one-field");
+        watched_for_leaks("one-field record", || {
+            let _: Sealed = rt.block_on(async {
+                source
+                    .encrypt_into_with_context(&keyset, nonempty!("docs").with("body"))
+                    .await
+                    .unwrap()
+            });
+        });
+    }
+
+    #[test]
+    fn a_record_whose_indexes_are_refused_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let (cipher, generates, _) = rt.block_on(common::counting_cipher());
+        let keyset = cipher.default_keyset();
+        let source = marked("refused-indexes");
+        watched_for_leaks("one-field record, indexes refused", || {
+            let refused: Result<Refused, _> = rt.block_on(async {
+                source
+                    .encrypt_into_with_context(&keyset, nonempty!("docs").with("body"))
+                    .await
+            });
+            assert!(
+                matches!(refused, Err(Error::Plan(PlanError::DuplicateIndex { .. }))),
+                "one index declared twice is refused: {:?}",
+                refused.err()
+            );
+        });
+        assert_eq!(generates.load(Ordering::SeqCst), 0, "no key is requested");
+    }
+}
+
 /// The JSON index: sealing a document under either root option, opening it
 /// whole (from the sealed root, and by walking its chain with the root
 /// open), opening a subtree read's rows and an extracted entry, and
@@ -1603,11 +2154,10 @@ mod json_index {
 
     use serde_json::{json, Value};
     use stack_encrypt::json::{
-        JsonDocument, JsonNode, JsonOptions, JsonPath, JsonQuery, JsonSubtree,
+        JsonDocument, JsonNode, JsonOptions, JsonPath, JsonPlaintext, JsonQuery,
     };
-    use stack_encrypt::target::legacy::DecryptFrom;
     use stack_encrypt::target::{json_document, AeadContext, Borrowed, CallerContext};
-    use stack_encrypt::{op, Plan, StackCipher};
+    use stack_encrypt::{DecryptFrom, StackCipher};
     use stack_kms::{
         DataKey, DataKeySource, DataKeyWithTag, DeterministicSource, GenerateKeyPayload,
         IdentifiedBy, IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
@@ -1625,6 +2175,10 @@ mod json_index {
             .unwrap()
             .get_or_insert([0; 32])
             .copy_from_slice(key.key());
+    }
+
+    impl stack_kms::KeySourceKind for Recorded {
+        type Kind = stack_kms::OwnIdentity;
     }
 
     impl DataKeySource for Recorded {
@@ -1739,10 +2293,17 @@ mod json_index {
         let value = document();
         for sealed_root in [true, false] {
             let doc = sealed(&rt, &cipher, &value, sealed_root);
-            let opened: Value = watched(&format!("open (sealed_root: {sealed_root})"), || {
-                rt.block_on(async { doc.clone().decrypt_into(&cipher, aead()).await.unwrap() })
+            // The opened document is dropped inside the watch, so a
+            // `JsonPlaintext` that stopped wiping itself fails here.
+            watched(&format!("open (sealed_root: {sealed_root})"), || {
+                let opened = rt.block_on(async {
+                    JsonPlaintext::decrypt_from_with_context(doc.clone(), &cipher, aead())
+                        .await
+                        .unwrap()
+                });
+                assert_eq!(opened.value(), &value);
+                drop(opened);
             });
-            assert_eq!(opened, value);
         }
         *KEY.lock().unwrap() = None;
     }
@@ -1778,18 +2339,21 @@ mod json_index {
                 })
                 .collect();
             let read = key.open(rows);
-            let opened: Value = watched(
+            // Built before the watch, and the opened value dropped inside
+            // it, as for the whole document.
+            let expected = json!(marked("short"));
+            watched(
                 &format!("subtree read (sealed_root: {sealed_root})"),
                 || {
-                    rt.block_on(async {
-                        cipher
-                            .decrypt_as::<Value, JsonSubtree>(read, aead())
+                    let opened = rt.block_on(async {
+                        JsonPlaintext::decrypt_from_with_context(read, &cipher, aead())
                             .await
                             .unwrap()
-                    })
+                    });
+                    assert_eq!(opened.value(), &expected);
+                    drop(opened);
                 },
             );
-            assert_eq!(opened, json!(marked("short")));
             let selector = rt
                 .block_on(async {
                     keyset
@@ -1799,15 +2363,15 @@ mod json_index {
                 .unwrap();
             let (j, _) = doc.find(&key.token_bytes()[0]).unwrap();
             let node = selector.open(doc.node(j).unwrap());
-            let opened: Value = watched(&format!("-> (sealed_root: {sealed_root})"), || {
-                rt.block_on(async {
-                    cipher
-                        .decrypt_as::<Value, stack_encrypt::json::JsonExtracted>(node, aead())
+            watched(&format!("-> (sealed_root: {sealed_root})"), || {
+                let opened = rt.block_on(async {
+                    JsonPlaintext::decrypt_from_with_context(node, &cipher, aead())
                         .await
                         .unwrap()
-                })
+                });
+                assert_eq!(opened.value(), &expected);
+                drop(opened);
             });
-            assert_eq!(opened, json!(marked("short")));
         }
         *KEY.lock().unwrap() = None;
     }
@@ -1816,32 +2380,53 @@ mod json_index {
     fn a_containment_needle_leaves_no_plaintext_on_the_heap() {
         let rt = runtime();
         let cipher = rt.block_on(cipher());
-        let plan = Plan::value::<Value>()
-            .context("users/profile")
-            .encrypt_into::<JsonDocument>()
-            .build()
-            .unwrap();
-        let needle = document();
-        let query: JsonQuery = watched("Contains needle", || {
-            rt.block_on(async { cipher.query(op::Contains, &needle).on(&plan).await.unwrap() })
+        let keyset = cipher.default_keyset();
+        // The field as a binding's plan names it, under the index's default
+        // options.
+        let wire = json!({
+            "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
+                        "target": "JsonSearch"}
         });
-        drop(query);
-        // The path is a `&'static str`: an owned path `String` is cloned by
-        // the query builder and dropped by the plan chain, and the chain's
-        // `P: AsRef<str>` cannot wipe it (see the module's JSON notes).
-        let path: &'static str =
-            Box::leak(format!("$[\"{}\"].inner", marked("key")).into_boxed_str());
-        let at = (path, marked("short"));
-        let query: JsonQuery = watched("AtPath(Eq) needle", || {
-            rt.block_on(async {
-                cipher
-                    .query(op::AtPath(op::Eq), &at)
-                    .on(&plan)
-                    .await
-                    .unwrap()
-            })
-        });
-        drop(query);
+        let plan = record::plan_with(
+            stack_encrypt::dynamic::frame::serde::to_vec(&wire)
+                .unwrap()
+                .as_protected_ref(),
+            &Documents,
+        )
+        .unwrap();
+        // The needle's text, the path and the value at it are the test's
+        // input, built and framed before the watch and alive across it. The
+        // path names the marked key, in quotes, and is an owned string.
+        let needle = document().to_string();
+        let path = format!("$[\"{}\"].inner", marked("key"));
+        let short = json!(marked("short")).to_string();
+        let inputs = [
+            (Op::Contains, object(vec![("json", frame(needle.as_str()))])),
+            (
+                Op::EqAt,
+                object(vec![
+                    ("path", frame(path.as_str())),
+                    ("json", frame(short.as_str())),
+                ]),
+            ),
+        ];
+        for (operator, input) in &inputs {
+            let term = watched(&format!("{operator:?} needle"), || {
+                rt.block_on(async {
+                    query_term(&keyset, &plan, "profile", *operator, input, &Documents)
+                        .expect("a document operator")
+                        .await
+                        .expect("its needle")
+                })
+            });
+            // The operand is the needle the database is sent.
+            let stack_encrypt::dynamic::Operand::One(operand) = term.operand() else {
+                panic!("{operator:?}: one operand")
+            };
+            let query: JsonQuery = serde_json::from_slice(operand).expect("a needle");
+            drop(query);
+        }
+        drop((needle, path, short));
     }
 
     /// A document field's operators through the data plan

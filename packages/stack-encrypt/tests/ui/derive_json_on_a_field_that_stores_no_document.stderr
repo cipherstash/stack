@@ -1,0 +1,49 @@
+error[E0277]: `Encrypted<EqualityTerm>` does not store a JSON document
+  --> tests/ui/derive_json_on_a_field_that_stores_no_document.rs:17:12
+   |
+17 |     email: Encrypted<EqualityTerm>,
+   |            ^^^^^^^^^^^^^^^^^^^^^^^ `#[stash(json(..))]` is on a field of this type
+   |
+   = help: the trait `JsonTarget<_>` is not implemented for `Encrypted<EqualityTerm>`
+   = note: `#[stash(json(..))]` names the JSON index's options, so it goes on a field whose type stores a JSON document, such as `JsonDocument` or `eql_bindings::v4::json_tree::JsonTreeDocument`
+help: the following other types implement trait `JsonTarget<S>`
+  --> src/json/target.rs
+   |
+   | impl JsonTarget<JsonPlaintext> for JsonDocument {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `JsonDocument` implements `JsonTarget<JsonPlaintext>`
+...
+   | impl<S: Zeroize, T: JsonTarget<S> + MaybeSend> JsonTarget<Option<S>> for Option<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Option<T>` implements `JsonTarget<Option<S>>`
+note: required by a bound in `seal_field`
+  --> src/json/target.rs
+   |
+   | pub fn seal_field<'s, T, S, K>(
+   |        ---------- required by a bound in this function
+...
+   |     T: JsonTarget<S>,
+   |        ^^^^^^^^^^^^^ required by this bound in `seal_field`
+
+error[E0277]: `Encrypted<EqualityTerm>` does not store a JSON document
+  --> tests/ui/derive_json_on_a_field_that_stores_no_document.rs:17:12
+   |
+17 |     email: Encrypted<EqualityTerm>,
+   |            ^^^^^^^^^^^^^^^^^^^^^^^ `#[stash(json(..))]` is on a field of this type
+   |
+   = help: the trait `JsonTarget<_>` is not implemented for `Encrypted<EqualityTerm>`
+   = note: `#[stash(json(..))]` names the JSON index's options, so it goes on a field whose type stores a JSON document, such as `JsonDocument` or `eql_bindings::v4::json_tree::JsonTreeDocument`
+help: the following other types implement trait `JsonTarget<S>`
+  --> src/json/target.rs
+   |
+   | impl JsonTarget<JsonPlaintext> for JsonDocument {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `JsonDocument` implements `JsonTarget<JsonPlaintext>`
+...
+   | impl<S: Zeroize, T: JsonTarget<S> + MaybeSend> JsonTarget<Option<S>> for Option<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Option<T>` implements `JsonTarget<Option<S>>`
+note: required by a bound in `seal_field_owned`
+  --> src/json/target.rs
+   |
+   | pub fn seal_field_owned<'s, T, S, K>(
+   |        ---------------- required by a bound in this function
+...
+   |     T: JsonTarget<S>,
+   |        ^^^^^^^^^^^^^ required by this bound in `seal_field_owned`

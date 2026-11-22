@@ -19,9 +19,31 @@ const DEFAULT_PATH = "/";
 const DEFAULT_SAFETY_MARGIN_SECONDS = 30;
 
 /**
+ * @typedef {object} CookieAttributes
+ * @property {string} [domain]                    `Domain` attribute (absent = host-only)
+ * @property {string} path                        `Path` attribute
+ * @property {boolean} secure                     `Secure` flag
+ * @property {boolean} httpOnly                   `HttpOnly` flag
+ * @property {"Strict" | "Lax" | "None"} sameSite `SameSite` attribute
+ * @property {number} [maxAge]                    `Max-Age` in seconds (absent when the token carries no expiry)
+ */
+
+/**
+ * A place cookies are read from and written to. The default is the `Cookie`
+ * header of a `Request` plus a `Headers` that collects `Set-Cookie`; a
+ * framework that owns the response (TanStack Start's `getCookie`/`setCookie`,
+ * Next's `cookies()`) is adapted by passing its own pair as `jar`.
+ *
+ * @typedef {object} CookieJar
+ * @property {(name: string) => string | null | undefined | Promise<string | null | undefined>} get
+ * @property {(name: string, value: string, attributes: CookieAttributes) => void | Promise<void>} set
+ */
+
+/**
  * @typedef {object} CookieStoreOptions
- * @property {Request} request                              Incoming request to read the cookie from
- * @property {Headers} responseHeaders                      Outgoing headers to append `Set-Cookie` to
+ * @property {Request} [request]                            Incoming request to read the cookie from (with `responseHeaders`)
+ * @property {Headers} [responseHeaders]                    Outgoing headers to append `Set-Cookie` to (with `request`)
+ * @property {CookieJar} [jar]                              Read and write through a framework's own cookie API instead of `request` / `responseHeaders`
  * @property {string} [name="cs_token"]                     Cookie name
  * @property {string} [domain]                              `Domain` attribute
  * @property {string} [path="/"]                            `Path` attribute
@@ -39,6 +61,7 @@ export function cookieStore(options) {
   const {
     request,
     responseHeaders,
+    jar,
     name = DEFAULT_NAME,
     domain,
     path = DEFAULT_PATH,
@@ -56,10 +79,20 @@ export function cookieStore(options) {
     );
   }
 
+  // Exactly one cookie source. Both at once is ambiguous (which one is read?),
+  // and neither used to surface as a `TypeError` on `request.headers` at the
+  // first `load()` — inside a strategy, where it is logged and ignored.
+  const hasHeaders = request !== undefined || responseHeaders !== undefined;
+  if (jar ? hasHeaders : !(request && responseHeaders)) {
+    throw new TypeError(
+      "cookieStore: pass either `request` and `responseHeaders`, or `jar` — not both, and not neither.",
+    );
+  }
+  const cookies = jar ?? headerJar(request, responseHeaders);
+
   return {
     async load() {
-      const cookies = parseCookieHeader(request.headers.get("cookie"));
-      const encoded = cookies[name];
+      const encoded = await cookies.get(name);
       if (!encoded) return null;
       try {
         return decodeBase64Url(encoded);
@@ -68,20 +101,33 @@ export function cookieStore(options) {
       }
     },
     async save(json) {
-      const value = encodeBase64Url(json);
       const maxAge = maxAgeFromTokenJson(json, expirySafetyMarginSeconds);
+      /** @type {CookieAttributes} */
+      const attributes = { path, secure, httpOnly, sameSite };
+      if (domain) attributes.domain = domain;
+      if (typeof maxAge === "number") attributes.maxAge = maxAge;
+      await cookies.set(name, encodeBase64Url(json), attributes);
+    },
+  };
+}
+
+/**
+ * The default {@link CookieJar}: read the request's `Cookie` header, append a
+ * serialised `Set-Cookie` to the response headers.
+ *
+ * @param {Request} request
+ * @param {Headers} responseHeaders
+ * @returns {CookieJar}
+ */
+function headerJar(request, responseHeaders) {
+  return {
+    get(name) {
+      return parseCookieHeader(request.headers.get("cookie"))[name];
+    },
+    set(name, value, attributes) {
       responseHeaders.append(
         "set-cookie",
-        serializeSetCookie({
-          name,
-          value,
-          domain,
-          path,
-          secure,
-          httpOnly,
-          sameSite,
-          maxAge,
-        }),
+        serializeSetCookie({ name, value, ...attributes }),
       );
     },
   };

@@ -4,9 +4,9 @@
 //!
 //! - **Round trip.** "Ng" stored is found by the query "Ng"; "Mike Ng" is
 //!   found by "Ng" and by "Mike Ng"; "Nguyen" is not found by "Ng".
-//! - **Identity.** The option is part of the index: a query asked under
-//!   other options than the field declares is refused, and options the
-//!   index cannot use are refused on both sides.
+//! - **Identity.** The option is part of the index, which is the field's
+//!   type: a field is stored and queried under the options its type
+//!   declares, and options the index cannot use are refused on both sides.
 //! - **Containment.** For random text, the stored filter holds the filter of
 //!   any run of its whole words.
 //! - **Calibration.** A one-word query sets as many bits as a one-trigram
@@ -19,14 +19,11 @@ use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::{Config, RngAlgorithm, RngSeed, TestRng, TestRunner};
 use stack_encrypt::kms::FakeDataKeySource;
-use stack_encrypt::op::{self, Probabilistic};
-use stack_encrypt::plan::{Field, FieldSchema, Fields, Indexed, PlanError, ValuePlan};
+use stack_encrypt::op::Probabilistic;
 use stack_encrypt::sem::{MatchConfig, MatchOptions, MatchQuery, MatchTerms, TermError, Tokenizer};
-use stack_encrypt::target::{Encrypted, IndexSpec};
-use stack_encrypt::{nonempty, Error, Match, Plan, StackCipher};
-
-/// A one-value plan of text under one match index of the configuration `C`.
-type MatchPlan<C> = ValuePlan<String, Indexed<Match<C>>>;
+use stack_encrypt::target::EncryptTarget;
+use stack_encrypt::{nonempty, EncryptInto, Encrypted, Error, KeysetCipher};
+use zeroize::Zeroize;
 
 /// 3-grams, downcased, with short-word tokens: the default index with the
 /// option on.
@@ -53,46 +50,32 @@ impl MatchConfig for StandardShortWords {
     }
 }
 
-type Cipher = StackCipher<FakeDataKeySource>;
+type Keyset<'a> = KeysetCipher<'a, FakeDataKeySource>;
 
-fn plan() -> MatchPlan<ShortWords> {
-    Plan::context("people/name")
-        .with::<String, _>(Match::<ShortWords>::new())
-        .build()
-        .expect("a valid plan")
+#[derive(Clone, Zeroize)]
+struct Person {
+    name: String,
 }
 
-async fn store(
-    cipher: &Cipher,
-    plan: &MatchPlan<ShortWords>,
-    text: &str,
-) -> MatchTerms<ShortWords> {
-    let stored: Encrypted<MatchTerms<ShortWords>> = cipher
-        .encrypt(&text.to_owned())
-        .using(plan)
+/// A person whose name is under the short-word match index.
+#[derive(EncryptTarget)]
+#[stash(struct = Person, scope = "people")]
+struct EncryptedPerson {
+    name: Encrypted<MatchTerms<ShortWords>>,
+}
+
+/// The stored filter of `text` as a person's name.
+async fn store(keyset: &Keyset<'_>, text: &str) -> MatchTerms<ShortWords> {
+    let stored: EncryptedPerson = Person { name: text.into() }
+        .encrypt_into(keyset)
         .await
         .unwrap_or_else(|error| panic!("{text:?} stores: {error}"));
-    stored.terms
+    stored.name.terms
 }
 
-async fn query(
-    cipher: &Cipher,
-    plan: &MatchPlan<ShortWords>,
-    text: &str,
-) -> Result<MatchQuery<ShortWords>, Error> {
-    cipher
-        .query(op::Matches, text)
-        .via(Match::<ShortWords>::new())
-        .on(plan)
-        .await
-}
-
-fn plan_error<T>(result: Result<T, Error>) -> PlanError {
-    match result {
-        Err(Error::Plan(error)) => error,
-        Err(other) => panic!("expected a plan error, got {other:?}"),
-        Ok(_) => panic!("expected a plan error, got a value"),
-    }
+/// A match query of `text` on a person's name, from the field reference.
+async fn query(keyset: &Keyset<'_>, text: &str) -> Result<MatchQuery<ShortWords>, Error> {
+    EncryptedPerson::NAME.matches(text).encrypt(keyset).await
 }
 
 mod given_short_words {
@@ -101,15 +84,13 @@ mod given_short_words {
     #[tokio::test]
     async fn a_two_letter_value_stores_one_token_and_the_two_letter_query_finds_it() {
         let cipher = stack_cipher().await;
-        let plan = plan();
-        let stored = store(&cipher, &plan, "Ng").await;
+        let keyset = cipher.default_keyset();
+        let stored = store(&keyset, "Ng").await;
         assert!(
             !stored.positions().is_empty(),
             "\"Ng\" stores a token, not the empty filter"
         );
-        let ng = query(&cipher, &plan, "Ng")
-            .await
-            .expect("\"Ng\" is a query");
+        let ng = query(&keyset, "Ng").await.expect("\"Ng\" is a query");
         assert!(stored.matches(&ng), "the query \"Ng\" finds \"Ng\"");
         assert!(ng.verify("Ng"), "and the row verifies");
         assert_eq!(
@@ -122,8 +103,8 @@ mod given_short_words {
     #[tokio::test]
     async fn a_two_letter_query_finds_the_word_and_not_a_longer_word_it_begins() {
         let cipher = stack_cipher().await;
-        let plan = plan();
-        let ng = query(&cipher, &plan, "ng").await.expect("a query");
+        let keyset = cipher.default_keyset();
+        let ng = query(&keyset, "ng").await.expect("a query");
         for (text, found) in [
             ("Ng", true),
             ("Mike Ng", true),
@@ -133,7 +114,7 @@ mod given_short_words {
             ("Mike Nguyen", false),
             ("Long", false),
         ] {
-            let stored = store(&cipher, &plan, text).await;
+            let stored = store(&keyset, text).await;
             // The filter alone: a row without the word could hold its bits
             // by chance, but under the test key and these rows none does,
             // so a stored side that set the word's bits for a longer word
@@ -154,12 +135,12 @@ mod given_short_words {
     #[tokio::test]
     async fn a_query_of_words_and_ngrams_needs_every_short_word_whole() {
         let cipher = stack_cipher().await;
-        let plan = plan();
-        let mike_ng = query(&cipher, &plan, "Mike Ng").await.expect("a query");
-        let stored = store(&cipher, &plan, "Mike Ng").await;
+        let keyset = cipher.default_keyset();
+        let mike_ng = query(&keyset, "Mike Ng").await.expect("a query");
+        let stored = store(&keyset, "Mike Ng").await;
         assert!(stored.matches(&mike_ng), "\"Mike Ng\" finds itself");
         assert!(mike_ng.verify("mike ng"), "case folded");
-        let longer = store(&cipher, &plan, "Mike Nguyen").await;
+        let longer = store(&keyset, "Mike Nguyen").await;
         assert!(
             !mike_ng.verify("Mike Nguyen"),
             "the query's short word must be a whole word of the row"
@@ -168,7 +149,7 @@ mod given_short_words {
             !longer.matches(&mike_ng),
             "and the filter says so: \"Mike Nguyen\" has no word token ng"
         );
-        let mike = query(&cipher, &plan, "Mike").await.expect("a query");
+        let mike = query(&keyset, "Mike").await.expect("a query");
         assert!(
             longer.matches(&mike) && stored.matches(&mike),
             "a query of trigrams alone finds both"
@@ -178,15 +159,15 @@ mod given_short_words {
     #[tokio::test]
     async fn a_query_that_cuts_nothing_is_still_refused() {
         let cipher = stack_cipher().await;
-        let plan = plan();
+        let keyset = cipher.default_keyset();
         for text in ["N", "", "  ", "n "] {
-            let refused = query(&cipher, &plan, text).await;
+            let refused = query(&keyset, text).await;
             assert!(
                 matches!(refused, Err(Error::Term(TermError::EmptyTermText))),
                 "{text:?}: {refused:?}"
             );
         }
-        let stored = store(&cipher, &plan, "N").await;
+        let stored = store(&keyset, "N").await;
         assert!(
             stored.positions().is_empty(),
             "a one-letter value is still the empty filter"
@@ -195,103 +176,82 @@ mod given_short_words {
 
     /// A person with one name under each index: the short-word index on
     /// `name`, the default on `alias`.
-    struct Person {
+    #[derive(Clone, Zeroize)]
+    struct Aliased {
         name: String,
         alias: String,
     }
-    impl Fields for Person {
-        fn field_names(&self) -> Vec<&str> {
-            vec!["name", "alias"]
-        }
-        fn schema() -> Option<Vec<FieldSchema>> {
-            Some(vec![
-                FieldSchema::of::<String>("name"),
-                FieldSchema::of::<String>("alias"),
-            ])
-        }
-    }
-    impl Field<String> for Person {
-        fn field(&self, name: &str) -> Option<&String> {
-            match name {
-                "name" => Some(&self.name),
-                "alias" => Some(&self.alias),
-                _ => None,
-            }
-        }
+
+    #[derive(EncryptTarget)]
+    #[stash(struct = Aliased, scope = "aliased")]
+    struct EncryptedAliased {
+        name: Encrypted<MatchTerms<ShortWords>>,
+        alias: Encrypted<MatchTerms>,
     }
 
-    /// The option is part of the index: asking a field for a match index
-    /// under the other setting is refused, as a mismatched `k` is.
+    /// The option is part of the index, and a field's index is its type:
+    /// each field is stored and queried under its own setting. The
+    /// two-letter word is a token of the short-word field, and cuts nothing
+    /// under the default field.
     #[tokio::test]
-    async fn a_query_under_other_options_than_the_field_declares_is_refused() {
+    async fn a_field_is_queried_under_the_options_its_type_declares() {
         let cipher = stack_cipher().await;
-        let plan: Plan<Person, FakeDataKeySource> = Plan::context("people")
-            .fields()
-            .encrypt_index::<String>("name", Match::<ShortWords>::new())
-            .encrypt_index::<String>("alias", Match)
-            .build()
-            .expect("a valid plan");
-        let name = plan.field("name").expect("declared");
-        let alias = plan.field("alias").expect("declared");
-        assert_eq!(
-            plan_error(cipher.query(op::Matches, "Mike").on(&name).await),
-            PlanError::IndexOptions {
-                field: "name".into(),
-                declared: IndexSpec::Match(ShortWords::options()),
-                asked: IndexSpec::Match(MatchOptions::default()),
-            },
-            "the default index is not the field's"
-        );
-        assert_eq!(
-            plan_error(
-                cipher
-                    .query(op::Matches, "Mike")
-                    .via(Match::<ShortWords>::new())
-                    .on(&alias)
-                    .await
-            ),
-            PlanError::IndexOptions {
-                field: "alias".into(),
-                declared: IndexSpec::Match(MatchOptions::default()),
-                asked: IndexSpec::Match(ShortWords::options()),
-            },
-            "nor is the short-word index a default field's"
-        );
-        let found: MatchQuery<ShortWords> = cipher
-            .query(op::Matches, "Ng")
-            .via(Match::<ShortWords>::new())
-            .on(&name)
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedAliased = Aliased {
+            name: "Mike Ng".into(),
+            alias: "Mike Ng".into(),
+        }
+        .encrypt_into(&keyset)
+        .await
+        .expect("stores");
+
+        let found: MatchQuery<ShortWords> = EncryptedAliased::NAME
+            .matches("Ng")
+            .encrypt(&keyset)
             .await
             .expect("the field's own options answer");
-        let mut row = cipher
-            .encrypt(&Person {
-                name: "Mike Ng".into(),
-                alias: "Mike Ng".into(),
-            })
-            .using(&plan)
+        assert!(stored.name.terms.matches(&found), "and find the row");
+
+        let refused = EncryptedAliased::ALIAS.matches("Ng").encrypt(&keyset).await;
+        assert!(
+            matches!(refused, Err(Error::Term(TermError::EmptyTermText))),
+            "the default index has no token for a two-letter word: {refused:?}"
+        );
+        let mike: MatchQuery = EncryptedAliased::ALIAS
+            .matches("Mike")
+            .encrypt(&keyset)
             .await
-            .expect("stores");
-        let stored: Encrypted<MatchTerms<ShortWords>> = row.take("name").expect("a name");
-        assert!(stored.terms.matches(&found), "and find the row");
+            .expect("a trigram query");
+        assert!(stored.alias.terms.matches(&mike));
+        assert!(
+            mike.verify("Mike Ng") && !mike.verify("Ng"),
+            "the default index verifies by trigrams alone"
+        );
+    }
+
+    /// A person whose name is under options the match index cannot use.
+    #[derive(EncryptTarget)]
+    #[stash(struct = Person, scope = "people")]
+    #[allow(dead_code)]
+    struct Unusable {
+        name: Encrypted<MatchTerms<StandardShortWords>>,
     }
 
     #[tokio::test]
     async fn options_the_index_cannot_use_are_refused_stored_and_queried() {
         let cipher = stack_cipher().await;
-        let plan: MatchPlan<StandardShortWords> = Plan::context("people/name")
-            .with::<String, _>(Match::<StandardShortWords>::new())
-            .build()
-            .expect("the plan does not read the options");
-        let stored = cipher.encrypt(&"Mike Ng".to_owned()).using(&plan).await;
+        let keyset = cipher.default_keyset();
+        let stored: Result<Unusable, Error> = Person {
+            name: "Mike Ng".into(),
+        }
+        .encrypt_into(&keyset)
+        .await;
         assert!(
             matches!(stored, Err(Error::Term(TermError::InvalidOptions(_)))),
-            "stored: {stored:?}"
+            "stored: {:?}",
+            stored.err()
         );
-        let queried = cipher
-            .query(op::Matches, "Mike Ng")
-            .via(Match::<StandardShortWords>::new())
-            .on(&plan)
-            .await;
+        let queried = Unusable::NAME.matches("Mike Ng").encrypt(&keyset).await;
         assert!(
             matches!(queried, Err(Error::Term(TermError::InvalidOptions(_)))),
             "queried: {queried:?}"
@@ -368,9 +328,9 @@ mod given_random_text {
 
             runtime().block_on(async {
                 let cipher = stack_cipher().await;
-                let plan = plan();
-                let stored = store(&cipher, &plan, &text).await;
-                match query(&cipher, &plan, asked).await {
+                let keyset = cipher.default_keyset();
+                let stored = store(&keyset, &text).await;
+                match query(&keyset, asked).await {
                     Ok(query) => {
                         prop_assert!(
                             stored.matches(&query),

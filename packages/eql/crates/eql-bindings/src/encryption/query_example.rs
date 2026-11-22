@@ -1,10 +1,23 @@
-use eql_bindings::{
-    v4::text::{TextEq, TextMatch},
-    Identifier,
-};
-use stack_encrypt::op::{self, Probabilistic, Stats};
-use stack_encrypt::{EncryptInto, Plan, StackCipher};
+use eql_bindings::v4::text::{TextEq, TextMatch};
+use stack_encrypt::op::{Probabilistic, Stats};
+use stack_encrypt::{EncryptInto, EncryptTarget, StackCipher};
 use stack_kms::FakeDataKeySource;
+use zeroize::Zeroize;
+
+#[derive(Zeroize)]
+struct User {
+    email: String,
+    name: String,
+}
+
+// The record's scope names the table, and each field's name is its column:
+// `users.email` and `users.name`.
+#[derive(EncryptTarget)]
+#[stash(struct = User, scope = "users")]
+struct EncryptedUser {
+    email: TextEq,
+    name: TextMatch,
+}
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -15,33 +28,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     let keyset = cipher.default_keyset();
 
-    // Write a value to the `users.email` column.
-    let column = Identifier::for_column("users", "email")?;
-    let stored: TextEq = String::from("alice@example.com")
-        .encrypt_into_with_context(&keyset, column)
-        .await?;
+    // Write a row.
+    let user = User {
+        email: "alice@example.com".into(),
+        name: "Alice Nguyen".into(),
+    };
+    let stored: EncryptedUser = user.encrypt_into(&keyset).await?;
 
-    // Query it: a plan for the column's type, under the label that names
-    // the same column, table then column.
-    let email_plan = Plan::value::<String>()
-        .context("users/email")
-        .encrypt_into::<TextEq>()
-        .build()?;
+    // Query the `email` column from the field reference.
     // A `TextEqQuery`: bind it as `$1::eql_v4.query_text_eq`.
-    let query = cipher
-        .query(op::Eq, "alice@example.com")
-        .on(&email_plan)
+    let query = EncryptedUser::EMAIL
+        .eq("alice@example.com")
+        .encrypt(&keyset)
         .await?;
-    assert_eq!(query.hm, stored.hm);
-    assert_eq!(query.i, stored.i);
+    assert_eq!(query.hm, stored.email.hm);
+    assert_eq!(query.i, stored.email.i);
 
     // A text match: bind `query.twin()` (or the query itself, which
     // serializes as the twin) as `$1::eql_v4.query_text_match`.
-    let name_plan = Plan::value::<String>()
-        .context("users/name")
-        .encrypt_into::<TextMatch>()
-        .build()?;
-    let query = cipher.query(op::Matches, "ali").on(&name_plan).await?;
+    let query = EncryptedUser::NAME.matches("ali").encrypt(&keyset).await?;
+    assert_eq!(query.twin().i, stored.name.i);
     // How many rows to fetch to expect 10 real matches in a million.
     let _limit = query.target_limit(10, &Stats::declared(1_000_000));
     // The server can return rows that hold every bit of the filter without

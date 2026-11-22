@@ -1,0 +1,17 @@
+error: unsupported `json(..)` option; expected `ordered = { "$.path": Type, .. }`, `paths = { "$.path": Type, .. }`, `names = { "key": name, .. }` or `sealed_root = false`
+  --> tests/ui/derive_json_attribute_misuse.rs:16:44
+   |
+16 |     #[stash(json(ordered = { "$.a": u32 }, depth = 3))]
+   |                                            ^^^^^
+
+error: `json(..)` is given twice; a field's JSON options are one list
+  --> tests/ui/derive_json_attribute_misuse.rs:23:45
+   |
+23 |     #[stash(json(ordered = { "$.a": u32 }), json(sealed_root = false))]
+   |                                             ^^^^
+
+error: `json(..)` names the JSON index's options a sealed document field is sealed and queried under; only a sealed field of a `struct = ..` record has them, so it does not apply to a `plaintext` record's field, or to a `context_field`, `passthrough` or `default` field
+  --> tests/ui/derive_json_attribute_misuse.rs:30:13
+   |
+30 |     #[stash(json(ordered = { "$.a": u32 }))]
+   |             ^^^^

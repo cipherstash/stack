@@ -51,17 +51,6 @@ description = "Fuzz stack-encrypt's stored-record preflight against a model of i
 dir = "{{config_root}}/packages/stack-encrypt"
 run = "mise x --env test -- cargo +nightly fuzz run check_record --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
 
-# Fuzz fields-plan building (`FieldsBuilder::build`) over untrusted names
-# with structure-aware inputs: the context, field names, pinned identities
-# and verbs a binding takes from its caller. Building and rendering must
-# never panic, a sealed or indexed field that builds has a well-formed
-# `<context>/<identity>` label, and passthrough names, which are under no
-# label, are never refused for their text.
-["fuzz:plan-build"]
-description = "Fuzz stack-encrypt's fields-plan build over untrusted names (structure-aware, libFuzzer, nightly, 60s default)"
-dir = "{{config_root}}/packages/stack-encrypt"
-run = "mise x --env test -- cargo +nightly fuzz run plan_build --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
-
 # Fuzz the JSON index's wire decoders: a stored `json_tree` document and the
 # entries `->` and the walks return come back through them before anything is
 # authenticated. The base64 tags, the base85 ciphertexts (SIMD-decoded on
@@ -80,6 +69,16 @@ run = "mise x --env test -- cargo +nightly fuzz run json_wire_decode --sanitizer
 description = "Fuzz stack-encrypt's JSON text parser (json::parse_text) against serde_json (libFuzzer, nightly, 60s default)"
 dir = "{{config_root}}/packages/stack-encrypt"
 run = "mise x --env test -- cargo +nightly fuzz run json_text --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+
+# Fuzz the label parser and constructor (`Label::parse`, `Label::new`). A
+# label is often the caller's text: a binding's record keys and options, a
+# data plan's names, and a context field's value. Neither may panic, a label
+# must render back to the text it was read from, and a refusal must name a
+# segment that shows the reason the error gives.
+["fuzz:label-parse"]
+description = "Fuzz stack-encrypt's label parser and constructor, Label::parse and Label::new (libFuzzer, nightly, 60s default)"
+dir = "{{config_root}}/packages/stack-encrypt"
+run = "mise x --env test -- cargo +nightly fuzz run label_parse --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
 
 # Rustdoc with warnings as errors: a broken intra-doc link or a rustdoc
 # warning fails the build. Doc *examples* are `test:doc:stack-encrypt`. Both run

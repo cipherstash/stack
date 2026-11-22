@@ -13,39 +13,51 @@
 //!
 //! ```
 //! use stack_encrypt::dynamic::{record, Op, Planned, QueryTerm, ValueFrame};
-//! use stack_encrypt::kms::FakeDataKeySource;
 //! use stack_encrypt::target::Scope;
 //! use stack_encrypt::{AsProtectedRef, DecryptFrom, EncryptInto, StackCipher, StackCipherText};
+//! use std::collections::BTreeMap;
 //! use vitaminc_aead_frame::serde::to_vec;
 //!
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-//! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
+//! let cipher = StackCipher::builder()
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
 //! let keyset = cipher.default_keyset();
 //! let declaration = to_vec(&serde_json::json!({
 //!     "email": { "context": ["users", "email"], "outputs": ["c", "eq"], "type": "string" },
 //!     "age": { "context": ["users", "age"], "outputs": ["c", "ore"], "type": "uint64" },
 //! }))?;
 //! let plan = record::plan(declaration.as_protected_ref())?;
-//! let values = ValueFrame::from_bytes(
-//!     to_vec(&serde_json::json!({"email": "ada@example.com", "age": 36}))?.as_protected_ref(),
-//! )?;
 //!
-//! // A record under the plan, bound to its row.
-//! let row: StackCipherText = Planned::new(&plan, values.clone())
+//! // Each value goes straight into a frame, which keeps its bytes under
+//! // `Protected` and wipes them when it is dropped. A row is a map of them.
+//! let row = || -> Result<ValueFrame, Box<dyn std::error::Error>> {
+//!     let fields = BTreeMap::from([
+//!         ("email", ValueFrame::of("ada@example.com")?),
+//!         ("age", ValueFrame::of(36u64)?),
+//!     ]);
+//!     Ok(ValueFrame::of(&fields)?)
+//! };
+//!
+//! // A record under the plan, bound to its row. The values are moved in:
+//! // a frame is not `Clone`.
+//! let stored: StackCipherText = Planned::new(&plan, row()?)
 //!     .encrypt_into_with_context(&keyset, Scope::new(42u64).bind(9u128))
 //!     .await?;
 //! let opened = ValueFrame::decrypt_from_with_context(
-//!     Planned::new(&plan, row),
+//!     Planned::new(&plan, stored),
 //!     &keyset,
 //!     Scope::new(42u64).bind(9u128),
 //! )
 //! .await?;
-//! assert_eq!(opened, values);
+//! assert_eq!(opened, row()?);
 //!
 //! // A query value under a query plan, by the scope alone.
 //! let by_email = plan.query("email", Op::Eq)?;
-//! let probe = ValueFrame::from_bytes(to_vec("ada@example.com")?.as_protected_ref())?;
-//! let term: QueryTerm = Planned::new(&by_email, probe.clone())
+//! let term: QueryTerm = Planned::new(&by_email, ValueFrame::of("ada@example.com")?)
 //!     .encrypt_into_with_context(&keyset, Scope::new(42u64))
 //!     .await?;
 //! assert_eq!(term.operator(), Op::Eq);
@@ -53,7 +65,7 @@
 //! // Or through the field handle, checked against the plan where it is made.
 //! let same: QueryTerm = plan
 //!     .field("email")?
-//!     .eq(probe)?
+//!     .eq(ValueFrame::of("ada@example.com")?)?
 //!     .scope(Scope::new(42u64))
 //!     .encrypt(&keyset)
 //!     .await?;
@@ -76,9 +88,9 @@ use super::{Error, Op, Reason, TermBytes};
 use crate::contexts::{self, CallerShape, Contexts, LeafContext, Placeholder};
 use crate::plan::{field_label, join, FieldValues, IntoLabel, Slot, FROM_CALL, FROM_PLAN};
 use crate::target::{
-    ciphertext, indexed, inspect, open, passthrough, AeadContext, Borrowed, CallerContext,
-    DeclaredContext, DecryptSource, Decryption, EncryptTarget, Encrypted, Encryption,
-    ExpectedContext, IndexSpec, Indexes, OptionalContext, Owned, Pending,
+    ciphertext, indexed, inspect, open, AeadContext, Borrowed, CallerContext, DeclaredContext,
+    DecryptSource, Decryption, EncryptTarget, Encrypted, Encryption, ExpectedContext, IndexSpec,
+    Indexes, OptionalContext, Owned, Pending,
 };
 use crate::{Encrypt, KeysetCipher, Label, NonEmpty, PlanError, StackCipherText};
 
@@ -194,19 +206,18 @@ impl Zeroize for ValueFrame {
     }
 }
 
-/// A dynamic refusal as the owned path reports it. A cipher error is
-/// already the crate's and passes through, so a refused term keeps its
-/// kind. A binding on a query is the crate's own refusal,
-/// [`PlanError::BindInQuery`], as the typed query reports it. Every other
-/// dynamic refusal is boxed as [`crate::Error::Other`], with its message.
+/// A dynamic refusal as the owned path reports it. A binding on a query is
+/// the crate's own refusal, [`PlanError::BindInQuery`], as the typed query
+/// reports it. Every other refusal is as [`Error::into_crate`] reports it: a
+/// cipher error passes through, and a refusal of the input is
+/// [`crate::Error::Input`].
 fn wrap(error: Error) -> crate::Error {
     match error {
-        Error::Cipher(error) => error,
         Error::Plan {
             reason: Reason::BindInQuery,
             ..
         } => PlanError::BindInQuery.into(),
-        other => crate::Error::Other(Box::new(other)),
+        other => other.into_crate(),
     }
 }
 
@@ -357,7 +368,7 @@ where
     where
         Planned<'p, Plan, ValueFrame, R>: 's,
     {
-        Encryption::from_build(
+        Encryption::from_owned_build(
             contexts::caller_leaf(),
             move |source: Planned<'p, Plan, ValueFrame, R>, cipher, context: Self::ContextInput| {
                 let Planned {
@@ -521,7 +532,7 @@ where
     where
         Planned<'p, QueryPlan, ValueFrame, R>: 's,
     {
-        Encryption::from_build(
+        Encryption::from_owned_build(
             contexts::caller_leaf(),
             move |source: Planned<'p, QueryPlan, ValueFrame, R>,
                   cipher,
@@ -689,7 +700,11 @@ impl<'p, R: TargetResolver + ?Sized> DynamicQuery<'p, R> {
 /// without the fields in `absent`: a check that the values' fields are the
 /// plan's, then each field's verb as its combinator, read out of the
 /// record by name, under the field's label, zipped so every key request
-/// settles in one batch, and the record assembled. This is the one
+/// settles in one batch, and the record assembled. The description is
+/// handed the values themselves. Every sealed or indexed field reads its
+/// value in place, and then each passthrough field's value is moved into the
+/// output, so no value is copied. The values left over are dropped, and a
+/// frame wipes itself when it drops. This is the one
 /// lowering of a data plan, as the derive's generated code is of a typed
 /// record: `encrypt_with` and `contexts()` run it. The
 /// checks a binding asks without a cipher ([`check_values`],
@@ -704,8 +719,10 @@ impl<'p, R: TargetResolver + ?Sized> DynamicQuery<'p, R> {
 pub(super) fn compose<'s, K: 'static>(
     plan: &Plan,
     absent: &Absent,
-) -> Result<Encryption<'s, FieldValues, FieldValues, K, DeclaredContext>, crate::Error> {
+) -> Result<Encryption<'s, FieldValues, FieldValues, K, DeclaredContext, Owned>, crate::Error> {
     let names = lowered_names(plan, absent);
+    // The passthrough fields, whose values are moved into the output.
+    let mut carried: Vec<Arc<str>> = Vec::new();
     let mut record: Encryption<'s, FieldValues, Vec<(Arc<str>, Slot)>, K, DeclaredContext> =
         inspect::<FieldValues, K, DeclaredContext, _>(move |values| check_names(values, &names))
             .map(|()| Vec::new());
@@ -738,15 +755,33 @@ pub(super) fn compose<'s, K: 'static>(
             }
         }
         .named(&name);
-        record =
-            record
-                .zip(operation)
-                .map(move |(mut slots, slot): (Vec<(Arc<str>, Slot)>, Slot)| {
-                    slots.push((name, slot));
-                    slots
-                });
+        if keys_nothing {
+            carried.push(Arc::clone(&name));
+        }
+        record = record.zip(operation).map(
+            move |(mut slots, slot): (Vec<(Arc<str>, Slot)>, Option<Slot>)| {
+                slots.extend(slot.map(|slot| (name, slot)));
+                slots
+            },
+        );
     }
-    Ok(record.map(FieldValues::from_slots))
+    // The record's checks have read the values by now, so a passthrough
+    // field that is missing has already failed the record.
+    let moved = Encryption::from_owned_build(
+        Vec::new(),
+        move |mut values: FieldValues, cipher, _: DeclaredContext| {
+            let slots: Vec<(Arc<str>, Slot)> = carried
+                .into_iter()
+                .filter_map(|name| values.take_slot(&name).map(|slot| (name, slot)))
+                .collect();
+            Pending::ready(cipher, Ok(slots))
+        },
+    );
+    // The output's slots are read by name, so their order does not matter.
+    Ok(moved.zip(record).map(|(moved, mut slots)| {
+        slots.extend(moved);
+        FieldValues::from_slots(slots)
+    }))
 }
 
 /// The opening of a stored record's values under `plan`, without the
@@ -823,10 +858,14 @@ fn lowered_names(plan: &Plan, absent: &Absent) -> Vec<String> {
 /// One field's verb as its combinator over the field's value, lifted to
 /// read the field out of the record. `None` for a target field, which the
 /// resolver runs and the lowering never sees.
+///
+/// A passthrough field's combinator only checks that the record has the
+/// field, and yields no slot: its value is moved into the output afterwards
+/// ([`compose`]), not copied here.
 fn operation_of<'s, K: 'static>(
     field: &FieldPlan,
     name: &Arc<str>,
-) -> Option<Encryption<'s, FieldValues, Slot, K, CallerContext>> {
+) -> Option<Encryption<'s, FieldValues, Option<Slot>, K, CallerContext>> {
     let indexes = field.indexes();
     Some(match field.verb() {
         Verb::Encrypt => lift(
@@ -838,10 +877,16 @@ fn operation_of<'s, K: 'static>(
             name,
         ),
         Verb::Index => lift(indexes.operations::<K, Borrowed>(), name),
-        Verb::Passthrough => lift(
-            passthrough::<ValueFrame, K, Borrowed, CallerContext>(),
-            name,
-        ),
+        Verb::Passthrough => {
+            let name = Arc::clone(name);
+            inspect::<FieldValues, K, CallerContext, _>(move |values| {
+                values
+                    .get::<ValueFrame>(&name)
+                    .map(drop)
+                    .ok_or_else(|| field_type(&name, type_name::<ValueFrame>()))
+            })
+            .map(|()| None)
+        }
         Verb::Target => return None,
     })
 }
@@ -859,7 +904,7 @@ fn lowered_fields<'p>(plan: &'p Plan, absent: &'p Absent) -> impl Iterator<Item 
 fn lift<'s, T, K>(
     operation: Encryption<'s, ValueFrame, T, K, CallerContext>,
     name: &Arc<str>,
-) -> Encryption<'s, FieldValues, Slot, K, CallerContext>
+) -> Encryption<'s, FieldValues, Option<Slot>, K, CallerContext>
 where
     T: std::any::Any + Send + 'static,
     K: 'static,
@@ -871,7 +916,7 @@ where
                 .get::<ValueFrame>(&name)
                 .ok_or_else(|| field_type(&name, type_name::<ValueFrame>()))
         })
-        .map(Slot::new)
+        .map(|output| Some(Slot::new(output)))
 }
 
 /// The values' fields against the plan's, both ways, and each at the type
@@ -1132,7 +1177,7 @@ mod tests {
             keyset
                 .run(
                     description,
-                    &values(Some(Tree::UInt32(34)), Some(Tree::UInt64(7))),
+                    values(Some(Tree::UInt32(34)), Some(Tree::UInt64(7))),
                     DeclaredContext::default(),
                 )
                 .await

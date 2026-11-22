@@ -19,7 +19,7 @@
 //!
 //! This is the *cipher-directed* layer — vitaminc's `Encrypt` / `Decrypt`
 //! derives, sealed through the keyset directly — one level below
-//! `#[derive(EncryptFrom)]`, which the
+//! `#[derive(EncryptTarget)]`, which the
 //! `encrypted_record` example uses. Reach for this layer when a value needs
 //! what the derive does not express: fields stored in the clear beside
 //! sealed ones, or a single ciphertext whose internal shape (this
@@ -93,7 +93,7 @@ fn describe(ciphertext: &StackCipherText, indent: usize) {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cipher = StackCipher::new().await?;
+    let cipher = StackCipher::with_detected_credentials().await?;
 
     let users = vec![
         User {

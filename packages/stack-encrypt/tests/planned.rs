@@ -3,7 +3,7 @@
 //! row, and derive a query term under a `QueryPlan`, each with the caller's
 //! context as the one context argument. The dynamic field handle checks
 //! each operator against the plan where it is called. A query from a plan
-//! that is data derives the same term a typed query from a field marker
+//! that is data derives the same term a typed query from a field reference
 //! does, under the same scope.
 #![cfg(all(feature = "dynamic", feature = "testing"))]
 
@@ -21,8 +21,8 @@ use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{DeclaredContext, DecryptSource, EncryptTarget, IndexSpec, Scope};
 use stack_encrypt::{
-    nonempty, AsProtectedRef, DecryptFrom, EncryptInto, Encrypted, Error, KeysetCipher, Label,
-    Pending, PlanError, StackCipher, StackCipherText,
+    nonempty, AsProtectedRef, DecryptFrom, Descriptor, EncryptInto, Encrypted, Error, KeysetCipher,
+    Label, NonEmpty, Pending, PlanError, StackCipher, StackCipherText,
 };
 use zeroize::Zeroize;
 
@@ -68,8 +68,10 @@ fn plan() -> record::Plan {
     }))
 }
 
-/// A resolver holding one EQL type, `Some`, that answers `eq`, whose query
-/// is a fixed JSON value: what a target field's query term carries.
+/// A resolver holding one EQL type, `Some`, that answers `eq`. Its query
+/// is a JSON value that names the query context it was run under: the
+/// field's label, then the scopes. That is what a target field's query
+/// term carries.
 struct OneType;
 
 impl TargetResolver for OneType {
@@ -93,6 +95,7 @@ impl TargetResolver for OneType {
         _: Option<&dynamic::TargetOptions>,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
+        _: &stack_encrypt::target::DeclaredContext,
         _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("these tests query, and encrypt nothing")
@@ -102,6 +105,7 @@ impl TargetResolver for OneType {
         _: &str,
         _: &'a StackCipher<K>,
         _: &Label,
+        _: &stack_encrypt::target::DeclaredContext,
         _: &[u8],
     ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
         unreachable!("these tests query, and decrypt nothing")
@@ -111,10 +115,14 @@ impl TargetResolver for OneType {
         _: &str,
         _: &IndexSpec,
         keyset: &'a KeysetCipher<'_, K>,
-        _: &Label,
+        label: &Label,
+        scopes: &stack_encrypt::target::DeclaredContext,
         _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
-        Ok(Pending::ready(keyset, Ok(br#"{"hm":"00"}"#.to_vec())))
+        let context = scopes.clone().under(NonEmpty::from(label.clone()));
+        let under = Descriptor::from_piece(&context.query());
+        let query = format!(r#"{{"hm":"{}"}}"#, under.as_str());
+        Ok(Pending::ready(keyset, Ok(query.into_bytes())))
     }
 }
 
@@ -132,16 +140,6 @@ fn ada() -> ValueFrame {
         ("email", frame("ada@example.com")),
         ("age", frame(36u32)),
     ])
-}
-
-/// The dynamic error inside an owned-path failure.
-fn dynamic_error(error: &Error) -> &dynamic::Error {
-    match error {
-        Error::Other(inner) => inner
-            .downcast_ref::<dynamic::Error>()
-            .unwrap_or_else(|| panic!("not a dynamic error: {inner}")),
-        other => panic!("not an owned-path failure: {other}"),
-    }
 }
 
 // The typed record the data plan above describes, for the equivalence
@@ -435,7 +433,7 @@ mod a_query_plan {
     }
 
     #[tokio::test]
-    async fn derives_the_term_a_typed_marker_query_derives() {
+    async fn derives_the_term_a_typed_field_query_derives() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let plan = plan();
@@ -568,12 +566,12 @@ mod a_query_plan {
             .await
             .unwrap_err();
         assert!(matches!(refused, Error::Term(_)), "{refused}");
-        // An empty scope is refused as the typed path refuses it.
+        // An empty scope is the caller's input, refused before any key.
         let refused = Planned::new(&by_email, frame("ada@example.com"))
             .encrypt_into_with_context::<QueryTerm, _>(&keyset, Scope::new(""))
             .await
             .unwrap_err();
-        assert!(matches!(refused, Error::Other(_)), "{refused}");
+        assert!(matches!(&refused, Error::Input(_)), "{refused}");
         assert_eq!(generates.load(Ordering::SeqCst), 0);
         assert_eq!(retrieves.load(Ordering::SeqCst), 0);
     }
@@ -623,7 +621,7 @@ mod a_target_field {
             .unwrap();
         assert_eq!(
             through_handle.operand(),
-            &Operand::One(br#"{"hm":"00"}"#.to_vec())
+            &Operand::One(br#"{"hm":"users/email"}"#.to_vec())
         );
         assert_eq!(through_handle.domain(), Some("eql_v3.query_some"));
         let by_email = plan.query_with("email", Op::Eq, &OneType).unwrap();
@@ -635,21 +633,23 @@ mod a_target_field {
     }
 
     #[test]
-    fn shows_its_context_under_its_label_alone() {
+    fn shows_its_context_as_a_field_with_outputs_does() {
         let plan = target_plan();
-        // An EQL value is sealed under its label by the resolver, and takes
-        // no caller part, so the view shows the label and no placeholder.
+        // The resolver runs an EQL type under its label, then the caller's
+        // parts. So the view shows a placeholder for the scope and for the
+        // binding, as it does for a field with outputs.
         assert_eq!(
             Planned::new(&plan, frame("a"))
                 .contexts()
                 .unwrap()
                 .to_string(),
-            "email\n  context: users / email\n"
+            "email\n  query context:  (users / email) / {scope?: CallerContext}\n  \
+             stored context: ((users / email) / {scope?: CallerContext}) / {bind?: CallerContext}\n"
         );
         let by_email = plan.query_with("email", Op::Eq, &OneType).unwrap();
         assert_eq!(
             by_email.contexts().unwrap().to_string(),
-            "context: users / email\n"
+            "context: (users / email) / {scope?: CallerContext}\n"
         );
     }
 
@@ -664,23 +664,32 @@ mod a_target_field {
         ));
     }
 
+    /// A scope goes to the resolver, after the field's label: the query is
+    /// derived under both, as a query on a field with indexes is.
     #[tokio::test]
-    async fn refuses_a_scope_it_cannot_be_stored_under() {
+    async fn takes_a_scope_and_runs_the_type_under_it() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let plan = target_plan();
         let by_email = plan.query_with("email", Op::Eq, &OneType).unwrap();
-        let refused = Planned::with_resolver(&by_email, frame("a"), OneType)
-            .encrypt_into_with_context::<QueryTerm, _>(&keyset, Scope::new(1u64))
+        let scoped: QueryTerm = Planned::with_resolver(&by_email, frame("a"), OneType)
+            .encrypt_into_with_context(&keyset, Scope::new(1u64))
             .await
-            .unwrap_err();
-        assert!(
-            matches!(
-                dynamic_error(&refused),
-                dynamic::Error::Target(TargetError::Extended { name, .. }) if name == "email"
-            ),
-            "{refused}"
+            .unwrap();
+        assert_eq!(
+            scoped.operand(),
+            &Operand::One(br#"{"hm":"(users/email)/1u64"}"#.to_vec())
         );
+        let through_handle: QueryTerm = plan
+            .field_with("email", &OneType)
+            .unwrap()
+            .eq(frame("a"))
+            .unwrap()
+            .scope(Scope::new(1u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(through_handle, scoped);
     }
 }
 

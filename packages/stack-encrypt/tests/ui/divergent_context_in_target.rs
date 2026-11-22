@@ -11,7 +11,7 @@
 //! being the same construct as a record naming the contexts of two fields
 //! (ADR-0004, decision 1).
 use stack_encrypt::sem::EqualityTerm;
-use stack_encrypt::target::{ciphertext, equality, DeclaredContext, EncryptFrom, Encryption};
+use stack_encrypt::target::{ciphertext, equality, DeclaredScopes, EncryptTarget, Encryption};
 use stack_encrypt::{nonempty, StackCipherText};
 
 struct Divergent {
@@ -19,9 +19,9 @@ struct Divergent {
     hm: EqualityTerm,
 }
 
-impl EncryptFrom<String> for Divergent {
-    type Context = DeclaredContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
+impl EncryptTarget<String> for Divergent {
+    type ContextInput = DeclaredScopes;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::ContextInput>
     where
         String: 's,
     {
@@ -29,6 +29,7 @@ impl EncryptFrom<String> for Divergent {
             .under(nonempty!("users/email"))
             .zip(equality())
             .map(|(c, hm)| Self { c, hm })
+            .accepting()
     }
 }
 

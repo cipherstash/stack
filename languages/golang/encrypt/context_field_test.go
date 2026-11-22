@@ -150,7 +150,7 @@ func TestContextFieldQueriesNameTheContext(t *testing.T) {
 	}
 }
 
-// The context-field case of the Rust record fixture: the typed chain and
+// The context-field case of the Rust record fixture: the typed API and
 // the data-plan lowering each sealed a Note under the deterministic source,
 // and the generated code opens both under the context they store, refuses
 // both under another, and derives the same term.

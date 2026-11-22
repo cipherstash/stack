@@ -485,7 +485,6 @@ impl Containment {
 struct Scenario {
     runtime: tokio::runtime::Runtime,
     cipher: Cipher,
-    plan: ValuePlan<Value, Laid<Json, JsonDocument>>,
     db: RefCell<postgres::Client>,
 }
 
@@ -507,7 +506,6 @@ fn scenario() -> Scenario {
     Scenario {
         runtime,
         cipher,
-        plan: plan(),
         db: RefCell::new(db),
     }
 }
@@ -543,21 +541,14 @@ impl Scenario {
             .iter()
             .map(|needle| {
                 let query = match containment {
-                    Containment::Contains => wait(
-                        &self.runtime,
-                        self.cipher
-                            .query(op::Contains, &needle.value)
-                            .on(&self.plan),
-                    ),
-                    Containment::ContainedBy => wait(
-                        &self.runtime,
-                        self.cipher
-                            .query(op::ContainedBy, &needle.value)
-                            .on(&self.plan),
-                    ),
-                }
-                .unwrap();
-                serde_json::to_string(&JsonTreeQuery::try_from(&query).unwrap()).unwrap()
+                    Containment::Contains => {
+                        wait(&self.runtime, contains(&self.cipher, &needle.value))
+                    }
+                    Containment::ContainedBy => {
+                        wait(&self.runtime, contained_by(&self.cipher, &needle.value))
+                    }
+                };
+                serde_json::to_string(&query).unwrap()
             })
             .collect()
     }
@@ -836,10 +827,7 @@ mod given_generated_documents_in_postgres {
                     let entry: JsonTreeEntry = serde_json::from_str(&got).unwrap();
                     let value = wait(
                         &scenario.runtime,
-                        scenario.cipher.decrypt_as::<Value, _>(
-                            JsonTreeExtracted::from_selector(&asked[i], entry),
-                            column(),
-                        ),
+                        extract(&scenario.cipher, &asked[i], entry),
                     )
                     .map_err(|e| {
                         TestCaseError::fail(format!(

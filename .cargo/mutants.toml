@@ -47,12 +47,25 @@ exclude_globs = ["packages/stack-encrypt-derive/**"]
 #
 # The regexes match the name `--list` prints, `path:line:col: replace …`.
 # Anchor on the replacement text, so an entry cannot swallow a reachable
-# sibling with the same function name. The wasm32 `TokenStoreFn`,
-# `AutoStrategy::detect_inner` and `Pending::into_future` entries also anchor
-# on the line because their names are identical to the native impl's.
-# If those lines move, a full sweep reports them again and the line numbers
-# here need moving with them.
+# sibling with the same function name. The wasm32 `TokenStoreFn` entry also
+# matches on the line number, because its name is identical to the native
+# impl's. If those lines move, a full sweep reports them again. Then change
+# the line numbers here.
+#
+# The wasm32 `AutoStrategy::detect_inner` entry matches any line. The native
+# function of the same name has one mutant, with the same replacement. That
+# mutant does not compile, because `AutoStrategy` has no `Default`. So the
+# entry excludes no mutant that a test could catch.
+#
+# The four wasm32 `into_future` entries in `pending.rs` match any line for the
+# same reason. The future that a native `into_future` returns has no
+# `Default`, so the native mutant does not compile.
 exclude_re = [
+  # stack-encrypt — equivalent. `predicate!`'s finders return the type of a
+  # path's values as a `PhantomData`, a zero-sized type with one value, so
+  # `PhantomData::from(Default::default())` is the same value. (Nothing calls
+  # them at run time either: the macro's checks are type-checked, never run.)
+  'stack-encrypt/src/field_reference/json/predicate_checks\.rs:\d+:\d+: replace .* -> PhantomData<[^>]*> with PhantomData::from\(Default::default\(\)\)$',
   # stack-auth — unreachable under the native test build.
   'stack-auth/src/transport\.rs:\d+:\d+: replace <impl std::fmt::Display for NoTransport>::fmt ',
   'stack-auth/src/transport\.rs:\d+:\d+: replace <impl DynTransport for T>::send_dyn -> std::pin::Pin<Box<dyn Future<Output = Result<HttpResponse, RequestError>>\+\x27a>> ',
@@ -62,7 +75,7 @@ exclude_re = [
   # Under `http` the body is `false`; the no-`http` arm is pinned by
   # `a_builder_without_a_transport_is_refused_when_there_is_no_bundled_one`.
   'stack-auth/src/error\.rs:\d+:\d+: replace RequestError::is_no_transport -> bool with false$',
-  'stack-auth/src/auto_strategy\.rs:150:9: replace AutoStrategy::detect_inner -> Result<Self, AuthError> with Ok\(Default::default\(\)\)$',
+  'stack-auth/src/auto_strategy\.rs:\d+:\d+: replace AutoStrategy::detect_inner -> Result<Self, AuthError> with Ok\(Default::default\(\)\)$',
   'stack-auth/src/token_store\.rs:(261|269):9: replace <impl TokenStore for TokenStoreFn<L, S>>::(load|save)',
   # stack-auth — equivalent.
   'stack-auth/src/(access_key|oidc)_refresher\.rs:\d+:\d+: replace <impl Refresher for \w+(<P>)?>::try_credential -> Option<Self::Credential> with Some\(Default::default\(\)\)$',
@@ -70,19 +83,27 @@ exclude_re = [
   # stack-encrypt — unreachable under the native test build (the wasm32
   # variant; the native one returns a `FallbackKeyProvider`).
   'stack-encrypt/src/cipher\.rs:\d+:\d+: replace client_key_provider -> EnvKeyProvider with Default::default\(\)$',
-  'stack-encrypt/src/target/pending\.rs:443:9: replace <impl IntoFuture for Pending<.*>>::into_future -> Self::IntoFuture with Default::default\(\)$',
+  'stack-encrypt/src/target/pending\.rs:\d+:\d+: replace <impl IntoFuture for Pending<.*>>::into_future -> Self::IntoFuture with Default::default\(\)$',
+  'stack-encrypt/src/target/pending\.rs:\d+:\d+: replace <impl IntoFuture for Audited<Pending<.*>>>::into_future -> Self::IntoFuture with Default::default\(\)$',
+  'stack-encrypt/src/target/pending\.rs:\d+:\d+: replace <impl IntoFuture for WithCredential<Pending<.*>>>::into_future -> Self::IntoFuture with Default::default\(\)$',
+  'stack-encrypt/src/target/pending\.rs:\d+:\d+: replace <impl IntoFuture for Audited<WithCredential<Pending<.*>>>>::into_future -> Self::IntoFuture with Default::default\(\)$',
   # stack-encrypt — equivalent.
   # An operator and an index are unit structs, whose `Default` is the value
   # `clone` and `case_sensitive` already return.
   'stack-encrypt/src/op(/mod)?\.rs:\d+:\d+: replace <impl Clone for Matches<C>>::clone -> Self with Default::default\(\)$',
   'stack-encrypt/src/op(/mod)?\.rs:\d+:\d+: replace Matches::case_sensitive -> Matches<CaseSensitive> with Default::default\(\)$',
   'stack-encrypt/src/target/index\.rs:\d+:\d+: replace <impl Clone for Match<O>>::clone -> Self with Default::default\(\)$',
-  'stack-encrypt/src/cipher\.rs:\d+:\d+: replace StackCipher<FromEnv>::builder -> StackCipherBuilder with Default::default\(\)$',
+  'stack-encrypt/src/cipher\.rs:\d+:\d+: replace StackCipher<NoKms>::builder -> StackCipherBuilder with Default::default\(\)$',
   'stack-encrypt/src/sem/mod\.rs:\d+:\d+: replace <impl MatchConfig for DefaultMatch>::options -> MatchOptions with Default::default\(\)$',
   # `Orderable`'s default `check_query` refuses nothing: its body is
   # `Ok(())`, so the replacement is the body. Text overrides it with
   # `query::order_text`, pinned by `an_ordering_refuses_only_text_it_cannot_encode`.
   'stack-encrypt/src/sem/mod\.rs:\d+:\d+: replace sealed::Sealed::check_query -> Result<\(\), super::TermError> with Ok\(\(\)\)$',
+  # A JSON document type's default options are the defaults: the trait's
+  # body is `JsonOptions::default()`. A type that overrides them is pinned
+  # by `a_field_that_names_no_options_queries_under_its_types_own`, and
+  # `Option<T>` forwarding by `a_nullable_field_queries_under_its_types_own_options`.
+  'stack-encrypt/src/json/target\.rs:\d+:\d+: replace JsonQueries::default_options -> JsonOptions with Default::default\(\)$',
   # Both unit-context conversions explicitly return Self::default().
   'stack-encrypt/src/target/context\.rs:\d+:\d+: replace <impl From<\(\)> for (DeclaredContext|ExpectedContext<T>)>::from -> Self with Default::default\(\)$',
   # A caller shape with no placeholder IS `CallerShape::default()`:
@@ -136,7 +157,7 @@ exclude_re = [
   # bits with a low nibble below 16: the bits never overlap, so `^` is `|`.
   'stack-encrypt/src/json/mod\.rs:\d+:\d+: replace \| with \^ in unhex$',
   # `JsonPath::root` is `Self::default()`.
-  'stack-encrypt/src/json/path\.rs:\d+:\d+: replace JsonPath::root -> Self with Default::default\(\)$',
+  'stack-encrypt-jsonpath/src/path\.rs:\d+:\d+: replace JsonPath::root -> Self with Default::default\(\)$',
   # A document always has a root, so its terms are never empty: `false` is
   # the value `is_empty` returns. The `true` replacement is still caught.
   'stack-encrypt/src/json/derive\.rs:\d+:\d+: replace JsonTerms::is_empty -> bool with false$',

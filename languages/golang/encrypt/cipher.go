@@ -31,9 +31,13 @@ type Cipher struct {
 	// context is the label Context named, for a type whose context is one
 	// of its fields; "" names none.
 	context string
-	// err is a refused extension part or context, reported by the first
-	// call rather than by Extend or Context: a cipher is made without a
-	// request, and no call on this package panics.
+	// audit is the audit metadata Audit gave, sent with every data-key
+	// request; nil sends none. The facts are never changed after they are
+	// made, so ciphers share them.
+	audit auditFacts
+	// err is a refused extension part, context or audit value, reported by
+	// the first call rather than by Extend, Context or Audit: a cipher is
+	// made without a request, and no call on this package panics.
 	err error
 }
 
@@ -80,9 +84,11 @@ func (cph *Cipher) Scope(parts ...any) *Cipher {
 // through cipher.Bind(rowID) opens only through a cipher with the same
 // binding. It is in no query context, so a query through a cipher with a
 // binding is refused as [ErrEncoding]: a query by column or by tenant still
-// finds the row. The parts are those [Cipher.Scope] takes, and an empty
-// string or byte slice is refused: an unassigned row ID would bind every
-// such row to one context.
+// finds the row. A read of part of a JSON document (a field's Selector or
+// Subtree) is not refused: it prepares under the scopes alone and opens
+// under the binding, so it reads that binding's row. The parts are those
+// [Cipher.Scope] takes, and an empty string or byte slice is refused: an
+// unassigned row ID would bind every such row to one context.
 func (cph *Cipher) Bind(parts ...any) *Cipher {
 	next := cph.copy()
 	for _, part := range parts {
@@ -109,10 +115,10 @@ func ownedPart(part any) any {
 // Deprecated: use Scope. Extend is removed in 0.1.0.
 func (cph *Cipher) Extend(parts ...any) *Cipher { return cph.Scope(parts...) }
 
-// copy is this cipher with the same keyset, scopes, bindings, context and
-// error, for a method that adds to one of them.
+// copy is this cipher with the same keyset, scopes, bindings, context, audit
+// metadata and error, for a method that adds to one of them.
 func (cph *Cipher) copy() *Cipher {
-	next := &Cipher{client: cph.client, keyset: cph.keyset, context: cph.context, err: cph.err}
+	next := &Cipher{client: cph.client, keyset: cph.keyset, context: cph.context, audit: cph.audit, err: cph.err}
 	next.extension = append(next.extension, cph.extension...)
 	next.bindings = append(next.bindings, cph.bindings...)
 	return next

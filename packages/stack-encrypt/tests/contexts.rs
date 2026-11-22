@@ -1,25 +1,24 @@
 //! The contexts a declaration or a call uses, shown before any key is
-//! requested (#1568).
+//! requested.
 //!
 //! Each test states the contexts of one shape of declaration with
 //! `assert_context!`, and the contexts of a call that runs it with
 //! `assert_contexts!`. The text the two views print is pinned by the unit
-//! tests of `contexts.rs`, since the Go module compares it. The shapes are the
-//! context scenarios of the Stack Encrypt API plan that exist on `next`:
-//! a static context (scenario 1), a context stored in the row, a nested
-//! record, a target that takes the caller's context, a collection, and a
-//! plan with each of its three context sources. The scenarios that need the
-//! `scope(..)` and `bind(..)` attributes land with #1487.
+//! tests of `contexts.rs`, since the Go module compares it. The shapes are:
+//! a static context (scenario 1 of the Stack Encrypt API plan), a context
+//! stored in the row, a nested record, a target that takes the caller's
+//! context, a collection, and a plan that is data, with its own context and
+//! with a context read from a field of each record. The scenarios with a
+//! `scope(..)` or a `bind(..)` attribute are in `scopes_and_bindings.rs`.
 #![cfg(feature = "testing")]
 
 use stack_encrypt::kms::FakeDataKeySource;
-use stack_encrypt::plan::{Field, Fields, Operation as _};
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{DecryptSource, EncryptTarget, Encryption, RequiredContext};
-use stack_encrypt::testing::{caller_scope, from_plaintext, required, Expect};
+use stack_encrypt::testing::required;
 use stack_encrypt::{
     assert_context, assert_contexts, nonempty, ContextTree, DecryptFrom, EncryptInto, Encrypted,
-    Equality, IntoContext as _, LeafContext, NonEmpty, Ore, Plan, StackCipher, StackCipherText,
+    Equality, IntoContext as _, LeafContext, NonEmpty, StackCipher, StackCipherText,
 };
 use zeroize::Zeroize;
 
@@ -273,133 +272,42 @@ mod a_collection {
     }
 }
 
-struct User {
-    email: String,
-    age: u32,
-    id: u64,
-    tenant: String,
-}
-impl Fields for User {
-    fn field_names(&self) -> Vec<&str> {
-        vec!["email", "age", "id", "tenant"]
-    }
-}
-impl Field<String> for User {
-    fn field(&self, name: &str) -> Option<&String> {
-        match name {
-            "email" => Some(&self.email),
-            "tenant" => Some(&self.tenant),
-            _ => None,
-        }
-    }
-}
-impl Field<u32> for User {
-    fn field(&self, name: &str) -> Option<&u32> {
-        (name == "age").then_some(&self.age)
-    }
-}
-impl Field<u64> for User {
-    fn field(&self, name: &str) -> Option<&u64> {
-        (name == "id").then_some(&self.id)
-    }
-}
-
-mod a_plan {
-    use super::*;
-
-    #[test]
-    fn with_its_own_context_shows_the_extension_a_run_may_add() {
-        let plan: Plan<User, FakeDataKeySource> = Plan::context("users")
-            .fields()
-            .encrypt_index::<String>("email", Equality)
-            .encrypt_index::<u32>("age", (Equality, Ore))
-            .passthrough::<u64>("id")
-            .build()
-            .unwrap();
-        assert_context!(
-            plan.contexts(),
-            email = [["users", "email"], caller_scope()],
-            age = [["users", "age"], caller_scope()],
-        );
-    }
-
-    #[test]
-    fn built_without_a_context_shows_the_label_the_call_names() {
-        let plan: Plan<User, FakeDataKeySource> = Plan::fields()
-            .encrypt_index::<String>("email", Equality)
-            .build()
-            .unwrap();
-        assert_context!(
-            plan.contexts(),
-            email = [
-                [
-                    Expect::from(required::<stack_encrypt::Label>()),
-                    Expect::from("email"),
-                ],
-                caller_scope(),
-            ],
-        );
-    }
-
-    #[test]
-    fn with_a_context_field_shows_where_the_context_is_read_from() {
-        let plan: Plan<User, FakeDataKeySource> = Plan::fields()
-            .context_field::<String>("tenant")
-            .encrypt_index::<String>("email", Equality)
-            .build()
-            .unwrap();
-        assert_context!(
-            plan.contexts(),
-            email = [
-                [
-                    Expect::from(from_plaintext::<stack_encrypt::Label>("tenant")),
-                    Expect::from("email"),
-                ],
-                caller_scope(),
-            ],
-        );
-    }
-
-    #[tokio::test]
-    async fn a_run_fills_the_extension_in() {
-        let cipher = cipher().await;
-        let plan: Plan<User, FakeDataKeySource> = Plan::context("users")
-            .fields()
-            .encrypt_index::<String>("email", Equality)
-            .passthrough::<u32>("age")
-            .passthrough::<u64>("id")
-            .passthrough::<String>("tenant")
-            .build()
-            .unwrap();
-        let user = User {
-            email: "ada@example.com".into(),
-            age: 36,
-            id: 7,
-            tenant: "acme".into(),
-        };
-        let keyset = cipher.default_keyset();
-        let call = cipher
-            .encrypt(&user)
-            .using(&plan)
-            .extend(nonempty!("acme"))
-            .prepare(&keyset, false);
-        let shown = call.context();
-        let record = call.await;
-        assert!(record.is_ok(), "{record:?}");
-        assert_context!(shown, [["users", "email"], "acme"]);
-    }
-}
-
+/// A plan that is data: a record declaration a binding sends. A plan names
+/// its own context, or reads it from a field of each record. The caller of
+/// a run may add a scope and a binding.
 #[cfg(feature = "dynamic")]
 mod a_data_plan {
     use super::*;
-    use stack_encrypt::dynamic::record::{FieldPlan, Output, Plan as DataPlan};
-    use stack_encrypt::dynamic::ValueKind;
+    use stack_encrypt::dynamic::record::{self, FieldPlan, Output, Plan as DataPlan};
+    use stack_encrypt::dynamic::{Planned, ValueFrame, ValueKind};
     use stack_encrypt::target::IndexSpec;
-    use stack_encrypt::{Describe as _, Label};
+    use stack_encrypt::testing::{caller_scope, from_plaintext, Expect};
+    use stack_encrypt::{AsProtectedRef as _, Describe as _, Label, Placeholder};
+    use vitaminc_aead_frame::serde::to_vec;
+
+    /// A data plan read from its JSON declaration.
+    fn plan_of(declaration: serde_json::Value) -> DataPlan {
+        record::plan(to_vec(&declaration).unwrap().as_protected_ref()).unwrap()
+    }
+
+    /// One record, as a binding sends it.
+    fn ada() -> ValueFrame {
+        let record = serde_json::json!({
+            "email": "ada@example.com",
+            "age": 36,
+            "id": 7,
+            "tenant": "acme",
+        });
+        ValueFrame::from_bytes(to_vec(&record).unwrap().as_protected_ref()).unwrap()
+    }
+
+    /// The binding the caller of a run may add: `{bind?: CallerContext}`.
+    fn caller_bind() -> Placeholder {
+        Placeholder::optional("bind", "CallerContext").as_bind()
+    }
 
     #[test]
-    fn shows_the_same_contexts_as_the_typed_plan_it_lowers_to() {
+    fn shows_each_field_under_its_own_context() {
         let label = NonEmpty::new(Label::parse("users/email").unwrap().to_context()).unwrap();
         let email = FieldPlan::new(
             "email",
@@ -411,6 +319,88 @@ mod a_data_plan {
         .unwrap();
         let plan = DataPlan::new(vec![email]).unwrap();
         assert_context!(plan.contexts().unwrap(), email = ["users", "email"]);
+    }
+
+    #[test]
+    fn with_its_own_context_shows_the_parts_a_run_may_add() {
+        let plan = plan_of(serde_json::json!({
+            "email": { "context": ["users", "email"], "outputs": ["c", "eq"], "type": "string" },
+            "age": { "context": ["users", "age"], "outputs": ["c", "eq", "ore"], "type": "uint32" },
+            "id": { "context": ["users", "id"], "outputs": ["passthrough"] },
+            "tenant": { "context": ["users", "tenant"], "outputs": ["passthrough"] },
+        }));
+        assert_context!(
+            Planned::new(&plan, ada()).contexts().unwrap(),
+            email = {
+                query = [["users", "email"], caller_scope()],
+                stored = [
+                    [
+                        Expect::from(["users", "email"]),
+                        Expect::from(caller_scope()),
+                    ],
+                    caller_bind(),
+                ],
+            },
+            age = {
+                query = [["users", "age"], caller_scope()],
+                stored = [
+                    [
+                        Expect::from(["users", "age"]),
+                        Expect::from(caller_scope()),
+                    ],
+                    caller_bind(),
+                ],
+            },
+        );
+    }
+
+    #[test]
+    fn with_a_context_field_shows_where_the_context_is_read_from() {
+        let plan = plan_of(serde_json::json!({
+            "context_field": "tenant",
+            "tenant": { "context": ["tenant"], "outputs": ["passthrough"] },
+            "email": { "context": ["email"], "outputs": ["c", "eq"], "type": "string" },
+        }));
+        assert_context!(
+            Planned::new(&plan, ada()).contexts().unwrap(),
+            email = {
+                query = [
+                    [
+                        Expect::from(from_plaintext::<Label>("tenant")),
+                        Expect::from("email"),
+                    ],
+                    caller_scope(),
+                ],
+                stored = [
+                    [
+                        Expect::from([
+                            Expect::from(from_plaintext::<Label>("tenant")),
+                            Expect::from("email"),
+                        ]),
+                        Expect::from(caller_scope()),
+                    ],
+                    caller_bind(),
+                ],
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn a_run_fills_the_callers_scope_in() {
+        let cipher = cipher().await;
+        let plan = plan_of(serde_json::json!({
+            "email": { "context": ["users", "email"], "outputs": ["c", "eq"], "type": "string" },
+            "age": { "context": ["users", "age"], "outputs": ["passthrough"] },
+            "id": { "context": ["users", "id"], "outputs": ["passthrough"] },
+            "tenant": { "context": ["users", "tenant"], "outputs": ["passthrough"] },
+        }));
+        let keyset = cipher.default_keyset();
+        let call = Planned::new(&plan, ada())
+            .encrypt_into_with_context::<StackCipherText, _>(&keyset, nonempty!("acme"));
+        let shown = call.context();
+        let record = call.await;
+        assert!(record.is_ok(), "{record:?}");
+        assert_context!(shown, [["users", "email"], "acme"]);
     }
 }
 
@@ -538,8 +528,8 @@ async fn a_failed_call_says_it_failed() {
 /// does.
 mod a_json_document {
     use super::*;
-    use stack_encrypt::json::JsonDocument;
-    use stack_encrypt::target::{CallerContext, DecryptInto, EncryptFrom};
+    use stack_encrypt::json::{JsonDocument, JsonPlaintext};
+    use stack_encrypt::target::CallerContext;
 
     #[tokio::test]
     async fn shows_its_context_when_sealed_and_when_opened() {
@@ -547,22 +537,14 @@ mod a_json_document {
         let keyset = cipher.default_keyset();
         let value = serde_json::json!({"name": "ada", "age": 36});
         let column = CallerContext::from(nonempty!("users").with("profile"));
-        let sealing = keyset.run(
-            <JsonDocument as EncryptFrom<serde_json::Value>>::encryption::<FakeDataKeySource>(),
-            &value,
-            column.clone(),
-        );
+        let sealing = JsonPlaintext::from(value)
+            .encrypt_into_with_context::<JsonDocument, _>(&keyset, column.clone());
         assert_context!(sealing.context(), ["users", "profile"]);
         let document = sealing.await.unwrap();
-        let opening = keyset.run_decryption(
-            <JsonDocument as DecryptInto<serde_json::Value>>::decryption::<FakeDataKeySource>(
-                document,
-                column.into(),
-            ),
-        );
+        let opening = JsonPlaintext::decrypt_from_with_context(document, &keyset, column);
         assert_context!(opening.context(), ["users", "profile"]);
-        let opened: serde_json::Value = opening.await.unwrap();
-        assert_eq!(opened["name"], "ada");
+        let opened = opening.await.unwrap();
+        assert_eq!(opened.value()["name"], "ada");
     }
 }
 

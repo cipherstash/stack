@@ -230,24 +230,6 @@ async fn text_order_terms_fold_case_and_accents() {
     }
 }
 
-/// A text term is not the term of the same bytes as bytes: the column salt
-/// binds the target, `Text` or `Bytes`.
-#[tokio::test]
-async fn a_text_order_term_is_keyed_apart_from_bytes() {
-    let cipher = cipher().await;
-    let keyset = cipher.default_keyset();
-    let text = keyset
-        .ore_term("cafe".to_string(), nonempty!("users/surname"))
-        .await
-        .unwrap();
-    let bytes = keyset
-        .ore_term(b"cafe".to_vec(), nonempty!("users/surname"))
-        .await
-        .unwrap();
-    assert_eq!(text.as_ref().len(), bytes.as_ref().len());
-    assert_ne!(text, bytes);
-}
-
 /// Text holding a code point Unicode 16 does not assign has no known fold,
 /// so it has no order term: vitaminc-ore refuses to encode it.
 #[tokio::test]

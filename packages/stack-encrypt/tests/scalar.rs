@@ -231,10 +231,7 @@ async fn wrong_keyset_is_rejected_before_retrieval() {
     use std::sync::atomic::Ordering;
     let (cipher, _, retrieves) = common::counting_cipher().await;
     let keyset = cipher.default_keyset();
-    let other = cipher
-        .keyset(stack_encrypt::kms::IdentifiedBy::Uuid(uuid::Uuid::new_v4()))
-        .await
-        .unwrap();
+    let other = cipher.keyset(stack_encrypt::kms::IdentifiedBy::Uuid(uuid::Uuid::new_v4()));
     let ct = keyset.encrypt(42i32).await.unwrap();
     assert!(matches!(
         other.decrypt::<i32>(ct).await,
@@ -251,10 +248,7 @@ async fn an_owned_keyset_confines_a_typed_decrypt() {
     use std::sync::atomic::Ordering;
     let (cipher, _, retrieves) = common::counting_cipher().await;
     let keyset = cipher.default_keyset();
-    let other = cipher
-        .keyset(stack_encrypt::kms::IdentifiedBy::Uuid(uuid::Uuid::new_v4()))
-        .await
-        .unwrap();
+    let other = cipher.keyset(stack_encrypt::kms::IdentifiedBy::Uuid(uuid::Uuid::new_v4()));
     let ct = keyset.encrypt(42i32).await.unwrap();
     assert!(matches!(
         i32::decrypt_from(ct, other).await,
@@ -522,6 +516,10 @@ struct FixedKeySource(stack_kms::FakeDataKeySource);
 const FIXED_KEY: [u8; 32] = *b"fixed-data-key-for-pinned-leaf!!";
 const FIXED_IV: [u8; 16] = *b"fixed-iv-pinned!";
 const FIXED_TAG: &[u8] = b"fixed-key-tag";
+impl stack_kms::KeySourceKind for FixedKeySource {
+    type Kind = stack_kms::OwnIdentity;
+}
+
 impl stack_kms::DataKeySource for FixedKeySource {
     async fn generate_keys(
         &self,

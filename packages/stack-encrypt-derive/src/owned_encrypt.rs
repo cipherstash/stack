@@ -1,6 +1,4 @@
-//! Emit an owned `EncryptTarget` declaration. Also emit the structural
-//! `EncryptFrom`. Then the record can be a field of a plan or of a structural
-//! record, as well as an owned target.
+//! Emit an owned `EncryptTarget` declaration.
 //!
 //! The derive composes the declarations of the fields:
 //!
@@ -13,37 +11,130 @@
 //! The field target's `ContextInput` decides which context the field can be
 //! given. So a target that cannot take the record's context is a compile error
 //! at that field.
-use crate::shape::{fresh_lifetime, trait_impl, ByField, Field, Flavor, Kind, OwnContext, Record};
+use crate::shape::{
+    decryptable_impl, fresh_lifetime, struct_literal_path, trait_impl, ByField, Field, Kind,
+    OwnContext, Record,
+};
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{parse_quote, DeriveInput, Ident, Result, Type, WherePredicate};
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
-    let record = Record::parse_as(&input, Flavor::Owned)?;
+    let record = Record::parse(&input)?;
     let derived = record.derived();
-    let decryptable = crate::encrypt::decryptable_impl(&input, &record, &derived);
+    let decryptable = decryptable_impl(&input, &record, &derived);
     let emitted = if record.by_field {
         struct_derive(&input, &record)
     } else {
         value_derive(&input, &record, &derived)
     };
     let contexts = contexts_fn(&input, &record);
-    let markers = markers(&input, &record);
-    Ok(quote!(#emitted #decryptable #contexts #markers))
+    let field_references = field_references(&input, &record);
+    let json = json_options_fns(&input, &record);
+    let paths = json_path_accessors(&input, &record)?;
+    Ok(quote!(#emitted #decryptable #contexts #field_references #json #paths))
 }
 
-/// The field markers of a `struct = ..` record: one associated constant
+/// The name of the function that builds the JSON options a field's
+/// `#[stash(json(..))]` names, which the field's encryption and its field reference
+/// both call.
+fn json_options_name(field: &Field) -> Ident {
+    Ident::new(
+        &format!("__stash_json_options_{}", field.local),
+        field.local.span(),
+    )
+}
+
+/// One function per `#[stash(json(..))]` field, building the options it
+/// names: the paths it orders, and whether the root is sealed. A path the
+/// engine refuses is an error the field's encryption and its queries meet
+/// before any key is requested.
+fn json_options_fns(input: &DeriveInput, record: &Record) -> TokenStream {
+    let krate = &record.krate;
+    let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let fns: Vec<TokenStream> = record
+        .fields
+        .iter()
+        .filter_map(|field| {
+            let Kind::Derived {
+                by_field: Some(ByField { json: Some(json), .. }),
+            } = &field.kind
+            else {
+                return None;
+            };
+            let fn_name = json_options_name(field);
+            let paths: Vec<_> = json.ordered.iter().map(|ordered| &ordered.text).collect();
+            let count = paths.len();
+            let sealed_root = json.sealed_root.as_ref().map(|sealed| {
+                quote!(options.sealed_root = #sealed;)
+            });
+            Some(quote_spanned! {json.span=>
+                #[doc(hidden)]
+                #[allow(dead_code)]
+                fn #fn_name() -> ::core::result::Result<#krate::json::JsonOptions, #krate::sem::TermError> {
+                    let paths: [&'static str; #count] = [#(#paths),*];
+                    #[allow(unused_mut)]
+                    let mut options = #krate::json::JsonOptions::new().ordering(paths)?;
+                    #sealed_root
+                    ::core::result::Result::Ok(options)
+                }
+            })
+        })
+        .collect();
+    if fns.is_empty() {
+        return TokenStream::new();
+    }
+    quote! {
+        #[automatically_derived]
+        impl #impl_generics #name #ty_generics #where_clause {
+            #(#fns)*
+        }
+    }
+}
+
+/// The typed accessors of each document field whose `#[stash(json(..))]`
+/// declares ordered paths ([`crate::json_paths`]).
+fn json_path_accessors(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
+    if !record.by_field {
+        return Ok(TokenStream::new());
+    }
+    let mut items = TokenStream::new();
+    for field in &record.fields {
+        let Kind::Derived {
+            by_field: Some(ByField {
+                json: Some(json), ..
+            }),
+        } = &field.kind
+        else {
+            continue;
+        };
+        let syn::Member::Named(ident) = &field.member else {
+            continue;
+        };
+        items.extend(crate::json_paths::accessors(
+            &record.krate,
+            &input.vis,
+            &input.ident,
+            ident,
+            json,
+        )?);
+    }
+    Ok(items)
+}
+
+/// The field references of a `struct = ..` record: one associated constant
 /// per derived field, named after the field in upper case
 /// (`EncryptedUser::EMAIL`), carrying the field's name, the record's scope,
 /// the field's identity, the record's `contexts`, the record itself
-/// (`Root<Self>`, which `Marker::field` checks a nested record's marker
+/// (`Root<Self>`, which `FieldReference::field` checks a nested record's field reference
 /// against), the type of the scope the caller supplies (`Scope<u64>` for
 /// `scope(tenant: u64)` or a stored `scope(field = ..)` of that type;
 /// `NoScope` for none), and the type a query takes (`Takes<String>` for
 /// `#[stash(query = String)]`; `TakesAny` without it). A tuple field has no
-/// name, so it has no marker.
-fn markers(input: &DeriveInput, record: &Record) -> TokenStream {
+/// name, so it has no field reference.
+fn field_references(input: &DeriveInput, record: &Record) -> TokenStream {
     if !record.by_field {
         return TokenStream::new();
     }
@@ -60,19 +151,32 @@ fn markers(input: &DeriveInput, record: &Record) -> TokenStream {
     };
     let consts = record.fields.iter().filter_map(|field| {
         let Kind::Derived {
-            by_field: Some(ByField { context, query, .. }),
+            by_field: Some(ByField { context, query, json, .. }),
         } = &field.kind
         else {
             return None;
         };
+        let json_options = json.as_ref().map(|_| {
+            let fn_name = json_options_name(field);
+            quote!(.with_json_options(Self::#fn_name))
+        });
         let syn::Member::Named(ident) = &field.member else {
             return None;
         };
         let query_ty = match query {
-            Some(query) => quote!(#krate::marker::Takes<#query>),
-            None => quote!(#krate::marker::TakesAny),
+            Some(query) => quote!(#krate::field_reference::Takes<#query>),
+            None => quote!(#krate::field_reference::TakesAny),
         };
-        // The marker's name is the field's as `contexts()` and the label
+        // A field that declares paths, ordered or not, has a type of its
+        // own for them, through which it has `at()` and `elements()`.
+        let paths_ty = json
+            .as_ref()
+            .filter(|json| !json.ordered.is_empty() || !json.paths.is_empty())
+            .map(|_| {
+                let paths = crate::json_paths::paths_type(name, ident);
+                quote!(, #paths)
+            });
+        // The field reference's name is the field's as `contexts()` and the label
         // spell it, `r#` included; the constant's name cannot carry it.
         let field_name = ident.to_string();
         let plain = field_name.strip_prefix("r#").unwrap_or(&field_name);
@@ -80,7 +184,7 @@ fn markers(input: &DeriveInput, record: &Record) -> TokenStream {
         let ty = &field.ty;
         let OwnContext { prefix, field: identity } = context;
         let doc = format!(
-            "The marker of the field `{field_name}`: what a typed query of it starts from. Emitted by `#[derive(EncryptTarget)]`; see [`Marker`]({}::Marker).",
+            "The reference to the field `{field_name}`: what a typed query of it starts from. Emitted by `#[derive(EncryptTarget)]`; see [`FieldReference`]({}::FieldReference).",
             quote!(#krate)
         );
         // A public record may hold a private field type (a nested record);
@@ -89,8 +193,8 @@ fn markers(input: &DeriveInput, record: &Record) -> TokenStream {
         Some(quote_spanned! {ty.span()=>
             #[doc = #doc]
             #[allow(dead_code, private_interfaces)]
-            pub const #const_name: #krate::Marker<#krate::marker::Root<Self>, #ty, #scope_ty, #query_ty> =
-                #krate::Marker::new(#field_name, #prefix, #identity, Self::contexts);
+            pub const #const_name: #krate::FieldReference<#krate::field_reference::Root<Self>, #ty, #scope_ty, #query_ty #paths_ty> =
+                #krate::FieldReference::new(#field_name, #prefix, #identity, Self::contexts)#json_options;
         })
     });
     quote! {
@@ -102,9 +206,10 @@ fn markers(input: &DeriveInput, record: &Record) -> TokenStream {
 }
 
 /// The caller's input on the encrypt side. A record whose fields have their
-/// own contexts takes an extension. A record that stores its context requires
-/// the `NonEmpty<T>` it stores. Any other record requires the caller context,
-/// or the type `context_type` names.
+/// own contexts takes an extension. A record that stores its context takes a
+/// `StoredContext<T>`: the caller passes the `NonEmpty<T>` it stores. Any
+/// other record requires the caller context, or the type `context_type`
+/// names.
 pub(crate) fn encrypt_input(record: &Record) -> Type {
     let krate = &record.krate;
     if record.parts.caller_any() {
@@ -113,7 +218,7 @@ pub(crate) fn encrypt_input(record: &Record) -> Type {
     }
     if let Some(field) = record.context_field() {
         let ty = &field.ty;
-        parse_quote!(#krate::target::RequiredContext<#krate::NonEmpty<#ty>>)
+        parse_quote!(#krate::target::StoredContext<#ty>)
     } else if record.by_field {
         parse_quote!(#krate::target::DeclaredScopes)
     } else {
@@ -318,7 +423,7 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
             let local = &field.local;
             match &field.kind {
                 Kind::Derived {
-                    by_field: Some(ByField { from, context, query }),
+                    by_field: Some(ByField { from, context, query, json }),
                 } => {
                     let own = own_expr(krate, context);
                     let name = field_name(field);
@@ -327,16 +432,25 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
                     let check = query.as_ref().map(|query| {
                         quote_spanned! {query.span()=>
                             let _ = |__source: &#source| {
-                                fn __query_field<__V, __F: #krate::marker::QueryField<__V> + ?Sized>(_: &__F) {}
+                                fn __query_field<__V, __F: #krate::field_reference::QueryField<__V> + ?Sized>(_: &__F) {}
                                 __query_field::<#query, _>(&__source.#from);
                             };
                         }
                     });
+                    // A `json(..)` field is sealed under the options it
+                    // names, through the field type's `JsonTarget`.
+                    let description = match json {
+                        Some(_) => {
+                            let fn_name = json_options_name(field);
+                            quote_spanned!(ty.span()=> #krate::json::seal_field::<#ty, _, __K>(Self::#fn_name()))
+                        }
+                        None => quote_spanned!(ty.span()=> <#ty as #krate::target::EncryptTarget<_>>::encryption::<__K>()),
+                    };
                     quote_spanned! {ty.span()=>
                         #check
-                        let #local = <#ty as #krate::target::EncryptTarget<_>>::encryption::<__K>()
+                        let #local = #description
+                            .under_field(#own)
                             .project(|__source: &#source| &__source.#from)
-                            .under(#own)
                             .named(#name);
                     }
                 }
@@ -365,13 +479,22 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
             let local = &field.local;
             match &field.kind {
                 Kind::Derived {
-                    by_field: Some(ByField { context, .. }),
+                    by_field: Some(ByField { context, json, .. }),
                 } => {
                     let own = own_expr(krate, context);
                     let name = field_name(field);
+                    let description = match json {
+                        Some(_) => {
+                            let fn_name = json_options_name(field);
+                            quote_spanned!(ty.span()=> #krate::json::seal_field_owned::<#ty, _, __K>(Self::#fn_name()))
+                        }
+                        None => quote_spanned!(ty.span()=> <#ty as #krate::target::EncryptTarget<_>>::owned_encryption::<__K>()),
+                    };
+                    // `under_field` wipes the field's plaintext when the
+                    // context is refused before the field's target runs.
                     quote_spanned! {ty.span()=>
-                        let #local = <#ty as #krate::target::EncryptTarget<_>>::owned_encryption::<__K>()
-                            .under(#own)
+                        let #local = #description
+                            .under_field(#own)
                             .named(#name);
                     }
                 }
@@ -398,7 +521,7 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
     let nested = nested_tuple(&locals);
     // A pattern writes generic arguments with a turbofish, as a struct
     // literal does: `Pt::<u64> { .. }`, not `Pt<u64> { .. }`.
-    let literal_path = match crate::decrypt::struct_literal_path(source) {
+    let literal_path = match struct_literal_path(source) {
         Ok(path) => path,
         Err(error) => return error.to_compile_error(),
     };
@@ -440,7 +563,7 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
         .make_where_clause()
         .predicates
         .push(parse_quote!(Self: 'static));
-    let encrypt_target = trait_impl(
+    trait_impl(
         input,
         &generics,
         quote!(#krate::target::EncryptTarget<#source>),
@@ -453,9 +576,7 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
                 #owned_body
             }
         },
-    );
-    let bridge = bridge(input, record, source, record.context_type(false), false);
-    quote!(#encrypt_target #bridge)
+    )
 }
 
 /// The `wipe` function that a `split` is given for the parts still waiting.
@@ -511,8 +632,15 @@ fn own_expr(krate: &syn::Path, context: &OwnContext) -> TokenStream {
 
 /// `#[stash(plaintext = T)]`, or no record attribute. Every field's target
 /// runs over the whole value, under the one required context, and the results
-/// are zipped. A record with a `context_field` requires the `NonEmpty<T>` it
-/// stores, and returns it beside the outputs.
+/// are zipped. A record with a `context_field` stores its context
+/// (`Encryption::storing`): the `NonEmpty<T>` the caller passes, or the
+/// field's own context when the record is a field of a `struct = ..` record.
+///
+/// A record with exactly one field derived from the plaintext also has an
+/// owned form ([`owned_form`]). Its value goes to that one field, so it can
+/// be moved into the field's own owned form. A record with two or more such
+/// fields keeps the default owned form: the value is guarded, and each field
+/// reads it through the borrowed form.
 fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> TokenStream {
     let krate = &record.krate;
     let input_type = encrypt_input(record);
@@ -570,20 +698,14 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
                 let value = literal(record, None);
                 quote!(#zipped.map(move |#zip_pattern| #value).accepting::<Self::ContextInput>())
             }
-            Some(_) => {
-                let value = literal(
-                    record,
-                    Some(
-                        quote!(#krate::target::RequiredContext::into_inner(__stored).into_inner()),
-                    ),
-                );
+            Some(stored) => {
+                let value = literal(record, Some(quote!(__stored)));
                 quote! {
-                    #zipped
-                        .accepting::<Self::ContextInput>()
-                        .map_with_context(move |#zip_pattern, __stored: Self::ContextInput| #value)
+                    #zipped.storing(move |#zip_pattern, __stored: #stored| #value)
                 }
             }
         };
+        let owned = owned_form(record, fields, &source, &lifetime, &threaded, &body);
         impls.push(trait_impl(
             input,
             &generics,
@@ -592,8 +714,21 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
                 type ContextInput = #input_type;
                 fn encryption<#lifetime, __K: 'static>() -> #krate::target::Encryption<#lifetime, #source, Self, __K, Self::ContextInput> where #source: #lifetime {
                     #(#descriptions)*
-                    #body
+                    let __described = #body;
+                    // The derive sees the fields' types, not the indexes
+                    // they declare. Two fields that declare one index, or
+                    // two indexes that answer one operator, are refused
+                    // here, before any key is requested. The refusal keeps
+                    // the fields' contexts, so `contexts()` still shows
+                    // them.
+                    if let ::core::result::Result::Err(__error) = #krate::target::check_indexes(
+                        &<Self as #krate::target::EncryptTarget<#source>>::indexes(),
+                    ) {
+                        return __described.refused(__error);
+                    }
+                    __described
                 }
+                #owned
                 fn indexes() -> ::std::vec::Vec<#krate::target::IndexSpec> {
                     let mut __indexes = ::std::vec::Vec::new();
                     #(#indexes)*
@@ -601,48 +736,50 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
                 }
             },
         ));
-        let legacy = record.context_type(false);
-        impls.push(bridge(input, record, &source, legacy, generic));
     }
     quote!(#(#impls)*)
 }
 
-/// The structural `EncryptFrom`. The record's structural context is converted
-/// into its owned input at the root. This impl is emitted beside every owned
-/// declaration. So an owned record can be a field of a plan or of a structural
-/// record, with no second derive.
-fn bridge(
-    input: &DeriveInput,
+/// The owned form of a `plaintext = T` record with exactly one field derived
+/// from the plaintext, or nothing for any other record.
+///
+/// The whole value goes to the one field, so nothing needs to share it. The
+/// value is moved into the field's own owned form. A field type that only
+/// reads its plaintext in place keeps the default owned form, which guards
+/// the value and wipes it. A field type that seals the value, such as a
+/// ciphertext, moves it into the seal, with no copy.
+///
+/// `body` is the borrowed form's root, after the fields' descriptions: a
+/// `map` and `accepting`, which take any source mode, or `storing`, whose
+/// owned form wipes the value when the context cannot be stored. A refusal
+/// of the record's indexes wipes the value too (`refused_wiping`).
+fn owned_form(
     record: &Record,
+    fields: &[&Field],
     source: &Type,
-    legacy: Type,
-    generic: bool,
+    lifetime: &syn::Lifetime,
+    threaded: &Type,
+    body: &TokenStream,
 ) -> TokenStream {
+    let [field] = fields else {
+        return TokenStream::new();
+    };
     let krate = &record.krate;
-    let lifetime = fresh_lifetime(&input.generics, "__source");
-    let mut generics = input.generics.clone();
-    if generic {
-        generics
-            .params
-            .push(parse_quote!(__S: #krate::target::Zeroize));
+    let ty = &field.ty;
+    let local = &field.local;
+    let name = field_name(field);
+    quote! {
+        fn owned_encryption<#lifetime, __K: 'static>() -> #krate::target::Encryption<#lifetime, #source, Self, __K, Self::ContextInput, #krate::target::Owned> where #source: #lifetime {
+            let #local = <#ty as #krate::target::EncryptTarget<#source>>::owned_encryption::<__K>()
+                .accepting::<#threaded>()
+                .named(#name);
+            let __described = #body;
+            if let ::core::result::Result::Err(__error) = #krate::target::check_indexes(
+                &<Self as #krate::target::EncryptTarget<#source>>::indexes(),
+            ) {
+                return __described.refused_wiping(__error);
+            }
+            __described
+        }
     }
-    let predicates = &mut generics.make_where_clause().predicates;
-    predicates.push(parse_quote!(Self: #krate::target::EncryptTarget<#source>));
-    predicates.push(parse_quote!(
-        #legacy: ::core::convert::Into<<Self as #krate::target::EncryptTarget<#source>>::ContextInput>
-    ));
-    trait_impl(
-        input,
-        &generics,
-        quote!(#krate::target::EncryptFrom<#source>),
-        quote! {
-            type Context = #legacy;
-            fn encryption<#lifetime, __K: 'static>() -> #krate::target::Encryption<#lifetime, #source, Self, __K, Self::Context> where #source: #lifetime {
-                <Self as #krate::target::EncryptTarget<#source>>::encryption::<__K>().accepting::<Self::Context>()
-            }
-            fn indexes() -> ::std::vec::Vec<#krate::target::IndexSpec> {
-                <Self as #krate::target::EncryptTarget<#source>>::indexes()
-            }
-        },
-    )
 }

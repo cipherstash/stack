@@ -26,8 +26,7 @@ use stack_encrypt::sem::{
     DefaultMatch, EqualityTerm, MatchTerms, OpeTerm, OreTerm, TermBytesError,
 };
 
-use stack_encrypt::target::legacy::EncryptInto;
-use stack_encrypt::{CipherText, Error, LeafBytesError, SealedValue, StackCipher};
+use stack_encrypt::{CipherText, EncryptInto, Error, LeafBytesError, SealedValue, StackCipher};
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,
     IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
@@ -263,6 +262,10 @@ async fn sealed_value_keyset_id_is_authenticated() {
 /// seal path must reject, rather than build a leaf whose `to_bytes` writes a
 /// saturated length field that `from_bytes` no longer inverts.
 struct OversizedTagSource(FakeDataKeySource);
+
+impl stack_kms::KeySourceKind for OversizedTagSource {
+    type Kind = stack_kms::OwnIdentity;
+}
 
 impl DataKeySource for OversizedTagSource {
     async fn generate_keys(

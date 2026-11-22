@@ -23,6 +23,7 @@ jobs:
   lint:
     name: Lint (Biome)
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
@@ -76,6 +77,7 @@ jobs:
   changes:
     name: Detect JS-relevant changes
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
     outputs:
       js: ${{ steps.r.outputs.js }}
     steps:
@@ -103,6 +105,7 @@ jobs:
               - '!languages/golang/**'
               - '!packages/stack-encrypt/**'
               - '!packages/stack-encrypt-derive/**'
+              - '!packages/stack-encrypt-jsonpath/**'
               - '!packages/stack-kms/**'
               - '!packages/stack-guest-abi/**'
               - '!packages/stack-auth/fuzz/**'
@@ -177,6 +180,7 @@ jobs:
   repo-checks:
     name: Repo checks
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
@@ -286,6 +290,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.js == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 25
     strategy:
       matrix:
         node-version: [22, 24]
@@ -577,6 +582,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.js == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
 
     # Auth-dependent suites in `e2e/` skip themselves unless these env vars
     # are set. We expose them at the job level so the wizard subprocess
@@ -730,6 +736,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.js == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 35
 
     permissions:
       contents: read
@@ -875,6 +882,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.js == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
     continue-on-error: true
 
     services:
@@ -983,6 +991,7 @@ jobs:
     needs: [lint, changes, repo-checks, run-tests, e2e-tests, wasm-e2e-tests, run-tests-bun]
     if: always()
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
     steps:
       - name: Assert every needed job passed or was skipped
         env:

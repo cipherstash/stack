@@ -1,0 +1,42 @@
+[package]
+name = "stack-encrypt-jsonpath"
+description = "The JSONPath subset stack-encrypt's JSON index addresses, shared by stack-encrypt and its derive"
+version = "0.3.0"
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license-file = "LICENSE"
+# Published to crates.io by release-plz.yml, in the `stack-encrypt` version
+# group: stack-encrypt parses every path through this crate, and
+# stack-encrypt-derive parses a field's declared paths through it at compile
+# time, so the three release together. stack-encrypt re-exports the types at
+# `stack_encrypt::json`.
+
+[dependencies]
+# A path deserializes from its text and serializes as it, as a plan's
+# ordered paths read on the wire.
+serde = { workspace = true }
+# `JsonPath::select` reads a `serde_json::Value`, and `Display` writes a
+# quoted key the way serde_json escapes a string.
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+# A path's key names can be customer data: a path wipes them when it drops,
+# and a quoted name is decoded into a buffer that is wiped.
+zeroize = { workspace = true }
+# The `diagnostics` feature: how stack-encrypt reports a refused path.
+# `miette::Diagnostic` gives `JsonPathError` its code and help, and stack-auth's
+# `ErrorPayload` its structured fields. Optional, so the derive, which parses
+# paths at compile time and reports its own errors, builds neither into the
+# compiler's process. stack-encrypt turns it on; both crates are already in
+# its graph.
+miette = { workspace = true, optional = true }
+stack-auth = { workspace = true, optional = true }
+
+[features]
+diagnostics = ["dep:miette", "dep:stack-auth"]
+
+[package.metadata.docs.rs]
+all-features = true

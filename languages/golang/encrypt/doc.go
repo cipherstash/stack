@@ -107,6 +107,10 @@
 // records; the [Client] opens records from any of its keysets. Both are a
 // [Decrypter], which the generated Decrypt functions take.
 //
+// [Cipher.Audit] gives a cipher audit metadata: facts about the calls made
+// through it, which ZeroKMS writes to its audit log with each data-key
+// request. See [AuditMetadata].
+//
 // # Declarations
 //
 // A struct's stash tags declare how each field is encrypted: the context of
@@ -241,6 +245,15 @@
 //
 // A selection or a subtree read opens values as JSON text ([JSONValue],
 // [JSONRead.Open]). [DecodeJSON] reads one into a Go type.
+//
+// A document sealed through a cipher with a binding ([Cipher.Bind]) is read
+// through a cipher with the same scopes and binding. Selector and Subtree
+// take such a cipher: the selector or the tokens derive under its scopes
+// alone, as a query's term does, and the entries open under the scopes and
+// the binding. Every row of one Open call opens under that binding, so a
+// read through a cipher with a binding reads that binding's row. A query
+// (Contains, EqAt, Match and the rest) opens nothing, so it takes no
+// binding, and a query through a cipher with one is refused.
 //
 // The SQL side of every JSON query, including extraction by selector,
 // ordered comparison at a path, subtree reads, and children, is documented

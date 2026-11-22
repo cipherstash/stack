@@ -237,6 +237,106 @@ cannot use different ones.
 client; `Client.Keyset(encrypt.KeysetName(..))` or `Client.Keyset(id)` any
 other, loaded on first use. `Cipher.KeysetID(ctx)` resolves it.
 
+### Audit metadata
+
+ZeroKMS logs every data-key request with the identity that made it. To
+provide additional context for that log, give the cipher audit metadata:
+
+```go
+metadata := encrypt.NewAuditMetadata().
+	Text("purpose", "list issues").
+	Text("request_id", requestID)
+people, err := users.Decrypt(ctx, cipher.Audit(metadata), rows)
+```
+
+Every `Encrypt` and `Decrypt` through that cipher sends the facts to
+ZeroKMS. So does every read of an encrypted JSON document. Audit metadata is
+optional: a cipher without it sends none.
+
+`Audit` adds to the facts the cipher has. A fact replaces one that has the
+same key. So a program can state its service once, and add a request ID for
+each request:
+
+```go
+service := cipher.Audit(encrypt.NewAuditMetadata().Text("service", "billing"))
+request := service.Audit(encrypt.NewAuditMetadata().Text("request_id", requestID))
+```
+
+To decrypt rows from any keyset, with metadata, pass `client.Audit(..)`
+where a `Decrypter` is taken:
+
+```go
+metadata := encrypt.NewAuditMetadata().Text("purpose", "export")
+people, err := users.Decrypt(ctx, client.Audit(metadata), rows)
+```
+
+> **Take care**
+>
+> - ZeroKMS does not verify the facts. No key depends on them, so do not
+>   use them for access control.
+> - ZeroKMS writes the facts to its logs. Do not send plaintext, anything
+>   derived from plaintext, or secrets. An IP address or a user agent is
+>   personal data. The SDK sends only what you pass.
+
+A decrypt does not need the facts the encrypt sent. A decrypt can send
+other facts, or none.
+
+A query sends no audit metadata. A query term is derived from the index key
+of the keyset, so a query asks ZeroKMS for no data key. A query through a
+cipher that has metadata still works. But refused metadata fails every call
+through the cipher, a query included.
+
+#### The values of a fact
+
+Each method adds one fact, and its parameter type is the type of the value.
+So the compiler refuses a value of another type.
+
+| Method | Value |
+|---|---|
+| `Text(key, value)` | a `string` |
+| `Bool(key, value)` | a `bool` |
+| `Int(key, value)` | an `int` |
+| `Int64(key, value)` | an `int64` |
+| `Float(key, value)` | a `float64` |
+| `Time(key, value)` | a `time.Time` |
+| `Null(key)` | no value, sent as null |
+| `TextList(key, values...)` | a list of `string` values |
+| `List(key, list)` | an `AuditList`, for a list of other values |
+| `Map(key, metadata)` | a nested `AuditMetadata` |
+
+Convert a value of another type yourself. For a named type such as
+`type ID string`, write `string(id)`. For a `[]byte`, send text, such as its
+hex form. ZeroKMS reads an integer as an `int64`, so there is no method for a
+`uint64`: convert it, or send it as text.
+
+Each method returns new metadata and leaves its own unchanged. A later fact
+replaces an earlier one that has the same key. A refusal of the earlier fact
+goes with it.
+
+ZeroKMS records each value as you give it, with two exceptions:
+
+- A time is sent as RFC 3339 text in UTC, such as `"2026-11-20T10:00:00Z"`.
+  The text keeps the instant to the nanosecond, and not the zone that the
+  time was in.
+- A float that is not finite is sent as null.
+
+The compiler cannot check three things, because they depend on the value.
+The first call through the cipher refuses each one with `ErrEncoding`:
+
+- a key or a text that is not valid UTF-8;
+- a time outside the years 0 to 9999, because RFC 3339 has no form for it;
+- maps and lists nested more than 32 levels deep.
+
+Printing an `AuditMetadata` shows its keys, quoted, and never a value.
+
+`go test` compiles the examples in this section: see `ExampleCipher_Audit`
+and `ExampleClient_Audit`. The example program in `encrypt/example` runs a
+decrypt with audit metadata.
+
+In the Rust crate this is `AuditMetadata::new().with(key, value)` and
+`.audit(..)`. In the ZeroKMS protocol it is the unverified context of a key
+request.
+
 ## Reading
 
 `users.Decrypt` takes a `Decrypter`: the `*Cipher`, which refuses a row
@@ -264,7 +364,7 @@ or a type defined over one (`type Email string`):
 | Go field | Seals as | Indexes it can store | Query methods |
 |---|---|---|---|
 | `string` | text | `equality`, `match`, `ore`, `ope` | `Eq`, `Matches`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
-| `[]byte` | bytes | `equality`, `ore`, `ope` | `Eq` |
+| `[]byte` | bytes | `equality` | `Eq` |
 | `bool` | a boolean | none | none |
 | `int16`, `int32`, `int64`, `int` | an integer of the field's own width (`int` is 64-bit) | `equality`, `ore`, `ope` | `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
 | `uint16`, `uint32`, `uint64`, `uint` | the same, unsigned | `equality`, `ore`, `ope` | the same |
@@ -275,9 +375,10 @@ or a type defined over one (`type Email string`):
 | `encrypt.Date` | a calendar date | `equality` | `Eq` |
 | `time.Time` | a timestamp, to the nanosecond, in UTC | `equality` | `Eq` |
 
-Each query method needs its index declared. An `ore` or `ope` index on bytes
-stores its term, but the engine answers no ordering through it, so such a
-field has no `Lt` (see [Queries](#queries)).
+Each query method needs its index declared. A field of bytes takes no `ore`
+or `ope` index: the engine answers no ordering over bytes, so the term
+would be stored and never queried, and `stashgen` refuses the declaration
+(see [Queries](#queries)).
 
 `encrypt.Date`, `Int128`, `Uint128` and `Decimal` are vitaminc's `vcvalue`
 types; build them with `encrypt.DateOf`, `ParseInt128`, `ParseUint128` and
@@ -359,11 +460,9 @@ one value, and every NaN is one value, above `+Inf`, so `Between(math.NaN(),
 math.Inf(1))` matches nothing. A `float32` orders as the `float64` it
 widens to.
 
-An order index on bytes stores its term but answers no ordering
-operator, so such a field has no `Lt`; nor does the `ope` index of a field
-that declares `ore` too, since `ore` answers the orderings. stashgen prints a notice for each such index, on stderr and in
-the generated file: the terms are stored, and only your own code can compare
-them. A match index on an index-only field (`index=match` with no `encrypt`)
+An order index on bytes is refused: no ordering operator is answered over
+bytes, so the term would be stored, where anyone who reads the column can
+compare it, and no query could use it. A match index on an index-only field (`index=match` with no `encrypt`)
 is refused, because `Verify` checks a match query's rows by decrypting them.
 
 Every query type implements `driver.Valuer`, so it binds as a parameter in
@@ -582,7 +681,8 @@ timestamp and numeric types: `NumericEq` normalises the scale, so `1.5` and
 microsecond are equal; each still opens as it was written, a
 decimal with its scale and a `time.Time` with its nanoseconds, in UTC. A
 `time.Time` is sealed as its instant, whatever its location. A zero
-`encrypt.Date`, a date or instant outside years -262143 to 262142 and a
+`encrypt.Date`, a date outside years -9999 to 9999, an instant outside
+`-009999-01-02T01:59:59Z` to `9999-12-30T22:00:00.999999999Z`, and a
 decimal with more than 28 digits after the point are refused with
 `ErrEncoding`. Ordered dates compare by day, timestamps by the truncated
 microsecond, and decimals by value (`1.5` ties `1.50`).
@@ -625,10 +725,21 @@ the column's `eql_v4.query_text_eq` operand takes; `TextEq` answers `eq`
 alone, and a `TextMatch` field's `Matches` returns an
 `encrypt.EQLMatchQuery`: the `eql.TextMatchQuery` operand with `Verify` and
 `TargetLimit`. `mise run
-wasm:guest:build:eql` builds that guest beside the other. A cipher extended
-with a tenant part refuses a struct with an `encrypt_into` field: an EQL
-value is stored under a table and a column, and the extended label has no
-column.
+wasm:guest:build:eql` builds that guest beside the other.
+
+A cipher with a scope or a binding (`cipher.Scope(tenant).Bind(rowID)`)
+seals a struct with an `encrypt_into` field as it seals any other struct.
+The scope and the binding come after the column in the field's context.
+The EQL value stores the table and the column alone, in `i`, so:
+
+- open the value through a cipher with the same scope and binding;
+- query it through a cipher with the same scope. A binding is in no query;
+- read part of a `JsonSearch` document (`Selector`, `Subtree`) through a
+  cipher with the same scope and binding. The selector or the tokens derive
+  under the scope alone, as a query does, and the entries open under the
+  scope and the binding. Every row of one `Open` call opens under that
+  binding, so a read through a cipher with a binding reads that binding's
+  row.
 
 ### Encrypted JSON documents
 

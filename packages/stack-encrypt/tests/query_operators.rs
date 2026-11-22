@@ -1,11 +1,11 @@
 //! The query fixture: a query a binding names by operator derives the term
-//! the typed query chain derives, and a probabilistic term's two questions
-//! answer as the typed `MatchQuery` answers them (ADR-0009; ADR-0007,
-//! amended 2026-10-16). `tests/fixtures/query_operators.json` records each
-//! query's term, a page of verified values and a few fetch limits, so the
-//! Go SDK's tests can hold the guest's `se_query_term`, `se_verify` and
-//! `se_target_limit` exports to the same results; its README gives the
-//! schema.
+//! the field reference of the same field of a derived record derives, and a
+//! probabilistic term's two questions answer as the typed `MatchQuery`
+//! answers them (ADR-0009; ADR-0007, amended 2026-10-16).
+//! `tests/fixtures/query_operators.json` records each query's term, a page
+//! of verified values and a few fetch limits, so the Go SDK's tests can hold
+//! the guest's `se_query_term`, `se_verify` and `se_target_limit` exports to
+//! the same results; its README gives the schema.
 //!
 //! Every query derives under the deterministic key source the record
 //! fixture uses, whose index key is `FakeDataKeySource`'s, so nothing in the
@@ -23,9 +23,12 @@ use common::frames::{frame, object};
 use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Value as Json};
 use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, QueryTerm, ValueFrame};
-use stack_encrypt::op::{self, Limit, Probabilistic, Stats};
-use stack_encrypt::{Equality, KeysetCipher, Match, Ore, Plan, StackCipher};
+use stack_encrypt::op::{Limit, Probabilistic, Stats};
+use stack_encrypt::sem::{EqualityTerm, MatchQuery, MatchTerms, OreTerm};
+use stack_encrypt::target::EncryptTarget;
+use stack_encrypt::{Encrypted, KeysetCipher};
 use vitaminc_aead::plaintext::{Physical, Raw};
+use zeroize::Zeroize;
 
 const SEED: [u8; 32] = *b"stack-encrypt record fixture v1 ";
 
@@ -37,6 +40,27 @@ fn plan_json() -> Json {
         "name": { "context": ["users", "name"], "outputs": ["c", "match"], "type": "string" },
         "score": { "context": ["users", "score"], "outputs": ["c", "ore"], "type": "float64" }
     })
+}
+
+#[derive(Clone, Zeroize)]
+struct User {
+    email: String,
+    age: u32,
+    name: String,
+    score: f64,
+}
+
+/// The declaration every query runs on, as a derived record: the scope,
+/// the field names and the indexes of [`plan_json`], so each field's
+/// field reference derives under the label the data plan gives the field.
+#[derive(EncryptTarget)]
+#[stash(struct = User, scope = "users")]
+#[allow(dead_code)]
+struct EncryptedUser {
+    email: Encrypted<EqualityTerm>,
+    age: Encrypted<(EqualityTerm, OreTerm<u32>)>,
+    name: Encrypted<MatchTerms>,
+    score: Encrypted<OreTerm<f64>>,
 }
 
 /// Each query: a field, an operator and its input, as a binding sends them.
@@ -127,68 +151,59 @@ fn limit_json(limit: Limit) -> Json {
     limit.rows().map_or(Json::Null, |rows| json!(rows))
 }
 
-/// The typed chain's term for the same query, as the operand's bytes: the
-/// proof that the data path derives what a Rust caller does.
+/// The term of the field's reference for the same query, as the operand's
+/// bytes: the proof that the data path derives what a Rust caller does.
 async fn typed_operand(
-    cipher: &StackCipher<DeterministicSource>,
+    keyset: &KeysetCipher<'_, DeterministicSource>,
     field: &str,
     operator: Op,
     input: &Json,
 ) -> Operand {
     let int = |value: &Json| u32::try_from(value.as_u64().expect("an integer")).expect("a u32");
+    let float = |value: &Json| value.as_f64().expect("a number");
     let text = |value: &Json| value.as_str().expect("text").to_owned();
-    let age = Plan::context("users/age")
-        .with::<u32, _>((Equality, Ore))
-        .build()
-        .expect("plan");
     let one = Operand::One;
     match (field, operator) {
-        ("email", Op::Eq) => {
-            let plan = Plan::context("users/email")
-                .with::<String, _>(Equality)
-                .build()
-                .expect("plan");
-            one(cipher
-                .query(op::Eq, &text(input))
-                .on(&plan)
-                .await
-                .expect("eq")
-                .to_bytes())
-        }
-        ("age", Op::Eq) => one(cipher
-            .query(op::Eq, &int(input))
-            .on(&age)
+        ("email", Op::Eq) => one(EncryptedUser::EMAIL
+            .eq(text(input))
+            .encrypt(keyset)
             .await
             .expect("eq")
             .to_bytes()),
-        ("age", Op::Lt) => one(cipher
-            .query(op::Lt, &int(input))
-            .on(&age)
+        ("age", Op::Eq) => one(EncryptedUser::AGE
+            .eq(int(input))
+            .encrypt(keyset)
+            .await
+            .expect("eq")
+            .to_bytes()),
+        ("age", Op::Lt) => one(EncryptedUser::AGE
+            .lt(int(input))
+            .encrypt(keyset)
             .await
             .expect("lt")
             .to_bytes()),
-        ("age", Op::Lte) => one(cipher
-            .query(op::Lte, &int(input))
-            .on(&age)
+        ("age", Op::Lte) => one(EncryptedUser::AGE
+            .lte(int(input))
+            .encrypt(keyset)
             .await
             .expect("lte")
             .to_bytes()),
-        ("age", Op::Gt) => one(cipher
-            .query(op::Gt, &int(input))
-            .on(&age)
+        ("age", Op::Gt) => one(EncryptedUser::AGE
+            .gt(int(input))
+            .encrypt(keyset)
             .await
             .expect("gt")
             .to_bytes()),
-        ("age", Op::Gte) => one(cipher
-            .query(op::Gte, &int(input))
-            .on(&age)
+        ("age", Op::Gte) => one(EncryptedUser::AGE
+            .gte(int(input))
+            .encrypt(keyset)
             .await
             .expect("gte")
             .to_bytes()),
         ("age", Op::Between) => {
-            let range = cipher
-                .query(op::Between, &(int(&input[0]), int(&input[1])))
-                .on(&age)
+            let range = EncryptedUser::AGE
+                .between(int(&input[0]), int(&input[1]))
+                .encrypt(keyset)
                 .await
                 .expect("between");
             Operand::Range {
@@ -196,49 +211,32 @@ async fn typed_operand(
                 hi: range.hi().to_bytes(),
             }
         }
-        ("name", Op::Matches) => one(typed_match(cipher, &text(input)).await.to_bytes()),
-        ("score", operator) => {
-            let float = |value: &Json| value.as_f64().expect("a number");
-            let score = Plan::context("users/score")
-                .with::<f64, _>(Ore)
-                .build()
-                .expect("plan");
-            match operator {
-                Op::Lt => one(cipher
-                    .query(op::Lt, &float(input))
-                    .on(&score)
-                    .await
-                    .expect("lt")
-                    .to_bytes()),
-                Op::Between => {
-                    let range = cipher
-                        .query(op::Between, &(float(&input[0]), float(&input[1])))
-                        .on(&score)
-                        .await
-                        .expect("between");
-                    Operand::Range {
-                        lo: range.lo().to_bytes(),
-                        hi: range.hi().to_bytes(),
-                    }
-                }
-                other => panic!("no typed score query for {other}"),
+        ("name", Op::Matches) => one(typed_match(keyset, &text(input)).await.to_bytes()),
+        ("score", Op::Lt) => one(EncryptedUser::SCORE
+            .lt(float(input))
+            .encrypt(keyset)
+            .await
+            .expect("lt")
+            .to_bytes()),
+        ("score", Op::Between) => {
+            let range = EncryptedUser::SCORE
+                .between(float(&input[0]), float(&input[1]))
+                .encrypt(keyset)
+                .await
+                .expect("between");
+            Operand::Range {
+                lo: range.lo().to_bytes(),
+                hi: range.hi().to_bytes(),
             }
         }
         other => panic!("no typed query for {other:?}"),
     }
 }
 
-async fn typed_match(
-    cipher: &StackCipher<DeterministicSource>,
-    input: &str,
-) -> stack_encrypt::sem::MatchQuery {
-    let plan = Plan::context("users/name")
-        .with::<String, _>(Match::default())
-        .build()
-        .expect("plan");
-    cipher
-        .query(op::Matches, input)
-        .on(&plan)
+async fn typed_match(keyset: &KeysetCipher<'_, DeterministicSource>, input: &str) -> MatchQuery {
+    EncryptedUser::NAME
+        .matches(input)
+        .encrypt(keyset)
         .await
         .expect("matches")
 }
@@ -276,8 +274,8 @@ async fn derived() -> Json {
         let term = data_term(&keyset, &plan, field, operator, &input).await;
         assert_eq!(
             term.operand(),
-            &typed_operand(&cipher, field, operator, &input).await,
-            "{operator} on {field}: the data path derives the typed chain's term"
+            &typed_operand(&keyset, field, operator, &input).await,
+            "{operator} on {field}: the data path derives the field reference's term"
         );
         terms.push(json!({
             "field": field,
@@ -287,7 +285,7 @@ async fn derived() -> Json {
         }));
     }
 
-    let typed = typed_match(&cipher, "alice").await;
+    let typed = typed_match(&keyset, "alice").await;
     let values: Vec<ValueFrame> = page()
         .as_array()
         .expect("a list")
@@ -317,7 +315,7 @@ async fn derived() -> Json {
         let Operand::One(bytes) = term.operand() else {
             panic!("a match term is one term");
         };
-        let typed = typed_match(&cipher, input).await;
+        let typed = typed_match(&keyset, input).await;
         for (stats_json, stats) in stats_cases() {
             let read = Stats::from_frame(frame_of_value(&stats_json).as_protected_ref())
                 .expect("stats read");
@@ -342,10 +340,13 @@ async fn derived() -> Json {
         }
     }
 
+    // The comment is part of the committed fixture, and is compared with it
+    // as every other key is: it keeps the wording the fixture was written
+    // with.
     json!({
         "_comment": "Query terms derived by operator through the data path (stack_encrypt::dynamic::query_term), each equal to the typed query chain's, with a verified page and fetch limits. Read by tests/query_operators.rs and the Go SDK's tests; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand.",
         "key_source": { "kind": "deterministic-sha256", "seed": hex(&SEED) },
-        "keyset_id": keyset.keyset_id().to_string(),
+        "keyset_id": keyset.keyset_id().await.unwrap().to_string(),
         "plan": plan_json(),
         "queries": terms,
         "verify": {

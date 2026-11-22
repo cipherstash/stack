@@ -29,7 +29,7 @@ pub enum Tokenizer {
     /// Sliding character n-grams of the given length over the whole text
     /// (whitespace included). Text shorter than `length` yields **no tokens**,
     /// exactly like the v1 match indexer — so a query shorter than the gram
-    /// length is refused by the query chain
+    /// length is refused when it is encrypted
     /// ([`TermError::EmptyTermText`](crate::sem::TermError::EmptyTermText))
     /// rather than silently never matching, and a stored value shorter than
     /// it is the empty filter, which no query matches. This is the default,

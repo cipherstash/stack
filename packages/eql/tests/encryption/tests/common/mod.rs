@@ -8,20 +8,32 @@ use stack_kms::{
 };
 use uuid::Uuid;
 
+/// What a [`RecordingKeySource`] has been asked for, in order.
 #[derive(Default)]
 pub struct Calls {
+    /// The descriptor of each data key generated, one list per request.
     pub generate: Vec<Vec<String>>,
+    /// The descriptor of each data key retrieved, one list per request.
     pub retrieve: Vec<Vec<String>>,
     /// Index key loads, one per keyset a call resolves after the cipher is
     /// built.
     pub loads: usize,
 }
 
-pub struct Observed {
+/// The fake key source every test in this crate encrypts with. It hands out
+/// [`FakeDataKeySource`]'s keys, and records each request in [`Calls`]: the
+/// descriptor of every data key generated or retrieved, and the number of
+/// index key loads. So a test can check which context a key was asked for
+/// under, or that a refused call asked for no key at all.
+pub struct RecordingKeySource {
     inner: FakeDataKeySource,
     calls: Arc<Mutex<Calls>>,
 }
-impl DataKeySource for Observed {
+impl stack_kms::KeySourceKind for RecordingKeySource {
+    type Kind = stack_kms::OwnIdentity;
+}
+
+impl DataKeySource for RecordingKeySource {
     async fn generate_keys(
         &self,
         payloads: Vec<GenerateKeyPayload<'_>>,
@@ -49,7 +61,7 @@ impl DataKeySource for Observed {
         self.inner.retrieve_keys(payloads, keyset, context).await
     }
 }
-impl IndexKeySource for Observed {
+impl IndexKeySource for RecordingKeySource {
     async fn load_index_key(
         &self,
         keyset: Option<IdentifiedBy>,
@@ -58,10 +70,12 @@ impl IndexKeySource for Observed {
         self.inner.load_index_key(keyset).await
     }
 }
-pub async fn cipher() -> (StackCipher<Observed>, Arc<Mutex<Calls>>) {
+/// A cipher over a [`RecordingKeySource`], and the calls it records. The
+/// index key loaded while the cipher is built is not counted.
+pub async fn cipher() -> (StackCipher<RecordingKeySource>, Arc<Mutex<Calls>>) {
     let calls = Arc::new(Mutex::new(Calls::default()));
     let cipher = StackCipher::builder()
-        .kms(Observed {
+        .kms(RecordingKeySource {
             inner: FakeDataKeySource::new(),
             calls: calls.clone(),
         })
@@ -84,4 +98,31 @@ pub fn index_of(name: &str) -> stack_encrypt::target::IndexSpec {
         .and_then(|target| target.indexes.first())
         .and_then(|key| IndexSpec::parse(key))
         .unwrap_or(IndexSpec::Equality)
+}
+
+/// The date `days` days after 1970-01-01, as the plaintext the `date`
+/// family takes.
+#[allow(dead_code)]
+pub fn date_of_days(days: i32) -> eql_bindings::v4::plaintext::Date {
+    let day = jiff::civil::date(1970, 1, 1)
+        .checked_add(jiff::Span::new().days(days))
+        .expect("a day in jiff's range");
+    eql_bindings::v4::plaintext::Date::new(day)
+}
+
+/// The instant `seconds` after the Unix epoch plus `nanoseconds`, as the
+/// plaintext the `timestamp` family takes.
+#[allow(dead_code)]
+pub fn timestamp_of(seconds: i64, nanoseconds: i32) -> eql_bindings::v4::plaintext::Timestamp {
+    let instant = jiff::Timestamp::new(seconds, nanoseconds).expect("an instant in jiff's range");
+    eql_bindings::v4::plaintext::Timestamp::new(instant).expect("an instant in range")
+}
+
+/// The number `mantissa × 10^-scale`, as the plaintext the `numeric`
+/// family takes.
+#[allow(dead_code)]
+pub fn decimal_of(mantissa: i128, scale: u32) -> eql_bindings::v4::plaintext::Decimal {
+    eql_bindings::v4::plaintext::Decimal::new(rust_decimal::Decimal::from_i128_with_scale(
+        mantissa, scale,
+    ))
 }

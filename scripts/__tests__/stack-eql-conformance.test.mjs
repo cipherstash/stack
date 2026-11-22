@@ -174,19 +174,31 @@ describe('required EQL/JSON conformance', () => {
       expect(step.env.STACK_CONFORMANCE_REPORT_DIR).toBeTruthy()
       if (task.endsWith(':postgres')) {
         const steps = jobs[0].steps
-        const repair = steps.findIndex((s) =>
-          s.run?.includes('mise install --force rust'),
-        )
+        const miseAction = (dir) =>
+          steps.findIndex(
+            (s) =>
+              s.uses?.startsWith('jdx/mise-action@') &&
+              (s.with?.working_directory ?? '.') === dir,
+          )
+        const runs = (command) =>
+          steps.findIndex((s) => s.run?.includes(command))
+        const rootMise = miseAction('.')
+        const eqlMise = miseAction('packages/eql')
+        const rootRepair = runs('mise install --force rust')
+        const eqlRepair = runs('mise -C packages/eql install --force rust')
         const cache = steps.findIndex((s) =>
           s.uses?.startsWith('Swatinem/rust-cache@'),
         )
-        expect(repair).toBeGreaterThan(-1)
-        expect(cache).toBeGreaterThan(repair)
-        expect(steps[repair].run).toContain(
-          'mise -C packages/eql install --force rust',
-        )
-        expect(steps[repair].run).toContain('mise x -- cargo --version')
-        expect(steps[repair].run).toContain(
+        expect(rootMise).toBeGreaterThan(-1)
+        // The root step exports RUSTUP_TOOLCHAIN, and the EQL step's
+        // `mise install` can compile cargo:sqlx-cli with it, so the root
+        // toolchain must be whole before the EQL step runs.
+        expect(rootRepair).toBeGreaterThan(rootMise)
+        expect(eqlMise).toBeGreaterThan(rootRepair)
+        expect(eqlRepair).toBeGreaterThan(eqlMise)
+        expect(cache).toBeGreaterThan(eqlRepair)
+        expect(steps[rootRepair].run).toContain('mise x -- cargo --version')
+        expect(steps[eqlRepair].run).toContain(
           'mise -C packages/eql x -- cargo --version',
         )
         expect(jobs[0].services.postgres).toBeDefined()

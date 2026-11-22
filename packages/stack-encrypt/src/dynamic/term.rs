@@ -16,7 +16,7 @@
 //!   a domain of its own. A boolean has none.
 //! - **Match** takes text only, cut in Unicode 16 NFC.
 //! - **ORE, OPE and block ORE** take an integer of 16 bits or wider, a
-//!   float, text, bytes, a date, a timestamp or a decimal, each handed to
+//!   float, text, a date, a timestamp or a decimal, each handed to
 //!   clww-ore (ORE, OPE) or ore-rs (block ORE) as the Rust type the typed
 //!   path would have named: an `i16` as an `i16`, a `u128` as a `u128`, a
 //!   date as a [`value::Date`](crate::value::Date). A boolean, a `u8` and an
@@ -41,17 +41,24 @@ use vitaminc_aead::plaintext::{
     Error as SinkError, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink, Sink,
     SourceError,
 };
-use vitaminc_aead::FromScalar;
+use vitaminc_aead::{EncryptRef, FromScalar};
 use vitaminc_normalize::{domain_of, normalize, NormalizeError};
 
 use serde::{Deserialize, Serialize, Serializer};
 
 use super::{Error, Reason};
 use crate::json::{JsonOptions, JsonPath};
-use crate::sem::{DefaultMatch, MatchOptions, Orderable, TermError, Tokenizer};
-use crate::target::{chosen, CallerContext, ConsumeSource, Encryption, Index, IndexSpec, Pending};
+use crate::sem::{
+    ope, order_error, order_pending, ore, ore_block, ore_block_error, target_of, DefaultMatch,
+    MatchOptions, TermError, Tokenizer,
+};
+use crate::target::{
+    chosen, CallerContext, Encryption, Index, IndexSpec, Pending, Source, WipeSource,
+};
 use crate::value::{Date, Decimal, Timestamp};
+use crate::Orderable;
 use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
+use vitaminc_ore::OrderTarget;
 
 /// The runtime half of [`IndexSpec`]: the domain table, and the index's wire
 /// form in a record plan.
@@ -135,7 +142,7 @@ impl IndexSpec {
     /// gives an equality domain (an integer, a float, text, bytes, a date,
     /// timestamp, decimal or uuid, and a null), not a boolean. Match
     /// takes text. ORE, OPE and block ORE take an integer of 16 bits or
-    /// wider, a float, text, bytes, a date, a timestamp or a decimal; not a
+    /// wider, a float, text, a date, a timestamp or a decimal; not bytes, a
     /// boolean, an 8-bit integer or a uuid. A match index's options do not
     /// change what it takes.
     ///
@@ -184,8 +191,9 @@ impl IndexSpec {
 }
 
 /// Whether the order indexes (CLLW ORE and OPE, and block ORE) order this
-/// scalar: an integer of 16 bits or wider, a float, text, bytes, or a date,
-/// timestamp or decimal in range. Not a boolean, and not an 8-bit integer:
+/// scalar: an integer of 16 bits or wider, a float, text, or a date,
+/// timestamp or decimal in range. Not bytes, which no ordering operator
+/// compares. Not a boolean, and not an 8-bit integer:
 /// an order term over so small a domain reveals too much, which rows hold
 /// `true`, or each row's rank among 256 values, which a few known rows
 /// resolve to the values. Not a null, and not a uuid or any other logical
@@ -194,7 +202,10 @@ fn ordered(ty: Option<Logical>, value: &Physical<'_>) -> bool {
     match ty {
         None => match value {
             Physical::Int(Int::I8(_) | Int::U8(_)) | Physical::Null | Physical::Bool(_) => false,
-            Physical::Int(_) | Physical::Float(_) | Physical::Text(_) | Physical::Bytes(_) => true,
+            Physical::Int(_) | Physical::Float(_) | Physical::Text(_) => true,
+            // No ordering operator compares bytes, so an order term of
+            // them answers no query and reveals the order of the rows.
+            Physical::Bytes(_) => false,
         },
         Some(Logical::Date) => Date::from_scalar(ty, *value).is_some(),
         Some(Logical::Timestamp(_)) => Timestamp::from_scalar(ty, *value).is_some(),
@@ -415,11 +426,12 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 /// use stack_encrypt::dynamic::{context, term};
 /// use stack_encrypt::target::IndexSpec;
 /// use stack_encrypt::{AsProtectedRef, StackCipher};
-/// use stack_encrypt::kms::FakeDataKeySource;
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+/// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+/// // the environment, or from the profile that `npx stash auth login` writes.
 /// let cipher = StackCipher::builder()
-///     .kms(FakeDataKeySource::new())
+/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
 ///     .init()
 ///     .await?;
 /// let keyset = cipher.default_keyset();
@@ -456,11 +468,12 @@ pub async fn term<'c, K, P, D>(
 ) -> Result<Vec<u8>, Error>
 where
     K: DataKeySource + IndexKeySource + Sync + 'static,
-    P: Encrypt + Clone,
+    P: Encrypt + EncryptRef,
     D: IntoPrfContext<'c>,
 {
-    // A value the index does not take is refused as that kind, first.
-    if !kind.defines(value.clone()) {
+    // A value the index does not take is refused as that kind, first. The
+    // checks read the value in place.
+    if !kind.defines(value.lend()) {
         return Err(Error::Term {
             field: None,
             kind: kind.clone(),
@@ -471,7 +484,7 @@ where
     // derived as the empty filter a stored value keeps. The value is read
     // as it is, not re-framed, so every scalar `defines` takes is one a
     // probe takes.
-    prepare_probe(kind, value.clone())?;
+    prepare_probe(kind, value.lend())?;
     derive(cipher, value, kind, context)?
         .await
         .map(TermBytes::into_bytes)
@@ -633,12 +646,10 @@ enum OrderIndex {
 /// Rust type the typed path would have named; `None` for a scalar it does
 /// not order ([`ordered`]).
 ///
-/// Text and bytes are copied out of the walk into an owned `String` or
-/// `Vec<u8>` and moved to the encryptor, which wraps the one copy in a
-/// `Zeroizing` on receipt: the order term takes its value by ownership
-/// (the visitor carries it) and wipes it, so nothing is freed with the
-/// plaintext still in it, in a guest's linear memory, where the host can
-/// read it.
+/// Text is read where the walk holds it, and not copied: each term makes
+/// the scalar's order encoding first, under `Protected`, so nothing is
+/// freed with the plaintext still in it, in a guest's linear memory, where
+/// the host can read it.
 ///
 /// Each scalar is encoded at the target of the Rust type named here
 /// ([`Orderable`]), as on the typed path: text by its case and accent
@@ -689,14 +700,13 @@ where
         Physical::Int(Int::U128(v)) => order(cipher, index, v, context),
         Physical::Float(Float::F32(v)) => order(cipher, index, v, context),
         Physical::Float(Float::F64(v)) => order(cipher, index, v, context),
-        Physical::Text(t) => order(cipher, index, t.to_owned(), context),
-        Physical::Bytes(b) => order(cipher, index, b.to_vec(), context),
+        Physical::Text(t) => order(cipher, index, t, context),
         _ => return None,
     })
 }
 
-/// The term of `value` under `index`. The term's bytes are its frozen
-/// encoding: the raw CLLW ciphertext, or the serialised block ORE one.
+/// The term of `value` under `index`, encoded at the target of its own
+/// type ([`Orderable`]).
 fn order<'a, 'c, K: 'static, T, D>(
     cipher: &'a KeysetCipher<'_, K>,
     index: OrderIndex,
@@ -707,16 +717,55 @@ where
     T: Orderable,
     D: IntoPrfContext<'c>,
 {
+    order_at(cipher, index, target_of::<T>(), value, context)
+}
+
+/// The term of `value` under `index`, encoded as `target`. The term's
+/// bytes are its frozen encoding: the raw CLLW ciphertext, or the
+/// serialised block ORE one.
+fn order_at<'a, 'c, K: 'static, V, D>(
+    cipher: &'a KeysetCipher<'_, K>,
+    index: OrderIndex,
+    target: OrderTarget,
+    value: V,
+    context: NonEmpty<D>,
+) -> Pending<'a, TermBytes, K>
+where
+    V: Encrypt,
+    D: IntoPrfContext<'c>,
+{
+    let context = context.into_prf_context().into_owned();
     match index {
-        OrderIndex::Ore => cipher
-            .ore_term(value, context)
-            .map(|term| TermBytes(term.as_ref().to_vec())),
-        OrderIndex::Ope => cipher
-            .ope_term(value, context)
-            .map(|term| TermBytes(term.as_ref().to_vec())),
-        OrderIndex::OreBlock => cipher
-            .ore_block_term(value, context)
-            .map(|term| TermBytes(term.into_bytes())),
+        OrderIndex::Ore => order_pending(
+            cipher,
+            target,
+            value,
+            context,
+            order_error,
+            |prf, encoding, context| {
+                ore(prf, encoding, context).map(|term| TermBytes(term.as_ref().to_vec()))
+            },
+        ),
+        OrderIndex::Ope => order_pending(
+            cipher,
+            target,
+            value,
+            context,
+            order_error,
+            |prf, encoding, context| {
+                ope(prf, encoding, context).map(|term| TermBytes(term.as_ref().to_vec()))
+            },
+        ),
+        OrderIndex::OreBlock => order_pending(
+            cipher,
+            target,
+            value,
+            context,
+            ore_block_error,
+            |prf, encoding, context| {
+                ore_block(prf, encoding, context).map(|term| TermBytes(term.into_bytes()))
+            },
+        ),
     }
 }
 
@@ -771,7 +820,7 @@ where
         Err(Refused(None))
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<T, Refused> {
+    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<T, Refused> {
         Err(Refused(None))
     }
 }
@@ -814,7 +863,7 @@ impl<T> Sink for NoContainer<T> {
         self.unreachable()
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<T, Refused> {
+    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<T, Refused> {
         self.unreachable()
     }
 }
@@ -853,52 +902,44 @@ impl<T> MapSink for NoContainer<T> {
     }
 }
 
-/// A dynamic error, where an operation's pending can only carry the crate's.
-/// A cipher error is already the crate's, and passes through unchanged, so a
-/// term the scheme refused (text that does not normalize) keeps its kind;
-/// boxing it would report it as an internal failure.
-fn lifted(error: Error) -> crate::Error {
-    match error {
-        Error::Cipher(error) => error,
-        other => crate::Error::Other(Box::new(other)),
-    }
-}
-
 /// An [`IndexSpec`] is an [`Index`] of a [`ValueFrame`]: the index named as
 /// data, over a plaintext whose type is known only when it arrives. Its
 /// `operation` is [`term`]'s derivation wrapped as a description, which
 /// walks the frame in place to its one scalar, so a field lowered from data
 /// runs through the same `indexed()` and `zip` every other field does, and
-/// its term is a [`TermBytes`]. A Rust chain over `ValueFrame` fields names
-/// its indexes this way too (`(IndexSpec::Equality, IndexSpec::Ore)`), and is
-/// then the same declaration as a data plan's.
+/// its term is a [`TermBytes`]. Rust code that runs the combinators over a
+/// `ValueFrame` names its indexes this way too
+/// (`indexed((IndexSpec::Equality, IndexSpec::Ore))`), and is then the same
+/// declaration as a data plan's.
 ///
 /// A value the index does not take (a container, a boolean under ORE)
 /// fails the description when it runs, with the dynamic [`Error::Term`]
-/// inside [`crate::Error::Other`]; a plan lowered from data refuses it
+/// inside [`crate::Error::Input`]; a plan lowered from data refuses it
 /// before that, at its boundary ([`admits`](super::admits)).
 impl Index<ValueFrame> for IndexSpec {
     type Term = TermBytes;
     fn spec(&self) -> IndexSpec {
         self.clone()
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, ValueFrame>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, ValueFrame>>(
         &self,
     ) -> Encryption<'s, ValueFrame, TermBytes, K, CallerContext, M> {
         let spec = self.clone();
-        chosen(move |source: M::Source, cipher, cx: CallerContext| {
-            // A term derives under the query context: the scopes, with no
-            // binding.
-            let (query, stored) = (cx.query(), cx.stored());
-            let context = match cx.validated() {
-                Ok(context) => CallerContext::query_nonempty(context),
-                Err(error) => return Pending::failed(cipher, error),
-            };
-            match derive(cipher, M::view(&source), &spec, context) {
-                Ok(pending) => pending.under_context(query, stored),
-                Err(error) => Pending::failed(cipher, lifted(error)),
-            }
-        })
+        chosen(
+            move |source: Source<'_, ValueFrame>, cipher, cx: CallerContext| {
+                // A term derives under the query context: the scopes, with no
+                // binding.
+                let (query, stored) = (cx.query(), cx.stored());
+                let context = match cx.validated() {
+                    Ok(context) => CallerContext::query_nonempty(context),
+                    Err(error) => return Pending::failed(cipher, error),
+                };
+                match derive(cipher, source.view(), &spec, context) {
+                    Ok(pending) => pending.under_context(query, stored),
+                    Err(error) => Pending::failed(cipher, error.into_crate()),
+                }
+            },
+        )
     }
 }
 
@@ -979,10 +1020,10 @@ mod tests {
                 )
                 .await;
             match refused {
-                Err(crate::Error::Other(inner)) => assert!(
+                Err(crate::Error::Input(inner)) => assert!(
                     matches!(
-                        inner.downcast_ref::<Error>(),
-                        Some(Error::Term { kind: refused_kind, .. }) if *refused_kind == kind
+                        *inner,
+                        Error::Term { kind: ref refused_kind, .. } if *refused_kind == kind
                     ),
                     "{what}: the lifted error names the index: {inner:?}"
                 ),
@@ -1264,15 +1305,17 @@ mod tests {
             ordered!(1.5f32, Tree::Float32(1.5), "f32");
             ordered!(2.5f64, Tree::Float64(2.5), "f64");
             ordered!("alice".to_string(), s("alice"), "text");
-            ordered!(b"ab".to_vec(), bytes(b"ab"), "bytes");
             // A date, a timestamp and a decimal, as their `value` types.
             ordered!(
-                crate::value::Date::from_days_since_epoch(19_782).expect("in range"),
+                crate::value::Date::new(jiff::civil::date(2024, 2, 29)),
                 Tree::Typed(Logical::Date, Box::new(Tree::Int32(19_782))),
                 "date"
             );
             ordered!(
-                crate::value::Timestamp::new(1_700_000_000, 123_456_789).expect("in range"),
+                crate::value::Timestamp::new(
+                    jiff::Timestamp::new(1_700_000_000, 123_456_789).expect("in range")
+                )
+                .expect("in range"),
                 Tree::Typed(
                     Logical::Timestamp(vitaminc_aead::plaintext::TimeUnit::Nanos),
                     Box::new(Tree::Int128(1_700_000_000_123_456_789))
@@ -1280,7 +1323,7 @@ mod tests {
                 "timestamp"
             );
             ordered!(
-                crate::value::Decimal::new(-123_450, 2).expect("in range"),
+                crate::value::Decimal::new(rust_decimal::Decimal::new(-123_450, 2)),
                 Tree::Typed(
                     Logical::Decimal { scale: 2 },
                     Box::new(Tree::Int128(-123_450))
@@ -1501,16 +1544,17 @@ mod tests {
         fn defines_is_true() {
             for (label, leaf) in every_scalar() {
                 let not_bool = !matches!(leaf, Tree::Bool(_));
-                let wide = not_bool && !matches!(leaf, Tree::Int8(_) | Tree::UInt8(_));
+                let wide =
+                    not_bool && !matches!(leaf, Tree::Int8(_) | Tree::UInt8(_) | Tree::Bytes(_));
                 assert_eq!(
                     IndexSpec::Ore.defines(&leaf),
                     wide,
-                    "{label} takes an ore term exactly when it is not a boolean or 8 bits wide"
+                    "{label} takes an ore term exactly when it is not a boolean, bytes or 8 bits wide"
                 );
                 assert_eq!(
                     IndexSpec::Ope.defines(&leaf),
                     wide,
-                    "{label} takes an ope term exactly when it is not a boolean or 8 bits wide"
+                    "{label} takes an ope term exactly when it is not a boolean, bytes or 8 bits wide"
                 );
                 assert_eq!(
                     IndexSpec::Equality.defines(&leaf),

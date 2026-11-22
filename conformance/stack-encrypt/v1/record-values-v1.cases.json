@@ -342,13 +342,12 @@
       "id": "bytes-binary",
       "kind": "bytes",
       "null": "",
-      "outputs": ["c", "eq", "ore"],
+      "outputs": ["c", "eq"],
       "input": {
         "type": "bytes",
         "text": "00ff10"
       },
-      "frame": "0b0300000000ff10",
-      "unanswered": ["ore"]
+      "frame": "0b0300000000ff10"
     },
     {
       "id": "string-nul",
@@ -508,9 +507,9 @@
       "outputs": ["c", "eq", "ope"],
       "input": {
         "type": "timestamp",
-        "text": "9999-12-31T23:59:59.999999999Z"
+        "text": "9999-12-30T22:00:00.999999999Z"
       },
-      "frame": "137f41f4ff3a000000ffc99a3b"
+      "frame": "13e0d3f2ff3a000000ffc99a3b"
     },
     {
       "id": "sealed-bool",

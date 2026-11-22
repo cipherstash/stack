@@ -1,0 +1,9 @@
+error[E0599]: no method named `init` found for struct `StackCipherBuilder` in the current scope
+  --> tests/ui/builder_init_without_a_source.rs:11:36
+   |
+11 |     let _ = StackCipher::builder().init().await;
+   |                                    ^^^^ method not found in `StackCipherBuilder`
+   |
+   = note: the method was found for
+           - `StackCipherBuilder<WithAuthStrategy<C, P>>`
+           - `StackCipherBuilder<WithKeySource<K>>`

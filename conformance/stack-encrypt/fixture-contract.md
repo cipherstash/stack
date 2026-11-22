@@ -61,7 +61,7 @@ the fixture. It does not claim every operator for every kind or index.
 | `queries.match-verification` | Verify the complete page in input order, including matches, nonmatches and null; results agree with the frozen boolean vector. | `verify` |
 | `queries.fetch-limits` | Given the frozen match term, requested count and statistics, return the recorded bounded row count or explicit unbounded result. | Every `target_limit` entry |
 
-Rust compares the dynamic path with typed query chains, `MatchQuery::verify`
+Rust compares the dynamic path with typed queries from field references, `MatchQuery::verify`
 and typed fetch sizing, and checks that the fixture contains both verification
 outcomes and both bounded/unbounded limits. Go exercises the record interface
 and generated query methods. Generated string-page verification omits null,

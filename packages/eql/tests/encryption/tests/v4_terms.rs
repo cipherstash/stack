@@ -8,9 +8,9 @@
 //! A change to any of these bytes is a change to the stored format. After such
 //! a change, a new query no longer finds the rows written before it.
 //!
-//! The fixture contains the output of the structural API (`encrypt_as`). This
-//! test writes through the owned API (`encrypt_into_with_context`). So the test
-//! also checks that the owned API writes what the structural API wrote.
+//! The fixture was recorded from the API that `encrypt_into_with_context`
+//! replaced. This test writes through `encrypt_into_with_context`. So the test
+//! also checks that a new value has the terms of the values stored before.
 //!
 //! The test leaves out two fields. Each contains a random nonce, so its bytes
 //! differ every time:
@@ -30,7 +30,6 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use chrono::{DateTime, NaiveDate, Utc};
 use eql_bindings::v4::plaintext::{
     Date as DateValue, Decimal as DecimalValue, Timestamp as TimestampValue,
 };
@@ -38,6 +37,7 @@ use eql_bindings::v4::{
     bigint, boolean, date, double, integer, numeric, real, smallint, text, timestamp,
 };
 use eql_bindings::Identifier;
+use jiff::civil::Date as CivilDate;
 use serde_json::Value;
 use stack_encrypt::{EncryptInto, NonEmpty};
 
@@ -46,11 +46,11 @@ fn column() -> NonEmpty<Identifier> {
 }
 
 fn date(text: &str) -> DateValue {
-    DateValue::from(NaiveDate::from_str(text).unwrap())
+    DateValue::from(text.parse::<CivilDate>().unwrap())
 }
 
 fn timestamp(text: &str) -> TimestampValue {
-    let instant: DateTime<Utc> = DateTime::parse_from_rfc3339(text).unwrap().to_utc();
+    let instant: jiff::Timestamp = text.parse().unwrap();
     TimestampValue::try_from(instant).unwrap()
 }
 
@@ -71,7 +71,6 @@ fn pinned_part<T: serde::Serialize>(value: &T) -> Value {
 macro_rules! encrypt {
     ($keyset:expr, $value:expr, $ty:ty) => {{
         let out: $ty = $value
-            .clone()
             .encrypt_into_with_context(&$keyset, column())
             .await
             .unwrap();
@@ -100,12 +99,12 @@ async fn every_payload() -> BTreeMap<String, Value> {
     let mut out = BTreeMap::new();
     {
         use text::*;
-        let value = "Ada Lovelace".to_owned();
+        let value = || "Ada Lovelace".to_owned();
         record!(
             out,
             keyset,
             "",
-            value,
+            value(),
             [
                 Text,
                 TextEq,
@@ -122,7 +121,7 @@ async fn every_payload() -> BTreeMap<String, Value> {
                 TextOrdOpeQuery,
             ]
         );
-        record!(out, keyset, value, [
+        record!(out, keyset, value(), [
             TextSearchOreEqualityQuery => TextSearchOreQuery,
             TextSearchOreOrderQuery => TextSearchOreQuery,
             TextSearchOreMatchQuery => TextSearchOreQuery,

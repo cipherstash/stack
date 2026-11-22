@@ -16,7 +16,9 @@ use serde::Serialize;
 use serde_wasm_bindgen::Serializer;
 use stack_auth::{AuthError, AuthStrategy, ServiceToken};
 #[cfg(target_arch = "wasm32")]
-use stack_auth::{OidcProvider, SecretToken, Token, TokenStore};
+use stack_auth::{
+    CredentialAuthStrategy, CredentialPerCall, OidcProvider, SecretToken, Token, TokenStore,
+};
 use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::JsFuture;
@@ -196,6 +198,12 @@ fn js_error_detail(err: &JsValue) -> String {
 
 /// `OidcProvider` adapter over a JS callback.
 ///
+/// The binding keeps this provider itself, and does not give it to the Rust
+/// strategy. A Rust strategy with a provider takes no JWT from its caller,
+/// and `getTokenForJwt` has to hand one in. So the Rust strategy is built
+/// with [`CredentialPerCall`], and each entry passes it a JWT: `getToken`
+/// the one this provider returns, `getTokenForJwt` the one it was given.
+///
 /// `getJwt` is called with no arguments and is expected to return
 /// `Promise<string>` — the current third-party OIDC JWT to federate. Unlike
 /// [`JsTokenStore`], a failure here is fatal: federation can't proceed without
@@ -331,30 +339,24 @@ impl AccessKeyStrategy {
     }
 }
 
-/// Cfg-gated to wasm32: `OidcFederationStrategy` is generic over the JWT provider, and
-/// the only provider the bindings offer (`JsOidcProvider`) wraps a
+/// Cfg-gated to wasm32: the JWT provider (`JsOidcProvider`) and the token
+/// store (`JsTokenStore`) the binding pairs with the strategy each wrap a
 /// `js_sys::Function`, which exists only on wasm32. The native build of this
 /// crate (used for `cargo clippy` / host `cargo test`) therefore has no
 /// `OidcFederationStrategy` — there is nothing native-testable about a JS-callback type.
 #[cfg(target_arch = "wasm32")]
 enum OidcFederationStrategyInner {
-    NoStore(stack_auth::OidcFederationStrategy<JsOidcProvider>),
-    WithStore(stack_auth::OidcFederationStrategy<JsOidcProvider, JsTokenStore>),
+    NoStore(stack_auth::OidcFederationStrategy<CredentialPerCall>),
+    WithStore(stack_auth::OidcFederationStrategy<CredentialPerCall, JsTokenStore>),
 }
 
 #[cfg(target_arch = "wasm32")]
 impl OidcFederationStrategyInner {
-    async fn get_token(&self) -> Result<ServiceToken, AuthError> {
+    /// The CTS token for `jwt`: the one cached for it, or a fresh exchange.
+    async fn token_for(&self, jwt: SecretToken) -> Result<ServiceToken, AuthError> {
         match self {
-            Self::NoStore(s) => s.get_token().await,
-            Self::WithStore(s) => s.get_token().await,
-        }
-    }
-
-    async fn get_token_for_jwt(&self, jwt: SecretToken) -> Result<ServiceToken, AuthError> {
-        match self {
-            Self::NoStore(s) => s.get_token_for_jwt(jwt).await,
-            Self::WithStore(s) => s.get_token_for_jwt(jwt).await,
+            Self::NoStore(s) => s.get_token_with_credential(jwt).await,
+            Self::WithStore(s) => s.get_token_with_credential(jwt).await,
         }
     }
 }
@@ -364,6 +366,7 @@ impl OidcFederationStrategyInner {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub struct OidcFederationStrategy {
+    provider: JsOidcProvider,
     inner: OidcFederationStrategyInner,
 }
 
@@ -406,15 +409,15 @@ impl OidcFederationStrategy {
         cache_capacity: Option<u32>,
     ) -> Result<OidcFederationStrategy, JsValue> {
         let crn = parse_workspace_crn(&workspace_crn)?;
-        let mut builder =
-            stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
-                .maybe_base_url(base_url)
-                .map_err(to_js_error)?;
+        let mut builder = stack_auth::OidcFederationStrategy::builder(crn, CredentialPerCall)
+            .maybe_base_url(base_url)
+            .map_err(to_js_error)?;
         if let Some(capacity) = cache_capacity {
             builder = builder.cache_capacity(capacity as usize);
         }
         let inner = builder.build().map_err(to_js_error)?;
         Ok(OidcFederationStrategy {
+            provider: JsOidcProvider { get_jwt },
             inner: OidcFederationStrategyInner::NoStore(inner),
         })
     }
@@ -445,10 +448,9 @@ impl OidcFederationStrategy {
             load: load_token,
             save: save_token,
         };
-        let mut builder =
-            stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
-                .maybe_base_url(base_url)
-                .map_err(to_js_error)?;
+        let mut builder = stack_auth::OidcFederationStrategy::builder(crn, CredentialPerCall)
+            .maybe_base_url(base_url)
+            .map_err(to_js_error)?;
         if let Some(capacity) = cache_capacity {
             builder = builder.cache_capacity(capacity as usize);
         }
@@ -457,6 +459,7 @@ impl OidcFederationStrategy {
             .build()
             .map_err(to_js_error)?;
         Ok(OidcFederationStrategy {
+            provider: JsOidcProvider { get_jwt },
             inner: OidcFederationStrategyInner::WithStore(inner),
         })
     }
@@ -464,8 +467,11 @@ impl OidcFederationStrategy {
     /// Retrieve a valid CTS service token, federating or re-federating as needed.
     #[wasm_bindgen(js_name = getToken)]
     pub async fn get_token(&self) -> Result<JsValue, JsValue> {
+        // Ask who this call is for before anything else, as a Rust strategy
+        // with a provider does.
+        let jwt = self.provider.fetch().await.map_err(to_js_error)?;
         self.inner
-            .get_token()
+            .token_for(jwt)
             .await
             .map_err(to_js_error)
             .and_then(token_result_from)
@@ -478,7 +484,7 @@ impl OidcFederationStrategy {
     #[wasm_bindgen(js_name = getTokenForJwt)]
     pub async fn get_token_for_jwt(&self, jwt: String) -> Result<JsValue, JsValue> {
         self.inner
-            .get_token_for_jwt(SecretToken::new(jwt))
+            .token_for(SecretToken::new(jwt))
             .await
             .map_err(to_js_error)
             .and_then(token_result_from)

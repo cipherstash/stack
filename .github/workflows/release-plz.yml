@@ -275,7 +275,7 @@ jobs:
         run: |
           set -euo pipefail
           publish_needed=false
-          for crate in stack-auth stack-profile stack-kms stack-encrypt stack-encrypt-derive; do
+          for crate in stack-auth stack-profile stack-kms stack-encrypt stack-encrypt-derive stack-encrypt-jsonpath; do
             version="$(grep -m1 '^version = ' "packages/${crate}/Cargo.toml" | cut -d'"' -f2)"
             # crates.io 403s curl's default User-Agent.
             published="$(curl -fsSL --retry 3 -H "User-Agent: cipherstash-stack-release (https://github.com/cipherstash/stack)" "https://crates.io/api/v1/crates/${crate}/versions" | jq -r '.versions[].num' | grep -Fx "$version" || true)"

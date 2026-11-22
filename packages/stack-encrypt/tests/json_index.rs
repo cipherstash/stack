@@ -8,6 +8,16 @@
 //! rules PostgreSQL documents (the live oracle against PostgreSQL itself is
 //! `packages/eql/tests/encryption/tests/json_tree.rs`).
 //!
+//! A document is sealed from a [`JsonPlaintext`], or by the
+//! [`json_document`](stack_encrypt::target::json_document) operation where
+//! a test sets the index's options, and every stored form opens to a
+//! `JsonPlaintext`. A query is derived through a data plan (the `query`
+//! module): the plan's one field is the column the documents are sealed
+//! under, with the options they are sealed with, and the operand it derives
+//! is read back into the typed [`JsonQuery`] or `JsonLeafQuery`, so the
+//! checks here run over the bytes a binding sends. The data plan is behind
+//! the `dynamic` feature, and so is every test that derives a query.
+//!
 //! Each `given_<scenario>` module is one situation, and each test in it is
 //! named for what it expects. Shared setup is [`scenario`] and the helpers
 //! below it; repeated checks are in [`assertions`]. The generated cases are
@@ -21,16 +31,17 @@ mod common;
 
 use common::stack_cipher;
 use serde_json::{json, Map, Value};
+#[cfg(feature = "dynamic")]
+use stack_encrypt::json::JsonQuery;
 use stack_encrypt::json::{
-    JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonPath, JsonQuery, JsonSelector,
+    JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonPath, JsonPlaintext, JsonSelector,
     JsonSubtree, JsonSubtreeKey, Tag,
 };
-use stack_encrypt::op;
 use stack_encrypt::sem::TermError;
 use stack_encrypt::target::{
     AeadContext, CallerContext, DecryptField, Decryption, IndexSpec, Json,
 };
-use stack_encrypt::{nonempty, Error, Plan, PlanError, StackCipher};
+use stack_encrypt::{nonempty, DecryptFrom, EncryptInto, Error, StackCipher};
 use stack_kms::FakeDataKeySource;
 
 // =============================================================================
@@ -39,21 +50,19 @@ use stack_kms::FakeDataKeySource;
 
 type Cipher = StackCipher<FakeDataKeySource>;
 
-type JsonPlan = stack_encrypt::plan::ValuePlan<Value, stack_encrypt::plan::Typed<JsonDocument>>;
-
-type OrderedPlan =
-    stack_encrypt::plan::ValuePlan<Value, stack_encrypt::plan::Laid<Json, JsonDocument>>;
-
-/// What most tests start from: a cipher over the fake key source and the
-/// default plan for a JSON column under `users/profile`.
+/// What most tests start from: a cipher over the fake key source and, for
+/// the tests that derive a query, the data plan of a JSON column under
+/// `users/profile` with the default options.
 struct Scenario {
     cipher: Cipher,
-    plan: JsonPlan,
+    #[cfg(feature = "dynamic")]
+    plan: query::Plan,
 }
 
 async fn scenario() -> Scenario {
     Scenario {
         cipher: stack_cipher().await,
+        #[cfg(feature = "dynamic")]
         plan: plan(),
     }
 }
@@ -66,22 +75,23 @@ fn aead() -> AeadContext {
     AeadContext::from(nonempty!("users").with("profile"))
 }
 
-fn plan() -> JsonPlan {
-    Plan::value::<Value>()
-        .context("users/profile")
-        .encrypt_into::<JsonDocument>()
-        .build()
-        .unwrap()
+/// The column's data plan under the default options, the ones [`seal`]
+/// seals with.
+#[cfg(feature = "dynamic")]
+fn plan() -> query::Plan {
+    query::plan(&JsonOptions::default())
 }
 
-/// The plan laid out by the JSON index with `$.hello`, `$.number` and
-/// `$.flag` ordered.
-fn ordered_plan() -> OrderedPlan {
-    Plan::value::<Value>()
-        .context("users/profile")
-        .encrypt_with_layout(Json::new(ordering(&["$.hello", "$.number", "$.flag"])))
-        .build()
-        .unwrap()
+/// The options with `$.hello`, `$.number` and `$.flag` ordered.
+fn ordered() -> JsonOptions {
+    ordering(&["$.hello", "$.number", "$.flag"])
+}
+
+/// The column's data plan under [`ordered`]: it answers queries on
+/// documents sealed with those options.
+#[cfg(feature = "dynamic")]
+fn ordered_plan() -> query::Plan {
+    query::plan(&ordered())
 }
 
 /// The options with the root open.
@@ -114,11 +124,10 @@ fn nodes(value: &Value) -> usize {
     }
 }
 
-/// Seal through the typed target, as `encrypt_as` does.
+/// Seal a [`JsonPlaintext`] into a document, under the default options.
 async fn seal(cipher: &Cipher, value: &Value) -> JsonDocument {
-    cipher
-        .default_keyset()
-        .encrypt_as::<Value, JsonDocument>(value, context())
+    JsonPlaintext::from(value.clone())
+        .encrypt_into_with_context(&cipher.default_keyset(), context())
         .await
         .expect("seals")
 }
@@ -145,8 +154,55 @@ async fn try_seal(
         .await
 }
 
+/// The document a plaintext holds. An opened plaintext is wiped when it is
+/// dropped and is not compared directly, so the helpers below hand a test
+/// the document itself.
+fn held(opened: JsonPlaintext) -> Value {
+    opened.value().clone()
+}
+
+/// A stored document, opened under the suite's column.
 async fn open(cipher: &Cipher, doc: JsonDocument) -> Result<Value, Error> {
-    cipher.decrypt_as::<Value, JsonDocument>(doc, aead()).await
+    open_under(cipher, doc, aead()).await
+}
+
+/// A stored document, opened under `context`.
+async fn open_under(
+    cipher: &Cipher,
+    doc: JsonDocument,
+    context: AeadContext,
+) -> Result<Value, Error> {
+    JsonPlaintext::decrypt_from_with_context(doc, cipher, context)
+        .await
+        .map(held)
+}
+
+/// The entry `->` returned, opened to its value.
+async fn open_extracted(cipher: &Cipher, entry: JsonExtracted) -> Result<Value, Error> {
+    JsonPlaintext::decrypt_from_with_context(entry, cipher, aead())
+        .await
+        .map(held)
+}
+
+/// The rows of a read, opened as the one node at its path.
+async fn open_one(cipher: &Cipher, rows: JsonSubtree) -> Result<Value, Error> {
+    JsonPlaintext::decrypt_from_with_context(rows, cipher, aead())
+        .await
+        .map(held)
+}
+
+/// The rows of a read, opened as the node at its path, or none.
+async fn open_option(cipher: &Cipher, rows: JsonSubtree) -> Result<Option<Value>, Error> {
+    Option::<JsonPlaintext>::decrypt_from_with_context(rows, cipher, aead())
+        .await
+        .map(|opened| opened.map(held))
+}
+
+/// The rows of a read, opened as a list: one value per node its path names.
+async fn open_list(cipher: &Cipher, rows: JsonSubtree) -> Result<Vec<Value>, Error> {
+    Vec::<JsonPlaintext>::decrypt_from_with_context(rows, cipher, aead())
+        .await
+        .map(|opened| opened.into_iter().map(held).collect())
 }
 
 async fn subtree_key(
@@ -219,6 +275,7 @@ async fn slots_of(cipher: &Cipher, doc: &JsonDocument, paths: &[&str]) -> Vec<us
 /// A projection as a set: every group's pairs and element groups sorted, so
 /// two projections that hold the same pairs in the same groups compare
 /// equal whatever their stored order (`jsonb @>` reads them as sets).
+#[cfg(feature = "dynamic")]
 fn as_set(q: &Value) -> Value {
     let mut sv = q["sv"].as_array().cloned().unwrap_or_default();
     sv.sort_by_key(|pair| pair.to_string());
@@ -285,8 +342,307 @@ fn pg_contains(stored: &Value, needle: &Value, top: bool) -> bool {
 /// array: a stored document carries no alternative pair, so the SQL answers
 /// false where `jsonb` answers true, as the design's leakage table records
 /// for v3's `@>`.
+#[cfg(feature = "dynamic")]
 fn scalar_in_array(stored: &Value, needle: &Value) -> bool {
     !stored.is_object() && !stored.is_array() && needle.is_array()
+}
+
+// =============================================================================
+// Queries through a data plan
+// =============================================================================
+
+/// Queries on the suite's column, through a data plan, which names the
+/// column's field, the operator and its input, and gets the operand to
+/// bind: what a binding sends. A record field's reference derives the same
+/// operands (`tests/json_field_references.rs`). Each helper here
+/// derives one operator's operand and reads it back into the type that
+/// serializes to it, [`JsonQuery`] or [`JsonLeafQuery`], so a test checks
+/// the query a binding sends.
+#[cfg(feature = "dynamic")]
+mod query {
+    use stack_encrypt::dynamic::{
+        self, record, Operand, QueryTerm, TargetDescriptor, TargetError, TargetOptions,
+        TargetResolver, ValueFrame, ValueKind,
+    };
+    use stack_encrypt::json::JsonLeafQuery;
+    use stack_encrypt::target::DeclaredContext;
+    use stack_encrypt::{AsProtectedRef as _, KeysetCipher, Label, Pending};
+    use stack_kms::{DataKeySource, IndexKeySource};
+
+    use super::*;
+
+    pub(super) use stack_encrypt::dynamic::record::Plan;
+    pub(super) use stack_encrypt::dynamic::Op;
+
+    /// The plan's one field: the column.
+    const FIELD: &str = "profile";
+
+    /// What the helpers run over: any key source a test builds its cipher
+    /// on.
+    pub(super) trait Source: DataKeySource + IndexKeySource + Send + Sync + 'static {}
+    impl<K: DataKeySource + IndexKeySource + Send + Sync + 'static> Source for K {}
+
+    /// A resolver holding one type, `JsonSearch`, which stores a document
+    /// and so answers the JSON operators. The engine derives those
+    /// operators itself, and this suite seals and opens its documents
+    /// without a plan, so the resolver is asked for the type's description
+    /// and nothing else.
+    struct Documents;
+
+    impl TargetResolver for Documents {
+        fn targets(&self) -> Vec<TargetDescriptor> {
+            vec![TargetDescriptor::new(
+                "JsonSearch",
+                "json",
+                "",
+                Some(ValueKind::Json),
+                "public.eql_v4_json_search",
+                vec!["json".to_string()],
+                Some("JsonSearchQuery".to_string()),
+                Some("eql_v4.query_json".to_string()),
+                true,
+                None,
+            )
+            .with_leaf_query_sql_domain("eql_v4.query_json_leaf")]
+        }
+
+        fn encrypt<'a, K: 'static>(
+            &self,
+            _: &str,
+            _: Option<&TargetOptions>,
+            _: &'a KeysetCipher<'_, K>,
+            _: &Label,
+            _: &DeclaredContext,
+            _: ValueFrame,
+        ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+            unreachable!("these tests seal a document without a plan")
+        }
+
+        fn decrypt<'a, K: 'static>(
+            &self,
+            _: &str,
+            _: &'a StackCipher<K>,
+            _: &Label,
+            _: &DeclaredContext,
+            _: &[u8],
+        ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+            unreachable!("these tests open a document without a plan")
+        }
+
+        fn query<'a, K: 'static>(
+            &self,
+            _: &str,
+            _: &IndexSpec,
+            _: &'a KeysetCipher<'_, K>,
+            _: &Label,
+            _: &DeclaredContext,
+            _: ValueFrame,
+        ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+            unreachable!("the JSON operators are the engine's")
+        }
+    }
+
+    /// The column as a data plan: one field under `users/profile`, the
+    /// context the documents are sealed under ([`context`]), storing a
+    /// document under `options`. A query derives the selectors a document
+    /// sealed with the same options stores, so a test seals with the
+    /// options it builds its plan from.
+    pub(super) fn plan(options: &JsonOptions) -> Plan {
+        let ordered: Vec<String> = options.ordered.iter().map(ToString::to_string).collect();
+        let wire = json!({
+            FIELD: {
+                "context": ["users", "profile"],
+                "type": "json",
+                "null": "sql",
+                "target": {
+                    "name": "JsonSearch",
+                    "options": {"sealed_root": options.sealed_root, "ordered": ordered}
+                }
+            }
+        });
+        let plan = record::plan_with(
+            dynamic::frame::serde::to_vec(&wire)
+                .unwrap()
+                .as_protected_ref(),
+            &Documents,
+        )
+        .unwrap();
+        assert_eq!(
+            plan.fields()[0].target_options(),
+            Some(&TargetOptions::Json(options.clone())),
+            "the plan resolved the options it was built from"
+        );
+        plan
+    }
+
+    /// A JSON value as a frame: what a binding sends as an operator's
+    /// input.
+    fn frame(input: &Value) -> ValueFrame {
+        ValueFrame::from_bytes(
+            dynamic::frame::serde::to_vec(input)
+                .unwrap()
+                .as_protected_ref(),
+        )
+        .unwrap()
+    }
+
+    /// The input of an operator that takes a document.
+    fn document(value: &Value) -> Value {
+        json!({"json": value.to_string()})
+    }
+
+    /// The input of an operator that takes a value at a path.
+    fn at(path: &str, value: &Value) -> Value {
+        json!({"path": path, "json": value.to_string()})
+    }
+
+    /// The input of `between_at`: the two bounds at a path.
+    fn within(path: &str, low: &Value, high: &Value) -> Value {
+        json!({"path": path, "low": low.to_string(), "high": high.to_string()})
+    }
+
+    /// The term `operator` derives for `input`, or the refusal: the data
+    /// plan's own, or the index's as [`dynamic::Error::Cipher`].
+    async fn term<K: Source>(
+        keyset: &KeysetCipher<'_, K>,
+        plan: &Plan,
+        operator: Op,
+        input: &Value,
+    ) -> Result<QueryTerm, dynamic::Error> {
+        dynamic::query_term(keyset, plan, FIELD, operator, frame(input), &Documents)?
+            .await
+            .map_err(dynamic::Error::Cipher)
+    }
+
+    /// One EQL operand's JSON, read back into the query type that
+    /// serializes to it. The type writes the same JSON again, so it holds
+    /// everything the operand does.
+    fn read<T>(bytes: &[u8]) -> T
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        let wire: Value = serde_json::from_slice(bytes).unwrap();
+        let query: T = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&query).unwrap(),
+            wire,
+            "the typed query is the operand"
+        );
+        query
+    }
+
+    /// A containment needle: the one operand of `contains`, `contained_by`
+    /// and `eq_at`.
+    async fn needle<K: Source>(
+        keyset: &KeysetCipher<'_, K>,
+        plan: &Plan,
+        operator: Op,
+        input: &Value,
+    ) -> Result<JsonQuery, dynamic::Error> {
+        let term = term(keyset, plan, operator, input).await?;
+        assert_eq!(term.domain(), Some("eql_v4.query_json"), "{operator:?}");
+        match term.operand() {
+            Operand::One(bytes) => Ok(read(bytes)),
+            other => panic!("{operator:?} derives one needle, got {other:?}"),
+        }
+    }
+
+    /// `column @> needle`.
+    pub(super) async fn contains<K: Source>(
+        keyset: &KeysetCipher<'_, K>,
+        plan: &Plan,
+        value: &Value,
+    ) -> Result<JsonQuery, dynamic::Error> {
+        needle(keyset, plan, Op::Contains, &document(value)).await
+    }
+
+    /// `column <@ needle`.
+    pub(super) async fn contained_by<K: Source>(
+        keyset: &KeysetCipher<'_, K>,
+        plan: &Plan,
+        value: &Value,
+    ) -> Result<JsonQuery, dynamic::Error> {
+        needle(keyset, plan, Op::ContainedBy, &document(value)).await
+    }
+
+    /// Equality with the scalar `value` at `path`.
+    pub(super) async fn eq_at<K: Source>(
+        keyset: &KeysetCipher<'_, K>,
+        plan: &Plan,
+        path: &str,
+        value: &Value,
+    ) -> Result<JsonQuery, dynamic::Error> {
+        needle(keyset, plan, Op::EqAt, &at(path, value)).await
+    }
+
+    /// An ordering (`Op::LtAt`, `Op::LteAt`, `Op::GtAt` or `Op::GteAt`)
+    /// against `value` at `path`: the leaf operand the SQL compares with
+    /// the stored leaf's.
+    pub(super) async fn ordering_at<K: Source>(
+        keyset: &KeysetCipher<'_, K>,
+        plan: &Plan,
+        operator: Op,
+        path: &str,
+        value: &Value,
+    ) -> Result<JsonLeafQuery, dynamic::Error> {
+        assert!(
+            matches!(operator, Op::LtAt | Op::LteAt | Op::GtAt | Op::GteAt),
+            "{operator:?} is not an ordering at a path"
+        );
+        let term = term(keyset, plan, operator, &at(path, value)).await?;
+        assert_eq!(
+            term.domain(),
+            Some("eql_v4.query_json_leaf"),
+            "{operator:?}"
+        );
+        match term.operand() {
+            Operand::One(bytes) => Ok(read(bytes)),
+            other => panic!("{operator:?} derives one leaf operand, got {other:?}"),
+        }
+    }
+
+    /// `between_at`: the leaf operands of the low bound and the high.
+    pub(super) async fn between_at<K: Source>(
+        keyset: &KeysetCipher<'_, K>,
+        plan: &Plan,
+        path: &str,
+        low: &Value,
+        high: &Value,
+    ) -> Result<(JsonLeafQuery, JsonLeafQuery), dynamic::Error> {
+        let term = term(keyset, plan, Op::BetweenAt, &within(path, low, high)).await?;
+        assert_eq!(term.domain(), Some("eql_v4.query_json_leaf"), "between_at");
+        match term.operand() {
+            Operand::Range { lo, hi } => Ok((read(lo), read(hi))),
+            other => panic!("between_at derives a range, got {other:?}"),
+        }
+    }
+
+    /// What a caller checks before it has a keyset: everything a query at
+    /// a path is refused for, with no cipher.
+    pub(super) fn check_at(
+        plan: &Plan,
+        operator: Op,
+        path: &str,
+        value: &Value,
+    ) -> Result<(), dynamic::Error> {
+        dynamic::check_query(plan, FIELD, operator, frame(&at(path, value)), &Documents)
+    }
+
+    /// [`check_at`] for `between_at`.
+    pub(super) fn check_between_at(
+        plan: &Plan,
+        path: &str,
+        low: &Value,
+        high: &Value,
+    ) -> Result<(), dynamic::Error> {
+        dynamic::check_query(
+            plan,
+            FIELD,
+            Op::BetweenAt,
+            frame(&within(path, low, high)),
+            &Documents,
+        )
+    }
 }
 
 // =============================================================================
@@ -420,8 +776,9 @@ mod given_the_fixture_document {
 
     #[tokio::test]
     async fn stores_the_wire_form_the_sql_domain_checks() {
-        let Scenario { cipher, plan } = scenario().await;
-        let doc = seal(&cipher, &fixture()).await;
+        let scenario = scenario().await;
+        let cipher = &scenario.cipher;
+        let doc = seal(cipher, &fixture()).await;
         let wire = serde_json::to_value(&doc).unwrap();
         let keys: Vec<&str> = wire
             .as_object()
@@ -431,19 +788,20 @@ mod given_the_fixture_document {
             .collect();
         assert_eq!(keys, ["h", "q", "sv"], "the document's wire keys");
         // `q` is the document's own projection, written once: the needle a
-        // `Contains` of the whole document derives has the same pairs in the
+        // `contains` of the whole document derives has the same pairs in the
         // same groups, and nothing else. Stored, its lists are shuffled; as
         // sets, which is how `jsonb @>` reads them, the two are one.
-        let needle = cipher
-            .query(op::Contains, &fixture())
-            .on(&plan)
-            .await
-            .unwrap();
-        assert_eq!(
-            as_set(&wire["q"]),
-            as_set(&serde_json::to_value(&needle).unwrap()),
-            "`q` is the needle a `Contains` of the whole document derives"
-        );
+        #[cfg(feature = "dynamic")]
+        {
+            let needle = query::contains(&cipher.default_keyset(), &scenario.plan, &fixture())
+                .await
+                .unwrap();
+            assert_eq!(
+                as_set(&wire["q"]),
+                as_set(&serde_json::to_value(&needle).unwrap()),
+                "`q` is the needle a `contains` of the whole document derives"
+            );
+        }
         assert!(
             serde_json::from_value::<JsonDocument>(json!({"h": wire["h"], "sv": wire["sv"]})).is_err(),
             "a document without `q` is not a document: the projection is the only place the value selectors live"
@@ -788,6 +1146,27 @@ mod given_ordered_paths {
             "a position set on the field refuses the seal",
         );
     }
+
+    /// A document sealed with ordered paths opens as any other does, one
+    /// document or a batch.
+    #[tokio::test]
+    async fn opens_what_it_wrote_one_document_or_a_batch() {
+        let Scenario { cipher, .. } = scenario().await;
+        let doc = seal_with(&cipher, &fixture(), &ordered()).await;
+        let back = open(&cipher, doc.clone()).await.unwrap();
+        assert_eq!(back, fixture(), "one document");
+        let docs: Vec<Value> = Vec::<JsonPlaintext>::decrypt_from_with_context(
+            vec![doc.clone(), doc],
+            &cipher,
+            aead(),
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(held)
+        .collect();
+        assert_eq!(docs, [fixture(), fixture()], "a batch");
+    }
 }
 
 // =============================================================================
@@ -1003,9 +1382,7 @@ mod given_an_extracted_node {
             let doc = &doc;
             async move {
                 let node = doc.node(at(cipher, doc, path).await).unwrap();
-                cipher
-                    .decrypt_as::<Value, JsonExtracted>(extracted(cipher, path, node).await, aead())
-                    .await
+                open_extracted(cipher, extracted(cipher, path, node).await).await
             }
         };
         assert_eq!(
@@ -1032,19 +1409,13 @@ mod given_an_extracted_node {
             .await
             .unwrap();
         let rows = read_rows(&doc, &key);
-        let nested = cipher
-            .decrypt_as::<Value, JsonSubtree>(key.open(rows.clone()), aead())
-            .await
-            .unwrap();
+        let nested = open_one(&cipher, key.open(rows.clone())).await.unwrap();
         assert_eq!(
             nested,
             fixture()["nested"],
             "the walk under $.nested opens to its value"
         );
-        let forest = cipher
-            .decrypt_as::<Vec<Value>, JsonSubtree>(key.open(rows), aead())
-            .await
-            .unwrap();
+        let forest = open_list(&cipher, key.open(rows)).await.unwrap();
         assert_eq!(
             forest,
             vec![fixture()["nested"].clone()],
@@ -1056,10 +1427,7 @@ mod given_an_extracted_node {
             .await
             .unwrap();
         let rows = read_rows(&doc, &list);
-        let elements = cipher
-            .decrypt_as::<Value, JsonSubtree>(list.open(rows), aead())
-            .await
-            .unwrap();
+        let elements = open_one(&cipher, list.open(rows)).await.unwrap();
         assert_eq!(
             elements,
             json!([{"x": 1}, {"x": 2}]),
@@ -1080,13 +1448,12 @@ mod given_an_extracted_node {
         let back: JsonNode = serde_json::from_value(wire).unwrap();
         assert_eq!(back.slot(), x as u64, "the node keeps its slot");
         assert_eq!(
-            cipher
-                .decrypt_as::<Value, JsonExtracted>(
-                    extracted(&cipher, "$.nested.list[*].x", back).await,
-                    aead()
-                )
-                .await
-                .unwrap(),
+            open_extracted(
+                &cipher,
+                extracted(&cipher, "$.nested.list[*].x", back).await
+            )
+            .await
+            .unwrap(),
             json!(1),
             "the grafted node opens to its scalar"
         );
@@ -1138,15 +1505,10 @@ mod given_wildcard_rows {
         assert_eq!(xs.probes(), [64]);
         let rows = read_rows(&doc, &xs);
         assert_eq!(rows.len(), 2, "both x");
-        let values = cipher
-            .decrypt_as::<Vec<Value>, JsonSubtree>(xs.open(rows.clone()), aead())
-            .await
-            .unwrap();
+        let values = open_list(&cipher, xs.open(rows.clone())).await.unwrap();
         assert_eq!(values, vec![json!(1), json!(2)], "one value per element");
         assertions::refused_as_opened_type(
-            &cipher
-                .decrypt_as::<Value, JsonSubtree>(xs.open(rows), aead())
-                .await,
+            &open_one(&cipher, xs.open(rows)).await,
             Some("one node at the walked path"),
             "two elements are not one value",
         );
@@ -1170,12 +1532,8 @@ mod given_wildcard_rows {
             "the first x, and the second element with its x"
         );
         for opened in [
-            cipher
-                .decrypt_as::<Vec<Value>, JsonSubtree>(one.open(rows.clone()), aead())
-                .await
-                .map(|_| ()),
-            cipher
-                .decrypt_as::<Option<Value>, JsonSubtree>(one.open(rows.clone()), aead())
+            open_list(&cipher, one.open(rows.clone())).await.map(|_| ()),
+            open_option(&cipher, one.open(rows.clone()))
                 .await
                 .map(|_| ()),
         ] {
@@ -1195,8 +1553,7 @@ mod given_wildcard_rows {
             )
             .await
             .unwrap();
-        let values = cipher
-            .decrypt_as::<Vec<Value>, JsonSubtree>(two.open(read_rows(&doc, &two)), aead())
+        let values = open_list(&cipher, two.open(read_rows(&doc, &two)))
             .await
             .unwrap();
         assert_eq!(
@@ -1235,25 +1592,31 @@ mod given_a_derived_record {
             "the list, both elements and both leaves"
         );
 
-        let opening: Option<Decryption<Value, FakeDataKeySource>> = doc.decryption_field(aead());
+        let opening: Option<Decryption<JsonPlaintext, FakeDataKeySource>> =
+            doc.decryption_field(aead());
         let opened = cipher
             .run_decryption(opening.expect("a document opens"))
             .await
             .unwrap();
-        assert_eq!(opened, fixture(), "the document field");
-        let opening: Option<Decryption<Value, FakeDataKeySource>> = node.decryption_field(aead());
+        assert_eq!(opened.value(), &fixture(), "the document field");
+        let opening: Option<Decryption<JsonPlaintext, FakeDataKeySource>> =
+            node.decryption_field(aead());
         let opened = cipher
             .run_decryption(opening.expect("a node opens"))
             .await
             .unwrap();
-        assert_eq!(opened, json!("world-1"), "the node field");
-        let opening: Option<Decryption<Value, FakeDataKeySource>> =
+        assert_eq!(opened.value(), &json!("world-1"), "the node field");
+        let opening: Option<Decryption<JsonPlaintext, FakeDataKeySource>> =
             subtree.decryption_field(aead());
         let opened = cipher
             .run_decryption(opening.expect("a subtree opens"))
             .await
             .unwrap();
-        assert_eq!(opened, json!([{"x": 1}, {"x": 2}]), "the subtree field");
+        assert_eq!(
+            opened.value(),
+            &json!([{"x": 1}, {"x": 2}]),
+            "the subtree field"
+        );
     }
 }
 
@@ -1284,28 +1647,20 @@ mod given_a_fallback_root {
             "$.nested",
             "the fallback carries the key's path"
         );
-        let nested = cipher
-            .decrypt_as::<Value, JsonSubtree>(rows, aead())
-            .await
-            .unwrap();
+        let nested = open_one(&cipher, rows).await.unwrap();
         assert_eq!(nested, fixture()["nested"], "the value at the path");
-        let xs = cipher
-            .decrypt_as::<Vec<Value>, JsonSubtree>(
-                keyed(&cipher, "$.nested.list[*].x", vec![root.clone()]).await,
-                aead(),
-            )
-            .await
-            .unwrap();
+        let xs = open_list(
+            &cipher,
+            keyed(&cipher, "$.nested.list[*].x", vec![root.clone()]).await,
+        )
+        .await
+        .unwrap();
         assert_eq!(
             xs,
             vec![json!(1), json!(2)],
             "a wildcard path selects every node over the document"
         );
-        let none = cipher
-            .decrypt_as::<Vec<Value>, JsonSubtree>(
-                keyed(&cipher, "$.missing[*]", vec![root]).await,
-                aead(),
-            )
+        let none = open_list(&cipher, keyed(&cipher, "$.missing[*]", vec![root]).await)
             .await
             .unwrap();
         assert!(
@@ -1326,12 +1681,7 @@ mod given_a_fallback_root {
             ("$.missing", "a node at the walked path"),
             ("$.nested.list[*].x", "one node at the walked path"),
         ] {
-            let refused = cipher
-                .decrypt_as::<Value, JsonSubtree>(
-                    keyed(&cipher, path, vec![root.clone()]).await,
-                    aead(),
-                )
-                .await;
+            let refused = open_one(&cipher, keyed(&cipher, path, vec![root.clone()]).await).await;
             assertions::refused_as_opened_type(&refused, Some(expected), path);
         }
     }
@@ -1351,7 +1701,7 @@ mod given_a_fallback_root {
             "the root at depth 1 is a walk's row"
         );
         assertions::refused_as_wrong_entry(
-            &cipher.decrypt_as::<Value, JsonSubtree>(rows, aead()).await,
+            &open_one(&cipher, rows).await,
             "the root at depth 1 is not a row of the walk",
         );
         let open_doc = seal_with(&cipher, &fixture(), &open_root()).await;
@@ -1414,23 +1764,13 @@ mod given_a_fallback_root {
             let walked = read_rows(&doc, &key);
             let fallen_back = key.open(vec![root.clone()]);
             assert!(fallen_back.is_sealed_root(), "{text}: the fallback");
-            let as_walked = cipher
-                .decrypt_as::<Vec<Value>, JsonSubtree>(key.open(walked.clone()), aead())
-                .await
-                .unwrap();
-            let as_fallen = cipher
-                .decrypt_as::<Vec<Value>, JsonSubtree>(fallen_back.clone(), aead())
-                .await
-                .unwrap();
+            let as_walked = open_list(&cipher, key.open(walked.clone())).await.unwrap();
+            let as_fallen = open_list(&cipher, fallen_back.clone()).await.unwrap();
             let expected: Vec<Value> = key.path().select(&document).into_iter().cloned().collect();
             assert_eq!(as_walked, expected, "{text}, walked, as a list");
             assert_eq!(as_fallen, expected, "{text}, fallen back, as a list");
-            let one_walked = cipher
-                .decrypt_as::<Option<Value>, JsonSubtree>(key.open(walked), aead())
-                .await;
-            let one_fallen = cipher
-                .decrypt_as::<Option<Value>, JsonSubtree>(fallen_back, aead())
-                .await;
+            let one_walked = open_option(&cipher, key.open(walked)).await;
+            let one_fallen = open_option(&cipher, fallen_back).await;
             match (one_walked, one_fallen) {
                 (Ok(a), Ok(b)) => assert_eq!(a, b, "{text}, as one value"),
                 (Err(Error::OpenedType { .. }), Err(Error::OpenedType { .. })) => {
@@ -1461,12 +1801,7 @@ mod given_rows_the_server_chose {
         let doc = seal(&cipher, &fixture()).await;
         let node = |j: usize| doc.node(j).unwrap();
         let repeated = keyed(&cipher, "$.nested", vec![node(1), node(1)]).await;
-        assertions::refused_as_wrong_entry(
-            &cipher
-                .decrypt_as::<Vec<Value>, JsonSubtree>(repeated, aead())
-                .await,
-            "a repeated row",
-        );
+        assertions::refused_as_wrong_entry(&open_list(&cipher, repeated).await, "a repeated row");
 
         // A wide document of one-member objects: its objects, returned as rows
         // with the last leaf after them, each take the next as their member,
@@ -1487,12 +1822,7 @@ mod given_rows_the_server_chose {
         containers.push(doc.node(at(&cipher, &doc, "$.k199.x").await).unwrap());
         assert_eq!(containers.len(), 201, "200 objects and the last leaf");
         assertions::refused_as_tampered(
-            &cipher
-                .decrypt_as::<Vec<Value>, JsonSubtree>(
-                    keyed(&cipher, "$.k000", containers).await,
-                    aead(),
-                )
-                .await,
+            &open_list(&cipher, keyed(&cipher, "$.k000", containers).await).await,
             "a line of 200 objects",
         );
 
@@ -1518,12 +1848,7 @@ mod given_rows_the_server_chose {
             "the outer array, 200 inner and the last leaf"
         );
         assertions::refused_as_tampered(
-            &cipher
-                .decrypt_as::<Vec<Value>, JsonSubtree>(
-                    keyed(&cipher, "$.k000", arrays).await,
-                    aead(),
-                )
-                .await,
+            &open_list(&cipher, keyed(&cipher, "$.k000", arrays).await).await,
             "a line of 202 arrays",
         );
     }
@@ -1569,12 +1894,12 @@ mod given_a_tampered_document {
         });
         assertions::refused_as_tampered(&open(&cipher, flipped).await, "a changed byte");
 
-        let wrong_context = cipher
-            .decrypt_as::<Value, JsonDocument>(
-                doc,
-                AeadContext::from(nonempty!("users").with("bio")),
-            )
-            .await;
+        let wrong_context = open_under(
+            &cipher,
+            doc,
+            AeadContext::from(nonempty!("users").with("bio")),
+        )
+        .await;
         assertions::refused_as_tampered(&wrong_context, "another column");
 
         // A node lifted out of its document fails under another slot. Through
@@ -1586,9 +1911,7 @@ mod given_a_tampered_document {
         lifted["j"] = json!(3 - a);
         let lifted: JsonNode = serde_json::from_value(lifted).unwrap();
         assertions::refused_as_not_a_leaf(
-            &cipher
-                .decrypt_as::<Value, JsonExtracted>(extracted(&cipher, "$.a", lifted).await, aead())
-                .await,
+            &open_extracted(&cipher, extracted(&cipher, "$.a", lifted).await).await,
             "a node under another slot",
         );
     }
@@ -1656,6 +1979,7 @@ mod given_the_containment_model {
     }
 }
 
+#[cfg(feature = "dynamic")]
 mod given_the_design_corpus {
     use super::*;
 
@@ -1753,12 +2077,13 @@ mod given_the_design_corpus {
     #[tokio::test]
     async fn sends_each_needle_in_an_order_of_its_own() {
         let Scenario { cipher, plan } = scenario().await;
+        let keyset = cipher.default_keyset();
         let value: Value = (0..11)
             .map(|i| (format!("k{i}"), json!(i)))
             .collect::<Map<String, Value>>()
             .into();
-        let one: JsonQuery = cipher.query(op::Contains, &value).on(&plan).await.unwrap();
-        let two: JsonQuery = cipher.query(op::Contains, &value).on(&plan).await.unwrap();
+        let one = query::contains(&keyset, &plan, &value).await.unwrap();
+        let two = query::contains(&keyset, &plan, &value).await.unwrap();
         let (a, b) = (
             serde_json::to_value(&one).unwrap(),
             serde_json::to_value(&two).unwrap(),
@@ -1771,12 +2096,10 @@ mod given_the_design_corpus {
         assert_ne!(a, b, "two orders");
         assert_eq!(as_set(&a), as_set(&b), "one set");
         assert_eq!(one, two, "equal as sets");
-        let at: JsonQuery = cipher
-            .query(op::AtPath(op::Eq), &("$.k3", 3))
-            .on(&plan)
+        let at = query::eq_at(&keyset, &plan, "$.k3", &json!(3))
             .await
             .unwrap();
-        let doc = cipher.encrypt(&value).using(&plan).await.unwrap();
+        let doc = seal(&cipher, &value).await;
         assert!(one.matches(doc.selector_set()) && two.matches(doc.selector_set()));
         assert!(at.matches(doc.selector_set()), "an equality needle too");
     }
@@ -1787,14 +2110,11 @@ mod given_the_design_corpus {
     #[tokio::test]
     async fn answers_containment_both_ways_as_jsonb_does() {
         let Scenario { cipher, plan } = scenario().await;
+        let keyset = cipher.default_keyset();
         for (stored, needle) in corpus() {
-            let doc = cipher.encrypt(&stored).using(&plan).await.unwrap();
-            let contains: JsonQuery = cipher.query(op::Contains, &needle).on(&plan).await.unwrap();
-            let contained_by: JsonQuery = cipher
-                .query(op::ContainedBy, &needle)
-                .on(&plan)
-                .await
-                .unwrap();
+            let doc = seal(&cipher, &stored).await;
+            let contains = query::contains(&keyset, &plan, &needle).await.unwrap();
+            let contained_by = query::contained_by(&keyset, &plan, &needle).await.unwrap();
             assertions::contains_as_jsonb(&contains, &doc, &stored, &needle);
             assertions::is_contained_by_as_jsonb(&contained_by, &doc, &stored, &needle);
         }
@@ -1811,17 +2131,22 @@ mod given_generated_documents {
     //! later run replays first. The strategies mirror the EQL live oracle's
     //! (`packages/eql/tests/encryption/tests/json_tree/generated.rs`), which
     //! sits in another Cargo workspace.
+    //!
+    //! The two properties derive their queries through the data plan, so
+    //! they are behind the `dynamic` feature. Without it the cases and the
+    //! needle strategies are compiled and not run.
+    #![cfg_attr(not(feature = "dynamic"), allow(dead_code))]
 
-    use std::cell::Cell;
     use std::fmt;
-    use std::future::IntoFuture;
 
     use proptest::collection::vec as vec_of;
     use proptest::prelude::*;
     use proptest::sample::{select, Index};
     use proptest::strategy::ValueTree;
+    #[cfg(feature = "dynamic")]
+    use proptest::test_runner::TestCaseError;
     use proptest::test_runner::{
-        Config, FileFailurePersistence, RngAlgorithm, RngSeed, TestCaseError, TestRunner,
+        Config, FileFailurePersistence, RngAlgorithm, RngSeed, TestRunner,
     };
 
     use super::*;
@@ -2157,6 +2482,7 @@ mod given_generated_documents {
 
     /// Run `body` over a whole proptest run on one runtime and cipher, and
     /// fail with the minimal case and the way to replay it.
+    #[cfg(feature = "dynamic")]
     fn run(
         name: &str,
         body: impl Fn(&Scenario, &tokio::runtime::Runtime, &Case) -> Result<(), TestCaseError>,
@@ -2180,36 +2506,26 @@ mod given_generated_documents {
         }
     }
 
-    /// The stored document, sealed through the plan.
+    /// The stored document, sealed under the options the scenario's plan
+    /// queries under.
+    #[cfg(feature = "dynamic")]
     fn sealed(
         scenario: &Scenario,
         runtime: &tokio::runtime::Runtime,
         stored: &Value,
     ) -> JsonDocument {
-        runtime
-            .block_on(
-                scenario
-                    .cipher
-                    .encrypt(stored)
-                    .using(&scenario.plan)
-                    .into_future(),
-            )
-            .unwrap()
+        runtime.block_on(seal(&scenario.cipher, stored))
     }
 
+    #[cfg(feature = "dynamic")]
     #[test]
     fn contains_as_jsonb_contains() {
         run("@>", |scenario, runtime, case| {
             let (needle, contained) = case.needle();
             let doc = sealed(scenario, runtime, &case.stored);
-            let query: JsonQuery = runtime
-                .block_on(
-                    scenario
-                        .cipher
-                        .query(op::Contains, &needle)
-                        .on(&scenario.plan)
-                        .into_future(),
-                )
+            let keyset = scenario.cipher.default_keyset();
+            let query = runtime
+                .block_on(query::contains(&keyset, &scenario.plan, &needle))
                 .unwrap();
             prop_assert!(
                 !contained || pg_contains(&case.stored, &needle, true),
@@ -2226,14 +2542,8 @@ mod given_generated_documents {
             // Every query sends its needle in a random order of its own: a
             // second derivation is the same set of pairs and groups, and
             // matches exactly what the first did.
-            let again: JsonQuery = runtime
-                .block_on(
-                    scenario
-                        .cipher
-                        .query(op::Contains, &needle)
-                        .on(&scenario.plan)
-                        .into_future(),
-                )
+            let again = runtime
+                .block_on(query::contains(&keyset, &scenario.plan, &needle))
                 .unwrap();
             prop_assert_eq!(&again, &query, "one needle, as sets");
             prop_assert_eq!(
@@ -2247,20 +2557,16 @@ mod given_generated_documents {
         });
     }
 
+    #[cfg(feature = "dynamic")]
     #[test]
     fn is_contained_by_as_jsonb_except_a_root_scalar_in_a_root_array() {
-        let excluded = Cell::new(0);
+        let excluded = std::cell::Cell::new(0);
         run("<@", |scenario, runtime, case| {
             let (needle, _) = case.needle();
             let doc = sealed(scenario, runtime, &case.stored);
-            let query: JsonQuery = runtime
-                .block_on(
-                    scenario
-                        .cipher
-                        .query(op::ContainedBy, &needle)
-                        .on(&scenario.plan)
-                        .into_future(),
-                )
+            let keyset = scenario.cipher.default_keyset();
+            let query = runtime
+                .block_on(query::contained_by(&keyset, &scenario.plan, &needle))
                 .unwrap();
             let jsonb = pg_contains(&needle, &case.stored, true);
             if jsonb && scalar_in_array(&case.stored, &needle) {
@@ -2345,21 +2651,13 @@ mod given_a_float_at_full_precision {
             ),
             (
                 "the extracted element, as `->` returns it",
-                cipher
-                    .decrypt_as::<Value, JsonExtracted>(
-                        extracted(cipher, "$.list[*]", element).await,
-                        aead(),
-                    )
+                open_extracted(cipher, extracted(cipher, "$.list[*]", element).await)
                     .await
                     .unwrap(),
             ),
             (
                 "the walk under $.list",
-                cipher
-                    .decrypt_as::<Value, JsonSubtree>(key.open(rows), aead())
-                    .await
-                    .unwrap()[0]
-                    .take(),
+                open_one(cipher, key.open(rows)).await.unwrap()[0].take(),
             ),
         ]
     }
@@ -2427,16 +2725,16 @@ mod given_a_float_at_full_precision {
 // Queries
 // =============================================================================
 
+#[cfg(feature = "dynamic")]
 mod given_a_containment_query {
     use super::*;
 
     #[tokio::test]
     async fn serializes_as_the_needle_operand_and_derives_no_key() {
         let (cipher, generates, _) = common::counting_cipher().await;
+        let keyset = cipher.default_keyset();
         let plan = plan();
-        let query = cipher
-            .query(op::Contains, &json!({"a": [{"x": 1}]}))
-            .on(&plan)
+        let query = query::contains(&keyset, &plan, &json!({"a": [{"x": 1}]}))
             .await
             .unwrap();
         let wire = serde_json::to_value(&query).unwrap();
@@ -2465,11 +2763,7 @@ mod given_a_containment_query {
             "a query mints no key"
         );
 
-        let scalar = cipher
-            .query(op::Contains, &json!("a"))
-            .on(&plan)
-            .await
-            .unwrap();
+        let scalar = query::contains(&keyset, &plan, &json!("a")).await.unwrap();
         let wire = serde_json::to_value(&scalar).unwrap();
         assert!(
             wire.get("alt").is_some(),
@@ -2478,34 +2772,28 @@ mod given_a_containment_query {
     }
 }
 
+#[cfg(feature = "dynamic")]
 mod given_equality_at_the_root {
     use super::*;
 
-    /// At the root, equality is of the root value: `("$", 1)` matches a
+    /// At the root, equality is of the root value: `1` at `$` matches a
     /// stored `1` and not a stored `[1]`, which containment of the scalar
     /// `1` would.
     #[tokio::test]
     async fn matches_the_root_value_and_not_an_array_holding_it() {
         let Scenario { cipher, plan } = scenario().await;
-        let at_root: JsonQuery = cipher
-            .query(op::AtPath(op::Eq), &("$", 1))
-            .on(&plan)
-            .await
-            .unwrap();
-        let contains: JsonQuery = cipher
-            .query(op::Contains, &json!(1))
-            .on(&plan)
-            .await
-            .unwrap();
-        let scalar = cipher.encrypt(&json!(1)).using(&plan).await.unwrap();
-        let array = cipher.encrypt(&json!([1])).using(&plan).await.unwrap();
+        let keyset = cipher.default_keyset();
+        let at_root = query::eq_at(&keyset, &plan, "$", &json!(1)).await.unwrap();
+        let contains = query::contains(&keyset, &plan, &json!(1)).await.unwrap();
+        let scalar = seal(&cipher, &json!(1)).await;
+        let array = seal(&cipher, &json!([1])).await;
         assert!(
             at_root.matches(scalar.selector_set()),
-            "(\"$\", 1) matches a stored 1"
+            "1 at `$` matches a stored 1"
         );
         assert!(
             !at_root.matches(array.selector_set()),
-            "(\"$\", 1) does not match a stored [1]"
+            "1 at `$` does not match a stored [1]"
         );
         assert!(contains.matches(array.selector_set()), "jsonb: [1] @> 1");
         assert!(
@@ -2515,13 +2803,16 @@ mod given_equality_at_the_root {
     }
 }
 
+#[cfg(feature = "dynamic")]
 mod given_an_accessor {
+    use super::query::Op;
     use super::*;
 
     #[tokio::test]
     async fn matches_the_value_at_its_path() {
         let Scenario { cipher, plan } = scenario().await;
-        let doc = cipher.encrypt(&fixture()).using(&plan).await.unwrap();
+        let keyset = cipher.default_keyset();
+        let doc = seal(&cipher, &fixture()).await;
         let projection = doc.selector_set();
         for (path, value, matches, what) in [
             ("$.nested.list[*].x", json!(2), true, "an element's x is 2"),
@@ -2529,28 +2820,24 @@ mod given_an_accessor {
             ("$.nested.deep", json!("constant"), true, "the deep string"),
             ("$.number", json!("1"), false, "a string is not the number"),
         ] {
-            let query: JsonQuery = cipher
-                .query(op::AtPath(op::Eq), &(path, value))
-                .on(&plan)
-                .await
-                .unwrap();
+            let query = query::eq_at(&keyset, &plan, path, &value).await.unwrap();
             assert_eq!(query.matches(projection), matches, "{what}");
         }
     }
 
     /// An ordering at a path: the path's selector and a leaf term that
     /// orders as the stored leaf's does, under native byte comparison. The
-    /// plan declares the paths it orders, and the query runs under them.
+    /// plan declares the paths it orders, the document is sealed with them,
+    /// and the query runs under them.
     #[tokio::test]
     async fn orders_as_the_stored_leaf_at_an_ordered_path() {
         let Scenario { cipher, .. } = scenario().await;
+        let keyset = cipher.default_keyset();
         let plan = ordered_plan();
-        let doc = cipher.encrypt(&fixture()).using(&plan).await.unwrap();
+        let doc = seal_with(&cipher, &fixture(), &ordered()).await;
         let number = &doc.entries()[at(&cipher, &doc, "$.number").await];
         let hello = &doc.entries()[at(&cipher, &doc, "$.hello").await];
-        let bound = cipher
-            .query(op::AtPath(op::Gte), &("$.number", 0))
-            .on(&plan)
+        let bound = query::ordering_at(&keyset, &plan, Op::GteAt, "$.number", &json!(0))
             .await
             .unwrap();
         assert_eq!(
@@ -2562,39 +2849,33 @@ mod given_an_accessor {
             bound.ordering_term() < number.ordering_term().unwrap(),
             "0 < 1"
         );
-        let above = cipher
-            .query(op::AtPath(op::Lt), &("$.number", 5))
-            .on(&plan)
+        let above = query::ordering_at(&keyset, &plan, Op::LtAt, "$.number", &json!(5))
             .await
             .unwrap();
         assert!(
             above.ordering_term() > number.ordering_term().unwrap(),
             "5 > 1"
         );
-        let text = cipher
-            .query(op::AtPath(op::Gt), &("$.hello", "world-0"))
-            .on(&plan)
+        let text = query::ordering_at(&keyset, &plan, Op::GtAt, "$.hello", &json!("world-0"))
             .await
             .unwrap();
         assert!(
             text.ordering_term() < hello.ordering_term().unwrap(),
             "world-0 < world-1"
         );
-        let range = cipher
-            .query(op::AtPath(op::Between), &("$.number", (0, 5)))
-            .on(&plan)
+        let (lo, hi) = query::between_at(&keyset, &plan, "$.number", &json!(0), &json!(5))
             .await
             .unwrap();
         assert!(
-            range.lo().ordering_term() < range.hi().ordering_term(),
+            lo.ordering_term() < hi.ordering_term(),
             "the range's bounds are in order"
         );
         assert_eq!(
-            range.lo().selector().as_bytes(),
+            lo.selector().as_bytes(),
             number.selector(),
             "the range asks at $.number"
         );
-        let wire = serde_json::to_value(range.lo()).unwrap();
+        let wire = serde_json::to_value(&lo).unwrap();
         assert_eq!(
             wire.as_object().unwrap().keys().collect::<Vec<_>>(),
             ["op", "s"],
@@ -2605,50 +2886,39 @@ mod given_an_accessor {
     /// Refusals, before any term is derived: a text that is not a path, a
     /// leaf kind that has no ordering, and a path the plan does not order
     /// (no stored leaf there carries a term, so the comparison would match
-    /// no row; under the default plan that is every path).
+    /// no row). A plan that orders no path, as the default plan does,
+    /// answers no ordering at all, and the data plan says so with a reason
+    /// of its own.
     #[tokio::test]
     async fn refuses_a_bad_path_an_unordered_leaf_or_a_path_the_plan_does_not_order() {
         let Scenario {
             cipher,
             plan: default_plan,
         } = scenario().await;
+        let keyset = cipher.default_keyset();
         let plan = ordered_plan();
-        let bad_path = cipher
-            .query(op::AtPath(op::Eq), &("address.city", "Sydney"))
-            .on(&plan)
-            .await;
-        assertions::refused_by_term(
+        let bad_path = query::eq_at(&keyset, &plan, "address.city", &json!("Sydney")).await;
+        assertions::query_refused_by_term(
             &bad_path,
             |e| matches!(e, TermError::JsonPath(_)),
             "a text that is not a path",
         );
-        let unordered = cipher
-            .query(op::AtPath(op::Gte), &("$.flag", true))
-            .on(&plan)
-            .await;
-        assertions::refused_by_term(
+        let unordered = query::ordering_at(&keyset, &plan, Op::GteAt, "$.flag", &json!(true)).await;
+        assertions::query_refused_by_term(
             &unordered,
             |e| matches!(e, TermError::JsonLeafNotOrdered),
             "a boolean has no ordering",
         );
-        let not_ordered = cipher
-            .query(op::AtPath(op::Lt), &("$.nested.deep", "z"))
-            .on(&plan)
-            .await;
-        assertions::refused_by_term(
+        let not_ordered =
+            query::ordering_at(&keyset, &plan, Op::LtAt, "$.nested.deep", &json!("z")).await;
+        assertions::query_refused_by_term(
             &not_ordered,
             |e| matches!(e, TermError::JsonPathNotOrdered),
             "a path the plan does not order",
         );
-        let not_ordered = cipher
-            .query(op::AtPath(op::Between), &("$.number", (0, 5)))
-            .on(&default_plan)
-            .await;
-        assertions::refused_by_term(
-            &not_ordered,
-            |e| matches!(e, TermError::JsonPathNotOrdered),
-            "the default plan orders no path",
-        );
+        let not_answered =
+            query::between_at(&keyset, &default_plan, "$.number", &json!(0), &json!(5)).await;
+        assertions::query_not_answered(&not_answered, "the default plan orders no path");
     }
 
     /// An ordering at a wildcard path is covered by the wildcard. One at a
@@ -2658,53 +2928,46 @@ mod given_an_accessor {
     #[tokio::test]
     async fn orders_at_a_wildcard_and_refuses_a_position() {
         let Scenario { cipher, .. } = scenario().await;
-        let by_element = Plan::value::<Value>()
-            .context("users/profile")
-            .encrypt_with_layout(Json::new(ordering(&["$.nested.list[*].x"])))
-            .build()
-            .unwrap();
-        let wildcard = cipher
-            .query(op::AtPath(op::Gt), &("$.nested.list[*].x", 0))
-            .on(&by_element)
-            .await;
+        let keyset = cipher.default_keyset();
+        let by_element = query::plan(&ordering(&["$.nested.list[*].x"]));
+        let wildcard = query::ordering_at(
+            &keyset,
+            &by_element,
+            Op::GtAt,
+            "$.nested.list[*].x",
+            &json!(0),
+        )
+        .await;
         assert!(
             wildcard.is_ok(),
             "the wildcard the plan orders: {wildcard:?}"
         );
         for path in ["$.nested.list[1].x", "$.nested.list[0].x"] {
-            let refused = cipher
-                .query(op::AtPath(op::Gt), &(path, 0))
-                .on(&by_element)
-                .await;
-            assertions::refused_by_term(
+            let refused = query::ordering_at(&keyset, &by_element, Op::GtAt, path, &json!(0)).await;
+            assertions::query_refused_by_term(
                 &refused,
                 |e| matches!(e, TermError::JsonOrderingAtPosition),
-                &format!("{path} with Gt"),
+                &format!("{path} with gt_at"),
             );
-            let refused = cipher
-                .query(op::AtPath(op::Between), &(path, (0, 5)))
-                .on(&by_element)
-                .await;
-            assertions::refused_by_term(
+            let refused = query::between_at(&keyset, &by_element, path, &json!(0), &json!(5)).await;
+            assertions::query_refused_by_term(
                 &refused,
                 |e| matches!(e, TermError::JsonOrderingAtPosition),
-                &format!("{path} with Between"),
+                &format!("{path} with between_at"),
             );
         }
     }
 
     /// Equality at a path compares one value: an object or an array would
-    /// be containment, which `op::Contains` asks for.
+    /// be containment, which `contains` asks for.
     #[tokio::test]
     async fn refuses_a_container_for_equality() {
         let Scenario { cipher, .. } = scenario().await;
+        let keyset = cipher.default_keyset();
         let plan = ordered_plan();
         for container in [json!({"deep": "constant"}), json!([]), json!([{"x": 1}])] {
-            let refused = cipher
-                .query(op::AtPath(op::Eq), &("$.nested", container.clone()))
-                .on(&plan)
-                .await;
-            assertions::refused_by_term(
+            let refused = query::eq_at(&keyset, &plan, "$.nested", &container).await;
+            assertions::query_refused_by_term(
                 &refused,
                 |e| matches!(e, TermError::JsonValueNotScalar),
                 &container.to_string(),
@@ -2712,88 +2975,53 @@ mod given_an_accessor {
         }
     }
 
-    /// An accessor whose path or bounds the index refuses is refused when
-    /// the query is awaited, before the keyset it names is loaded; so is an
-    /// open that names a context the plan already has.
+    /// An accessor whose path or bounds the index refuses is refused by
+    /// the check a caller runs before it has a keyset, which takes no
+    /// cipher: the keyset the query is for is not loaded for it.
     #[tokio::test]
     async fn is_refused_before_its_keyset_loads() {
         let (cipher, loads) = common::loads_counting_cipher().await;
         let plan = ordered_plan();
-        let eq = cipher
-            .query(op::AtPath(op::Eq), &("address.city", "Sydney"))
-            .on(&plan)
-            .keyset("tenant")
-            .await;
-        assertions::refused_by_term(
+        let eq = query::check_at(&plan, Op::EqAt, "address.city", &json!("Sydney"));
+        assertions::query_refused_by_term(
             &eq,
             |e| matches!(e, TermError::JsonPath(_)),
-            "Eq at a bad path",
+            "eq_at at a bad path",
         );
-        let between = cipher
-            .query(op::AtPath(op::Between), &("address.age", (1, 2)))
-            .on(&plan)
-            .keyset("tenant")
-            .await;
-        assertions::refused_by_term(
+        let between = query::check_between_at(&plan, "address.age", &json!(1), &json!(2));
+        assertions::query_refused_by_term(
             &between,
             |e| matches!(e, TermError::JsonPath(_)),
-            "Between at a bad path",
+            "between_at at a bad path",
         );
-        let unordered = cipher
-            .query(op::AtPath(op::Between), &("$.flag", (false, true)))
-            .on(&plan)
-            .keyset("tenant")
-            .await;
-        assertions::refused_by_term(
+        let unordered = query::check_between_at(&plan, "$.flag", &json!(false), &json!(true));
+        assertions::query_refused_by_term(
             &unordered,
             |e| matches!(e, TermError::JsonLeafNotOrdered),
-            "Between over booleans",
+            "between_at over booleans",
         );
-        let not_ordered = cipher
-            .query(op::AtPath(op::Lt), &("$.nested.deep", "z"))
-            .on(&plan)
-            .keyset("tenant")
-            .await;
-        assertions::refused_by_term(
+        let not_ordered = query::check_at(&plan, Op::LtAt, "$.nested.deep", &json!("z"));
+        assertions::query_refused_by_term(
             &not_ordered,
             |e| matches!(e, TermError::JsonPathNotOrdered),
             "a path the plan does not order",
         );
-        let at_position = cipher
-            .query(op::AtPath(op::Gte), &("$.nested.list[0].x", 1))
-            .on(&plan)
-            .keyset("tenant")
-            .await;
-        assertions::refused_by_term(
+        let at_position = query::check_at(&plan, Op::GteAt, "$.nested.list[0].x", &json!(1));
+        assertions::query_refused_by_term(
             &at_position,
             |e| matches!(e, TermError::JsonOrderingAtPosition),
             "an ordering at a position",
         );
-        let doc = seal(&stack_cipher().await, &fixture()).await;
-        let clash = cipher
-            .open(doc.clone())
-            .context("users/other")
-            .using(&plan)
-            .keyset("tenant")
-            .await;
-        assertions::refused_for_two_contexts(&clash, "one document");
-        let clash = cipher
-            .open(vec![doc])
-            .context("users/other")
-            .using(&plan)
-            .keyset("tenant")
-            .await;
-        assertions::refused_for_two_contexts(&clash, "a batch");
         assert_eq!(
             loads.load(std::sync::atomic::Ordering::SeqCst),
             0,
-            "no keyset was loaded for a refused query or open"
+            "no keyset was loaded for a refused query"
         );
-        // The same query with a path the index takes does load it.
-        let _ = cipher
-            .query(op::AtPath(op::Eq), &("$.address.city", "Sydney"))
-            .on(&plan)
-            .keyset("tenant")
+        // The same query with a path the index takes passes the check, and
+        // deriving it loads the keyset.
+        query::check_at(&plan, Op::EqAt, "$.address.city", &json!("Sydney")).unwrap();
+        let tenant = cipher.keyset(stack_kms::IdentifiedBy::Name("tenant".to_string().into()));
+        let _ = query::eq_at(&tenant, &plan, "$.address.city", &json!("Sydney"))
             .await
             .unwrap();
         assert_eq!(
@@ -2805,126 +3033,31 @@ mod given_an_accessor {
 }
 
 // =============================================================================
-// Plans
+// The index as data
 // =============================================================================
 
-mod given_a_plan {
+mod given_the_json_index {
+    use stack_encrypt::target::Index;
+
     use super::*;
 
-    #[tokio::test]
-    async fn refuses_a_query_under_other_options() {
-        let Scenario { cipher, plan } = scenario().await;
-        let refused = cipher
-            .query(op::Contains, &json!({}))
-            .via(Json::new(open_root()))
-            .on(&plan)
-            .await;
-        assert!(
-            matches!(refused, Err(Error::Plan(PlanError::IndexOptions { .. }))),
-            "a query under other options is refused: {refused:?}"
-        );
+    /// The index names its options in its spec, the data form a plan
+    /// carries, and the value `Json` is the index under the defaults.
+    #[test]
+    fn names_its_options_in_its_spec() {
+        let options = ordered();
+        let index = Json::new(options.clone());
+        assert_eq!(index.options(), &options, "the index's options");
         assert_eq!(
-            <JsonDocument as stack_encrypt::EncryptFrom<Value>>::indexes(),
-            [IndexSpec::Json(JsonOptions::default())],
-            "a JSON document's index is the default JSON index"
+            Index::<Value>::spec(&index),
+            IndexSpec::Json(options),
+            "the index's spec"
         );
         assert_eq!(Json, Json::default(), "the value is the default index");
-    }
-
-    #[tokio::test]
-    async fn opens_what_it_wrote_as_the_typed_open_does() {
-        let Scenario { cipher, plan } = scenario().await;
-        let doc = cipher.encrypt(&fixture()).using(&plan).await.unwrap();
-        let typed = open(&cipher, doc.clone()).await.unwrap();
-        let back: Value = cipher.open(doc).using(&plan).await.unwrap();
-        assert_eq!(back, fixture(), "the plan opens what it wrote");
-        assert_eq!(back, typed, "and the typed open agrees");
-    }
-}
-
-mod given_a_laid_out_plan {
-    use super::*;
-
-    #[test]
-    fn reports_its_layout() {
-        let plan = ordered_plan();
-        let options = ordering(&["$.hello", "$.number", "$.flag"]);
-        assert_eq!(plan.layout().options(), &options, "the layout's options");
         assert_eq!(
-            plan.specs(),
-            [IndexSpec::Json(options.clone())],
-            "the plan's index specs"
-        );
-        assert_eq!(
-            stack_encrypt::target::Layout::<Value>::specs(&Json::new(options.clone())),
-            [IndexSpec::Json(options)],
-            "the layout's index specs"
-        );
-        assert!(
-            format!("{plan:?}").contains("Laid<stack_encrypt::json::JsonDocument>(Json"),
-            "the plan's Debug names its layout: {plan:?}"
-        );
-    }
-
-    /// A plan laid out by the index opens what it wrote, one document or a
-    /// batch.
-    #[tokio::test]
-    async fn opens_what_it_wrote_one_document_or_a_batch() {
-        let Scenario { cipher, .. } = scenario().await;
-        let plan = ordered_plan();
-        let doc = cipher.encrypt(&fixture()).using(&plan).await.unwrap();
-        let back: Value = cipher.open(doc.clone()).using(&plan).await.unwrap();
-        assert_eq!(back, fixture(), "one document");
-        let docs: Vec<Value> = cipher
-            .open(vec![doc.clone(), doc])
-            .using(&plan)
-            .await
-            .unwrap();
-        assert_eq!(docs, [fixture(), fixture()], "a batch");
-    }
-
-    /// The plan was built with its context, so an open that names one is
-    /// refused, one document or a batch, before any key is requested.
-    #[tokio::test]
-    async fn refuses_an_open_that_names_another_context() {
-        let Scenario { cipher, .. } = scenario().await;
-        let plan = ordered_plan();
-        let doc = cipher.encrypt(&fixture()).using(&plan).await.unwrap();
-        let clash = cipher
-            .open(doc.clone())
-            .context("users/other")
-            .using(&plan)
-            .await;
-        assertions::refused_for_two_contexts(&clash, "one document");
-        let clash = cipher
-            .open(vec![doc])
-            .context("users/other")
-            .using(&plan)
-            .await;
-        assertions::refused_for_two_contexts(&clash, "a batch");
-    }
-
-    /// The index named on the query says only which: the plan's own, with
-    /// its options, answers.
-    #[tokio::test]
-    async fn answers_a_named_index_with_its_own_options() {
-        let Scenario { cipher, .. } = scenario().await;
-        let plan = ordered_plan();
-        let through_default = cipher
-            .query(op::AtPath(op::Gte), &("$.number", 0))
-            .via(Json)
-            .on(&plan)
-            .await
-            .unwrap();
-        let chosen = cipher
-            .query(op::AtPath(op::Gte), &("$.number", 0))
-            .on(&plan)
-            .await
-            .unwrap();
-        assert_eq!(
-            through_default.selector(),
-            chosen.selector(),
-            "the default index named on the query answers as the plan's own"
+            Index::<Value>::spec(&Json),
+            IndexSpec::Json(JsonOptions::default()),
+            "the default index's spec"
         );
     }
 }
@@ -3087,18 +3220,40 @@ mod assertions {
         );
     }
 
-    /// `result` is the refusal of an open that names a second context.
-    pub(super) fn refused_for_two_contexts<T: Debug>(result: &Result<T, Error>, what: &str) {
+    /// `result` is a query the index refused with the term error `is`
+    /// picks out, which the data plan hands on as its cipher error.
+    #[cfg(feature = "dynamic")]
+    pub(super) fn query_refused_by_term<T: Debug>(
+        result: &Result<T, stack_encrypt::dynamic::Error>,
+        is: impl Fn(&TermError) -> bool,
+        what: &str,
+    ) {
         assert!(
             matches!(
                 result,
-                Err(Error::Plan(PlanError::TwoContextSources { .. }))
+                Err(stack_encrypt::dynamic::Error::Cipher(Error::Term(error))) if is(error)
             ),
-            "{what}: an open naming another context should be refused, got {result:?}"
+            "{what}: refused with the wrong outcome: {result:?}"
+        );
+    }
+
+    /// `result` is a query the data plan refused because the field does
+    /// not answer its operator.
+    #[cfg(feature = "dynamic")]
+    pub(super) fn query_not_answered<T: Debug>(
+        result: &Result<T, stack_encrypt::dynamic::Error>,
+        what: &str,
+    ) {
+        let reason = result.as_ref().err().and_then(|error| error.reason());
+        assert_eq!(
+            reason,
+            Some(stack_encrypt::dynamic::Reason::OperatorNotAnswered),
+            "{what}: should not be answered, got {result:?}"
         );
     }
 
     /// `@>` over the projections is the model's `jsonb @>`.
+    #[cfg(feature = "dynamic")]
     pub(super) fn contains_as_jsonb(
         query: &JsonQuery,
         doc: &JsonDocument,
@@ -3114,6 +3269,7 @@ mod assertions {
 
     /// `<@` is the model's `jsonb <@`, but for a stored root scalar in a
     /// needle root array.
+    #[cfg(feature = "dynamic")]
     pub(super) fn is_contained_by_as_jsonb(
         query: &JsonQuery,
         doc: &JsonDocument,

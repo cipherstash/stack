@@ -18,8 +18,7 @@ use eql_bindings::encryption::targets::{self as targets};
 use eql_bindings::v4::{bigint, double, integer, real, text};
 use eql_bindings::Identifier;
 use stack_encrypt::dynamic::ValueFrame;
-use stack_encrypt::value::{Date, Decimal, Timestamp};
-use stack_encrypt::{Encrypt, Label, NonEmpty};
+use stack_encrypt::{DecryptFrom, Encrypt, EncryptInto, Label, NonEmpty};
 
 fn frame<T: Encrypt>(value: T) -> ValueFrame {
     ValueFrame::of(value).unwrap()
@@ -58,7 +57,7 @@ const ORDERED: &[&str] = &[
 /// The stored JSON the named type writes for `value`, through the by-name
 /// dispatch a Go plan reaches.
 async fn stored(
-    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
     value: ValueFrame,
 ) -> serde_json::Value {
@@ -71,7 +70,7 @@ async fn stored(
 
 /// The query operand the named type's twin derives for `value`.
 async fn query(
-    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
     value: ValueFrame,
 ) -> serde_json::Value {
@@ -132,15 +131,15 @@ async fn each_ordered_type_stores_its_catalog_terms() {
         } else if name.starts_with("Real") {
             frame::<f32>(7.0)
         } else if name.starts_with("Date") {
-            frame(Date::from_days_since_epoch(7).unwrap())
+            frame(common::date_of_days(7))
         } else if name.starts_with("Timestamp") {
-            frame(Timestamp::new(7, 8).unwrap())
+            frame(common::timestamp_of(7, 8))
         } else if name.starts_with("Numeric") {
-            frame(Decimal::new(750, 2).unwrap())
+            frame(common::decimal_of(750, 2))
         } else {
             frame::<f64>(7.0)
         };
-        let json = stored(&keyset, name, value.clone()).await;
+        let json = stored(&keyset, name, again(&value)).await;
         let mut keys: Vec<&str> = json
             .as_object()
             .unwrap()
@@ -156,7 +155,7 @@ async fn each_ordered_type_stores_its_catalog_terms() {
         assert_eq!(keys, expected, "{name}");
         assert_eq!(json["v"], 4, "{name}");
 
-        let q = query(&keyset, name, value.clone()).await;
+        let q = query(&keyset, name, again(&value)).await;
         assert!(
             q.get("c").is_none(),
             "{name}: a query carries no ciphertext"
@@ -176,7 +175,7 @@ async fn each_ordered_type_stores_its_catalog_terms() {
 /// says: each entry's group is its rank, so equal groups must store one
 /// term and a lower group a lower term.
 async fn sorts_as(
-    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
     values: Vec<(usize, ValueFrame, &str)>,
 ) {
@@ -238,7 +237,7 @@ async fn integer_terms_order_by_value() {
 async fn date_timestamp_and_decimal_terms_order_by_value() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let day = |days| frame(Date::from_days_since_epoch(days).unwrap());
+    let day = |days| frame(common::date_of_days(days));
     for name in ["DateOrd", "DateOrdOpe"] {
         let values = vec![
             (0, day(-719_162), "0001-01-01"),
@@ -248,7 +247,7 @@ async fn date_timestamp_and_decimal_terms_order_by_value() {
         ];
         sorts_as(&keyset, name, values).await;
     }
-    let at = |seconds, nanos| frame(Timestamp::new(seconds, nanos).unwrap());
+    let at = |seconds, nanos| frame(common::timestamp_of(seconds, nanos));
     for name in ["TimestampOrd", "TimestampOrdOpe"] {
         let values = vec![
             (0, at(-1, 999_999_000), "-1us"),
@@ -260,7 +259,7 @@ async fn date_timestamp_and_decimal_terms_order_by_value() {
         ];
         sorts_as(&keyset, name, values).await;
     }
-    let number = |mantissa, scale| frame(Decimal::new(mantissa, scale).unwrap());
+    let number = |mantissa, scale| frame(common::decimal_of(mantissa, scale));
     for name in ["NumericOrd", "NumericOrdOpe"] {
         let values = vec![
             (0, number(-1_000, 0), "-1000"),
@@ -382,7 +381,7 @@ async fn ord_and_ord_ope_store_one_term() {
         ("TextOrd", "TextOrdOpe", frame("Zoë")),
     ];
     for (ord, ope, value) in pairs {
-        let a = stored(&keyset, ord, value.clone()).await;
+        let a = stored(&keyset, ord, again(&value)).await;
         let b = stored(&keyset, ope, value).await;
         assert_eq!(op(&a), op(&b), "{ord} and {ope}");
     }
@@ -413,7 +412,10 @@ async fn text_with_no_fold_is_refused() {
         };
         assert!(queried.is_err(), "{name}: queried text with no fold");
     }
-    let typed: Result<text::TextOrd, _> = keyset.encrypt_as(&unassigned.to_owned(), column()).await;
+    let typed: Result<text::TextOrd, _> = unassigned
+        .to_owned()
+        .encrypt_into_with_context(&keyset, column())
+        .await;
     assert!(typed.is_err(), "the typed entry point refuses it too");
 }
 
@@ -424,36 +426,53 @@ async fn the_typed_entry_point_stores_the_dispatchs_terms() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
 
-    let typed: integer::IntegerOrd = keyset.encrypt_as(&-9i32, column()).await.unwrap();
+    let typed: integer::IntegerOrd = (-9i32)
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
     let named = stored(&keyset, "IntegerOrd", frame(-9i32)).await;
     assert_eq!(serde_json::to_value(&typed.op).unwrap(), named["op"]);
-    let opened: i32 = cipher.decrypt_as(typed, column().into()).await.unwrap();
+    let opened = i32::decrypt_from_with_context(typed, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(opened, -9);
 
-    let typed: bigint::BigintOrdOpeQuery = keyset.encrypt_as(&7i64, column()).await.unwrap();
+    let typed: bigint::BigintOrdOpeQuery = 7i64
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
     let named = query(&keyset, "BigintOrdOpe", frame(7i64)).await;
     assert_eq!(serde_json::to_value(&typed.op).unwrap(), named["op"]);
 
-    let typed: real::RealOrd = keyset.encrypt_as(&-0.0f32, column()).await.unwrap();
+    let typed: real::RealOrd = (-0.0f32)
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
     let named = stored(&keyset, "RealOrd", frame(0.0f32)).await;
     assert_eq!(
         serde_json::to_value(&typed.op).unwrap(),
         named["op"],
         "-0.0 ties 0.0 in the term"
     );
-    let opened: f32 = cipher.decrypt_as(typed, column().into()).await.unwrap();
+    let opened = f32::decrypt_from_with_context(typed, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(
         opened.to_bits(),
         (-0.0f32).to_bits(),
         "and keeps its sign in c"
     );
 
-    let typed: double::DoubleOrdOpe = keyset.encrypt_as(&f64::NAN, column()).await.unwrap();
+    let typed: double::DoubleOrdOpe = f64::NAN
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
     let named = stored(&keyset, "DoubleOrdOpe", frame(f64::NAN)).await;
     assert_eq!(serde_json::to_value(&typed.op).unwrap(), named["op"]);
 
-    let typed: text::TextOrdQuery = keyset
-        .encrypt_as(&"Café".to_owned(), column())
+    let typed: text::TextOrdQuery = "Café"
+        .to_owned()
+        .encrypt_into_with_context(&keyset, column())
         .await
         .unwrap();
     let named = query(&keyset, "TextOrd", frame("Café")).await;
@@ -579,11 +598,13 @@ mod go_rows {
         let p = &row.plaintext;
         macro_rules! open {
             ($ty:ty, $plain:ty, $column:literal) => {{
-                let opened: $plain = cipher
-                    .decrypt_as(parsed::<$ty>(row, $column), column($column).into())
-                    .await
-                    .unwrap();
-                opened
+                <$plain>::decrypt_from_with_context(
+                    parsed::<$ty>(row, $column),
+                    cipher,
+                    column($column),
+                )
+                .await
+                .unwrap()
             }};
         }
         assert_eq!(open!(integer::IntegerOrd, i32, "level"), p.level);
@@ -809,14 +830,14 @@ fn postgres_compares_and_orders_ope_rows() {
         .query_one("SELECT eql_v4.max(level)::text FROM v4_ordered", &[])
         .map(|r| r.get(0))
         .unwrap_or_else(|e| panic!("max(level): {e}"));
-    let opened: i32 = runtime
+    let opened = runtime
         .block_on(async {
-            cipher
-                .decrypt_as(
-                    serde_json::from_str::<integer::IntegerOrd>(&back).unwrap(),
-                    column().into(),
-                )
-                .await
+            i32::decrypt_from_with_context(
+                serde_json::from_str::<integer::IntegerOrd>(&back).unwrap(),
+                &cipher,
+                column(),
+            )
+            .await
         })
         .unwrap();
     assert_eq!(opened, i32::MAX);
@@ -956,4 +977,10 @@ fn postgres_compares_rows_the_go_sdk_sealed() {
             "ORDER BY ord_term over Go-sealed {column}"
         );
     }
+}
+
+/// A second frame of the same bytes. A frame is not `Clone`.
+fn again(frame: &ValueFrame) -> ValueFrame {
+    use stack_encrypt::AsProtectedRef as _;
+    ValueFrame::from_bytes(frame.as_protected_ref()).unwrap()
 }

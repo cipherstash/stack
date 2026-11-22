@@ -10,7 +10,7 @@ Paths are relative to the repository root. New profile cases run from `v1/`.
 | Owned opaque ciphertext and storage envelope | `packages/stack-encrypt/tests/scalar.rs`, `frozen_bytes.rs`; initial cross-opening cases; `owned_records.rs`, which tests the owned record derives: passthrough fields are moved, sealed fields are wiped, nested and renamed fields work, a record can store its context, and a column makes one batch. Whole-value blobs: `packages/stack-encrypt/tests/opaque_blob.rs` (round trips, the bytes leaf shared with the structural writer, a pinned storage blob and a pinned sealed ciphertext, refusals by class after authentication, source wipe) and `languages/golang/encrypt/gensupport/gensupport_internal_test.go::TestOpaqueReadsARustWrittenBlob`; the storage profile itself is pinned upstream by Vitamin C's golden corpus; fresh sealed blobs exchanged in both directions by the [exchange profile](exchange-contract.md). JSON documents as one ciphertext: `packages/stack-encrypt/tests/json_plaintext.rs` (round trips, the text leaf shared with a sealed string, refusals after authentication, a generated-document property) and, as the EQL type `Json`, `packages/eql/tests/encryption/tests/v4_types.rs` with the Go-sealed rows `v4_json_rows.json` and the frozen `stored_v4_json_rows_v1.json`, opened in Rust and Go | Encoded targets; supported version matrix |
 | Record declaration and lowering | [Declaration grammar](declaration-grammar.md); `v1/record-declarations-v1.cases.json` shared by native Rust and Go; native normalization observations; existing record lowering suites; `packages/stack-encrypt/tests/owned_equivalence.rs`, which seals one mixed, searchable record three ways: through a hand-written owned target, the owned derive, and the data plan. All three use one provider that records its requests. The test compares the descriptors and the term bytes, and checks that each way decrypts the records of the others | EQL-resolver profile; SDK-to-declaration mappings; runtime source/read shapes |
 | Context binding and composition | `packages/stack-encrypt/tests/target.rs`, `descriptor.rs`, `record_lowering.rs`; `languages/golang/encrypt/context_field_test.go`; initial wrong-context cases | Shared composition vectors; expected-context and required-input matrix |
-| Query terms and diagnostics | [Query-operator requirements](fixture-contract.md#query-operator-requirements), existing Rust/Go runners, initial equality/query-error cases and the [query-refusal profile](query-refusals-contract.md) (`v1/record-query-refusals-v1.cases.json`: every scalar operator against every field capability that does not answer it, the listed range shapes, other-kind values and nulls, by class, with the typed chain's refusal stage) | JSON operator and EQL target refusals; moving the typed chain's value refusals before the keyset |
+| Query terms and diagnostics | [Query-operator requirements](fixture-contract.md#query-operator-requirements), existing Rust/Go runners, initial equality/query-error cases and the [query-refusal profile](query-refusals-contract.md) (`v1/record-query-refusals-v1.cases.json`: every scalar operator against every field capability that does not answer it, the listed range shapes, other-kind values and nulls, by class, with the typed query's refusal stage) | JSON operator and EQL target refusals |
 | Missing, SQL NULL and sealed null | `packages/stack-encrypt/src/dynamic/record.rs` null tests; `languages/golang/encrypt/null_test.go` | Explicit language mappings and common missing/null fixtures |
 | Fresh cross-language storage | `.github/workflows/tests-golang.yml` exports fresh Go EQL rows for Rust, the storage-only `Json` documents among them; initial scalar artifact exchange; fixed storage-blob vectors read by both Rust (`opaque_blob.rs`) and Go (`TestOpaqueReadsARustWrittenBlob`); the [exchange profile](exchange-contract.md): values, records, blobs and EQL rows written fresh and opened in both Rust/Go directions, with producer, engine, backend and storage versions in the report | Python/TypeScript pairs and backends when their runners exist; supported released versions once the compatibility policy is defined; fresh exchange of searchable JSON documents, and of `Json` documents from Rust to Go; a SQL lane storing one language's fresh rows through the other |
 | JSON queries, extraction and tampering | `packages/stack-encrypt/tests/json_tree_vectors.rs`; `packages/eql/tests/encryption/tests/json_tree.rs`; `languages/golang/encrypt/json_tree_test.go`, `json_postgres_test.go` | Formal operation profile; JSON vectors consumed by all runners |
@@ -100,9 +100,10 @@ adding a language does not create another copy of the expected behavior.
 The [context contract](context-contract.md) adds 18 shared composition cases and
 eleven shared read boundary cases and four query cases, plus enrollment of the
 existing record-lowering
-context-field fixture. Rust typed write/query/open chains and Go generated
-methods execute the composition cases. Required native plan-grammar tests cover
-caller-provided bases and empty-batch source validation. Existing context tests
+context-field fixture. Rust typed writes, queries and opens (the engine's
+combinators) and Go generated methods execute the composition cases. Required
+native plan-grammar tests cover a missing context, conflicting sources and an
+empty scope on an empty batch, through the data plan. Existing context tests
 remain: no mixed-purpose Rust or Go test is removed.
 
 Go proves canonical AAD indirectly through its actual guest plan frame and native
@@ -139,15 +140,12 @@ Each runs in native Rust and Go WASI under `test:conformance`.
 |---|---|---|
 | `value_kinds.json` and its runners | `i8-*`, `u8-*`, `i16-*`, `u16-*`, `u32-*`, `i128-*`, `u128-*`, `f32-*`, `f64-*`, `bytes-*`, `decimal-*`, `date-*`, `timestamp-*`, `sealed-*`, `sql-*`, `*-given-*` | Typed Rust term comparisons and generated Go methods |
 | Native `dynamic/query.rs` refusal tests, Go `TestVerifyAndTargetLimitRefuseWhatIsNotAMatchQuery` | Every `record-query-refusals-v1` case | Tree-notation inputs, the hand-built match options, generated query methods |
-| Native typed refusal tests in `tests/op.rs` | The `typed` entries | Case-sensitivity mismatch, batch and `via` forms, which the API plan removes (its step 3) |
+| Native typed refusal tests in `tests/op.rs` | The `typed` entries | A refusal in a batch of two queries, and the refusal on a case-sensitive field |
 | Native `a_stored_record_that_does_not_fit`, the read profile | `shape-*`, `authenticated-*`, `success-*` | Mutation vocabulary over real ciphertext |
 | Guest `test_frame` and `last_error` tests | `transport-*`, `leaf-*` | Plan-frame boundary cases, ABI status mapping |
 
-Unsupported combinations the corpora record rather than skip: the order
-index on `bytes` stores a term no operator reads; the typed chain refuses
-equality, order and block ORE value refusals only after its keyset loads,
-where the binding refuses before any; a repeated key in a stored record is
-a transport refusal in both decoders, and the engine's own `field_repeated`
+Unsupported combinations the corpora record rather than skip: a repeated
+key in a stored record is a transport refusal in both decoders, and the engine's own `field_repeated`
 and `repeated_key` guards are reached natively alone; the Go host refuses
 the zero `Date`, a decimal scale above 28, a timestamp outside the
 decoder's range and non-value Go types before the engine. `NaN` and
@@ -257,7 +255,7 @@ Considered and kept, with the reason:
 - `tests/op.rs` typed refusals (`a_match_query_with_no_tokens_is_refused_before_any_term_or_keyset`,
   `a_match_query_is_cut_in_nfc_and_refuses_text_with_no_normal_form`,
   `an_inverted_range_is_a_query_like_any_other`): the corpus's `typed` entries
-  record the typed chain's refusal stage, not its `via`, batch, case-sensitive
+  record the typed query's refusal stage, not its batch, case-sensitive
   and bound-order assertions.
 - Go `TestPlanCheckAnswersWithoutACipher`, `TestQueryTermRefusesWhatTheFieldDoesNotAnswerBeforeState`,
   `TestGuestRefusesMalformedInputsBeforeState`, `TestCheckerRefusesAnIndexedUntypedField`:

@@ -13,15 +13,49 @@
 
 ### Features
 
-- `OidcFederationStrategy::get_token_for_jwt`, the exchange for a JWT the
-  caller already holds. `get_token` is the provider fetch followed by it, and
-  both share one cache.
 - Every error carries a path-style miette code (`stack_auth::invalid_crn`)
   beside its unchanged frozen code, and implements stack-profile's
   `ErrorPayload`. `ERROR_CODES` lists every code. Re-exports `diagnostic` and
   `ErrorPayload`.
 - `tls::client_config`, the rustls client configuration the crate's HTTP
   clients use.
+- `OidcFederationStrategy::with_detected_workspace(provider)` builds the
+  strategy without a CRN from the caller. The workspace is `CS_WORKSPACE_CRN`
+  if that variable is set. Otherwise the workspace is the CLI's current
+  workspace, read from its saved session. With neither, the result is
+  `NotAuthenticated`. `OidcFederationStrategy::new(crn, provider)` is
+  unchanged.
+- `OidcFederationStrategy::builder_with_detected_workspace(provider)` returns
+  a builder whose `build()` detects the workspace in the same way. Use it to
+  set other options, such as a token store, without naming the workspace.
+  `OidcFederationStrategy::builder(crn, provider)` is unchanged.
+- `CredentialAuthStrategy::get_token_with_credential(credential)` issues the
+  token for a credential handed in with the call. A strategy implements it
+  or `AuthStrategy`, never both. So a call cannot forget its credential, and
+  a credential is never ignored: either mistake does not compile.
+- `StrategyKind` says which of the two kinds a strategy is, and is what
+  stops a type from being both. Its `Kind` is `OwnIdentity` or
+  `CredentialPerCall`. Every `AuthStrategy` has the kind `OwnIdentity`
+  already, so an existing strategy needs no change. `CredentialAuthStrategy`
+  requires the kind `CredentialPerCall`: a strategy that implements it also
+  implements `StrategyKind`, with `type Kind = CredentialPerCall`. A type
+  that implements both strategy traits does not compile.
+- `OidcFederationStrategy::credential_per_call(crn)` builds a strategy that
+  takes its JWT with each call and has no provider callback. It implements
+  `CredentialAuthStrategy`, and has no `get_token`. `CredentialPerCall`
+  stands where its provider would be: pass it to `with_detected_workspace`
+  or to a builder for the other ways to build one. Both kinds of strategy
+  use one cache and one exchange.
+- An `OidcFederationStrategy` has one source for the JWT of a call. Built
+  with an `OidcProvider`, it implements `AuthStrategy` and asks the
+  provider: it has no `get_token_with_credential`, and no other method that
+  takes a JWT from the caller. Built with `credential_per_call`, it takes
+  the JWT with the call. Code built on these two traits, such as Stack KMS
+  and Stack Encrypt, gets this rule from them.
+- The constructors of `OidcFederationStrategy`, and
+  `OidcFederationStrategyBuilder::build`, no longer require the provider
+  type to be an `OidcProvider`, so that they also build a strategy with
+  `CredentialPerCall`.
 
 ### Fixes
 

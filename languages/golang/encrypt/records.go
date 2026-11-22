@@ -74,7 +74,7 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	opts, err := vcffi.Marshal(options(cph.keyset, ""))
+	opts, err := cph.dataKeyCall().marshal()
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +121,9 @@ func (cph *Cipher) Open(ctx context.Context, plan *record.Plan, records []record
 	if err != nil {
 		return nil, err
 	}
-	return cph.client.open(ctx, cph.keyset, cph.context, p, records)
+	opts := cph.dataKeyCall()
+	opts.context = cph.context
+	return cph.client.open(ctx, opts, p, records)
 }
 
 // derive derives one index term for one value of a field, under the plan's
@@ -163,7 +165,7 @@ func (cph *Cipher) derive(ctx context.Context, plan *record.Plan, field string, 
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	opts, err := vcffi.Marshal(options(cph.keyset, ""))
+	opts, err := cph.termCall().marshal()
 	if err != nil {
 		return nil, err
 	}
@@ -185,6 +187,45 @@ func (cph *Cipher) queryPlan(plan *record.Plan, field string) (*record.Plan, err
 	if len(p.Bind) != 0 {
 		return nil, fmt.Errorf("%w: field %q: a query takes no binding; a binding is in the stored context only, so a query by the scopes alone finds the row", ErrEncoding, field)
 	}
+	return cph.underNamedContext(p, field)
+}
+
+// operandPlan is the plan operator's operand on field derives under. A
+// read's operand (selector, subtree) derives under this cipher's scopes
+// alone, and its bindings are left out: the read opens what the database
+// returns through the same cipher, bindings included ([Cipher.JSONOpen]).
+// So a cipher with a binding prepares a read, and its operand is the one a
+// cipher with the same scopes and no binding derives. Every other operator
+// is a query's, which opens nothing: [Cipher.queryPlan] refuses it through
+// a cipher with a binding.
+func (cph *Cipher) operandPlan(plan *record.Plan, field, operator string) (*record.Plan, error) {
+	if operator == "selector" || operator == "subtree" {
+		// The copy keeps the cipher's error, so a binding part Bind refused
+		// is reported here, before the read is prepared.
+		scopes := cph.copy()
+		scopes.bindings = nil
+		return scopes.queryPlan(plan, field)
+	}
+	return cph.queryPlan(plan, field)
+}
+
+// readPlan is the plan a read of field's document opens under: as
+// [Cipher.queryPlan], and with this cipher's bindings. The engine derives
+// the read's selector or key under the scopes, as it derives a query's
+// term. It opens each entry under the bindings too, because the document
+// was sealed under them.
+func (cph *Cipher) readPlan(plan *record.Plan, field string) (*record.Plan, error) {
+	p, err := cph.plan(plan)
+	if err != nil {
+		return nil, err
+	}
+	return cph.underNamedContext(p, field)
+}
+
+// underNamedContext is p for a query or a read on field: p itself, or for
+// a plan that takes its context from a field, p under the context named
+// with [Cipher.Context].
+func (cph *Cipher) underNamedContext(p *record.Plan, field string) (*record.Plan, error) {
 	if p.ContextField == "" {
 		return p, nil
 	}
@@ -210,10 +251,17 @@ func (c *Client) Open(ctx context.Context, plan *record.Plan, records []record.S
 	if c == nil {
 		return nil, fmt.Errorf("%w: Open on a nil *Client", ErrEncoding)
 	}
+	return c.openAny(ctx, nil, plan, records)
+}
+
+// openAny opens records under whichever keyset sealed each one, and sends
+// audit with every data-key request: [Client.Open], and the Decrypter that
+// [Client.Audit] returns.
+func (c *Client) openAny(ctx context.Context, audit auditFacts, plan *record.Plan, records []record.Sealed) ([]record.Source, error) {
 	if err := plan.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	return c.open(ctx, anyKeyset{}, "", plan, records)
+	return c.open(ctx, callOptions{keyset: anyKeyset{}, audit: audit}, plan, records)
 }
 
 // plan is the declaration's plan with this cipher's extension, checked. A
@@ -379,10 +427,11 @@ var errNoContext = errors.New("encrypt: the record has no value for its context 
 // an EQL type.
 var errNoEQL = errors.New("encrypt: the record has no EQL value for a field that names an EQL type")
 
-// open decrypts records under the keyset the selector names, and, when
-// expected is not "", refuses a record whose stored context field names
-// another context before any key is retrieved.
-func (c *Client) open(ctx context.Context, sel KeysetSelector, expected string, p *record.Plan, records []record.Sealed) ([]record.Source, error) {
+// open decrypts records under the keyset opts names. When opts names a
+// context, open refuses a record whose stored context field names another,
+// before any key is retrieved. The audit metadata in opts is sent with
+// every data-key request.
+func (c *Client) open(ctx context.Context, opts callOptions, p *record.Plan, records []record.Sealed) ([]record.Source, error) {
 	trees := make([]any, len(records))
 	for i, rec := range records {
 		tree := make(map[string]any, len(p.Fields)+1)
@@ -422,28 +471,28 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, expected string, 
 		}
 		trees[i] = tree
 	}
-	return c.openTree(ctx, sel, expected, p, trees)
+	return c.openTree(ctx, opts, p, trees)
 }
 
 // openTree owns the shared transport, opening and typed-row validation path.
-func (c *Client) openTree(ctx context.Context, sel KeysetSelector, expected string, p *record.Plan, trees []any) ([]record.Source, error) {
+func (c *Client) openTree(ctx context.Context, opts callOptions, p *record.Plan, trees []any) ([]record.Source, error) {
 	encodedTree, err := marshalCipherText(trees)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	return c.openEncoded(ctx, sel, expected, p, encodedTree, len(trees))
+	return c.openEncoded(ctx, opts, p, encodedTree, len(trees))
 }
 
 // openEncoded opens a batch already in the transport codec: rows is how
 // many records the batch holds, so the answer can be held to it. The tree
 // encoder refuses a repeated key, so a test that needs one feeds this
 // directly, and the guest's decoder is what refuses it.
-func (c *Client) openEncoded(ctx context.Context, sel KeysetSelector, expected string, p *record.Plan, encodedTree []byte, rows int) ([]record.Source, error) {
+func (c *Client) openEncoded(ctx context.Context, call callOptions, p *record.Plan, encodedTree []byte, rows int) ([]record.Source, error) {
 	encodedPlan, err := vcffi.Marshal(p.Wire())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	opts, err := vcffi.Marshal(options(sel, expected))
+	opts, err := call.marshal()
 	if err != nil {
 		return nil, err
 	}

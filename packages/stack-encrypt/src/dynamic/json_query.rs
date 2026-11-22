@@ -204,13 +204,13 @@ use zeroize::Zeroizing;
 
 use super::query::{Op, Operand};
 use super::{Error, Reason, ValueFrame};
-use crate::json::{
-    parse_text, wipe_value, JsonExtracted, JsonLeafQuery, JsonNode, JsonOptions, JsonPath,
-    JsonQuery, JsonSubtree, JsonSubtreeKey,
+pub(super) use crate::json::inputs::Under;
+use crate::json::inputs::{
+    elements_base, json_reason, leaf, member_path, node_path, ordered_path, path, scalar,
+    selector_path, wildcard_bound, Bounds, Compare, Derived, Input, Parsed, Predicate,
 };
-use crate::sem::TermError;
-use crate::target::{AeadContext, DeclaredContext, Index, Json, Owned};
-use crate::{KeysetCipher, Label, NonEmpty, Pending};
+use crate::json::{parse_text, JsonNode, JsonOptions, JsonPath, JsonPlaintext, JsonSubtreeKey};
+use crate::{DecryptFrom, KeysetCipher, Pending};
 
 /// The SQL type a JSON operand binds as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -310,34 +310,14 @@ impl<'de> Deserialize<'de> for PathText {
     }
 }
 
-/// A document parsed from an input, wiped when it drops.
-#[derive(PartialEq)]
-pub(super) struct Parsed(pub(super) Value);
-
-impl Drop for Parsed {
-    fn drop(&mut self) {
-        wipe_value(&mut self.0);
-    }
-}
-
 impl JsonText {
     pub(super) fn parse(&self) -> Result<Parsed, Error> {
         parse_text(&self.0)
-            .map(Parsed)
+            .map(Parsed::of)
             .map_err(|error| Error::Source {
                 field: None,
                 reason: json_reason(error),
             })
-    }
-}
-
-/// The reason a JSON text refusal is reported with.
-pub(super) fn json_reason(error: crate::json::JsonTextError) -> Reason {
-    use crate::json::JsonTextError as E;
-    match error {
-        E::Syntax { .. } => Reason::JsonSyntax,
-        E::DuplicateKey { .. } => Reason::JsonDuplicateKey,
-        E::IntegerRange => Reason::JsonIntegerRange,
     }
 }
 
@@ -408,47 +388,6 @@ struct MatchInput {
     wildcard_bound: Option<u32>,
 }
 
-/// How a predicate of `element_match` compares its field with one value.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Compare {
-    Eq,
-    Lt,
-    Lte,
-    Gt,
-    Gte,
-}
-
-/// A predicate's bounds, as its input gives them.
-#[derive(PartialEq)]
-pub(super) enum Bounds {
-    /// One value, compared by the predicate's `op`.
-    One(Compare, Parsed),
-    /// `between`: the low bound then the high, both inclusive.
-    Between(Parsed, Parsed),
-}
-
-/// One predicate of `element_match`, checked: the full path of the
-/// element's field, which the field orders, and its bounds.
-#[derive(PartialEq)]
-pub(super) struct Predicate {
-    pub(super) path: JsonPath,
-    pub(super) bounds: Bounds,
-}
-
-/// An operator's input, read from its frame and checked: everything
-/// [`derive`] would refuse before it derives anything. `match`'s is its
-/// predicate compiled to a tree of the other operators' inputs.
-#[derive(PartialEq)]
-pub(super) enum Input {
-    Document(Parsed),
-    At(JsonPath, Parsed),
-    Between(JsonPath, Parsed, Parsed),
-    Path(JsonPath),
-    Read(JsonPath, u32),
-    Elements(u32, Vec<Predicate>),
-    Predicate(Box<super::json_predicate::Node>),
-}
-
 fn read_frame<T: for<'de> Deserialize<'de>>(input: &ValueFrame) -> Result<T, Error> {
     vitaminc_aead_frame::serde::from_slice(input.risky_ref()).map_err(|_| Error::Source {
         field: None,
@@ -456,59 +395,25 @@ fn read_frame<T: for<'de> Deserialize<'de>>(input: &ValueFrame) -> Result<T, Err
     })
 }
 
-/// A path from an input. A path with more steps than a document has
-/// levels names no node, and the operators that build the document
-/// holding a value there (`eq_at`, the orderings) would build one as deep
-/// as the path, whose recursive drop could overflow the stack: it is
-/// refused as too deep before anything is built, for every operator.
-fn path(text: &str) -> Result<JsonPath, Error> {
-    let path =
-        JsonPath::parse(text).map_err(|error| Error::Cipher(TermError::JsonPath(error).into()))?;
-    if path.segments().len() > crate::json::MAX_DEPTH {
-        return Err(term(TermError::JsonTooDeep));
-    }
-    Ok(path)
-}
-
-/// A path whose operand is a selector, which reads a position as the
-/// wildcard.
-fn selector_path(text: &str) -> Result<JsonPath, Error> {
-    let path = path(text)?;
-    if path.names_a_position() {
-        return Err(Error::bad_source(Reason::JsonPathPosition));
-    }
-    Ok(path)
-}
-
-/// A path that names one node: no wildcard.
-fn node_path(text: &str) -> Result<JsonPath, Error> {
-    let path = path(text)?;
-    // `is_positional`: every array step names a position, so the path
-    // has no wildcard and names at most one node.
-    if path.is_positional() {
-        Ok(path)
-    } else {
-        Err(Error::bad_source(Reason::JsonPathWildcard))
-    }
-}
-
-fn term(error: TermError) -> Error {
-    Error::Cipher(error.into())
-}
-
-/// Read and check an operator's input against the field's options.
+/// Read and check an operator's input against the field's options: the
+/// frame read into the input the operator takes ([`Input`]), checked with
+/// the rules a field reference's typed JSON queries apply, and in the order a
+/// binding has always met them.
 fn read_input(op: Op, options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error> {
     match op {
         Op::Contains | Op::ContainedBy => Ok(Input::Document(
             read_frame::<DocumentInput>(input)?.json.parse()?,
         )),
         Op::EqAt => read_eq_at(input),
-        Op::LtAt | Op::LteAt | Op::GtAt | Op::GteAt => read_ordering(options, input),
+        Op::LtAt => read_ordering(options, Compare::Lt, input),
+        Op::LteAt => read_ordering(options, Compare::Lte, input),
+        Op::GtAt => read_ordering(options, Compare::Gt, input),
+        Op::GteAt => read_ordering(options, Compare::Gte, input),
         Op::BetweenAt => read_between(options, input),
-        Op::Selector => Ok(Input::Path(selector_path(
+        Op::Selector => Ok(Input::Selector(selector_path(
             &read_frame::<PathInput>(input)?.path,
         )?)),
-        Op::Children | Op::ChildCount => Ok(Input::Path(node_path(
+        Op::Children | Op::ChildCount => Ok(Input::Node(node_path(
             &read_frame::<PathInput>(input)?.path,
         )?)),
         Op::Subtree => {
@@ -524,15 +429,6 @@ fn read_input(op: Op, options: &JsonOptions, input: &ValueFrame) -> Result<Input
     }
 }
 
-/// The wildcard bound an input names, or the default: never `0`, which
-/// would send the probe alone, so an element predicate could never be true.
-fn wildcard_bound(bound: Option<u32>) -> Result<u32, Error> {
-    match bound.unwrap_or(JsonSubtreeKey::DEFAULT_BOUND) {
-        0 => Err(Error::bad_source(Reason::JsonWildcardBoundZero)),
-        bound => Ok(bound),
-    }
-}
-
 /// `match`'s input: a jsonpath predicate, its variables as one JSON object
 /// (the `vars` jsonb `jsonb_path_match` takes, `{}` when absent) and the
 /// bound its element-scoped leaves are read to. The predicate is compiled
@@ -542,29 +438,21 @@ fn read_match(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error>
     let bound = wildcard_bound(input.wildcard_bound)?;
     let vars = match &input.vars {
         Some(vars) => vars.parse()?,
-        None => Parsed(Value::Object(serde_json::Map::new())),
+        None => Parsed::of(Value::Object(serde_json::Map::new())),
     };
     if !vars.0.is_object() {
         return Err(Error::bad_source(Reason::JsonInput));
     }
     let text = std::str::from_utf8(&input.predicate.0)
         .map_err(|_| Error::bad_source(Reason::JsonInput))?;
-    Ok(Input::Predicate(Box::new(super::json_predicate::compile(
-        text, &vars.0, options, bound,
-    )?)))
+    Input::predicate(options, text, &vars.0, Some(bound))
 }
 
 /// `element_match`'s input: an array's elements, by a path with a wildcard
 /// and no position, and one or more predicates on their fields.
 fn read_elements(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error> {
     let elements: ElementsInput = read_frame(input)?;
-    let base = path(&elements.path)?;
-    if base.is_positional() {
-        return Err(Error::bad_source(Reason::JsonPathNoWildcard));
-    }
-    if base.names_a_position() {
-        return Err(term(TermError::JsonOrderingAtPosition));
-    }
+    let base = elements_base(&elements.path)?;
     let bound = wildcard_bound(elements.wildcard_bound)?;
     if elements.predicates.is_empty() {
         return Err(Error::bad_source(Reason::JsonNoPredicates));
@@ -574,7 +462,7 @@ fn read_elements(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Err
         .iter()
         .map(|predicate| read_predicate(options, &base, predicate))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Input::Elements(bound, predicates))
+    Input::elements(Some(bound), predicates)
 }
 
 /// One predicate of `element_match`: its member's full path below `base`,
@@ -607,67 +495,26 @@ fn read_predicate(
     Ok(Predicate { path, bounds })
 }
 
-/// A member's full path: `base` and then the member's steps, read as a
-/// path relative to an element (`name`, `address.city`, `["a b"]`). A
-/// member names one field of each element, so it has no wildcard of its
-/// own, and the full path is an ordering's: no position, and ordered. A
-/// member that does not parse is refused at an offset into the member's
-/// own text.
-fn member_path(options: &JsonOptions, base: &JsonPath, member: &str) -> Result<JsonPath, Error> {
-    let prefix = if member.starts_with('[') { "$" } else { "$." };
-    // Sized before it is written, and wiped: the member names keys.
-    let mut rooted = Zeroizing::new(String::with_capacity(prefix.len() + member.len()));
-    rooted.push_str(prefix);
-    rooted.push_str(member);
-    let relative = JsonPath::parse(&rooted).map_err(|error| {
-        let error = crate::json::JsonPathError {
-            at: error.at.saturating_sub(prefix.len()),
-            ..error
-        };
-        Error::Cipher(TermError::JsonPath(error).into())
-    })?;
-    member_of(options, base, relative)
-}
-
-/// A member's full path, from the steps already parsed: the checks
-/// [`member_path`] makes past parsing, which `match` makes of the members
-/// of an element-scoped filter.
-pub(super) fn member_of(
-    options: &JsonOptions,
-    base: &JsonPath,
-    relative: JsonPath,
-) -> Result<JsonPath, Error> {
-    if !relative.is_positional() {
-        return Err(Error::bad_source(Reason::JsonPathWildcard));
-    }
-    let full = relative
-        .segments()
-        .iter()
-        .fold(base.clone(), |at, segment| at.then(segment.clone()));
-    if full.segments().len() > crate::json::MAX_DEPTH {
-        return Err(term(TermError::JsonTooDeep));
-    }
-    ordered_path_of(options, full)
-}
-
 /// `eq_at`'s input: a scalar at a path read through a selector.
 fn read_eq_at(input: &ValueFrame) -> Result<Input, Error> {
     let at: AtInput = read_frame(input)?;
     let path = selector_path(&at.path)?;
     let value = at.json.parse()?;
-    if matches!(value.0, Value::Object(_) | Value::Array(_)) {
-        return Err(term(TermError::JsonValueNotScalar));
-    }
-    Ok(Input::At(path, value))
+    scalar(&value.0)?;
+    Ok(Input::EqAt(path, value))
 }
 
 /// An ordering's input: a leaf the index orders at an ordered path.
-fn read_ordering(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error> {
+fn read_ordering(
+    options: &JsonOptions,
+    compare: Compare,
+    input: &ValueFrame,
+) -> Result<Input, Error> {
     let at: AtInput = read_frame(input)?;
     let path = ordered_path(options, &at.path)?;
     let value = at.json.parse()?;
     leaf(&value.0)?;
-    Ok(Input::At(path, value))
+    Ok(Input::Ordering(compare, path, value))
 }
 
 /// `between_at`'s input: two leaves the index orders at an ordered path.
@@ -680,231 +527,55 @@ fn read_between(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Erro
     Ok(Input::Between(path, low, high))
 }
 
-/// A path the index orders, which names no position.
-///
-/// A position here is the index's own refusal,
-/// [`TermError::JsonOrderingAtPosition`], the one the typed
-/// `op::AtPath` orderings and [`JsonOptions::ordering`] give, so a
-/// binding and a Rust caller see one error for one mistake. `eq_at` and
-/// `selector` have no such refusal in the index (a typed equality reads a
-/// position as the wildcard), so the data plan's own,
-/// [`Reason::JsonPathPosition`], is what refuses one there.
-fn ordered_path(options: &JsonOptions, text: &str) -> Result<JsonPath, Error> {
-    ordered_path_of(options, path(text)?)
-}
-
-/// [`ordered_path`] of a path already parsed.
-pub(super) fn ordered_path_of(options: &JsonOptions, path: JsonPath) -> Result<JsonPath, Error> {
-    if path.names_a_position() {
-        Err(term(TermError::JsonOrderingAtPosition))
-    } else if options.orders(&path) {
-        Ok(path)
-    } else {
-        Err(term(TermError::JsonPathNotOrdered))
-    }
-}
-
-/// A leaf the index orders: a number or a string.
-pub(super) fn leaf(value: &Value) -> Result<(), Error> {
-    match value {
-        Value::Number(_) | Value::String(_) => Ok(()),
-        _ => Err(term(TermError::JsonLeafNotOrdered)),
-    }
-}
-
-/// Check a JSON operator's input without a cipher: what [`derive`]
-/// refuses from the input alone (its shape, its paths and values, a path
-/// deeper than a document). The limits a subtree read's key hits as it is
-/// built, a wildcard expanding too wide or a path too deep for its
-/// tokens (`JsonWildcardTooWide`, `JsonTooWide`, `JsonTooDeep`), are
-/// [`derive`]'s, after the keyset is resolved.
+/// Check a JSON operator's input without a cipher: what [`derive`] refuses
+/// from the input alone (its shape, its paths and values, a path deeper
+/// than a document). The limits a subtree read's key hits as it is built,
+/// a wildcard expanding too wide or a path too deep for its tokens
+/// (`JsonWildcardTooWide`, `JsonTooWide`, `JsonTooDeep`), are [`derive`]'s,
+/// after the keyset is resolved.
 pub(super) fn check(op: Op, options: &JsonOptions, input: &ValueFrame) -> Result<(), Error> {
     read_input(op, options, input).map(drop)
-}
-
-/// The JSON index's terms of `value` under the column, as the stored
-/// document's were derived.
-fn terms<'a, K: 'static>(
-    keyset: &'a KeysetCipher<'_, K>,
-    options: &JsonOptions,
-    label: &Label,
-    value: Value,
-) -> Pending<'a, crate::json::JsonTerms, K> {
-    keyset.run(
-        Index::<Value>::operation::<K, Owned>(&Json::new(options.clone()))
-            .under(NonEmpty::from(label.clone())),
-        value,
-        DeclaredContext::default(),
-    )
 }
 
 pub(super) fn eql<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, crate::Error> {
     serde_json::to_vec(value).map_err(|error| crate::Error::Other(Box::new(error)))
 }
 
-/// Derive a JSON operator's operand for one input, under the field's
-/// column and options. Derived locally: the pending carries no request.
+/// Derive a JSON operator's operand for one input, under the field's query
+/// context and options, as a binding binds it. Derived locally: the pending
+/// carries no request.
 pub(super) fn derive<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
-    label: &Label,
+    under: &Under<'_>,
     options: &JsonOptions,
     op: Op,
     input: &ValueFrame,
 ) -> Result<Pending<'a, Operand, K>, Error> {
-    derive_input(keyset, label, options, op, read_input(op, options, input)?)
+    Ok(
+        crate::json::inputs::derive(keyset, under, options, read_input(op, options, input)?)?
+            .try_map(operand),
+    )
 }
 
-/// Derive an operand for an input already read and checked: what
-/// [`derive`] does past reading, and what `match` does for each of its
-/// leaves.
-pub(super) fn derive_input<'a, K: 'static>(
-    keyset: &'a KeysetCipher<'_, K>,
-    label: &Label,
-    options: &JsonOptions,
-    op: Op,
-    input: Input,
-) -> Result<Pending<'a, Operand, K>, Error> {
-    let column = || NonEmpty::from(label.clone());
-    Ok(match input {
-        Input::Document(document) => terms(keyset, options, label, document.0.clone())
-            .try_map(|terms| eql(&JsonQuery::of_terms(terms)).map(Operand::One)),
-        Input::At(path, value) if op == Op::EqAt => {
-            terms(keyset, options, label, path.holding(value.0.clone()))
-                .try_map(|terms| eql(&JsonQuery::at_path(terms)).map(Operand::One))
+/// An operand as a binding binds it: an EQL value's JSON bytes, the two of
+/// a range, or text.
+fn operand(derived: Derived) -> Result<Operand, crate::Error> {
+    Ok(match derived {
+        Derived::Query(query) => Operand::One(eql(&query)?),
+        Derived::Leaf(leaf) => Operand::One(eql(&leaf)?),
+        Derived::Range(lo, hi) => Operand::Range {
+            lo: eql(&lo)?,
+            hi: eql(&hi)?,
+        },
+        Derived::Selector(selector) => Operand::Text(selector.to_string()),
+        Derived::Node(key) => {
+            // `json::inputs::derive` checked the key holds one token.
+            Operand::Text(key.tokens().concat())
         }
-        Input::At(path, value) => terms(keyset, options, label, path.holding(value.0.clone()))
-            .try_map(|terms| eql(&JsonLeafQuery::of_leaf(&terms)).map(Operand::One)),
-        Input::Between(path, low, high) => {
-            terms(keyset, options, label, path.holding(low.0.clone()))
-                .zip(terms(keyset, options, label, path.holding(high.0.clone())))
-                .try_map(|(lo, hi)| {
-                    Ok(Operand::Range {
-                        lo: eql(&JsonLeafQuery::of_leaf(&lo))?,
-                        hi: eql(&JsonLeafQuery::of_leaf(&hi))?,
-                    })
-                })
-        }
-        Input::Path(path) if op == Op::Selector => {
-            let selector = keyset.json_selector_now(&path, column())?;
-            Pending::ready(keyset, Ok(Operand::Text(selector.to_string())))
-        }
-        Input::Path(path) => {
-            // A path with no wildcard names one node: its key holds the
-            // one token, and nothing that covers a node above it.
-            let key = keyset.json_subtree_key_now(
-                &path,
-                options,
-                JsonSubtreeKey::DEFAULT_BOUND,
-                column(),
-            )?;
-            let [token]: [String; 1] = key.tokens().try_into().map_err(|_| Error::Internal)?;
-            Pending::ready(keyset, Ok(Operand::Text(token)))
-        }
-        Input::Read(path, bound) => {
-            let key = keyset.json_subtree_key_now(&path, options, bound, column())?;
-            Pending::ready(keyset, Ok(Operand::TextList(key.tokens())))
-        }
-        Input::Elements(bound, predicates) => elements(keyset, label, options, bound, &predicates)?,
-        Input::Predicate(node) => super::json_predicate::derive(keyset, label, options, *node)?,
+        Derived::Read(key) => Operand::TextList(key.tokens()),
+        Derived::Elements(elements) => Operand::One(eql(&elements)?),
+        Derived::Predicate(predicate) => Operand::One(eql(&predicate)?),
     })
-}
-
-/// One member of an `element_match` operand: the tokens of a read of the
-/// member's full path, probes included, and its bounds, each a leaf
-/// operand. `eql_v4.query_json_elements` holds a list of them as `{"m"}`.
-#[derive(serde::Serialize)]
-struct MemberOperand {
-    t: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    gt: Option<JsonLeafQuery>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    gte: Option<JsonLeafQuery>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    lt: Option<JsonLeafQuery>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    lte: Option<JsonLeafQuery>,
-}
-
-/// `element_match`'s operand, `eql_v4.query_json_elements`.
-#[derive(serde::Serialize)]
-struct ElementsOperand {
-    m: Vec<MemberOperand>,
-}
-
-impl MemberOperand {
-    /// The member reading `tokens` that compares as `compare`, with the
-    /// leaf operands of its values in order: one for a comparison, the
-    /// low's then the high's for `between` (`compare` `None`). Equality is
-    /// both inclusive bounds at its one value.
-    fn new(tokens: Vec<String>, compare: Option<Compare>, leaves: Vec<JsonLeafQuery>) -> Self {
-        let mut member = Self {
-            t: tokens,
-            gt: None,
-            gte: None,
-            lt: None,
-            lte: None,
-        };
-        let mut leaves = leaves.into_iter();
-        match compare {
-            Some(Compare::Eq) => {
-                member.gte = leaves.next();
-                member.lte = member.gte.clone();
-            }
-            Some(Compare::Lt) => member.lt = leaves.next(),
-            Some(Compare::Lte) => member.lte = leaves.next(),
-            Some(Compare::Gt) => member.gt = leaves.next(),
-            Some(Compare::Gte) => member.gte = leaves.next(),
-            None => {
-                member.gte = leaves.next();
-                member.lte = leaves.next();
-            }
-        }
-        member
-    }
-}
-
-/// `element_match`'s operand: for each predicate, the tokens of a subtree
-/// read of its full path at `bound`, as `subtree` derives them, and the
-/// leaf operand of each of its values, as the orderings derive them. The
-/// reads share the path and the bound, so the `k`-th token of every member
-/// names a field of one element, and each member's last names the element
-/// at the bound: the probe.
-fn elements<'a, K: 'static>(
-    keyset: &'a KeysetCipher<'_, K>,
-    label: &Label,
-    options: &JsonOptions,
-    bound: u32,
-    predicates: &[Predicate],
-) -> Result<Pending<'a, Operand, K>, Error> {
-    let mut members = Vec::with_capacity(predicates.len());
-    for predicate in predicates {
-        let tokens = keyset
-            .json_subtree_key_now(
-                &predicate.path,
-                options,
-                bound,
-                NonEmpty::from(label.clone()),
-            )?
-            .tokens();
-        let leaf = |value: &Parsed| {
-            terms(
-                keyset,
-                options,
-                label,
-                predicate.path.holding(value.0.clone()),
-            )
-            .map(|terms| JsonLeafQuery::of_leaf(&terms))
-        };
-        let (compare, leaves) = match &predicate.bounds {
-            Bounds::One(compare, value) => (Some(*compare), vec![leaf(value)]),
-            Bounds::Between(low, high) => (None, vec![leaf(low), leaf(high)]),
-        };
-        members.push(
-            Pending::all(keyset, leaves)
-                .map(move |leaves| MemberOperand::new(tokens, compare, leaves)),
-        );
-    }
-    Ok(Pending::all(keyset, members).try_map(|m| eql(&ElementsOperand { m }).map(Operand::One)))
 }
 
 /// A read to open, as the request that prepared it names it: the
@@ -984,9 +655,12 @@ enum Opener {
 }
 
 /// Open the rows a read returned against the request that prepared it,
-/// under the field's column and options and through `keyset`, the keyset
+/// under the field's contexts and options and through `keyset`, the keyset
 /// whose index key derived the read, and that keyset alone: a document
-/// sealed under another is refused before any key is retrieved. Each
+/// sealed under another is refused before any key is retrieved. The
+/// selector or the read key derives under the field's query context, and
+/// every entry opens under its stored context, so under the plan's
+/// bindings too. Each
 /// group of rows is one database row's: for `selector`, the entry `->`
 /// returned or none (SQL `NULL`); for `subtree`, the rows
 /// `json_tree_subtree` returned. Every group opens to a list of JSON
@@ -1008,64 +682,104 @@ enum Opener {
 /// an altered entry, is [`crate::Error::JsonNotALeaf`].
 pub(super) fn open<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
-    label: &Label,
+    under: &Under<'_>,
     options: &JsonOptions,
     request: &ValueFrame,
     rows: &ValueFrame,
 ) -> Result<Pending<'a, ValueFrame, K>, Error> {
     let (read, groups) = read_open(request, rows)?;
-    let column = || NonEmpty::from(label.clone());
+    if keyset.loaded_state().is_some() {
+        return open_read(keyset, under, options, read, groups);
+    }
+    // A read opens its rows with a key derived under the keyset's index
+    // key, and the rows' key requests are built from it. With a default
+    // keyset that is not loaded yet, there is nothing to build from. So
+    // the pending is built when it settles and has loaded the keyset. A
+    // refusal of the read is then the pending's error.
+    let (label, parts) = under.owned();
+    let options = options.clone();
+    Ok(Pending::after_load(keyset, move |keyset| {
+        match open_read(keyset, &Under::new(&label, parts), &options, read, groups) {
+            Ok(pending) => pending,
+            Err(error) => Pending::failed(keyset, pending_error(error)),
+        }
+    }))
+}
+
+/// An error raised while a pending is built or fulfilled, as the pending's
+/// own error: the engine's error itself, or the input error inside one.
+fn pending_error(error: Error) -> crate::Error {
+    match error {
+        Error::Cipher(error) => error,
+        other => crate::Error::Other(Box::new(other)),
+    }
+}
+
+/// [`open`], for a read already read and checked, through a keyset that is
+/// loaded.
+fn open_read<'a, K: 'static>(
+    keyset: &KeysetCipher<'a, K>,
+    under: &Under<'_>,
+    options: &JsonOptions,
+    read: Read,
+    groups: Vec<Vec<JsonNode>>,
+) -> Result<Pending<'a, ValueFrame, K>, Error> {
     let opener = match read {
-        Read::Selector(path) => Opener::Selector(keyset.json_selector_now(&path, column())?),
+        Read::Selector(path) => Opener::Selector(keyset.json_selector_now(&path, under.query()?)?),
         Read::Subtree(path, bound) => {
-            Opener::Subtree(keyset.json_subtree_key_now(&path, options, bound, column())?)
+            Opener::Subtree(keyset.json_subtree_key_now(&path, options, bound, under.query()?)?)
         }
     };
-    let context = || AeadContext::from(NonEmpty::from(label.clone()));
+    let context = || under.stored();
     // Opened through the client, confined to the deriving keyset, as a
     // record's leaves are through a keyset reference: the read's key is that
     // keyset's, so a document sealed under another cannot answer it.
     let opener_cipher = keyset.cipher();
-    let confine = keyset.keyset_id();
-    let confined = |pending: Pending<'a, Vec<Value>, K>| pending.scoped_to(confine);
-    let mut pendings: Vec<Pending<'a, Vec<Value>, K>> = Vec::with_capacity(groups.len());
+    let confine = keyset.selector();
+    let confined = |pending: Pending<'a, Vec<JsonPlaintext>, K>| pending.confined_to(&confine);
+    let mut pendings: Vec<Pending<'a, Vec<JsonPlaintext>, K>> = Vec::with_capacity(groups.len());
     for nodes in groups {
         pendings.push(match &opener {
             Opener::Selector(selector) => match <[JsonNode; 1]>::try_from(nodes) {
                 Ok([node]) => confined(
-                    opener_cipher
-                        .decrypt_as::<Value, JsonExtracted>(selector.open(node), context())
-                        .map(|value| vec![value]),
+                    JsonPlaintext::decrypt_from_with_context(
+                        selector.open(node),
+                        opener_cipher,
+                        context(),
+                    )
+                    .map(|value| vec![value]),
                 ),
                 // `read_open` allows a selector group one entry or none.
                 Err(_) => Pending::ready(keyset, Ok(Vec::new())),
             },
-            Opener::Subtree(key) => confined(
-                opener_cipher.decrypt_as::<Vec<Value>, JsonSubtree>(key.open(nodes), context()),
-            ),
+            Opener::Subtree(key) => confined(Vec::<JsonPlaintext>::decrypt_from_with_context(
+                key.open(nodes),
+                opener_cipher,
+                context(),
+            )),
         });
     }
     Ok(Pending::all(keyset, pendings).try_map(opened_frame))
 }
 
 /// The opened groups as a frame: a list per group of each value's JSON
-/// text, as bytes. Each value is wiped once its text is written, and each
-/// text once the frame holds it.
-fn opened_frame(mut groups: Vec<Vec<Value>>) -> Result<ValueFrame, crate::Error> {
+/// text, as bytes. Each value is wiped when it is dropped, here, once its
+/// text is written, and each text once the frame holds it.
+fn opened_frame(groups: Vec<Vec<JsonPlaintext>>) -> Result<ValueFrame, crate::Error> {
     let texts: Result<Vec<Vec<Protected<Vec<u8>>>>, crate::Error> = groups
         .iter()
         .map(|group| {
             group
                 .iter()
                 .map(|value| {
-                    crate::json::to_text(value)
+                    crate::json::to_text(value.value())
                         .map(Protected::new)
                         .map_err(|error| crate::Error::Other(Box::new(error)))
                 })
                 .collect()
         })
         .collect();
-    groups.iter_mut().flatten().for_each(wipe_value);
+    drop(groups);
     ValueFrame::of(&texts?).map_err(|error| crate::Error::Other(Box::new(error)))
 }
 

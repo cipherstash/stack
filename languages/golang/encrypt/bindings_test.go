@@ -130,16 +130,17 @@ func TestAFieldNamedBindIsRefused(t *testing.T) {
 	}
 }
 
-// An EQL type stores its column alone, so a binding has no column to sit
-// under: the plan is refused, as an extended one is.
-func TestABindingIsRefusedOnAnEQLType(t *testing.T) {
+// An EQL type stores its column alone. A binding comes after the column in
+// the field's context, so a plan with an EQL field takes one, as it takes a
+// scope. The whole behaviour is in TestAnEQLFieldTakesAScopeAndABinding.
+func TestABindingIsTakenOnAnEQLType(t *testing.T) {
 	p := &record.Plan{
 		Context: []string{"users"},
 		Bind:    []any{uint64(9)},
 		Fields:  []record.Field{{Name: "email", Kind: record.String, Target: "TextEq"}},
 	}
-	if err := p.Validate(); err == nil {
-		t.Fatal("a bound EQL plan validated")
+	if err := p.Validate(); err != nil {
+		t.Fatalf("a bound EQL plan: %v", err)
 	}
 }
 

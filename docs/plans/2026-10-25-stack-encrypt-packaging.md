@@ -320,17 +320,18 @@ Keep these agreed spellings:
 
 - `encryption_plan()`
 - `Planned::new(&plan, value)`, for a value under a plan that is data
-- `encrypt` and `encrypt_with_context`, where the marker or the plan fixes
+- `encrypt` and `encrypt_with_context`, where the field reference or the plan fixes
   the output type
 - `encrypt_into` and `encrypt_into_with_context`, where the caller names
   the output type
 - `decrypt_from` and `decrypt_from_with_context`
 
-There is no `using` method. A typed query starts from the field marker.
+There is no `using` method. A typed query starts from the field reference.
 
 Keep the direct `cipher.decrypt` and `decrypt_with_context`. As already
-agreed, remove `.encrypt` on plaintext, the redundant `encrypt_as`, and
-the public `decrypt_into`.
+agreed, remove `.encrypt` on plaintext and the redundant `encrypt_as` and
+`decrypt_as`. The public `decrypt_into` is already removed, with
+`target::legacy`.
 
 ### Definition, layout, seal, and open
 
