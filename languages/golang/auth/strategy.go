@@ -96,7 +96,9 @@ func (s *ProfileStore) AccessKey(ctx context.Context, crn, key string, opts ...S
 // every Token call for the IdP JWT of the user that call is for; the
 // strategy keeps one CTS token per distinct JWT and mints a new one only
 // for a JWT that has no unexpired token. [WithCacheCapacity] sets how many
-// JWTs that cache holds.
+// JWTs that cache holds. crn names the workspace, and an empty crn is
+// [ErrConfig]; [ProfileStore.OIDCWithDetectedWorkspace] finds the workspace
+// instead.
 func (s *ProfileStore) OIDC(ctx context.Context, crn string, provider OIDCProvider, opts ...StrategyOption) (*Strategy, error) {
 	if crn == "" || provider == nil {
 		return nil, ErrConfig
@@ -117,6 +119,75 @@ func (s *ProfileStore) OIDC(ctx context.Context, crn string, provider OIDCProvid
 	}
 	strategy.providerID = id
 	return strategy, nil
+}
+
+// OIDCWithDetectedWorkspace is [ProfileStore.OIDC] for a workspace the
+// caller does not name. Use it when the workspace comes from the
+// environment or from a CLI login. Use OIDC to name the workspace yourself.
+//
+// The workspace is CS_WORKSPACE_CRN if that variable is set. Otherwise it
+// is the CLI's current workspace in this store, which needs a session saved
+// by `stash auth login`. Only the workspace is read from that session:
+// every token still comes from exchanging the JWT that provider returns.
+//
+// s must be the profile root that [Resolve] or [Open] returns: the CLI's
+// current workspace is the root's, and a workspace store has none.
+//
+// The errors are:
+//
+//   - [ErrConfig] if s is a workspace store, from [ProfileStore.WorkspaceStore]
+//     or [ProfileStore.CurrentWorkspaceStore]. Use OIDC with that
+//     workspace's CRN instead.
+//   - [ErrConfig] if CS_WORKSPACE_CRN is set to a value that is not a CRN.
+//     The profile is not read in that case.
+//   - [ErrNotAuthenticated] if CS_WORKSPACE_CRN is not set and there is no
+//     saved session to read: no profile, no current workspace, no auth.json
+//     in it, or a session that records no region. The error says to set
+//     CS_WORKSPACE_CRN or run `stash auth login`.
+//   - The profile's own error if the current workspace or its session cannot
+//     be read: [ErrIO] for a file that cannot be read, [ErrInvalidWorkspaceID]
+//     for a current workspace that is not a workspace id, and [ErrInvalid]
+//     for a session that is not JSON, whose token is not a JWT naming a
+//     workspace, or whose region is not a region. A broken profile is never
+//     reported as not logged in.
+//   - Any error OIDC returns.
+func (s *ProfileStore) OIDCWithDetectedWorkspace(ctx context.Context, provider OIDCProvider, opts ...StrategyOption) (*Strategy, error) {
+	if provider == nil || s.dir != guestRoot {
+		return nil, ErrConfig
+	}
+	crn, err := s.detectWorkspaceCRN(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.OIDC(ctx, crn, provider, opts...)
+}
+
+// detectWorkspaceCRN is the workspace a strategy takes when its caller names
+// none, in stack-auth's order: CS_WORKSPACE_CRN, checked by the guest's CRN
+// parser, else the CRN of the current workspace's saved session. The
+// variable is read here because the guest has no environment. The session
+// is read in the guest, which decides what counts as not logged in.
+func (s *ProfileStore) detectWorkspaceCRN(ctx context.Context) (string, error) {
+	if crn, ok := os.LookupEnv("CS_WORKSPACE_CRN"); ok {
+		_, err := s.callArgs(ctx, func(i *instance) api.Function { return i.authValidateCRN }, guest.BufArg([]byte(crn)))
+		if err != nil {
+			return "", fmt.Errorf("auth: CS_WORKSPACE_CRN is not a workspace CRN: %w", err)
+		}
+		return crn, nil
+	}
+	out, err := s.call(ctx, func(i *instance) api.Function { return i.sessionCRN })
+	const hint = "no workspace: set CS_WORKSPACE_CRN, or run `stash auth login`"
+	switch {
+	case errors.Is(err, ErrNotAuthenticated):
+		return "", fmt.Errorf("auth: %s: %w", hint, err)
+	case errors.Is(err, ErrNoProfile):
+		// A store with nothing mounted has no session to read. The bare
+		// ErrNoProfile it returns says no more than that.
+		return "", fmt.Errorf("%w: %s", ErrNotAuthenticated, hint)
+	case err != nil:
+		return "", err
+	}
+	return string(out), nil
 }
 
 // DeviceSession uses this workspace store's auth.json. Fresh tokens are read

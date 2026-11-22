@@ -331,9 +331,10 @@
 // which sends it with any [net/http.RoundTripper] and resumes the operation
 // with the response. What crosses per ZeroKMS call is what would cross TLS
 // anyway; derived key material never leaves the guest. Under
-// [AutoCredentials], [AccessKeyCredentials], and [OIDCFederation] the same
-// RoundTripper also carries the authentication requests to CTS, so one
-// scoped to the ZeroKMS host alone is not enough. Under [NewCredentials]
+// [AutoCredentials], [AccessKeyCredentials], [OIDCFederation], and
+// [OIDCFederationWithDetectedWorkspace] the same RoundTripper also carries
+// the authentication requests to CTS, so one scoped to the ZeroKMS host
+// alone is not enough. Under [NewCredentials]
 // those requests go through the store the caller opened the strategy from.
 //
 // # Credentials
@@ -353,6 +354,8 @@
 // go-envconfig can fill it. [NewCredentials] takes a client id, a client
 // key, and a strategy explicitly. [OIDCFederation] exchanges a token from an
 // identity provider for a CipherStash token.
+// [OIDCFederationWithDetectedWorkspace] does the same for the workspace
+// CS_WORKSPACE_CRN names, else the CLI's current workspace.
 //
 // None takes a raw token: a token is always a strategy's, since a raw one
 // cannot be refreshed when it expires. Credentials that cannot be resolved

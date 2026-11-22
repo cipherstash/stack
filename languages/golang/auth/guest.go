@@ -71,7 +71,7 @@ type instance struct {
 	shutdown                                                     api.Function
 	currentWorkspace, setCurrentWorkspace, clearCurrentWorkspace api.Function
 	listWorkspaces, workspaceDir, lockPath                       api.Function
-	secretKey, token, hasToken, deviceIdentity                   api.Function
+	secretKey, token, hasToken, sessionCRN, deviceIdentity       api.Function
 	authNew, authValidateCRN, authToken, authRefresh, authFree   api.Function
 }
 
@@ -166,6 +166,7 @@ func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.
 		"sa_secret_key":              &inst.secretKey,
 		"sa_token":                   &inst.token,
 		"sa_has_token":               &inst.hasToken,
+		"sa_session_crn":             &inst.sessionCRN,
 		"sa_device_identity":         &inst.deviceIdentity,
 		"sa_auth_new":                &inst.authNew,
 		"sa_auth_validate_crn":       &inst.authValidateCRN,

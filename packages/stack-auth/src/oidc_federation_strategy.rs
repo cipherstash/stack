@@ -1,6 +1,8 @@
 mod cache;
 mod workspace;
 
+pub use workspace::profile_workspace_crn;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -269,7 +271,7 @@ impl<P> OidcFederationStrategy<P> {
     ///   read or does not hold a valid workspace id.
     /// - [`AuthError::InvalidToken`] if the saved session's token is not a
     ///   JWT with a `workspace` claim.
-    /// - [`AuthError::Server`] if the saved session records a region this
+    /// - [`AuthError::Region`] if the saved session records a region this
     ///   crate does not know.
     /// - Any error [`new`](Self::new) returns.
     ///

@@ -27,7 +27,8 @@
 // stores scoped from it are closed with it.
 //
 // For authentication and refresh, use [ProfileStore.AccessKey],
-// [ProfileStore.OIDC], [ProfileStore.DeviceSession], or [ProfileStore.Auto].
+// [ProfileStore.OIDC], [ProfileStore.OIDCWithDetectedWorkspace],
+// [ProfileStore.DeviceSession], or [ProfileStore.Auto].
 // Each returns a [Strategy], which is what encrypt.NewCredentials takes
 // for the bearer token: the only way a token reaches an encrypt client.
 // A raw token — [ProfileStore.Token]'s included — cannot be refreshed when
