@@ -56,11 +56,21 @@ use crate::target::IndexSpec;
 /// of every width, both floats, a decimal, a date, a timestamp, text and
 /// bytes, and not a boolean. The rest are this crate's: match over text
 /// alone, and ORE, OPE and block ORE over the integers of 16 bits and
-/// wider, both floats, text, bytes, a decimal, a date and a timestamp. A
+/// wider, both floats, text, a decimal, a date and a timestamp. A
 /// boolean and an 8-bit integer have no order term: over so small a domain
 /// it would reveal which rows are `true`, or each row's rank among 256
 /// values. A composite (`array`, `object`) has no term. Only the index's
 /// kind matters: a match index's options do not change what it applies to.
+///
+/// Bytes have no order term: no ordering operator compares them, so no
+/// query could use a stored term, and anyone who reads the rows could
+/// still compare the terms. So a plan refuses an order index on bytes, as
+/// [`IndexSpec::defines`] gives bytes no order term.
+///
+/// A plan therefore accepts an index on a kind only if one of the
+/// index's operators accepts that kind. The typed interface has the same
+/// rule: an order index needs [`Orderable`](crate::Orderable), which does
+/// not cover bytes.
 ///
 /// ```
 /// use stack_encrypt::dynamic::{admits, ValueKind};
@@ -75,6 +85,8 @@ use crate::target::IndexSpec;
 /// assert!(!admits(ValueKind::Bool, &IndexSpec::Equality));
 /// assert!(!admits(ValueKind::Bool, &IndexSpec::Ore));
 /// assert!(!admits(ValueKind::Object, &IndexSpec::Ore));
+/// assert!(admits(ValueKind::Bytes, &IndexSpec::Equality));
+/// assert!(!admits(ValueKind::Bytes, &IndexSpec::Ore));
 /// ```
 pub fn admits(kind: ValueKind, index: &IndexSpec) -> bool {
     scalar_of(kind).is_some_and(|(ty, scalar)| index.takes(ty, &scalar))
@@ -687,10 +699,20 @@ mod tests {
 
     /// `admits` is `IndexSpec::defines` stated over kinds: the two cannot
     /// disagree about a value of any kind, and a composite admits nothing.
+    /// Bytes have no order term, so a plan refuses an order index on them
+    /// with `index_not_admitted`.
     #[test]
     fn admits_agrees_with_defines_for_every_kind() {
         for kind in value_kinds() {
             for index in indexes() {
+                let order = matches!(index, IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock);
+                if kind == ValueKind::Bytes && order {
+                    assert_eq!(
+                        not_admitted(kind, &index),
+                        Some(Reason::IndexNotAdmitted),
+                        "bytes and {index}"
+                    );
+                }
                 assert_eq!(
                     admits(kind, &index),
                     index.defines(sample(kind)),

@@ -16,7 +16,7 @@
 //!   a domain of its own. A boolean has none.
 //! - **Match** takes text only, cut in Unicode 16 NFC.
 //! - **ORE, OPE and block ORE** take an integer of 16 bits or wider, a
-//!   float, text, bytes, a date, a timestamp or a decimal, each handed to
+//!   float, text, a date, a timestamp or a decimal, each handed to
 //!   clww-ore (ORE, OPE) or ore-rs (block ORE) as the Rust type the typed
 //!   path would have named: an `i16` as an `i16`, a `u128` as a `u128`, a
 //!   date as a [`value::Date`](crate::value::Date). A boolean, a `u8` and an
@@ -142,7 +142,7 @@ impl IndexSpec {
     /// gives an equality domain (an integer, a float, text, bytes, a date,
     /// timestamp, decimal or uuid, and a null), not a boolean. Match
     /// takes text. ORE, OPE and block ORE take an integer of 16 bits or
-    /// wider, a float, text, bytes, a date, a timestamp or a decimal; not a
+    /// wider, a float, text, a date, a timestamp or a decimal; not bytes, a
     /// boolean, an 8-bit integer or a uuid. A match index's options do not
     /// change what it takes.
     ///
@@ -191,8 +191,9 @@ impl IndexSpec {
 }
 
 /// Whether the order indexes (CLLW ORE and OPE, and block ORE) order this
-/// scalar: an integer of 16 bits or wider, a float, text, bytes, or a date,
-/// timestamp or decimal in range. Not a boolean, and not an 8-bit integer:
+/// scalar: an integer of 16 bits or wider, a float, text, or a date,
+/// timestamp or decimal in range. Not bytes, which no ordering operator
+/// compares. Not a boolean, and not an 8-bit integer:
 /// an order term over so small a domain reveals too much, which rows hold
 /// `true`, or each row's rank among 256 values, which a few known rows
 /// resolve to the values. Not a null, and not a uuid or any other logical
@@ -201,7 +202,10 @@ fn ordered(ty: Option<Logical>, value: &Physical<'_>) -> bool {
     match ty {
         None => match value {
             Physical::Int(Int::I8(_) | Int::U8(_)) | Physical::Null | Physical::Bool(_) => false,
-            Physical::Int(_) | Physical::Float(_) | Physical::Text(_) | Physical::Bytes(_) => true,
+            Physical::Int(_) | Physical::Float(_) | Physical::Text(_) => true,
+            // No ordering operator compares bytes, so an order term of
+            // them answers no query and reveals the order of the rows.
+            Physical::Bytes(_) => false,
         },
         Some(Logical::Date) => Date::from_scalar(ty, *value).is_some(),
         Some(Logical::Timestamp(_)) => Timestamp::from_scalar(ty, *value).is_some(),
@@ -642,10 +646,10 @@ enum OrderIndex {
 /// Rust type the typed path would have named; `None` for a scalar it does
 /// not order ([`ordered`]).
 ///
-/// Text and bytes are read where the walk holds them, and not copied:
-/// each term makes the scalar's order encoding first, under `Protected`,
-/// so nothing is freed with the plaintext still in it, in a guest's linear
-/// memory, where the host can read it.
+/// Text is read where the walk holds it, and not copied: each term makes
+/// the scalar's order encoding first, under `Protected`, so nothing is
+/// freed with the plaintext still in it, in a guest's linear memory, where
+/// the host can read it.
 ///
 /// Each scalar is encoded at the target of the Rust type named here
 /// ([`Orderable`]), as on the typed path: text by its case and accent
@@ -697,7 +701,6 @@ where
         Physical::Float(Float::F32(v)) => order(cipher, index, v, context),
         Physical::Float(Float::F64(v)) => order(cipher, index, v, context),
         Physical::Text(t) => order(cipher, index, t, context),
-        Physical::Bytes(b) => order_at(cipher, index, OrderTarget::Bytes, b, context),
         _ => return None,
     })
 }
@@ -720,11 +723,6 @@ where
 /// The term of `value` under `index`, encoded as `target`. The term's
 /// bytes are its frozen encoding: the raw CLLW ciphertext, or the
 /// serialised block ORE one.
-///
-/// Bytes are not [`Orderable`]: no ordering operator compares them, so the
-/// typed path has no order term of bytes. A data plan can still declare an
-/// order index on bytes, and the rows it stored carry the term, so this path
-/// derives it as it did, by naming the `Bytes` target.
 fn order_at<'a, 'c, K: 'static, V, D>(
     cipher: &'a KeysetCipher<'_, K>,
     index: OrderIndex,
@@ -1546,16 +1544,17 @@ mod tests {
         fn defines_is_true() {
             for (label, leaf) in every_scalar() {
                 let not_bool = !matches!(leaf, Tree::Bool(_));
-                let wide = not_bool && !matches!(leaf, Tree::Int8(_) | Tree::UInt8(_));
+                let wide =
+                    not_bool && !matches!(leaf, Tree::Int8(_) | Tree::UInt8(_) | Tree::Bytes(_));
                 assert_eq!(
                     IndexSpec::Ore.defines(&leaf),
                     wide,
-                    "{label} takes an ore term exactly when it is not a boolean or 8 bits wide"
+                    "{label} takes an ore term exactly when it is not a boolean, bytes or 8 bits wide"
                 );
                 assert_eq!(
                     IndexSpec::Ope.defines(&leaf),
                     wide,
-                    "{label} takes an ope term exactly when it is not a boolean or 8 bits wide"
+                    "{label} takes an ope term exactly when it is not a boolean, bytes or 8 bits wide"
                 );
                 assert_eq!(
                     IndexSpec::Equality.defines(&leaf),

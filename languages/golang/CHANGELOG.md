@@ -62,6 +62,26 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   9999. If you might have stored one, check before you upgrade. Decrypt
   the column with the release you run now, or check its plaintext source.
 
+- **An order index on bytes is refused** (#1577). A `[]byte` field tagged
+  `index=ore` or `index=ope` is now a field error from `stashgen`. A plan
+  built by hand with an `ore`, `ope` or `ore_block` output on a `bytes`
+  field is refused by the guest (`index_not_admitted`) before any key is
+  requested. No ordering operator
+  is answered over bytes, so the field stored an order term that anyone
+  who read the column could compare and that no query could use.
+  `stashgen`'s notice for an index no generated method queries is gone
+  with the case it described.
+  - Code that rc.6 or earlier generated for such a field still compiles,
+    but the guest refuses its plan when it is parsed. Until the tag is
+    edited and `stashgen` is run again, `Encrypt` and `Decrypt` of that
+    record type fail with `index_not_admitted`, as does its bytes field's
+    `Field.Encrypt`. That includes rows that were stored correctly.
+  - To upgrade, remove the index from the tag and generate again. Once the
+    code is generated again, rows stored with the term still open: opening
+    ignores a stored term the plan does not declare. The stored terms stay
+    in the database until the row is written again or the column is
+    dropped.
+
 ### Changed
 
 - `vcffi` and `vcvalue` move to vitaminc `f1fc9ae74`, the commit vitaminc

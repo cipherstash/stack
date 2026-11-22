@@ -199,9 +199,10 @@ func (e Static) operators(ctx context.Context, d stashgen.Declaration) (map[stri
 // answeredBy mirrors Op::answered_by in stack-encrypt: eq through an
 // equality index, matches through a match index, and the orderings through
 // the one order index the field declares (ORE, block ORE or OPE; check
-// refused a field with two), over an integer of 16 bits or wider, a float,
-// text, a decimal, a date or a timestamp; each only where the index applies
-// to the type.
+// refused a field with two); each only where the index applies to the type
+// (indexApplies). As in the engine, there is no second list of the types
+// that the orderings accept. If an index applies to a type, each of the
+// index's operators accepts that type.
 func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName) (stashgen.IndexName, bool) {
 	declared := func(want stashgen.IndexName) bool {
 		for _, idx := range indexes {
@@ -217,11 +218,6 @@ func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName
 	case "matches":
 		return stashgen.IndexMatch, declared(stashgen.IndexMatch)
 	}
-	orderable := (integer(t) && !eightBit(t)) || logical(t) ||
-		t.Kind == stashgen.KindFloat || t.Kind == stashgen.KindString
-	if !orderable {
-		return "", false
-	}
 	for _, index := range []stashgen.IndexName{stashgen.IndexOre, stashgen.IndexOreBlock} {
 		if declared(index) {
 			return index, true
@@ -234,15 +230,6 @@ func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName
 func integer(t stashgen.GoType) bool {
 	switch t.Kind {
 	case stashgen.KindInt, stashgen.KindUint, stashgen.KindInt128, stashgen.KindUint128:
-		return true
-	}
-	return false
-}
-
-// logical reports whether the type is a decimal, a date or a timestamp.
-func logical(t stashgen.GoType) bool {
-	switch t.Kind {
-	case stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp:
 		return true
 	}
 	return false
@@ -262,10 +249,11 @@ func eightBit(t stashgen.GoType) bool {
 // every kind vitaminc gives an equality domain (integers of every width,
 // floats, decimals, dates, timestamps, text and bytes; a boolean has none),
 // match over text alone, ORE and OPE over integers of 16 bits and wider,
-// floats, text, bytes, decimals, dates and timestamps. Not over a boolean
-// or an 8-bit integer, whose order term would reveal which rows are true,
-// or each row's rank among 256 values. The JSON index is not in the engine
-// yet.
+// floats, text, decimals, dates and timestamps. Not over a boolean or an
+// 8-bit integer, whose order term would reveal which rows are true, or
+// each row's rank among 256 values. Not over bytes: no ordering operator
+// accepts bytes, so no query could use the stored term.
+// The JSON index is not in the engine yet.
 func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 	switch name {
 	case stashgen.IndexEquality:
@@ -283,7 +271,7 @@ func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 		return fmt.Errorf("match applies to a string, not to %s", t)
 	case stashgen.IndexOre, stashgen.IndexOpe, stashgen.IndexOreBlock:
 		switch t.Kind {
-		case stashgen.KindString, stashgen.KindBytes, stashgen.KindFloat,
+		case stashgen.KindString, stashgen.KindFloat,
 			stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp:
 			return nil
 		}
