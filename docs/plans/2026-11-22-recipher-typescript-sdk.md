@@ -10,6 +10,11 @@ Supabase and Prisma Next adapters move onto it. It follows the
 The Go SDK (`languages/golang/encrypt`) is the reference for what an SDK does.
 The Python SDK (PR #1284) is the nearest example of a native binding.
 
+The engine crate, `stack-encrypt`, is to be renamed `recipher`. This plan
+uses the current name. The Rust crates of the TypeScript SDK are named
+`recipher-js`, so they never share the engine's name; the npm package is
+`@cipherstash/recipher`.
+
 ## Contents
 
 - [What it is](#what-it-is)
@@ -120,13 +125,13 @@ The Python SDK splits its Rust code in two: a core crate with the logic and
 a thin crate that converts at the boundary. This SDK does the same, with one
 thin crate for each build target.
 
-| Path | What it is |
-|---|---|
-| `languages/typescript/packages/recipher/crates/core` | Rust, no JavaScript types. Builds plans, runs operations through `dynamic::Planned`, maps errors. Depends on `stack-encrypt` (`dynamic`) and `eql-bindings` (`targets`) by path. |
-| `languages/typescript/packages/recipher/crates/node` | Rust, napi-rs. Converts between JavaScript values and frames, and exposes the core as a Node addon. |
-| `languages/typescript/packages/recipher/crates/wasm` | Rust, `wasm-bindgen`, for `wasm32-unknown-unknown`. The same conversions over `JsValue`. |
-| `languages/typescript/packages/recipher` | `@cipherstash/recipher`: the TypeScript SDK, its types and the loaders. |
-| `languages/typescript/packages/recipher/platforms/*` | One npm package per Node platform, holding its `.node` file. |
+| Path | Name | What it is |
+|---|---|---|
+| `languages/typescript/packages/recipher-js/crates/core` | crate `recipher-js` | Rust, no JavaScript types. Builds plans, runs operations through `dynamic::Planned`, maps errors. Depends on `stack-encrypt` (`dynamic`) and `eql-bindings` (`targets`) by path. |
+| `languages/typescript/packages/recipher-js/crates/node` | crate `recipher-js-node` | Rust, napi-rs. Converts between JavaScript values and frames, and exposes the core as a Node addon. |
+| `languages/typescript/packages/recipher-js/crates/wasm` | crate `recipher-js-wasm` | Rust, `wasm-bindgen`, for `wasm32-unknown-unknown`. The same conversions over `JsValue`. |
+| `languages/typescript/packages/recipher-js` | npm `@cipherstash/recipher` | The TypeScript SDK, its types and the loaders. |
+| `languages/typescript/packages/recipher-js/platforms/*` | npm `@cipherstash/recipher-<platform>` | One package per Node platform, holding its `.node` file. |
 
 The npm package picks its binding by export condition, as
 `@cipherstash/auth` does:
