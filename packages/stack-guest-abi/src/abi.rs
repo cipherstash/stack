@@ -36,14 +36,15 @@
 //! against linear memory before any unsafe construction ([`input`]; null
 //! with nonzero length rejected), and invalid input yields `STATUS_ENCODING`
 //! rather than a trap. The validation lives in [`crate::memory`], which
-//! builds natively so Miri runs it; this module only names linear memory. A guest wraps each of its *own* exports in a
-//! `catch_unwind`, belt-and-braces for a hypothetical unwind build —
-//! wasm32-wasip1 aborts on panic; the two exports here need none, since
-//! neither has a panic path (allocation goes through `try_reserve_exact`
-//! and release through the registry). A failure is a status number, and
-//! `se_last_error` has the error behind it, encoded under the rule on
-//! `stack-profile`'s `ErrorPayload` ([`crate::last_error`]): no plaintext, key,
-//! token, ciphertext or context value is ever in it.
+//! builds natively so Miri runs it; this module only names linear memory.
+//! A guest wraps each of its *own* exports in a `catch_unwind`,
+//! belt-and-braces for a hypothetical unwind build — wasm32-wasip1 aborts
+//! on panic; the two exports here need none, since neither has a panic
+//! path (allocation goes through `try_reserve_exact` and release through
+//! the registry). A failure is a status number, and `se_last_error` has
+//! the error behind it, encoded under the rule on `stack-profile`'s
+//! `ErrorPayload` ([`crate::last_error`]): no plaintext, key, token,
+//! ciphertext or context value is ever in it.
 //!
 //! Wasm modules are single-threaded; the host must serialize calls into one
 //! instance.
@@ -75,8 +76,8 @@ pub fn export(f: impl FnOnce() -> Result<Vec<u8>, u32>) -> u64 {
 /// The full error behind the most recent failed export, as a packed buffer
 /// result: a transport-frame map of `code`, `message`, `help`, `url`
 /// (when set), `severity`, `fields` and `causes` (see
-/// [`crate::last_error::encode`]). Zero when there is none — no export has failed
-/// since the last success, or the error was already handed over.
+/// [`crate::last_error::encode`]). Zero when there is none — no export has
+/// failed since the last success, or the error was already handed over.
 ///
 /// The host calls it only after a non-zero status, copies the buffer out
 /// and releases it with [`se_dealloc`], like any output. Handing the buffer

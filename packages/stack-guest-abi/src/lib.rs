@@ -1,12 +1,12 @@
 // Security lints — the block `stack-encrypt` and `stack-auth` carry, minus
 // `deny(unsafe_code)`: the export surface (`abi`) and the host import
-// (`transport`) are `extern "C"` over raw pointers by nature. A raw pointer
-// becomes a slice or a `Vec` in two places only: the pair validation
-// (`memory`) and the buffer registry (`buffers`). Every other `unsafe` block
-// (in `abi`, `transport`, `call`, `step` and `last_error`) builds neither:
-// it calls an unsafe function of those two modules, a host import, or a
-// wrapper over them. Each is documented at the site, and
-// `unsafe_op_in_unsafe_fn` keeps each one explicit.
+// (`transport`) are `extern "C"` over raw pointers by nature. Outside test
+// code, a raw pointer becomes a slice or a `Vec` in two places only: the
+// pair validation (`memory`) and the buffer registry (`buffers`). Every
+// other `unsafe` block (in `abi`, `transport`, `call`, `step` and
+// `last_error`) builds neither: it calls an unsafe function of those two
+// modules, a host import, or a wrapper over them. Each is documented at
+// the site, and `unsafe_op_in_unsafe_fn` keeps each one explicit.
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(clippy::unwrap_used)]
 #![warn(clippy::expect_used)]
@@ -100,12 +100,12 @@
 //! export lifecycle, the pair validation and the response reclaim have no
 //! wasm in them and are unit-tested on the host and under Miri — but only
 //! the wasm32 build has an ABI: on any other target the exports and the
-//! import do not exist, so a native library built over this crate exports no `se_*`
-//! symbol at all rather than a silently wrong one (the packed result would
-//! truncate a 64-bit pointer). A native backend, when it comes, adds its own
-//! export and import modules beside these and swaps the registry's
-//! thread-local owner for a locked one (see [`buffers`]); nothing else here
-//! assumes wasm.
+//! import do not exist, so a native library built over this crate exports
+//! no `se_*` symbol at all rather than a silently wrong one (the packed
+//! result would truncate a 64-bit pointer). A native backend, when it
+//! comes, adds its own export and import modules beside these and swaps
+//! the registry's thread-local owner for a locked one (see [`buffers`]);
+//! nothing else here assumes wasm.
 
 pub mod buffers;
 pub mod call;

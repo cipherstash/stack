@@ -12,8 +12,9 @@
 //! `take_plaintext` use it. This module has no wasm in it otherwise, so it
 //! builds natively and runs under Miri (`miri:stack-guest-abi`), where a
 //! test names the range with `GuestMemory::spanning` (test-only) over a
-//! buffer it owns. A validation that let a bad pair through would then build a slice
-//! past that buffer, which Miri reports as undefined behaviour.
+//! buffer it owns. A validation that let a bad pair through would then
+//! build a slice past that buffer, which Miri reports as undefined
+//! behaviour.
 
 use vitaminc_protected::Protected;
 use zeroize::Zeroize;
@@ -215,6 +216,8 @@ mod tests {
         assert_eq!(whole, &buf[..]);
         // The last byte, then one past it.
         let last = buf.as_ptr().wrapping_add(15);
+        // SAFETY: the first borrow is inside `buf`, live and unwritten while
+        // it lasts; the second is refused before any slice is built.
         assert_eq!(unsafe { memory.input(last, 1) }.unwrap(), &[15]);
         assert_eq!(unsafe { memory.input(last, 2) }, Err(STATUS_ENCODING));
     }
@@ -228,6 +231,7 @@ mod tests {
         assert_eq!(unsafe { memory.input(ptr, 9) }, Err(STATUS_ENCODING));
         // A pointer past the end with any length.
         let past = buf.as_ptr().wrapping_add(16);
+        // SAFETY: refused before any slice is built.
         assert_eq!(unsafe { memory.input(past, 1) }, Err(STATUS_ENCODING));
     }
 
@@ -252,10 +256,12 @@ mod tests {
             unsafe { memory.input(std::ptr::null(), 1) },
             Err(STATUS_ENCODING)
         );
+        // SAFETY: a zero length builds the empty slice without reading `ptr`.
         assert_eq!(unsafe { memory.input(std::ptr::null(), 0) }, Ok(&[][..]));
         // A zero length is never dereferenced, so even an address outside
         // memory, with no provenance at all, is the empty slice.
         let nowhere = std::ptr::without_provenance::<u8>(0x10);
+        // SAFETY: as above, `nowhere` is never read.
         assert_eq!(unsafe { memory.input(nowhere, 0) }, Ok(&[][..]));
     }
 
@@ -342,9 +348,12 @@ mod tests {
         let (mut buf, memory) = host_buffer();
         let ptr = buf.as_mut_ptr();
         use vitaminc_protected::Controlled as _;
-        // SAFETY: each borrow ends before the next call writes.
+        // SAFETY: `ptr` is `buf`'s own pointer, `buf` is live, and nothing
+        // else borrows it during the calls.
         let first = unsafe { memory.take_plaintext(ptr, 8) }.unwrap();
+        // SAFETY: as above; the borrow inside the first call ended with it.
         let second = unsafe { memory.take_plaintext(ptr.wrapping_add(4), 8) }.unwrap();
+        // SAFETY: as above; the borrow ends with the copy on this line.
         let third = unsafe { memory.input(ptr, 16) }.unwrap().to_vec();
         assert_eq!(first.risky_unwrap(), (0..8).collect::<Vec<u8>>());
         assert_eq!(second.risky_unwrap(), vec![0, 0, 0, 0, 8, 9, 10, 11]);
@@ -355,8 +364,9 @@ mod tests {
     #[test]
     fn wipe_input_of_null_or_empty_is_a_no_op() {
         let _release = ReleaseLastError;
-        // SAFETY: neither is dereferenced.
+        // SAFETY: a null pointer is always allowed and is not dereferenced.
         unsafe { wipe_input(std::ptr::null_mut(), 4) };
+        // SAFETY: a zero length is always allowed and is not dereferenced.
         unsafe { wipe_input(std::ptr::without_provenance_mut(0x10), 0) };
     }
 }
