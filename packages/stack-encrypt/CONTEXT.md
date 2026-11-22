@@ -231,6 +231,19 @@ in storage is not detected. A plan names a passthrough field explicitly; a
 field the plan does not name is an error, in either direction.
 _Avoid_: plaintext field, skipped field, excluded field
 
+**Reader**:
+An operation that reads its plaintext through a reference: sealing a
+ciphertext, deriving a term, the JSON index, and a query's value. A
+declaration has any number of them over one value, and none copies it.
+_Avoid_: borrower, viewer
+
+**Taker**:
+An operation whose output is the plaintext itself. `passthrough` is the
+only one. In an owned description, the one operation that is handed the
+value is the first written; every other operation over that value reads a
+borrow of it.
+_Avoid_: consumer, owner
+
 **Identity**:
 The label segment a field's data is keyed under, fixed when the data is
 first written and never changed afterwards. It defaults to the field's
