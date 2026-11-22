@@ -714,7 +714,6 @@ pub(super) fn compose<'s, K: 'static>(
     absent: &Absent,
 ) -> Result<Encryption<'s, FieldValues, FieldValues, K, DeclaredContext, Owned>, crate::Error> {
     let names = lowered_names(plan, absent);
-    let order = names.clone();
     // The passthrough fields, whose values are moved into the output.
     let mut carried: Vec<Arc<str>> = Vec::new();
     let mut record: Encryption<'s, FieldValues, Vec<(Arc<str>, Slot)>, K, DeclaredContext> =
@@ -771,10 +770,9 @@ pub(super) fn compose<'s, K: 'static>(
             Pending::ready(cipher, Ok(slots))
         },
     );
-    Ok(moved.zip(record).map(move |(moved, mut slots)| {
+    // The output's slots are read by name, so their order does not matter.
+    Ok(moved.zip(record).map(|(moved, mut slots)| {
         slots.extend(moved);
-        // The output's fields are in the plan's order.
-        slots.sort_by_key(|(name, _)| order.iter().position(|field| *field == **name));
         FieldValues::from_slots(slots)
     }))
 }

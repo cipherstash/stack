@@ -157,9 +157,8 @@ pub trait WipeSource<'s, S: 's>: SourceMode<'s, S> {
     fn wipe(source: Source<'_, S>);
 }
 impl<'s, S: 's> WipeSource<'s, S> for Borrowed {
-    fn wipe(source: Source<'_, S>) {
-        drop(source);
-    }
+    // A borrow is the caller's: letting go of it does nothing.
+    fn wipe(_: Source<'_, S>) {}
 }
 impl<'s, S: zeroize::Zeroize + 's> WipeSource<'s, S> for Owned {
     fn wipe(source: Source<'_, S>) {
@@ -186,5 +185,20 @@ impl<'s, S: Clone + 's> ConsumeSource<'s, S> for Borrowed {
 impl<'s, S: 's> ConsumeSource<'s, S> for Owned {
     fn take(source: Source<'_, S>) -> S {
         source.owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Source;
+
+    /// A source's `Debug` names the type and prints nothing it holds.
+    #[test]
+    fn a_source_prints_no_plaintext() {
+        let secret = String::from("4111 1111 1111 1111");
+        let lent = format!("{:?}", Source::lent(&secret));
+        let given = format!("{:?}", Source::given(secret.clone()));
+        assert_eq!(lent, "Source { .. }");
+        assert_eq!(given, "Source { .. }");
     }
 }
