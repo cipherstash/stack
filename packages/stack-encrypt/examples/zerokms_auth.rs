@@ -19,19 +19,19 @@ use stack_encrypt::StackCipher;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // --- The default: credentials from the environment ----------------------
+    // --- Detected credentials: from the environment or the CLI's login -------
     //
-    // `StackCipher::new()` is `StackKmsBuilder::auto()` plus a client key,
-    // plus a keyset resolution. Both credentials are looked up the same way —
-    // environment first, then the current workspace in the CLI's profile
-    // directory (`~/.cipherstash`, written by `npx stash auth login`):
+    // `StackCipher::with_detected_credentials()` is the one constructor that
+    // looks for credentials itself. Both credentials are looked up the same
+    // way: the environment first, then the CLI's profile directory
+    // (`~/.cipherstash`, written by `npx stash auth login`):
     //
     //   access token:  CS_CLIENT_ACCESS_KEY + CS_WORKSPACE_CRN, else auth.json
     //   client key:    CS_CLIENT_ID + CS_CLIENT_KEY,            else secretkey.json
     //
     // So a logged-in developer machine needs nothing else; CI sets the four
     // variables.
-    let cipher = match StackCipher::new().await {
+    let cipher = match StackCipher::with_detected_credentials().await {
         Ok(cipher) => cipher,
         // Nothing to connect to: say so and exit cleanly, so the example is
         // safe to run anywhere.

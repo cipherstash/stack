@@ -122,7 +122,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `StackCipher::builder().auth_strategy(strategy).key_provider(provider).init()`
   builds the ZeroKMS client from an auth strategy and a client key provider
   that you choose. Before, a caller who wanted another auth strategy had to
-  build the `StackKms` by hand. `init()` and `kms(..)` are unchanged.
+  build the `StackKms` by hand. `kms(..)` is unchanged.
   - `auth_strategy` takes any strategy `StackKmsBuilder::new` takes: an
     `OidcFederationStrategy`, an `AccessKeyStrategy`, or an `AuthStrategyFn`.
   - `key_provider` is required after `auth_strategy`. The builder then reads
@@ -437,6 +437,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   apply when the pending is awaited, not when the term is described.
 
 ### Breaking
+
+- **A cipher no longer reads credentials you did not name** (#1722).
+  `StackCipher::new()` and `init()` on the bare builder read
+  `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`,
+  `CS_WORKSPACE_CRN` and the CLI's profile directory, and nothing in the
+  call said so. Both are removed.
+  - `StackCipher::with_detected_credentials()` replaces `new()`. It reads
+    the same places in the same order, and its name says so. To upgrade,
+    rename the call.
+  - `StackCipher::builder()` has no `init()` until you name a data-key
+    source, with `kms(..)` or with `auth_strategy(..)` and then
+    `key_provider(..)`. For `StackCipher::builder().init()` with builder
+    options such as `keyset_cache_size`, write
+    `.auth_strategy(AutoStrategy::detect()?)` and
+    `.key_provider(FallbackKeyProvider::new(EnvKeyProvider, ProfileKeyProvider::for_detected_workspace()))`
+    before `init()`. That builds the same cipher on a native target.
+    `ProfileKeyProvider` exists on native targets only, so on wasm32 write
+    `.key_provider(EnvKeyProvider)`.
+  - The builder state `FromEnv` is renamed `NoKms`, since the builder no
+    longer reads the environment in it.
+  - `Error::Config` reads "could not build a ZeroKMS client", without
+    "from the environment": a builder given an auth strategy and a key
+    provider reports its errors there too.
 
 - **A key source of your own states its kind.** `kms::DataKeySource`,
   `kms::IndexKeySource` and `kms::CredentialKeySource` each require

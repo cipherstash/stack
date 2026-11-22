@@ -25,9 +25,10 @@ use stack_encrypt::{nonempty, EncryptInto, StackCipher, StackCipherText};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // `StackCipher::new()` builds a ZeroKMS client from the environment and
-    // loads the keyset's index key once, during construction.
-    let cipher = StackCipher::new().await?;
+    // `StackCipher::with_detected_credentials()` builds a ZeroKMS client from
+    // the environment or the CLI's login, and loads the keyset's index key
+    // once, during construction.
+    let cipher = StackCipher::with_detected_credentials().await?;
     // Terms bind to a keyset: this handle derives every term under the
     // default keyset's index key.
     let terms = cipher.default_keyset();

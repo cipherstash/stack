@@ -93,7 +93,7 @@ fn describe(ciphertext: &StackCipherText, indent: usize) {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cipher = StackCipher::new().await?;
+    let cipher = StackCipher::with_detected_credentials().await?;
 
     let users = vec![
         User {

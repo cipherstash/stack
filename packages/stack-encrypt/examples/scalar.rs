@@ -5,7 +5,7 @@ use stack_encrypt::{Ciphertext, DecryptFrom, EncryptInto, StackCipher};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cipher = StackCipher::new().await?;
+    let cipher = StackCipher::with_detected_credentials().await?;
     let keyset = cipher.default_keyset();
 
     let encrypted = keyset.encrypt(42i32).await?;

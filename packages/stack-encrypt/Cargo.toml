@@ -14,12 +14,14 @@ license-file = "LICENSE"
 
 [dependencies]
 # `profile` (native only; stack-kms gates it off wasm32 itself) lets
-# `StackCipher::new()` fall back to the client key `stash auth login` writes
-# to the profile directory (`secretkey.json`) when CS_CLIENT_ID /
-# CS_CLIENT_KEY are not set — the same place `AutoStrategy` finds the token.
+# `StackCipher::with_detected_credentials()` fall back to the client key
+# `stash auth login` writes to the profile directory (`secretkey.json`) when
+# CS_CLIENT_ID / CS_CLIENT_KEY are not set — the same place `AutoStrategy`
+# finds the token.
 stack-kms = { path = "../stack-kms", version = "0.2.0", default-features = false, features = ["profile"] }
-# `StackCipher::new()` builds a ZeroKMS client from the environment, so its
-# return type names the auto-detected auth strategy. Only needed with `http`.
+# `StackCipher::with_detected_credentials()` builds a ZeroKMS client from the
+# environment, so its return type names the auto-detected auth strategy. Only
+# needed with `http`.
 stack-auth = { workspace = true, optional = true }
 # `#[derive(EncryptTarget)]` / `#[derive(DecryptSource)]`, re-exported from `target`.
 stack-encrypt-derive = { path = "../stack-encrypt-derive", version = "0.3.0" }
@@ -106,11 +108,12 @@ zeroize = { workspace = true }
 
 [features]
 default = ["http", "jiff", "rust_decimal"]
-# `StackCipher::new()` / `StackCipher::builder().init()` from the environment:
-# the default HTTP transport in stack-kms and the auto-detected auth strategy
-# in stack-auth. Off, a cipher is built over an explicit `DataKeySource`
-# (`StackCipher::builder().kms(..)`) and no HTTP client or TLS stack is in
-# the dependency graph — the shape the WASI/wazero guest builds against.
+# A cipher over ZeroKMS: `StackCipher::with_detected_credentials()`, or
+# `StackCipher::builder().auth_strategy(..)`. It brings the default HTTP
+# transport in stack-kms and the auth strategies in stack-auth. Off, a cipher
+# is built over an explicit `DataKeySource` (`StackCipher::builder().kms(..)`)
+# and no HTTP client or TLS stack is in the dependency graph — the shape the
+# WASI/wazero guest builds against.
 http = ["dep:stack-auth", "stack-auth/http", "stack-kms/http"]
 # `stack_encrypt::dynamic`: encrypt and decrypt values whose types are known
 # only at runtime, as an FFI binding's are. Off by default — it is only of

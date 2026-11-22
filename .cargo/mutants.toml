@@ -93,7 +93,7 @@ exclude_re = [
   'stack-encrypt/src/op(/mod)?\.rs:\d+:\d+: replace <impl Clone for Matches<C>>::clone -> Self with Default::default\(\)$',
   'stack-encrypt/src/op(/mod)?\.rs:\d+:\d+: replace Matches::case_sensitive -> Matches<CaseSensitive> with Default::default\(\)$',
   'stack-encrypt/src/target/index\.rs:\d+:\d+: replace <impl Clone for Match<O>>::clone -> Self with Default::default\(\)$',
-  'stack-encrypt/src/cipher\.rs:\d+:\d+: replace StackCipher<FromEnv>::builder -> StackCipherBuilder with Default::default\(\)$',
+  'stack-encrypt/src/cipher\.rs:\d+:\d+: replace StackCipher<NoKms>::builder -> StackCipherBuilder with Default::default\(\)$',
   'stack-encrypt/src/sem/mod\.rs:\d+:\d+: replace <impl MatchConfig for DefaultMatch>::options -> MatchOptions with Default::default\(\)$',
   # `Orderable`'s default `check_query` refuses nothing: its body is
   # `Ok(())`, so the replacement is the body. Text overrides it with

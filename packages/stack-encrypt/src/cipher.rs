@@ -254,8 +254,8 @@ pub enum Error {
         )
     )]
     DescriptorTooLong { len: usize },
-    /// Building a ZeroKMS client from the environment failed: credentials or
-    /// client key missing or malformed.
+    /// Building a ZeroKMS client failed: a credential or the client key is
+    /// missing or malformed, or `CS_ZEROKMS_HOST` cannot be used.
     ///
     /// Boxed rather than naming `stack_encrypt::kms::StackKmsBuilderError` directly:
     /// that type only exists with `http`, and a variant whose presence tracks
@@ -268,10 +268,10 @@ pub enum Error {
     ///
     /// Its payload is the builder error's (the variable at fault, say). Its
     /// code stays this one; the builder error's own is on the source.
-    #[error("could not build a ZeroKMS client from the environment: {0}")]
+    #[error("could not build a ZeroKMS client: {0}")]
     #[diagnostic(
         code(stack_encrypt::config),
-        help("The message says which setting failed. Check `CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY` and `CS_ZEROKMS_HOST`, or log in with `stash auth login`.")
+        help("The message says which setting failed. Check the auth strategy and key provider you named, and `CS_ZEROKMS_HOST` if it is set. `with_detected_credentials` reads `CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY` and `CS_CLIENT_ACCESS_KEY`, or the login `stash auth login` saved.")
     )]
     Config(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
     /// An index term failed to derive.
@@ -544,24 +544,26 @@ impl From<crate::json::JsonPathError> for Error {
 ///
 /// # Construction
 ///
-// `new()` builds the ZeroKMS client from the environment, so it exists only
-// with `http`; the builder path below works in either shape.
+// `with_detected_credentials()` builds the ZeroKMS client from the
+// environment, so it exists only with `http`; the builder path below works in
+// either shape.
 #[cfg_attr(
     feature = "http",
-    doc = r#"[`new`](Self::new) is the default path — a ZeroKMS client from the
-environment, on that client's default keyset:
+    doc = r#"[`with_detected_credentials`](Self::with_detected_credentials)
+reads the credentials from the environment, or from the CLI's login if the
+variables are not set:
 
 ```no_run
 # async fn example() -> Result<(), stack_encrypt::Error> {
 use stack_encrypt::StackCipher;
 
-let cipher = StackCipher::new().await?;
+let cipher = StackCipher::with_detected_credentials().await?;
 # Ok(())
 # }
 ```
 
-Override with [`builder`](Self::builder) — a different keyset, or a
-different data-key source entirely:"#
+To name the credentials yourself, or to set other options, use
+[`builder`](Self::builder):"#
 )]
 #[cfg_attr(
     not(feature = "http"),
@@ -640,24 +642,85 @@ impl<K> StackCipher<K> {
 
 #[cfg(feature = "http")]
 impl StackCipher<StackKms<stack_auth::AutoStrategy>> {
-    /// Build a cipher over a ZeroKMS client configured from the environment,
-    /// on that client's default keyset.
+    /// Build a cipher with credentials read from the environment, or from
+    /// the CLI's login if the variables are not set.
     ///
-    /// Equivalent to `StackCipher::builder().init()`. For a different keyset
-    /// or a different data-key source, use [`builder`](StackCipher::builder).
-    pub async fn new() -> Result<Self, Error> {
-        StackCipher::builder().init().await
+    /// This is the only way to build a cipher that reads credentials you did
+    /// not name. It reads both of the credentials that ZeroKMS needs:
+    ///
+    /// - **The token.** [`stack_auth::AutoStrategy`] uses
+    ///   `CS_CLIENT_ACCESS_KEY` with `CS_WORKSPACE_CRN`. If
+    ///   `CS_CLIENT_ACCESS_KEY` is not set, it uses the login that
+    ///   `npx stash auth login` saved.
+    /// - **The client key.** `CS_CLIENT_ID` and `CS_CLIENT_KEY`. If they are
+    ///   not set, the `secretkey.json` that `npx stash auth login` saved, for
+    ///   the workspace `CS_WORKSPACE_CRN` names, or else the CLI's current
+    ///   workspace. On wasm32 there is no profile, so only the variables are
+    ///   read.
+    ///
+    /// The CLI saves its login in `~/.cipherstash`, unless `CS_CONFIG_PATH`
+    /// names another directory. So on a developer machine, logging in with
+    /// the CLI is enough. In CI, set the four variables.
+    ///
+    /// Use it where the environment is the program's own to configure. Where
+    /// it is not, name the credentials with
+    /// [`StackCipherBuilder::auth_strategy`] and
+    /// [`StackCipherBuilder::key_provider`]. That builder also takes the
+    /// other options, such as
+    /// [`keyset_cache_size`](StackCipherBuilder::keyset_cache_size). On a
+    /// native target, this builds the same cipher as
+    /// `with_detected_credentials`:
+    ///
+    /// ```no_run
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use stack_auth::AutoStrategy;
+    /// use stack_encrypt::StackCipher;
+    /// use stack_encrypt::kms::{EnvKeyProvider, FallbackKeyProvider, ProfileKeyProvider};
+    ///
+    /// let cipher = StackCipher::builder()
+    ///     .auth_strategy(AutoStrategy::detect()?)
+    ///     .key_provider(FallbackKeyProvider::new(
+    ///         EnvKeyProvider,
+    ///         ProfileKeyProvider::for_detected_workspace(),
+    ///     ))
+    ///     .init()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// `ProfileKeyProvider` exists on native targets only. On wasm32 there is
+    /// no profile, so the same cipher is `.key_provider(EnvKeyProvider)`.
+    ///
+    /// Both forms take the ZeroKMS endpoint from `CS_ZEROKMS_HOST` if it is
+    /// set. To choose it in code, see
+    /// [`auth_strategy`](StackCipherBuilder::auth_strategy).
+    ///
+    /// The cipher uses the client's default keyset.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Config`] if no token or no client key is configured, or if
+    ///   `CS_WORKSPACE_CRN` is not a CRN.
+    /// - [`Error::Kms`] if ZeroKMS refuses the request that loads the default
+    ///   keyset.
+    pub async fn with_detected_credentials() -> Result<Self, Error> {
+        let kms = StackKmsBuilder::auto()?
+            .with_key_provider(client_key_provider())
+            .build()
+            .await?;
+        StackCipher::builder().kms(kms).init().await
     }
 }
 
-impl StackCipher<FromEnv> {
-    /// Start building a cipher: pick a keyset, or supply a data-key source
-    /// other than the environment's ZeroKMS client.
+impl StackCipher<NoKms> {
+    /// Start building a cipher: name its data-key source, and set its
+    /// options.
     ///
     /// A convenience alias for [`StackCipherBuilder::new`], which is the
-    /// canonical entry point. This one is anchored on `StackCipher<FromEnv>`
+    /// canonical entry point. This one is anchored on `StackCipher<NoKms>`
     /// purely so `StackCipher::builder()` names a single concrete `K` and
-    /// resolves without a type annotation; `StackCipher<FromEnv>` is never
+    /// resolves without a type annotation; `StackCipher<NoKms>` is never
     /// constructed.
     pub fn builder() -> StackCipherBuilder {
         StackCipherBuilder::new()
@@ -973,9 +1036,10 @@ async fn load_default_keyset<K: KeySource<I>, I>(
 }
 
 /// The state of a [`StackCipherBuilder`] that has not been given a data-key
-/// source: [`init`](StackCipherBuilder::init) will build a ZeroKMS client from
-/// the environment (and, on native targets, the CLI's profile directory).
-pub struct FromEnv;
+/// source. The builder has no `init` in this state: name the source first,
+/// with [`kms`](StackCipherBuilder::kms) or, with the `http` feature,
+/// `auth_strategy`.
+pub struct NoKms;
 
 /// The state of a [`StackCipherBuilder`] after
 /// [`kms`](StackCipherBuilder::kms): `K` is the key source the cipher will
@@ -995,8 +1059,8 @@ pub struct WithAuthStrategy<C, P = ()> {
     key_provider: P,
 }
 
-/// Returns the client key provider for the default
-/// [`init`](StackCipherBuilder::init).
+/// Returns the client key provider for
+/// [`StackCipher::with_detected_credentials`].
 ///
 /// The provider reads `CS_CLIENT_ID` and `CS_CLIENT_KEY` first. If they are
 /// not set, the provider reads `secretkey.json` in the profile directory.
@@ -1015,7 +1079,7 @@ fn client_key_provider() -> EnvKeyProvider {
 
 /// Builder for a [`StackCipher`]. Start with [`StackCipherBuilder::new`] (or
 /// its alias [`StackCipher::builder`]).
-pub struct StackCipherBuilder<K = FromEnv> {
+pub struct StackCipherBuilder<K = NoKms> {
     kms: K,
     cache_size: NonZeroUsize,
     name_ttl: Duration,
@@ -1023,15 +1087,15 @@ pub struct StackCipherBuilder<K = FromEnv> {
     json_seed: Option<Protected<[u8; 32]>>,
 }
 
-impl StackCipherBuilder<FromEnv> {
-    /// Start building a cipher: pick a keyset, or supply a data-key source
-    /// other than the environment's ZeroKMS client.
+impl StackCipherBuilder<NoKms> {
+    /// Start building a cipher: name its data-key source, and set its
+    /// options.
     ///
-    /// The `K = FromEnv` type default makes this resolve without a type
+    /// The `K = NoKms` type default makes this resolve without a type
     /// annotation whether or not the `http` feature is on.
     pub fn new() -> Self {
         Self {
-            kms: FromEnv,
+            kms: NoKms,
             cache_size: KeysetCache::DEFAULT_CAPACITY,
             name_ttl: DEFAULT_NAME_TTL,
             #[cfg(feature = "test-support")]
@@ -1040,7 +1104,7 @@ impl StackCipherBuilder<FromEnv> {
     }
 }
 
-impl Default for StackCipherBuilder<FromEnv> {
+impl Default for StackCipherBuilder<NoKms> {
     fn default() -> Self {
         Self::new()
     }
@@ -1089,9 +1153,8 @@ impl<K> StackCipherBuilder<K> {
     }
 }
 
-impl StackCipherBuilder<FromEnv> {
-    /// Use the data-key source `kms` instead of a ZeroKMS client built from
-    /// the environment.
+impl StackCipherBuilder<NoKms> {
+    /// Use the data-key source `kms`.
     ///
     /// Pass a [`kms::StackKms`](crate::kms::StackKms) that you built yourself
     /// to choose the transport settings, such as the timeouts or the ZeroKMS
@@ -1114,12 +1177,9 @@ impl StackCipherBuilder<FromEnv> {
         }
     }
 
-    /// Get ZeroKMS tokens from `strategy`, instead of detecting an access
-    /// key or a CLI login.
+    /// Get ZeroKMS tokens from `strategy`.
     ///
-    /// The default [`init`](Self::init) uses [`stack_auth::AutoStrategy`].
-    /// `AutoStrategy` detects an access key or a CLI login. Pass any other
-    /// strategy here. For example:
+    /// Pass any strategy here. For example:
     ///
     /// - An [`OidcFederationStrategy`](stack_auth::OidcFederationStrategy)
     ///   exchanges the JWT of a user signed in to your application for a
@@ -1212,32 +1272,6 @@ impl StackCipherBuilder<FromEnv> {
             key_provider: (),
         })
     }
-
-    /// Build a ZeroKMS client from the environment, then resolve the keyset
-    /// and load its index key.
-    ///
-    /// Credentials come from the same two places for both halves of the
-    /// client — the access token and the client key:
-    ///
-    /// 1. the environment (`CS_CLIENT_ACCESS_KEY` + `CS_WORKSPACE_CRN`;
-    ///    `CS_CLIENT_ID` + `CS_CLIENT_KEY`), then
-    /// 2. the CLI's profile directory (`auth.json`; `secretkey.json`), which
-    ///    `npx stash auth login` writes: the workspace `CS_WORKSPACE_CRN`
-    ///    names if it is set (for both files), otherwise the current one.
-    ///
-    /// So on a developer machine, logging in with the CLI is sufficient; in
-    /// CI, the four variables are.
-    ///
-    /// To choose the auth strategy and the source of the client key
-    /// yourself, call [`auth_strategy`](Self::auth_strategy) first.
-    #[cfg(feature = "http")]
-    pub async fn init(self) -> Result<StackCipher<StackKms<stack_auth::AutoStrategy>>, Error> {
-        let kms = StackKmsBuilder::auto()?
-            .with_key_provider(client_key_provider())
-            .build()
-            .await?;
-        self.kms(kms).init().await
-    }
 }
 
 #[cfg(feature = "http")]
@@ -1258,6 +1292,13 @@ impl<C> StackCipherBuilder<WithAuthStrategy<C>> {
     ///
     /// The client key must belong to the workspace that the strategy's
     /// tokens are for.
+    ///
+    /// The builder still reads one setting from the environment: the
+    /// ZeroKMS endpoint, from `CS_ZEROKMS_HOST`, if it is set. Each request
+    /// sends the token to that endpoint. The client key stays in your
+    /// program. To choose the endpoint in code, build a [`StackKms`] with
+    /// [`with_base_url`](crate::kms::StackKmsBuilder::with_base_url) and pass
+    /// it to [`kms`](StackCipherBuilder::kms).
     pub fn key_provider<P: KeyProvider>(
         self,
         provider: P,
@@ -2594,12 +2635,12 @@ mod credential_tests {
         }
     }
 
-    mod default_init {
+    mod with_detected_credentials {
         use super::*;
 
         #[test]
         fn given_no_credentials_is_not_authenticated() {
-            let error = run_with_env(None, None, || StackCipher::builder().init())
+            let error = run_with_env(None, None, StackCipher::with_detected_credentials)
                 .map(|_| ())
                 .unwrap_err();
 
@@ -2608,15 +2649,19 @@ mod credential_tests {
                     builder_error(&error),
                     stack_kms::StackKmsBuilderError::Auth(AuthError::NotAuthenticated(_))
                 ),
-                "the default init detects no access key and no session, got: {error:?}"
+                "no access key and no session is detected, got: {error:?}"
             );
         }
 
         #[test]
         fn given_an_unparseable_cs_workspace_crn_is_invalid_crn() {
-            let error = run_with_env(None, Some("not-a-crn"), || StackCipher::builder().init())
-                .map(|_| ())
-                .unwrap_err();
+            let error = run_with_env(
+                None,
+                Some("not-a-crn"),
+                StackCipher::with_detected_credentials,
+            )
+            .map(|_| ())
+            .unwrap_err();
 
             assert!(
                 matches!(
