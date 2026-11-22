@@ -113,9 +113,6 @@ func TestACustomersFieldsDeriveEachQuery(t *testing.T) {
 	if v, err := read.Tokens().Value(); err != nil || !strings.HasPrefix(fmt.Sprint(v), `{"`) {
 		t.Fatalf("Tokens bind as a text[] literal: %v %v", v, err)
 	}
-	if _, err := f.Children(ctx, cipher, "$.visits"); err != nil {
-		t.Fatal(err)
-	}
 	// An ordered path's own selector is the field's at that path.
 	pathSel, err := f.At.VisitsAt.Selector(ctx, cipher)
 	if err != nil {
@@ -150,6 +147,29 @@ func TestACustomersFieldsDeriveEachQuery(t *testing.T) {
 	}
 	if _, err := (encrypt.JSONRead[eql.JSONEntry]{}).Tokens().Value(); !errors.Is(err, encrypt.ErrEncoding) {
 		t.Fatalf("a zero read's tokens bind: %v", err)
+	}
+	// A children read binds as its token, and a zero one binds nothing and
+	// opens nothing.
+	children, err := f.Children(ctx, cipher, "$.visits")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, err := children.Value(); err != nil || v != string(children.Token()) || children.Token() == "" {
+		t.Fatalf("a children read binds as %v (%v), not its token", v, err)
+	}
+	var zero encrypt.JSONChildren[eql.JSONEntry]
+	if _, err := zero.Value(); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("a zero children read binds: %v", err)
+	}
+	if _, err := zero.Open(ctx, []eql.JSONEntry{eql.JSONEntry(`{}`)}); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("a zero children read opens: %v", err)
+	}
+	if fmt.Sprint(zero) != "encrypt.JSONChildren{}" || zero.LogValue().String() != "[]" {
+		t.Fatalf("a zero children read prints %v and logs %v", zero, zero.LogValue())
+	}
+	// No entries open to no values without a request.
+	if values, err := children.Open(ctx, nil); err != nil || values == nil || len(values) != 0 {
+		t.Fatalf("no entries: %q %v", values, err)
 	}
 	// A selection over rows with no entry opens to no value without a
 	// request.
@@ -193,14 +213,14 @@ func TestJSONReadTypesPrintAndLogRedacted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := f.Children(ctx, cipher, "$.secretkey")
+	children, err := f.Children(ctx, cipher, "$.secretkey")
 	if err != nil {
 		t.Fatal(err)
 	}
-	hidden := append([]string{"secretkey", string(sel.Selector()), string(token)}, read.Tokens()...)
+	hidden := append([]string{"secretkey", string(sel.Selector()), string(children.Token())}, read.Tokens()...)
 	var logged bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logged, nil))
-	for name, v := range map[string]any{"selection": sel, "read": read, "token": token, "tokens": read.Tokens()} {
+	for name, v := range map[string]any{"selection": sel, "read": read, "children": children, "token": children.Token(), "tokens": read.Tokens()} {
 		logger.Info(name, "v", v)
 		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d"} {
 			out := fmt.Sprintf(verb, v)
@@ -242,17 +262,17 @@ func subtreeLeafRow(t *testing.T, entry []byte) eql.JSONEntry {
 }
 
 // A document sealed through a cipher with a binding is read in part through
-// the same cipher: Selector and Subtree prepare the read under the cipher's
-// scopes alone, so their selector and tokens are those of a cipher with the
-// same scopes and no binding, and open what the database returns under the
-// scopes and the binding. A cipher with another binding, or none, finds the
+// the same cipher: Selector, Subtree and Children prepare the read under
+// the cipher's scopes alone, so their selector and tokens are those of a
+// cipher with the same scopes and no binding, and open what the database
+// returns under the scopes and the binding. A cipher with another binding, or none, finds the
 // same entries and does not open them. A document sealed with no binding
 // reads through a cipher with no binding, as before.
 func TestACustomersDocumentReadsThroughACipherWithABinding(t *testing.T) {
 	c := deterministicEQLClient(t)
 	ctx := context.Background()
 	f := testusers.CustomerFields.Profile
-	in := []testusers.Customer{{ID: 1, Profile: json.RawMessage(`{"name":"Alice","age":34}`)}}
+	in := []testusers.Customer{{ID: 1, Profile: json.RawMessage(`{"name":"Alice","age":34,"tags":["vip"]}`)}}
 	const path = "$.name"
 
 	// selectorRead opens the entry `col -> selector` returns through
@@ -304,6 +324,33 @@ func TestACustomersDocumentReadsThroughACipherWithABinding(t *testing.T) {
 		return read.Tokens(), nil
 	}
 
+	// childrenRead opens the one child json_tree_children returns for
+	// $.tags through cipher.
+	childrenRead := func(cipher *encrypt.Cipher, document []byte) (encrypt.JSONToken, error) {
+		t.Helper()
+		children, err := f.Children(ctx, cipher, "$.tags")
+		if err != nil {
+			return "", err
+		}
+		// The element's entry is the one carrying the elements' selector.
+		sel, err := f.Selector(ctx, cipher, "$.tags[*]")
+		if err != nil {
+			return "", err
+		}
+		entry := jsonEntry(t, document, string(sel.Selector()))
+		if entry == nil {
+			t.Fatal("the selector names no element of the document")
+		}
+		values, err := children.Open(ctx, []eql.JSONEntry{eql.JSONEntry(entry)})
+		if err != nil {
+			return children.Token(), err
+		}
+		if len(values) != 1 || string(values[0]) != `"vip"` {
+			t.Fatalf("the child opened %q", values)
+		}
+		return children.Token(), nil
+	}
+
 	plain := c.DefaultKeyset()
 	for _, scoped := range []struct {
 		name   string
@@ -328,6 +375,10 @@ func TestACustomersDocumentReadsThroughACipherWithABinding(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Subtree through the cipher that sealed the document: %v", err)
 			}
+			token, err := childrenRead(bound, document)
+			if err != nil {
+				t.Fatalf("Children through the cipher that sealed the document: %v", err)
+			}
 			// The operands are those of the cipher's scopes alone.
 			unbound, err := f.Selector(ctx, scoped.cipher, path)
 			if err != nil || unbound.Selector() != selector {
@@ -344,6 +395,13 @@ func TestACustomersDocumentReadsThroughACipherWithABinding(t *testing.T) {
 			}
 			if _, err := f.Subtree(ctx, scoped.cipher.Bind(""), path, encrypt.JSONReadOptions{}); !errors.Is(err, encrypt.ErrEncoding) {
 				t.Errorf("Subtree through a cipher with an empty binding: %v, want ErrEncoding", err)
+			}
+			unboundChildren, err := f.Children(ctx, scoped.cipher, "$.tags")
+			if err != nil || unboundChildren.Token() != token {
+				t.Errorf("the bound cipher's children token is not its scopes' own: %v", err)
+			}
+			if _, err := f.Children(ctx, scoped.cipher.Bind(""), "$.tags"); !errors.Is(err, encrypt.ErrEncoding) {
+				t.Errorf("Children through a cipher with an empty binding: %v, want ErrEncoding", err)
 			}
 
 			// An ordered path's accessor prepares its selection the same way.
@@ -369,11 +427,14 @@ func TestACustomersDocumentReadsThroughACipherWithABinding(t *testing.T) {
 				if _, err := subtreeRead(other, document); !errors.Is(err, encrypt.ErrForbidden) {
 					t.Errorf("%s: Subtree opened the row, or not as ErrForbidden: %v", whose, err)
 				}
+				if _, err := childrenRead(other, document); !errors.Is(err, encrypt.ErrForbidden) {
+					t.Errorf("%s: Children opened the child, or not as ErrForbidden: %v", whose, err)
+				}
 			}
 
 			// A query opens nothing, so it has no use for a binding, and a
 			// query through a cipher with one is still refused. So is a
-			// node's token, which is a query's operand too.
+			// child count's token, which is a query's operand too.
 			for name, err := range map[string]error{
 				"Contains":    func() error { _, err := f.Contains(ctx, bound, json.RawMessage(`{"name":"Alice"}`)); return err }(),
 				"ContainedBy": func() error { _, err := f.ContainedBy(ctx, bound, json.RawMessage(`{"name":"Alice"}`)); return err }(),
@@ -387,7 +448,6 @@ func TestACustomersDocumentReadsThroughACipherWithABinding(t *testing.T) {
 					_, err := f.Elements.Visits.Match(ctx, bound, encrypt.JSONReadOptions{}, encrypt.AtPath(testusers.CustomerPaths.Profile.Visits.At).Gt(1))
 					return err
 				}(),
-				"Children":   func() error { _, err := f.Children(ctx, bound, path); return err }(),
 				"ChildCount": func() error { _, err := f.ChildCount(ctx, bound, path); return err }(),
 			} {
 				if !errors.Is(err, encrypt.ErrEncoding) {
@@ -407,6 +467,12 @@ func TestACustomersDocumentReadsThroughACipherWithABinding(t *testing.T) {
 			}
 			if _, err := subtreeRead(scoped.cipher, plainDocument); err != nil {
 				t.Errorf("Subtree of a document sealed with no binding: %v", err)
+			}
+			if _, err := childrenRead(scoped.cipher, plainDocument); err != nil {
+				t.Errorf("Children of a document sealed with no binding: %v", err)
+			}
+			if _, err := childrenRead(bound, plainDocument); !errors.Is(err, encrypt.ErrForbidden) {
+				t.Errorf("a bound cipher's Children opened a document sealed with no binding: %v", err)
 			}
 			if _, err := selectorRead(bound, plainDocument); !errors.Is(err, encrypt.ErrForbidden) {
 				t.Errorf("a bound cipher's Selector opened a document sealed with no binding: %v", err)

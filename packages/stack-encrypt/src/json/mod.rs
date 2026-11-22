@@ -61,8 +61,9 @@
 //! extraction is [`JsonNode`] rows, which open only through what the
 //! client derived for the read: [`JsonSelector::open`] for the one entry
 //! `->` returns ([`JsonExtracted`]), [`JsonSubtreeKey::open`] for the rows
-//! of a walk ([`JsonSubtree`]). Each checks that the rows are the ones the
-//! read asked for. Every entry's AAD binds its selector, the slot it is
+//! of a walk ([`JsonSubtree`]), and [`JsonSubtreeKey::open_child`] for one
+//! entry `json_tree_children` returns ([`JsonChild`]). Each checks that the
+//! rows are the ones the read asked for. Every entry's AAD binds its selector, the slot it is
 //! stored at and the digest of its children's AEAD tags (the cascade), so
 //! the rows beneath the node a read names open only as they were sealed;
 //! the node itself is checked against the path the client derived, since
@@ -735,6 +736,39 @@ where
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
         Some(self.decryption(context.into()))
+    }
+}
+
+/// One entry `json_tree_children(doc, token)` returned, with the key of the
+/// node whose token it was: what
+/// [`DecryptSource<JsonPlaintext>`](crate::DecryptSource) opens to the
+/// child's value, which is wiped when it is dropped. Built only by
+/// [`JsonSubtreeKey::open_child`], so it always carries the parent's key,
+/// and opening checks the entry against it (see that method for the
+/// checks).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JsonChild {
+    node: JsonNode,
+    parent: JsonSubtreeKey,
+}
+
+impl JsonChild {
+    pub(crate) fn keyed(node: JsonNode, parent: JsonSubtreeKey) -> Self {
+        Self { node, parent }
+    }
+
+    /// The row, as the database returned it.
+    pub fn node(&self) -> &JsonNode {
+        &self.node
+    }
+
+    /// The path of the parent the child is checked against.
+    pub fn parent_path(&self) -> &JsonPath {
+        &self.parent.path
+    }
+
+    pub(crate) fn into_parts(self) -> (JsonNode, JsonSubtreeKey) {
+        (self.node, self.parent)
     }
 }
 

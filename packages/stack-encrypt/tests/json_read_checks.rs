@@ -1,7 +1,8 @@
 //! What the client checks when it opens the rows a JSON index read
 //! returned, with no database: the entry `->` returns must carry the
-//! selector the client derived for the path, and the rows of a subtree read
-//! must be the subtree of the node the key's token names. The cascade
+//! selector the client derived for the path, the rows of a subtree read
+//! must be the subtree of the node the key's token names, and an entry
+//! `json_tree_children` returns must be a child of that node. The cascade
 //! refuses, at the cipher ([`Error::Aead`]), any change to the rows beneath
 //! that node: a row swapped, dropped, added, reordered or moved under
 //! another parent changes a tag on the way up. The client's own checks
@@ -23,9 +24,10 @@ use std::sync::atomic::Ordering;
 use common::CountingSource;
 use serde_json::{json, Value};
 use stack_encrypt::json::{
-    JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonPath, JsonPlaintext, JsonSelector,
-    JsonSubtree, JsonSubtreeKey,
+    JsonChild, JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonPath, JsonPlaintext,
+    JsonSelector, JsonSubtree, JsonSubtreeKey,
 };
+use stack_encrypt::refusal::Reason;
 use stack_encrypt::target::{AeadContext, CallerContext};
 use stack_encrypt::{nonempty, DecryptFrom, EncryptInto, Error, StackCipher};
 
@@ -813,6 +815,249 @@ mod given_the_rows_of_a_read {
             .collect();
         let value = open_value(&cipher, nested.open(rows)).await;
         assert_eq!(value.unwrap(), fixture()["nested"], "the sub-document");
+    }
+}
+
+/// One entry `json_tree_children` returned, opened on its own against the
+/// key of the node whose token found it: the parent's path and token, and
+/// nothing of the parent's subtree.
+mod given_one_child_of_a_node {
+    use super::*;
+
+    const REACHED: &str = "a node the walked path reaches";
+    const RULE: &str = "a child the member or element rule names";
+    const LABEL: &str = "a child under the rule its label names";
+    const DEPTH: &str = "a row at the depth the chain gives it";
+
+    /// A member of each kind under `$.a`, a container with children among
+    /// them, and an array of three under `$.arr`.
+    fn tree() -> Value {
+        json!({
+            "a": {"s": "text", "n": 1, "z": null, "o": {}, "e": [], "full": {"x": 1}},
+            "arr": [10, 20, 30],
+            "b": {"s": "other"},
+        })
+    }
+
+    /// The rows `json_tree_children(doc, key.tokens()[0])` returns: one per
+    /// child, in ordinal order, each at depth 1.
+    fn children(doc: &JsonDocument, key: &JsonSubtreeKey) -> Vec<JsonNode> {
+        doc.children(&key.token_bytes()[0])
+            .iter()
+            .map(|(j, _, _)| row(doc, *j, Some(1)))
+            .collect()
+    }
+
+    /// The row of the child at the concrete `path`, as `json_tree_children`
+    /// returns it.
+    async fn child_row(cipher: &Cipher, doc: &JsonDocument, path: &str) -> JsonNode {
+        row(doc, slot(cipher, doc, path).await, Some(1))
+    }
+
+    async fn open(cipher: &Cipher, child: JsonChild) -> Result<Value, Error> {
+        JsonPlaintext::decrypt_from_with_context(child, cipher, aead())
+            .await
+            .map(document)
+    }
+
+    #[tokio::test]
+    async fn each_leaf_child_opens_to_its_value() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &tree()).await;
+        let a = key(&cipher, "$.a").await;
+        let mut opened = serde_json::Map::new();
+        for node in children(&doc, &a) {
+            let child = a.open_child(node);
+            assert_eq!(
+                child.parent_path().to_string(),
+                "$.a",
+                "the parent asked about"
+            );
+            match open(&cipher, child).await {
+                Ok(value) => {
+                    let _ = opened.insert(value_key(&tree()["a"], &value), value);
+                }
+                Err(Error::JsonNotALeaf) => {
+                    let _ = opened.insert("full".into(), json!("not a leaf"));
+                }
+                Err(error) => panic!("a child of $.a: {error:?}"),
+            }
+        }
+        assert_eq!(
+            Value::Object(opened),
+            json!({"s": "text", "n": 1, "z": null, "o": {}, "e": [], "full": "not a leaf"}),
+            "every child opens to its value, and the container with children to JsonNotALeaf"
+        );
+    }
+
+    #[tokio::test]
+    async fn each_element_opens_to_its_value_in_position_order() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &tree()).await;
+        let arr = key(&cipher, "$.arr").await;
+        let mut opened = Vec::new();
+        for node in children(&doc, &arr) {
+            opened.push(open(&cipher, arr.open_child(node)).await.unwrap());
+        }
+        assert_eq!(
+            opened,
+            vec![json!(10), json!(20), json!(30)],
+            "the elements in order"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_child_of_another_node_is_refused_by_its_selector() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &tree()).await;
+        let a = key(&cipher, "$.a").await;
+        // `$.b.s`, a genuine scalar child of `$.b`, offered as `$.a`'s.
+        let other = child_row(&cipher, &doc, "$.b.s").await;
+        assertions::wrong_entry(open(&cipher, a.open_child(other)).await, REACHED);
+    }
+
+    /// The second element's row carrying the first's self tag: the same
+    /// selector, but its decrypted position derives another token.
+    #[tokio::test]
+    async fn an_element_read_as_another_position_is_refused() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &tree()).await;
+        let arr = key(&cipher, "$.arr").await;
+        let first = key(&cipher, "$.arr[0]").await;
+        let second = child_row(&cipher, &doc, "$.arr[1]").await;
+        let forged = with_x(vec![second], 0, x_of(&doc, &first));
+        let forged = forged.into_iter().next().unwrap();
+        assertions::wrong_entry(open(&cipher, arr.open_child(forged)).await, RULE);
+    }
+
+    /// A member whose self tag is the one the element rule derives at the
+    /// ordinal its label stands for: its decrypted label is a key.
+    #[tokio::test]
+    async fn a_member_under_the_element_rule_is_refused_by_its_label() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &tree()).await;
+        let a = key(&cipher, "$.a").await;
+        let s = selector_bytes(&selector(&cipher, "$.a.s").await);
+        let as_element = chain::element_token(&a.token_bytes()[0], &s, 0);
+        let member = child_row(&cipher, &doc, "$.a.s").await;
+        let forged = with_x(
+            vec![member],
+            0,
+            base64(&chain::self_tag(doc.header().iv(), &as_element)),
+        );
+        let forged = forged.into_iter().next().unwrap();
+        assertions::wrong_entry(open(&cipher, a.open_child(forged)).await, LABEL);
+    }
+
+    #[tokio::test]
+    async fn a_row_at_another_depth_is_refused() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &tree()).await;
+        let a = key(&cipher, "$.a").await;
+        let at = slot(&cipher, &doc, "$.a.s").await;
+        assertions::wrong_entry(
+            open(&cipher, a.open_child(row(&doc, at, Some(2)))).await,
+            DEPTH,
+        );
+        let undepthed = open(&cipher, a.open_child(row(&doc, at, None))).await;
+        assert_eq!(
+            undepthed.unwrap(),
+            json!("text"),
+            "a row with no depth is placed by the key"
+        );
+    }
+
+    /// Under the sealed root the top-level fields head the chain: they are
+    /// found by their own tokens and carry no parent tag, so none is a
+    /// child, and none is opened as one.
+    #[tokio::test]
+    async fn a_chain_head_is_refused_before_any_key_is_retrieved() {
+        let (cipher, retrieved) = cipher().await;
+        let doc = seal(&cipher, &tree()).await;
+        let root = key(&cipher, "$").await;
+        let head = child_row(&cipher, &doc, "$.arr").await;
+        assert!(
+            head.entry().parent_tag().is_none(),
+            "a head has no parent tag"
+        );
+        assertions::wrong_entry(
+            open(&cipher, root.open_child(head)).await,
+            "a child of the node the key names",
+        );
+        assert_eq!(
+            retrieved.load(Ordering::SeqCst),
+            0,
+            "the refusal retrieved no key"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_key_with_a_wildcard_is_refused_before_any_key_is_retrieved() {
+        let (cipher, retrieved) = cipher().await;
+        let doc = seal(&cipher, &tree()).await;
+        // At the default bound a wildcard sends a token per element and a
+        // probe; at a bound of 0, the probe alone, which is one token too.
+        let probe_only = cipher
+            .default_keyset()
+            .json_subtree_key_with_bound(
+                &JsonPath::parse("$.arr[*]").unwrap(),
+                &JsonOptions::default(),
+                0,
+                nonempty!("users").with("profile"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(probe_only.tokens().len(), 1, "the probe alone");
+        for elements in [key(&cipher, "$.arr[*]").await, probe_only] {
+            let element = child_row(&cipher, &doc, "$.arr[0]").await;
+            match open(&cipher, elements.open_child(element)).await {
+                Err(Error::Input(refusal)) => assert_eq!(
+                    refusal.reason(),
+                    Some(Reason::JsonPathWildcard),
+                    "a wildcard names no one parent"
+                ),
+                other => panic!("expected an input refusal, got {other:?}"),
+            }
+        }
+        assert_eq!(
+            retrieved.load(Ordering::SeqCst),
+            0,
+            "the refusal retrieved no key"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_opening_shows_its_context() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &tree()).await;
+        let arr = key(&cipher, "$.arr").await;
+        let element = child_row(&cipher, &doc, "$.arr[2]").await;
+        let slot = element.slot();
+        let child = arr.open_child(element);
+        assert_eq!(child.node().slot(), slot, "the row as returned");
+        let opening = JsonPlaintext::decrypt_from_with_context(child, &cipher, aead());
+        let shown = opening.context();
+        assert!(!shown.has_failed(), "the opening has not failed: {shown}");
+        assert_eq!(
+            shown.to_string(),
+            "context: users / profile\n",
+            "the column it opens under"
+        );
+        assert_eq!(
+            document(opening.await.unwrap()),
+            json!(30),
+            "the third element"
+        );
+    }
+
+    /// The key of the member `$.a` whose value is `value`, for a test that
+    /// reads members in their random ordinal order.
+    fn value_key(object: &Value, value: &Value) -> String {
+        object
+            .as_object()
+            .and_then(|members| members.iter().find(|(_, v)| *v == value))
+            .map(|(k, _)| k.clone())
+            .unwrap_or_else(|| panic!("{value} is a member of {object}"))
     }
 }
 

@@ -234,6 +234,16 @@ chain from nothing. Do not convert
 NULL to `0`. The count is a count of stored entries: it is not an
 authenticated proof that no child was withheld.
 
+The client opens each entry `json_tree_children` returns on its own,
+against the path whose token it sent, so a read of one child transfers that
+child's entry and not the parent's subtree. The client checks that the
+entry is a child of that node: its selector is the parent's path extended
+by its decrypted key or position, and its self tag is the one that key or
+position derives under the parent's token. A scalar child opens to its
+value, and an empty object or array to `{}` or `[]`. A child with members
+of its own does not open alone, because its authentication tag covers its
+children's tags: read it with a subtree read of its own path.
+
 ## One array element, and a whole predicate
 
 Two containment needles, or two comparisons, on one array can be
@@ -252,11 +262,6 @@ why no index serves it.
 
 ## What the SQL cannot do
 
-- **Open a child bound to its parent.** The SQL returns children, but
-  opening one child scalar so that it is checked against its parent is
-  not implemented. To inspect one child, the client fetches the parent's
-  subtree and opens it. That transfers more data, and reveals a different
-  set of tokens.
 - **Return plaintext of every match.** `json_tree_path_query` returns
   encrypted entries. The supported way to grouped plaintext for a path
   through an array is a subtree read with a wildcard bound.

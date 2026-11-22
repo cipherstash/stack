@@ -111,9 +111,11 @@ pub struct JsonTreeDocument {
 ///
 /// An entry a query returned is the database's word and does not open on
 /// its own: open the entry `->` returned through the selector that asked
-/// for it ([`JsonTreeExtracted::from_selector`]), and a read's rows through
-/// the key that keyed it ([`JsonTreeSubtree::from_key`]). Each checks that
-/// the rows are the ones it asked for.
+/// for it ([`JsonTreeExtracted::from_selector`]), a read's rows through
+/// the key that keyed it ([`JsonTreeSubtree::from_key`]), and one entry
+/// `json_tree_children` returned through the key of its parent
+/// ([`JsonTreeChild::from_key`]). Each checks that the rows are the ones it
+/// asked for.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JsonTreeEntry {
@@ -354,6 +356,46 @@ impl JsonTreeSubtree {
     /// The path the read was keyed from.
     pub fn path(&self) -> &JsonPath {
         self.key.path()
+    }
+}
+
+/// One entry `eql_v4.json_tree_children(doc, token)` returned, with the key
+/// of the node whose token it was: opens to the child's value, a scalar,
+/// or `{}` or `[]` for an empty container, without the parent's subtree.
+/// The only constructor, [`from_key`](Self::from_key), takes the parent's
+/// key, and opening checks the entry is a child of the node the key names,
+/// as [`JsonSubtreeKey::open_child`] describes: its selector, its depth,
+/// and the self tag its decrypted label derives under the parent's token.
+/// A container with children does not open on its own
+/// ([`Error::JsonNotALeaf`]): read it through [`JsonTreeSubtree`].
+///
+/// The key is the one whose token the query took: for a path with no
+/// wildcard it holds that path's one token, which is what
+/// `children(path)` derives as a [`JsonTreeToken`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsonTreeChild {
+    entry: JsonTreeEntry,
+    parent: JsonSubtreeKey,
+}
+
+impl JsonTreeChild {
+    /// The entry `json_tree_children` returned for the one token of `key`,
+    /// the key of the parent's path, as the server sent it.
+    pub fn from_key(key: &JsonSubtreeKey, entry: JsonTreeEntry) -> Self {
+        Self {
+            entry,
+            parent: key.clone(),
+        }
+    }
+
+    /// The entry.
+    pub fn entry(&self) -> &JsonTreeEntry {
+        &self.entry
+    }
+
+    /// The path of the parent the child is checked against.
+    pub fn parent_path(&self) -> &JsonPath {
+        self.parent.path()
     }
 }
 
@@ -711,6 +753,22 @@ impl DecryptSource<JsonPlaintext> for JsonTreeExtracted {
     fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
         match self.entry.node() {
             Ok(node) => DecryptSource::decryption(self.selector.open(node), context),
+            Err(error) => Decryption::failed(error),
+        }
+    }
+}
+
+/// A child's entry opens to a [`JsonPlaintext`], which is wiped when it is
+/// dropped: the child's scalar, or `{}` or `[]` for an empty container.
+///
+/// The context is required. It is the context the document was sealed
+/// under, as for [`JsonTreeExtracted`]. An entry with no parent tag, and a
+/// key of a path with a wildcard, are refused before any key is requested.
+impl DecryptSource<JsonPlaintext> for JsonTreeChild {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
+        match self.entry.node() {
+            Ok(node) => DecryptSource::decryption(self.parent.open_child(node), context),
             Err(error) => Decryption::failed(error),
         }
     }

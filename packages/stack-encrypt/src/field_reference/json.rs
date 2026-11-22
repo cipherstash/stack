@@ -852,7 +852,15 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P, D> FieldReference<W, T, C, P, D
 
     /// The token of the node at `path`, a path with no wildcard, which
     /// `eql_v4.json_tree_children` and `eql_v4.json_tree_child_count` take
-    /// to find the node's children in every row.
+    /// to find the node's children in every row. For a [`JsonDocument`]
+    /// field it is the [`JsonSubtreeKey`] that holds the token, which also
+    /// opens each entry `json_tree_children` returns, one child at a time,
+    /// checked against the node at `path`
+    /// ([`JsonSubtreeKey::open_child`]).
+    ///
+    /// [`JsonDocument`]: crate::json::JsonDocument
+    /// [`JsonSubtreeKey`]: crate::json::JsonSubtreeKey
+    /// [`JsonSubtreeKey::open_child`]: crate::json::JsonSubtreeKey::open_child
     pub fn children(self, path: &str) -> JsonFieldQuery<T, Children, C::Start> {
         self.json(Body::Children(path_text(path)))
     }

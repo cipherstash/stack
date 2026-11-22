@@ -340,7 +340,51 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want("children rows", ids(`SELECT id FROM customers, eql_v4.json_tree_children(profile, $1::text) AS e ORDER BY id`, children), 1, 1, 2)
+	want("children rows", ids(`SELECT id FROM customers, eql_v4.json_tree_children(profile, $1::text) AS e ORDER BY id`, children.Token()), 1, 1, 2)
+
+	// Each child json_tree_children returns opens on its own, checked
+	// against the parent the read was prepared for: the one member of each
+	// row's first visit. A child with members of its own does not open
+	// alone, and another parent's children are refused.
+	childEntries := func(c encrypt.JSONChildren[eql.JSONEntry]) []eql.JSONEntry {
+		t.Helper()
+		rows, err := conn.QueryContext(ctx, `SELECT e FROM customers, eql_v4.json_tree_children(profile, $1::text) AS e ORDER BY id`, c.Token())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []eql.JSONEntry
+		for rows.Next() {
+			var e eql.JSONEntry
+			if err := rows.Scan(&e); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, e)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	firstVisit, err := f.Children(ctx, cipher, "$.visits[0]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ats, err := firstVisit.Open(ctx, childEntries(firstVisit))
+	if err != nil || len(ats) != 2 || string(ats[0]) != "3" || string(ats[1]) != "5" {
+		t.Errorf("the children of $.visits[0]: %q %v", ats, err)
+	}
+	var d *encrypt.Diagnostic
+	if _, err := children.Open(ctx, childEntries(children)); !errors.As(err, &d) || d.Code != "stack_encrypt::json_not_a_leaf" {
+		t.Errorf("the children of $.visits, each with a member: %v, want json_not_a_leaf", err)
+	}
+	tags, err := f.Children(ctx, cipher, "$.tags")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := firstVisit.Open(ctx, childEntries(tags)); !errors.As(err, &d) || d.Code != "stack_encrypt::json_wrong_entry" {
+		t.Errorf("the children of $.tags opened as $.visits[0]'s: %v, want json_wrong_entry", err)
+	}
 
 	// Sorting by an ordered path, in the form EQL documents:
 	// ORDER BY eql_v4.ord_term(col -> sel) at a path with no array step.

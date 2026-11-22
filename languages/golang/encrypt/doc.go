@@ -247,8 +247,8 @@
 // [JSONRead.Open]). [DecodeJSON] reads one into a Go type.
 //
 // A document sealed through a cipher with a binding ([Cipher.Bind]) is read
-// through a cipher with the same scopes and binding. Selector and Subtree
-// take such a cipher: the selector or the tokens derive under its scopes
+// through a cipher with the same scopes and binding. Selector, Subtree and
+// Children take such a cipher: the selector or the tokens derive under its scopes
 // alone, as a query's term does, and the entries open under the scopes and
 // the binding. Every row of one Open call opens under that binding, so a
 // read through a cipher with a binding reads that binding's row. A query

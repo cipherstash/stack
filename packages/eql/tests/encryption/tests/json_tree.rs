@@ -20,8 +20,8 @@ mod common;
 
 use eql_bindings::encryption::EqlTargets;
 use eql_bindings::v4::json_tree::{
-    JsonTree, JsonTreeDocument, JsonTreeEntry, JsonTreeExtracted, JsonTreeLeafQuery, JsonTreeQuery,
-    JsonTreeSubtree,
+    JsonTree, JsonTreeChild, JsonTreeDocument, JsonTreeEntry, JsonTreeExtracted, JsonTreeLeafQuery,
+    JsonTreeQuery, JsonTreeSubtree,
 };
 use eql_bindings::Identifier;
 use serde_json::{json, Map, Value};
@@ -197,6 +197,22 @@ async fn read_list(
     .map(|opened| opened.iter().map(|value| value.value().clone()).collect())
 }
 
+/// The value one entry `json_tree_children` returned opens to under the
+/// column, through the key of its parent's path.
+async fn open_child(
+    cipher: &Cipher,
+    parent: &JsonSubtreeKey,
+    entry: JsonTreeEntry,
+) -> Result<Value, stack_encrypt::Error> {
+    JsonPlaintext::decrypt_from_with_context(
+        JsonTreeChild::from_key(parent, entry),
+        cipher,
+        column(),
+    )
+    .await
+    .map(|opened| opened.value().clone())
+}
+
 /// Padded standard base64, as the wire spells a selector.
 /// A projection with every list sorted: `q` as the sets `jsonb @>` reads.
 fn as_set(q: &Value) -> Value {
@@ -299,6 +315,71 @@ async fn a_document_round_trips_through_the_typed_target() {
     );
     let bare = stored.sv[at].clone();
     assert!(extract(&cipher, &hello, bare).await.is_err());
+}
+
+/// An entry lifted from the stored document as `json_tree_children` returns
+/// it (the header, its slot and depth 1 grafted) opens on its own through
+/// the key of its parent's path, and is refused under another parent's.
+#[tokio::test]
+async fn a_child_opens_through_the_key_of_its_parent() {
+    let (cipher, calls) = common::cipher().await;
+    let stored = seal(&cipher, &fixture()).await;
+    let keyset = cipher.default_keyset();
+    let key = |path: &str| {
+        let path = JsonPath::parse(path).unwrap();
+        let keyset = keyset.clone();
+        async move {
+            keyset
+                .json_subtree_key(&path, &options(), column())
+                .await
+                .unwrap()
+        }
+    };
+    // `$.nested.deep` is the one entry carrying its selector.
+    let deep = keyset
+        .json_selector(&JsonPath::parse("$.nested.deep").unwrap(), column())
+        .await
+        .unwrap();
+    let at = stored
+        .sv
+        .iter()
+        .position(|e| serde_json::to_value(&e.s).unwrap() == json!(deep.to_string()))
+        .expect("the document has $.nested.deep");
+    let mut entry = stored.sv[at].clone();
+    entry.h = Some(stored.h.clone());
+    entry.j = Some(at as u64);
+    entry.d = Some(1);
+    entry.i = Some(stored.i.clone());
+    entry.v = Some(stored.v);
+
+    let nested = key("$.nested").await;
+    let child = JsonTreeChild::from_key(&nested, entry.clone());
+    assert_eq!(child.entry(), &entry, "the entry as the server sent it");
+    assert_eq!(
+        child.parent_path().to_string(),
+        "$.nested",
+        "the parent it is checked against"
+    );
+    let opened = open_child(&cipher, &nested, entry.clone()).await.unwrap();
+    assert_eq!(opened, json!("constant"), "the child's value");
+
+    let hello = key("$.hello").await;
+    let refused = open_child(&cipher, &hello, entry.clone()).await;
+    assert!(
+        matches!(refused, Err(stack_encrypt::Error::JsonWrongEntry { .. })),
+        "a child of another node: {refused:?}"
+    );
+    let retrieved = calls.lock().unwrap().retrieve.len();
+    let bare = stored.sv[at].clone();
+    assert!(
+        open_child(&cipher, &nested, bare).await.is_err(),
+        "an entry with no header or slot does not open"
+    );
+    assert_eq!(
+        calls.lock().unwrap().retrieve.len(),
+        retrieved,
+        "the bare entry retrieved no key"
+    );
 }
 
 #[tokio::test]
@@ -1784,6 +1865,146 @@ fn postgres_every_subtree_read_answers_as_jsonb_does() {
     assert!(
         checked.iter().all(|n| *n > 0),
         "the corpus reaches no node, `{{}}`, `[]` and other values: {checked:?}"
+    );
+}
+
+/// The entries `json_tree_children(doc, token)` returns in row `id` for the
+/// token of `key`, in the order the SQL returns them.
+fn children_rows(
+    db: &mut postgres::Client,
+    table: &str,
+    id: i32,
+    key: &JsonSubtreeKey,
+) -> Vec<JsonTreeEntry> {
+    db.query(
+        &format!("SELECT e::jsonb::text FROM {table}, eql_v4.json_tree_children(doc, $1::text) e WHERE id = $2"),
+        &[&key.tokens()[0], &id],
+    )
+    .unwrap_or_else(|error| panic!("{table} {}: {error}", key.path()))
+    .iter()
+    .map(|r| serde_json::from_str(&r.get::<_, String>(0)).unwrap())
+    .collect()
+}
+
+/// Needs an EQL v4 installation. Every entry `json_tree_children` returns
+/// for a node's token opens on its own through the key of the node's path,
+/// to the value `jsonb` holds there: an array's elements in position
+/// order, an object's members in any order. A child with children of its
+/// own does not open alone ([`stack_encrypt::Error::JsonNotALeaf`]) and is
+/// read with a subtree read. Every node of every document of the read
+/// oracle is a parent here, with the root sealed and open; the sealed root
+/// has no children to return. An array's elements opened against the key
+/// of another array that holds them too (`$.l` for `$.h.l`) are refused.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_each_child_opens_against_its_parent() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (cipher, _) = wait(&runtime, common::cipher());
+    let keyset = cipher.default_keyset();
+    let mut db = connect();
+    let documents = read_documents();
+    // The wide object's members are scalars, with no children: its own
+    // path reads all 300 of them.
+    let mut paths: Vec<JsonPath> = documents
+        .iter()
+        .flat_map(node_paths)
+        .filter(|p| !matches!(p.segments(), [Segment::Key(w), Segment::Key(_)] if w == "wide"))
+        .collect();
+    paths.sort();
+    paths.dedup();
+    // What a child opens to: its value, or `None` for a container with
+    // children, which does not open alone.
+    let leaf = |value: &Value| match value {
+        Value::Object(members) if !members.is_empty() => None,
+        Value::Array(items) if !items.is_empty() => None,
+        other => Some(other.clone()),
+    };
+    let mut opened = [0usize; 2];
+    for sealed_root in [true, false] {
+        let options = JsonOptions {
+            sealed_root,
+            ..JsonOptions::default()
+        };
+        let table = if sealed_root {
+            "json_tree_children_sealed"
+        } else {
+            "json_tree_children_open"
+        };
+        store(&mut db, &runtime, &cipher, table, &options, &documents);
+        let key = |path: &JsonPath| {
+            wait(&runtime, keyset.json_subtree_key(path, &options, column())).unwrap()
+        };
+        for path in &paths {
+            let parent = key(path);
+            for id in 1..=documents.len() as i32 {
+                let at = format!("{table} {path}, row {id}");
+                let rows = children_rows(&mut db, table, id, &parent);
+                if sealed_root && path.segments().is_empty() {
+                    assert!(
+                        rows.is_empty(),
+                        "{at}: the sealed root's members chain from nothing"
+                    );
+                    continue;
+                }
+                let plain = jsonb_first(&mut db, table, id, path);
+                let mut expected: Vec<Option<Value>> = match &plain {
+                    Some(Value::Array(items)) => items.iter().map(leaf).collect(),
+                    Some(Value::Object(members)) => members.values().map(leaf).collect(),
+                    _ => Vec::new(),
+                };
+                let mut got: Vec<Option<Value>> = rows
+                    .into_iter()
+                    .map(
+                        |entry| match wait(&runtime, open_child(&cipher, &parent, entry)) {
+                            Ok(value) => {
+                                opened[0] += 1;
+                                Some(value)
+                            }
+                            Err(stack_encrypt::Error::JsonNotALeaf) => {
+                                opened[1] += 1;
+                                None
+                            }
+                            Err(error) => panic!("{at}: {error}"),
+                        },
+                    )
+                    .collect();
+                // An object's members come back in the random order their
+                // ordinals were drawn in.
+                if matches!(plain, Some(Value::Object(_))) {
+                    expected.sort_by_key(|child| format!("{child:?}"));
+                    got.sort_by_key(|child| format!("{child:?}"));
+                }
+                assert_eq!(got, expected, "{at}: each child opens to its value");
+            }
+        }
+
+        // `$.l`'s elements, offered as `$.h.l`'s: each carries `$.l[*]`'s
+        // selector, not `$.h.l[*]`'s, and is refused, or does not open
+        // alone if it has children of its own.
+        let (outer, inner) = (
+            key(&JsonPath::parse("$.l").unwrap()),
+            key(&JsonPath::parse("$.h.l").unwrap()),
+        );
+        let rows = children_rows(&mut db, table, 1, &outer);
+        assert!(!rows.is_empty(), "{table}: row 1 has elements at $.l");
+        for entry in rows {
+            let refused = wait(&runtime, open_child(&cipher, &inner, entry));
+            assert!(
+                matches!(
+                    refused,
+                    Err(stack_encrypt::Error::JsonWrongEntry { .. }
+                        | stack_encrypt::Error::JsonNotALeaf)
+                ),
+                "{table}: a child of $.l under $.h.l: {refused:?}"
+            );
+        }
+    }
+    assert!(
+        opened.iter().all(|n| *n > 0),
+        "the corpus opens children and refuses containers with children: {opened:?}"
     );
 }
 

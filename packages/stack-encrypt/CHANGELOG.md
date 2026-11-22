@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Open one child of a JSON node, bound to its parent** (#1677).
+  `JsonSubtreeKey::open_child(node)` takes one entry `json_tree_children`
+  returned for the key's token and gives a `JsonChild`, which opens
+  (`DecryptSource<JsonPlaintext>`) to the child's value: a scalar, or `{}`
+  or `[]` for an empty container. A read of one child no longer needs the
+  parent's subtree.
+  - Opening checks the entry is a child of the node the key names, with
+    the parent-link check a subtree read makes: the entry carries a parent
+    tag, sits one level down, carries the selector of the parent's path
+    extended by its decrypted label, and carries the self tag that label
+    derives under the parent's token. Anything else is
+    `Error::JsonWrongEntry`. A container with children does not open alone
+    (`Error::JsonNotALeaf`). A key of a path with a wildcard is refused
+    with `Error::Input` (reason `JsonPathWildcard`), and an entry with no
+    parent tag with `JsonWrongEntry`, both before any key is retrieved.
+  - For a `JsonDocument` field, the key is what the field reference's
+    `children(path)` returns, so the token sent and the key that opens are
+    one value.
+  - `dynamic::json_open` takes the operation `"children"`, with the path of
+    the parent and one entry or none per group. `dynamic::check_json_open`
+    checks it.
+  - The stored format is unchanged.
+
 - **A credential with each call** (#1708). A server that decrypts as the end
   user who signed in had to build its cipher inside the first request,
   because `init` needs a token and a server starting up has no user. It also

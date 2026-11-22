@@ -1284,8 +1284,15 @@ release leaves behind.
 - **Why.** Today a program must read and open the parent's whole subtree to
   see one child. That transfers more data and reveals a different set of
   tokens.
-- **Done already.** Nothing.
-- **Tracked in.** Issue #1677 is open. Pull request #1353, the Go JSON plan document, lists it as remaining.
+- **Done already.** The engine opens one entry `json_tree_children`
+  returned against the key of its parent's path
+  (`JsonSubtreeKey::open_child`, a `JsonChild`), checking the parent link
+  the subtree rebuild checks. `eql-bindings` has `JsonTreeChild`, the
+  dynamic interface's `json_open` takes the `children` operation, and Go's
+  generated `Children` returns an `encrypt.JSONChildren`, whose `Open`
+  opens each entry. The `eql-json-v1` profile enrolls it as
+  `json-child-v1`, with Rust, Go and PostgreSQL evidence.
+- **Tracked in.** Issue #1677. Pull request #1353, the Go JSON plan document, lists it as remaining.
 - **Finished when** Go can open one child, and the `eql-json-v1`
   conformance profile covers it.
 
@@ -1644,7 +1651,9 @@ Base64.
   program runs it is `predicate(text).var(..)`, so the operand is the text
   form's and the data plan's `match` operand.
 - **Tracked in.** Issue #1459 closes with the `predicate!` pull request.
-  Issue #1677 is open for opening one child. Issue #1486 is closed.
+  Issue #1677, for opening one child, closes with its pull request: a
+  `JsonDocument` field's `children(path)` key opens each child
+  (`open_child`). Issue #1486 is closed.
 - **Finished when** these are all true:
   - the [JSON query example](#query-a-json-document) compiles;
   - a path, a member or a value type the field does not declare does not

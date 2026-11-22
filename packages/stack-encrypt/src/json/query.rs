@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use super::derive::{JsonTerms, Selectors, TermNode};
 use super::path::JsonPath;
-use super::{base64, JsonExtracted, JsonNode, JsonOptions, JsonSubtree, Tag};
+use super::{base64, JsonChild, JsonExtracted, JsonNode, JsonOptions, JsonSubtree, Tag};
 use crate::op::{Op, QueryTerm};
 use crate::target::Json;
 use vitaminc_protected::{Choice, OpaqueDebug, TimingSafeEq};
@@ -605,6 +605,48 @@ impl JsonSubtreeKey {
     /// the rest.
     pub fn open(&self, rows: Vec<JsonNode>) -> JsonSubtree {
         JsonSubtree::keyed(rows, self.clone())
+    }
+
+    /// One entry `json_tree_children(doc, token)` returned for this key's
+    /// token, ready to open on its own: the only way to build a
+    /// [`JsonChild`]. The key is of a path with no wildcard, which names
+    /// one node, the parent; the query that returned the entry took the
+    /// key's one token. One child opens without its siblings or the parent,
+    /// so a read of one child sends the parent's token and returns that
+    /// child's entry, not the parent's whole subtree.
+    ///
+    /// Opening it ([`DecryptSource<JsonPlaintext>`](crate::DecryptSource))
+    /// checks that the entry is a child of the node the key names, and
+    /// refuses it with [`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry)
+    /// if not: the entry must carry a parent tag (the root and, under the
+    /// sealed root, the top-level fields carry none, as no node's child),
+    /// sit one level below the parent where the server reported a depth,
+    /// carry the selector of the parent's path extended by its decrypted
+    /// label (its key, or the array step), and carry the self tag of the
+    /// token that label derives under the parent's token: a member's by its
+    /// key, an element's by its index. The label is authenticated, so an
+    /// element read as another position, or a member read under the
+    /// element rule, is refused. A missing parent tag is refused before any
+    /// key is retrieved.
+    ///
+    /// The entry opens under the digest of no children, as an entry `->`
+    /// returns does: a scalar opens to itself, an empty object or array to
+    /// `{}` or `[]`, and a container with children does not open alone
+    /// ([`Error::JsonNotALeaf`](crate::Error::JsonNotALeaf)); read it with
+    /// a subtree read of its own path. A key of a path with a wildcard
+    /// names no one parent, and opening is refused as the `children`
+    /// operator refuses that path ([`Error::Input`](crate::Error::Input),
+    /// reason `JsonPathWildcard`), before any key is retrieved.
+    ///
+    /// Not covered, by design, as for [`open`](Self::open): which row of
+    /// the column the entry comes from, unless its context names the row,
+    /// and whether the database left children out. The tags are not
+    /// authenticated, and the database holds the parent's token, so a
+    /// database that forges them can put the child of one array element
+    /// under another (`$.items[0].price` for `$.items[1].price`), as it can
+    /// for the node at the top of a read.
+    pub fn open_child(&self, node: JsonNode) -> JsonChild {
+        JsonChild::keyed(node, self.clone())
     }
 }
 

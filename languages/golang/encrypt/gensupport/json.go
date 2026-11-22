@@ -457,6 +457,17 @@ func JSONSubtree[E ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.C
 	return encrypt.NewJSONRead[E](c, f.plan, f.name, input, term.Text), nil
 }
 
+// JSONChildren prepares json_tree_children at a path with no wildcard on a
+// JSON field: the parent's token to bind, and what opens each entry it
+// returns. E is the field's entry type.
+func JSONChildren[E ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cipher, path string) (encrypt.JSONChildren[E], error) {
+	term, err := f.jsonTerm(ctx, c, "children", "text", 1, vcvalue.Object{{Key: "path", Value: path}})
+	if err != nil {
+		return encrypt.JSONChildren[E]{}, err
+	}
+	return encrypt.NewJSONChildren[E](c, f.plan, f.name, path, term.Text[0]), nil
+}
+
 // JSONNodeToken derives the token of the node at a path with no wildcard
 // (children, child_count), which json_tree_children and
 // json_tree_child_count take.

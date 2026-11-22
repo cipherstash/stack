@@ -186,9 +186,12 @@
 //! derives the selector or the read key again from that request, the
 //! field's definition and the keyset, and checks every row against it with
 //! the index's own checks ([`JsonSelector::open`],
-//! [`JsonSubtreeKey::open`](crate::json::JsonSubtreeKey::open)). The rows
-//! never say which path they are for. Each group of rows is one database
-//! row's, and opens on its own: entries of two documents are never one walk.
+//! [`JsonSubtreeKey::open`](crate::json::JsonSubtreeKey::open), and
+//! [`JsonSubtreeKey::open_child`](crate::json::JsonSubtreeKey::open_child)
+//! for one entry `json_tree_children` returned, checked against the parent
+//! the `children` operator's path names). The rows never say which path
+//! they are for. Each group of rows is one database row's, and opens on its
+//! own: entries of two documents are never one walk.
 //!
 //! What opening proves is limited, as the index documents: a row of the
 //! column other than the one asked for can answer, an element under one
@@ -602,11 +605,13 @@ struct Groups(Vec<Vec<JsonText>>);
 enum Read {
     Selector(JsonPath),
     Subtree(JsonPath, u32),
+    /// `children`: the path of the parent, which names one node.
+    Child(JsonPath),
 }
 
 /// Read and check a read's request and its rows: everything [`open`]
-/// refuses before it derives anything. A selector's group holds one entry
-/// or none.
+/// refuses before it derives anything. A selector's group and a child's
+/// hold one entry or none.
 fn read_open(request: &ValueFrame, rows: &ValueFrame) -> Result<(Read, Vec<Vec<JsonNode>>), Error> {
     let request: ReadRequest = read_frame(request)?;
     let read = match Op::parse(&request.operation) {
@@ -619,6 +624,9 @@ fn read_open(request: &ValueFrame, rows: &ValueFrame) -> Result<(Read, Vec<Vec<J
                 .wildcard_bound
                 .unwrap_or(JsonSubtreeKey::DEFAULT_BOUND),
         ),
+        Some(Op::Children) if request.wildcard_bound.is_none() => {
+            Read::Child(node_path(&request.path)?)
+        }
         _ => return Err(Error::bad_source(Reason::JsonInput)),
     };
     let groups: Groups = read_frame(rows)?;
@@ -633,7 +641,7 @@ fn read_open(request: &ValueFrame, rows: &ValueFrame) -> Result<(Read, Vec<Vec<J
                 .map_err(|_| Error::bad_source(Reason::JsonInput))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if matches!(read, Read::Selector(_)) && groups.iter().any(|group| group.len() > 1) {
+    if !matches!(read, Read::Subtree(..)) && groups.iter().any(|group| group.len() > 1) {
         return Err(Error::bad_source(Reason::JsonInput));
     }
     Ok((read, groups))
@@ -647,11 +655,12 @@ pub(super) fn check_open(request: &ValueFrame, rows: &ValueFrame) -> Result<(), 
     read_open(request, rows).map(drop)
 }
 
-/// What a read opens with: the selector or the subtree key, derived again
-/// from the request.
+/// What a read opens with: the selector, the subtree key, or the key of
+/// the children's parent, derived again from the request.
 enum Opener {
     Selector(crate::json::JsonSelector),
     Subtree(JsonSubtreeKey),
+    Child(JsonSubtreeKey),
 }
 
 /// Open the rows a read returned against the request that prepared it,
@@ -663,23 +672,27 @@ enum Opener {
 /// bindings too. Each
 /// group of rows is one database row's: for `selector`, the entry `->`
 /// returned or none (SQL `NULL`); for `subtree`, the rows
-/// `json_tree_subtree` returned. Every group opens to a list of JSON
-/// texts: for `selector`, the scalar or none, and for `subtree`, one value
-/// per concrete path the read named that the row has, in document order.
-/// One key request for every group.
+/// `json_tree_subtree` returned; for `children`, one entry
+/// `json_tree_children` returned for the token of the node at the path, or
+/// none. Every group opens to a list of JSON texts: for `selector`, the
+/// scalar or none; for `subtree`, one value per concrete path the read
+/// named that the row has, in document order; and for `children`, the
+/// child's value (a scalar, `{}` or `[]`) or none. One key request for
+/// every group.
 ///
 /// # Errors
 ///
 /// [`Error::Source`] ([`Reason::JsonInput`]) for a request or rows that
-/// do not parse, an operation that is not `selector` or `subtree`, a
-/// `wildcard_bound` on a `selector`, or a selector group of more than one
-/// entry; [`Error::Cipher`] for the read's own refusals (a path that does
-/// not parse, a wildcard that expands too far). A row that is not the one
-/// the read asked for fails the pending
+/// do not parse, an operation that is not `selector`, `subtree` or
+/// `children`, a `wildcard_bound` on a `selector` or a `children`, or a
+/// selector or child group of more than one entry; [`Reason::JsonPathWildcard`]
+/// for a `children` path with a wildcard; [`Error::Cipher`] for the read's
+/// own refusals (a path that does not parse, a wildcard that expands too
+/// far). A row that is not the one the read asked for fails the pending
 /// ([`crate::Error::JsonWrongEntry`]), as does a wildcard read of an array
 /// longer than the bound ([`crate::Error::JsonWildcardTruncated`]). A
-/// `selector` entry that does not open alone, a container with members or
-/// an altered entry, is [`crate::Error::JsonNotALeaf`].
+/// `selector` or `children` entry that does not open alone, a container
+/// with members or an altered entry, is [`crate::Error::JsonNotALeaf`].
 pub(super) fn open<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     under: &Under<'_>,
@@ -729,6 +742,14 @@ fn open_read<'a, K: 'static>(
         Read::Subtree(path, bound) => {
             Opener::Subtree(keyset.json_subtree_key_now(&path, options, bound, under.query()?)?)
         }
+        // A path with no wildcard: the key holds the parent's one token,
+        // and the bound is never used.
+        Read::Child(path) => Opener::Child(keyset.json_subtree_key_now(
+            &path,
+            options,
+            JsonSubtreeKey::DEFAULT_BOUND,
+            under.query()?,
+        )?),
     };
     let context = || under.stored();
     // Opened through the client, confined to the deriving keyset, as a
@@ -757,6 +778,18 @@ fn open_read<'a, K: 'static>(
                 opener_cipher,
                 context(),
             )),
+            Opener::Child(key) => match <[JsonNode; 1]>::try_from(nodes) {
+                Ok([node]) => confined(
+                    JsonPlaintext::decrypt_from_with_context(
+                        key.open_child(node),
+                        opener_cipher,
+                        context(),
+                    )
+                    .map(|value| vec![value]),
+                ),
+                // `read_open` allows a child's group one entry or none.
+                Err(_) => Pending::ready(keyset, Ok(Vec::new())),
+            },
         });
     }
     Ok(Pending::all(keyset, pendings).try_map(opened_frame))

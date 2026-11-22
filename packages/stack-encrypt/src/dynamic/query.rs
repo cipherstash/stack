@@ -909,21 +909,25 @@ pub fn check_json_open(
 }
 
 /// Open the rows a read of a document field returned, against the request
-/// that prepared it: the runtime form of [`JsonSelector::open`] and
-/// [`JsonSubtreeKey::open`], for a binding. `request` is the read as the
-/// binding prepared it, `{"operation": "selector" | "subtree", "path",
-/// "wildcard_bound"?}`, and `rows` a list per database row of the entries
-/// the SQL returned for it (`public.eql_v4_json_entry` JSON, as text
-/// or bytes): for `selector`, the one entry `->` returned or none, and for
-/// `subtree`, the rows `json_tree_subtree` returned. The engine derives
-/// the selector or the read key again, under `cipher`'s keyset and the
-/// field's column and options, and checks every row against it; the rows
-/// open through that keyset alone, so a document sealed under another is
-/// refused before any key is retrieved. The result is a list per database
-/// row of JSON
-/// texts, as bytes: for `selector` the scalar or nothing, for `subtree`
-/// one value per concrete path the read named that the row has, in
-/// document order. One key request for every row.
+/// that prepared it: the runtime form of [`JsonSelector::open`],
+/// [`JsonSubtreeKey::open`] and [`JsonSubtreeKey::open_child`], for a
+/// binding. `request` is the read as the binding prepared it,
+/// `{"operation": "selector" | "subtree" | "children", "path",
+/// "wildcard_bound"?}`, and `rows` a list per group of the entries the SQL
+/// returned for it (`public.eql_v4_json_entry` JSON, as text or bytes):
+/// for `selector`, the one entry `->` returned for a database row or none;
+/// for `subtree`, the rows `json_tree_subtree` returned for a database
+/// row; and for `children`, one entry `json_tree_children` returned for the
+/// token of the node at the path, or none. The engine derives the selector
+/// or the read key again, under `cipher`'s keyset and the field's column
+/// and options, and checks every row against it; for `children`, that the
+/// entry is a child of the node at the path. The rows open through that
+/// keyset alone, so a document sealed under another is refused before any
+/// key is retrieved. The result is a list per group of JSON texts, as
+/// bytes: for `selector` the scalar or nothing, for `subtree` one value per
+/// concrete path the read named that the row has, in document order, and
+/// for `children` the child's value or nothing. One key request for every
+/// group.
 ///
 /// The read runs under the contexts the document was sealed under. The
 /// selector or the read key derives under the field's column, then the
@@ -937,6 +941,7 @@ pub fn check_json_open(
 ///
 /// [`JsonSelector::open`]: crate::json::JsonSelector::open
 /// [`JsonSubtreeKey::open`]: crate::json::JsonSubtreeKey::open
+/// [`JsonSubtreeKey::open_child`]: crate::json::JsonSubtreeKey::open_child
 ///
 /// # Errors
 ///
@@ -950,8 +955,8 @@ pub fn check_json_open(
 /// ([`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry)), as does a
 /// wildcard read of an array longer than its bound
 /// ([`Error::JsonWildcardTruncated`](crate::Error::JsonWildcardTruncated)).
-/// A `selector` entry that does not open alone, a container with members
-/// or an altered entry, fails it as
+/// A `selector` or `children` entry that does not open alone, a container
+/// with members or an altered entry, fails it as
 /// [`Error::JsonNotALeaf`](crate::Error::JsonNotALeaf); a container is read
 /// with `subtree`.
 pub fn json_open<'a, K>(

@@ -280,6 +280,108 @@ func TestJSONSelectorReadsOpenAgainstTheirRequest(t *testing.T) {
 	}
 }
 
+// A child read through the guest: each entry eql_v4.json_tree_children
+// returns opens on its own against the parent the request names, one group
+// each. Another parent's child, a child with members of its own, and a
+// parent path with a wildcard are refused.
+func TestJSONChildrenOpenAgainstTheirParent(t *testing.T) {
+	c := deterministicEQLClient(t)
+	ctx := context.Background()
+	cipher := c.DefaultKeyset()
+	sealed, err := cipher.Seal(ctx, jsonPlan(), []record.Source{{"profile": []byte(`{"name":"Alice","tags":["a","b"],"visits":[{"at":3},{"at":1,"where":"x"}]}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := sealed[0]["profile"].EQL
+	selector := func(path string) string {
+		t.Helper()
+		term, err := cipher.QueryTerm(ctx, jsonPlan(), "profile", "selector", vcvalue.Object{{Key: "path", Value: path}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return term.Text[0]
+	}
+	// The children of $.tags and of $.visits, as json_tree_children returns
+	// them, one group each: every entry carrying the elements' selector.
+	children := func(path string) [][][]byte {
+		t.Helper()
+		entries := jsonEntries(t, document, selector(path+"[*]"))
+		if len(entries) != 2 {
+			t.Fatalf("%s has %d elements, want 2", path, len(entries))
+		}
+		groups := make([][][]byte, len(entries))
+		for i, entry := range entries {
+			groups[i] = [][]byte{entry}
+		}
+		return groups
+	}
+	request := func(path string) vcvalue.Object {
+		return vcvalue.Object{{Key: "operation", Value: "children"}, {Key: "path", Value: path}}
+	}
+	opened, err := cipher.JSONOpen(ctx, jsonPlan(), "profile", request("$.tags"), append(children("$.tags"), nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, values := range opened[:2] {
+		if len(values) != 1 {
+			t.Fatalf("a child opened to %q", values)
+		}
+		got = append(got, string(values[0]))
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, []string{`"a"`, `"b"`}) || len(opened) != 3 || len(opened[2]) != 0 {
+		t.Fatalf("the children of $.tags opened %q", opened)
+	}
+	diagnostic := func(name string, err error, code string) {
+		t.Helper()
+		var d *encrypt.Diagnostic
+		if !errors.Is(err, encrypt.ErrEncoding) || !errors.As(err, &d) || d.Code != code {
+			t.Fatalf("%s: %v, want ErrEncoding with %s", name, err, code)
+		}
+	}
+	_, err = cipher.JSONOpen(ctx, jsonPlan(), "profile", request("$.visits"), children("$.tags"))
+	diagnostic("$.tags' children under $.visits", err, "stack_encrypt::json_wrong_entry")
+	_, err = cipher.JSONOpen(ctx, jsonPlan(), "profile", request("$.visits"), children("$.visits"))
+	diagnostic("a child with members", err, "stack_encrypt::json_not_a_leaf")
+	_, err = cipher.JSONOpen(ctx, jsonPlan(), "profile", request("$.tags[*]"), children("$.tags"))
+	var d *encrypt.Diagnostic
+	if !errors.Is(err, encrypt.ErrEncoding) || !errors.As(err, &d) || d.Reason() != "json_path_wildcard" || d.Field() != "profile" {
+		t.Fatalf("a parent path with a wildcard: %v", err)
+	}
+	bounded := append(request("$.tags"), vcvalue.Field{Key: "wildcard_bound", Value: uint32(2)})
+	if _, err := cipher.JSONOpen(ctx, jsonPlan(), "profile", bounded, children("$.tags")); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("a children read with a bound: %v", err)
+	}
+}
+
+// jsonEntries are the entries of a sealed document that carry selector, as
+// eql_v4.json_tree_graft writes each: every element of an array shares its
+// selector, so these are an array's elements, in the document's stored
+// order.
+func jsonEntries(t *testing.T, document []byte, selector string) [][]byte {
+	t.Helper()
+	var doc struct {
+		H  string                       `json:"h"`
+		SV []map[string]json.RawMessage `json:"sv"`
+	}
+	if err := json.Unmarshal(document, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var out [][]byte
+	for j, entry := range doc.SV {
+		var s string
+		_ = json.Unmarshal(entry["s"], &s)
+		if s == selector {
+			entry["h"], _ = json.Marshal(doc.H)
+			entry["j"], _ = json.Marshal(j)
+			row, _ := json.Marshal(entry)
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
 // jsonEntry is the entry `col -> selector` returns for a sealed document,
 // as eql_v4.json_tree_graft writes it, or nil when no entry of the document
 // carries the selector.
@@ -398,9 +500,9 @@ func TestAJSONDocumentIsFoundAndReadUnderItsScopeAndBinding(t *testing.T) {
 		})
 	}
 
-	// A cipher with a binding prepares a read: its selector and its subtree
-	// tokens derive under the scope alone, so they are the tenant's. A query,
-	// and a node's token, take no binding.
+	// A cipher with a binding prepares a read: its selector, its subtree
+	// tokens and its children's token derive under the scope alone, so they
+	// are the tenant's. A query, and a child count's token, take no binding.
 	if got := selector(bound); got != selector(tenant) {
 		t.Errorf("a selector through a cipher with a binding is not the tenant's")
 	}
@@ -415,7 +517,18 @@ func TestAJSONDocumentIsFoundAndReadUnderItsScopeAndBinding(t *testing.T) {
 	if tenantTokens, err := subtree(tenant); err != nil || !slices.Equal(boundTokens, tenantTokens) {
 		t.Errorf("a subtree read's tokens through a cipher with a binding are not the tenant's: %v", err)
 	}
-	for _, operator := range []string{"children", "child_count", "eq_at"} {
+	children := func(cipher *encrypt.Cipher) ([]string, error) {
+		term, err := cipher.QueryTerm(ctx, jsonPlan(), "profile", "children", vcvalue.Object{{Key: "path", Value: "$.name"}})
+		return term.Text, err
+	}
+	boundToken, err := children(bound)
+	if err != nil {
+		t.Fatalf("a children read through a cipher with a binding: %v", err)
+	}
+	if tenantToken, err := children(tenant); err != nil || !slices.Equal(boundToken, tenantToken) {
+		t.Errorf("a children read's token through a cipher with a binding is not the tenant's: %v", err)
+	}
+	for _, operator := range []string{"child_count", "eq_at"} {
 		input := vcvalue.Object{{Key: "path", Value: "$.name"}}
 		if operator == "eq_at" {
 			input = append(input, vcvalue.Field{Key: "json", Value: []byte(`"Alice"`)})

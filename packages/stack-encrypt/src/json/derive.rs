@@ -31,7 +31,9 @@ use super::plain::{
 use super::plaintext::JsonPlaintext;
 use super::query::{group_of, JsonSelector, JsonSelectorSet, JsonSubtreeKey, Read};
 use super::shuffle;
-use super::{JsonDocument, JsonEntry, JsonExtracted, JsonHeader, JsonOptions, JsonSubtree, Tag};
+use super::{
+    JsonChild, JsonDocument, JsonEntry, JsonExtracted, JsonHeader, JsonOptions, JsonSubtree, Tag,
+};
 use crate::keyset::KeysetState;
 use crate::sem::TermError;
 use crate::target::{AeadContext, Decryption, Pending, Request, RequiredContext};
@@ -1554,6 +1556,60 @@ impl DecryptSource<JsonPlaintext> for JsonExtracted {
     }
 }
 
+/// One child's entry opens to its value: a scalar, or `{}` or `[]` for an
+/// empty container. See [`JsonSubtreeKey::open_child`] for the checks. The
+/// value is wiped when it is dropped. The context is required: it is the
+/// context the document was sealed under.
+impl DecryptSource<JsonPlaintext> for JsonChild {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
+        let context = context.into_inner();
+        let (node, key) = self.into_parts();
+        // A path with no wildcard derives one token, its node's, and no
+        // probe: the parent.
+        let parent = match key.reads.as_slice() {
+            [read] if !read.probe => read.clone(),
+            _ => {
+                return Decryption::failed(
+                    crate::refusal::Error::bad_source(crate::refusal::Reason::JsonPathWildcard)
+                        .into_crate(),
+                )
+            }
+        };
+        // The root and, under the sealed root, the top-level fields head
+        // the chain and carry no parent tag: no node's child.
+        if node.entry.p.is_none() {
+            return Decryption::failed(wrong("a child of the node the key names"));
+        }
+        let selectors = key.selectors;
+        Decryption::from_open(move |cipher| {
+            let shown = context.piece().clone();
+            let (request, aad) = match key_retrieval(&node.header, context.into_context()) {
+                Ok(parts) => parts,
+                Err(error) => return Pending::failed(cipher, error),
+            };
+            Pending::request(cipher, vec![request], move |responses| {
+                let retrieved = responses.next_retrieved_key()?;
+                let aes = leaf_cipher(&retrieved)?;
+                let opening = Opening {
+                    header: &node.header,
+                    aad: &aad,
+                    aes: &aes,
+                };
+                let row = ReturnedRow {
+                    entry: node.entry,
+                    slot: node.slot,
+                    depth: node.depth,
+                };
+                ChainWalk::new(vec![row], &selectors, &opening)
+                    .lone_child(&parent)
+                    .map(hand_over)
+            })
+            .under_context(shown.clone(), shown)
+        })
+    }
+}
+
 /// Open the rows of a read into the values of the nodes its tokens named,
 /// in the key's order, each still under its `Protected`. Shared by the
 /// three openings below, so they agree on every row and on the fallback:
@@ -1875,7 +1931,16 @@ impl<'k> ChainWalk<'k> {
         expected: ExpectedSelector<'_>,
         depth: u32,
     ) -> Result<(Protected<PlainJson>, Label), Error> {
-        let refused = || wrong("a node the walked path reaches");
+        self.place_row(at, depth)?;
+        let children = self.children(token)?;
+        let (opened, label, bytes) = self.open_row(at, &children, expected)?;
+        let value = self.value(opened, token, children, &bytes, depth)?;
+        Ok((value, label))
+    }
+
+    /// Mark the row at `at` placed, `depth` levels below the node its read
+    /// named, and check the depth the server reported for it.
+    fn place_row(&mut self, at: usize, depth: u32) -> Result<(), Error> {
         // No row is placed twice: below a node the chain follows only
         // children that open under its digest, which are the ones sealed
         // there, and a key's paths are disjoint, so no row is both a read's
@@ -1884,7 +1949,22 @@ impl<'k> ChainWalk<'k> {
         if self.rows[at].depth.is_some_and(|got| got != depth) {
             return Err(wrong("a row at the depth the chain gives it"));
         }
-        let children = self.children(token)?;
+        Ok(())
+    }
+
+    /// Open the row at `at` under the digest of `children`, the rows the
+    /// chain found beneath it, and check it is the node `expected` says:
+    /// the sealed root nowhere but at `$`, the child count its plaintext
+    /// records, and the selector its decrypted label gives it. Returns the
+    /// opened node, its label, and its selector bytes, which its children's
+    /// selectors extend.
+    fn open_row(
+        &self,
+        at: usize,
+        children: &[(usize, Tag)],
+        expected: ExpectedSelector<'_>,
+    ) -> Result<(Opened, Label, Protected<Vec<u8>>), Error> {
+        let refused = || wrong("a node the walked path reaches");
         let digest = cascade::children_digest(
             children
                 .iter()
@@ -1919,42 +1999,54 @@ impl<'k> ChainWalk<'k> {
         if self.selectors.of(bytes.clone())? != row.entry.s {
             return Err(refused());
         }
+        Ok((opened, label, bytes))
+    }
+
+    /// The value of an opened node whose token is `token`: the whole
+    /// document for the sealed root, the scalar, or the container built
+    /// from `children`, each placed and opened in turn.
+    fn value(
+        &mut self,
+        opened: Opened,
+        token: &Tag,
+        children: Vec<(usize, Tag)>,
+        bytes: &Protected<Vec<u8>>,
+        depth: u32,
+    ) -> Result<Protected<PlainJson>, Error> {
         if let Some(whole) = opened.whole {
-            return Ok((whole, label));
+            return Ok(whole);
         }
         match opened.kind {
             Kind::Object => {
                 let mut object = protected_object();
                 for (child, child_token) in children {
                     let (value, child_label) =
-                        self.child(child, token, &child_token, &bytes, depth)?;
+                        self.child(child, token, &child_token, bytes, depth)?;
                     let Label::Key(key) = child_label else {
                         return Err(shape("an object member"));
                     };
                     insert_member(&mut object, key, value);
                 }
-                Ok((object, label))
+                Ok(object)
             }
             Kind::Array => {
                 let mut array = protected_array(children.len());
                 for (i, (child, child_token)) in children.into_iter().enumerate() {
                     let (value, child_label) =
-                        self.child(child, token, &child_token, &bytes, depth)?;
+                        self.child(child, token, &child_token, bytes, depth)?;
                     if !matches!(child_label, Label::Index(at) if at == i as u64) {
                         return Err(shape("an array element in order"));
                     }
                     push_element(&mut array, value);
                 }
-                Ok((array, label))
+                Ok(array)
             }
-            _ => Ok((opened.scalar.ok_or_else(|| shape("a JSON scalar"))?, label)),
+            _ => opened.scalar.ok_or_else(|| shape("a JSON scalar")),
         }
     }
 
-    /// Place and open a child, and check that the token its self tag chose
-    /// (the member or the element rule) is the one its decrypted label
-    /// derives under its parent's: a member's by its key, an element's by
-    /// its index.
+    /// Place and open a child, and check its link to its parent
+    /// ([`check_parent_link`]).
     fn child(
         &mut self,
         child: usize,
@@ -1969,12 +2061,59 @@ impl<'k> ChainWalk<'k> {
             ExpectedSelector::UnderParent(parent_bytes),
             depth + 1,
         )?;
-        let s = self.rows[child].entry.s;
-        if labelled_token(parent_token, &s, &label).as_ref() != Some(child_token) {
-            return Err(wrong("a child under the rule its label names"));
-        }
+        check_parent_link(parent_token, &self.rows[child].entry.s, &label, child_token)?;
         Ok((value, label))
     }
+
+    /// Open the walk's one row as a child of the node `parent` names, read
+    /// on its own: what `json_tree_children` returned for that node's
+    /// token. The row is placed one level below the parent and opened
+    /// under the digest of no children, so a scalar or an empty container
+    /// opens and a container with children does not
+    /// ([`Error::JsonNotALeaf`]). Its selector must be the parent's path
+    /// extended by its decrypted label, and its self tag that of the token
+    /// the label derives under the parent's ([`check_parent_link`]).
+    fn lone_child(&mut self, parent: &Read) -> Result<Protected<PlainJson>, Error> {
+        let parent_bytes = parent.path.protected_selector_bytes();
+        self.place_row(0, 1)?;
+        let (opened, label, bytes) = self
+            .open_row(0, &[], ExpectedSelector::UnderParent(&parent_bytes))
+            .map_err(|error| match error {
+                Error::Aead => Error::JsonNotALeaf,
+                other => other,
+            })?;
+        let entry = &self.rows[0].entry;
+        // An element's ordinal is its index, which its label names. A
+        // member's ordinal is a random draw a lone row does not carry, and
+        // its token takes none (`member_token`), so the member rule finds a
+        // member whatever ordinal is passed.
+        let ordinal = match &label {
+            Label::Index(index) => u32::try_from(*index).unwrap_or(u32::MAX),
+            _ => 0,
+        };
+        let child_token = hit_token(&self.opening.header.iv, &parent.token, entry, ordinal)
+            .ok_or_else(|| wrong("a child the member or element rule names"))?;
+        check_parent_link(&parent.token, &entry.s, &label, &child_token)?;
+        self.value(opened, &child_token, Vec::new(), &bytes, 1)
+    }
+}
+
+/// The link from a child to its parent: the token the child's self tag
+/// chose, `child_token` (the member or the element rule, [`hit_token`]),
+/// must be the one its decrypted `label` derives under its parent's
+/// token, `parent_token`: a member's by its key, an element's by its index.
+/// The label is authenticated and the self tag is not, so a self tag that
+/// names another position, or the other rule, is refused here.
+fn check_parent_link(
+    parent_token: &Tag,
+    selector: &Tag,
+    label: &Label,
+    child_token: &Tag,
+) -> Result<(), Error> {
+    if labelled_token(parent_token, selector, label).as_ref() != Some(child_token) {
+        return Err(wrong("a child under the rule its label names"));
+    }
+    Ok(())
 }
 
 /// Whether a node with `label` is the one the concrete `path` names by its

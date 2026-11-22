@@ -174,6 +174,12 @@ type JSONSelection[E ~[]byte] struct{ _ E }
 func (JSONSelection[E]) Selector() JSONSelector                          { return "" }
 func (JSONSelection[E]) Open(context.Context, []*E) ([]JSONValue, error) { return nil, nil }
 
+// JSONChildren is a prepared json_tree_children on a JSONSearch field.
+type JSONChildren[E ~[]byte] struct{ _ E }
+
+func (JSONChildren[E]) Token() JSONToken                                     { return "" }
+func (JSONChildren[E]) Open(context.Context, []E) ([]json.RawMessage, error) { return nil, nil }
+
 // JSONRead is a prepared subtree read on a JSONSearch field.
 type JSONRead[E ~[]byte] struct{ _ E }
 
