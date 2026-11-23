@@ -143,23 +143,28 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ### Changed
 
-- **Decrypt uses about a quarter of the CPU it did in rc.6.** The guest's
+- **Decrypt uses about a tenth of the CPU it did in rc.6.** The guest's
   runtime was built with wazero's `WithCloseOnContextDone`. That option
   puts a call back into Go at the top of every loop the guest runs, and the
   guest's cryptography is almost all loops. The runtime no longer sets the
   option, and the guest is now built at `opt-level = 3` rather than for
-  size. These figures are medians of 9 calls on one Apple silicon laptop.
-  - 100 rows of 14 columns, against ZeroKMS: about 410 ms of CPU before,
-    about 105 ms now. Wall time falls from about 670 ms to 340.
-  - 100 rows of one 2 KB text or JSON column: 90 to 100 ms of CPU before,
-    about 25 ms now.
+  size. These figures are medians of 9 calls on one Apple silicon laptop,
+  with its CPU clock held steady.
+  - 100 rows of 14 columns, against ZeroKMS: about 400 ms of CPU before,
+    about 39 ms now. Wall time falls from about 660 ms to 280.
+  - 100 rows of one 2 KB text or JSON column: 90 to 105 ms of CPU before,
+    about 8 ms now.
   - The EQL build of the guest is about 1.9 MB larger: 6.8 MB, against
     4.9 MB.
   - The option's calls into Go were also the points where the Go
     scheduler could stop a running guest call. A garbage collector
-    stop-the-world pause now waits for the guest call in progress. While
-    100 rows of 14 columns decrypt, the longest such pause grows from
-    about 0.3 ms to 10 to 25 ms.
+    stop-the-world pause waits for the guest call in progress. So the
+    guest now yields to the host every 64 data keys while it derives keys
+    or opens or seals a batch (#1762). Decrypting 1,410 values against
+    ZeroKMS, its longest step falls from 42 ms to 11 ms, and most steps
+    take 1 to 2 ms. Two steps are still long: the one that builds a batch
+    (36 ms to encrypt 1,410 values, which derives every search term) and
+    the one that decodes each ZeroKMS response.
 - **A stuck call is no longer interrupted.** A call that runs on 30 seconds
   after its context ended is a bug. The option that interrupted it is gone,
   so it now runs on.

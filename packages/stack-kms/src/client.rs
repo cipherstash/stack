@@ -14,7 +14,7 @@ use vitaminc::random::{Generatable, SafeRand};
 use crate::connection::HttpConnection;
 use crate::connection::ZeroKMSConnection;
 use crate::errors::{Error, GenerateKeyError, LoadKeysetError, RetrieveKeyError};
-use crate::futures::map_async_chunked;
+use crate::futures::{map_async_chunked, yield_now, YIELD_EVERY};
 use crate::key::{ClientKey, DataKey, DataKeyWithTag, IndexKey};
 use crate::payload::{GenerateKeyPayload, RetrieveKeyPayload};
 
@@ -194,11 +194,25 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
 
                 tracing::trace!(target: "stack_kms::client", operation, "received {} keys - creating data keys", keys.len());
 
-                chunk
-                    .iter()
-                    .zip(keys)
-                    .map(|(spec, item)| map_key(spec, item))
-                    .collect::<Result<Vec<_>, E>>()
+                // Deriving a key from its key material is the costly part of
+                // a batch (a recipher re-encryption and a hash per key), so
+                // the loop yields to the runtime every `YIELD_EVERY` keys. A
+                // host that cannot preempt the work (a wasm guest) gets
+                // control back between chunks.
+                //
+                // That is every `YIELD_EVERY` keys with one request in
+                // flight, as a wasm guest has. With more, `buffered` passes
+                // a yield on only once two requests have yielded or it has
+                // polled them all, so about twice as many keys, or more,
+                // are derived before the runtime gets control back.
+                let mut out = Vec::with_capacity(keys.len());
+                for (i, (spec, item)) in chunk.iter().zip(keys).enumerate() {
+                    if i > 0 && i % YIELD_EVERY == 0 {
+                        yield_now().await;
+                    }
+                    out.push(map_key(spec, item)?);
+                }
+                Ok(out)
             },
             self.max_keys_per_req,
             self.max_concurrent_reqs,

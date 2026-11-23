@@ -68,6 +68,10 @@ type Client struct {
 	// caller past the cap waits here for one rather than being refused by
 	// the guest.
 	paused chan struct{}
+	// onYield, when set, runs each time a step pauses to yield rather than
+	// to reach ZeroKMS (see step.go), on the caller's goroutine, before the
+	// host resumes the step. Only tests set it.
+	onYield func()
 	// closed refuses further calls: Close ran, or a trapped or stuck call
 	// closed the client (see Client.step).
 	closed bool
@@ -510,6 +514,11 @@ func (c *Client) callKMS(ctx context.Context, f stepFunc) ([]byte, error) {
 // keyset lookup): which operations reach ZeroKMS is known only once the
 // guest has run. A source that fails is reported only if the guest asks.
 //
+// An operation without kms takes no slot, because it cannot pause. It
+// never reaches ZeroKMS, and it does not yield either: it asks for no
+// keys, and the guest yields only once a batch's items have taken at least
+// 64 keys (see step.go).
+//
 // The caller's context governs everything the host waits on: the slot, the
 // token fetch, the wait for the lock and the requests, which run under it.
 // A wedged client (see Client.step) ends the first three as well, and the
@@ -518,7 +527,8 @@ func (c *Client) callKMS(ctx context.Context, f stepFunc) ([]byte, error) {
 // step). An operation whose caller gives up between steps is aborted,
 // which drops it in the guest with everything it held, and the call fails
 // with the context's error; one abandoned while it waited on ZeroKMS
-// matches ErrTransport too.
+// matches ErrTransport too. One abandoned at a yield does not: it asked
+// for no requests, so none was sent or about to be.
 func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -570,23 +580,35 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 		if io == nil {
 			return settle(ctx, out, err)
 		}
+		yield := len(io.requests) == 0
 		// A caller that gave up while the guest ran sends no request.
 		if err := ctx.Err(); err != nil {
 			io.wipe()
 			c.abort(io.handle)
-			return nil, fmt.Errorf("%w: %w", err, ErrTransport)
+			return nil, abandoned(err, yield)
 		}
-		responses, err = c.transport.performStep(ctx, io)
+		if yield {
+			// A yield: nothing to perform. The lock was released when the
+			// step returned, so other callers, and the garbage collector,
+			// had their turn.
+			if c.onYield != nil {
+				c.onYield()
+			}
+			responses, err = vcffi.Marshal([]any{})
+		} else {
+			responses, err = c.transport.performStep(ctx, io)
+		}
 		if err != nil {
 			c.abort(io.handle)
 			return nil, err
 		}
 		// The requests ran under the caller's context, so one it cancelled
 		// came back a transport failure: the guest is not resumed with it.
+		// Nor is a yield whose caller gave up meanwhile.
 		if err := ctx.Err(); err != nil {
 			wipe(responses)
 			c.abort(io.handle)
-			return nil, fmt.Errorf("%w: %w", err, ErrTransport)
+			return nil, abandoned(err, yield)
 		}
 		h, pending := io.handle, responses
 		handle, resumed = h, true
@@ -595,6 +617,18 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 			return inst.call(ctx, inst.resume, scalar(h), buf(pending))
 		}
 	}
+}
+
+// abandoned is how an operation fails when its caller gave up at a pause:
+// with the context's error, ctxErr. A pause that asked for requests also
+// matches ErrTransport, because they were sent or about to be. A yield
+// asked for none, so its error is the context's alone, as it would be had
+// the batch run to its end in one step (see settle).
+func abandoned(ctxErr error, yield bool) error {
+	if yield {
+		return ctxErr
+	}
+	return fmt.Errorf("%w: %w", ctxErr, ErrTransport)
 }
 
 // settle is how an operation ends for its caller. A call that failed after

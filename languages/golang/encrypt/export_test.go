@@ -365,3 +365,8 @@ func (cph *Cipher) AuditUncheckedForTest(facts map[string]any) *Cipher {
 	next.audit = func() map[string]any { return facts }
 	return next
 }
+
+// OnYield sets f to run each time one of c's operations pauses to yield,
+// on the caller's goroutine and before the host resumes the operation; nil
+// removes it. Set it while no call is in progress.
+func OnYield(c *Client, f func()) { c.onYield = f }
