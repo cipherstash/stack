@@ -25,7 +25,11 @@ async function invoke(
     adapter,
     `
     console.log(JSON.stringify(${JSON.stringify({ id: 'request-1', method: 'exec', command })}));
-    process.stdin.once('data', () => process.exit(0));
+    let reply = '';
+    process.stdin.on('data', chunk => {
+      reply += chunk;
+      if (reply.includes('\\n')) process.exit(0);
+    });
   `,
   )
   return runMigrator({
@@ -158,3 +162,19 @@ test.each(['openat', 'stat'])(
     expect(report.manifest.documentationExposure?.reviewRequired).toBe(true)
   },
 )
+
+test('broker evidence identifies the truncated result sent to the adapter', async () => {
+  const response = {
+    exitCode: 0,
+    stdout: `${'x'.repeat(220_000)}TAIL_DOCUMENT`,
+    stderr: '',
+  }
+  const outcome = await invoke(['cat', 'package-lock.json'], response)
+  expect(outcome.documentationExposure?.evidenceComplete).toBe(true)
+  expect(
+    outcome.brokerEvidence?.[0]?.result.stdout.endsWith('TAIL_DOCUMENT'),
+  ).toBe(true)
+  const delivered = outcome.brokerEvidence?.[0]?.deliveredResult?.stdout
+  expect(delivered).toMatch(/output truncated/)
+  expect(delivered).not.toContain('TAIL_DOCUMENT')
+})

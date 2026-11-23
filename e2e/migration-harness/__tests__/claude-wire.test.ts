@@ -27,3 +27,19 @@ test('readMessages still fails on a single message over 1 MiB', async () => {
   await new Promise((resolve) => stream.on('end', resolve))
   expect(fail).toHaveBeenCalledWith(Error('Protocol output limit exceeded'))
 })
+
+test('readMessages accepts a chunk spanning two individually valid messages', () => {
+  const stream = new PassThrough()
+  const receive = vi.fn()
+  const fail = vi.fn()
+  readMessages(stream, receive, fail)
+  const first = { text: 'x'.repeat(1024 * 1024 - 20) }
+  const second = { text: 'y'.repeat(64) }
+  const line = JSON.stringify(first)
+  stream.write(line.slice(0, -5))
+  stream.end(`${line.slice(-5)}\n${JSON.stringify(second)}\n`)
+  expect(receive).toHaveBeenCalledTimes(2)
+  expect(receive.mock.calls[0]?.[0]?.text.length).toBe(first.text.length)
+  expect(receive.mock.calls[1]?.[0]).toEqual(second)
+  expect(fail).not.toHaveBeenCalled()
+})

@@ -7,31 +7,43 @@
  * @param {(error:Error)=>void} fail
  */
 export function readMessages(stream, receive, fail) {
+  const maxMessageLength = 1024 * 1024
   let buffer = ''
+  let failed = false
+  /** @param {Error} error */
+  function reject(error) {
+    if (failed) return
+    failed = true
+    buffer = ''
+    fail(error)
+  }
   stream.setEncoding('utf8')
   stream.on('data', (chunk) => {
+    if (failed) return
     buffer += chunk
-    if (buffer.length > 1024 * 1024) {
-      fail(Error('Protocol output limit exceeded'))
-      return
-    }
     for (;;) {
       const end = buffer.indexOf('\n')
       if (end < 0) break
+      if (end > maxMessageLength) {
+        reject(Error('Protocol output limit exceeded'))
+        return
+      }
       const line = buffer.slice(0, end)
       buffer = buffer.slice(end + 1)
       try {
         receive(JSON.parse(line))
       } catch {
-        fail(Error('Invalid protocol message'))
+        reject(Error('Invalid protocol message'))
         return
       }
     }
+    if (buffer.length > maxMessageLength)
+      reject(Error('Protocol output limit exceeded'))
   })
   stream.on('end', () => {
-    if (buffer.trim()) fail(Error('Unfinished protocol message'))
+    if (buffer.trim()) reject(Error('Unfinished protocol message'))
   })
-  stream.on('error', fail)
+  stream.on('error', reject)
 }
 
 /** @param {unknown} command @returns {command is string[]} */

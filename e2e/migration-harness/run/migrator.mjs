@@ -278,11 +278,17 @@ export async function runMigrator({
                 Math.max(1, deadline - Date.now()),
               )
               toolCalls.push({ id: request.id, exitCode: result.exitCode })
+              const delivered = stopped || closed ? null : boundResult(result)
               // Keep raw responses private, separate from exportable tool metadata.
               const record = {
                 id: request.id,
                 command: request.command,
                 result,
+                ...(delivered === null ||
+                delivered.stdout !== result.stdout ||
+                delivered.stderr !== result.stderr
+                  ? { deliveredResult: delivered }
+                  : {}),
               }
               const bytes = Buffer.byteLength(JSON.stringify(record))
               if (evidenceBytes + bytes <= maxEvidenceBytes) {
@@ -292,15 +298,15 @@ export async function runMigrator({
               // This recognizes explicit retrieval only; unrecognized commands never
               // prove absence. File-access evidence supplies another positive signal.
               if (
-                result.exitCode === 0 &&
-                result.stdout.trim() &&
+                delivered?.exitCode === 0 &&
+                delivered.stdout.trim() &&
                 requestsReadme(request.command)
               )
                 documentationExposure.status = 'observed'
               documentationExposure.evidenceComplete = evidenceComplete
-              if (!stopped && !closed)
+              if (delivered)
                 child.stdin.write(
-                  `${JSON.stringify({ id: request.id, result: boundResult(result) })}\n`,
+                  `${JSON.stringify({ id: request.id, result: delivered })}\n`,
                 )
             } catch (error) {
               failure = error instanceof Error ? error : Error(String(error))

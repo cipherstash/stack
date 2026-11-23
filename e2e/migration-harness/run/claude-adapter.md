@@ -59,6 +59,9 @@ contain provider details. The broker transcript records the actual isolated
 command requests and runtime metadata; the broker also returns tool-call exit codes.
 `broker-evidence.json` separately retains request IDs, commands and responses as
 private evidence (mode `0600`), referenced by `manifest.artifacts.brokerEvidence`.
+Each record keeps the raw response in `result`. When the reply is truncated,
+`deliveredResult` contains the exact reply the broker sends to the adapter.
+A null `deliveredResult` means the broker skipped sending the reply.
 It is not inline Editor evidence and must be redacted before any future export.
 Retention is limited to 8 MiB per Run; records that exceed the remaining budget
 are omitted and the artifact and manifest report incomplete evidence.

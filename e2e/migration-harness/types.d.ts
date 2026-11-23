@@ -31,6 +31,8 @@ export interface MigratorResult {
     id: string
     command: string[]
     result: IsolationResult
+    /** Exact reply when it differs from result, or null if forwarding was skipped. */
+    deliveredResult?: IsolationResult | null
   }>
   documentationExposure?: DocumentationExposure
   runtime?: {
