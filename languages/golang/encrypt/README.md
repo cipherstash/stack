@@ -143,8 +143,9 @@ A client closes itself, and every later call returns `ErrState`, only when
 the guest's state is unknown. Either the guest trapped, or a call ran on
 for 30 seconds after its `ctx` ended, which means a bug. Nothing can
 interrupt such a call, so its own caller waits until it returns. Every
-other call, and `Close`, returns `ErrState` at once. A service that sees
-`ErrState` from a client it did not close builds a new one.
+other call returns `ErrState` at once, and `Close` returns it without
+waiting for the stuck call. A service that sees `ErrState` from a client
+it did not close builds a new one.
 
 Every other setting is a functional option with a default:
 

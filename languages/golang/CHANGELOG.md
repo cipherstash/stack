@@ -166,9 +166,12 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   - The stuck call's own caller now waits until the call returns. Before,
     it got an error about 30 seconds after its context ended.
   - The client still closes. The calls queued behind the stuck call, and
-    every later call, return `ErrState` at once.
-  - `Close` returns `ErrState` at once and releases the credentials. If
-    the call returns, the guest's memory is wiped and released.
+    every later call, return `ErrState` at once. That includes a call
+    waiting for one of the 64 slots for calls that reach ZeroKMS, or
+    for its token.
+  - `Close` releases the credentials and returns `ErrState` without
+    waiting for the stuck call. If the call returns, the guest's memory
+    is wiped and released.
 - An `eq` query on a `TextOrdOre` field of text that ends in NUL, or is too
   long for block ORE, is refused before any key is requested, as an
   ordering of the same text is (#1668). It was refused with the same error

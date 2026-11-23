@@ -52,14 +52,16 @@ type Client struct {
 	// the guest is treated as stuck and the client closed. guest.StuckAfter;
 	// tests shorten it.
 	stuck time.Duration
-	// wedged is closed, once, when a step is still running stuck after its
-	// caller's context ended (see Client.step). The runtime cannot interrupt
-	// it (it is built without WithCloseOnContextDone, see newInstance), and
-	// it holds mu, so everything that would wait for mu waits on this too
-	// and leaves with ErrState. The stuck step releases the instance itself
-	// if it ever returns.
-	wedged    chan struct{}
-	wedgeOnce sync.Once
+	// wedged ends, once, when a step is still running stuck after its
+	// caller's context ended (see Client.step); markWedged ends it. The
+	// runtime cannot interrupt the step (it is built without
+	// WithCloseOnContextDone, see newInstance), and the step holds mu. So
+	// every wait an operation makes before its step (a paused slot, its
+	// token, mu) also ends when wedged does, and the operation fails with
+	// ErrState. The stuck step releases the instance itself if it ever
+	// returns.
+	wedged     context.Context
+	markWedged context.CancelFunc
 	// paused bounds the operations that may be paused in the guest at once
 	// to its cap (maxPaused): an operation that can reach ZeroKMS takes a
 	// slot before its first step and gives it back when it ends, so a
@@ -278,7 +280,8 @@ func consumeUnresolved(creds Credentials) {
 // instance, not the client: a cleanup whose argument reaches its object
 // keeps that object alive forever.
 func newClient(inst *instance, t *transport) *Client {
-	c := &Client{inst: inst, transport: t, stuck: guest.StuckAfter, paused: make(chan struct{}, maxPaused), wedged: make(chan struct{})}
+	wedged, markWedged := context.WithCancel(context.Background())
+	c := &Client{inst: inst, transport: t, stuck: guest.StuckAfter, paused: make(chan struct{}, maxPaused), wedged: wedged, markWedged: markWedged}
 	c.cleanup = runtime.AddCleanup(c, func(inst *instance) { _ = inst.release() }, inst)
 	return c
 }
@@ -386,11 +389,12 @@ func encodeConfig(cfg initConfig) ([]byte, error) {
 //
 // A client closed by a call that ran on after its context ended (see
 // [Client]) cannot free its guest while that call runs in the guest's
-// memory. Close then releases the credentials and returns [ErrState] at
-// once. The call frees the guest, wiped, if it ever returns. A Close after
-// that returns nil.
+// memory. Close then releases the credentials and returns [ErrState]
+// without waiting for that call. Releasing the credentials can wait for a
+// token refresh already sent, as it does on any Close. The call frees the
+// guest, wiped, if it ever returns. A Close after that returns nil.
 func (c *Client) Close() error {
-	if c.mu.AcquireUnless(context.Background(), c.wedged) != nil {
+	if c.mu.AcquireUnless(context.Background(), c.wedged.Done()) != nil {
 		return c.closeWedged()
 	}
 	defer c.mu.Unlock()
@@ -507,7 +511,9 @@ func (c *Client) callKMS(ctx context.Context, f stepFunc) ([]byte, error) {
 // guest has run. A source that fails is reported only if the guest asks.
 //
 // The caller's context governs everything the host waits on: the slot, the
-// token fetch, the wait for the lock and the requests, which run under it. It
+// token fetch, the wait for the lock and the requests, which run under it.
+// A wedged client (see Client.step) ends the first three as well, and the
+// call fails with ErrState: its step could only fail behind the stuck one. It
 // never reaches the guest, which runs each step under guest.Detach (see
 // step). An operation whose caller gives up between steps is aborted,
 // which drops it in the guest with everything it held, and the call fails
@@ -517,6 +523,9 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if c.wedged.Err() != nil {
+		return nil, errStuck
+	}
 	token, tokenErr := "", error(nil)
 	if kms {
 		select {
@@ -524,14 +533,19 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 			defer func() { <-c.paused }()
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		case <-c.wedged.Done():
+			return nil, errStuck
 		}
 	}
 	if kms && c.transport != nil {
-		token, tokenErr = c.transport.fetchToken(ctx)
+		token, tokenErr = c.fetchToken(ctx)
 		// A caller that gave up waiting on its token never starts the
-		// operation.
+		// operation, and nor does one the client wedged under.
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		if c.wedged.Err() != nil {
+			return nil, errStuck
 		}
 	}
 	step, resumed := f, false
@@ -605,8 +619,19 @@ func settle(ctx context.Context, out []byte, err error) ([]byte, error) {
 	return out, nil
 }
 
+// fetchToken fetches an operation's token under its caller's context, and
+// stops when the client is wedged. A stopped fetch also lets go of the
+// credentials, so a Close of the wedged client does not wait for it.
+func (c *Client) fetchToken(ctx context.Context) (string, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(c.wedged, cancel)
+	defer stop()
+	return c.transport.fetchToken(ctx)
+}
+
 // wedge marks the client unusable while a stuck step holds its lock.
-func (c *Client) wedge() { c.wedgeOnce.Do(func() { close(c.wedged) }) }
+func (c *Client) wedge() { c.markWedged() }
 
 // abort drops a paused operation in the guest, for a caller that gave up
 // on it between steps. It waits for the lock however long that takes, and
@@ -616,7 +641,7 @@ func (c *Client) wedge() { c.wedgeOnce.Do(func() { close(c.wedged) }) }
 // A wedged client is the exception: the step holding the lock may never
 // return, and the paused operation is dropped with the instance.
 func (c *Client) abort(handle uint64) {
-	if c.mu.AcquireUnless(context.Background(), c.wedged) != nil {
+	if c.mu.AcquireUnless(context.Background(), c.wedged.Done()) != nil {
 		return
 	}
 	defer c.mu.Unlock()
@@ -660,7 +685,7 @@ var errStuck = fmt.Errorf("%w: %w, and the client is closed", ErrState, guest.Er
 // itself runs on, and its own caller waits for it. If it returns, the
 // instance is released here, and its key material goes with its memory.
 func (c *Client) step(ctx context.Context, token string, tokenErr error, f stepFunc) ([]byte, *ioStep, error) {
-	if err := c.mu.AcquireUnless(ctx, c.wedged); err != nil {
+	if err := c.mu.AcquireUnless(ctx, c.wedged.Done()); err != nil {
 		if errors.Is(err, guest.ErrAbandoned) {
 			return nil, nil, errStuck
 		}

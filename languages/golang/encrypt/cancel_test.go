@@ -249,12 +249,12 @@ func TestAStuckStepFailsEveryoneWaitingBehindIt(t *testing.T) {
 	select {
 	case err := <-queued:
 		t.Fatalf("a call behind a running step returned before the backstop: %v", err)
-	case <-c.wedged:
+	case <-c.wedged.Done():
 		t.Fatal("the backstop fired before the queued caller could be checked; lengthen c.stuck")
 	case <-time.After(30 * time.Millisecond):
 	}
 	select {
-	case <-c.wedged:
+	case <-c.wedged.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("the backstop did not wedge the client")
 	}
@@ -309,6 +309,94 @@ func TestAStuckStepFailsEveryoneWaitingBehindIt(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Errorf("Close after the release: %v, want nil (idempotent)", err)
 	}
+}
+
+// An operation waits for a paused slot and for its token before it waits for
+// the lock. A wedged client ends those waits too, so a caller with no
+// deadline gets ErrState rather than waiting, and a new call fetches no
+// token. Each client here is wedged with no stuck step, so the test
+// releases its instance itself.
+func TestAWedgedClientEndsEveryWaitBeforeAStep(t *testing.T) {
+	wedgedClient := func(t *testing.T, token tokenSource) (*Client, *switchable) {
+		t.Helper()
+		rt := &switchable{rt: unauthorized}
+		c := cancelClient(t, rt, token)
+		t.Cleanup(func() { _ = c.release() })
+		return c, rt
+	}
+	wantStuck := func(t *testing.T, errs <-chan error) {
+		t.Helper()
+		select {
+		case err := <-errs:
+			if !errors.Is(err, ErrState) {
+				t.Fatalf("a call on the wedged client: %v, want ErrState", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("a call waited on after the client was wedged")
+		}
+	}
+
+	t.Run("a full slot pool", func(t *testing.T) {
+		c, rt := wedgedClient(t, staticToken("t"))
+		// Every slot is held by an operation that is not coming back.
+		for range maxPaused {
+			c.paused <- struct{}{}
+		}
+		errs := make(chan error, 1)
+		go func() { errs <- cipherInit(context.Background(), c) }()
+		select {
+		case err := <-errs:
+			t.Fatalf("a call with every slot held returned before the wedge: %v", err)
+		case <-time.After(30 * time.Millisecond):
+		}
+		c.wedge()
+		wantStuck(t, errs)
+		if n := rt.sent.Load(); n != 0 {
+			t.Fatalf("%d request(s) sent", n)
+		}
+	})
+
+	t.Run("a token fetch in flight", func(t *testing.T) {
+		fetching := make(chan struct{})
+		stopped := make(chan struct{})
+		c, rt := wedgedClient(t, tokenFunc(func(ctx context.Context) (string, error) {
+			close(fetching)
+			<-ctx.Done()
+			close(stopped)
+			return "", ctx.Err()
+		}))
+		errs := make(chan error, 1)
+		go func() { errs <- cipherInit(context.Background(), c) }()
+		<-fetching
+		c.wedge()
+		wantStuck(t, errs)
+		select {
+		case <-stopped:
+		default:
+			t.Error("the token fetch was not stopped")
+		}
+		if n := rt.sent.Load(); n != 0 {
+			t.Fatalf("%d request(s) sent", n)
+		}
+	})
+
+	t.Run("a new call", func(t *testing.T) {
+		var asked atomic.Int32
+		c, rt := wedgedClient(t, tokenFunc(func(context.Context) (string, error) {
+			asked.Add(1)
+			return "t", nil
+		}))
+		c.wedge()
+		errs := make(chan error, 1)
+		go func() { errs <- cipherInit(context.Background(), c) }()
+		wantStuck(t, errs)
+		if n := asked.Load(); n != 0 {
+			t.Errorf("the token was fetched %d time(s) for a call on a wedged client", n)
+		}
+		if n := rt.sent.Load(); n != 0 {
+			t.Fatalf("%d request(s) sent", n)
+		}
+	})
 }
 
 // A guest call whose context has already ended still runs: the runtime does
