@@ -152,10 +152,11 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.Lo
 	//
 	// The cost of leaving it off: the Go scheduler cannot preempt native
 	// wasm code, and those calls into Go were the guest's only safe points.
-	// A stop-the-world GC pause now waits for the running guest step, so
-	// the pause can be as long as one step (about 10 to 25 ms for a
-	// 1,400-value decrypt, against 0.3 ms with the option). Keeping each
-	// step short bounds it.
+	// A stop-the-world GC pause waits for the running guest step. So the
+	// engine keeps every step short: it yields to the host every 64 data
+	// keys while it derives keys or opens or seals a batch, and the host
+	// resumes it at once (see step.go). A pause then waits for one chunk,
+	// not a whole batch.
 	config := wazero.NewRuntimeConfig().
 		WithCompilationCache(compilationCache())
 	runtime := wazero.NewRuntimeWithConfig(ctx, config)

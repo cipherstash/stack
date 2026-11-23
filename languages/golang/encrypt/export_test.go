@@ -365,3 +365,6 @@ func (cph *Cipher) AuditUncheckedForTest(facts map[string]any) *Cipher {
 	next.audit = func() map[string]any { return facts }
 	return next
 }
+
+// Yields is how many steps of c's operations paused to yield.
+func Yields(c *Client) uint64 { return c.yields.Load() }

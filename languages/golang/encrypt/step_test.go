@@ -295,6 +295,18 @@ func TestAnAbortedInitLeavesNoKeyInGuestMemory(t *testing.T) {
 	}
 }
 
+// A yield is a step with an empty list of requests: the host resumes it
+// with none.
+func TestAYieldStepDecodesWithNoRequests(t *testing.T) {
+	step, err := decodeStep(marshalStep(t, map[string]any{"handle": uint64(7), "requests": []any{}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if step.handle != 7 || len(step.requests) != 0 {
+		t.Fatalf("decoded %+v, want handle 7 and no requests", step)
+	}
+}
+
 // A step the host cannot decode is refused, never performed.
 func TestAMalformedStepIsRefused(t *testing.T) {
 	for _, raw := range [][]byte{nil, {0xff}, marshalStep(t, map[string]any{"handle": uint64(1)})} {

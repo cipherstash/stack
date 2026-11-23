@@ -18,12 +18,19 @@ import (
 // runs, never across a network round trip, and a caller that gives up
 // between two steps aborts the operation (se_abort) while the guest is not
 // running at all.
+//
+// A step can also pause with no requests: a yield. The guest's engine yields
+// every few dozen data keys while it opens or seals a batch, because the Go
+// runtime cannot preempt a running guest call: its garbage collector's
+// stop-the-world pause, and every other caller of the client, would otherwise
+// wait for the whole batch. The host resumes a yield at once, with no
+// responses, and the client's lock is released in between like any step.
 
 // stepFunc runs one step of an operation in the guest, under ctx.
 type stepFunc func(ctx context.Context, inst *instance) ([]byte, error)
 
 // ioStep is a paused operation's step, as the guest hands it over: the
-// operation's handle and the requests it waits on.
+// operation's handle and the requests it waits on, none for a yield.
 type ioStep struct {
 	handle   uint64
 	requests []ioRequest
@@ -84,7 +91,7 @@ func decodeStep(raw []byte) (*ioStep, error) {
 		return nil, errMalformedStep
 	}
 	step := &ioStep{}
-	var sawHandle bool
+	var sawHandle, sawRequests bool
 	for _, f := range obj {
 		switch f.Key {
 		case "handle":
@@ -98,6 +105,7 @@ func decodeStep(raw []byte) (*ioStep, error) {
 			if !ok {
 				return nil, errMalformedStep
 			}
+			sawRequests = true
 			for _, item := range items {
 				r, ok := decodeRequest(item)
 				if !ok {
@@ -111,7 +119,8 @@ func decodeStep(raw []byte) (*ioStep, error) {
 			return nil, errMalformedStep
 		}
 	}
-	if !sawHandle || len(step.requests) == 0 {
+	// An empty list is a yield; a missing one is malformed.
+	if !sawHandle || !sawRequests {
 		step.wipe()
 		return nil, errMalformedStep
 	}

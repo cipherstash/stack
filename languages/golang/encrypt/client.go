@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
@@ -59,11 +60,13 @@ type Client struct {
 	wedged    chan struct{}
 	wedgeOnce sync.Once
 	// paused bounds the operations that may be paused in the guest at once
-	// to its cap (maxPaused): an operation that can reach ZeroKMS takes a
-	// slot before its first step and gives it back when it ends, so a
-	// caller past the cap waits here for one rather than being refused by
-	// the guest.
+	// to its cap (maxPaused): every operation takes a slot before its first
+	// step and gives it back when it ends, so a caller past the cap waits
+	// here for one rather than being refused by the guest.
 	paused chan struct{}
+	// yields counts the steps that paused to yield rather than to reach
+	// ZeroKMS (see step.go).
+	yields atomic.Uint64
 	// closed refuses further calls: either Close ran, or a stuck or
 	// trapped call took the module down (see Client.step).
 	// released is the runtime's own state, tracked apart from it because
@@ -495,13 +498,13 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 		return nil, err
 	}
 	token, tokenErr := "", error(nil)
-	if kms {
-		select {
-		case c.paused <- struct{}{}:
-			defer func() { <-c.paused }()
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+	// Every operation takes a paused slot, not only one that can reach
+	// ZeroKMS: any operation can pause to yield (see step.go).
+	select {
+	case c.paused <- struct{}{}:
+		defer func() { <-c.paused }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 	if kms && c.transport != nil {
 		token, tokenErr = c.transport.fetchToken(ctx)
@@ -539,7 +542,15 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 			c.abort(io.handle)
 			return nil, fmt.Errorf("%w: %w", err, ErrTransport)
 		}
-		responses, err = c.transport.performStep(ctx, io)
+		if len(io.requests) == 0 {
+			// A yield: nothing to perform. The lock was released when the
+			// step returned, so other callers, and the garbage collector,
+			// had their turn.
+			c.yields.Add(1)
+			responses, err = vcffi.Marshal([]any{})
+		} else {
+			responses, err = c.transport.performStep(ctx, io)
+		}
 		if err != nil {
 			c.abort(io.handle)
 			return nil, err
