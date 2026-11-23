@@ -112,8 +112,8 @@
 //!   none today. This is what shows the distinguishers can see what the
 //!   clauses describe, so that the positive control passing means something.
 //! - **The harness itself.** The chain functions agree with the crate's own
-//!   walk (`JsonDocument::subtree`) for reads through members, positions,
-//!   wildcards and `$`; one document sealed four times stores its root at
+//!   walk (`eql_simulator::json_tree_subtree`) for reads through members,
+//!   positions, wildcards, and `$`; one document sealed four times stores its root at
 //!   slot `0` each time and the rest of its entries, and `q`'s pairs, in a
 //!   fresh order each time (`the_order_is_drawn_afresh_with_the_root_first`);
 //!   and on the real scheme a wildcard read's token list gives its bound and

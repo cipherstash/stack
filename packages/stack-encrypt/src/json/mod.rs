@@ -502,8 +502,8 @@ impl JsonDocument {
 
     /// The entries, in their stored order: the root first, the rest in a
     /// uniformly random order drawn when the document was sealed, which says
-    /// nothing of the tree. A node's children are found by the chain
-    /// ([`children`](Self::children)), not by position.
+    /// nothing of the tree. The database finds a node's children through
+    /// the chain, not by position.
     pub fn entries(&self) -> &[JsonEntry] {
         &self.entries
     }
@@ -525,7 +525,11 @@ impl JsonDocument {
     /// last of them, as the server's index keeps it
     /// (`eql_v4_internal.json_tree_index` builds it with
     /// `jsonb_object_agg`, which keeps the last value of a repeated key).
-    pub fn find(&self, token: &Tag) -> Option<(usize, &JsonEntry)> {
+    ///
+    /// Decrypting a whole document uses it to check that the root's token
+    /// enters the document's chain. `eql_simulator::find_by_token` exposes
+    /// it.
+    pub(crate) fn find(&self, token: &Tag) -> Option<(usize, &JsonEntry)> {
         let x = derive::self_tag(&self.header.iv, token);
         self.entries
             .iter()
@@ -543,7 +547,9 @@ impl JsonDocument {
     ///
     /// What `json_tree_children(doc, token)` returns; one level of the
     /// walk [`subtree`](Self::subtree) runs to the bottom.
-    pub fn children(&self, token: &Tag) -> Vec<(usize, &JsonEntry, Option<Tag>)> {
+    /// `eql_simulator::json_tree_children` exposes it.
+    #[cfg(any(test, feature = "eql-simulator"))]
+    pub(crate) fn children(&self, token: &Tag) -> Vec<(usize, &JsonEntry, Option<Tag>)> {
         let iv = &self.header.iv;
         let mut out = Vec::new();
         if self.find(token).is_none() {
@@ -584,7 +590,9 @@ impl JsonDocument {
     /// deepest level a sealed document has, and stops once it has returned
     /// as many entries as the document holds, which a tree never exceeds,
     /// so it ends, and in bounded stack, on any document.
-    pub fn subtree(&self, tokens: &[Tag]) -> Vec<(usize, &JsonEntry, u32)> {
+    /// `eql_simulator::json_tree_subtree` exposes it.
+    #[cfg(any(test, feature = "eql-simulator"))]
+    pub(crate) fn subtree(&self, tokens: &[Tag]) -> Vec<(usize, &JsonEntry, u32)> {
         let mut out = Vec::new();
         for token in tokens {
             let Some((j, entry)) = self.find(token) else {
@@ -597,6 +605,7 @@ impl JsonDocument {
         out
     }
 
+    #[cfg(any(test, feature = "eql-simulator"))]
     fn walk<'a>(&'a self, token: &Tag, depth: u32, out: &mut Vec<(usize, &'a JsonEntry, u32)>) {
         // A walk finds each entry at most once, so a document whose tags do
         // not form a tree (which no sealing produces) ends the walk once it
@@ -620,7 +629,9 @@ impl JsonDocument {
     /// The node stored at `slot` as an extraction returns it: the entry
     /// with the header beside it. A scalar or an empty container opens on
     /// its own; a container with children opens only with its subtree.
-    pub fn node(&self, slot: usize) -> Option<JsonNode> {
+    /// `eql_simulator::entry_row` exposes it.
+    #[cfg(feature = "eql-simulator")]
+    pub(crate) fn node(&self, slot: usize) -> Option<JsonNode> {
         self.entries.get(slot).map(|entry| JsonNode {
             entry: entry.clone(),
             header: self.header.clone(),

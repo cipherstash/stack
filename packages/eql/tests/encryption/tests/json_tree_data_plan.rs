@@ -36,6 +36,7 @@ use eql_bindings::v4::json_tree::{JsonTree, JsonTreeDocument, JsonTreeLeafQuery,
 use eql_bindings::Identifier;
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::{self, record, TargetError, ValueFrame};
+use stack_encrypt::eql_simulator;
 use stack_encrypt::json::{JsonDocument, JsonOptions, JsonPlaintext, JsonQuery};
 use stack_encrypt::{CipherText, DecryptFrom, Encrypt, KeysetCipher, Label, NonEmpty};
 
@@ -883,10 +884,10 @@ fn subtree_rows(doc: &stack_encrypt::json::JsonDocument, tokens: &[String]) -> V
                 .unwrap()
         })
         .collect();
-    doc.subtree(&tokens)
+    eql_simulator::json_tree_subtree(doc, &tokens)
         .into_iter()
         .map(|(j, _, d)| {
-            let mut wire = serde_json::to_value(doc.node(j).unwrap()).unwrap();
+            let mut wire = serde_json::to_value(eql_simulator::entry_row(doc, j).unwrap()).unwrap();
             wire["d"] = json!(d);
             wire.to_string()
         })
@@ -907,7 +908,7 @@ fn extracted_row(doc: &stack_encrypt::json::JsonDocument, selector: &str) -> Opt
         .iter()
         .position(|e| e.selector() == &selector)?;
     Some(
-        serde_json::to_value(doc.node(j).unwrap())
+        serde_json::to_value(eql_simulator::entry_row(doc, j).unwrap())
             .unwrap()
             .to_string(),
     )

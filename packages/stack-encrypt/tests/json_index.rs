@@ -31,6 +31,7 @@ mod common;
 
 use common::stack_cipher;
 use serde_json::{json, Map, Value};
+use stack_encrypt::eql_simulator;
 #[cfg(feature = "dynamic")]
 use stack_encrypt::json::JsonQuery;
 use stack_encrypt::json::{
@@ -252,7 +253,7 @@ async fn keyed(cipher: &Cipher, path: &str, rows: Vec<JsonNode>) -> JsonSubtree 
 /// option of `options`.
 async fn at_with(cipher: &Cipher, doc: &JsonDocument, path: &str, options: JsonOptions) -> usize {
     let key = subtree_key(cipher, path, options).await.unwrap();
-    doc.find(&key.token_bytes()[0])
+    eql_simulator::find_by_token(doc, &key.token_bytes()[0])
         .unwrap_or_else(|| panic!("the document has {path}"))
         .0
 }
@@ -295,12 +296,15 @@ fn base64(bytes: &[u8]) -> String {
 
 /// The ordinals the read of `tokens` finds.
 fn subtree_ordinals(doc: &JsonDocument, tokens: &[Tag]) -> Vec<usize> {
-    doc.subtree(tokens).iter().map(|(j, _, _)| *j).collect()
+    eql_simulator::json_tree_subtree(doc, tokens)
+        .iter()
+        .map(|(j, _, _)| *j)
+        .collect()
 }
 
 /// Node `j` as a walk returns it, `d` levels below where it started.
 fn with_depth(doc: &JsonDocument, j: usize, d: u32) -> JsonNode {
-    let mut wire = serde_json::to_value(doc.node(j).unwrap()).unwrap();
+    let mut wire = serde_json::to_value(eql_simulator::entry_row(doc, j).unwrap()).unwrap();
     wire["d"] = json!(d);
     serde_json::from_value(wire).unwrap()
 }
@@ -309,7 +313,7 @@ fn with_depth(doc: &JsonDocument, j: usize, d: u32) -> JsonNode {
 /// read here as the SQL reads them, each with its depth below the node its
 /// token named.
 fn read_rows(doc: &JsonDocument, key: &JsonSubtreeKey) -> Vec<JsonNode> {
-    doc.subtree(&key.token_bytes())
+    eql_simulator::json_tree_subtree(doc, &key.token_bytes())
         .iter()
         .map(|(j, _, d)| with_depth(doc, *j, *d))
         .collect()
@@ -1037,7 +1041,7 @@ mod given_the_fixture_document {
                 tokens.len() <= doc.entries().len(),
                 "the chain is a tree: no token is reached twice"
             );
-            for (_, _, child) in doc.children(&token) {
+            for (_, _, child) in eql_simulator::json_tree_children(&doc, &token) {
                 let child = child.expect("every child of a sealed node takes a rule");
                 tokens.push(child);
                 frontier.push(child);
@@ -1194,7 +1198,7 @@ mod given_a_subtree_key {
             &JsonPath::parse("$.nested").unwrap(),
             "the key carries the path it was derived from"
         );
-        let under = doc.subtree(&key.token_bytes());
+        let under = eql_simulator::json_tree_subtree(&doc, &key.token_bytes());
         let mut expected = Vec::new();
         for (path, d) in [
             ("$.nested", 0),
@@ -1220,7 +1224,7 @@ mod given_a_subtree_key {
             "nested, deep, list, both elements and both leaves, each at its depth below $.nested"
         );
         assert!(
-            doc.subtree(&[[7; 16]]).is_empty(),
+            eql_simulator::json_tree_subtree(&doc, &[[7; 16]]).is_empty(),
             "a wrong token finds nothing"
         );
     }
@@ -1253,8 +1257,7 @@ mod given_a_subtree_key {
         let list = subtree_key(&cipher, "$.nested.list", JsonOptions::default())
             .await
             .unwrap();
-        let (_, entry, list_token) = doc
-            .children(&key.token_bytes()[0])
+        let (_, entry, list_token) = eql_simulator::json_tree_children(&doc, &key.token_bytes()[0])
             .into_iter()
             .find(|(j, _, _)| *j == list_at)
             .expect("the list is a child of nested");
@@ -1264,13 +1267,12 @@ mod given_a_subtree_key {
             "the server derives the token the client sends"
         );
         assert_eq!(
-            doc.find(&list.token_bytes()[0]).map(|(j, _)| j),
+            eql_simulator::find_by_token(&doc, &list.token_bytes()[0]).map(|(j, _)| j),
             Some(list_at),
             "the list's token finds the list"
         );
         assert_eq!(entry.selector(), doc.entries()[list_at].selector());
-        let children: Vec<usize> = doc
-            .children(&list.token_bytes()[0])
+        let children: Vec<usize> = eql_simulator::json_tree_children(&doc, &list.token_bytes()[0])
             .iter()
             .map(|(j, _, _)| *j)
             .collect();
@@ -1282,7 +1284,10 @@ mod given_a_subtree_key {
             ],
             "the children of a node, by ordinal: the list's two elements"
         );
-        assert!(doc.children(&[7; 16]).is_empty(), "no node, no children");
+        assert!(
+            eql_simulator::json_tree_children(&doc, &[7; 16]).is_empty(),
+            "no node, no children"
+        );
     }
 
     /// `$` is a read under either root. Under the sealed root its token
@@ -1297,7 +1302,7 @@ mod given_a_subtree_key {
             .await
             .unwrap();
         assert_eq!(
-            doc.subtree(&sealed_root.token_bytes())
+            eql_simulator::json_tree_subtree(&doc, &sealed_root.token_bytes())
                 .iter()
                 .map(|(j, _, d)| (*j, *d))
                 .collect::<Vec<_>>(),
@@ -1307,7 +1312,7 @@ mod given_a_subtree_key {
         let open_doc = seal_with(&cipher, &fixture(), &open_root()).await;
         let root = subtree_key(&cipher, "$", open_root()).await.unwrap();
         assert_eq!(
-            open_doc.subtree(&root.token_bytes()).len(),
+            eql_simulator::json_tree_subtree(&open_doc, &root.token_bytes()).len(),
             10,
             "the root and every entry beneath it"
         );
@@ -1358,7 +1363,7 @@ mod given_a_position {
             ] {
                 let doc = seal(&cipher, &object).await;
                 assert!(
-                    doc.subtree(&first.token_bytes()).is_empty(),
+                    eql_simulator::json_tree_subtree(&doc, &first.token_bytes()).is_empty(),
                     "{path} in {object}: an object member is not an element"
                 );
             }
@@ -1381,7 +1386,7 @@ mod given_an_extracted_node {
             let cipher = &cipher;
             let doc = &doc;
             async move {
-                let node = doc.node(at(cipher, doc, path).await).unwrap();
+                let node = eql_simulator::entry_row(doc, at(cipher, doc, path).await).unwrap();
                 open_extracted(cipher, extracted(cipher, path, node).await).await
             }
         };
@@ -1442,7 +1447,7 @@ mod given_an_extracted_node {
         let Scenario { cipher, .. } = scenario().await;
         let doc = seal(&cipher, &fixture()).await;
         let x = at(&cipher, &doc, "$.nested.list[0].x").await;
-        let mut wire = serde_json::to_value(doc.node(x).unwrap()).unwrap();
+        let mut wire = serde_json::to_value(eql_simulator::entry_row(&doc, x).unwrap()).unwrap();
         wire["i"] = json!({"t": "users", "c": "profile"});
         wire["v"] = json!(4);
         let back: JsonNode = serde_json::from_value(wire).unwrap();
@@ -1466,11 +1471,11 @@ mod given_an_extracted_node {
         let Scenario { cipher, .. } = scenario().await;
         let doc = seal(&cipher, &fixture()).await;
         assert_eq!(
-            doc.node(6).unwrap().depth(),
+            eql_simulator::entry_row(&doc, 6).unwrap().depth(),
             None,
             "an extracted node has no depth"
         );
-        let mut wire = serde_json::to_value(doc.node(6).unwrap()).unwrap();
+        let mut wire = serde_json::to_value(eql_simulator::entry_row(&doc, 6).unwrap()).unwrap();
         assert!(
             wire.get("d").is_none(),
             "an extracted node writes no `d`: {wire}"
@@ -1575,7 +1580,12 @@ mod given_a_derived_record {
         let Scenario { cipher, .. } = scenario().await;
         let doc = seal(&cipher, &fixture()).await;
         let hello = at(&cipher, &doc, "$.hello").await;
-        let node = extracted(&cipher, "$.hello", doc.node(hello).unwrap()).await;
+        let node = extracted(
+            &cipher,
+            "$.hello",
+            eql_simulator::entry_row(&doc, hello).unwrap(),
+        )
+        .await;
         let list = subtree_key(&cipher, "$.nested.list", JsonOptions::default())
             .await
             .unwrap();
@@ -1799,7 +1809,7 @@ mod given_rows_the_server_chose {
     async fn refuses_a_repeated_row_or_a_line_of_containers() {
         let Scenario { cipher, .. } = scenario().await;
         let doc = seal(&cipher, &fixture()).await;
-        let node = |j: usize| doc.node(j).unwrap();
+        let node = |j: usize| eql_simulator::entry_row(&doc, j).unwrap();
         let repeated = keyed(&cipher, "$.nested", vec![node(1), node(1)]).await;
         assertions::refused_as_wrong_entry(&open_list(&cipher, repeated).await, "a repeated row");
 
@@ -1815,11 +1825,12 @@ mod given_rows_the_server_chose {
         let mut containers = Vec::new();
         for i in 0..200 {
             containers.push(
-                doc.node(at(&cipher, &doc, &format!("$.k{i:03}")).await)
+                eql_simulator::entry_row(&doc, at(&cipher, &doc, &format!("$.k{i:03}")).await)
                     .unwrap(),
             );
         }
-        containers.push(doc.node(at(&cipher, &doc, "$.k199.x").await).unwrap());
+        containers
+            .push(eql_simulator::entry_row(&doc, at(&cipher, &doc, "$.k199.x").await).unwrap());
         assert_eq!(containers.len(), 201, "200 objects and the last leaf");
         assertions::refused_as_tampered(
             &open_list(&cipher, keyed(&cipher, "$.k000", containers).await).await,
@@ -1834,14 +1845,16 @@ mod given_rows_the_server_chose {
                 .collect(),
         );
         let doc = seal(&cipher, &wide).await;
-        let mut arrays = vec![doc.node(at(&cipher, &doc, "$.k000").await).unwrap()];
+        let mut arrays =
+            vec![eql_simulator::entry_row(&doc, at(&cipher, &doc, "$.k000").await).unwrap()];
         for i in 0..200 {
             arrays.push(
-                doc.node(at(&cipher, &doc, &format!("$.k{i:03}[0]")).await)
+                eql_simulator::entry_row(&doc, at(&cipher, &doc, &format!("$.k{i:03}[0]")).await)
                     .unwrap(),
             );
         }
-        arrays.push(doc.node(at(&cipher, &doc, "$.k199[0][0]").await).unwrap());
+        arrays
+            .push(eql_simulator::entry_row(&doc, at(&cipher, &doc, "$.k199[0][0]").await).unwrap());
         assert_eq!(
             arrays.len(),
             202,
@@ -1907,7 +1920,8 @@ mod given_a_tampered_document {
         // `JsonNotALeaf`, which names both.
         let sealed = seal(&cipher, &value).await;
         let a = at(&cipher, &sealed, "$.a").await;
-        let mut lifted = serde_json::to_value(sealed.node(a).unwrap()).unwrap();
+        let mut lifted =
+            serde_json::to_value(eql_simulator::entry_row(&sealed, a).unwrap()).unwrap();
         lifted["j"] = json!(3 - a);
         let lifted: JsonNode = serde_json::from_value(lifted).unwrap();
         assertions::refused_as_not_a_leaf(
@@ -2639,7 +2653,8 @@ mod given_a_float_at_full_precision {
             .await
             .unwrap();
         let rows = read_rows(&sealed, &key);
-        let element = sealed.node(at(cipher, &sealed, "$.list[0]").await).unwrap();
+        let element =
+            eql_simulator::entry_row(&sealed, at(cipher, &sealed, "$.list[0]").await).unwrap();
         vec![
             (
                 "the document, from the sealed root",

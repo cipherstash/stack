@@ -558,9 +558,9 @@ fn children(row: &ObservedRow, index: &RowIndex, token: &Tag16) -> Vec<Child> {
 }
 
 /// The node `token` names in `row`, found by its self tag, then everything
-/// below it, depth first, bounded as the crate's walk (`JsonDocument::subtree`)
-/// and the SQL's are: no deeper than the index seals, and no more hits than
-/// entries.
+/// below it, depth first, bounded as the crate's walk
+/// (`eql_simulator::json_tree_subtree`) and the SQL's are. That is, no
+/// deeper than the index seals, and no more hits than entries.
 pub(super) fn walk_with(row: &ObservedRow, index: &RowIndex, token: &Tag16) -> Vec<Hit> {
     fn go(
         row: &ObservedRow,
@@ -1472,7 +1472,7 @@ pub fn ordering_matches(world: &ObservedWorld) -> Vec<Vec<Vec<usize>>> {
 }
 
 /// The positions and depths a read of `tokens` reaches in `row`, token by
-/// token in the walk's order: what `JsonDocument::subtree` returns.
+/// token in the walk's order: what `eql_simulator::json_tree_subtree` returns.
 pub fn walk_positions(row: &ObservedRow, tokens: &[Tag16]) -> Vec<(usize, usize)> {
     let index = row_index(row);
     tokens

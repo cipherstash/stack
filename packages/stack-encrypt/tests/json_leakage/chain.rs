@@ -10,7 +10,7 @@
 //! selectors, head tokens, member ranks, the OPE key) stays on the client
 //! and is replaced by randomness in the simulator.
 //! `chain_is_the_crates_chain` (in `calibration.rs`) holds them to the
-//! crate's own walk, `JsonDocument::subtree`.
+//! crate's own walk, `eql_simulator::json_tree_subtree`.
 
 use sha2::{Digest, Sha256};
 

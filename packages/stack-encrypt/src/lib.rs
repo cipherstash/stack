@@ -320,6 +320,11 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! # }).unwrap();
 //! ```
 //!
+//! To read part of a stored JSON document without PostgreSQL, turn on this
+//! crate's `eql-simulator` feature in your `[dev-dependencies]`. The module
+//! `stack_encrypt::eql_simulator` copies, in Rust, the EQL functions that
+//! the database runs for that read. Production code does not use it.
+//!
 //! # Seeing the context
 //!
 //! A wrong context loses data silently: a query under the wrong context
@@ -712,6 +717,8 @@ mod codes;
 pub mod descriptor;
 #[cfg(feature = "dynamic")]
 pub mod dynamic;
+#[cfg(feature = "eql-simulator")]
+pub mod eql_simulator;
 pub mod field_reference;
 pub mod json;
 pub mod keyset;

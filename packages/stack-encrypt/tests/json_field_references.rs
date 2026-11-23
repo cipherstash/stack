@@ -15,6 +15,7 @@ use std::num::NonZeroU32;
 use std::sync::atomic::Ordering;
 
 use serde_json::{json, Value};
+use stack_encrypt::eql_simulator;
 use stack_encrypt::json::{
     JsonChildPlaintext, JsonDocument, JsonLeafQuery, JsonPlaintext, JsonQuery,
 };
@@ -234,7 +235,7 @@ mod the_fields_options {
         doc: &'d JsonDocument,
         key: &JsonSubtreeKey,
     ) -> Option<&'d stack_encrypt::json::JsonEntry> {
-        doc.find(&key.token_bytes()[0]).map(|(_, entry)| entry)
+        eql_simulator::find_by_token(doc, &key.token_bytes()[0]).map(|(_, entry)| entry)
     }
 
     /// `encrypt_keyed` gives `encrypt`'s token and the key that holds it,
@@ -258,9 +259,9 @@ mod the_fields_options {
         assert_eq!(key.tokens(), alone.tokens(), "the key holds the token");
         assert_eq!(key.path().to_string(), "$.visits[0]", "the key's path");
         let mut members = Vec::new();
-        for (slot, _, _) in doc.children(&key.token_bytes()[0]) {
+        for (slot, _, _) in eql_simulator::json_tree_children(&doc, &key.token_bytes()[0]) {
             let child = JsonChildPlaintext::decrypt_from_with_context(
-                key.open_child(doc.node(slot).unwrap()),
+                key.open_child(eql_simulator::entry_row(&doc, slot).unwrap()),
                 &keyset,
                 AeadContext::from(nonempty!("customers").with("profile")),
             )

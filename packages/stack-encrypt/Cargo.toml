@@ -155,8 +155,19 @@ test-support = ["stack-kms/test-support"]
 # declaration or a call in a test. No dependency; a dev-dependency on this
 # crate with the feature on is enough.
 testing = []
+# `stack_encrypt::eql_simulator`: Rust copies of what the database (EQL)
+# does to read a stored JSON document, so tests and examples run without
+# PostgreSQL. Production code does not use it. No dependency; turn it on in
+# a dev-dependency.
+eql-simulator = []
 
 [dev-dependencies]
+# This crate's own tests and doc examples read stored JSON documents through
+# `eql_simulator`. A dev-dependency on the crate itself turns the feature on
+# for them under every feature set, and adds nothing else:
+# `default-features = false` keeps `--no-default-features` builds free of
+# `http`. A path-only dev-dependency is dropped when the crate is published.
+stack-encrypt = { path = ".", default-features = false, features = ["eql-simulator"] }
 # The types `value::{Date, Timestamp, Decimal}` are built from, for the
 # tests and doc examples that build one.
 jiff = { version = "1.0.0", default-features = false }

@@ -44,7 +44,9 @@ eql-domains = { path = "../../crates/eql-domains" }
 # `dynamic`: `ValueFrame`, the runtime plaintext the target dispatch takes,
 # as eql-bindings names it.
 # `testing`: `assert_context!`, which pins the contexts of the EQL types.
-stack-encrypt = { path = "../../../stack-encrypt", default-features = false, features = ["dynamic", "testing"] }
+# `eql-simulator`: Rust copies of the EQL reads of a stored JSON document, so
+# the tests that need no PostgreSQL read one without it.
+stack-encrypt = { path = "../../../stack-encrypt", default-features = false, features = ["dynamic", "testing", "eql-simulator"] }
 # `plaintext::Sink`, for a plaintext type with its own `Encrypt` impl; and
 # jiff's and rust_decimal's own sources, which seal the leaf a date,
 # timestamp or decimal from any other producer seals.
