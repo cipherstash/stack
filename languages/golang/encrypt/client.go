@@ -63,9 +63,10 @@ type Client struct {
 	wedged     context.Context
 	markWedged context.CancelFunc
 	// paused bounds the operations that may be paused in the guest at once
-	// to its cap (maxPaused): every operation takes a slot before its first
-	// step and gives it back when it ends, so a caller past the cap waits
-	// here for one rather than being refused by the guest.
+	// to its cap (maxPaused): an operation that can reach ZeroKMS takes a
+	// slot before its first step and gives it back when it ends, so a
+	// caller past the cap waits here for one rather than being refused by
+	// the guest.
 	paused chan struct{}
 	// yields counts the steps that paused to yield rather than to reach
 	// ZeroKMS (see step.go).
@@ -503,15 +504,19 @@ func (c *Client) callKMS(ctx context.Context, f stepFunc) ([]byte, error) {
 // step and released while the requests run, so callers share the client
 // between steps rather than queue behind a round trip.
 //
-// Every operation first takes one of the guest's paused slots (see
-// Client.paused), since any operation can pause to yield. When kms is set,
-// the token is fetched once, before its first step and outside the lock;
-// every step of the operation hands it
+// When kms is set, the operation first takes one of the guest's paused
+// slots (see Client.paused), and the token is fetched once, before its
+// first step and outside the lock; every step of the operation hands it
 // over, so the guest's token_get never waits. The token source is asked
 // once per such operation, including one the guest answers from its cache
 // without asking for the token (a query term on a loaded keyset, a cached
 // keyset lookup): which operations reach ZeroKMS is known only once the
 // guest has run. A source that fails is reported only if the guest asks.
+//
+// An operation without kms takes no slot, because it cannot pause. It
+// never reaches ZeroKMS, and it does not yield either: it asks for no
+// keys, and the guest yields only once a batch's items have taken at least
+// 64 keys (see step.go).
 //
 // The caller's context governs everything the host waits on: the slot, the
 // token fetch, the wait for the lock and the requests, which run under it.
@@ -530,15 +535,15 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 		return nil, errStuck
 	}
 	token, tokenErr := "", error(nil)
-	// Every operation takes a paused slot, not only one that can reach
-	// ZeroKMS: any operation can pause to yield (see step.go).
-	select {
-	case c.paused <- struct{}{}:
-		defer func() { <-c.paused }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-c.wedged.Done():
-		return nil, errStuck
+	if kms {
+		select {
+		case c.paused <- struct{}{}:
+			defer func() { <-c.paused }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-c.wedged.Done():
+			return nil, errStuck
+		}
 	}
 	if kms && c.transport != nil {
 		token, tokenErr = c.fetchToken(ctx)

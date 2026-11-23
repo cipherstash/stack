@@ -172,8 +172,8 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
     it got an error about 30 seconds after its context ended.
   - The client still closes. The calls queued behind the stuck call, and
     every later call, return `ErrState` at once. That includes a call
-    waiting for one of the 64 slots for calls in progress, or for its
-    token.
+    waiting for one of the 64 slots for calls that reach ZeroKMS, or
+    for its token.
   - `Close` releases the credentials and returns `ErrState` without
     waiting for the stuck call. If the call returns, the guest's memory
     is wiped and released.
