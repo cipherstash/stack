@@ -199,6 +199,12 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
                 // the loop yields to the runtime every `YIELD_EVERY` keys. A
                 // host that cannot preempt the work (a wasm guest) gets
                 // control back between chunks.
+                //
+                // That is every `YIELD_EVERY` keys with one request in
+                // flight, as a wasm guest has. With more, `buffered` passes
+                // a yield on only once two requests have yielded or it has
+                // polled them all, so about twice as many keys, or more,
+                // are derived before the runtime gets control back.
                 let mut out = Vec::with_capacity(keys.len());
                 for (i, (spec, item)) in chunk.iter().zip(keys).enumerate() {
                     if i > 0 && i % YIELD_EVERY == 0 {
