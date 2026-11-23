@@ -4,16 +4,16 @@
 //!
 //! - **Round trip.** "Ng" stored is found by the query "Ng"; "Mike Ng" is
 //!   found by "Ng" and by "Mike Ng"; "Nguyen" is not found by "Ng".
-//! - **Queries.** A query keeps its short words only when it cuts no
-//!   n-gram: "Ng" is its word token, and "Mike Ng" its trigrams alone, so it
-//!   finds "Mike Nguyen" as it does with the option off. The filter and
-//!   `verify` agree.
+//! - **Queries.** A query keeps its short words only when its whole text is
+//!   shorter than one n-gram. "Ng" is its word token. "Mike Ng" is its
+//!   trigrams alone, so it finds "Mike Nguyen", as it does with the option
+//!   off. The filter and `verify` agree.
 //! - **Identity.** The option is part of the index, which is the field's
 //!   type: a field is stored and queried under the options its type
 //!   declares, and options the index cannot use are refused on both sides.
-//! - **Containment.** For random text, the stored filter holds the filter of
-//!   any run of its whole words, and of any run of its characters that cuts
-//!   an n-gram.
+//! - **Containment.** For random text, the stored filter contains the filter
+//!   of any run of its whole words. The stored filter also contains the
+//!   filter of any run of its characters that has an n-gram.
 //! - **Calibration.** A one-word query sets as many bits as a one-trigram
 //!   query, and a row's chance of matching either falsely is the same.
 
@@ -137,9 +137,9 @@ mod given_short_words {
         }
     }
 
-    /// A query that cuts an n-gram asks for its n-grams alone, so a short
-    /// word in it need not be a whole word of the row: a name typed in part
-    /// finds its row, as it does with the option off. A query of one short
+    /// A query with an n-gram asks for its n-grams alone. So a short word in
+    /// it need not be a whole word of the row. A name typed in part finds
+    /// its row, as it does with the option off. A query of one short
     /// word is that word, whole. The filter and `verify` agree on every row.
     #[tokio::test]
     async fn a_query_keeps_its_short_words_only_when_it_cuts_no_ngram() {
@@ -165,9 +165,8 @@ mod given_short_words {
                 .await
                 .unwrap_or_else(|error| panic!("{asked:?} is a query: {error}"));
             let stored = store(&keyset, text).await;
-            // The filter alone: a row without the tokens could hold their
-            // bits by chance, but under the test key and these rows none
-            // does.
+            // The filter alone. A row without the tokens could have their
+            // bits by chance. Under the test key and these rows, none does.
             assert_eq!(
                 stored.matches(&query),
                 found,
@@ -189,8 +188,8 @@ mod given_short_words {
         name: Encrypted<MatchTerms>,
     }
 
-    /// A query that cuts an n-gram sends the filter the index without the
-    /// option stores for the same text: its n-grams, and no word.
+    /// A query with an n-gram sends the filter that the index stores for the
+    /// same text without the option: its n-grams, and no word.
     #[tokio::test]
     async fn a_query_of_ngrams_is_the_filter_the_index_without_the_option_stores() {
         let cipher = stack_cipher().await;
@@ -233,10 +232,10 @@ mod given_short_words {
         );
     }
 
-    /// The query cut run on its own, as a binding or an index defined
-    /// elsewhere runs it, refuses text that cuts no token as a field query
-    /// does: its empty filter would match every row. The stored cut keeps
-    /// such text as the empty filter.
+    /// `matching_query` run on its own, as a binding or an index defined
+    /// elsewhere runs it. `matching_query` refuses text with no token, as a
+    /// field query does, because the empty filter would match every row.
+    /// `matching` stores such text as the empty filter.
     mod given_the_query_cut_alone {
         use super::*;
         use stack_encrypt::sem::DefaultMatch;
@@ -499,10 +498,10 @@ mod given_random_text {
             })?;
         }
 
-        /// A query of any run of a text's characters that cuts an n-gram
-        /// finds the text, filter and `verify` alike, whether or not the
-        /// run starts or ends inside a word: typeahead and partial names
-        /// find their rows with short words on.
+        /// A query of any run of a text's characters that has an n-gram
+        /// finds the text, by filter and by `verify`. The run can start or
+        /// end inside a word. So with short words on, a query typed in part
+        /// finds its row, as does a partial name.
         #[test]
         fn a_run_of_characters_that_cuts_an_ngram_finds_its_text(
             words in prop::collection::vec(word(), 1..8),

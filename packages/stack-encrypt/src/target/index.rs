@@ -48,10 +48,11 @@
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 //! ```
 //!
-//! One term can be derived alone, with no ciphertext: [`Indexes::select`]
-//! picks an index out of a set by type, [`Index::query_operation`] is the
-//! term a query of it sends, and [`Index::operation`] the term it stores. A
-//! field query does not use `select`: the field's
+//! One term can be derived alone, with no ciphertext. [`Indexes::select`]
+//! picks an index out of a set by type. That index's
+//! [`Index::query_operation`] derives the term a query sends, and its
+//! [`Index::operation`] the term a value stores. A field query does not use
+//! `select`: the field's
 //! target type names the index that answers each operator
 //! ([`Answers`](crate::op::Answers)).
 //!
@@ -249,9 +250,9 @@ impl fmt::Display for IndexSpec {
 /// no `Index<u32>` for [`Match`](struct@Match), because match is defined over text.
 ///
 /// An index does not seal anything. [`indexed`] puts a ciphertext beside the
-/// indexes of a field; [`operation`](Self::operation) on its own is the term
-/// alone, and [`query_operation`](Self::query_operation) is the term a query
-/// sends.
+/// indexes of a field. On its own, [`operation`](Self::operation) derives the
+/// term a value stores, and [`query_operation`](Self::query_operation) the
+/// term a query sends.
 ///
 /// The trait is open: an index defined in another crate implements it by
 /// composing this module's public operations, as the four here do.
@@ -276,15 +277,15 @@ pub trait Index<S> {
     where
         S: 's;
     /// The description that derives the term a query of `S` sends, under
-    /// the [`CallerContext`] it is handed when it runs: what a field query
-    /// derives.
+    /// the [`CallerContext`] it is handed when it runs. A field query derives
+    /// its term through this method.
     ///
-    /// Most indexes send the term they store, and return
-    /// [`operation`](Self::operation)'s description here. A match index
-    /// cuts a query differently from a stored value ([`matching_query`]):
-    /// with short words on, a query that sent the stored cut would miss rows
-    /// it should find. So there is no default, and an index that wraps
-    /// another forwards both methods to it.
+    /// Return [`operation`](Self::operation)'s description here when the
+    /// index sends the term it stores, as most indexes do. A match index
+    /// does not: it returns [`matching_query`]. With short words on, a query
+    /// that sent a stored value's filter would miss rows it should find.
+    /// That is why this method has no default. An index that wraps another
+    /// must forward both methods to it.
     fn query_operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
@@ -412,7 +413,7 @@ impl<S: crate::Encrypt + vitaminc_aead::EncryptRef> Index<S> for Equality {
     {
         equality()
     }
-    /// The term it stores: a query sends the same term.
+    /// A query sends the term this index stores.
     fn query_operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
@@ -460,7 +461,7 @@ where
     {
         ore()
     }
-    /// The term it stores: a query sends the same term.
+    /// A query sends the term this index stores.
     fn query_operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
@@ -486,7 +487,7 @@ where
     {
         ope()
     }
-    /// The term it stores: a query sends the same term.
+    /// A query sends the term this index stores.
     fn query_operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
@@ -512,7 +513,7 @@ where
     {
         ore_block()
     }
-    /// The term it stores: a query sends the same term.
+    /// A query sends the term this index stores.
     fn query_operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
@@ -536,8 +537,8 @@ impl Index<serde_json::Value> for Json {
     ) -> Encryption<'s, serde_json::Value, Self::Term, K, CallerContext, M> {
         json_terms::<K, M>(self.options.clone())
     }
-    /// The document's terms, as stored: a query reads the terms it sends
-    /// out of them.
+    /// The document's terms, as stored. A query takes the terms it sends
+    /// from them.
     fn query_operation<'s, K: 'static, M: WipeSource<'s, serde_json::Value>>(
         &self,
     ) -> Encryption<'s, serde_json::Value, Self::Term, K, CallerContext, M> {
@@ -574,13 +575,14 @@ pub trait Indexes<S> {
     where
         S: 's,
         M: WipeSource<'s, S>;
-    /// The description that derives every term a query of `S` sends, each
-    /// index's [`query_operation`](Index::query_operation), under the one
-    /// [`CallerContext`] it is handed and settled in one batch, as
-    /// [`operations`](Self::operations) settles the stored terms. A set
-    /// that holds a [`Match`](struct@Match) index sends the filter of the
-    /// tokens the query keeps, where [`operations`](Self::operations)
-    /// derives a stored value's. There is no default, for the reason
+    /// The description that derives every term a query of `S` sends. The
+    /// description calls each index's
+    /// [`query_operation`](Index::query_operation) under the one
+    /// [`CallerContext`] it is handed, and settles them in one batch.
+    /// [`operations`](Self::operations) does the same for the stored terms.
+    /// For a [`Match`](struct@Match) index in the set, this sends the filter
+    /// of the tokens the query keeps, where `operations` derives a stored
+    /// value's filter. There is no default, for the reason
     /// [`Index::query_operation`] has none.
     fn query_operations<'s, K: 'static, M>(
         &self,
@@ -588,9 +590,9 @@ pub trait Indexes<S> {
     where
         S: 's,
         M: WipeSource<'s, S>;
-    /// The one index of type `I` in this set, for the query side, where a
-    /// query asks one index for one term and needs no ciphertext; its
-    /// [`query_operation`](Index::query_operation) is the term a query
+    /// The one index of type `I` in this set, for the query side. A query
+    /// asks one index for one term, and needs no ciphertext. The index's
+    /// [`query_operation`](Index::query_operation) derives the term a query
     /// sends, and its [`operation`](Index::operation) the term a value
     /// stores.
     ///
@@ -691,9 +693,9 @@ macro_rules! single_index {
 }
 single_index!([] Equality, [O] Match<O>, [] Ore, [] Ope, [] OreBlock, [] Json, [] IndexSpec);
 
-/// A tuple of indexes: each index's operation (or query operation), zipped
-/// left to right, and the nested pairs `zip` builds flattened back into one
-/// tuple of terms.
+/// A tuple of indexes. Each index's operation, or query operation, is zipped
+/// left to right. The nested pairs that `zip` builds are flattened back into
+/// one tuple of terms.
 macro_rules! tuple_of_indexes {
     ($(($($name:ident $at:tt),+) => $nested:pat,)+) => {$(
         impl<S, $($name: Index<S>),+> Indexes<S> for ($($name,)+) {
@@ -759,7 +761,7 @@ mod tuples {
 /// an empty one is refused when it runs, with
 /// [`PlanError::EmptyIndexes`](crate::PlanError::EmptyIndexes), before any
 /// key is requested: a field declared indexed derives at least one term. In
-/// [`Owned`] mode the refusal wipes the value it is handed.
+/// [`Owned`] mode, the refusal wipes the value it is handed.
 /// [`select`](Indexes::select) is not available on a `Vec`; a binding
 /// answers a query by index key, through its own `Index` impl.
 impl<S, I: Index<S>> Indexes<S> for Vec<I> {
@@ -785,11 +787,11 @@ impl<S, I: Index<S>> Indexes<S> for Vec<I> {
     }
 }
 
-/// The description that derives each of `indexes`' terms for `side`, in
-/// order, zipped into one batch: the stored terms or a query's. An empty
+/// The description that derives the term of each of `indexes` for `side`,
+/// in order, zipped into one batch: the stored terms, or a query's. An empty
 /// list is refused with
-/// [`PlanError::EmptyIndexes`](crate::PlanError::EmptyIndexes), and the
-/// refusal lets go of the plaintext as an operation would ([`WipeSource`]).
+/// [`PlanError::EmptyIndexes`](crate::PlanError::EmptyIndexes). The refusal
+/// releases the plaintext as an operation would ([`WipeSource`]).
 fn each_index<'s, S: 's, I: Index<S>, K: 'static, M: WipeSource<'s, S>>(
     indexes: &[I],
     side: Side,

@@ -999,13 +999,16 @@ async fn two_letter_surnames_store_and_are_found() {
     }
 }
 
-/// A query keeps its two-letter words only when it cuts no 3-gram, on every
-/// path that builds one: the query twins directly (`TextMatchQuery`,
-/// `TextSearchMatchQuery`) and the by-name query dispatch a binding runs.
-/// So "Mike Ng" is its 3-grams alone and finds "Mike Nguyen", a name typed
-/// in part ("ke Ng", "san fr") finds its row, and "Ng" alone is its word
-/// token and does not find "Nguyen". Stored values are unchanged: each
-/// still carries its word tokens.
+/// A query keeps its two-letter words only when the whole query is one
+/// two-letter word. The rule applies to every path that builds a query: the
+/// query twins directly (`TextMatchQuery`, `TextSearchMatchQuery`), and the
+/// by-name query dispatch that a binding runs.
+///
+/// - "Mike Ng" is its 3-grams alone, and finds "Mike Nguyen".
+/// - A name typed in part, such as "ke Ng" or "san fr", finds its row.
+/// - "Ng" alone is its word token. The query does not find "Nguyen".
+///
+/// Stored values do not change. Each still contains its word tokens.
 #[tokio::test]
 async fn a_query_keeps_its_two_letter_words_only_when_it_cuts_no_trigram() {
     let (cipher, _) = common::cipher().await;
@@ -1068,8 +1071,9 @@ async fn a_query_keeps_its_two_letter_words_only_when_it_cuts_no_trigram() {
             "{needle:?} on {text:?}"
         );
     }
-    // A query of 3-grams carries no word token: it is the filter of its
-    // 3-grams, which a stored value of the same text holds beside its words.
+    // A query of 3-grams has no word token. The query's filter is the filter
+    // of its 3-grams. A stored value of the same text contains them beside its
+    // words.
     let query: text::TextMatchQuery = "Mike Ng"
         .to_owned()
         .encrypt_into_with_context(&keyset, column())
@@ -1198,9 +1202,10 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
 }
 
 /// Needs an EQL v4 installation. Two-letter surnames in a `TextMatch` and a
-/// `TextSearch` column: `@@` with the query of the surname finds the rows
-/// holding it as a word, bare or in a full name, and not a longer name it
-/// begins; a full-name query is its 3-grams, so it finds a longer name too.
+/// `TextSearch` column. `@@` with the query of the surname finds the rows
+/// that contain it as a whole word, such as "Ng" and "Mike Ng". The query
+/// does not find a longer name that the surname begins. A full-name query
+/// is its 3-grams, so it finds a longer name too.
 #[test]
 #[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
 fn postgres_finds_two_letter_surnames() {

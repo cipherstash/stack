@@ -481,17 +481,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
-- **`Index` and `Indexes` each gain a required method** (#1398).
-  `Index::query_operation` derives the term a query of the index sends, and
-  `Indexes::query_operations` derives each index's query term in one batch.
-  A field query derives through them. Neither has a default: a default of
-  the stored term would let an index that wraps a match index forward only
-  `operation` and send the stored cut, which misses rows. To upgrade, an
-  index defined outside this crate adds `query_operation`, returning the
-  same description as `operation` when it sends what it stores, and
-  forwarding to the wrapped index's `query_operation` when it wraps one. A
-  set of indexes defined outside this crate adds `query_operations`, built
-  from each index's `query_operation`. No stored byte changes.
+- **`Index` and `Indexes` each gain a required method** (#1398). A field
+  query now derives its terms through these methods.
+  - `Index::query_operation` derives the term that a query of the index
+    sends. `Index::operation` still derives the term that a stored value
+    contains.
+  - `Indexes::query_operations` derives the query term of every index in
+    the set, in one batch.
+
+  To upgrade:
+  1. In each index you define, add `query_operation`. If the index sends
+     the term it stores, return the same description as `operation`. If
+     the index wraps another index, call that index's `query_operation`.
+  2. In each set of indexes you define, add `query_operations`. Build it
+     from each index's `query_operation`.
+
+  Neither method has a default, on purpose. A default that returned the
+  stored term would let an index that wraps a match index forward only
+  `operation`. That index would compile. The index's queries would then
+  send the stored value's tokens, and miss rows. No stored byte changes.
 
 - **Seven `PlanError` variants that nothing raised are removed** (#1671).
   Only the plan builder and `plan::all` raised them, and both are gone,
@@ -1374,39 +1382,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **With `MatchOptions::short_words` on, a query keeps its short words only
-  when it cuts no n-gram** (#1398). A query that held a short word cut that
-  word's token beside its n-grams, so the word had to be a whole word of
-  the row: "Mike Ng" no longer found "Mike Nguyen", and "san fr" no longer
-  found "San Francisco". Now a query that cuts an n-gram sends its n-grams
-  alone, as it does with the option off, and finds those rows again. A
-  query that cuts no n-gram (its whole text is shorter than the n-gram
-  length) asks for its word tokens: "Ng" finds "Ng" and "Mike Ng", and not
-  "Nguyen". With trigrams that is one short word; with longer n-grams it
-  can be several words, such as "Ng Wu" under 6-grams.
-  - The stored side does not change: a stored value keeps its word tokens,
-    so no stored filter moves and nothing needs re-encrypting.
-  - Every query path cuts a query by the one rule, so a filter and its
-    verify agree: a field query (`Supports::prepare` and the term it
-    derives), `dynamic::query_term`, `dynamic::term`, `dynamic::verify`, and
-    `MatchQuery::verify`.
-  - A field query now derives its term through the new
-    `Index::query_operation` (see Breaking). A match index's is the new
-    `target::matching_query`, the query's filter; every other index's is
-    its `operation`. An index that wraps another forwards both methods.
+- **With `MatchOptions::short_words` on, a query asks for its short words
+  only when its whole text is shorter than one n-gram** (#1398). Before
+  this fix, "Mike Ng" did not find "Mike Nguyen". "san fr" did not find
+  "San Francisco" either.
+
+  An n-gram is a run of n characters in a row, such as "mik" in "Mike"
+  under trigrams. A short word is a word shorter than one n-gram, such as
+  "Ng" under trigrams. A stored value contains each short word as a
+  whole-word token, beside its n-grams. Before this fix, a query also asked
+  for each of its short words as a whole word. "Nguyen" contains "ng" only
+  inside a longer word, so "Mike Ng" missed "Mike Nguyen".
+
+  Now a query with an n-gram asks for its n-grams alone, as it does with
+  the option off. A query shorter than one n-gram asks for its short
+  words. Under trigrams, that is one short word: "Ng" finds "Ng" and "Mike
+  Ng", and not "Nguyen". Under longer n-grams it can be several words,
+  such as "Ng Wu" under 6-grams.
+  - Stored values do not change. No stored filter moves, so nothing needs
+    re-encrypting.
+  - Every query path uses the one rule, so a query's filter and its verify
+    agree. The paths are a field query (`Supports::prepare` and the term
+    it derives), `dynamic::query_term`, `dynamic::term`, `dynamic::verify`,
+    and `MatchQuery::verify`.
+  - A field query derives its term through the new `Index::query_operation`
+    (see Breaking). A match index returns the new `target::matching_query`.
+    That function builds the query's filter. Every other index returns its
+    `operation`. An index that wraps another forwards both methods.
   - A set of indexes derives a query's terms through the new
-    `Indexes::query_operations`, each index's `query_operation`, as
-    `Indexes::operations` derives the stored terms through each index's
-    `operation`. One index, a tuple and a `Vec` implement it.
-  - `target::matching_query` refuses text that keeps no token
-    (`TermError::EmptyTermText`), since its empty filter would match every
-    row: run on its own, it refuses what a field query's `prepare` does.
-    `target::matching` still stores such text as the empty filter.
-  - What it reveals: one more token per short word in every stored value
-    that holds one, unique to the word, so rows holding "Ng" can be told
-    from rows holding "Nguyen" and counted. A query shorter than the
-    n-gram length shows the word tokens it asks for; a query that cuts an
-    n-gram sends no word token.
+    `Indexes::query_operations`. The method calls each index's
+    `query_operation`, as `Indexes::operations` calls each index's
+    `operation`. One index, a tuple, and a `Vec` implement it.
+  - `target::matching_query` refuses text that keeps no token, with
+    `TermError::EmptyTermText`, because an empty filter would match every
+    row. So when you call it on its own, it refuses the text that a field
+    query's `prepare` refuses. `target::matching` still stores such text as
+    the empty filter.
+  - What the option reveals: one more token per short word, in every
+    stored value that contains one. The token is unique to the word.
+    Someone can tell the rows that contain "Ng" from the rows that contain
+    "Nguyen", and count them. A query shorter than one n-gram shows the
+    word tokens it asks for. A query with an n-gram sends no word token.
 - **The JSON path grammar is its own crate, `stack-encrypt-jsonpath`**
   (#1687). `JsonPath`, `Segment` and `JsonPathError` moved there unchanged,
   so that the derive can parse a field's declared paths at compile time
@@ -1468,12 +1484,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     descriptor without it is taken to carry the answering index's term
     alone, as before.
 
-- **An empty `Vec` of indexes wipes an owned plaintext when it refuses
-  it** (#1398). `Indexes::operations` and `Indexes::query_operations` on an
-  empty `Vec` refuse with `PlanError::EmptyIndexes`, and in `Owned` mode
-  the refusal dropped the plaintext without wiping it. The refusal now lets
-  go of it as an operation does: an owned value is wiped, and a borrow is
-  left with the caller.
+- **An empty `Vec` of indexes now wipes an owned plaintext when it
+  refuses it** (#1398). `Indexes::operations` and
+  `Indexes::query_operations` refuse an empty `Vec` with
+  `PlanError::EmptyIndexes`. In `Owned` mode, that refusal dropped the
+  plaintext without wiping it. Now the refusal releases the plaintext as
+  an operation does. The refusal wipes an owned value, and leaves a
+  borrowed value with the caller.
 
 - **`Pending::zip` and `Pending::all` wipe the plaintext they recovered
   before a later failure** (#1666). When one decrypt in a batch failed

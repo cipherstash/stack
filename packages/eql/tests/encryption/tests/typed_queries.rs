@@ -581,12 +581,14 @@ async fn a_field_reference_match_query_verifies_and_sizes_as_the_data_path_does(
     }
 }
 
-/// A field reference's match query keeps a query's two-letter words only
-/// when it cuts no 3-gram, as the data path's does, on every type with a
-/// match index: `TextMatch`, and `TextSearch` and `TextSearchOre`, whose
-/// twins carry the equality and order terms beside the match term. "Ng" is
-/// its word and does not find "Nguyen"; "Mike Ng" and "ke Ng" are their
-/// 3-grams and find "Mike Nguyen".
+/// A field reference's match query keeps its two-letter words only when the
+/// whole query is one two-letter word, as the data path's query does. The
+/// rule applies to every type with a match index: `TextMatch`,
+/// `TextSearch`, and `TextSearchOre`. The twins of the last two contain the
+/// equality and order terms beside the match term.
+///
+/// - "Ng" is its word. The query does not find "Nguyen".
+/// - "Mike Ng" and "ke Ng" are their 3-grams. Both find "Mike Nguyen".
 mod given_a_two_letter_word_in_a_match_query {
     use super::*;
 
@@ -628,7 +630,7 @@ mod given_a_two_letter_word_in_a_match_query {
         }
     }
 
-    /// A record whose match fields all hold "Mike Nguyen", stored.
+    /// A stored record whose match fields all contain "Mike Nguyen".
     async fn scenario(keyset: &Keyset<'_>) -> EncryptedColumns {
         Columns {
             text_match: "Mike Nguyen".into(),

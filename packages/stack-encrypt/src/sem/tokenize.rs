@@ -16,8 +16,8 @@
 //! each is run through the PRF under a domain of its own.
 //!
 //! A stored value keeps both kinds. A query keeps its short words only when
-//! it cuts no n-gram ([`Side::Query`]), so "Ng" asks for the word `ng` and
-//! "Mike Ng" asks for its trigrams alone.
+//! its whole text is shorter than one n-gram ([`Side::Query`]). So "Ng" asks
+//! for the word `ng`, and "Mike Ng" asks for its trigrams alone.
 
 use std::collections::HashSet;
 
@@ -86,29 +86,32 @@ pub(crate) struct Tokens {
     pub(crate) short_words: Vec<String>,
 }
 
-/// Which side of a match a text is cut for: a value to store, or a query
-/// to find stored values by.
+/// What a text is split into tokens for: a value to store, or a query that
+/// finds stored values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Side {
-    /// A value to store: every token of both kinds, so that any query of a
-    /// run of its words finds it.
+    /// A value to store. The value keeps every token of both kinds, so a
+    /// query of any run of its words finds it.
     Stored,
-    /// A query: the tokenizer's tokens, and the short words only when the
-    /// tokenizer cut none ([`Tokens::into_query`]).
+    /// A query. The query keeps the tokenizer's tokens, and its short words
+    /// only when the tokenizer found none ([`Tokens::into_query`]).
     Query,
 }
 
 impl Tokens {
-    /// The tokens a query keeps of the tokens its text cuts: all of them
-    /// when the tokenizer cut none, else the tokenizer's alone, the short
-    /// words wiped.
+    /// The tokens a query keeps. If the tokenizer found no token, the query
+    /// keeps every short word. Otherwise the query keeps the tokenizer's
+    /// tokens alone, and the short words are wiped.
     ///
-    /// So a query of short words alone ("Ng") is its word tokens, and finds
-    /// the rows that hold those words whole. A query that cuts an n-gram
-    /// ("Mike Ng") is its n-grams, as with the option off, and finds the rows
-    /// that hold them: "Mike Nguyen" as well as "Mike Ng". Every stored
-    /// value keeps its word tokens, so the rule moves no stored filter, and
-    /// every token a query keeps is still a token its own text stores.
+    /// So a query of short words alone, such as "Ng", asks for its word
+    /// tokens. That query finds the rows that contain those words whole. A
+    /// query with an n-gram, such as "Mike Ng", asks for its n-grams, as it
+    /// does with the option off. That query finds every row that contains
+    /// them: "Mike Nguyen" as well as "Mike Ng".
+    ///
+    /// The rule changes no stored filter, since every stored value keeps its
+    /// word tokens. Every token a query keeps is also a token that its own
+    /// text stores.
     fn into_query(mut self) -> Self {
         if !self.tokenizer.is_empty() {
             self.short_words.zeroize();
@@ -153,8 +156,9 @@ impl Default for Tokenizer {
 /// unassigned in Unicode 16 is refused, as equality refuses it: its NFC
 /// form could change when the code point is assigned.
 ///
-/// The tokens are cut for `side`: a stored value keeps every token, and a
-/// query its short words only when it cuts no n-gram ([`Side`]).
+/// The tokens are for `side` ([`Side`]). A stored value keeps every token. A
+/// query keeps its short words only when its whole text is shorter than one
+/// n-gram.
 ///
 /// The normalized copy is held in [`Protected`](vitaminc_protected::Protected)
 /// and wiped on drop.
@@ -674,9 +678,9 @@ mod tests {
                     }
                 }
 
-                /// A query keeps the n-grams its text cuts, and its short
-                /// words only when it cuts none of them; whichever it
-                /// keeps, the same text stored holds them.
+                /// A query keeps every n-gram of its text. The query keeps
+                /// its short words only when it has no n-gram. The same
+                /// text, stored, contains every token the query keeps.
                 #[test]
                 fn a_query_keeps_its_short_words_only_when_it_cuts_no_ngram(
                     (_, text) in text(),
@@ -733,7 +737,7 @@ mod tests {
             use super::*;
 
             /// The tokens a query of `text` keeps under 3-grams, downcased,
-            /// with the short-word filter on, as [`tokens`] cuts them.
+            /// with short words on, as [`tokens`] returns them.
             fn query(text: &str) -> Tokens {
                 tokens(
                     text,

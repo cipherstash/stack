@@ -208,13 +208,21 @@ cannot tell which they are producing.
 > differs from the stored term, and ADR-0009 makes the operator, not the
 > index, the thing a caller names.
 
-> **Amended 2026-11-23 (#1398).** `match_terms` is no longer a match
-> query's path when `MatchOptions::short_words` is on. It derives a stored
-> value's filter, and a query keeps its short words only when it cuts no
-> n-gram, so the `match_terms` filter of "Mike Ng" asks for the word `ng`
-> and misses "Mike Nguyen". A match query comes from the field's reference,
-> or from `target::matching_query`. ADR-0009's amendment of the same date
-> has the rule.
+> **Amended 2026-11-23 (#1398).** Do not use `KeysetCipher::match_terms`
+> to build a match query when the field's match index has
+> `MatchOptions::short_words` on. Build the query from the field's
+> reference, or with `target::matching_query`.
+>
+> With short words on, `match_terms` returns what a stored value holds:
+> every n-gram, plus each short word as a whole word. A query must not ask
+> for the whole word. A query for "Mike Ng" built with `match_terms` asks
+> for the word "ng", so it does not find "Mike Nguyen". A query keeps its
+> short words only when its whole text is shorter than one n-gram, such as
+> "Ng" on its own.
+>
+> This amendment changes decision 5 above. `match_terms` is no longer the
+> query path for a match index. ADR-0009's amendment of the same date gives
+> the full rule.
 
 ### 6. Targets declare their sources; `FfiValue` is not one
 

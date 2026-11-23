@@ -38,10 +38,10 @@
 //! The other term newtypes and the [`DomainType`] trait are shared with v3:
 //! a v4 `Ciphertext` or `Hmac256` is v3's type, so a change to its
 //! validation in `v3::terms` changes v4 too. v3's order terms
-//! (`OreBlock256`, `OpeCllw`) are not among them. The two v4 terms v3 has
-//! no use for are [`terms::SearchBloomFilter`], the stored filter of a
-//! search domain, and [`terms::QueryBloomFilter`], the filter of a match
-//! query. What separates the two generations on the wire is the envelope's
+//! (`OreBlock256`, `OpeCllw`) are not among them. Two v4 terms have no use
+//! in v3: [`terms::SearchBloomFilter`], the stored filter of a search
+//! domain, and [`terms::QueryBloomFilter`], the filter of a match query.
+//! What separates the two generations on the wire is the envelope's
 //! [`SchemaVersion`], which refuses the other generation's `v`.
 
 /// Generated: the `op::Answers` impls through which a field reference of a
@@ -84,11 +84,14 @@ pub mod timestamp;
 pub use crate::v3::domain_type::{DomainType, SQL_SCHEMA};
 pub use inventory::{all, all_query, all_range_query};
 
-/// The wire-field types of the v4 payloads: v3's that are not order terms,
-/// shared; [`SearchBloomFilter`](terms::SearchBloomFilter) and
-/// [`QueryBloomFilter`](terms::QueryBloomFilter); and the JSON of the order
-/// terms, [`OreBlockHex`](terms::OreBlockHex) and
-/// [`OpeHex`](terms::OpeHex), whose fields hold Stack Encrypt's terms.
+/// The wire-field types of the v4 payloads:
+///
+/// - v3's types that are not order terms, shared with v3;
+/// - [`SearchBloomFilter`](terms::SearchBloomFilter) and
+///   [`QueryBloomFilter`](terms::QueryBloomFilter);
+/// - the JSON of the order terms, [`OreBlockHex`](terms::OreBlockHex),
+///   and [`OpeHex`](terms::OpeHex), whose fields contain Stack Encrypt's
+///   terms.
 pub mod terms {
     pub use super::term_formats::{OpeHex, OreBlockHex};
     pub use crate::v3::terms::{BloomFilter, Ciphertext, Hmac256};
@@ -110,9 +113,9 @@ pub mod terms {
     /// match projection refuses such text, and the SQL refuses `"bf": []`).
     ///
     /// [`BloomFilter`], `TextMatch`'s stored filter, still refuses such
-    /// text, since `TextMatch` has no other term to find it by, and so does
-    /// [`QueryBloomFilter`], the filter of every query. The JSON is
-    /// [`BloomFilter`]'s, and so is the JSON Schema; only what Stack Encrypt
+    /// text, since `TextMatch` has no other term to find it by.
+    /// [`QueryBloomFilter`], the filter of every query, refuses it too. The
+    /// JSON and JSON Schema are [`BloomFilter`]'s. Only what Stack Encrypt
     /// derives into it differs.
     #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
     #[serde(transparent)]
@@ -139,24 +142,30 @@ pub mod terms {
         }
     }
 
-    /// The `bf` term of a match query (`TextMatchQuery`,
-    /// `TextSearchMatchQuery`, `TextSearchOreMatchQuery`, and the `bf` of
-    /// `TextSearchQuery` and `TextSearchOreQuery`): a [`BloomFilter`] over the
-    /// tokens a query keeps.
+    /// The `bf` term of a match query: a [`BloomFilter`] of the tokens the
+    /// query keeps. `QueryBloomFilter` is the `bf` of `TextMatchQuery`,
+    /// `TextSearchMatchQuery`, `TextSearchOreMatchQuery`, `TextSearchQuery`,
+    /// and `TextSearchOreQuery`.
     ///
-    /// A stored value's filter holds every token its text cuts: its
-    /// 3-grams, and each two-letter word whole. A query keeps its two-letter
-    /// words only when it cuts no 3-gram. So the query "ng" is the word
-    /// token `ng`, and finds the rows holding the word "Ng" ("Ng", "Mike
-    /// Ng"), not "Nguyen"; the query "Mike Ng" is its 3-grams alone, and
-    /// finds "Mike Ng" and "Mike Nguyen", as does "ke Ng"; "san fr" finds
-    /// "San Francisco". A query sends no token a stored value of its own
-    /// text lacks, so the rule moves no stored filter.
+    /// A stored value's filter contains every token of its text: its
+    /// 3-grams, and each two-letter word as a whole word. A query keeps its
+    /// two-letter words only when the whole query is one two-letter word.
+    /// A query of three characters or more keeps its 3-grams alone.
     ///
-    /// Text that cuts no token (empty, separator-only, or one letter) is
-    /// refused, as for [`BloomFilter`]: a query's filter is never empty. The
-    /// JSON is [`BloomFilter`]'s, and so is the JSON Schema; only what Stack
-    /// Encrypt derives into it differs.
+    /// - The query "ng" is the word token `ng`. The query finds the rows
+    ///   that contain the word "Ng", such as "Ng" and "Mike Ng", and not
+    ///   "Nguyen".
+    /// - The query "Mike Ng" is its 3-grams alone. The query finds "Mike Ng"
+    ///   and "Mike Nguyen", as does "ke Ng".
+    /// - The query "san fr" finds "San Francisco".
+    ///
+    /// A query sends no token that a stored value of its own text lacks. So
+    /// the rule changes no stored filter.
+    ///
+    /// Text with no token is refused, as for [`BloomFilter`]: a query's
+    /// filter is never empty. Such text is empty, separators only, or one
+    /// letter. The JSON and JSON Schema are [`BloomFilter`]'s. Only what
+    /// Stack Encrypt derives into it differs.
     #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
     #[serde(transparent)]
     pub struct QueryBloomFilter(pub BloomFilter);

@@ -661,17 +661,23 @@ with `ErrEncoding`, naming the field's kind and not the value.
 `encrypt.Int128` and `encrypt.Uint128` are not converted, and floats take
 exactly their own width.
 
-A `TextMatch` value is indexed by its 3-grams and by each two-letter word
-whole, so a two-letter surname such as "Ng" is stored, and `Matches` with
-"ng" finds the rows holding the word "Ng" ("Ng", "Mike Ng"), not "Nguyen".
-A query keeps its two-letter words only when it cuts no 3-gram, which is
-when the whole query is one two-letter word: "Mike Ng" is its 3-grams alone,
-so it finds "Mike Ng" and "Mike Nguyen", and a name typed in part, such as
-"ke Ng", finds its row. The word token is one more token per two-letter word
-in every stored value that holds one, unique to the word: someone who
-clusters tokens across rows can tell the rows holding "Ng" from those
-holding "Nguyen", and count them, where before only the trigram they share
-was visible.
+A `TextMatch` index contains the 3-grams of a value, and each two-letter
+word as a whole word. A 3-gram is a run of three characters, such as "mik" in
+"Mike". The whole-word token lets you store a two-letter surname such as
+"Ng". `Matches` with "ng" finds the rows that contain the word "Ng", such as
+"Ng" and "Mike Ng", and not "Nguyen".
+
+A query asks for its two-letter words only when the whole query is one
+two-letter word. A query of three characters or more asks for its 3-grams
+alone. So "Mike Ng" finds "Mike Ng" and "Mike Nguyen". A name typed in part,
+such as "ke Ng", finds its row.
+
+The word token adds one token for each two-letter word in a stored value.
+The token is unique to the word. Someone who groups tokens across rows can
+tell the rows that contain "Ng" from the rows that contain "Nguyen", and
+count them. Without the word token, they see only the 3-gram that both
+names share.
+
 Text that cuts no token, such as an empty string or one letter, is refused. A
 `TextSearch` value of such text is stored with an empty match filter: `Eq`,
 `Lt`, `Lte`, `Gt` and `Gte` find it through its other terms, and no

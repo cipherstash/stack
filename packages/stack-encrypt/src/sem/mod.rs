@@ -87,17 +87,20 @@
 //! filter, which shows that it is empty, separator-only or too short for
 //! any token.
 //!
-//! With [`MatchOptions::short_words`] on, each word shorter than the n-gram
-//! length (and at least 2 characters) adds one token to a stored value's
-//! filter: the word itself, under the same PRF and a domain of its own,
-//! folded into the same filter by the same `k` positions and matched by the
-//! same containment rule. That is one more token per short word, and the
-//! token is unique to the word: someone who clusters tokens across rows can
-//! tell the rows holding the word "Ng" from those holding "Nguyen", where
-//! before only the boundary trigram `" ng"` they share was visible. No
-//! bigram of a longer word is ever indexed. A query sends its word tokens
-//! only when it cuts no n-gram ("Ng"); a query that cuts one ("Mike Ng")
-//! sends its n-grams alone, as it would with the option off.
+//! With [`MatchOptions::short_words`] on, a stored value's filter gains one
+//! token for each short word. A short word is shorter than one n-gram, and
+//! at least 2 characters long. The word token is the whole word, derived
+//! under the same PRF in a domain of its own. The token sets the same `k`
+//! positions in the same filter, and matches by the same containment rule.
+//!
+//! The word token is unique to the word. Someone who clusters tokens across
+//! rows can tell the rows that contain the word "Ng" from the rows that
+//! contain "Nguyen". Without the option, they see only the trigram `" ng"`
+//! that both share. No bigram of a longer word is indexed.
+//!
+//! A query sends its word tokens only when its whole text is shorter than
+//! one n-gram, such as "Ng" under trigrams. A longer query, such as "Mike
+//! Ng", sends its n-grams alone, as it does with the option off.
 //!
 //! This is a fresh (v2) term format: PRF inputs are framed with vitaminc's PAE
 //! context encoding, so terms are intentionally **not** byte-compatible with
@@ -721,32 +724,38 @@ pub struct MatchOptions {
     ///
     /// The word token is PRF'd under a domain of its own, so it never
     /// derives the bits of an n-gram of the same characters, and folds into
-    /// the same filter by the same `k` positions. Stored, "Ng" is one token
-    /// rather than the empty filter, and "Mike Ng" carries its trigrams and
-    /// `ng`.
+    /// the same filter by the same `k` positions. A stored "Ng" is one
+    /// token, not the empty filter. A stored "Mike Ng" contains its trigrams
+    /// and `ng`.
     ///
-    /// A query keeps its word tokens only when it cuts no n-gram, which is
-    /// when the whole query is shorter than the n-gram length. With trigrams
-    /// that is one short word; with longer n-grams it can be several, so
-    /// under 6-grams "Ng Wu" asks for both its words. "Ng" is one word token
-    /// and is accepted: it finds the rows holding the word "Ng" ("Ng", "Mike Ng"),
-    /// and not "Nguyen". "Mike Ng" cuts trigrams, so it asks for its
-    /// trigrams alone, as with the option off: it finds "Mike Ng", and "Mike
-    /// Nguyen" too, so a name typed in part still finds its row. So does
-    /// "Li Wu": its trigrams cross the space. A query that cuts nothing at
-    /// all, such as one letter, is still refused
-    /// ([`TermError::EmptyTermText`]). A query is verified by the tokens it
-    /// asks for, so its filter and its verify agree.
+    /// A query asks for its word tokens only when its whole text is shorter
+    /// than one n-gram. Under trigrams, that is a query of one short word.
+    /// Under longer n-grams it can be several words: under 6-grams, "Ng Wu"
+    /// asks for both. A longer query asks for its n-grams alone, as it does
+    /// with the option off.
     ///
-    /// **What it reveals.** One more token per short word in every stored
-    /// value that holds one, under the same PRF, in the same filter, matched
-    /// by the same containment rule. The token is unique to the word:
-    /// someone who clusters tokens across rows can tell the rows holding the
-    /// word "Ng" from those holding "Nguyen", where before only the boundary
-    /// trigram `" ng"` they share was visible, and can count how many rows
-    /// hold it. A query of short words alone shows which word tokens it asks
-    /// for. Only words shorter than an n-gram get one, so no bigram of a
-    /// longer word is ever indexed.
+    /// - "Ng" is accepted, and asks for the word token `ng`. The query finds
+    ///   the rows that contain the word "Ng", such as "Ng" and "Mike Ng".
+    ///   The query does not find "Nguyen".
+    /// - "Mike Ng" asks for its trigrams alone. The query finds "Mike Ng"
+    ///   and "Mike Nguyen", so a name typed in part still finds its row.
+    /// - "Li Wu" also asks for its trigrams. Some of them span the space.
+    /// - A query with no token at all, such as one letter, is refused
+    ///   ([`TermError::EmptyTermText`]).
+    ///
+    /// A query's verify checks the same tokens the query asks for, so its
+    /// filter and its verify agree.
+    ///
+    /// **What it reveals.** Each stored value gains one token for each short
+    /// word it contains. The token uses the same PRF, the same filter, and
+    /// the same containment rule. Only a word shorter than one n-gram gets a
+    /// token, so no bigram of a longer word is indexed.
+    ///
+    /// The word token is unique to the word. Someone who clusters tokens
+    /// across rows can tell the rows that contain the word "Ng" from the rows
+    /// that contain "Nguyen", and count them. Without the option, they see
+    /// only the trigram `" ng"` that both share. A query of short words alone
+    /// shows which word tokens it asks for.
     ///
     /// It takes an n-gram tokenizer of length at least 3: the
     /// [`Standard`](Tokenizer::Standard) tokenizer already emits whole words,
@@ -819,16 +828,20 @@ impl MatchOptions {
 /// reference use one configuration: the field's type names its match index,
 /// [`Match<O>`](struct@crate::target::Match), through
 /// [`Answers`](crate::op::Answers), and the query derives its filter through
-/// that index. A filter derived directly, with
-/// [`match_terms`](crate::KeysetCipher::match_terms) or a `Match<O>` the
-/// caller names, is cut under whatever configuration it is given, and
+/// that index. You can also derive a filter directly, with
+/// [`match_terms`](crate::KeysetCipher::match_terms) or a `Match<O>` you
+/// name. That filter uses whatever configuration you give it. The filter
 /// matches a stored filter only when that configuration is the field's.
+///
 /// `match_terms` and `Match<O>`'s [`operation`](crate::target::Index::operation)
-/// cut a stored value; with [`MatchOptions::short_words`] on, a query is
-/// cut by [`matching_query`](crate::target::matching_query), which keeps
-/// its short words only when it cuts no n-gram. A plan that is data has one
-/// match index per field, and its stored filter and its query both read
-/// that index's options.
+/// build a stored value's filter. With [`MatchOptions::short_words`] on,
+/// build a query's filter with
+/// [`matching_query`](crate::target::matching_query). That function keeps
+/// the query's short words only when its whole text is shorter than one
+/// n-gram.
+///
+/// A plan that is data has one match index per field. The plan's stored
+/// filter and its query both read that index's options.
 pub trait MatchConfig: Send + Sync + 'static {
     fn options() -> MatchOptions;
 
@@ -1182,10 +1195,11 @@ impl<T> RangeQuery<T> {
 pub struct QueryTokens(Zeroizing<tokenize::Tokens>);
 
 impl QueryTokens {
-    /// The tokens a query of `text` keeps under `options`' tokenizer and
-    /// case folding: its short words only when it cuts no n-gram
-    /// ([`Side::Query`]). The filter a query sends is derived from the same
-    /// cut, so a query verifies by exactly the tokens it asks for.
+    /// The tokens a query of `text` keeps. `options` sets the tokenizer and
+    /// the case folding. The query keeps its short words only when its whole
+    /// text is shorter than one n-gram ([`Side::Query`]). The filter a query
+    /// sends is built from the same tokens. So a query verifies a row by
+    /// exactly the tokens it asks for.
     ///
     /// # Errors
     ///
@@ -1218,8 +1232,9 @@ impl QueryTokens {
     /// Whether `value` holds every one of these tokens, cut under the same
     /// `options` the tokens were: what [`MatchQuery`]'s `verify` asks, with
     /// the options a value rather than a type, so a match index declared as
-    /// data verifies by the same code. The value is cut as it is stored,
-    /// with every token of both kinds. Each kind is held by its own kind: a
+    /// data verifies by the same code. The value is split into tokens as it
+    /// is stored, with every token of both kinds. Each kind is held by its
+    /// own kind: a
     /// short-word token of the query must be a short word of the value. No
     /// tokens verify nothing, and a value the index cannot normalize holds
     /// no token of any query.
@@ -1297,21 +1312,25 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for BloomVisitor {
     }
 }
 
-/// Derive a match term of `text` cut for `side` ([`Side`]): a stored
-/// value's filter or a query's. Synchronous — see [`equality`]: validation
-/// and tokenization run before the PRF, the visitor folds blocks into
-/// positions. The tokenizer's tokens derive under [`MATCH_DOMAIN`] and the
-/// short-word tokens under [`MATCH_WORD_DOMAIN`], each bound to `context`,
-/// and both fold into the one filter.
+/// Derive the match term of `text` for `side` ([`Side`]): a stored value's
+/// filter, or a query's.
 ///
-/// Text that cuts no token (empty, separator-only, or shorter than the
-/// n-gram length with no short word) is the empty filter when stored: no
-/// position set, no PRF call, and a value no query matches, since a query
-/// always has at least one token and the empty filter holds none of its
-/// positions. A query of such text is refused
-/// ([`TermError::EmptyTermText`]), because its empty filter would match
-/// every row. A field query refuses it earlier, when it is prepared; this
-/// refuses it for every other caller of the query cut.
+/// Synchronous, as [`equality`] is. The text is checked and split into
+/// tokens before the PRF runs. The visitor then folds the PRF's blocks into
+/// positions. The tokenizer's tokens derive under [`MATCH_DOMAIN`], and the
+/// short-word tokens under [`MATCH_WORD_DOMAIN`]. Each is bound to
+/// `context`, and both set positions in the one filter.
+///
+/// Some text has no token: empty text, text of separators only, or text
+/// shorter than one n-gram with no short word.
+///
+/// - Stored, such text is the empty filter. No position is set. The PRF is
+///   not called. No query matches it, since a query always has at least one
+///   token.
+/// - As a query, such text is refused ([`TermError::EmptyTermText`]),
+///   because an empty filter would match every row. A field query refuses
+///   it earlier, when the query is prepared. This check refuses it for
+///   every other caller that builds a query's filter.
 fn match_term<O>(
     prf: &HmacSha256Prf,
     text: &str,
@@ -1372,9 +1391,9 @@ fn bloom_positions(
         .map_err(TermError::from_prf)
 }
 
-/// The match term of `text` cut for `side`, through the keyset `cipher`
-/// holds: derived now when the keyset is loaded, else when it has loaded.
-/// Under the local HMAC backend the returned [`Pending`] carries no
+/// The match term of `text` for `side`, through the keyset of `cipher`. The
+/// term is derived now if the keyset is loaded, or else once it loads.
+/// Under the local HMAC backend, the returned [`Pending`] carries no
 /// requests.
 fn match_pending<'a, K, O>(
     cipher: &'a KeysetCipher<'_, K>,
@@ -1415,12 +1434,14 @@ where
     })
 }
 
-/// The match term a query of `source` sends under `O`'s options: the
-/// filter of the tokens the query keeps ([`Side::Query`]), the tokens its
-/// [`QueryTokens`] verify a row by. What a field query of a match index
-/// derives ([`matching_query`](crate::target::matching_query)), called as
-/// [`Term::encrypt_from`] is. Text that keeps no token is refused
-/// ([`TermError::EmptyTermText`]).
+/// The match term that a query of `source` sends, under `O`'s options. The
+/// term is the filter of the tokens the query keeps ([`Side::Query`]). The
+/// query's [`QueryTokens`] verify a row by the same tokens.
+///
+/// A field query of a match index derives this term, through
+/// [`matching_query`](crate::target::matching_query). That function calls
+/// this one as [`Term::encrypt_from`] is called. Text that keeps no token
+/// is refused ([`TermError::EmptyTermText`]).
 pub(crate) fn match_query<'a, 'c, K, O>(
     source: impl AsRef<str>,
     cipher: &'a KeysetCipher<'_, K>,
@@ -2100,13 +2121,16 @@ order_term! {
 /// identical either way; what differs is whether anything holds the two in
 /// agreement.
 ///
-/// [`match_terms`](Self::match_terms) is the exception: it derives a stored
-/// value's filter, which is a query's only while
-/// [`MatchOptions::short_words`] is off. With the option on, a query keeps
-/// its short words only when it cuts no n-gram, so the filter of "Mike Ng"
-/// from `match_terms` asks for the word `ng` and misses "Mike Nguyen". A
-/// match query comes from the field's reference (`matches(..)`), or from
-/// [`matching_query`](crate::target::matching_query) run on its own.
+/// Do not use [`match_terms`](Self::match_terms) to build a match query when
+/// [`MatchOptions::short_words`] is on. `match_terms` is the exception to
+/// the rule above, because it derives a stored value's filter. That filter
+/// is also a query's filter only while the option is off.
+///
+/// With the option on, a query keeps its short words only when its whole
+/// text is shorter than one n-gram. A query for "Mike Ng" built with
+/// `match_terms` asks for the word `ng`, so it does not find "Mike Nguyen".
+/// Build a match query from the field's reference (`matches(..)`), or with
+/// [`matching_query`](crate::target::matching_query).
 ///
 /// The descriptor is a context
 /// as the target-directed leaves take it — a [`NonEmpty<T>`]:
@@ -2163,16 +2187,24 @@ impl<K> KeysetCipher<'_, K> {
     /// `O`. For custom options, define a marker type implementing
     /// [`MatchConfig`].
     ///
-    /// This derives the *stored* filter. Text that yields no tokens (empty
-    /// or separator-only text, or text shorter than the n-gram length; see
-    /// [`Tokenizer::Ngram`]) is the empty filter, which no query matches,
-    /// so a short value can be stored. A query is the other type,
-    /// [`MatchQuery`], and comes from a query
-    /// (a field reference's `matches(..)`), which refuses a query of such
-    /// text ([`TermError::EmptyTermText`]) because its filter would match
-    /// every row, and keeps a query's short words only when it cuts no
-    /// n-gram ([`MatchOptions::short_words`]); this method derives the
-    /// stored filter and refuses nothing.
+    /// Use this to build the filter of a value you store, not a query. With
+    /// [`MatchOptions::short_words`] on, a stored filter contains every
+    /// n-gram, plus each short word as a whole word. A query must not ask for
+    /// the whole word. A query for "Mike Ng" built with `match_terms` asks
+    /// for the word `ng`, so it does not find "Mike Nguyen".
+    ///
+    /// Build a query with a field reference's `matches(..)`. That gives the
+    /// other type, [`MatchQuery`]. Or build a query's filter with
+    /// [`matching_query`](crate::target::matching_query). Both keep a
+    /// query's short words only when its whole text is shorter than one
+    /// n-gram.
+    ///
+    /// Text with no token is the empty filter. No query matches it. Such
+    /// text is empty, separators only, or shorter than one n-gram (see
+    /// [`Tokenizer::Ngram`]). So a short value can be stored, and this method
+    /// refuses nothing. A query of such text is refused
+    /// ([`TermError::EmptyTermText`]), because its filter would match every
+    /// row.
     pub fn match_terms<'c, O>(
         &self,
         text: &str,
@@ -2209,13 +2241,14 @@ impl<K> KeysetCipher<'_, K> {
         }
     }
 
-    /// [`match_terms`](Self::match_terms) under runtime options and cut for
-    /// `side`, for the `dynamic` path, whose plan carries a match index's
-    /// options as data (an `IndexSpec::Match`) and which derives a stored
-    /// value's filter and a query's alike. Not public: the typed API keeps
-    /// the options on the type so a stored field and its probe cannot
-    /// disagree, and a binding reaches this only through a plan that names
-    /// the options for both.
+    /// [`match_terms`](Self::match_terms) under runtime options, for `side`,
+    /// for the `dynamic` path. That path's plan carries a match index's
+    /// options as data (an `IndexSpec::Match`). The path derives both stored
+    /// and query filters.
+    ///
+    /// This method is not public. The typed API keeps the options on the
+    /// type, so a stored field and its query cannot disagree. A binding
+    /// reaches this only through a plan that names the options for both.
     pub(crate) fn match_terms_under<'c, O>(
         &self,
         text: &str,
@@ -2597,8 +2630,8 @@ mod tests {
                 );
             }
 
-            /// Text of short and long words, so a query cuts n-grams, words,
-            /// both or neither.
+            /// Text of short and long words, so a query has n-grams, short
+            /// words, both, or neither.
             fn text() -> impl Strategy<Value = String> {
                 prop::collection::vec(
                     prop::sample::select(vec!['a', 'n', 'g', 'é', '李', ' ', ',']),
@@ -2609,8 +2642,8 @@ mod tests {
 
             proptest! {
                 /// A query's filter is the filter of exactly the tokens it
-                /// verifies by, so no row the filter rejects would verify;
-                /// a query that keeps no token has no filter.
+                /// verifies by. So no row the filter rejects would verify. A
+                /// query that keeps no token has no filter.
                 #[test]
                 fn the_filter_is_the_filter_of_the_tokens_it_verifies_by(query in text()) {
                     let prf = prf();
@@ -2650,9 +2683,9 @@ mod tests {
                     }
                 }
 
-                /// A query finds the text it was cut from, and any text it
-                /// is a run of characters of when it cuts an n-gram: a name
-                /// typed in part finds its row.
+                /// A query with an n-gram finds every text that contains it
+                /// as a run of characters. So a name typed in part finds its
+                /// row.
                 #[test]
                 fn a_query_that_cuts_an_ngram_finds_every_text_it_is_part_of(
                     row in text(),

@@ -493,15 +493,15 @@ mod given_a_set_of_indexes {
     }
 }
 
-/// A set of indexes derives a query's terms through each index's own query
-/// derivation (`Indexes::query_operations`): a match index's term is the
-/// filter of the tokens the query keeps, and every other index's is the
-/// term it stores. One index, a tuple and a `Vec` alike.
+/// A set of indexes derives a query's terms through each index's own
+/// `query_operation` (`Indexes::query_operations`). A match index's term is
+/// the filter of the tokens the query keeps. Every other index's term is the
+/// one it stores. The same holds for one index, a tuple, and a `Vec`.
 mod given_a_set_holding_a_match_index_with_short_words {
     use super::*;
 
-    /// 3-grams with short-word tokens, so a query that cuts an n-gram
-    /// derives a filter other than the one the same text stores.
+    /// 3-grams with short-word tokens. So a query with an n-gram derives a
+    /// filter other than the one the same text stores.
     struct ShortWords;
     impl MatchConfig for ShortWords {
         fn options() -> MatchOptions {
@@ -512,9 +512,8 @@ mod given_a_set_holding_a_match_index_with_short_words {
         }
     }
 
-    /// The text: "Ng" is a short word of a query that cuts n-grams, so the
-    /// query keeps its 3-grams alone, where a stored value holds the word
-    /// too.
+    /// The text. The query has n-grams, so it keeps its 3-grams alone and
+    /// drops the short word "Ng". A stored value contains the word too.
     const TEXT: &str = "Mike Ng";
 
     /// A keyset over the fake key source, and the stored and query filters
@@ -665,8 +664,8 @@ mod given_a_set_holding_a_match_index_with_short_words {
     mod assertions {
         use super::*;
 
-        /// The stored and query filters of one text differ, so a set that
-        /// derived the stored filter for a query would show.
+        /// The stored and query filters of one text differ. So this shows a
+        /// set that derived the stored filter for a query.
         pub(super) fn differ(stored: &MatchTerms<ShortWords>, queried: &MatchTerms<ShortWords>) {
             assert_ne!(
                 stored.positions(),
@@ -690,9 +689,9 @@ mod given_a_set_holding_a_match_index_with_short_words {
     }
 }
 
-/// An empty `Vec` of indexes handed a plaintext by value: the refusal is the
-/// operation that lets go of it, so it wipes it, for a stored value and for a
-/// query alike.
+/// An empty `Vec` of indexes handed a plaintext by value. The refusal is the
+/// operation that releases the plaintext, so the refusal wipes it, for a
+/// stored value and for a query alike.
 mod given_an_owned_plaintext_and_an_empty_vec_of_indexes {
     use super::*;
     use std::sync::atomic::AtomicUsize;

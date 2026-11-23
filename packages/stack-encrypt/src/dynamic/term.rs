@@ -416,10 +416,11 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 }
 
 /// Derive one index term's frozen byte encoding, as a query sends it. A
-/// match term is cut as a query is: with
-/// [`short_words`](MatchOptions::short_words) on, a value's short words are
-/// tokens only when it cuts no n-gram, so the probe of "Mike Ng" is its
-/// trigrams alone, where the record path stores its word token beside them.
+/// match term keeps the tokens a query keeps. With
+/// [`short_words`](MatchOptions::short_words) on, the value's short words
+/// are tokens only when its whole text is shorter than one n-gram. So the
+/// term of "Mike Ng" is its trigrams alone. The record path stores the word
+/// token beside them.
 ///
 /// # Examples
 ///
@@ -560,8 +561,8 @@ impl AsRef<[u8]> for TermBytes {
 }
 
 /// Walk `value` to its one scalar and derive `kind`'s term there, for
-/// `side`: a stored value's term, or the term a query sends, which differ
-/// only for a match index with short words ([`Side`]). Nothing is
+/// `side` ([`Side`]). A stored value's term and a query's term differ only
+/// for a match index with short words on. Nothing is
 /// requested: a term is derived by the keyset cipher's own PRF, so the
 /// pending is ready when it is built.
 ///
@@ -2101,12 +2102,12 @@ mod tests {
         }
 
         /// The data path derives a short-word index's query term by the
-        /// query's rule, and "Ng", which cuts nothing under the default
-        /// options, is one token under them. A probe is a query: "Ng" cuts
-        /// no trigram, so it is its word token, the filter "Ng" stores;
-        /// "Mike Ng" cuts trigrams, so it is its trigrams alone, the filter
-        /// the index without the option stores, and not the one "Mike Ng"
-        /// stores under it.
+        /// query rule. "Ng" has no token under the default options, and one
+        /// token with short words on. "Ng" has no trigram, so its query is
+        /// its word token: the filter of a stored "Ng". "Mike Ng" has
+        /// trigrams, so its query is its trigrams alone. That is the filter
+        /// the index stores without the option, not the one a stored "Mike
+        /// Ng" has with it.
         #[tokio::test]
         async fn short_words_drive_the_derivation() {
             struct ShortWords;
@@ -2160,8 +2161,9 @@ mod tests {
                 stored("Mike Ng").await,
                 "and not the stored filter, which holds the word token too"
             );
-            // The index as a description: `operation` is the stored side,
-            // `query_operation` a field query's, the probe's bytes.
+            // The index as a description: `operation` derives a stored
+            // value's filter, and `query_operation` a field query's filter.
+            // The field query's filter has the bytes `term` returns above.
             let index = IndexSpec::Match(options.clone());
             let run = |query: bool| {
                 let keyset = &keyset;

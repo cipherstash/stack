@@ -348,8 +348,8 @@ impl<I: fmt::Debug, Q, D: fmt::Debug> fmt::Debug for TwinIndex<I, Q, D> {
 /// Declared as `I` is, so it is the index that answers the operator, and
 /// derives the terms of `D` for one value, under one context: `I`'s term
 /// alone when `D` is `I`. A query derives each index's query term
-/// ([`Indexes::query_operations`]), so a match term is the filter of the
-/// tokens the query keeps, as `I`'s own query is.
+/// ([`Indexes::query_operations`]). So a match term is the filter of the
+/// tokens the query keeps, as in `I`'s own query.
 impl<S, I: Index<S>, Q, D: Indexes<S>> Index<S> for TwinIndex<I, Q, D> {
     type Term = D::Terms;
     fn spec(&self) -> IndexSpec {
@@ -555,13 +555,14 @@ macro_rules! twin_orderings {
 }
 twin_orderings!(Lt, Lte, Gt, Gte);
 
-/// Text match: the twin's `bf` is the filter EQL's match index derives
-/// over the tokens the query keeps (its two-letter words only when it cuts
-/// no 3-gram, [`QueryBloomFilter`]), and the query keeps those tokens to
-/// [`verify`](Probabilistic::verify) each decrypted row, as Stack Encrypt's
-/// `MatchQuery` does. A query whose text cuts no token is refused before
-/// any term exists. Only for the plaintext the twin's type is produced
-/// from.
+/// Text match. The twin's `bf` is the filter EQL's match index derives over
+/// the tokens the query keeps ([`QueryBloomFilter`]). The query keeps its
+/// two-letter words only when the whole query is one two-letter word. The
+/// query also keeps those tokens to [`verify`](Probabilistic::verify) each
+/// decrypted row, as Stack Encrypt's `MatchQuery` does.
+///
+/// A query whose text has no token is refused before any term exists. Only
+/// for the plaintext the twin's type is produced from.
 impl<Q> Supports<op::Matches, Q::Plaintext> for TwinIndex<Match<EqlMatch>, Q>
 where
     Q: QueryTwin<QueryBloomFilter> + MaybeSend + 'static,

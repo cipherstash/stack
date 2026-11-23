@@ -163,9 +163,9 @@ impl IndexKey {
     }
 
     /// The type a query twin stores the index's term in, over the type's
-    /// plaintext `source`: the EQL newtype of an `hm` or a `bf`
-    /// ([`query_term_newtype`], so a `bf` is a `QueryBloomFilter`), Stack
-    /// Encrypt's own term of an `op` or an `ob`.
+    /// plaintext `source`. An `hm` or a `bf` is an EQL newtype
+    /// ([`query_term_newtype`]). A `bf` is a `QueryBloomFilter`. An `op` or
+    /// an `ob` is Stack Encrypt's own term.
     fn twin_term_type(self, source: &syn::Path) -> TokenStream {
         match self.term_import() {
             TermImport::Newtype(name) => {
@@ -180,7 +180,7 @@ impl IndexKey {
     }
 
     /// The name `answers.rs` imports the twin's term type by, and where
-    /// from. An `hm` or a `bf` is the newtype a query carries
+    /// from. An `hm` or a `bf` is the newtype a query contains
     /// ([`query_term_newtype`]): `Hmac256`, or `QueryBloomFilter`.
     fn term_import(self) -> TermImport {
         match self {

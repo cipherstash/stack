@@ -181,12 +181,11 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
             mode: PhantomData,
         }
     }
-    /// Reject the declaration as [`failed`](Self::failed) does, and let go
-    /// of the plaintext it is handed through [`WipeSource`]: in
-    /// [`Owned`] mode the value is wiped, and a borrow is left
-    /// with the caller. A description that refuses before any operation has
-    /// taken its plaintext uses this, so the refusal does not free the value
-    /// unwiped.
+    /// Reject the declaration as [`failed`](Self::failed) does, and release
+    /// the plaintext it is handed through [`WipeSource`]. In [`Owned`] mode
+    /// the value is wiped. A borrow is left with the caller. Use this when a
+    /// description refuses before any operation has taken its plaintext, so
+    /// the refusal does not free the value without wiping it.
     pub(crate) fn failed_wiping(error: Error) -> Self
     where
         M: WipeSource<'s, S>,
@@ -1150,10 +1149,11 @@ where
 /// Every term reads the plaintext in place, so it runs in either mode
 /// without a copy. `$lend` is how a borrow of `S` becomes the source its
 /// scheme reads. In [`Owned`] mode a `wipe` term hands the value to its
-/// scheme, which wipes it. A `view` term (match) reads a borrow in either
-/// mode through `$derive`, called as `Term::encrypt_from` is, and then
-/// wipes a value it was handed. Either kind wipes a value it was handed
-/// when the context is refused ([`WipeSource`]).
+/// scheme, and the scheme wipes it. A `view` term (match) reads a borrow in
+/// either mode through `$derive`. The term calls `$derive` as
+/// `Term::encrypt_from` is called, and then wipes a value it was handed.
+/// Either kind wipes a value it was handed when the context is refused
+/// ([`WipeSource`]).
 macro_rules! term_operation {
     (
         $(#[$doc:meta])*
@@ -1235,30 +1235,33 @@ term_operation!(
     equality, crate::sem::EqualityTerm, wipe(EncryptRef::lend), [], [S: crate::Encrypt + EncryptRef]
 );
 term_operation!(
-    /// The match term of any text `S` under the context the tree hands it,
-    /// tokenised and hashed as `O` declares: a stored value's filter, which
-    /// holds every token the text cuts.
+    /// The match term of any text `S`, under the context the tree hands it,
+    /// tokenised and hashed as `O` declares. The term is a stored value's
+    /// filter, with every token of the text. A query's filter comes from
+    /// [`matching_query`].
     matching, crate::sem::MatchTerms<O>,
     view(<crate::sem::MatchTerms<O> as Term<&S, K, _>>::encrypt_from),
     [O: crate::sem::MatchConfig + 'static], [S: AsRef<str>]
 );
 term_operation!(
-    /// The match term a query of the text `S` sends, under the context the
-    /// tree hands it: the filter of the tokens the query keeps, which a
-    /// stored filter holds when the row holds them. With
-    /// [`short_words`](crate::sem::MatchOptions::short_words) on, a query's
-    /// short words are tokens of the filter only when it cuts no n-gram:
-    /// "Ng" asks for the word `ng`, and "Mike Ng" for its trigrams alone, so
-    /// it finds "Mike Nguyen" as well as "Mike Ng". With the option off it
-    /// is [`matching`]'s term of any text that cuts a token.
+    /// The match term that a query of the text `S` sends, under the context
+    /// the tree hands it. The term is the filter of the tokens the query
+    /// keeps. A stored filter contains it when the row contains those
+    /// tokens. A field query of a match index derives this term
+    /// ([`Index::query_operation`](super::Index::query_operation)).
     ///
-    /// What a field query of a match index derives
-    /// ([`Index::query_operation`](super::Index::query_operation)). Text
-    /// that cuts no token is refused
+    /// With [`short_words`](crate::sem::MatchOptions::short_words) on, a
+    /// query keeps its short words only when its whole text is shorter than
+    /// one n-gram. "Ng" asks for the word `ng`. "Mike Ng" asks for its
+    /// trigrams alone, so it finds "Mike Nguyen" as well as "Mike Ng". With
+    /// the option off, this is [`matching`]'s term, for any text that has a
+    /// token.
+    ///
+    /// Text with no token is refused
     /// ([`TermError::EmptyTermText`](crate::sem::TermError::EmptyTermText)),
-    /// since its empty filter would match every row; [`matching`] stores
-    /// such text as the empty filter. A field query refuses it earlier,
-    /// when it is prepared ([`Supports::prepare`](crate::op::Supports::prepare)).
+    /// since its empty filter would match every row. [`matching`] stores
+    /// such text as the empty filter. A field query refuses it earlier, when
+    /// it is prepared ([`Supports::prepare`](crate::op::Supports::prepare)).
     matching_query, crate::sem::MatchTerms<O>,
     view(crate::sem::match_query),
     [O: crate::sem::MatchConfig + 'static], [S: AsRef<str>]

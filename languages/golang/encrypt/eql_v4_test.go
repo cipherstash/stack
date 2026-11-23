@@ -297,8 +297,8 @@ func TestV4QueriesMatchTheRustFixture(t *testing.T) {
 	if ok, err := ng.Verify(ctx, []string{"Ng", "Mike Ng", "Nguyen"}); err != nil || !ok[0] || !ok[1] || ok[2] {
 		t.Errorf("Verify(Ng, Mike Ng, Nguyen) = %v, %v, want true, true, false", ok, err)
 	}
-	// A query that cuts a 3-gram keeps no two-letter word, so a name typed
-	// in part finds the longer name too.
+	// A query of three characters or more keeps no two-letter word. So a
+	// name typed in part finds the longer name too.
 	mikeNg, err := testusers.ProfileFields.Name.Matches(ctx, cipher, "Mike Ng")
 	if err != nil {
 		t.Fatalf("Name.Matches(%q): %v", "Mike Ng", err)
