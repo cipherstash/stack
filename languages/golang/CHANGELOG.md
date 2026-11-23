@@ -105,6 +105,11 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   - 100 rows of one 2 KB text or JSON column: 90 to 100 ms of CPU before,
     about 25 ms now.
   - The EQL build of the guest is about 1.6 MB larger.
+  - The option's calls into Go were also the points where the Go
+    scheduler could stop a running guest call. A garbage collector
+    stop-the-world pause now waits for the guest call in progress. While
+    100 rows of 14 columns decrypt, the longest such pause grows from
+    about 0.3 ms to 10 to 25 ms.
 - **A stuck call is no longer interrupted.** A call that runs on 30 seconds
   after its context ended is a bug. The option that interrupted it is gone,
   so it now runs on. The client still closes, and nothing waits for the

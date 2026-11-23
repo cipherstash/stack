@@ -138,17 +138,24 @@ func guestModuleConfig() wazero.ModuleConfig {
 // ErrMemoryLock.
 func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.LockPolicy) (*instance, error) {
 	// No WithCloseOnContextDone. That option makes wazero compile a call
-	// back into Go at the top of every loop and the entry of every function
-	// the guest runs, so that a call whose context ends can be interrupted.
-	// The guest is cryptography, which is tight loops (the ZeroKMS key
-	// derivation, software AES and GHASH, copies and wipes), and the option
-	// cost a decrypt five to six times its CPU. Nothing needs it: a guest
-	// call never runs under the caller's context (Client.step runs it under
-	// guest.Detach) and never waits inside the guest (the host runs every
-	// request between steps), so the only call it would interrupt is a
-	// guest step that does not finish, which is a bug. Client.step's
-	// backstop handles that one without interrupting it: the client is
-	// closed for everyone else, and released if the step returns.
+	// back into Go at the top of every loop the guest runs, so that a call
+	// whose context ends can be interrupted. The guest is cryptography,
+	// which is tight loops (the ZeroKMS key derivation, software AES and
+	// GHASH, copies and wipes), and the option cost a decrypt five to six
+	// times its CPU. Nothing else needs it: a guest call never runs under
+	// the caller's context (Client.step runs it under guest.Detach) and
+	// never waits inside the guest (the host runs every request between
+	// steps), so the only call it would interrupt is a guest step that does
+	// not finish, which is a bug. Client.step's backstop handles that one
+	// without interrupting it: the client is closed for everyone else, and
+	// released if the step returns.
+	//
+	// The cost of leaving it off: the Go scheduler cannot preempt native
+	// wasm code, and those calls into Go were the guest's only safe points.
+	// A stop-the-world GC pause now waits for the running guest step, so
+	// the pause can be as long as one step (about 10 to 25 ms for a
+	// 1,400-value decrypt, against 0.3 ms with the option). Keeping each
+	// step short bounds it.
 	config := wazero.NewRuntimeConfig().
 		WithCompilationCache(compilationCache())
 	runtime := wazero.NewRuntimeWithConfig(ctx, config)
