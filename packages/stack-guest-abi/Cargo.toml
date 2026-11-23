@@ -25,16 +25,18 @@ thiserror = { workspace = true }
 # crosses to the host as a transport frame.
 vitaminc-aead = { workspace = true }
 vitaminc-aead-frame = { workspace = true }
-# `HostValue::Bytes` holds its bytes in `Protected`, and `transport`
-# (wasm32-only) uses `OpaqueDebug` for its response, whose body can carry
+# `HostValue::Bytes` holds its bytes in `Protected`, and `transport` uses
+# `OpaqueDebug` for its response, whose body can carry
 # wrapped key material or a credential and so never prints.
 vitaminc-protected = { workspace = true }
 
 [dev-dependencies]
-# The registry's property test (`buffers::properties`): random interleavings
-# of alloc / register / take / dealloc / wipe_all against a model of what the
-# host holds, run natively and under Miri. `std` only: the `fork` and
-# `timeout` defaults spawn processes and threads Miri cannot interpret.
+# The property tests, run natively and under Miri: the registry's
+# (`buffers::properties`), random interleavings of alloc / register / take /
+# dealloc / wipe_all against a model of what the host holds; and the pair
+# validation's (`memory::properties`), the bounds rule at and around its
+# edges. `std` only: the `fork` and `timeout` defaults spawn processes and
+# threads Miri cannot interpret.
 proptest = { version = "1.7", default-features = false, features = ["std"] }
 # `step`'s tests drive the loop through the combinators the ZeroKMS client
 # runs its requests with (`buffered`, `join`).
