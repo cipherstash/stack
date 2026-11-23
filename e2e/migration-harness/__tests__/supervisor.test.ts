@@ -608,6 +608,32 @@ test.each(['ECONNREFUSED', 'ETIMEDOUT', '111'])(
   },
 )
 
+// A connect to a loopback port with no listener can draw that same port as its
+// source port, and the kernel then connects the socket to itself. That reached
+// no listener, so it must not stop the actor as a forbidden connection.
+test('observer does not treat a socket connected to itself as a reached forbidden peer', async () => {
+  const frames = await observe([
+    {
+      stage: 'startup-probe',
+      calls: [
+        'connect(18<TCP:[127.0.0.1:32884]>, {sa_family=AF_INET, sin_port=htons(32884), sin_addr=inet_addr("127.0.0.1")}, 16) = -1 EINPROGRESS (Operation now in progress)',
+        'getsockopt(18<TCP:[127.0.0.1:32884->127.0.0.1:32884]>, SOL_SOCKET, SO_ERROR, [0], [4]) = 0',
+      ],
+    },
+  ])
+  expect(frames.filter((frame) => frame.kind === 'stream-error')).toEqual([])
+  expect(
+    frames.find((frame) => frame.event?.operation === 'getsockopt')?.event,
+  ).toMatchObject({
+    resource: '127.0.0.1:32884',
+    decision: 'allowed',
+    result: 'success',
+  })
+  expect(frames).toContainEqual(
+    expect.objectContaining({ kind: 'actor-exit', exitCode: 0 }),
+  )
+})
+
 test.each([
   ['SO_ERROR', '[0]'],
   ['SO_ERROR', '[UNKNOWN]'],

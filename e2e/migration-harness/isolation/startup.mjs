@@ -28,20 +28,33 @@ for (const path of [
   } catch {}
   if (obtained) throw Error(`Startup probe obtained protected content: ${path}`)
 }
-/** @param {string} host @param {number} port */
+/**
+ * A connect to a loopback port with no listener can draw that same port as its
+ * source port. The kernel then connects the socket to itself, which is not a
+ * listener being reached, so try again.
+ * @param {string} host @param {number} port
+ */
 async function denied(host, port) {
-  await new Promise((resolve, reject) => {
-    const socket = net.connect({ host, port })
-    socket.once('connect', () => {
-      socket.destroy()
-      reject(Error('Forbidden listener reached'))
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const selfConnected = await new Promise((resolve, reject) => {
+      const socket = net.connect({ host, port })
+      socket.once('connect', () => {
+        const self =
+          socket.localPort === socket.remotePort &&
+          socket.localAddress === socket.remoteAddress
+        socket.destroy()
+        if (self) resolve(true)
+        else reject(Error('Forbidden listener reached'))
+      })
+      socket.once('error', () => resolve(false))
+      socket.setTimeout(1000, () => {
+        socket.destroy()
+        reject(Error('Network probe had no enforcement result'))
+      })
     })
-    socket.once('error', () => resolve(undefined))
-    socket.setTimeout(1000, () => {
-      socket.destroy()
-      reject(Error('Network probe had no enforcement result'))
-    })
-  })
+    if (!selfConnected) return
+  }
+  throw Error('Network probe kept connecting to itself')
 }
 const forbiddenTargets = JSON.parse(process.env.HARNESS_STARTUP_TARGETS ?? '[]')
 if (forbiddenTargets.length < 4)
