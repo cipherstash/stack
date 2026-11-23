@@ -39,6 +39,43 @@ async function textFile(path) {
   return readFile(path, 'utf8')
 }
 
+/** What the migrated workspace says about its own Stack dependency: the
+ * specifier in its package manifest and the version in its lock. This is
+ * evidence, not a check. The App Host always installs the Stack the Run
+ * selected, so a Run passes or fails against that Stack whatever the workspace
+ * declares; a real Migrator follows the published guide and is not told about a
+ * tree or tarball Stack. Either value is null when it is absent or unreadable.
+ * @param {string} workspace
+ * @returns {Promise<{specifier:string|null, locked:string|null}>} */
+export async function declaredStack(workspace) {
+  /** @param {string} name */
+  const read = async (name) => {
+    try {
+      return object(JSON.parse(await textFile(join(workspace, name))))
+    } catch {
+      return {}
+    }
+  }
+  /** The workspace is Migrator-written, so keep only a short string.
+   * @param {unknown} value */
+  const text = (value) =>
+    typeof value === 'string' && value.length <= 256 ? value : null
+  /** @param {unknown} value @returns {Record<string, unknown>} */
+  const record = (value) =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? /** @type {Record<string, unknown>} */ (value)
+      : {}
+  const manifest = await read('package.json')
+  const lock = await read('package-lock.json')
+  const name = '@cipherstash/stack'
+  return {
+    specifier:
+      text(record(manifest.dependencies)[name]) ??
+      text(record(manifest.devDependencies)[name]),
+    locked: text(record(record(lock.packages)[`node_modules/${name}`]).version),
+  }
+}
+
 /** @param {string} workspace @returns {Promise<Array<{path:string,text:string}>>} */
 async function sources(workspace) {
   const result = []

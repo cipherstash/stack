@@ -122,5 +122,13 @@ npm's unbundled transitive dependencies may occupy a separate `node_modules`
 directory within Stack and are outside this comparison, as are hoisted
 dependencies. It does not attest the complete dependency graph.
 
+The manifest also records `declaredStack`: the `@cipherstash/stack` specifier in
+the migrated workspace's `package.json` and the version in its
+`package-lock.json`, each `null` when absent. This is evidence, not a check. The
+App Host always installs the Stack the Run selected, so a Run passes or fails
+against that Stack even when the workspace declares another one. A real Migrator
+follows the published guide and is not told about a tree or tarball Stack, so
+failing on a mismatch would fail every such Run.
+
 Set `HARNESS_LIVE=1` and the four `CS_*` credentials
 to run the credentialed self-test matrix; CI runs it without model calls.

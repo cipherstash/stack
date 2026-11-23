@@ -4,7 +4,8 @@ import { cp, mkdir, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { relative, resolve, sep } from 'node:path'
 import { behaviour, legacy, mutation } from './behaviour.mjs'
 import { fakeMigrate } from './fake-migrator.mjs'
-import { migrationChecks } from './migration.mjs'
+import { declaredStack, migrationChecks } from './migration-checks.mjs'
+import { runMigrator } from './migrator.mjs'
 import { noRewrite, validateLegacySnapshot } from './no-rewrite.mjs'
 import { createStoreSet, disposeStores } from './real-stores.mjs'
 import { isSnapshotInfrastructureError } from './snapshot-errors.mjs'
@@ -280,6 +281,8 @@ export function createRealDriver({
       }
     },
     async installAppHost() {
+      // Recorded before the App Host copy replaces the dependency below.
+      manifest.declaredStack = await declaredStack(workspace)
       await rm(oracleWorkspace, { recursive: true, force: true })
       await cp(workspace, oracleWorkspace, {
         recursive: true,

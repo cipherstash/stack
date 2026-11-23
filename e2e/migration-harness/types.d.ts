@@ -80,6 +80,9 @@ export interface Manifest {
   fixtureRevision?: string
   artifacts?: { transcript: string; diff?: string; snapshot: string }
   storeCapabilities?: unknown
+  /** The Stack the migrated workspace declares. Evidence only: the Run
+   * installs `stack` regardless. */
+  declaredStack?: { specifier: string | null; locked: string | null }
   [key: string]: unknown
 }
 export interface StageFailure {
