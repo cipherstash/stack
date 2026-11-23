@@ -250,6 +250,35 @@
       }
     },
     {
+      "id": "json-child-v1",
+      "evidence": {
+        "engine-reads": [
+          "given_one_child_of_a_node::each_leaf_member_opens_to_its_key_and_value",
+          "given_one_child_of_a_node::each_element_opens_to_its_index_and_value_in_position_order",
+          "given_one_child_of_a_node::a_child_of_another_node_is_refused_by_its_selector",
+          "given_one_child_of_a_node::an_element_read_as_another_position_is_refused",
+          "given_one_child_of_a_node::a_member_under_the_element_rule_is_refused_by_its_label",
+          "given_one_child_of_a_node::a_row_at_another_depth_is_refused",
+          "given_one_child_of_a_node::a_chain_head_is_refused_before_any_key_is_retrieved",
+          "given_one_child_of_a_node::a_key_with_a_wildcard_is_refused_before_any_key_is_retrieved"
+        ],
+        "engine-queries": [
+          "a_child_opens_against_the_parent_its_request_names",
+          "a_malformed_read_is_refused_before_any_key"
+        ],
+        "eql-typed": ["a_child_opens_through_the_key_of_its_parent"],
+        "postgres": ["postgres_each_child_opens_against_its_parent"],
+        "go": [
+          "TestJSONChildrenOpenAgainstTheirParent",
+          "TestTheReadOperatorsAreTheOnesTheEngineOpens",
+          "TestACustomersDocumentReadsThroughACipherWithABinding",
+          "TestAnOlderGeneratedChildrenTokenIsAQueryOperand",
+          "TestJSONReadTypesPrintAndLogRedacted"
+        ],
+        "go-postgres": ["TestJSONDocumentsQueryAndReadInPostgres"]
+      }
+    },
+    {
       "id": "json-tamper-v1",
       "evidence": {
         "engine-reads": [

@@ -15,11 +15,13 @@ use std::num::NonZeroU32;
 use std::sync::atomic::Ordering;
 
 use serde_json::{json, Value};
-use stack_encrypt::json::{JsonDocument, JsonLeafQuery, JsonPlaintext, JsonQuery};
+use stack_encrypt::json::{
+    JsonChildPlaintext, JsonDocument, JsonLeafQuery, JsonPlaintext, JsonQuery,
+};
 use stack_encrypt::refusal::Reason;
 use stack_encrypt::sem::TermError;
-use stack_encrypt::target::{DecryptSource, EncryptTarget, Scope};
-use stack_encrypt::{DecryptFrom, EncryptInto, Error, KeysetCipher, StackCipher};
+use stack_encrypt::target::{AeadContext, DecryptSource, EncryptTarget, Scope};
+use stack_encrypt::{nonempty, DecryptFrom, EncryptInto, Error, KeysetCipher, StackCipher};
 use stack_kms::FakeDataKeySource;
 use zeroize::Zeroize;
 
@@ -233,6 +235,45 @@ mod the_fields_options {
         key: &JsonSubtreeKey,
     ) -> Option<&'d stack_encrypt::json::JsonEntry> {
         doc.find(&key.token_bytes()[0]).map(|(_, entry)| entry)
+    }
+
+    /// `encrypt_keyed` gives `encrypt`'s token and the key that holds it,
+    /// and the key opens each child the token finds, with its key.
+    #[tokio::test]
+    async fn encrypt_keyed_gives_the_token_with_the_key_that_opens_its_children() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let doc = stored(&keyset).await.profile;
+        let (token, key) = EncryptedCustomer::PROFILE
+            .children("$.visits[0]")
+            .encrypt_keyed(&keyset)
+            .await
+            .unwrap();
+        let alone = EncryptedCustomer::PROFILE
+            .children("$.visits[0]")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(token.tokens(), alone.tokens(), "encrypt's token");
+        assert_eq!(key.tokens(), alone.tokens(), "the key holds the token");
+        assert_eq!(key.path().to_string(), "$.visits[0]", "the key's path");
+        let mut members = Vec::new();
+        for (slot, _, _) in doc.children(&key.token_bytes()[0]) {
+            let child = JsonChildPlaintext::decrypt_from_with_context(
+                key.open_child(doc.node(slot).unwrap()),
+                &keyset,
+                AeadContext::from(nonempty!("customers").with("profile")),
+            )
+            .await
+            .unwrap();
+            members.push((child.key().unwrap().to_owned(), child.value().clone()));
+        }
+        members.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            members,
+            [("at".into(), json!(15)), ("place".into(), json!("home"))],
+            "each member of the first visit, with its key"
+        );
     }
 
     #[tokio::test]

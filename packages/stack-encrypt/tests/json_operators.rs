@@ -252,6 +252,19 @@ fn extracted(doc: &JsonDocument, selector: &str) -> Vec<String> {
         .collect()
 }
 
+/// The rows `json_tree_children(doc, token)` returns, one group each: the
+/// children of the node the token names, in ordinal order, at depth 1.
+fn children(doc: &JsonDocument, token: &str) -> Vec<Vec<String>> {
+    doc.children(&tag(token))
+        .into_iter()
+        .map(|(j, _, _)| {
+            let mut wire = serde_json::to_value(doc.node(j).unwrap()).unwrap();
+            wire["d"] = json!(1);
+            vec![wire.to_string()]
+        })
+        .collect()
+}
+
 /// The rows `json_tree_subtree(doc, tokens, 0)` returns: each node with
 /// its depth grafted.
 fn subtree(doc: &JsonDocument, tokens: &[String]) -> Vec<String> {
@@ -306,6 +319,51 @@ fn opened_values(opened: &ValueFrame) -> Vec<Vec<Value>> {
                 .collect()
         })
         .collect()
+}
+
+/// A `children` read of the `profile` field over `groups`: per group, the
+/// children it opened.
+async fn open_children<K: Source>(
+    keyset: &KeysetCipher<'_, K>,
+    plan: &record::Plan,
+    request: Value,
+    groups: Vec<Vec<String>>,
+) -> Result<Vec<Vec<Opened>>, stack_encrypt::Error> {
+    let opened = open_pending(keyset, plan, &request, &groups).await?;
+    let groups: Vec<Vec<ChildMap>> = dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
+    Ok(groups
+        .into_iter()
+        .map(|group| group.into_iter().map(ChildMap::opened).collect())
+        .collect())
+}
+
+/// One child as the frame carries it: its key or its index, and its
+/// value's JSON text.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChildMap {
+    key: Option<String>,
+    index: Option<u64>,
+    json: bytes::Bytes,
+}
+
+impl ChildMap {
+    fn opened(self) -> Opened {
+        let value = serde_json::from_slice(&self.json.0).unwrap();
+        match (self.key, self.index) {
+            (Some(key), None) => Opened::Member(key, value),
+            (None, Some(index)) => Opened::Element(index, value),
+            (key, index) => panic!("a child has a key or an index: {key:?}, {index:?}"),
+        }
+    }
+}
+
+/// What a child opened to: an object's member by its key, or an array's
+/// element by its index, with its value.
+#[derive(Debug, PartialEq)]
+enum Opened {
+    Member(String, Value),
+    Element(u64, Value),
 }
 
 /// A byte string read out of a frame.
@@ -727,6 +785,106 @@ async fn reads_open_against_the_request_that_prepared_them() {
             Err(stack_encrypt::Error::JsonWildcardTruncated { .. })
         ),
         "{truncated:?}"
+    );
+}
+
+/// `children`: each entry `json_tree_children` returned for the token the
+/// `children` operator derived opens on its own, one group each, against
+/// the parent the request's path names; an entry of another parent is
+/// refused.
+#[tokio::test]
+async fn a_child_opens_against_the_parent_its_request_names() {
+    let cipher = common::stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let plan = plan();
+    let doc = seal(
+        &keyset,
+        &plan,
+        &json!({"name": "Alice", "visits": [{"at": 3}, {"at": 1, "where": "x"}], "tags": ["a", "b"]}),
+    )
+    .await;
+    let token = |t: QueryTerm| match t.operand() {
+        Operand::Text(text) => text.clone(),
+        other => panic!("{other:?}"),
+    };
+    let tags = token(term(&keyset, &plan, "children", json!({"path": "$.tags"})).await);
+    let opened = open_children(
+        &keyset,
+        &plan,
+        json!({"operation": "children", "path": "$.tags"}),
+        children(&doc, &tags),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        opened,
+        [
+            vec![Opened::Element(0, json!("a"))],
+            vec![Opened::Element(1, json!("b"))]
+        ],
+        "each element with its index, in position order"
+    );
+    let second = token(term(&keyset, &plan, "children", json!({"path": "$.visits[1]"})).await);
+    let mut members: Vec<Opened> = open_children(
+        &keyset,
+        &plan,
+        json!({"operation": "children", "path": "$.visits[1]"}),
+        children(&doc, &second),
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .flatten()
+    .collect();
+    // The members come back in their random ordinal order; each names
+    // itself.
+    members.sort_by_key(|child| format!("{child:?}"));
+    assert_eq!(
+        members,
+        [
+            Opened::Member("at".into(), json!(1)),
+            Opened::Member("where".into(), json!("x"))
+        ],
+        "each member of the second visit, with its key"
+    );
+    let none = open_children(
+        &keyset,
+        &plan,
+        json!({"operation": "children", "path": "$.tags"}),
+        vec![vec![]],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        none,
+        [Vec::<Opened>::new()],
+        "a group with no entry opens to none"
+    );
+
+    // `$.tags`' elements answered for `$.visits[1]`'s members.
+    let wrong = open_children(
+        &keyset,
+        &plan,
+        json!({"operation": "children", "path": "$.visits[1]"}),
+        children(&doc, &tags),
+    )
+    .await;
+    assert!(
+        matches!(wrong, Err(stack_encrypt::Error::JsonWrongEntry { .. })),
+        "{wrong:?}"
+    );
+    // A container with children does not open on its own.
+    let visits = token(term(&keyset, &plan, "children", json!({"path": "$.visits"})).await);
+    let container = open_children(
+        &keyset,
+        &plan,
+        json!({"operation": "children", "path": "$.visits"}),
+        children(&doc, &visits),
+    )
+    .await;
+    assert!(
+        matches!(container, Err(stack_encrypt::Error::JsonNotALeaf)),
+        "{container:?}"
     );
 }
 
@@ -1342,17 +1500,57 @@ fn a_malformed_read_is_refused_before_any_key() {
             json!([]),
             "engine",
         ),
+        (
+            json!({"operation": "children", "path": "$.a", "wildcard_bound": 2}),
+            json!([]),
+            "json_input",
+        ),
+        (
+            json!({"operation": "children", "path": "$.a[*]"}),
+            json!([]),
+            "json_path_wildcard",
+        ),
+        (
+            json!({"operation": "child_count", "path": "$.a"}),
+            json!([]),
+            "json_input",
+        ),
     ] {
         assert_eq!(refused(request.clone(), rows), want, "{request}");
     }
 
-    // A selector group holds one entry or none: `->` returns one.
-    let entry = json!({"s": "AAAAAAAAAAAAAAAAAAAAAA==", "c": "AA=="}).to_string();
-    let two = check(
-        json!({"operation": "selector", "path": "$.a"}),
-        json!([[entry.clone(), entry]]),
+    // A selector group holds one entry or none: `->` returns one. So does
+    // a child's: one entry `json_tree_children` returned.
+    // An entry as the SQL returns it, with the header (version 1, no tag)
+    // and the slot grafted: it parses, and nothing here opens it.
+    let entry = json!({
+        "s": "AAAAAAAAAAAAAAAAAAAAAA==",
+        "c": "AA==",
+        "x": "AAAAAAAAAAA=",
+        "h": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+        "j": 1,
+    })
+    .to_string();
+    for operation in ["selector", "children"] {
+        let request = json!({"operation": operation, "path": "$.a"});
+        assert!(
+            check(request.clone(), json!([[entry.clone()]])).is_ok(),
+            "{operation}: one entry"
+        );
+        assert_eq!(
+            refused(request, json!([[entry.clone(), entry.clone()]])),
+            "json_input",
+            "{operation}: two entries in one group"
+        );
+    }
+    assert!(
+        check(
+            json!({"operation": "subtree", "path": "$.a"}),
+            json!([[entry.clone(), entry]])
+        )
+        .is_ok(),
+        "a subtree group holds many rows"
     );
-    assert!(two.is_err());
 
     // A field that does not store a document has no reads.
     let wire =

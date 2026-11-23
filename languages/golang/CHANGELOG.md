@@ -15,6 +15,44 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ### Added
 
+- **Read one child of a JSON node** (#1677). Your app can now read one
+  level of a `JsonSearch` document without fetching the parent's whole
+  subtree. The read takes three steps.
+  1. Your app calls `Children(ctx, c, path)` on the field. `Children` now
+     returns an `encrypt.JSONChildren`.
+  2. The database (EQL) runs `eql_v4.json_tree_children(col, $1::text)`,
+     with `Token()` as `$1`. The database returns the parent's direct
+     children as encrypted entries.
+  3. Your app passes the entries to `Open(ctx, entries)`. `Open` checks
+     each entry, then decrypts it.
+
+  More detail:
+
+  - Each entry opens to an `encrypt.JSONChildValue`. `Key()` gives a
+    member's key, and `Index()` gives an element's index. `JSON` is the
+    child's value as JSON text, or `{}` or `[]` for an empty object or
+    array.
+  - The key or index is encrypted with the value, and authenticated. The
+    database returns an object's members in a random order. So the key is
+    how your app tells the members apart.
+  - `Open` checks each entry against the node at `path`. The entry's
+    selector must be that path extended by its key or index. The entry's
+    self tag must be the one that key or index gives under the parent's
+    token.
+  - An entry that is not a child of that node is `ErrEncoding`, with code
+    `stack_encrypt::json_wrong_entry`.
+  - A child that is an object or an array with members does not open
+    alone. `Open` refuses it as `ErrEncoding`, with code
+    `stack_encrypt::json_not_a_leaf`. Read such a child with `Subtree` at
+    its own path.
+  - No guest export is added. `se_json_open` takes the operation
+    `"children"`, and returns each child's key or index with its value.
+    `Cipher.JSONOpen` refuses that operation. Open a children read with
+    `JSONChildren.Open`.
+  - `JSONChildren` prints and logs with the path and the token redacted,
+    as `JSONSelection` and `JSONRead` do. `JSONChildValue` prints and logs
+    redacted, since a key can be a customer's data.
+
 - **Audit metadata for the ZeroKMS audit log** (#1067). ZeroKMS logs every
   data-key request with the identity that made it. `encrypt.AuditMetadata`
   adds facts about the call to that log, such as its purpose or a request
@@ -92,8 +130,24 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
     in the database until the row is written again or the column is
     dropped.
 
+- **`Children` returns `encrypt.JSONChildren`, not `encrypt.JSONToken`**
+  (#1677). The new type contains the token and opens the children.
+  Regenerate with `stashgen` to get it.
+  - Code that passes the result to a query keeps working, because
+    `JSONChildren` binds as its token.
+  - Code that keeps the result as a `JSONToken` takes `.Token()`.
+  - `ChildCount` still returns a `JSONToken`.
+  - A `*_stash.go` file generated before this release still compiles and
+    runs. Its `Children` returns a `JSONToken`, and a cipher with a binding
+    still refuses it.
+
 ### Changed
 
+- `Children` through a cipher with a binding now prepares the read, as
+  `Selector` and `Subtree` do (#1677). Before, the cipher refused it. The
+  token derives under the cipher's scopes alone. The children open under
+  the scopes and the binding. A cipher with a binding still refuses
+  `ChildCount`, since a count opens nothing.
 - `vcffi` and `vcvalue` move to vitaminc `f1fc9ae74`, the commit vitaminc
   0.10.0 was released from. The host now checks the same date and
   timestamp range as the guests.

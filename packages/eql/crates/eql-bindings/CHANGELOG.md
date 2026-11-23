@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Read one child of a JSON tree node** (#1677). Your app can now decrypt
+  one entry that `eql_v4.json_tree_children` returned, without fetching
+  the parent's whole subtree.
+  - `JsonTreeChild::from_key(&key, entry)` pairs the entry with the
+    `JsonSubtreeKey` of the parent's path.
+  - A `JsonTreeChild` decrypts into a `JsonPlaintext` for the child's
+    value. A `JsonTreeChild` also decrypts into a `JsonChildPlaintext` for
+    the value with its key or index.
+  - The database returns an object's members in a random order. So the key
+    is how your app tells the members apart.
+  - Decrypting checks the entry against the parent, as Stack Encrypt's
+    `JsonSubtreeKey::open_child` does.
+  - A child with members of its own does not decrypt alone. Read it
+    through `JsonTreeSubtree`.
+  - A field reference's `children(path).encrypt_keyed(&keyset)` returns
+    the `JsonTreeToken` to send. The call also returns the key that
+    decrypts what the query returns.
+  - The stored format and the SQL do not change.
+
 - **A `JsonTreeDocument` field is queried from its field reference** (#1459,
   #1687). As a field of a derived record, a `JsonTreeDocument` (and an
   `Option<JsonTreeDocument>`) has Stack Encrypt's JSON field queries,

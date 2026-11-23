@@ -908,22 +908,44 @@ pub fn check_json_open(
     super::json_query::check_open(&request, &rows).map_err(|error| error.in_field(field))
 }
 
-/// Open the rows a read of a document field returned, against the request
-/// that prepared it: the runtime form of [`JsonSelector::open`] and
-/// [`JsonSubtreeKey::open`], for a binding. `request` is the read as the
-/// binding prepared it, `{"operation": "selector" | "subtree", "path",
-/// "wildcard_bound"?}`, and `rows` a list per database row of the entries
-/// the SQL returned for it (`public.eql_v4_json_entry` JSON, as text
-/// or bytes): for `selector`, the one entry `->` returned or none, and for
-/// `subtree`, the rows `json_tree_subtree` returned. The engine derives
-/// the selector or the read key again, under `cipher`'s keyset and the
-/// field's column and options, and checks every row against it; the rows
-/// open through that keyset alone, so a document sealed under another is
-/// refused before any key is retrieved. The result is a list per database
-/// row of JSON
-/// texts, as bytes: for `selector` the scalar or nothing, for `subtree`
-/// one value per concrete path the read named that the row has, in
-/// document order. One key request for every row.
+/// Opens the entries a read of a document field returned, against the
+/// request that prepared the read. It is the runtime form of
+/// [`JsonSelector::open`], [`JsonSubtreeKey::open`] and
+/// [`JsonSubtreeKey::open_child`], for a language binding.
+///
+/// `request` is the read as the binding prepared it:
+/// `{"operation": "selector" | "subtree" | "children", "path",
+/// "wildcard_bound"?}`. `rows` is a list of groups of entries. Each entry
+/// is `public.eql_v4_json_entry` JSON, as text or bytes.
+///
+/// - For `selector`, a group is one database row: the entry `->`
+///   returned, or nothing for SQL `NULL`.
+/// - For `subtree`, a group is one database row: the entries
+///   `json_tree_subtree` returned.
+/// - For `children`, a group is one entry `json_tree_children` returned,
+///   or nothing.
+///
+/// The engine derives the selector or the read's key again, from the
+/// request, `cipher`'s keyset, and the field's column and options. Then
+/// the engine checks every entry against that selector or key. For
+/// `children`, the engine checks that each entry is a child of the node at
+/// the path.
+///
+/// Entries decrypt through that keyset alone. So a document encrypted under
+/// another keyset is refused before any key is fetched.
+///
+/// The result is a list with one item per group:
+///
+/// - For `selector`, the scalar's JSON text as bytes, or nothing.
+/// - For `subtree`, the JSON text, as bytes, of each value the read
+///   reached in that row, in document order.
+/// - For `children`, the child, or nothing. A child is a map:
+///   `{"key": text, "json": bytes}` for a member of an object, or
+///   `{"index": u64, "json": bytes}` for an element of an array. `json` is
+///   the child's value as JSON text. The engine checked the key or index
+///   with the value.
+///
+/// All the groups share one key request.
 ///
 /// The read runs under the contexts the document was sealed under. The
 /// selector or the read key derives under the field's column, then the
@@ -937,6 +959,7 @@ pub fn check_json_open(
 ///
 /// [`JsonSelector::open`]: crate::json::JsonSelector::open
 /// [`JsonSubtreeKey::open`]: crate::json::JsonSubtreeKey::open
+/// [`JsonSubtreeKey::open_child`]: crate::json::JsonSubtreeKey::open_child
 ///
 /// # Errors
 ///
@@ -945,15 +968,15 @@ pub fn check_json_open(
 /// ([`Reason::QueryContextField`]): a read names no record, so it has no
 /// context to derive under. A plan with a binding is not refused.
 /// [`Error::Source`] names the field for a
-/// request or rows that do not parse ([`Reason::JsonInput`]). A row that
-/// is not one the read asked for fails the pending
-/// ([`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry)), as does a
+/// request or rows that do not parse ([`Reason::JsonInput`]). An entry
+/// that is not one the read asked for fails the pending
+/// ([`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry)). So does a
 /// wildcard read of an array longer than its bound
 /// ([`Error::JsonWildcardTruncated`](crate::Error::JsonWildcardTruncated)).
-/// A `selector` entry that does not open alone, a container with members
-/// or an altered entry, fails it as
-/// [`Error::JsonNotALeaf`](crate::Error::JsonNotALeaf); a container is read
-/// with `subtree`.
+/// A `selector` or `children` entry that does not decrypt alone fails it
+/// as [`Error::JsonNotALeaf`](crate::Error::JsonNotALeaf). That entry is a
+/// container with members, or an altered entry. Read a container with
+/// `subtree`.
 pub fn json_open<'a, K>(
     cipher: &'a KeysetCipher<'_, K>,
     plan: &Plan,

@@ -188,7 +188,7 @@ use crate::json::inputs::{
     self, elements_base, member_predicate, node_path, selector_path, Bounds, Compare, Derived,
     Input, Parsed, Under,
 };
-use crate::json::{FieldOptions, JsonOptions, JsonPlaintext, JsonQueries};
+use crate::json::{FieldOptions, JsonOptions, JsonPlaintext, JsonQueries, JsonSubtreeKey};
 use crate::op::{AtPath, Between, ContainedBy, Contains, Eq, Gt, Gte, Lt, Lte};
 use crate::sem::TermError;
 use crate::target::Pending;
@@ -850,9 +850,19 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P, D> FieldReference<W, T, C, P, D
         })
     }
 
-    /// The token of the node at `path`, a path with no wildcard, which
-    /// `eql_v4.json_tree_children` and `eql_v4.json_tree_child_count` take
-    /// to find the node's children in every row.
+    /// The token of the node at `path`, a path with no wildcard. The
+    /// database passes it to `eql_v4.json_tree_children` or
+    /// `eql_v4.json_tree_child_count` to find the node's children in every
+    /// row.
+    ///
+    /// For a [`JsonDocument`] field, this derives a [`JsonSubtreeKey`]. The
+    /// key holds the token to send. Your app keeps the key to decrypt each
+    /// child the database returns ([`JsonSubtreeKey::open_child`]). For a
+    /// field of another type, [`encrypt_keyed`](JsonFieldQuery::encrypt_keyed)
+    /// returns the token and the key together.
+    ///
+    /// [`JsonDocument`]: crate::json::JsonDocument
+    /// [`JsonSubtreeKey::open_child`]: crate::json::JsonSubtreeKey::open_child
     pub fn children(self, path: &str) -> JsonFieldQuery<T, Children, C::Start> {
         self.json(Body::Children(path_text(path)))
     }
@@ -1455,6 +1465,30 @@ json_encrypt! {
         Derived::Node(key) => T::token(key),
         _ => Err(mismatched()),
     };
+}
+
+impl<T: JsonQueries> JsonFieldQuery<T, Children, Ready> {
+    /// Derives the node's token and its key together. The token is the one
+    /// [`encrypt`](Self::encrypt) returns, in the field's own token type.
+    /// Your app sends the token to the database, and keeps the key to
+    /// decrypt each child the database returns
+    /// ([`JsonSubtreeKey::open_child`]). Both come from one derivation, so
+    /// the key always matches the token sent.
+    ///
+    /// The query is checked against the field's options first. The query's
+    /// path is wiped when the query is derived, refused, or dropped. The
+    /// derivation runs in your app and asks ZeroKMS for nothing.
+    ///
+    /// [`JsonSubtreeKey::open_child`]: crate::json::JsonSubtreeKey::open_child
+    pub fn encrypt_keyed<'a, K: 'static>(
+        mut self,
+        keyset: &'a KeysetCipher<'_, K>,
+    ) -> Pending<'a, (T::Token, JsonSubtreeKey), K> {
+        self.derive_json(keyset).try_map(|derived| match derived {
+            Derived::Node(key) => Ok((T::token(key.clone())?, key)),
+            _ => Err(mismatched()),
+        })
+    }
 }
 
 impl<T: JsonQueries, A> JsonFieldQuery<T, ElementMatch<A>, Ready> {

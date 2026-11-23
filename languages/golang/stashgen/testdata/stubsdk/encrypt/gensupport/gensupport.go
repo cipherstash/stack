@@ -256,6 +256,11 @@ func JSONSubtree[E ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, s
 	return encrypt.JSONRead[E]{}, nil
 }
 
+// JSONChildren prepares json_tree_children at a path on a JSON field.
+func JSONChildren[E ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string) (encrypt.JSONChildren[E], error) {
+	return encrypt.JSONChildren[E]{}, nil
+}
+
 // JSONNodeToken derives the token of the node at a path.
 func JSONNodeToken[T any](context.Context, Field[T], *encrypt.Cipher, string, string) (encrypt.JSONToken, error) {
 	return "", nil

@@ -28,9 +28,9 @@ use schemars::{schema_for, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stack_encrypt::json::{
-    JsonDocument, JsonElementsQuery, JsonLeafQuery, JsonNode, JsonOptions, JsonPath, JsonPlaintext,
-    JsonPredicateQuery, JsonQueries, JsonQuery, JsonSelector, JsonSubtree, JsonSubtreeKey,
-    JsonTarget,
+    JsonChild, JsonChildPlaintext, JsonDocument, JsonElementsQuery, JsonLeafQuery, JsonNode,
+    JsonOptions, JsonPath, JsonPlaintext, JsonPredicateQuery, JsonQueries, JsonQuery, JsonSelector,
+    JsonSubtree, JsonSubtreeKey, JsonTarget,
 };
 use stack_encrypt::target::{
     json_document, AeadContext, Borrowed, DecryptSource, EncryptTarget, ExpectedContext, Index,
@@ -109,11 +109,17 @@ pub struct JsonTreeDocument {
 /// `h`, `j`, `d`, `v` and `i` are what the extractors graft onto an entry
 /// they return, so that it can be opened.
 ///
-/// An entry a query returned is the database's word and does not open on
-/// its own: open the entry `->` returned through the selector that asked
-/// for it ([`JsonTreeExtracted::from_selector`]), and a read's rows through
-/// the key that keyed it ([`JsonTreeSubtree::from_key`]). Each checks that
-/// the rows are the ones it asked for.
+/// An entry a query returned comes from the database, so it does not
+/// decrypt on its own. Pair it with what your app derived for the query:
+///
+/// - the entry `->` returned, with the selector
+///   ([`JsonTreeExtracted::from_selector`]);
+/// - the entries of a subtree read, with the read's key
+///   ([`JsonTreeSubtree::from_key`]);
+/// - one entry `json_tree_children` returned, with the key of its parent
+///   ([`JsonTreeChild::from_key`]).
+///
+/// Decrypting checks that each entry is one the query asked for.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JsonTreeEntry {
@@ -354,6 +360,73 @@ impl JsonTreeSubtree {
     /// The path the read was keyed from.
     pub fn path(&self) -> &JsonPath {
         self.key.path()
+    }
+}
+
+/// One entry that `eql_v4.json_tree_children` returned, paired with the key
+/// of its parent node. Decrypt it into a [`JsonPlaintext`] for the child's
+/// value. Decrypt it into a [`JsonChildPlaintext`] for its key or index too.
+///
+/// Reading a node's children takes three steps.
+///
+/// 1. **Your app** derives the parent's token and key. A field reference's
+///    `children(path).encrypt_keyed(&keyset)` returns the [`JsonTreeToken`]
+///    and the [`JsonSubtreeKey`] together. The call asks ZeroKMS for
+///    nothing. Your app keeps the key and sends the token.
+/// 2. **The database (EQL)** runs `eql_v4.json_tree_children(doc, $1)`,
+///    with the token as `$1`. The database returns the parent's direct
+///    children as encrypted entries. The database never decrypts anything,
+///    and it never receives a key.
+/// 3. **Your app** pairs each returned entry with the key, through
+///    [`from_key`](Self::from_key), and decrypts the result. Decrypting
+///    checks that the entry is a child of that parent. Then it fetches the
+///    data key from ZeroKMS and decrypts the child.
+///
+/// [`JsonSubtreeKey::open_child`] lists what decrypting checks, and what it
+/// does not. A child that has children of its own does not decrypt alone
+/// ([`Error::JsonNotALeaf`]). Read it with a [`JsonTreeSubtree`] instead.
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsonTreeChild {
+    entry: JsonTreeEntry,
+    parent: JsonSubtreeKey,
+}
+
+impl JsonTreeChild {
+    /// Pairs `entry`, as the database returned it, with `key`, the key of
+    /// the parent's path.
+    pub fn from_key(key: &JsonSubtreeKey, entry: JsonTreeEntry) -> Self {
+        Self {
+            entry,
+            parent: key.clone(),
+        }
+    }
+
+    /// The entry, as the database returned it.
+    pub fn entry(&self) -> &JsonTreeEntry {
+        &self.entry
+    }
+
+    /// The path of the parent node that decrypting checks the entry
+    /// against.
+    pub fn parent_path(&self) -> &JsonPath {
+        self.parent.path()
+    }
+
+    /// The one way a child decrypts, into either plaintext: the entry, with
+    /// the header and slot the database added, paired with the parent's
+    /// key.
+    fn decryption_into<T, K: 'static>(
+        self,
+        context: RequiredContext<AeadContext>,
+    ) -> Decryption<T, K>
+    where
+        T: zeroize::Zeroize + 'static,
+        JsonChild: DecryptSource<T, ContextInput = RequiredContext<AeadContext>>,
+    {
+        match self.entry.node() {
+            Ok(node) => DecryptSource::decryption(self.parent.open_child(node), context),
+            Err(error) => Decryption::failed(error),
+        }
     }
 }
 
@@ -713,6 +786,35 @@ impl DecryptSource<JsonPlaintext> for JsonTreeExtracted {
             Ok(node) => DecryptSource::decryption(self.selector.open(node), context),
             Err(error) => Decryption::failed(error),
         }
+    }
+}
+
+/// Decrypts the child to its value and its key or index. All three are
+/// wiped when they are dropped.
+///
+/// The context is required. The context must be the one the document was
+/// encrypted under. An entry with no parent tag is refused before any key
+/// is fetched. So is a key for a path with a wildcard.
+impl DecryptSource<JsonChildPlaintext> for JsonTreeChild {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(
+        self,
+        context: Self::ContextInput,
+    ) -> Decryption<JsonChildPlaintext, K> {
+        self.decryption_into(context)
+    }
+}
+
+/// Decrypts the child to its value alone. The value is wiped when it is
+/// dropped. This decryption runs the same checks as a
+/// [`JsonChildPlaintext`] does. Then it wipes the key or index.
+///
+/// The context is required. The context must be the one the document was
+/// encrypted under.
+impl DecryptSource<JsonPlaintext> for JsonTreeChild {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
+        self.decryption_into(context)
     }
 }
 
