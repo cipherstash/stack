@@ -30,20 +30,22 @@
 //! one tenant's [`KeysetCipher`] compares only against terms derived through
 //! the same keyset.
 //!
-//! A term that your app stores comes from a target. The term shares its
-//! ciphertext's context only in two cases. Either the term is a field of a
-//! derived record, or it sits beside its ciphertext in an
-//! [`Encrypted`](crate::target::Encrypted). A bare term target, such as
-//! [`EqualityTerm`], takes any context and seals no ciphertext beside the
-//! term. Nothing checks that its context is the context of a ciphertext.
+//! A term that your app stores comes from a target. A term does not have
+//! to share its ciphertext's context. A type that needs the two under one
+//! context ties them together. A derived record does it for its fields.
+//! An [`Encrypted`](crate::target::Encrypted) does it too. A bare term
+//! target, such as [`EqualityTerm`], takes the context you give it and
+//! seals no ciphertext.
 //!
-//! A query term comes from the field's reference, such as
-//! `EncryptedUser::EMAIL.eq(..)` or `EncryptedUser::NAME.matches(..)`. The
-//! reference supplies the field's index and context. A query target run on
-//! its own, such as [`matching_query`](crate::target::matching_query), also
-//! builds one. A query term is not always the stored term: a match query
-//! with [`MatchOptions::short_words`] on is cut differently. With that
-//! option on, a bare [`MatchTerms`] is a stored filter, not a query.
+//! A query must be built in the same domain as the stored term it
+//! searches. The field's reference does this, such as
+//! `EncryptedUser::EMAIL.eq(..)` or `EncryptedUser::NAME.matches(..)`: it
+//! supplies the field's index, options, and context. A query target run on
+//! its own, such as [`matching_query`](crate::target::matching_query), takes
+//! its context from you, so pass the stored term's context. Not all query
+//! terms are the same as the stored terms. With
+//! [`MatchOptions::short_words`] on, a bare [`MatchTerms`] is a stored
+//! filter, not a query.
 //!
 //! A target, and a field query's `.encrypt(&keyset)`, each return a
 //! [`Pending`]. A term needs no data key. Under the local HMAC backend, the
@@ -2118,18 +2120,17 @@ order_term! {
 
 /// Term derivations that the `dynamic` path shares.
 ///
-/// A term that your app stores comes from a target. The term shares its
-/// ciphertext's context only as a field of a derived record, or beside its
-/// ciphertext in an [`Encrypted`](crate::target::Encrypted). A bare term
-/// target, such as [`EqualityTerm`], [`MatchTerms`], or [`OreTerm`], takes
-/// any context and seals no ciphertext beside the term.
+/// A term that your app stores comes from a target. That is a derived
+/// record's field, an [`Encrypted`](crate::target::Encrypted), or a bare
+/// term target such as [`EqualityTerm`] or [`MatchTerms`].
 ///
-/// A query term comes from the field's reference, such as
-/// `EncryptedUser::EMAIL.eq(..)`. A query target run on its own, such as
-/// [`matching_query`](crate::target::matching_query), also builds one. A
-/// stored term and a query term are the same bytes for some indexes only.
-/// A bare [`MatchTerms`] with [`MatchOptions::short_words`] on is a stored
-/// filter, not a query.
+/// A query comes from the field's reference, such as
+/// `EncryptedUser::EMAIL.eq(..)`. The reference builds it in the stored
+/// term's domain. A query target run on its own, such as
+/// [`matching_query`](crate::target::matching_query), also builds one, under
+/// the context you pass. Not all query terms are the same as the stored
+/// terms. A bare [`MatchTerms`] with [`MatchOptions::short_words`] on is a
+/// stored filter, not a query.
 impl<K> KeysetCipher<'_, K> {
     /// The equality term of one scalar that the caller has already
     /// normalized. The `dynamic` path walks a value to its one scalar and

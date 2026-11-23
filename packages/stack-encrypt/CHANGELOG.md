@@ -484,16 +484,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`KeysetCipher::equality_term`, `match_terms`, `ore_term`,
   `ope_term`, and `ore_block_term` are no longer public** (#1760). Each
   method built one term on its own, outside the target path and the
-  query path. Nothing tied that term to the context of the ciphertext
-  stored beside it. For most indexes, the term a query sends is not the
-  term a row stores. With `MatchOptions::short_words` on, the
+  query path, and copied its target's code. A query built with one of
+  them was not tied to the field it searched. Not all query terms are
+  the same as the stored terms. With `MatchOptions::short_words` on, the
   `match_terms` filter of "Mike Ng" misses "Mike Nguyen".
 
-  Removing the methods removes one way to build a term under the wrong
-  context. The change does not make a wrong context impossible. A term
-  shares its ciphertext's context only when it is a field of a derived
-  record, or sits beside its ciphertext in `Encrypted<(…)>`. A bare term
-  target, such as `EqualityTerm`, still takes any context.
+  A query must be built in the same domain as the stored term it
+  searches. A field reference does this: it builds the query under the
+  field's own context and options. A term does not have to share its
+  ciphertext's context. A type that needs that ties the two together, as
+  an EQL type does with its one context field.
 
   To upgrade, build each term one of two ways:
   - **To store a value**, encrypt it into a derived record with a field

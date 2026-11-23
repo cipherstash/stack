@@ -224,37 +224,35 @@ cannot tell which they are producing.
 > query path for a match index. ADR-0009's amendment of the same date gives
 > the full rule.
 
-> **Amended 2026-11-23 (#1760).** The four methods are no longer public.
-> Removing them removes one way to build a term under the wrong context.
-> The change does not make a wrong context impossible.
+> **Amended 2026-11-23 (#1760).** The four methods, and `ore_block_term`,
+> are no longer public. Each copied its target's code. A query built with
+> one of them was not tied to the field it searched.
 >
-> The bare term targets `EqualityTerm`, `MatchTerms<O>`, `OreTerm<T>`,
-> and `OpeTerm<T>` are still public. A bare target takes any context, and
-> seals no ciphertext beside its term. A term shares its ciphertext's
-> context in two cases only:
+> The rule that matters is that a query is built in the same domain as
+> the stored term it searches. Not all query terms are the same as the
+> stored terms: a match query is a different filter from the stored one.
+> A field reference builds its query under the field's own context and
+> options, so it meets the rule.
 >
-> - the term is a field of a derived record;
-> - the term sits beside its ciphertext in `Encrypted<(…)>`, the output
->   of `target::indexed`.
+> A term does not have to share its ciphertext's context. This changes
+> the reason decision 5 gives. A type that needs the two under one
+> context ties them together. An EQL type does it with its one context
+> field. `Encrypted<(…)>`, the output of `target::indexed`, does it too.
+> The bare term targets `EqualityTerm`, `MatchTerms<O>`,
+> `OreTerm<T>`, `OpeTerm<T>`, and `OreBlockTerm<T>` stay public, for a
+> type that needs a term on its own.
 >
 > Outside the crate, build each term this way:
 >
-> - **To store a value**, encrypt it into a derived record with a field of
->   the term type, or run `target::indexed` over it. Each builds the term
->   under the context it seals the ciphertext under. A bare target
->   (`value.encrypt_into_with_context(&keyset, context)` into
->   `EqualityTerm`) builds the same term, but nothing ties its context to
->   a ciphertext.
+> - **To store a value**, encrypt it into its type. That is a derived
+>   record with a field of the term type, the output of
+>   `target::indexed`, or the bare term type.
 > - **To query**, use the field reference's operator method
->   (`EncryptedUser::EMAIL.eq(..)`, `EncryptedUser::NAME.matches(..)`), or
->   a query target run on its own, such as `target::matching_query`. A
->   bare `MatchTerms<O>` with `MatchOptions::short_words` on is a stored
->   filter, not a query.
->
-> `ore_block_term` is removed too. That method built a block
-> order-revealing encryption (ORE) term outside a target, as the four did.
-> The bare target `OreBlockTerm<T>` is still public, as the four bare
-> targets above are.
+>   (`EncryptedUser::EMAIL.eq(..)`, `EncryptedUser::NAME.matches(..)`).
+>   A query target run on its own, such as `target::matching_query`, also
+>   builds a query. It takes its context from the caller, so pass the
+>   stored term's context. A bare `MatchTerms<O>` with
+>   `MatchOptions::short_words` on is a stored filter, not a query.
 
 ### 6. Targets declare their sources; `FfiValue` is not one
 
