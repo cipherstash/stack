@@ -467,6 +467,11 @@ A `Pending` is a Rust future. Run it on the async runtime your binding
 tool provides, or on a runtime the extension owns. Dropping it before it
 settles cancels it, and wipes what it held.
 
+Built for `wasm32`, a batch also yields: every 64 data keys, it wakes its
+own waker and returns pending, so the runtime can run other work before
+the next chunk. Any executor handles that, `wasm-bindgen-futures`
+included.
+
 ### A guest
 
 This part is for a guest. **The guest never waits on the network: it
@@ -485,12 +490,21 @@ se_resume(handle, [ { "status": <i32>, "headers", "body" }, ... ])
 ```
 
 A negative `status` is a request the host could not perform, with the error
-text as the body. The guest is never running while a request is in flight,
+text as the body.
+
+A step can also pause with no requests: a **yield**. The guest yields
+every 64 data keys while it seals or opens a batch, because a host cannot
+preempt a running guest call. In Go, the garbage collector's
+stop-the-world pause and every other caller would otherwise wait for the
+whole batch. The host resumes a yield at once, with no responses
+(`languages/golang/encrypt/step.go`). An empty `requests` list is a yield;
+a missing one is a malformed step. The guest is never running while a request is in flight,
 so a host's cancellation never interrupts it: an aborted operation is a
 future dropped between two polls, and everything it held is wiped. At most
-64 operations may be paused at once; the Go client bounds itself to that
-and queues callers rather than failing them (`maxPaused` in
-`languages/golang/encrypt/client.go`).
+64 operations may be paused at once. The Go client bounds itself to that:
+an operation that can reach ZeroKMS takes a slot before its first step,
+and a caller past the cap waits for one rather than failing (`maxPaused`
+in `languages/golang/encrypt/client.go`).
 
 **The token comes through one import.** The guest imports exactly one host
 function, `token_get` in module `cipherstash_transport`
