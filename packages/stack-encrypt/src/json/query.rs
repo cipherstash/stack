@@ -637,6 +637,8 @@ impl JsonSubtreeKey {
     /// use serde_json::json;
     /// use stack_encrypt::json::{JsonDocument, JsonOptions, JsonPath, JsonPlaintext};
     /// use stack_encrypt::target::{AeadContext, CallerContext};
+    /// // `eql_simulator` needs this crate's `eql-simulator` feature. The
+    /// // feature is off by default.
     /// use stack_encrypt::{eql_simulator, nonempty, DecryptFrom, EncryptInto, StackCipher};
     ///
     /// let cipher = StackCipher::builder()

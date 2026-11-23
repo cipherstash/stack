@@ -34,7 +34,7 @@
 //!
 //! ```toml
 //! [dev-dependencies]
-//! stack-encrypt = { version = "0.3", features = ["eql-simulator"] }
+//! stack-encrypt = { version = "0.4", features = ["eql-simulator"] }
 //! ```
 //!
 //! This example reads the members of one object in a stored document:
@@ -90,7 +90,8 @@
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 //! ```
 
-use crate::json::{JsonDocument, JsonEntry, JsonNode, Tag};
+use crate::json::derive::{hit_token, parent_tag};
+use crate::json::{JsonDocument, JsonEntry, JsonNode, Tag, MAX_DEPTH};
 
 /// The entry whose token is `token`, with the slot it is stored at. `None`
 /// when `token` names no node of the document.
@@ -125,7 +126,30 @@ pub fn json_tree_children<'d>(
     document: &'d JsonDocument,
     token: &Tag,
 ) -> Vec<(usize, &'d JsonEntry, Option<Tag>)> {
-    document.children(token)
+    let iv = document.header().iv();
+    let entries = document.entries();
+    let mut children = Vec::new();
+    if document.find(token).is_none() {
+        return children;
+    }
+    // Probe the ordinals 0, 1, 2, … until one has no entry. A node has at
+    // most as many children as the document has entries, so the loop ends
+    // whatever the entries say.
+    let most = u32::try_from(entries.len()).unwrap_or(u32::MAX);
+    for ordinal in 0..most {
+        let wanted = parent_tag(iv, token, ordinal);
+        // The last entry with the parent tag, as `find_by_token` picks.
+        let Some((slot, entry)) = entries
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, entry)| entry.parent_tag() == Some(&wanted))
+        else {
+            break;
+        };
+        children.push((slot, entry, hit_token(iv, token, entry, ordinal)));
+    }
+    children
 }
 
 /// The node each token names, and every entry beneath it: each entry's
@@ -147,7 +171,44 @@ pub fn json_tree_subtree<'d>(
     document: &'d JsonDocument,
     tokens: &[Tag],
 ) -> Vec<(usize, &'d JsonEntry, u32)> {
-    document.subtree(tokens)
+    let mut rows = Vec::new();
+    for token in tokens {
+        let Some((slot, entry)) = document.find(token) else {
+            continue;
+        };
+        let mut token_rows = vec![(slot, entry, 0)];
+        walk(document, token, 1, &mut token_rows);
+        rows.extend(token_rows);
+    }
+    rows
+}
+
+/// Appends the entries beneath the node whose token is `token` to `rows`,
+/// each at its depth, starting at `depth` for the node's children.
+fn walk<'d>(
+    document: &'d JsonDocument,
+    token: &Tag,
+    depth: u32,
+    rows: &mut Vec<(usize, &'d JsonEntry, u32)>,
+) {
+    // The walk returns each entry at most once in a tree. So when the tags
+    // form a cycle, it stops once it has returned as many rows as the
+    // document has entries. No sealed document nests deeper than
+    // `MAX_DEPTH`, so a longer chain stops there, and the recursion stays
+    // bounded.
+    let most = document.entries().len();
+    if rows.len() >= most || depth as usize > MAX_DEPTH {
+        return;
+    }
+    for (slot, entry, child) in json_tree_children(document, token) {
+        if rows.len() >= most {
+            return;
+        }
+        rows.push((slot, entry, depth));
+        if let Some(child) = child {
+            walk(document, &child, depth + 1, rows);
+        }
+    }
 }
 
 /// The row an EQL function returns for the entry stored at `slot`: the
@@ -159,5 +220,8 @@ pub fn json_tree_subtree<'d>(
 /// `eql_v4.json_tree_children` and `eql_v4.json_tree_subtree` build the
 /// same row and add the entry's depth.
 pub fn entry_row(document: &JsonDocument, slot: usize) -> Option<JsonNode> {
-    document.node(slot)
+    document
+        .entries()
+        .get(slot)
+        .map(|entry| JsonNode::new(entry.clone(), document.header().clone(), slot as u64))
 }

@@ -252,6 +252,8 @@ impl fmt::Debug for JsonPlaintext {
 ///     JsonChildPlaintext, JsonDocument, JsonOptions, JsonPath, JsonPlaintext,
 /// };
 /// use stack_encrypt::target::{AeadContext, CallerContext};
+/// // `eql_simulator` needs this crate's `eql-simulator` feature. The
+/// // feature is off by default.
 /// use stack_encrypt::{eql_simulator, nonempty, DecryptFrom, EncryptInto, StackCipher};
 ///
 /// let cipher = StackCipher::builder()

@@ -428,7 +428,7 @@ pub(super) fn self_tag(iv: &[u8], token: &Tag) -> super::SelfTag {
 /// is inside `c`), so the self tag is what chooses. An entry that matches
 /// neither is still a child, and is returned, but the walk does not descend
 /// into it.
-pub(super) fn hit_token(
+pub(crate) fn hit_token(
     iv: &[u8],
     parent: &Tag,
     entry: &super::JsonEntry,
@@ -447,7 +447,7 @@ pub(super) fn hit_token(
 /// document, so the same position in two rows is too. Eight bytes, since a
 /// parent tag only has to be distinct within its document
 /// ([`ParentTag`](super::ParentTag)).
-pub(super) fn parent_tag(iv: &[u8], parent: &Tag, ordinal: u32) -> super::ParentTag {
+pub(crate) fn parent_tag(iv: &[u8], parent: &Tag, ordinal: u32) -> super::ParentTag {
     let full = h16(&[b"p", iv, parent, &ordinal.to_le_bytes()]);
     let mut tag = super::ParentTag::default();
     tag.copy_from_slice(&full[..8]);

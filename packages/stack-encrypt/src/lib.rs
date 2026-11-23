@@ -717,7 +717,7 @@ mod codes;
 pub mod descriptor;
 #[cfg(feature = "dynamic")]
 pub mod dynamic;
-#[cfg(feature = "eql-simulator")]
+#[cfg(any(test, feature = "eql-simulator"))]
 pub mod eql_simulator;
 pub mod field_reference;
 pub mod json;

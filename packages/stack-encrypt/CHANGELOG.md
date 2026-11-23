@@ -520,7 +520,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns what its method returned. To upgrade:
 
   1. Turn the feature on in your dev-dependencies:
-     `stack-encrypt = { version = "0.3", features = ["eql-simulator"] }`.
+     `stack-encrypt = { version = "0.4", features = ["eql-simulator"] }`.
   2. Change each call to the function in the table.
 
   No stored byte changes.
