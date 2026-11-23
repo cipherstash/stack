@@ -366,5 +366,7 @@ func (cph *Cipher) AuditUncheckedForTest(facts map[string]any) *Cipher {
 	return next
 }
 
-// Yields is how many steps of c's operations paused to yield.
-func Yields(c *Client) uint64 { return c.yields.Load() }
+// OnYield sets f to run each time one of c's operations pauses to yield,
+// on the caller's goroutine and before the host resumes the operation; nil
+// removes it. Set it while no call is in progress.
+func OnYield(c *Client, f func()) { c.onYield = f }

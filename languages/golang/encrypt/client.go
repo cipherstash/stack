@@ -68,9 +68,10 @@ type Client struct {
 	// caller past the cap waits here for one rather than being refused by
 	// the guest.
 	paused chan struct{}
-	// yields counts the steps that paused to yield rather than to reach
-	// ZeroKMS (see step.go).
-	yields atomic.Uint64
+	// onYield, when set, runs each time a step pauses to yield rather than
+	// to reach ZeroKMS (see step.go), on the caller's goroutine, before the
+	// host resumes the step. Only tests set it.
+	onYield func()
 	// closed refuses further calls: Close ran, or a trapped or stuck call
 	// closed the client (see Client.step).
 	closed bool
@@ -590,7 +591,9 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 			// A yield: nothing to perform. The lock was released when the
 			// step returned, so other callers, and the garbage collector,
 			// had their turn.
-			c.yields.Add(1)
+			if c.onYield != nil {
+				c.onYield()
+			}
 			responses, err = vcffi.Marshal([]any{})
 		} else {
 			responses, err = c.transport.performStep(ctx, io)
