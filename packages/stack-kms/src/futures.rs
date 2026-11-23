@@ -1,5 +1,37 @@
 use futures::StreamExt;
 use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+/// How many keys a batch derives between yields. A key costs tens of
+/// microseconds in a wasm guest, so a chunk is a few milliseconds there and
+/// far less natively.
+pub(crate) const YIELD_EVERY: usize = 64;
+
+/// Yield to the async runtime once: wake this task and return pending, so
+/// the runtime can run other work before it polls this one again. On tokio
+/// that reschedules the task. In a wasm guest's step loop it hands control
+/// back to the host, which cannot preempt the guest (see `stack-guest-abi`'s
+/// step module).
+pub(crate) fn yield_now() -> YieldNow {
+    YieldNow(false)
+}
+
+/// The future [`yield_now`] returns.
+pub(crate) struct YieldNow(bool);
+
+impl Future for YieldNow {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        if self.0 {
+            return Poll::Ready(());
+        }
+        self.0 = true;
+        cx.waker().wake_by_ref();
+        Poll::Pending
+    }
+}
 
 /**
  * Chunk an input slice and run an async callback on each of the chunks.
