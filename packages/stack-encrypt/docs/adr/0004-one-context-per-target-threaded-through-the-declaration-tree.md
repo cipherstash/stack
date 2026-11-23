@@ -224,19 +224,32 @@ cannot tell which they are producing.
 > query path for a match index. ADR-0009's amendment of the same date gives
 > the full rule.
 
-> **Amended 2026-11-23 (#1760).** The four methods are now crate-private,
-> so the compiler enforces the rule, not the documentation. The methods
-> stay inside the crate, where tests compare other paths against them.
-> Outside the crate, each term is built one way:
+> **Amended 2026-11-23 (#1760).** The four methods are no longer public.
+> Removing them removes one way to build a term under the wrong context.
+> The change does not make a wrong context impossible.
 >
-> - **To store a value**, encrypt it into its target type with
->   `value.encrypt_into_with_context(&keyset, context)`. The target type
->   is `EqualityTerm`, `MatchTerms<O>`, `OreTerm<T>`, or `OpeTerm<T>`, or
->   a derived record with a field of that type. The target builds the
->   term under the context it seals the ciphertext under.
+> The bare term targets `EqualityTerm`, `MatchTerms<O>`, `OreTerm<T>`,
+> and `OpeTerm<T>` are still public. A bare target takes any context, and
+> seals no ciphertext beside its term. A term shares its ciphertext's
+> context in two cases only:
+>
+> - the term is a field of a derived record;
+> - the term sits beside its ciphertext in `Encrypted<(…)>`, the output
+>   of `target::indexed`.
+>
+> Outside the crate, build each term this way:
+>
+> - **To store a value**, encrypt it into a derived record with a field of
+>   the term type, or run `target::indexed` over it. Each builds the term
+>   under the context it seals the ciphertext under. A bare target
+>   (`value.encrypt_into_with_context(&keyset, context)` into
+>   `EqualityTerm`) builds the same term, but nothing ties its context to
+>   a ciphertext.
 > - **To query**, use the field reference's operator method
 >   (`EncryptedUser::EMAIL.eq(..)`, `EncryptedUser::NAME.matches(..)`), or
->   a query target run on its own, such as `target::matching_query`.
+>   a query target run on its own, such as `target::matching_query`. A
+>   bare `MatchTerms<O>` with `MatchOptions::short_words` on is a stored
+>   filter, not a query.
 >
 > `ore_block_term` is still public. That method builds a block
 > order-revealing encryption (ORE) term outside a target, as the four did.

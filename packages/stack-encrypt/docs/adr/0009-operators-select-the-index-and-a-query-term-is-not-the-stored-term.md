@@ -1377,7 +1377,8 @@ The changes:
   query's `prepare`. `target::matching` stores such text as the empty
   filter.
 - **`KeysetCipher::match_terms` builds a stored value's filter.** With
-  short words on, it is not a way to build a query.
+  short words on, it is not a way to build a query. ADR-0004's #1760
+  amendment removes the method from the public API.
 - **EQL v4's query twins carry `QueryBloomFilter`.** A query twin is the
   eql-bindings struct that contains a query's terms, such as
   `TextMatchQuery`. `QueryBloomFilter` has `BloomFilter`'s JSON and JSON

@@ -4130,10 +4130,13 @@ mod tests {
                 "the same term as the combinator extended by the same part"
             );
             let native = nonempty!("users").with("age").with(7u64);
-            let probe = keyset.equality_term(34u32, native).await.expect("probe");
+            let probe: EqualityTerm = 34u32
+                .encrypt_into_with_context(&keyset, native)
+                .await
+                .expect("probe");
             assert_eq!(stored, probe.to_bytes());
-            let flat = keyset
-                .equality_term(34u32, nonempty!("users").with("age"))
+            let flat: EqualityTerm = 34u32
+                .encrypt_into_with_context(&keyset, nonempty!("users").with("age"))
                 .await
                 .expect("probe");
             assert_ne!(
@@ -4178,12 +4181,18 @@ mod tests {
             assert_eq!(stored, typed_age.terms.to_bytes());
 
             let nested = nonempty!("users").with("age").with(7u64).with("eu");
-            let probe = keyset.equality_term(34u32, nested).await.expect("probe");
+            let probe: EqualityTerm = 34u32
+                .encrypt_into_with_context(&keyset, nested)
+                .await
+                .expect("probe");
             assert_eq!(stored, probe.to_bytes(), "left-nested, part by part");
             let one_piece = nonempty!("users")
                 .with("age")
                 .with(NonEmpty::from(7u64).with("eu"));
-            let probe = keyset.equality_term(34u32, one_piece).await.expect("probe");
+            let probe: EqualityTerm = 34u32
+                .encrypt_into_with_context(&keyset, one_piece)
+                .await
+                .expect("probe");
             assert_ne!(stored, probe.to_bytes(), "not one two-part piece");
 
             let opened: Tree = cipher
@@ -5952,8 +5961,8 @@ mod tests {
             let mut row = map(sealed);
             let mut age = map(node(&mut row, "age"));
             let eq = term_bytes(&node(&mut age, "eq"));
-            let typed = keyset
-                .equality_term(34u64, nonempty!("users").with("age"))
+            let typed: EqualityTerm = 34u64
+                .encrypt_into_with_context(&keyset, nonempty!("users").with("age"))
                 .await
                 .expect("typed");
             assert_eq!(eq, typed.into_bytes().to_vec(), "the u64 term");

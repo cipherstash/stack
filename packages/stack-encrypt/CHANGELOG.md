@@ -483,24 +483,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`KeysetCipher::equality_term`, `match_terms`, `ore_term`, and
   `ope_term` are no longer public** (#1760). Each method built one term
-  on its own, outside the target path and the query path. A term built
-  that way was easy to get wrong. Nothing tied it to the context of the ciphertext stored
-  beside it. For most indexes, the term a query sends is not the term a
-  row stores. With `MatchOptions::short_words` on, the `match_terms`
-  filter of "Mike Ng" misses "Mike Nguyen". To upgrade, build each term
-  one of two ways:
-  - **To store a value**, encrypt it into its target type, or into a
-    derived record with a field of that type. Use `EqualityTerm` for
-    `equality_term`, `MatchTerms<O>` for `match_terms`, `OreTerm<T>` for
-    `ore_term`, and `OpeTerm<T>` for `ope_term`. The target builds the
-    term under the context it seals the ciphertext under.
-    `OreTerm::inner()` and `OpeTerm::inner()` return the ciphertext the
-    old methods returned. A target takes text as a `String`, not a
-    `&str`.
+  on its own, outside the target path and the query path. Nothing tied
+  that term to the context of the ciphertext stored beside it. For most
+  indexes, the term a query sends is not the term a row stores. With
+  `MatchOptions::short_words` on, the `match_terms` filter of "Mike Ng"
+  misses "Mike Nguyen".
+
+  Removing the methods removes one way to build a term under the wrong
+  context. The change does not make a wrong context impossible. A term
+  shares its ciphertext's context only when it is a field of a derived
+  record, or sits beside its ciphertext in `Encrypted<(…)>`. A bare term
+  target, such as `EqualityTerm`, still takes any context.
+
+  To upgrade, build each term one of two ways:
+  - **To store a value**, encrypt it into a derived record with a field
+    of the term type, or run `target::indexed` over it. Use
+    `EqualityTerm` for `equality_term`, `MatchTerms<O>` for
+    `match_terms`, `OreTerm<T>` for `ore_term`, and `OpeTerm<T>` for
+    `ope_term`. Encrypting the value into the bare term type gives the
+    same term, with no ciphertext beside it. `OreTerm::inner()` and
+    `OpeTerm::inner()` return the ciphertext the old methods returned. A
+    target takes text as a `String`, not a `&str`.
   - **To query**, use the field reference's operator method, such as
     `EncryptedUser::EMAIL.eq(&email)` or
     `EncryptedUser::NAME.matches("Mike Ng")`. A query target run on its
-    own, such as `target::matching_query`, also works.
+    own, such as `target::matching_query`, also works. A bare
+    `MatchTerms<O>` with `short_words` on is a stored filter, not a
+    query.
 
   ```rust
   // Before
@@ -514,7 +523,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   let query = EncryptedUser::EMAIL.eq(&email).encrypt(&keyset).await?;
   ```
 
-  `ore_block_term` does not change. No stored byte changes.
+  `OreTerm<T>` and `OpeTerm<T>` need `T: Zeroize`. The old `ore_term`
+  and `ope_term` also took three types that are not `Zeroize`: jiff's
+  `civil::Date` and `Timestamp`, and rust_decimal's `Decimal`. For these,
+  convert the value to `value::Date`, `value::Timestamp`, or
+  `value::Decimal` first. Or run the borrowed operation, as below, to
+  read the value in place:
+
+  ```rust
+  let term: OpeTerm<value::Date> = value::Date::new(dob)
+      .encrypt_into_with_context(&keyset, nonempty!("users/dob"))
+      .await?;
+  // Or, with the jiff date as it is
+  let context = CallerContext::from(nonempty!("users/dob"));
+  let term: OpeTerm<jiff::civil::Date> = keyset
+      .run(target::ope::<_, _, Borrowed>(), &dob, context)
+      .await?;
+  ```
+
+  `target::ore` gives the order-revealing encryption (ORE) term the same
+  way. The two routes give the same bytes. `ore_block_term` does not
+  change. No stored byte changes.
 
 - **`Index` and `Indexes` each gain a required method** (#1398). A field
   query now derives its terms through these methods.
