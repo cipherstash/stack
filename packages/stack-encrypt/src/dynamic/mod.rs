@@ -95,6 +95,15 @@ mod kind;
 pub mod planned;
 mod query;
 pub mod record;
+
+/// How to build a language integration on this module: the binding, what
+/// crosses it, the operations, the plan grammar, plaintext hygiene, keys and
+/// authentication, errors, versioning, one integer traced end to end with
+/// its real bytes, and a checklist built on the conformance suite. The Go
+/// SDK is the reference.
+pub mod guide {
+    #![doc = include_str!("../../docs/language-integration.md")]
+}
 mod target;
 mod term;
 #[cfg(test)]
@@ -112,8 +121,6 @@ pub use json::{json_frame, read_json, JsonValueError};
 /// a kind means to this engine.
 pub use kind::{admits, not_admitted, read, ParseValueKindError, ValueKind};
 pub use planned::{DynamicQuery, FieldHandle, Planned, QueryPlan};
-#[allow(deprecated)]
-pub use query::OpSpec;
 pub use query::{
     check_json_open, check_query, field_operators, json_open, query_term, target_limit, verify,
     Fidelity, Op, Operand, OperatorEntry, QueryTerm,

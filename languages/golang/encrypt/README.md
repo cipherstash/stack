@@ -1049,6 +1049,10 @@ module's tag at the same version carries the test builds.
 `go test ./...` from `languages/golang` does not reach them. `mise run
 go:test` tests all three modules.
 
+This package is the reference integration for the engine. How the binding
+works, what crosses it and how to build one for another language is the
+guide in `packages/stack-encrypt/docs/language-integration.md`.
+
 ## Licence
 
 The Go code in this module is MIT-licensed ([`LICENSE`](../LICENSE)). The

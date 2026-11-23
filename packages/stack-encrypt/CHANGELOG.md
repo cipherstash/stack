@@ -52,6 +52,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     element. `dynamic::check_json_open` checks the request.
   - The stored format is unchanged.
 
+- **A guide to building a language integration**, `dynamic::guide`
+  (`docs/language-integration.md`, in the crate docs under the `dynamic`
+  feature). It covers the binding versus the language SDK; linking the
+  engine natively (PyO3, Rustler, napi-rs), with a WebAssembly guest only
+  for a language that cannot, such as Go; the operations through
+  `dynamic::Planned`; scopes and bindings; JSON documents; the plan
+  grammar; control messages versus plaintext; plaintext hygiene and the
+  tests that prove it; credentials and audit metadata; errors; and
+  versioning. The Go guest's exports, step loop and status table are
+  described as the guest path. It traces one `int32` stored as EQL v4
+  `IntegerEq` through encrypt, query and decrypt, with the bytes from the
+  committed fixtures, and ends with a checklist built on
+  `conformance/stack-encrypt`. The frame format stays in
+  `vitaminc-aead-frame`'s documentation and is linked, not restated.
 - **A credential with each call** (#1708). A server that decrypts as the end
   user who signed in had to build its cipher inside the first request,
   because `init` needs a token and a server starting up has no user. It also
@@ -1022,9 +1036,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Every operator is declared once, and `op::Supports` has one method**
   (#1279, #1318). The `op` module lists each operator with its type, its
   arity and its wire name; the dynamic enum `Op` (`dynamic::OpSpec` until
-  now, kept as a deprecated alias), each type's `Operator::OP` and
-  `Op::name` are generated from that list, so `op::Eq`, `Op::Eq` and
-  `"eq"` cannot drift apart. `Leaf` gains `AT`, the operator's path form.
+  now; the old name is removed, so rename it to `Op`), each type's
+  `Operator::OP` and `Op::name` are generated from that list, so `op::Eq`,
+  `Op::Eq` and `"eq"` cannot drift apart. `Leaf` gains `AT`, the operator's path form.
   - `Supports::check`, `verifier` and `admit` are one
     `prepare(&self, input) -> Result<Self::Verifier, Error>`, called once
     per query, when the query is awaited and before any keyset is
