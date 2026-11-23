@@ -791,11 +791,11 @@ pub use vitaminc_aead::{
 /// nothing wipes them. A target and an owned index need `Zeroize`, so
 /// neither takes them.
 ///
-/// [`KeysetCipher::ore_block_term`], a borrowed index, and a borrowed
-/// operation such as `target::ope::<_, _, Borrowed>()` take them. A value
-/// passed by value is a copy that the caller still holds. To have the
-/// plaintext wiped, use `value::Date`, `value::Timestamp`, or
-/// `value::Decimal`.
+/// A borrowed index takes them, and so does a borrowed operation, such as
+/// `target::ope::<_, _, Borrowed>()` or
+/// `target::ore_block::<_, _, Borrowed>()`. Each reads the value in place,
+/// and the caller keeps it. To have the plaintext wiped, use `value::Date`,
+/// `value::Timestamp`, or `value::Decimal`.
 ///
 /// Bytes have no order term. No ordering operator compares bytes, so such
 /// a term would answer no query, and would still reveal the order of the

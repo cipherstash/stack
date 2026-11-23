@@ -7,8 +7,9 @@ use stack_encrypt::nonempty;
 use stack_encrypt::sem::{OpeTerm, OreBlockTerm, OreTerm, TermBytesError};
 use stack_encrypt::Orderable;
 
-use stack_encrypt::{EncryptInto, KeysetCipher, StackCipher};
+use stack_encrypt::{EncryptInto, EncryptRef, KeysetCipher, StackCipher};
 use stack_kms::FakeDataKeySource;
+use zeroize::Zeroize;
 
 async fn cipher() -> StackCipher<FakeDataKeySource> {
     StackCipher::builder()
@@ -22,12 +23,12 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-async fn block<T: Orderable + 'static>(
+async fn block<T: Orderable + EncryptRef + Zeroize + 'static>(
     keyset: &KeysetCipher<'_, FakeDataKeySource>,
     value: T,
 ) -> OreBlockTerm<T> {
-    keyset
-        .ore_block_term(value, nonempty!("users/n"))
+    value
+        .encrypt_into_with_context(keyset, nonempty!("users/n"))
         .await
         .expect("a block ORE term")
 }

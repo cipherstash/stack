@@ -481,13 +481,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
-- **`KeysetCipher::equality_term`, `match_terms`, `ore_term`, and
-  `ope_term` are no longer public** (#1760). Each method built one term
-  on its own, outside the target path and the query path. Nothing tied
-  that term to the context of the ciphertext stored beside it. For most
-  indexes, the term a query sends is not the term a row stores. With
-  `MatchOptions::short_words` on, the `match_terms` filter of "Mike Ng"
-  misses "Mike Nguyen".
+- **`KeysetCipher::equality_term`, `match_terms`, `ore_term`,
+  `ope_term`, and `ore_block_term` are no longer public** (#1760). Each
+  method built one term on its own, outside the target path and the
+  query path. Nothing tied that term to the context of the ciphertext
+  stored beside it. For most indexes, the term a query sends is not the
+  term a row stores. With `MatchOptions::short_words` on, the
+  `match_terms` filter of "Mike Ng" misses "Mike Nguyen".
 
   Removing the methods removes one way to build a term under the wrong
   context. The change does not make a wrong context impossible. A term
@@ -499,11 +499,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **To store a value**, encrypt it into a derived record with a field
     of the term type, or run `target::indexed` over it. Use
     `EqualityTerm` for `equality_term`, `MatchTerms<O>` for
-    `match_terms`, `OreTerm<T>` for `ore_term`, and `OpeTerm<T>` for
-    `ope_term`. Encrypting the value into the bare term type gives the
-    same term, with no ciphertext beside it. `OreTerm::inner()` and
-    `OpeTerm::inner()` return the ciphertext the old methods returned. A
-    target takes text as a `String`, not a `&str`.
+    `match_terms`, `OreTerm<T>` for `ore_term`, `OpeTerm<T>` for
+    `ope_term`, and `OreBlockTerm<T>` for `ore_block_term`. Encrypting
+    the value into the bare term type gives the same term, with no
+    ciphertext beside it. `OreTerm::inner()` and `OpeTerm::inner()`
+    return the ciphertext the old methods returned. A target takes text
+    as a `String`, not a `&str`.
   - **To query**, use the field reference's operator method, such as
     `EncryptedUser::EMAIL.eq(&email)` or
     `EncryptedUser::NAME.matches("Mike Ng")`. A query target run on its
@@ -523,12 +524,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   let query = EncryptedUser::EMAIL.eq(&email).encrypt(&keyset).await?;
   ```
 
-  `OreTerm<T>` and `OpeTerm<T>` need `T: Zeroize`. The old `ore_term`
-  and `ope_term` also took three types that are not `Zeroize`: jiff's
-  `civil::Date` and `Timestamp`, and rust_decimal's `Decimal`. For these,
-  convert the value to `value::Date`, `value::Timestamp`, or
-  `value::Decimal` first. Or run the borrowed operation, as below, to
-  read the value in place:
+  `OreTerm<T>`, `OpeTerm<T>`, and `OreBlockTerm<T>` need `T: Zeroize`.
+  The old `ore_term`, `ope_term`, and `ore_block_term` also took three
+  types that are not `Zeroize`: jiff's `civil::Date` and `Timestamp`,
+  and rust_decimal's `Decimal`. For these, convert the value to
+  `value::Date`, `value::Timestamp`, or `value::Decimal` first. Or run
+  the borrowed operation, as below, to read the value in place:
 
   ```rust
   let term: OpeTerm<value::Date> = value::Date::new(dob)
@@ -542,8 +543,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
 
   `target::ore` gives the order-revealing encryption (ORE) term the same
-  way. The two routes give the same bytes. `ore_block_term` does not
-  change. No stored byte changes.
+  way. The two routes give the same bytes. `target::ore_block` gives the
+  block ORE term the same way. A block ORE term contains a random nonce,
+  so its two routes give terms that compare equal, with the same left
+  half. No stored byte changes.
 
 - **`Index` and `Indexes` each gain a required method** (#1398). A field
   query now derives its terms through these methods.

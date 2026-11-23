@@ -942,8 +942,8 @@ async fn a_date_with_a_ciphertext_and_two_terms_is_not_copied() {
         .encrypt_into_with_context(&keyset, context())
         .await
         .unwrap();
-    let later = keyset
-        .ore_block_term(Date::new(jiff::civil::date(2024, 3, 1)), context())
+    let later: OreBlockTerm<Date> = Date::new(jiff::civil::date(2024, 3, 1))
+        .encrypt_into_with_context(&keyset, context())
         .await
         .unwrap();
     assert_eq!(

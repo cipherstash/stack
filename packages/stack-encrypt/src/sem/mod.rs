@@ -2116,8 +2116,7 @@ order_term! {
 // Term generation on the cipher
 // =============================================================================
 
-/// Term derivations that the `dynamic` path shares, and one block ORE term
-/// made on its own.
+/// Term derivations that the `dynamic` path shares.
 ///
 /// A term that your app stores comes from a target. The term shares its
 /// ciphertext's context only as a field of a derived record, or beside its
@@ -2177,42 +2176,6 @@ impl<K> KeysetCipher<'_, K> {
         O: MatchConfig + MaybeSend,
     {
         match_pending(self, text, descriptor.into_prf_context(), options, side)
-    }
-
-    /// Generate a block ORE term: ore-rs's 6-bit block order-revealing
-    /// encryption (ORE), the scheme that EQL v4's `_ord_ore` domains store.
-    /// The PRF input is the descriptor alone. The plaintext never enters
-    /// the PRF, and one visitor derives the per-descriptor key and uses it.
-    /// See [`OreBlockTerm`] for which scheme a type is encrypted with, and
-    /// what is refused.
-    ///
-    /// Every [`Orderable`] type is supported, each encoded as its target.
-    /// The walk that encodes a value wipes a value handed over by value. A
-    /// reference (`&String`, `&str`) is read in place. The term's left half
-    /// is byte-identical to the target-directed path's for the same
-    /// descriptor. The right half contains a random nonce.
-    ///
-    /// The descriptor is the context the target-directed path takes, a
-    /// [`NonEmpty<T>`]: `nonempty!("users").with("age")`. Nothing ties a
-    /// term made here to the context of the ciphertext beside it. So a term
-    /// that you will store should come from a target instead. The target
-    /// hands one context to the term and the ciphertext.
-    pub fn ore_block_term<'c, T: Orderable>(
-        &self,
-        value: T,
-        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
-    ) -> Pending<'_, OreBlockTerm<T>, K> {
-        let context = descriptor.into_prf_context().into_owned();
-        order_pending(
-            self,
-            target_of::<T>(),
-            value,
-            context,
-            ore_block_error,
-            |prf, encoding, context| {
-                ore_block(prf, encoding, context).map(|term| OreBlockTerm(term, PhantomData))
-            },
-        )
     }
 }
 

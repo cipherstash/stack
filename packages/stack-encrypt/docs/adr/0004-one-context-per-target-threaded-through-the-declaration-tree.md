@@ -251,8 +251,10 @@ cannot tell which they are producing.
 >   bare `MatchTerms<O>` with `MatchOptions::short_words` on is a stored
 >   filter, not a query.
 >
-> `ore_block_term` is still public. That method builds a block
+> `ore_block_term` is removed too. That method built a block
 > order-revealing encryption (ORE) term outside a target, as the four did.
+> The bare target `OreBlockTerm<T>` is still public, as the four bare
+> targets above are.
 
 ### 6. Targets declare their sources; `FfiValue` is not one
 
