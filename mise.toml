@@ -374,6 +374,39 @@ description = "Format check, vet and test the Go module (languages/golang: encry
 # embeds is named relative to the module root.
 run = "scripts/go-binding-test.sh languages/golang"
 
+[tasks."go:fuzz"]
+description = "Fuzz the guests' ABI from Go: run every Fuzz* target in languages/golang for GO_FUZZTIME each (default 60s), or only the target GO_FUZZ names; needs `wasm:guest:build:deterministic` and `wasm:auth-guest:build` first"
+dir = "languages/golang"
+shell = "bash -c"
+# `go test -fuzz` takes one target in one package at a time, so the targets
+# are listed from the test binaries rather than written down here: a new
+# Fuzz* function is fuzzed without editing this task. `go test` alone
+# replays their seeds and testdata/fuzz corpus (go:test does, on every
+# pull request). New inputs go to $(go env GOCACHE)/fuzz; a failing one is
+# written to the package's testdata/fuzz/<target>/.
+run = """
+set -euo pipefail
+fuzztime=${GO_FUZZTIME:-60s}
+found=0
+for pkg in $(go list ./...); do
+  # A package whose tests do not build fails here, rather than adding no
+  # targets while another package's run passes.
+  listed=$(CGO_ENABLED=0 go test -list '^Fuzz' "$pkg")
+  for target in $(grep '^Fuzz' <<<"$listed" || true); do
+    if [ -n "${GO_FUZZ:-}" ] && [ "$target" != "$GO_FUZZ" ]; then
+      continue
+    fi
+    found=1
+    echo "== $pkg $target ($fuzztime)"
+    CGO_ENABLED=0 go test "$pkg" -run '^$' -fuzz "^${target}\\$" -fuzztime "$fuzztime"
+  done
+done
+if [ "$found" = 0 ]; then
+  echo "no Fuzz target${GO_FUZZ:+ named $GO_FUZZ} in languages/golang" >&2
+  exit 1
+fi
+"""
+
 [tasks."go:test:postgres"]
 description = "Install the EQL v4 bundle built from the tree into the database EQL_TEST_DATABASE_URL names and run the Go module's PostgreSQL tests against it: rows the Go SDK stores in every EQL type it produces, found by the queries it derives, encrypted JSON documents, raw and of Go types, queried and read through their generated methods, and random values in every ordered type, ordered as their plaintexts (EQL_ORDER_SEED replays a seed); needs `wasm:guest:build:deterministic` and `wasm:guest:build:eql:deterministic` first"
 # The bundle is built from packages/eql, as test:encryption:postgres builds
