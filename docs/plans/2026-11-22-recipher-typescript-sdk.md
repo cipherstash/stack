@@ -503,12 +503,22 @@ the one every vitaminc program in JavaScript has.
 **A record field's kind.** A record field declares its kind, because the
 stored type is fixed before any row exists. The kind checks the value: an
 `int32` field refuses a `bigint` outside 32 bits. The TypeScript type of
-each kind is the one in the table, so an integer field is a `bigint`.
+each kind is the one in the table, so an integer field is a `bigint`, at
+every width. A `number` in an integer field does not compile.
+
+**Integers in an adapter.** An ORM such as Drizzle gives an integer column
+as a `number`. The adapter converts, because it knows the column's type: a
+`number` that is a safe integer becomes a `bigint` on the way in, and a
+`bigint` becomes a `number` on the way out. An unsafe integer is refused.
+The core has one mapping, and it is vitaminc's.
 
 **The wasm build.** `vitaminc-aead-napi` is for Node addons only. The wasm
 crate needs the same mapping over `wasm-bindgen`'s `JsValue`, with the same
 wrapper classes and the same refusals. Its right home is vitaminc, beside
-the napi bridge. Until it is there, the wasm crate holds it, and both
+the napi bridge: cipherstash/vitaminc#632 asks for it. vitaminc's other
+binding package, `vcffi`, is the Go transport into a WASI guest and does
+not apply here. Until the crate exists, the wasm crate holds the mapping,
+and both
 builds run vitaminc's value conformance cases
 (`packages/aead-napi/tests/value-conformance.cjs`).
 
@@ -839,7 +849,7 @@ The core, with no EQL:
 5. **Credentials, keysets, audit metadata and cancellation.** The
    per-call credential type, the testing cipher and the lifecycle profile.
 6. **The wasm build.** The `wasm-bindgen` crate, vitaminc's mapping over
-   `JsValue`, the export conditions, the inlined build and the edge-runtime
+   `JsValue` (from cipherstash/vitaminc#632 if it has landed), the export conditions, the inlined build and the edge-runtime
    test.
 
 Then the EQL extension:
@@ -898,6 +908,8 @@ Decided on 2026-11-23:
   `@cipherstash/eql-<platform>`.
 - Values convert through `vitaminc-aead-napi`. A value's type picks how it
   is encrypted, and no call names a kind.
+- Integers are a `bigint` in the core, at every width. An adapter converts
+  for an ORM whose integer columns are a `number`.
 - A plain object is refused, as in Rust. The caller chooses `opaque` or
   `json`.
 - One value returns one result. An array returns an array.
@@ -972,7 +984,9 @@ Read on 2026-11-23, in `cipherstash/vitaminc` at `222f1ad39`:
   README holds the mapping and the safety rules this plan repeats.
 - Its test addon (`tests/addon/src/lib.rs`) exports the wrapper classes
   and seals a frame from `JsRef::to_frame` in an `AsyncTask`.
-- vitaminc has no `wasm-bindgen` counterpart to it.
+- vitaminc has no `wasm-bindgen` counterpart to it. Its other bindings are
+  for Go: `bindings/go/vcffi` (the transport codec into a wasm guest),
+  `vcvalue` and `vcencrypt`.
 
 Not checked:
 
