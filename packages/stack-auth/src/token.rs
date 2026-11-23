@@ -40,12 +40,26 @@ pub(crate) fn expires_at_after(now: u64, expires_in: u64) -> u64 {
     now.saturating_add(expires_in.min(MAX_TOKEN_LIFETIME_SECS))
 }
 
+/// A server-supplied ABSOLUTE expiry (seconds since the Unix epoch), capped
+/// at [`MAX_TOKEN_LIFETIME_SECS`] after `now`.
+///
+/// The counterpart of [`expires_at_after`] for servers that send an absolute
+/// `exp` rather than a lifetime, such as CTS `/api/authorise`. No arithmetic
+/// on the server's value is involved, so it cannot overflow, but it is still
+/// unbounded: an `expiry` of `u64::MAX` would make the token look valid for
+/// ever, so [`AutoRefresh`](crate::auto_refresh::AutoRefresh) would keep
+/// sending it after the server stopped accepting it. Capping it means the
+/// worst a bad value can do is make the token refresh within 30 days.
+pub(crate) fn cap_expires_at(now: u64, expires_at: u64) -> u64 {
+    expires_at.min(now.saturating_add(MAX_TOKEN_LIFETIME_SECS))
+}
+
 /// The current Unix time in whole seconds, from the system wall clock.
 ///
 /// Delegates to [`SystemClock`](crate::clock::SystemClock) so the crate has a
 /// single definition of "now"; the `*_at` methods take an explicit `now` for
 /// tests that drive a [`Clock`](crate::clock::Clock).
-fn now_unix_secs() -> u64 {
+pub(crate) fn now_unix_secs() -> u64 {
     use crate::clock::{Clock, SystemClock};
     SystemClock.now_unix_secs()
 }

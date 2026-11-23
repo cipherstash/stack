@@ -28,6 +28,9 @@ serde_json = { workspace = true }
 # `.form()` does (it uses this crate), so the bundled transport and a host's
 # own transport send byte-identical requests.
 serde_urlencoded = "0.7"
+# `serde_urlencoded` only writes into a `form_urlencoded::Serializer`, which
+# `transport::form_body` builds itself so it can size the target up front.
+form_urlencoded = "1.2"
 # `OidcFederationStrategy` keys its per-user token cache on the SHA-256 of
 # the provider JWT, and stamps that digest on the tokens it persists.
 sha2 = "0.10"

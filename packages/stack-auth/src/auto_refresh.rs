@@ -256,8 +256,37 @@ impl<R> AutoRefresh<R, NoStore> {
     }
 }
 
+/// A freshly refreshed `token` with its expiry capped at 30 days after `now`.
+///
+/// A refreshed token was issued just now, so 30 days from now is the most it
+/// can legitimately claim. Tokens minted since `/api/authorise` and
+/// `expires_in` were capped satisfy this already; the cap here keeps the
+/// engine safe from a [`Refresher`] that does not.
+fn capped(mut token: Token, now: u64) -> Token {
+    token.expires_at = crate::token::cap_expires_at(now, token.expires_at);
+    token
+}
+
+/// A `token` whose issue time is unknown (the one the engine is built with,
+/// or one loaded from a [`TokenStore`]), treated as already expired if it
+/// claims to last more than 30 days from `now`.
+///
+/// A store can hand back a token saved before the `/api/authorise` cap
+/// existed, or one written by whoever can write to the store (a cookie, a KV
+/// entry). Capping it at `now + 30 days` would not do: every new engine would
+/// cap it afresh, so a process restarting more often than every 30 days would
+/// use an `expires_at` of `u64::MAX` for ever. No legitimate token claims more
+/// than the cap, so one that does is refreshed before use.
+fn distrust_overlong(mut token: Token, now: u64) -> Token {
+    if crate::token::cap_expires_at(now, token.expires_at) < token.expires_at {
+        token.expires_at = now;
+    }
+    token
+}
+
 impl<R, S> AutoRefresh<R, S> {
     fn new(refresher: R, store: S, token: Option<Token>, clock: SharedClock) -> Self {
+        let token = token.map(|t| distrust_overlong(t, clock.now_unix_secs()));
         Self {
             shared: Arc::new(RefreshState {
                 refresher,
@@ -274,6 +303,12 @@ impl<R, S> AutoRefresh<R, S> {
     /// successful refresh. `NoStore` disables external caching.
     pub(crate) fn with_store(refresher: R, store: S) -> Self {
         Self::new(refresher, store, None, system_clock())
+    }
+
+    // Its only callers are in `expiry_crossing_regression`, which needs `http`.
+    #[cfg(all(test, feature = "http"))]
+    pub(crate) fn with_store_and_clock(refresher: R, store: S, clock: SharedClock) -> Self {
+        Self::new(refresher, store, None, clock)
     }
 
     pub(crate) fn refresher(&self) -> &R {
@@ -308,7 +343,7 @@ impl<R: Refresher, S: TokenStore> RefreshState<R, S> {
             let loaded = self.store.load().await;
             state = self.state.clone().lock_owned().await;
             if state.token.is_none() {
-                state.token = loaded;
+                state.token = loaded.map(|t| distrust_overlong(t, self.clock.now_unix_secs()));
             }
         }
 
@@ -411,7 +446,7 @@ impl<R: Refresher, S: TokenStore> RefreshState<R, S> {
     /// [`save_refreshed_token`](Self::save_refreshed_token).
     fn install_refreshed_token(&self, state: &mut State, new_token: Token) -> ServiceToken {
         let service_token = ServiceToken::new(new_token.access_token().clone());
-        state.token = Some(new_token);
+        state.token = Some(capped(new_token, self.clock.now_unix_secs()));
         // A success proves whatever previously refused us has changed its mind.
         state.denial = None;
         state.last_refresh_error = None;
@@ -1935,6 +1970,144 @@ mod expiry_crossing_regression {
         }
     }
 
+    /// A refresher whose `refresh` returns at once, counting its calls.
+    fn ready_refresher(clock: &TestClock, calls: &Arc<AtomicUsize>) -> GatedRefresher {
+        let gate = Arc::new(Notify::new());
+        // A stored permit: the first `refresh` passes the gate without waiting.
+        gate.notify_one();
+        GatedRefresher {
+            started: Arc::new(Notify::new()),
+            gate,
+            calls: Arc::clone(calls),
+            refreshed_expires_at: clock.now() + 3600,
+        }
+    }
+
+    use crate::token::MAX_TOKEN_LIFETIME_SECS;
+
+    /// A token that reaches the engine claiming to expire at `u64::MAX` (one
+    /// saved before the `/api/authorise` cap existed, or written into a
+    /// caller-writable store) is refreshed before its first use, not used for
+    /// ever.
+    #[tokio::test]
+    async fn an_initial_token_claiming_to_never_expire_is_refreshed_before_use() {
+        let clock = TestClock::new(1_000_000);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let strategy = AutoRefresh::with_token_and_clock(
+            ready_refresher(&clock, &calls),
+            make_token("forever-token", u64::MAX),
+            clock.shared(),
+        );
+
+        assert_eq!(
+            strategy.get_token().await.unwrap().as_str(),
+            "refreshed-token"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// The same applies to a token loaded from a `TokenStore`.
+    #[tokio::test]
+    async fn a_stored_token_claiming_to_never_expire_is_refreshed_before_use() {
+        let clock = TestClock::new(1_000_000);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let store = crate::InMemoryTokenStore::new();
+        store.save(&make_token("forever-token", u64::MAX)).await;
+        let strategy = AutoRefresh::with_store_and_clock(
+            ready_refresher(&clock, &calls),
+            store,
+            clock.shared(),
+        );
+
+        assert_eq!(
+            strategy.get_token().await.unwrap().as_str(),
+            "refreshed-token"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// A stored token within the cap is used as is.
+    #[tokio::test]
+    async fn a_stored_token_within_thirty_days_is_used_without_refreshing() {
+        let clock = TestClock::new(1_000_000);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let store = crate::InMemoryTokenStore::new();
+        store
+            .save(&make_token(
+                "stored-token",
+                clock.now() + MAX_TOKEN_LIFETIME_SECS,
+            ))
+            .await;
+        let strategy = AutoRefresh::with_store_and_clock(
+            ready_refresher(&clock, &calls),
+            store,
+            clock.shared(),
+        );
+
+        assert_eq!(strategy.get_token().await.unwrap().as_str(), "stored-token");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    /// A freshly refreshed token is capped at 30 days rather than distrusted:
+    /// it was issued just now.
+    #[tokio::test]
+    async fn a_refreshed_token_claiming_to_never_expire_is_capped_at_thirty_days() {
+        let clock = TestClock::new(1_000_000);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut refresher = ready_refresher(&clock, &calls);
+        refresher.refreshed_expires_at = u64::MAX;
+        let strategy = AutoRefresh::with_token_and_clock(
+            refresher,
+            make_token("expired-token", clock.now()),
+            clock.shared(),
+        );
+
+        assert_eq!(
+            strategy.get_token().await.unwrap().as_str(),
+            "refreshed-token"
+        );
+        clock.advance(MAX_TOKEN_LIFETIME_SECS - 1_000);
+        // Bounded: a second refresh would wait on the gate for ever, and a
+        // cap that is too short must fail here, not hang the suite.
+        let token = tokio::time::timeout(std::time::Duration::from_secs(5), strategy.get_token())
+            .await
+            .expect("the refreshed token stays usable within the cap, with no second refresh")
+            .unwrap();
+        assert_eq!(token.as_str(), "refreshed-token");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// A stored token that claims to outlive the 30-day cap is not trusted
+    /// again on every load. Re-capping it from each load's "now" would let a
+    /// process that restarts more often than every 30 days use it for ever,
+    /// because each fresh engine would see another 30 days left.
+    #[tokio::test]
+    async fn restarts_do_not_renew_a_stored_token_that_claims_to_never_expire() {
+        let clock = TestClock::new(1_000_000);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let store = Arc::new(crate::InMemoryTokenStore::new());
+        store.save(&make_token("forever-token", u64::MAX)).await;
+
+        // Three short-lived processes, 20 days apart, sharing the store.
+        for restart in 0..3 {
+            let calls_before = calls.load(Ordering::SeqCst);
+            let strategy = AutoRefresh::with_store_and_clock(
+                ready_refresher(&clock, &calls),
+                Arc::clone(&store),
+                clock.shared(),
+            );
+            assert_ne!(
+                strategy.get_token().await.unwrap().as_str(),
+                "forever-token",
+                "restart {restart}: a token claiming to outlive the cap must be refreshed"
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), calls_before + 1);
+            // Put the over-long token back, as a stale or hostile writer would.
+            store.save(&make_token("forever-token", u64::MAX)).await;
+            clock.advance(20 * 24 * 60 * 60);
+        }
+    }
+
     #[tokio::test(start_paused = true)]
     async fn initiating_caller_receives_the_refreshed_token() {
         for elapsed in [0, 9, 10, 11] {
@@ -2113,6 +2286,16 @@ mod expiry_crossing_regression {
     /// `notified().await`) exists to make correct.
     #[tokio::test]
     async fn waiters_get_expired_when_in_flight_refresh_fails() {
+        // Bounded, so a broken engine fails here instead of hanging the suite.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            waiters_get_expired_when_in_flight_refresh_fails_unbounded(),
+        )
+        .await
+        .expect("the test must finish");
+    }
+
+    async fn waiters_get_expired_when_in_flight_refresh_fails_unbounded() {
         let clock = TestClock::new(1_000_000);
         let started = Arc::new(Notify::new());
         let gate = Arc::new(Notify::new());
@@ -2309,6 +2492,16 @@ mod expiry_crossing_regression {
     /// every caller except the one that happened to perform it.
     #[tokio::test]
     async fn waiters_get_the_issuers_error_even_when_it_is_not_an_account_refusal() {
+        // Bounded, so a broken engine fails here instead of hanging the suite.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            waiters_get_the_issuers_error_even_when_it_is_not_an_account_refusal_unbounded(),
+        )
+        .await
+        .expect("the test must finish");
+    }
+
+    async fn waiters_get_the_issuers_error_even_when_it_is_not_an_account_refusal_unbounded() {
         let clock = TestClock::new(1_000_000);
         let started = Arc::new(Notify::new());
         let gate = Arc::new(Notify::new());
