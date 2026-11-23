@@ -106,6 +106,10 @@ export async function runMigrator({
       child.stdin.on('error', () => {
         if (!closed && !stopped) invalid('adapter closed its response channel')
       })
+      // Decode per stream, not per chunk: a multi-byte character can straddle
+      // two chunks, and `+=` on a Buffer would decode each half on its own.
+      child.stdout.setEncoding('utf8')
+      child.stderr.setEncoding('utf8')
       child.stderr.on('data', (data) => {
         stderr += data
         if (stderr.length > 16 * 1024 * 1024)
