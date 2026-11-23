@@ -141,8 +141,8 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.Lo
 	// back into Go at the top of every loop the guest runs, so that a call
 	// whose context ends can be interrupted. The guest is cryptography,
 	// which is tight loops (the ZeroKMS key derivation, software AES and
-	// GHASH, copies and wipes), and the option cost a decrypt five to six
-	// times its CPU. Nothing else needs it: a guest call never runs under
+	// GHASH, copies and wipes), and the option cost the guest 3.5 to 5 times
+	// its CPU on a decrypt. Nothing else needs it: a guest call never runs under
 	// the caller's context (Client.step runs it under guest.Detach) and
 	// never waits inside the guest (the host runs every request between
 	// steps), so the only call it would interrupt is a guest step that does
@@ -239,10 +239,10 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.Lo
 // release runs the guest's shutdown — the client key and every loaded
 // index key wiped inside the instance — and closes the runtime, which
 // frees the linear memory through the allocator's wipe. It is what Close
-// does, and what the cleanup on an unreachable Client does. A module a
-// stuck call or a trap already closed cannot run se_shutdown; the
-// runtime close still wipes and frees its memory, so nothing is left
-// behind either way.
+// does, what a stuck step does once it returns, and what the cleanup on an
+// unreachable Client does. A module a trap already closed cannot run
+// se_shutdown; the runtime close still wipes and frees its memory, so
+// nothing is left behind either way.
 func (inst *instance) release() error {
 	ctx := context.Background()
 	if !inst.module.IsClosed() {

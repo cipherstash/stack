@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
@@ -27,12 +28,13 @@ import (
 // call: one request's cancellation or deadline never closes the client for
 // the others sharing it. A call waiting its turn leaves the queue when its
 // context ends; a call waiting on ZeroKMS has its request cancelled, and
-// the error matches both the context's error and [ErrTransport]. The
-// client closes itself, and every later call is [ErrState], only when the
-// guest's state is unknown: it trapped, or it went on running long after
-// its caller gave up, which is a bug. A call still running then cannot be
-// interrupted; the calls waiting behind it, and every later one, fail with
-// [ErrState] at once rather than wait for it.
+// the error matches both the context's error and [ErrTransport].
+//
+// The client closes itself, and every later call is [ErrState], only when
+// the guest's state is unknown. Either the guest trapped, or a call ran on
+// long after its caller gave up, which is a bug. Nothing can interrupt
+// such a call, so its own caller waits until it returns. Every other
+// caller, queued or later, gets [ErrState] at once.
 //
 // Its key material lives in the guest's linear memory, which this package
 // supplies: reserved once so it never moves, locked in RAM and excluded
@@ -64,18 +66,23 @@ type Client struct {
 	// caller past the cap waits here for one rather than being refused by
 	// the guest.
 	paused chan struct{}
-	// closed refuses further calls: either Close ran, or a stuck or
-	// trapped call took the module down (see Client.step).
-	// released is the runtime's own state, tracked apart from it because
-	// those two things come apart: a stuck call closes the module — and so
-	// the client — while the runtime and the host modules beside it are
-	// still allocated. Close is what frees those, so it must do its work
-	// even on a client that is already closed.
-	closed   bool
-	released bool
+	// closed refuses further calls: Close ran, or a trapped or stuck call
+	// closed the client (see Client.step).
+	closed bool
+	// released records that the runtime, and the host modules beside it,
+	// are freed. It is tracked apart from closed because the two come
+	// apart: a trapped call closes the module but leaves the runtime
+	// allocated, and Close frees it, so Close does its work even on a
+	// client that is already closed. A stuck step frees it itself, once it
+	// returns. It is atomic because a Close that finds the client wedged
+	// reads it without the lock, which the stuck step holds.
+	released atomic.Bool
 	def      KeysetID
-	// releaseCredentials is the resolved credentials' Close, run once by
-	// Close. Nil when they hold nothing open.
+	// releaseCredentials is the resolved credentials' Close, run at most
+	// once (a sync.OnceValue). Release runs it, and so does a Close that
+	// finds the client wedged: the stuck step reads only the token it was
+	// handed, so the credentials need not wait for it. Nil when they hold
+	// nothing open.
 	releaseCredentials func() error
 	// credentialsLockErr is the resolved credentials' MemoryLockError: the
 	// memory the key passed through before it reached this guest, asked
@@ -203,7 +210,9 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	// From here the credentials are the client's: every exit below goes
 	// through its Close, which releases them once, and so does the
 	// client's own Close later.
-	c.releaseCredentials = resolved.Close
+	if resolved.Close != nil {
+		c.releaseCredentials = sync.OnceValue(resolved.Close)
+	}
 	c.credentialsLockErr = resolved.MemoryLockError
 	owned = true
 	out, err := c.callKMS(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
@@ -375,29 +384,43 @@ func encodeConfig(cfg initConfig) ([]byte, error) {
 // a deferred Close is ordinary resource hygiene, and the memory's
 // protection (see [Client]) does not wait on it.
 //
-// A client a stuck call has wedged (see [Client]) cannot be released while
-// that call runs in its guest's memory: Close then returns [ErrState] at
-// once, and the call releases the instance, wiped, if it ever returns.
+// A client closed by a call that ran on after its context ended (see
+// [Client]) cannot free its guest while that call runs in the guest's
+// memory. Close then releases the credentials and returns [ErrState] at
+// once. The call frees the guest, wiped, if it ever returns. A Close after
+// that returns nil.
 func (c *Client) Close() error {
-	if err := c.mu.AcquireUnless(context.Background(), c.wedged); err != nil {
-		// Wedged. If the stuck step has returned, it released the instance
-		// and freed the lock; if not, it still holds it.
-		if !c.mu.TryLock() {
-			return fmt.Errorf("%w: a call is stuck in the guest; its memory is released if it returns", ErrState)
-		}
+	if c.mu.AcquireUnless(context.Background(), c.wedged) != nil {
+		return c.closeWedged()
 	}
 	defer c.mu.Unlock()
 	return c.release()
 }
 
+// closeWedged is Close on a wedged client. It runs without the lock, which
+// the stuck step holds until it returns, and then releases the instance
+// itself (see Client.step).
+func (c *Client) closeWedged() error {
+	if c.released.Load() {
+		return nil
+	}
+	err := fmt.Errorf("%w; the guest is released if the call returns", errStuck)
+	if c.releaseCredentials != nil {
+		err = errors.Join(err, c.releaseCredentials())
+	}
+	return err
+}
+
 // release is Close's work, under the lock.
 func (c *Client) release() error {
 	// Idempotency turns on the runtime, not on the client: a client a
-	// stuck call already closed has never released its runtime.
-	if c.released {
+	// trapped call already closed has not released its runtime. It is set
+	// last, so a Close that reads it without the lock (closeWedged) sees
+	// it only once everything is freed.
+	if c.released.Load() {
 		return nil
 	}
-	c.released = true
+	defer c.released.Store(true)
 	c.closed = true
 	c.cleanup.Stop()
 	err := c.inst.release()
@@ -608,6 +631,11 @@ func (c *Client) abort(handle uint64) {
 // ended while it waited for the client.
 var errLockWait = errors.New("encrypt: the caller's context ended waiting for the client")
 
+// errStuck is how a call fails, and how Close fails while the call still
+// runs, once a call ran on long after its caller's context ended (see
+// step). It matches ErrState.
+var errStuck = fmt.Errorf("%w: %w, and the client is closed", ErrState, guest.ErrStuck)
+
 // step runs one step of an operation on the instance under the client's
 // lock: the operation's output when it finishes, or its next step when it
 // pauses, taken from the guest before the lock is released (a host reads a
@@ -616,8 +644,9 @@ var errLockWait = errors.New("encrypt: the caller's context ended waiting for th
 // The caller's context bounds the wait for the lock, and is refused if it
 // has already ended, so a step whose caller timed out in the queue never
 // reaches the guest. The guest then runs under guest.Detach, never the
-// caller's context: the runtime closes a module whose call context ends,
-// and one caller giving up must not close the client for the others.
+// caller's context: the caller's context reaches only the host functions
+// (guest.Caller), so one caller giving up cancels its own requests and
+// nothing else.
 //
 // The client is closed, so later calls are ErrState rather than a runtime
 // error, when the guest's state is unknown. A guest that trapped is one:
@@ -628,12 +657,12 @@ var errLockWait = errors.New("encrypt: the caller's context ended waiting for th
 // that every caller waiting for the lock, and every later one, fails with
 // ErrState rather than wait on a step nothing can interrupt. The runtime
 // is built without WithCloseOnContextDone (see newInstance), so the step
-// itself runs on; if it returns, the module is closed here, and its key
-// material goes with its memory.
+// itself runs on, and its own caller waits for it. If it returns, the
+// instance is released here, and its key material goes with its memory.
 func (c *Client) step(ctx context.Context, token string, tokenErr error, f stepFunc) ([]byte, *ioStep, error) {
 	if err := c.mu.AcquireUnless(ctx, c.wedged); err != nil {
 		if errors.Is(err, guest.ErrAbandoned) {
-			return nil, nil, fmt.Errorf("%w: a call ran on long after its caller's context ended, and the client is closed", ErrState)
+			return nil, nil, errStuck
 		}
 		return nil, nil, fmt.Errorf("%w: %w", errLockWait, err)
 	}
@@ -669,15 +698,22 @@ func (c *Client) step(ctx context.Context, token string, tokenErr error, f stepF
 		// The step outlived the backstop. It has returned now, so no guest
 		// code is running and the release is immediate: the client is
 		// already unusable, so its instance goes, with its memory wiped,
-		// as Close would release it.
+		// as Close would release it. A step it paused is dropped with the
+		// instance; its requests carry the bearer token and key-material
+		// contexts, so they are wiped here, as drive wipes them on every
+		// other path that drops a step.
 		c.wedge()
 		wipe(out)
+		if io != nil {
+			io.wipe()
+		}
 		out, io = nil, nil
 		_ = c.release()
 		if err == nil {
-			err = ErrState
+			err = errStuck
+		} else {
+			err = fmt.Errorf("%w: %w", errStuck, err)
 		}
-		err = fmt.Errorf("%w: the guest ran on after its caller's context ended, and the client is closed", err)
 	case errors.Is(err, errGuestTrap):
 		// No guest code is running (f has returned), so the close is
 		// immediate: the module's memory is wiped and freed here.

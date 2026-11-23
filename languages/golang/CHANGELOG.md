@@ -148,12 +148,13 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   puts a call back into Go at the top of every loop the guest runs, and the
   guest's cryptography is almost all loops. The runtime no longer sets the
   option, and the guest is now built at `opt-level = 3` rather than for
-  size.
+  size. These figures are medians of 9 calls on one Apple silicon laptop.
   - 100 rows of 14 columns, against ZeroKMS: about 410 ms of CPU before,
     about 105 ms now. Wall time falls from about 670 ms to 340.
   - 100 rows of one 2 KB text or JSON column: 90 to 100 ms of CPU before,
     about 25 ms now.
-  - The EQL build of the guest is about 1.6 MB larger.
+  - The EQL build of the guest is about 1.9 MB larger: 6.8 MB, against
+    4.9 MB.
   - The option's calls into Go were also the points where the Go
     scheduler could stop a running guest call. A garbage collector
     stop-the-world pause now waits for the guest call in progress. While
@@ -161,9 +162,13 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
     about 0.3 ms to 10 to 25 ms.
 - **A stuck call is no longer interrupted.** A call that runs on 30 seconds
   after its context ended is a bug. The option that interrupted it is gone,
-  so it now runs on. The client still closes, and nothing waits for the
-  stuck call: the calls queued behind it, and `Close`, return `ErrState` at
-  once. If the call returns, the guest's memory is wiped and released.
+  so it now runs on.
+  - The stuck call's own caller now waits until the call returns. Before,
+    it got an error about 30 seconds after its context ended.
+  - The client still closes. The calls queued behind the stuck call, and
+    every later call, return `ErrState` at once.
+  - `Close` returns `ErrState` at once and releases the credentials. If
+    the call returns, the guest's memory is wiped and released.
 - An `eq` query on a `TextOrdOre` field of text that ends in NUL, or is too
   long for block ORE, is refused before any key is requested, as an
   ordering of the same text is (#1668). It was refused with the same error
