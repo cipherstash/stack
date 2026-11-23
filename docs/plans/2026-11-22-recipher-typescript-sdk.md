@@ -5,13 +5,16 @@ with EQL as an extension, and the work is in three phases. Status:
 proposed. Nothing in this plan is built.
 
 This plan says how to build the TypeScript SDK on the Stack Encrypt engine
-(`packages/stack-encrypt`). It is two npm packages:
+(`packages/stack-encrypt`). It is one new npm package and an addition to
+another:
 
 - `@cipherstash/recipher`, the core. It encrypts values, files, whole
   objects and records, and derives search terms. It knows nothing about a
   database.
-- `@cipherstash/recipher-eql`, an extension. It adds the EQL v4 types, so
-  a record's fields can be stored in PostgreSQL columns and queried there.
+- `@cipherstash/eql`, which exists and holds EQL's wire types, schemas and
+  SQL. It gains an extension to the core, `@cipherstash/eql/recipher`. The
+  extension adds the EQL v4 types, so a record's fields can be stored in
+  PostgreSQL columns and queried there.
 
 The split is the one Rust has: `stack-encrypt` is the engine, and
 `eql-bindings` adds the EQL types to it. The plan also says how the
@@ -80,7 +83,8 @@ It does not use the WASI guest that the Go SDK uses.
 
 In scope, for the core:
 
-- A value, a file and a whole object, each as one ciphertext.
+- A value, a file and a whole object, each as one ciphertext, with a
+  context or with none.
 - A record: fields that are encrypted, indexed or passed through.
 - The engine's indexes (`equality`, `match`, `ore`, `ope`) and the query
   terms for them.
@@ -94,10 +98,11 @@ In scope, for the EQL extension:
 - Every EQL v4 type the engine produces, including `JsonSearch` documents.
 - The EQL/JSON profile, and the EQL rows of the exchange profile.
 
-In scope, after both:
+In scope, after both, and after `recipher-compat`:
 
 - The Drizzle, Supabase and Prisma Next adapters, moved onto the two
   packages in a new major version each.
+- The DynamoDB integration, moved onto the core.
 
 Not in scope:
 
@@ -117,15 +122,15 @@ the first starts now.
 |---|---|---|
 | 1 | Now | Everything that needs no context from the caller. The core first: values, records, query terms, credentials and the wasm build. Then the EQL extension. |
 | 2 | When #1663 is closed and the context design is settled | Scopes, bindings, context fields and the expected context of a decrypt. |
-| 3 | When the issues that change stored bytes are closed | The first stable release, then the adapters. |
+| 3 | When the issues that change stored bytes are closed | The first stable release. Then, when `recipher-compat` exists, the adapters. |
 
 [Order of work](#order-of-work) lists the steps of each phase.
 
 ### What phase 1 leaves out
 
-A phase 1 value is encrypted under the context its declaration names, and
-nothing else. For a record field, that is the record's name and the field's
-name. The caller adds no part to it. So phase 1 has no `.scope`, no
+A phase 1 value is encrypted under the context its declaration names, or
+under none, and nothing else. For a record field, the context is the
+record's name and the field's name. The caller adds no part to it. So phase 1 has no `.scope`, no
 `.bind`, no context field and no expected context on a decrypt.
 
 Three rules keep phase 1 clear of the open design:
@@ -170,7 +175,8 @@ compatibility promise:
   terms. #1398, its pair, is closed.
 - **#1490** (stable gates and conformance versions) and **#1314**
   (the compatibility policy).
-- EQL v4 installable through `stash eql install`, for the adapters.
+- EQL v4 installable through `stash eql install`, and `recipher-compat`,
+  for the adapters.
 
 The rest of the milestone *Stable Stack Encrypt Rust release* does not
 block this plan. The Go-only issues, the internal ones (#1458, #1676,
@@ -192,15 +198,15 @@ thin crate for each build target.
 | `languages/typescript/packages/recipher-js/crates/wasm` | crate `recipher-js-wasm` | Rust, `wasm-bindgen`, for `wasm32-unknown-unknown`. The same conversions over `JsValue`. |
 | `languages/typescript/packages/recipher-js` | npm `@cipherstash/recipher` | The core SDK, its types and the loaders. Its builds hold no EQL type (`NoTargets`). |
 | `languages/typescript/packages/recipher-js/platforms/*` | npm `@cipherstash/recipher-<platform>` | One package per Node platform, holding its `.node` file. |
-| `languages/typescript/packages/recipher-eql` | npm `@cipherstash/recipher-eql` | The EQL extension: the EQL v4 types in TypeScript, and the builds that hold them. |
-| `languages/typescript/packages/recipher-eql/platforms/*` | npm `@cipherstash/recipher-eql-<platform>` | One package per Node platform, holding the EQL build's `.node` file. |
+| `packages/eql/packages/eql` | npm `@cipherstash/eql`, entry `./recipher` | The EQL extension: the EQL v4 types in TypeScript, and the loaders of the builds that hold them. The package exists; the entry is new. |
+| `packages/eql/packages/eql-<platform>` | npm `@cipherstash/eql-<platform>` | One package per Node platform, holding the EQL build's `.node` file. |
 
 **How the extension reaches the engine.** The engine runs a named type
 through a `TargetResolver` that the host links in. `NoTargets` is the
 build without one. So the node crate and the wasm crate each have a cargo
 feature, `eql`, which links `eql-bindings` (`targets`) by path and passes
 its resolver to the core crate. The core package ships the builds without
-the feature. The EQL package ships the builds with it. This is what Go
+the feature. `@cipherstash/eql` ships the builds with it. This is what Go
 does: `encrypt/eql` holds a second build of the guest, with the EQL types.
 
 A cipher runs in one build. A program names its extensions when it builds
@@ -208,7 +214,7 @@ the cipher, and the cipher loads the build that holds them:
 
 ```ts
 import { Cipher } from "@cipherstash/recipher";
-import { eql } from "@cipherstash/recipher-eql";
+import { eql } from "@cipherstash/eql/recipher";
 
 const cipher = await Cipher.create({ extensions: [eql] });
 ```
@@ -218,13 +224,20 @@ bundler can drop an import that is used only for its side effect.
 `Cipher.create` refuses an extension built from another engine commit than
 the core package.
 
-Each package picks its build by export condition, as `@cipherstash/auth`
-does:
+**What `@cipherstash/eql` keeps.** Its root, `./schema` and `./sql` entries
+load no native build and do not import the core. The CLI and
+`stash eql install` use those entries, and they stay as light as they are.
+Only `./recipher` loads a build. `@cipherstash/recipher` is an optional
+peer dependency, for that entry alone.
+
+The core package and the `./recipher` entry each pick their build by export
+condition, as `@cipherstash/auth` does:
 
 - `node` loads the napi addon for the platform.
 - `default` loads the wasm build, as a separate `.wasm` file.
-- `./wasm-inline` loads the wasm build inlined into the JavaScript, for
-  bundlers and edge runtimes that cannot load a second file.
+- `./wasm-inline` (`./recipher/wasm-inline` in `@cipherstash/eql`) loads
+  the wasm build inlined into the JavaScript, for bundlers and edge
+  runtimes that cannot load a second file.
 
 The six platforms are the ones `@cipherstash/auth` ships: `darwin-arm64`,
 `darwin-x64`, `linux-arm64-gnu`, `linux-x64-gnu`, `linux-x64-musl` and
@@ -243,20 +256,23 @@ then search terms. Nothing in this section needs a database.
 ### A value
 
 ```ts
-import { Cipher, kinds, value } from "@cipherstash/recipher";
+import { Cipher, kinds } from "@cipherstash/recipher";
 
 const cipher = await Cipher.create();
 const keyset = cipher.defaultKeyset();
 
-const note = value("notes", kinds.string);
-
-const [sealed] = await keyset.encrypt(note, ["a secret message"]);
-const [opened] = await cipher.decrypt(note, [sealed]);
+const [sealed] = await keyset.encrypt(kinds.string, ["a secret message"]);
+const [opened] = await cipher.decrypt(kinds.string, [sealed]);
 ```
 
-- **A declaration, even for one value.** `value(context, kind)` says the
-  context the value is encrypted under and its type. The write and the read
-  take the same declaration, so they cannot name different contexts.
+This is plain encryption, with no context. It is the engine's
+`keyset.encrypt(value)`.
+
+- **A kind is one of the engine's value kinds:** `kinds.string`,
+  `kinds.int32`, `kinds.int64`, `kinds.bytes`, `kinds.json` and the rest.
+  [Values](#values) lists them and the TypeScript type of each. A call
+  names the kind because several kinds share one TypeScript type: an
+  `int16`, an `int32` and a `double` are all a `number`.
 - **Encrypting needs a keyset; decrypting does not.** Every data key is
   made under one keyset, and a ciphertext names the keyset it was made
   under. `cipher.decrypt` opens a value from any of the cipher's keysets.
@@ -265,16 +281,32 @@ const [opened] = await cipher.decrypt(note, [sealed]);
 - **A `Ciphertext` is opaque bytes.** `ciphertext.toBytes()` gives a
   `Uint8Array` to store, and `Ciphertext.fromBytes(..)` reads one back.
   Each ciphertext has its own data key.
-- **A kind is one of the engine's value kinds:** `kinds.string`,
-  `kinds.int32`, `kinds.int64`, `kinds.bytes`, `kinds.json` and the rest.
-  [Values](#values) lists them and the TypeScript type of each.
+
+### A value with a context
+
+A context binds a ciphertext to the place it was written for, such as a
+table or a tenant. The ciphertext then opens only under the same context.
+It is the engine's `encrypt_with_context`.
+
+```ts
+import { value } from "@cipherstash/recipher";
+
+const note = value(kinds.string, { context: "notes" });
+
+const [sealed] = await keyset.encrypt(note, ["a secret message"]);
+const [opened] = await cipher.decrypt(note, [sealed]);
+```
+
+`value` makes a declaration: a kind and its context. The write and the
+read take the same declaration, so they cannot name different contexts.
+A kind used alone is the declaration with no context.
 
 ### A file, and a whole object
 
 A file or a stored object is a value of kind `bytes`:
 
 ```ts
-const invoice = value("invoices", kinds.bytes);
+const invoice = value(kinds.bytes, { context: "invoices" });
 const [sealed] = await keyset.encrypt(invoice, [await readFile("invoice.pdf")]);
 await writeFile("invoice.pdf.enc", sealed.toBytes());
 ```
@@ -285,7 +317,7 @@ A whole object is one ciphertext with `opaque`:
 import { opaque } from "@cipherstash/recipher";
 
 type Card = { number: string; expiry: { month: number; year: number } };
-const card = opaque<Card>("cards");
+const card = opaque<Card>({ context: "cards" });
 
 const [sealed] = await keyset.encrypt(card, [
   { number: "4111 1111 1111 1111", expiry: { month: 4, year: 2031 } },
@@ -293,7 +325,8 @@ const [sealed] = await keyset.encrypt(card, [
 ```
 
 `opaque` stores what the engine's `OpaqueBlob` stores, in the same format
-as a Go opaque struct. Nothing inside it can be searched.
+as a Go opaque struct. Nothing inside it can be searched. Like a value, it
+takes a context or none.
 
 ### A record
 
@@ -399,8 +432,8 @@ the boundary.
 | int64, uint64, int128 | `bigint` | A `number` is refused, so no 64-bit value passes through a double |
 | real, double | `number` | |
 | decimal | `string` | Decimal text, parsed in Rust |
-| date | see [Decisions needed](#decisions-needed) | |
-| timestamp | see [Decisions needed](#decisions-needed) | |
+| date | `Date` | Midnight UTC of the day, else refused |
+| timestamp | `Date` | To the millisecond. See below |
 | bytes | `Uint8Array` | |
 | json | a JSON value, with `bigint` for a large integer | See below |
 | null | `null` | Only where the field declares `null` |
@@ -413,19 +446,27 @@ outside the safe range comes back as a `bigint`. The conversion is in Rust,
 and the engine's one parser reads the result. The `eql-json-v1` case that
 holds `18446744073709551615` round-trips on both builds.
 
+**Timestamps.** A `Date` holds milliseconds, and the engine's timestamp
+holds nanoseconds. So a timestamp written here has no part below a
+millisecond. A timestamp that Rust or Go wrote with a finer part opens
+truncated to the millisecond, never rounded. The conformance runner
+compares such a case to the millisecond and lists it as truncated. A
+finer TypeScript type can be added later without a change to stored
+bytes.
+
 The value profile of the conformance suite (`record-values-v1`) is the
 contract for this table. Its cases include every kind at its edges and the
 conversions the host refuses.
 
 ## The EQL extension
 
-`@cipherstash/recipher-eql` adds one thing to the core: a field that is
+`@cipherstash/eql/recipher` adds one thing to the core: a field that is
 stored as an EQL v4 type. In the engine's words, the field names a target.
 In Go it is the `encrypt_into=` tag.
 
 ```ts
 import { Cipher, passthrough, record } from "@cipherstash/recipher";
-import { eql, types } from "@cipherstash/recipher-eql";
+import { eql, types } from "@cipherstash/eql/recipher";
 
 export const users = record("users", {
   id: passthrough<bigint>(),
@@ -542,8 +583,12 @@ can check, and the README says so.
 
 `@cipherstash/stack-drizzle`, `@cipherstash/stack-supabase` and
 `@cipherstash/stack-prisma` move onto `@cipherstash/recipher` and
-`@cipherstash/recipher-eql`. Each takes a new major version that depends on
+`@cipherstash/eql/recipher`. Each takes a new major version that depends on
 them and drops `@cipherstash/stack`.
+
+No adapter moves until `recipher-compat` exists. A new major then reads
+the EQL v3 rows the current major wrote, so no customer upgrades into data
+they cannot read.
 
 - **Columns.** Each adapter maps its own column objects to a record and a
   field name, as each maps them to a table and a column name today:
@@ -567,7 +612,9 @@ them and drops `@cipherstash/stack`.
   answer decides which operators the new major offers.
 - **DynamoDB.** `@cipherstash/stack/dynamodb` is a subpath of
   `@cipherstash/stack`, not an adapter package. DynamoDB has no EQL, so it
-  needs the core only; see [Decisions needed](#decisions-needed).
+  needs the core only. It moves to `@cipherstash/recipher/dynamodb` after
+  the adapters, and also waits for `recipher-compat`, which reads the
+  items the current integration wrote.
 - **Skills.** `skills/stash-drizzle`, `stash-supabase`, `stash-prisma`,
   `stash-dynamodb`, `stash-encryption` and `stash-indexing` change with
   their adapters, in the same pull requests.
@@ -576,7 +623,7 @@ them and drops `@cipherstash/stack`.
 
 `recipher-compat` is planned to read and write EQL v3 and v2 on the same
 engine. In TypeScript it arrives as another extension, beside
-`@cipherstash/recipher-eql`, with no new call shape. So this plan holds to
+`@cipherstash/eql/recipher`, with no new call shape. So this plan holds to
 three rules:
 
 - **The EQL version is in the field's type, never in a call.** A
@@ -599,7 +646,7 @@ these rules are checked then.
 - **Conformance.** A Vitest runner for every profile in
   `conformance/stack-encrypt/v1`, against both the napi build and the wasm
   build (#1479). The core package runs the profiles that name no EQL type.
-  The EQL package runs `eql-json-v1`. Phase 1 runs the cases that take no
+  `@cipherstash/eql` runs `eql-json-v1`. Phase 1 runs the cases that take no
   context from the caller. Phase 2 adds the context, context-boundary and
   binding profiles (`record-contexts-v1`, `record-context-boundaries-v1`,
   `record-bindings-v1`) and the cases of the other profiles that name a
@@ -609,6 +656,8 @@ these rules are checked then.
   and Go wrote in the same run, and they open what TypeScript wrote.
 - **The core has no EQL in it.** A test fails if the core package's
   builds link `eql-bindings`, or if its TypeScript names an EQL type.
+- **The SQL entries stay light.** A test fails if the root, `./schema` or
+  `./sql` entry of `@cipherstash/eql` imports the core or loads a build.
 - **A frozen stored-rows file** (phase 3). Rows the first stable release
   wrote, opened on every build and never regenerated.
 - **Value conversion.** The value profile, plus a fuzz target that converts
@@ -632,8 +681,14 @@ The packages follow `@cipherstash/auth`:
   package, and publishes the platform packages before the wrapper, as
   `publish-auth` does. npm trusted publishing is set up for each package,
   bound to `release.yml`.
-- The core package and the EQL package are released together, at one
-  version. Each package gets a changeset like any other workspace package.
+- `@cipherstash/eql` keeps EQL's version, which its SQL bundle, its docs,
+  its image and the `eql-bindings` crate share. Its release gains the six
+  platform addons and the wasm build of the extension.
+- The extension's builds hold the engine. So a release of
+  `@cipherstash/recipher` that changes the engine or the binding needs a
+  release of `@cipherstash/eql` from the same commit. The peer dependency
+  names the core version an EQL release was built with.
+- Each package gets a changeset like any other workspace package.
 - The crates depend on `stack-encrypt` and `eql-bindings` by path, so one
   release carries the engine of its own commit. Each package names that
   commit in an `engineCommit` export, and `Cipher.create` compares them.
@@ -641,11 +696,12 @@ The packages follow `@cipherstash/auth`:
 ## Documentation and skills
 
 - The core's README starts with the steps to encrypt and decrypt one
-  value, then a record, then a query term. It needs no database. The EQL
-  package's README starts with the steps to a working round trip through
-  PostgreSQL. Both are tested in CI, as Python's is.
-- A skill under `skills/` for each package once it is published, since
-  skills ship to customers.
+  value, then a record, then a query term. It needs no database. The
+  README of `@cipherstash/eql` gains the steps to a working round trip
+  through PostgreSQL. Both are tested in CI, as Python's is.
+- A skill under `skills/` for the core once it is published, since skills
+  ship to customers. `skills/stash-postgres` and `skills/stash-indexing`
+  gain the extension.
 - `AGENTS.md` (repository layout) and `SECURITY.md` (package list) gain
   each package in the pull request that adds it.
 
@@ -658,12 +714,13 @@ Each step is one pull request, and each ends with its tests passing in CI.
 The core, with no EQL:
 
 1. **Walking skeleton.** The three crates and the core npm package.
-   `Cipher.create`, and `encrypt` and `decrypt` of one `string` value on
-   Node. CI builds it on Linux. Proves that the engine's futures run on
+   `Cipher.create`, and plain `encrypt` and `decrypt` of one `string`
+   value on Node, with no context. CI builds it on Linux. Proves that the engine's futures run on
    napi-rs's runtime. Adds the tests that the core crate names no `Label`
    and links no `eql-bindings`.
-2. **Values.** Every kind in the table above, `bytes` for a file, `opaque`
-   for a whole object, the value profile and the fuzz target.
+2. **Values.** Every kind in the table above, a value with a context,
+   `bytes` for a file, `opaque` for a whole object, the value profile and
+   the fuzz target.
 3. **Records.** `record`, `encrypt`, `passthrough`, nulls, the stored row
    type, `encryptField` and `decryptField`, the type tests, and the
    declaration, runtime and read profiles. This step is the first to call
@@ -678,8 +735,8 @@ The core, with no EQL:
 
 Then the EQL extension:
 
-7. **EQL types.** The EQL package, the `eql` cargo feature, the extension
-   passed to `Cipher.create`, the `eql-codegen` writer and its drift check,
+7. **EQL types.** The `./recipher` entry of `@cipherstash/eql`, the `eql`
+   cargo feature, the extension passed to `Cipher.create`, the `eql-codegen` writer and its drift check,
    and the scalar EQL types on Node and on wasm.
 8. **JSON documents.** `JsonSearch` and the EQL/JSON profile.
 9. **Exchange.** The exchange enrolment, so TypeScript, Rust and Go open
@@ -706,39 +763,32 @@ stable.
 14. **Release.** The platform packages, the release jobs, the READMEs and
     the skills.
 15. **The adapters.** Drizzle, then Prisma Next, then Supabase, each a
-    major version in its own pull request, after EQL v4 installs through
-    `stash eql install`.
+    major version in its own pull request. This step waits for EQL v4 to
+    install through `stash eql install`, and for `recipher-compat`.
+16. **DynamoDB.** `@cipherstash/recipher/dynamodb`, on the core.
 
 ## Decisions needed
 
-1. **Data the current adapters wrote.** The new majors read EQL v4 only
-   until `recipher-compat` exists. Until then, a customer with rows the
-   current majors wrote stays on those majors. Whether the new majors wait
-   for `recipher-compat`, or ship first and gain v3 support later, is a
-   product decision.
-2. **Dates and times.** A JavaScript `Date` has millisecond precision; the
-   engine's timestamp has nanosecond precision. `Temporal` is the newer
-   standard date and time API with nanosecond instants and plain dates. It
-   is not in Safari yet. The choices are `Date`, `Temporal` with a
-   fallback, or strings.
-3. **DynamoDB.** Whether `@cipherstash/stack/dynamodb` moves onto the core
-   package, as `@cipherstash/recipher/dynamodb` or as a package of its own.
-4. **A pre-release after phase 1.** Phase 1 could publish to npm under a
-   pre-release tag, so the adapters and early users can try it. Its stored
-   values would carry no promise that a later version opens them. The
-   other choice is to publish nothing until phase 3. Publishing early
-   moves the release jobs of step 14 into phase 1.
-5. **How the EQL extension ships its build.** This plan gives the EQL
-   package its own builds, as Go does. The core's builds then hold no EQL
-   code, which keeps the core's wasm small. The cost is six more platform
-   packages to publish. The other choice is one build that always holds
-   the EQL types, with the split in the TypeScript API only.
-6. **The EQL package's name.** This plan uses `@cipherstash/recipher-eql`.
-   `@cipherstash/eql` exists already and holds the SQL bundle.
-7. **A value with no context.** Rust's `keyset.encrypt(value)` takes no
-   context. This plan gives every value a declared context, as Go does, so
-   no ciphertext opens in a place it was not written for. The other choice
-   is to allow `value(kind)` with no context.
+1. **A pre-release after phase 1.** Phase 1 could publish to npm under a
+   pre-release tag, so early users can try it. Its stored values would
+   carry no promise that a later version opens them. The other choice is
+   to publish nothing until phase 3. Publishing early moves the release
+   jobs of step 14 into phase 1.
+2. **Where the EQL builds are published.** This plan publishes them as six
+   platform packages, `@cipherstash/eql-<platform>`, beside
+   `@cipherstash/eql`. The other choice adds no package: each
+   `@cipherstash/recipher-<platform>` package holds a second `.node` file,
+   built with EQL. The core's own build still holds no EQL code, but the
+   core's release then builds against `eql-bindings`.
+
+Decided on 2026-11-23:
+
+- The adapters' new majors wait for `recipher-compat`. No customer
+  upgrades before it.
+- Dates and timestamps are a `Date`, for now.
+- DynamoDB moves onto the core, after the adapters.
+- The EQL extension is part of `@cipherstash/eql`, not a new package.
+- The core has plain encryption, with no context.
 
 ## What was checked
 
@@ -796,6 +846,10 @@ Read on 2026-11-23, on `next` at `e62420d8e`:
 - `Plan::with_context_field` refuses a field that names an EQL type, with
   `TargetError::ContextField` (`dynamic/record.rs`).
 
+- `@cipherstash/eql` is at `packages/eql/packages/eql`. Its entries are
+  the root, `./schema` and `./sql`, and it has no dependencies. The CLI,
+  `@cipherstash/stack` and `@cipherstash/stack-prisma` depend on it.
+
 Not checked:
 
 - That the engine's pending calls are `Send`, as napi-rs's async
@@ -809,5 +863,9 @@ Not checked:
   the engine needs.
 - The largest value one call can seal, which bounds the size of a file.
 - The size of each wasm build, with and without the EQL types.
+- How `@cipherstash/eql` declares its platform packages so that an
+  install for the SQL entries alone downloads no native build.
+- How a prerelease of `@cipherstash/eql` carries the extension while the
+  package is at an EQL v3 version.
 - napi-rs addons under Bun and Deno.
 - Whether PostgREST can write the EQL v4 query domains.
