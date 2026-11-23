@@ -36,27 +36,6 @@ async fn generator() -> StackCipher<FakeDataKeySource> {
 // --- Leaf implementations ---------------------------------------------------
 
 #[tokio::test]
-async fn equality_leaf_agrees_with_the_descriptor_api() {
-    let generator = generator().await;
-    let generator = generator.default_keyset();
-
-    let via_target: EqualityTerm = "alice"
-        .to_string()
-        .encrypt_into_with_context(&generator, nonempty!("users/email"))
-        .await
-        .unwrap();
-    let via_descriptor = generator
-        .equality_term("alice", nonempty!("users/email"))
-        .await
-        .unwrap();
-
-    assert_eq!(
-        via_target, via_descriptor,
-        "target-directed and descriptor-string call sites must agree on term bytes"
-    );
-}
-
-#[tokio::test]
 async fn terms_agree_between_independently_built_ciphers() {
     // Query-side code in another process, holding its own cipher over the same
     // keyset, must produce the same terms
@@ -555,15 +534,17 @@ async fn an_explicit_keyset_is_honoured() {
     // a different index key.
     let default = stack_cipher().await;
     let default = default.default_keyset();
-    let a = explicit
-        .equality_term("alice", nonempty!("users/email"))
+    let a: EqualityTerm = "alice"
+        .to_string()
+        .encrypt_into_with_context(&explicit, nonempty!("users/email"))
         .await
         .unwrap();
-    let b = default
-        .equality_term("alice", nonempty!("users/email"))
+    let b: EqualityTerm = "alice"
+        .to_string()
+        .encrypt_into_with_context(&default, nonempty!("users/email"))
         .await
         .unwrap();
-    assert_ne!(a, b);
+    assert_ne!(a, b, "the keysets' index keys differ");
 }
 
 #[test]

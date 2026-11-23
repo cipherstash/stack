@@ -30,15 +30,21 @@
 //! one tenant's [`KeysetCipher`] compares only against terms derived through
 //! the same keyset.
 //!
-//! Alongside the target-directed path, the keyset cipher carries descriptor
-//! methods ([`KeysetCipher::equality_term`] and friends) for call sites that
-//! want a single term rather than a whole record — query builders, mostly.
-//! Each returns a [`Pending`], as the record path does; they derive no data
-//! keys, and under the local HMAC backend the pending carries no requests,
-//! so a probe settles without a ZeroKMS call — though a backend that derives
-//! terms at ZeroKMS settles it through the same pending. The
-//! descriptor is the same [`NonEmpty`] context the target-directed path
-//! takes, so the two agree byte for byte.
+//! A term that your app stores comes from a target. Encrypt the value into
+//! its term type, or into a record with the term as a field. The target
+//! builds the term under the context it seals the ciphertext under.
+//!
+//! A query term comes from the field's reference, such as
+//! `EncryptedUser::EMAIL.eq(..)` or `EncryptedUser::NAME.matches(..)`. The
+//! reference supplies the field's index and context. A query target run on
+//! its own, such as [`matching_query`](crate::target::matching_query), also
+//! builds one. A query term is not always the stored term: a match query
+//! with [`MatchOptions::short_words`] on is cut differently.
+//!
+//! Each of these returns a [`Pending`]. A term needs no data key. Under the
+//! local HMAC backend, the pending makes no request, so it settles without
+//! a ZeroKMS call. A backend that derives terms at ZeroKMS settles the term
+//! through the same pending.
 //!
 //! # PRF backends, visitors, and the 2-party future
 //!
@@ -175,7 +181,7 @@ use std::fmt;
 use std::marker::PhantomData;
 
 // Re-exported because they appear in this module's public signatures
-// ([`KeysetCipher::ore_term`], [`OreTerm::inner`], ...): a caller can name
+// ([`OreTerm::inner`], [`OpeTerm::new`], ...): a caller can name
 // the ciphertext types without depending on `clww-ore` directly.
 use clww_ore::{ClwwOpe, ClwwOre};
 pub use clww_ore::{OpeClww8VariableV1, OreClww8VariableV1};
@@ -518,8 +524,23 @@ impl TermError {
 // Equality
 // =============================================================================
 
-/// An equality (exact-match) index term: one PRF block over the value's
-/// normalized bytes (see [`KeysetCipher::equality_term`]).
+/// An equality (exact-match) index term: one block of a pseudorandom
+/// function (PRF) over the value's normalized bytes. The same value under
+/// the same context always yields the same term, at write time and at
+/// query time.
+///
+/// The value is one scalar. `vitaminc-normalize` normalizes it before the
+/// PRF reads it:
+///
+/// - Every integer width of one number is one term, so `34u32` and `34i64`
+///   match. Both float widths of one number are one term too.
+/// - Text is compared in Unicode 16 NFC.
+/// - A date, timestamp, decimal, or uuid derives in a domain of its own.
+/// - Every null shares one term.
+///
+/// A boolean or a container has no term ([`TermError::NoEqualityTerm`]).
+/// Text with a code point unassigned in Unicode 16 is refused
+/// ([`TermError::Normalize`]).
 ///
 /// Terms are pseudorandom under the index key; they are stored server-side and
 /// are not secret key material.
@@ -828,17 +849,19 @@ impl MatchOptions {
 /// reference use one configuration: the field's type names its match index,
 /// [`Match<O>`](struct@crate::target::Match), through
 /// [`Answers`](crate::op::Answers), and the query derives its filter through
-/// that index. You can also derive a filter directly, with
-/// [`match_terms`](crate::KeysetCipher::match_terms) or a `Match<O>` you
-/// name. That filter uses whatever configuration you give it. The filter
-/// matches a stored filter only when that configuration is the field's.
+/// that index.
 ///
-/// `match_terms` and `Match<O>`'s [`operation`](crate::target::Index::operation)
-/// build a stored value's filter. With [`MatchOptions::short_words`] on,
-/// build a query's filter with
-/// [`matching_query`](crate::target::matching_query). That function keeps
-/// the query's short words only when its whole text is shorter than one
-/// n-gram.
+/// You can also derive a filter directly: encrypt text into a
+/// `MatchTerms<O>`, or run a `Match<O>` that you name. That filter uses
+/// whatever configuration you give it. The filter matches a stored filter
+/// only when that configuration is the field's.
+///
+/// A `MatchTerms<O>` target and `Match<O>`'s
+/// [`operation`](crate::target::Index::operation) build a stored value's
+/// filter. With [`MatchOptions::short_words`] on, build a query's filter
+/// with [`matching_query`](crate::target::matching_query). That function
+/// keeps the query's short words only when its whole text is shorter than
+/// one n-gram.
 ///
 /// A plan that is data has one match index per field. The plan's stored
 /// filter and its query both read that index's options.
@@ -2088,139 +2111,24 @@ order_term! {
 // Term generation on the cipher
 // =============================================================================
 
-/// Descriptor term generation, for call sites that want one term rather than
-/// a whole record: query builders probing an index, re-indexers, tests of a
-/// single scheme.
+/// Term derivations that the `dynamic` path shares, and one block ORE term
+/// made on its own.
 ///
-/// Each returns a [`Pending`], the same carrier the record path hands back,
-/// so probes combine ([`Pending::zip`], [`Pending::all`]) and a batch of
-/// them settles as one. Under the local HMAC backend a term is derived
-/// during the synchronous build and the pending carries no requests —
-/// awaiting it does no I/O — but that is the backend's property, not the
-/// API's: a backend that derives terms at ZeroKMS settles them the way it
-/// settles data keys, through the same pending.
+/// A term that your app stores comes from a target. Encrypt the value into
+/// its term type, such as [`EqualityTerm`], [`MatchTerms`], or
+/// [`OreTerm`], or into a derived record's field. The target builds the
+/// term under the context it seals the ciphertext under.
 ///
-/// # These are the query-probe path
-///
-/// A term derived here is bound to the descriptor you pass and to nothing
-/// else: it builds no [`Descriptor`](crate::Descriptor), makes no ZeroKMS
-/// request, and has no relation to the ciphertext of the field it indexes.
-/// Nothing checks that the two agree, and the two mistakes fail differently —
-/// a ciphertext under the wrong context is refused at first read, while a
-/// term under the wrong context is a valid term in another domain that
-/// matches nothing, forever, with no error anywhere.
-///
-/// So derive a term here to *query*: a probe has no ciphertext to agree with,
-/// and needs the field's context because that is what it is matching against.
-/// A term that is going to be **stored** should come from a target instead,
-/// where the one context the target is handed reaches the ciphertext and the
-/// term beside it alike, and giving either a context of its own is written
-/// in the declaration rather than plumbed. A derived record does
-/// this per field and cannot get it wrong; a hand-written target can still
-/// put a subtree under its own context, but has to say so. The bytes are
-/// identical either way; what differs is whether anything holds the two in
-/// agreement.
-///
-/// Do not use [`match_terms`](Self::match_terms) to build a match query when
-/// [`MatchOptions::short_words`] is on. `match_terms` is the exception to
-/// the rule above, because it derives a stored value's filter. That filter
-/// is also a query's filter only while the option is off.
-///
-/// With the option on, a query keeps its short words only when its whole
-/// text is shorter than one n-gram. A query for "Mike Ng" built with
-/// `match_terms` asks for the word `ng`, so it does not find "Mike Nguyen".
-/// Build a match query from the field's reference (`matches(..)`), or with
-/// [`matching_query`](crate::target::matching_query).
-///
-/// The descriptor is a context
-/// as the target-directed leaves take it — a [`NonEmpty<T>`]:
-/// `nonempty!("users").with("email")`, `NonEmpty::new(column)?`,
-/// `nonempty!("users").with("email").with(row_id)` — and each method is
-/// byte-identical to that path for the same descriptor, so a term generated
-/// here compares against one generated by `encrypt_into_with_context`.
+/// A query term comes from the field's reference, such as
+/// `EncryptedUser::EMAIL.eq(..)`. A query target run on its own, such as
+/// [`matching_query`](crate::target::matching_query), also builds one. A
+/// stored term and a query term are the same bytes for some indexes only.
 impl<K> KeysetCipher<'_, K> {
-    /// Generate an equality (exact-match) term for `value` under the field
-    /// `descriptor`. Deterministic: the same value + descriptor always yields
-    /// the same term, at write time and at query time. Byte-identical to
-    /// `value.encrypt_into_with_context(&keyset, descriptor)` into an
-    /// `EqualityTerm`.
-    ///
-    /// The value is one scalar, normalized by `vitaminc-normalize` before the
-    /// PRF sees it: every integer width of one number is one term
-    /// (`34u32` and `34i64` match), both float widths of one number are one
-    /// term, text is compared in Unicode 16 NFC, and a date, timestamp,
-    /// decimal or uuid derives in a domain of its own, and every null shares
-    /// one term. A boolean or a container has no term
-    /// ([`TermError::NoEqualityTerm`]), and text with a code point
-    /// unassigned in Unicode 16 is refused ([`TermError::Normalize`]).
-    pub fn equality_term<'c, T>(
-        &self,
-        value: T,
-        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
-    ) -> Pending<'_, EqualityTerm, K>
-    where
-        T: Encrypt,
-    {
-        match self.loaded_state() {
-            Some(keyset) => {
-                let term = equality(&keyset.prf, value, descriptor.into_prf_context());
-                Pending::ready(self, term.map_err(Error::from))
-            }
-            None => match normalized(value) {
-                Ok(normalized) => self.equality_term_normalized(normalized, descriptor),
-                Err(error) => Pending::ready(self, Err(error.into())),
-            },
-        }
-    }
-
-    /// Generate a match (full-text) term for `text` under the field
-    /// `descriptor` and the type-level config `O`: tokenize locally, PRF each
-    /// token, fold the outputs into Bloom-filter bit positions.
-    ///
-    /// The config is a *type* parameter (not runtime options), so the
-    /// filter's type says which configuration cut it. A filter cut under
-    /// one config is not comparable with one cut under another: a query
-    /// would miss rows it should match, with no error. So a filter derived
-    /// here matches a stored one only when `O` is the field's own. A query
-    /// made from the field's reference takes the field's `O` ([`MatchConfig`]
-    /// says how). Byte-identical to the target-directed path for the same
-    /// `O`. For custom options, define a marker type implementing
-    /// [`MatchConfig`].
-    ///
-    /// Use this to build the filter of a value you store, not a query. With
-    /// [`MatchOptions::short_words`] on, a stored filter contains every
-    /// n-gram, plus each short word as a whole word. A query must not ask for
-    /// the whole word. A query for "Mike Ng" built with `match_terms` asks
-    /// for the word `ng`, so it does not find "Mike Nguyen".
-    ///
-    /// Build a query with a field reference's `matches(..)`. That gives the
-    /// other type, [`MatchQuery`]. Or build a query's filter with
-    /// [`matching_query`](crate::target::matching_query). Both keep a
-    /// query's short words only when its whole text is shorter than one
-    /// n-gram.
-    ///
-    /// Text with no token is the empty filter. No query matches it. Such
-    /// text is empty, separators only, or shorter than one n-gram (see
-    /// [`Tokenizer::Ngram`]). So a short value can be stored, and this method
-    /// refuses nothing. A query of such text is refused
-    /// ([`TermError::EmptyTermText`]), because its filter would match every
-    /// row.
-    pub fn match_terms<'c, O>(
-        &self,
-        text: &str,
-        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
-    ) -> Pending<'_, MatchTerms<O>, K>
-    where
-        O: MatchConfig + MaybeSend,
-    {
-        self.match_terms_under(text, descriptor, O::options(), Side::Stored)
-    }
-
-    /// [`equality_term`](Self::equality_term) of one scalar the caller has
-    /// normalized already, for the `dynamic` path, which walks a value to
-    /// its one scalar and normalizes it there, with the same
-    /// `vitaminc_normalize::normalize` the typed path's sink applies.
-    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+    /// The equality term of one scalar that the caller has already
+    /// normalized. The `dynamic` path walks a value to its one scalar and
+    /// normalizes it there, with the `vitaminc_normalize::normalize` that
+    /// the typed path's sink applies.
+    #[cfg(any(test, feature = "dynamic"))]
     pub(crate) fn equality_term_normalized<'c>(
         &self,
         normalized: Normalized,
@@ -2241,14 +2149,15 @@ impl<K> KeysetCipher<'_, K> {
         }
     }
 
-    /// [`match_terms`](Self::match_terms) under runtime options, for `side`,
-    /// for the `dynamic` path. That path's plan carries a match index's
-    /// options as data (an `IndexSpec::Match`). The path derives both stored
-    /// and query filters.
+    /// The match filter of `text` under runtime options, for `side`, for the
+    /// `dynamic` path. That path's plan carries a match index's options as
+    /// data (an `IndexSpec::Match`). The path derives both stored and query
+    /// filters.
     ///
-    /// This method is not public. The typed API keeps the options on the
-    /// type, so a stored field and its query cannot disagree. A binding
-    /// reaches this only through a plan that names the options for both.
+    /// The typed API keeps the options on the type, so a stored field and
+    /// its query cannot disagree. A binding reaches this method only through
+    /// a plan that names the options for both.
+    #[cfg(any(test, feature = "dynamic"))]
     pub(crate) fn match_terms_under<'c, O>(
         &self,
         text: &str,
@@ -2262,45 +2171,24 @@ impl<K> KeysetCipher<'_, K> {
         match_pending(self, text, descriptor.into_prf_context(), options, side)
     }
 
-    /// Generate an order-revealing (CLLW ORE) term for a range-queryable value
-    /// under the field `descriptor`. The PRF input is the descriptor alone —
-    /// the plaintext never enters the PRF; it travels in the visitor, which
-    /// derives the per-descriptor CLLW key from the PRF block and encrypts
-    /// under it in one step. The key never leaves the visitor.
+    /// Generate a block ORE term: ore-rs's 6-bit block order-revealing
+    /// encryption (ORE), the scheme that EQL v4's `_ord_ore` domains store.
+    /// The PRF input is the descriptor alone. The plaintext never enters
+    /// the PRF, and one visitor derives the per-descriptor key and uses it.
+    /// See [`OreBlockTerm`] for which scheme a type is encrypted with, and
+    /// what is refused.
     ///
-    /// Supported inputs: every [`Orderable`] type, each encoded as its
-    /// target. Bytes are not one. A value handed over by value is wiped by
-    /// the walk that encodes it, and a reference (`&String`, `&str`) is read
-    /// in place. Returns the raw CLLW ciphertext; the target-directed path
-    /// wraps the same bytes in [`OreTerm`].
-    pub fn ore_term<'c, T: Orderable>(
-        &self,
-        value: T,
-        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
-    ) -> Pending<'_, OreClww8VariableV1, K> {
-        let context = descriptor.into_prf_context().into_owned();
-        order_pending(self, target_of::<T>(), value, context, order_error, ore)
-    }
-
-    /// Generate an order-preserving (CLLW OPE) term: ciphertexts compare with
-    /// plain lexicographic byte order, no custom comparator required.
-    /// Encrypt-only — pair with the record ciphertext for round-trips. Key
-    /// handling and input bounds as for [`ore_term`](Self::ore_term).
-    pub fn ope_term<'c, T: Orderable>(
-        &self,
-        value: T,
-        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
-    ) -> Pending<'_, OpeClww8VariableV1, K> {
-        let context = descriptor.into_prf_context().into_owned();
-        order_pending(self, target_of::<T>(), value, context, order_error, ope)
-    }
-
-    /// Generate a block ORE term: ore-rs's 6-bit block ORE, the scheme
-    /// EQL v4's `_ord_ore` domains store. Key handling and inputs as for
-    /// [`ore_term`](Self::ore_term), under a key of its own; see
-    /// [`OreBlockTerm`] for which scheme a type is encrypted with and what
-    /// is refused. Byte-identical to the target-directed path's left half
-    /// for the same descriptor; the right half carries a random nonce.
+    /// Every [`Orderable`] type is supported, each encoded as its target.
+    /// The walk that encodes a value wipes a value handed over by value. A
+    /// reference (`&String`, `&str`) is read in place. The term's left half
+    /// is byte-identical to the target-directed path's for the same
+    /// descriptor. The right half contains a random nonce.
+    ///
+    /// The descriptor is the context the target-directed path takes, a
+    /// [`NonEmpty<T>`]: `nonempty!("users").with("age")`. Nothing ties a
+    /// term made here to the context of the ciphertext beside it. So a term
+    /// that you will store should come from a target instead. The target
+    /// hands one context to the term and the ciphertext.
     pub fn ore_block_term<'c, T: Orderable>(
         &self,
         value: T,
@@ -2317,6 +2205,72 @@ impl<K> KeysetCipher<'_, K> {
                 ore_block(prf, encoding, context).map(|term| OreBlockTerm(term, PhantomData))
             },
         )
+    }
+}
+
+/// One term of each kind on its own, under a descriptor, outside any
+/// target. This crate's tests compare another path's term against these.
+/// Each method derives the bytes that a target derives for the same
+/// descriptor. The `lone_terms` tests check that.
+#[cfg(test)]
+impl<K> KeysetCipher<'_, K> {
+    /// The equality term of `value` under `descriptor`: the term an
+    /// [`EqualityTerm`] target derives.
+    pub(crate) fn equality_term<'c, T>(
+        &self,
+        value: T,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
+    ) -> Pending<'_, EqualityTerm, K>
+    where
+        T: Encrypt,
+    {
+        match self.loaded_state() {
+            Some(keyset) => {
+                let term = equality(&keyset.prf, value, descriptor.into_prf_context());
+                Pending::ready(self, term.map_err(Error::from))
+            }
+            None => match normalized(value) {
+                Ok(normalized) => self.equality_term_normalized(normalized, descriptor),
+                Err(error) => Pending::ready(self, Err(error.into())),
+            },
+        }
+    }
+
+    /// The stored match filter of `text` under `descriptor` and the
+    /// config `O`: the filter a [`MatchTerms<O>`] target derives. A query
+    /// of the same text is cut differently when
+    /// [`MatchOptions::short_words`] is on.
+    pub(crate) fn match_terms<'c, O>(
+        &self,
+        text: &str,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
+    ) -> Pending<'_, MatchTerms<O>, K>
+    where
+        O: MatchConfig + MaybeSend,
+    {
+        self.match_terms_under(text, descriptor, O::options(), Side::Stored)
+    }
+
+    /// The CLLW ORE ciphertext of `value` under `descriptor`: the bytes an
+    /// [`OreTerm`] target wraps.
+    pub(crate) fn ore_term<'c, T: Orderable>(
+        &self,
+        value: T,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
+    ) -> Pending<'_, OreClww8VariableV1, K> {
+        let context = descriptor.into_prf_context().into_owned();
+        order_pending(self, target_of::<T>(), value, context, order_error, ore)
+    }
+
+    /// The CLLW OPE ciphertext of `value` under `descriptor`: the bytes an
+    /// [`OpeTerm`] target wraps.
+    pub(crate) fn ope_term<'c, T: Orderable>(
+        &self,
+        value: T,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
+    ) -> Pending<'_, OpeClww8VariableV1, K> {
+        let context = descriptor.into_prf_context().into_owned();
+        order_pending(self, target_of::<T>(), value, context, order_error, ope)
     }
 }
 
@@ -2936,5 +2890,162 @@ mod order_terms_before_the_keyset_loads {
             matches!(before, Error::Term(TermError::Normalize(_))),
             "{before:?}"
         );
+    }
+}
+
+/// Each lone term method derives the bytes that a target derives for the
+/// same value and descriptor. The tests check this with the keyset loaded,
+/// and with the keyset not yet loaded when the call is built.
+#[cfg(test)]
+mod lone_terms {
+    use stack_kms::{FakeCredentialKeySource, FakeDataKeySource, SecretToken};
+
+    use super::*;
+    use crate::{nonempty, EncryptInto, StackCipher};
+
+    const EMAIL: &str = "bob@example.com";
+    const TEXT: &str = "bob the builder";
+    const AGE: u32 = 42;
+
+    fn field() -> NonEmpty<(&'static str, &'static str)> {
+        nonempty!("users").with("email")
+    }
+
+    /// Settle a pending: awaited as it is, or with a credential, which a
+    /// cipher over a credential key source needs for every call.
+    macro_rules! settle {
+        ($pending:expr, plain) => {
+            $pending.await.unwrap()
+        };
+        ($pending:expr, credentialed) => {
+            $pending
+                .with_credential(SecretToken::new("alice.jwt"))
+                .await
+                .unwrap()
+        };
+    }
+
+    /// Each lone term is the target's term of the same value. The lone
+    /// call is built and settled first, so on a keyset that is not loaded
+    /// it is the call that loads it.
+    macro_rules! each_lone_term_is_the_targets_term {
+        ($keyset:expr, $state:ident) => {{
+            let keyset = $keyset;
+            let equality = settle!(keyset.equality_term(String::from(EMAIL), field()), $state);
+            let target: EqualityTerm = settle!(
+                String::from(EMAIL).encrypt_into_with_context(keyset, field()),
+                $state
+            );
+            assert_eq!(equality, target, "the lone equality term is the target's");
+
+            let matching = settle!(keyset.match_terms::<DefaultMatch>(TEXT, field()), $state);
+            let target: MatchTerms = settle!(
+                String::from(TEXT).encrypt_into_with_context(keyset, field()),
+                $state
+            );
+            assert_eq!(matching, target, "the lone match filter is the target's");
+
+            let ore = settle!(keyset.ore_term(AGE, field()), $state);
+            let target: OreTerm<u32> =
+                settle!(AGE.encrypt_into_with_context(keyset, field()), $state);
+            assert_eq!(&ore, target.inner(), "the lone ORE term is the target's");
+
+            let ope = settle!(keyset.ope_term(AGE, field()), $state);
+            let target: OpeTerm<u32> =
+                settle!(AGE.encrypt_into_with_context(keyset, field()), $state);
+            assert_eq!(&ope, target.inner(), "the lone OPE term is the target's");
+        }};
+    }
+
+    mod given_a_loaded_keyset {
+        use super::*;
+
+        async fn scenario() -> StackCipher<FakeDataKeySource> {
+            StackCipher::builder()
+                .kms(FakeDataKeySource::new())
+                .init()
+                .await
+                .unwrap()
+        }
+
+        #[tokio::test]
+        async fn each_lone_term_is_the_targets_term() {
+            let cipher = scenario().await;
+            let keyset = cipher.default_keyset();
+            assert!(keyset.loaded_state().is_some(), "init loads the keyset");
+            each_lone_term_is_the_targets_term!(&keyset, plain);
+        }
+    }
+
+    mod given_a_keyset_that_is_not_loaded {
+        use super::*;
+
+        async fn scenario() -> StackCipher<FakeCredentialKeySource> {
+            StackCipher::builder()
+                .kms(FakeCredentialKeySource::new())
+                .init()
+                .await
+                .unwrap()
+        }
+
+        #[tokio::test]
+        async fn each_lone_term_is_the_targets_term() {
+            let cipher = scenario().await;
+            let keyset = cipher.default_keyset();
+            assert!(
+                keyset.loaded_state().is_none(),
+                "nothing has loaded the keyset"
+            );
+            each_lone_term_is_the_targets_term!(&keyset, credentialed);
+        }
+
+        /// Each lone term built before the load is the term the loaded
+        /// keyset derives through the same method.
+        #[tokio::test]
+        async fn each_lone_term_built_before_the_load_is_the_term_after_it() {
+            let cipher = scenario().await;
+            let keyset = cipher.default_keyset();
+            let equality = keyset.equality_term(String::from(EMAIL), field());
+            let matching = keyset.match_terms::<DefaultMatch>(TEXT, field());
+            let ore = keyset.ore_term(AGE, field());
+            let ope = keyset.ope_term(AGE, field());
+            assert!(
+                keyset.loaded_state().is_none(),
+                "building a lone term loads nothing"
+            );
+            let (equality, matching, ore, ope) = (
+                settle!(equality, credentialed),
+                settle!(matching, credentialed),
+                settle!(ore, credentialed),
+                settle!(ope, credentialed),
+            );
+            assert!(keyset.loaded_state().is_some(), "the calls loaded it");
+            assert_eq!(
+                equality,
+                settle!(
+                    keyset.equality_term(String::from(EMAIL), field()),
+                    credentialed
+                ),
+                "the equality term"
+            );
+            assert_eq!(
+                matching,
+                settle!(
+                    keyset.match_terms::<DefaultMatch>(TEXT, field()),
+                    credentialed
+                ),
+                "the match filter"
+            );
+            assert_eq!(
+                ore,
+                settle!(keyset.ore_term(AGE, field()), credentialed),
+                "the ORE term"
+            );
+            assert_eq!(
+                ope,
+                settle!(keyset.ope_term(AGE, field()), credentialed),
+                "the OPE term"
+            );
+        }
     }
 }

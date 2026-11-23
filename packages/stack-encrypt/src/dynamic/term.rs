@@ -5,9 +5,9 @@
 //! [`ValueFrame`] the engine holds, a Rust value. It is walked to the one
 //! scalar it must be, and the term derives there, from the scalar vitaminc
 //! hands the sink, so this module restates none of vitaminc's vocabulary.
-//! The derivation is the typed path's, which is what makes a term a
-//! cross-language contract: an equality term for a frame holding `34` is the
-//! term `equality_term(34u32)` derives.
+//! The derivation is the typed path's. That makes a term a cross-language
+//! contract: an equality term for a frame that contains `34` is the term
+//! that `34u32` derives as an [`EqualityTerm`](crate::sem::EqualityTerm).
 //!
 //! - **Equality** normalizes the scalar with `vitaminc-normalize` and runs
 //!   the PRF over the result, as the typed path does through that crate's
@@ -429,8 +429,9 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 ///
 /// ```
 /// use stack_encrypt::dynamic::{context, term};
+/// use stack_encrypt::sem::EqualityTerm;
 /// use stack_encrypt::target::IndexSpec;
-/// use stack_encrypt::{AsProtectedRef, StackCipher};
+/// use stack_encrypt::{AsProtectedRef, EncryptInto, StackCipher};
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
@@ -444,7 +445,7 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 /// // `["users", "age"]`, as a binding writes it.
 /// let ctx = context(vitaminc_aead_frame::serde::to_vec(&("users", "age"))?.as_protected_ref())?;
 /// let probe = term(&keyset, &34u32, &IndexSpec::Equality, ctx.clone()).await?;
-/// let typed = keyset.equality_term(34u32, ctx).await?;
+/// let typed: EqualityTerm = 34u32.encrypt_into_with_context(&keyset, ctx).await?;
 /// assert_eq!(probe, typed.into_bytes().to_vec());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// # }).unwrap();

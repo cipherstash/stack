@@ -22,8 +22,8 @@ use stack_encrypt::target::{
 };
 use stack_encrypt::AsProtectedRef as _;
 use stack_encrypt::{
-    CipherText, Descriptor, Equality, IntoAad, IntoPrfContext, Label, NonEmpty, SealedValue,
-    StackCipherText,
+    CipherText, Descriptor, EncryptInto, Equality, IntoAad, IntoPrfContext, Label, NonEmpty,
+    SealedValue, StackCipherText,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -272,7 +272,11 @@ async fn shared_context_composition() {
         let descriptor = Descriptor::of(ctx.clone()).as_str().to_owned();
         let aad = hex(ctx.clone().into_aad().as_bytes());
         let prf = hex(ctx.clone().into_prf_context().as_bytes());
-        let term = keyset.equality_term("hello", ctx.clone()).await.unwrap();
+        let term: EqualityTerm = "hello"
+            .to_string()
+            .encrypt_into_with_context(&keyset, ctx.clone())
+            .await
+            .unwrap();
         let plan = plan(&case);
         let fresh = record::encrypt(&keyset, source(&case), &plan)
             .unwrap()

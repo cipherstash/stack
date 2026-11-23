@@ -331,8 +331,9 @@ async fn seal_rejects_a_key_tag_the_length_field_cannot_frame() {
 async fn equality_term_encoding_is_the_raw_prf_bytes() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
-    let term = keyset
-        .equality_term("alice", nonempty!("users/email"))
+    let term: EqualityTerm = "alice"
+        .to_string()
+        .encrypt_into_with_context(&keyset, nonempty!("users/email"))
         .await
         .expect("equality term");
 
@@ -372,8 +373,9 @@ fn equality_term_try_from_rejects_wrong_length() {
 async fn match_term_bytes_are_pinned() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
-    let term = keyset
-        .match_terms::<DefaultMatch>("alice smith", nonempty!("users/name"))
+    let term: MatchTerms<DefaultMatch> = "alice smith"
+        .to_string()
+        .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await
         .expect("match term");
 

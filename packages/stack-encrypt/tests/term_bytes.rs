@@ -41,9 +41,11 @@
 //! changing the bytes encrypted. As with vitaminc 0.5, nothing of this
 //! crate's own derivation moved, so the `/v2` suffixes stay.
 
-use stack_encrypt::nonempty;
-use stack_encrypt::sem::{DefaultMatch, MatchConfig, MatchOptions};
-use stack_encrypt::StackCipher;
+use stack_encrypt::sem::{
+    DefaultMatch, EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreTerm,
+};
+use stack_encrypt::target::AcceptsContext;
+use stack_encrypt::{EncryptInto, EncryptTarget, Error, KeysetCipher, NonEmpty, StackCipher};
 use stack_kms::FakeDataKeySource;
 
 async fn cipher() -> StackCipher<FakeDataKeySource> {
@@ -54,6 +56,23 @@ async fn cipher() -> StackCipher<FakeDataKeySource> {
         .expect("build cipher")
 }
 
+/// The term `value` stores as a `T` under the field `name`: the value
+/// encrypted into its term type. Every term here is derived this way.
+async fn stored<S, T>(
+    keyset: &KeysetCipher<'_, FakeDataKeySource>,
+    value: S,
+    name: &'static str,
+) -> Result<T, Error>
+where
+    S: EncryptInto,
+    T: EncryptTarget<S> + 'static,
+    T::ContextInput: AcceptsContext,
+    NonEmpty<&'static str>: Into<<T::ContextInput as AcceptsContext>::Value>,
+{
+    let field = NonEmpty::new(name).expect("a field name");
+    value.encrypt_into_with_context(keyset, field).await
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -61,9 +80,7 @@ fn hex(bytes: &[u8]) -> String {
 #[tokio::test]
 async fn equality_term_bytes_are_pinned() {
     let cipher = cipher().await;
-    let term = cipher
-        .default_keyset()
-        .equality_term("alice", nonempty!("users/email"))
+    let term: EqualityTerm = stored(&cipher.default_keyset(), "alice".to_string(), "users/email")
         .await
         .unwrap();
 
@@ -80,19 +97,18 @@ async fn equality_term_bytes_are_pinned() {
 async fn equality_terms_are_one_per_normal_form() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
-    let term = |value: &'static str| keyset.equality_term(value, nonempty!("users/email"));
+    let term =
+        |value: &'static str| stored::<_, EqualityTerm>(&keyset, value.to_string(), "users/email");
     assert_eq!(
         term("cafe\u{301}").await.unwrap(),
         term("caf\u{e9}").await.unwrap(),
         "a combining accent and the precomposed letter are one string"
     );
     assert_eq!(
-        keyset
-            .equality_term(34u32, nonempty!("users/age"))
+        stored::<_, EqualityTerm>(&keyset, 34u32, "users/age")
             .await
             .unwrap(),
-        keyset
-            .equality_term(34i64, nonempty!("users/age"))
+        stored::<_, EqualityTerm>(&keyset, 34i64, "users/age")
             .await
             .unwrap(),
         "34 is one number at every width"
@@ -102,11 +118,13 @@ async fn equality_terms_are_one_per_normal_form() {
 #[tokio::test]
 async fn match_term_positions_are_pinned() {
     let cipher = cipher().await;
-    let term = cipher
-        .default_keyset()
-        .match_terms::<DefaultMatch>("alice smith", nonempty!("users/name"))
-        .await
-        .unwrap();
+    let term: MatchTerms<DefaultMatch> = stored(
+        &cipher.default_keyset(),
+        "alice smith".to_string(),
+        "users/name",
+    )
+    .await
+    .unwrap();
 
     // Pins the tokenizer, the per-token PRF framing, and the Bloom folding
     // together: any of the three moving changes this set.
@@ -124,9 +142,7 @@ async fn ore_term_bytes_are_pinned() {
     // The ORE key is a PRF of the descriptor, so this pins the key derivation
     // as much as the CLLW encryption.
     let cipher = cipher().await;
-    let term = cipher
-        .default_keyset()
-        .ore_term(42u32, nonempty!("users/age"))
+    let term: OreTerm<u32> = stored(&cipher.default_keyset(), 42u32, "users/age")
         .await
         .unwrap();
 
@@ -142,9 +158,7 @@ async fn ope_term_bytes_are_pinned() {
     // schemes derive their keys under different domains and must never share
     // one (OPE ciphertexts are encrypt-only).
     let cipher = cipher().await;
-    let term = cipher
-        .default_keyset()
-        .ope_term(42u32, nonempty!("users/age"))
+    let term: OpeTerm<u32> = stored(&cipher.default_keyset(), 42u32, "users/age")
         .await
         .unwrap();
 
@@ -171,11 +185,13 @@ impl MatchConfig for WideMatch {
 #[tokio::test]
 async fn match_term_positions_are_pinned_for_a_wide_filter() {
     let cipher = cipher().await;
-    let term = cipher
-        .default_keyset()
-        .match_terms::<WideMatch>("alice smith", nonempty!("users/name"))
-        .await
-        .unwrap();
+    let term: MatchTerms<WideMatch> = stored(
+        &cipher.default_keyset(),
+        "alice smith".to_string(),
+        "users/name",
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         term.positions(),
@@ -196,12 +212,10 @@ async fn match_term_positions_are_pinned_for_a_wide_filter() {
 async fn text_order_term_bytes_are_pinned() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
-    let ore = keyset
-        .ore_term("Ab".to_string(), nonempty!("users/surname"))
+    let ore: OreTerm<String> = stored(&keyset, "Ab".to_string(), "users/surname")
         .await
         .unwrap();
-    let ope = keyset
-        .ope_term("Ab".to_string(), nonempty!("users/surname"))
+    let ope: OpeTerm<String> = stored(&keyset, "Ab".to_string(), "users/surname")
         .await
         .unwrap();
     assert_eq!(
@@ -220,8 +234,8 @@ async fn text_order_term_bytes_are_pinned() {
 async fn text_order_terms_fold_case_and_accents() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
-    let ore = |text: String| keyset.ore_term(text, nonempty!("users/surname"));
-    let ope = |text: String| keyset.ope_term(text, nonempty!("users/surname"));
+    let ore = |text: String| stored::<_, OreTerm<String>>(&keyset, text, "users/surname");
+    let ope = |text: String| stored::<_, OpeTerm<String>>(&keyset, text, "users/surname");
     let want_ore = ore("cafe".into()).await.unwrap();
     let want_ope = ope("cafe".into()).await.unwrap();
     for text in ["Caf\u{e9}", "CAF\u{c9}", "cafe\u{301}", "CAFE"] {
@@ -236,14 +250,10 @@ async fn text_order_terms_fold_case_and_accents() {
 async fn text_with_no_fold_has_no_order_term() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
-    assert!(keyset
-        .ore_term("a\u{378}b".to_string(), nonempty!("users/surname"))
-        .await
-        .is_err());
-    assert!(keyset
-        .ope_term("a\u{378}b".to_string(), nonempty!("users/surname"))
-        .await
-        .is_err());
+    let ore = stored::<_, OreTerm<String>>(&keyset, "a\u{378}b".to_string(), "users/surname").await;
+    assert!(ore.is_err(), "no ORE term: {ore:?}");
+    let ope = stored::<_, OpeTerm<String>>(&keyset, "a\u{378}b".to_string(), "users/surname").await;
+    assert!(ope.is_err(), "no OPE term: {ope:?}");
 }
 
 /// A float's order term: clww-ore's encryption of its ADR-0002 order key,
@@ -253,14 +263,8 @@ async fn text_with_no_fold_has_no_order_term() {
 async fn float_order_term_bytes_are_pinned() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
-    let ore = keyset
-        .ore_term(1.5f64, nonempty!("users/score"))
-        .await
-        .unwrap();
-    let ope = keyset
-        .ope_term(1.5f64, nonempty!("users/score"))
-        .await
-        .unwrap();
+    let ore: OreTerm<f64> = stored(&keyset, 1.5f64, "users/score").await.unwrap();
+    let ope: OpeTerm<f64> = stored(&keyset, 1.5f64, "users/score").await.unwrap();
     assert_eq!(hex(ore.as_ref()), "6c487f77b33ab3b4e0d37e79f84b24b92843d9cb591d492fd8d092afebba96e50e7d6733935a6e94faa8e7945f04471385553a35aa00ca30fb77d0b7a7a9a9a3");
     assert_eq!(hex(ope.as_ref()), "00836260f898d58c06c8e23b8754e05d7d352c676b714e8523582c930f9e83640ad87d56aa35b7c3ecdc44dfb29a7378fb95738bca93f5ee9ca2a066c63ecb6aaf");
 }
@@ -272,8 +276,8 @@ async fn float_order_term_bytes_are_pinned() {
 async fn float_order_terms_follow_the_semantic_baseline() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
-    let ore = |value: f64| keyset.ore_term(value, nonempty!("users/score"));
-    let ope = |value: f64| keyset.ope_term(value, nonempty!("users/score"));
+    let ore = |value: f64| stored::<_, OreTerm<f64>>(&keyset, value, "users/score");
+    let ope = |value: f64| stored::<_, OpeTerm<f64>>(&keyset, value, "users/score");
 
     assert_eq!(ore(-0.0).await.unwrap(), ore(0.0).await.unwrap());
     assert_eq!(ope(-0.0).await.unwrap(), ope(0.0).await.unwrap());
@@ -329,28 +333,12 @@ async fn an_f32_is_ordered_as_the_f64_it_widens_to() {
     let keyset = cipher.default_keyset();
     for value in [1.5f32, -0.0, f32::NAN, f32::MIN_POSITIVE, f32::INFINITY] {
         let wide = f64::from(value);
-        assert_eq!(
-            keyset
-                .ore_term(value, nonempty!("users/score"))
-                .await
-                .unwrap(),
-            keyset
-                .ore_term(wide, nonempty!("users/score"))
-                .await
-                .unwrap(),
-            "ore {value:?}"
-        );
-        assert_eq!(
-            keyset
-                .ope_term(value, nonempty!("users/score"))
-                .await
-                .unwrap(),
-            keyset
-                .ope_term(wide, nonempty!("users/score"))
-                .await
-                .unwrap(),
-            "ope {value:?}"
-        );
+        let narrow_ore: OreTerm<f32> = stored(&keyset, value, "users/score").await.unwrap();
+        let wide_ore: OreTerm<f64> = stored(&keyset, wide, "users/score").await.unwrap();
+        assert_eq!(narrow_ore.as_bytes(), wide_ore.as_bytes(), "ore {value:?}");
+        let narrow_ope: OpeTerm<f32> = stored(&keyset, value, "users/score").await.unwrap();
+        let wide_ope: OpeTerm<f64> = stored(&keyset, wide, "users/score").await.unwrap();
+        assert_eq!(narrow_ope.as_bytes(), wide_ope.as_bytes(), "ope {value:?}");
     }
 }
 
@@ -369,8 +357,8 @@ async fn every_integer_width_orders_by_its_own_key() {
             let mut ores = Vec::new();
             let mut opes = Vec::new();
             for value in values {
-                let ore = keyset.ore_term(value, nonempty!("users/n")).await.unwrap();
-                let ope = keyset.ope_term(value, nonempty!("users/n")).await.unwrap();
+                let ore: OreTerm<$ty> = stored(&keyset, value, "users/n").await.unwrap();
+                let ope: OpeTerm<$ty> = stored(&keyset, value, "users/n").await.unwrap();
                 assert_eq!(ore.as_ref().len(), bits, "{} ore", stringify!($ty));
                 assert_eq!(ope.as_ref().len(), bits + 1, "{} ope", stringify!($ty));
                 ores.push(ore);
@@ -403,8 +391,7 @@ impl MatchConfig for WideShortWords {
 async fn short_word_positions_are_pinned() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
-    let word = keyset
-        .match_terms::<WideShortWords>("Ng", nonempty!("users/name"))
+    let word: MatchTerms<WideShortWords> = stored(&keyset, "Ng".to_string(), "users/name")
         .await
         .unwrap();
     assert_eq!(
@@ -412,8 +399,7 @@ async fn short_word_positions_are_pinned() {
         PINNED_NG,
         "the word token's positions are frozen"
     );
-    let whole = keyset
-        .match_terms::<WideShortWords>("Mike Ng", nonempty!("users/name"))
+    let whole: MatchTerms<WideShortWords> = stored(&keyset, "Mike Ng".to_string(), "users/name")
         .await
         .unwrap();
     assert!(

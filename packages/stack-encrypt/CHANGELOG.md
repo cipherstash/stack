@@ -481,6 +481,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`KeysetCipher::equality_term`, `match_terms`, `ore_term`, and
+  `ope_term` are no longer public** (#1760). Each method built one term
+  on its own, outside the target path and the query path. A term built
+  that way was easy to get wrong. Nothing tied it to the context of the ciphertext stored
+  beside it. For most indexes, the term a query sends is not the term a
+  row stores. With `MatchOptions::short_words` on, the `match_terms`
+  filter of "Mike Ng" misses "Mike Nguyen". To upgrade, build each term
+  one of two ways:
+  - **To store a value**, encrypt it into its target type, or into a
+    derived record with a field of that type. Use `EqualityTerm` for
+    `equality_term`, `MatchTerms<O>` for `match_terms`, `OreTerm<T>` for
+    `ore_term`, and `OpeTerm<T>` for `ope_term`. The target builds the
+    term under the context it seals the ciphertext under.
+    `OreTerm::inner()` and `OpeTerm::inner()` return the ciphertext the
+    old methods returned. A target takes text as a `String`, not a
+    `&str`.
+  - **To query**, use the field reference's operator method, such as
+    `EncryptedUser::EMAIL.eq(&email)` or
+    `EncryptedUser::NAME.matches("Mike Ng")`. A query target run on its
+    own, such as `target::matching_query`, also works.
+
+  ```rust
+  // Before
+  let term = keyset.equality_term("alice@example.com", nonempty!("users/email")).await?;
+
+  // After: the term to store
+  let term: EqualityTerm = String::from("alice@example.com")
+      .encrypt_into_with_context(&keyset, nonempty!("users/email"))
+      .await?;
+  // After: the query
+  let query = EncryptedUser::EMAIL.eq(&email).encrypt(&keyset).await?;
+  ```
+
+  `ore_block_term` does not change. No stored byte changes.
+
 - **`Index` and `Indexes` each gain a required method** (#1398). A field
   query now derives its terms through these methods.
   - `Index::query_operation` derives the term that a query of the index

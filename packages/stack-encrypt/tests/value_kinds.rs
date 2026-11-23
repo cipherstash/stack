@@ -29,7 +29,8 @@ use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
 use stack_encrypt::dynamic::{
     context, query_term, NoTargets, Op, Operand, Reason, ValueFrame, ValueKind,
 };
-use stack_encrypt::target::IndexSpec;
+use stack_encrypt::sem::EqualityTerm;
+use stack_encrypt::target::{equality, Borrowed, CallerContext, IndexSpec};
 use stack_encrypt::{CipherText, KeysetCipher, SealedValue, StackCipher, StackCipherText};
 use vitaminc_aead::plaintext::{Int, Logical, Physical, Raw, TimeUnit};
 use vitaminc_aead::plaintext::{MapSink, Sink};
@@ -373,8 +374,12 @@ async fn every_new_kind_seals_opens_and_queries_as_the_typed_path() {
                 .as_protected_ref(),
         )
         .expect("context");
-        let typed_eq = keyset
-            .equality_term(kind.value, ctx.clone())
+        let typed_eq: EqualityTerm = keyset
+            .run(
+                equality::<_, _, Borrowed>(),
+                &kind.value,
+                CallerContext::from(ctx.clone()),
+            )
             .await
             .expect("the typed path derives");
         assert_eq!(

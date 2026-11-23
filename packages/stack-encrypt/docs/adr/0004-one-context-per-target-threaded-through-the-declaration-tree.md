@@ -224,6 +224,23 @@ cannot tell which they are producing.
 > query path for a match index. ADR-0009's amendment of the same date gives
 > the full rule.
 
+> **Amended 2026-11-23 (#1760).** The four methods are now crate-private,
+> so the compiler enforces the rule, not the documentation. The methods
+> stay inside the crate, where tests compare other paths against them.
+> Outside the crate, each term is built one way:
+>
+> - **To store a value**, encrypt it into its target type with
+>   `value.encrypt_into_with_context(&keyset, context)`. The target type
+>   is `EqualityTerm`, `MatchTerms<O>`, `OreTerm<T>`, or `OpeTerm<T>`, or
+>   a derived record with a field of that type. The target builds the
+>   term under the context it seals the ciphertext under.
+> - **To query**, use the field reference's operator method
+>   (`EncryptedUser::EMAIL.eq(..)`, `EncryptedUser::NAME.matches(..)`), or
+>   a query target run on its own, such as `target::matching_query`.
+>
+> `ore_block_term` is still public. That method builds a block
+> order-revealing encryption (ORE) term outside a target, as the four did.
+
 ### 6. Targets declare their sources; `FfiValue` is not one
 
 A target names the plaintext it accepts (`TextEq` from `Protected<String>`), and

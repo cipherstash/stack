@@ -789,9 +789,9 @@ pub use vitaminc_aead::{
 /// vitaminc-ore's table also has jiff's `civil::Date` and `Timestamp`, and
 /// rust_decimal's `Decimal`. Those types are `Copy` and are not `Zeroize`,
 /// so nothing wipes them. A target and an owned index need `Zeroize`, so
-/// neither takes them. The keyset's term functions
-/// ([`KeysetCipher::ore_term`] and the others) and a borrowed index do take
-/// them: a value passed by value is a copy the caller still holds. To have
+/// neither takes them. [`KeysetCipher::ore_block_term`] and a borrowed
+/// index do take them: a value passed by value is a copy the caller still
+/// holds. To have
 /// the plaintext wiped, use `value::Date`, `value::Timestamp`, or
 /// `value::Decimal`.
 ///

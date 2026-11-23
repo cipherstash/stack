@@ -861,8 +861,9 @@ fn a_typed_query_leaves_no_plaintext_on_the_heap() {
 #[test]
 fn a_call_through_a_keyset_that_is_not_loaded_leaves_no_plaintext_on_the_heap() {
     use stack_encrypt::kms::{FakeCredentialKeySource, SecretToken};
-    use stack_encrypt::sem::DefaultMatch;
-    use stack_encrypt::{Ciphertext, StackCipher};
+    use stack_encrypt::sem::{DefaultMatch, EqualityTerm, MatchTerms, OreTerm};
+    use stack_encrypt::target::{matching, Borrowed, CallerContext};
+    use stack_encrypt::{Ciphertext, EncryptInto, StackCipher};
     let rt = runtime();
     let not_loaded = || {
         rt.block_on(
@@ -877,14 +878,14 @@ fn a_call_through_a_keyset_that_is_not_loaded_leaves_no_plaintext_on_the_heap() 
     let cipher = not_loaded();
     let keyset = cipher.default_keyset();
     let text = marked("equality");
-    watched("equality_term (keyset not loaded)", || {
-        rt.block_on(async {
-            keyset
-                .equality_term(text, nonempty!("users/email"))
-                .with_credential(credential())
-                .await
-        })
-        .unwrap();
+    watched("equality term (keyset not loaded)", || {
+        let _: EqualityTerm = rt
+            .block_on(async {
+                text.encrypt_into_with_context(&keyset, nonempty!("users/email"))
+                    .with_credential(credential())
+                    .await
+            })
+            .unwrap();
     });
 
     let cipher = not_loaded();
@@ -892,28 +893,33 @@ fn a_call_through_a_keyset_that_is_not_loaded_leaves_no_plaintext_on_the_heap() 
     // The caller's own text stays alive across the watch: the pending
     // works on its copy.
     let text = marked("match these words");
-    watched("match_terms (keyset not loaded)", || {
-        rt.block_on(async {
-            keyset
-                .match_terms::<DefaultMatch>(&text, nonempty!("users/bio"))
-                .with_credential(credential())
-                .await
-        })
-        .unwrap();
+    watched("match filter (keyset not loaded)", || {
+        let _: MatchTerms = rt
+            .block_on(async {
+                keyset
+                    .run(
+                        matching::<_, _, Borrowed, DefaultMatch>(),
+                        &text,
+                        CallerContext::from(nonempty!("users/bio")),
+                    )
+                    .with_credential(credential())
+                    .await
+            })
+            .unwrap();
     });
     drop(text);
 
     let cipher = not_loaded();
     let keyset = cipher.default_keyset();
     let text = marked("order");
-    watched("ore_term (keyset not loaded)", || {
-        rt.block_on(async {
-            keyset
-                .ore_term(text, nonempty!("users/surname"))
-                .with_credential(credential())
-                .await
-        })
-        .unwrap();
+    watched("ORE term (keyset not loaded)", || {
+        let _: OreTerm<String> = rt
+            .block_on(async {
+                text.encrypt_into_with_context(&keyset, nonempty!("users/surname"))
+                    .with_credential(credential())
+                    .await
+            })
+            .unwrap();
     });
 
     let cipher = not_loaded();
@@ -926,25 +932,33 @@ fn a_call_through_a_keyset_that_is_not_loaded_leaves_no_plaintext_on_the_heap() 
     });
 }
 
-/// An order term takes its plaintext by value, so the engine owns the
-/// `String` or `Vec<u8>` it is handed (a clone of the caller's, on the
-/// target path) and must wipe it. Both paths hand a bare one; the engine
-/// wraps it in `Zeroizing` on receipt, before anything can fail.
+/// Text encrypted into an order term is handed over by value. The engine
+/// owns the `String` and must wipe it.
 #[test]
 fn an_order_term_of_owned_text_or_bytes_leaves_no_plaintext_on_the_heap() {
+    use stack_encrypt::sem::{OpeTerm, OreTerm};
+    use stack_encrypt::EncryptInto;
     let rt = runtime();
     let cipher = rt.block_on(common::stack_cipher());
     let keyset = cipher.default_keyset();
     // Each plaintext is built before its watch: building one can free a
     // partly written copy, which is the test's own residue, not the term's.
     let text = marked("order");
-    watched("ore_term (String)", || {
-        rt.block_on(async { keyset.ore_term(text, nonempty!("users/surname")).await })
+    watched("ORE term (String)", || {
+        let _: OreTerm<String> = rt
+            .block_on(async {
+                text.encrypt_into_with_context(&keyset, nonempty!("users/surname"))
+                    .await
+            })
             .unwrap();
     });
     let text = marked("order");
-    watched("ope_term (String)", || {
-        rt.block_on(async { keyset.ope_term(text, nonempty!("users/surname")).await })
+    watched("OPE term (String)", || {
+        let _: OpeTerm<String> = rt
+            .block_on(async {
+                text.encrypt_into_with_context(&keyset, nonempty!("users/surname"))
+                    .await
+            })
             .unwrap();
     });
 }
