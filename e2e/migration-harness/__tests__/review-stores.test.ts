@@ -161,6 +161,12 @@ test('the Oracle snapshot reads the selected record from both assigned stores', 
   try {
     const stores = await provision(resources)
     const snapshot: (pk: string) => Promise<unknown> = stores.snapshot
+    const role = new URL(stores.env.DATABASE_URL).username
+    expect(connect.mock.calls.at(-1)?.[0]).toMatchObject({
+      username: role,
+      database: role,
+    })
+    expect(endings).toContain(role)
     await snapshot('mutation')
 
     expect(JSON.parse(requests[0]).Key).toEqual({ pk: { S: 'mutation' } })
@@ -170,5 +176,23 @@ test('the Oracle snapshot reads the selected record from both assigned stores', 
     ).toEqual(['mutation'])
   } finally {
     await disposeStores(resources)
+  }
+})
+
+test('independent store acquisitions with the same Run ID have unique Dynamo names', async () => {
+  const first: import('../run/real-stores.mjs').Resource[] = []
+  const second: import('../run/real-stores.mjs').Resource[] = []
+  const options = {
+    runId: 'same-prefix',
+    actor: `oracle${++actorOrdinal}`,
+    eqlBundle: fileURLToPath(new URL('../run/stores.mjs', import.meta.url)),
+  }
+  try {
+    const a = await createStoreSet({ ...options, resources: first })
+    const b = await createStoreSet({ ...options, resources: second })
+    expect(a.forwards[1].targetHost).not.toBe(b.forwards[1].targetHost)
+  } finally {
+    await disposeStores(second)
+    await disposeStores(first)
   }
 })

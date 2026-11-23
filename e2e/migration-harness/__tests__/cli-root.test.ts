@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -72,6 +72,27 @@ test('CLI resolves the checkout root and writes a report with its real Fixture A
     process.argv = argv
     process.exitCode = exitCode
     diagnostics.mockRestore()
+    await rm(output, { recursive: true, force: true })
+  }
+})
+
+test('CLI rejects an output directory containing evidence from a previous Run', async () => {
+  const output = await mkdtemp(join(tmpdir(), 'mh-cli-reuse-'))
+  const argv = process.argv
+  const exitCode = process.exitCode
+  try {
+    await writeFile(join(output, 'run-report.json'), 'previous report')
+    vi.resetModules()
+    process.argv = ['node', 'cli.mjs', '--migrator', 'fake', '--output', output]
+    await expect(import('../run/cli.mjs')).rejects.toThrow(
+      /empty output directory/i,
+    )
+    expect(await readFile(join(output, 'run-report.json'), 'utf8')).toBe(
+      'previous report',
+    )
+  } finally {
+    process.argv = argv
+    process.exitCode = exitCode
     await rm(output, { recursive: true, force: true })
   }
 })

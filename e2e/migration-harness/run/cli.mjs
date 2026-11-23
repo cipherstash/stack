@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs, promisify } from 'node:util'
@@ -23,6 +23,9 @@ const id = randomUUID()
 const root = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const output = resolve(values.output ?? `.migration-harness-runs/${id}`)
 await mkdir(output, { recursive: true })
+if ((await readdir(output)).length)
+  throw Error('Run requires an empty output directory')
+await writeFile(resolve(output, '.run-id'), id, { flag: 'wx' })
 const manifest = {
   stack: values.stack ?? '^1.2.1',
   guideHash: null,

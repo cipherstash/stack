@@ -19,9 +19,8 @@ export async function docker(args) {
 async function publishAdminPort(target, port, network, resources) {
   const relay = `${target}-admin`
   const adminNetwork = `${relay}-network`
-  resources.push(() => docker(['network', 'rm', adminNetwork]))
-  resources.push(relay)
   await docker(['network', 'create', adminNetwork])
+  resources.push(() => docker(['network', 'rm', adminNetwork]))
   await docker([
     'run',
     '-d',
@@ -59,6 +58,7 @@ net.createServer((client) => {
     target,
     String(port),
   ])
+  resources.push(relay)
   const binding = await docker(['port', relay, `${port}/tcp`])
   const match = /^127\.0\.0\.1:(\d+)$/.exec(binding)
   if (!match) throw Error('Store administration relay has no loopback binding')
@@ -74,11 +74,12 @@ async function initializePostgres(actor, eqlBundle) {
   const pg = `mh-pg-${randomBytes(8).toString('hex')}-${actor}`
   const network = `${pg}-network`
   /** @type {Resource[]} */
-  const resources = [() => docker(['network', 'rm', network]), pg]
+  const resources = []
   /** @type {import('postgres').Sql|undefined} */
   let admin
   try {
     await docker(['network', 'create', '--internal', network])
+    resources.push(() => docker(['network', 'rm', network]))
     await docker([
       'run',
       '-d',
@@ -92,6 +93,7 @@ async function initializePostgres(actor, eqlBundle) {
       '/var/lib/postgresql/data:rw,nosuid,nodev,size=512m',
       'postgres:17-alpine',
     ])
+    resources.push(pg)
     const pgPort = await publishAdminPort(pg, 5432, network, resources)
     admin = postgres({
       host: '127.0.0.1',
@@ -182,11 +184,10 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
       }
     }
   })
-  const dynamo = `mh-dynamo-${runId.slice(0, 8)}-${actor}`
+  const dynamo = `mh-dynamo-${randomBytes(8).toString('hex')}-${actor}`
   const dynamoNetwork = `${dynamo}-network`
-  resources.push(() => docker(['network', 'rm', dynamoNetwork]))
-  resources.push(dynamo)
   await docker(['network', 'create', '--internal', dynamoNetwork])
+  resources.push(() => docker(['network', 'rm', dynamoNetwork]))
   await docker([
     'run',
     '-d',
@@ -200,6 +201,7 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
     '-inMemory',
     '-sharedDb',
   ])
+  resources.push(dynamo)
   const dynamoPort = await publishAdminPort(
     dynamo,
     8000,
@@ -211,7 +213,7 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
     actor,
     template: 'mh_template',
   })
-  const snapshotSql = postgres({
+  const grantSql = postgres({
     host: '127.0.0.1',
     port: pgPort,
     username: 'postgres',
@@ -219,17 +221,28 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
     database: identity.database,
     max: 1,
   })
+  try {
+    for (const schema of ['eql_v3', 'eql_v3_internal']) {
+      await grantSql.unsafe(
+        `GRANT USAGE ON SCHEMA ${schema} TO "${identity.role}"`,
+      )
+      await grantSql.unsafe(
+        `GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ${schema} TO "${identity.role}"`,
+      )
+    }
+  } finally {
+    await grantSql.end({ timeout: 1 })
+  }
+  // Snapshot queries read application-owned objects under the assigned role.
+  const snapshotSql = postgres({
+    host: '127.0.0.1',
+    port: pgPort,
+    username: identity.role,
+    password: identity.password,
+    database: identity.database,
+    max: 1,
+  })
   resources.push(() => snapshotSql.end({ timeout: 1 }))
-  await snapshotSql.unsafe(`GRANT USAGE ON SCHEMA eql_v3 TO "${identity.role}"`)
-  await snapshotSql.unsafe(
-    `GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA eql_v3 TO "${identity.role}"`,
-  )
-  await snapshotSql.unsafe(
-    `GRANT USAGE ON SCHEMA eql_v3_internal TO "${identity.role}"`,
-  )
-  await snapshotSql.unsafe(
-    `GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA eql_v3_internal TO "${identity.role}"`,
-  )
   const env = {
     DATABASE_URL: `postgresql://${identity.role}:${identity.password}@127.0.0.1:5432/${identity.database}`,
     HARNESS_DYNAMO_URL: 'http://127.0.0.1:8000',
