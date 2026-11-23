@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import 'dotenv/config'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -6,6 +7,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'vitest'
 import { createIsolation } from '../isolation.mjs'
+import { createIsolationTrailWriter } from '../run/isolation-trail.mjs'
 import { createRealDriver } from '../run/real-driver.mjs'
 import { run } from '../run/run.mjs'
 
@@ -15,8 +17,7 @@ const keys = [
   'CS_CLIENT_KEY',
   'CS_CLIENT_ACCESS_KEY',
 ]
-const enabled =
-  process.env.HARNESS_LIVE === '1' && keys.every((key) => process.env[key])
+const enabled = process.env.HARNESS_LIVE === '1'
 const cases = [
   ['reference', 'pass', null],
   ['noop', 'behaviour', 'migration.legacy-packages-absent'],
@@ -34,6 +35,10 @@ for (const [kind, outcome, checkId] of cases) {
   test.skipIf(!enabled)(
     `real Run self-test: ${kind}`,
     async () => {
+      const missing = keys.filter((key) => !process.env[key])
+      if (missing.length)
+        throw Error(`HARNESS_LIVE=1 requires ${missing.join(', ')}`)
+      const id = randomUUID()
       const output = await mkdtemp(resolve(tmpdir(), 'mh-selftest-'))
       const isolation = createIsolation()
       const manifest = {
@@ -41,7 +46,7 @@ for (const [kind, outcome, checkId] of cases) {
         guideHash: null,
       }
       const driver = createRealDriver({
-        id: `selftest-${Date.now()}`,
+        id,
         root: fileURLToPath(new URL('../../..', import.meta.url)),
         output,
         command: '',
@@ -54,10 +59,11 @@ for (const [kind, outcome, checkId] of cases) {
       })
       try {
         const report = await run({
-          id: kind,
+          id,
           manifest,
           driver,
           supervision: isolation,
+          writeIsolationTrail: createIsolationTrailWriter(output),
         })
         const diagnostics = JSON.stringify({
           outcome: report.outcome,
@@ -86,13 +92,10 @@ for (const [kind, outcome, checkId] of cases) {
           )
         if (kind === 'denied-app')
           assert.ok(deniedBy('app-host'), 'createApp probe was not denied')
-        // Only the Migrator's bare `npm install` runs the root install hook;
-        // the App Host names a package spec, and npm skips root lifecycle
-        // scripts for `npm install <spec>`.
         if (kind === 'denied-lifecycle')
           assert.ok(
-            deniedBy('migrator', 'migrator'),
-            'Migrator install hook was not denied',
+            deniedBy('app-host', 'app-host-install'),
+            'App Host dependency install hook was not denied',
           )
         if (checkId)
           assert.equal(

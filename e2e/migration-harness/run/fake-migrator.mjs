@@ -1,4 +1,4 @@
-import { cp, readFile, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 /** Harness-owned deterministic command substitute. The hidden reference is never mounted.
@@ -71,11 +71,25 @@ export async function fakeMigrate({ root, workspace, kind, stack }) {
         delete manifest[group]?.[name]
     }
     manifest.dependencies['@cipherstash/stack'] = stack
-    if (kind === 'denied-lifecycle')
-      manifest.scripts = {
-        ...manifest.scripts,
-        install: `node -e "try { require('node:fs').readFileSync('/trace/canary') } catch {}"`,
-      }
+    if (kind === 'denied-lifecycle') {
+      const dependency = resolve(workspace, 'lifecycle-probe')
+      await mkdir(dependency, { recursive: true })
+      await writeFile(
+        resolve(dependency, 'package.json'),
+        JSON.stringify({
+          name: 'harness-lifecycle-probe',
+          version: '1.0.0',
+          scripts: {
+            install: `node -e "try { require('node:fs').readFileSync('/trace/canary') } catch {}"`,
+          },
+        }),
+      )
+      manifest.dependencies['harness-lifecycle-probe'] =
+        'file:./lifecycle-probe'
+      // Install the local dependency as a package so its hook runs even when
+      // App Host names a package spec and npm skips the root lifecycle.
+      await writeFile(resolve(workspace, '.npmrc'), 'install-links=true\n')
+    }
     if (kind === 'legacy-ffi')
       manifest.dependencies['@cipherstash/protect-ffi'] = '0.18.1'
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2))
