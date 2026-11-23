@@ -42,7 +42,7 @@ uses the current name. The Rust crates of the TypeScript SDK are named
 - [Values](#values)
 - [The EQL extension](#the-eql-extension)
 - [Credentials, keysets and audit metadata](#credentials-keysets-and-audit-metadata)
-- [Errors](#errors)
+- [Results and errors](#results-and-errors)
 - [Plaintext hygiene](#plaintext-hygiene)
 - [Promises and cancellation](#promises-and-cancellation)
 - [The adapters](#the-adapters)
@@ -216,13 +216,19 @@ the cipher, and the cipher loads the build that holds them:
 import { Cipher } from "@cipherstash/recipher";
 import { eql } from "@cipherstash/eql/recipher";
 
-const cipher = await Cipher.create({ extensions: [eql] });
+const cipher = (await Cipher.create({ extensions: [eql] })).unwrap();
 ```
 
 The extension is passed as a value, not registered by an import, because a
 bundler can drop an import that is used only for its side effect.
-`Cipher.create` refuses an extension built from another engine commit than
-the core package.
+
+**Versions.** The core and EQL are released apart. Several versions of
+`@cipherstash/eql` work with one version of `@cipherstash/recipher`. What
+they share is the binding interface: the functions the core's TypeScript
+calls on a build. The interface has a version number. Each build reports
+the number it implements, and `Cipher.create` refuses a build with another
+number. A change to EQL's SQL changes `eql-bindings` with it, so those two
+are released together, as they are today.
 
 **What `@cipherstash/eql` keeps.** Its root, `./schema` and `./sql` entries
 load no native build and do not import the core. The CLI and
@@ -256,23 +262,37 @@ then search terms. Nothing in this section needs a database.
 ### A value
 
 ```ts
-import { Cipher, kinds } from "@cipherstash/recipher";
+import { Cipher } from "@cipherstash/recipher";
 
-const cipher = await Cipher.create();
+const cipher = (await Cipher.create()).unwrap();
 const keyset = cipher.defaultKeyset();
 
-const [sealed] = await keyset.encrypt(kinds.string, ["a secret message"]);
-const [opened] = await cipher.decrypt(kinds.string, [sealed]);
+const sealed = await keyset.encrypt("a secret message");
+if (sealed.isErr()) {
+  return sealed; // a RecipherError, as a value
+}
+
+const opened = await cipher.decrypt(sealed.value);
 ```
 
 This is plain encryption, with no context. It is the engine's
 `keyset.encrypt(value)`.
 
-- **A kind is one of the engine's value kinds:** `kinds.string`,
-  `kinds.int32`, `kinds.int64`, `kinds.bytes`, `kinds.json` and the rest.
-  [Values](#values) lists them and the TypeScript type of each. A call
-  names the kind because several kinds share one TypeScript type: an
-  `int16`, an `int32` and a `double` are all a `number`.
+- **One value in, one ciphertext out.** An array of values is a batch: it
+  returns an array, in one ZeroKMS request. This is the engine's rule for a
+  scalar and a collection.
+- **No call throws.** Every call resolves to a `Result`. See
+  [Results and errors](#results-and-errors).
+- **The value's type picks how it is encrypted.** A `string` is encrypted
+  as a string, a `boolean` as a boolean, a `number` as a double, a `bigint`
+  as a 64-bit integer, a `Uint8Array` as bytes and a `Date` as a timestamp.
+  [Values](#values) has the table.
+- **A kind is named only to choose another encoding.** `kinds.int32(36)`
+  encrypts the number as a 32-bit integer, and `kinds.date(day)` encrypts
+  a `Date` as a calendar date. Nothing else needs one.
+- **A plain object or array is refused.** It has no one encoding, so the
+  caller chooses `opaque(..)` or `kinds.json(..)`. The engine has the same
+  rule: it has no fallback that picks the stored bytes of a struct.
 - **Encrypting needs a keyset; decrypting does not.** Every data key is
   made under one keyset, and a ciphertext names the keyset it was made
   under. `cipher.decrypt` opens a value from any of the cipher's keysets.
@@ -281,6 +301,12 @@ This is plain encryption, with no context. It is the engine's
 - **A `Ciphertext` is opaque bytes.** `ciphertext.toBytes()` gives a
   `Uint8Array` to store, and `Ciphertext.fromBytes(..)` reads one back.
   Each ciphertext has its own data key.
+- **A ciphertext knows its type.** `encrypt("..")` returns a
+  `Ciphertext<string>`, and decrypting it gives a `string`. A ciphertext
+  read from storage is typed by naming the kind:
+  `Ciphertext.fromBytes(bytes, kinds.string)`. Decrypting it refuses a
+  value that was encrypted as another kind. With no kind named, the value
+  comes back as the kind it was encrypted as, typed as the union of them.
 
 ### A value with a context
 
@@ -289,26 +315,17 @@ table or a tenant. The ciphertext then opens only under the same context.
 It is the engine's `encrypt_with_context`.
 
 ```ts
-import { value } from "@cipherstash/recipher";
-
-const note = value(kinds.string, { context: "notes" });
-
-const [sealed] = await keyset.encrypt(note, ["a secret message"]);
-const [opened] = await cipher.decrypt(note, [sealed]);
+const sealed = await keyset.encrypt("a secret message").withContext("notes");
+const opened = await cipher.decrypt(sealed.unwrap()).withContext("notes");
 ```
-
-`value` makes a declaration: a kind and its context. The write and the
-read take the same declaration, so they cannot name different contexts.
-A kind used alone is the declaration with no context.
 
 ### A file, and a whole object
 
-A file or a stored object is a value of kind `bytes`:
+A file or a stored object is a `Uint8Array`, so it needs no kind:
 
 ```ts
-const invoice = value(kinds.bytes, { context: "invoices" });
-const [sealed] = await keyset.encrypt(invoice, [await readFile("invoice.pdf")]);
-await writeFile("invoice.pdf.enc", sealed.toBytes());
+const sealed = await keyset.encrypt(await readFile("invoice.pdf")).withContext("invoices");
+await writeFile("invoice.pdf.enc", sealed.unwrap().toBytes());
 ```
 
 A whole object is one ciphertext with `opaque`:
@@ -316,12 +333,8 @@ A whole object is one ciphertext with `opaque`:
 ```ts
 import { opaque } from "@cipherstash/recipher";
 
-type Card = { number: string; expiry: { month: number; year: number } };
-const card = opaque<Card>({ context: "cards" });
-
-const [sealed] = await keyset.encrypt(card, [
-  { number: "4111 1111 1111 1111", expiry: { month: 4, year: 2031 } },
-]);
+const card = { number: "4111 1111 1111 1111", expiry: { month: 4, year: 2031 } };
+const sealed = await keyset.encrypt(opaque(card)).withContext("cards");
 ```
 
 `opaque` stores what the engine's `OpaqueBlob` stores, in the same format
@@ -344,11 +357,14 @@ export const user = record("users", {
   notes: encrypt(kinds.string),
 });
 
-// Rows: always a batch, one ZeroKMS request.
-const stored = await keyset.encrypt(user, rows);
-const opened = await cipher.decrypt(user, stored);
+// One row, or an array of rows in one ZeroKMS request.
+const stored = await keyset.encrypt(user, row);
+const opened = await cipher.decrypt(user, stored.unwrap());
 ```
 
+- **A field names its kind.** A declaration has no value to read a type
+  from, and the stored type is fixed before any row exists. So
+  `encrypt(kinds.string)` is where a kind is always written.
 - **The stored row has one object for each sealed field**, with one
   property for each output: `ciphertext`, and `equality`, `match`, `ore`
   or `ope` for each index the field declares. Each is opaque bytes. A
@@ -356,10 +372,11 @@ const opened = await cipher.decrypt(user, stored);
 - **The compiler checks the row.** `Plaintext<typeof user>` is
   `{ id: bigint; email: string; name: string; age: number; notes: string }`.
   A row of another shape does not compile. `Stored<typeof user>` is the
-  stored type, and `stored[0].notes.equality` does not compile.
+  stored type, and `stored.notes.equality` does not compile.
 - **The engine checks the declaration when the cipher is built.**
   `Cipher.create({ records: [user] })` turns each record into a plan once,
-  in Rust. A refusal names the record, the field and the reason. A
+  in Rust. A refusal is an `Err` that names the record, the field and the
+  reason. A
   `checkDeclarations()` function runs the same check with no credentials,
   for a test or a CI step.
 - **The user never sees the plan.** The plan's frame is written in Rust
@@ -371,11 +388,11 @@ const opened = await cipher.decrypt(user, stored);
 - **A declaration is plain data.** A library reads a record's name, its
   fields and each field's declaration from the object.
 
-One field of a record, for an update of that field, is still a batch:
+One field of a record, for an update of that field:
 
 ```ts
-const emails = await keyset.encryptField(user, "email", ["ada@example.com"]);
-const opened = await cipher.decryptField(user, "email", emails);
+const email = await keyset.encryptField(user, "email", "ada@example.com");
+const opened = await cipher.decryptField(user, "email", email.unwrap());
 ```
 
 ### Search terms
@@ -384,8 +401,10 @@ A query names a field, an operator and a value. The result is the term to
 compare with the stored term.
 
 ```ts
-// Query terms: a batch, which may span fields.
-const [byEmail, byAge] = await keyset.query(user, [
+const byEmail = await keyset.query(user, { field: "email", op: "eq", value: "ada@example.com" });
+
+// An array of queries is a batch, which may span fields.
+const terms = await keyset.query(user, [
   { field: "email", op: "eq", value: "ada@example.com" },
   { field: "age", op: "gte", value: 36 },
 ]);
@@ -406,11 +425,19 @@ const [byEmail, byAge] = await keyset.query(user, [
 
 ### The shape of a call
 
-- **Batch by default.** Every call takes a batch and makes at most one key
-  request. A one-field call is the exception the principles allow, and is
-  still a batch of values.
-- **Each call returns a builder.** Awaiting it runs it. `.audit`,
-  `.withCredential` and `.signal` come before the `await`. Phase 2 adds
+- **One value or a batch.** Every call takes one value or an array of
+  them. One value returns one result. An array returns an array, in the
+  same order, and makes at most one key request however long it is. So a
+  loop over single calls is never needed, and the README says so.
+- **All or nothing.** A batch that fails is one `Err`. It returns no
+  partial array.
+- **Principle 5 changes with this.** The SDK design principles allow a
+  single-value form only for one field of a record. This plan allows one
+  for every call, because the same call takes the batch. The principles
+  document is amended in the pull request for step 1.
+- **Each call returns a builder.** Awaiting it runs it and gives a
+  `Result`. `.withContext`, `.audit`, `.withCredential` and `.signal` come
+  before the `await`. Phase 2 adds
   `.scope` and `.bind` to the same builder, so it changes no phase 1 call.
 - **Scopes and bindings** (phase 2) are part of a call:
   `keyset.encrypt(user, rows).scope(tenantId).bind(rowIds)` and
@@ -420,23 +447,27 @@ const [byEmail, byAge] = await keyset.query(user, [
 ## Values
 
 The native crate converts each JavaScript value straight into a frame, by
-the declared kind, with `ValueFrame::of` over a type that describes itself
+its kind, with `ValueFrame::of` over a type that describes itself
 to vitaminc. Python's `Typed` does the same. No JSON text of a row crosses
 the boundary.
 
-| Kind | TypeScript type | Rule |
+A value encrypted alone takes its kind from its TypeScript type. The kind
+in bold is the default for that type. Any other kind is named, as
+`kinds.int32(36)` or as a record field's `encrypt(kinds.int32)`.
+
+| TypeScript type | Kinds | Rule |
 |---|---|---|
-| string | `string` | |
-| boolean | `boolean` | |
-| int16, int32 | `number` | A safe integer in range, else refused |
-| int64, uint64, int128 | `bigint` | A `number` is refused, so no 64-bit value passes through a double |
-| real, double | `number` | |
-| decimal | `string` | Decimal text, parsed in Rust |
-| date | `Date` | Midnight UTC of the day, else refused |
-| timestamp | `Date` | To the millisecond. See below |
-| bytes | `Uint8Array` | |
-| json | a JSON value, with `bigint` for a large integer | See below |
-| null | `null` | Only where the field declares `null` |
+| `string` | **string**, decimal | A decimal is decimal text, parsed in Rust |
+| `boolean` | **boolean** | |
+| `number` | **double**, real, int16, int32 | An integer kind takes a safe integer in range, else it is refused |
+| `bigint` | **int64**, uint64, int128 | A value outside the kind's range is refused. A `number` is refused for these kinds, so no 64-bit value passes through a double |
+| `Uint8Array` | **bytes** | |
+| `Date` | **timestamp**, date | A timestamp is to the millisecond; see below. A date is midnight UTC of the day, else it is refused |
+| a JSON value | json | Always named. An integer outside the safe range is a `bigint`; see below |
+| `null` | | Only where a record field declares `null` |
+
+A default never depends on the value, only on its type. So `36` and `36.5`
+are both a double, and the same code always writes the same kind.
 
 **JSON numbers.** A JavaScript `number` cannot hold every integer a JSON
 document can. So a JSON value is a tree in which an integer outside the
@@ -476,13 +507,11 @@ export const users = record("users", {
   profile: types.JsonSearch({ ordered: ["$.score"] }),
 });
 
-const cipher = await Cipher.create({ extensions: [eql], records: [users] });
+const cipher = (await Cipher.create({ extensions: [eql], records: [users] })).unwrap();
 const keyset = cipher.defaultKeyset();
 
 const stored = await keyset.encrypt(users, rows);
-const [byEmail] = await keyset.query(users, [
-  { field: "email", op: "eq", value: "ada@example.com" },
-]);
+const byEmail = await keyset.query(users, { field: "email", op: "eq", value: "ada@example.com" });
 ```
 
 - **The same declaration and the same calls.** An EQL type goes where
@@ -526,7 +555,8 @@ const [byEmail] = await keyset.query(users, [
   takes a credential with each call, such as OIDC federation, has a
   different type. Its calls return a builder that cannot be awaited until
   `.withCredential(jwt)` is called. Forgetting it is a type error, as it is
-  a compile error in Rust. The JWT is read in the caller's request, which is
+  a compile error in Rust. It is the one mistake with a call that is not
+  an `Err`, because the compiler finds it first. The JWT is read in the caller's request, which is
   what #1565 asks of `@cipherstash/stack`.
 - **Keysets.** `cipher.defaultKeyset()` is the keyset a ZeroKMS
   administrator set for the client. `cipher.keyset(name)` is any other,
@@ -539,16 +569,46 @@ const [byEmail] = await keyset.query(users, [
   cipher over the engine's deterministic test keys, with no credentials and
   no network, as Go's `encrypttest.NewClient` does.
 
-## Errors
+## Results and errors
 
-Every failure is a `RecipherError` with `code`, `reason` and `field` from
-the engine's error. Subclasses name the failures a caller acts on
-differently: a refused declaration, a value of the wrong type, a refused
-credential, a ZeroKMS refusal, a foreign keyset, a context mismatch and a
-value that did not open. No message, property or `toString()` holds a
-plaintext, a key, a token, a ciphertext or a context value. A decrypted
-row's `inspect` output names its fields and hides their values, as Go's
-`Redacted` does.
+No call throws, and no promise the SDK returns rejects. Every call
+resolves to a `Result<T, RecipherError>`, as a Rust call returns one.
+`Cipher.create` does too.
+
+```ts
+const sealed = await keyset.encrypt("a secret message");
+
+// Narrow it.
+if (sealed.isOk()) {
+  store(sealed.value.toBytes());
+} else {
+  log(sealed.error.kind);
+}
+
+// Or combine it.
+const bytes = sealed.map((ciphertext) => ciphertext.toBytes()).unwrapOr(null);
+```
+
+- **The combinators are Rust's:** `isOk`, `isErr`, `map`, `mapErr`,
+  `andThen`, `orElse`, `unwrapOr` and `match`. `unwrap()` and `expect(..)`
+  are the only functions that throw, and only when the caller asks. They
+  are for a script, a test or a startup path.
+- **`Result` is the core's own type**, with no dependency. Its shape
+  follows `neverthrow`, the common TypeScript library for it.
+- **An error is a value.** A `RecipherError` has `kind`, `code`, `reason`
+  and `field`, from the engine's error. `kind` is a closed set a caller
+  switches on: a refused declaration, a value of the wrong type, a refused
+  credential, a ZeroKMS refusal, a foreign keyset, a context mismatch, a
+  value that did not open, and a cancelled call. The compiler checks that
+  a `switch` covers every kind.
+- **Nothing escapes as an exception.** A failure in the binding, such as a
+  build that does not load, is an `Err` too. A test passes each call a
+  wrong argument and a failing key service, and asserts that none throws
+  or rejects.
+- **No error holds a secret.** No message, property or `toString()` holds
+  a plaintext, a key, a token, a ciphertext or a context value. A
+  decrypted row's `inspect` output names its fields and hides their
+  values, as Go's `Redacted` does.
 
 ## Plaintext hygiene
 
@@ -571,11 +631,11 @@ can check, and the README says so.
 
 ## Promises and cancellation
 
-- Every operation returns a `Promise`. napi-rs runs the engine's future on
-  its tokio runtime. The wasm build runs it through `wasm-bindgen-futures`,
+- Every operation returns a `Promise` of a `Result`, which never rejects.
+  napi-rs runs the engine's future on its tokio runtime. The wasm build runs it through `wasm-bindgen-futures`,
   and ZeroKMS requests go out through the runtime's `fetch`.
 - A call takes an `AbortSignal`. Aborting drops the future, which wipes what
-  it held, and rejects with the signal's reason. Only that call fails; the
+  it held, and the call resolves to an `Err` of kind `cancelled`. Only that call fails; the
   cipher goes on serving others. The Go SDK's cancellation tests
   (`languages/golang/encrypt/cancel_test.go`) are the list of cases.
 
@@ -664,8 +724,13 @@ these rules are checked then.
   a host value to a frame and compares it with `ValueFrame::of` for the same
   value.
 - **Type tests.** A wrong row, a wrong value, an unknown field, an
-  operator a field cannot answer, and an EQL type against a cipher without
-  the extension do not compile.
+  operator a field cannot answer, an unhandled error kind, and an EQL type
+  against a cipher without the extension do not compile.
+- **Nothing throws.** Every call is run with a wrong argument, a failing
+  key service and an aborted signal. Each must resolve to an `Err`.
+- **Extension versions.** A build with another binding interface number is
+  refused by `Cipher.create`, and two EQL builds with the same number both
+  load.
 - **Edge runtime.** Each package's wasm build runs one encrypt, query and
   decrypt under an edge runtime in CI (Miniflare or `workerd`).
 - **Live.** One credentialed round trip of the core against ZeroKMS, and
@@ -683,15 +748,17 @@ The packages follow `@cipherstash/auth`:
   bound to `release.yml`.
 - `@cipherstash/eql` keeps EQL's version, which its SQL bundle, its docs,
   its image and the `eql-bindings` crate share. Its release gains the six
-  platform addons and the wasm build of the extension.
-- The extension's builds hold the engine. So a release of
-  `@cipherstash/recipher` that changes the engine or the binding needs a
-  release of `@cipherstash/eql` from the same commit. The peer dependency
-  names the core version an EQL release was built with.
+  platform addons and the wasm build of the extension. A change to EQL's
+  SQL and the bindings for it ship together, in one EQL release.
+- `@cipherstash/recipher` has its own version. An EQL release is built
+  against one engine, and works with every core version that has the same
+  binding interface number. The peer dependency of `@cipherstash/eql` names
+  that range. A new EQL release is needed for the core only when the
+  interface number changes.
 - Each package gets a changeset like any other workspace package.
 - The crates depend on `stack-encrypt` and `eql-bindings` by path, so one
   release carries the engine of its own commit. Each package names that
-  commit in an `engineCommit` export, and `Cipher.create` compares them.
+  commit in an `engineCommit` export, for a bug report.
 
 ## Documentation and skills
 
@@ -714,11 +781,12 @@ Each step is one pull request, and each ends with its tests passing in CI.
 The core, with no EQL:
 
 1. **Walking skeleton.** The three crates and the core npm package.
-   `Cipher.create`, and plain `encrypt` and `decrypt` of one `string`
-   value on Node, with no context. CI builds it on Linux. Proves that the engine's futures run on
+   `Cipher.create`, `Result`, and plain `encrypt` and `decrypt` of one
+   `string` value on Node, with no context. CI builds it on Linux. Proves that the engine's futures run on
    napi-rs's runtime. Adds the tests that the core crate names no `Label`
    and links no `eql-bindings`.
-2. **Values.** Every kind in the table above, a value with a context,
+2. **Values.** Every kind in the table above, the default kind of each
+   type, a batch, a value with a context,
    `bytes` for a file, `opaque` for a whole object, the value profile and
    the fuzz target.
 3. **Records.** `record`, `encrypt`, `passthrough`, nulls, the stored row
@@ -774,12 +842,6 @@ stable.
    carry no promise that a later version opens them. The other choice is
    to publish nothing until phase 3. Publishing early moves the release
    jobs of step 14 into phase 1.
-2. **Where the EQL builds are published.** This plan publishes them as six
-   platform packages, `@cipherstash/eql-<platform>`, beside
-   `@cipherstash/eql`. The other choice adds no package: each
-   `@cipherstash/recipher-<platform>` package holds a second `.node` file,
-   built with EQL. The core's own build still holds no EQL code, but the
-   core's release then builds against `eql-bindings`.
 
 Decided on 2026-11-23:
 
@@ -789,6 +851,12 @@ Decided on 2026-11-23:
 - DynamoDB moves onto the core, after the adapters.
 - The EQL extension is part of `@cipherstash/eql`, not a new package.
 - The core has plain encryption, with no context.
+- The core and EQL are released apart, so several EQL versions work with
+  one core. The EQL builds are published beside `@cipherstash/eql`, as
+  `@cipherstash/eql-<platform>`.
+- A value's type picks its kind. A kind is named only to choose another.
+- One value returns one result, and an array is a batch.
+- Calls return a `Result` and never throw.
 
 ## What was checked
 
@@ -862,6 +930,8 @@ Not checked:
   fields, which `decryptField` needs. Step 3 proves it or finds the change
   the engine needs.
 - The largest value one call can seal, which bounds the size of a file.
+- That a sealed value's bytes name its kind, which a decrypt with no kind
+  named needs. Step 2 proves it or finds the change the engine needs.
 - The size of each wasm build, with and without the EQL types.
 - How `@cipherstash/eql` declares its platform packages so that an
   install for the SQL entries alone downloads no native build.
