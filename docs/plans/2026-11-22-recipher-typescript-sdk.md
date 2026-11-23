@@ -1,6 +1,8 @@
 # `@cipherstash/recipher`: the TypeScript SDK on Stack Encrypt
 
-Date: 2026-11-22. Status: proposed. Nothing in this plan is built.
+Date: 2026-11-22. Revised 2026-11-23: the work is split into three phases,
+so it can start before the engine's context design is settled. Status:
+proposed. Nothing in this plan is built.
 
 This plan says how to build `@cipherstash/recipher`, the TypeScript SDK on
 the Stack Encrypt engine (`packages/stack-encrypt`), and how the Drizzle,
@@ -19,7 +21,7 @@ uses the current name. The Rust crates of the TypeScript SDK are named
 
 - [What it is](#what-it-is)
 - [Scope](#scope)
-- [Before starting](#before-starting)
+- [Phases](#phases)
 - [Packages and build targets](#packages-and-build-targets)
 - [The declaration](#the-declaration)
 - [Operations](#operations)
@@ -77,49 +79,78 @@ Not in scope:
   and write them. This plan does not design it, but leaves room for it:
   see [Room for EQL v3 and v2](#room-for-eql-v3-and-v2).
 
-## Before starting
+## Phases
 
-These issues in the milestone *Stable Stack Encrypt Rust release* change
-what a binding calls or sends. A binding written before them is rewritten
-after them.
+The engine issues this plan first waited for are still open, and the design
+of contexts and labels is taking time. So the work is in three phases, and
+the first starts now.
 
-Before step 1:
+| Phase | Starts | What it builds |
+|---|---|---|
+| 1 | Now | Everything that needs no context from the caller: the bindings, the declaration, values, queries, credentials, JSON documents, the wasm build and the conformance runners. |
+| 2 | When #1663 is closed and the context design is settled | Scopes, bindings, context fields and the expected context of a decrypt. |
+| 3 | When the issues that change stored bytes are closed | The first stable release, then the adapters. |
 
-- **#1669**: `dynamic::record::encrypt_with` and `decrypt_with` become
-  `Planned` or private, so `Planned` is the one way in.
+[Order of work](#order-of-work) lists the steps of each phase.
+
+### What phase 1 leaves out
+
+A phase 1 value is encrypted under its table name and its column name, and
+nothing else. The declaration gives the engine those two names as the
+field's context, as the engine's own `Planned` example does. The caller
+adds no part to it. So phase 1 has no `.scope`, no `.bind`, no
+`contextField` and no expected context on a decrypt.
+
+Three rules keep phase 1 clear of the open design:
+
+- **The core crate does not name `Label` or `IntoLabel`.** A test fails if
+  its source does. #1663 then removes them without a change here. Its
+  acceptance says a context made of the same names gives the same bytes.
+- **Only the core crate names an engine type.** The node crate, the wasm
+  crate and the TypeScript code see the core crate's own types. A rename in
+  the engine changes one crate.
+- **No phase 1 build promises that a later build opens its stored values.**
+  The README says so. The promise starts with the first stable release.
+
+### Issues that are still open
+
+Phase 1 does not wait for these. Each one changes a small, known part of
+phase 1 when it lands.
+
+| Issue | State on 2026-11-23 | What it changes here |
+|---|---|---|
+| #1669 (`encrypt_with` and `decrypt_with` become `Planned`) | Closed | Nothing. The core crate calls `Planned` from the first step. |
+| #1489 (the naming review) | Open | The engine names in the core crate (`StackCipher` becomes `Cipher`, `stack-kms` becomes `stack-zerokms`, and the rest). No TypeScript name changes. |
+| #1594 (a binding sends a serialised `Planned`) | Open | The conformance runners' reader of the corpus. The extension calls `Planned` directly. |
+| #1672 (the closed `FieldIndexes` shape) | Open | The one function in the core crate that writes a plan from a declaration. |
+| #1673 (match options as one analyzer pipeline) | Open | The options of `types.TextMatch`. Phase 1 offers the default options only. |
+| #1678 (JSON Schemas and a protocol version) | Open | Nothing in phase 1, because TypeScript writes no frame. Phase 3 checks the plan the core crate writes against the schema. |
+
+Phase 2 waits for:
+
 - **#1663**: remove `Label` and `IntoLabel`. A decrypt's expected context
   takes a `Label` today.
-- **#1489**: apply the naming review (`StackCipher` becomes `Cipher`,
-  `stack-kms` becomes `stack-zerokms`, and the rest). Every name the
-  extension uses is on that list.
-- **#1594**: what a binding sends is a serialised `Planned`, and the
-  conformance corpus is written as one. The extension calls `Planned`
-  directly, but its conformance runners read the corpus.
+- **The context design.** How a caller's context parts are named (scope,
+  binding, label) is being decided for every SDK at once. The TypeScript
+  names follow that decision, so they are not written before it.
 
-Before step 2 (the declaration):
-
-- **#1672**: a field's indexes become the closed `FieldIndexes` shape.
-- **#1673**: match options become one analyzer pipeline. Both change what
-  the declaration builder writes.
-- **#1678**: JSON Schemas and a protocol version for the plan and the
-  messages. The TypeScript types for a plan can then be generated from the
-  schemas, not written by hand.
-
-Before the first release, because they change stored bytes or the
+Phase 3 waits for these, because they change stored bytes or the
 compatibility promise:
 
 - **#1566** (scopes and bindings as key request items) and **#1567**
   (labels in EQL payloads).
-- **#1398** and **#1399** (match index text filters), which change match
-  terms.
+- **#1399** (a character filter in the match index), which changes match
+  terms. #1398, its pair, is closed.
 - **#1490** (stable gates and conformance versions) and **#1314**
   (the compatibility policy).
+- EQL v4 installable through `stash eql install`, for the adapters.
 
-The rest of the milestone does not block this plan. The Go-only issues,
-the internal ones (#1458, #1676, #1670, #1671, #1063, #1684) and the typed
-Rust ones (#1668, #1569, #1570) do not change a binding. #1572 and #1683
-add features the SDK picks up later. #1479 (the TypeScript conformance
-runner) is part of this plan. #561 and #1565 are answered by this design.
+The rest of the milestone *Stable Stack Encrypt Rust release* does not
+block this plan. The Go-only issues, the internal ones (#1458, #1676,
+#1670, #1671, #1063, #1684) and the typed Rust ones (#1668, #1569, #1570)
+do not change a binding. #1572 and #1683 add features the SDK picks up
+later. #1479 (the TypeScript conformance runner) is part of this plan.
+#561 and #1565 are answered by this design.
 
 ## Packages and build targets
 
@@ -169,6 +200,8 @@ export const users = encryptedTable("users", {
 });
 ```
 
+This is the phase 1 declaration. Phase 2 adds the context field.
+
 - **The types come from the EQL catalog.** `eql-codegen` writes the Go
   types today (`go_eql.rs` writes `languages/golang/encrypt/eql/eql_gen.go`).
   It gains a TypeScript writer, which writes each type's plaintext type, its
@@ -189,9 +222,11 @@ export const users = encryptedTable("users", {
   check with no credentials, for a test or a CI step.
 - **The user never sees the plan.** The plan's frame is written in Rust from
   the declaration. TypeScript writes no frame.
-- **Context.** The table name and the column name are the column's label, as
-  in Go. A table whose tenant is in each row declares its context field with
-  `contextField: "tenant"`.
+- **Context.** A column's context is its table name and its column name, as
+  in Go. In phase 2, a table whose tenant is in each row declares its
+  context field with `contextField: "tenant"`.
+- **Match options.** `types.TextMatch()` takes no options until #1673
+  decides them.
 - **A declaration is plain data.** An adapter reads a table's name, its
   columns and each column's type from the declaration object, so it can
   build its own column objects from it, or check its own against it.
@@ -230,7 +265,7 @@ const [byEmail, byAge] = await client.query(users, [
   A query term carries the SQL domain it binds as (`term.domain`), as the
   engine's `QueryTerm` does, so an adapter writes the cast without a table
   of its own.
-- **Scopes and bindings** are part of a call:
+- **Scopes and bindings** (phase 2) are part of a call:
   `client.encrypt(users, rows).scope(tenantId).bind(rowIds)` and
   `client.query(users, terms).scope(tenantId)`. A query has no `bind`
   method, so a query with a binding does not compile.
@@ -242,8 +277,10 @@ const [byEmail, byAge] = await client.query(users, [
   `child_count`. A read's rows open through `client.openJson(..)`, over
   `dynamic::json_open`.
 
-Each call returns a builder. Awaiting it runs it. `.scope`, `.bind`,
-`.audit`, `.withCredential` and `.signal` come before the `await`.
+Each call returns a builder. Awaiting it runs it. `.audit`,
+`.withCredential` and `.signal` come before the `await`, and so do `.scope`
+and `.bind` from phase 2. The builder is there from phase 1, so phase 2
+adds methods and changes no call.
 
 ## Values
 
@@ -350,7 +387,7 @@ new major version that depends on it and drops `@cipherstash/stack`.
 - **Installing EQL v4.** `@cipherstash/eql` ships the v3 bundle, and
   `stash eql install` installs it. Both need the v4 bundle before an
   adapter can move. That is its own piece of work, in the CLI and in
-  `packages/eql`, and step 11 depends on it.
+  `packages/eql`, and step 14 depends on it.
 - **Supabase.js.** The v3 adapter refuses some operators because PostgREST
   cannot write the `eql_v3.query_*` cast they need. Whether PostgREST can
   write the v4 query domains is checked before the Supabase step; the
@@ -386,11 +423,16 @@ These rules are checked when `recipher-compat` is designed, not before.
 
 - **Conformance.** A Vitest runner for every profile in
   `conformance/stack-encrypt/v1`, against both the napi build and the wasm
-  build (#1479). The exchange profile enrols TypeScript in
+  build (#1479). Phase 1 runs the cases that take no context from the
+  caller. Phase 2 adds the context, context-boundary and binding profiles
+  (`record-contexts-v1`, `record-context-boundaries-v1`,
+  `record-bindings-v1`) and the cases of the other profiles that name a
+  context field. A case a phase skips is listed as not run, never as
+  passed. The exchange profile enrols TypeScript in
   `scripts/stack-exchange-conformance.mjs`, so TypeScript opens what Rust
   and Go wrote in the same run, and they open what TypeScript wrote.
-- **A frozen stored-rows file.** Rows the first release wrote, opened on
-  every build and never regenerated.
+- **A frozen stored-rows file** (phase 3). Rows the first stable release
+  wrote, opened on every build and never regenerated.
 - **Value conversion.** The value profile, plus a fuzz target that converts
   a host value to a frame and compares it with `ValueFrame::of` for the same
   value.
@@ -429,28 +471,48 @@ The package follows `@cipherstash/auth`:
 
 Each step is one pull request, and each ends with its tests passing in CI.
 
+### Phase 1: now
+
 1. **Walking skeleton.** The three crates and the npm package. One
    hand-written table, `encrypt` and `decrypt` of one `TextEq` column on
    Node, through `Planned`. CI builds it on Linux. Proves that the engine's
-   futures run on napi-rs's runtime.
+   futures run on napi-rs's runtime. Adds the test that the core crate
+   names no `Label`.
 2. **The catalog in TypeScript.** The `eql-codegen` writer, its drift
    check, `encryptedTable` and `types`, and the type tests.
-3. **Values.** The conversion table above, the value profile and the fuzz
-   target.
+3. **Values and nulls.** The conversion table above, the value profile,
+   the runtime profile and the fuzz target.
 4. **Queries.** Every scalar operator, `encryptColumn`, match `verify` and
-   `targetLimit`, and the query-refusal profile.
-5. **Context.** Scopes, bindings, context fields and nulls, with the
-   context, bindings and runtime profiles.
-6. **Credentials, keysets, audit metadata and cancellation.** The
+   `targetLimit` with the default match options, and the query-refusal
+   profile.
+5. **Credentials, keysets, audit metadata and cancellation.** The
    per-call credential type and the lifecycle profile.
-7. **JSON documents.** `JsonSearch` and the EQL/JSON profile.
-8. **The wasm build.** The `wasm-bindgen` crate, the export conditions, the
+6. **JSON documents.** `JsonSearch` and the EQL/JSON profile.
+7. **The wasm build.** The `wasm-bindgen` crate, the export conditions, the
    inlined build and the edge-runtime test.
-9. **Exchange and stored rows.** The exchange enrolment and the frozen
-   stored-rows file.
-10. **Release.** The platform packages, the release jobs, the README and
+8. **Exchange.** The exchange enrolment, so TypeScript, Rust and Go open
+   each other's values in one run.
+
+Phase 1 ends with an SDK that passes every conformance case with no
+caller context, on Node and on wasm. It is not published as stable.
+
+### Phase 2: after #1663
+
+9. **Context.** Scopes, bindings and context fields, under the names the
+   context design settles on, with the context, context-boundary and
+   binding profiles.
+10. **Expected context.** A decrypt that names the context it expects, and
+    the context-mismatch error.
+
+### Phase 3: after the issues that change stored bytes
+
+11. **Catch up with the engine.** Match options (#1673), the plan checked
+    against the JSON Schemas (#1678), and any rename from #1489 not yet
+    taken.
+12. **Stored rows.** The frozen stored-rows file.
+13. **Release.** The platform packages, the release jobs, the README and
     the skill.
-11. **The adapters.** Drizzle, then Prisma Next, then Supabase, each a
+14. **The adapters.** Drizzle, then Prisma Next, then Supabase, each a
     major version in its own pull request, after EQL v4 installs through
     `stash eql install`.
 
@@ -468,6 +530,11 @@ Each step is one pull request, and each ends with its tests passing in CI.
    fallback, or strings.
 3. **DynamoDB.** Whether `@cipherstash/stack/dynamodb` moves to
    `@cipherstash/recipher/dynamodb`.
+4. **A pre-release after phase 1.** Phase 1 could publish to npm under a
+   pre-release tag, so the adapters and early users can try it. Its stored
+   values would carry no promise that a later version opens them. The
+   other choice is to publish nothing until phase 3. Publishing early
+   moves the release jobs of step 13 into phase 1.
 
 ## What was checked
 
@@ -494,6 +561,21 @@ Run on 2026-11-22, on `next` at `38db57856`:
 - `dynamic::Planned`, `Plan::query`, `Plan::field`, `QueryTerm::domain` and
   the per-call credential exist on `next` and are covered by their
   doctests.
+
+Read on 2026-11-23, on `next` at `e62420d8e`:
+
+- The state of each issue in [Phases](#phases): #1669 and #1398 are
+  closed; the others named there are open.
+- A plan field declares its context as a list of names
+  (`"context": ["users", "email"]`, in the module example of
+  `packages/stack-encrypt/src/dynamic/planned.rs`), and a `Planned`
+  encrypts and decrypts with no context from the caller (`encrypt_into`
+  and `decrypt_from` in the tests of `dynamic/record.rs`). An expected
+  context is an `Option<Label>` in `planned.rs`, which phase 1 never
+  passes.
+- Of the conformance case files, only `record-bindings-v1` names a scope
+  or a binding; `record-declarations-v1` and `record-reads-v1` have cases
+  that name a context field.
 
 Not checked:
 
