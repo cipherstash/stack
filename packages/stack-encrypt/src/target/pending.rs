@@ -32,13 +32,83 @@ use crate::{Descriptor, Error, KeysetCipher, StackCipher};
 use vitaminc_aead::ContextPiece;
 
 /// The boxed fulfilment: consumes this pending's slice of the responses and
-/// produces the output. The `Send` split mirrors [`kms::MaybeSend`](crate::kms::MaybeSend) —
-/// the underlying ZeroKMS futures are not `Send` on wasm32.
+/// produces the output, or does part of the work and returns the rest
+/// ([`Fulfilled::More`]). The `Send` split mirrors
+/// [`kms::MaybeSend`](crate::kms::MaybeSend) — the underlying ZeroKMS
+/// futures are not `Send` on wasm32.
 #[cfg(not(target_arch = "wasm32"))]
-type FulfilBox<'a, T> = Box<dyn FnOnce(&mut Responses) -> Result<T, Error> + Send + 'a>;
+type FulfilBox<'a, T> =
+    Box<dyn FnOnce(&mut Responses) -> Result<Fulfilled<'a, T>, Error> + Send + 'a>;
 /// See the native definition above; identical minus the `Send` bound.
 #[cfg(target_arch = "wasm32")]
-type FulfilBox<'a, T> = Box<dyn FnOnce(&mut Responses) -> Result<T, Error> + 'a>;
+type FulfilBox<'a, T> = Box<dyn FnOnce(&mut Responses) -> Result<Fulfilled<'a, T>, Error> + 'a>;
+
+/// What one run of a fulfilment produced.
+///
+/// Only a column ([`Pending::all`]) in a wasm guest stops part way: after about
+/// [`YIELD_EVERY`] data keys' worth of items it returns the rest of itself,
+/// and [`settle_with`](Pending::settle_with) yields to the async runtime
+/// before it runs the rest. A host that cannot preempt the work (the Go
+/// SDK's wasm guest, whose garbage collector waits for a running guest
+/// call) gets control back between chunks. Everything else runs a
+/// fulfilment to its end without yielding ([`finish`]).
+enum Fulfilled<'a, T> {
+    /// The output.
+    Done(T),
+    /// The rest of the fulfilment, over the same responses. Dropping it
+    /// drops what the work recovered so far as an error would: a column's
+    /// recovered items are released, and wiped, by its guard. Only a wasm
+    /// guest's column makes one.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    More(FulfilBox<'a, T>),
+}
+
+/// How many data keys' worth of items a column fulfils between yields, in
+/// a wasm guest.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+const YIELD_EVERY: usize = 64;
+
+/// Run `fulfil` to its end, without yielding.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn finish<'a, T>(mut fulfil: FulfilBox<'a, T>, responses: &mut Responses) -> Result<T, Error> {
+    loop {
+        match fulfil(responses)? {
+            Fulfilled::Done(value) => return Ok(value),
+            Fulfilled::More(rest) => fulfil = rest,
+        }
+    }
+}
+
+/// `fulfil`, then `f` on its output, keeping its chunks: a [`Fulfilled::More`]
+/// comes back as the rest followed by `f`.
+fn then<'a, T: 'a, U: 'a>(
+    fulfil: FulfilBox<'a, T>,
+    f: impl FnOnce(T) -> Result<U, Error> + MaybeSend + 'a,
+) -> FulfilBox<'a, U> {
+    Box::new(move |responses| match fulfil(responses)? {
+        Fulfilled::Done(value) => f(value).map(Fulfilled::Done),
+        Fulfilled::More(rest) => Ok(Fulfilled::More(then(rest, f))),
+    })
+}
+
+/// Yield to the async runtime once: wake this task and return pending, so
+/// the runtime polls it again after other work. On tokio that reschedules
+/// the task. In a wasm guest's step loop it hands control back to the host
+/// (see `stack-guest-abi`'s step module).
+struct YieldNow(bool);
+
+impl Future for YieldNow {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<()> {
+        if self.0 {
+            return std::task::Poll::Ready(());
+        }
+        self.0 = true;
+        cx.waker().wake_by_ref();
+        std::task::Poll::Pending
+    }
+}
 
 /// How to wipe a recovered value in place. A decrypt sets it on the pending
 /// it returns ([`wiping`](Pending::wiping)), so that [`zip`](Pending::zip) and
@@ -377,7 +447,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
                 failed: None,
                 contexts: Vec::new(),
                 wipe: None,
-                fulfil: Box::new(move |_| Ok(value)),
+                fulfil: Box::new(move |_| Ok(Fulfilled::Done(value))),
                 build: None,
             },
             Err(error) => Self::failed(cipher_ref, error),
@@ -459,7 +529,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
                 if !own.is_exhausted() {
                     return Err(Error::ResponseShape);
                 }
-                Ok(value)
+                Ok(Fulfilled::Done(value))
             }),
             build: None,
         }
@@ -563,7 +633,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             // The output is a new value. Whether it holds plaintext is not
             // known here.
             wipe: None,
-            fulfil: Box::new(move |responses| fulfil(responses).map(f)),
+            fulfil: then(fulfil, move |value| Ok(f(value))),
             build: None,
         }
     }
@@ -585,7 +655,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             failed: pending.failed,
             contexts: pending.contexts,
             wipe: None,
-            fulfil: Box::new(move |responses| fulfil(responses).and_then(f)),
+            fulfil: then(fulfil, f),
             build: None,
         }
     }
@@ -841,17 +911,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             failed: None,
             contexts,
             wipe,
-            fulfil: Box::new(move |responses| {
-                // The left side's output is held in a guard. So if the right
-                // side fails or panics, the guard releases the left side's
-                // output, as a collection does.
-                let held = Held {
-                    item: Some(first(responses)?),
-                    release: Some(release),
-                };
-                let second = second(responses)?;
-                Ok((held.keep(), second))
-            }),
+            fulfil: fulfil_pair(first, second, release),
             build: None,
         }
     }
@@ -953,9 +1013,12 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         let mut fulfils = Vec::with_capacity(column.len());
         let mut wipes = Vec::with_capacity(column.len());
         for item in column {
+            // An item's weight is the data keys it asked for: what its
+            // fulfilment opens or seals.
+            let weight = item.requests.len();
             requests.extend(item.requests);
             contexts.extend(item.contexts);
-            fulfils.push(item.fulfil);
+            fulfils.push((item.fulfil, weight));
             wipes.push(item.wipe);
         }
         if let Err(error) = check_keyset(&keyset, &requests) {
@@ -984,21 +1047,150 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             failed: None,
             contexts,
             wipe,
-            fulfil: Box::new(move |responses| {
-                // Held in a guard so that an item whose fulfilment panics
-                // releases the prefix during the unwind, as an error does.
-                let mut recovered = Recovered {
-                    items: Vec::with_capacity(fulfils.len()),
-                    release: Some(release),
-                };
-                for fulfil in fulfils {
-                    recovered.items.push(fulfil(responses)?);
-                }
-                Ok(recovered.keep())
-            }),
+            // The recovered items are held in a guard so that an item whose
+            // fulfilment panics releases the prefix during the unwind, as an
+            // error does, and so does a column dropped between its chunks.
+            fulfil: fulfil_column(fulfils.into_iter(), release),
             build: None,
         }
     }
+}
+
+/// A column's fulfilment: each item's fulfilment in turn, the recovered
+/// items held in a guard that passes them to `release` if a later item
+/// fails, panics, or the column is dropped part way.
+///
+/// In a wasm guest it stops after about [`YIELD_EVERY`] data keys' worth of
+/// items and returns the rest of itself, taking the guard with it, so the
+/// host gets control back between chunks. Natively it runs to its end: a
+/// chunk would hold recovered items across a yield, and a native
+/// fulfilment must be `Send`, which would ask `T` to be `Send` too.
+#[cfg(not(target_arch = "wasm32"))]
+fn fulfil_column<'a, T: 'a, R: FnOnce(Vec<T>) + MaybeSend + 'a>(
+    rest: std::vec::IntoIter<(FulfilBox<'a, T>, usize)>,
+    release: R,
+) -> FulfilBox<'a, Vec<T>> {
+    Box::new(move |responses| {
+        let mut recovered = Recovered {
+            items: Vec::with_capacity(rest.len()),
+            release: Some(release),
+        };
+        for (fulfil, _) in rest {
+            recovered.items.push(finish(fulfil, responses)?);
+        }
+        Ok(Fulfilled::Done(recovered.keep()))
+    })
+}
+
+/// See the native definition above.
+#[cfg(target_arch = "wasm32")]
+fn fulfil_column<'a, T: 'a, R: FnOnce(Vec<T>) + 'a>(
+    rest: std::vec::IntoIter<(FulfilBox<'a, T>, usize)>,
+    release: R,
+) -> FulfilBox<'a, Vec<T>> {
+    let recovered = Recovered {
+        items: Vec::with_capacity(rest.len()),
+        release: Some(release),
+    };
+    fulfil_column_from(rest, recovered)
+}
+
+/// The rest of a wasm guest's column, from `rest` on, with the items before
+/// it in `recovered`.
+#[cfg(target_arch = "wasm32")]
+fn fulfil_column_from<'a, T: 'a, R: FnOnce(Vec<T>) + 'a>(
+    mut rest: std::vec::IntoIter<(FulfilBox<'a, T>, usize)>,
+    mut recovered: Recovered<T, R>,
+) -> FulfilBox<'a, Vec<T>> {
+    Box::new(move |responses| {
+        let mut weight = 0;
+        while let Some((fulfil, w)) = rest.next() {
+            match fulfil(responses)? {
+                Fulfilled::Done(item) => recovered.items.push(item),
+                // An item that is a column itself yields on its own: the
+                // rest of it runs first, then the rest of this column.
+                Fulfilled::More(item) => {
+                    return Ok(Fulfilled::More(fulfil_column_item(item, rest, recovered)))
+                }
+            }
+            weight += w;
+            if weight >= YIELD_EVERY && rest.len() > 0 {
+                return Ok(Fulfilled::More(fulfil_column_from(rest, recovered)));
+            }
+        }
+        Ok(Fulfilled::Done(recovered.keep()))
+    })
+}
+
+/// The rest of a wasm guest's column whose next item stopped part way:
+/// `item`, then the items in `rest`.
+#[cfg(target_arch = "wasm32")]
+fn fulfil_column_item<'a, T: 'a, R: FnOnce(Vec<T>) + 'a>(
+    item: FulfilBox<'a, T>,
+    rest: std::vec::IntoIter<(FulfilBox<'a, T>, usize)>,
+    mut recovered: Recovered<T, R>,
+) -> FulfilBox<'a, Vec<T>> {
+    Box::new(move |responses| match item(responses)? {
+        Fulfilled::Done(item) => {
+            recovered.items.push(item);
+            fulfil_column_from(rest, recovered)(responses)
+        }
+        Fulfilled::More(item) => Ok(Fulfilled::More(fulfil_column_item(item, rest, recovered))),
+    })
+}
+
+/// A pair's fulfilment: the left side, held in a guard that passes it to
+/// `release` if the right side fails, panics, or the pair is dropped part
+/// way, then the right side.
+///
+/// In a wasm guest either side may stop part way (a column) and the pair
+/// passes that on, so a batch of records yields between its rows. Natively
+/// both sides run to their end, for the reason [`fulfil_column`] gives.
+#[cfg(not(target_arch = "wasm32"))]
+fn fulfil_pair<'a, T: 'a, U: 'a, R: FnOnce(T) + MaybeSend + 'a>(
+    first: FulfilBox<'a, T>,
+    second: FulfilBox<'a, U>,
+    release: R,
+) -> FulfilBox<'a, (T, U)> {
+    Box::new(move |responses| {
+        let held = Held {
+            item: Some(finish(first, responses)?),
+            release: Some(release),
+        };
+        let second = finish(second, responses)?;
+        Ok(Fulfilled::Done((held.keep(), second)))
+    })
+}
+
+/// See the native definition above.
+#[cfg(target_arch = "wasm32")]
+fn fulfil_pair<'a, T: 'a, U: 'a, R: FnOnce(T) + 'a>(
+    first: FulfilBox<'a, T>,
+    second: FulfilBox<'a, U>,
+    release: R,
+) -> FulfilBox<'a, (T, U)> {
+    Box::new(move |responses| match first(responses)? {
+        Fulfilled::More(first) => Ok(Fulfilled::More(fulfil_pair(first, second, release))),
+        Fulfilled::Done(item) => {
+            let held = Held {
+                item: Some(item),
+                release: Some(release),
+            };
+            fulfil_pair_right(held, second)(responses)
+        }
+    })
+}
+
+/// The right side of a wasm guest's pair, with the left side held.
+#[cfg(target_arch = "wasm32")]
+fn fulfil_pair_right<'a, T: 'a, U: 'a, R: FnOnce(T) + 'a>(
+    held: Held<T, R>,
+    second: FulfilBox<'a, U>,
+) -> FulfilBox<'a, (T, U)> {
+    Box::new(move |responses| match second(responses)? {
+        Fulfilled::Done(second) => Ok(Fulfilled::Done((held.keep(), second))),
+        Fulfilled::More(second) => Ok(Fulfilled::More(fulfil_pair_right(held, second))),
+    })
 }
 
 /// A [`Pending`] without its cipher: see [`Pending::detached`].
@@ -1153,7 +1345,16 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         } else {
             dispatch(self.cipher, keyset, requests, audit.as_deref(), identity).await?
         };
-        (self.fulfil)(&mut responses)
+        let mut fulfil = self.fulfil;
+        loop {
+            // Only the rest of the work, never an output, is held across
+            // the yield.
+            fulfil = match fulfil(&mut responses)? {
+                Fulfilled::Done(value) => return Ok(value),
+                Fulfilled::More(rest) => rest,
+            };
+            YieldNow(false).await;
+        }
     }
 }
 
