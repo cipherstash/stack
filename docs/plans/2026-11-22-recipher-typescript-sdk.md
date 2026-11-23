@@ -39,6 +39,7 @@ uses the current name. The Rust crates of the TypeScript SDK are named
 - [Phases](#phases)
 - [Packages and build targets](#packages-and-build-targets)
 - [The core](#the-core)
+- [Context: policies, labels and partitions](#context-policies-labels-and-partitions)
 - [Values](#values)
 - [The EQL extension](#the-eql-extension)
 - [Credentials, keysets and audit metadata](#credentials-keysets-and-audit-metadata)
@@ -88,7 +89,8 @@ In scope, for the core:
 - A record: fields that are encrypted, indexed or passed through.
 - The engine's indexes (`equality`, `match`, `ore`, `ope`) and the query
   terms for them.
-- Scopes, bindings, nulls, credentials, keysets and audit metadata.
+- The parts of a context: policies, labels and partitions.
+- Nulls, credentials, keysets and audit metadata.
 - Every profile of `conformance/stack-encrypt` that needs no EQL type.
 
 In scope, for the EQL extension:
@@ -114,24 +116,29 @@ Not in scope:
 
 ## Phases
 
-The engine issues this plan first waited for are still open, and the design
-of contexts and labels is taking time. So the work is in three phases, and
-the first starts now.
+The engine issues this plan first waited for are still open. The design of
+a context is decided, in ADR-0016
+(`packages/stack-encrypt/docs/adr/0016-a-context-is-a-field-path-and-named-parts.md`,
+PR #1772), but the engine does not have it yet. So the work is in three
+phases, and the first starts now.
 
 | Phase | Starts | What it builds |
 |---|---|---|
 | 1 | Now | Everything that needs no context from the caller. The core first: values, records, query terms, credentials and the wasm build. Then the EQL extension, and a pre-release of both on npm. |
-| 2 | When #1663 is closed and the context design is settled | Scopes, bindings, context fields and the expected context of a decrypt. |
-| 3 | When the issues that change stored bytes are closed | The first stable release. Then, when `recipher-compat` exists, the adapters. |
+| 2 | When the engine has ADR-0016's named parts | Labels and partitions, a value with a context, and the policies the engine has. |
+| 3 | When the issues that change stored bytes are closed | Refinements, the first stable release and, when `recipher-compat` exists, the adapters. |
 
 [Order of work](#order-of-work) lists the steps of each phase.
 
 ### What phase 1 leaves out
 
-A phase 1 value is encrypted under the context its declaration names, or
-under none, and nothing else. For a record field, the context is the
-record's name and the field's name. The caller adds no part to it. So phase 1 has no `.scope`, no
-`.bind`, no context field and no expected context on a decrypt.
+A phase 1 value has no parts. A value encrypted alone has no context. A
+record field's context is its field path: the record's name and the
+field's name. So phase 1 has no `.withContext`, no `with(..)`, no part
+declared in a record and no `.partition`.
+
+These are the two forms that ADR-0016 says keep their stored bytes: a
+value with no context, and a value whose whole context is a field path.
 
 Three rules keep phase 1 clear of the open design:
 
@@ -158,19 +165,22 @@ phase 1 when it lands.
 | #1673 (match options as one analyzer pipeline) | Open | The options of a `match` index. Phase 1 offers the default options only. |
 | #1678 (JSON Schemas and a protocol version) | Open | Nothing in phase 1, because TypeScript writes no frame. Phase 3 checks the plan the core crate writes against the schema. |
 
-Phase 2 waits for:
+Phase 2 waits for the engine to have ADR-0016:
 
-- **#1663**: remove `Label` and `IntoLabel`. A decrypt's expected context
-  takes a `Label` today.
-- **The context design.** How a caller's context parts are named (scope,
-  binding, label) is being decided for every SDK at once. The TypeScript
-  names follow that decision, so they are not written before it.
+- **#1663**: the `Label` struct becomes `FieldPath`, and `IntoLabel` goes.
+- **Named parts in the engine.** The traits `Policy`, `Label` and
+  `Partition`, the built-in parts, and `.partition(..)` on a query. The
+  untyped `Scope` and `Bind` are removed. No issue tracks this yet.
+- **#1566**: a value's parts go to ZeroKMS as named key request items.
+
+A policy also needs ZeroKMS to check it. Phase 2 offers each policy when
+the engine and ZeroKMS have it. #1683 is to be rewritten for that.
 
 Phase 3 waits for these, because they change stored bytes or the
 compatibility promise:
 
-- **#1566** (scopes and bindings as key request items) and **#1567**
-  (labels in EQL payloads).
+- **#1567**, which ADR-0016 turns into refinements: a label or a policy
+  added to a value that is already stored.
 - **#1399** (a character filter in the match index), which changes match
   terms. #1398, its pair, is closed.
 - **#1490** (stable gates and conformance versions) and **#1314**
@@ -181,8 +191,7 @@ compatibility promise:
 The rest of the milestone *Stable Stack Encrypt Rust release* does not
 block this plan. The Go-only issues, the internal ones (#1458, #1676,
 #1670, #1671, #1063, #1684) and the typed Rust ones (#1668, #1569, #1570)
-do not change a binding. #1572 and #1683 add features the SDK picks up
-later. #1479 (the TypeScript conformance runner) is part of this plan.
+do not change a binding. #1572 is to be rewritten or closed by ADR-0016. #1479 (the TypeScript conformance runner) is part of this plan.
 #561 and #1565 are answered by this design.
 
 ## Packages and build targets
@@ -319,23 +328,12 @@ it is. This is the engine's rule for a collection. There is one `encrypt`
 and one `decrypt`: no second function for a batch, and no loop over single
 calls.
 
-### A value with a context
-
-A context binds a ciphertext to the place it was written for, such as a
-table or a tenant. The ciphertext then opens only under the same context.
-It is the engine's `encrypt_with_context`.
-
-```ts
-const sealed = await keyset.encrypt("a secret message").withContext("notes");
-const opened = await cipher.decrypt(sealed.unwrap()).withContext("notes");
-```
-
 ### A file, and a whole object
 
 A file or a stored object is a `Uint8Array`, so it needs no kind:
 
 ```ts
-const sealed = await keyset.encrypt(await readFile("invoice.pdf")).withContext("invoices");
+const sealed = await keyset.encrypt(await readFile("invoice.pdf"));
 await writeFile("invoice.pdf.enc", sealed.unwrap().toBytes());
 ```
 
@@ -345,12 +343,11 @@ A whole object is one ciphertext with `opaque`:
 import { opaque } from "@cipherstash/recipher";
 
 const card = { number: "4111 1111 1111 1111", expiry: { month: 4, year: 2031 } };
-const sealed = await keyset.encrypt(opaque(card)).withContext("cards");
+const sealed = await keyset.encrypt(opaque(card));
 ```
 
 `opaque` stores what the engine's `OpaqueBlob` stores, in the same format
-as a Go opaque struct. Nothing inside it can be searched. Like a value, it
-takes a context or none.
+as a Go opaque struct. Nothing inside it can be searched.
 
 ### A record
 
@@ -392,8 +389,9 @@ const opened = await cipher.decrypt(user, stored.unwrap());
   for a test or a CI step.
 - **The user never sees the plan.** The plan's frame is written in Rust
   from the declaration. TypeScript writes no frame.
-- **Context.** A field's context is the record's name and the field's
-  name. Phase 2 adds scopes, bindings and a context field.
+- **Context.** A field's context is its field path: the record's name and
+  the field's name. Phase 2 adds parts; see
+  [Context](#context-policies-labels-and-partitions).
 - **Nulls.** A field that can be `null` declares it, with the null modes
   the engine's `NullMode` has.
 - **A declaration is plain data.** A library reads a record's name, its
@@ -444,13 +442,92 @@ const terms = await keyset.query(user, [
 - **All or nothing.** A batch that fails is one `Err`. It returns no
   partial array.
 - **Each call returns a builder.** Awaiting it runs it and gives a
-  `Result`. `.withContext`, `.audit`, `.withCredential` and `.signal` come
-  before the `await`. Phase 2 adds
-  `.scope` and `.bind` to the same builder, so it changes no phase 1 call.
-- **Scopes and bindings** (phase 2) are part of a call:
-  `keyset.encrypt(user, rows).scope(tenantId).bind(rowIds)` and
-  `keyset.query(user, terms).scope(tenantId)`. A query has no `bind`
-  method, so a query with a binding does not compile.
+  `Result`. `.audit`, `.withCredential` and `.signal` come before the
+  `await`. Phase 2 adds `.withContext` and `.partition` to the same
+  builder, so it changes no phase 1 call.
+
+## Context: policies, labels and partitions
+
+This section is phase 2. It is the TypeScript form of ADR-0016, which
+decides the words, the wire names and the rules for every SDK.
+
+A context is a field path and a list of named parts. A part is one of
+three kinds:
+
+- A **policy** restricts who can read a value. ZeroKMS checks it.
+- A **label** is a fact that is safe to show, such as a row ID. It proves
+  a value was written for that row. It restricts no reader.
+- A **partition** splits data into groups, such as tenants. It keeps one
+  group's values and search terms apart from another's. It restricts no
+  reader.
+
+The built-in parts have the engine's wire names:
+
+| TypeScript | Wire name | Kinds |
+|---|---|---|
+| `notBefore(date)` | `not_before` | policy, label |
+| `notAfter(date)` | `not_after` | policy, label |
+| `forSub` | `for_sub` | policy |
+| `forTenant` | `for_tenant` | policy, partition |
+| `tenantId(value)` | `tenant_id` | label, partition |
+| `recordId(value)` | `record_id` | label |
+| `note(value)` | `note` | label |
+
+### A value with a context
+
+```ts
+const sealed = await keyset.encrypt("a secret message").withContext("notes");
+const opened = await cipher.decrypt(sealed.unwrap()).withContext("notes");
+```
+
+A bare value in `.withContext` is a `note`, which is a label. This is the
+engine's `encrypt_with_context`. It also takes named parts:
+`.withContext(tenantId(42n), recordId(id))`.
+
+### A record with parts
+
+```ts
+import { encrypt, forSub, kinds, passthrough, record, recordId, tenantId } from "@cipherstash/recipher";
+
+export const notes = record("notes", {
+  id: passthrough<string>().label(recordId),
+  title: encrypt(kinds.string, { index: ["equality"] }),
+}, { context: [tenantId<bigint>(), forSub] });
+
+const tenant = keyset.with(tenantId(42n));
+
+const stored = await tenant.encrypt(notes, row);
+const term = await tenant.query(notes, { field: "title", op: "eq", value: "Renewal" });
+const opened = await tenant.decrypt(notes, stored.unwrap());
+```
+
+- **A record lists its parts.** `context: [..]` names the parts a caller
+  supplies, or that ZeroKMS takes from the reader's token, such as
+  `forSub`.
+- **A part can be read from a field.** `.label(recordId)` on a field reads
+  the value from that field and stores it in the clear. `.partition(..)`
+  on a field does the same for a partition. This replaces a context field.
+- **What changes from one caller to the next attaches to the keyset.**
+  `keyset.with(..)` returns a keyset that carries the parts, for the write,
+  the query and the read. No call takes a part of its own, so the three
+  cannot differ. Go's `Cipher.With` is the same.
+- **A query takes partitions only.** A query through a keyset that carries
+  a label does not compile. `.partition(..)` on one query narrows it
+  without a new keyset.
+- **The compiler checks the parts.** A record that lists a part does not
+  compile against a keyset that lacks it. A value for a policy that
+  ZeroKMS takes only from the token, such as `forTenant`, does not compile
+  either.
+- **A custom part.** `label("region")` and `partition("region")` define a
+  label or a partition of the application's own. A built-in wire name is
+  refused. There is no function that defines a policy, because `Policy`
+  is sealed in the engine.
+- **The order is the engine's.** Parts are sorted by wire name, not by
+  the order they are written in.
+- **A label that does not match is refused before any key is requested**,
+  as an `Err` of kind `context_mismatch`.
+- **Refinements** (phase 3). `refine` adds a label or a policy to a stored
+  value without encrypting it again. It waits for #1567.
 
 ## Values
 
@@ -585,10 +662,10 @@ const byEmail = await keyset.query(users, { field: "email", op: "eq", value: "ad
   `match`, and the reads `selector`, `subtree`, `children` and
   `child_count`. A read's rows open through `cipher.openJson(..)`, over
   `dynamic::json_open`. These are the extension's only calls of its own.
-- **A context field** (phase 2). The engine refuses a context field on a
-  record with an EQL type (`TargetError::ContextField`), because an EQL
-  value is stored under the table its declaration names. So an EQL record
-  takes a tenant as a scope from the caller, and has no context field.
+- **Parts** (phase 2). An EQL record takes parts as any record does. Its
+  field path is the table and the column, which EQL stores in the value.
+  A tenant is a `tenantId` part, read from a column or supplied through
+  the keyset.
 
 ## Credentials, keysets and audit metadata
 
@@ -757,10 +834,10 @@ these rules are checked then.
   `conformance/stack-encrypt/v1`, against both the napi build and the wasm
   build (#1479). The core package runs the profiles that name no EQL type.
   `@cipherstash/eql` runs `eql-json-v1`. Phase 1 runs the cases that take no
-  context from the caller. Phase 2 adds the context, context-boundary and
-  binding profiles (`record-contexts-v1`, `record-context-boundaries-v1`,
-  `record-bindings-v1`) and the cases of the other profiles that name a
-  context field. A case a phase skips is listed as not run, never as
+  context from the caller. Phase 2 adds the context profiles, as the
+  engine rewrites them for named parts. Today they are
+  `record-contexts-v1`, `record-context-boundaries-v1` and
+  `record-bindings-v1`. A case a phase skips is listed as not run, never as
   passed. The exchange profile enrols TypeScript in
   `scripts/stack-exchange-conformance.mjs`, so TypeScript opens what Rust
   and Go wrote in the same run, and they open what TypeScript wrote.
@@ -836,7 +913,7 @@ The core, with no EQL:
    napi-rs's runtime. Adds the tests that the core crate names no `Label`
    and links no `eql-bindings`.
 2. **Values.** `vitaminc-aead-napi` for every type in the table above,
-   the wrapper classes, an array of values, a value with a context,
+   the wrapper classes, an array of values,
    `bytes` for a file, `opaque` for a whole object, the value profile and
    the fuzz target.
 3. **Records.** `record`, `encrypt`, `passthrough`, nulls, the stored row
@@ -870,21 +947,23 @@ with no caller context, on Node and on wasm, and that anyone can install
 as a pre-release. Each README says that a pre-release makes no promise
 that a later version opens its stored values.
 
-### Phase 2: after #1663
+### Phase 2: when the engine has named parts
 
-11. **Context.** Scopes, bindings and context fields, under the names the
-    context design settles on, with the context, context-boundary and
-    binding profiles.
-12. **Expected context.** A decrypt that names the context it expects, and
-    the context-mismatch error.
+11. **Labels and partitions.** The built-in parts, `keyset.with(..)`, a
+    part declared on a record and on a field, `.partition(..)`, custom
+    labels and partitions, `.withContext` on a value, and the context
+    profiles.
+12. **Policies.** `forSub`, `forTenant`, `notBefore` and `notAfter`, each
+    when the engine and ZeroKMS have it, with a live test of a refused
+    reader.
 
 Each phase 2 step is published as a pre-release too.
 
 ### Phase 3: after the issues that change stored bytes
 
-13. **Catch up with the engine.** Match options (#1673), the plan checked
-    against the JSON Schemas (#1678), and any rename from #1489 not yet
-    taken.
+13. **Catch up with the engine.** Match options (#1673), refinements
+    (#1567), the plan checked against the JSON Schemas (#1678), and any
+    rename from #1489 not yet taken.
 14. **Stored rows.** The frozen stored-rows file.
 15. **Stable release.** The first versions published as `latest`, with the
     promise that later versions open their stored values, and the skills.
@@ -919,6 +998,8 @@ Decided on 2026-11-23:
 - Calls return a `Result` and never throw. `Result` is the core's own
   type, with Rust's methods.
 - Phase 1 ends with a pre-release on npm.
+- A context follows ADR-0016: policies, labels and partitions, with the
+  engine's wire names. Parts attach to the keyset with `with(..)`.
 
 ## What was checked
 
@@ -979,6 +1060,15 @@ Read on 2026-11-23, on `next` at `e62420d8e`:
 - `@cipherstash/eql` is at `packages/eql/packages/eql`. Its entries are
   the root, `./schema` and `./sql`, and it has no dependencies. The CLI,
   `@cipherstash/stack` and `@cipherstash/stack-prisma` depend on it.
+
+Read on 2026-11-23, in PR #1772 at `docs/adr-context-parts`:
+
+- ADR-0016 has status accepted. It changes no code. Its decision 10 lists
+  what every SDK takes from it, and leaves each SDK's form to its plan.
+- A value with no parts keeps its stored bytes, and so does a value whose
+  whole context is a field path.
+- Not decided there: a policy whose value the caller supplies, a label
+  for data that is not safe to show, and whether keysets are removed.
 
 Read on 2026-11-23, in `cipherstash/vitaminc` at `222f1ad39`:
 
