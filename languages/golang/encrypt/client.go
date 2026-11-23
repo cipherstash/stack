@@ -503,9 +503,10 @@ func (c *Client) callKMS(ctx context.Context, f stepFunc) ([]byte, error) {
 // step and released while the requests run, so callers share the client
 // between steps rather than queue behind a round trip.
 //
-// When kms is set, the operation first takes one of the guest's paused
-// slots (see Client.paused), and the token is fetched once, before its
-// first step and outside the lock; every step of the operation hands it
+// Every operation first takes one of the guest's paused slots (see
+// Client.paused), since any operation can pause to yield. When kms is set,
+// the token is fetched once, before its first step and outside the lock;
+// every step of the operation hands it
 // over, so the guest's token_get never waits. The token source is asked
 // once per such operation, including one the guest answers from its cache
 // without asking for the token (a query term on a loaded keyset, a cached
