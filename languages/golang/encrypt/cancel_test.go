@@ -210,6 +210,86 @@ func TestAStepThatRunsOnAfterItsContextEndsClosesTheClient(t *testing.T) {
 	}
 }
 
+// The runtime cannot interrupt a step (it is built without
+// WithCloseOnContextDone), so the backstop wedges the client while the
+// stuck step still runs: the callers queued behind it, and Close, leave
+// with ErrState at once rather than wait on it. When the step does return,
+// the module is closed and the instance released.
+func TestAStuckStepFailsEveryoneWaitingBehindIt(t *testing.T) {
+	rt := &switchable{rt: unauthorized}
+	c := cancelClient(t, rt, staticToken("t"))
+	c.stuck = 20 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	release := make(chan struct{})
+	stuck := make(chan error, 1)
+	go func() {
+		_, err := c.call(ctx, func(run context.Context, inst *instance) ([]byte, error) {
+			cancel()
+			<-release // a guest loop that does not end, until the test lets it
+			return inst.call(run, inst.targets)
+		})
+		stuck <- err
+	}()
+	select {
+	case <-c.wedged:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the backstop did not wedge the client")
+	}
+	// A caller with no deadline, which would otherwise wait for ever.
+	waited := make(chan error, 1)
+	go func() { waited <- cipherInit(context.Background(), c) }()
+	select {
+	case err := <-waited:
+		if !errors.Is(err, ErrState) {
+			t.Fatalf("a call behind the stuck one: %v, want ErrState", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a call behind the stuck one waited on it")
+	}
+	if err := c.Close(); !errors.Is(err, ErrState) {
+		t.Fatalf("Close while a call is stuck: %v, want ErrState", err)
+	}
+	if c.inst.module.IsClosed() {
+		t.Fatal("the module was closed under a running step")
+	}
+	close(release)
+	select {
+	case err := <-stuck:
+		if err == nil || !strings.Contains(err.Error(), "the client is closed") {
+			t.Fatalf("the stuck call: %v, want the client closed", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stuck call did not return")
+	}
+	if !c.inst.module.IsClosed() {
+		t.Error("the module is open after the stuck step returned")
+	}
+	if !c.released {
+		t.Error("the Close that found the client wedged did not release it when the step returned")
+	}
+	if err := c.Close(); err != nil {
+		t.Errorf("Close after the release: %v, want nil (idempotent)", err)
+	}
+}
+
+// A guest call whose context has already ended still runs: the runtime does
+// not close a module when a call's context ends. That option costs the
+// guest's cryptography several times its CPU (see newInstance); the
+// backstop above is what bounds a stuck call instead.
+func TestTheRuntimeDoesNotCloseOnContextDone(t *testing.T) {
+	rt := &switchable{rt: unauthorized}
+	c := cancelClient(t, rt, staticToken("t"))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := c.inst.call(ctx, c.inst.targets); err != nil {
+		t.Fatalf("a guest call under an ended context: %v", err)
+	}
+	if c.inst.module.IsClosed() {
+		t.Fatal("the runtime closed the module when a call's context ended")
+	}
+}
+
 // A request that ignores its context holds up only its own call: the guest
 // is paused while it runs, so nothing is stuck, and the client stays open.
 func TestARequestThatIgnoresItsContextLeavesTheClientOpen(t *testing.T) {

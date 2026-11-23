@@ -137,16 +137,20 @@ func guestModuleConfig() wazero.ModuleConfig {
 // strict policy, memory that cannot be locked fails instantiation with
 // ErrMemoryLock.
 func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.LockPolicy) (*instance, error) {
-	// WithCloseOnContextDone closes the module when a call's context ends.
-	// A guest call never runs under the caller's context: Client.call runs
-	// it under guest.Detach, whose context ends only when the guest has run
-	// on long after its caller gave up. Closing the module then frees the
-	// Client's lock, which a stuck call would otherwise hold against every
-	// other user, at the cost of the Client: the alternative is a wedged
-	// process.
+	// No WithCloseOnContextDone. That option makes wazero compile a call
+	// back into Go at the top of every loop and the entry of every function
+	// the guest runs, so that a call whose context ends can be interrupted.
+	// The guest is cryptography, which is tight loops (the ZeroKMS key
+	// derivation, software AES and GHASH, copies and wipes), and the option
+	// cost a decrypt five to six times its CPU. Nothing needs it: a guest
+	// call never runs under the caller's context (Client.step runs it under
+	// guest.Detach) and never waits inside the guest (the host runs every
+	// request between steps), so the only call it would interrupt is a
+	// guest step that does not finish, which is a bug. Client.step's
+	// backstop handles that one without interrupting it: the client is
+	// closed for everyone else, and released if the step returns.
 	config := wazero.NewRuntimeConfig().
-		WithCompilationCache(compilationCache()).
-		WithCloseOnContextDone(true)
+		WithCompilationCache(compilationCache())
 	runtime := wazero.NewRuntimeWithConfig(ctx, config)
 	// The Must* form of this panics on any error, which is the wrong
 	// failure mode for a constructor in a library and would strand the

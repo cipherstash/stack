@@ -320,7 +320,9 @@
 // A Client closes itself, and every later call returns [ErrState], only
 // when the guest's state is unknown: the guest trapped, or a call ran on
 // for 30 seconds after its context ended, which means a bug, not a caller
-// that gave up. A service that sees ErrState from a client it did not
+// that gave up. Such a call cannot be interrupted, so it goes on running,
+// but nothing waits for it: the calls queued behind it, and Close, return
+// ErrState at once. A service that sees ErrState from a client it did not
 // close builds a new one.
 //
 // # Transport and auth

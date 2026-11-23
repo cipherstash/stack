@@ -85,8 +85,11 @@ base16ct = { version = "0.2.0", features = ["alloc"] }
 base64ct = { version = "1.7", features = ["alloc"] }
 
 [profile.release]
-# Smaller .wasm; the guest is IO-bound on the FFI copy and the ZeroKMS round
-# trip, not on codegen.
-opt-level = "s"
+# Optimised for speed, not size. The guest is CPU-bound: every value it opens
+# or seals costs a ZeroKMS key derivation and a software AES-GCM pass (wasm
+# has no aws-lc), and the ZeroKMS round trip runs in the host between steps,
+# not in here. Against "s", opt-level 3 halves a decrypt's guest CPU for
+# about 1.6 MB more module (5.6 MB against 4.0 MB with the EQL types).
+opt-level = 3
 lto = true
 strip = true

@@ -141,8 +141,10 @@ request giving up never closes the shared client for the others.
 
 A client closes itself, and every later call returns `ErrState`, only when
 the guest's state is unknown: the guest trapped, or a call ran on for 30
-seconds after its `ctx` ended, which means a bug. A service that sees
-`ErrState` from a client it did not close builds a new one.
+seconds after its `ctx` ended, which means a bug. Such a call cannot be
+interrupted, so it goes on running, but nothing waits for it: the calls
+queued behind it, and `Close`, return `ErrState` at once. A service that
+sees `ErrState` from a client it did not close builds a new one.
 
 Every other setting is a functional option with a default:
 

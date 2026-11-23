@@ -94,6 +94,22 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ### Changed
 
+- **Decrypt uses about a quarter of the CPU it did in rc.6.** The guest's
+  runtime was built with wazero's `WithCloseOnContextDone`. That option
+  puts a call back into Go at the top of every loop the guest runs, and the
+  guest's cryptography is almost all loops. The runtime no longer sets the
+  option, and the guest is now built at `opt-level = 3` rather than for
+  size.
+  - 100 rows of 14 columns, against ZeroKMS: about 410 ms of CPU before,
+    about 105 ms now. Wall time falls from about 670 ms to 340.
+  - 100 rows of one 2 KB text or JSON column: 90 to 100 ms of CPU before,
+    about 25 ms now.
+  - The EQL build of the guest is about 1.6 MB larger.
+- **A stuck call is no longer interrupted.** A call that runs on 30 seconds
+  after its context ended is a bug. The option that interrupted it is gone,
+  so it now runs on. The client still closes, and nothing waits for the
+  stuck call: the calls queued behind it, and `Close`, return `ErrState` at
+  once. If the call returns, the guest's memory is wiped and released.
 - `vcffi` and `vcvalue` move to vitaminc `f1fc9ae74`, the commit vitaminc
   0.10.0 was released from. The host now checks the same date and
   timestamp range as the guests.
