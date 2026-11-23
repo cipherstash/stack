@@ -1,5 +1,5 @@
 error: this `plaintext` is listed twice; each listed type gets one impl
- --> tests/ui/duplicate_plaintext.rs:4:38
+ --> tests/ui/duplicate_plaintext.rs:7:38
   |
-4 | #[stash(plaintext = u32, plaintext = u32)]
+7 | #[stash(plaintext = u32, plaintext = u32)]
   |                                      ^^^

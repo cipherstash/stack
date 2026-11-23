@@ -1,15 +1,12 @@
 //! Why a plan was refused.
-use crate::target::IndexSpec;
+use crate::op::Op;
 use crate::LabelError;
 
-/// Why a plan was refused: when it was built, or when it was run against a
+/// Why a plan was refused: when it was parsed, or when it was run against a
 /// value, a stored record or a query that does not match it.
 ///
-/// Every refusal of a plan, at build or when it runs, is raised before any
-/// key is requested: a plan that does not hold up never reaches ZeroKMS.
-/// [`FieldValues::take`](super::FieldValues::take) reuses two of these
-/// ([`NotInValue`](Self::NotInValue), [`FieldType`](Self::FieldType)) for a
-/// record already in hand. Carried in [`Error::Plan`].
+/// Every refusal of a plan is raised before any key is requested: a plan
+/// that does not hold up never reaches ZeroKMS. Carried in [`Error::Plan`].
 ///
 /// [`Error::Plan`]: crate::Error::Plan
 ///
@@ -46,11 +43,6 @@ pub enum PlanError {
         #[diagnostic_source]
         source: LabelError,
     },
-    /// `identity` was called before any field was declared, so there was no
-    /// field for it to pin.
-    #[error("identity was set before any field was declared")]
-    #[diagnostic(code(stack_encrypt::plan_identity_without_field))]
-    IdentityWithoutField,
     /// A field was named twice.
     #[error("field {field:?} is named twice")]
     #[diagnostic(code(stack_encrypt::plan_duplicate_field))]
@@ -75,23 +67,11 @@ pub enum PlanError {
         /// The field declared second.
         second: String,
     },
-    /// A field was declared both passthrough and indexed. A passthrough
-    /// field is carried unsealed and unauthenticated; one that must be
-    /// searchable is sealed, with its indexes beside it.
-    #[error("field {field:?} is declared both passthrough and indexed")]
-    #[diagnostic(
-        code(stack_encrypt::plan_passthrough_indexed),
-        help("A passthrough field is stored unsealed. Seal the field to index it.")
-    )]
-    PassthroughIndexed {
-        /// The field.
-        field: String,
-    },
-    /// A field, or a one-value plan, names the same index twice.
+    /// A field, or a record of one value, names the same index twice.
     #[error("{at:?} names the {index} index twice")]
     #[diagnostic(code(stack_encrypt::plan_duplicate_index))]
     DuplicateIndex {
-        /// The field, or `the value` for a one-value plan.
+        /// The field, or `the value` for a typed declaration.
         at: String,
         /// The index named twice, as its key (`"eq"`, `"match"`, ...).
         index: &'static str,
@@ -123,7 +103,7 @@ pub enum PlanError {
     },
     /// A field is not of the type the plan declares for it, so the plan
     /// cannot resolve how to seal, index or read it.
-    #[error("field {field:?} is not a {expected}")]
+    #[error("field {field:?} is not {article} {expected}", article = article(expected))]
     #[diagnostic(
         code(stack_encrypt::plan_field_type),
         help("Give the field a value of the type the plan declares. A row stored as another type opens only after it is re-encrypted as the declared one.")
@@ -141,47 +121,28 @@ pub enum PlanError {
         /// The field asked for.
         field: String,
     },
-    /// The chains given to one [`all`](crate::all) were started on
-    /// different ciphers. A batch settles through one client and resolves
-    /// every keyset it names there, so a chain from another cipher would
-    /// run under a keyset its own cipher never chose.
-    #[error("the chains in one batch were started on different ciphers")]
+    /// A field declares two indexes that answer one operator, so a query
+    /// for it would have two terms to choose from and the plan has to
+    /// guess. A field declares at most one index per operator:
+    /// `(Equality, Ore)` answer different operators; `(Ore, Ope)` and
+    /// `(Ore, OreBlock)` do not. (Two match indexes are one index twice,
+    /// [`DuplicateIndex`](Self::DuplicateIndex), which is checked first.)
+    /// The second index would store a term no query uses, and an order
+    /// term tells anyone who reads the column how its values order.
+    #[error("field {at:?} declares two indexes that answer {operator}: {first} and {second}")]
     #[diagnostic(
-        code(stack_encrypt::plan_mixed_ciphers),
-        help("Start every chain in one batch on the same cipher.")
+        code(stack_encrypt::plan_index_overlap),
+        help("Declare one index per operator on the field: drop one of the two.")
     )]
-    MixedCiphers,
-    /// A query asked a field for an index the field never declared, so it
-    /// would have matched nothing.
-    #[error("field {field:?} declares no {index} index")]
-    #[diagnostic(
-        code(stack_encrypt::plan_index_not_declared),
-        help("Query the field through an index it declares, or declare the index on the field.")
-    )]
-    IndexNotDeclared {
+    IndexOverlap {
         /// The field, or `the value` for a one-value plan.
-        field: String,
-        /// The index asked for, as its key.
-        index: &'static str,
-    },
-    /// A query asked a field for an index the field declares with other
-    /// options (a match index under another tokenizer or filter size), so
-    /// its terms would never have matched.
-    #[error(
-        "field {field:?} declares a {} index with other options: declared {declared:?}, asked {asked:?}",
-        declared.key()
-    )]
-    #[diagnostic(
-        code(stack_encrypt::plan_index_options),
-        help("Query with the options the field declares: terms derived under other options never match.")
-    )]
-    IndexOptions {
-        /// The field, or `the value` for a one-value plan.
-        field: String,
-        /// The index as the field declares it.
-        declared: IndexSpec,
-        /// The index as the query asked for it.
-        asked: IndexSpec,
+        at: String,
+        /// The first index, as its key.
+        first: &'static str,
+        /// The second index, as its key.
+        second: &'static str,
+        /// An operator both answer.
+        operator: Op,
     },
     /// The plan's context was given twice. A plan takes its context from
     /// exactly one place: the plan, the call that runs it, or a context
@@ -200,20 +161,43 @@ pub enum PlanError {
         /// Who gave it again.
         second: &'static str,
     },
-    /// The plan was run with no context: it was built without one and has
-    /// no context field, and the call named none.
-    #[error(
-        "the plan has no context: build it with one, name one in the call, or use a context field"
+    /// A query was extended by a binding. A binding is in the stored
+    /// context alone, so a query cannot carry one: the row is found by its
+    /// scopes, and the binding is checked when the row is opened.
+    #[error("a query takes no binding: a binding is in the stored context only")]
+    #[diagnostic(
+        code(stack_encrypt::plan_bind_in_query),
+        help(
+            "Extend the query by its scopes alone. The binding is checked when the row is opened."
+        )
     )]
-    #[diagnostic(code(stack_encrypt::plan_no_context))]
-    NoContext,
-    /// A field was declared both as a typed target (`encrypt_into`) and with
-    /// a data verb. A field is one or the other: the target's type decides
-    /// its layout and its queries.
-    #[error("field {field:?} is declared both as a typed target and with data verbs")]
-    #[diagnostic(code(stack_encrypt::plan_target_with_verbs))]
-    TargetWithVerbs {
-        /// The field.
+    BindInQuery,
+    /// A scope or binding the caller passed is empty: an empty text or byte
+    /// string. A part names a tenant or a row, and an empty one would put
+    /// every row under one context. Refused before any key is requested.
+    #[error("a scope or binding is empty")]
+    #[diagnostic(
+        code(stack_encrypt::plan_empty_part),
+        help("Give the scope or binding a value. An empty part would put every row under one context.")
+    )]
+    EmptyPart,
+    /// A field's type stores the field's own context in the row, and
+    /// cannot store this one. The own context is the declared part: the
+    /// record's scope and the field's name. An EQL type stores it as a
+    /// table and a column, so the own context must be two text parts.
+    ///
+    /// The scopes and bindings of the record are not stored, so they never
+    /// cause this error. Refused before any key is requested.
+    #[error("field {field:?}: its type cannot store the field's own context")]
+    #[diagnostic(
+        code(stack_encrypt::plan_context_not_storable),
+        help("A field type that stores its context, such as an EQL type, stores the field's own context: the record's scope and the field's name. Declare the field in a `struct = ..` record with a `scope = \"..\"`, which gives it an own context of two text parts, or give the field a type that does not store its context.")
+    )]
+    ContextNotStorable {
+        /// The field's own context, as it renders: the record's scope and
+        /// the field's name, `members/email`. A context that no record
+        /// built for a field has no own part. This is then the whole query
+        /// context that the type was given.
         field: String,
     },
 }
@@ -229,11 +213,10 @@ impl crate::ErrorPayload for PlanError {
                 fields
             }
             Self::DuplicateField { field }
-            | Self::PassthroughIndexed { field }
             | Self::NotInPlan { field }
             | Self::NotInValue { field }
             | Self::NoSuchField { field }
-            | Self::TargetWithVerbs { field } => payload([("field", field.as_str().into())]),
+            | Self::ContextNotStorable { field } => payload([("field", field.as_str().into())]),
             Self::SharedIdentity {
                 identity,
                 first,
@@ -250,52 +233,55 @@ impl crate::ErrorPayload for PlanError {
                 ("field", field.as_str().into()),
                 ("expected", (*expected).into()),
             ]),
-            Self::IndexNotDeclared { field, index } => {
-                payload([("field", field.as_str().into()), ("index", (*index).into())])
-            }
-            Self::IndexOptions {
-                field,
-                declared,
-                asked,
+            Self::IndexOverlap {
+                at,
+                first,
+                second,
+                operator,
             } => payload([
-                ("field", field.as_str().into()),
-                ("index", declared.key().into()),
-                ("declared", index_value(declared)),
-                ("asked", index_value(asked)),
+                ("field", at.as_str().into()),
+                ("first", (*first).into()),
+                ("second", (*second).into()),
+                ("operator", operator.name().into()),
             ]),
             Self::TwoContextSources { first, second } => {
                 payload([("first", (*first).into()), ("second", (*second).into())])
             }
-            Self::IdentityWithoutField
-            | Self::EmptyIndexes
-            | Self::MixedCiphers
-            | Self::NoContext => serde_json::Map::new(),
+            Self::EmptyIndexes | Self::BindInQuery | Self::EmptyPart => serde_json::Map::new(),
         }
     }
 }
 
-/// An index as a plan writes it: its key, or for a match index the object of
-/// all four options (`{"match": {"tokenizer": "standard", "downcase": true,
-/// "k": 3, "m": 256}}`, an n-gram tokenizer as `{"ngram": 3}`). A caller in
-/// another language can read it, and it does not move when a field is added
-/// to the Rust type, as `Debug` text would.
-fn index_value(index: &IndexSpec) -> serde_json::Value {
-    use crate::sem::Tokenizer;
-    match index {
-        IndexSpec::Match(options) => {
-            let tokenizer = match options.tokenizer {
-                Tokenizer::Standard => serde_json::Value::from("standard"),
-                Tokenizer::Ngram { length } => serde_json::json!({ "ngram": length }),
-            };
-            serde_json::json!({
-                "match": {
-                    "tokenizer": tokenizer,
-                    "downcase": options.downcase,
-                    "k": options.k,
-                    "m": options.m,
-                }
-            })
-        }
-        IndexSpec::Equality | IndexSpec::Ore | IndexSpec::Ope => index.key().into(),
+/// The indefinite article for a type's name, as it is read aloud: "an" before
+/// a vowel sound (`an int8`, `an i64`, `an object`), and "a" otherwise. A name
+/// starting with `u` is read as "you" (`a uint8`, `a u32`), so it takes "a".
+fn article(name: &str) -> &'static str {
+    match name.chars().next().map(|c| c.to_ascii_lowercase()) {
+        Some('a' | 'e' | 'i' | 'o') => "an",
+        _ => "a",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_field_type_refusal_reads_with_the_right_article() {
+        let message = |expected| {
+            PlanError::FieldType {
+                field: "f".to_owned(),
+                expected,
+            }
+            .to_string()
+        };
+        assert_eq!(message("int8"), r#"field "f" is not an int8"#);
+        assert_eq!(message("object"), r#"field "f" is not an object"#);
+        assert_eq!(message("i64"), r#"field "f" is not an i64"#);
+        assert_eq!(message("uint8"), r#"field "f" is not a uint8"#);
+        assert_eq!(message("u32"), r#"field "f" is not a u32"#);
+        assert_eq!(message("string"), r#"field "f" is not a string"#);
+        assert_eq!(message("decimal"), r#"field "f" is not a decimal"#);
+        assert_eq!(message(""), r#"field "f" is not a "#);
     }
 }

@@ -135,6 +135,7 @@ pub fn wipe_all() {
     // The recorded last error is one of these buffers; its slot must not
     // outlive the wipe and name freed memory.
     crate::last_error::forget();
+    crate::step::forget_pending();
     let live = BUFFERS.with(|b| core::mem::take(&mut *b.borrow_mut()));
     for (ptr, len) in live {
         // SAFETY: every entry was registered by `register`, which leaked a

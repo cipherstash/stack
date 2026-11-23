@@ -4,360 +4,360 @@
 -- REQUIRE: src/v3/scalars/integer/integer_ord_ore_functions.sql
 
 --! @file encrypted_domain/integer/query_integer_ord_ore_functions.sql
---! @brief Functions for eql_v3.query_integer_ord_ore.
+--! @brief Functions for {{prefix}}.query_integer_ord_ore.
 
---! @brief Index extractor for eql_v3.query_integer_ord_ore.
---! @param a eql_v3.query_integer_ord_ore
---! @return eql_v3_internal.ore_block_256
-CREATE FUNCTION eql_v3.ord_term_ore(a eql_v3.query_integer_ord_ore)
-RETURNS eql_v3_internal.ore_block_256
+--! @brief Index extractor for {{prefix}}.query_integer_ord_ore.
+--! @param a {{prefix}}.query_integer_ord_ore
+--! @return {{prefix}}_internal.{{ore_block}}
+CREATE FUNCTION {{prefix}}.ord_term_ore(a {{prefix}}.query_integer_ord_ore)
+RETURNS {{prefix}}_internal.{{ore_block}}
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3_internal.ore_block_256(a::jsonb) $$;
+AS $$ SELECT {{prefix}}_internal.{{ore_block}}(a::jsonb) $$;
 
---! @brief Operator wrapper for eql_v3.query_integer_ord_ore.
---! @param a public.eql_v3_integer_ord_ore
---! @param b eql_v3.query_integer_ord_ore
+--! @brief Operator wrapper for {{prefix}}.query_integer_ord_ore.
+--! @param a public.{{prefix}}_integer_ord_ore
+--! @param b {{prefix}}.query_integer_ord_ore
 --! @return boolean
-CREATE FUNCTION eql_v3.eq(a public.eql_v3_integer_ord_ore, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}.eq(a public.{{prefix}}_integer_ord_ore, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.=) eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT {{prefix}}.ord_term_ore(a) OPERATOR(public.=) {{prefix}}.ord_term_ore(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_integer_ord_ore.
---! @param a eql_v3.query_integer_ord_ore
---! @param b public.eql_v3_integer_ord_ore
+--! @brief Operator wrapper for {{prefix}}.query_integer_ord_ore.
+--! @param a {{prefix}}.query_integer_ord_ore
+--! @param b public.{{prefix}}_integer_ord_ore
 --! @return boolean
-CREATE FUNCTION eql_v3.eq(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord_ore)
+CREATE FUNCTION {{prefix}}.eq(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.=) eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT {{prefix}}.ord_term_ore(a) OPERATOR(public.=) {{prefix}}.ord_term_ore(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_integer_ord_ore.
---! @param a public.eql_v3_integer_ord_ore
---! @param b eql_v3.query_integer_ord_ore
+--! @brief Operator wrapper for {{prefix}}.query_integer_ord_ore.
+--! @param a public.{{prefix}}_integer_ord_ore
+--! @param b {{prefix}}.query_integer_ord_ore
 --! @return boolean
-CREATE FUNCTION eql_v3.neq(a public.eql_v3_integer_ord_ore, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}.neq(a public.{{prefix}}_integer_ord_ore, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.<>) eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT {{prefix}}.ord_term_ore(a) OPERATOR(public.<>) {{prefix}}.ord_term_ore(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_integer_ord_ore.
---! @param a eql_v3.query_integer_ord_ore
---! @param b public.eql_v3_integer_ord_ore
+--! @brief Operator wrapper for {{prefix}}.query_integer_ord_ore.
+--! @param a {{prefix}}.query_integer_ord_ore
+--! @param b public.{{prefix}}_integer_ord_ore
 --! @return boolean
-CREATE FUNCTION eql_v3.neq(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord_ore)
+CREATE FUNCTION {{prefix}}.neq(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.<>) eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT {{prefix}}.ord_term_ore(a) OPERATOR(public.<>) {{prefix}}.ord_term_ore(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_integer_ord_ore.
---! @param a public.eql_v3_integer_ord_ore
---! @param b eql_v3.query_integer_ord_ore
+--! @brief Operator wrapper for {{prefix}}.query_integer_ord_ore.
+--! @param a public.{{prefix}}_integer_ord_ore
+--! @param b {{prefix}}.query_integer_ord_ore
 --! @return boolean
-CREATE FUNCTION eql_v3.lt(a public.eql_v3_integer_ord_ore, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}.lt(a public.{{prefix}}_integer_ord_ore, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.<) eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT {{prefix}}.ord_term_ore(a) OPERATOR(public.<) {{prefix}}.ord_term_ore(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_integer_ord_ore.
---! @param a eql_v3.query_integer_ord_ore
---! @param b public.eql_v3_integer_ord_ore
+--! @brief Operator wrapper for {{prefix}}.query_integer_ord_ore.
+--! @param a {{prefix}}.query_integer_ord_ore
+--! @param b public.{{prefix}}_integer_ord_ore
 --! @return boolean
-CREATE FUNCTION eql_v3.lt(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord_ore)
+CREATE FUNCTION {{prefix}}.lt(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.<) eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT {{prefix}}.ord_term_ore(a) OPERATOR(public.<) {{prefix}}.ord_term_ore(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_integer_ord_ore.
---! @param a public.eql_v3_integer_ord_ore
---! @param b eql_v3.query_integer_ord_ore
+--! @brief Operator wrapper for {{prefix}}.query_integer_ord_ore.
+--! @param a public.{{prefix}}_integer_ord_ore
+--! @param b {{prefix}}.query_integer_ord_ore
 --! @return boolean
-CREATE FUNCTION eql_v3.lte(a public.eql_v3_integer_ord_ore, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}.lte(a public.{{prefix}}_integer_ord_ore, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.<=) eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT {{prefix}}.ord_term_ore(a) OPERATOR(public.<=) {{prefix}}.ord_term_ore(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_integer_ord_ore.
---! @param a eql_v3.query_integer_ord_ore
---! @param b public.eql_v3_integer_ord_ore
+--! @brief Operator wrapper for {{prefix}}.query_integer_ord_ore.
+--! @param a {{prefix}}.query_integer_ord_ore
+--! @param b public.{{prefix}}_integer_ord_ore
 --! @return boolean
-CREATE FUNCTION eql_v3.lte(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord_ore)
+CREATE FUNCTION {{prefix}}.lte(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.<=) eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT {{prefix}}.ord_term_ore(a) OPERATOR(public.<=) {{prefix}}.ord_term_ore(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_integer_ord_ore.
---! @param a public.eql_v3_integer_ord_ore
---! @param b eql_v3.query_integer_ord_ore
+--! @brief Operator wrapper for {{prefix}}.query_integer_ord_ore.
+--! @param a public.{{prefix}}_integer_ord_ore
+--! @param b {{prefix}}.query_integer_ord_ore
 --! @return boolean
-CREATE FUNCTION eql_v3.gt(a public.eql_v3_integer_ord_ore, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}.gt(a public.{{prefix}}_integer_ord_ore, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.>) eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT {{prefix}}.ord_term_ore(a) OPERATOR(public.>) {{prefix}}.ord_term_ore(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_integer_ord_ore.
---! @param a eql_v3.query_integer_ord_ore
---! @param b public.eql_v3_integer_ord_ore
+--! @brief Operator wrapper for {{prefix}}.query_integer_ord_ore.
+--! @param a {{prefix}}.query_integer_ord_ore
+--! @param b public.{{prefix}}_integer_ord_ore
 --! @return boolean
-CREATE FUNCTION eql_v3.gt(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord_ore)
+CREATE FUNCTION {{prefix}}.gt(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.>) eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT {{prefix}}.ord_term_ore(a) OPERATOR(public.>) {{prefix}}.ord_term_ore(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_integer_ord_ore.
---! @param a public.eql_v3_integer_ord_ore
---! @param b eql_v3.query_integer_ord_ore
+--! @brief Operator wrapper for {{prefix}}.query_integer_ord_ore.
+--! @param a public.{{prefix}}_integer_ord_ore
+--! @param b {{prefix}}.query_integer_ord_ore
 --! @return boolean
-CREATE FUNCTION eql_v3.gte(a public.eql_v3_integer_ord_ore, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}.gte(a public.{{prefix}}_integer_ord_ore, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.>=) eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT {{prefix}}.ord_term_ore(a) OPERATOR(public.>=) {{prefix}}.ord_term_ore(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_integer_ord_ore.
---! @param a eql_v3.query_integer_ord_ore
---! @param b public.eql_v3_integer_ord_ore
+--! @brief Operator wrapper for {{prefix}}.query_integer_ord_ore.
+--! @param a {{prefix}}.query_integer_ord_ore
+--! @param b public.{{prefix}}_integer_ord_ore
 --! @return boolean
-CREATE FUNCTION eql_v3.gte(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord_ore)
+CREATE FUNCTION {{prefix}}.gte(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.>=) eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT {{prefix}}.ord_term_ore(a) OPERATOR(public.>=) {{prefix}}.ord_term_ore(b) $$;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: public.eql_v3_integer_eq and eql_v3.query_integer_ord_ore (mismatched query domain).
---! @param a public.eql_v3_integer_eq left operand
---! @param b eql_v3.query_integer_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: public.{{prefix}}_integer_eq and {{prefix}}.query_integer_ord_ore (mismatched query domain).
+--! @param a public.{{prefix}}_integer_eq left operand
+--! @param b {{prefix}}.query_integer_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.eq(a public.eql_v3_integer_eq, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.eq(a public.{{prefix}}_integer_eq, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.eql_v3_integer_eq and eql_v3.query_integer_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.{{prefix}}_integer_eq and {{prefix}}.query_integer_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: eql_v3.query_integer_ord_ore and public.eql_v3_integer_eq (mismatched query domain).
---! @param a eql_v3.query_integer_ord_ore left operand
---! @param b public.eql_v3_integer_eq right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: {{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_eq (mismatched query domain).
+--! @param a {{prefix}}.query_integer_ord_ore left operand
+--! @param b public.{{prefix}}_integer_eq right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.eq(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_eq)
+CREATE FUNCTION {{prefix}}_internal.eq(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_eq)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'eql_v3.query_integer_ord_ore and public.eql_v3_integer_eq'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', '{{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_eq'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: public.eql_v3_integer_eq and eql_v3.query_integer_ord_ore (mismatched query domain).
---! @param a public.eql_v3_integer_eq left operand
---! @param b eql_v3.query_integer_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: public.{{prefix}}_integer_eq and {{prefix}}.query_integer_ord_ore (mismatched query domain).
+--! @param a public.{{prefix}}_integer_eq left operand
+--! @param b {{prefix}}.query_integer_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.neq(a public.eql_v3_integer_eq, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.neq(a public.{{prefix}}_integer_eq, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.eql_v3_integer_eq and eql_v3.query_integer_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.{{prefix}}_integer_eq and {{prefix}}.query_integer_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: eql_v3.query_integer_ord_ore and public.eql_v3_integer_eq (mismatched query domain).
---! @param a eql_v3.query_integer_ord_ore left operand
---! @param b public.eql_v3_integer_eq right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: {{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_eq (mismatched query domain).
+--! @param a {{prefix}}.query_integer_ord_ore left operand
+--! @param b public.{{prefix}}_integer_eq right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.neq(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_eq)
+CREATE FUNCTION {{prefix}}_internal.neq(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_eq)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'eql_v3.query_integer_ord_ore and public.eql_v3_integer_eq'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', '{{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_eq'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: public.eql_v3_integer_ord and eql_v3.query_integer_ord_ore (mismatched query domain).
---! @param a public.eql_v3_integer_ord left operand
---! @param b eql_v3.query_integer_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: public.{{prefix}}_integer_ord and {{prefix}}.query_integer_ord_ore (mismatched query domain).
+--! @param a public.{{prefix}}_integer_ord left operand
+--! @param b {{prefix}}.query_integer_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.eq(a public.eql_v3_integer_ord, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.eq(a public.{{prefix}}_integer_ord, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.eql_v3_integer_ord and eql_v3.query_integer_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.{{prefix}}_integer_ord and {{prefix}}.query_integer_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord (mismatched query domain).
---! @param a eql_v3.query_integer_ord_ore left operand
---! @param b public.eql_v3_integer_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: {{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord (mismatched query domain).
+--! @param a {{prefix}}.query_integer_ord_ore left operand
+--! @param b public.{{prefix}}_integer_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.eq(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord)
+CREATE FUNCTION {{prefix}}_internal.eq(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', '{{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: public.eql_v3_integer_ord and eql_v3.query_integer_ord_ore (mismatched query domain).
---! @param a public.eql_v3_integer_ord left operand
---! @param b eql_v3.query_integer_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: public.{{prefix}}_integer_ord and {{prefix}}.query_integer_ord_ore (mismatched query domain).
+--! @param a public.{{prefix}}_integer_ord left operand
+--! @param b {{prefix}}.query_integer_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.neq(a public.eql_v3_integer_ord, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.neq(a public.{{prefix}}_integer_ord, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.eql_v3_integer_ord and eql_v3.query_integer_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.{{prefix}}_integer_ord and {{prefix}}.query_integer_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord (mismatched query domain).
---! @param a eql_v3.query_integer_ord_ore left operand
---! @param b public.eql_v3_integer_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: {{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord (mismatched query domain).
+--! @param a {{prefix}}.query_integer_ord_ore left operand
+--! @param b public.{{prefix}}_integer_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.neq(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord)
+CREATE FUNCTION {{prefix}}_internal.neq(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', '{{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: public.eql_v3_integer_ord and eql_v3.query_integer_ord_ore (mismatched query domain).
---! @param a public.eql_v3_integer_ord left operand
---! @param b eql_v3.query_integer_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: public.{{prefix}}_integer_ord and {{prefix}}.query_integer_ord_ore (mismatched query domain).
+--! @param a public.{{prefix}}_integer_ord left operand
+--! @param b {{prefix}}.query_integer_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.lt(a public.eql_v3_integer_ord, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.lt(a public.{{prefix}}_integer_ord, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', 'public.eql_v3_integer_ord and eql_v3.query_integer_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', 'public.{{prefix}}_integer_ord and {{prefix}}.query_integer_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord (mismatched query domain).
---! @param a eql_v3.query_integer_ord_ore left operand
---! @param b public.eql_v3_integer_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: {{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord (mismatched query domain).
+--! @param a {{prefix}}.query_integer_ord_ore left operand
+--! @param b public.{{prefix}}_integer_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.lt(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord)
+CREATE FUNCTION {{prefix}}_internal.lt(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', 'eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', '{{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: public.eql_v3_integer_ord and eql_v3.query_integer_ord_ore (mismatched query domain).
---! @param a public.eql_v3_integer_ord left operand
---! @param b eql_v3.query_integer_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: public.{{prefix}}_integer_ord and {{prefix}}.query_integer_ord_ore (mismatched query domain).
+--! @param a public.{{prefix}}_integer_ord left operand
+--! @param b {{prefix}}.query_integer_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.lte(a public.eql_v3_integer_ord, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.lte(a public.{{prefix}}_integer_ord, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', 'public.eql_v3_integer_ord and eql_v3.query_integer_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', 'public.{{prefix}}_integer_ord and {{prefix}}.query_integer_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord (mismatched query domain).
---! @param a eql_v3.query_integer_ord_ore left operand
---! @param b public.eql_v3_integer_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: {{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord (mismatched query domain).
+--! @param a {{prefix}}.query_integer_ord_ore left operand
+--! @param b public.{{prefix}}_integer_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.lte(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord)
+CREATE FUNCTION {{prefix}}_internal.lte(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', 'eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', '{{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: public.eql_v3_integer_ord and eql_v3.query_integer_ord_ore (mismatched query domain).
---! @param a public.eql_v3_integer_ord left operand
---! @param b eql_v3.query_integer_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: public.{{prefix}}_integer_ord and {{prefix}}.query_integer_ord_ore (mismatched query domain).
+--! @param a public.{{prefix}}_integer_ord left operand
+--! @param b {{prefix}}.query_integer_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.gt(a public.eql_v3_integer_ord, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.gt(a public.{{prefix}}_integer_ord, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', 'public.eql_v3_integer_ord and eql_v3.query_integer_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', 'public.{{prefix}}_integer_ord and {{prefix}}.query_integer_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord (mismatched query domain).
---! @param a eql_v3.query_integer_ord_ore left operand
---! @param b public.eql_v3_integer_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: {{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord (mismatched query domain).
+--! @param a {{prefix}}.query_integer_ord_ore left operand
+--! @param b public.{{prefix}}_integer_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.gt(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord)
+CREATE FUNCTION {{prefix}}_internal.gt(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', 'eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', '{{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: public.eql_v3_integer_ord and eql_v3.query_integer_ord_ore (mismatched query domain).
---! @param a public.eql_v3_integer_ord left operand
---! @param b eql_v3.query_integer_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: public.{{prefix}}_integer_ord and {{prefix}}.query_integer_ord_ore (mismatched query domain).
+--! @param a public.{{prefix}}_integer_ord left operand
+--! @param b {{prefix}}.query_integer_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.gte(a public.eql_v3_integer_ord, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.gte(a public.{{prefix}}_integer_ord, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', 'public.eql_v3_integer_ord and eql_v3.query_integer_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', 'public.{{prefix}}_integer_ord and {{prefix}}.query_integer_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord (mismatched query domain).
---! @param a eql_v3.query_integer_ord_ore left operand
---! @param b public.eql_v3_integer_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: {{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord (mismatched query domain).
+--! @param a {{prefix}}.query_integer_ord_ore left operand
+--! @param b public.{{prefix}}_integer_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.gte(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord)
+CREATE FUNCTION {{prefix}}_internal.gte(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', 'eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', '{{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: public.eql_v3_integer_ord_ope and eql_v3.query_integer_ord_ore (mismatched query domain).
---! @param a public.eql_v3_integer_ord_ope left operand
---! @param b eql_v3.query_integer_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: public.{{prefix}}_integer_ord_ope and {{prefix}}.query_integer_ord_ore (mismatched query domain).
+--! @param a public.{{prefix}}_integer_ord_ope left operand
+--! @param b {{prefix}}.query_integer_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.eq(a public.eql_v3_integer_ord_ope, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.eq(a public.{{prefix}}_integer_ord_ope, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.eql_v3_integer_ord_ope and eql_v3.query_integer_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.{{prefix}}_integer_ord_ope and {{prefix}}.query_integer_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord_ope (mismatched query domain).
---! @param a eql_v3.query_integer_ord_ore left operand
---! @param b public.eql_v3_integer_ord_ope right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: {{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord_ope (mismatched query domain).
+--! @param a {{prefix}}.query_integer_ord_ore left operand
+--! @param b public.{{prefix}}_integer_ord_ope right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.eq(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord_ope)
+CREATE FUNCTION {{prefix}}_internal.eq(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord_ope)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord_ope'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', '{{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord_ope'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: public.eql_v3_integer_ord_ope and eql_v3.query_integer_ord_ore (mismatched query domain).
---! @param a public.eql_v3_integer_ord_ope left operand
---! @param b eql_v3.query_integer_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: public.{{prefix}}_integer_ord_ope and {{prefix}}.query_integer_ord_ore (mismatched query domain).
+--! @param a public.{{prefix}}_integer_ord_ope left operand
+--! @param b {{prefix}}.query_integer_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.neq(a public.eql_v3_integer_ord_ope, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.neq(a public.{{prefix}}_integer_ord_ope, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.eql_v3_integer_ord_ope and eql_v3.query_integer_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.{{prefix}}_integer_ord_ope and {{prefix}}.query_integer_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord_ope (mismatched query domain).
---! @param a eql_v3.query_integer_ord_ore left operand
---! @param b public.eql_v3_integer_ord_ope right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: {{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord_ope (mismatched query domain).
+--! @param a {{prefix}}.query_integer_ord_ore left operand
+--! @param b public.{{prefix}}_integer_ord_ope right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.neq(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord_ope)
+CREATE FUNCTION {{prefix}}_internal.neq(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord_ope)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord_ope'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', '{{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord_ope'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: public.eql_v3_integer_ord_ope and eql_v3.query_integer_ord_ore (mismatched query domain).
---! @param a public.eql_v3_integer_ord_ope left operand
---! @param b eql_v3.query_integer_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: public.{{prefix}}_integer_ord_ope and {{prefix}}.query_integer_ord_ore (mismatched query domain).
+--! @param a public.{{prefix}}_integer_ord_ope left operand
+--! @param b {{prefix}}.query_integer_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.lt(a public.eql_v3_integer_ord_ope, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.lt(a public.{{prefix}}_integer_ord_ope, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', 'public.eql_v3_integer_ord_ope and eql_v3.query_integer_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', 'public.{{prefix}}_integer_ord_ope and {{prefix}}.query_integer_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord_ope (mismatched query domain).
---! @param a eql_v3.query_integer_ord_ore left operand
---! @param b public.eql_v3_integer_ord_ope right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: {{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord_ope (mismatched query domain).
+--! @param a {{prefix}}.query_integer_ord_ore left operand
+--! @param b public.{{prefix}}_integer_ord_ope right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.lt(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord_ope)
+CREATE FUNCTION {{prefix}}_internal.lt(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord_ope)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', 'eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord_ope'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', '{{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord_ope'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: public.eql_v3_integer_ord_ope and eql_v3.query_integer_ord_ore (mismatched query domain).
---! @param a public.eql_v3_integer_ord_ope left operand
---! @param b eql_v3.query_integer_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: public.{{prefix}}_integer_ord_ope and {{prefix}}.query_integer_ord_ore (mismatched query domain).
+--! @param a public.{{prefix}}_integer_ord_ope left operand
+--! @param b {{prefix}}.query_integer_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.lte(a public.eql_v3_integer_ord_ope, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.lte(a public.{{prefix}}_integer_ord_ope, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', 'public.eql_v3_integer_ord_ope and eql_v3.query_integer_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', 'public.{{prefix}}_integer_ord_ope and {{prefix}}.query_integer_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord_ope (mismatched query domain).
---! @param a eql_v3.query_integer_ord_ore left operand
---! @param b public.eql_v3_integer_ord_ope right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: {{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord_ope (mismatched query domain).
+--! @param a {{prefix}}.query_integer_ord_ore left operand
+--! @param b public.{{prefix}}_integer_ord_ope right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.lte(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord_ope)
+CREATE FUNCTION {{prefix}}_internal.lte(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord_ope)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', 'eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord_ope'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', '{{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord_ope'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: public.eql_v3_integer_ord_ope and eql_v3.query_integer_ord_ore (mismatched query domain).
---! @param a public.eql_v3_integer_ord_ope left operand
---! @param b eql_v3.query_integer_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: public.{{prefix}}_integer_ord_ope and {{prefix}}.query_integer_ord_ore (mismatched query domain).
+--! @param a public.{{prefix}}_integer_ord_ope left operand
+--! @param b {{prefix}}.query_integer_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.gt(a public.eql_v3_integer_ord_ope, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.gt(a public.{{prefix}}_integer_ord_ope, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', 'public.eql_v3_integer_ord_ope and eql_v3.query_integer_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', 'public.{{prefix}}_integer_ord_ope and {{prefix}}.query_integer_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord_ope (mismatched query domain).
---! @param a eql_v3.query_integer_ord_ore left operand
---! @param b public.eql_v3_integer_ord_ope right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: {{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord_ope (mismatched query domain).
+--! @param a {{prefix}}.query_integer_ord_ore left operand
+--! @param b public.{{prefix}}_integer_ord_ope right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.gt(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord_ope)
+CREATE FUNCTION {{prefix}}_internal.gt(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord_ope)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', 'eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord_ope'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', '{{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord_ope'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: public.eql_v3_integer_ord_ope and eql_v3.query_integer_ord_ore (mismatched query domain).
---! @param a public.eql_v3_integer_ord_ope left operand
---! @param b eql_v3.query_integer_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: public.{{prefix}}_integer_ord_ope and {{prefix}}.query_integer_ord_ore (mismatched query domain).
+--! @param a public.{{prefix}}_integer_ord_ope left operand
+--! @param b {{prefix}}.query_integer_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.gte(a public.eql_v3_integer_ord_ope, b eql_v3.query_integer_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.gte(a public.{{prefix}}_integer_ord_ope, b {{prefix}}.query_integer_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', 'public.eql_v3_integer_ord_ope and eql_v3.query_integer_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', 'public.{{prefix}}_integer_ord_ope and {{prefix}}.query_integer_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_integer_ord_ore: eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord_ope (mismatched query domain).
---! @param a eql_v3.query_integer_ord_ore left operand
---! @param b public.eql_v3_integer_ord_ope right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_integer_ord_ore: {{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord_ope (mismatched query domain).
+--! @param a {{prefix}}.query_integer_ord_ore left operand
+--! @param b public.{{prefix}}_integer_ord_ope right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.gte(a eql_v3.query_integer_ord_ore, b public.eql_v3_integer_ord_ope)
+CREATE FUNCTION {{prefix}}_internal.gte(a {{prefix}}.query_integer_ord_ore, b public.{{prefix}}_integer_ord_ope)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', 'eql_v3.query_integer_ord_ore and public.eql_v3_integer_ord_ope'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', '{{prefix}}.query_integer_ord_ore and public.{{prefix}}_integer_ord_ope'; END; $$
 LANGUAGE plpgsql;

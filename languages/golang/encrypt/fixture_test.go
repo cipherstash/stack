@@ -122,21 +122,21 @@ func TestGeneratedCodeOpensTheRustRecordFixture(t *testing.T) {
 				}
 			}
 			// The terms Go derives are the bytes Rust stored.
-			eq, err := testusers.Fields.Age.Equality(ctx, cipher, f.Plaintext.Age)
+			eq, err := testusers.Fields.Age.Eq(ctx, cipher, f.Plaintext.Age)
 			if err != nil || !eq.Equal(stored.Age.Equality) {
 				t.Errorf("age equality: %v, equal=%v", err, eq.Equal(stored.Age.Equality))
 			}
-			ore, err := testusers.Fields.Age.Ore(ctx, cipher, f.Plaintext.Age)
+			ore, err := testusers.Fields.Age.Lt(ctx, cipher, f.Plaintext.Age)
 			if err != nil || !bytes.Equal(ore, stored.Age.Ore) {
 				t.Errorf("age ore: %v, equal=%v", err, bytes.Equal(ore, stored.Age.Ore))
 			}
-			emailEq, err := testusers.Fields.Email.Equality(ctx, cipher, f.Plaintext.Email)
+			emailEq, err := testusers.Fields.Email.Eq(ctx, cipher, f.Plaintext.Email)
 			if err != nil || !emailEq.Equal(stored.Email.Equality) {
 				t.Errorf("email equality: %v, equal=%v", err, emailEq.Equal(stored.Email.Equality))
 			}
-			match, err := testusers.Fields.Email.Match(ctx, cipher, f.Plaintext.Email)
-			if err != nil || !bytes.Equal(match, stored.Email.Match) {
-				t.Errorf("email match: %v, equal=%v", err, bytes.Equal(match, stored.Email.Match))
+			match, err := testusers.Fields.Email.Matches(ctx, cipher, f.Plaintext.Email)
+			if err != nil || !bytes.Equal(match.Term(), stored.Email.Match) {
+				t.Errorf("email match: %v, equal=%v", err, bytes.Equal(match.Term(), stored.Email.Match))
 			}
 			// A fresh Go record of the same plaintext derives the same terms.
 			again, err := testusers.Encrypt(ctx, cipher, []testusers.User{{ID: int64(f.Plaintext.ID), Age: f.Plaintext.Age, Email: f.Plaintext.Email, Notes: f.Plaintext.Notes}})

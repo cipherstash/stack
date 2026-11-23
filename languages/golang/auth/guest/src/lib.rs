@@ -58,8 +58,8 @@
 //!
 //! Profile inputs are UTF-8 strings: the store directory (a guest path under
 //! the mount), a workspace id, a filename. Outputs are either a UTF-8 string
-//! (an id, a path) or a value in vitaminc's FFI codec
-//! (`vitaminc_aead_value::transport`): a list of ids, or the fields of
+//! (an id, a path) or a vitaminc transport frame
+//! ([`HostValue`](stack_guest_abi::value::HostValue)): a list of ids, or the fields of
 //! `secretkey.json`, `auth.json` or `device.json` as an object. The client
 //! key in `secretkey.json` crosses as the text the file holds; the Go side
 //! wraps it in its opaque `ClientKey` and wipes its transport copy. A

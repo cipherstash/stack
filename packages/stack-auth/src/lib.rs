@@ -57,6 +57,7 @@ mod auth_strategy_fn;
 mod clock;
 mod error;
 mod service_token;
+mod strategy_kind;
 mod token;
 mod token_store;
 mod transport;
@@ -116,11 +117,14 @@ pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
 pub use auth_strategy_fn::AuthStrategyFn;
 pub use auto_strategy::{AutoStrategy, AutoStrategyBuilder};
 pub use device_session_strategy::{DeviceSessionStrategy, DeviceSessionStrategyBuilder};
-pub use oidc_federation_strategy::{OidcFederationStrategy, OidcFederationStrategyBuilder};
-pub use oidc_refresher::{OidcProvider, OidcProviderFn};
+pub use oidc_federation_strategy::{
+    profile_workspace_crn, OidcFederationStrategy, OidcFederationStrategyBuilder,
+};
+pub use oidc_refresher::{CredentialPerCall, OidcProvider, OidcProviderFn};
 pub use service_token::ServiceToken;
 #[cfg(any(test, feature = "test-utils"))]
 pub use static_token_strategy::StaticTokenStrategy;
+pub use strategy_kind::{OwnIdentity, StrategyKind};
 pub use token::Token;
 pub use token_store::{InMemoryTokenStore, NoStore, TokenStore, TokenStoreFn};
 #[cfg(feature = "http")]
@@ -179,8 +183,9 @@ pub use cts_common::Crn;
 /// All items in this module are also re-exported at the crate root.
 pub mod auth {
     pub use crate::{
-        AccessKey, AuthError, AuthStrategy, AuthStrategyBounds, AuthStrategyFn, HttpRequest,
-        HttpResponse, HttpTransport, InvalidAccessKey, SecretToken, ServiceToken,
+        AccessKey, AuthError, AuthStrategy, AuthStrategyBounds, AuthStrategyFn,
+        CredentialAuthStrategy, HttpRequest, HttpResponse, HttpTransport, InvalidAccessKey,
+        OwnIdentity, SecretToken, ServiceToken, StrategyKind,
     };
 
     #[cfg(feature = "http")]
@@ -188,8 +193,8 @@ pub mod auth {
 
     pub use crate::{
         AccessKeyStrategy, AccessKeyStrategyBuilder, AutoStrategy, AutoStrategyBuilder,
-        DeviceSessionStrategy, DeviceSessionStrategyBuilder, OidcFederationStrategy,
-        OidcFederationStrategyBuilder, OidcProvider, OidcProviderFn,
+        CredentialPerCall, DeviceSessionStrategy, DeviceSessionStrategyBuilder,
+        OidcFederationStrategy, OidcFederationStrategyBuilder, OidcProvider, OidcProviderFn,
     };
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -329,6 +334,82 @@ pub trait AuthStrategy: Send {
 pub trait AuthStrategy {
     /// Retrieve a valid access token, refreshing or re-authenticating as needed.
     fn get_token(self) -> impl Future<Output = Result<ServiceToken, AuthError>>;
+}
+
+/// A strategy that issues the token for a credential handed in with the
+/// call.
+///
+/// [`AuthStrategy::get_token`] takes no argument. A strategy that issues a
+/// different token for each caller therefore has to find the caller itself,
+/// from a callback and whatever ambient state the callback reads. This trait
+/// is the direct route: the caller hands the credential over with the
+/// request, and the token it gets back is the one for that credential.
+///
+/// The credential is whatever the strategy exchanges for a token. For
+/// [`OidcFederationStrategy`] it is a JWT from an identity provider, most
+/// often that of the end user who signed in. It can also be the JWT of a
+/// service or a job.
+///
+/// A strategy implements this trait or [`AuthStrategy`], never both.
+/// [`StrategyKind`] holds that: this trait requires the kind
+/// [`CredentialPerCall`], and every `AuthStrategy` has the kind
+/// [`OwnIdentity`]. A type that implements both does not compile.
+///
+/// - A strategy that takes a credential with each call implements this
+///   trait. It has no token for a call that brings no credential, so it has
+///   no `get_token`. Code that forgets the credential does not compile.
+///   [`OidcFederationStrategy::credential_per_call`] builds one.
+/// - A strategy with an identity of its own implements [`AuthStrategy`]
+///   ([`AccessKeyStrategy`], [`DeviceSessionStrategy`], [`AutoStrategy`], and
+///   an [`OidcFederationStrategy`] built with an [`OidcProvider`]). It has
+///   no `get_token_with_credential`, so code that passes a credential does
+///   not compile against one. A credential is never ignored.
+///
+/// Like [`AuthStrategy`], it is implemented for `&T`.
+///
+// The example builds a strategy over the bundled HTTP transport, so it is
+// in the docs only with `http`. Without it, a strategy is given a transport.
+#[cfg_attr(
+    feature = "http",
+    doc = r#"# Example
+
+```
+use stack_auth::{CredentialAuthStrategy, OidcFederationStrategy, SecretToken};
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse()?;
+// Built once, at startup. No request is made.
+let strategy = OidcFederationStrategy::credential_per_call(crn)?;
+
+// A request handler passes the JWT of the user who signed in. Awaiting
+// this future exchanges the JWT at the auth server for that user's token.
+let jwt = SecretToken::new("header.payload.signature");
+let token = (&strategy).get_token_with_credential(jwt);
+# drop(token);
+# Ok(())
+# }
+```"#
+)]
+#[cfg(not(target_arch = "wasm32"))]
+pub trait CredentialAuthStrategy: StrategyKind<Kind = CredentialPerCall> + Send {
+    /// Retrieve a valid access token for `credential`, refreshing or
+    /// re-authenticating as needed.
+    fn get_token_with_credential(
+        self,
+        credential: SecretToken,
+    ) -> impl Future<Output = Result<ServiceToken, AuthError>> + Send;
+}
+
+/// Wasm32 variant of [`CredentialAuthStrategy`]: drops the `Send` bound, as
+/// [`AuthStrategy`] does.
+#[cfg(target_arch = "wasm32")]
+pub trait CredentialAuthStrategy: StrategyKind<Kind = CredentialPerCall> {
+    /// Retrieve a valid access token for `credential`, refreshing or
+    /// re-authenticating as needed.
+    fn get_token_with_credential(
+        self,
+        credential: SecretToken,
+    ) -> impl Future<Output = Result<ServiceToken, AuthError>>;
 }
 
 /// Marker trait alias for the bounds an owned `AuthStrategy`-providing

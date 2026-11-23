@@ -51,7 +51,7 @@ func TestSelectorsSpellEveryVariant(t *testing.T) {
 		if got := tc.sel.selector(); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%T: got %v, want %v", tc.sel, got, tc.want)
 		}
-		if _, err := vcffi.Marshal(options(tc.sel, "")); err != nil {
+		if _, err := (callOptions{keyset: tc.sel}).marshal(); err != nil {
 			t.Errorf("%T options do not marshal: %v", tc.sel, err)
 		}
 	}
@@ -150,7 +150,6 @@ func TestTermsAndLeavesScanAndValue(t *testing.T) {
 func TestLeafSetKeepsStackEncryptLeavesDistinct(t *testing.T) {
 	ct := map[string]any{
 		"a": Ciphertext{1},
-		"b": otherLeaf{kind: vcffi.LeafNone, bytes: []byte{2}},
 		"c": otherLeaf{kind: vcffi.LeafEmptySeq, bytes: []byte{3}},
 		"d": otherLeaf{kind: vcffi.LeafEmptyMap, bytes: []byte{4}},
 		"p": vcvalue.Plain{V: "clear"},

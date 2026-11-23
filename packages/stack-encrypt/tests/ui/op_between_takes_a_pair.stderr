@@ -1,0 +1,51 @@
+error[E0061]: this method takes 2 arguments but 1 argument was supplied
+  --> tests/ui/op_between_takes_a_pair.rs:22:32
+   |
+22 |     let _ = EncryptedUser::AGE.between(40u32);
+   |                                ^^^^^^^------- argument #2 of type `u32` is missing
+   |
+note: method defined here
+  --> src/field_reference.rs
+   |
+   |     pub fn between<Q>(self, lo: Q, hi: Q) -> BetweenQuery<T, Q::Value, C::Start>
+   |            ^^^^^^^
+help: provide the argument
+   |
+22 |     let _ = EncryptedUser::AGE.between(40u32, /* u32 */);
+   |                                             +++++++++++
+
+error[E0277]: the trait bound `(u32, u32): QueryInput` is not satisfied
+  --> tests/ui/op_between_takes_a_pair.rs:23:35
+   |
+23 |     let _ = EncryptedUser::AGE.lt((18u32, 65u32));
+   |                                -- ^^^^^^^^^^^^^^ the trait `QueryInput` is not implemented for `(u32, u32)`
+   |                                |
+   |                                required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `QueryInput`:
+             &Vec<u8>
+             &[u8]
+             &std::string::String
+             &str
+             Option<V>
+             Vec<u8>
+             bool
+             f32
+           and $N others
+note: required by a bound in `FieldReference::<W, T, C, P, D>::lt`
+  --> src/field_reference.rs
+   |
+   |                   Q: QueryInput,
+   |                      ^^^^^^^^^^ required by this bound in `FieldReference::<W, T, C, P, D>::lt`
+...
+   | / operator_methods! {
+   | |     /// Rows whose value equals `value` ([`op::Eq`](struct@Eq)).
+   | |     eq => Eq;
+   | |     /// Rows whose value is below `value` ([`op::Lt`](Lt)).
+   | |     lt => Lt;
+   | |     -- required by a bound in this associated function
+...  |
+   | |     matches => Matches;
+   | | }
+   | |_- in this macro invocation
+   = note: this error originates in the macro `operator_methods` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -1,0 +1,28 @@
+error[E0599]: no method named `encrypt` found for struct `EncryptedCustomerProfileElementsVisits<Q>` in the current scope
+  --> tests/ui/field_reference_elements_needs_a_condition.rs:24:60
+   |
+15 | #[derive(EncryptTarget)]
+   |          ------------- method `encrypt` not found for this struct
+...
+24 |     let _ = EncryptedCustomer::PROFILE.elements().visits().encrypt(&keyset);
+   |                                                            ^^^^^^^ method not found in `EncryptedCustomerProfileElementsVisits<ArrayElements<Root<EncryptedCustomer>, JsonDocument, NoScope, TakesAny, EncryptedCustomerProfileElementsVisits>>`
+   |
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following traits define an item `encrypt`, perhaps you need to implement one of them:
+           candidate #1: `TargetResolver`
+           candidate #2: `cipher::stream::AsyncStreamCipher`
+           candidate #3: `rustls::crypto::cipher::MessageEncrypter`
+           candidate #4: `rustls::server::server_conn::ProducesTickets`
+           candidate #5: `vitaminc_aead::encrypt::Encrypt`
+           candidate #6: `vitaminc_ore::scheme::OrderEncrypt`
+
+error[E0599]: no method named `encrypt` found for struct `Elements<W, T, C, P>` in the current scope
+  --> tests/ui/field_reference_elements_needs_a_condition.rs:27:10
+   |
+25 |       let _ = EncryptedCustomer::PROFILE
+   |  _____________-
+26 | |         .elements_text_path("$.visits[*]")
+27 | |         .encrypt(&keyset);
+   | |         -^^^^^^^ method not found in `Elements<Root<EncryptedCustomer>, JsonDocument, NoScope, TakesAny>`
+   | |_________|
+   |

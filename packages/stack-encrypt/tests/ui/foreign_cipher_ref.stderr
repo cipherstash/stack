@@ -1,0 +1,31 @@
+warning: unreachable expression
+  --> tests/ui/foreign_cipher_ref.rs:8:5
+   |
+ 8 | /     CipherRef {
+ 9 | |         cipher,
+10 | |         // Whatever the field is given: it cannot be named from here.
+11 | |         keyset: unimplemented!(),
+   | |                 ---------------- any code following this expression is unreachable
+12 | |     }
+   | |_____^ unreachable expression
+   |
+   = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+error[E0451]: fields `cipher` and `keyset` of struct `CipherRef` are private
+  --> tests/ui/foreign_cipher_ref.rs:9:9
+   |
+ 8 |     CipherRef {
+   |     --------- in this type
+ 9 |         cipher,
+   |         ^^^^^^ private field
+10 |         // Whatever the field is given: it cannot be named from here.
+11 |         keyset: unimplemented!(),
+   |         ^^^^^^ private field
+
+error: type `target::pending::KeysetSelector` is private
+  --> tests/ui/foreign_cipher_ref.rs:11:17
+   |
+11 |         keyset: unimplemented!(),
+   |                 ^^^^^^^^^^^^^^^^ private type
+   |
+   = note: this error originates in the macro `unimplemented` (in Nightly builds, run with -Z macro-backtrace for more info)

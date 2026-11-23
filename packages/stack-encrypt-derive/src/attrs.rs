@@ -1,6 +1,7 @@
 //! Parsing of the `#[stash(...)]` container and field attributes.
 
-use syn::{Attribute, Expr, LitStr, Member, Path, Result, Type};
+use stack_encrypt_jsonpath::JsonPath;
+use syn::{Attribute, Expr, Ident, LitBool, LitStr, Member, Path, Result, Token, Type};
 
 /// Container-level options, from `#[stash(...)]` on the struct itself.
 pub(crate) struct ContainerAttrs {
@@ -15,15 +16,27 @@ pub(crate) struct ContainerAttrs {
     /// `#[stash(struct = Type)]`: the record encrypts the struct `Type`
     /// field by field. Every derived field is derived from the plaintext
     /// field of its own name (`from`), under a context made of the
-    /// container's `context` and the plaintext field's name, unless the
-    /// field says otherwise. Exclusive with `plaintext`; requires `context`.
+    /// container's `scope` and the plaintext field's name, unless the
+    /// field says otherwise. Exclusive with `plaintext`; requires `scope`.
     pub(crate) by_field: Option<Type>,
-    /// `#[stash(context = "...")]` on the container: the first half of every
-    /// field's inferred context, the pair `("<context>", "<field>")`. Names the stored
-    /// data, not the Rust type: it is part of the stored data's identity, so
-    /// it is given explicitly rather than inferred from a name a refactor
-    /// can change. Only meaningful with `struct`.
-    pub(crate) context: Option<LitStr>,
+    /// `#[stash(scope = "...")]` on the container: the record's name and the
+    /// first scope of every field's context, the pair `("<scope>", "<field>")`.
+    /// Names the stored data, not the Rust type: it is part of the stored
+    /// data's identity, so it is given explicitly rather than inferred from a
+    /// name a refactor can change. Only meaningful with `struct`.
+    pub(crate) scope: Option<LitStr>,
+    /// `#[stash(scope(tenant: u64))]`: a scope the caller supplies on every
+    /// call, with its name and type. In the query context and the stored
+    /// context.
+    pub(crate) caller_scope: Option<(Ident, Type)>,
+    /// `#[stash(scope(field = "tenant"))]`: a scope stored in the row, in
+    /// the `passthrough` field derived from the named plaintext field.
+    pub(crate) stored_scope: Option<LitStr>,
+    /// `#[stash(bind(row: u128))]`: a binding the caller supplies on every
+    /// call. In the stored context only.
+    pub(crate) caller_bind: Option<(Ident, Type)>,
+    /// `#[stash(bind(field = "id"))]`: a binding stored in the row.
+    pub(crate) stored_bind: Option<LitStr>,
     /// `#[stash(context_type = Type)]`: the record's associated `Context`,
     /// when its fields take the caller's context. The default,
     /// `CallerContext`, derives ciphertext and terms alike and so needs both
@@ -35,15 +48,58 @@ pub(crate) struct ContainerAttrs {
 }
 
 const CONTAINER_KEYS: &str = "unsupported container attribute; expected `plaintext = Type`, \
-     `struct = Type`, `context = \"...\"` (with `struct`), `context_type = Type` or \
-     `crate = \"...\"`";
+     `struct = Type`, `scope = \"...\"` (with `struct`), `scope(name: Type)`, \
+     `scope(field = \"...\")`, `bind(name: Type)`, `bind(field = \"...\")`, `context_type = Type` \
+     or `crate = \"...\"`";
+
+/// One `scope(..)` or `bind(..)` part: a caller part with its name and type,
+/// or a stored part naming the plaintext field.
+enum Part {
+    Caller(Ident, Box<Type>),
+    Stored(LitStr),
+}
+
+/// Parse the parentheses of `scope(..)` or `bind(..)`: `name: Type` or
+/// `field = "name"`.
+fn parse_part(input: syn::parse::ParseStream<'_>, kind: &str) -> Result<Part> {
+    let content;
+    syn::parenthesized!(content in input);
+    let name: Ident = content.call(syn::ext::IdentExt::parse_any)?;
+    if content.peek(syn::Token![=]) {
+        if name != "field" {
+            return Err(syn::Error::new(
+                name.span(),
+                format!(
+                    "`{kind}(..)` takes `name: Type` for a part the caller supplies, or \
+                     `field = \"..\"` for a part stored in the row"
+                ),
+            ));
+        }
+        let _: syn::Token![=] = content.parse()?;
+        return Ok(Part::Stored(content.parse()?));
+    }
+    let _: syn::Token![:] = content.parse().map_err(|_| {
+        syn::Error::new(
+            name.span(),
+            format!(
+                "`{kind}(..)` takes `name: Type` for a part the caller supplies, or \
+                 `field = \"..\"` for a part stored in the row"
+            ),
+        )
+    })?;
+    Ok(Part::Caller(name, Box::new(content.parse()?)))
+}
 
 impl ContainerAttrs {
     pub(crate) fn parse(attrs: &[Attribute]) -> Result<Self> {
         let mut krate: Option<Path> = None;
         let mut plaintexts: Vec<Type> = Vec::new();
         let mut by_field: Option<Type> = None;
-        let mut context: Option<LitStr> = None;
+        let mut scope: Option<LitStr> = None;
+        let mut caller_scope: Option<(Ident, Type)> = None;
+        let mut stored_scope: Option<LitStr> = None;
+        let mut caller_bind: Option<(Ident, Type)> = None;
+        let mut stored_bind: Option<LitStr> = None;
         let mut context_type: Option<Type> = None;
 
         for attr in attrs.iter().filter(|a| a.path().is_ident("stash")) {
@@ -59,12 +115,47 @@ impl ContainerAttrs {
                     krate = Some(lit.parse()?);
                     return Ok(());
                 }
-                if meta.path.is_ident("context") {
-                    if context.is_some() {
-                        return Err(meta.error("`context` is given twice; a struct has one prefix"));
+                if meta.path.is_ident("scope") && meta.input.peek(syn::token::Paren) {
+                    if caller_scope.is_some() || stored_scope.is_some() {
+                        return Err(meta.error(
+                            "`scope(..)` is given twice; a record lists one scope beside its name",
+                        ));
                     }
-                    context = Some(meta.value()?.parse()?);
+                    match parse_part(meta.input, "scope")? {
+                        Part::Caller(name, ty) => caller_scope = Some((name, *ty)),
+                        Part::Stored(field) => stored_scope = Some(field),
+                    }
                     return Ok(());
+                }
+                if meta.path.is_ident("bind") && meta.input.peek(syn::token::Paren) {
+                    if caller_bind.is_some() || stored_bind.is_some() {
+                        return Err(
+                            meta.error("`bind(..)` is given twice; a record lists one binding")
+                        );
+                    }
+                    match parse_part(meta.input, "bind")? {
+                        Part::Caller(name, ty) => caller_bind = Some((name, *ty)),
+                        Part::Stored(field) => stored_bind = Some(field),
+                    }
+                    return Ok(());
+                }
+                if meta.path.is_ident("scope") {
+                    if scope.is_some() {
+                        return Err(meta.error(
+                            "`scope` is given twice; a record has one name, its first scope",
+                        ));
+                    }
+                    scope = Some(meta.value()?.parse()?);
+                    return Ok(());
+                }
+                // Renamed rather than unknown, so the message can say what to
+                // write instead.
+                if meta.path.is_ident("context") {
+                    return Err(meta.error(
+                        "the record's name is now `scope = \"..\"` (`context = \"..\"` before): \
+                         it is the record's first scope, and each field's name is the next. \
+                         The stored data does not change",
+                    ));
                 }
                 if meta.path.is_ident("context_type") {
                     if context_type.is_some() {
@@ -104,14 +195,14 @@ impl ContainerAttrs {
                     let plaintext: Type = meta.value()?.parse()?;
                     // The type is spliced into the impl header as
                     // written, where a reference has no lifetime to
-                    // name. The generic impl (no `plaintext` at all)
-                    // already accepts `&str` and friends.
+                    // name. A plaintext is also passed by value and wiped,
+                    // which a reference cannot be.
                     if let Type::Reference(_) = plaintext {
                         return Err(syn::Error::new_spanned(
                             &plaintext,
                             "`plaintext` must be an owned type: a reference plaintext has no \
-                             lifetime the generated impl can name. Omit `plaintext` for an impl \
-                             generic over the source, which accepts references too.",
+                             lifetime the generated impl can name, and a plaintext is passed by \
+                             value and wiped. Name the owned type, such as `String` for `&str`.",
                         ));
                     }
                     if plaintexts.contains(&plaintext) {
@@ -143,43 +234,43 @@ impl ContainerAttrs {
         // `Account` in different modules would silently share every field
         // context, making ciphertexts transplantable between them and index
         // terms comparable across them.
-        match (&by_field, &context) {
+        match (&by_field, &scope) {
             (Some(by_field), None) => {
                 return Err(syn::Error::new_spanned(
                     by_field,
-                    "`struct = ..` needs a `context = \"..\"` beside it naming the stored data \
-                     (e.g. `#[stash(struct = User, context = \"users\")]`): each field is derived \
-                     under the pair `(\"<context>\", \"<field>\")`, and the prefix is part of the stored data's \
+                    "`struct = ..` needs a `scope = \"..\"` beside it naming the stored data \
+                     (e.g. `#[stash(struct = User, scope = \"users\")]`): each field is derived \
+                     under the pair `(\"<scope>\", \"<field>\")`, and the record's name is part of the stored data's \
                      identity, so it is given explicitly rather than inferred from the Rust \
                      type's name",
                 ));
             }
-            (None, Some(context)) => {
+            (None, Some(scope)) => {
                 return Err(syn::Error::new(
-                    context.span(),
-                    "a container `context` is the prefix of the per-field contexts and applies \
-                     only with `struct = ..`; a `plaintext` record's fields take the caller's \
-                     context",
+                    scope.span(),
+                    "a container `scope` is the record's name, the first scope of each field's \
+                     context, and applies only with `struct = ..`; a `plaintext` record's fields \
+                     take the caller's context",
                 ));
             }
             _ => {}
         }
-        if let Some(context) = &context {
-            if context.value().is_empty() {
+        if let Some(scope) = &scope {
+            if scope.value().is_empty() {
                 return Err(syn::Error::new(
-                    context.span(),
-                    "an empty `context` is rejected when a value is encrypted: name the stored \
+                    scope.span(),
+                    "an empty `scope` is rejected when a value is encrypted: name the stored \
                      data (e.g. \"users\")",
                 ));
             }
-            if !is_plain_segment(&context.value()) {
+            if !is_plain_segment(&scope.value()) {
                 return Err(syn::Error::new(
-                    context.span(),
-                    "a container `context` is the first segment of every field's ZeroKMS \
+                    scope.span(),
+                    "a container `scope` is the first segment of every field's ZeroKMS \
                      descriptor, so it must be plain: no `/`, `(`, `)`, control or invisible \
                      character, and not beginning with `b64:`, a digit or `-`; otherwise it \
                      would render escaped and the log would not name the table. For the table \
-                     `public.users` write `context = \"users\"`",
+                     `public.users` write `scope = \"users\"`",
                 ));
             }
         }
@@ -188,18 +279,38 @@ impl ContainerAttrs {
             let mut err = syn::Error::new_spanned(
                 context_type,
                 "`context_type` names what the caller passes to a record whose fields take the \
-                 caller's context; a `struct` derive's fields carry their own, so the record \
-                 takes `DeclaredContext` and a caller's context extends them",
+                 caller's context; a `struct` derive's fields carry their own contexts, so it does \
+                 not apply",
             );
             err.combine(syn::Error::new_spanned(by_field, "`struct` given here"));
             return Err(err);
+        }
+
+        if by_field.is_none() {
+            let part = caller_scope
+                .as_ref()
+                .map(|(name, _)| name.span())
+                .or_else(|| stored_scope.as_ref().map(|field| field.span()))
+                .or_else(|| caller_bind.as_ref().map(|(name, _)| name.span()))
+                .or_else(|| stored_bind.as_ref().map(|field| field.span()));
+            if let Some(span) = part {
+                return Err(syn::Error::new(
+                    span,
+                    "`scope(..)` and `bind(..)` list the parts of a `struct = ..` record's \
+                     context: a `plaintext` record takes the whole context from its caller",
+                ));
+            }
         }
 
         Ok(Self {
             krate: krate.unwrap_or_else(|| syn::parse_quote!(::stack_encrypt)),
             plaintexts,
             by_field,
-            context,
+            scope,
+            caller_scope,
+            stored_scope,
+            caller_bind,
+            stored_bind,
             context_type,
         })
     }
@@ -211,8 +322,7 @@ pub(crate) struct FieldAttrs {
     pub(crate) context_field: bool,
     /// `#[stash(identity = "...")]`: with `struct = ..`, the label segment
     /// this field is keyed under, in place of the plaintext field's name:
-    /// the field is derived under `("<context>", "<identity>")`. The plan
-    /// builder's `.identity(segment)`.
+    /// the field is derived under `("<scope>", "<identity>")`.
     pub(crate) identity: Option<LitStr>,
     /// `#[stash(from = field)]` / `#[stash(from = 0)]`: with `struct = ..`,
     /// derive this field from a plaintext field whose name differs from its
@@ -223,6 +333,227 @@ pub(crate) struct FieldAttrs {
     pub(crate) default: Option<Option<Expr>>,
     /// `#[stash(decrypt)]`: decryption opens this field.
     pub(crate) decrypt: bool,
+    /// `#[stash(passthrough)]`, on a field of a `struct = ..` record with the
+    /// owned derives. The plaintext field is moved into the record in the
+    /// clear, not encrypted, and moved back when the record is decrypted.
+    pub(crate) passthrough: bool,
+    /// `#[stash(query = String)]`: with `struct = ..`, the type a query of
+    /// this field takes, so its field reference's methods take that type alone. The
+    /// derive checks it against the plaintext field, which is that type or
+    /// an `Option` of it. On a field whose field reference has no operator method
+    /// (a record field, a ciphertext alone), only the check applies.
+    pub(crate) query: Option<Type>,
+    /// `#[stash(json(ordered = { "$.age": u32 }, sealed_root = false))]`:
+    /// with `struct = ..`, the JSON index's options of a field that stores a
+    /// document. The field is sealed under them, its field reference's JSON
+    /// queries derive under them, and each ordered path gets a typed
+    /// accessor.
+    pub(crate) json: Option<JsonAttr>,
+}
+
+/// The JSON index's options a field's `json(..)` names.
+#[cfg_attr(test, derive(Debug))]
+pub(crate) struct JsonAttr {
+    /// Where `json` is written, for errors.
+    pub(crate) span: proc_macro2::Span,
+    /// `ordered = { "$.age": u32, .. }`: the paths whose leaves carry an
+    /// ordering term, each with the type of the values at it, in the order
+    /// written. Each path is parsed here, with the engine's grammar.
+    pub(crate) ordered: Vec<TypedPath>,
+    /// `paths = { "$.name": String, .. }`: paths given a type and no
+    /// ordering term, in the order written: each gets a typed accessor
+    /// under `at()` for equality, and adds nothing to the field's options.
+    pub(crate) paths: Vec<TypedPath>,
+    /// `names = { "first-name": first_name, .. }`: the word a JSON key
+    /// gives an accessor name, for a key the naming rule cannot turn into
+    /// one, or whose word another key gives too.
+    pub(crate) names: Vec<(LitStr, Ident)>,
+    /// `sealed_root = false`: turn off the sealed root, which is on by
+    /// default.
+    pub(crate) sealed_root: Option<LitBool>,
+}
+
+/// One entry of `ordered = { .. }` or `paths = { .. }`: a path and the type
+/// its values hold.
+#[cfg_attr(test, derive(Debug))]
+pub(crate) struct TypedPath {
+    /// The path as written, which the field's options are built from.
+    pub(crate) text: LitStr,
+    /// The path, parsed.
+    pub(crate) path: JsonPath,
+    /// The type of the values at the path.
+    pub(crate) ty: Type,
+    /// Whether the entry is under `ordered`: its leaves carry an ordering
+    /// term, and its accessor has the orderings.
+    pub(crate) ordered: bool,
+}
+
+/// What `ordered` is now, for a field that still writes the list form.
+const ORDERED_IS_A_MAP: &str = "`ordered` maps each path to the type of the values at it: \
+     `ordered = { \"$.age\": u32, \"$.visits[*].place\": String }`. The type is a number \
+     type or `String`, and gives the path a typed accessor under `at()`";
+
+impl JsonAttr {
+    fn parse(meta: &syn::meta::ParseNestedMeta<'_>) -> Result<Self> {
+        let mut json = Self {
+            span: syn::spanned::Spanned::span(&meta.path),
+            ordered: Vec::new(),
+            paths: Vec::new(),
+            names: Vec::new(),
+            sealed_root: None,
+        };
+        let mut ordered = false;
+        let mut paths = false;
+        let mut names = false;
+        meta.parse_nested_meta(|inner| {
+            if inner.path.is_ident("ordered") {
+                if ordered {
+                    return Err(inner.error("`ordered` is given twice"));
+                }
+                ordered = true;
+                let value = inner.value()?;
+                if value.peek(syn::token::Bracket) {
+                    return Err(value.error(ORDERED_IS_A_MAP));
+                }
+                let content;
+                syn::braced!(content in value);
+                json.ordered = parse_typed_paths(&content, true, &json.paths)?;
+                return Ok(());
+            }
+            if inner.path.is_ident("paths") {
+                if paths {
+                    return Err(inner.error("`paths` is given twice"));
+                }
+                paths = true;
+                let value = inner.value()?;
+                let content;
+                syn::braced!(content in value);
+                json.paths = parse_typed_paths(&content, false, &json.ordered)?;
+                return Ok(());
+            }
+            if inner.path.is_ident("names") {
+                if names {
+                    return Err(inner.error("`names` is given twice"));
+                }
+                names = true;
+                let value = inner.value()?;
+                let content;
+                syn::braced!(content in value);
+                json.names = parse_names(&content)?;
+                return Ok(());
+            }
+            if inner.path.is_ident("sealed_root") {
+                if json.sealed_root.is_some() {
+                    return Err(inner.error("`sealed_root` is given twice"));
+                }
+                json.sealed_root = Some(inner.value()?.parse()?);
+                return Ok(());
+            }
+            Err(inner.error(
+                "unsupported `json(..)` option; expected `ordered = { \"$.path\": Type, .. }`, \
+                 `paths = { \"$.path\": Type, .. }`, `names = { \"key\": name, .. }` or \
+                 `sealed_root = false`",
+            ))
+        })?;
+        Ok(json)
+    }
+}
+
+/// The entries of `ordered = { .. }` (`ordered`) or `paths = { .. }`:
+/// `"path": Type`, comma separated. Each path is parsed with the engine's
+/// grammar. A path that does not parse, names an array position, repeats
+/// an earlier path, or is one of `other`, the entries of the other key, is
+/// refused at its literal.
+fn parse_typed_paths(
+    content: syn::parse::ParseStream<'_>,
+    ordered: bool,
+    other: &[TypedPath],
+) -> Result<Vec<TypedPath>> {
+    let key = if ordered { "ordered" } else { "paths" };
+    let other_key = if ordered { "paths" } else { "ordered" };
+    let mut entries: Vec<TypedPath> = Vec::new();
+    while !content.is_empty() {
+        let text: LitStr = content.parse()?;
+        let _: Token![:] = content.parse()?;
+        let ty: Type = content.parse()?;
+        let path = JsonPath::parse(&text.value()).map_err(|error| {
+            syn::Error::new(
+                text.span(),
+                format!(
+                    "{error}. A path starts with `$` and continues with `.name`, `[\"name\"]` or \
+                     `[*]` steps, as in `$.age` or `$.visits[*].place`"
+                ),
+            )
+        })?;
+        if path.names_a_position() {
+            return Err(syn::Error::new(
+                text.span(),
+                if ordered {
+                    "an ordered path names no array position (`[2]`): an ordering compares the \
+                     value its selector reads, and a selector reads every element of an array \
+                     alike. Write `[*]` to order every element"
+                } else {
+                    "a declared path names no array position (`[2]`): a query reads every \
+                     element of an array alike. Write `[*]` for every element"
+                },
+            ));
+        }
+        if let Some(earlier) = entries.iter().find(|entry| entry.path == path) {
+            let mut error = syn::Error::new(
+                text.span(),
+                format!("this path is given twice in `{key}`; each path is declared once"),
+            );
+            error.combine(syn::Error::new(earlier.text.span(), "given here first"));
+            return Err(error);
+        }
+        if let Some(earlier) = other.iter().find(|entry| entry.path == path) {
+            let mut error = syn::Error::new(
+                text.span(),
+                format!(
+                    "this path is given in `{other_key}` too; declare a path once: under \
+                     `ordered` to compare it, or under `paths` for equality alone"
+                ),
+            );
+            error.combine(syn::Error::new(earlier.text.span(), "given here first"));
+            return Err(error);
+        }
+        entries.push(TypedPath {
+            text,
+            path,
+            ty,
+            ordered,
+        });
+        if content.is_empty() {
+            break;
+        }
+        let _: Token![,] = content.parse()?;
+    }
+    Ok(entries)
+}
+
+/// The entries of `names = { .. }`: `"key": name`, comma separated.
+fn parse_names(content: syn::parse::ParseStream<'_>) -> Result<Vec<(LitStr, Ident)>> {
+    let mut names: Vec<(LitStr, Ident)> = Vec::new();
+    while !content.is_empty() {
+        let key: LitStr = content.parse()?;
+        let _: Token![:] = content.parse()?;
+        let name: Ident = content.parse()?;
+        if names
+            .iter()
+            .any(|(earlier, _)| earlier.value() == key.value())
+        {
+            return Err(syn::Error::new(
+                key.span(),
+                "this key is given twice in `names`; a key has one name",
+            ));
+        }
+        names.push((key, name));
+        if content.is_empty() {
+            break;
+        }
+        let _: Token![,] = content.parse()?;
+    }
+    Ok(names)
 }
 
 impl FieldAttrs {
@@ -239,9 +570,8 @@ impl FieldAttrs {
                     return Ok(());
                 }
                 // Removed rather than unknown, so the message can say what
-                // to write instead. A plan has exactly one context source,
-                // and every field sits under it: a field sealed under a
-                // literal of its own has no plan form.
+                // to write instead. A record has exactly one context source,
+                // and every field sits under it.
                 if meta.path.is_ident("context") {
                     return Err(meta.error(
                         "a field-level `context = \"..\"` is no longer accepted (0.2.0 accepted \
@@ -250,9 +580,9 @@ impl FieldAttrs {
                          record's context, so key it under another segment with \
                          `identity = \"..\"`. Either replacement is a different context from the \
                          old literal: data written with the literal does not decrypt under it and \
-                         its terms do not match, so re-encrypt that data. Writing one value under \
-                         two contexts (a dual write) is a fields plan that picks the same source \
-                         twice, not a derive",
+                         its terms do not match, so re-encrypt that data. To write one value \
+                         under two contexts (a dual write), encrypt it twice, once under each \
+                         context",
                     ));
                 }
                 // Each of these is singular by meaning, so a repeat is a
@@ -296,13 +626,38 @@ impl FieldAttrs {
                     parsed.decrypt = true;
                     return Ok(());
                 }
+                if meta.path.is_ident("passthrough") {
+                    if parsed.passthrough {
+                        return Err(meta.error("`passthrough` is given twice"));
+                    }
+                    parsed.passthrough = true;
+                    return Ok(());
+                }
+                if meta.path.is_ident("json") {
+                    if parsed.json.is_some() {
+                        return Err(meta.error(
+                            "`json(..)` is given twice; a field's JSON options are one list",
+                        ));
+                    }
+                    parsed.json = Some(JsonAttr::parse(&meta)?);
+                    return Ok(());
+                }
+                if meta.path.is_ident("query") {
+                    if parsed.query.is_some() {
+                        return Err(
+                            meta.error("`query` is given twice; a field's queries take one type")
+                        );
+                    }
+                    parsed.query = Some(meta.value()?.parse()?);
+                    return Ok(());
+                }
                 // Removed rather than unknown, so the message can say what
                 // to write instead.
                 if meta.path.is_ident("nested") {
                     return Err(meta.error(
                         "`nested` is no longer accepted (0.2.0 accepted it): a field whose type \
                          is a record is an ordinary field, derived under \
-                         `(\"<context>\", \"<field>\")` like any other, and its own fields sit \
+                         `(\"<scope>\", \"<field>\")` like any other, and its own fields sit \
                          under that. Omit `nested`. That is a different context from the one \
                          `nested` gave the inner fields: data written with `nested` does not \
                          decrypt without it and its terms do not match, so re-encrypt that data",
@@ -310,8 +665,8 @@ impl FieldAttrs {
                 }
                 Err(meta.error(
                     "unsupported field attribute; expected `context_field`, \
-                     `identity = \"...\"`, `from = field`, `default`, `default = expr` or \
-                     `decrypt`",
+                     `identity = \"...\"`, `from = field`, `default`, `default = expr`, \
+                     `decrypt`, `passthrough`, `query = Type` or `json(..)`",
                 ))
             })?;
         }

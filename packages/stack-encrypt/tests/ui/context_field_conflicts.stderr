@@ -1,11 +1,11 @@
 error: a record has exactly one `context_field`
- --> tests/ui/context_field_conflicts.rs:3:8
+ --> tests/ui/context_field_conflicts.rs:7:8
   |
-3 | struct Twice {
+7 | struct Twice {
   |        ^^^^^
 
-error: `context_field` is metadata and cannot also be derived or defaulted
-  --> tests/ui/context_field_conflicts.rs:13:8
+error: `context_field` is metadata and cannot also be derived, defaulted or passed through
+  --> tests/ui/context_field_conflicts.rs:18:8
    |
-13 |     i: String,
+18 |     i: String,
    |        ^^^^^^

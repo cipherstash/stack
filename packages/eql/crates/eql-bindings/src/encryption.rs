@@ -2,21 +2,30 @@
 //!
 //! The target declares its operations; Stack Encrypt invokes Vitamin C's
 //! plaintext implementations. These adapters only encode encrypted outputs.
-//! Equality uses Vitamin C's exact string semantics: no normalization or case
-//! folding. The stored identifier supplies context for ciphertext and terms.
+//! Equality compares text in Unicode 16 NFC, the normal form
+//! `vitaminc-normalize` gives it, and folds no case: `café` written with a
+//! precomposed `é` and with `e` and a combining accent is one value, `Café`
+//! another. The stored identifier supplies context for ciphertext and terms.
+//!
+//! Order (the `op` term of the `Ord` and `OrdOpe` types) compares ADR-0002's
+//! order key, which folds text's case and accents: `Café` and `cafe` are
+//! neither `<` nor `>` each other, while `=` on a `TextOrd` column, which
+//! reads the equality term, still tells them apart.
 //!
 //! This is a new producer profile, independent of existing cipherstash-client
-//! ciphertext and terms. The EQL envelope and SQL domains remain unchanged.
+//! ciphertext and terms, so it writes the `eql_v4` domains ([`crate::v4`]),
+//! never `eql_v3` (ADR-0002).
 //!
-//! [`TextEq`]: crate::v3::text::TextEq
-//! [`TextEqQuery`]: crate::v3::text::TextEqQuery
+//! [`TextEq`]: crate::v4::text::TextEq
+//! [`TextEqQuery`]: crate::v4::text::TextEqQuery
 //!
 //! # Example
 //!
 //! Enable the `stack-encrypt` feature on `eql-bindings`. Both targets accept
 //! a [`String`] as plaintext and a [`NonEmpty<Identifier>`] as context.
-//! [`Identifier::for_column`] validates the table and column; the returned
-//! identifier is passed directly to `encrypt_as` and stored in the output's `i`.
+//! [`Identifier::for_column`] validates the table and column. Pass the
+//! identifier it returns to `encrypt_into_with_context`, and the output stores
+//! it in `i`.
 //! The output type selects the encryption operations: [`TextEq`] includes
 //! ciphertext and an equality term, while [`TextEqQuery`] contains only the term.
 //!
@@ -41,57 +50,82 @@
 //! builder with `StackCipher::new().await?`, using your configured CipherStash
 //! credentials. The encryption and decryption calls are identical.
 //!
-//! A binding that holds no Rust type to name reaches the same plans by the
-//! type's *name* through [`targets`]: the catalog-generated table of EQL
-//! types a data plan may name as a field target, and `encrypt` / `decrypt` /
-//! `query` dispatching on that name.
+#![cfg_attr(
+    feature = "targets",
+    doc = "A binding that holds no Rust type to name runs the same encryption by the type's *name* through [`targets`] (`targets` feature): the catalog-generated table of EQL types a data plan may name as a field target, and `encrypt` / `decrypt` / `query` dispatching on that name."
+)]
+#![cfg_attr(
+    not(feature = "targets"),
+    doc = "A binding that holds no Rust type to name runs the same encryption by the type's *name* through `targets`, with the `targets` feature: the catalog-generated table of EQL types a data plan may name as a field target, and `encrypt` / `decrypt` / `query` dispatching on that name."
+)]
 //!
-//! Use the same table and column identifier for writes and queries. Passing
-//! `column.into()` on decryption also checks that the stored identifier matches
-//! the expected destination before retrieving keys. `Default::default()` instead
-//! uses the stored identifier alone.
+//! Use the same table and column identifier for writes and queries.
+//! `decrypt_from_with_context(stored, &keyset, column)` also checks that the
+//! stored identifier matches the expected destination before retrieving keys.
+//! `decrypt_from(stored, &keyset)` instead uses the stored identifier alone.
 //!
 //! # Unsupported conversions
 //!
 //! Query terms cannot recover plaintext:
 //! ```compile_fail
-//! use eql_bindings::v3::text::TextEqQuery;
-//! fn require<T: stack_encrypt::DecryptInto<String>>() {}
+//! use eql_bindings::v4::text::TextEqQuery;
+//! fn require<T: stack_encrypt::target::DecryptSource<String>>() {}
 //! require::<TextEqQuery>();
 //! ```
 //! An encrypted EQL record is not a plaintext value:
 //! ```compile_fail
-//! use eql_bindings::v3::text::TextEq;
+//! use eql_bindings::v4::text::TextEq;
 //! fn require<T: stack_encrypt::Encrypt>() {}
 //! require::<TextEq>();
 //! ```
 //! The text domain accepts text, and requires a concrete column identifier:
 //! ```compile_fail
-//! use eql_bindings::v3::text::TextEq;
-//! fn require<T: stack_encrypt::EncryptFrom<u32>>() {}
+//! use eql_bindings::v4::text::TextEq;
+//! fn require<T: stack_encrypt::target::EncryptTarget<u32>>() {}
 //! require::<TextEq>();
 //! ```
 //! ```compile_fail
-//! use eql_bindings::v3::text::TextEq;
-//! fn require<T: stack_encrypt::EncryptFrom<String, Context = ()>>() {}
+//! use eql_bindings::v4::text::TextEq;
+//! fn require<T: stack_encrypt::target::EncryptTarget<
+//!     String,
+//!     ContextInput = stack_encrypt::target::NoCallerContext,
+//! >>() {}
 //! require::<TextEq>();
 //! ```
 
+pub mod query;
+
+// The by-name dispatch over the EQL v4 types (`targets` feature). A plain
+// comment: a doc comment here would resolve the module's own links from
+// this scope.
+#[cfg(feature = "targets")]
 pub mod targets;
 
+// The EQL types as Stack Encrypt's resolver (`targets` feature).
+#[cfg(feature = "targets")]
+mod resolver;
+#[cfg(feature = "targets")]
+pub use resolver::EqlTargets;
+
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use stack_encrypt::sem::EqualityTerm;
-use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
-use stack_encrypt::target::{self, AeadContext, CallerContext};
-use stack_encrypt::{
-    CipherText, ContextPiece, Decrypt, DecryptField, DecryptInto, Decryptable, Decryption,
-    Describe, Description, Encrypt, EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty,
-    NonEmpty, SealedValue, StackCipherText,
+use stack_encrypt::sem::{
+    EqualityTerm, MatchConfig, MatchOptions, MatchTerms, TermError, Tokenizer,
 };
-use vitaminc_prf::PrfValue;
+use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
+use stack_encrypt::target::{
+    self, AeadContext, CallerContext, ContextFromField, DecryptSource, EncryptTarget, IndexSpec,
+    Owned, RequiredContext,
+};
+use stack_encrypt::{
+    CipherText, ContextPiece, Decrypt, DecryptField, Decryptable, Decryption, Describe,
+    Description, Encrypt, EncryptRef, Encryption, Error, IntoContext, MaybeEmpty, NonEmpty,
+    SealedValue, StackCipherText,
+};
+use zeroize::Zeroize;
 
 use crate::{
-    v3::terms::{Ciphertext, Hmac256},
+    v3::terms::{BloomFilter, Ciphertext, Hmac256},
+    v4::terms::{QueryBloomFilter, SearchBloomFilter},
     Identifier,
 };
 
@@ -115,6 +149,20 @@ impl Identifier {
             c: column.into(),
         })
     }
+
+    /// The column a two-segment label names, table then column, or `None`
+    /// for a label of any other length. One reading of a label for the
+    /// by-name dispatch (`targets::Identifier::from_label`) and the typed
+    /// query of a field reference ([`query`]).
+    pub(crate) fn column_of(label: &stack_encrypt::Label) -> Option<NonEmpty<Self>> {
+        let mut segments = label.segments();
+        let (Some(table), Some(column), None) = (segments.next(), segments.next(), segments.next())
+        else {
+            return None;
+        };
+        // A label segment is plain, so never empty.
+        Self::for_column(table, column).ok()
+    }
 }
 
 impl MaybeEmpty for Identifier {
@@ -129,7 +177,7 @@ impl MaybeEmpty for Identifier {
 /// under ([`IntoContext`] below returns [`Describe::to_context`]), so the
 /// descriptor ZeroKMS binds and the AAD never disagree. It is the same
 /// context as the two-segment [`stack_encrypt::Label`] and as the pair a
-/// `#[stash(struct = .., context = "<table>")]` derive binds.
+/// `#[stash(struct = .., scope = "<table>")]` derive binds.
 impl Describe for Identifier {
     fn describe(&self) -> Description {
         Description::text(self.t.as_str()).then_text(self.c.as_str())
@@ -143,6 +191,41 @@ impl Describe for Identifier {
 impl<'a> IntoContext<'a> for Identifier {
     fn into_context(self) -> ContextPiece<'a> {
         self.to_context()
+    }
+}
+/// A borrowed identifier is the same context, so a call can pass `&column`
+/// and keep the identifier for the next call.
+impl<'a> IntoContext<'a> for &'a Identifier {
+    fn into_context(self) -> ContextPiece<'a> {
+        self.to_context()
+    }
+}
+
+/// An EQL type can be a field of a derived `struct = ..` record. The record
+/// gives the field a context of its own: the record's scope, then the
+/// field's name, such as `("members", "email")`. The EQL type stores that
+/// pair in `i` as its column: table `members`, column `email`.
+///
+/// `i` holds those two declared names, and nothing a caller supplies. A
+/// record can also list a scope or a binding, such as a tenant or a row ID.
+/// They come after the column, as they do for a field of any other type.
+/// The field's terms derive under the column and the scope. Its
+/// ciphertext is sealed under the column, the scope and the binding. None
+/// of that is stored in `i`, so the reader supplies the scope and the
+/// binding again. The names of a record that holds this one as a field
+/// come after the column as a scope does.
+///
+/// With no scope and no binding, the field writes the terms that the type
+/// writes on its own under `Identifier::for_column("members", "email")`.
+impl ContextFromField for Identifier {
+    fn from_field(own: &ContextPiece<'_>) -> Option<NonEmpty<Self>> {
+        let ContextPiece::List(parts) = own else {
+            return None;
+        };
+        let [ContextPiece::Text(table), ContextPiece::Text(column)] = parts.as_slice() else {
+            return None;
+        };
+        Self::for_column(table.as_ref(), column.as_ref()).ok()
     }
 }
 
@@ -174,13 +257,26 @@ impl Reader for Ciphertext {
     }
 }
 
-impl<S: Encrypt + Clone> EncryptFrom<S> for Ciphertext {
-    type Context = AeadContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+// The canonical ciphertext, read into EQL's `c`. The declaration requires the
+// AEAD (authenticated encryption) half of the context, as Stack Encrypt's own
+// `StackCipherText` does.
+//
+// The borrowed form reads the plaintext in place. The owned form is Stack
+// Encrypt's own owned form of `StackCipherText`: it moves the value into the
+// seal, and wipes it when the context is refused.
+impl<S: Encrypt + EncryptRef + Zeroize> EncryptTarget<S> for Ciphertext {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
     where
         S: 's,
     {
-        target::ciphertext().transcode()
+        target::ciphertext().accepting().transcode()
+    }
+    fn owned_encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput, Owned>
+    where
+        S: 's,
+    {
+        <StackCipherText as EncryptTarget<S>>::owned_encryption().transcode()
     }
 }
 
@@ -195,11 +291,11 @@ impl Visitor for NativeCiphertextVisitor {
         Ok(CipherText::Single(leaf))
     }
 }
-impl<P: Decrypt<'static> + 'static> DecryptInto<P> for Ciphertext {
-    type Context = AeadContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
+impl<P: Decrypt + Zeroize + Send + 'static> DecryptSource<P> for Ciphertext {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<P, K> {
         match self.read(NativeCiphertextVisitor) {
-            Ok(native) => target::open(native, context),
+            Ok(native) => target::open(native, context.into_inner()),
             Err(error) => Decryption::failed(error),
         }
     }
@@ -207,13 +303,13 @@ impl<P: Decrypt<'static> + 'static> DecryptInto<P> for Ciphertext {
 impl Decryptable for Ciphertext {
     const DECRYPTABLE: bool = true;
 }
-impl<P, Ctx> DecryptField<P, Ctx> for Ciphertext
+impl<P: Zeroize, Ctx> DecryptField<P, Ctx> for Ciphertext
 where
-    Self: DecryptInto<P>,
-    Ctx: Into<<Self as DecryptInto<P>>::Context>,
+    Self: DecryptSource<P>,
+    Ctx: Into<<Self as DecryptSource<P>>::ContextInput>,
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
-        Some(self.decryption(context.into()))
+        Some(DecryptSource::decryption(self, context.into()))
     }
 }
 
@@ -223,8 +319,14 @@ pub struct EqualityVisitor;
 impl Visitor for EqualityVisitor {
     type Value = Hmac256;
     fn equality(self, term: EqualityTerm) -> Result<Self::Value, Error> {
-        Ok(Hmac256(hex::encode(term.as_bytes())))
+        Ok(hmac256(&term))
     }
+}
+
+/// EQL's `hm` for an equality term: the HMAC, hex encoded. One encoding for
+/// stored values and query twins alike.
+fn hmac256(term: &EqualityTerm) -> Hmac256 {
+    Hmac256(hex::encode(term.as_bytes()))
 }
 impl Transcode for Hmac256 {
     type Visitor = EqualityVisitor;
@@ -232,13 +334,18 @@ impl Transcode for Hmac256 {
         EqualityVisitor
     }
 }
-impl<S: PrfValue + Clone> EncryptFrom<S> for Hmac256 {
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+impl<S: Encrypt + EncryptRef + Zeroize> EncryptTarget<S> for Hmac256 {
+    type ContextInput = RequiredContext<CallerContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
     where
         S: 's,
     {
-        target::equality().transcode()
+        target::equality().accepting().transcode()
+    }
+    /// The equality index: a type holding an `hm` answers `op::Eq`
+    /// through it.
+    fn indexes() -> Vec<IndexSpec> {
+        vec![IndexSpec::Equality]
     }
 }
 impl Decryptable for Hmac256 {
@@ -250,11 +357,246 @@ impl<P, Ctx> DecryptField<P, Ctx> for Hmac256 {
     }
 }
 
+/// The match configuration of EQL v4's match types (`TextMatch`,
+/// `TextSearch`, `TextSearchOre`): 3-grams of the lower-cased text, plus each
+/// two-letter word whole as one more token (Stack Encrypt's
+/// `MatchOptions::short_words`), `k = 6` positions per token in a 2048-bit
+/// filter.
+///
+/// The short-word tokens are what make a two-letter surname searchable: "Ng"
+/// cuts no 3-gram, so without them it would be no `TextMatch` value at all,
+/// and the query "ng" would be refused. With them, "Ng" stores one token.
+/// `@@` with the query "ng" finds the rows that contain the word "Ng", such
+/// as "Ng", "Mike Ng", and "Ng, Mike". The query does not find "Nguyen".
+///
+/// A query asks for its word token only when the whole query is one
+/// two-letter word. A query of three characters or more asks for its
+/// 3-grams alone ([`QueryBloomFilter`]). So "Mike Ng" finds "Mike Ng" and
+/// "Mike Nguyen", and "san fr" finds "San Francisco".
+///
+/// What it reveals: one more token per two-letter word, in every stored
+/// value that contains one. The token uses the same PRF in a domain of its
+/// own, the same filter, and the same containment rule. The token is unique
+/// to the word. Someone who clusters tokens across rows can tell "Ng" from
+/// "Nguyen". Without the word token, they see only the trigram `" ng"` that
+/// both share.
+///
+/// [`QueryBloomFilter`]: crate::v4::terms::QueryBloomFilter
+///
+/// Pinned here rather than taken from Stack Encrypt's default, because it is
+/// part of the stored format: a stored filter and a query filter agree only
+/// when both were built under the same values, and nothing in the payload
+/// records them. Changing any of them is a new domain or payload version,
+/// never an edit in place. Every position is below 2048, so it fits a
+/// `smallint`.
+///
+/// A filter is a set of bits, so `@@` can return rows that do not contain the
+/// query (false positives) and never misses one that does. 2048 bits keeps
+/// that rate low for text of a few hundred characters; re-check matches
+/// after decrypting where it matters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct EqlMatch;
+impl MatchConfig for EqlMatch {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            tokenizer: Tokenizer::Ngram { length: 3 },
+            downcase: true,
+            short_words: true,
+            k: 6,
+            m: 2048,
+        }
+    }
+}
+
+/// Builds EQL's bloom filter, the set bit positions as `smallint`s, from the
+/// native match terms built under [`EqlMatch`]: `TextMatch`'s stored
+/// filter. Every stored filter and every query filter is built under
+/// [`EqlMatch`], so they agree on every token a query keeps. A query can
+/// keep fewer tokens than the same text stores. A query's filter is a
+/// [`QueryBloomFilter`] ([`QueryMatchVisitor`]). Matching
+/// cipherstash-client's parameters is not a goal, because cipherstash-client
+/// never writes an `eql_v4` column.
+///
+/// Text that cuts no token (empty, separator-only, or shorter than a 3-gram
+/// with no two-letter word, such as one letter) is refused with
+/// [`TermError::EmptyTermText`]. Stack Encrypt stores such a value as the
+/// empty filter, but a `TextMatch` value with an empty filter is a row no
+/// operator can find. A query's filter is refused for such text too,
+/// because it must never be empty. A search domain's stored filter is a
+/// [`SearchBloomFilter`]. That filter can be empty
+/// ([`SearchMatchVisitor`]), since `=` and `<` find the value through its
+/// other terms.
+#[doc(hidden)]
+pub struct MatchVisitor;
+impl Visitor for MatchVisitor {
+    type Value = BloomFilter;
+    fn matching<O: MatchConfig>(self, terms: MatchTerms<O>) -> Result<Self::Value, Error> {
+        if terms.positions().is_empty() {
+            return Err(Error::Term(TermError::EmptyTermText));
+        }
+        bloom_filter(terms.positions())
+    }
+}
+
+/// EQL's `bf` for a filter's set positions, each as a `smallint`. One
+/// encoding for stored values and query twins alike.
+fn bloom_filter(positions: &[u16]) -> Result<BloomFilter, Error> {
+    positions
+        .iter()
+        .map(|&position| {
+            i16::try_from(position).map_err(|_| {
+                Error::Other(
+                    "a match position does not fit a smallint; EQL's bloom filter stores \
+                     filters of at most 32768 bits"
+                        .into(),
+                )
+            })
+        })
+        .collect::<Result<_, _>>()
+        .map(BloomFilter)
+}
+impl Transcode for BloomFilter {
+    type Visitor = MatchVisitor;
+    fn visitor() -> Self::Visitor {
+        MatchVisitor
+    }
+}
+impl<S: AsRef<str> + Zeroize> EncryptTarget<S> for BloomFilter {
+    type ContextInput = RequiredContext<CallerContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
+    where
+        S: 's,
+    {
+        // The type annotation names the match configuration. Inference fills
+        // in the other type parameters of `matching`.
+        let terms: Encryption<'s, S, MatchTerms<EqlMatch>, K, CallerContext> = target::matching();
+        terms.accepting().transcode()
+    }
+    /// The match index under [`EqlMatch`]: a type holding a `bf` answers
+    /// `op::Matches` through it.
+    fn indexes() -> Vec<IndexSpec> {
+        vec![IndexSpec::Match(EqlMatch::options())]
+    }
+}
+impl Decryptable for BloomFilter {
+    const DECRYPTABLE: bool = false;
+}
+impl<P, Ctx> DecryptField<P, Ctx> for BloomFilter {
+    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
+        None
+    }
+}
+
+/// Builds a stored search value's filter: [`MatchVisitor`]'s filter, except
+/// that text which cuts no token stores the empty filter instead of being
+/// refused (see [`SearchBloomFilter`]).
+#[doc(hidden)]
+pub struct SearchMatchVisitor;
+impl Visitor for SearchMatchVisitor {
+    type Value = SearchBloomFilter;
+    fn matching<O: MatchConfig>(self, terms: MatchTerms<O>) -> Result<Self::Value, Error> {
+        if terms.positions().is_empty() {
+            return Ok(SearchBloomFilter(BloomFilter(Vec::new())));
+        }
+        MatchVisitor.matching(terms).map(SearchBloomFilter)
+    }
+}
+impl Transcode for SearchBloomFilter {
+    type Visitor = SearchMatchVisitor;
+    fn visitor() -> Self::Visitor {
+        SearchMatchVisitor
+    }
+}
+impl<S: AsRef<str> + Zeroize> EncryptTarget<S> for SearchBloomFilter {
+    type ContextInput = RequiredContext<CallerContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
+    where
+        S: 's,
+    {
+        // The annotation names the match configuration, as for `BloomFilter`.
+        let terms: Encryption<'s, S, MatchTerms<EqlMatch>, K, CallerContext> = target::matching();
+        terms.accepting().transcode()
+    }
+}
+impl Decryptable for SearchBloomFilter {
+    const DECRYPTABLE: bool = false;
+}
+impl<P, Ctx> DecryptField<P, Ctx> for SearchBloomFilter {
+    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
+        None
+    }
+}
+
+/// Builds a query's filter from the tokens the query keeps (see
+/// [`QueryBloomFilter`]). The filter is [`MatchVisitor`]'s, so text with no
+/// token is refused.
+#[doc(hidden)]
+pub struct QueryMatchVisitor;
+impl Visitor for QueryMatchVisitor {
+    type Value = QueryBloomFilter;
+    fn matching<O: MatchConfig>(self, terms: MatchTerms<O>) -> Result<Self::Value, Error> {
+        MatchVisitor.matching(terms).map(QueryBloomFilter)
+    }
+}
+impl Transcode for QueryBloomFilter {
+    type Visitor = QueryMatchVisitor;
+    fn visitor() -> Self::Visitor {
+        QueryMatchVisitor
+    }
+}
+impl<S: AsRef<str> + Zeroize> EncryptTarget<S> for QueryBloomFilter {
+    type ContextInput = RequiredContext<CallerContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
+    where
+        S: 's,
+    {
+        // A query's tokens: its two-letter words only when the whole query is
+        // one two-letter word. The annotation names the match configuration,
+        // as for `BloomFilter`.
+        let terms: Encryption<'s, S, MatchTerms<EqlMatch>, K, CallerContext> =
+            target::matching_query();
+        terms.accepting().transcode()
+    }
+    /// The match index under [`EqlMatch`], as for [`BloomFilter`]. A query
+    /// twin with a `bf` is a query of that index.
+    fn indexes() -> Vec<IndexSpec> {
+        vec![IndexSpec::Match(EqlMatch::options())]
+    }
+}
+impl Decryptable for QueryBloomFilter {
+    const DECRYPTABLE: bool = false;
+}
+impl<P, Ctx> DecryptField<P, Ctx> for QueryBloomFilter {
+    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use stack_encrypt::{nonempty, Descriptor, Label};
 
     use super::*;
+
+    /// The stored format: a change here strands every filter already stored
+    /// under the old values, so it must arrive as a new domain or payload
+    /// version, and this test makes that a deliberate edit.
+    #[test]
+    fn the_match_configuration_is_pinned() {
+        let options = EqlMatch::options();
+        assert!(matches!(options.tokenizer, Tokenizer::Ngram { length: 3 }));
+        assert!(options.downcase);
+        assert!(
+            options.short_words,
+            "the v4 match types index each two-letter word whole"
+        );
+        assert_eq!(options.k, 6);
+        assert_eq!(options.m, 2048);
+        assert!(
+            options.m <= 1 << 15,
+            "every position must fit EQL's smallint filter"
+        );
+    }
 
     fn id(t: &str, c: &str) -> Identifier {
         Identifier {

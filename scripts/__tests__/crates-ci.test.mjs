@@ -16,7 +16,7 @@ import { readWorkflow, WORKFLOW_DIR, workflowFiles } from './lib/workflows.mjs'
  * EQL import, and `integrationSuiteCi.test.ts` for protect-ffi's before it.
  * This file is the same guard for this set, in two halves:
  *
- *   1. Every mise task the set defines — the five crate `tasks.toml` files the
+ *   1. Every mise task the set defines — the six crate `tasks.toml` files the
  *      root `mise.toml` includes, and the root tasks — is reached from a root
  *      workflow, or named as exempt with a reason. The scan is a smaller copy
  *      of `eql-suite-ci.test.mjs`'s: the same `invokes` rule for "a command,
@@ -33,6 +33,33 @@ const readRepo = (relPath) => readFileSync(join(REPO_ROOT, relPath), 'utf8')
 
 const ROOT_MISE = 'mise.toml'
 const IMPORTED_WORKFLOW_DIR = '.github/imported-workflows'
+
+describe('the test toolchain installs from a shared mise cache', () => {
+  it('runs the prebuilt CRAP executable on a compatible image before coverage', () => {
+    const workflow = readWorkflow('.github/workflows/crap-crates.yml')
+    for (const name of ['crap-stack-auth', 'crap-stack-encrypt']) {
+      const job = workflow.jobs[name]
+      expect(job['runs-on']).toMatch(/ubuntu-2404$/)
+      const probe = job.steps.findIndex((s) => s.run === 'cargo crap --version')
+      const gate = job.steps.findIndex((s) =>
+        s.run?.startsWith('mise run crap:'),
+      )
+      expect(probe).toBeGreaterThan(-1)
+      expect(gate).toBeGreaterThan(probe)
+    }
+  })
+
+  it('selects the prebuilt cargo-binstall before installing cargo tools', () => {
+    // EQL installs cargo-binstall. A restored shim with no selected version
+    // makes mise's cargo backend fail instead of falling back to cargo install.
+    const tools = readRepo('mise.test.toml')
+      .split(/^\[tools\]\s*$/m)[1]
+      .split(/^\[/m)[0]
+    expect(tools).toMatch(/^"cargo:cargo-nextest"\s*=/m)
+    expect(tools).toMatch(/^"cargo-binstall"\s*=\s*"\d+\.\d+\.\d+"\s*$/m)
+    expect(tools).not.toMatch(/^"cargo:cargo-binstall"\s*=/m)
+  })
+})
 
 // ---------------------------------------------------------------------------
 // The task graph
@@ -199,6 +226,10 @@ function reachableFrom(workflows) {
  * is nothing for CI to do.
  */
 const CI_EXEMPT_TASKS = new Map([
+  [
+    'test:conformance',
+    'Local aggregate: CI runs Rust profiles in tests-crates, Go profiles in go:test, and the fresh artifact consumer in tests-golang; rerunning the aggregate would duplicate both suites.',
+  ],
   ...[
     'stack-auth',
     'stack-encrypt',
@@ -228,11 +259,12 @@ const CI_EXEMPT_TASKS = new Map([
 ])
 
 describe('the scan sees every task mise sees', () => {
-  it('reads the five crate task files from the root mise.toml', () => {
+  it('reads the six crate task files from the root mise.toml', () => {
     expect(INCLUDES.sort()).toEqual(
       [
         'packages/stack-auth/tasks.toml',
         'packages/stack-encrypt/tasks.toml',
+        'packages/stack-encrypt-jsonpath/tasks.toml',
         'packages/stack-guest-abi/tasks.toml',
         'packages/stack-kms/tasks.toml',
         'packages/stack-profile/tasks.toml',
@@ -282,6 +314,7 @@ describe('the scan sees every task mise sees', () => {
       [
         'doc:stack-auth',
         'doc:stack-encrypt',
+        'doc:stack-encrypt-jsonpath',
         'doc:stack-guest-abi',
         'doc:stack-kms',
         'doc:stack-profile',
@@ -536,6 +569,46 @@ describe('the Go jobs test the guest the Linux job built and checked', () => {
         firstGo,
       )
     }
+  })
+})
+
+/**
+ * `fuzz.yml`'s Go campaign runs one job per fuzz target, so each target has
+ * the whole job timeout to itself. `mise run go:fuzz` finds the targets on
+ * its own, but the matrix is written down: a new `Fuzz*` function would be
+ * replayed by `go test` and never fuzzed. This holds the two together.
+ */
+describe('the Go fuzz campaign fuzzes every Go fuzz target', () => {
+  const wf = readWorkflow(`${WORKFLOW_DIR}/fuzz.yml`)
+  const job = wf?.jobs?.['go-fuzz-campaign']
+  const rows = job?.strategy?.matrix?.include ?? []
+  const declared = execFileSync(
+    'git',
+    ['ls-files', '--', ':(glob)languages/golang/**/*_test.go'],
+    { cwd: REPO_ROOT, encoding: 'utf8' },
+  )
+    .split('\n')
+    .filter(Boolean)
+    .flatMap((file) => [
+      ...readRepo(file).matchAll(/^func (Fuzz\w+)\(\w+ \*testing\.F\)/gm),
+    ])
+    .map(([, name]) => name)
+    .sort()
+
+  it('finds the Go fuzz targets', () => {
+    expect(declared).toContain('FuzzGuestExportPairs')
+  })
+
+  it('has one matrix row for each target, and none for a target that has gone', () => {
+    expect(rows.map((row) => row.target).sort()).toEqual(declared)
+  })
+
+  it('runs go:fuzz on the target the matrix row names', () => {
+    const fuzz = jobSteps(job).find((step) =>
+      invokes(String(step?.run ?? ''), 'go:fuzz'),
+    )
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Actions expression
+    expect(fuzz?.env?.GO_FUZZ).toBe('${{ matrix.target }}')
   })
 })
 

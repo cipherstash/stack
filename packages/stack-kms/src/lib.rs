@@ -128,17 +128,31 @@ pub use errors::{
 /// `stack-kms` and `stack-encrypt`.
 pub use stack_auth::{diagnostic, ErrorPayload};
 
+/// The type of a credential that comes with a call
+/// ([`CredentialKeySource`]): a secret string, wiped when it is dropped and
+/// hidden from `Debug`. Re-exported so that a caller needs no direct
+/// dependency on `stack-auth` to pass one.
+pub use stack_auth::SecretToken;
+
+/// The two kinds of key source ([`KeySourceKind`]): one with an identity of
+/// its own, and one that takes a credential with each call. They are
+/// stack-auth's types, for the two kinds of strategy, re-exported so that a
+/// key source needs no direct dependency on `stack-auth` to state its kind.
+pub use stack_auth::{CredentialPerCall, OwnIdentity};
+
 // Key material
 pub use key::{ClientKey, DataKey, DataKeyWithTag, IndexKey, V1KeySet};
 
 // Key source abstractions (production = `StackKms`; tests = `FakeDataKeySource`)
 #[cfg(feature = "test-support")]
 pub use key_source::DeterministicSource;
+pub use key_source::{CredentialKeySource, DataKeySource, IndexKeySource, KeySourceKind};
 #[cfg(feature = "test-support")]
-pub use key_source::FakeDataKeySource;
-pub use key_source::{DataKeySource, IndexKeySource};
+pub use key_source::{FakeCredentialKeySource, FakeDataKeySource};
 
 // Key providers
+#[cfg(all(feature = "profile", not(target_arch = "wasm32")))]
+pub use key_provider::ProfileKeyProvider;
 pub use key_provider::{
     EnvKeyProvider, FallbackKeyProvider, KeyProvider, KeyProviderError, StaticKeyProvider,
 };
@@ -154,8 +168,8 @@ pub use payload::{GenerateKeyPayload, RetrieveKeyPayload};
 // Commonly needed re-exports from the protocol / crypto layers
 pub use recipher::key::{GenRandom, Iv};
 pub use zerokms_protocol::{
-    Context, DecryptionPolicy, IdentifiedBy, KeyId, Keyset, UnverifiedContext, ViturKeyMaterial,
-    MAX_DESCRIPTOR_LEN,
+    Context, DecryptionPolicy, IdentifiedBy, KeyId, Keyset, UnverifiedContext,
+    UnverifiedContextValue, ViturKeyMaterial, MAX_DESCRIPTOR_LEN,
 };
 
 /// Process-wide environment guard for tests that set or clear env vars.

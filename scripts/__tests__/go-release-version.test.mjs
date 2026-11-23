@@ -6,6 +6,7 @@ import {
   allowedMajors,
   goReleaseVersionErrors,
   modulePathOf,
+  vitamincPseudoVersions,
 } from '../go-release-version.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow } from './lib/workflows.mjs'
@@ -19,8 +20,26 @@ const MODULE = 'github.com/cipherstash/stack/languages/golang'
 const MAIN = 'refs/heads/main'
 const BRANCH = 'refs/heads/ci/golang-release'
 
-const errorsFor = (version, ref = MAIN, modulePath = MODULE) =>
-  goReleaseVersionErrors(version, { modulePath, ref })
+const errorsFor = (version, ref = MAIN, modulePath = MODULE, goMod = '') =>
+  goReleaseVersionErrors(version, { modulePath, ref, goMod })
+
+const VCFFI = 'github.com/cipherstash/vitaminc/bindings/go/vcffi'
+const VCVALUE = 'github.com/cipherstash/vitaminc/bindings/go/vcvalue'
+const PSEUDO = 'v0.0.0-20261026030854-d7de535c4288'
+
+// A go.mod whose vitaminc modules are at `version`, with the TEMPORARY
+// comment the real one carries when that is a pseudo-version.
+const goModPinning = (version) => `module ${MODULE}
+
+go 1.26.10
+
+// TEMPORARY: vcffi and vcvalue at vitaminc d7de535c4 (v0.0.0-20261026030854-d7de535c4288).
+require (
+	${VCFFI} ${version}
+	${VCVALUE} ${version}
+	github.com/tetratelabs/wazero v1.12.0
+)
+`
 
 describe('goReleaseVersionErrors', () => {
   it.each([
@@ -80,6 +99,62 @@ describe('goReleaseVersionErrors', () => {
   })
 })
 
+describe('a TEMPORARY vitaminc pin', () => {
+  const temporary = goModPinning(PSEUDO)
+  const released = goModPinning('v0.9.0')
+
+  it('is every vitaminc module go.mod names at a pseudo-version', () => {
+    expect(vitamincPseudoVersions(temporary)).toEqual([
+      `${VCFFI} ${PSEUDO}`,
+      `${VCVALUE} ${PSEUDO}`,
+    ])
+    // The three pseudo-version forms, and a replace directive, count too.
+    expect(
+      vitamincPseudoVersions(
+        `require ${VCFFI} v0.8.1-0.20261026030854-d7de535c4288\n` +
+          `replace ${VCVALUE} v0.9.0 => ${VCVALUE} v0.9.1-alpha.1.0.20261026030854-d7de535c4288\n`,
+      ),
+    ).toEqual([
+      `${VCFFI} v0.8.1-0.20261026030854-d7de535c4288`,
+      `${VCVALUE} v0.9.1-alpha.1.0.20261026030854-d7de535c4288`,
+    ])
+  })
+
+  it('is not a tag, a pseudo-version quoted in a comment, or another module', () => {
+    expect(vitamincPseudoVersions(released)).toEqual([])
+    expect(
+      vitamincPseudoVersions(
+        `// ${VCFFI} ${PSEUDO}\nrequire github.com/tetratelabs/wazero ${PSEUDO}\n`,
+      ),
+    ).toEqual([])
+    expect(vitamincPseudoVersions('')).toEqual([])
+  })
+
+  it('refuses a final version, naming the pins', () => {
+    const errors = errorsFor('0.1.0', MAIN, MODULE, temporary)
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('pseudo-version')
+    expect(errors[0]).toContain(`${VCFFI} ${PSEUDO}`)
+    expect(errors[0]).toContain(`${VCVALUE} ${PSEUDO}`)
+    expect(errors[0]).toContain('0.1.0-alpha.1')
+  })
+
+  it('lets a pre-release through, from main or a branch', () => {
+    expect(errorsFor('0.1.0-alpha.1', MAIN, MODULE, temporary)).toEqual([])
+    expect(errorsFor('0.1.0-rc.1', BRANCH, MODULE, temporary)).toEqual([])
+  })
+
+  it('does not hold a final version once the pin is a tag', () => {
+    expect(errorsFor('0.1.0', MAIN, MODULE, released)).toEqual([])
+  })
+
+  it('is reported alongside the other reasons, not instead of them', () => {
+    const errors = errorsFor('0.1.0', BRANCH, MODULE, temporary).join('\n')
+    expect(errors).toContain('released from main only')
+    expect(errors).toContain('pseudo-version')
+  })
+})
+
 describe('allowedMajors', () => {
   it('reads the /vN suffix and nothing else', () => {
     expect(allowedMajors(MODULE)).toEqual([0, 1])
@@ -123,6 +198,21 @@ describe('the script as the workflow runs it', () => {
     const { status, out } = run('2.0.0', MAIN)
     expect(status).toBe(1)
     expect(out).toContain('::error::')
+  })
+
+  it("reads the tree's go.mod, so a final version is refused while it carries a TEMPORARY vitaminc pin", () => {
+    const goMod = readFileSync(
+      join(REPO_ROOT, 'languages/golang/go.mod'),
+      'utf8',
+    )
+    const pins = vitamincPseudoVersions(goMod)
+    const { status, out } = run('0.1.0', MAIN)
+    if (pins.length > 0) {
+      expect(status).toBe(1)
+      for (const pin of pins) expect(out).toContain(pin)
+    } else {
+      expect(status).toBe(0)
+    }
   })
 
   it('is what release-golang.yml checks the version with, before any build', () => {

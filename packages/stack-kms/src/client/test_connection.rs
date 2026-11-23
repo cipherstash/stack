@@ -67,6 +67,7 @@ impl TestConnectionBuilder {
         TestConnection {
             handlers: Mutex::new(self.handlers),
             effects: Mutex::new(self.effects),
+            sent: Mutex::new(Vec::new()),
         }
     }
 }
@@ -80,6 +81,16 @@ impl Default for TestConnectionBuilder {
 pub(crate) struct TestConnection {
     handlers: Mutex<RequestHandlers>,
     effects: Mutex<EffectHandlers>,
+    /// The endpoint and the access token of every request sent, in order.
+    sent: Mutex<Vec<(String, String)>>,
+}
+
+impl TestConnection {
+    /// The endpoint and the access token of every request sent so far, in
+    /// the order they were sent.
+    pub(crate) async fn sent(&self) -> Vec<(String, String)> {
+        self.sent.lock().await.clone()
+    }
 }
 
 impl ZeroKMSConnectionInit for TestConnection {
@@ -98,9 +109,14 @@ impl ZeroKMSConnection for TestConnection {
     async fn send<Request: ViturRequest>(
         &self,
         request: Request,
-        _access_token: &str,
+        access_token: &str,
     ) -> Result<Request::Response, ViturRequestError> {
         let endpoint = Request::ENDPOINT;
+
+        self.sent
+            .lock()
+            .await
+            .push((endpoint.to_string(), access_token.to_string()));
 
         let mut effect_guard = self.effects.lock().await;
 

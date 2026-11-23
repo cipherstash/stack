@@ -1,0 +1,433 @@
+-- ONLY EQL VERSION: 4
+-- REQUIRE: src/v3/schema.sql
+
+--! @file v3/json_tree/types.sql
+--! @brief Domain types for the {{prefix}} JSON tree surface: an encrypted JSON
+--!        document stored as one entry per node, with node-local ciphertexts,
+--!        a token chain and exact containment.
+--!
+--! This is a new domain family beside `public.{{prefix}}_json`, for documents
+--! Stack Encrypt's JSON index writes. It shares no wire shape and no SQL with
+--! the SteVec surface. Five jsonb-backed domains (none over another domain,
+--! so the native-jsonb firewall in blockers.sql attaches):
+--!   - public.{{prefix}}_json_search — storage: an EQL envelope `{v, i, h, sv, q}`.
+--!   - public.{{prefix}}_json_entry  — one `sv` element (returned by `->`
+--!                                    and the subtree read).
+--!   - {{prefix}}.query_json         — a containment needle: the element-nested
+--!                                    projection of the needle's selectors.
+--!   - {{prefix}}.query_json_leaf    — an ordering operand at a path: a
+--!                                    selector and a leaf ordering term.
+--!   - {{prefix}}.query_json_elements — an element-scoped predicate: per
+--!                                    member of an array's elements, the
+--!                                    member's read tokens and its bounds.
+--! A sixth, {{prefix}}.query_json_predicate, a boolean tree whose leaves
+--! are these operands, is in predicate.sql beside the function that reads
+--! it.
+--!
+--! The design is `docs/plans/2026-10-17-json-tree-index.md`
+--! at the repository root. The document's per-entry fields:
+--!   `s`  path selector (16 bytes, base64): every element of an array shares its
+--!        parent's, so a path reads `$.a[*].x`.
+--!   `c`  the node's own ciphertext (RFC 1924 base85, which no SQL function
+--!        decodes): its label, its kind and, for a scalar, its value. The
+--!        root's is the whole document when the root is sealed (the default).
+--!   `x`  the self tag, the first eight bytes of `H("x" ‖ iv ‖ t)` (base64,
+--!        twelve characters), `t` being the node's own token: on every
+--!        entry, the root and the chain's heads included. Every token derives
+--!        from its node's path alone (a member's as `H("t" ‖ t(parent) ‖ s)`,
+--!        an element's as `H("t" ‖ t(parent) ‖ s ‖ LE32(i))`), so the server
+--!        finds the node a client-derived token names by its self tag.
+--!   `p`  the parent tag, the first eight bytes of
+--!        `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))` (base64), where `o` is the
+--!        node's ordinal under its parent: present below the chain's heads.
+--!        The ordinals under a node are dense from 0, so a read holding
+--!        `t(parent)` probes them in turn until the first miss, and derives
+--!        each hit's own token by the member rule or the element rule,
+--!        whichever the hit's self tag matches. Nothing stores a token or an
+--!        ordinal.
+--!   `op` the leaf ordering term (CLLW OPE, base64) on number and string leaves.
+--! The header `h` (base64) carries the document's data key material once; the
+--! SQL reads only the sealed-root flag at byte offset 1 and the ZeroKMS `iv`
+--! at byte offset 22 of it, the per-document salt of the self and parent
+--! tags, and
+--! otherwise carries it opaquely. `q` is the document's containment
+--! projection, `{"sv": [{s, vs}, …], "el": [group, …]}`: one `{s, vs}` pair
+--! per node, `vs` being the value selector of the node's kind and, for a
+--! scalar, its value, bound to `s`, nested by array element. The client
+--! writes it beside `sv` and it is the only place the value selectors
+--! live: the server compares it with a needle by native `jsonb @>`.
+--! The CHECK validates its shape, not that it agrees with `sv`: containment
+--! answers from `q` as written, so a row written by anything but Stack
+--! Encrypt's JSON index can answer `@>` differently from `->`, the reads
+--! and decryption, which answer from `sv`.
+
+--! @brief Validate one JSON tree entry.
+--! @internal
+--! @param val jsonb Candidate entry.
+--! @return boolean True when `val` is an object with string `s`, `c` and
+--!         `x`, optional string `p` and `op`, and the metadata the extractors
+--!         graft: string `h`, numeric `j` (the entry's ordinal in the
+--!         document) and `d` (its depth below the node a read's token named), and the
+--!         envelope's `v` and `i`. No other key.
+CREATE OR REPLACE FUNCTION public.{{prefix}}_is_valid_json_tree_entry_payload(val jsonb)
+  RETURNS boolean
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+  SELECT COALESCE(
+    jsonb_typeof(val) = 'object'
+     AND jsonb_typeof(val -> 's') = 'string'
+     AND jsonb_typeof(val -> 'c') = 'string'
+     AND jsonb_typeof(val -> 'x') = 'string'
+     AND (NOT (val ? 'p') OR jsonb_typeof(val -> 'p') = 'string')
+     AND (NOT (val ? 'op') OR jsonb_typeof(val -> 'op') = 'string')
+     AND (NOT (val ? 'h') OR jsonb_typeof(val -> 'h') = 'string')
+     AND (NOT (val ? 'j') OR jsonb_typeof(val -> 'j') = 'number')
+     AND (NOT (val ? 'd') OR jsonb_typeof(val -> 'd') = 'number')
+     AND val - ARRAY['s', 'c', 'x', 'p', 'op', 'h', 'j', 'd', 'v', 'i']::text[] = '{}'::jsonb,
+    false
+  )
+$$;
+
+--! @brief Validate one group of a containment needle, recursively.
+--! @internal
+--!
+--! A group is `{"sv": [{"s": "…", "vs": "…"}, …], "el": [group, …]}`: the
+--! selector pairs that sit directly in it, and one nested group per array
+--! element that is a container. The same shape a stored document carries
+--! in `q`, its own projection, so native `jsonb @>` over the two is exact
+--! containment. Validates both: a needle at its cast, a document's `q` at
+--! its write.
+--!
+--! @param val jsonb Candidate group.
+--! @return boolean True when `val` is a group.
+--! @note plpgsql: the recursion and the subqueries over the arrays cannot be
+--!       written as a CHECK expression, and a plpgsql body caches its plan
+--!       across the per-needle casts on the query hot path.
+CREATE OR REPLACE FUNCTION {{prefix}}_internal.json_tree_is_valid_query_group(val jsonb)
+  RETURNS boolean
+  LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+BEGIN
+  RETURN COALESCE(
+    jsonb_typeof(val) = 'object'
+     AND jsonb_typeof(val -> 'sv') = 'array'
+     AND jsonb_typeof(val -> 'el') = 'array'
+     AND val - ARRAY['sv', 'el']::text[] = '{}'::jsonb
+     AND NOT EXISTS (
+       SELECT 1 FROM jsonb_array_elements(val -> 'sv') AS pair
+       WHERE NOT COALESCE(
+         jsonb_typeof(pair) = 'object'
+         AND jsonb_typeof(pair -> 's') = 'string'
+         AND jsonb_typeof(pair -> 'vs') = 'string'
+         AND pair - ARRAY['s', 'vs']::text[] = '{}'::jsonb,
+         false)
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM jsonb_array_elements(val -> 'el') AS grp
+       WHERE NOT {{prefix}}_internal.json_tree_is_valid_query_group(grp)
+     ),
+    false
+  );
+END;
+$$;
+
+--! @brief Validate a JSON tree document.
+--! @internal
+--! @param val jsonb Candidate document.
+--! @return boolean True when `val` is an envelope with `v = {{eql_version}}`, `i`, a
+--!         string header `h`, a non-empty `sv` array of valid entries and
+--!         the document's containment projection `q`, a group, and no
+--!         other key. A document always has a root, so `sv` is never empty.
+CREATE OR REPLACE FUNCTION public.{{prefix}}_is_valid_json_tree_document_payload(val jsonb)
+  RETURNS boolean
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+  SELECT COALESCE(
+    jsonb_typeof(val) = 'object'
+     AND val ? 'v'
+     AND val ->> 'v' = '{{eql_version}}'
+     AND val ? 'i'
+     AND jsonb_typeof(val -> 'h') = 'string'
+     AND jsonb_typeof(val -> 'sv') = 'array'
+     AND jsonb_array_length(val -> 'sv') >= 1
+     AND val - ARRAY['v', 'i', 'h', 'sv', 'q']::text[] = '{}'::jsonb
+     AND NOT EXISTS (
+       SELECT 1
+       FROM jsonb_array_elements(val -> 'sv') AS elem
+       WHERE NOT public.{{prefix}}_is_valid_json_tree_entry_payload(elem)
+     )
+     AND {{prefix}}_internal.json_tree_is_valid_query_group(val -> 'q'),
+    false
+  )
+$$;
+
+--! @brief Validate a containment needle.
+--! @internal
+--! @param val jsonb Candidate needle.
+--! @return boolean True when `val` is a group (`sv`, `el`) with an optional
+--!         `alt` group beside it: the alternative projection a needle whose
+--!         root is a scalar carries, so that a stored root array holding the
+--!         scalar matches as `jsonb @>` says it does.
+CREATE OR REPLACE FUNCTION public.{{prefix}}_is_valid_json_tree_query_payload(val jsonb)
+  RETURNS boolean
+  LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+BEGIN
+  RETURN COALESCE(
+    jsonb_typeof(val) = 'object'
+     AND {{prefix}}_internal.json_tree_is_valid_query_group(val - 'alt')
+     AND (NOT (val ? 'alt') OR {{prefix}}_internal.json_tree_is_valid_query_group(val -> 'alt')),
+    false
+  );
+END;
+$$;
+
+--! @brief Storage domain for an encrypted JSON tree column.
+--!
+--! CHECK: the EQL envelope (`v = {{eql_version}}`, `i`, `h`) around a non-empty `sv`
+--! array of valid entries and the projection `q`. The firewall in
+--! blockers.sql attaches to this domain to stop native jsonb operators from
+--! reaching a column value.
+--!
+--! @note Constructing from inline JSON uses the standard DOMAIN cast:
+--!       `'{"v":{{eql_version}},"i":{…},"h":"…","sv":[…],"q":{…}}'::public.{{prefix}}_json_search`.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type
+    WHERE typname = '{{prefix}}_json_search' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE DOMAIN public.{{prefix}}_json_search AS jsonb
+      CHECK (
+        public.{{prefix}}_is_valid_json_tree_document_payload(VALUE)
+      );
+  END IF;
+
+  COMMENT ON DOMAIN public.{{prefix}}_json_search IS 'EQL encrypted JSON tree document (containment, token chain)';
+END
+$$;
+
+--! @brief Domain type for one entry of a JSON tree document.
+--!
+--! What `->`, the path functions and the subtree read return: the entry with
+--! the document's `h`, `v` and `i` and its own ordinal `j` grafted on, so it
+--! opens on its own. A read also grafts `d`, the entry's depth below the
+--! node its token named.
+--!
+--! @note The CHECK calls the validator rather than inlining it: an entry is
+--!       constructed by the extractors, not cast on the query hot path.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type
+    WHERE typname = '{{prefix}}_json_entry' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE DOMAIN public.{{prefix}}_json_entry AS jsonb
+      CHECK (
+        VALUE IS NULL OR public.{{prefix}}_is_valid_json_tree_entry_payload(VALUE)
+      );
+  END IF;
+
+  COMMENT ON DOMAIN public.{{prefix}}_json_entry IS 'EQL encrypted JSON tree entry (one node)';
+END
+$$;
+
+--! @brief Domain type for a JSON tree containment needle.
+--!
+--! The element-nested projection of the needle's selectors, as Stack
+--! Encrypt's `JsonQuery` serializes it: `{"sv": [{"s", "vs"}, …], "el":
+--! [group, …], "alt": group?}`: the shape a stored document's `q` has, with
+--! the optional `alt` beside it. Typing the needle this way stops raw jsonb
+--! from casting and matching every row via bare `jsonb @>`.
+--!
+--! @note Construct from inline JSON via the DOMAIN cast:
+--!       `'{"sv":[…],"el":[]}'::{{prefix}}.query_json`.
+--! @see {{prefix}}.json_tree_query
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type
+    WHERE typname = 'query_json' AND typnamespace = '{{prefix}}'::regnamespace
+  ) THEN
+    CREATE DOMAIN {{prefix}}.query_json AS jsonb
+      CHECK (
+        public.{{prefix}}_is_valid_json_tree_query_payload(VALUE)
+      );
+  END IF;
+
+  COMMENT ON DOMAIN {{prefix}}.query_json IS 'EQL JSON tree query operand (containment)';
+END
+$$;
+
+--! @brief Validate an ordering operand at a JSON path.
+--! @internal
+--! @param val jsonb Candidate operand.
+--! @return boolean True when `val` is an object with string `s` and `op`
+--!         and no other key: the {{prefix}}.query_json_leaf CHECK, and each
+--!         bound of a {{prefix}}.query_json_elements member.
+CREATE OR REPLACE FUNCTION {{prefix}}_internal.json_tree_is_valid_leaf_query_payload(val jsonb)
+  RETURNS boolean
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+  SELECT COALESCE(
+    jsonb_typeof(val) = 'object'
+     AND jsonb_typeof(val -> 's') = 'string'
+     AND jsonb_typeof(val -> 'op') = 'string'
+     AND val - ARRAY['s', 'op']::text[] = '{}'::jsonb,
+    false
+  )
+$$;
+
+--! @brief Domain type for an ordering operand at a JSON path.
+--!
+--! `{"s": "…", "op": "…"}`: the path's selector, which `->` takes, and the
+--! leaf ordering term the stored leaf's `op` compares against, as Stack
+--! Encrypt's `JsonLeafQuery` serializes it. One operand serves `<`, `<=`,
+--! `>` and `>=` on an extracted entry; a range at a path is two predicates.
+--!
+--! @note Construct from inline JSON via the DOMAIN cast:
+--!       `'{"s":"…","op":"…"}'::{{prefix}}.query_json_leaf`.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type
+    WHERE typname = 'query_json_leaf' AND typnamespace = '{{prefix}}'::regnamespace
+  ) THEN
+    CREATE DOMAIN {{prefix}}.query_json_leaf AS jsonb
+      CHECK (
+        VALUE IS NULL
+        OR {{prefix}}_internal.json_tree_is_valid_leaf_query_payload(VALUE)
+      );
+  END IF;
+
+  COMMENT ON DOMAIN {{prefix}}.query_json_leaf IS 'EQL JSON tree query operand (ordering at a path)';
+END
+$$;
+
+--! @brief Validate the bounds of an ordering at one path.
+--! @internal
+--!
+--! Bounds are `{"gt" | "gte": leaf, "lt" | "lte": leaf}`: one or two
+--! ordering operands of the shape `{{prefix}}.query_json_leaf` holds
+--! (`{"s", "op"}`). At most one lower bound (`gt` or `gte`) and at most one
+--! upper (`lt` or `lte`), at least one in all, and every bound at the one
+--! selector: the path's. A member of an element-scoped predicate is bounds
+--! with its tokens beside them, and the `cmp` leaf of a
+--! `{{prefix}}.query_json_predicate` is bounds alone.
+--!
+--! @param val jsonb Candidate bounds.
+--! @return boolean True when `val` is bounds.
+--! @note plpgsql, for the subqueries over the bounds, which a CHECK
+--!       expression cannot hold.
+CREATE OR REPLACE FUNCTION {{prefix}}_internal.json_tree_is_valid_bounds(val jsonb)
+  RETURNS boolean
+  LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+BEGIN
+  RETURN COALESCE(
+    jsonb_typeof(val) = 'object'
+     AND val - ARRAY['gt', 'gte', 'lt', 'lte']::text[] = '{}'::jsonb
+     AND val ?| ARRAY['gt', 'gte', 'lt', 'lte']::text[]
+     AND NOT (val ? 'gt' AND val ? 'gte')
+     AND NOT (val ? 'lt' AND val ? 'lte')
+     -- Each bound by the `{{prefix}}.query_json_leaf` CHECK's own rule.
+     AND NOT EXISTS (
+       SELECT 1 FROM jsonb_each(val) AS bound
+       WHERE NOT {{prefix}}_internal.json_tree_is_valid_leaf_query_payload(bound.value)
+     )
+     AND (SELECT count(DISTINCT bound.value ->> 's') FROM jsonb_each(val) AS bound) = 1,
+    false
+  );
+END;
+$$;
+
+--! @brief Validate one member of an element-scoped predicate.
+--! @internal
+--!
+--! A member is `{"t": ["…", …], "gt" | "gte": leaf, "lt" | "lte": leaf}`:
+--! the tokens of a read of the member's path, one per element below the
+--! wildcard bound in element order and then the probe, and the bounds of
+--! the member's path beside them, as
+--! {{prefix}}_internal.json_tree_is_valid_bounds validates them.
+--!
+--! @param val jsonb Candidate member.
+--! @return boolean True when `val` is a member.
+--! @note plpgsql, for the subquery over the tokens, which a CHECK
+--!       expression cannot hold.
+CREATE OR REPLACE FUNCTION {{prefix}}_internal.json_tree_is_valid_elements_member(val jsonb)
+  RETURNS boolean
+  LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+BEGIN
+  RETURN COALESCE(
+    jsonb_typeof(val) = 'object'
+     AND jsonb_typeof(val -> 't') = 'array'
+     AND jsonb_array_length(val -> 't') >= 1
+     AND NOT EXISTS (
+       SELECT 1 FROM jsonb_array_elements(val -> 't') AS token
+       WHERE jsonb_typeof(token) <> 'string'
+     )
+     AND {{prefix}}_internal.json_tree_is_valid_bounds(val - 't'),
+    false
+  );
+END;
+$$;
+
+--! @brief Validate an element-scoped predicate.
+--! @internal
+--! @param val jsonb Candidate predicate.
+--! @return boolean True when `val` is `{"m": [member, …]}`, at least one
+--!         member, each valid, every member's tokens as many as every
+--!         other's: one wildcard expansion, at one bound, under each.
+--! @see {{prefix}}_internal.json_tree_is_valid_elements_member
+CREATE OR REPLACE FUNCTION {{prefix}}_internal.json_tree_is_valid_elements_payload(val jsonb)
+  RETURNS boolean
+  LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+BEGIN
+  RETURN COALESCE(
+    jsonb_typeof(val) = 'object'
+     AND val - 'm' = '{}'::jsonb
+     AND jsonb_typeof(val -> 'm') = 'array'
+     AND jsonb_array_length(val -> 'm') >= 1
+     AND NOT EXISTS (
+       SELECT 1 FROM jsonb_array_elements(val -> 'm') AS member
+       WHERE NOT {{prefix}}_internal.json_tree_is_valid_elements_member(member)
+     )
+     AND (SELECT count(DISTINCT jsonb_array_length(member -> 't'))
+          FROM jsonb_array_elements(val -> 'm') AS member) = 1,
+    false
+  );
+END;
+$$;
+
+--! @brief Domain type for an element-scoped predicate over an array.
+--!
+--! `{"m": [{"t": ["…", …], "gte": {"s", "op"}, "lte": {"s", "op"}}, …]}`:
+--! one member per field of an element the predicate tests, each the
+--! tokens of a subtree read of that field's path through the array's
+--! wildcard and the field's bounds, as Stack Encrypt's `element_match`
+--! operator derives them. {{prefix}}.json_tree_element_match reads it: some
+--! one element of the array satisfies every member's bounds. A member
+--! carries `gt` or `gte` for a lower bound and `lt` or `lte` for an upper
+--! one, each the ordering operand {{prefix}}.query_json_leaf holds; an
+--! equality is `gte` and `lte` at one value.
+--!
+--! @note Construct from inline JSON via the DOMAIN cast:
+--!       `'{"m":[{"t":["…"],"gt":{"s":"…","op":"…"}}]}'::{{prefix}}.query_json_elements`.
+--! @see {{prefix}}.json_tree_element_match
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type
+    WHERE typname = 'query_json_elements' AND typnamespace = '{{prefix}}'::regnamespace
+  ) THEN
+    CREATE DOMAIN {{prefix}}.query_json_elements AS jsonb
+      CHECK (
+        {{prefix}}_internal.json_tree_is_valid_elements_payload(VALUE)
+      );
+  END IF;
+
+  COMMENT ON DOMAIN {{prefix}}.query_json_elements IS 'EQL JSON tree query operand (element-scoped predicate)';
+END
+$$;

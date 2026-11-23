@@ -1,23 +1,24 @@
-//! A field-level `context = ".."` is refused on every derive form. A plan has
-//! exactly one context source, and every output sits under it: all outputs of
-//! a `plaintext = T` record share the caller's context, and every field of a
-//! `struct = ..` derive sits under the record's (`identity` keys it under
-//! another segment). One value written under two contexts, a dual write, is a
-//! fields plan that picks the same source twice, not a derive.
-use stack_encrypt::{EncryptFrom, StackCipherText};
+//! A field-level `context = ".."` is refused on every record form. Every
+//! output sits under one context source: all outputs of a `plaintext = T`
+//! record share the caller's context, and every field of a `struct = ..`
+//! record sits under the record's (`identity` keys it under another
+//! segment). To write one value under two contexts, encrypt it twice.
+use stack_encrypt::target::EncryptTarget;
+use stack_encrypt::StackCipherText;
 
+#[derive(zeroize::Zeroize)]
 struct User {
     name: String,
 }
 
-#[derive(EncryptFrom)]
-#[stash(struct = User, context = "users")]
+#[derive(EncryptTarget)]
+#[stash(struct = User, scope = "users")]
 struct EncryptedUser {
     #[stash(context = "nickname")]
     name: StackCipherText,
 }
 
-#[derive(EncryptFrom)]
+#[derive(EncryptTarget)]
 #[stash(plaintext = String)]
 struct Doubled {
     c: StackCipherText,
@@ -25,7 +26,7 @@ struct Doubled {
     shadow: StackCipherText,
 }
 
-#[derive(EncryptFrom)]
+#[derive(EncryptTarget)]
 struct Generic {
     #[stash(context = "legacy_age")]
     c: StackCipherText,

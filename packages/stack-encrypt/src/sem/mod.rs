@@ -3,7 +3,7 @@
 //! Index terms are stored alongside a
 //! [`StackCipherText`](crate::StackCipherText) so encrypted values can be
 //! queried without decryption. Each term type implements
-//! [`EncryptFrom`](crate::EncryptFrom), so the usual entry point is
+//! [`EncryptTarget`](crate::EncryptTarget), so the usual entry point is
 //! target-directed:
 //!
 //! ```text
@@ -18,10 +18,11 @@
 //!   construction.
 //! * [`OreTerm`] / [`OpeTerm`] — CLLW order-revealing / order-preserving
 //!   ciphertexts produced *inside the PRF visitor* from a per-context key
-//!   derived through the PRF; range queries.
+//!   derived through the PRF; range queries. A `Between` query sends both
+//!   bounds' terms as one [`RangeQuery`].
 //!
 //! Every term type here is built on exactly one thing the cipher exposes
-//! publicly — its PRF ([`KeysetCipher::prf`], keyed by the index key of the
+//! publicly — its PRF ([`KeysetCipher::with_prf`], keyed by the index key of the
 //! keyset the handle is bound to). These core implementations own term
 //! generation; downstream storage types can wrap the supported operations or
 //! consume their native output with a visitor (see [`target`](crate::target)).
@@ -52,7 +53,7 @@
 //! [`HmacSha256Prf`] — keyed by the
 //! deterministic per-keyset [`IndexKey`](crate::kms::IndexKey) from
 //! [`kms::IndexKeySource`](crate::kms::IndexKeySource), loaded when the keyset is selected — so
-//! every derivation completes with no I/O and an [`EncryptFrom`](crate::EncryptFrom) term
+//! every derivation completes with no I/O and an [`EncryptTarget`](crate::EncryptTarget) term
 //! carries **no requests** in its [`Pending`]. That is the backend's
 //! property, not the API's: the term is a `Pending` either way. The next
 //! ZeroKMS release adds 2-party PRF generation; under
@@ -72,6 +73,34 @@
 //! Every term kind derives under its own PAE-encoded domain, bound to the
 //! caller's context, so the same value indexed as an equality term, a match
 //! token, or an ORE key can never produce colliding PRF outputs.
+//!
+//! # What a match index reveals
+//!
+//! A stored [`MatchTerms`] is a set of Bloom-filter bit positions, `k` per
+//! token, under a key the server does not hold. Someone holding the column
+//! sees, per row, which bits are set and how many: the fill tracks the number
+//! of distinct tokens, and so the text's approximate length. Tokens are
+//! deterministic per column, so the same token sets the same bits in every
+//! row, and bits that recur together across rows can be clustered into
+//! tokens and their frequency counted; a query shows which bits it asks for
+//! and which rows hold them. A value that cuts no token stores the empty
+//! filter, which shows that it is empty, separator-only or too short for
+//! any token.
+//!
+//! With [`MatchOptions::short_words`] on, a stored value's filter gains one
+//! token for each short word. A short word is shorter than one n-gram, and
+//! at least 2 characters long. The word token is the whole word, derived
+//! under the same PRF in a domain of its own. The token sets the same `k`
+//! positions in the same filter, and matches by the same containment rule.
+//!
+//! The word token is unique to the word. Someone who clusters tokens across
+//! rows can tell the rows that contain the word "Ng" from the rows that
+//! contain "Nguyen". Without the option, they see only the trigram `" ng"`
+//! that both share. No bigram of a longer word is indexed.
+//!
+//! A query sends its word tokens only when its whole text is shorter than
+//! one n-gram, such as "Ng" under trigrams. A longer query, such as "Mike
+//! Ng", sends its n-grams alone, as it does with the option off.
 //!
 //! This is a fresh (v2) term format: PRF inputs are framed with vitaminc's PAE
 //! context encoding, so terms are intentionally **not** byte-compatible with
@@ -93,12 +122,24 @@
 //! * [`OreTerm`] / [`OpeTerm`] — the raw CLLW ciphertext bytes, unframed
 //!   ([`as_bytes`](OreTerm::as_bytes) / [`to_bytes`](OreTerm::to_bytes) /
 //!   [`from_bytes`](OreTerm::from_bytes)).
+//! * [`OreBlockTerm`] — the serialised ore-rs ciphertext, header first
+//!   ([`as_bytes`](OreBlockTerm::as_bytes) /
+//!   [`from_bytes`](OreBlockTerm::from_bytes)).
 //!
 //! Every kind decodes through `TryFrom<&[u8]>` as well, failing with a
 //! [`TermBytesError`]; [`EqualityTerm`] additionally keeps an infallible
-//! [`from_bytes`](EqualityTerm::from_bytes) over a `[u8; 32]`. `as_bytes`
-//! exists only where the term *is* a contiguous buffer (equality, ORE, OPE);
-//! a [`MatchTerms`] is canonically a position list, so it has none.
+//! [`from_bytes`](EqualityTerm::from_bytes) over a `[u8; 32]`. The three
+//! order terms keep the buffer they decode, so their `from_bytes` takes it
+//! by value (`TryFrom<Vec<u8>>` too) and copies nothing; `TryFrom<&[u8]>`
+//! copies once. `as_bytes` exists only where the term *is* a contiguous
+//! buffer (equality and the order terms); a [`MatchTerms`] is canonically a
+//! position list, so it has none.
+//!
+//! The order terms are also serde types: lowercase hex in a human-readable
+//! format such as JSON, the raw bytes in a binary one, through
+//! [`serdect`](https://docs.rs/serdect), whose hex is constant-time.
+//! Deserializing decodes through `from_bytes`, so it refuses what
+//! `from_bytes` refuses, and its errors carry no byte of the term.
 //!
 //! For equality and ORE/OPE the transport bytes are also the stored form,
 //! and they share the *shape* of the v1 / `cipherstash-client` encodings — a
@@ -124,25 +165,35 @@
 //! place: a binding depends on the transport bytes, so they are frozen even
 //! where no column holds them.
 
+pub(crate) mod query;
 mod tokenize;
 
+pub(crate) use tokenize::Side;
 pub use tokenize::Tokenizer;
 
 use std::fmt;
 use std::marker::PhantomData;
 
-// Re-exported because they appear in this module's public bounds
-// ([`KeysetCipher::ore_term`], [`OreTerm`], ...): a caller writing a generic
-// wrapper over the term APIs has to be able to name them without depending
-// on `cllw-ore` directly.
-pub use cllw_ore::{CllwOpeEncrypt, CllwOreEncrypt};
+// Re-exported because they appear in this module's public signatures
+// ([`KeysetCipher::ore_term`], [`OreTerm::inner`], ...): a caller can name
+// the ciphertext types without depending on `clww-ore` directly.
+use clww_ore::{ClwwOpe, ClwwOre};
+pub use clww_ore::{OpeClww8VariableV1, OreClww8VariableV1};
+use vitaminc_aead::Encrypt;
+use vitaminc_aead::EncryptRef;
 use vitaminc_hmac::HmacSha256Prf;
+use vitaminc_normalize::{terms, NormalizeError, Normalized};
+use vitaminc_ore::{
+    OrderEncrypt, OrderError, OrderKeyInit, OrderPlaintext, OrderScheme, OrderTarget, Orderable,
+    SchemeVisitor, Target as _,
+};
 use vitaminc_prf::{
     BlockVisitor, Context, IntoPrfContext, MapAccess, PrfError, PrfValue, PrfVisitor,
     PrfVisitorError, SeqAccess,
 };
 use vitaminc_protected::NonEmpty;
-use zeroize::Zeroize;
+use vitaminc_protected::Protected;
+use zeroize::Zeroizing;
 
 use stack_kms::MaybeSend;
 
@@ -150,21 +201,44 @@ use crate::target::core::Term;
 use crate::target::{DecryptField, Decryptable, Decryption};
 use crate::{Error, KeysetCipher, Pending};
 
-// The `/v1` suffix versions the *derivation* (domain + input framing), not the
-// crate. Any change to the bytes a term derives from must bump it: a changed
+// The version suffix (`/v1`, `/v2`) versions the *derivation* (domain +
+// input framing), not the crate. Any change to the bytes a term derives from must bump it: a changed
 // derivation under an unchanged domain makes every existing term silently
 // unfindable, with no error to notice. The byte-level pins in
 // `tests/term_bytes.rs` are what force that bump to be deliberate.
 
 /// PAE domain for equality (exact-match) terms.
-const EQUALITY_DOMAIN: &[u8] = b"stack-encrypt/sem/equality/v1";
+///
+/// `v2`: the PRF input is the value's `vitaminc-normalize` encoding under
+/// its domain, where `v1` was the value's own PRF encoding.
+const EQUALITY_DOMAIN: &[u8] = b"stack-encrypt/sem/equality/v2";
 /// PAE domain for match (full-text) token terms.
-const MATCH_DOMAIN: &[u8] = b"stack-encrypt/sem/match/v1";
+///
+/// `v2`: the text is tokenized in Unicode 16 NFC, where `v1` tokenized it as
+/// written.
+const MATCH_DOMAIN: &[u8] = b"stack-encrypt/sem/match/v2";
+/// PAE domain for a match index's short-word tokens
+/// ([`MatchOptions::short_words`]). Distinct from [`MATCH_DOMAIN`] so a word
+/// token and a tokenizer token of the same characters derive different PRF
+/// blocks, under any tokenizer: `ng` as a word never sets the bits of `ng`
+/// as a 2-gram.
+const MATCH_WORD_DOMAIN: &[u8] = b"stack-encrypt/sem/match/word/v1";
 /// PAE domain for ORE key derivation.
-const ORE_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ore-key/v1";
+///
+/// `v2`: the key keys clww-ore's vitaminc ORE scheme, which encrypts the
+/// value's `vitaminc-ore` order encoding at its [`Orderable`] target, where
+/// `v1` keyed clww-ore's own per-type encryption.
+const ORE_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ore-key/v2";
 /// PAE domain for OPE key derivation (distinct from ORE: OPE ciphertexts are
-/// encrypt-only, so the two schemes must never share a key).
-const OPE_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ope-key/v1";
+/// encrypt-only, so the two schemes must never share a key). `v2` as for
+/// [`ORE_KEY_DOMAIN`].
+const OPE_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ope-key/v2";
+/// PAE domain for block ORE key derivation, distinct from both CLLW
+/// domains so no two schemes share a key. One key per index: ore-rs derives
+/// the 6-bit scheme's key and the chained scheme's from it under labels of
+/// its own, and binds the scheme, the target and the context into each
+/// term's salt.
+const ORE_BLOCK_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ore-block-key/v1";
 
 /// Errors from SEM term generation.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -177,43 +251,185 @@ pub enum TermError {
     #[error("PRF failed")]
     #[diagnostic(code(stack_encrypt::prf_failed))]
     Prf(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
-    /// CLLW ORE/OPE encryption failed. (`cllw_ore::Error` is deliberately
+    /// CLLW ORE/OPE encryption failed. (`clww_ore::Error` is deliberately
     /// contentless, so its message is fixed text.)
     #[error("ORE/OPE encryption failed: {0}")]
     #[diagnostic(code(stack_encrypt::ore_failed))]
-    Ore(#[from] cllw_ore::Error),
+    Ore(#[from] clww_ore::Error),
+    /// Block ORE ([`OreBlockTerm`]) orders text whose fold is at most 1023
+    /// bytes, and bytes of at most 1023: the chained engine's 1024-byte
+    /// ceiling, less the one marker byte `vitaminc-ore` puts in front of a
+    /// variable-width value. The ceiling bounds what one value costs: a term
+    /// of 1023 bytes is already about 34 KB.
+    #[error(
+        "the value is too long for a block ORE term: it is longer than 1023 bytes, text counted by its fold"
+    )]
+    #[diagnostic(
+        code(stack_encrypt::ore_block_too_long),
+        help("Block ORE orders text and bytes of at most 1023 bytes, counted after text is folded. Order a shorter prefix of the value, or index the column with OPE.")
+    )]
+    OreBlockTooLong,
+    /// Text whose order encoding ends in NUL has no block ORE term: the
+    /// chained scheme pads text with NUL bytes to its length bucket, so
+    /// `"a\0"` would encrypt the same as `"a"`. PostgreSQL `text` cannot
+    /// hold NUL.
+    #[error("text that ends in NUL has no block ORE term")]
+    #[diagnostic(
+        code(stack_encrypt::ore_block_trailing_nul),
+        help("Block ORE pads text with NUL bytes, so text that ends in NUL would order as the text without it. Remove the trailing NUL characters before encrypting.")
+    )]
+    OreBlockTrailingNul,
+    /// Block ORE encryption failed in the scheme: its key or its
+    /// randomness. The scheme's error is the
+    /// [`source`](std::error::Error::source); it names no part of the value.
+    #[error("block ORE encryption failed")]
+    #[diagnostic(code(stack_encrypt::ore_block_failed))]
+    OreBlock(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
     /// The supplied [`MatchOptions`] are invalid.
     #[error("invalid match options: {0}")]
     #[diagnostic(code(stack_encrypt::invalid_match_options))]
     InvalidOptions(&'static str),
-    /// The text produced no tokens under the configured tokenizer — empty or
-    /// separator-only text, or (for n-grams, as in the v1 match indexer) text
-    /// shorter than the n-gram length. Rejected at generation time for both
-    /// the write and query paths: an empty term used as a query would
-    /// vacuously match every stored row, and a sub-gram-length probe could
-    /// never match anything (a silent false negative).
+    /// A match query's text produced no tokens under the index's tokenizer:
+    /// empty or separator-only text, or (for n-grams, as in the v1 match
+    /// indexer) text shorter than the n-gram length. A query with no tokens
+    /// would match every row, so a query refuses it when it is encrypted,
+    /// before a term exists. A *stored* value with no tokens is
+    /// not refused: it is stored as the empty filter, which no query
+    /// matches, so a short or empty value is a valid thing to hold in a
+    /// match column. The empty filter shows that the value cut no token
+    /// (see [what a match index reveals](crate::sem#what-a-match-index-reveals)).
     #[error(
-        "text produces no match tokens (empty, separator-only, or shorter than the n-gram length)"
+        "the query's text produces no match tokens (empty, separator-only, or shorter than the n-gram length)"
     )]
     #[diagnostic(
         code(stack_encrypt::empty_term_text),
-        help("A match term needs text with at least one token: a query with none would match every row, and one shorter than the n-gram length could match none. Match on longer text, or skip the match condition for this value.")
+        help("A match query needs text with at least one token: a query with none would match every row, and one shorter than the n-gram length could match none. Query on longer text, or leave the match condition out.")
     )]
     EmptyTermText,
+    /// The value is not one scalar an equality term is defined for: a
+    /// boolean, a container, or a value of a logical type vitaminc gives no
+    /// equality domain. Equality derives over one scalar, in the domain
+    /// `vitaminc-normalize` gives its kind (every integer width one domain,
+    /// both float widths one, text, bytes, the dates, timestamps, decimals
+    /// and uuids that opt in, and a null); there is no term for anything
+    /// else.
+    #[error("no equality term is defined for this value")]
+    #[diagnostic(
+        code(stack_encrypt::no_equality_term),
+        help("An equality term is defined for one integer, float, text, bytes, date, timestamp, decimal, uuid or null value, not for a boolean or a container.")
+    )]
+    NoEqualityTerm,
+    /// The value cannot be normalized for its term: text with a code point
+    /// unassigned in Unicode 16 (an equality or match term), or a value not
+    /// valid for its logical type. The reason is vitaminc's, and names no
+    /// part of the value.
+    #[error("the value cannot be normalized for its term: {0}")]
+    #[diagnostic(code(stack_encrypt::term_normalize))]
+    Normalize(#[from] NormalizeError),
     /// Term bytes do not decode under the term kind's frozen encoding — see
     /// [`TermBytesError`].
     #[error(transparent)]
     #[diagnostic(transparent)]
     Bytes(#[from] TermBytesError),
+    /// A JSON accessor's path is not one the JSON index addresses — see
+    /// [`JsonPathError`](crate::json::JsonPathError).
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    JsonPath(#[from] crate::json::JsonPathError),
+    /// A JSON document nests deeper than the JSON index walks.
+    #[error("the JSON document nests too deep for the JSON index")]
+    #[diagnostic(
+        code(stack_encrypt::json_too_deep),
+        help("The JSON index takes a document at most 127 levels deep, the depth its sealed root parses back. Flatten the document, or store it as a ciphertext without the index.")
+    )]
+    JsonTooDeep,
+    /// A JSON array or object has more children than the JSON index
+    /// numbers, or a path names an array position past the last one it
+    /// numbers: 2³¹ − 1, PostgreSQL's `integer`.
+    #[error("a JSON array is too wide for the JSON index")]
+    #[diagnostic(
+        code(stack_encrypt::json_too_wide),
+        help("The JSON index numbers at most 2147483647 children under one node, so no stored document has an element past position 2147483647. Split the array, or ask for a position below that.")
+    )]
+    JsonTooWide,
+    /// A subtree read's wildcards would expand to more tokens than one read
+    /// sends: a wildcard expands to its bound plus one tokens under each node
+    /// it sits below, so nested wildcards multiply.
+    #[error("a JSON subtree read expands to too many tokens")]
+    #[diagnostic(
+        code(stack_encrypt::json_wildcard_too_wide),
+        help("A read sends at most 8192 tokens. Lower the wildcard bound (`json_subtree_key_with_bound`), use fewer nested wildcards, or read the array itself.")
+    )]
+    JsonWildcardTooWide,
+    /// An ordering at a JSON path was asked with a value that is neither a
+    /// number nor a string, the only leaves the index orders.
+    #[error("an ordering at a JSON path takes a number or a string")]
+    #[diagnostic(
+        code(stack_encrypt::json_leaf_not_ordered),
+        help("The JSON index derives an ordering term for number and string leaves only. Ask for a boolean or a null with equality at the path: a field reference's path query, `at().age().eq(v)` or `at().age().is_null()`, or the dynamic interface's `eq_at`.")
+    )]
+    JsonLeafNotOrdered,
+    /// An ordering was asked at a JSON path the index does not order: no
+    /// stored leaf there carries an ordering term, so the comparison would
+    /// match no row.
+    #[error("the JSON index orders no leaf at this path")]
+    #[diagnostic(
+        code(stack_encrypt::json_path_not_ordered),
+        help("A leaf carries an ordering term only at a path the index's `ordered` option covers (`$.age`, or `$.orders[*].total` for every element). Declare the path on the index, and re-encrypt the documents stored before it was, then order at it.")
+    )]
+    JsonPathNotOrdered,
+    /// An ordered path, or an ordering asked at a path, names an array
+    /// position. An ordering compares the leaf `->` extracts by the path's
+    /// selector, and a selector reads every position as the wildcard, so
+    /// `->` returns an unspecified element at the path whatever position
+    /// was named: the comparison would be against another element's leaf,
+    /// or against one with no term.
+    #[error("an ordering at a JSON path cannot name an array position")]
+    #[diagnostic(
+        code(stack_encrypt::json_ordering_at_position),
+        help("Write `[*]` where an ordered path, or the path an ordering asks at, crosses an array: `$.orders[*].total`, not `$.orders[2].total`. The comparison extracts one element at the path, by selector, never the one a position names.")
+    )]
+    JsonOrderingAtPosition,
+    #[error("equality at a JSON path takes a scalar")]
+    #[diagnostic(
+        code(stack_encrypt::json_value_not_scalar),
+        help("Equality at a path (a field reference's `at().age().eq(v)`, or the dynamic interface's `eq_at`) compares one value: a string, a number, a boolean or a null. To ask whether the value at a path holds an object or an array, query containment (`contains(doc)`, or `contains`) with the document that holds it there.")
+    )]
+    JsonValueNotScalar,
+    /// A JSON query was given a NaN or an infinity, which no JSON number
+    /// is: no stored document holds one, and JSON has no way to write one.
+    /// Refused before any key is requested, where a conversion to JSON would
+    /// otherwise turn it into `null` and match the documents holding `null`.
+    #[error("a JSON query takes no NaN or infinity")]
+    #[diagnostic(
+        code(stack_encrypt::json_number_not_finite),
+        help("A JSON number is finite. Ask for a JSON `null` with a path's `is_null()`.")
+    )]
+    JsonNumberNotFinite,
 }
 
 impl crate::ErrorPayload for TermError {
     fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
         match self {
             Self::Bytes(error) => error.payload(),
-            Self::Prf(_) | Self::Ore(_) | Self::InvalidOptions(_) | Self::EmptyTermText => {
-                serde_json::Map::new()
-            }
+            Self::JsonPath(error) => error.payload(),
+            Self::Prf(_)
+            | Self::Ore(_)
+            | Self::OreBlockTooLong
+            | Self::OreBlockTrailingNul
+            | Self::OreBlock(_)
+            | Self::InvalidOptions(_)
+            | Self::EmptyTermText
+            | Self::NoEqualityTerm
+            | Self::Normalize(_)
+            | Self::JsonTooDeep
+            | Self::JsonTooWide
+            | Self::JsonWildcardTooWide
+            | Self::JsonLeafNotOrdered
+            | Self::JsonPathNotOrdered
+            | Self::JsonOrderingAtPosition
+            | Self::JsonValueNotScalar
+            | Self::JsonNumberNotFinite => serde_json::Map::new(),
         }
     }
 }
@@ -261,11 +477,17 @@ pub enum TermBytesError {
         filter_size: u32,
     },
     /// The buffer's length is not one this CLLW ciphertext shape can have.
-    /// (The length is all there is to report: `cllw_ore::Error` is
+    /// (The length is all there is to report: `clww_ore::Error` is
     /// deliberately contentless, so its message would say strictly less.)
     #[error("{0} bytes do not fit this CLLW ciphertext shape")]
     #[diagnostic(code(stack_encrypt::cllw_ciphertext_length))]
     MalformedCllwCiphertext(usize),
+    /// The bytes are not a block ORE ciphertext ore-rs's comparator reads:
+    /// neither the 6-bit scheme's header and length nor the chained
+    /// scheme's. The length is all there is to report.
+    #[error("{0} bytes are not a block ORE ciphertext")]
+    #[diagnostic(code(stack_encrypt::ore_block_ciphertext_shape))]
+    MalformedOreBlockCiphertext(usize),
 }
 
 impl crate::ErrorPayload for TermBytesError {
@@ -274,7 +496,8 @@ impl crate::ErrorPayload for TermBytesError {
         match self {
             Self::WrongEqualityTermLength(len)
             | Self::OddMatchTermsLength(len)
-            | Self::MalformedCllwCiphertext(len) => payload([("len", (*len).into())]),
+            | Self::MalformedCllwCiphertext(len)
+            | Self::MalformedOreBlockCiphertext(len) => payload([("len", (*len).into())]),
             Self::MatchPositionOutOfRange { filter_size, .. } => {
                 payload([("filter_size", (*filter_size).into())])
             }
@@ -283,7 +506,7 @@ impl crate::ErrorPayload for TermBytesError {
 }
 
 impl TermError {
-    fn from_prf<E>(err: PrfError<E>) -> Self
+    pub(crate) fn from_prf<E>(err: PrfError<E>) -> Self
     where
         E: std::error::Error + Send + Sync + 'static,
     {
@@ -295,7 +518,8 @@ impl TermError {
 // Equality
 // =============================================================================
 
-/// An equality (exact-match) index term: one PRF block over the whole value.
+/// An equality (exact-match) index term: one PRF block over the value's
+/// normalized bytes (see [`KeysetCipher::equality_term`]).
 ///
 /// Terms are pseudorandom under the index key; they are stored server-side and
 /// are not secret key material.
@@ -369,27 +593,71 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for EqualityVisitor {
 /// deferred backend the same visitor runs after the round-trip instead).
 /// `context` is the encoding of a [`NonEmpty`] — every caller holds one —
 /// so there is nothing left to validate here.
+///
+/// The value is normalized first, by `vitaminc-normalize`'s [`terms`] sink:
+/// it must be one scalar with an equality domain, and the PRF derives over
+/// that scalar's [`Normalized`] bytes under its domain. So every integer
+/// width of one number is one term, both float widths of one number are
+/// one term, and text is compared in Unicode 16 NFC: `café` written with a
+/// precomposed `é` and with `e` and a combining accent is one term.
 fn equality<T>(
     prf: &HmacSha256Prf,
     value: T,
     context: Context<'_>,
 ) -> Result<EqualityTerm, TermError>
 where
-    T: PrfValue,
+    T: Encrypt,
 {
+    equality_of_normalized(prf, normalized(value)?, context)
+}
+
+/// The equality term of a scalar already normalized: the PRF over its
+/// bytes, under its `vitaminc-normalize` domain and the PAE-framed
+/// `[EQUALITY_DOMAIN, context]`. [`equality`] and the `dynamic` path, which
+/// normalizes the one scalar it walks to, both end here.
+fn equality_of_normalized(
+    prf: &HmacSha256Prf,
+    normalized: Normalized,
+    context: Context<'_>,
+) -> Result<EqualityTerm, TermError> {
     let context = Context::pae(&[EQUALITY_DOMAIN, context.as_bytes()]);
-    value
+    normalized
         .prf_visit_with_context(prf, context, EqualityVisitor)
         .into_result()
         .map_err(TermError::from_prf)
 }
 
-/// An equality term of any [`PrfValue`] source. Under the local HMAC
-/// backend, derived during the synchronous build — the returned [`Pending`]
-/// carries no requests.
+/// The one [`Normalized`] scalar of a value, as `vitaminc-normalize`'s
+/// [`terms`] sink derives it: [`TermError::NoEqualityTerm`] unless the value
+/// is one scalar with an equality domain, and [`TermError::Normalize`] for a
+/// scalar the sink refuses (text with a code point unassigned in Unicode 16,
+/// a value not valid for its logical type).
+pub(crate) fn normalized<T: Encrypt>(value: T) -> Result<Normalized, TermError> {
+    let mut terms = terms(value).map_err(|error| match error.term() {
+        Some(refused) => TermError::Normalize(refused.error()),
+        // A shape refusal or a source failure: not one scalar the sink could
+        // read, so there is no term.
+        None => TermError::NoEqualityTerm,
+    })?;
+    match (terms.pop(), terms.is_empty()) {
+        // One term, and at the root: the value is that scalar. A container
+        // with one indexable scalar inside is not a scalar, and a boolean
+        // produces no term at all. A null, typed or plain, has one
+        // (`vitaminc-normalize` 0.8): every null of a context is one term,
+        // so an absent value sealed as a null can be stored beside its term
+        // and found by it (#1298).
+        (Some(term), true) if term.path.steps().is_empty() => Ok(term.normalized),
+        _ => Err(TermError::NoEqualityTerm),
+    }
+}
+
+/// An equality term of any [`Encrypt`] source that is one scalar with an
+/// equality domain (see [`equality`]). Under the local HMAC backend,
+/// derived during the synchronous build — the returned [`Pending`] carries
+/// no requests.
 impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for EqualityTerm
 where
-    S: PrfValue,
+    S: Encrypt,
     T: IntoPrfContext<'c>,
 {
     // Derived locally: no data key, no descriptor.
@@ -403,8 +671,20 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = equality(cipher.prf(), source, context).map_err(Error::from);
-        Pending::ready(cipher, term)
+        match cipher.loaded_state() {
+            Some(keyset) => {
+                let term = equality(&keyset.prf, source, context).map_err(Error::from);
+                Pending::ready(cipher, term)
+            }
+            // Normalized now, so the source is read and wiped during the
+            // build. The PRF runs when the pending has loaded the keyset.
+            None => match normalized(source) {
+                Ok(normalized) => cipher.deferred(move |keyset| {
+                    equality_of_normalized(&keyset.prf, normalized, context).map_err(Error::from)
+                }),
+                Err(error) => Pending::ready(cipher, Err(error.into())),
+            },
+        }
     }
 }
 
@@ -414,13 +694,74 @@ where
 
 /// Options controlling match-term generation. The defaults mirror the existing
 /// match indexer: 3-gram tokens, downcased, `k = 3` hash slices into an
-/// `m = 256`-bit filter.
+/// `m = 256`-bit filter, no short-word tokens.
+///
+/// Every option is part of the index's identity: a stored filter and a query
+/// filter agree only when both were cut under the same options. So a query
+/// takes its options from the field it queries: a field reference from the
+/// field's type, and a plan that is data from the plan.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MatchOptions {
     /// How text splits into tokens.
     pub tokenizer: Tokenizer,
     /// Lower-case the text before tokenization (case-insensitive matching).
     pub downcase: bool,
+    /// Also index every short word whole, so a word too short to hold an
+    /// n-gram can be searched: "Ng" under 3-grams. Off by default.
+    ///
+    /// With it on, every word of the normalized (and, with
+    /// [`downcase`](Self::downcase), case-folded) text that is at least 2
+    /// characters long and shorter than the n-gram length is one more
+    /// token, the word itself, beside the n-grams of the whole text. Under
+    /// the default 3-grams that is every two-letter word; under 4-grams,
+    /// every word of 2 or 3. A one-letter word adds nothing, and a word as
+    /// long as an n-gram is found by its n-grams as before. A word is a run
+    /// of characters between the separators [`Tokenizer::Standard`] splits
+    /// on (space, comma, semicolon, colon, exclamation mark), so "Ng, Mike"
+    /// holds the word `ng`, and "Ng." or "Ng-Smith" does not (a full stop, a
+    /// hyphen, a tab or a newline is part of a word); length is counted in
+    /// characters of the case-folded text.
+    ///
+    /// The word token is PRF'd under a domain of its own, so it never
+    /// derives the bits of an n-gram of the same characters, and folds into
+    /// the same filter by the same `k` positions. A stored "Ng" is one
+    /// token, not the empty filter. A stored "Mike Ng" contains its trigrams
+    /// and `ng`.
+    ///
+    /// A query asks for its word tokens only when its whole text is shorter
+    /// than one n-gram. Under trigrams, that is a query of one short word.
+    /// Under longer n-grams it can be several words: under 6-grams, "Ng Wu"
+    /// asks for both. A longer query asks for its n-grams alone, as it does
+    /// with the option off.
+    ///
+    /// - "Ng" is accepted, and asks for the word token `ng`. The query finds
+    ///   the rows that contain the word "Ng", such as "Ng" and "Mike Ng".
+    ///   The query does not find "Nguyen".
+    /// - "Mike Ng" asks for its trigrams alone. The query finds "Mike Ng"
+    ///   and "Mike Nguyen", so a name typed in part still finds its row.
+    /// - "Li Wu" also asks for its trigrams. Some of them span the space.
+    /// - A query with no token at all, such as one letter, is refused
+    ///   ([`TermError::EmptyTermText`]).
+    ///
+    /// A query's verify checks the same tokens the query asks for, so its
+    /// filter and its verify agree.
+    ///
+    /// **What it reveals.** Each stored value gains one token for each short
+    /// word it contains. The token uses the same PRF, the same filter, and
+    /// the same containment rule. Only a word shorter than one n-gram gets a
+    /// token, so no bigram of a longer word is indexed.
+    ///
+    /// The word token is unique to the word. Someone who clusters tokens
+    /// across rows can tell the rows that contain the word "Ng" from the rows
+    /// that contain "Nguyen", and count them. Without the option, they see
+    /// only the trigram `" ng"` that both share. A query of short words alone
+    /// shows which word tokens it asks for.
+    ///
+    /// It takes an n-gram tokenizer of length at least 3: the
+    /// [`Standard`](Tokenizer::Standard) tokenizer already emits whole words,
+    /// and under shorter n-grams no word is short enough. Either pairing is
+    /// refused ([`TermError::InvalidOptions`]).
+    pub short_words: bool,
     /// Number of bit positions derived per token, `3..=16` (the v1 match
     /// indexer's bounds; the upper bound is also the PRF block size — each
     /// position consumes 2 bytes of the 32-byte block).
@@ -435,6 +776,7 @@ impl Default for MatchOptions {
         Self {
             tokenizer: Tokenizer::default(),
             downcase: true,
+            short_words: false,
             k: 3,
             m: 256,
         }
@@ -451,6 +793,21 @@ impl MatchOptions {
                 "n-gram length must be at least 1",
             ));
         }
+        if self.short_words {
+            match self.tokenizer {
+                Tokenizer::Standard => {
+                    return Err(TermError::InvalidOptions(
+                        "short_words takes an n-gram tokenizer: the standard tokenizer already indexes whole words",
+                    ))
+                }
+                Tokenizer::Ngram { length } if length < 3 => {
+                    return Err(TermError::InvalidOptions(
+                        "short_words takes an n-gram length of at least 3: no word of two characters or more is shorter than the n-grams",
+                    ))
+                }
+                Tokenizer::Ngram { .. } => {}
+            }
+        }
         if !(3..=16).contains(&self.k) {
             return Err(TermError::InvalidOptions("k must be in 3..=16"));
         }
@@ -465,11 +822,40 @@ impl MatchOptions {
 }
 
 /// Type-level match configuration: the [`MatchOptions`] a [`MatchTerms<Self>`]
-/// is generated with. Putting the configuration on the *type* means a record
-/// field and the query probing it agree on tokenizer and filter parameters by
-/// construction. Define your own by implementing this on a marker type.
+/// is generated with. Define your own by implementing this on a marker type.
+///
+/// A field stored as `MatchTerms<O>` and a query made from that field's
+/// reference use one configuration: the field's type names its match index,
+/// [`Match<O>`](struct@crate::target::Match), through
+/// [`Answers`](crate::op::Answers), and the query derives its filter through
+/// that index. You can also derive a filter directly, with
+/// [`match_terms`](crate::KeysetCipher::match_terms) or a `Match<O>` you
+/// name. That filter uses whatever configuration you give it. The filter
+/// matches a stored filter only when that configuration is the field's.
+///
+/// `match_terms` and `Match<O>`'s [`operation`](crate::target::Index::operation)
+/// build a stored value's filter. With [`MatchOptions::short_words`] on,
+/// build a query's filter with
+/// [`matching_query`](crate::target::matching_query). That function keeps
+/// the query's short words only when its whole text is shorter than one
+/// n-gram.
+///
+/// A plan that is data has one match index per field. The plan's stored
+/// filter and its query both read that index's options.
 pub trait MatchConfig: Send + Sync + 'static {
     fn options() -> MatchOptions;
+
+    /// The typical number of distinct tokens in a value this index stores:
+    /// 20 for a name column, 200 for a notes column, counting a value's
+    /// short-word tokens when [`MatchOptions::short_words`] is on (each sets
+    /// `k` bits, as an n-gram does). A prior, used to size a query's
+    /// fetch ([`Stats::declared`](crate::op::Stats::declared)) before the
+    /// column's filters have been measured. It is not part of the index's
+    /// identity and changes no term. `None`, the default, declares no
+    /// prior.
+    fn expected_tokens() -> Option<u32> {
+        None
+    }
 }
 
 /// The default [`MatchConfig`]: [`MatchOptions::default`].
@@ -544,13 +930,25 @@ impl<O> MatchTerms<O> {
     /// false negative).
     ///
     /// An empty `query` returns `false`: containment of zero positions is
-    /// vacuously true, which would turn an empty probe into a match-every-row
-    /// query. Term generation already refuses to build such a term
-    /// ([`TermError::EmptyTermText`]); this guards any other
-    /// (e.g. deserialized) source of an empty term.
-    pub fn contains(&self, query: &MatchTerms<O>) -> bool {
-        !query.positions.is_empty()
-            && query
+    /// vacuously true, which would turn an empty query into a match-every-row
+    /// query. A field query already refuses to build such a query
+    /// ([`TermError::EmptyTermText`]); this guards any other (e.g.
+    /// deserialized) source of an empty one. The stored side is the other
+    /// way round: a value with no tokens is stored as the empty filter, and
+    /// holds no query's positions, so no query matches it.
+    pub fn matches(&self, query: &MatchQuery<O>) -> bool {
+        self.contains(query.filter())
+    }
+
+    /// Whether this term's positions are a superset of `other`'s, for two
+    /// stored terms: `other` is a filter over a whole stored value, not a
+    /// query. [`matches`](Self::matches) is the check for a query, and the
+    /// only one that takes a [`MatchQuery`].
+    ///
+    /// An empty `other` returns `false`, as an empty query does.
+    pub fn contains(&self, other: &MatchTerms<O>) -> bool {
+        !other.positions.is_empty()
+            && other
                 .positions
                 .iter()
                 .all(|p| self.positions.binary_search(p).is_ok())
@@ -633,6 +1031,240 @@ impl<O> PartialEq for MatchTerms<O> {
 
 impl<O> Eq for MatchTerms<O> {}
 
+/// The query term of a match index: a Bloom filter over the *query's*
+/// tokens, where the stored [`MatchTerms`] is a filter over the whole
+/// stored value's. A row matches when its stored filter holds every position of
+/// the query's ([`MatchTerms::matches`]).
+///
+/// The two are different types because they are different things, even
+/// where their bytes share an encoding: a query is never stored, and a
+/// stored filter is never sent as a query. A
+/// `MatchQuery` comes from a field query ([`op::Matches`](struct@crate::op::Matches)),
+/// never from a target.
+///
+/// A Bloom filter can hold every bit of the query without the value holding
+/// the query's text, so a match query is
+/// [`Probabilistic`](crate::op::Probabilistic): it keeps the query's tokens,
+/// as the index cut them, and [`verify`](crate::op::Probabilistic::verify)
+/// checks a decrypted value against them. The tokens are plaintext: they
+/// never leave the process, never appear in `Debug`, and are zeroized when
+/// the query is dropped.
+pub struct MatchQuery<O = DefaultMatch> {
+    terms: MatchTerms<O>,
+    tokens: QueryTokens,
+}
+
+impl<O> MatchQuery<O> {
+    /// The query term of the filter `terms`, derived over the value whose
+    /// tokens are `tokens`.
+    pub(crate) fn new(terms: MatchTerms<O>, tokens: QueryTokens) -> Self {
+        Self { terms, tokens }
+    }
+
+    /// The set positions of the query's filter, sorted ascending, no
+    /// duplicates: what the server tests a stored filter for.
+    pub fn positions(&self) -> &[u16] {
+        self.terms.positions()
+    }
+
+    /// The transport byte encoding, as [`MatchTerms::to_bytes`].
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.terms.to_bytes()
+    }
+
+    /// The query's filter.
+    pub(crate) fn filter(&self) -> &MatchTerms<O> {
+        &self.terms
+    }
+}
+
+/// A row is a real match when every token of the query is a token of the
+/// value, cut by the index's own tokenizer and case folding. That is the
+/// meaning a Bloom match approximates, so `verify` keeps every row the
+/// filter would have kept had it no false positives: order and repetition
+/// do not count, and a match is not a substring test.
+impl<O: MatchConfig> crate::op::Probabilistic for MatchQuery<O> {
+    type Plaintext = str;
+
+    fn verify(&self, value: &str) -> bool {
+        self.tokens.verify(value, &O::options())
+    }
+
+    /// `want` plus the false positives expected among the rows `stats`
+    /// scans: the query sets `b` bits ([`positions`](Self::positions)), and
+    /// a stored filter of fill `f` holds them all with probability `f^b`.
+    /// The fill comes from the measured histogram in `stats`, or else from
+    /// the configuration's
+    /// [`expected_tokens`](MatchConfig::expected_tokens) prior; with
+    /// neither, the answer is
+    /// [`Limit::Unbounded`](crate::op::Limit::Unbounded).
+    fn target_limit(&self, want: u64, stats: &crate::op::Stats) -> crate::op::Limit {
+        match_limit(
+            self.positions().len(),
+            &O::options(),
+            O::expected_tokens(),
+            want,
+            stats,
+        )
+    }
+}
+
+/// Positions only: the tokens are plaintext.
+impl<O> fmt::Debug for MatchQuery<O> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MatchQuery")
+            .field("positions", &self.terms.positions)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<O> Clone for MatchQuery<O> {
+    fn clone(&self) -> Self {
+        Self {
+            terms: self.terms.clone(),
+            tokens: self.tokens.clone(),
+        }
+    }
+}
+
+/// Two queries are equal when they send the same filter. This compares no
+/// plaintext. Two query values can share a filter by chance, as a short
+/// value under a small filter does, and those queries are equal here yet
+/// verify differently: equal queries select the same rows, not the same
+/// matches.
+impl<O> PartialEq for MatchQuery<O> {
+    fn eq(&self, other: &Self) -> bool {
+        self.terms == other.terms
+    }
+}
+
+impl<O> Eq for MatchQuery<O> {}
+
+/// The query term of [`op::Between`](crate::op::Between): the index's
+/// terms for both bounds, as one value. Inclusive at both ends.
+///
+/// One query derives both bounds under one context, and the term stays
+/// one value in SQL, so no statement can pair the low bound of one query
+/// with the high bound of another, or bind them the
+/// wrong way round. `T` is the index's term: `OreTerm<u32>` for a range
+/// over an ORE index of `u32`, `OpeTerm<i64>` over an OPE index. The
+/// bounds are read with [`lo`](Self::lo) and [`hi`](Self::hi), each the
+/// term the index would send for that value alone, which is how a query
+/// domain that carries a range serialises it.
+///
+/// It comes only from a field query: a range is never stored. Both ends
+/// are inclusive, and a range whose low bound is above its high bound is
+/// not refused: as SQL's `BETWEEN`, it matches nothing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RangeQuery<T> {
+    lo: T,
+    hi: T,
+}
+
+impl<T> RangeQuery<T> {
+    /// The range `lo..=hi`, from the index's terms for its bounds.
+    pub(crate) fn new(lo: T, hi: T) -> Self {
+        Self { lo, hi }
+    }
+
+    /// The term of the low bound, inclusive.
+    pub fn lo(&self) -> &T {
+        &self.lo
+    }
+
+    /// The term of the high bound, inclusive.
+    pub fn hi(&self) -> &T {
+        &self.hi
+    }
+
+    /// The two bounds' terms, low then high.
+    pub fn into_bounds(self) -> (T, T) {
+        (self.lo, self.hi)
+    }
+}
+
+/// The query's tokens, as a match index cuts them from the query's value:
+/// a match query's verifier, which a [`MatchQuery`] keeps to verify a row. Plaintext, so it is
+/// zeroized on drop and has no `Debug`.
+/// [`Supports::prepare`](crate::op::Supports::prepare) makes one; only a field
+/// field query can join it to a filter
+/// ([`Supports::query`](crate::op::Supports::query) takes a token no caller
+/// can make), so one query's tokens never verify rows for another value's
+/// filter.
+#[derive(Clone, Default)]
+pub struct QueryTokens(Zeroizing<tokenize::Tokens>);
+
+impl QueryTokens {
+    /// The tokens a query of `text` keeps. `options` sets the tokenizer and
+    /// the case folding. The query keeps its short words only when its whole
+    /// text is shorter than one n-gram ([`Side::Query`]). The filter a query
+    /// sends is built from the same tokens. So a query verifies a row by
+    /// exactly the tokens it asks for.
+    ///
+    /// # Errors
+    ///
+    /// [`TermError::Normalize`] for text with no normal form.
+    pub(crate) fn under(text: &str, options: &MatchOptions) -> Result<Self, TermError> {
+        Ok(Self(Zeroizing::new(tokenize::tokens(
+            text,
+            options,
+            Side::Query,
+        )?)))
+    }
+
+    /// The tokens of a query's `text` under `options`, or why the query is
+    /// refused: options the index cannot use
+    /// ([`TermError::InvalidOptions`]), checked before the text is
+    /// tokenised, or text that cuts no token ([`TermError::EmptyTermText`]),
+    /// whose filter would match every row. The one rule for a match query:
+    /// a field query and the `dynamic` path both apply it, so they cannot
+    /// disagree on what they refuse. The stored side keeps token-less text
+    /// as the empty filter instead.
+    pub(crate) fn of_query(text: &str, options: &MatchOptions) -> Result<Self, TermError> {
+        let _mask = options.validate()?;
+        let tokens = Self::under(text, options)?;
+        if tokens.0.is_empty() {
+            return Err(TermError::EmptyTermText);
+        }
+        Ok(tokens)
+    }
+
+    /// Whether `value` holds every one of these tokens, cut under the same
+    /// `options` the tokens were: what [`MatchQuery`]'s `verify` asks, with
+    /// the options a value rather than a type, so a match index declared as
+    /// data verifies by the same code. The value is split into tokens as it
+    /// is stored, with every token of both kinds. Each kind is held by its
+    /// own kind: a
+    /// short-word token of the query must be a short word of the value. No
+    /// tokens verify nothing, and a value the index cannot normalize holds
+    /// no token of any query.
+    pub(crate) fn verify(&self, value: &str, options: &MatchOptions) -> bool {
+        let Ok(tokens) = tokenize::tokens(value, options, Side::Stored) else {
+            return false;
+        };
+        let tokens = Zeroizing::new(tokens);
+        !self.0.is_empty() && tokens.hold(&self.0)
+    }
+}
+
+/// The fetch for `want` real matches of a match query whose filter sets
+/// `bits` positions, under `options` and the index's `expected_tokens`
+/// prior: what [`MatchQuery`]'s `target_limit` answers, with the options a
+/// value rather than a type, so a match index declared as data sizes its
+/// fetch by the same code.
+pub(crate) fn match_limit(
+    bits: usize,
+    options: &MatchOptions,
+    expected_tokens: Option<u32>,
+    want: u64,
+    stats: &crate::op::Stats,
+) -> crate::op::Limit {
+    let declared =
+        expected_tokens.map(|tokens| crate::op::stats::expected_fill(tokens, options.k, options.m));
+    let bits = u32::try_from(bits).unwrap_or(u32::MAX);
+    stats.limit(want, stats.pass_rate(bits, options.m, declared))
+}
+
 /// A [`PrfVisitor`] that folds a sequence of per-token PRF blocks into
 /// Bloom-filter bit positions: `k` little-endian 2-byte slices of each block,
 /// masked to the filter size.
@@ -680,28 +1312,151 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for BloomVisitor {
     }
 }
 
-/// Derive a match term. Synchronous — see [`equality`]: validation and
-/// tokenization run before the PRF, the visitor folds blocks into positions.
+/// Derive the match term of `text` for `side` ([`Side`]): a stored value's
+/// filter, or a query's.
+///
+/// Synchronous, as [`equality`] is. The text is checked and split into
+/// tokens before the PRF runs. The visitor then folds the PRF's blocks into
+/// positions. The tokenizer's tokens derive under [`MATCH_DOMAIN`], and the
+/// short-word tokens under [`MATCH_WORD_DOMAIN`]. Each is bound to
+/// `context`, and both set positions in the one filter.
+///
+/// Some text has no token: empty text, text of separators only, or text
+/// shorter than one n-gram with no short word.
+///
+/// - Stored, such text is the empty filter. No position is set. The PRF is
+///   not called. No query matches it, since a query always has at least one
+///   token.
+/// - As a query, such text is refused ([`TermError::EmptyTermText`]),
+///   because an empty filter would match every row. A field query refuses
+///   it earlier, when the query is prepared. This check refuses it for
+///   every other caller that builds a query's filter.
 fn match_term<O>(
     prf: &HmacSha256Prf,
     text: &str,
     context: Context<'_>,
     options: MatchOptions,
+    side: Side,
 ) -> Result<MatchTerms<O>, TermError> {
     let mask = options.validate()?;
-    let tokens = tokenize::tokenize(text, options.tokenizer, options.downcase);
-    if tokens.is_empty() {
+    // The PRF takes the tokens by value and moves each `String`'s buffer
+    // into a `Protected`, which zeroizes it on drop: the tokens are wiped
+    // there, not here. The `Vec`s themselves hold only their pointers.
+    let tokens = tokenize::tokens(text, &options, side)?;
+    if side == Side::Query && tokens.is_empty() {
         return Err(TermError::EmptyTermText);
     }
-    let context = Context::pae(&[MATCH_DOMAIN, context.as_bytes()]);
-
-    let positions = tokens
-        .prf_visit_with_context(prf, context, BloomVisitor { k: options.k, mask })
-        .into_result()
-        .map_err(TermError::from_prf)?;
+    let tokenize::Tokens {
+        tokenizer,
+        short_words,
+    } = tokens;
+    // Held wiped-on-drop until the PRF takes them, so a failure deriving
+    // the tokenizer's tokens does not free the words unwiped.
+    let mut short_words = Zeroizing::new(short_words);
+    let mut positions = bloom_positions(prf, tokenizer, MATCH_DOMAIN, &context, options.k, mask)?;
+    positions.extend(bloom_positions(
+        prf,
+        std::mem::take(&mut *short_words),
+        MATCH_WORD_DOMAIN,
+        &context,
+        options.k,
+        mask,
+    )?);
     // Every position came out of the visitor masked to `m - 1`, so the range
     // check `from_positions` applies is already satisfied by construction.
     Ok(MatchTerms::normalised(positions))
+}
+
+/// The Bloom positions of `tokens`, each PRF'd under the PAE-framed
+/// `[domain, context]` and folded by [`BloomVisitor`]. No tokens is no
+/// positions and no PRF call.
+fn bloom_positions(
+    prf: &HmacSha256Prf,
+    tokens: Vec<String>,
+    domain: &[u8],
+    context: &Context<'_>,
+    k: usize,
+    mask: u16,
+) -> Result<Vec<u16>, TermError> {
+    if tokens.is_empty() {
+        return Ok(Vec::new());
+    }
+    tokens
+        .prf_visit_with_context(
+            prf,
+            Context::pae(&[domain, context.as_bytes()]),
+            BloomVisitor { k, mask },
+        )
+        .into_result()
+        .map_err(TermError::from_prf)
+}
+
+/// The match term of `text` for `side`, through the keyset of `cipher`. The
+/// term is derived now if the keyset is loaded, or else once it loads.
+/// Under the local HMAC backend, the returned [`Pending`] carries no
+/// requests.
+fn match_pending<'a, K, O>(
+    cipher: &'a KeysetCipher<'_, K>,
+    text: &str,
+    context: Context<'_>,
+    options: MatchOptions,
+    side: Side,
+) -> Pending<'a, MatchTerms<O>, K>
+where
+    O: MatchConfig,
+{
+    match cipher.loaded_state() {
+        Some(keyset) => {
+            let term = match_term(&keyset.prf, text, context, options, side).map_err(Error::from);
+            Pending::ready(cipher, term)
+        }
+        None => match_deferred(cipher, text, context, options, side),
+    }
+}
+
+/// The match term of `text`, through a keyset that is not loaded
+/// yet. The pending keeps a copy of the text, wiped on drop, and derives
+/// the term when it has loaded the keyset.
+fn match_deferred<'a, K, O>(
+    cipher: &'a KeysetCipher<'_, K>,
+    text: &str,
+    context: Context<'_>,
+    options: MatchOptions,
+    side: Side,
+) -> Pending<'a, MatchTerms<O>, K>
+where
+    O: MatchConfig,
+{
+    let text = Zeroizing::new(text.to_owned());
+    let context = context.into_owned();
+    cipher.deferred(move |keyset| {
+        match_term(&keyset.prf, &text, context, options, side).map_err(Error::from)
+    })
+}
+
+/// The match term that a query of `source` sends, under `O`'s options. The
+/// term is the filter of the tokens the query keeps ([`Side::Query`]). The
+/// query's [`QueryTokens`] verify a row by the same tokens.
+///
+/// A field query of a match index derives this term, through
+/// [`matching_query`](crate::target::matching_query). That function calls
+/// this one as [`Term::encrypt_from`] is called. Text that keeps no token
+/// is refused ([`TermError::EmptyTermText`]).
+pub(crate) fn match_query<'a, 'c, K, O>(
+    source: impl AsRef<str>,
+    cipher: &'a KeysetCipher<'_, K>,
+    context: NonEmpty<impl IntoPrfContext<'c>>,
+) -> Pending<'a, MatchTerms<O>, K>
+where
+    O: MatchConfig,
+{
+    match_pending(
+        cipher,
+        source.as_ref(),
+        context.into_prf_context(),
+        O::options(),
+        Side::Query,
+    )
 }
 
 /// A match term of any text source, generated under `O`'s options. Under
@@ -724,10 +1479,13 @@ where
     where
         Self: 'a,
     {
-        let context = context.into_prf_context().into_owned();
-        let term =
-            match_term(cipher.prf(), source.as_ref(), context, O::options()).map_err(Error::from);
-        Pending::ready(cipher, term)
+        match_pending(
+            cipher,
+            source.as_ref(),
+            context.into_prf_context(),
+            O::options(),
+            Side::Stored,
+        )
     }
 }
 
@@ -735,18 +1493,43 @@ where
 // ORE / OPE
 // =============================================================================
 
-/// An order-revealing (CLLW ORE) index term for a source value of type `T`.
-/// Wraps the CLLW ciphertext ([`CllwOreEncrypt::Output`]); comparisons order
-/// like the plaintexts.
+// The plaintext types an order term is derived over are vitaminc-ore's
+// `Orderable` types: each has an order target of its own, which vitaminc-ore
+// names, and this crate names none. The crate root re-exports the trait and
+// documents its table (`crate::Orderable`).
+
+/// The order target `T` is encoded as: the one vitaminc-ore gives it.
+pub(crate) fn target_of<T: Orderable>() -> OrderTarget {
+    <T::Target as Default>::default().runtime()
+}
+
+/// Why clww-ore produced no order term, as a [`TermError`]: the value's
+/// encoding refused it, or the scheme failed. `clww_ore::Error` carries
+/// nothing, so a scheme failure is that one value whichever way it
+/// arrives. A scalar of an [`Orderable`] type is never a container and
+/// never unsupported by a CLLW scheme, so those refusals cannot occur;
+/// they read as a scheme failure rather than a panic.
+pub(crate) fn order_error(error: OrderError<clww_ore::Error>) -> TermError {
+    match error {
+        OrderError::Term(error) => TermError::Normalize(error),
+        _ => TermError::Ore(clww_ore::Error),
+    }
+}
+
+/// An order-revealing (CLLW ORE) index term for a source value of type `T`:
+/// clww-ore's encryption of the value's `vitaminc-ore` order encoding at
+/// `T`'s [`Orderable`] target. Comparisons order like the plaintexts, within
+/// one index.
 ///
 /// The type parameter is the *source* type: `OreTerm<u64>` in a record type
-/// declares "this field is the ORE term of a `u64`".
-pub struct OreTerm<T: CllwOreEncrypt>(T::Output);
+/// declares "this field is the ORE term of a `u64`". Every source type's
+/// term is the same ciphertext type, [`OreClww8VariableV1`].
+pub struct OreTerm<T: Orderable>(OreClww8VariableV1, PhantomData<fn() -> T>);
 
 /// An order-preserving (CLLW OPE) index term for a source value of type `T`
-/// (see [`OreTerm`]). The wrapped ciphertext compares with plain
+/// (see [`OreTerm`]): [`OpeClww8VariableV1`], which compares with plain
 /// lexicographic byte order.
-pub struct OpeTerm<T: CllwOpeEncrypt>(T::Output);
+pub struct OpeTerm<T: Orderable>(OpeClww8VariableV1, PhantomData<fn() -> T>);
 
 /// Index terms are one-way: decryption passes over them. `Decryptable` and
 /// `DecryptField` say so, which is how a derived record finds its ciphertext
@@ -766,58 +1549,45 @@ macro_rules! index_term {
 
 index_term!(EqualityTerm);
 index_term!(MatchTerms<O>, O: MatchConfig);
-index_term!(OreTerm<T>, T: CllwOreEncrypt);
-index_term!(OpeTerm<T>, T: CllwOpeEncrypt);
+index_term!(OreTerm<T>, T: Orderable);
+index_term!(OpeTerm<T>, T: Orderable);
+index_term!(OreBlockTerm<T>, T: Orderable);
 
 macro_rules! term_wrapper {
-    ($name:ident, $bound:ident) => {
-        impl<T: $bound> $name<T> {
+    ($name:ident, $inner:ty, $well_formed:expr) => {
+        impl<T: Orderable> $name<T> {
             /// Wrap an already-generated CLLW ciphertext.
-            pub fn new(output: T::Output) -> Self {
-                Self(output)
+            pub fn new(output: $inner) -> Self {
+                Self(output, PhantomData)
             }
 
             /// The wrapped CLLW ciphertext.
-            pub fn inner(&self) -> &T::Output {
+            pub fn inner(&self) -> &$inner {
                 &self.0
             }
 
             /// Unwrap into the CLLW ciphertext.
-            pub fn into_inner(self) -> T::Output {
+            pub fn into_inner(self) -> $inner {
                 self.0
             }
 
             /// Decode a term from its frozen byte encoding — the raw CLLW
             /// ciphertext bytes, the inverse of [`as_bytes`](Self::as_bytes)
-            /// — for terms persisted server-side. Structural only (length
-            /// checks); the caller asserts the bytes were generated for this
-            /// source type `T` and under the same context.
-            pub fn from_bytes(bytes: &[u8]) -> Result<Self, TermBytesError>
-            where
-                for<'a> T::Output: TryFrom<&'a [u8]>,
-            {
-                T::Output::try_from(bytes)
-                    .map(Self)
-                    .map_err(|_| TermBytesError::MalformedCllwCiphertext(bytes.len()))
+            /// — for terms persisted server-side. Takes the buffer and keeps
+            /// it, copying nothing. Structural only (the length, and an OPE
+            /// term's leading carry); the caller asserts the bytes were
+            /// generated for this source type `T` and under the same
+            /// context.
+            pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, TermBytesError> {
+                let len = bytes.len();
+                if !$well_formed(&bytes) {
+                    return Err(TermBytesError::MalformedCllwCiphertext(len));
+                }
+                <$inner>::from_bytes(bytes)
+                    .map(Self::new)
+                    .map_err(|_| TermBytesError::MalformedCllwCiphertext(len))
             }
-        }
 
-        /// The inherent `from_bytes` as a std conversion — the same decoder.
-        impl<T: $bound> TryFrom<&[u8]> for $name<T>
-        where
-            for<'a> T::Output: TryFrom<&'a [u8]>,
-        {
-            type Error = TermBytesError;
-
-            fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-                Self::from_bytes(bytes)
-            }
-        }
-
-        impl<T: $bound> $name<T>
-        where
-            T::Output: AsRef<[u8]>,
-        {
             /// The frozen byte encoding: the raw CLLW ciphertext bytes,
             /// unframed — the same *shape* the EQL layer hex-encodes, but
             /// not comparable with rows it wrote (see the
@@ -832,59 +1602,64 @@ macro_rules! term_wrapper {
             }
         }
 
+        /// The inherent `from_bytes` as a std conversion — the same decoder.
+        impl<T: Orderable> TryFrom<Vec<u8>> for $name<T> {
+            type Error = TermBytesError;
+
+            fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+                Self::from_bytes(bytes)
+            }
+        }
+
+        /// The inherent `from_bytes` over a copy of `bytes`.
+        impl<T: Orderable> TryFrom<&[u8]> for $name<T> {
+            type Error = TermBytesError;
+
+            fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+                Self::from_bytes(bytes.to_vec())
+            }
+        }
+
         /// The frozen byte encoding — the same bytes as the inherent
         /// `as_bytes`.
-        impl<T: $bound> AsRef<[u8]> for $name<T>
-        where
-            T::Output: AsRef<[u8]>,
-        {
+        impl<T: Orderable> AsRef<[u8]> for $name<T> {
             fn as_ref(&self) -> &[u8] {
                 self.0.as_ref()
             }
         }
 
-        impl<T: $bound> fmt::Debug for $name<T>
-        where
-            T::Output: fmt::Debug,
-        {
+        term_serde!($name);
+
+        impl<T: Orderable> fmt::Debug for $name<T> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.debug_tuple(stringify!($name)).field(&self.0).finish()
             }
         }
 
-        impl<T: $bound> Clone for $name<T>
-        where
-            T::Output: Clone,
-        {
+        impl<T: Orderable> Clone for $name<T> {
             fn clone(&self) -> Self {
-                Self(self.0.clone())
+                Self::new(self.0.clone())
             }
         }
 
-        impl<T: $bound> PartialEq for $name<T>
-        where
-            T::Output: PartialEq,
-        {
+        impl<T: Orderable> PartialEq for $name<T> {
             fn eq(&self, other: &Self) -> bool {
                 self.0 == other.0
             }
         }
 
-        impl<T: $bound> Eq for $name<T> where T::Output: Eq {}
+        impl<T: Orderable> Eq for $name<T> {}
 
-        impl<T: $bound> PartialOrd for $name<T>
-        where
-            T::Output: PartialOrd,
-        {
+        impl<T: Orderable> PartialOrd for $name<T> {
             fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                self.0.partial_cmp(&other.0)
+                Some(self.cmp(other))
             }
         }
 
-        impl<T: $bound> Ord for $name<T>
-        where
-            T::Output: Ord,
-        {
+        /// The scheme's comparison of two terms of one index. Terms of
+        /// different indexes compare as noise: keep an index's terms
+        /// together.
+        impl<T: Orderable> Ord for $name<T> {
             fn cmp(&self, other: &Self) -> std::cmp::Ordering {
                 self.0.cmp(&other.0)
             }
@@ -892,156 +1667,421 @@ macro_rules! term_wrapper {
     };
 }
 
-term_wrapper!(OreTerm, CllwOreEncrypt);
-term_wrapper!(OpeTerm, CllwOpeEncrypt);
+/// The serde impls of an order term `$name<T>` with `as_bytes` and an
+/// owning `from_bytes`: lowercase hex in a human-readable format, the raw
+/// bytes in a binary one, both through `serdect` (constant-time hex).
+/// Deserializing refuses what `from_bytes` refuses; its errors name a
+/// length or the encoding, never a byte of the term.
+macro_rules! term_serde {
+    ($name:ident) => {
+        impl<T: Orderable> serde::Serialize for $name<T> {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serdect::slice::serialize_hex_lower_or_bin(&self.as_bytes(), serializer)
+            }
+        }
 
-/// A [`PrfVisitor`] that carries the plaintext in and hands the CLLW ORE
-/// ciphertext out. The PRF block becomes the CLLW [`Key`](cllw_ore::Key)
-/// *inside* `visit_block` and dies there: the block arrives by value and is
-/// copied into the `ZeroizeOnDrop` key (`[u8; 32]` is `Copy`, so `Key::from`
-/// wipes its copy and this visitor wipes the one it still holds), the value
-/// is encrypted, and only the ciphertext leaves. No key is ever returned to
-/// the caller.
+        impl<'de, T: Orderable> serde::Deserialize<'de> for $name<T> {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                let bytes = serdect::slice::deserialize_hex_or_bin_vec(deserializer)?;
+                Self::from_bytes(bytes).map_err(serde::de::Error::custom)
+            }
+        }
+    };
+}
+
+term_wrapper!(OreTerm, OreClww8VariableV1, |_: &[u8]| true);
+// An OPE term leads with the carry out of its top byte, 0 or 1. clww-ore's
+// comparator refuses any other, and its `from_bytes` does not check it.
+term_wrapper!(OpeTerm, OpeClww8VariableV1, |bytes: &[u8]| matches!(
+    bytes.first(),
+    Some(0 | 1)
+));
+
+/// A block ORE index term for a source value of type `T`: ore-rs's 6-bit
+/// block ORE encryption of the value's `vitaminc-ore` order encoding at
+/// `T`'s [`Orderable`] target, the scheme EQL v4's `_ord_ore` domains
+/// store (`ob`). Comparisons order like the plaintexts, within one index.
 ///
-/// This is the shape a 2-party PRF needs: the caller supplies a PRF input
-/// (the context) and receives a term, and where the key comes from — or
-/// whether one exists at all — is the visitor's business. Swapping the
-/// backend for one that returns per-prefix PRF outputs instead of a key
-/// changes this visitor, not its callers.
+/// ore-rs's one scheme, `BlockOre`, routes the target to one of its two
+/// 6-bit engines when the space is opened:
 ///
-/// The plaintext is owned (`T: 'static`) because the visitor outlives the
-/// call under an asynchronous backend; `Send` for the same reason. CLLW
-/// failures surface through the visitor's `Value` rather than
-/// [`PrfVisitorError`] so they keep their own error type.
-struct OreVisitor<T>(T);
+/// - **`OreAes128Bit6`** for a target of at most ten bytes: the integers to
+///   64 bits, floats (as the `f64` they widen to) and dates (four bytes).
+///   Wire header `02 02`, then the block count; one block per six bits of
+///   the encoding, so an `i32` or a date is six blocks and an `i64` eleven.
+/// - **`OreAes128Bit6Chained`** for text, bytes, the 128-bit integers,
+///   timestamps (twelve bytes) and decimals (fourteen). Wire header `02 03`,
+///   the block count, then the padding policy. Text is padded with NUL
+///   bytes to a power of two of at least 16 bytes, so a term reveals its
+///   text's length bucket rather than its length; nothing else is padded. Text and bytes of more than 1023 bytes
+///   are refused ([`TermError::OreBlockTooLong`]), and text that ends in
+///   NUL ([`TermError::OreBlockTrailingNul`]).
+///
+/// A term is the whole ciphertext, left and right halves. The right half
+/// carries a random nonce, so one value encrypts to different bytes each
+/// time, and those terms compare equal. That is why equality here is the
+/// scheme's comparison, not the bytes: `==` is "orders equal", and there
+/// is no `Eq` or `Hash`, since two terms of different indexes, or a
+/// malformed one, have no order at all.
+///
+/// The query term for every ordering operator is this same full
+/// ciphertext, not its left half alone: EQL v4's comparator takes the
+/// stored term's left half and the query's right half when a btree index
+/// or `eql_v4.between` passes the stored value first.
+///
+/// Comparing two stored terms needs no key, as for any ORE: a full
+/// ciphertext carries its deterministic left half, so anyone holding two
+/// stored terms learns their order and, for the chained scheme, the length
+/// of their common prefix in six-bit blocks.
+pub struct OreBlockTerm<T: Orderable>(ore_rs::Term, PhantomData<fn() -> T>);
 
-impl<T, P> PrfVisitor<[u8; 32], P> for OreVisitor<T>
-where
-    T: CllwOreEncrypt + Send + 'static,
-    T::Output: Send + 'static,
-    P: Send + 'static,
-{
-    type Value = Result<T::Output, cllw_ore::Error>;
+/// The order of two block ORE ciphertexts, by the comparator of the scheme
+/// their header names; `None` if either is not a well-formed ciphertext of
+/// that scheme, if they name different schemes, or (chained) if they were
+/// padded under different policies.
+///
+/// `BlockOre::compare` reads the header and compares with that engine's
+/// comparator, `OreAes128Bit6` or `OreAes128Bit6Chained`. ore-rs's legacy
+/// 8-bit engine (module `bit2`) is not used here.
+fn ore_block_compare(a: &ore_rs::Term, b: &ore_rs::Term) -> Option<std::cmp::Ordering> {
+    ore_rs::BlockOre::compare(a, b)
+}
 
-    fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
-        let key = cllw_ore::Key::from(block);
-        block.zeroize();
-        Ok(self.0.encrypt(&key))
+impl<T: Orderable> OreBlockTerm<T> {
+    /// Decode a term from its frozen byte encoding, the serialised ore-rs
+    /// ciphertext, for terms persisted server-side. Takes the buffer and
+    /// keeps it, copying nothing. Structural only: the bytes must be a
+    /// well-formed 6-bit or chained block ORE ciphertext (header, block
+    /// count, length, padding policy and symbols); the caller asserts they
+    /// were generated for this source type `T` and under the same context.
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, TermBytesError> {
+        let term = ore_rs::Term::from_bytes(bytes);
+        if ore_block_compare(&term, &term).is_none() {
+            return Err(TermBytesError::MalformedOreBlockCiphertext(
+                term.as_bytes().len(),
+            ));
+        }
+        Ok(Self(term, PhantomData))
+    }
+
+    /// The frozen byte encoding: the serialised ore-rs ciphertext, header
+    /// first, unframed. EQL v4 stores it hex-encoded as the one element of
+    /// `ob`.
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
+    /// Owned copy of [`as_bytes`](Self::as_bytes).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.0.as_bytes().to_vec()
+    }
+
+    /// Unwrap into the serialised ciphertext.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0.into_bytes()
+    }
+
+    /// The order of the two values, by the scheme's comparator. `None`
+    /// for two terms made under different padding policies, which a
+    /// decoded term can be; two terms of one index always compare. Terms
+    /// of different indexes compare as noise: keep an index's terms
+    /// together.
+    pub fn compare(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        ore_block_compare(&self.0, &other.0)
     }
 }
 
-/// The OPE twin of [`OreVisitor`]: same key handling, produces a CLLW OPE
-/// ciphertext (byte order is plaintext order).
-struct OpeVisitor<T>(T);
+/// The inherent `from_bytes` as a std conversion — the same decoder.
+impl<T: Orderable> TryFrom<Vec<u8>> for OreBlockTerm<T> {
+    type Error = TermBytesError;
 
-impl<T, P> PrfVisitor<[u8; 32], P> for OpeVisitor<T>
-where
-    T: CllwOpeEncrypt + Send + 'static,
-    T::Output: Send + 'static,
-    P: Send + 'static,
-{
-    type Value = Result<T::Output, cllw_ore::Error>;
-
-    fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
-        let key = cllw_ore::Key::from(block);
-        block.zeroize();
-        Ok(self.0.encrypt_ope(&key))
+    fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+        Self::from_bytes(bytes)
     }
 }
 
-/// Derive an ORE term: PRF of the encoded context under a PAE-encoded
-/// `[domain, context]` framing — the same framing every other term kind uses
-/// (see the module docs), so no reimplementation of this derivation can
-/// collide with an equality or match derivation. Only the context enters the
-/// PRF — never the plaintext, which rides in the visitor and is encrypted
-/// there. Deterministic, so write-time and query-time terms agree; under a
-/// 2-party PRF backend this derivation is a visible ZeroKMS event.
-fn ore<T>(prf: &HmacSha256Prf, value: T, context: Context<'_>) -> Result<OreTerm<T>, TermError>
+/// The inherent `from_bytes` over a copy of `bytes`.
+impl<T: Orderable> TryFrom<&[u8]> for OreBlockTerm<T> {
+    type Error = TermBytesError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        Self::from_bytes(bytes.to_vec())
+    }
+}
+
+term_serde!(OreBlockTerm);
+
+/// The frozen byte encoding — the same bytes as the inherent `as_bytes`.
+impl<T: Orderable> AsRef<[u8]> for OreBlockTerm<T> {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
+
+/// The length only: a term is not secret, but it is long.
+impl<T: Orderable> fmt::Debug for OreBlockTerm<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OreBlockTerm")
+            .field("len", &self.0.as_bytes().len())
+            .finish()
+    }
+}
+
+impl<T: Orderable> Clone for OreBlockTerm<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone(), PhantomData)
+    }
+}
+
+/// Two terms are equal when their values order equal. Their bytes
+/// differ: each carries a random nonce.
+impl<T: Orderable> PartialEq for OreBlockTerm<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.compare(other) == Some(std::cmp::Ordering::Equal)
+    }
+}
+
+/// The scheme's comparison ([`OreBlockTerm::compare`]).
+impl<T: Orderable> PartialOrd for OreBlockTerm<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.compare(other)
+    }
+}
+
+/// Key the order scheme `S` of one index from the PRF, under `domain` and
+/// the index's context.
+///
+/// The PRF block keys the scheme inside Vitamin C's [`SchemeVisitor`] and
+/// is wiped there: the block is copied into the scheme's key, which is wiped
+/// when the scheme drops. The visitor holds no plaintext, so the value is
+/// never passed to the PRF call, and a backend that derives the block later
+/// keeps no copy of it. The caller then encrypts the value on the scheme, by
+/// reference.
+///
+/// The column is opened with the value's target and the empty context:
+/// the key is already this index's own, derived under the index's
+/// descriptor, so there is nothing left for a context to separate. The
+/// column's salt still binds the scheme and the target.
+fn keyed<S>(prf: &HmacSha256Prf, domain: &[u8], context: &Context<'_>) -> Result<S, TermError>
 where
-    T: CllwOreEncrypt + Send + 'static,
-    T::Output: Send + 'static,
+    S: OrderKeyInit<Key = Protected<[u8; 32]>> + Send + 'static,
 {
     let context_bytes = context.as_bytes();
     context_bytes
         .prf_visit_with_context(
             prf,
-            Context::pae(&[ORE_KEY_DOMAIN, context_bytes]),
-            OreVisitor(value),
+            Context::pae(&[domain, context_bytes]),
+            SchemeVisitor::new(),
         )
         .into_result()
-        .map_err(TermError::from_prf)?
-        .map(OreTerm)
-        .map_err(TermError::Ore)
+        .map_err(TermError::from_prf)
 }
 
-/// Derive an OPE term — as [`ore`], under the OPE domain so the two schemes
-/// never share a key.
-fn ope<T>(prf: &HmacSha256Prf, value: T, context: Context<'_>) -> Result<OpeTerm<T>, TermError>
-where
-    T: CllwOpeEncrypt + Send + 'static,
-    T::Output: Send + 'static,
-{
-    let context_bytes = context.as_bytes();
-    context_bytes
-        .prf_visit_with_context(
-            prf,
-            Context::pae(&[OPE_KEY_DOMAIN, context_bytes]),
-            OpeVisitor(value),
-        )
-        .into_result()
-        .map_err(TermError::from_prf)?
-        .map(OpeTerm)
-        .map_err(TermError::Ore)
-}
-
-/// An ORE term of any [`CllwOreEncrypt`] source. Under the local HMAC
-/// backend, derived during the synchronous build — the returned [`Pending`]
-/// carries no requests.
-impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for OreTerm<S>
-where
-    S: CllwOreEncrypt + Send + 'static,
-    S::Output: Send + 'static,
-    T: IntoPrfContext<'c>,
-{
-    // Derived locally: no data key, no descriptor.
-
-    fn encrypt_from<'a>(
-        source: S,
-        cipher: &'a KeysetCipher<'_, K>,
-        context: NonEmpty<T>,
-    ) -> Pending<'a, Self, K>
-    where
-        Self: 'a,
-    {
-        let context = context.into_prf_context().into_owned();
-        let term = ore(cipher.prf(), source, context).map_err(Error::from);
-        Pending::ready(cipher, term)
+/// Why ore-rs produced no block ORE term, as a [`TermError`]: the value's
+/// encoding refused it, the value is too long, text ends in NUL, or the
+/// scheme failed. ore-rs's errors name no part of the value. A target the
+/// scheme does not take cannot occur (`BlockOre` takes every target), and
+/// reads as a scheme failure rather than a panic.
+pub(crate) fn ore_block_error(error: OrderError<ore_rs::OreError>) -> TermError {
+    use ore_rs::OreError;
+    match error {
+        OrderError::Term(error) => TermError::Normalize(error),
+        OrderError::Backend(OreError::TooLong) => TermError::OreBlockTooLong,
+        OrderError::Backend(OreError::TrailingNul) => TermError::OreBlockTrailingNul,
+        OrderError::Backend(error) => TermError::OreBlock(Box::new(error)),
+        other => TermError::OreBlock(other.to_string().into()),
     }
 }
 
-/// An OPE term of any [`CllwOpeEncrypt`] source. Under the local HMAC
-/// backend, derived during the synchronous build — the returned [`Pending`]
-/// carries no requests.
-impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for OpeTerm<S>
-where
-    S: CllwOpeEncrypt + Send + 'static,
-    S::Output: Send + 'static,
-    T: IntoPrfContext<'c>,
-{
-    // Derived locally: no data key, no descriptor.
-
-    fn encrypt_from<'a>(
-        source: S,
-        cipher: &'a KeysetCipher<'_, K>,
-        context: NonEmpty<T>,
-    ) -> Pending<'a, Self, K>
-    where
-        Self: 'a,
-    {
-        let context = context.into_prf_context().into_owned();
-        let term = ope(cipher.prf(), source, context).map_err(Error::from);
-        Pending::ready(cipher, term)
+/// The order encoding of `value` as `target`. It needs no key, so a term
+/// makes it first, before it keys its scheme, and a term whose keyset is
+/// not loaded yet keeps it, not the value, until the keyset arrives.
+/// vitaminc-ore holds it under `Protected`, which wipes it on drop. A value
+/// handed over by value is wiped by the walk that reads it.
+pub(crate) fn order_encoding<V: Encrypt, E>(
+    target: OrderTarget,
+    value: V,
+) -> Result<OrderPlaintext, OrderError<E>> {
+    match vitaminc_ore::order_terms(target, value) {
+        Ok(mut terms) => terms
+            .pop()
+            .map(|term| term.normalized)
+            .ok_or(OrderError::NotScalar),
+        Err(error) => Err(match error.term() {
+            Some(term) => OrderError::Term(term.error()),
+            None => OrderError::NotScalar,
+        }),
     }
+}
+
+/// An order term of `value`, which `derive` makes from the value's
+/// encoding under the keyset's index key: during the build when the keyset
+/// is loaded, and when the pending has loaded it otherwise. The encoding is
+/// made first in both cases, so the value is read once, here, and not kept.
+pub(crate) fn order_pending<'a, K, V, U, E>(
+    cipher: &'a KeysetCipher<'_, K>,
+    target: OrderTarget,
+    value: V,
+    context: Context<'static>,
+    refused: fn(OrderError<E>) -> TermError,
+    derive: fn(&HmacSha256Prf, &OrderPlaintext, Context<'_>) -> Result<U, TermError>,
+) -> Pending<'a, U, K>
+where
+    V: Encrypt,
+    U: MaybeSend + 'a,
+{
+    let encoding = match order_encoding(target, value) {
+        Ok(encoding) => encoding,
+        Err(error) => return Pending::ready(cipher, Err(refused(error).into())),
+    };
+    match cipher.loaded_state() {
+        Some(keyset) => {
+            let term = derive(&keyset.prf, &encoding, context).map_err(Error::from);
+            Pending::ready(cipher, term)
+        }
+        None => cipher
+            .deferred(move |keyset| derive(&keyset.prf, &encoding, context).map_err(Error::from)),
+    }
+}
+
+/// The ORE term of an order encoding, at the target it was made for: PRF
+/// of the encoded context under a PAE-encoded `[domain, context]` framing,
+/// the same framing every other term kind uses (see the module docs), so no
+/// reimplementation of this derivation can collide with an equality or
+/// match derivation. Only the context enters the PRF, never the plaintext,
+/// whose encoding the keyed scheme encrypts. Deterministic, so write-time
+/// and query-time terms agree; under a 2-party PRF backend this derivation
+/// is a visible ZeroKMS event.
+pub(crate) fn ore(
+    prf: &HmacSha256Prf,
+    encoding: &OrderPlaintext,
+    context: Context<'_>,
+) -> Result<OreClww8VariableV1, TermError> {
+    let scheme: ClwwOre = keyed(prf, ORE_KEY_DOMAIN, &context)?;
+    scheme
+        .target(encoding.target())
+        .encrypt_term(encoding)
+        .map(vitaminc_ore::OrderTerm::into_raw)
+        .map_err(order_error)
+}
+
+/// The OPE term of an order encoding, as [`ore`], under the OPE domain so
+/// the two schemes never share a key. The JSON index derives a leaf's
+/// ordering term through it, so a leaf's `op` is the term the scalar `Ope`
+/// index stores for the same value.
+pub(crate) fn ope(
+    prf: &HmacSha256Prf,
+    encoding: &OrderPlaintext,
+    context: Context<'_>,
+) -> Result<OpeClww8VariableV1, TermError> {
+    let scheme: ClwwOpe = keyed(prf, OPE_KEY_DOMAIN, &context)?;
+    scheme
+        .target(encoding.target())
+        .encrypt_term(encoding)
+        .map(vitaminc_ore::OrderTerm::into_raw)
+        .map_err(order_error)
+}
+
+/// The block ORE term of an order encoding, as [`ore`], under the block ORE
+/// domain, so no CLLW scheme shares its key.
+pub(crate) fn ore_block(
+    prf: &HmacSha256Prf,
+    encoding: &OrderPlaintext,
+    context: Context<'_>,
+) -> Result<ore_rs::Term, TermError> {
+    let scheme: ore_rs::BlockOre = keyed(prf, ORE_BLOCK_KEY_DOMAIN, &context)?;
+    scheme
+        .target(encoding.target())
+        .encrypt_term(encoding)
+        .map(vitaminc_ore::OrderTerm::into_raw)
+        .map_err(ore_block_error)
+}
+
+/// Whether block ORE takes `text` as order text: its order encoding (the
+/// marker byte, then the fold, which a [`OreBlockTerm`] encrypts) must
+/// exist, fit the chained scheme's 1024 bytes, and not end in NUL. These
+/// are the refusals derivation makes, stated without a key, so a query is
+/// refused at its boundary on both paths ([`query::order`]).
+#[cfg(feature = "dynamic")]
+pub(crate) fn ore_block_text(text: &str) -> Result<(), TermError> {
+    let encoded = vitaminc_ore::text(text)?;
+    ore_block_fits(vitaminc_protected::Controlled::risky_ref(&encoded))
+}
+
+/// Whether block ORE takes a text order encoding (the marker byte, then
+/// the fold): the rule `ore_block_text` applies, over an encoding already
+/// made.
+pub(crate) fn ore_block_fits(encoded: &[u8]) -> Result<(), TermError> {
+    if encoded.len() > ORE_BLOCK_MAX_BYTES {
+        return Err(TermError::OreBlockTooLong);
+    }
+    if encoded.last() == Some(&0) {
+        return Err(TermError::OreBlockTrailingNul);
+    }
+    Ok(())
+}
+
+/// The longest text or bytes order encoding block ORE takes: ore-rs's
+/// chained ceiling, 1024 bytes, which counts the marker byte `vitaminc-ore`
+/// puts in front of the fold, so the fold itself is at most 1023.
+const ORE_BLOCK_MAX_BYTES: usize = ore_rs::scheme::chained::DEFAULT_MAX_STR_BYTES.get();
+
+/// The order terms of any [`Orderable`] source, by value or read in place.
+/// Under the local HMAC backend each is derived during the synchronous
+/// build when the keyset is loaded, and the returned [`Pending`] carries no
+/// requests. A term derives no descriptor and requests no data key.
+///
+/// A value handed over by value is wiped by the walk that encodes it. A
+/// value read in place stays with the caller, and is not copied. When the
+/// keyset is not loaded yet, the pending keeps the value's order encoding
+/// until it is, and wipes it.
+macro_rules! order_term {
+    ($($term:ident: $scheme:ident, $refused:ident, $wrap:expr;)+) => {$(
+        impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for $term<S>
+        where
+            S: Orderable,
+            T: IntoPrfContext<'c>,
+        {
+            fn encrypt_from<'a>(
+                source: S,
+                cipher: &'a KeysetCipher<'_, K>,
+                context: NonEmpty<T>,
+            ) -> Pending<'a, Self, K>
+            where
+                Self: 'a,
+            {
+                let context = context.into_prf_context().into_owned();
+                order_pending(cipher, target_of::<S>(), source, context, $refused, |prf, encoding, context| {
+                    $scheme(prf, encoding, context).map($wrap)
+                })
+            }
+        }
+
+        impl<'c, S, K, T> Term<&S, K, NonEmpty<T>> for $term<S>
+        where
+            S: Orderable + EncryptRef,
+            T: IntoPrfContext<'c>,
+        {
+            fn encrypt_from<'a>(
+                source: &S,
+                cipher: &'a KeysetCipher<'_, K>,
+                context: NonEmpty<T>,
+            ) -> Pending<'a, Self, K>
+            where
+                Self: 'a,
+            {
+                let context = context.into_prf_context().into_owned();
+                order_pending(cipher, target_of::<S>(), source.lend(), context, $refused, |prf, encoding, context| {
+                    $scheme(prf, encoding, context).map($wrap)
+                })
+            }
+        }
+    )+};
+}
+order_term! {
+    OreTerm: ore, order_error, OreTerm::new;
+    OpeTerm: ope, order_error, OpeTerm::new;
+    OreBlockTerm: ore_block, ore_block_error, |term| OreBlockTerm(term, PhantomData);
 }
 
 // =============================================================================
@@ -1075,11 +2115,22 @@ where
 /// A term that is going to be **stored** should come from a target instead,
 /// where the one context the target is handed reaches the ciphertext and the
 /// term beside it alike, and giving either a context of its own is written
-/// in the declaration rather than plumbed (ADR-0004). A derived record does
+/// in the declaration rather than plumbed. A derived record does
 /// this per field and cannot get it wrong; a hand-written target can still
 /// put a subtree under its own context, but has to say so. The bytes are
 /// identical either way; what differs is whether anything holds the two in
 /// agreement.
+///
+/// Do not use [`match_terms`](Self::match_terms) to build a match query when
+/// [`MatchOptions::short_words`] is on. `match_terms` is the exception to
+/// the rule above, because it derives a stored value's filter. That filter
+/// is also a query's filter only while the option is off.
+///
+/// With the option on, a query keeps its short words only when its whole
+/// text is shorter than one n-gram. A query for "Mike Ng" built with
+/// `match_terms` asks for the word `ng`, so it does not find "Mike Nguyen".
+/// Build a match query from the field's reference (`matches(..)`), or with
+/// [`matching_query`](crate::target::matching_query).
 ///
 /// The descriptor is a context
 /// as the target-directed leaves take it — a [`NonEmpty<T>`]:
@@ -1093,38 +2144,67 @@ impl<K> KeysetCipher<'_, K> {
     /// the same term, at write time and at query time. Byte-identical to
     /// `value.encrypt_into_with_context(&keyset, descriptor)` into an
     /// `EqualityTerm`.
+    ///
+    /// The value is one scalar, normalized by `vitaminc-normalize` before the
+    /// PRF sees it: every integer width of one number is one term
+    /// (`34u32` and `34i64` match), both float widths of one number are one
+    /// term, text is compared in Unicode 16 NFC, and a date, timestamp,
+    /// decimal or uuid derives in a domain of its own, and every null shares
+    /// one term. A boolean or a container has no term
+    /// ([`TermError::NoEqualityTerm`]), and text with a code point
+    /// unassigned in Unicode 16 is refused ([`TermError::Normalize`]).
     pub fn equality_term<'c, T>(
         &self,
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, EqualityTerm, K>
     where
-        T: PrfValue,
+        T: Encrypt,
     {
-        let term = equality(self.prf(), value, descriptor.into_prf_context());
-        Pending::ready(self, term.map_err(Error::from))
+        match self.loaded_state() {
+            Some(keyset) => {
+                let term = equality(&keyset.prf, value, descriptor.into_prf_context());
+                Pending::ready(self, term.map_err(Error::from))
+            }
+            None => match normalized(value) {
+                Ok(normalized) => self.equality_term_normalized(normalized, descriptor),
+                Err(error) => Pending::ready(self, Err(error.into())),
+            },
+        }
     }
 
     /// Generate a match (full-text) term for `text` under the field
     /// `descriptor` and the type-level config `O`: tokenize locally, PRF each
     /// token, fold the outputs into Bloom-filter bit positions.
     ///
-    /// The config is a *type* parameter (not runtime options) so write-time
-    /// and query-time terms agree by construction — a term generated under
-    /// one config cannot be compared against a term generated under another,
-    /// which would otherwise silently return false negatives. Byte-identical
-    /// to the target-directed path for the same `O`. For custom options,
-    /// define a marker type implementing [`MatchConfig`].
+    /// The config is a *type* parameter (not runtime options), so the
+    /// filter's type says which configuration cut it. A filter cut under
+    /// one config is not comparable with one cut under another: a query
+    /// would miss rows it should match, with no error. So a filter derived
+    /// here matches a stored one only when `O` is the field's own. A query
+    /// made from the field's reference takes the field's `O` ([`MatchConfig`]
+    /// says how). Byte-identical to the target-directed path for the same
+    /// `O`. For custom options, define a marker type implementing
+    /// [`MatchConfig`].
     ///
-    /// The same call serves both write time (index the stored text) and query
-    /// time (index the probe text, then test [`MatchTerms::contains`]
-    /// server-side).
+    /// Use this to build the filter of a value you store, not a query. With
+    /// [`MatchOptions::short_words`] on, a stored filter contains every
+    /// n-gram, plus each short word as a whole word. A query must not ask for
+    /// the whole word. A query for "Mike Ng" built with `match_terms` asks
+    /// for the word `ng`, so it does not find "Mike Nguyen".
     ///
-    /// Fails with [`TermError::EmptyTermText`] — as
-    /// [`Error::Term`], once awaited — when the text
-    /// yields no tokens: empty or separator-only text, or an n-gram probe
-    /// shorter than the gram length (which could never match; see
-    /// [`Tokenizer::Ngram`]).
+    /// Build a query with a field reference's `matches(..)`. That gives the
+    /// other type, [`MatchQuery`]. Or build a query's filter with
+    /// [`matching_query`](crate::target::matching_query). Both keep a
+    /// query's short words only when its whole text is shorter than one
+    /// n-gram.
+    ///
+    /// Text with no token is the empty filter. No query matches it. Such
+    /// text is empty, separators only, or shorter than one n-gram (see
+    /// [`Tokenizer::Ngram`]). So a short value can be stored, and this method
+    /// refuses nothing. A query of such text is refused
+    /// ([`TermError::EmptyTermText`]), because its filter would match every
+    /// row.
     pub fn match_terms<'c, O>(
         &self,
         text: &str,
@@ -1133,27 +2213,53 @@ impl<K> KeysetCipher<'_, K> {
     where
         O: MatchConfig + MaybeSend,
     {
-        self.match_terms_under(text, descriptor, O::options())
+        self.match_terms_under(text, descriptor, O::options(), Side::Stored)
     }
 
-    /// [`match_terms`](Self::match_terms) under runtime options, for the
-    /// `dynamic` path, whose plan carries a match index's options as data
-    /// (an `IndexSpec::Match`). Not public: the typed API keeps the options
-    /// on the type so a stored field and its probe cannot disagree, and a
-    /// binding reaches this only through a plan that names the options for
-    /// both.
+    /// [`equality_term`](Self::equality_term) of one scalar the caller has
+    /// normalized already, for the `dynamic` path, which walks a value to
+    /// its one scalar and normalizes it there, with the same
+    /// `vitaminc_normalize::normalize` the typed path's sink applies.
     #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+    pub(crate) fn equality_term_normalized<'c>(
+        &self,
+        normalized: Normalized,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
+    ) -> Pending<'_, EqualityTerm, K> {
+        match self.loaded_state() {
+            Some(keyset) => {
+                let term =
+                    equality_of_normalized(&keyset.prf, normalized, descriptor.into_prf_context());
+                Pending::ready(self, term.map_err(Error::from))
+            }
+            None => {
+                let context = descriptor.into_prf_context().into_owned();
+                self.deferred(move |keyset| {
+                    equality_of_normalized(&keyset.prf, normalized, context).map_err(Error::from)
+                })
+            }
+        }
+    }
+
+    /// [`match_terms`](Self::match_terms) under runtime options, for `side`,
+    /// for the `dynamic` path. That path's plan carries a match index's
+    /// options as data (an `IndexSpec::Match`). The path derives both stored
+    /// and query filters.
+    ///
+    /// This method is not public. The typed API keeps the options on the
+    /// type, so a stored field and its query cannot disagree. A binding
+    /// reaches this only through a plan that names the options for both.
     pub(crate) fn match_terms_under<'c, O>(
         &self,
         text: &str,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
         options: MatchOptions,
+        side: Side,
     ) -> Pending<'_, MatchTerms<O>, K>
     where
         O: MatchConfig + MaybeSend,
     {
-        let term = match_term(self.prf(), text, descriptor.into_prf_context(), options);
-        Pending::ready(self, term.map_err(Error::from))
+        match_pending(self, text, descriptor.into_prf_context(), options, side)
     }
 
     /// Generate an order-revealing (CLLW ORE) term for a range-queryable value
@@ -1162,39 +2268,55 @@ impl<K> KeysetCipher<'_, K> {
     /// derives the per-descriptor CLLW key from the PRF block and encrypts
     /// under it in one step. The key never leaves the visitor.
     ///
-    /// Supported inputs: `u16`/`u32`/`u64`/`u128`, `&'static str`, `String`,
-    /// `Vec<u8>` (via [`CllwOreEncrypt`]). The value must be owned
-    /// (`'static`) because the visitor carries it; pass a `String` for
-    /// borrowed text. Returns the raw CLLW ciphertext; the target-directed
-    /// path wraps the same bytes in [`OreTerm`].
-    pub fn ore_term<'c, T>(
+    /// Supported inputs: every [`Orderable`] type, each encoded as its
+    /// target. Bytes are not one. A value handed over by value is wiped by
+    /// the walk that encodes it, and a reference (`&String`, `&str`) is read
+    /// in place. Returns the raw CLLW ciphertext; the target-directed path
+    /// wraps the same bytes in [`OreTerm`].
+    pub fn ore_term<'c, T: Orderable>(
         &self,
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
-    ) -> Pending<'_, T::Output, K>
-    where
-        T: CllwOreEncrypt + Send + 'static,
-        T::Output: Send + 'static,
-    {
-        let term = ore(self.prf(), value, descriptor.into_prf_context()).map(OreTerm::into_inner);
-        Pending::ready(self, term.map_err(Error::from))
+    ) -> Pending<'_, OreClww8VariableV1, K> {
+        let context = descriptor.into_prf_context().into_owned();
+        order_pending(self, target_of::<T>(), value, context, order_error, ore)
     }
 
     /// Generate an order-preserving (CLLW OPE) term: ciphertexts compare with
     /// plain lexicographic byte order, no custom comparator required.
     /// Encrypt-only — pair with the record ciphertext for round-trips. Key
     /// handling and input bounds as for [`ore_term`](Self::ore_term).
-    pub fn ope_term<'c, T>(
+    pub fn ope_term<'c, T: Orderable>(
         &self,
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
-    ) -> Pending<'_, T::Output, K>
-    where
-        T: CllwOpeEncrypt + Send + 'static,
-        T::Output: Send + 'static,
-    {
-        let term = ope(self.prf(), value, descriptor.into_prf_context()).map(OpeTerm::into_inner);
-        Pending::ready(self, term.map_err(Error::from))
+    ) -> Pending<'_, OpeClww8VariableV1, K> {
+        let context = descriptor.into_prf_context().into_owned();
+        order_pending(self, target_of::<T>(), value, context, order_error, ope)
+    }
+
+    /// Generate a block ORE term: ore-rs's 6-bit block ORE, the scheme
+    /// EQL v4's `_ord_ore` domains store. Key handling and inputs as for
+    /// [`ore_term`](Self::ore_term), under a key of its own; see
+    /// [`OreBlockTerm`] for which scheme a type is encrypted with and what
+    /// is refused. Byte-identical to the target-directed path's left half
+    /// for the same descriptor; the right half carries a random nonce.
+    pub fn ore_block_term<'c, T: Orderable>(
+        &self,
+        value: T,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
+    ) -> Pending<'_, OreBlockTerm<T>, K> {
+        let context = descriptor.into_prf_context().into_owned();
+        order_pending(
+            self,
+            target_of::<T>(),
+            value,
+            context,
+            ore_block_error,
+            |prf, encoding, context| {
+                ore_block(prf, encoding, context).map(|term| OreBlockTerm(term, PhantomData))
+            },
+        )
     }
 }
 
@@ -1206,6 +2328,483 @@ mod tests {
     use vitaminc_protected::Protected;
 
     use super::*;
+
+    #[test]
+    fn a_match_query_with_no_tokens_verifies_nothing() {
+        // A query refuses token-less text before a term exists, so
+        // this cannot reach a `MatchQuery` through the API; the guard is for
+        // one built any other way, which must never match every row.
+        let query = MatchQuery::<DefaultMatch>::new(
+            MatchTerms::normalised(vec![1, 2, 3]),
+            QueryTokens::default(),
+        );
+        assert!(!crate::op::Probabilistic::verify(&query, "anything at all"));
+        assert!(!crate::op::Probabilistic::verify(&query, ""));
+    }
+
+    /// An equality term is one scalar's: a container, even one holding one
+    /// scalar, and a scalar with no equality domain have none, and text with
+    /// no normal form is refused for that reason.
+    #[test]
+    fn equality_is_defined_for_one_scalar_with_a_domain() {
+        let prf = HmacSha256Prf::new(Protected::new([7; 32]));
+        let derive = |value| equality(&prf, value, Context::empty());
+        assert!(equality(&prf, 34u32, Context::empty()).is_ok());
+        // A null has one term, whatever type it stands in for and whether
+        // it is typed (a fixed-width type's) or plain (text's), and no value
+        // has it (#1298).
+        let null = equality(&prf, None::<u32>, Context::empty()).expect("a null has a term");
+        for other in [
+            equality(&prf, None::<i64>, Context::empty()),
+            equality(&prf, None::<String>, Context::empty()),
+            equality(&prf, None::<f64>, Context::empty()),
+        ] {
+            assert_eq!(other.expect("a null has a term"), null);
+        }
+        for value in [
+            equality(&prf, 0u32, Context::empty()),
+            equality(&prf, String::new(), Context::empty()),
+        ] {
+            assert_ne!(value.expect("a value has a term"), null);
+        }
+        for (what, refused) in [
+            ("a boolean", equality(&prf, true, Context::empty())),
+            (
+                "a sequence of one",
+                equality(&prf, vec![34u32], Context::empty()),
+            ),
+            (
+                "a map of one",
+                equality(&prf, BTreeMap::from([("a", 34u32)]), Context::empty()),
+            ),
+            (
+                "a map of two",
+                equality(
+                    &prf,
+                    BTreeMap::from([("a", 34u32), ("b", 35u32)]),
+                    Context::empty(),
+                ),
+            ),
+        ] {
+            assert!(
+                matches!(refused, Err(TermError::NoEqualityTerm)),
+                "{what}: {refused:?}"
+            );
+        }
+        assert!(matches!(
+            derive("a\u{378}b"),
+            Err(TermError::Normalize(NormalizeError::UnassignedCodePoint))
+        ));
+    }
+
+    /// A match query's one rule: options the index cannot use are refused
+    /// before the text is tokenised, then text that cuts no token; text
+    /// that cuts one comes back as its tokens.
+    #[test]
+    fn a_query_is_refused_for_its_options_then_for_cutting_no_token() {
+        let zero = MatchOptions {
+            tokenizer: Tokenizer::Ngram { length: 0 },
+            ..Default::default()
+        };
+        assert!(matches!(
+            QueryTokens::of_query("", &zero),
+            Err(TermError::InvalidOptions(_))
+        ));
+        let options = MatchOptions::default();
+        assert!(matches!(
+            QueryTokens::of_query("al", &options),
+            Err(TermError::EmptyTermText)
+        ));
+        let tokens = QueryTokens::of_query("ALICE", &options).expect("cuts tokens");
+        assert_eq!(
+            tokens.0.tokenizer,
+            QueryTokens::under("alice", &options)
+                .expect("normalizes")
+                .0
+                .tokenizer
+        );
+    }
+
+    mod given_short_words {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn options() -> MatchOptions {
+            MatchOptions {
+                short_words: true,
+                ..MatchOptions::default()
+            }
+        }
+
+        /// The positions `token` sets as one token of the kind `domain`
+        /// names, under the widest filter and the most slices, so two
+        /// blocks that differ anywhere in their first 32 bytes show it.
+        fn positions(prf: &HmacSha256Prf, token: &str, domain: &[u8], context: &[u8]) -> Vec<u16> {
+            bloom_positions(
+                prf,
+                vec![token.to_owned()],
+                domain,
+                &Context::from_encoded(context),
+                16,
+                u16::MAX,
+            )
+            .expect("derives")
+        }
+
+        #[test]
+        fn the_option_is_valid_beside_ngrams_of_three_or_more() {
+            for length in [3, 4, 8] {
+                let options = MatchOptions {
+                    tokenizer: Tokenizer::Ngram { length },
+                    ..options()
+                };
+                assert!(
+                    options.validate().is_ok(),
+                    "{length}-grams take short words"
+                );
+            }
+        }
+
+        #[test]
+        fn the_option_is_refused_beside_the_standard_tokenizer_or_shorter_ngrams() {
+            for tokenizer in [
+                Tokenizer::Standard,
+                Tokenizer::Ngram { length: 1 },
+                Tokenizer::Ngram { length: 2 },
+            ] {
+                let refused = MatchOptions {
+                    tokenizer,
+                    ..options()
+                }
+                .validate();
+                assert!(
+                    matches!(refused, Err(TermError::InvalidOptions(_))),
+                    "{tokenizer:?}: {refused:?}"
+                );
+                assert!(
+                    MatchOptions {
+                        tokenizer,
+                        ..MatchOptions::default()
+                    }
+                    .validate()
+                    .is_ok(),
+                    "{tokenizer:?} is valid without the option"
+                );
+            }
+        }
+
+        #[test]
+        fn a_query_of_one_short_word_is_accepted_and_of_one_letter_refused() {
+            let tokens = QueryTokens::of_query("Ng", &options()).expect("one word token");
+            assert_eq!(tokens.0.short_words, ["ng"], "the word, folded");
+            assert!(tokens.0.tokenizer.is_empty(), "no trigram in two letters");
+            for text in ["N", "", "  ", "n "] {
+                assert!(
+                    matches!(
+                        QueryTokens::of_query(text, &options()),
+                        Err(TermError::EmptyTermText)
+                    ),
+                    "{text:?} still cuts nothing"
+                );
+            }
+            assert!(
+                matches!(
+                    QueryTokens::of_query(
+                        "Ng",
+                        &MatchOptions {
+                            tokenizer: Tokenizer::Standard,
+                            ..options()
+                        }
+                    ),
+                    Err(TermError::InvalidOptions(_))
+                ),
+                "options are checked before the text"
+            );
+        }
+
+        #[test]
+        fn a_query_that_cuts_an_ngram_keeps_no_short_word() {
+            let tokens = QueryTokens::of_query("Mike Ng", &options()).expect("a query");
+            assert!(
+                tokens.0.short_words.is_empty(),
+                "\"Mike Ng\" keeps its trigrams alone: {:?}",
+                tokens.0.short_words
+            );
+            assert_eq!(
+                tokens.0.tokenizer,
+                ["mik", "ike", "ke ", "e n", " ng"],
+                "every trigram of the whole text"
+            );
+            for row in ["Mike Ng", "Mike Nguyen", "mike ngo"] {
+                assert!(
+                    tokens.verify(row, &options()),
+                    "\"Mike Ng\" verifies {row:?}"
+                );
+            }
+            assert!(
+                !tokens.verify("Ng", &options()),
+                "\"Ng\" holds none of its trigrams"
+            );
+        }
+
+        /// The filter a query sends, against the tokens it verifies by.
+        mod given_a_query_filter {
+            use super::*;
+
+            fn prf() -> HmacSha256Prf {
+                HmacSha256Prf::new(Protected::new([7; 32]))
+            }
+
+            fn context() -> Context<'static> {
+                Context::from_encoded(&b"users/name"[..])
+            }
+
+            /// The filter of `tokens`, each kind under its own domain, as
+            /// [`match_term`] folds them.
+            fn filter_of(prf: &HmacSha256Prf, tokens: &tokenize::Tokens) -> MatchTerms {
+                let mask = options().validate().expect("valid");
+                let mut positions = bloom_positions(
+                    prf,
+                    tokens.tokenizer.clone(),
+                    MATCH_DOMAIN,
+                    &context(),
+                    3,
+                    mask,
+                )
+                .expect("grams");
+                positions.extend(
+                    bloom_positions(
+                        prf,
+                        tokens.short_words.clone(),
+                        MATCH_WORD_DOMAIN,
+                        &context(),
+                        3,
+                        mask,
+                    )
+                    .expect("words"),
+                );
+                MatchTerms::normalised(positions)
+            }
+
+            fn derive(text: &str, side: Side) -> MatchTerms {
+                match_term(&prf(), text, context(), options(), side).expect("derives")
+            }
+
+            #[test]
+            fn a_query_of_ngrams_sends_the_filter_of_its_ngrams_alone() {
+                let query = derive("Mike Ng", Side::Query);
+                let without: MatchTerms = match_term(
+                    &prf(),
+                    "Mike Ng",
+                    context(),
+                    MatchOptions::default(),
+                    Side::Stored,
+                )
+                .expect("derives");
+                assert_eq!(
+                    query, without,
+                    "the filter the index without the option stores"
+                );
+                assert!(
+                    derive("Mike Nguyen", Side::Stored).contains(&query),
+                    "which \"Mike Nguyen\" holds"
+                );
+                assert!(
+                    derive("Mike Ng", Side::Stored).contains(&query)
+                        && derive("Mike Ng", Side::Stored) != query,
+                    "\"Mike Ng\" holds it, and stores its word beside it"
+                );
+            }
+
+            #[test]
+            fn a_query_of_one_short_word_sends_the_filter_the_word_stores() {
+                let query = derive("Ng", Side::Query);
+                assert_eq!(query, derive("Ng", Side::Stored), "one word token");
+                assert!(
+                    derive("Mike Ng", Side::Stored).contains(&query),
+                    "held by a row holding the word"
+                );
+                assert!(
+                    !derive("Mike Nguyen", Side::Stored).contains(&query),
+                    "and not by a row holding a longer word it begins"
+                );
+            }
+
+            /// Text of short and long words, so a query has n-grams, short
+            /// words, both, or neither.
+            fn text() -> impl Strategy<Value = String> {
+                prop::collection::vec(
+                    prop::sample::select(vec!['a', 'n', 'g', 'é', '李', ' ', ',']),
+                    0..10,
+                )
+                .prop_map(|chars| chars.into_iter().collect())
+            }
+
+            proptest! {
+                /// A query's filter is the filter of exactly the tokens it
+                /// verifies by. So no row the filter rejects would verify. A
+                /// query that keeps no token has no filter.
+                #[test]
+                fn the_filter_is_the_filter_of_the_tokens_it_verifies_by(query in text()) {
+                    let prf = prf();
+                    let tokens = QueryTokens::under(&query, &options()).expect("normalizes");
+                    let derived: Result<MatchTerms, TermError> =
+                        match_term(&prf, &query, context(), options(), Side::Query);
+                    if tokens.0.is_empty() {
+                        prop_assert!(
+                            matches!(derived, Err(TermError::EmptyTermText)),
+                            "{:?} keeps no token, and is refused: {:?}",
+                            query,
+                            derived
+                        );
+                    } else {
+                        prop_assert_eq!(
+                            derived.expect("a query that keeps a token derives"),
+                            filter_of(&prf, &tokens.0),
+                            "the filter of {:?}",
+                            query
+                        );
+                    }
+                }
+
+                /// No false negative: a row that verifies holds the query's
+                /// filter, whatever the two texts.
+                #[test]
+                fn a_row_that_verifies_holds_the_filter(query in text(), row in text()) {
+                    if let Ok(tokens) = QueryTokens::of_query(&query, &options()) {
+                        if tokens.verify(&row, &options()) {
+                            prop_assert!(
+                                derive(&row, Side::Stored).contains(&derive(&query, Side::Query)),
+                                "{:?} verifies {:?} and holds its filter",
+                                query,
+                                row
+                            );
+                        }
+                    }
+                }
+
+                /// A query with an n-gram finds every text that contains it
+                /// as a run of characters. So a name typed in part finds its
+                /// row.
+                #[test]
+                fn a_query_that_cuts_an_ngram_finds_every_text_it_is_part_of(
+                    row in text(),
+                    bounds in (0usize..10, 0usize..10),
+                ) {
+                    let chars: Vec<char> = row.chars().collect();
+                    let (start, end) = (bounds.0.min(chars.len()), bounds.1.min(chars.len()));
+                    let query: String = chars[start.min(end)..start.max(end)].iter().collect();
+                    let tokens = QueryTokens::under(&query, &options()).expect("normalizes");
+                    if !tokens.0.tokenizer.is_empty() {
+                        prop_assert!(
+                            tokens.verify(&row, &options()),
+                            "{:?} verifies {:?}",
+                            query,
+                            row
+                        );
+                        prop_assert!(
+                            derive(&row, Side::Stored).contains(&derive(&query, Side::Query)),
+                            "{:?} holds the filter of {:?}",
+                            row,
+                            query
+                        );
+                    }
+                }
+            }
+        }
+
+        /// A word token is framed under its own domain, so it never sets
+        /// the bits an n-gram of the same characters sets: pinned for
+        /// `ng`, under a fixed key and the widest filter, where the two
+        /// would share all sixteen positions if the domains did not part
+        /// them.
+        #[test]
+        fn a_word_token_and_an_ngram_of_the_same_characters_share_no_position() {
+            let prf = HmacSha256Prf::new(Protected::new([7; 32]));
+            let as_gram = positions(&prf, "ng", MATCH_DOMAIN, b"users/name");
+            let as_word = positions(&prf, "ng", MATCH_WORD_DOMAIN, b"users/name");
+            assert_eq!(as_gram.len(), 16, "sixteen distinct positions: {as_gram:?}");
+            assert!(
+                as_gram.iter().all(|p| as_word.binary_search(p).is_err()),
+                "no position in common: {as_gram:?} and {as_word:?}"
+            );
+        }
+
+        /// The stored filter of a value is the union of its two kinds,
+        /// each under its own domain: the n-grams' positions under the
+        /// match domain, the words' under the word domain.
+        #[test]
+        fn a_stored_filter_is_the_union_of_both_kinds() {
+            let prf = HmacSha256Prf::new(Protected::new([7; 32]));
+            let context = Context::from_encoded(&b"users/name"[..]);
+            let stored: MatchTerms =
+                match_term(&prf, "Mike Ng", context.clone(), options(), Side::Stored)
+                    .expect("derives");
+            let mask = options().validate().expect("valid");
+            let mut union = bloom_positions(
+                &prf,
+                vec![
+                    "mik".into(),
+                    "ike".into(),
+                    "ke ".into(),
+                    "e n".into(),
+                    " ng".into(),
+                ],
+                MATCH_DOMAIN,
+                &context,
+                3,
+                mask,
+            )
+            .expect("grams");
+            union.extend(
+                bloom_positions(
+                    &prf,
+                    vec!["ng".into()],
+                    MATCH_WORD_DOMAIN,
+                    &context,
+                    3,
+                    mask,
+                )
+                .expect("word"),
+            );
+            assert_eq!(
+                stored,
+                MatchTerms::normalised(union),
+                "the trigrams of the whole text and the word"
+            );
+            let alone: MatchTerms =
+                match_term(&prf, "Ng", context.clone(), options(), Side::Stored).expect("derives");
+            assert!(
+                !alone.positions().is_empty() && stored.contains(&alone),
+                "\"Ng\" stores one token, which \"Mike Ng\" holds: {alone:?}"
+            );
+            let without: MatchTerms =
+                match_term(&prf, "Ng", context, MatchOptions::default(), Side::Stored)
+                    .expect("derives");
+            assert!(
+                without.positions().is_empty(),
+                "without the option, \"Ng\" is the empty filter"
+            );
+        }
+
+        proptest! {
+            /// For any token, key and context, the word domain and the
+            /// match domain derive different blocks: the positions differ.
+            #[test]
+            fn the_two_domains_never_derive_one_block(
+                token in "\\PC{1,4}",
+                key in any::<[u8; 32]>(),
+                context in prop::collection::vec(any::<u8>(), 1..24),
+            ) {
+                let prf = HmacSha256Prf::new(Protected::new(key));
+                prop_assert_ne!(
+                    positions(&prf, &token, MATCH_DOMAIN, &context),
+                    positions(&prf, &token, MATCH_WORD_DOMAIN, &context),
+                    "a word token and an n-gram of the same characters derive apart"
+                );
+            }
+        }
+    }
 
     /// The Bloom fold reads a token *stream*: handed a map-shaped PRF input
     /// it refuses, rather than folding the entries' blocks as if they were
@@ -1224,6 +2823,118 @@ mod tests {
                 Err(PrfError::Visitor(PrfVisitorError::UnexpectedShape))
             ),
             "{result:?}"
+        );
+    }
+}
+
+/// An order term of a value read in place, through a keyset that is not
+/// loaded yet. The pending keeps the value's order encoding, and no borrow
+/// of the value.
+#[cfg(test)]
+mod order_terms_before_the_keyset_loads {
+    use stack_kms::{FakeCredentialKeySource, SecretToken};
+
+    use super::*;
+    use crate::{nonempty, StackCipher};
+
+    async fn not_loaded() -> StackCipher<FakeCredentialKeySource> {
+        StackCipher::builder()
+            .kms(FakeCredentialKeySource::new())
+            .init()
+            .await
+            .unwrap()
+    }
+    fn jwt() -> SecretToken {
+        SecretToken::new("alice.jwt")
+    }
+
+    /// The term made before the load is the term made after it, for each of
+    /// the three order schemes, and it still orders against another value's.
+    #[tokio::test]
+    async fn a_borrowed_value_has_the_term_a_loaded_keyset_derives() {
+        let cipher = not_loaded().await;
+        let keyset = cipher.default_keyset();
+        let context = || nonempty!("readings").with("level");
+        macro_rules! term {
+            ($term:ty, $value:expr) => {
+                <$term as Term<&_, _, _>>::encrypt_from($value, &keyset, context())
+                    .with_credential(jwt())
+                    .await
+                    .unwrap()
+            };
+        }
+
+        // Each first call is built while the keyset is not loaded.
+        assert!(keyset.loaded_state().is_none());
+        let before = <OreTerm<u32> as Term<&u32, _, _>>::encrypt_from(&7, &keyset, context());
+        let ope_before = <OpeTerm<u32> as Term<&u32, _, _>>::encrypt_from(&7, &keyset, context());
+        let block_before = <OreBlockTerm<String> as Term<&String, _, _>>::encrypt_from(
+            &String::from("ada"),
+            &keyset,
+            context(),
+        );
+        let before = before.with_credential(jwt()).await.unwrap();
+        let ope_before = ope_before.with_credential(jwt()).await.unwrap();
+        let block_before = block_before.with_credential(jwt()).await.unwrap();
+
+        assert!(
+            keyset.loaded_state().is_some(),
+            "the calls loaded the keyset"
+        );
+        assert_eq!(before.as_bytes(), term!(OreTerm<u32>, &7).as_bytes());
+        assert_eq!(ope_before.as_bytes(), term!(OpeTerm<u32>, &7).as_bytes());
+        let ada = String::from("ada");
+        let bob = String::from("bob");
+        assert_eq!(
+            block_before.compare(&term!(OreBlockTerm<String>, &ada)),
+            Some(std::cmp::Ordering::Equal)
+        );
+        assert_eq!(
+            block_before.compare(&term!(OreBlockTerm<String>, &bob)),
+            Some(std::cmp::Ordering::Less)
+        );
+    }
+
+    /// A value with no order encoding is refused with the same error
+    /// before the load as after it.
+    #[tokio::test]
+    async fn a_refused_value_reads_the_same_before_and_after_the_load() {
+        // U+0378 is not assigned in Unicode 16.
+        let unassigned = String::from("\u{378}");
+        let context = || nonempty!("readings").with("level");
+
+        let cipher = not_loaded().await;
+        let keyset = cipher.default_keyset();
+        assert!(keyset.loaded_state().is_none());
+        let before = <OreBlockTerm<String> as Term<&String, _, _>>::encrypt_from(
+            &unassigned,
+            &keyset,
+            context(),
+        )
+        .with_credential(jwt())
+        .await
+        .map(drop)
+        .unwrap_err();
+
+        // A term that is not refused loads the keyset.
+        let _ = <OreTerm<u32> as Term<&u32, _, _>>::encrypt_from(&7, &keyset, context())
+            .with_credential(jwt())
+            .await
+            .unwrap();
+        assert!(keyset.loaded_state().is_some());
+        let after = <OreBlockTerm<String> as Term<&String, _, _>>::encrypt_from(
+            &unassigned,
+            &keyset,
+            context(),
+        )
+        .with_credential(jwt())
+        .await
+        .map(drop)
+        .unwrap_err();
+        assert_eq!(format!("{before:?}"), format!("{after:?}"));
+        assert!(
+            matches!(before, Error::Term(TermError::Normalize(_))),
+            "{before:?}"
         );
     }
 }

@@ -35,7 +35,7 @@ fn tempdir() -> TempDir {
 /// the output-root override (test isolation) and never touches the committed
 /// `crates/eql-bindings/src/v3/*.rs`. The count is one file per scalar family
 /// plus the jsonb family's generated `jsonb_storage.rs`, `payload.rs`,
-/// `query_payload.rs`, `targets.rs`, and `inventory.rs`.
+/// `query_payload.rs`, `targets.rs`, `answers.rs` and `inventory.rs`.
 #[test]
 fn bindings_subcommand_succeeds_and_reports_count() {
     let out_root = tempdir();
@@ -50,7 +50,13 @@ fn bindings_subcommand_succeeds_and_reports_count() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let expected = eql_domains::scalar_families().count() + 5;
+    // v3: scalar families + json_storage + payload + query_payload +
+    // inventory. v4: every family with a scalar domain + targets + answers +
+    // inventory + term_formats.
+    let expected = eql_domains::scalar_families().count()
+        + 4
+        + eql_domains::families_with_scalar_domains().count()
+        + 4;
     assert!(
         stdout.contains(&format!("bindings: ok ({expected} files)")),
         "expected 'bindings: ok ({expected} files)' in stdout, got:\n{stdout}"
@@ -65,25 +71,32 @@ fn bindings_subcommand_succeeds_and_reports_count() {
     );
 }
 
-/// `list-schemas` exits 0 and prints the owned schemas, public first, one per
-/// line. This is the Rust side of the schema-split parity gate
-/// (`mise run test:schemas:parity`), so the exact stdout is pinned here.
+/// `list-schemas` exits 0 and prints the owned schemas, rendered, public first,
+/// one per line (v3 by default). This is the Rust side of the schema-split
+/// parity gate (`mise run test:schemas:parity`), so the exact stdout is pinned
+/// here.
 #[test]
 fn list_schemas_subcommand_prints_owned_schemas() {
-    let out = Command::new(bin())
-        .arg("list-schemas")
-        .output()
-        .expect("run eql-codegen list-schemas");
-    assert!(
-        out.status.success(),
-        "list-schemas should exit 0; stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(
-        stdout, "eql_v3\neql_v3_internal\n",
-        "list-schemas must print the public schema first, then the internal schema"
-    );
+    for (args, expected) in [
+        (&["list-schemas"][..], "eql_v3\neql_v3_internal\n"),
+        (&["list-schemas", "3"][..], "eql_v3\neql_v3_internal\n"),
+        (&["list-schemas", "4"][..], "eql_v4\neql_v4_internal\n"),
+    ] {
+        let out = Command::new(bin())
+            .args(args)
+            .output()
+            .expect("run eql-codegen list-schemas");
+        assert!(
+            out.status.success(),
+            "{args:?} should exit 0; stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            expected,
+            "{args:?} must print the public schema first, then the internal schema"
+        );
+    }
 }
 
 /// `order` exits 0 and prints the real surface's install order, one repo-relative
@@ -150,6 +163,62 @@ fn order_subcommand_fails_on_a_dangling_require() {
         stderr.contains("src/v3/typo.sql") && stderr.contains("src/v3/broken.sql"),
         "the error must name both the dangling target and the file requiring it, got:\n{stderr}"
     );
+}
+
+/// `select` prints, in the order given, the files that belong to a version,
+/// dropping one confined to the other version. `tasks/build.sh` builds each
+/// bundle's file list with it, so stdout is paths only.
+#[test]
+fn select_subcommand_drops_files_confined_to_the_other_version() {
+    let root = tempdir();
+    let shared = root.0.join("shared.sql");
+    let v4_only = root.0.join("range.sql");
+    std::fs::write(&shared, "SELECT {{prefix}}.f();\n").unwrap();
+    std::fs::write(
+        &v4_only,
+        "-- AUTOMATICALLY GENERATED FILE.\n-- ONLY EQL VERSION: 4\nSELECT 1;\n",
+    )
+    .unwrap();
+    let run = |version: &str, files: &[&std::path::Path]| {
+        Command::new(bin())
+            .arg("select")
+            .arg(version)
+            .args(files)
+            .output()
+            .expect("run eql-codegen select")
+    };
+
+    let out = run("4", &[&v4_only, &shared]);
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("{}\n{}\n", v4_only.display(), shared.display())
+    );
+    let out = run("3", &[&v4_only, &shared]);
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("{}\n", shared.display())
+    );
+
+    // Selecting nothing is an error, not an empty bundle.
+    let out = run("3", &[&v4_only]);
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("chose no file"));
+
+    // A malformed directive or a missing file fails, naming the file.
+    let bad = root.0.join("bad.sql");
+    std::fs::write(&bad, "-- ONLY EQL VERSION: five\n").unwrap();
+    for file in [bad.as_path(), root.0.join("missing.sql").as_path()] {
+        let out = run("4", &[&shared, file]);
+        assert!(!out.status.success(), "{}", file.display());
+        assert!(out.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&out.stderr).contains(&*file.to_string_lossy()));
+    }
+
+    let out = run("5", &[&shared]);
+    assert_eq!(out.status.code(), Some(2));
 }
 
 /// An unrecognised argument prints usage and exits 2 (the `ExitCode::from(2)`

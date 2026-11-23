@@ -1,0 +1,22 @@
+error[E0599]: no method named `scope` found for struct `stack_encrypt::target::Bind<T>` in the current scope
+ --> tests/ui/scope_after_bind.rs:6:30
+  |
+6 |     let _ = Bind::new(9u128).scope(42u64);
+  |                              ^^^^^ method not found in `stack_encrypt::target::Bind<u128>`
+
+error[E0061]: this method takes 0 arguments but 1 argument was supplied
+ --> tests/ui/scope_after_bind.rs:7:43
+  |
+7 |     let _ = Scope::new(42u64).bind(9u128).scope(7u64);
+  |                                           ^^^^^ ---- unexpected argument of type `u64`
+  |
+note: method defined here
+ --> src/target/context.rs
+  |
+  |     pub fn scope(&self) -> &S {
+  |            ^^^^^
+help: remove the extra argument
+  |
+7 -     let _ = Scope::new(42u64).bind(9u128).scope(7u64);
+7 +     let _ = Scope::new(42u64).bind(9u128).scope();
+  |

@@ -90,4 +90,43 @@ mod tests {
 
         assert_eq!(input, output);
     }
+    #[test]
+    fn concurrency_limit_bounds_chunks_and_drop_releases_them() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Mutex};
+        use std::task::{Context, Waker};
+
+        struct InFlight(Arc<AtomicUsize>);
+        impl Drop for InFlight {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        let active = Arc::new(AtomicUsize::new(0));
+        let chunks = Arc::new(Mutex::new(Vec::new()));
+        let input: Vec<_> = (0..10).collect();
+        let mut work = Box::pin(map_async_chunked(
+            &input,
+            |chunk| {
+                let active = active.clone();
+                let chunks = chunks.clone();
+                async move {
+                    active.fetch_add(1, Ordering::SeqCst);
+                    let _in_flight = InFlight(active);
+                    chunks.lock().unwrap().push(chunk.to_vec());
+                    std::future::pending::<Result<Vec<i32>, ()>>().await
+                }
+            },
+            3,
+            2,
+        ));
+        assert!(work
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending());
+        assert_eq!(active.load(Ordering::SeqCst), 2);
+        assert_eq!(*chunks.lock().unwrap(), vec![vec![0, 1, 2], vec![3, 4, 5]]);
+        drop(work);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+    }
 }

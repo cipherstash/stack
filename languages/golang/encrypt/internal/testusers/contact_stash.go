@@ -12,7 +12,7 @@ import (
 )
 
 // Stops compiling when the library does not accept this version of generated file.
-const _ = gensupport.GeneratedVersion1
+const _ = gensupport.GeneratedVersion2
 
 // Contact prints its sealed fields in the clear: it has no String or LogValue
 // method. Write them, or run stashgen with -redact.
@@ -124,9 +124,9 @@ func (f ContactEmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v str
 	return eql.TextEq(out.EQL), err
 }
 
-func (f ContactEmailField) Query(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
-	out, err := f.field.Query(ctx, c, v)
-	return eql.TextEqQuery(out.EQL), err
+func (f ContactEmailField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
+	term, err := f.field.Term(ctx, c, "eq", v)
+	return eql.TextEqQuery(term), err
 }
 
 type ContactNotesField struct {

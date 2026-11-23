@@ -1,0 +1,73 @@
+error[E0277]: `u8` is not `Orderable`: it has no order target of its own
+  --> tests/ui/order_term_of_an_8_bit_integer.rs:11:15
+   |
+11 | fn terms(ore: OreTerm<u8>, ope: OpeTerm<i8>) {
+   |               ^^^^^^^^^^^ has no order target of its own
+   |
+   = help: the trait `Orderable` is not implemented for `u8`
+   = note: name the target: `scheme.target(I64).encrypt_checked(value)`
+   = note: there is no 8-bit target: an order term over 256 values reveals them, so an `i8` goes into `I16` or wider by name (`scheme.target(I16).encrypt(value)`), or into an equality index
+   = note: bytes order only into a target named for them, `scheme.target(Bytes)`: no ordering operator compares bytes
+   = help: the following other types implement trait `Orderable`:
+             &f32
+             &f64
+             &i128
+             &i16
+             &i32
+             &i64
+             &u128
+             &u16
+           and $N others
+note: required by a bound in `OreTerm`
+  --> src/sem/mod.rs
+   |
+   | pub struct OreTerm<T: Orderable>(OreClww8VariableV1, PhantomData<fn() -> T>);
+   |                       ^^^^^^^^^ required by this bound in `OreTerm`
+
+error[E0277]: `i8` is not `Orderable`: it has no order target of its own
+  --> tests/ui/order_term_of_an_8_bit_integer.rs:11:33
+   |
+11 | fn terms(ore: OreTerm<u8>, ope: OpeTerm<i8>) {
+   |                                 ^^^^^^^^^^^ has no order target of its own
+   |
+   = help: the trait `Orderable` is not implemented for `i8`
+   = note: name the target: `scheme.target(I64).encrypt_checked(value)`
+   = note: there is no 8-bit target: an order term over 256 values reveals them, so an `i8` goes into `I16` or wider by name (`scheme.target(I16).encrypt(value)`), or into an equality index
+   = note: bytes order only into a target named for them, `scheme.target(Bytes)`: no ordering operator compares bytes
+   = help: the following other types implement trait `Orderable`:
+             &f32
+             &f64
+             &i128
+             &i16
+             &i32
+             &i64
+             &u128
+             &u16
+           and $N others
+note: required by a bound in `OpeTerm`
+  --> src/sem/mod.rs
+   |
+   | pub struct OpeTerm<T: Orderable>(OpeClww8VariableV1, PhantomData<fn() -> T>);
+   |                       ^^^^^^^^^ required by this bound in `OpeTerm`
+
+error[E0277]: `i8` is not `Orderable`: it has no order target of its own
+  --> tests/ui/order_term_of_an_8_bit_integer.rs:16:13
+   |
+16 |     let _ = indexed::<i8, FakeDataKeySource, Borrowed, _>(Ore);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ has no order target of its own
+   |
+   = help: the trait `Orderable` is not implemented for `i8`
+   = note: name the target: `scheme.target(I64).encrypt_checked(value)`
+   = note: there is no 8-bit target: an order term over 256 values reveals them, so an `i8` goes into `I16` or wider by name (`scheme.target(I16).encrypt(value)`), or into an equality index
+   = note: bytes order only into a target named for them, `scheme.target(Bytes)`: no ordering operator compares bytes
+   = help: the following other types implement trait `Orderable`:
+             &f32
+             &f64
+             &i128
+             &i16
+             &i32
+             &i64
+             &u128
+             &u16
+           and $N others
+   = note: required for `stack_encrypt::Ore` to implement `stack_encrypt::Index<i8>`

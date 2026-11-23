@@ -14,24 +14,24 @@
 //! anywhere, and CI builds it either way.
 
 use stack_auth::{AuthError, AuthStrategyFn, SecretToken, ServiceToken};
-use stack_encrypt::kms::{EnvKeyProvider, StackKmsBuilder};
+use stack_encrypt::kms::EnvKeyProvider;
 use stack_encrypt::StackCipher;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // --- The default: credentials from the environment ----------------------
+    // --- Detected credentials: from the environment or the CLI's login -------
     //
-    // `StackCipher::new()` is `StackKmsBuilder::auto()` plus a client key,
-    // plus a keyset resolution. Both credentials are looked up the same way —
-    // environment first, then the current workspace in the CLI's profile
-    // directory (`~/.cipherstash`, written by `npx stash auth login`):
+    // `StackCipher::with_detected_credentials()` is the one constructor that
+    // looks for credentials itself. Both credentials are looked up the same
+    // way: the environment first, then the CLI's profile directory
+    // (`~/.cipherstash`, written by `npx stash auth login`):
     //
     //   access token:  CS_CLIENT_ACCESS_KEY + CS_WORKSPACE_CRN, else auth.json
     //   client key:    CS_CLIENT_ID + CS_CLIENT_KEY,            else secretkey.json
     //
     // So a logged-in developer machine needs nothing else; CI sets the four
     // variables.
-    let cipher = match StackCipher::new().await {
+    let cipher = match StackCipher::with_detected_credentials().await {
         Ok(cipher) => cipher,
         // Nothing to connect to: say so and exit cleanly, so the example is
         // safe to run anywhere.
@@ -54,9 +54,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(other) => return Err(other.into()),
     };
     let keyset = cipher.default_keyset();
-    println!("connected; keyset {}", keyset.keyset_id());
+    println!("connected; keyset {}", keyset.keyset_id().await.unwrap());
 
-    let ciphertext = keyset.encrypt("hello", "demo/greeting").await?;
+    let ciphertext = keyset.encrypt_tree("hello", "demo/greeting").await?;
     let plaintext: String = cipher.decrypt(ciphertext, "demo/greeting").await?;
     assert_eq!(plaintext, "hello");
     println!("round-tripped a value under the default keyset");
@@ -72,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     let customers = cipher
     //         .keyset(IdentifiedBy::Name("customers".to_string().into()))
     //         .await?;
-    //     let ciphertext = customers.encrypt("hello", "demo/greeting").await?;
+    //     let ciphertext = customers.encrypt_tree("hello", "demo/greeting").await?;
     //
     // `default_keyset()` above is not one of these: it is the client's own
     // default, the keyset a ZeroKMS administrator set for this client, and
@@ -80,15 +80,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- A custom authentication strategy -----------------------------------
     //
-    // When the built-in strategies do not fit — tokens from your own broker, a
-    // sidecar, a test double — build the `StackKms` yourself and hand it to
-    // the builder. Any `AuthStrategy` works; `AuthStrategyFn` wraps a closure.
+    // Use `auth_strategy` when the detected credentials do not fit. For
+    // example, your tokens come from your own broker or from a sidecar. Any
+    // `AuthStrategy` works: `AccessKeyStrategy`, `OidcFederationStrategy`,
+    // `DeviceSessionStrategy`, or `AuthStrategyFn`. This example uses
+    // `AuthStrategyFn`, with a closure.
     //
-    // The same seam takes `AccessKeyStrategy`, `DeviceSessionStrategy`, or an
-    // OIDC federation strategy when you want to name one explicitly rather
-    // than let `auto()` detect it.
-    // This section needs a real token: building the cipher resolves the keyset
-    // and loads its index key, which is a round-trip that must authenticate.
+    // The strategy does not choose the client key. Name the source of the
+    // client key with `key_provider`. `EnvKeyProvider` reads `CS_CLIENT_ID`
+    // and `CS_CLIENT_KEY`.
+    //
+    // This section needs a real token. `init` loads the index key of the
+    // default keyset, and ZeroKMS must accept the token on that request.
     //
     // Note what the token is held in: `SecretToken` wraps it the moment it is
     // read, and that wrapper — not a bare `String` — is what the closure
@@ -106,12 +109,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         async move { Ok::<_, AuthError>(ServiceToken::new(token)) }
     });
 
-    let kms = StackKmsBuilder::new(strategy)
-        .with_key_provider(EnvKeyProvider)
-        .build()
+    let _cipher = StackCipher::builder()
+        .auth_strategy(strategy)
+        .key_provider(EnvKeyProvider)
+        .init()
         .await?;
-
-    let _cipher = StackCipher::builder().kms(kms).init().await?;
     println!("built a second cipher over a custom auth strategy");
 
     Ok(())

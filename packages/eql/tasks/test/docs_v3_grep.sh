@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Fail if any user-facing doc still references the removed eql_v2 surface"
+# The Doxygen half reads the rendered SQL (build/render/eql_v3/), so build first.
+#MISE depends=["build"]
 
 set -euo pipefail
 
@@ -64,9 +66,16 @@ done
 
 # Deprecated SQL compatibility aliases remain installed, but the explicitly
 # hidden block must never reach Doxygen — including its generated source browser.
-ste_vec_alias_count=$(grep -c '^CREATE FUNCTION eql_v3\.ste_vec_contains' src/v3/json/functions.sql || true)
+# Count them in the RENDERED file, the one the Doxygen filter reads, so the
+# count does not depend on how the source spells its placeholders.
+rendered_functions=build/render/eql_v3/src/v3/json/functions.sql
+if [ ! -f "$rendered_functions" ]; then
+  echo "ERROR: $rendered_functions missing; run 'mise run build' first" >&2
+  exit 2
+fi
+ste_vec_alias_count=$(grep -c '^CREATE FUNCTION eql_v3\.ste_vec_contains' "$rendered_functions" || true)
 if [ "$ste_vec_alias_count" -ne 2 ]; then
-  echo "FAIL: expected both deprecated ste_vec_contains overloads in src/v3/json/functions.sql" >&2
+  echo "FAIL: expected both deprecated ste_vec_contains overloads in $rendered_functions" >&2
   status=1
 else
   # CAPTURE, THEN MATCH — never `doxygen-filter.sh ... | grep -q ...`. `grep -q`

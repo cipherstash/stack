@@ -1,9 +1,10 @@
 //! The per-call options object, and the keyset selector it carries.
 //!
 //! Every export that touches a keyset takes one more codec-encoded
-//! argument: an [`FfiValue::Object`] with one required key, `keyset`, whose
-//! value is a tagged object naming the keyset the call binds to, and on
-//! `se_decrypt_record` one optional key, `context` (below):
+//! argument: a frame object with one required key, `keyset`, whose
+//! value is a tagged object naming the keyset the call binds to, and two
+//! optional keys: `context` on `se_decrypt_record`, and `audit` on the
+//! exports that request data keys (both below):
 //!
 //! | selector          | meaning |
 //! |-------------------|---------|
@@ -37,18 +38,51 @@
 //! and a term's context arrives as its own argument. A `context` that is
 //! not a string, or not a plain label, is [`STATUS_ENCODING`] too.
 //!
+//! `audit` is audit metadata: facts about the call, which the engine sends
+//! with every data-key request the call makes, for the ZeroKMS audit log.
+//! It is the data form of the Rust call's `.audit(metadata)`, and
+//! [`AuditMetadata`] reads it. The value is an object with text keys. A
+//! value in it is a bool, an integer that fits a signed 64-bit integer, a
+//! float, text, null, a list of these, or another such object. Bytes, a
+//! wider integer and a value with a logical type (a date, a timestamp, a
+//! decimal) are [`STATUS_ENCODING`], and so is an `audit` that is not an
+//! object. A float that is not finite is sent as null. An empty object
+//! sends nothing, as an absent key does. ZeroKMS does not verify the facts,
+//! and no key depends on them.
+//!
+//! ZeroKMS has no type for a time, so a time crosses as text. A language
+//! SDK that takes its language's time type in audit metadata sends this
+//! text, so that every language SDK logs one form:
+//!
+//! - RFC 3339, in UTC, with the suffix `Z`;
+//! - a fraction of a second only when it is not zero, with no trailing
+//!   zeros and at most nine digits;
+//! - a year from 0000 to 9999. The language SDK refuses a time outside
+//!   those years.
+//!
+//! For example, `2026-11-20T10:00:00Z` and `2026-11-20T10:00:00.5Z`. The
+//! guest cannot hold a language SDK to this rule, because the text arrives
+//! as any other text does.
+//!
+//! `audit` is accepted where the call requests data keys:
+//! `se_encrypt_record`, `se_decrypt_record` and `se_json_open`. On `se_term`
+//! and `se_query_term` it is [`STATUS_ENCODING`]: a term is derived from the
+//! keyset's index key, so the call makes no data-key request to send the
+//! facts with, and a host that sent them there would log nothing.
+//! [`Export::accepts`] states which export takes which key.
+//!
 //! This object is a cross-language contract: every binding builds it, so
-//! it is objects, strings, bytes and nothing else, and this module is its
-//! one home. The Go bindings plan points here.
+//! it is objects, strings, bytes and, inside `audit`, the plain values
+//! listed above, and this module is its one home. The Go bindings plan
+//! points here.
 
-use stack_encrypt::dynamic::Scope;
-use stack_encrypt::{KeysetCipher, Label, StackCipher};
-use stack_kms::{IdentifiedBy, IndexKeySource};
+use stack_encrypt::CipherRef;
+use stack_encrypt::{AuditMetadata, KeysetCipher, Label, StackCipher};
+use stack_kms::{DataKeySource, IdentifiedBy, IndexKeySource};
 use uuid::Uuid;
-use vitaminc_aead_value::FfiValue;
-use vitaminc_protected::Controlled;
 use zerokms_protocol::Name;
 
+use stack_encrypt::dynamic::frame::serde::from_slice;
 use stack_guest_abi::last_error::malformed;
 
 use crate::status::fail_error;
@@ -68,104 +102,226 @@ pub enum KeysetSelector {
     Any,
 }
 
-/// Which side of the boundary an options object is parsed for: the sealing
-/// and term exports need a keyset to mint under, so `{"any"}` is refused
-/// there.
+/// The export an options object is parsed for. The export decides which
+/// keys the object may carry: see [`Export::accepts`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Side {
-    /// `se_encrypt_record`, `se_term`.
-    Mint,
+pub enum Export {
+    /// `se_encrypt_record`.
+    EncryptRecord,
     /// `se_decrypt_record`.
-    Open,
+    DecryptRecord,
+    /// `se_json_open`.
+    JsonOpen,
+    /// `se_term`.
+    Term,
+    /// `se_query_term`.
+    QueryTerm,
+}
+
+/// What an export takes in its options object, beyond one keyset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Accepts {
+    /// The `{"any"}` selector: the call opens leaves from any keyset.
+    pub any_keyset: bool,
+    /// The `context` key.
+    pub context: bool,
+    /// The `audit` key: the call requests data keys.
+    pub audit: bool,
+}
+
+impl Export {
+    /// Every export this module parses options for.
+    pub const ALL: [Export; 5] = [
+        Export::EncryptRecord,
+        Export::DecryptRecord,
+        Export::JsonOpen,
+        Export::Term,
+        Export::QueryTerm,
+    ];
+
+    /// What this export takes. This function is the one statement of the
+    /// rules, and [`parse_options`] refuses whatever it does not list.
+    ///
+    /// - Decrypting a record opens leaves from any keyset, checks a stored
+    ///   context, and retrieves data keys.
+    /// - Encrypting a record and reading a JSON document work under one
+    ///   keyset, and request data keys.
+    /// - A term and a query term derive under one keyset, from its index
+    ///   key. They request no data key.
+    pub const fn accepts(self) -> Accepts {
+        match self {
+            Export::DecryptRecord => Accepts {
+                any_keyset: true,
+                context: true,
+                audit: true,
+            },
+            Export::EncryptRecord | Export::JsonOpen => Accepts {
+                any_keyset: false,
+                context: false,
+                audit: true,
+            },
+            Export::Term | Export::QueryTerm => Accepts {
+                any_keyset: false,
+                context: false,
+                audit: false,
+            },
+        }
+    }
 }
 
 /// The parsed options object.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Options {
     pub keyset: KeysetSelector,
     /// The context the host expects a record's context field to hold;
     /// opening only. See the [module docs](self).
     pub context: Option<Label>,
+    /// The audit metadata to send with the call's data-key requests. Empty
+    /// when the host sent none: empty metadata sends nothing. See the
+    /// [module docs](self).
+    pub audit: AuditMetadata,
 }
 
-/// Parse a decoded options object for `side`. Anything outside the shape in
-/// the [module docs](self) is [`STATUS_ENCODING`].
-pub fn parse_options(value: FfiValue, side: Side) -> Result<Options, u32> {
-    let FfiValue::Object(entries) = value else {
-        return Err(malformed("the options are not an object"));
-    };
-    let mut keyset: Option<KeysetSelector> = None;
-    let mut context: Option<Label> = None;
-    for (key, value) in entries {
-        match key.as_str() {
-            "keyset" if keyset.is_none() => keyset = Some(parse_selector(value)?),
-            "context" if context.is_none() && side == Side::Open => {
-                let FfiValue::String(text) = value else {
-                    return Err(malformed(r#"the "context" option is not a string"#));
-                };
-                // Valid UTF-8 by `Utf8String`'s construction invariant;
-                // checked rather than assumed because this is boundary
-                // code. A context is not secret, so the payload moves out
-                // of its `Protected` rather than being copied and wiped.
-                let text = String::from_utf8(text.into_inner().risky_unwrap())
-                    .map_err(|_| malformed(r#"the "context" option is not UTF-8"#))?;
-                context = Some(
-                    Label::parse(&text)
-                        .map_err(|_| malformed(r#"the "context" option is not a label"#))?,
-                );
-            }
-            _ => {
-                return Err(malformed(
-                    r#"the options have a key other than "keyset" and, when opening, "context", or give one twice"#,
-                ))
-            }
-        }
+/// Parse the options frame a host sent for `export`. Anything outside the
+/// shape in the [module docs](self) is [`STATUS_ENCODING`], with a message
+/// that names what was wrong and never a value. So is a key or a selector
+/// that the export does not take ([`Export::accepts`]).
+pub fn parse_options(bytes: &[u8], export: Export) -> Result<Options, u32> {
+    let wire: wire::Options =
+        from_slice(bytes).map_err(|e| malformed(format!("the options: {e}")))?;
+    let keyset = KeysetSelector::from(wire.keyset);
+    let accepts = export.accepts();
+    if wire.context.is_some() && !accepts.context {
+        return Err(malformed(
+            r#"the "context" option is for decrypting a record only"#,
+        ));
     }
-    let keyset = keyset.ok_or_else(|| malformed("the options name no keyset"))?;
-    if side == Side::Mint && keyset == KeysetSelector::Any {
-        return Err(malformed(r#"{"any"} names no keyset to encrypt under"#));
+    if keyset == KeysetSelector::Any && !accepts.any_keyset {
+        return Err(malformed(
+            r#"{"any"} names no keyset, and this call works under one"#,
+        ));
     }
-    Ok(Options { keyset, context })
-}
-
-/// Parse a keyset selector: a tagged object with exactly one key. Spelled
-/// out here rather than in [`parse_options`] so `se_keyset`, which takes a
-/// bare selector, shares the one definition.
-pub fn parse_selector(value: FfiValue) -> Result<KeysetSelector, u32> {
-    let not_one = || malformed("a keyset selector is not an object with exactly one key");
-    let FfiValue::Object(mut entries) = value else {
-        return Err(not_one());
-    };
-    if entries.len() != 1 {
-        return Err(not_one());
+    if wire.audit.is_some() && !accepts.audit {
+        return Err(malformed(
+            r#"the "audit" option is for a call that requests data keys; a term requests none"#,
+        ));
     }
-    let (tag, value) = entries.pop().ok_or_else(not_one)?;
-    Ok(match (tag.as_str(), value) {
-        ("default", FfiValue::Object(fields)) if fields.is_empty() => KeysetSelector::Default,
-        ("any", FfiValue::Object(fields)) if fields.is_empty() => KeysetSelector::Any,
-        ("name", FfiValue::String(name)) => {
-            // Valid UTF-8 by `Utf8String`'s construction invariant; checked
-            // rather than assumed because this is boundary code. A keyset
-            // name is not secret, so the payload moves out of its
-            // `Protected` rather than being copied and wiped. ZeroKMS's
-            // naming rules apply here, at the boundary, not at resolution.
-            let name = String::from_utf8(name.into_inner().risky_unwrap())
-                .map_err(|_| malformed("a keyset name is not UTF-8"))?;
-            KeysetSelector::Name(
-                Name::try_from(name.as_str())
-                    .map_err(|_| malformed("a keyset name breaks ZeroKMS's naming rules"))?,
-            )
-        }
-        ("id", FfiValue::Bytes(bytes)) => KeysetSelector::Id(
-            Uuid::from_slice(bytes.risky_ref())
-                .map_err(|_| malformed("a keyset id is not 16 bytes"))?,
-        ),
-        _ => {
-            return Err(malformed(
-                r#"a keyset selector is not {"default"}, {"any"}, {"name"} or {"id"}"#,
-            ))
-        }
+    Ok(Options {
+        keyset,
+        context: wire.context.map(|context| context.0),
+        audit: wire.audit.unwrap_or_default(),
     })
+}
+
+/// Parse a bare keyset selector frame, as `se_keyset` takes it. One
+/// definition, `wire::Selector`, serves this and [`parse_options`].
+pub fn parse_selector(bytes: &[u8]) -> Result<KeysetSelector, u32> {
+    from_slice::<wire::Selector>(bytes)
+        .map(KeysetSelector::from)
+        .map_err(|e| malformed(format!("a keyset selector: {e}")))
+}
+
+/// The options and the selector as a host writes them, read straight from
+/// the frame by serde (`vitaminc_aead_frame::serde`). Each field type
+/// validates as it reads, through `TryFrom`, so a parsed value is already
+/// the guest's. The frame's serde never repeats a `TryFrom` error's text,
+/// so a refusal names the key and says only that its value was not
+/// accepted; each error here is still a fixed string, for the reader.
+mod wire {
+    use serde::{Deserialize, Deserializer};
+    use stack_encrypt::{AuditMetadata, Label};
+    use uuid::Uuid;
+    use zerokms_protocol::Name;
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(super) struct Options {
+        pub(super) keyset: Selector,
+        /// Absent is `None`. Present, it must be a label: a null is refused
+        /// like any other non-string, as it always has been.
+        #[serde(default, deserialize_with = "present")]
+        pub(super) context: Option<ContextLabel>,
+        /// Absent is `None`. Present, it must be an object: a null is
+        /// refused, as it is for `context`. [`AuditMetadata`] reads the
+        /// object and refuses a value ZeroKMS has no form for.
+        #[serde(default, deserialize_with = "present")]
+        pub(super) audit: Option<AuditMetadata>,
+    }
+
+    fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+        d: D,
+    ) -> Result<Option<T>, D::Error> {
+        T::deserialize(d).map(Some)
+    }
+
+    /// Every variant is spelled; the payload of `default` and `any` is an
+    /// empty object.
+    #[derive(Deserialize)]
+    #[serde(rename_all = "lowercase", deny_unknown_fields)]
+    pub(super) enum Selector {
+        Default {},
+        Any {},
+        Name(KeysetName),
+        Id(KeysetId),
+    }
+
+    impl From<Selector> for super::KeysetSelector {
+        fn from(selector: Selector) -> Self {
+            match selector {
+                Selector::Default {} => Self::Default,
+                Selector::Any {} => Self::Any,
+                Selector::Name(KeysetName(name)) => Self::Name(name),
+                Selector::Id(KeysetId(id)) => Self::Id(id),
+            }
+        }
+    }
+
+    /// A keyset name, checked against ZeroKMS's naming rules here at the
+    /// boundary, not at resolution.
+    #[derive(Deserialize)]
+    #[serde(try_from = "&str")]
+    pub(super) struct KeysetName(Name);
+
+    impl TryFrom<&str> for KeysetName {
+        type Error = &'static str;
+
+        fn try_from(name: &str) -> Result<Self, Self::Error> {
+            Name::try_from(name)
+                .map(KeysetName)
+                .map_err(|_| "a keyset name that breaks ZeroKMS's naming rules")
+        }
+    }
+
+    /// A keyset id: exactly 16 bytes, a UUID's raw form.
+    #[derive(Deserialize)]
+    #[serde(try_from = "&[u8]")]
+    pub(super) struct KeysetId(Uuid);
+
+    impl TryFrom<&[u8]> for KeysetId {
+        type Error = &'static str;
+
+        fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+            Uuid::from_slice(bytes)
+                .map(KeysetId)
+                .map_err(|_| "a keyset id that is not 16 bytes")
+        }
+    }
+
+    /// The context a host expects a record's context field to hold: a
+    /// string that parses as a plain label.
+    #[derive(Deserialize)]
+    #[serde(try_from = "&str")]
+    pub(super) struct ContextLabel(pub(super) Label);
+
+    impl TryFrom<&str> for ContextLabel {
+        type Error = &'static str;
+
+        fn try_from(text: &str) -> Result<Self, Self::Error> {
+            Label::parse(text)
+                .map(ContextLabel)
+                .map_err(|_| "a context that is not a plain label")
+        }
+    }
 }
 
 impl KeysetSelector {
@@ -173,13 +329,16 @@ impl KeysetSelector {
     /// default without a round trip, a name or id through the cipher's
     /// cache (a first use is one `load-keyset` call). `Any` is not a keyset
     /// and is [`STATUS_ENCODING`] here; opening exports resolve it through
-    /// [`scope_for`] instead.
+    /// [`cipher_ref_for`] instead.
+    ///
+    /// A keyset selected by name or id is loaded here, so one that ZeroKMS
+    /// does not know fails the call that selected it, with that error.
     pub async fn resolve<'c, K>(
         &self,
         cipher: &'c StackCipher<K>,
     ) -> Result<KeysetCipher<'c, K>, u32>
     where
-        K: IndexKeySource,
+        K: DataKeySource + IndexKeySource + Sync,
     {
         let by: IdentifiedBy = match self {
             KeysetSelector::Default => return Ok(cipher.default_keyset()),
@@ -187,71 +346,70 @@ impl KeysetSelector {
             KeysetSelector::Name(name) => IdentifiedBy::Name(name.clone()),
             KeysetSelector::Id(id) => IdentifiedBy::Uuid(*id),
         };
-        cipher.keyset(by).await.map_err(|e| fail_error(&e))
+        // Selecting makes no request. Reading the id loads the keyset, and
+        // the handle keeps it.
+        let keyset = cipher.keyset(by);
+        let _ = keyset.keyset_id().await.map_err(|e| fail_error(&e))?;
+        Ok(keyset)
     }
 }
 
-/// The [`Scope`] a decrypt-side selector names: the client for `{"any"}`,
-/// which opens a leaf sealed under any of its keysets, or one keyset's
-/// cipher, which opens only its own and refuses the rest before any key is
-/// retrieved.
-pub async fn scope_for<'c, K>(
+/// Returns the [`CipherRef`] for the keyset selector of a decrypt call.
+///
+/// - For `{"any"}`, the result is the client. The client opens a leaf
+///   sealed under any of its keysets.
+/// - For one keyset, the result is that keyset's cipher. That cipher only
+///   opens leaves from its own keyset. The cipher refuses any other leaf
+///   before it retrieves any key.
+pub async fn cipher_ref_for<'c, K>(
     cipher: &'c StackCipher<K>,
     selector: &KeysetSelector,
-) -> Result<Scope<'c, K>, u32>
+) -> Result<CipherRef<'c, K>, u32>
 where
-    K: IndexKeySource,
+    K: DataKeySource + IndexKeySource + Sync,
 {
     match selector {
-        KeysetSelector::Any => Ok(Scope::Client(cipher)),
-        other => other.resolve(cipher).await.map(Scope::Keyset),
+        KeysetSelector::Any => Ok(CipherRef::from(cipher)),
+        other => other.resolve(cipher).await.map(CipherRef::from),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vitaminc_protected::Protected;
+    use crate::test_frame::{empty, frame, obj, V};
 
-    fn obj(entries: Vec<(&str, FfiValue)>) -> FfiValue {
-        FfiValue::Object(
-            entries
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect(),
-        )
-    }
-
-    fn options(selector: FfiValue) -> FfiValue {
+    fn options(selector: V) -> V {
         obj(vec![("keyset", selector)])
     }
 
-    fn empty() -> FfiValue {
-        FfiValue::Object(Vec::new())
+    fn selector(v: V) -> Result<KeysetSelector, u32> {
+        parse_selector(&frame(&v))
+    }
+
+    fn opts(v: V, export: Export) -> Result<Options, u32> {
+        parse_options(&frame(&v), export)
     }
 
     #[test]
     fn every_selector_variant_is_spelled() {
         let id = Uuid::from_u128(7);
         assert_eq!(
-            parse_selector(obj(vec![("default", empty())])),
+            selector(obj(vec![("default", empty())])),
             Ok(KeysetSelector::Default)
         );
         assert_eq!(
-            parse_selector(obj(vec![("any", empty())])),
+            selector(obj(vec![("any", empty())])),
             Ok(KeysetSelector::Any)
         );
         assert_eq!(
-            parse_selector(obj(vec![("name", FfiValue::String("acme".into()))])),
+            selector(obj(vec![("name", V::Str("acme".into()))])),
             Ok(KeysetSelector::Name(
                 Name::try_from("acme").ok().expect("valid name")
             ))
         );
         assert_eq!(
-            parse_selector(obj(vec![(
-                "id",
-                FfiValue::Bytes(Protected::new(id.as_bytes().to_vec()))
-            )])),
+            selector(obj(vec![("id", V::Bytes(id.as_bytes().to_vec()))])),
             Ok(KeysetSelector::Id(id))
         );
     }
@@ -260,8 +418,8 @@ mod tests {
     fn a_selector_is_exactly_one_known_tag_with_the_right_payload() {
         for (label, bad) in [
             ("an empty object", empty()),
-            ("a string", FfiValue::String("default".into())),
-            ("null", FfiValue::Null),
+            ("a string", V::Str("default".into())),
+            ("null", V::Null),
             ("an unknown tag", obj(vec![("primary", empty())])),
             (
                 "two tags",
@@ -269,7 +427,7 @@ mod tests {
             ),
             (
                 "default with a payload",
-                obj(vec![("default", FfiValue::Bool(true))]),
+                obj(vec![("default", V::Bool(true))]),
             ),
             (
                 "default with fields",
@@ -277,56 +435,77 @@ mod tests {
             ),
             (
                 "a name that is not a string",
-                obj(vec![("name", FfiValue::UInt64(1))]),
+                obj(vec![("name", V::U64(1))]),
             ),
-            (
-                "an empty name",
-                obj(vec![("name", FfiValue::String("".into()))]),
-            ),
+            ("an empty name", obj(vec![("name", V::Str("".into()))])),
             (
                 "a name past ZeroKMS's 64-byte limit",
-                obj(vec![(
-                    "name",
-                    FfiValue::String("x".repeat(65).as_str().into()),
-                )]),
+                obj(vec![("name", V::Str("x".repeat(65)))]),
             ),
             (
                 "an id that is not 16 bytes",
-                obj(vec![("id", FfiValue::Bytes(Protected::new(vec![1, 2, 3])))]),
+                obj(vec![("id", V::Bytes(vec![1, 2, 3]))]),
+            ),
+            (
+                "a 16-byte id sent as text",
+                obj(vec![("id", V::Str("0123456789abcdef".into()))]),
+            ),
+            (
+                "a name sent as bytes",
+                obj(vec![("name", V::Bytes(b"acme".to_vec()))]),
+            ),
+            (
+                "a selector sent as an array",
+                V::Arr(vec![obj(vec![("name", V::Str("acme".into()))])]),
             ),
             (
                 "an id as text",
                 obj(vec![(
                     "id",
-                    FfiValue::String("00000000-0000-0000-0000-000000000007".into()),
+                    V::Str("00000000-0000-0000-0000-000000000007".into()),
                 )]),
             ),
         ] {
             assert_eq!(
-                parse_selector(bad).err(),
+                selector(bad).err(),
                 Some(STATUS_ENCODING),
                 "{label} is not a selector and must be refused"
             );
         }
     }
 
+    /// Options sent as an array are refused: the frame reads them only from
+    /// an object, never by position.
+    #[test]
+    fn options_sent_as_an_array_are_refused() {
+        let positional = V::Arr(vec![obj(vec![("name", V::Str("acme".into()))])]);
+        assert_eq!(
+            opts(positional, Export::DecryptRecord),
+            Err(STATUS_ENCODING)
+        );
+    }
+
     #[test]
     fn options_are_one_keyset_key() {
         assert_eq!(
-            parse_options(options(obj(vec![("default", empty())])), Side::Mint),
+            opts(
+                options(obj(vec![("default", empty())])),
+                Export::EncryptRecord
+            ),
             Ok(Options {
                 keyset: KeysetSelector::Default,
                 context: None,
+                audit: AuditMetadata::new(),
             })
         );
         for (label, bad) in [
             ("no keyset", empty()),
-            ("not an object", FfiValue::Null),
+            ("not an object", V::Null),
             (
                 "an unknown key beside it",
                 obj(vec![
                     ("keyset", obj(vec![("default", empty())])),
-                    ("mode", FfiValue::Bool(true)),
+                    ("mode", V::Bool(true)),
                 ]),
             ),
             (
@@ -338,7 +517,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                parse_options(bad, Side::Open).err(),
+                opts(bad, Export::DecryptRecord).err(),
                 Some(STATUS_ENCODING),
                 "{label} must be refused"
             );
@@ -347,44 +526,45 @@ mod tests {
 
     #[test]
     fn an_expected_context_is_an_opening_option_only() {
-        let with = |context: FfiValue| {
+        let with = |context: V| {
             obj(vec![
                 ("keyset", obj(vec![("default", empty())])),
                 ("context", context),
             ])
         };
         assert_eq!(
-            parse_options(with(FfiValue::String("tenants/acme".into())), Side::Open),
+            opts(with(V::Str("tenants/acme".into())), Export::DecryptRecord),
             Ok(Options {
                 keyset: KeysetSelector::Default,
                 context: Some(Label::parse("tenants/acme").expect("a label")),
+                audit: AuditMetadata::new(),
             })
         );
-        for (label, bad, side) in [
+        for (label, bad, export) in [
             (
                 "on the sealing side",
-                with(FfiValue::String("tenants/acme".into())),
-                Side::Mint,
+                with(V::Str("tenants/acme".into())),
+                Export::EncryptRecord,
             ),
-            ("not a string", with(FfiValue::UInt64(7)), Side::Open),
+            ("not a string", with(V::U64(7)), Export::DecryptRecord),
             (
                 "not a plain label",
-                with(FfiValue::String("tenants/(acme)".into())),
-                Side::Open,
+                with(V::Str("tenants/(acme)".into())),
+                Export::DecryptRecord,
             ),
-            ("empty", with(FfiValue::String("".into())), Side::Open),
+            ("empty", with(V::Str("".into())), Export::DecryptRecord),
             (
                 "given twice",
                 obj(vec![
                     ("keyset", obj(vec![("default", empty())])),
-                    ("context", FfiValue::String("a".into())),
-                    ("context", FfiValue::String("a".into())),
+                    ("context", V::Str("a".into())),
+                    ("context", V::Str("a".into())),
                 ]),
-                Side::Open,
+                Export::DecryptRecord,
             ),
         ] {
             assert_eq!(
-                parse_options(bad, side).err(),
+                opts(bad, export).err(),
                 Some(STATUS_ENCODING),
                 "{label} must be refused"
             );
@@ -395,15 +575,186 @@ mod tests {
     fn any_is_an_opening_selector_only() {
         let any = || options(obj(vec![("any", empty())]));
         assert_eq!(
-            parse_options(any(), Side::Open),
+            opts(any(), Export::DecryptRecord),
             Ok(Options {
                 keyset: KeysetSelector::Any,
                 context: None,
+                audit: AuditMetadata::new(),
             })
         );
         assert_eq!(
-            parse_options(any(), Side::Mint).err(),
+            opts(any(), Export::EncryptRecord).err(),
             Some(STATUS_ENCODING)
+        );
+        assert_eq!(opts(any(), Export::Term).err(), Some(STATUS_ENCODING));
+    }
+
+    /// The rules, as a table a reader can check against the docs. A change
+    /// to [`Export::accepts`] has to change this table too.
+    #[test]
+    fn the_exports_accept_these_keys() {
+        let table = Export::ALL.map(|export| {
+            let Accepts {
+                any_keyset,
+                context,
+                audit,
+            } = export.accepts();
+            (export, any_keyset, context, audit)
+        });
+        assert_eq!(
+            table,
+            [
+                (Export::EncryptRecord, false, false, true),
+                (Export::DecryptRecord, true, true, true),
+                (Export::JsonOpen, false, false, true),
+                (Export::Term, false, false, false),
+                (Export::QueryTerm, false, false, false),
+            ]
+        );
+    }
+
+    /// The parser holds every export to what it accepts: a key or selector
+    /// it accepts is read, and one it does not is `STATUS_ENCODING`.
+    #[test]
+    fn each_export_takes_what_it_accepts_and_refuses_the_rest() {
+        let held = |result: Result<Options, u32>, accepted: bool, what: &str| {
+            if accepted {
+                assert!(result.is_ok(), "{what} must be read");
+            } else {
+                assert_eq!(
+                    result.err(),
+                    Some(STATUS_ENCODING),
+                    "{what} must be refused"
+                );
+            }
+        };
+        for export in Export::ALL {
+            let accepts = export.accepts();
+            // Every export takes one keyset and nothing else.
+            assert_eq!(
+                opts(options(obj(vec![("default", empty())])), export),
+                Ok(Options {
+                    keyset: KeysetSelector::Default,
+                    context: None,
+                    audit: AuditMetadata::new(),
+                }),
+                "{export:?}"
+            );
+            held(
+                opts(options(obj(vec![("any", empty())])), export),
+                accepts.any_keyset,
+                &format!("{export:?}: the any selector"),
+            );
+            let with_context = obj(vec![
+                ("keyset", obj(vec![("default", empty())])),
+                ("context", V::Str("tenants/acme".into())),
+            ]);
+            held(
+                opts(with_context, export),
+                accepts.context,
+                &format!("{export:?}: a context"),
+            );
+            // Audit metadata is refused where it would log nothing, even
+            // when it holds no facts.
+            for audit in [facts(), empty()] {
+                held(
+                    opts(audited(audit), export),
+                    accepts.audit,
+                    &format!("{export:?}: audit metadata"),
+                );
+            }
+        }
+    }
+
+    /// The options with an `audit` key holding `audit`.
+    fn audited(audit: V) -> V {
+        obj(vec![
+            ("keyset", obj(vec![("default", empty())])),
+            ("audit", audit),
+        ])
+    }
+
+    fn facts() -> V {
+        obj(vec![
+            ("purpose", V::Str("list issues".into())),
+            ("rows", V::U32(250)),
+            ("dry_run", V::Bool(false)),
+            ("actor", V::Null),
+            ("tables", V::Arr(vec![V::Str("users".into()), V::I32(-1)])),
+            ("request", obj(vec![("id", V::Str("req_01J9Z3".into()))])),
+        ])
+    }
+
+    fn facts_built() -> AuditMetadata {
+        AuditMetadata::new()
+            .with("purpose", "list issues")
+            .with("rows", 250)
+            .with("dry_run", false)
+            .with("actor", None::<bool>)
+            .with(
+                "tables",
+                vec![
+                    stack_encrypt::AuditValue::from("users"),
+                    stack_encrypt::AuditValue::from(-1),
+                ],
+            )
+            .with("request", AuditMetadata::new().with("id", "req_01J9Z3"))
+    }
+
+    #[test]
+    fn audit_is_read_as_the_facts_the_host_sent() {
+        for export in Export::ALL {
+            if !export.accepts().audit {
+                continue;
+            }
+            assert_eq!(
+                opts(audited(facts()), export).map(|options| options.audit),
+                Ok(facts_built()),
+                "{export:?}"
+            );
+            // An empty object is metadata with no facts, which sends nothing.
+            let none = opts(audited(empty()), export).expect("an empty object");
+            assert!(none.audit.is_empty(), "{export:?}");
+        }
+    }
+
+    #[test]
+    fn audit_is_an_object_of_values_zerokms_has_a_form_for() {
+        let fact = |value: V| audited(obj(vec![("fact", value)]));
+        for (label, bad) in [
+            ("null", audited(V::Null)),
+            ("a string", audited(V::Str("purpose".into()))),
+            ("a list", audited(V::Arr(vec![]))),
+            ("bytes", fact(V::Bytes(vec![1, 2, 3]))),
+            ("bytes in a list", fact(V::Arr(vec![V::Bytes(vec![1])]))),
+            (
+                "an integer above a signed 64-bit integer",
+                fact(V::U64(u64::MAX)),
+            ),
+            (
+                "given twice",
+                obj(vec![
+                    ("keyset", obj(vec![("default", empty())])),
+                    ("audit", empty()),
+                    ("audit", empty()),
+                ]),
+            ),
+            (
+                "a fact given twice",
+                audited(obj(vec![("fact", V::Bool(true)), ("fact", V::Bool(true))])),
+            ),
+        ] {
+            assert_eq!(
+                opts(bad, Export::DecryptRecord).err(),
+                Some(STATUS_ENCODING),
+                "{label} must be refused"
+            );
+        }
+        // The largest integer that fits is read.
+        let max = fact(V::U64(i64::MAX.unsigned_abs()));
+        assert_eq!(
+            opts(max, Export::DecryptRecord).map(|options| options.audit),
+            Ok(AuditMetadata::new().with("fact", i64::MAX))
         );
     }
 }

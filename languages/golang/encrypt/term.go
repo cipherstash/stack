@@ -70,9 +70,13 @@ type JSONOption interface {
 	jsonOption()
 }
 
-// JSON is the index over a JSON document. The engine does not derive it
-// yet: a declaration that names it is refused by stashgen, and at run time
-// by the engine.
+// JSON is the index over a JSON document as an output beside a ciphertext,
+// which the engine does not derive: a declaration that names it is refused
+// by stashgen, and at run time by the engine.
+//
+// Deprecated: store a JSON document as a struct, map, slice or
+// json.RawMessage field with `encrypt_into=JsonSearch`, whose EQL type
+// carries the JSON index.
 func JSON(options ...JSONOption) Index {
 	_ = options
 	return index("json")
@@ -151,9 +155,12 @@ func (t OpeTerm) Compare(other OpeTerm) int { return bytes.Compare(t, other) }
 // Less reports whether t's plaintext orders before other's.
 func (t OpeTerm) Less(other OpeTerm) bool { return t.Compare(other) < 0 }
 
-// JSONTerm is the term of the json index. The engine does not derive it
-// yet; the type exists so a generated declaration that names [JSON] has a
-// Go type to fail into.
+// JSONTerm is the term of the json index as an output. The engine does not
+// derive it; the type exists so a generated declaration that names [JSON]
+// has a Go type to fail into.
+//
+// Deprecated: a JsonSearch field's queries are eql.JSONSearchQuery
+// and eql.JSONSearchLeafQuery.
 type JSONTerm []byte
 
 // compareCLLW is cllw-ore's compare_lex: compare_slice over the common

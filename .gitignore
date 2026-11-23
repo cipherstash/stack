@@ -118,8 +118,13 @@ languages/golang/auth/wasm/*.wasm
 languages/golang/encrypt/wasm/*.sha256
 languages/golang/encrypt/eql/wasm/*.sha256
 languages/golang/auth/wasm/*.sha256
-# The deterministic-kms TEST build of the stack-encrypt guest, from `mise run
-# wasm:guest:build:deterministic`; under testdata so no binary embeds it.
+# The deterministic-kms TEST builds of the stack-encrypt guest, from `mise run
+# wasm:guest:build:deterministic` and `wasm:guest:build:eql:deterministic`.
+# Package encrypttest embeds them; the release commits them on the tag.
+languages/golang/encrypt/encrypttest/wasm/*.wasm
+languages/golang/encrypt/encrypttest/wasm/*.sha256
+# Where those builds went before they moved to encrypttest/wasm. A checkout
+# that built them there still has them, and they must not show as untracked.
 languages/golang/encrypt/testdata/*.wasm
 languages/golang/encrypt/testdata/*.sha256
 # Raw migration harness reports, transcripts, credentials and workspace copies.

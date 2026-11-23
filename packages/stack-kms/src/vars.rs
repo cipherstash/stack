@@ -12,3 +12,7 @@ pub static CS_CLIENT_ID: &str = "CS_CLIENT_ID";
 
 /// The client key material (hex or base64 encoded) used to derive data keys.
 pub static CS_CLIENT_KEY: &str = "CS_CLIENT_KEY";
+
+/// The workspace CRN this process is configured for. `ProfileKeyProvider`
+/// reads the client key of the workspace the CRN names.
+pub static CS_WORKSPACE_CRN: &str = "CS_WORKSPACE_CRN";

@@ -1,0 +1,38 @@
+error[E0277]: the trait bound `OpaqueBlob<NoDefault>: OpaqueDecode` is not satisfied
+  --> tests/ui/opaque_blob_decrypt_requires_default.rs:16:50
+   |
+16 |     let _refused: OpaqueBlob<NoDefault> = keyset.decrypt(ct).await.unwrap();
+   |                                                  ^^^^^^^ the trait `OpaqueDecode` is not implemented for `OpaqueBlob<NoDefault>`
+   |
+help: the trait `OpaqueDecode` is implemented for `OpaqueBlob<T>`
+  --> src/blob.rs
+   |
+   | impl<T: DeserializeOwned + Default + Zeroize + Send + 'static> OpaqueDecode for OpaqueBlob<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt`
+  --> src/scalar.rs
+   |
+   |     pub fn decrypt<P: OpaqueDecode>(&self, ciphertext: Ciphertext) -> Pending<'_, P, K> {
+   |                       ^^^^^^^^^^^^ required by this bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt`
+
+error[E0599]: the function or associated item `decode` exists for struct `OpaqueBlob<NoDefault>`, but its trait bounds were not satisfied
+  --> tests/ui/opaque_blob_decrypt_requires_default.rs:20:45
+   |
+11 | struct NoDefault {
+   | ---------------- doesn't satisfy `NoDefault: Default`
+...
+20 |     let _refused = OpaqueBlob::<NoDefault>::decode(bytes);
+   |                                             ^^^^^^ function or associated item cannot be called on `OpaqueBlob<NoDefault>` due to unsatisfied trait bounds
+   |
+note: if you're trying to build a new `OpaqueBlob<NoDefault>`, consider using `OpaqueBlob::<T>::new` which returns `OpaqueBlob<_>`
+  --> src/blob.rs
+   |
+   |     pub fn new(value: T) -> Self {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: the following trait bounds were not satisfied:
+           `NoDefault: Default`
+help: consider annotating `NoDefault` with `#[derive(Default)]`
+   |
+11 + #[derive(Default)]
+12 | struct NoDefault {
+   |

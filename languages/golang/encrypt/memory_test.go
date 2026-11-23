@@ -202,7 +202,7 @@ func TestRequireLockedMemoryFailsTheCallThatCannotGrow(t *testing.T) {
 	ctx := context.Background()
 	c := strictClient(t)
 	refusing := guest.RefuseGrowth(c.inst.mem, errors.New("refused for the test"))
-	stage := func(inst *instance) ([]byte, error) { return nil, stageLarge(ctx, inst) }
+	stage := func(ctx context.Context, inst *instance) ([]byte, error) { return nil, stageLarge(ctx, inst) }
 	_, err := c.call(ctx, stage)
 	if !errors.Is(err, ErrMemoryLock) || !strings.Contains(err.Error(), "growth refused") || !strings.Contains(err.Error(), refusing.Reason().Error()) {
 		t.Fatalf("call needing a refused growth: %v; want ErrMemoryLock naming the refusal", err)
@@ -236,18 +236,23 @@ func TestRequireLockedMemoryFailsTheCallThatCannotGrow(t *testing.T) {
 // same way, but the guest cannot report it: its allocator aborts, the trap
 // closes the module, and the client is closed with it, its keys wiped.
 // The call still fails with ErrMemoryLock naming the refusal, and the
-// client is ErrState from then on. Provoked by staging a config the guest
-// must copy while decoding, with the refusal installed after the staging.
+// client is ErrState from then on. Provoked by staging a config whose
+// client key the guest must decode into a buffer of its own (the parser
+// borrows every other string from the staged config), with the refusal
+// installed after the staging.
 func TestRequireLockedMemoryClosesTheClientOnARefusedInternalGrowth(t *testing.T) {
 	ctx := context.Background()
 	c := strictClient(t)
-	cfg := initConfig{clientID: strings.Repeat("a", 2<<20), clientKey: NewClientKey([]byte("00"))}
+	cfg := initConfig{
+		clientID:  "6a1b8c6e-6f3a-4e43-9a3b-2f0f6f8b1c2d",
+		clientKey: NewClientKey([]byte(strings.Repeat("00", 2<<20))),
+	}
 	encoded, err := encodeConfig(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var refusing *guest.Refusing
-	_, err = c.call(ctx, func(inst *instance) ([]byte, error) {
+	_, err = c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		staged, err := inst.exports.AllocWrite(ctx, inst.module, encoded)
 		if err != nil {
 			return nil, err
@@ -268,7 +273,7 @@ func TestRequireLockedMemoryClosesTheClientOnARefusedInternalGrowth(t *testing.T
 	if !c.inst.mem.IsFreed() {
 		t.Fatal("the closed client's memory was not wiped and freed")
 	}
-	if _, err := c.call(ctx, func(*instance) ([]byte, error) { return nil, nil }); !errors.Is(err, ErrState) {
+	if _, err := c.call(ctx, func(context.Context, *instance) ([]byte, error) { return nil, nil }); !errors.Is(err, ErrState) {
 		t.Fatalf("a call after the abort: %v, want ErrState", err)
 	}
 	if !c.MemoryLocked() {

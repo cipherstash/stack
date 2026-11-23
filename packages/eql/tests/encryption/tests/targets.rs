@@ -1,16 +1,22 @@
 //! EQL types as plan field targets, reached by name: the dispatch in
-//! `eql_bindings::encryption::targets` must run the same plan the typed
-//! `encrypt_as::<TextEq>` call runs, refuse what the table says it cannot
-//! produce, and the table must be the catalog.
+//! `eql_bindings::encryption::targets` must run the same encryption the
+//! typed call runs (`value.encrypt_into_with_context::<TextEq, _>(..)`),
+//! refuse what the table says it cannot produce, and the table must be the
+//! catalog.
 
 mod common;
 
 use eql_bindings::encryption::targets::{self as targets, Opener, Target, TargetError};
-use eql_bindings::v3::text::{TextEq, TextEqQuery};
-use eql_bindings::{v3, Identifier};
-use eql_domains::{Shape, Term, CATALOG};
-use stack_encrypt::Label;
-use vitaminc_aead_value::{FfiValue, ValueKind};
+use eql_bindings::v4::text::{TextEq, TextEqQuery};
+use eql_bindings::{v4, Identifier};
+use eql_domains::{Term, CATALOG};
+use stack_encrypt::dynamic::{ValueFrame, ValueKind};
+use stack_encrypt::{Decrypt, DecryptFrom, Encrypt, EncryptInto, Label};
+
+/// A Rust value as the engine's runtime plaintext: its frame.
+fn frame<T: Encrypt>(value: T) -> ValueFrame {
+    ValueFrame::of(value).unwrap()
+}
 
 fn email() -> Label {
     Label::new(["users", "email"]).unwrap()
@@ -20,15 +26,16 @@ fn column() -> stack_encrypt::NonEmpty<Identifier> {
     Identifier::for_column("users", "email").unwrap()
 }
 
-fn text(value: &str) -> FfiValue {
-    FfiValue::String(value.into())
+fn text(value: &str) -> ValueFrame {
+    frame(value)
 }
 
-fn opened(value: FfiValue) -> String {
-    match value {
-        FfiValue::String(s) => std::str::from_utf8(s.risky_ref()).unwrap().to_owned(),
-        other => panic!("a text target opens to a string, not {:?}", other.kind()),
-    }
+/// An opened frame read as text; any other kind fails the test.
+fn opened(value: ValueFrame) -> String {
+    let kind = value.kind();
+    value
+        .visit(String::sink())
+        .unwrap_or_else(|_| panic!("a text target opens to a string, not {kind:?}"))
 }
 
 /// The refusal a dispatch returned. `Pending` has no `Debug`, so this stands
@@ -43,12 +50,12 @@ fn refused<T>(result: Result<T, TargetError>) -> TargetError {
 mod given_text_eq {
     use super::*;
 
-    /// The dispatch and the typed call are the same plan: same identifier,
-    /// same equality term, and each side's value opens through the other.
-    /// The ciphertexts differ because every write seals under a fresh key,
-    /// so byte identity is asserted on everything but `c`.
+    /// The dispatch and the typed call run the same encryption: same
+    /// identifier, same equality term, and each side's value opens through
+    /// the other. The ciphertexts differ because every write seals under a
+    /// fresh key, so byte identity is asserted on everything but `c`.
     #[tokio::test]
-    async fn produces_what_encrypt_as_produces() {
+    async fn produces_what_the_typed_call_produces() {
         let (cipher, calls) = common::cipher().await;
         let keyset = cipher.default_keyset();
         for value in ["alice@example.com", "", "雪☃", "cafe\u{301}"] {
@@ -57,8 +64,9 @@ mod given_text_eq {
                 .await
                 .unwrap();
             let by_name: TextEq = serde_json::from_slice(&by_name).unwrap();
-            let typed: TextEq = keyset
-                .encrypt_as(&value.to_owned(), column())
+            let typed: TextEq = value
+                .to_owned()
+                .encrypt_into_with_context(&keyset, column())
                 .await
                 .unwrap();
             assert_eq!(by_name.v, typed.v, "{value:?}: same envelope version");
@@ -72,10 +80,10 @@ mod given_text_eq {
                 "{value:?}: each write seals under a fresh key"
             );
 
-            let typed_opened: String = cipher
-                .decrypt_as(by_name.clone(), column().into())
-                .await
-                .unwrap();
+            let typed_opened =
+                String::decrypt_from_with_context(by_name.clone(), &cipher, column())
+                    .await
+                    .unwrap();
             assert_eq!(
                 typed_opened, value,
                 "{value:?}: the typed path opens the named value"
@@ -144,8 +152,8 @@ mod given_text_eq {
         use stack_kms::IdentifiedBy;
         let (cipher, calls) = common::cipher().await;
         let named = |n: &str| IdentifiedBy::Name(n.to_string().into());
-        let acme = cipher.keyset(named("acme")).await.unwrap();
-        let globex = cipher.keyset(named("globex")).await.unwrap();
+        let acme = cipher.keyset(named("acme"));
+        let globex = cipher.keyset(named("globex"));
         let stored = targets::encrypt("TextEq", &acme, &email(), text("secret"))
             .unwrap()
             .await
@@ -178,12 +186,19 @@ mod given_text_eq {
     async fn query_bytes_are_the_typed_query_twin() {
         let (cipher, calls) = common::cipher().await;
         let keyset = cipher.default_keyset();
-        let by_name = targets::query("TextEq", &keyset, &email(), text("alice@example.com"))
-            .unwrap()
-            .await
-            .unwrap();
-        let typed: TextEqQuery = keyset
-            .encrypt_as(&"alice@example.com".to_owned(), column())
+        let by_name = targets::query(
+            "TextEq",
+            &common::index_of("TextEq"),
+            &keyset,
+            &email(),
+            text("alice@example.com"),
+        )
+        .unwrap()
+        .await
+        .unwrap();
+        let typed: TextEqQuery = "alice@example.com"
+            .to_owned()
+            .encrypt_into_with_context(&keyset, column())
             .await
             .unwrap();
         assert_eq!(
@@ -235,12 +250,7 @@ mod given_text_eq {
     async fn refuses_a_value_of_another_kind_before_minting() {
         let (cipher, calls) = common::cipher().await;
         let keyset = cipher.default_keyset();
-        let error = refused(targets::encrypt(
-            "TextEq",
-            &keyset,
-            &email(),
-            FfiValue::UInt64(34),
-        ));
+        let error = refused(targets::encrypt("TextEq", &keyset, &email(), frame(34u64)));
         assert!(
             matches!(
                 error,
@@ -252,11 +262,33 @@ mod given_text_eq {
             ),
             "{error}"
         );
-        let error = refused(targets::query("TextEq", &keyset, &email(), FfiValue::Null));
+        let error = refused(targets::query(
+            "TextEq",
+            &common::index_of("TextEq"),
+            &keyset,
+            &email(),
+            frame(vec![34u64]),
+        ));
         assert!(
-            matches!(error, TargetError::Plaintext { found: None, .. }),
+            matches!(
+                error,
+                TargetError::Plaintext {
+                    found: Some(ValueKind::Array),
+                    ..
+                }
+            ),
             "{error}"
         );
+        // A null is a query of its own: the stored nulls' equality term
+        // (#1298).
+        assert!(targets::query(
+            "TextEq",
+            &common::index_of("TextEq"),
+            &keyset,
+            &email(),
+            frame(None::<String>),
+        )
+        .is_ok());
         assert!(
             calls.lock().unwrap().generate.is_empty(),
             "nothing was minted"
@@ -284,6 +316,36 @@ mod given_text_eq {
         }
     }
 
+    /// Earlier builds wrote Stack Encrypt payloads with `"v": 3` and the same
+    /// ciphertext prefix. A real, well-formed v4 payload with only its version
+    /// changed is refused, so the version alone is what refuses it.
+    #[tokio::test]
+    async fn refuses_a_stored_payload_of_the_other_version() {
+        let (cipher, _) = common::cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored = targets::encrypt("TextEq", &keyset, &email(), text("secret"))
+            .unwrap()
+            .await
+            .unwrap();
+        let mut payload: serde_json::Value = serde_json::from_slice(&stored).unwrap();
+        assert_eq!(payload["v"], 4);
+        payload["v"] = 3.into();
+        let as_v3 = serde_json::to_vec(&payload).unwrap();
+
+        let error = refused(targets::decrypt("TextEq", &cipher, &email(), &as_v3));
+        assert!(
+            matches!(
+                error,
+                TargetError::Stored {
+                    target: "TextEq",
+                    ..
+                }
+            ),
+            "{error}"
+        );
+        assert!(error.to_string().contains("version 3"), "{error}");
+    }
+
     #[tokio::test]
     async fn refuses_a_label_that_is_not_a_column() {
         let (cipher, _) = common::cipher().await;
@@ -293,57 +355,6 @@ mod given_text_eq {
         assert!(
             matches!(&error, TargetError::Context { label } if label == "tenant/users/email"),
             "{error}"
-        );
-    }
-}
-
-mod given_a_name_the_engine_cannot_produce {
-    use super::*;
-
-    #[tokio::test]
-    async fn every_entry_point_refuses_it_with_the_table_reason() {
-        let (cipher, calls) = common::cipher().await;
-        let keyset = cipher.default_keyset();
-        let unproducible = |error: TargetError, name: &str| {
-            let reason = targets::target(name).unwrap().reason.unwrap();
-            assert!(
-                matches!(&error, TargetError::Unproducible { name: n, reason: r } if *n == name && *r == reason),
-                "{name}: {error}"
-            );
-        };
-        for target in targets::targets().iter().filter(|t| !t.producible) {
-            let name = target.name;
-            unproducible(
-                refused(targets::encrypt(name, &keyset, &email(), text("x"))),
-                name,
-            );
-            unproducible(
-                refused(targets::query(name, &keyset, &email(), text("x"))),
-                name,
-            );
-            unproducible(
-                refused(targets::decrypt(name, &cipher, &email(), b"{}")),
-                name,
-            );
-        }
-        let error = refused(targets::encrypt("TextOrdOre", &keyset, &email(), text("x")));
-        assert_eq!(
-            error.to_string(),
-            "the engine cannot produce TextOrdOre yet: EQL stores a block ORE term and the engine \
-             derives a CLLW ORE term; the two are different algorithms"
-        );
-        // Refused by name before the label or the value is looked at.
-        let error = refused(targets::encrypt(
-            "TextOrdOre",
-            &keyset,
-            &Label::new(["one"]).unwrap(),
-            FfiValue::Null,
-        ));
-        assert!(matches!(error, TargetError::Unproducible { .. }), "{error}");
-        let calls = calls.lock().unwrap();
-        assert!(
-            calls.generate.is_empty() && calls.retrieve.is_empty(),
-            "no key was touched"
         );
     }
 }
@@ -368,12 +379,55 @@ mod given_an_unknown_name {
                 &email(),
                 text("x"),
             )));
-            unknown(refused(targets::query(name, &keyset, &email(), text("x"))));
+            unknown(refused(targets::query(
+                name,
+                &common::index_of(name),
+                &keyset,
+                &email(),
+                text("x"),
+            )));
             unknown(refused(targets::decrypt(name, &cipher, &email(), b"{}")));
         }
         assert_eq!(
             refused(targets::encrypt("Nope", &keyset, &email(), text("x"))).to_string(),
             "no such EQL type: Nope"
+        );
+    }
+
+    /// The name is checked first: a name with no type is refused as that,
+    /// whatever its label and value are, and no key is touched.
+    #[tokio::test]
+    async fn the_name_is_refused_before_the_label_or_the_value_is_read() {
+        let (cipher, calls) = common::cipher().await;
+        let keyset = cipher.default_keyset();
+        let not_a_column = Label::new(["one"]).unwrap();
+        let error = refused(targets::encrypt(
+            "Nope",
+            &keyset,
+            &not_a_column,
+            frame(None::<i32>),
+        ));
+        assert!(matches!(error, TargetError::Unknown { .. }), "{error}");
+        let error = refused(targets::decrypt(
+            "Nope",
+            &cipher,
+            &not_a_column,
+            b"not json",
+        ));
+        assert!(matches!(error, TargetError::Unknown { .. }), "{error}");
+        // The same label and value under a real type are refused for
+        // themselves.
+        let error = refused(targets::encrypt(
+            "TextEq",
+            &keyset,
+            &not_a_column,
+            frame(None::<i32>),
+        ));
+        assert!(matches!(error, TargetError::Context { .. }), "{error}");
+        let calls = calls.lock().unwrap();
+        assert!(
+            calls.generate.is_empty() && calls.retrieve.is_empty(),
+            "no key was touched"
         );
     }
 }
@@ -382,7 +436,9 @@ mod the_table {
     use super::*;
 
     /// The stored domains of the catalog, in catalog order: every scalar
-    /// domain plus the SteVec document — the rows the table must have.
+    /// domain — the rows the table must have before the document families'.
+    /// The SteVec document is EQL v3 only: in v4 its domain name,
+    /// `json_search`, is the JSON tree family's stored type.
     fn stored_domains() -> Vec<(
         &'static eql_domains::DomainFamily,
         &'static eql_domains::Domain,
@@ -390,7 +446,7 @@ mod the_table {
         CATALOG
             .iter()
             .flat_map(|f| f.domains.iter().map(move |d| (f, d)))
-            .filter(|(f, d)| d.is_scalar() || d.full_name(f.name) == "json_search")
+            .filter(|(_, d)| d.is_scalar())
             .collect()
     }
 
@@ -398,15 +454,64 @@ mod the_table {
         match term {
             Term::Hm => "eq",
             Term::Bloom => "match",
-            Term::Ore => "ore",
+            Term::Ore => "ore_block",
             Term::Ope => "ope",
+        }
+    }
+
+    /// The shared resolver lists the catalog's types and no other: each
+    /// scalar domain as its struct name, then each document family's
+    /// stored type, in catalog order. A program that installs it holds
+    /// every EQL type the catalog has.
+    #[test]
+    fn the_resolver_lists_the_catalogs_types_in_order() {
+        use stack_encrypt::dynamic::TargetResolver as _;
+        let catalog: Vec<String> = stored_domains()
+            .iter()
+            .map(|(family, domain)| domain.rust_struct_name(family.name))
+            .chain(eql_domains::DOCUMENT_FAMILIES.iter().map(|family| {
+                family
+                    .domain(eql_domains::DocumentRole::Stored)
+                    .unwrap()
+                    .name
+                    .to_owned()
+            }))
+            .collect();
+        let resolver = eql_bindings::encryption::EqlTargets;
+        let listed: Vec<String> = resolver.targets().into_iter().map(|t| t.name).collect();
+        assert_eq!(listed, catalog);
+        // A plan may name exactly the types the table marks producible.
+        for row in targets::targets() {
+            assert_eq!(
+                resolver.resolve(row.name).is_ok(),
+                row.producible,
+                "{}",
+                row.name
+            );
         }
     }
 
     #[test]
     fn names_every_stored_catalog_domain_in_order() {
-        let table = targets::targets();
+        let all = targets::targets();
         let expected = stored_domains();
+        // The document families' stored types follow the catalog's, one
+        // each, named as their contract names, with their plaintext kind,
+        // their index and their needle.
+        let (table, documents) = all.split_at(expected.len());
+        assert_eq!(documents.len(), eql_domains::DOCUMENT_FAMILIES.len());
+        for (row, family) in documents.iter().zip(eql_domains::DOCUMENT_FAMILIES) {
+            let stored = family.domain(eql_domains::DocumentRole::Stored).unwrap();
+            let query = family.domain(eql_domains::DocumentRole::Query).unwrap();
+            assert_eq!(row.name, stored.name);
+            assert_eq!(row.family, family.name);
+            assert_eq!(row.sql_domain, stored.sql_domain);
+            assert_eq!(row.plaintext, Some(family.plaintext));
+            assert_eq!(row.indexes, [family.index]);
+            assert_eq!(row.query, Some(query.name));
+            assert_eq!(row.query_sql_domain, Some(query.sql_domain));
+            assert!(row.producible && row.reason.is_none());
+        }
         assert_eq!(
             table.iter().map(|t| t.name).collect::<Vec<_>>(),
             expected
@@ -420,17 +525,13 @@ mod the_table {
             assert_eq!(row.family, family.name, "{name}: family");
             assert_eq!(
                 row.sql_domain,
-                format!("public.{}", domain.sql_typname(family.name)),
+                format!("public.eql_v4_{}", domain.full_name(family.name)),
                 "{name}: stored domain"
             );
-            let indexes: Vec<&str> = if matches!(domain.shape, Shape::SteVec) {
-                vec!["json"]
-            } else {
-                Term::payload_terms(domain.terms)
-                    .into_iter()
-                    .map(index_key)
-                    .collect()
-            };
+            let indexes: Vec<&str> = Term::payload_terms(domain.terms)
+                .into_iter()
+                .map(index_key)
+                .collect();
             assert_eq!(row.indexes, indexes.as_slice(), "{name}: indexes");
             let suffix: String = domain
                 .name
@@ -442,24 +543,33 @@ mod the_table {
                 })
                 .collect();
             assert_eq!(row.suffix, suffix, "{name}: suffix");
+            let kind = match family.name {
+                "text" => Some(ValueKind::String),
+                "smallint" => Some(ValueKind::Int16),
+                "integer" => Some(ValueKind::Int32),
+                "bigint" => Some(ValueKind::Int64),
+                "boolean" => Some(ValueKind::Bool),
+                "real" => Some(ValueKind::Float32),
+                "double" => Some(ValueKind::Float64),
+                "date" => Some(ValueKind::Date),
+                "timestamp" => Some(ValueKind::Timestamp),
+                "numeric" => Some(ValueKind::Decimal),
+                "json" => Some(ValueKind::Json),
+                // A family added later has no Rust plaintext type in
+                // eql-bindings until it is given one.
+                _ => None,
+            };
             assert_eq!(
                 row.plaintext,
-                (family.name == "text").then_some("string"),
-                "{name}: only text's plaintext encoding is specified"
+                kind.map(ValueKind::name),
+                "{name}: the family's plaintext kind"
             );
             assert_eq!(
                 row.plaintext_kind(),
-                (family.name == "text").then_some(ValueKind::String),
+                kind,
                 "{name}: the plaintext name is a vitaminc kind"
             );
-            if matches!(domain.shape, Shape::SteVec) {
-                assert_eq!(
-                    row.query,
-                    Some("SteVecQuery"),
-                    "{name}: the containment needle"
-                );
-                assert_eq!(row.query_sql_domain, Some("eql_v3.query_json"), "{name}");
-            } else if domain.terms.is_empty() {
+            if domain.terms.is_empty() {
                 assert_eq!(
                     (row.query, row.query_sql_domain),
                     (None, None),
@@ -473,7 +583,7 @@ mod the_table {
                 );
                 assert_eq!(
                     row.query_sql_domain.map(str::to_owned),
-                    Some(format!("eql_v3.{}", domain.query_name(family.name))),
+                    Some(format!("eql_v4.{}", domain.query_name(family.name))),
                     "{name}: query domain"
                 );
             }
@@ -482,8 +592,8 @@ mod the_table {
 
     #[test]
     fn every_row_is_a_compiled_domain_type_and_so_is_its_query() {
-        let stored: Vec<&str> = v3::all().iter().map(|d| d.sql_domain()).collect();
-        let queries: Vec<&str> = v3::all_query().iter().map(|d| d.sql_domain()).collect();
+        let stored: Vec<&str> = v4::all().iter().map(|d| d.sql_domain()).collect();
+        let queries: Vec<&str> = v4::all_query().iter().map(|d| d.sql_domain()).collect();
         for row in targets::targets() {
             assert!(
                 stored.contains(&row.sql_domain),
@@ -492,10 +602,8 @@ mod the_table {
                 row.sql_domain
             );
             if let Some(query) = row.query_sql_domain {
-                // The SteVec needle is in `all()`, not `all_query()`: it is
-                // a hand-written document shape, not a scalar twin.
                 assert!(
-                    queries.contains(&query) || stored.contains(&query),
+                    queries.contains(&query),
                     "{}: {query} is a compiled domain type",
                     row.name
                 );
@@ -503,8 +611,12 @@ mod the_table {
         }
     }
 
+    /// The types the engine produces in EQL v4 today: the storage and
+    /// equality domains of every family whose plaintext eql-bindings names,
+    /// the ordered domains (OPE and block ORE) of those the engine derives
+    /// an order term for, and text match and search.
     #[test]
-    fn text_eq_is_the_one_producible_type_today() {
+    fn the_producible_types_are_the_ones_with_a_rust_plaintext() {
         let producible: Vec<&str> = targets::targets()
             .iter()
             .filter(|t| t.producible)
@@ -512,20 +624,66 @@ mod the_table {
             .collect();
         assert_eq!(
             producible,
-            ["TextEq"],
-            "the plan's list: the engine produces TextEq only"
+            [
+                "Integer",
+                "IntegerEq",
+                "IntegerOrdOre",
+                "IntegerOrd",
+                "IntegerOrdOpe",
+                "Smallint",
+                "SmallintEq",
+                "SmallintOrdOre",
+                "SmallintOrd",
+                "SmallintOrdOpe",
+                "Bigint",
+                "BigintEq",
+                "BigintOrdOre",
+                "BigintOrd",
+                "BigintOrdOpe",
+                "Date",
+                "DateEq",
+                "DateOrdOre",
+                "DateOrd",
+                "DateOrdOpe",
+                "Timestamp",
+                "TimestampEq",
+                "TimestampOrdOre",
+                "TimestampOrd",
+                "TimestampOrdOpe",
+                "Numeric",
+                "NumericEq",
+                "NumericOrdOre",
+                "NumericOrd",
+                "NumericOrdOpe",
+                "Text",
+                "TextEq",
+                "TextMatch",
+                "TextOrdOre",
+                "TextOrd",
+                "TextOrdOpe",
+                "TextSearchOre",
+                "TextSearch",
+                "Boolean",
+                "Real",
+                "RealEq",
+                "RealOrdOre",
+                "RealOrd",
+                "RealOrdOpe",
+                "Double",
+                "DoubleEq",
+                "DoubleOrdOre",
+                "DoubleOrd",
+                "DoubleOrdOpe",
+                "Json",
+                "JsonSearch"
+            ],
         );
-        for row in targets::targets().iter().filter(|t| !t.producible) {
-            let reason = row.reason.expect("an unproducible type has a reason");
-            let expected = match (row.family, row.suffix) {
-                ("json", "Search") => "JSON index",
-                (family, _) if family != "text" => "encodes a plaintext",
-                (_, "OrdOre" | "SearchOre") => "CLLW",
-                (_, "Match" | "Ord" | "OrdOpe" | "Search") => "no EQL type is built",
-                (_, "") => "storage-only",
-                (_, suffix) => panic!("{}: unexpected text suffix {suffix}", row.name),
-            };
-            assert!(reason.contains(expected), "{}: {reason}", row.name);
+        // That is every row: no type waits for an encoding today. A type
+        // added as not producible fails here. Give it a test that
+        // `encrypt`, `query` and `decrypt` each refuse it with its reason.
+        for row in targets::targets() {
+            assert!(row.producible, "{}", row.name);
+            assert_eq!(row.reason, None, "{}", row.name);
         }
     }
 
@@ -541,24 +699,31 @@ mod the_table {
                 "family": "text",
                 "suffix": "Eq",
                 "plaintext": "string",
-                "sql_domain": "public.eql_v3_text_eq",
+                "sql_domain": "public.eql_v4_text_eq",
                 "indexes": ["eq"],
                 "query": "TextEqQuery",
-                "query_sql_domain": "eql_v3.query_text_eq",
+                "query_sql_domain": "eql_v4.query_text_eq",
                 "producible": true,
                 "reason": null
             })
         );
-        let row = targets::target("Integer").unwrap();
-        let json = serde_json::to_value(row).unwrap();
+        // A storage-only type: its query fields are null, not absent.
+        let row = targets::target("Json").unwrap();
         assert_eq!(
-            json["plaintext"],
-            serde_json::Value::Null,
-            "an unspecified plaintext is null, not absent"
+            serde_json::to_value(row).unwrap(),
+            serde_json::json!({
+                "name": "Json",
+                "family": "json",
+                "suffix": "",
+                "plaintext": "json",
+                "sql_domain": "public.eql_v4_json",
+                "indexes": [],
+                "query": null,
+                "query_sql_domain": null,
+                "producible": true,
+                "reason": null
+            })
         );
-        assert_eq!(json["query"], serde_json::Value::Null);
-        assert_eq!(json["producible"], false);
-        assert!(json["reason"].is_string());
         // The whole table serializes as a list, the shape of the export.
         let all = serde_json::to_value(targets::targets()).unwrap();
         assert_eq!(all.as_array().unwrap().len(), targets::targets().len());
@@ -589,10 +754,16 @@ mod the_cross_language_fixture {
     async fn the_text_eq_query_fixture_is_what_the_dispatch_derives() {
         let (cipher, calls) = common::cipher().await;
         let keyset = cipher.default_keyset();
-        let query = targets::query("TextEq", &keyset, &email(), text(PLAINTEXT))
-            .unwrap()
-            .await
-            .unwrap();
+        let query = targets::query(
+            "TextEq",
+            &common::index_of("TextEq"),
+            &keyset,
+            &email(),
+            text(PLAINTEXT),
+        )
+        .unwrap()
+        .await
+        .unwrap();
         assert!(
             calls.lock().unwrap().generate.is_empty(),
             "a query mints nothing"
@@ -614,8 +785,9 @@ mod the_cross_language_fixture {
             committed, rendered,
             "the committed fixture is what the dispatch derives today"
         );
-        let typed: TextEqQuery = keyset
-            .encrypt_as(&PLAINTEXT.to_owned(), column())
+        let typed: TextEqQuery = PLAINTEXT
+            .to_owned()
+            .encrypt_into_with_context(&keyset, column())
             .await
             .unwrap();
         assert_eq!(

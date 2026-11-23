@@ -4,360 +4,360 @@
 -- REQUIRE: src/v3/scalars/timestamp/timestamp_ord_functions.sql
 
 --! @file encrypted_domain/timestamp/query_timestamp_ord_functions.sql
---! @brief Functions for eql_v3.query_timestamp_ord.
+--! @brief Functions for {{prefix}}.query_timestamp_ord.
 
---! @brief Index extractor for eql_v3.query_timestamp_ord.
---! @param a eql_v3.query_timestamp_ord
---! @return eql_v3_internal.ope_cllw
-CREATE FUNCTION eql_v3.ord_term(a eql_v3.query_timestamp_ord)
-RETURNS eql_v3_internal.ope_cllw
+--! @brief Index extractor for {{prefix}}.query_timestamp_ord.
+--! @param a {{prefix}}.query_timestamp_ord
+--! @return {{prefix}}_internal.ope_cllw
+CREATE FUNCTION {{prefix}}.ord_term(a {{prefix}}.query_timestamp_ord)
+RETURNS {{prefix}}_internal.ope_cllw
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3_internal.ope_cllw(a::jsonb) $$;
+AS $$ SELECT {{prefix}}_internal.ope_cllw(a::jsonb) $$;
 
---! @brief Operator wrapper for eql_v3.query_timestamp_ord.
---! @param a public.eql_v3_timestamp_ord
---! @param b eql_v3.query_timestamp_ord
+--! @brief Operator wrapper for {{prefix}}.query_timestamp_ord.
+--! @param a public.{{prefix}}_timestamp_ord
+--! @param b {{prefix}}.query_timestamp_ord
 --! @return boolean
-CREATE FUNCTION eql_v3.eq(a public.eql_v3_timestamp_ord, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}.eq(a public.{{prefix}}_timestamp_ord, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.=) eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.=) {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_timestamp_ord.
---! @param a eql_v3.query_timestamp_ord
---! @param b public.eql_v3_timestamp_ord
+--! @brief Operator wrapper for {{prefix}}.query_timestamp_ord.
+--! @param a {{prefix}}.query_timestamp_ord
+--! @param b public.{{prefix}}_timestamp_ord
 --! @return boolean
-CREATE FUNCTION eql_v3.eq(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord)
+CREATE FUNCTION {{prefix}}.eq(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.=) eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.=) {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_timestamp_ord.
---! @param a public.eql_v3_timestamp_ord
---! @param b eql_v3.query_timestamp_ord
+--! @brief Operator wrapper for {{prefix}}.query_timestamp_ord.
+--! @param a public.{{prefix}}_timestamp_ord
+--! @param b {{prefix}}.query_timestamp_ord
 --! @return boolean
-CREATE FUNCTION eql_v3.neq(a public.eql_v3_timestamp_ord, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}.neq(a public.{{prefix}}_timestamp_ord, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<>) eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<>) {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_timestamp_ord.
---! @param a eql_v3.query_timestamp_ord
---! @param b public.eql_v3_timestamp_ord
+--! @brief Operator wrapper for {{prefix}}.query_timestamp_ord.
+--! @param a {{prefix}}.query_timestamp_ord
+--! @param b public.{{prefix}}_timestamp_ord
 --! @return boolean
-CREATE FUNCTION eql_v3.neq(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord)
+CREATE FUNCTION {{prefix}}.neq(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<>) eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<>) {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_timestamp_ord.
---! @param a public.eql_v3_timestamp_ord
---! @param b eql_v3.query_timestamp_ord
+--! @brief Operator wrapper for {{prefix}}.query_timestamp_ord.
+--! @param a public.{{prefix}}_timestamp_ord
+--! @param b {{prefix}}.query_timestamp_ord
 --! @return boolean
-CREATE FUNCTION eql_v3.lt(a public.eql_v3_timestamp_ord, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}.lt(a public.{{prefix}}_timestamp_ord, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<) eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<) {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_timestamp_ord.
---! @param a eql_v3.query_timestamp_ord
---! @param b public.eql_v3_timestamp_ord
+--! @brief Operator wrapper for {{prefix}}.query_timestamp_ord.
+--! @param a {{prefix}}.query_timestamp_ord
+--! @param b public.{{prefix}}_timestamp_ord
 --! @return boolean
-CREATE FUNCTION eql_v3.lt(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord)
+CREATE FUNCTION {{prefix}}.lt(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<) eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<) {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_timestamp_ord.
---! @param a public.eql_v3_timestamp_ord
---! @param b eql_v3.query_timestamp_ord
+--! @brief Operator wrapper for {{prefix}}.query_timestamp_ord.
+--! @param a public.{{prefix}}_timestamp_ord
+--! @param b {{prefix}}.query_timestamp_ord
 --! @return boolean
-CREATE FUNCTION eql_v3.lte(a public.eql_v3_timestamp_ord, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}.lte(a public.{{prefix}}_timestamp_ord, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<=) eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<=) {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_timestamp_ord.
---! @param a eql_v3.query_timestamp_ord
---! @param b public.eql_v3_timestamp_ord
+--! @brief Operator wrapper for {{prefix}}.query_timestamp_ord.
+--! @param a {{prefix}}.query_timestamp_ord
+--! @param b public.{{prefix}}_timestamp_ord
 --! @return boolean
-CREATE FUNCTION eql_v3.lte(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord)
+CREATE FUNCTION {{prefix}}.lte(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<=) eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<=) {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_timestamp_ord.
---! @param a public.eql_v3_timestamp_ord
---! @param b eql_v3.query_timestamp_ord
+--! @brief Operator wrapper for {{prefix}}.query_timestamp_ord.
+--! @param a public.{{prefix}}_timestamp_ord
+--! @param b {{prefix}}.query_timestamp_ord
 --! @return boolean
-CREATE FUNCTION eql_v3.gt(a public.eql_v3_timestamp_ord, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}.gt(a public.{{prefix}}_timestamp_ord, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.>) eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>) {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_timestamp_ord.
---! @param a eql_v3.query_timestamp_ord
---! @param b public.eql_v3_timestamp_ord
+--! @brief Operator wrapper for {{prefix}}.query_timestamp_ord.
+--! @param a {{prefix}}.query_timestamp_ord
+--! @param b public.{{prefix}}_timestamp_ord
 --! @return boolean
-CREATE FUNCTION eql_v3.gt(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord)
+CREATE FUNCTION {{prefix}}.gt(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.>) eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>) {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_timestamp_ord.
---! @param a public.eql_v3_timestamp_ord
---! @param b eql_v3.query_timestamp_ord
+--! @brief Operator wrapper for {{prefix}}.query_timestamp_ord.
+--! @param a public.{{prefix}}_timestamp_ord
+--! @param b {{prefix}}.query_timestamp_ord
 --! @return boolean
-CREATE FUNCTION eql_v3.gte(a public.eql_v3_timestamp_ord, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}.gte(a public.{{prefix}}_timestamp_ord, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.>=) eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>=) {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_timestamp_ord.
---! @param a eql_v3.query_timestamp_ord
---! @param b public.eql_v3_timestamp_ord
+--! @brief Operator wrapper for {{prefix}}.query_timestamp_ord.
+--! @param a {{prefix}}.query_timestamp_ord
+--! @param b public.{{prefix}}_timestamp_ord
 --! @return boolean
-CREATE FUNCTION eql_v3.gte(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord)
+CREATE FUNCTION {{prefix}}.gte(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.>=) eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>=) {{prefix}}.ord_term(b) $$;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: public.eql_v3_timestamp_eq and eql_v3.query_timestamp_ord (mismatched query domain).
---! @param a public.eql_v3_timestamp_eq left operand
---! @param b eql_v3.query_timestamp_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: public.{{prefix}}_timestamp_eq and {{prefix}}.query_timestamp_ord (mismatched query domain).
+--! @param a public.{{prefix}}_timestamp_eq left operand
+--! @param b {{prefix}}.query_timestamp_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.eq(a public.eql_v3_timestamp_eq, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}_internal.eq(a public.{{prefix}}_timestamp_eq, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.eql_v3_timestamp_eq and eql_v3.query_timestamp_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.{{prefix}}_timestamp_eq and {{prefix}}.query_timestamp_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: eql_v3.query_timestamp_ord and public.eql_v3_timestamp_eq (mismatched query domain).
---! @param a eql_v3.query_timestamp_ord left operand
---! @param b public.eql_v3_timestamp_eq right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: {{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_eq (mismatched query domain).
+--! @param a {{prefix}}.query_timestamp_ord left operand
+--! @param b public.{{prefix}}_timestamp_eq right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.eq(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_eq)
+CREATE FUNCTION {{prefix}}_internal.eq(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_eq)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'eql_v3.query_timestamp_ord and public.eql_v3_timestamp_eq'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', '{{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_eq'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: public.eql_v3_timestamp_eq and eql_v3.query_timestamp_ord (mismatched query domain).
---! @param a public.eql_v3_timestamp_eq left operand
---! @param b eql_v3.query_timestamp_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: public.{{prefix}}_timestamp_eq and {{prefix}}.query_timestamp_ord (mismatched query domain).
+--! @param a public.{{prefix}}_timestamp_eq left operand
+--! @param b {{prefix}}.query_timestamp_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.neq(a public.eql_v3_timestamp_eq, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}_internal.neq(a public.{{prefix}}_timestamp_eq, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.eql_v3_timestamp_eq and eql_v3.query_timestamp_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.{{prefix}}_timestamp_eq and {{prefix}}.query_timestamp_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: eql_v3.query_timestamp_ord and public.eql_v3_timestamp_eq (mismatched query domain).
---! @param a eql_v3.query_timestamp_ord left operand
---! @param b public.eql_v3_timestamp_eq right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: {{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_eq (mismatched query domain).
+--! @param a {{prefix}}.query_timestamp_ord left operand
+--! @param b public.{{prefix}}_timestamp_eq right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.neq(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_eq)
+CREATE FUNCTION {{prefix}}_internal.neq(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_eq)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'eql_v3.query_timestamp_ord and public.eql_v3_timestamp_eq'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', '{{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_eq'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: public.eql_v3_timestamp_ord_ore and eql_v3.query_timestamp_ord (mismatched query domain).
---! @param a public.eql_v3_timestamp_ord_ore left operand
---! @param b eql_v3.query_timestamp_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: public.{{prefix}}_timestamp_ord_ore and {{prefix}}.query_timestamp_ord (mismatched query domain).
+--! @param a public.{{prefix}}_timestamp_ord_ore left operand
+--! @param b {{prefix}}.query_timestamp_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.eq(a public.eql_v3_timestamp_ord_ore, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}_internal.eq(a public.{{prefix}}_timestamp_ord_ore, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.eql_v3_timestamp_ord_ore and eql_v3.query_timestamp_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.{{prefix}}_timestamp_ord_ore and {{prefix}}.query_timestamp_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ore (mismatched query domain).
---! @param a eql_v3.query_timestamp_ord left operand
---! @param b public.eql_v3_timestamp_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: {{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ore (mismatched query domain).
+--! @param a {{prefix}}.query_timestamp_ord left operand
+--! @param b public.{{prefix}}_timestamp_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.eq(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.eq(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', '{{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: public.eql_v3_timestamp_ord_ore and eql_v3.query_timestamp_ord (mismatched query domain).
---! @param a public.eql_v3_timestamp_ord_ore left operand
---! @param b eql_v3.query_timestamp_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: public.{{prefix}}_timestamp_ord_ore and {{prefix}}.query_timestamp_ord (mismatched query domain).
+--! @param a public.{{prefix}}_timestamp_ord_ore left operand
+--! @param b {{prefix}}.query_timestamp_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.neq(a public.eql_v3_timestamp_ord_ore, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}_internal.neq(a public.{{prefix}}_timestamp_ord_ore, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.eql_v3_timestamp_ord_ore and eql_v3.query_timestamp_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.{{prefix}}_timestamp_ord_ore and {{prefix}}.query_timestamp_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ore (mismatched query domain).
---! @param a eql_v3.query_timestamp_ord left operand
---! @param b public.eql_v3_timestamp_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: {{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ore (mismatched query domain).
+--! @param a {{prefix}}.query_timestamp_ord left operand
+--! @param b public.{{prefix}}_timestamp_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.neq(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.neq(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', '{{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: public.eql_v3_timestamp_ord_ore and eql_v3.query_timestamp_ord (mismatched query domain).
---! @param a public.eql_v3_timestamp_ord_ore left operand
---! @param b eql_v3.query_timestamp_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: public.{{prefix}}_timestamp_ord_ore and {{prefix}}.query_timestamp_ord (mismatched query domain).
+--! @param a public.{{prefix}}_timestamp_ord_ore left operand
+--! @param b {{prefix}}.query_timestamp_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.lt(a public.eql_v3_timestamp_ord_ore, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}_internal.lt(a public.{{prefix}}_timestamp_ord_ore, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', 'public.eql_v3_timestamp_ord_ore and eql_v3.query_timestamp_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', 'public.{{prefix}}_timestamp_ord_ore and {{prefix}}.query_timestamp_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ore (mismatched query domain).
---! @param a eql_v3.query_timestamp_ord left operand
---! @param b public.eql_v3_timestamp_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: {{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ore (mismatched query domain).
+--! @param a {{prefix}}.query_timestamp_ord left operand
+--! @param b public.{{prefix}}_timestamp_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.lt(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.lt(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', 'eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', '{{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: public.eql_v3_timestamp_ord_ore and eql_v3.query_timestamp_ord (mismatched query domain).
---! @param a public.eql_v3_timestamp_ord_ore left operand
---! @param b eql_v3.query_timestamp_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: public.{{prefix}}_timestamp_ord_ore and {{prefix}}.query_timestamp_ord (mismatched query domain).
+--! @param a public.{{prefix}}_timestamp_ord_ore left operand
+--! @param b {{prefix}}.query_timestamp_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.lte(a public.eql_v3_timestamp_ord_ore, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}_internal.lte(a public.{{prefix}}_timestamp_ord_ore, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', 'public.eql_v3_timestamp_ord_ore and eql_v3.query_timestamp_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', 'public.{{prefix}}_timestamp_ord_ore and {{prefix}}.query_timestamp_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ore (mismatched query domain).
---! @param a eql_v3.query_timestamp_ord left operand
---! @param b public.eql_v3_timestamp_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: {{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ore (mismatched query domain).
+--! @param a {{prefix}}.query_timestamp_ord left operand
+--! @param b public.{{prefix}}_timestamp_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.lte(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.lte(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', 'eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', '{{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: public.eql_v3_timestamp_ord_ore and eql_v3.query_timestamp_ord (mismatched query domain).
---! @param a public.eql_v3_timestamp_ord_ore left operand
---! @param b eql_v3.query_timestamp_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: public.{{prefix}}_timestamp_ord_ore and {{prefix}}.query_timestamp_ord (mismatched query domain).
+--! @param a public.{{prefix}}_timestamp_ord_ore left operand
+--! @param b {{prefix}}.query_timestamp_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.gt(a public.eql_v3_timestamp_ord_ore, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}_internal.gt(a public.{{prefix}}_timestamp_ord_ore, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', 'public.eql_v3_timestamp_ord_ore and eql_v3.query_timestamp_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', 'public.{{prefix}}_timestamp_ord_ore and {{prefix}}.query_timestamp_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ore (mismatched query domain).
---! @param a eql_v3.query_timestamp_ord left operand
---! @param b public.eql_v3_timestamp_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: {{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ore (mismatched query domain).
+--! @param a {{prefix}}.query_timestamp_ord left operand
+--! @param b public.{{prefix}}_timestamp_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.gt(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.gt(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', 'eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', '{{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: public.eql_v3_timestamp_ord_ore and eql_v3.query_timestamp_ord (mismatched query domain).
---! @param a public.eql_v3_timestamp_ord_ore left operand
---! @param b eql_v3.query_timestamp_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: public.{{prefix}}_timestamp_ord_ore and {{prefix}}.query_timestamp_ord (mismatched query domain).
+--! @param a public.{{prefix}}_timestamp_ord_ore left operand
+--! @param b {{prefix}}.query_timestamp_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.gte(a public.eql_v3_timestamp_ord_ore, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}_internal.gte(a public.{{prefix}}_timestamp_ord_ore, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', 'public.eql_v3_timestamp_ord_ore and eql_v3.query_timestamp_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', 'public.{{prefix}}_timestamp_ord_ore and {{prefix}}.query_timestamp_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ore (mismatched query domain).
---! @param a eql_v3.query_timestamp_ord left operand
---! @param b public.eql_v3_timestamp_ord_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: {{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ore (mismatched query domain).
+--! @param a {{prefix}}.query_timestamp_ord left operand
+--! @param b public.{{prefix}}_timestamp_ord_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.gte(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord_ore)
+CREATE FUNCTION {{prefix}}_internal.gte(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', 'eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', '{{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: public.eql_v3_timestamp_ord_ope and eql_v3.query_timestamp_ord (mismatched query domain).
---! @param a public.eql_v3_timestamp_ord_ope left operand
---! @param b eql_v3.query_timestamp_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: public.{{prefix}}_timestamp_ord_ope and {{prefix}}.query_timestamp_ord (mismatched query domain).
+--! @param a public.{{prefix}}_timestamp_ord_ope left operand
+--! @param b {{prefix}}.query_timestamp_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.eq(a public.eql_v3_timestamp_ord_ope, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}_internal.eq(a public.{{prefix}}_timestamp_ord_ope, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.eql_v3_timestamp_ord_ope and eql_v3.query_timestamp_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.{{prefix}}_timestamp_ord_ope and {{prefix}}.query_timestamp_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ope (mismatched query domain).
---! @param a eql_v3.query_timestamp_ord left operand
---! @param b public.eql_v3_timestamp_ord_ope right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: {{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ope (mismatched query domain).
+--! @param a {{prefix}}.query_timestamp_ord left operand
+--! @param b public.{{prefix}}_timestamp_ord_ope right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.eq(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord_ope)
+CREATE FUNCTION {{prefix}}_internal.eq(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ope'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', '{{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ope'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: public.eql_v3_timestamp_ord_ope and eql_v3.query_timestamp_ord (mismatched query domain).
---! @param a public.eql_v3_timestamp_ord_ope left operand
---! @param b eql_v3.query_timestamp_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: public.{{prefix}}_timestamp_ord_ope and {{prefix}}.query_timestamp_ord (mismatched query domain).
+--! @param a public.{{prefix}}_timestamp_ord_ope left operand
+--! @param b {{prefix}}.query_timestamp_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.neq(a public.eql_v3_timestamp_ord_ope, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}_internal.neq(a public.{{prefix}}_timestamp_ord_ope, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.eql_v3_timestamp_ord_ope and eql_v3.query_timestamp_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.{{prefix}}_timestamp_ord_ope and {{prefix}}.query_timestamp_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ope (mismatched query domain).
---! @param a eql_v3.query_timestamp_ord left operand
---! @param b public.eql_v3_timestamp_ord_ope right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: {{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ope (mismatched query domain).
+--! @param a {{prefix}}.query_timestamp_ord left operand
+--! @param b public.{{prefix}}_timestamp_ord_ope right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.neq(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord_ope)
+CREATE FUNCTION {{prefix}}_internal.neq(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ope'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', '{{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ope'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: public.eql_v3_timestamp_ord_ope and eql_v3.query_timestamp_ord (mismatched query domain).
---! @param a public.eql_v3_timestamp_ord_ope left operand
---! @param b eql_v3.query_timestamp_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: public.{{prefix}}_timestamp_ord_ope and {{prefix}}.query_timestamp_ord (mismatched query domain).
+--! @param a public.{{prefix}}_timestamp_ord_ope left operand
+--! @param b {{prefix}}.query_timestamp_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.lt(a public.eql_v3_timestamp_ord_ope, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}_internal.lt(a public.{{prefix}}_timestamp_ord_ope, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', 'public.eql_v3_timestamp_ord_ope and eql_v3.query_timestamp_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', 'public.{{prefix}}_timestamp_ord_ope and {{prefix}}.query_timestamp_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ope (mismatched query domain).
---! @param a eql_v3.query_timestamp_ord left operand
---! @param b public.eql_v3_timestamp_ord_ope right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: {{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ope (mismatched query domain).
+--! @param a {{prefix}}.query_timestamp_ord left operand
+--! @param b public.{{prefix}}_timestamp_ord_ope right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.lt(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord_ope)
+CREATE FUNCTION {{prefix}}_internal.lt(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', 'eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ope'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', '{{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ope'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: public.eql_v3_timestamp_ord_ope and eql_v3.query_timestamp_ord (mismatched query domain).
---! @param a public.eql_v3_timestamp_ord_ope left operand
---! @param b eql_v3.query_timestamp_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: public.{{prefix}}_timestamp_ord_ope and {{prefix}}.query_timestamp_ord (mismatched query domain).
+--! @param a public.{{prefix}}_timestamp_ord_ope left operand
+--! @param b {{prefix}}.query_timestamp_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.lte(a public.eql_v3_timestamp_ord_ope, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}_internal.lte(a public.{{prefix}}_timestamp_ord_ope, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', 'public.eql_v3_timestamp_ord_ope and eql_v3.query_timestamp_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', 'public.{{prefix}}_timestamp_ord_ope and {{prefix}}.query_timestamp_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ope (mismatched query domain).
---! @param a eql_v3.query_timestamp_ord left operand
---! @param b public.eql_v3_timestamp_ord_ope right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: {{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ope (mismatched query domain).
+--! @param a {{prefix}}.query_timestamp_ord left operand
+--! @param b public.{{prefix}}_timestamp_ord_ope right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.lte(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord_ope)
+CREATE FUNCTION {{prefix}}_internal.lte(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', 'eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ope'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', '{{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ope'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: public.eql_v3_timestamp_ord_ope and eql_v3.query_timestamp_ord (mismatched query domain).
---! @param a public.eql_v3_timestamp_ord_ope left operand
---! @param b eql_v3.query_timestamp_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: public.{{prefix}}_timestamp_ord_ope and {{prefix}}.query_timestamp_ord (mismatched query domain).
+--! @param a public.{{prefix}}_timestamp_ord_ope left operand
+--! @param b {{prefix}}.query_timestamp_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.gt(a public.eql_v3_timestamp_ord_ope, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}_internal.gt(a public.{{prefix}}_timestamp_ord_ope, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', 'public.eql_v3_timestamp_ord_ope and eql_v3.query_timestamp_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', 'public.{{prefix}}_timestamp_ord_ope and {{prefix}}.query_timestamp_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ope (mismatched query domain).
---! @param a eql_v3.query_timestamp_ord left operand
---! @param b public.eql_v3_timestamp_ord_ope right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: {{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ope (mismatched query domain).
+--! @param a {{prefix}}.query_timestamp_ord left operand
+--! @param b public.{{prefix}}_timestamp_ord_ope right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.gt(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord_ope)
+CREATE FUNCTION {{prefix}}_internal.gt(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', 'eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ope'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', '{{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ope'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: public.eql_v3_timestamp_ord_ope and eql_v3.query_timestamp_ord (mismatched query domain).
---! @param a public.eql_v3_timestamp_ord_ope left operand
---! @param b eql_v3.query_timestamp_ord right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: public.{{prefix}}_timestamp_ord_ope and {{prefix}}.query_timestamp_ord (mismatched query domain).
+--! @param a public.{{prefix}}_timestamp_ord_ope left operand
+--! @param b {{prefix}}.query_timestamp_ord right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.gte(a public.eql_v3_timestamp_ord_ope, b eql_v3.query_timestamp_ord)
+CREATE FUNCTION {{prefix}}_internal.gte(a public.{{prefix}}_timestamp_ord_ope, b {{prefix}}.query_timestamp_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', 'public.eql_v3_timestamp_ord_ope and eql_v3.query_timestamp_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', 'public.{{prefix}}_timestamp_ord_ope and {{prefix}}.query_timestamp_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_timestamp_ord: eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ope (mismatched query domain).
---! @param a eql_v3.query_timestamp_ord left operand
---! @param b public.eql_v3_timestamp_ord_ope right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_timestamp_ord: {{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ope (mismatched query domain).
+--! @param a {{prefix}}.query_timestamp_ord left operand
+--! @param b public.{{prefix}}_timestamp_ord_ope right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal.gte(a eql_v3.query_timestamp_ord, b public.eql_v3_timestamp_ord_ope)
+CREATE FUNCTION {{prefix}}_internal.gte(a {{prefix}}.query_timestamp_ord, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', 'eql_v3.query_timestamp_ord and public.eql_v3_timestamp_ord_ope'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', '{{prefix}}.query_timestamp_ord and public.{{prefix}}_timestamp_ord_ope'; END; $$
 LANGUAGE plpgsql;

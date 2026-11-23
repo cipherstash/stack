@@ -1,0 +1,5 @@
+---
+'@cipherstash/eql': minor
+---
+
+**Stack Encrypt produces the EQL v4 date, timestamp and numeric types `Date`, `DateEq`, `Timestamp`, `TimestampEq`, `Numeric` and `NumericEq`** (`eql-bindings`, `stack-encrypt` feature). Their Rust plaintexts are Vitamin C's `Date`, `Timestamp` and `Decimal`, which `stack_encrypt::value` re-exports, re-exported again as `v4::plaintext::Date`, `Timestamp` and `Decimal`. A `Date` is built from a jiff `civil::Date`, a `Timestamp` from a jiff `Timestamp`, and a `Decimal` from a rust_decimal `Decimal`, and each is read back as that type. None is `Clone`, and each is wiped when it is dropped. The `stack-encrypt` feature turns on jiff and rust_decimal, so the three types exist whenever it is on. Dates are from `-009999-01-01` to `9999-12-31`, and instants from `-009999-01-02T01:59:59Z` to `9999-12-30T22:00:00.999999999Z`. `=` on `NumericEq` normalises the scale (`1.5 = 1.50`) and on `TimestampEq` compares to the microsecond, truncating (never rounding) the nanoseconds below it; each value decrypts as it was stored. The Go SDK's `encrypt/eql` table marks the six producible, from `encrypt.Date`, `time.Time` and `encrypt.Decimal`.

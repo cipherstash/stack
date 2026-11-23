@@ -226,8 +226,8 @@ updates:
       # stack-encrypt behind its optional `stack-encrypt` feature. Those crates
       # declare these `{ workspace = true }`, so their requirements come from
       # the root Cargo.toml even when built here. The root entry below ignores
-      # them because they move by hand with cipherstash-suite: the root
-      # manifest pins recipher and cllw-ore with `=`, and so does the Go guest.
+      # them because they move by hand: the root manifest pins recipher,
+      # clww-ore and ore-rs with `=`, and the Go guest pins recipher with `=`.
       # Without these lines this entry bumped them in this lockfile and, to
       # satisfy the exact pins, rewrote the root Cargo.toml without touching
       # the root Cargo.lock or the guest's pin, breaking every root `--locked`
@@ -238,7 +238,8 @@ updates:
       # scripts/__tests__/dependabot-eql-inherited-ignores.test.mjs fails when
       # the root entry ignores a crate this entry does not.
       - dependency-name: "recipher"
-      - dependency-name: "cllw-ore"
+      - dependency-name: "clww-ore"
+      - dependency-name: "ore-rs"
       - dependency-name: "zerokms-protocol"
       - dependency-name: "vitaminc*"
       # Major bumps are reviewed and applied manually, not by Dependabot.
@@ -294,14 +295,18 @@ updates:
     ignore:
       # Released from cipherstash-suite: stack-auth's API carries their types,
       # so they move in lockstep with the suite, by hand. The guests pin them
-      # with `=`; the root Cargo.toml pins recipher and cllw-ore with `=`, and
-      # gives cts-common and zerokms-protocol caret requirements.
+      # with `=`; the root Cargo.toml pins recipher with `=`, and gives
+      # cts-common and zerokms-protocol caret requirements.
       - dependency-name: "cts-common"
       - dependency-name: "zerokms-protocol"
       - dependency-name: "recipher"
-      - dependency-name: "cllw-ore"
-      # vitaminc is pinned at 0.5.0 across the crates and the guests; the
-      # guests' `FfiValue: Decrypt` bound fails if two versions resolve.
+      # The order schemes, from cipherstash/ore.rs, moved by hand with
+      # vitaminc: a new release can change every stored order term.
+      - dependency-name: "clww-ore"
+      - dependency-name: "ore-rs"
+      # vitaminc is pinned at 0.8.0 across the crates. The encrypt guest
+      # takes it only through stack-encrypt's re-exports, so it cannot
+      # resolve a second version; one would fail at `ValueFrame: Decrypt`.
       - dependency-name: "vitaminc*"
       # Major bumps are reviewed and applied manually, not by Dependabot.
       - dependency-name: "*"
@@ -309,8 +314,18 @@ updates:
           - version-update:semver-major
 
   # ── Go (languages/golang) ──────────────────────────────────────
+  # One entry for the three modules, grouped by dependency name, so one PR
+  # moves a dependency in all of them. The nested modules replace the SDK
+  # with ../.. and build against its dependencies, so a bump to the SDK's
+  # go.sum alone would break their builds.
   - package-ecosystem: gomod
-    directory: /languages/golang
+    directories:
+      - /languages/golang
+      - /languages/golang/encrypt/encrypttest
+      - /languages/golang/encrypt/example
+    groups:
+      go-modules:
+        group-by: dependency-name
     schedule:
       interval: monthly
     cooldown:
@@ -327,6 +342,13 @@ updates:
       - dependency-name: "*"
         update-types:
           - version-update:semver-major
+      # The nested modules require the SDK, and the example requires
+      # encrypttest, at the zero pseudo-version, replaced by the directory in
+      # this checkout. The release pins that placeholder to the version it
+      # tags (scripts/go-release-pin-encrypttest.sh) and refuses a go.mod
+      # without it, so a bump to a tagged version would stop every release.
+      - dependency-name: "github.com/cipherstash/stack/languages/golang"
+      - dependency-name: "github.com/cipherstash/stack/languages/golang/encrypt/encrypttest"
 
   # ── pip (.github/impact-gate — the advisory ImpactGate toolchain) ──
   # impact.yml installs this hashed requirements.txt with `--require-hashes

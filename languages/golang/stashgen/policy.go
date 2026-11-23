@@ -173,9 +173,11 @@ func generateFor(ctx context.Context, cfg generateConfig, source policy.Source, 
 	if err != nil {
 		return err
 	}
-	if err := cfg.engine.Check(ctx, gf.decl); err != nil {
+	operators, err := cfg.engine.Check(ctx, gf.decl)
+	if err != nil {
 		return err
 	}
+	gf.setOperators(operators)
 	src, err := emit(gf)
 	if err != nil {
 		return err

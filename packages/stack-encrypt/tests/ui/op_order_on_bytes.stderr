@@ -1,0 +1,154 @@
+error[E0277]: `Vec<u8>` is not `Orderable`: it has no order target of its own
+  --> tests/ui/op_order_on_bytes.rs:17:21
+   |
+17 |     blob: Encrypted<OreTerm<Vec<u8>>>,
+   |                     ^^^^^^^^^^^^^^^^ has no order target of its own
+   |
+   = help: the trait `Orderable` is not implemented for `Vec<u8>`
+   = note: name the target: `scheme.target(I64).encrypt_checked(value)`
+   = note: there is no 8-bit target: an order term over 256 values reveals them, so an `i8` goes into `I16` or wider by name (`scheme.target(I16).encrypt(value)`), or into an equality index
+   = note: bytes order only into a target named for them, `scheme.target(Bytes)`: no ordering operator compares bytes
+   = help: the following other types implement trait `Orderable`:
+             &f32
+             &f64
+             &i128
+             &i16
+             &i32
+             &i64
+             &jiff::civil::date::Date
+             &jiff::timestamp::Timestamp
+           and $N others
+note: required by a bound in `OreTerm`
+  --> src/sem/mod.rs
+   |
+   | pub struct OreTerm<T: Orderable>(OreClww8VariableV1, PhantomData<fn() -> T>);
+   |                       ^^^^^^^^^ required by this bound in `OreTerm`
+
+error[E0277]: `Vec<u8>` is not `Orderable`: it has no order target of its own
+  --> tests/ui/op_order_on_bytes.rs:17:11
+   |
+17 |     blob: Encrypted<OreTerm<Vec<u8>>>,
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^ has no order target of its own
+   |
+   = help: the trait `Orderable` is not implemented for `Vec<u8>`
+   = note: name the target: `scheme.target(I64).encrypt_checked(value)`
+   = note: there is no 8-bit target: an order term over 256 values reveals them, so an `i8` goes into `I16` or wider by name (`scheme.target(I16).encrypt(value)`), or into an equality index
+   = note: bytes order only into a target named for them, `scheme.target(Bytes)`: no ordering operator compares bytes
+   = help: the following other types implement trait `Orderable`:
+             &f32
+             &f64
+             &i128
+             &i16
+             &i32
+             &i64
+             &jiff::civil::date::Date
+             &jiff::timestamp::Timestamp
+           and $N others
+note: required by a bound in `OreTerm`
+  --> src/sem/mod.rs
+   |
+   | pub struct OreTerm<T: Orderable>(OreClww8VariableV1, PhantomData<fn() -> T>);
+   |                       ^^^^^^^^^ required by this bound in `OreTerm`
+
+error[E0277]: `Vec<u8>` is not `Orderable`: it has no order target of its own
+  --> tests/ui/op_order_on_bytes.rs:17:11
+   |
+17 |     blob: Encrypted<OreTerm<Vec<u8>>>,
+   |           ^^^^^^^^^ has no order target of its own
+   |
+   = help: the trait `Orderable` is not implemented for `Vec<u8>`
+   = note: name the target: `scheme.target(I64).encrypt_checked(value)`
+   = note: there is no 8-bit target: an order term over 256 values reveals them, so an `i8` goes into `I16` or wider by name (`scheme.target(I16).encrypt(value)`), or into an equality index
+   = note: bytes order only into a target named for them, `scheme.target(Bytes)`: no ordering operator compares bytes
+   = help: the following other types implement trait `Orderable`:
+             &f32
+             &f64
+             &i128
+             &i16
+             &i32
+             &i64
+             &jiff::civil::date::Date
+             &jiff::timestamp::Timestamp
+           and $N others
+   = note: required for `OreTerm<Vec<u8>>` to implement `TermSet<Vec<u8>>`
+   = note: required for `Encrypted<OreTerm<Vec<u8>>>` to implement `EncryptTarget<Vec<u8>>`
+
+error[E0277]: `Vec<u8>` is not `Orderable`: it has no order target of its own
+  --> tests/ui/op_order_on_bytes.rs:14:10
+   |
+14 | #[derive(EncryptTarget)]
+   |          ^^^^^^^^^^^^^ has no order target of its own
+   |
+   = help: the trait `Orderable` is not implemented for `Vec<u8>`
+   = note: name the target: `scheme.target(I64).encrypt_checked(value)`
+   = note: there is no 8-bit target: an order term over 256 values reveals them, so an `i8` goes into `I16` or wider by name (`scheme.target(I16).encrypt(value)`), or into an equality index
+   = note: bytes order only into a target named for them, `scheme.target(Bytes)`: no ordering operator compares bytes
+   = help: the following other types implement trait `Orderable`:
+             &f32
+             &f64
+             &i128
+             &i16
+             &i32
+             &i64
+             &jiff::civil::date::Date
+             &jiff::timestamp::Timestamp
+           and $N others
+note: required by a bound in `OreTerm`
+  --> src/sem/mod.rs
+   |
+   | pub struct OreTerm<T: Orderable>(OreClww8VariableV1, PhantomData<fn() -> T>);
+   |                       ^^^^^^^^^ required by this bound in `OreTerm`
+   = note: this error originates in the derive macro `EncryptTarget` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `Vec<u8>` is not `Orderable`: it has no order target of its own
+  --> tests/ui/op_order_on_bytes.rs:14:10
+   |
+14 | #[derive(EncryptTarget)]
+   |          ^ has no order target of its own
+   |
+   = help: the trait `Orderable` is not implemented for `Vec<u8>`
+   = note: name the target: `scheme.target(I64).encrypt_checked(value)`
+   = note: there is no 8-bit target: an order term over 256 values reveals them, so an `i8` goes into `I16` or wider by name (`scheme.target(I16).encrypt(value)`), or into an equality index
+   = note: bytes order only into a target named for them, `scheme.target(Bytes)`: no ordering operator compares bytes
+   = help: the following other types implement trait `Orderable`:
+             &f32
+             &f64
+             &i128
+             &i16
+             &i32
+             &i64
+             &jiff::civil::date::Date
+             &jiff::timestamp::Timestamp
+           and $N others
+note: required by a bound in `OreTerm`
+  --> src/sem/mod.rs
+   |
+   | pub struct OreTerm<T: Orderable>(OreClww8VariableV1, PhantomData<fn() -> T>);
+   |                       ^^^^^^^^^ required by this bound in `OreTerm`
+   = note: this error originates in the derive macro `EncryptTarget` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `Vec<u8>` is not `Orderable`: it has no order target of its own
+  --> tests/ui/op_order_on_bytes.rs:21:13
+   |
+21 |     let _ = EncryptedFile::BLOB.lt(vec![1u8, 2]);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ has no order target of its own
+   |
+   = help: the trait `Orderable` is not implemented for `Vec<u8>`
+   = note: name the target: `scheme.target(I64).encrypt_checked(value)`
+   = note: there is no 8-bit target: an order term over 256 values reveals them, so an `i8` goes into `I16` or wider by name (`scheme.target(I16).encrypt(value)`), or into an equality index
+   = note: bytes order only into a target named for them, `scheme.target(Bytes)`: no ordering operator compares bytes
+   = help: the following other types implement trait `Orderable`:
+             &f32
+             &f64
+             &i128
+             &i16
+             &i32
+             &i64
+             &jiff::civil::date::Date
+             &jiff::timestamp::Timestamp
+           and $N others
+note: required by a bound in `OreTerm`
+  --> src/sem/mod.rs
+   |
+   | pub struct OreTerm<T: Orderable>(OreClww8VariableV1, PhantomData<fn() -> T>);
+   |                       ^^^^^^^^^ required by this bound in `OreTerm`

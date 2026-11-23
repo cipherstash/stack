@@ -1,6 +1,7 @@
 package encrypt
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
@@ -24,12 +25,19 @@ type Cipher struct {
 	client    *Client
 	keyset    KeysetSelector
 	extension []any
+	// bindings is the caller's bindings, in order, after the scopes: in the
+	// stored context of every field, and in no query context.
+	bindings []any
 	// context is the label Context named, for a type whose context is one
 	// of its fields; "" names none.
 	context string
-	// err is a refused extension part or context, reported by the first
-	// call rather than by Extend or Context: a cipher is made without a
-	// request, and no call on this package panics.
+	// audit is the audit metadata Audit gave, sent with every data-key
+	// request; nil sends none. The facts are never changed after they are
+	// made, so ciphers share them.
+	audit auditFacts
+	// err is a refused extension part, context or audit value, reported by
+	// the first call rather than by Extend, Context or Audit: a cipher is
+	// made without a request, and no call on this package panics.
 	err error
 }
 
@@ -49,31 +57,103 @@ func (cph *Cipher) KeysetID(ctx context.Context) (KeysetID, error) {
 	return cph.client.resolveKeyset(ctx, cph.keyset)
 }
 
-// Extend returns a cipher that extends the context of every field, in every
-// call through it: the write, the query and the read. It appends to the
-// context the tags declare and never replaces it, so a field sealed through
-// cipher.Extend("tenant-42") opens and matches only through a cipher with
-// the same extension. A part is a string, a byte slice or an integer
-// (int32, int64, uint32, uint64; Go's int is sent as int64); a byte slice is
-// copied. Several parts nest in order: Extend(a, b) is Extend(a).Extend(b).
-// An unsupported part type is reported by the first call through the
-// cipher, as [ErrEncoding].
-func (cph *Cipher) Extend(parts ...any) *Cipher {
-	next := &Cipher{client: cph.client, keyset: cph.keyset, context: cph.context, err: cph.err}
-	next.extension = append(next.extension, cph.extension...)
+// Scope returns a cipher that adds a scope to the context of every field,
+// in every call through it: the write, the query and the read. A scope
+// narrows the data and the queries over it: a field sealed through
+// cipher.Scope("tenant-42") opens and matches only through a cipher with the
+// same scope. It appends to the context the tags declare and never
+// replaces it. A part is a string, a byte slice or an integer (int32,
+// int64, uint32, uint64; Go's int is sent as int64); a byte slice is copied.
+// Several parts nest in order: Scope(a, b) is Scope(a).Scope(b). An
+// unsupported part type is reported by the first call through the cipher,
+// as [ErrEncoding].
+func (cph *Cipher) Scope(parts ...any) *Cipher {
+	next := cph.copy()
 	for _, part := range parts {
 		if err := record.CheckPart(part); err != nil && next.err == nil {
-			next.err = fmt.Errorf("%w: Extend: %v", ErrEncoding, err)
+			next.err = fmt.Errorf("%w: Scope: %v", ErrEncoding, err)
 		}
-		next.extension = append(next.extension, part)
+		next.extension = append(next.extension, ownedPart(part))
 	}
 	return next
 }
 
-// Extension is the parts the cipher extends every field's context by, in
-// order. Empty for a cipher straight from [Client.Keyset].
-func (cph *Cipher) Extension() []any {
-	return append([]any(nil), cph.extension...)
+// Bind returns a cipher that binds every field to the given parts, in every
+// write and read through it: a row ID. A binding ties a ciphertext to its
+// row. It is in the stored context, after every scope, so a field sealed
+// through cipher.Bind(rowID) opens only through a cipher with the same
+// binding. It is in no query context, so a query through a cipher with a
+// binding is refused as [ErrEncoding]: a query by column or by tenant still
+// finds the row. A cipher with a binding does not refuse a read of part of
+// a JSON document, through a field's Selector, Subtree, or Children. The
+// read prepares under the scopes alone and opens under the binding, so it
+// reads that binding's row.
+//
+// The parts are those [Cipher.Scope] takes. Bind refuses an empty string
+// or byte slice. An unassigned row ID would bind every such row to one
+// context.
+func (cph *Cipher) Bind(parts ...any) *Cipher {
+	next := cph.copy()
+	for _, part := range parts {
+		if err := record.CheckBinding(part); err != nil && next.err == nil {
+			next.err = fmt.Errorf("%w: Bind: %v", ErrEncoding, err)
+		}
+		next.bindings = append(next.bindings, ownedPart(part))
+	}
+	return next
+}
+
+// ownedPart is part as the cipher keeps it: a byte slice is copied, so a
+// caller that reuses or changes its buffer after Scope or Bind does not
+// change the context of a cipher it already has.
+func ownedPart(part any) any {
+	if b, ok := part.([]byte); ok {
+		return bytes.Clone(b)
+	}
+	return part
+}
+
+// Extend is the former name of [Cipher.Scope].
+//
+// Deprecated: use Scope. Extend is removed in 0.1.0.
+func (cph *Cipher) Extend(parts ...any) *Cipher { return cph.Scope(parts...) }
+
+// copy is this cipher with the same keyset, scopes, bindings, context, audit
+// metadata and error, for a method that adds to one of them.
+func (cph *Cipher) copy() *Cipher {
+	next := &Cipher{client: cph.client, keyset: cph.keyset, context: cph.context, audit: cph.audit, err: cph.err}
+	next.extension = append(next.extension, cph.extension...)
+	next.bindings = append(next.bindings, cph.bindings...)
+	return next
+}
+
+// Scopes is the parts the cipher adds to every field's context as scopes,
+// in order. Empty for a cipher straight from [Client.Keyset]. Each part is
+// a copy: changing a returned []byte does not change the cipher.
+func (cph *Cipher) Scopes() []any {
+	return ownedParts(cph.extension)
+}
+
+// Extension is the former name of [Cipher.Scopes].
+//
+// Deprecated: use Scopes. Extension is removed in 0.1.0.
+func (cph *Cipher) Extension() []any { return cph.Scopes() }
+
+// Bindings is the parts the cipher binds every field to, in order. Empty
+// for a cipher with no [Cipher.Bind]. Each part is a copy, as for
+// [Cipher.Scopes].
+func (cph *Cipher) Bindings() []any {
+	return ownedParts(cph.bindings)
+}
+
+// ownedParts is a copy of parts whose byte slices are copies too, so
+// neither side can change the other's through a returned part.
+func ownedParts(parts []any) []any {
+	owned := make([]any, len(parts))
+	for i, part := range parts {
+		owned[i] = ownedPart(part)
+	}
+	return owned
 }
 
 // Context returns a cipher that names the context every row through it is
@@ -91,8 +171,8 @@ func (cph *Cipher) Extension() []any {
 // The label is segments separated by '/', such as "tenants/acme"; one that
 // is not a plain label is reported by the first call, as ErrEncoding.
 func (cph *Cipher) Context(label string) *Cipher {
-	next := &Cipher{client: cph.client, keyset: cph.keyset, context: label, err: cph.err}
-	next.extension = append(next.extension, cph.extension...)
+	next := cph.copy()
+	next.context = label
 	if _, err := record.ParseContext(label); err != nil && next.err == nil {
 		next.err = fmt.Errorf("%w: Context: %v", ErrEncoding, err)
 	}

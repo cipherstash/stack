@@ -28,7 +28,7 @@ func run(ctx context.Context) error {
 
 	// One cipher for one tenant: the default keyset, and the tenant as a
 	// part of every field's context. Every call through it carries both.
-	cipher := client.DefaultKeyset().Extend("tenant-42")
+	cipher := client.DefaultKeyset().Scope("tenant-42")
 
 	people := []User{
 		{ID: 1, Email: "alice@example.com", Age: 34},
@@ -47,7 +47,7 @@ func run(ctx context.Context) error {
 	}
 
 	// A query term for one field compares against the stored terms.
-	term, err := Fields.Email.Equality(ctx, cipher, "bob@example.com")
+	term, err := Fields.Email.Eq(ctx, cipher, "bob@example.com")
 	if err != nil {
 		return fmt.Errorf("query term: %w", err)
 	}
@@ -58,13 +58,38 @@ func run(ctx context.Context) error {
 	// Decrypt through the cipher. It carries the extension that Encrypt
 	// used, and it refuses rows from another keyset. The client would refuse
 	// these rows: it opens only rows sealed with no extension.
-	back, err := Decrypt(ctx, cipher, encrypted)
+	//
+	// Audit gives the cipher audit metadata: facts about the call, which
+	// ZeroKMS writes to its audit log with the request for the data keys.
+	// ZeroKMS does not verify the facts. Do not send plaintext or secrets.
+	reader := cipher.Audit(encrypt.NewAuditMetadata().
+		Text("purpose", "example").
+		Text("request_id", "req_01J9Z3"))
+	back, err := Decrypt(ctx, reader, encrypted)
 	if err != nil {
 		return fmt.Errorf("decrypt: %w", err)
 	}
 	// Print ids only: everything else here is plaintext.
 	for _, u := range back {
 		fmt.Printf("decrypted id %d\n", u.ID)
+	}
+
+	// A matches query's answer can hold rows that do not match, so the
+	// rows it finds are decrypted and verified: one call for the page.
+	q, err := Fields.Email.Matches(ctx, cipher, "bob")
+	if err != nil {
+		return fmt.Errorf("matches: %w", err)
+	}
+	emails := make([]string, len(back))
+	for i, u := range back {
+		emails[i] = u.Email
+	}
+	verified, err := q.Verify(ctx, emails)
+	if err != nil {
+		return fmt.Errorf("verify: %w", err)
+	}
+	for i, u := range back {
+		fmt.Printf("id %d holds bob: %v\n", u.ID, verified[i])
 	}
 	return nil
 }

@@ -1,0 +1,5 @@
+---
+"@cipherstash/eql": patch
+---
+
+EQL v4 `json_tree` (unreleased): the client now checks that what `->` and the subtree walks return is what it asked for. Every entry of a stored document is sealed under its own path selector and position, so any entry of the row opened, and a database could answer `doc -> s($.salary)` with the row's `$.bonus`, or with the sealed root (the whole document), or splice other entries into a walk. In the `eql-bindings` crate an entry `->` returned now opens through the selector that asked for it, `JsonTreeExtracted::from_selector(&selector, entry)`, which refuses an entry carrying any other selector; `JsonTreeEntry` no longer opens on its own. A walk's rows, opened through `JsonTreeSubtree::from_key(&key, rows)` as before, are each checked against the key's path: the node a gated walk reaches must carry the path's selector and position, every other row the selector of its parent's path and its own label, and the rows must follow each other in the document with no gap. A refusal is `stack_encrypt::Error::JsonWrongEntry`. Not checked, by design: which row of the column an entry comes from (ADR 0010). The SQL is unchanged.

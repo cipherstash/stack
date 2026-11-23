@@ -45,9 +45,12 @@
 //! `se_cipher_init`; derived data keys and index keys never leave.
 //!
 //! The exports are the record path (`se_encrypt_record`, `se_decrypt_record`),
-//! per-field term derivation (`se_term`), a target field's EQL query value
-//! (`se_query`), keyset resolution (`se_keyset`), the generator's two
-//! questions (`se_plan_check`, `se_targets`) and the lifetime pair
+//! the term of one index under a context (`se_term`, which the Go SDK asks
+//! to name the field behind a record's term failure), a query named by
+//! operator and a probabilistic query's two questions (`se_query_term`,
+//! `se_verify`, `se_target_limit`; ADR-0007, amended 2026-10-16), keyset
+//! resolution (`se_keyset`), the generator's three questions
+//! (`se_plan_check`, `se_targets`, `se_operators`) and the lifetime pair
 //! (`se_cipher_init`, `se_shutdown`). There is no whole-value export: the
 //! Go SDK seals every value under a declaration (ADR-0007).
 //!
@@ -73,13 +76,15 @@
 //! - [`abi`], [`host`] (wasm32 only) — this guest's export surface and its
 //!   token import. The conventions every guest shares — `se_alloc` /
 //!   `se_dealloc`, the buffer registry, the packed result encoding, the
-//!   status table, the `transport_send` import — are `stack_guest_abi`'s;
+//!   status table, the step loop (`stack_guest_abi::step`) — are
+//!   `stack_guest_abi`'s, and [`io`] is how this guest's steps cross;
 //!   [`abi`]'s module docs give this guest's contract on top of them.
 //!
 //! On wasm32 `vitaminc-encrypt` uses its pure-Rust (RustCrypto `aes-gcm`)
 //! backend; the trade-offs are documented there. Values cross the boundary
-//! in the vitaminc FFI codec (`vitaminc_aead_value::transport` — an FFI
-//! encoding, not a storage format); the leaves inside a ciphertext tree are
+//! as vitaminc transport frames and ciphertext trees in vitaminc's
+//! ciphertext codec (`vitaminc_aead_frame` — FFI encodings, not a storage
+//! format); the leaves inside a ciphertext tree are
 //! the *frozen* `SealedValue` byte encoding from Phase 2, so a leaf lifted
 //! out of a tree is exactly what a database column holds.
 
@@ -87,11 +92,17 @@ pub mod config;
 #[cfg(feature = "deterministic-kms")]
 pub mod deterministic;
 pub mod headers;
+pub mod io;
 pub mod ops;
 pub mod options;
 pub mod response;
 pub mod status;
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod support;
 pub mod targets;
+#[cfg(test)]
+mod test_frame;
 
 // The ABI's packed u64 results embed 32-bit pointers, its bounds checks
 // read the wasm linear-memory size, and `host` calls imported functions —

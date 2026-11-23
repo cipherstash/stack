@@ -2,29 +2,35 @@
 //! engine instead of once per caller.
 //!
 //! An *index* is an operation that derives a search term beside a
-//! ciphertext: [`Equality`], [`Match`], [`Ore`] or [`Ope`]. Each is a type
-//! implementing [`Index<S>`] for exactly the plaintexts its scheme is defined
-//! over, so an index that does not apply does not compile: `Match` is text
-//! only, so a match index on an integer is a type error, not a runtime one.
+//! ciphertext: [`Equality`], [`Match`], [`Ore`], [`Ope`], [`OreBlock`] or
+//! [`Json`]. Each is a type implementing [`Index<S>`] for exactly the
+//! plaintexts its scheme is defined over, so an index that does not apply
+//! does not compile: `Match` is text only, so a match index on an integer is
+//! a type error, not a runtime one; `Json` is defined over a JSON document
+//! alone.
 //!
 //! A field's indexes are one value: a single index, or a tuple of them
 //! ([`Indexes<S>`]). `()` is deliberately not a set of indexes, so asking for
 //! an indexed field with no index is a compile error rather than a quiet
 //! ciphertext-only field; a field with no index is [`ciphertext`] alone.
 //!
-//! [`indexed`] does the composition every caller used to spell by hand —
+//! [`indexed`] does the composition a caller would otherwise spell by hand —
 //! `ciphertext().accepting().zip(equality()).zip(ore()).map(..)`, with its
 //! nested-pair bookkeeping — and produces an [`Encrypted<Terms>`]: the
 //! ciphertext, and the terms as a tuple read by destructuring.
 //!
 //! ```
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
-//! use stack_encrypt::kms::FakeDataKeySource;
 //! use stack_encrypt::sem::{EqualityTerm, OreTerm};
 //! use stack_encrypt::target::{indexed, Borrowed, CallerContext, Encrypted, Equality, Ore};
 //! use stack_encrypt::{nonempty, StackCipher};
 //!
-//! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
+//! let cipher = StackCipher::builder()
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
 //! let keyset = cipher.default_keyset();
 //!
 //! let age = 34u32;
@@ -42,9 +48,13 @@
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 //! ```
 //!
-//! On the query side a field's indexes answer one at a time, with no
-//! ciphertext: [`Indexes::select`] picks the index by type and
-//! [`Index::operation`] is its term alone.
+//! One term can be derived alone, with no ciphertext. [`Indexes::select`]
+//! picks an index out of a set by type. That index's
+//! [`Index::query_operation`] derives the term a query sends, and its
+//! [`Index::operation`] the term a value stores. A field query does not use
+//! `select`: the field's
+//! target type names the index that answers each operator
+//! ([`Answers`](crate::op::Answers)).
 //!
 //! For the FFI and for saved plans an index lowers to data,
 //! [`IndexSpec`], through [`Index::spec`]. Parameters live on the index
@@ -54,11 +64,19 @@ use std::fmt;
 use std::marker::PhantomData;
 
 use super::context::{AeadContext, CallerContext};
-use super::operations::{ciphertext, equality, matching, ope, open, ore};
-use super::source::{ConsumeSource, ShareSource};
-use super::{DecryptField, DecryptInto, Decryptable, Decryption, EncryptFrom, Encryption};
+use super::operations::{
+    ciphertext, equality, json_terms, matching, matching_query, ope, open, ore, ore_block,
+};
+use super::source::{Owned, WipeSource};
+use super::{
+    DecryptField, DecryptSource, Decryptable, Decryption, EncryptTarget, Encryption,
+    RequiredContext,
+};
+use crate::json::{JsonOptions, JsonTerms};
+use crate::op::Op;
 use crate::sem::{
-    DefaultMatch, EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreTerm,
+    DefaultMatch, EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreBlockTerm,
+    OreTerm, Side,
 };
 use crate::StackCipherText;
 
@@ -69,22 +87,30 @@ use crate::StackCipherText;
 /// spell an index as an `IndexSpec`, options included.
 ///
 /// The [`key`](Self::key) strings are the output keys of the `dynamic` record
-/// format (`"eq"`, `"match"`, `"ore"`, `"ope"`), so they are wire format;
-/// that is why this enum is exhaustive: a new index is something every
-/// binding has to be taught. With the `dynamic` feature, a plan spells an
-/// index as its key, or, for a match index with non-default options, as an
-/// object carrying them; `dynamic::record::plan` documents that shape, and
-/// `IndexSpec::from_value` / `IndexSpec::to_value` read and write it.
+/// format (`"eq"`, `"match"`, `"ore"`, `"ope"`, `"ore_block"`, `"json"`), so
+/// they are wire format; that is why this enum is exhaustive: a new index is
+/// something every binding has to be taught. With the `dynamic` feature, a
+/// plan spells an index as its key, or, for a match or JSON index with
+/// non-default options, as an object carrying them; `dynamic::record::plan`
+/// documents that shape, and `IndexSpec::from_value` / `IndexSpec::to_value`
+/// read and write it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum IndexSpec {
     /// Equality (exact match).
     Equality,
     /// Full-text match, with the options its terms are generated under.
     Match(MatchOptions),
-    /// Order-revealing comparison.
+    /// Order-revealing comparison, CLLW ORE.
     Ore,
-    /// Order-preserving comparison.
+    /// Order-preserving comparison, CLLW OPE.
     Ope,
+    /// Order-revealing comparison, 6-bit block ORE: the term EQL v4's
+    /// `_ord_ore` domains store as `ob`.
+    OreBlock,
+    /// The JSON index: a searchable document, with the layout options it
+    /// is written under. A data plan names it but cannot run it yet
+    /// (`Reason::JsonIndexPending`); the typed path can.
+    Json(JsonOptions),
 }
 
 impl IndexSpec {
@@ -101,8 +127,114 @@ impl IndexSpec {
             IndexSpec::Match(_) => "match",
             IndexSpec::Ore => "ore",
             IndexSpec::Ope => "ope",
+            IndexSpec::OreBlock => "ore_block",
+            IndexSpec::Json(_) => "json",
         }
     }
+
+    /// The operators this index declares: the one declaration each index
+    /// type carries (`Equality::OPERATORS`, `Ore::OPERATORS`, …), which the
+    /// typed `Supports` impls are written beside, so the typed and the
+    /// dynamic lookup read one table. An index declared as data has the
+    /// operators its type has, whatever its options.
+    pub fn operators(&self) -> &'static [Op] {
+        match self {
+            IndexSpec::Equality => Equality::OPERATORS,
+            IndexSpec::Match(_) => Match::<DefaultMatch>::OPERATORS,
+            IndexSpec::Ore => Ore::OPERATORS,
+            IndexSpec::Ope => Ope::OPERATORS,
+            IndexSpec::OreBlock => OreBlock::OPERATORS,
+            IndexSpec::Json(_) => Json::OPERATORS,
+        }
+    }
+
+    /// Whether this index, as configured, answers `op`: the operator is in
+    /// its [declaration](Self::operators), and for a JSON index an ordering
+    /// at a path, or an element predicate built of them, only when the
+    /// index orders some path.
+    pub fn answers(&self, op: Op) -> bool {
+        if !self.operators().contains(&op) {
+            return false;
+        }
+        match self {
+            IndexSpec::Json(options) if json_ordering(op) => !options.ordered.is_empty(),
+            _ => true,
+        }
+    }
+}
+
+/// The JSON operators answered only by an index that orders some path.
+fn json_ordering(op: Op) -> bool {
+    matches!(
+        op,
+        Op::LtAt | Op::LteAt | Op::GtAt | Op::GteAt | Op::BetweenAt | Op::ElementMatch
+    )
+}
+
+/// Two indexes of `indexes` that declare one operator, with that operator:
+/// a field declares at most one index per operator, so the lookup for an
+/// operator finds zero or one index. `(Equality, Ore)` declares none in
+/// common; `(Ore, Ope)`, `(Ore, OreBlock)` and two match indexes do. The
+/// first pair in declaration order, and its first common operator.
+pub(crate) fn overlapping(indexes: &[IndexSpec]) -> Option<(&IndexSpec, &IndexSpec, Op)> {
+    indexes.iter().enumerate().find_map(|(i, first)| {
+        indexes[i + 1..].iter().find_map(|second| {
+            first
+                .operators()
+                .iter()
+                .find(|op| second.operators().contains(op))
+                .map(|op| (first, second, *op))
+        })
+    })
+}
+
+/// Refuse a set of indexes that one value cannot declare together: one
+/// index named twice, or two indexes that answer one operator.
+///
+/// Two match indexes with different options are still one index twice: a
+/// value has one term for each kind of index. `Ore` and `Ope` both answer
+/// the orderings, so a query for one would have to choose between them.
+/// The dynamic path refuses the same declarations when it parses a plan.
+///
+/// A target calls this when it is described, so the refusal comes before
+/// any key is requested: [`Encrypted<Terms>`] used as a target checks the
+/// indexes its terms name, and a derived `plaintext = T` record checks the
+/// indexes of its fields.
+///
+/// The combinator [`indexed`] does not call it. A description built by
+/// hand from `indexed((Ore, Ope))` and run with
+/// [`KeysetCipher::run`](crate::KeysetCipher::run) derives both terms.
+///
+/// # Errors
+///
+/// [`PlanError::DuplicateIndex`](crate::PlanError::DuplicateIndex) or
+/// [`PlanError::IndexOverlap`](crate::PlanError::IndexOverlap), in
+/// [`Error::Plan`](crate::Error::Plan).
+#[doc(hidden)]
+pub fn check_indexes(indexes: &[IndexSpec]) -> Result<(), crate::Error> {
+    const AT: &str = "the value";
+    for (i, index) in indexes.iter().enumerate() {
+        if indexes[..i]
+            .iter()
+            .any(|earlier| earlier.key() == index.key())
+        {
+            return Err(crate::PlanError::DuplicateIndex {
+                at: AT.to_owned(),
+                index: index.key(),
+            }
+            .into());
+        }
+    }
+    if let Some((first, second, operator)) = overlapping(indexes) {
+        return Err(crate::PlanError::IndexOverlap {
+            at: AT.to_owned(),
+            first: first.key(),
+            second: second.key(),
+            operator,
+        }
+        .into());
+    }
+    Ok(())
 }
 
 impl fmt::Display for IndexSpec {
@@ -115,11 +247,12 @@ impl fmt::Display for IndexSpec {
 ///
 /// Implemented for exactly the plaintexts the index's scheme is defined
 /// over, which is what makes an inapplicable index a compile error: there is
-/// no `Index<u32>` for [`Match`], because match is defined over text.
+/// no `Index<u32>` for [`Match`](struct@Match), because match is defined over text.
 ///
 /// An index does not seal anything. [`indexed`] puts a ciphertext beside the
-/// indexes of a field; [`operation`](Self::operation) on its own is the term
-/// alone, which is the query side.
+/// indexes of a field. On its own, [`operation`](Self::operation) derives the
+/// term a value stores, and [`query_operation`](Self::query_operation) the
+/// term a query sends.
 ///
 /// The trait is open: an index defined in another crate implements it by
 /// composing this module's public operations, as the four here do.
@@ -138,7 +271,22 @@ pub trait Index<S> {
     ///
     /// A fresh description per call: a description is single-use, and an
     /// index is not, so a saved plan asks again each time it runs.
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
+        &self,
+    ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
+    where
+        S: 's;
+    /// The description that derives the term a query of `S` sends, under
+    /// the [`CallerContext`] it is handed when it runs. A field query derives
+    /// its term through this method.
+    ///
+    /// Return [`operation`](Self::operation)'s description here when the
+    /// index sends the term it stores, as most indexes do. A match index
+    /// does not: it returns [`matching_query`]. With short words on, a query
+    /// that sent a stored value's filter would miss rows it should find.
+    /// That is why this method has no default. An index that wraps another
+    /// must forward both methods to it.
+    fn query_operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -160,21 +308,81 @@ pub struct Ore;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Ope;
 
+/// The block ORE index: ore-rs's 6-bit block ORE ciphertext of the value,
+/// under a key derived from the field's context
+/// ([`OreBlockTerm`](crate::sem::OreBlockTerm)). Defined for the same `S`
+/// as [`Ore`].
+///
+/// [`Ore`] and [`Ope`] are CLLW schemes. This is the other ORE family, the
+/// one EQL v4's `_ord_ore` domains store (`ob`), named as EQL names it: an
+/// ORE *block* term. Its terms leak less than [`Ore`]'s (a stored term's
+/// right half is randomised, and a comparison reveals the first differing
+/// six-bit block rather than the first differing bit), cost more (about
+/// 300 bytes for an `i64`, 600 for short text), and need a comparator
+/// that is not byte order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct OreBlock;
+
+/// The JSON index, over a [`serde_json::Value`] alone: one searchable
+/// document per value, with a path selector per node, a token chain, and
+/// a containment projection of the nodes' value selectors grouped by array
+/// element (the [`json`](crate::json) module).
+///
+/// Its term is a [`JsonTerms`], the document's one-way terms, which every
+/// query term is built from; the stored document is the output of the
+/// separate sealing operation, [`json_document`](super::json_document),
+/// and a [`JsonDocument`](crate::json::JsonDocument) target names it by
+/// type. The index answers `op::Contains`, `op::ContainedBy`, `op::AtPath(op::Eq)`
+/// and the orderings at a path, `op::AtPath(op::Gte)` and the rest.
+///
+/// The value [`Json`](constant@Json) is the index under the default
+/// options ([`JsonOptions::default`], the root sealed); `Json::new(options)`
+/// is another. The options are part of the index's identity, as a match
+/// index's are: a stored document and the query probing it agree on them
+/// through the plan that declares the index.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Json {
+    pub(crate) options: JsonOptions,
+}
+
+/// The JSON index under the default options, as a value: `.with(Json)`.
+#[allow(non_upper_case_globals)]
+pub const Json: Json = Json::new(JsonOptions::new());
+
+impl Json {
+    /// The index under `options`.
+    pub const fn new(options: JsonOptions) -> Self {
+        Self { options }
+    }
+}
+
 /// The full-text match index, over text only, with the tokenizer and filter
 /// parameters its [`MatchConfig`] `O` fixes.
 ///
-/// `Match::default()` is the default configuration ([`DefaultMatch`]);
-/// `Match::<MyConfig>::new()` is another. The configuration is on the type so
-/// that a stored field and the query probing it agree on it by construction.
-pub struct Match<O = DefaultMatch>(PhantomData<fn() -> O>);
+/// The value [`Match`](constant@Match) is the index under the default
+/// configuration ([`DefaultMatch`]), as `PhantomData` is a value of its
+/// type; `Match::<MyConfig>::new()` is another. The configuration is on the
+/// type, so a field's type fixes the one its stored filter and its queries
+/// are cut under: a query made from the field's reference answers through
+/// the field's own `Match<O>` ([`Answers`](crate::op::Answers)).
+pub struct Match<O = DefaultMatch> {
+    config: PhantomData<fn() -> O>,
+}
+
+/// The match index under the default configuration, as a value:
+/// `.with((Equality, Match))`.
+#[allow(non_upper_case_globals)]
+pub const Match: Match = Match::new();
 
 impl<O> Match<O> {
     /// The match index under the configuration `O`.
     pub const fn new() -> Self {
-        Self(PhantomData)
+        Self {
+            config: PhantomData,
+        }
     }
 }
-impl Default for Match {
+impl<O> Default for Match<O> {
     fn default() -> Self {
         Self::new()
     }
@@ -192,12 +400,21 @@ impl<O> fmt::Debug for Match<O> {
     }
 }
 
-impl<S: vitaminc_prf::PrfValue> Index<S> for Equality {
+impl<S: crate::Encrypt + vitaminc_aead::EncryptRef> Index<S> for Equality {
     type Term = EqualityTerm;
     fn spec(&self) -> IndexSpec {
         IndexSpec::Equality
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
+        &self,
+    ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
+    where
+        S: 's,
+    {
+        equality()
+    }
+    /// A query sends the term this index stores.
+    fn query_operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -211,7 +428,7 @@ impl<S: AsRef<str>, O: MatchConfig + 'static> Index<S> for Match<O> {
     fn spec(&self) -> IndexSpec {
         IndexSpec::Match(O::options())
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -219,17 +436,33 @@ impl<S: AsRef<str>, O: MatchConfig + 'static> Index<S> for Match<O> {
     {
         matching()
     }
+    fn query_operation<'s, K: 'static, M: WipeSource<'s, S>>(
+        &self,
+    ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
+    where
+        S: 's,
+    {
+        matching_query()
+    }
 }
 impl<S> Index<S> for Ore
 where
-    S: cllw_ore::CllwOreEncrypt + Send + 'static,
-    S::Output: Send + 'static,
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
 {
     type Term = OreTerm<S>;
     fn spec(&self) -> IndexSpec {
         IndexSpec::Ore
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
+        &self,
+    ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
+    where
+        S: 's,
+    {
+        ore()
+    }
+    /// A query sends the term this index stores.
+    fn query_operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -240,14 +473,22 @@ where
 }
 impl<S> Index<S> for Ope
 where
-    S: cllw_ore::CllwOpeEncrypt + Send + 'static,
-    S::Output: Send + 'static,
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
 {
     type Term = OpeTerm<S>;
     fn spec(&self) -> IndexSpec {
         IndexSpec::Ope
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
+        &self,
+    ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
+    where
+        S: 's,
+    {
+        ope()
+    }
+    /// A query sends the term this index stores.
+    fn query_operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -256,9 +497,57 @@ where
         ope()
     }
 }
+impl<S> Index<S> for OreBlock
+where
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
+{
+    type Term = OreBlockTerm<S>;
+    fn spec(&self) -> IndexSpec {
+        IndexSpec::OreBlock
+    }
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
+        &self,
+    ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
+    where
+        S: 's,
+    {
+        ore_block()
+    }
+    /// A query sends the term this index stores.
+    fn query_operation<'s, K: 'static, M: WipeSource<'s, S>>(
+        &self,
+    ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
+    where
+        S: 's,
+    {
+        ore_block()
+    }
+}
+
+/// The JSON index's operation derives the document's terms and seals
+/// nothing: it only reads the value, so it runs in either source mode
+/// without a copy. Sealing is [`json_document`](super::json_document).
+impl Index<serde_json::Value> for Json {
+    type Term = JsonTerms;
+    fn spec(&self) -> IndexSpec {
+        IndexSpec::Json(self.options.clone())
+    }
+    fn operation<'s, K: 'static, M: WipeSource<'s, serde_json::Value>>(
+        &self,
+    ) -> Encryption<'s, serde_json::Value, Self::Term, K, CallerContext, M> {
+        json_terms::<K, M>(self.options.clone())
+    }
+    /// The document's terms, as stored. A query takes the terms it sends
+    /// from them.
+    fn query_operation<'s, K: 'static, M: WipeSource<'s, serde_json::Value>>(
+        &self,
+    ) -> Encryption<'s, serde_json::Value, Self::Term, K, CallerContext, M> {
+        json_terms::<K, M>(self.options.clone())
+    }
+}
 
 /// A non-empty set of indexes over `S`: one [`Index`], or a tuple of two to
-/// four of them.
+/// five of them.
 ///
 /// Not implemented for `()`. An indexed field with no index would be a
 /// ciphertext-only field that says otherwise; that field is [`ciphertext`]
@@ -279,15 +568,33 @@ pub trait Indexes<S> {
     /// The description that derives every term, under the one
     /// [`CallerContext`] it is handed, settling them in one batch.
     ///
-    /// Several indexes over one owned plaintext share it, so in
-    /// [`Owned`](super::Owned) mode `S` must be `Clone` (see [`ShareSource`]).
+    /// Several indexes over one plaintext all read it in place, so nothing
+    /// is copied in either mode. In [`Owned`](super::Owned) mode the first
+    /// index is handed the value, once the others have read it.
     fn operations<'s, K: 'static, M>(&self) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
     where
         S: 's,
-        M: ConsumeSource<'s, S> + ShareSource<'s, S>;
-    /// The one index of type `I` in this set, for the query side, where a
-    /// query asks one index for one term and needs no ciphertext; its
-    /// [`operation`](Index::operation) is that term alone.
+        M: WipeSource<'s, S>;
+    /// The description that derives every term a query of `S` sends. The
+    /// description calls each index's
+    /// [`query_operation`](Index::query_operation) under the one
+    /// [`CallerContext`] it is handed, and settles them in one batch.
+    /// [`operations`](Self::operations) does the same for the stored terms.
+    /// For a [`Match`](struct@Match) index in the set, this sends the filter
+    /// of the tokens the query keeps, where `operations` derives a stored
+    /// value's filter. There is no default, for the reason
+    /// [`Index::query_operation`] has none.
+    fn query_operations<'s, K: 'static, M>(
+        &self,
+    ) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
+    where
+        S: 's,
+        M: WipeSource<'s, S>;
+    /// The one index of type `I` in this set, for the query side. A query
+    /// asks one index for one term, and needs no ciphertext. The index's
+    /// [`query_operation`](Index::query_operation) derives the term a query
+    /// sends, and its [`operation`](Index::operation) the term a value
+    /// stores.
     ///
     /// `P` is where `I` sits (the position [`Select`] names) and is inferred;
     /// leave it `_`. Asking for an index the set does not hold does not
@@ -368,17 +675,27 @@ macro_rules! single_index {
             ) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
             where
                 S: 's,
-                M: ConsumeSource<'s, S> + ShareSource<'s, S>,
+                M: WipeSource<'s, S>,
             {
                 self.operation()
+            }
+            fn query_operations<'s, K: 'static, M>(
+                &self,
+            ) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
+            where
+                S: 's,
+                M: WipeSource<'s, S>,
+            {
+                self.query_operation()
             }
         }
     )+};
 }
-single_index!([] Equality, [O] Match<O>, [] Ore, [] Ope, [] IndexSpec);
+single_index!([] Equality, [O] Match<O>, [] Ore, [] Ope, [] OreBlock, [] Json, [] IndexSpec);
 
-/// A tuple of indexes: each index's operation, zipped left to right, and the
-/// nested pairs `zip` builds flattened back into one tuple of terms.
+/// A tuple of indexes. Each index's operation, or query operation, is zipped
+/// left to right. The nested pairs that `zip` builds are flattened back into
+/// one tuple of terms.
 macro_rules! tuple_of_indexes {
     ($(($($name:ident $at:tt),+) => $nested:pat,)+) => {$(
         impl<S, $($name: Index<S>),+> Indexes<S> for ($($name,)+) {
@@ -391,16 +708,26 @@ macro_rules! tuple_of_indexes {
             ) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
             where
                 S: 's,
-                M: ConsumeSource<'s, S> + ShareSource<'s, S>,
+                M: WipeSource<'s, S>,
             {
-                tuple_of_indexes!(@zip self, $($at),+)
+                tuple_of_indexes!(@zip self, operation, $($at),+)
+                    .map(|$nested| ($($name,)+))
+            }
+            fn query_operations<'s, K: 'static, M>(
+                &self,
+            ) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
+            where
+                S: 's,
+                M: WipeSource<'s, S>,
+            {
+                tuple_of_indexes!(@zip self, query_operation, $($at),+)
                     .map(|$nested| ($($name,)+))
             }
         }
         tuple_of_indexes!(@select [$($name),+] $($name $at),+);
     )+};
-    (@zip $self:ident, $first:tt $(, $rest:tt)*) => {
-        $self.$first.operation()$(.zip($self.$rest.operation()))*
+    (@zip $self:ident, $operation:ident, $first:tt $(, $rest:tt)*) => {
+        $self.$first.$operation()$(.zip($self.$rest.$operation::<K, super::super::Borrowed>()))*
     };
     // One `Select` impl per position, each over the whole tuple.
     (@select [$($all:ident),+] $name:ident $at:tt $(, $rest:ident $rest_at:tt)*) => {
@@ -433,7 +760,8 @@ mod tuples {
 /// A `Vec` cannot be refused for being empty at compile time as `()` is, so
 /// an empty one is refused when it runs, with
 /// [`PlanError::EmptyIndexes`](crate::PlanError::EmptyIndexes), before any
-/// key is requested: a field declared indexed derives at least one term.
+/// key is requested: a field declared indexed derives at least one term. In
+/// [`Owned`] mode, the refusal wipes the value it is handed.
 /// [`select`](Indexes::select) is not available on a `Vec`; a binding
 /// answers a query by index key, through its own `Index` impl.
 impl<S, I: Index<S>> Indexes<S> for Vec<I> {
@@ -444,18 +772,57 @@ impl<S, I: Index<S>> Indexes<S> for Vec<I> {
     fn operations<'s, K: 'static, M>(&self) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
     where
         S: 's,
-        M: ConsumeSource<'s, S> + ShareSource<'s, S>,
+        M: WipeSource<'s, S>,
     {
-        let mut indexes = self.iter();
-        let Some(first) = indexes.next() else {
-            return Encryption::failed(crate::PlanError::EmptyIndexes.into());
-        };
-        indexes.fold(first.operation().map(|term| vec![term]), |terms, index| {
-            terms.zip(index.operation()).map(|(mut terms, term)| {
-                terms.push(term);
-                terms
-            })
-        })
+        each_index(self, Side::Stored)
+    }
+    fn query_operations<'s, K: 'static, M>(
+        &self,
+    ) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
+    where
+        S: 's,
+        M: WipeSource<'s, S>,
+    {
+        each_index(self, Side::Query)
+    }
+}
+
+/// The description that derives the term of each of `indexes` for `side`,
+/// in order, zipped into one batch: the stored terms, or a query's. An empty
+/// list is refused with
+/// [`PlanError::EmptyIndexes`](crate::PlanError::EmptyIndexes). The refusal
+/// releases the plaintext as an operation would ([`WipeSource`]).
+fn each_index<'s, S: 's, I: Index<S>, K: 'static, M: WipeSource<'s, S>>(
+    indexes: &[I],
+    side: Side,
+) -> Encryption<'s, S, Vec<I::Term>, K, CallerContext, M> {
+    let mut indexes = indexes.iter();
+    let Some(first) = indexes.next() else {
+        return Encryption::failed_wiping(crate::PlanError::EmptyIndexes.into());
+    };
+    indexes.fold(
+        term_for(first, side).map(|term| vec![term]),
+        |terms, index| {
+            terms
+                .zip(term_for::<S, I, K, super::Borrowed>(index, side))
+                .map(|(mut terms, term)| {
+                    terms.push(term);
+                    terms
+                })
+        },
+    )
+}
+
+/// `index`'s description for `side`: the term it stores
+/// ([`operation`](Index::operation)) or the term a query sends
+/// ([`query_operation`](Index::query_operation)).
+fn term_for<'s, S: 's, I: Index<S>, K: 'static, M: WipeSource<'s, S>>(
+    index: &I,
+    side: Side,
+) -> Encryption<'s, S, I::Term, K, CallerContext, M> {
+    match side {
+        Side::Stored => index.operation(),
+        Side::Query => index.query_operation(),
     }
 }
 
@@ -471,7 +838,7 @@ impl<S, I: Index<S>> Indexes<S> for Vec<I> {
 ///
 /// There are deliberately no named accessors (`out.ore()`): they would need
 /// a type-level search of the tuple to serve a case that barely exists. A
-/// struct with named fields is what `#[derive(EncryptFrom)]` is for.
+/// struct with named fields is what `#[derive(EncryptTarget)]` is for.
 ///
 /// Decrypting it opens the ciphertext: the terms are one-way.
 #[derive(Debug)]
@@ -482,32 +849,55 @@ pub struct Encrypted<Terms> {
     pub terms: Terms,
 }
 
-impl<P: crate::Decrypt<'static> + 'static, Terms> DecryptInto<P> for Encrypted<Terms> {
-    type Context = AeadContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
-        open(self.ciphertext, context)
-    }
-}
-
-/// `Encrypted<Terms>` is a target, so a record field, a typed verb or a
-/// caller names a ciphertext with its terms by type alone:
+/// `Encrypted<Terms>` is a target, so a record field or a caller names a
+/// ciphertext with its terms by type alone:
 /// `email: Encrypted<(EqualityTerm, MatchTerms)>`. The terms name their
-/// indexes ([`TermSet`]), and the description is [`indexed`] over them, so
-/// the bytes are the data spelling's and the hand composition's.
-impl<S, Terms> EncryptFrom<S> for Encrypted<Terms>
+/// indexes ([`TermSet`]), and the description is [`indexed`] over them, under
+/// the one caller context that the record field or the caller supplies.
+///
+/// The owned form is handed the value. The terms read it in place, and then
+/// the ciphertext takes it. Vitamin C wipes it when it is sealed, and the
+/// ciphertext wipes it when the context is refused. Nothing is copied.
+impl<S, Terms> EncryptTarget<S> for Encrypted<Terms>
 where
-    S: crate::Encrypt + Clone,
+    S: crate::Encrypt + vitaminc_aead::EncryptRef + zeroize::Zeroize,
     Terms: TermSet<S>,
 {
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    type ContextInput = RequiredContext<CallerContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
     where
         S: 's,
     {
-        indexed(Terms::INDEXES)
+        let described = indexed(Terms::INDEXES).accepting();
+        if let Err(error) = check_indexes(&Terms::INDEXES.specs()) {
+            // Refused with the leaves' contexts kept, so `contexts()`
+            // still shows the field.
+            return described.refused(error);
+        }
+        described
+    }
+    fn owned_encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput, Owned>
+    where
+        S: 's,
+    {
+        let described = indexed::<S, K, Owned, _>(Terms::INDEXES).accepting();
+        if let Err(error) = check_indexes(&Terms::INDEXES.specs()) {
+            // The refused value is the description's to wipe. The leaves'
+            // contexts are kept, as in the borrowed form.
+            return described.refused_wiping(error);
+        }
+        described
     }
     fn indexes() -> Vec<IndexSpec> {
         Terms::INDEXES.specs()
+    }
+}
+impl<P: crate::Decrypt + zeroize::Zeroize + Send + 'static, Terms> DecryptSource<P>
+    for Encrypted<Terms>
+{
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<P, K> {
+        open(self.ciphertext, context.into_inner())
     }
 }
 
@@ -515,18 +905,18 @@ where
 impl<Terms> Decryptable for Encrypted<Terms> {
     const DECRYPTABLE: bool = true;
 }
-impl<P: 'static, Ctx, Terms> DecryptField<P, Ctx> for Encrypted<Terms>
+impl<P: zeroize::Zeroize + 'static, Ctx, Terms> DecryptField<P, Ctx> for Encrypted<Terms>
 where
-    Self: DecryptInto<P>,
-    Ctx: Into<<Self as DecryptInto<P>>::Context>,
+    Self: DecryptSource<P>,
+    Ctx: Into<<Self as DecryptSource<P>>::ContextInput>,
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
-        Some(self.decryption(context.into()))
+        Some(<Self as DecryptSource<P>>::decryption(self, context.into()))
     }
 }
 
 /// The terms of a set of indexes, named from the terms' side: one term type,
-/// or a tuple of two to five, each naming the index that derives it. This is
+/// or a tuple of two or three, each naming the index that derives it. This is
 /// what lets [`Encrypted<Terms>`] be a target with no value in hand: its type
 /// says which indexes to run.
 ///
@@ -536,13 +926,18 @@ where
 ///
 /// A match term names its configuration in its type (`MatchTerms<O>`), so
 /// the index it names is `Match<O>`, the configuration included.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a set of terms over `{S}`",
+    label = "expected one term, or a tuple of two or three terms over `{S}`",
+    note = "a value holds at most one term for each family of operators (equality, match and the orderings), so a tuple of terms has at most three"
+)]
 pub trait TermSet<S>: Sized + 'static {
     /// The indexes that derive these terms.
     type Indexes: Indexes<S, Terms = Self>;
     /// Those indexes, as a value.
     const INDEXES: Self::Indexes;
 }
-impl<S: vitaminc_prf::PrfValue> TermSet<S> for EqualityTerm {
+impl<S: crate::Encrypt + vitaminc_aead::EncryptRef> TermSet<S> for EqualityTerm {
     type Indexes = Equality;
     const INDEXES: Equality = Equality;
 }
@@ -552,23 +947,33 @@ impl<S: AsRef<str>, O: MatchConfig + 'static> TermSet<S> for MatchTerms<O> {
 }
 impl<S> TermSet<S> for OreTerm<S>
 where
-    S: cllw_ore::CllwOreEncrypt + Send + 'static,
-    S::Output: Send + 'static,
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
 {
     type Indexes = Ore;
     const INDEXES: Ore = Ore;
 }
 impl<S> TermSet<S> for OpeTerm<S>
 where
-    S: cllw_ore::CllwOpeEncrypt + Send + 'static,
-    S::Output: Send + 'static,
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
 {
     type Indexes = Ope;
     const INDEXES: Ope = Ope;
 }
+impl<S> TermSet<S> for OreBlockTerm<S>
+where
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
+{
+    type Indexes = OreBlock;
+    const INDEXES: OreBlock = OreBlock;
+}
 
 /// A tuple of terms names the tuple of their indexes. Each element must be
 /// one term (its set is one index), as a tuple of indexes holds indexes.
+///
+/// A tuple has at most three terms. A value holds at most one term for each
+/// family of operators: equality, match, and the orderings. Four terms
+/// would include two that answer one family, which [`check_indexes`]
+/// refuses every time, so there is no impl for four or five.
 macro_rules! tuple_of_terms {
     ($(($($name:ident),+),)+) => {$(
         impl<S, $($name),+> TermSet<S> for ($($name,)+)
@@ -586,8 +991,6 @@ mod term_tuples {
     tuple_of_terms! {
         (A, B),
         (A, B, C),
-        (A, B, C, D),
-        (A, B, C, D, E),
     }
 }
 
@@ -599,24 +1002,28 @@ mod term_tuples {
 /// so a field with indexes is one line and its output is an
 /// [`Encrypted<Terms>`]. The bytes are exactly the hand composition's.
 ///
-/// The ciphertext and every term share the plaintext, so in
-/// [`Owned`](super::Owned) mode `S` must be `Clone`; a plaintext that must
-/// never be copied can still be sealed alone ([`ciphertext`]) or indexed
-/// alone ([`Index::operation`]).
+/// The ciphertext and every term read the same plaintext in place, so
+/// nothing is copied in either mode. In [`Owned`](super::Owned) mode the
+/// terms read the value first, and then the ciphertext takes it.
 ///
 /// The type parameters are in the order [`ciphertext`]'s are, with the
 /// indexes last: `indexed::<u32, _, Borrowed, _>((Equality, Ore))`.
+///
+/// This does not check the set of indexes. A set that names one index
+/// twice, or two indexes that answer one operator, derives every term it
+/// names. The target [`Encrypted<Terms>`] refuses such a set before any
+/// key is requested.
 pub fn indexed<'s, S, K, M, X>(
     indexes: X,
 ) -> Encryption<'s, S, Encrypted<X::Terms>, K, CallerContext, M>
 where
-    S: crate::Encrypt + 's,
+    S: crate::Encrypt + vitaminc_aead::EncryptRef + 's,
     K: 'static,
-    M: ConsumeSource<'s, S> + ShareSource<'s, S>,
+    M: WipeSource<'s, S>,
     X: Indexes<S>,
 {
     ciphertext::<S, K, M>()
         .accepting::<CallerContext>()
-        .zip(indexes.operations())
+        .zip(indexes.operations::<K, super::Borrowed>())
         .map(|(ciphertext, terms)| Encrypted { ciphertext, terms })
 }

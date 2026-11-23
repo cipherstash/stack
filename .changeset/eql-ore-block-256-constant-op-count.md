@@ -16,6 +16,6 @@ terms now run the hash too; text comparisons now take about 18 µs whatever the
 operands. Multi-term (text) values now check every paired term, so a
 malformed or mismatched-width term after the first difference, or one paired
 with a NULL element, raises instead of being skipped; see
-[U-001](../../docs/upgrading/v3.1.md#u-001-block-ore-text-comparisons-check-every-term)
+[U-004](../../docs/upgrading/v3.1.md#u-004-block-ore-text-comparisons-check-every-term)
 for how to find such rows before upgrading. A timing harness is in
 `packages/eql/tests/timing/ore_block_256/`.

@@ -29,14 +29,14 @@
 //! wipes on release, and nowhere else.
 
 use serde::Deserialize;
-use stack_auth::Token;
+use stack_auth::{AuthError, ErrorPayload, Token};
+use stack_guest_abi::value::HostValue;
 use stack_profile::{DeviceIdentity, ProfileStore};
-use vitaminc_aead_value::{transport as codec, FfiValue};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use stack_guest_abi::last_error::{internal, malformed};
+use stack_guest_abi::last_error::{self, internal, malformed};
 
-use crate::status::fail_profile;
+use crate::status::{fail_auth, fail_profile, STATUS_PROFILE_JSON};
 
 /// The file `secretkey.json`, as `stack-auth`'s device client writes it
 /// and `stack-kms`'s `SecretKey` reads it: the ZeroKMS client id and the
@@ -76,18 +76,18 @@ fn text(bytes: &[u8]) -> Result<&str, u32> {
     std::str::from_utf8(bytes).map_err(|_| malformed("an input is not UTF-8"))
 }
 
-fn string(value: impl Into<String>) -> FfiValue {
-    FfiValue::String(value.into().into())
+fn string(value: impl Into<String>) -> HostValue {
+    HostValue::text(value)
 }
 
-fn optional(value: Option<&str>) -> FfiValue {
-    value.map_or(FfiValue::Null, string)
+fn optional(value: Option<&str>) -> HostValue {
+    value.map_or(HostValue::Null, string)
 }
 
-fn encode(value: FfiValue) -> Result<Vec<u8>, u32> {
-    let mut out = Vec::new();
-    codec::encode_value(value, &mut out).map_err(|_| internal("an output did not encode"))?;
-    Ok(out)
+fn encode(value: HostValue) -> Result<Vec<u8>, u32> {
+    value
+        .encode()
+        .map_err(|_| internal("an output did not encode"))
 }
 
 /// The current workspace id, as text.
@@ -122,7 +122,7 @@ pub fn list_workspaces(dir: &[u8]) -> Result<Vec<u8>, u32> {
     let ids = store(dir)?
         .list_workspaces()
         .map_err(|e| fail_profile(&e))?;
-    encode(FfiValue::Array(ids.into_iter().map(string).collect()))
+    encode(HostValue::List(ids.into_iter().map(string).collect()))
 }
 
 /// The directory of the store scoped to workspace `id`, as text: what
@@ -165,11 +165,11 @@ pub fn secret_key(dir: &[u8]) -> Result<Vec<u8>, u32> {
     // fields cannot be moved out of it directly.
     let client_id = std::mem::take(&mut file.client_id);
     let client_key = std::mem::take(&mut file.client_key);
-    encode(FfiValue::Object(vec![
+    encode(HostValue::Map(vec![
         ("client_id".to_string(), string(client_id)),
         (
             "client_key".to_string(),
-            FfiValue::Bytes(client_key.into_bytes().into()),
+            HostValue::Bytes(client_key.into_bytes().into()),
         ),
     ]))
 }
@@ -184,7 +184,7 @@ pub fn token(dir: &[u8]) -> Result<Vec<u8>, u32> {
     let token: Token = store(dir)?
         .load(AUTH_FILENAME)
         .map_err(|e| fail_profile(&e))?;
-    encode(FfiValue::Object(vec![
+    encode(HostValue::Map(vec![
         (
             "access_token".to_string(),
             string(token.access_token().as_str()),
@@ -192,7 +192,7 @@ pub fn token(dir: &[u8]) -> Result<Vec<u8>, u32> {
         ("token_type".to_string(), string(token.token_type())),
         (
             "expires_at".to_string(),
-            FfiValue::UInt64(token.expires_at()),
+            HostValue::UInt(token.expires_at()),
         ),
         ("region".to_string(), optional(token.region())),
         ("client_id".to_string(), optional(token.client_id())),
@@ -210,11 +210,36 @@ pub fn has_token(dir: &[u8]) -> Result<Vec<u8>, u32> {
     Ok(vec![u8::from(store(dir)?.exists_profile::<Token>())])
 }
 
+/// The CRN of the session `stash auth login` saved for the current
+/// workspace of the store at `dir`, as text, from
+/// [`stack_auth::profile_workspace_crn`]. An OIDC federation strategy whose
+/// caller names no workspace takes this one, when `CS_WORKSPACE_CRN` is
+/// unset. The host reads that variable; this guest has no environment.
+///
+/// stack-auth decides what is "not logged in" and what is a broken
+/// profile. This only gives each error its status. A saved session whose
+/// token is not a JWT naming a workspace, or whose region is not a region,
+/// is [`STATUS_PROFILE_JSON`]: the file is not the session its type
+/// expects. [`status_for_auth`](crate::status::status_for_auth) would make
+/// those a configuration error, which on this path would blame
+/// `CS_WORKSPACE_CRN`.
+///
+/// Only the CRN crosses: the token stays here.
+pub fn session_crn(dir: &[u8]) -> Result<Vec<u8>, u32> {
+    match stack_auth::profile_workspace_crn(&store(dir)?) {
+        Ok(crn) => Ok(crn.to_string().into_bytes()),
+        Err(e @ (AuthError::InvalidToken(_) | AuthError::Region(_))) => {
+            Err(last_error::record(&e, e.payload(), STATUS_PROFILE_JSON))
+        }
+        Err(e) => Err(fail_auth(&e)),
+    }
+}
+
 /// `device.json` in this store, read-only, as a codec object
 /// `{device_instance_id, device_name}`. Creating one is the CLI's.
 pub fn device_identity(dir: &[u8]) -> Result<Vec<u8>, u32> {
     let identity = DeviceIdentity::load(&store(dir)?).map_err(|e| fail_profile(&e))?;
-    encode(FfiValue::Object(vec![
+    encode(HostValue::Map(vec![
         (
             "device_instance_id".to_string(),
             string(identity.device_instance_id.to_string()),
@@ -235,12 +260,12 @@ mod tests {
         t.path().to_str().unwrap().as_bytes().to_vec()
     }
 
-    fn decode(bytes: &[u8]) -> FfiValue {
-        codec::decode_value(&mut codec::Reader::new(bytes)).unwrap()
+    fn decode(bytes: &[u8]) -> HostValue {
+        HostValue::decode(bytes).unwrap()
     }
 
-    fn field<'a>(value: &'a FfiValue, key: &str) -> &'a FfiValue {
-        let FfiValue::Object(entries) = value else {
+    fn field<'a>(value: &'a HostValue, key: &str) -> &'a HostValue {
+        let HostValue::Map(entries) = value else {
             panic!("not an object");
         };
         entries
@@ -250,16 +275,16 @@ mod tests {
             .unwrap_or_else(|| panic!("no field {key}"))
     }
 
-    fn as_text(value: &FfiValue) -> String {
-        let FfiValue::String(s) = value else {
+    fn as_text(value: &HostValue) -> String {
+        let HostValue::Text(s) = value else {
             panic!("not a string");
         };
-        String::from_utf8(s.risky_ref().to_vec()).unwrap()
+        s.to_string()
     }
 
-    fn as_bytes(value: &FfiValue) -> Vec<u8> {
+    fn as_bytes(value: &HostValue) -> Vec<u8> {
         use vitaminc_protected::Controlled;
-        let FfiValue::Bytes(b) = value else {
+        let HostValue::Bytes(b) = value else {
             panic!("not bytes");
         };
         b.risky_ref().to_vec()
@@ -314,7 +339,7 @@ mod tests {
         assert_eq!(current_workspace(&d).unwrap(), WS_A.as_bytes());
 
         let listed = decode(&list_workspaces(&d).unwrap());
-        let FfiValue::Array(items) = listed else {
+        let HostValue::List(items) = listed else {
             panic!("not an array");
         };
         let ids: Vec<String> = items.iter().map(as_text).collect();
@@ -411,11 +436,11 @@ mod tests {
         assert_eq!(as_text(field(&tok, "token_type")), "Bearer");
         assert!(matches!(
             field(&tok, "expires_at"),
-            FfiValue::UInt64(1_800_000_000)
+            HostValue::UInt(1_800_000_000)
         ));
         assert_eq!(as_text(field(&tok, "region")), "ap-southeast-2");
-        assert!(matches!(field(&tok, "client_id"), FfiValue::Null));
-        let FfiValue::Object(entries) = tok else {
+        assert!(matches!(field(&tok, "client_id"), HostValue::Null));
+        let HostValue::Map(entries) = tok else {
             panic!("not an object");
         };
         assert!(
@@ -434,6 +459,123 @@ mod tests {
             "0f4a4fd7-4a1a-4c5e-9d3e-7a4c8e3a9c11"
         );
         assert_eq!(as_text(field(&identity, "device_name")), "laptop");
+    }
+
+    /// A JWT whose claims name workspace `WS_A`. The signature is not
+    /// checked when a saved session is read.
+    const SESSION_JWT: &str = "e30.eyJpc3MiOiJodHRwczovL2N0cy5leGFtcGxlIiwic3ViIjoiQ1N8dGVzdCIsIndvcmtzcGFjZSI6IkFBQUFBQUFBQUFBQUFBQUEifQ.c2ln";
+
+    /// A profile at `t` whose current workspace is `WS_A`, with `auth`
+    /// as its saved session when it is not empty.
+    fn current_session(t: &tempfile::TempDir, auth: &str) {
+        let ws = t.path().join("workspaces").join(WS_A);
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::write(t.path().join("current_workspace"), WS_A).unwrap();
+        if !auth.is_empty() {
+            std::fs::write(ws.join(AUTH_FILENAME), auth).unwrap();
+        }
+    }
+
+    fn session(region: Option<&str>) -> String {
+        let region = region.map_or("null".to_string(), |r| format!("{r:?}"));
+        format!(
+            r#"{{"access_token":"{SESSION_JWT}","token_type":"Bearer","expires_at":1800000000,"region":{region}}}"#
+        )
+    }
+
+    #[test]
+    fn session_crn_is_the_current_sessions_region_and_workspace() {
+        let t = tempfile::tempdir().unwrap();
+        current_session(&t, &session(Some("ap-southeast-2.aws")));
+        assert_eq!(
+            session_crn(&dir(&t)).unwrap(),
+            format!("crn:ap-southeast-2.aws:{WS_A}").as_bytes()
+        );
+    }
+
+    #[test]
+    fn session_crn_without_a_login_is_not_authenticated() {
+        // No current workspace.
+        let t = tempfile::tempdir().unwrap();
+        assert_eq!(
+            session_crn(&dir(&t)).unwrap_err(),
+            STATUS_AUTH_NOT_AUTHENTICATED
+        );
+        // A current workspace with no saved session.
+        current_session(&t, "");
+        assert_eq!(
+            session_crn(&dir(&t)).unwrap_err(),
+            STATUS_AUTH_NOT_AUTHENTICATED
+        );
+        // A saved session that records no region.
+        current_session(&t, &session(None));
+        assert_eq!(
+            session_crn(&dir(&t)).unwrap_err(),
+            STATUS_AUTH_NOT_AUTHENTICATED
+        );
+    }
+
+    #[test]
+    fn session_crn_reports_a_broken_profile_as_itself() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("current_workspace"), "not-a-workspace").unwrap();
+        assert_eq!(
+            session_crn(&dir(&t)).unwrap_err(),
+            STATUS_PROFILE_INVALID_WORKSPACE_ID
+        );
+
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(t.path().join("current_workspace")).unwrap();
+        assert_eq!(session_crn(&dir(&t)).unwrap_err(), STATUS_PROFILE_IO);
+
+        let t = tempfile::tempdir().unwrap();
+        current_session(&t, "{");
+        assert_eq!(session_crn(&dir(&t)).unwrap_err(), STATUS_PROFILE_JSON);
+
+        // A saved session that is JSON but not a session: a token that is
+        // not a JWT, a JWT that names no workspace, or a region that does
+        // not parse. None of these is a configuration or network error.
+        let no_workspace_jwt =
+            "e30.eyJpc3MiOiJodHRwczovL2N0cy5leGFtcGxlIiwic3ViIjoiQ1N8dGVzdCJ9.c2ln";
+        for (access_token, region) in [
+            ("not-a-jwt", "ap-southeast-2.aws"),
+            (no_workspace_jwt, "ap-southeast-2.aws"),
+            (SESSION_JWT, "nowhere"),
+        ] {
+            let t = tempfile::tempdir().unwrap();
+            current_session(
+                &t,
+                &format!(
+                    r#"{{"access_token":"{access_token}","token_type":"Bearer","expires_at":1800000000,"region":"{region}"}}"#
+                ),
+            );
+            assert_eq!(
+                session_crn(&dir(&t)).unwrap_err(),
+                STATUS_PROFILE_JSON,
+                "{access_token} in {region}"
+            );
+        }
+    }
+
+    /// An `auth.json` whose metadata cannot be read is an I/O error, not
+    /// "not logged in": only a missing file is.
+    #[cfg(unix)]
+    #[test]
+    fn session_crn_reports_an_unreadable_session_as_io() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let t = tempfile::tempdir().unwrap();
+        current_session(&t, &session(Some("ap-southeast-2.aws")));
+        let ws = t.path().join("workspaces").join(WS_A);
+        std::fs::set_permissions(&ws, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let unreadable = std::fs::metadata(ws.join(AUTH_FILENAME)).is_err();
+        let result = session_crn(&dir(&t));
+        std::fs::set_permissions(&ws, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if !unreadable {
+            // Run as root: permissions do not stop the read.
+            return;
+        }
+        assert_eq!(result.unwrap_err(), STATUS_PROFILE_IO);
     }
 
     #[test]

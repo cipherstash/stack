@@ -1,0 +1,42 @@
+error[E0277]: `CipherText<SealedValue, PassthroughFrame>` does not store a JSON document, so its field reference has no JSON queries
+  --> tests/ui/predicate_on_a_scalar_field.rs:19:13
+   |
+19 |     let _ = predicate!(EncryptedCustomer::NAME, "$.age >= 30");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |             |
+   |             this field's type is `CipherText<SealedValue, PassthroughFrame>`
+   |             required by a bound introduced by this call
+   |
+   = help: the trait `JsonQueries` is not implemented for `CipherText<SealedValue, PassthroughFrame>`
+   = note: the JSON queries (`contains`, `at`, `elements`, `predicate`, `children`) belong to a field whose type stores a JSON document, such as `JsonDocument` or `eql_bindings::v4::json_tree::JsonTreeDocument`
+help: the following other types implement trait `JsonQueries`
+  --> src/json/target.rs
+   |
+   | impl JsonQueries for JsonDocument {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `JsonDocument`
+...
+   | impl<T: JsonQueries> JsonQueries for Option<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Option<T>`
+   = note: there are multiple different versions of crate `vitaminc_aead` in the dependency graph
+   = help: you can use `cargo tree` to explore your dependency tree
+note: required by a bound in `document`
+  --> src/field_reference/json/predicate_checks.rs
+   |
+   | pub fn document<W: Place, T: JsonQueries, C: ScopeInput, P, D>(
+   |                              ^^^^^^^^^^^ required by this bound in `document`
+   = note: this error originates in the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: this field declares no path `$.age`
+  --> tests/ui/predicate_on_a_scalar_field.rs:19:49
+   |
+19 |     let _ = predicate!(EncryptedCustomer::NAME, "$.age >= 30");
+   |                                                 ^^^^^^^^^^^^^ `$.age` is not one of the field's declared paths
+   |
+   = help: the trait `DeclaresLine19Column49Check0` is not implemented for `TextPaths`
+   = note: `predicate!` checks each path against the field's `#[stash(json(..))]`. Declare `$.age` with its type under `ordered = {..}` to compare it, or under `paths = {..}` for equality alone, or build this query at run time with `predicate(text)`
+note: required by a bound in `declared`
+  --> tests/ui/predicate_on_a_scalar_field.rs:19:13
+   |
+19 |     let _ = predicate!(EncryptedCustomer::NAME, "$.age >= 30");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `declared`
+   = note: this error originates in the macro `$crate::field_reference::json::predicate_checks::predicate_with_crate` which comes from the expansion of the macro `predicate` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -21,7 +21,9 @@ on:
       - packages/stack-profile/**
       - packages/stack-kms/**
       - packages/stack-encrypt/**
+      - conformance/stack-encrypt/**
       - packages/stack-encrypt-derive/**
+      - packages/stack-encrypt-jsonpath/**
       - packages/stack-guest-abi/**
       - languages/typescript/packages/auth/**
       - languages/typescript/packages/profile/**
@@ -44,7 +46,9 @@ on:
       - packages/stack-profile/**
       - packages/stack-kms/**
       - packages/stack-encrypt/**
+      - conformance/stack-encrypt/**
       - packages/stack-encrypt-derive/**
+      - packages/stack-encrypt-jsonpath/**
       - packages/stack-guest-abi/**
       - languages/typescript/packages/auth/**
       - languages/typescript/packages/profile/**
@@ -142,7 +146,7 @@ jobs:
         run: cargo build --locked -p stack-encrypt --examples
 
       # The crates release-plz publishes. `--dry-run` packages and compiles
-      # each the way crates.io would (all five together, so each resolves the
+      # each the way crates.io would (all six together, so each resolves the
       # others from cargo's temporary local registry rather than from
       # crates.io), catching a publish-blocker on the PR instead of in
       # release-crates on main: missing metadata, a runtime path dependency
@@ -154,7 +158,7 @@ jobs:
       # version is on crates.io, cargo warns rather than fails on a dry run of
       # it.
       - name: Verify the stack-* crates package cleanly for crates.io
-        run: cargo publish --locked --dry-run --allow-dirty -p stack-profile -p stack-auth -p stack-kms -p stack-encrypt-derive -p stack-encrypt
+        run: cargo publish --locked --dry-run --allow-dirty -p stack-profile -p stack-auth -p stack-kms -p stack-encrypt-jsonpath -p stack-encrypt-derive -p stack-encrypt
 
   node-bindings:
     name: node bindings, napi typings, stack-auth-wasm

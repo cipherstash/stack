@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"math"
 
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
@@ -23,8 +24,10 @@ import (
 // What it may carry is the rule written on stack-profile's ErrorPayload:
 // keyset ids and names, field names, counts, index kinds, ZeroKMS request
 // kinds and HTTP statuses, workspace ids, CRNs and regions, profile file
-// paths. Never plaintext, key material, tokens, ciphertext or term bytes,
-// or a context's values: a stored context's length and parts at most.
+// paths, and for a refused predicate the construct in the grammar's words
+// and a byte offset. Never plaintext, key material, tokens, ciphertext or
+// term bytes, or a context's values: a stored context's length and parts
+// at most.
 //
 // A guest built before se_last_error, or one whose error does not decode,
 // returns the bare sentinel instead: the detail is never allowed to hide
@@ -124,6 +127,88 @@ func (d *Diagnostic) Field() string {
 func (d *Diagnostic) Reason() string {
 	reason, _ := d.Fields["reason"].(string)
 	return reason
+}
+
+// Construct is what a refused predicate (a JSONSearch field's Match) names
+// as refused, in the grammar's own words ("`like_regex`", "a position
+// (`[2]`)", "a variable"), or "" for an error that names none. It is a
+// fixed string of the grammar, never text from the predicate.
+func (d *Diagnostic) Construct() string {
+	construct, _ := d.Fields["construct"].(string)
+	return construct
+}
+
+// At is the byte offset into the caller's text where a refusal starts:
+// for a refused Match predicate, where the refused construct begins in the
+// predicate string. The offset is read whatever integer width the value
+// transport carried it in, and from a float that holds a whole number. ok
+// is false for an error that gives no offset, or one that is negative, not
+// a whole number, or past int.
+func (d *Diagnostic) At() (offset int, ok bool) {
+	return nonNegativeInt(d.Fields["at"])
+}
+
+// nonNegativeInt reads a decoded field as a non-negative int: any Go
+// integer type, or a float holding a whole number exactly (below 2^53).
+func nonNegativeInt(v any) (int, bool) {
+	var signed int64
+	switch n := v.(type) {
+	case int:
+		signed = int64(n)
+	case int8:
+		signed = int64(n)
+	case int16:
+		signed = int64(n)
+	case int32:
+		signed = int64(n)
+	case int64:
+		signed = n
+	case uint:
+		return unsignedInt(uint64(n))
+	case uint8:
+		return unsignedInt(uint64(n))
+	case uint16:
+		return unsignedInt(uint64(n))
+	case uint32:
+		return unsignedInt(uint64(n))
+	case uint64:
+		return unsignedInt(n)
+	case float32:
+		return wholeFloat(float64(n))
+	case float64:
+		return wholeFloat(n)
+	default:
+		return 0, false
+	}
+	if signed < 0 || signed > math.MaxInt {
+		return 0, false
+	}
+	return int(signed), true
+}
+
+func unsignedInt(n uint64) (int, bool) {
+	if n > math.MaxInt {
+		return 0, false
+	}
+	return int(n), true
+}
+
+// wholeFloat reads f as an int: a whole number from 0, below 2^53 (where
+// a float64 stops holding every integer exactly) and at most math.MaxInt.
+func wholeFloat(f float64) (int, bool) {
+	n, ok := wholeFloatUpTo(f, math.MaxInt)
+	return int(n), ok
+}
+
+// wholeFloatUpTo reads f as a whole number from 0, below 2^53 and at most
+// limit, which is math.MaxInt for the int wholeFloat returns: a bound of
+// 2^31-1 where int is 32 bits, so a larger float is refused rather than
+// overflowing the conversion.
+func wholeFloatUpTo(f float64, limit int64) (int64, bool) {
+	if f < 0 || f >= 1<<53 || f > float64(limit) || f != math.Trunc(f) {
+		return 0, false
+	}
+	return int64(f), true
 }
 
 // parseUUID parses a canonical hyphenated UUID.

@@ -27,7 +27,8 @@
 // stores scoped from it are closed with it.
 //
 // For authentication and refresh, use [ProfileStore.AccessKey],
-// [ProfileStore.OIDC], [ProfileStore.DeviceSession], or [ProfileStore.Auto].
+// [ProfileStore.OIDC], [ProfileStore.OIDCWithDetectedWorkspace],
+// [ProfileStore.DeviceSession], or [ProfileStore.Auto].
 // Each returns a [Strategy], which is what encrypt.NewCredentials takes
 // for the bearer token: the only way a token reaches an encrypt client.
 // A raw token — [ProfileStore.Token]'s included — cannot be refreshed when
@@ -38,6 +39,18 @@
 // both are the caller's, and stay open until the client is closed.
 // [OAuth2TokenSource] adapts an existing golang.org/x/oauth2.TokenSource
 // into the OIDC provider interface.
+//
+// A call whose context ends, [Strategy.Token] included, fails with the
+// context's error and leaves the store and its strategies open: a request
+// cancelled while its token is exchanged or refreshed does not stop the
+// encrypt clients that read tokens from the same store. A request to the
+// token service is cancelled with its caller, except a device session's
+// refresh: the service rotates the refresh token when it answers one, so
+// the caller returns at once while the refresh runs on, for up to 10
+// seconds, and the store keeps what it sends back for the next call.
+// [Strategy.Close] waits for such a refresh. The store closes itself, and
+// every later call is [ErrState], only when its guest traps or a call runs
+// on for 30 seconds after its context ended.
 //
 // # Why a second guest
 //

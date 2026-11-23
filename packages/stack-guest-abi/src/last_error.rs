@@ -5,7 +5,7 @@
 //! the fast path a host acts on, byte-compatible with the vitaminc guest.
 //! Beside it, the export records the error that produced the number — its
 //! miette code, message, help, URL, severity, structured fields and causes —
-//! as one value in the transport codec every input and output already uses
+//! as one value in the transport frame every input and output already uses
 //! ([`encode`]). A host that wants the detail calls `se_last_error` after a
 //! non-zero status; a call that succeeds pays nothing.
 //!
@@ -43,10 +43,10 @@ use std::cell::Cell;
 use std::error::Error;
 
 use miette::{Diagnostic, Severity};
-use vitaminc_aead_value::{transport as codec, FfiValue};
 
 use crate::buffers;
 use crate::status::{STATUS_ENCODING, STATUS_INTERNAL, STATUS_STATE};
+use crate::value::HostValue;
 
 thread_local! {
     /// The registered buffer holding the encoded last error, if any, and
@@ -82,7 +82,7 @@ pub const UNDESCRIBED_CAUSE: &str = "an error from another library";
 #[non_exhaustive]
 pub enum GuestError {
     /// The input failed the export's own validation before any library
-    /// saw it: bytes that are not the transport codec, a pointer/length
+    /// saw it: bytes that are not a transport frame, a pointer/length
     /// pair outside linear memory, a config or option of the wrong shape.
     #[error("malformed input: {0}")]
     #[diagnostic(code(stack_guest_abi::malformed_input))]
@@ -191,7 +191,7 @@ pub fn encode(
     error: &dyn Diagnostic,
     fields: serde_json::Map<String, serde_json::Value>,
     describe: &dyn Fn(&(dyn Error + 'static)) -> Option<String>,
-) -> FfiValue {
+) -> HostValue {
     let mut entries = Vec::with_capacity(7);
     if let Some(code) = error.code() {
         entries.push(("code".to_owned(), text(code.to_string())));
@@ -211,18 +211,13 @@ pub fn encode(
     entries.push(("severity".to_owned(), text(severity)));
     entries.push((
         "fields".to_owned(),
-        FfiValue::Object(
-            fields
-                .into_iter()
-                .map(|(key, value)| (key, json_value(value)))
-                .collect(),
-        ),
+        HostValue::from_json(serde_json::Value::Object(fields)),
     ));
     entries.push((
         "causes".to_owned(),
-        FfiValue::Array(causes(error, describe)),
+        HostValue::List(causes(error, describe)),
     ));
-    FfiValue::Object(entries)
+    HostValue::Map(entries)
 }
 
 /// One link of the cause chain.
@@ -239,7 +234,7 @@ enum Cause<'a> {
 fn causes(
     error: &dyn Diagnostic,
     describe: &dyn Fn(&(dyn Error + 'static)) -> Option<String>,
-) -> Vec<FfiValue> {
+) -> Vec<HostValue> {
     let mut out = Vec::new();
     let mut next = next_of(error);
     while let Some(cause) = next {
@@ -263,7 +258,7 @@ fn causes(
             entry.push(("code".to_owned(), text(code)));
         }
         entry.push(("message".to_owned(), text(message)));
-        out.push(FfiValue::Object(entry));
+        out.push(HostValue::Map(entry));
         next = after;
     }
     out
@@ -279,35 +274,8 @@ fn next_of(diagnostic: &dyn Diagnostic) -> Option<Cause<'_>> {
 }
 
 /// A string leaf.
-fn text(value: impl Into<String>) -> FfiValue {
-    FfiValue::String(value.into().into())
-}
-
-/// A structured field as a transport value.
-fn json_value(value: serde_json::Value) -> FfiValue {
-    match value {
-        serde_json::Value::Null => FfiValue::Null,
-        serde_json::Value::Bool(value) => FfiValue::Bool(value),
-        serde_json::Value::Number(number) => {
-            if let Some(value) = number.as_u64() {
-                FfiValue::UInt64(value)
-            } else if let Some(value) = number.as_i64() {
-                FfiValue::Int64(value)
-            } else {
-                FfiValue::Float64(number.as_f64().unwrap_or(f64::NAN))
-            }
-        }
-        serde_json::Value::String(value) => text(value),
-        serde_json::Value::Array(items) => {
-            FfiValue::Array(items.into_iter().map(json_value).collect())
-        }
-        serde_json::Value::Object(entries) => FfiValue::Object(
-            entries
-                .into_iter()
-                .map(|(key, value)| (key, json_value(value)))
-                .collect(),
-        ),
-    }
+fn text(value: impl Into<String>) -> HostValue {
+    HostValue::text(value)
 }
 
 /// Record `error` as the last error for `status`, with its structured
@@ -331,14 +299,14 @@ pub fn record_with(
     describe: &dyn Fn(&(dyn Error + 'static)) -> Option<String>,
     status: u32,
 ) -> u32 {
-    let mut bytes = Vec::new();
     // An error that does not encode (it cannot: every leaf is a string, a
-    // number or a container) leaves the last error empty rather than half
-    // written; the status still says what happened.
-    if codec::encode_value(encode(error, fields, describe), &mut bytes).is_err() {
+    // number or a container, and every key is distinct) leaves the last
+    // error empty rather than half written; the status still says what
+    // happened.
+    let Ok(bytes) = encode(error, fields, describe).encode() else {
         clear();
         return status;
-    }
+    };
     store(bytes, status);
     status
 }
@@ -417,22 +385,16 @@ pub fn take() -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
-    fn decode(bytes: &[u8]) -> FfiValue {
-        codec::decode_value(&mut codec::Reader::new(bytes)).expect("an encoded error decodes")
+    fn decode(bytes: &[u8]) -> HostValue {
+        HostValue::decode(bytes).expect("an encoded error decodes")
     }
 
-    fn get<'a>(value: &'a FfiValue, key: &str) -> Option<&'a FfiValue> {
-        match value {
-            FfiValue::Object(entries) => entries.iter().find(|(k, _)| k == key).map(|(_, v)| v),
-            _ => None,
-        }
+    fn get<'a>(value: &'a HostValue, key: &str) -> Option<&'a HostValue> {
+        value.get(key)
     }
 
-    fn string(value: Option<&FfiValue>) -> Option<String> {
-        match value? {
-            FfiValue::String(s) => String::from_utf8(s.risky_ref().to_vec()).ok(),
-            _ => None,
-        }
+    fn string(value: Option<&HostValue>) -> Option<String> {
+        value?.as_text().map(str::to_owned)
     }
 
     #[derive(Debug, thiserror::Error, Diagnostic)]
@@ -473,9 +435,9 @@ mod tests {
         assert_eq!(string(get(&value, "severity")).as_deref(), Some("error"));
         assert!(matches!(
             get(get(&value, "fields").expect("fields"), "count"),
-            Some(FfiValue::UInt64(2))
+            Some(HostValue::UInt(2))
         ));
-        let Some(FfiValue::Array(causes)) = get(&value, "causes") else {
+        let Some(HostValue::List(causes)) = get(&value, "causes") else {
             panic!("causes is a list");
         };
         assert_eq!(causes.len(), 2);
@@ -504,7 +466,7 @@ mod tests {
         struct Wrapper(#[source] Foreign);
         let _ = record(&Wrapper(Foreign), serde_json::Map::new(), STATUS_INTERNAL);
         let value = decode(&take().expect("recorded"));
-        let Some(FfiValue::Array(causes)) = get(&value, "causes") else {
+        let Some(HostValue::List(causes)) = get(&value, "causes") else {
             panic!("causes is a list");
         };
         assert_eq!(
@@ -550,7 +512,7 @@ mod tests {
         );
         assert!(matches!(
             get(get(&value, "fields").expect("fields"), "status"),
-            Some(FfiValue::UInt64(42))
+            Some(HostValue::UInt(42))
         ));
     }
 

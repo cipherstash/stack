@@ -9,6 +9,2028 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Read one child of a JSON node, checked against its parent** (#1677).
+  Your app can now read one level of a document without fetching the
+  parent's whole subtree. The read takes three steps.
+  1. Your app derives the parent's token and key, for example with
+     `children(path).encrypt_keyed(&keyset)`. Deriving asks ZeroKMS for
+     nothing.
+  2. The database (EQL) runs `eql_v4.json_tree_children(doc, $1)` with the
+     token. The database returns the parent's direct children as encrypted
+     entries.
+  3. Your app passes each entry to `JsonSubtreeKey::open_child(node)`, and
+     decrypts the `JsonChild` it gets back.
+
+  More detail:
+
+  - A `JsonChild` decrypts into a `JsonPlaintext` for the child's value
+    alone. A `JsonChild` also decrypts into a `JsonChildPlaintext` for the
+    value with the member's `key()` or the element's `index()`.
+  - The database returns an object's members in a random order. So use
+    `JsonChildPlaintext` when your app needs to know which member a value
+    is.
+  - The key or index is encrypted with the value, and authenticated. The
+    key, the index, and the value are wiped on drop. `Debug` hides all
+    three.
+  - Decrypting checks the entry's link to its parent, as a subtree read
+    does. The entry must have a parent tag and sit one level down. The
+    entry's selector must be the parent's path extended by its key or
+    index. The entry's self tag must be the one that key or index gives
+    under the parent's token.
+  - An entry that fails a check is `Error::JsonWrongEntry`. A child with
+    children of its own does not decrypt alone (`Error::JsonNotALeaf`).
+  - Two refusals come before any key is fetched. A key for a path with a
+    wildcard is `Error::Input`, with reason `JsonPathWildcard`. An entry
+    with no parent tag is `JsonWrongEntry`.
+  - For a `JsonDocument` field, the field reference's `children(path)`
+    returns the key, so the token sent and the key are one value. For a
+    field of another type, `children(path).encrypt_keyed` returns the
+    token and the key from one derivation.
+  - `dynamic::json_open` takes the operation `"children"`, with the
+    parent's path and one entry or none per group. Each child opens to a
+    map: `{"key", "json"}` for a member, or `{"index", "json"}` for an
+    element. `dynamic::check_json_open` checks the request.
+  - The stored format is unchanged.
+
+- **A credential with each call** (#1708). A server that decrypts as the end
+  user who signed in had to build its cipher inside the first request,
+  because `init` needs a token and a server starting up has no user. It also
+  had to tell the auth strategy which user each call was for through a
+  task-local variable. Both are gone.
+  - Call `.with_credential(credential)` on a call before you await it:
+    `keyset.decrypt(stored).with_credential(jwt).await?`. Every request the
+    call makes is then made with that credential, so ZeroKMS serves and
+    logs it as that caller. The credential is a `kms::SecretToken`. For a
+    `stack_auth::OidcFederationStrategy` it is a JWT, most often the end
+    user's.
+  - Every `Pending` has `.with_credential(..)`. So it works for scalars,
+    trees, values and records sealed through the conversion traits, terms,
+    queries and `dynamic`.
+  - `.with_credential(..)` returns a `WithCredential` call. You can await
+    it, or call `.audit(..)` on it and await that. So attach the credential
+    last, to the whole call: `a.zip(b).with_credential(jwt)`, or
+    `Pending::all(&keyset, calls).with_credential(jwt)`.
+    `a.with_credential(jwt).zip(b)` does not compile. One call therefore
+    has one credential.
+    `.audit(..)` and `.with_credential(..)` go in either order.
+  - A cipher and a keyset hold no credential.
+  - A key source is one of two kinds (`KeySource`), and a call can neither
+    forget a credential nor have one ignored:
+    - A key source that takes a credential with each call
+      (`kms::CredentialKeySource`) has no request without one. A call
+      through its cipher is not a future until `.with_credential(..)`, so
+      `keyset.decrypt(stored).await` does not compile. A ZeroKMS client
+      over `OidcFederationStrategy::credential_per_call(crn)` is this
+      kind.
+    - A key source with an identity of its own makes every request as that
+      identity. A call through its cipher is awaited as it is, and has no
+      `.with_credential(..)`. An access key, a saved login, and an
+      `OidcFederationStrategy` built with a provider callback are this
+      kind.
+  - `init` is the same call for every auth strategy. With an access key or
+    a saved login it loads the default keyset, as before, so wrong
+    credentials still fail at startup. With a key source that takes a
+    credential with each call, `init` has no credential to load the keyset
+    with. It then makes no request and returns the cipher. So a server
+    builds its cipher at startup:
+    `StackCipher::builder().auth_strategy(strategy).key_provider(provider).init().await?`.
+    `init` has a type parameter that says which kind the key source is.
+    You never write it: the compiler works it out.
+  - `default_keyset()` still makes no request and cannot fail. On such a
+    cipher it returns a handle on a keyset that is not loaded yet. Every
+    call on the handle works as usual: the first call that is awaited loads
+    the default keyset, with its own credential, beside its key request.
+    Callers that arrive together make one load between them. A load that
+    fails leaves the cipher as it was, and the next call tries again.
+  - A keyset's index key is still loaded once and kept for every caller,
+    with the credential of the call that needed it first. Data key requests
+    are made as each caller; that one load is not. This changes what the
+    ZeroKMS log shows, not what a caller can reach: a keyset is granted to
+    a client, and a cipher has one client.
+  - A call loads the keyset it works under, and no other. With such a key
+    source, a call on a keyset selected by id or by name does not load the
+    default keyset.
+  - The JSON queries, typed and `dynamic`, and the `dynamic` reads work
+    through a keyset that is not loaded yet too. A query operand is derived
+    when it is awaited. A read (`json_open`) builds its key requests from a
+    key derived under the keyset, so it is built when it is awaited. It
+    still merges with other calls (`zip`, `all`).
+  - This needs the `stack-kms` and `stack-auth` of this change:
+    `kms::CredentialKeySource`, `StackKms::generate_keys_with_credential`,
+    `retrieve_keys_with_credential` and `load_keyset_with_credential`, and
+    in `stack-auth`, `CredentialAuthStrategy` and
+    `OidcFederationStrategy::credential_per_call` (a strategy with no
+    provider callback).
+  - For tests, `kms::FakeCredentialKeySource` is a key source that takes a
+    credential with each call and records it: `credentials_seen()` lists
+    the credential of each request. A test of a request handler built on it
+    does not compile if the handler forgets its caller's credential.
+- **Audit metadata for ZeroKMS key requests** (#1705). ZeroKMS logs every
+  key request with the identity that made it. An `AuditMetadata` adds
+  facts about the call to that log, such as its purpose or a request id.
+  To send it, call `.audit(metadata)` on a call before you await it. A
+  call without it sends none, and its request is unchanged.
+  - Build the metadata with `AuditMetadata::new().with(key, value)`. A
+    value is text, a `bool`, a float, or an integer that fits an `i64`.
+    A value can also be an `Option` or a `Vec` of these, or another
+    `AuditMetadata`. There is no conversion from `u64`, because ZeroKMS
+    cannot record a value above `i64::MAX` exactly. A float that is not
+    finite is sent as `null`.
+  - Every `Pending` has `.audit(..)`. So it works for scalars, trees,
+    targets, records, and `dynamic::record`, and for a batch made with
+    `zip` or `Pending::all`.
+  - `.audit(..)` returns an `Audited` call. You can only await an
+    `Audited` call. So attach the metadata last, to the whole call:
+    `a.zip(b).audit(m)`, or `Pending::all(&keyset, vec![a, b]).audit(m)`.
+    Neither `a.audit(m).zip(b)` nor
+    `Pending::all(&keyset, vec![a.audit(m), b])` compiles. A call
+    therefore sends one map, with every key request that it makes.
+  - A call that requests no data key sends no metadata, and still
+    succeeds. A query term is one such call. So is a call over an empty
+    list.
+  - ZeroKMS does not verify the metadata. A decrypt does not need it.
+    ZeroKMS writes the metadata to its logs. Do not send plaintext,
+    anything derived from plaintext, or secrets.
+  - The scalar and tree decrypt methods document this with an example
+    that runs.
+  - `AuditMetadata` implements serde's `Deserialize` (#1067). It reads a
+    map with text keys from any serde format, for a language binding that
+    has the facts as data. A value follows the same rules as a value given
+    to `with`. The reader refuses data that is not a map, bytes, an
+    integer that does not fit an `i64`, a key that is not text, and a key
+    that appears twice in one map. The reader's message does not show a
+    key or a value. `serde_json` reads a JSON number above `u64::MAX` as a
+    float, so that number is sent as a float.
+- **`StackCipherBuilder::auth_strategy` and `key_provider`** (#1700).
+  `StackCipher::builder().auth_strategy(strategy).key_provider(provider).init()`
+  builds the ZeroKMS client from an auth strategy and a client key provider
+  that you choose. Before, a caller who wanted another auth strategy had to
+  build the `StackKms` by hand. `kms(..)` is unchanged.
+  - `auth_strategy` takes any strategy `StackKmsBuilder::new` takes: an
+    `OidcFederationStrategy`, an `AccessKeyStrategy`, or an `AuthStrategyFn`.
+  - `key_provider` is required after `auth_strategy`. The builder then reads
+    the client key only from that provider. For example, `EnvKeyProvider`
+    reads `CS_CLIENT_ID` and `CS_CLIENT_KEY`, and `ProfileKeyProvider` reads
+    the key the CLI saved.
+  - `init` loads the default keyset's index key, so call `init` where the
+    strategy can return a token. With an OIDC provider that returns the
+    current request's JWT, that is while your program handles a request.
+  - The builder state is `WithAuthStrategy<C, P>`, behind the `http`
+    feature.
+  - Needs stack-auth 0.44.0 and stack-kms 0.2.0.
+
+- **`predicate!`** (#1459). `predicate!(EncryptedCustomer::PROFILE, "$.age
+  >= $min && $.name == $name", min = 30, name)` checks a SQL/JSON path
+  predicate when the program compiles and sends the same text when it
+  runs: it expands to `predicate(text)` with a `var` for each variable,
+  so its query, its `scope` and `encrypt`, and its operand are the text
+  form's. The text is read with the engine's own parser, now in
+  `stack-encrypt-jsonpath`. Refused at compile time: text that does not
+  parse; a construct the JSON index cannot answer whatever the variables
+  hold; a variable used and not given, given and not used, or given twice;
+  a path the field does not declare (under `ordered` or `paths`), an
+  ordering of a path declared under `paths`, and a member of an array, in
+  a filter of more than one condition, that the array does not order; and
+  a value, variable or literal, of another type than the path's, which
+  for a number literal means one the path's type does not hold (`1.5`,
+  `-1` and `99999999999` for a `u32`). A variable's value is moved into
+  the query. The macro finds a path's accessor by the path's text, through lookups the
+  derive now generates (hidden, in `field_reference::json::predicate_checks`),
+  so a `names` override changes nothing. It is a `macro_rules` wrapper
+  that passes `$crate`, so it works however a program reaches this crate.
+  The predicate parser moved to `stack-encrypt-jsonpath` with no change to
+  what it reads, refuses or derives.
+
+- **Typed JSON queries from a field reference** (#1459, #1687). A field
+  whose type stores a JSON document (`JsonDocument`, or EQL's
+  `JsonTreeDocument`) has one field reference method for each kind of JSON
+  query, in place of the operator methods:
+
+  | Field reference method | Returns, for `JsonDocument` |
+  | --- | --- |
+  | `contains(doc)`, `contained_by(doc)`, `at().age().eq(v)` | `JsonQuery` |
+  | `at().age().lt(v)`, `.lte`, `.gt`, `.gte` | `JsonLeafQuery` |
+  | `at().age().between(lo, hi)` | `(JsonLeafQuery, JsonLeafQuery)`, low then high |
+  | `at().age().is_null()` | `JsonQuery` |
+  | `at().age().selector()` | `JsonSelector` |
+  | `elements().visits().place().eq(v).and().at().gt(v)` | `JsonElementsQuery` |
+  | `predicate(text).var(name, v)` | `JsonPredicateQuery` |
+  | `children(path)` | `JsonSubtreeKey`, which holds the node's one token |
+
+  `EncryptedCustomer::PROFILE.at().age().gt(30).encrypt(&keyset)` derives
+  under the field's column and options, as a scalar field's query does,
+  and takes a scope with `.scope(..)`. Each query derives the operand the
+  dynamic interface derives for the same declaration: the field reference
+  and the data plan read one definition of each input, which no longer
+  needs the `dynamic` feature.
+  - **Typed paths.** `#[stash(json(ordered = { "$.age": u32,
+    "$.visits[*].place": String }, sealed_root = false))]` on the field
+    names the JSON index's options and the type of the values at each
+    ordered path. The derive seals the field under them, and the field
+    queries under them. It parses each path at compile time with the
+    engine's grammar (`stack-encrypt-jsonpath`): a path that does not
+    parse, has no `$`, names an array position or is given twice is a
+    compile error at the path, and a type other than an integer type,
+    `f64` or `String` (`JsonPathType`) is one at the type. Each path gets
+    a method under `at()`, returning a `DeclaredPath` of its type, and
+    each array whose elements have an ordered member gets one under
+    `elements()`, whose methods are the members (`ElementMember`). A
+    path, member or array the field does not declare has no method, a
+    value of another type does not compile (`PathValue`), and `and()`
+    after a condition gives the same array's members, so a member of
+    another array cannot be given. A method is named after the path's
+    keys (`$.visits[*].at` is `visits_at()`); `names = { "key": word }`
+    names a key the rule cannot. `paths = { "$.name": String, "$.vip":
+    bool }` declares a path for equality alone: its type is any
+    `JsonScalarType` (a `JsonPathType` or `bool`), it adds nothing to the
+    field's options, so no stored or derived byte changes, and its
+    `DeclaredPath` (kind `EqualityPath`, where an `ordered` path's is
+    `OrderedPath`) has `eq`, `is_null` and `selector`; an ordering of it
+    does not compile (`OrderedPathKind`). A path under both keys is a
+    compile error. An element-scoped condition compares ordering terms,
+    so `elements()` has ordered members only. The field reference has a fifth type
+    parameter, the field's paths (`DocumentPaths`); a field that declares
+    none has `TextPaths`. A field reached through an outer record
+    (`field`) keeps its paths.
+  - **Paths as text.** `at_text_path(path)` and `elements_text_path(path)`
+    take JSONPath text, for a filter built at run time, and check it when
+    the query is encrypted, before any key is requested, by the dynamic
+    interface's rules: an ordering at a path the field does not order is
+    `TermError::JsonPathNotOrdered`. They derive the operand the typed
+    method derives for the same path and value. A field with no declared
+    paths has only these. A document type that seals under other options
+    when its field names none says so with `JsonQueries::default_options`,
+    which its field queries under.
+  - **Typed values.** An ordering at a text path takes a number or a
+    string (`field_reference::json::JsonOrdered`), equality there a scalar
+    (`JsonScalar`), and containment a document. A boolean ordering, or
+    equality with an object, does not compile. An element predicate with
+    no condition has no `encrypt`. A NaN or an infinity, which no JSON
+    number is, is refused with the new `TermError::JsonNumberNotFinite`
+    (`stack_encrypt::json_number_not_finite`) before any key is requested,
+    rather than becoming `null`. There is no `f32` value: serde_json widens
+    an `f32` when it builds a document, so the query takes the `f64` the
+    document holds (`f64::from(x)` for one built from `x`). A NaN or an
+    infinity inside a `serde_json::Value` given to `contains` is already
+    `null`, and is queried as `null`.
+  - **Predicate variables.** `predicate(text).var("min", 30)` names one
+    variable, which the predicate reads as `$min`; `var_null(name)` names
+    a JSON `null`. A value is a `JsonScalar`. A NaN or an infinity is
+    refused with `TermError::JsonNumberNotFinite`, and a name given twice
+    with `Error::Input` and `Reason::JsonDuplicateKey`, each before any
+    key is requested. The predicate text is checked when the query is
+    encrypted.
+  - **Refusals.** A refusal of the input's own shape (an
+    `elements_text_path` path with no wildcard, a predicate the grammar
+    does not read) is the new `Error::Input`, below.
+  - **New public items.** `json::JsonTarget`, which seals a document under
+    options; `json::JsonQueries`, which converts each operand into the
+    field type's query type; `json::JsonElementsQuery` and
+    `json::JsonPredicateQuery`, the typed element and predicate operands;
+    and `field_reference::json`, the query types: `DeclaredPath`,
+    `ArrayElements`, `ElementMember`, `DocumentPaths`, `ElementArray`,
+    `TextPaths`, `JsonPathType` and `PathValue` among them.
+
+- **A value passed by value is sealed without a copy** (#1687). Sealing
+  a value took a copy of it when the target had no owned form of its own.
+  Both copies were wiped, so nothing leaked, but the copy was not needed.
+  - A `JsonDocument` field marked `#[stash(json(..))]` moves the document
+    out of the `JsonPlaintext` into the seal
+    (`JsonTarget::json_owned_encryption`), as `encrypt_into` already did.
+  - A derived `plaintext = T` record with exactly one field derived from
+    the plaintext has its own `owned_encryption`. It moves the value into
+    the owned form of that field's target. So a record whose one field is a
+    `StackCipherText` seals the value with no copy. When the record's
+    context cannot be stored, or its indexes are refused, the value is
+    wiped. A record with two or more such fields is unchanged.
+  - Three items for generated and binding code, hidden from the docs:
+    `Encryption::storing` in `Owned` mode (requires `S: Zeroize`, and
+    wipes the value when the context cannot be stored),
+    `Encryption::refused_wiping` (requires `S: Zeroize`), and
+    `Encryption::over_json_plaintext`, which turns an owned description of
+    a `serde_json::Value` into one of a `JsonPlaintext` by moving the
+    document across. No item returns the document to its caller.
+  - The stored bytes do not change. A target with search terms keeps its
+    behaviour.
+
+- **`Error::Input`: a refusal of the caller's input** (#1459). A field
+  field reference's JSON query whose input has the wrong shape, and a data plan run
+  through `dynamic::Planned` whose source does not fit it, now fail with
+  `Error::Input`, which holds the dynamic interface's error. Its message,
+  code (`stack_encrypt::dynamic_source`, `stack_encrypt::dynamic_predicate`
+  and the rest) and payload (`reason`, and `field`, `construct` and `at`
+  where it has them) are that error's, so a refusal reports the same way
+  on both paths. They used to be `Error::Other`, whose code
+  (`stack_encrypt::other`) a caller could not tell from an engine fault.
+  The error type is now public without the `dynamic` feature too, as
+  `stack_encrypt::refusal::Error` and `refusal::Reason` (the same types as
+  `dynamic::Error` and `dynamic::Reason`). This module's own bug
+  (`Internal`) and a target resolver's own failure stay `Error::Other`.
+- **Two more records derive** (#1661). The owned derives did not accept
+  these shapes, and the removed derives did:
+  - A `plaintext = T` record can have a `struct = ..` record as a field.
+    The caller's context extends each of the inner record's fields.
+  - A record with `context_type = NonEmpty<T>` can have a ciphertext or a
+    term as a field.
+- **The JSON targets implement the owned traits** (#1660). The plaintext
+  is `json::JsonPlaintext`, which holds a `serde_json::Value` and wipes it
+  when it is dropped.
+  - `JsonDocument` implements `EncryptTarget<JsonPlaintext>` and
+    `DecryptSource<JsonPlaintext>`. So
+    `profile.encrypt_into_with_context(&keyset, column)` seals a document
+    under the default options, and
+    `JsonPlaintext::decrypt_from_with_context(document, &cipher, column)`
+    opens it.
+  - `JsonExtracted`, the entry `->` returns, implements
+    `DecryptSource<JsonPlaintext>`.
+  - `JsonSubtree`, the rows of a read, implements `DecryptSource` for
+    `JsonPlaintext`, `Option<JsonPlaintext>` and `Vec<JsonPlaintext>`.
+  - The context is required in each case. The stored bytes do not
+    change.
+
+- **A field type that stores its context can be a record field** (#1658).
+  A derived `struct = ..` record gives each field a context of its own:
+  the record's scope, then the field's name. A type that stores its
+  context in the row (`#[stash(context_field)]`), such as an EQL type that
+  stores a table and a column, stores that own context. The stored type
+  implements the new trait `target::ContextFromField`.
+  - `ContextFromField::from_field` builds the stored context from the
+    field's own context, or returns `None` when the type cannot store it.
+  - The scopes and the bindings that the record lists, and the names of a
+    record that holds this one, come after the own context, as they do
+    for a field of any other type. The search terms derive under the own
+    context and the scopes. The data key and the AAD derive under the
+    bindings too. The field does not store them, so the reader supplies
+    them again.
+  - On decrypt, the stored context must equal the field's own, as a
+    standalone decrypt with an expected context checks it.
+  - An own context that the type cannot store is refused before any key
+    is requested, on encrypt and on decrypt, with the new
+    `PlanError::ContextNotStorable`
+    (`stack_encrypt::plan_context_not_storable`), which names that
+    context (`members/email`).
+  - The encrypt input of a `context_field` record is the hidden type
+    `target::StoredContext<T>`, in place of
+    `RequiredContext<NonEmpty<T>>`. A caller passes a `NonEmpty<T>`.
+    Generic code names the input as
+    `ContextInput: AcceptsContext<Value = NonEmpty<T>>`.
+
+- **`json::JsonPlaintext`, a JSON document as one ciphertext** (#1636).
+  `JsonPlaintext` holds a `serde_json::Value` and wipes it when it is
+  dropped. Build one with `JsonPlaintext::from(value)` or
+  `JsonPlaintext::parse(text)`, which applies the strict checks of
+  `json::parse_text`, and read it with `value()`. It is a single value to
+  the cipher, so `keyset.encrypt(document)` returns one `Ciphertext`, and
+  `keyset.decrypt::<JsonPlaintext>(ct)` opens it. A target with a
+  ciphertext field takes it as a plaintext too.
+  - The stored plaintext is the document's JSON text, sealed as one text
+    leaf. It is the text `serde_json` writes, with no whitespace. Key
+    order, whitespace and the spelling of a number are not kept.
+  - A document is sealed only if it will open. Its depth is checked and
+    its text is parsed by the strict rules before it is sealed, so a
+    `Value` nested deeper than 127 levels is refused as `Error::Aead` and
+    no key is requested. The depth check does not recurse past the limit,
+    so a document of any depth is refused and does not overflow the stack.
+  - On decrypt the leaf is authenticated first, then the text is parsed by
+    the same strict rules. A leaf that is not text, or text that is not a
+    document, is `Error::OpenedType`. The ciphertext is authentic in that
+    case: it was sealed as something else.
+  - A target that derives an equality term from a single value derives
+    the term of the document's JSON text. Equal documents have one term
+    while `serde_json` keeps members in key order, its default.
+  - `dynamic::JsonPlaintext` is now this type, re-exported, so
+    `dynamic::read_json` returns it. It gains `Clone`, `Zeroize`, a
+    redacted `Debug`, `From<Value>` and `parse`.
+  - ADR-0013 records the decision.
+- **Field references** (#1486, #1590, #1596, #1600). `#[derive(EncryptTarget)]` on
+  a `struct = ..` record emits one `FieldReference` per derived field. It is an
+  associated constant named after the field in upper case:
+  `EncryptedUser::EMAIL`. A field reference is `FieldReference<W, T, C, P>`. `W` is where
+  the field sits: `field_reference::Root<R>` for a field of the record `R`, or
+  `field_reference::Nested<W>` for one reached through a record field. `T` is the
+  field's target type. `C` is the type of the scopes a query takes:
+  `NoScope`, one `Scope<U>`, or `target::Scopes` for a field of a nested
+  record.
+  `P` is the type a query takes: `field_reference::TakesAny`, or `field_reference::Takes<V>`
+  for a field marked `#[stash(query = V)]`.
+  - Its methods are one per operator the field's indexes answer, checked
+    at compile time through `Answers`: `eq`, `lt`, `lte`, `gt`, `gte`,
+    `between`, and `matches`. A field of several indexes,
+    `Encrypted<(EqualityTerm, MatchTerms)>`, answers each operator through
+    the one index that answers it. Each term states its answer with
+    `op::OperatorAnswer`. An operator no index answers, or two answer, has
+    no method. An `Option<..>` field has the methods a present value has.
+  - `EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET)` is the
+    inner field's reference under the outer field's context. `field` accepts
+    only a field reference of the inner record.
+  - A nullable record field, `Option<EncryptedAddress>`, has the same
+    `field` (`field_reference::Holds`). A row whose field is `None` stores nothing
+    to match.
+  - An inner record may list a scope of its own, such as
+    `scope(field = "tenant")`. The query then takes one scope for each
+    record that lists one, outermost first. The new `Scope::scope`
+    chains them: `.scope(Scope::new(outer).scope(inner))`
+    (`field_reference::JoinScope`). The chain returns the new `target::Scopes`,
+    and any number of records can list a scope. Where one record lists a
+    scope, `scope` takes that scope alone.
+  - `#[stash(query = String)]` states the type a field's queries take. The
+    derive checks it against the plaintext struct's field.
+  - A record that lists a scope, `scope(tenant: u64)` or a stored
+    `scope(field = "tenant")` over a `u64`, gives a query with no `encrypt`
+    until `.scope(..)` is given once, with a `Scope<u64>`. A record with no
+    scope gives a query that is ready at once. The query has no `bind`
+    method, and ends with `.encrypt(&keyset)`. The output is the index's
+    query term.
+  - A query from a field reference derives under the declaration the derive wrote,
+    so it is the stored term. No plan is written by hand beside the
+    record. A method takes its value by value, and a string literal as
+    it is (`QueryInput`). The query's value is wiped when it is derived,
+    refused, or dropped. `assert_context!` takes a field reference, and
+    `FieldReference::contexts()` is the record's contexts narrowed to the field.
+    A tuple field has no field reference.
+- **Tuples of terms answer a query too** (#1596). The field reference of a field
+  typed `Encrypted<(EqualityTerm, MatchTerms)>` answers `eq` and
+  `matches`. The query uses the one term that answers the operator. `OreBlockTerm` implements `LabelledTarget`, so a block ORE field
+  is queried under its label.
+- **`dynamic::Planned`, a value under a plan that is data** (#1486). A
+  record under a `Plan`, or a query value under a `QueryPlan`, each a
+  `ValueFrame`, is a target in the owned API's sense. `StackCipherText`
+  implements `EncryptTarget<Planned<Plan, ValueFrame>>`. `QueryTerm`
+  implements `EncryptTarget<Planned<QueryPlan, ValueFrame>>`.
+  `Planned<Plan, StackCipherText>` implements `DecryptSource<ValueFrame>`.
+  So `encrypt_into`, `decrypt_from`, and their `_with_context` forms run
+  them. The caller's scope and bindings are the one context argument,
+  after the plan's own. A query takes scopes alone, and refuses a binding
+  before any key is requested, as `PlanError::BindInQuery`. A refused
+  term keeps its kind (`Error::Term`); a refusal of the caller's input is
+  `Error::Input`. `Planned::contexts()` shows every field's context with
+  a placeholder for the caller's scope and one for the caller's binding,
+  before any value is encrypted.
+- **Query plans and the dynamic field handle** (#1486). `Plan::query(field,
+  op)` and `Plan::query_with(.., &resolver)` narrow a record plan to one
+  field and one operator. They are refused where they are made when none
+  of the field's indexes answers the operator (`operator_not_answered`),
+  or when the plan has no such field. `Plan::field(name)` and
+  `Plan::field_with(name, &resolver)` are the handle a program whose plan
+  is data queries through. It has one method per scalar operator and
+  `op(..)` for any, each checked against the plan where it is called, then
+  `.scope(..)` and `.encrypt(&keyset)`. Neither has a `bind` method.
+- `ValueFrame` implements `Zeroize`. `dynamic::query_term` takes any
+  `K: 'static`, as `record::encrypt_with` does. The key source's bounds
+  apply when the pending is awaited, not when the term is described.
+
+### Breaking
+
+- **`Index` and `Indexes` each gain a required method** (#1398). A field
+  query now derives its terms through these methods.
+  - `Index::query_operation` derives the term that a query of the index
+    sends. `Index::operation` still derives the term that a stored value
+    contains.
+  - `Indexes::query_operations` derives the query term of every index in
+    the set, in one batch.
+
+  To upgrade:
+  1. In each index you define, add `query_operation`. If the index sends
+     the term it stores, return the same description as `operation`. If
+     the index wraps another index, call that index's `query_operation`.
+  2. In each set of indexes you define, add `query_operations`. Build it
+     from each index's `query_operation`.
+
+  Neither method has a default, on purpose. A default that returned the
+  stored term would let an index that wraps a match index forward only
+  `operation`. That index would compile. The index's queries would then
+  send the stored value's tokens, and miss rows. No stored byte changes.
+
+- **Seven `PlanError` variants that nothing raised are removed** (#1671).
+  Only the plan builder and `plan::all` raised them, and both are gone,
+  so no call returned them: `IdentityWithoutField`, `IndexNotDeclared`,
+  `IndexOptions`, `MixedCiphers`, `NoContext`, `PassthroughIndexed` and
+  `TargetWithVerbs`. `plan::all` raised `MixedCiphers`; the builder raised
+  the other six.
+  Their error codes go with them (`stack_encrypt::plan_identity_without_field`,
+  `plan_index_not_declared`, `plan_index_options`, `plan_mixed_ciphers`,
+  `plan_no_context`, `plan_passthrough_indexed` and
+  `plan_target_with_verbs`). The other variants keep their codes. No
+  `dynamic::Reason` is removed: a data plan with a passthrough beside
+  another output, or with both outputs and a target, is still refused as
+  `passthrough_with_outputs` or `outputs_with_target`. To upgrade, delete
+  match arms that name a removed variant; `PlanError` is
+  `#[non_exhaustive]`, so a wildcard arm already covers the rest. No
+  stored byte changes.
+
+- **A cipher no longer reads credentials you did not name** (#1722).
+  `StackCipher::new()` and `init()` on the bare builder read
+  `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`,
+  `CS_WORKSPACE_CRN` and the CLI's profile directory, and nothing in the
+  call said so. Both are removed.
+  - `StackCipher::with_detected_credentials()` replaces `new()`. It reads
+    the same places in the same order, and its name says so. To upgrade,
+    rename the call.
+  - `StackCipher::builder()` has no `init()` until you name a data-key
+    source, with `kms(..)` or with `auth_strategy(..)` and then
+    `key_provider(..)`. For `StackCipher::builder().init()` with builder
+    options such as `keyset_cache_size`, write
+    `.auth_strategy(AutoStrategy::detect()?)` and
+    `.key_provider(FallbackKeyProvider::new(EnvKeyProvider, ProfileKeyProvider::for_detected_workspace()))`
+    before `init()`. That builds the same cipher on a native target.
+    `ProfileKeyProvider` exists on native targets only, so on wasm32 write
+    `.key_provider(EnvKeyProvider)`.
+  - The builder state `FromEnv` is renamed `NoKms`, since the builder no
+    longer reads the environment in it.
+  - `Error::Config` reads "could not build a ZeroKMS client", without
+    "from the environment": a builder given an auth strategy and a key
+    provider reports its errors there too.
+
+- **A key source of your own states its kind.** `kms::DataKeySource`,
+  `kms::IndexKeySource` and `kms::CredentialKeySource` each require
+  `kms::KeySourceKind`, so that a type cannot be both kinds of key source.
+  To migrate, add one impl to each key source you wrote, such as a test
+  double. A cipher built with `auth_strategy(..)` or over
+  `kms::StackKms`, `kms::FakeDataKeySource` or
+  `kms::FakeCredentialKeySource` needs no change.
+
+  ```rust
+  impl stack_encrypt::kms::KeySourceKind for MyKeySource {
+      // `kms::CredentialPerCall` for a `CredentialKeySource`.
+      type Kind = stack_encrypt::kms::OwnIdentity;
+  }
+  ```
+
+- **`.kms(source)` returns a builder in its own state** (#1708). This
+  follows from telling the two kinds of key source apart in the types
+  (`KeySource`). `StackCipher::builder().kms(source)` returns a
+  `StackCipherBuilder<WithKeySource<K>>`. It returned a
+  `StackCipherBuilder<K>`. To migrate, change code that names the
+  builder's type. Code that chains `.kms(..).init()` is unchanged.
+
+- **`StackCipher::keyset` makes no request and returns the handle**
+  (#1708). It was `async` and returned a `Result`. Selecting a keyset now
+  loads nothing, as `default_keyset` loads nothing: the first call on the
+  handle that is awaited loads the keyset. So that load can be made with
+  the credential of the call. To migrate:
+  - Change `cipher.keyset(by).await?` to `cipher.keyset(by)`.
+  - A keyset that ZeroKMS does not know, or has disabled, now fails the
+    first call on the handle, with the same `Error::Kms`. To fail where the
+    keyset is selected, await `keyset.keyset_id()` there.
+  - A handle is still one keyset. Calls built through a handle before its
+    keyset is loaded all run under the keyset the first of them loads. A
+    name is resolved once for the handle.
+
+- **`KeysetCipher::keyset_id` and `keyset_name` return a `Pending`, and
+  `with_prf` replaces `prf`** (#1708). They read the loaded keyset. A
+  handle on a keyset that is not loaded yet loads it when the call is
+  awaited, so each can make a request, and can take a credential. To
+  migrate:
+  - Change `keyset.keyset_id()` to `keyset.keyset_id().await?`, and
+    `keyset_name()` in the same way. `keyset_name` now returns an owned
+    `Option<String>`.
+  - Change `keyset.prf()` to `keyset.with_prf(|prf| ..)`. The closure
+    returns a `Result`, and the method returns a `Pending` of its value.
+  - With the keyset loaded, each call makes no request and does not fail.
+    The default keyset is loaded by `init` with an access key or a saved
+    login.
+
+- **`CipherRef` is `Clone` and no longer `Copy`** (#1708). A reference to
+  a keyset selected by name, and not loaded yet, keeps the name. Call
+  `.clone()` where a `CipherRef` was copied. Code that passes `&cipher` or
+  `&keyset` to an entry point does not change. `CipherRef::keyset_id()`
+  returns `None` for a keyset that is not loaded yet, unless it was
+  selected by its id.
+
+- **A plaintext is read in place, and no longer needs `Clone`** (#1734).
+  One value that feeds a ciphertext and several terms is not copied.
+  - A sealed or indexed plaintext is bounded by `Encrypt + EncryptRef`,
+    where it was `Encrypt + Clone`. `EncryptRef` means `&T: Encrypt`.
+    vitaminc's types and its derive provide it. A type with only a
+    by-value `Encrypt` impl must add `impl Encrypt for &T`.
+    `stack_encrypt::EncryptRef` is a new re-export.
+  - `Encryption::zip` takes a borrowed description as its second
+    argument, and runs it first. The outputs keep their written order.
+  - `target::ShareSource` is removed. `target::ConsumeSource` stays for
+    `passthrough` only.
+  - `dynamic::ValueFrame` and `json::JsonPlaintext` are no longer `Clone`.
+  - A call on a keyset that is not loaded yet keeps no borrow of the
+    plaintext. The call keeps what it derived without the keyset: a
+    term's normalized form or order encoding, wiped on drop. A borrowed
+    JSON document is the one plaintext that is copied. That copy is made
+    once, and wiped.
+- **An operation in `Owned` mode wipes the value it is handed** (#1734).
+  `ciphertext` dropped a value whose context was refused without wiping
+  it. A match term dropped every value it was handed without wiping it.
+  Both wipe the value now, as every other operation does.
+  - `ciphertext`, `equality`, `matching`, `ore`, `ope`, `ore_block`, and
+    `indexed` are bounded by the new `target::WipeSource`, where they
+    were bounded by `SourceMode`. `Borrowed` implements it for every
+    plaintext. `Owned` implements it for a plaintext that is `Zeroize`.
+    So a value sealed or indexed in `Owned` mode must be `Zeroize`.
+  - `Index::operation` and `Indexes::operations` are bounded by
+    `WipeSource`. An `Index` implemented outside this crate changes
+    `M: SourceMode<'s, S>` to `M: WipeSource<'s, S>`.
+  - A query's value is handed to its index by value, so it must be
+    `Zeroize` too. Every query value this crate and `eql-bindings`
+    accept already is.
+  - A JSON document keeps its own guard and needs no `Zeroize`.
+    `json_terms` and `json_document` stay bounded by `SourceMode`.
+  - `Encryption::zip` is bounded by `WipeSource` too. While its argument
+    reads an owned value, `zip` holds the value in a guard. If a reader
+    panics, the value is wiped as the stack unwinds. A match term guards
+    the value it reads in the same way.
+- **An order index is bounded by vitaminc-ore's `Orderable`** (#1734).
+  `sem::Orderable` and `op::Ordered` are removed. `stack_encrypt::Orderable`
+  re-exports vitaminc-ore's trait, and its table is vitaminc-ore's.
+  - It covers the integers of 16 bits and wider, `f32`, `f64`, `String`,
+    `&str`, and `value::Date`, `value::Timestamp`, and `value::Decimal`. It
+    covers a reference to each. It does not cover bytes, an 8-bit integer,
+    or a `bool`.
+  - An order term, an order index, or an ordering operator over bytes does
+    not compile. Before, `OreTerm<Vec<u8>>` compiled, but no ordering
+    operator answered it. Its term revealed the order of the rows.
+  - To upgrade a record with an order index on bytes, remove the index.
+    Rows stored before stay readable. Opening reads only the ciphertext
+    and ignores the stored order term, so name the field
+    `StackCipherText`, or `Encrypted<..>` over the terms it keeps.
+  - `KeysetCipher::ore_term`, `ope_term`, and `ore_block_term` no longer
+    take bytes. They take a reference such as `&String` or `&str`, as well
+    as a value.
+  - An order index reads its value in place, so it is bounded by
+    `Orderable + EncryptRef`. A target or a query value of it is also
+    `Zeroize` and `'static`.
+  - A data plan still accepts an order index on bytes, and derives its term
+    as before. Stored rows and the conformance corpus do not change.
+  - The JSON index derives a string leaf's OPE term from the document in
+    place, and a data plan derives a text field's order term from the
+    frame in place. Each copied the text before.
+- **`value::Date`, `value::Timestamp`, and `value::Decimal` are vitaminc's
+  types** (#1734). Stack Encrypt's own copies are removed. The stored
+  format is unchanged.
+  - Build a `Date` from a jiff `civil::Date`, a `Timestamp` from a jiff
+    `Timestamp`, and a `Decimal` from a rust_decimal `Decimal`, with
+    `new` or `From`. Read one back with `to_jiff` or `to_decimal`.
+  - These are removed: `Date::from_days_since_epoch`,
+    `Date::days_since_epoch`, `Timestamp::new(seconds, nanoseconds)`,
+    `Timestamp::seconds`, `Timestamp::nanoseconds`,
+    `Decimal::new(mantissa, scale)`, `Decimal::mantissa`,
+    `Decimal::scale`, and `value::RangeError`.
+  - `Timestamp::new` returns `value::OutOfRange` for an instant that jiff
+    1.0.0 can make before its own minimum. `Date::new` and `Decimal::new`
+    cannot fail.
+  - None of the three is `Clone`.
+  - The `jiff` and `rust_decimal` features are on by default, and the
+    `dynamic` feature turns both on. With one off, its types do not
+    exist. A build with `default-features = false` must name them.
+- **The tree entry points return a `Pending`** (#1705), so they can take
+  audit metadata like every other call. `KeysetCipher::encrypt_tree`,
+  `KeysetCipher::decrypt_tree`, and `StackCipher::decrypt` were
+  `async fn`s. `.await` on them works as before. To migrate:
+  - Code that used the result as a `Future` (`tokio::spawn`,
+    `futures::join!`) calls `.into_future()` on it first.
+  - Awaiting a `Pending` on a native target needs the key source to be
+    `Sync`, as the scalar and plan entry points already did. Generic code
+    over the key source adds `K: Sync`.
+
+- **`PendingStackCipherText::seal` is removed** (#1705). Once `seal`
+  returned a `Pending`, it was the same function as `into_pending`. Call
+  `into_pending(cipher, context)` instead, with the same arguments. Await
+  the result as before. `KeysetCipher::encrypt_tree` plans and seals in
+  one call.
+
+- **Stack Encrypt now uses vitaminc 0.10, clww-ore 0.8 and ore-rs 0.12.**
+  The two order scheme releases only move to vitaminc 0.10: no order term
+  changes. vitaminc 0.10 is a breaking release, and three of its changes
+  reach callers of this crate.
+  - **The `chrono` feature is now `jiff`.** vitaminc 0.10 takes dates and
+    timestamps from the `jiff` crate, because `chrono` is marked
+    unmaintained (RUSTSEC-2026-0543). To upgrade:
+    - Enable the `jiff` feature in place of `chrono`.
+    - Convert a `value::Date` to and from `jiff::civil::Date`, in place
+      of `chrono::NaiveDate`. Every jiff date converts.
+    - Convert a `value::Timestamp` to and from `jiff::Timestamp`, in
+      place of `chrono::DateTime<Utc>`. `Timestamp::try_from` refuses one
+      instant: jiff 1.0.0 can make an instant up to one second before its
+      own `Timestamp::MIN` when it parses text with a UTC offset, and that
+      instant has no encoding.
+  - **Dates and timestamps must be in years -9999 to 9999.** The range
+    was years -262143 to 262142. The new range is jiff's, and every
+    language's binding uses it, so a value one binding encrypts, every
+    binding can decrypt. The exact limits:
+    - dates from `-009999-01-01` to `9999-12-31`;
+    - timestamps from `-009999-01-02T01:59:59Z` to
+      `9999-12-30T22:00:00.999999999Z`.
+
+    Encrypting a date or timestamp outside the range is refused, and so is
+    building a `value::Date` or `value::Timestamp` outside it
+    (`RangeError::Date`, `RangeError::Timestamp`). The stored format is
+    unchanged: a value in range has the same ciphertext and the same terms
+    as before. A row stored earlier with a date or timestamp outside the
+    range still passes authentication, but no longer decrypts: its leaf
+    no longer reads, so it is refused as `Error::Aead`, the error a damaged
+    ciphertext gets. A clearer error needs a change in vitaminc, which
+    cipherstash/vitaminc#630 tracks. PostgreSQL's `date` and `timestamptz`
+    allow years after 9999, so check before you upgrade if you might have
+    stored one.
+  - **`RangeError::LeapSecond` is renamed `RangeError::Nanoseconds`.**
+    jiff has no leap seconds, so the error now says only what is wrong:
+    `Timestamp::new` was given nanoseconds of one second or more.
+
+- **An index run over a `ValueFrame` refuses a value as `Error::Input`**
+  (#1459). An `IndexSpec` run directly over a `ValueFrame` it has no term
+  for (a boolean under equality, a container under ORE) failed with the
+  dynamic `Error::Term` boxed in `Error::Other`. It is now in
+  `Error::Input`, matched as `Error::Input(refusal)` with
+  `refusal.as_ref()` the `dynamic::Error::Term`, and its code is
+  `stack_encrypt::dynamic_term` rather than `stack_encrypt::other`.
+- **The structural API is removed** (#1661, #1662). Stack Encrypt had two
+  ways to encrypt a record and two ways to query one. The owned API stays:
+  `EncryptTarget`, `DecryptSource`, `EncryptInto`, `DecryptFrom`, field
+  references, and `dynamic::Planned` for a plan that is data. These are gone:
+  - The traits `EncryptFrom` and `DecryptInto`, the derives
+    `#[derive(EncryptFrom)]` and `#[derive(DecryptInto)]`, and the calls
+    `encrypt_as` and `decrypt_as`.
+  - The plan builder and the chain: `plan::Plan`, `Plan::context`,
+    `Plan::fields`, `Plan::value`, `build()`, `plan::pick`, `FieldRef`, `FieldsBuilder`,
+    `FieldValues`, `Fields`, `Field`, `FieldSchema`, `ValuePlan`, `Typed`,
+    `Stored`, `Laid`, `Runs`, `Opens`, `cipher.encrypt(&value)` with
+    `.context`, `.with`, `.fields`, `.using`, `.extend` and `.keyset`,
+    `cipher.query(op, value)` with `.on` and `.via`, `cipher.open(record)`,
+    and `plan::all`. The `plan` module keeps `PlanError` and `IntoLabel`.
+  - `target::Layout`, `target::JoinContext`, and tuples of targets such as
+    `(StackCipherText, EqualityTerm)`.
+  - `op::DefaultIndex`. Only the chain read it. A field's target type
+    names the index that answers an operator (`op::Answers`), and a plan
+    that is data reads `dynamic::Op::answered_by`.
+  - The JSON targets no longer open to a `serde_json::Value`. They open to
+    a `json::JsonPlaintext`, which is wiped when it is dropped.
+
+  To upgrade:
+
+  | Removed | Replacement |
+  | --- | --- |
+  | `keyset.encrypt_as(&value, context)` | `value.encrypt_into_with_context(&keyset, context)`. The plaintext is passed by value and must be `Zeroize`, so a `&str` becomes a `String`. |
+  | `cipher.decrypt_as(stored, context)` | `P::decrypt_from_with_context(stored, &cipher, context)` |
+  | `#[derive(EncryptFrom, DecryptInto)]` | `#[derive(EncryptTarget, DecryptSource)]`, with the same `#[stash(..)]` attributes. The plaintext type derives `Zeroize`. A `struct = ..` record seals every plaintext field or marks it `#[stash(passthrough)]`. |
+  | `cipher.encrypt(&value).context("a/b")` | `keyset.encrypt_tree(&value, &Label::parse("a/b")?)` |
+  | `cipher.encrypt(&value).context(c).with((Equality, Ore))` | `value.encrypt_into_with_context::<Encrypted<(EqualityTerm, OreTerm<u32>)>, _>(&keyset, c)` |
+  | `Plan::context("users").fields()..build()` and `.using(&plan)` | A derived record, `#[stash(struct = User, scope = "users")]`. A program whose declaration is data parses it with `dynamic::record::plan` and runs `dynamic::Planned::new(&plan, value)`. |
+  | `cipher.query(op::Eq, value).on(&plan)` | The field's reference: `EncryptedUser::EMAIL.eq(value).encrypt(&keyset)` |
+  | `cipher.open(record).using(&plan)` | `P::decrypt_from(record, &keyset)` |
+  | `plan::all((a, b))` | `a.zip(b)` on two `Pending` values, or `Pending::all`. Both wipe the plaintext a decrypt recovered if a later item fails. |
+  | A hand-written `impl EncryptFrom<S> for T` | `impl EncryptTarget<S> for T` with `type ContextInput = RequiredContext<CallerContext>`, and `DecryptSource` in place of `DecryptInto` |
+
+  A typed JSON query, `cipher.query(op::Contains, ..).on(&plan)` and
+  `op::AtPath(..)`, is the document field's reference query: see "Typed JSON
+  queries from a field reference", above.
+
+  What has no replacement yet:
+  - **Naming another index for a query** (`.via(index)`). A field reference
+    answers through the index its field's type declares.
+  - **A keyset chosen by name on a call** (`.keyset("tenant")`). Load the
+    keyset first, with `cipher.keyset(..)`.
+
+  Notes for a hand-written target and for two kinds of record:
+  - `DecryptField` and `Decryptable` stay. A hand-written target that is a
+    record field implements `DecryptField` through `DecryptSource`.
+  - A record that is generic over a lifetime needs `'a: 'static`, because
+    `EncryptTarget` requires `Self: 'static`.
+  - A field whose type is a derived `plaintext = T` record has no field reference
+    method, because the derive writes no `op::Answers` for the record.
+    Implement `op::Answers` and `op::LabelledTarget` for the record by
+    hand to query it.
+
+- **`target::open` requires its plaintext to be `Zeroize`** (#1666). Its
+  output is recovered plaintext, and a `Decryption::zip` or
+  `Decryption::all` that holds it now wipes it when a later leaf fails. A
+  `DecryptSource<P>` already requires `P: Zeroize`, so a hand-written
+  target that calls `open` for its own plaintext type is unaffected. A
+  caller that opens a type that is not `Zeroize` wraps it in one that is,
+  or implements `Zeroize` for it.
+- **The JSON index answers no typed operator through `Supports`** (#1459).
+  `Json`'s `Supports` impls for `op::Contains`, `op::ContainedBy` and
+  `op::AtPath`, `JsonDocument`'s `Answers` and `LabelledTarget` impls, the
+  `Input` impls of a path and a value, and `json::AtPathTerms` are
+  removed. Only the removed query chain reached them; a field reference's
+  JSON queries replace them. The operator types stay: the dynamic `Op`
+  enum is generated from them.
+
+- **A set of terms holds one index for each operator.**
+  `Encrypted<Terms>` and a derived `plaintext = T` record now refuse a set
+  that names one index twice, such as `Encrypted<(EqualityTerm,
+  EqualityTerm)>`, or two indexes that answer one operator, such as
+  `Encrypted<(OreTerm<u32>, OpeTerm<u32>)>`. The refusal is
+  `PlanError::DuplicateIndex` or `PlanError::IndexOverlap`, when the value
+  is encrypted and before any key is requested. The refused fields still
+  show in the record's `contexts()`. The plan builder refused
+  these sets, a plan that is data still does, and a field reference has no method
+  for an operator that two indexes answer. Used directly as a target,
+  such a set was accepted before.
+  - A tuple of terms now has two or three terms. There are three
+    families of operators (equality, match and the orderings), and
+    `OreTerm`, `OpeTerm` and `OreBlockTerm` all answer the orderings, so
+    every tuple of four or five terms holds two that answer one operator.
+    `TermSet`, `Answers` and `LabelledTarget` are no longer implemented
+    for those tuples, so a field such as `Encrypted<(EqualityTerm,
+    MatchTerms, OreTerm<String>, OpeTerm<String>)>` is a compile error
+    rather than a refusal every time it is encrypted. To migrate, keep
+    one ordering term. A tuple of four or five indexes passed to
+    `indexed` is unchanged.
+
+- **A data plan field that names an EQL type takes a scope and a
+  binding** (#1658). `dynamic::TargetResolver` now receives them:
+  `encrypt` and `decrypt` take `parts: &DeclaredContext` after the label,
+  and `query` takes `scopes: &DeclaredContext`. A resolver runs the type
+  under the label, then those parts (`parts.clone().under(label)`), as
+  the lowering runs a field with outputs.
+  - Such a plan was refused with `TargetError::Extended`, at build time
+    for an extended plan and at `with_bindings` and a scoped call. That
+    variant and its code `stack_encrypt::target_extended` are removed.
+  - The EQL value stores the label's column alone. Whoever reads it
+    supplies the scopes and the bindings again.
+  - `Plan::contexts()` and `Planned::contexts()` show a target field
+    under the same parts as a field with outputs.
+  - A document field's JSON operators and reads run under the same
+    parts. `dynamic::query_term` derives a JSON operand under the label,
+    then the plan's scopes, so a query finds the documents sealed under
+    the same scopes. `dynamic::json_open` derives its selector or read
+    key under them too, and opens each entry under the plan's bindings
+    as well.
+  - `dynamic::json_open` and `check_json_open` take a plan with a
+    binding, where they refused one (`Reason::BindInQuery`): the entries
+    were sealed under it. A query still refuses a binding.
+
+- **`target::legacy` is removed** (#1488). It held two traits,
+  implemented for every type, that gave the structural API a second
+  call syntax. Their names were the same as the owned traits'
+  `EncryptInto` and `DecryptFrom`, but they borrowed the plaintext. Use
+  the owned traits, which take the plaintext by value. The entry "The
+  structural API is removed", above, has the upgrade table.
+
+- **`target::ExpectedContext` is no longer part of the API** (#1488). It
+  is the check that a `#[stash(context_field)]` record runs on decrypt:
+  the stored context must equal the one the caller expects, if the caller
+  names one. It is now hidden from the documentation and from the lists
+  of implementors in compile errors. It stays public only so that code
+  the derives emit, and the EQL types in `eql-bindings`, can name it.
+  Code that names it still compiles, but the type is outside semver and
+  may change in any release.
+  - To upgrade, do not name the type. For a record whose context field
+    has type `C` and whose plaintext has type `P`, pass the
+    `NonEmpty<C>` you expect, or `()` for no check, and let `Into`
+    convert it: `P::decrypt_from_with_context(record, &cipher, expected)`.
+    For no check, `P::decrypt_from(record, &cipher)` also works.
+
+- **A data plan refuses an order index on bytes** (#1577).
+  `dynamic::admits` no longer admits `ore`, `ope` or `ore_block` on a
+  `bytes` field, so `record::plan` refuses the declaration with
+  `index_not_admitted`. Go reaches the same check through the guest.
+  Before, the declaration was accepted, each row stored an order term
+  that anyone who held two rows could compare, and every ordering query
+  was refused as `operator_not_answered`.
+  - To upgrade, remove the index from the plan. A row stored with the
+    term still opens under the new plan: opening ignores a stored term,
+    and an index-only field, that the plan does not declare. The stored
+    terms stay in the database until the row is written again.
+  - The dynamic path no longer derives an order term of bytes, as the
+    typed path does not. `IndexSpec::defines` reports no order term for
+    bytes, and `dynamic::term` refuses one.
+  - The conformance corpus follows. In `record-declarations-v1` the
+    cases `type-bytes-ore`, `type-bytes-ope` and `type-bytes-ore_block`
+    are now refused. `record-values-v1` no longer has an `unanswered`
+    list. In `record-query-refusals-v1` the bytes field declares
+    equality alone, and the six `*-on-bytes-order-index` cases are
+    renamed `*-on-bytes`.
+  - `tests/fixtures/stored_rows_v1.json` is not changed. Its `every_kind`
+    plan declares an order index on two bytes fields. The test now opens
+    those rows under the plan with the indexes removed.
+
+- **`CipherRef` replaces `target::CipherScope` and `dynamic::Scope`**
+  (#1488). A `CipherRef` is one borrowed value: a connection, and the
+  keyset it is confined to, if any. It is built from `&StackCipher`,
+  `&KeysetCipher`, or an owned `KeysetCipher`, and in no other way.
+  - Every entry point that took `impl CipherScope` takes
+    `impl Into<CipherRef>`. A call that passes `&cipher` or `&keyset`
+    compiles unchanged. These are `DecryptFrom::decrypt_from` and
+    `decrypt_from_with_context`, and `Pending::ready`, `failed`,
+    `request` and `all`.
+  - A function of your own that took `impl CipherScope<'a, K>` takes
+    `impl Into<CipherRef<'a, K>>` instead.
+  - These entry points now also take an owned `KeysetCipher`.
+  - A pending built through `&keyset` now lives as long as the
+    connection, not as long as the borrow of the keyset handle. So
+    `i32::decrypt_from(ciphertext, &cipher.default_keyset())` compiles
+    when the pending is stored and awaited later.
+  - `dynamic::record::decrypt` and `decrypt_with` take
+    `impl Into<CipherRef>` too. Write `&cipher` in place of
+    `Scope::Client(&cipher)`, and `&keyset` or `keyset` in place of
+    `Scope::Keyset(keyset)`.
+  - The rules do not change. A reference to a `StackCipher` opens a leaf
+    from any keyset the client can use. A reference to a `KeysetCipher`
+    refuses a leaf from another keyset with `ForeignKeyset`, before any key
+    is retrieved.
+  - `CipherRef::keyset_id()` returns the keyset the reference is confined
+    to. `CipherRef` is re-exported from the crate root.
+
+- **Every operator is declared once, and `op::Supports` has one method**
+  (#1279, #1318). The `op` module lists each operator with its type, its
+  arity and its wire name; the dynamic enum `Op` (`dynamic::OpSpec` until
+  now, kept as a deprecated alias), each type's `Operator::OP` and
+  `Op::name` are generated from that list, so `op::Eq`, `Op::Eq` and
+  `"eq"` cannot drift apart. `Leaf` gains `AT`, the operator's path form.
+  - `Supports::check`, `verifier` and `admit` are one
+    `prepare(&self, input) -> Result<Self::Verifier, Error>`, called once
+    per query, when the query is awaited and before any keyset is
+    resolved. A match query is prepared once and keeps its tokens as the
+    verifier. An index outside this crate implements `prepare` in place of
+    the three. `Operator::OP` and `Leaf::AT` are new, with `None` defaults,
+    so an operator outside this crate needs nothing more.
+  - What a query is refused for is written once, in the `sem` module, for
+    a typed query and the dynamic path alike. So a typed query now
+    refuses an equality or order query of text with no normal form, and
+    block ORE text over its limit, before the keyset is resolved
+    (#1321); the dynamic path already did. `Supports<Eq, S> for Equality`
+    and `Answers<Eq, S>` need `S: Clone` for that check.
+  - `op::Matches` has no case parameter: `Case`, `CaseInsensitive`,
+    `CaseSensitive`, `op::MatchCase` and `PlanError::MatchCase` are gone.
+    Case is the match index's configuration alone, for the stored filter
+    and the query. Write `op::Matches` where you wrote
+    `op::Matches.case_sensitive()`; a `MatchConfig` needs no `MatchCase`.
+  - `dynamic::term` prepares its probe as `query_term` does, and the
+    stored-term derivation no longer carries a query flag.
+- **A field declares at most one index per operator** (#1233).
+  `(Ore, Ope)` and `(Ore, OreBlock)` are refused when the plan is built,
+  as `PlanError::IndexOverlap` on the typed path and `overlapping_outputs`
+  on the dynamic one, before any key is requested; two match indexes were
+  already one index twice (`DuplicateIndex`). `(Equality, Ore)` answer
+  different operators and are allowed. The rule is a declaration's.
+  `Encrypted<(OreTerm, OpeTerm)>` as a target, and a derived
+  `plaintext = T` record with those two fields, are refused the same way
+  (see "A set of terms holds one index for each operator", above). The
+  combinator `indexed(..)` composed by hand with two order indexes still
+  runs, since no query reads the second term. Each index declares the operators it answers once (`Equality::OPERATORS`,
+  `Ore::OPERATORS`, …; `IndexSpec::operators` and `IndexSpec::answers`
+  read them), and `Op::answered_by` has no priority between order indexes.
+  A field that stored both order terms wrote the OPE one for nothing, and
+  it told anyone who read the column how its values order.
+
+- **Every part of a context is a scope or a binding** (#1487). Search terms
+  derive under the query context, the scopes. The data key and the AAD
+  derive under the stored context, the scopes then the bindings. A record
+  with no binding stores exactly the bytes it stored before: the frozen
+  vectors do not change.
+  - A derived record lists the parts its caller supplies:
+    `#[stash(struct = User, scope = "users", scope(tenant: u64), bind(row: u128))]`.
+    The caller passes `Scope::new(tenant)`, `Bind::new(row)`, or
+    `Scope::new(tenant).bind(row)`. A part the record does not list does
+    not compile. The record's `ContextInput` is `RequiredContext<Parts<..>>`.
+  - A part stored in the row is listed as `scope(field = "tenant")` or
+    `bind(field = "id")`, in a `passthrough` field. The engine reads it from
+    the plaintext on encrypt and from the row on decrypt. A reader may pass
+    it to check it, and a mismatch is `ContextMismatch` before any key is
+    requested.
+  - `CallerContext` holds the scopes and the bindings apart, with `query()`
+    and `stored()`. `AeadContext` is the stored context. An empty `Scope`
+    or `Bind` is refused before any key is requested
+    (`PlanError::EmptyPart`).
+  - The dynamic record grammar has a plan-level `"bind"` key, a list of
+    parts. A query on a plan with a binding is refused, `bind_in_query`,
+    before any key is requested. `dynamic::record::Plan::with_bindings` and
+    `bindings` carry it. The key is reserved, so a field named `bind` is
+    refused (`bind`), and so is a grouped part, since a binding part is a
+    scalar. An empty binding is refused (`empty_binding`), and so is an
+    explicit empty list.
+  - A typed query carries no binding either: `.extend(Bind::new(..))` does
+    not compile, and a binding inside a `CallerContext` or `DeclaredContext`
+    is `PlanError::BindInQuery` when the query is awaited, before any key.
+  - `CallerContext` is no longer an `IntoContext`: a context with a binding
+    is two contexts, so a leaf takes `query()` or `stored()` by name, and a
+    PRF or AEAD API is never handed one whole. `AeadContext` nests a binding
+    as `CallerContext::extend` does. A JSON document seals under the stored
+    context and derives its selectors under the query context, so a bound
+    document is found by a query under the scopes.
+  - `Contexts` and `CallContexts` show a `query context:` line and a
+    `stored context:` line for a field with a binding, and one `context:`
+    line otherwise. `assert_context!` states both as
+    `field = { query = [..], stored = [..] }`. The placeholders say `scope`
+    and `bind`: a plan's optional extension is `{scope?: CallerContext}`,
+    which `testing::caller_scope()` states. `testing::extension()` is
+    renamed to `caller_scope()`.
+
+- **`OpaqueDecode` no longer requires vitaminc's `Decrypt` trait.** If you
+  only name types that implement `OpaqueDecode`, nothing changes, because
+  the trait is sealed. If your generic code is bounded on `P: OpaqueDecode`
+  and calls `P::sink()` or another `Decrypt` method, add a `P: Decrypt`
+  bound. The change lets `OpaqueBlob<T>` implement `OpaqueDecode`: a blob
+  opens as a bytes leaf and is decoded afterwards, so it cannot implement
+  `Decrypt`.
+- **The record attribute `context = ".."` is now `scope = ".."`**. The
+  value is
+  the record's name, the first scope of each field's context, and the
+  stored data does not change. Write `#[stash(struct = User, scope =
+  "users")]`. The old spelling is a compile error that names the new one.
+  The Go `context=` tag is not renamed yet.
+- Repeated plan-chain `.extend(..)` calls now append parts in order, matching
+  Go's `Cipher.Extend`, instead of replacing earlier extensions.
+  `.extend(())` adds nothing, and grouped `NonEmpty` parts retain their grouping.
+  Records written using the previous replacement behavior must still be opened
+  with the final extension alone. Queries using repeated extensions now derive
+  different terms and silently miss those old rows: they return no error. Keep
+  the final extension alone for both reads and queries of old data, or re-encrypt
+  and re-index it under the appended context. This does not migrate stored data.
+- **stack-encrypt requires the vitaminc 0.9 crates (vitaminc-protected
+  0.9.1), clww-ore 0.7 and ore-rs 0.11.** If your crate names a vitaminc type that stack-encrypt takes
+  or returns, move it to vitaminc 0.9 too. No sealed bytes, terms, or stored
+  formats change. Two parts of this crate's API change:
+  - The re-exported frame codec, `stack_encrypt::dynamic::frame`, now writes
+    into a `vitaminc_protected::Buffer`, not a `Vec<u8>`. A `Buffer` wipes each
+    allocation it outgrows. `serde::to_vec` returns a `Buffer`, and
+    `FrameWriter` writes into one. `Buffer` is re-exported as
+    `stack_encrypt::Buffer`. `ValueFrame::into_inner` still returns
+    `Protected<Vec<u8>>`.
+  - The frame readers take a `ProtectedRef<'_, [u8]>` in place of a
+    `&[u8]`: `dynamic::context`, `record::plan`, `record::plan_with`,
+    `ValueFrame::from_bytes`, `ValueFrame::check`, `IndexSpec::from_frame`,
+    and `op::Stats::from_frame`. Pass a `Buffer` or a `ValueFrame` with
+    `.as_protected_ref()`, and a `Protected<Vec<u8>>` with
+    `.as_protected_ref().as_deref()`. Bytes that arrive as a plain `Vec<u8>`
+    or `&[u8]` go into a `Protected` first. The `Protected` wipes them. So a caller
+    never reads the bytes with `risky_ref` to pass them to a reader. This
+    needs vitaminc-protected 0.9.1. `AsProtectedRef` and `ProtectedRef` are
+    re-exported from the crate root, and `ValueFrame` now implements
+    `AsProtectedRef<'_, [u8]>`.
+  - `ValueFrame::of` no longer names a repeated map key outside a
+    passthrough. `ValueFrame::of` returns `DecodeError::Source` in place of
+    `DecodeError::DuplicateKey(key)`, and the source error is
+    `FrameWriteError::DuplicateKey`.
+    The vitaminc 0.9 writer does not copy the key out of the frame, because
+    the key is plaintext. A record source still reports `Reason::RepeatedKey`
+    for the field.
+
+### Added
+
+- **A declaration and a call show the context they use, before any key is
+  requested** (#1568). `Encryption::contexts()` lists the context of each
+  field that is sealed or indexed, with a typed placeholder for each part
+  the caller supplies, such as `{context: u64}`. The derives emit
+  `contexts()` on every record, and `Plan::contexts()` shows a plan's. A
+  data plan's field that names an EQL type is shown under its label alone,
+  in plan order, since an EQL value takes no part from the caller.
+  `Pending::context()` lists the exact contexts a prepared call will use,
+  with the caller's values filled in. Both views show each part's type:
+  `7u64`, `7i64`, the text `7`, and the bytes `0x37` are four different
+  contexts. The views are built by the same combinators that build the key
+  descriptor and the AAD, so what a developer sees is what the engine uses.
+  The dynamic interface has the same view, `dynamic::record::Plan::contexts`.
+- **The `testing` feature adds `assert_context!`**, which pins the context
+  of a declaration or a call in a test. It names the first part that
+  differs. `assert_contexts!` pins each context a call uses, in order.
+  `stack_encrypt::testing` also has `required`, `optional`, `extension`,
+  `from_plaintext`, and `list`, which state the caller's parts and a
+  one-part list.
+- **A context can be passed by reference.** `CallerContext`, `AeadContext`,
+  and `DeclaredContext` convert from `&NonEmpty<T>`, so
+  `value.encrypt_into_with_context(&keyset, &column)` compiles for a target
+  that takes a `CallerContext`, and the column is still usable afterwards.
+- **A target can take its context from a field of the plaintext:
+  `Encryption::context_from`** (#1586). Some values arrive together with the
+  context they are stored under. For example, a value decrypted from an older
+  format comes with its column. Such a value now encrypts with no context
+  argument.
+  - A type that wraps the target names the field once, in its
+    `EncryptTarget` declaration. The type declares `NoCallerContext`.
+  - The target must store its context in the row, so its context input must
+    be a typed `NonEmpty<C>`. Records with a `context_field`, and EQL types,
+    qualify. Opening a value never needs its plaintext.
+  - The field is picked by reference, so a context cannot be computed from
+    the sealed value.
+  - An empty context fails the encryption. No key is requested.
+  - The picked field is sent to ZeroKMS and stored in the clear. The field
+    must not be secret.
+- **Optional values through the owned API: `Option<T>`** (#1585). An
+  `Option<S>` encrypts into an `Option<T>` for any owned target `T`, and
+  decrypts back.
+  - `None` stays `None`. Nothing is stored. No key is requested. The column
+    is a database NULL.
+  - `Some` is the target alone, under the same context.
+  - The context input is the target's, so a call is the same whatever the
+    data.
+
+  A database NULL is not a sealed null. A sealed null is a stored value that
+  means "null". An EQL type encrypted from an `Option<String>` writes one.
+- **Owned records: `#[derive(EncryptTarget, DecryptSource)]`** (#1483). A
+  struct now encrypts field by field into a record type that declares its
+  own layout. The crate docs' "Records" section and the derive crate's
+  "Owned records" section show each form. The `tests/ui` cases pin the
+  forms that are refused, with the error at the field.
+  - With `#[stash(struct = User, scope = "users")]`, each field's target
+    is given the context `("users", "<field>")`: the record's name, then the
+    field's name. `#[stash(from = ..)]`
+    names another source field, and `identity = ".."` sets the second part
+    of the context, as on the structural derive.
+  - A `#[stash(passthrough)]` field is moved from the plaintext into the
+    record, in the clear. It is never copied. A passthrough field is **not
+    encrypted and not authenticated**. Use it only for values that are not
+    secret, and treat the value read back as untrusted input.
+  - `user.encrypt_into(&keyset)` consumes the plaintext, wipes every field
+    it seals, and moves the passthrough fields. `User::decrypt_from(record,
+    &cipher)` decrypts each field under its context, and moves the
+    passthrough fields back.
+  - A `struct` record takes no context from the caller. Its input is
+    `DeclaredScopes`, so `encrypt_into_with_context` does not compile for
+    it. A caller's scope or row binding will be declared on the record, with
+    attributes that are not built yet.
+  - Records nest. The outer field's context extends the contexts of the
+    inner record's fields.
+  - A `#[stash(plaintext = String)]` record can be searched, for example a
+    `Ciphertext` beside an `EqualityTerm`. It can be a field of a `struct`
+    record.
+  - A `context_field` record stores its context, and decrypts under an
+    `ExpectedContext`.
+  - A `Vec<User>` encrypts into a `Vec<Record>` with one batched key
+    request.
+  - The plaintext type must implement `Zeroize`. A `struct` record must name
+    every field of its plaintext, as a sealed field or a passthrough field.
+    A field it leaves out is a compile error, so no field is dropped without
+    being wiped. For the same reason, the plaintext type cannot implement
+    `Drop`, so it cannot derive `ZeroizeOnDrop`.
+  - The decrypt derive also implements `DecryptSource<Protected<P>>` for
+    each plaintext type the record names. `Protected::<User>::decrypt_from(
+    record, &cipher)` returns the plaintext inside a `Protected`, which
+    wipes it when it is dropped. A `Vec` of records decrypts into a
+    `Vec<Protected<User>>`. `User::decrypt_from` still returns a bare
+    `User`, which the caller must wipe.
+  - If a later field is refused during decryption, the fields already
+    decrypted are wiped.
+  - `#[derive(DecryptSource)]` also implements `DecryptField`, so a
+    record can be a field of another record.
+- **A `Ciphertext` decrypts into a `Protected`.** `OpaqueDecode` now covers
+  every `Decrypt + Zeroize` type, not only the `FromScalar` ones. So
+  `keyset.decrypt::<Protected<String>>(ct)` and
+  `Protected::<i32>::decrypt_from_with_context(ct, &keyset, ctx)` work, and
+  the `Protected` wipes the plaintext when it is dropped. A target that is
+  not a scalar, such as `Vec<String>`, now compiles too. Opening refuses it
+  with `Error::OpenedType`.
+- **`Decryption::zip_wiping`**, a `zip` for recovered plaintext. The right
+  side can fail after its key arrives, or panic in its conversion. The
+  plaintext that the left side recovered is then wiped, not dropped as it
+  is. The owned record derive decrypts its fields through this method.
+- **`EncryptTarget::owned_encryption` and `EncryptTarget::indexes`.**
+  - `owned_encryption` describes the encryption over the plaintext by
+    value, in `Owned` source mode. By default, it guards the value with
+    `Protected`, runs `encryption` over a borrow of it, and wipes it before
+    the pending request is returned. `EncryptInto` and the owned column run
+    this method.
+  - A record overrides `owned_encryption`. It divides the struct between its
+    fields with the new `Encryption::split`. `split` runs two descriptions
+    over two parts of one value, under one context. `split` also takes a
+    `wipe` function for the part that waits while the first description
+    runs. If that description panics, `wipe` wipes the waiting part.
+  - `Encryption::project_owned` is also new, for generated code. The method is
+    hidden from the docs. It drops the other fields of the struct without
+    wiping them. The derive calls it only when the plaintext has one field.
+  - `EncryptInto` guards the plaintext until the declaration and its context
+    have been built. So a declaration that panics while it is being built
+    wipes the plaintext.
+  - `indexes` returns the indexes that a plan field typed with the target
+    supports. The terms, `Encrypted<Terms>`, and `plaintext` records report
+    their indexes.
+- **The core leaves implement the owned declarations.**
+  - `StackCipherText` takes a `RequiredContext<AeadContext>`, to encrypt
+    and to decrypt. The owned form seals the value without a copy. When the
+    context is refused, the value is wiped.
+  - `Encrypted<Terms>` takes a `RequiredContext<CallerContext>` to encrypt,
+    and a `RequiredContext<AeadContext>` to decrypt. The owned form wipes
+    the ciphertext's copy of the value when the context is refused.
+  - `EqualityTerm`, `MatchTerms`, `OreTerm`, `OpeTerm`, and `OreBlockTerm`
+    implement `EncryptTarget` alone.
+  - `Ciphertext` implements `Decryptable` and `DecryptField`, so it can be a
+    record field.
+- **`DeclaredScopes`** is the input of a `struct` record, whose fields have
+  their own contexts. The caller passes no context. A record that contains
+  the record, or a plan, passes the field's context, which extends each of
+  the inner record's contexts.
+- **`ExpectedContext<T>` is a `ContextInput`.** If the caller leaves the
+  context out, the record decrypts under the context it stores, unchecked.
+  If the caller passes a `NonEmpty<T>`, the stored context must equal it.
+  - `DeclaredScopes` and `ExpectedContext` convert from the structural
+    contexts, `DeclaredContext` and `CallerContext`. So do the
+    `RequiredContext` wrappers of the core contexts. This is how a record
+    field is given its context.
+- **Owned collections: `EncryptInto` encrypts a `Vec<S>` into a `Vec<T>`,
+  and `DecryptFrom` decrypts it back** (#1482). `Vec<T>` implements
+  `EncryptTarget<Vec<S>>` and `DecryptSource<Vec<P>>` for any owned element
+  target. For example, `vec![29i32, 34].encrypt_into::<Vec<Ciphertext>, _>(&keyset)`
+  needs no caller context, and `Vec::<i32>::decrypt_from(ciphertexts, &keyset)`
+  decrypts the result.
+  - A collection uses its element target's `ContextInput`. A collection of a
+    `RequiredContext` target must be given a context, and a collection of a
+    `NoCallerContext` target cannot be given one. `Default` does not change
+    either rule.
+  - Each element is encrypted under its own data key and authenticated on
+    its own. An element's position and the number of elements are not
+    authenticated. That suits the common case of storing each element in its
+    own database row. A query can return rows in any order, or only some of
+    them.
+  - A collection makes one logical batch of key requests, in element order.
+    That is one `generate_keys` call to encrypt it, and one `retrieve_keys`
+    call for each keyset to decrypt it. An empty collection makes no call. The key
+    source can still split a logical batch into several requests to its
+    provider.
+  - Each element is wiped by its own declaration before the pending request
+    is returned, even when the context is refused. If a declaration panics,
+    the elements not yet handed over are wiped too. The elements do not need
+    to implement `Clone`.
+  - If an element fails after earlier elements were decrypted, the earlier
+    plaintexts are wiped before the error is returned. If an element's
+    conversion panics, they are wiped before the panic unwinds.
+  - A `Vec<u8>` is not a collection of bytes. A `Vec<u8>` is one byte
+    string, as the next entry describes.
+  - `keyset.encrypt` still takes a single value, and `encrypt_tree` is still
+    the structural path.
+- **Byte strings encrypt as one value: `Vec<u8>` and `[u8; N]` encrypt into
+  one `Ciphertext`, and a `Vec<Vec<u8>>` encrypts into a `Vec<Ciphertext>`.** So
+  `keyset.encrypt(vec![1u8, 2, 3])` and
+  `Vec::<u8>::decrypt_from(ciphertext, &keyset)` now compile. The structural
+  API and the Go SDK already encrypted byte strings this way.
+  - `OpaqueEncode` is now implemented for every owned `Zeroize` type whose
+    borrow is a Vitamin C `plaintext::Scalar`. A `Scalar` is a type that
+    Vitamin C encrypts as a single value. `OpaqueDecode` is implemented for
+    every `Zeroize` type that implements `FromScalar`.
+  - Before this change, both traits were implemented for a list of types
+    kept by hand. That list did not include the byte strings that Vitamin C
+    treats as single values.
+  - Your own type becomes an `OpaqueEncode` type if its borrow implements
+    `Scalar` and the type implements `Zeroize`.
+  - `u8` alone, and a `Vec` of any type other than `u8`, still do not encrypt
+    into one `Ciphertext`.
+- **`ValueFrame` implements `PartialEq`, comparing frames in constant time.**
+  Two frames are equal when their bytes are. So `34u32` and `34u64` are not
+  equal. Two maps with their keys in a different order are not equal either. Frames
+  of different lengths are unequal at once. The frame is now held in an
+  `Equatable<Protected<Vec<u8>>>`. Until vitaminc-protected implements
+  `ConstantTimeEq` for `Vec<u8>` (cipherstash/vitaminc#602), the bytes are
+  compared through `TimingSafeEq`.
+- **`OpaqueBlob<T>` encrypts a whole value as one `Ciphertext`** (#1484).
+  Use it to store a struct, map, or `Vec` as one ciphertext under one data
+  key. Encrypt with `keyset.encrypt(OpaqueBlob::new(value))`, for any
+  `Serialize + Zeroize` value. Decrypt with
+  `keyset.decrypt::<OpaqueBlob<T>>(ct)`, for any
+  `DeserializeOwned + Default + Zeroize` type, then call `into_inner()`.
+  - The value is encoded with version 1 of Vitamin C's storage profile
+    (`vitaminc_aead_frame::storage`). The encoded bytes start with a `VCS`
+    header and a version byte, inside the plaintext. The profile has a
+    frozen specification and a golden corpus of test vectors.
+  - The encoded bytes are sealed as one bytes leaf of the `SealedValue` v1
+    envelope. The envelope does not change. Encrypting a blob makes the same key
+    request as encrypting a scalar.
+  - The format is the Go SDK's opaque-struct format
+    (`vcffi.MarshalStorage`). A Go-written opaque column opens in Rust, and
+    a Rust-written one opens in Go, when the field types correspond. The
+    `blob` module docs give the rules. Both test suites pin the same bytes.
+  - A `Vec<OpaqueBlob<T>>` encrypts into a `Vec<Ciphertext>`, one ciphertext
+    per element, with every key requested together. An
+    `OpaqueBlob<Vec<T>>` is one ciphertext.
+  - There is still no `Serialize` fallback. A struct passed to `encrypt`
+    without the wrapper does not compile. An `OpaqueBlob` of a type that
+    does not implement `Zeroize` does not compile either.
+  - `OpaqueBlob::encode` and `OpaqueBlob::decode` give access to the
+    encoding. `blob::HEADER` and `blob::VERSION` are the header bytes.
+  - The `blob` module docs cover the supported types and schema changes.
+    The docs also say what the ciphertext's length reveals: the encoded
+    length plus a constant, because nothing is padded. Architecture
+    decision record ADR-0011 records the decision.
+- **A decrypted `OpaqueBlob<T>` is wiped when it is dropped.** The blob
+  stores its value in a `Zeroizing<T>`. `into_inner` returns that
+  `Zeroizing<T>`, so the value is still wiped on drop after it leaves the
+  blob. `Zeroizing<T>` derefs to `T`. A decrypted scalar is still an ordinary owned value, and nothing
+  wipes it on drop.
+- **A blob refused part-way through reading wipes the fields it read**
+  (#1676). A valid blob of another shape can be refused after some of its
+  fields are read, for example when a later field is missing or has another
+  type. Those fields used to be dropped unwiped, because serde holds them
+  until the whole `T` is built. Decrypting now reads the blob in place
+  into a `T::default()` held in a `Zeroizing<T>`, through serde's
+  `Deserialize::deserialize_in_place`, and a refusal wipes that value. This
+  covers the fields of most derived structs, the fields of a struct nested
+  in one, and the elements of a `Vec` stored before the refusal.
+  - Decrypting an `OpaqueBlob<T>` now needs `T: Default`. Add
+    `#[derive(Default)]` to the type.
+  - stack-encrypt turns on serde_derive's `deserialize_in_place` feature.
+    Cargo shares a crate's features across a build, so every
+    `#[derive(Deserialize)]` in a build with stack-encrypt also writes
+    `deserialize_in_place`. `deserialize` does not change.
+  - A field serde skips when reading (`#[serde(skip)]` or
+    `#[serde(skip_deserializing)]`) keeps the value `T::default()` gives
+    it. A `#[serde(default = "...")]` on that field or on its struct is not
+    used, so make `T::default()` give the value the field should have.
+  - serde still builds some values whole, and a refusal inside one of them
+    still drops what it built unwiped (#1754): an element of a sequence, a
+    map, an `Option`, a `Box`, an enum, a field read with
+    `deserialize_with`, and a struct the derive writes no in-place read
+    for. That is a struct marked `#[serde(transparent)]`, `from` or
+    `try_from`, one with a `#[serde(flatten)]` field, and one whose every
+    field uses `deserialize_with`; when `T` is such a struct, a refusal
+    wipes nothing `T` read. A part that wipes itself on drop, such as a
+    `Zeroizing<String>`, closes that gap for that part.
+  - serde reserves room for at most 1 MiB of a sequence's elements before
+    reading them. A longer sequence regrows its buffer as it is read and
+    frees each old buffer unwiped, as it did before this change.
+- **Encrypting an `OpaqueBlob` wipes the value in every case.** The value is
+  wiped before `encrypt` returns the pending request, both on success and
+  when the value cannot be encoded. A failed encoding requests no key. A
+  context that is too long for a key request is refused before the value
+  is encoded, as it is for a scalar. The encoded bytes are held in a `Buffer`
+  that wipes itself. On decrypt, the opened bytes are held in a `Protected`
+  buffer while they are read.
+- **`Error::Blob(BlobError)` reports why a blob was refused.** It has one
+  variant and one error code for each kind of refusal:
+  - `blob_unwritable`: the value cannot be encoded. This error happens
+    before any key is requested.
+  - `blob_not_a_blob`: the decrypted bytes are not a storage blob.
+  - `blob_unsupported_version`: the blob is a later version of the storage
+    profile. Upgrade stack-encrypt to read it.
+  - `blob_malformed`: the blob breaks a rule of its version.
+  - `blob_mismatch`: the blob is valid. It is not a value of the type you
+    asked for.
+
+  The last four happen only after the ciphertext was authenticated, so
+  they mean the data was written as something else, not tampered with.
+  Other refusals are reported as before:
+  - Tampering is `Aead`.
+  - A wrong context is `Kms`, because ZeroKMS refuses to return the key.
+    A key source that ignores contexts, such as `FakeDataKeySource`,
+    reports `Aead` instead.
+  - A blob decrypted as a scalar other than `Vec<u8>`, or such a scalar
+    decrypted as a blob, is `OpenedType`.
+  - A blob is sealed as a plain bytes leaf. So a blob decrypted as a
+    `Vec<u8>` returns the encoded blob. A `Vec<u8>` decrypted as a blob
+    reaches the blob reader. The reader returns a `Blob` error unless the
+    bytes are a blob.
+
+  No error names a text value or a map key. A mismatch's payload names the
+  declared field. `blob_unsupported_version` includes the blob's version
+  byte, and a mismatch can include the length of a sequence.
+- **`Ciphertext` converts to and from `SealedValue`.** The bytes are the
+  same. A `CipherText::Single` leaf from `encrypt_tree` decrypts through the
+  owned API, and an owned `Ciphertext` can give its leaf to the structural
+  API.
+- **The heap-hygiene tests cover blobs.** They check that encrypting a
+  blob, decrypting one, and refusing one of another shape leave no
+  plaintext on the heap. A new opt-in check, `watched_for_leaks`, also
+  looks for marked blocks that were never freed. That check has its own
+  negative control. A second negative control records the one known gap.
+  A derived `Deserialize` might build some fields and then refuse a later
+  field. It drops the fields it built without wiping them, because no `T`
+  was built.
+
+### Changed
+
+- **With `MatchOptions::short_words` on, a query asks for its short words
+  only when its whole text is shorter than one n-gram** (#1398). Before
+  this fix, "Mike Ng" did not find "Mike Nguyen". "san fr" did not find
+  "San Francisco" either.
+
+  An n-gram is a run of n characters in a row, such as "mik" in "Mike"
+  under trigrams. A short word is a word shorter than one n-gram, such as
+  "Ng" under trigrams. A stored value contains each short word as a
+  whole-word token, beside its n-grams. Before this fix, a query also asked
+  for each of its short words as a whole word. "Nguyen" contains "ng" only
+  inside a longer word, so "Mike Ng" missed "Mike Nguyen".
+
+  Now a query with an n-gram asks for its n-grams alone, as it does with
+  the option off. A query shorter than one n-gram asks for its short
+  words. Under trigrams, that is one short word: "Ng" finds "Ng" and "Mike
+  Ng", and not "Nguyen". Under longer n-grams it can be several words,
+  such as "Ng Wu" under 6-grams.
+  - Stored values do not change. No stored filter moves, so nothing needs
+    re-encrypting.
+  - Every query path uses the one rule, so a query's filter and its verify
+    agree. The paths are a field query (`Supports::prepare` and the term
+    it derives), `dynamic::query_term`, `dynamic::term`, `dynamic::verify`,
+    and `MatchQuery::verify`.
+  - A field query derives its term through the new `Index::query_operation`
+    (see Breaking). A match index returns the new `target::matching_query`.
+    That function builds the query's filter. Every other index returns its
+    `operation`. An index that wraps another forwards both methods.
+  - A set of indexes derives a query's terms through the new
+    `Indexes::query_operations`. The method calls each index's
+    `query_operation`, as `Indexes::operations` calls each index's
+    `operation`. One index, a tuple, and a `Vec` implement it.
+  - `target::matching_query` refuses text that keeps no token, with
+    `TermError::EmptyTermText`, because an empty filter would match every
+    row. So when you call it on its own, it refuses the text that a field
+    query's `prepare` refuses. `target::matching` still stores such text as
+    the empty filter.
+  - What the option reveals: one more token per short word, in every
+    stored value that contains one. The token is unique to the word.
+    Someone can tell the rows that contain "Ng" from the rows that contain
+    "Nguyen", and count them. A query shorter than one n-gram shows the
+    word tokens it asks for. A query with an n-gram sends no word token.
+- **The JSON path grammar is its own crate, `stack-encrypt-jsonpath`**
+  (#1687). `JsonPath`, `Segment` and `JsonPathError` moved there unchanged,
+  so that the derive can parse a field's declared paths at compile time
+  with the engine's own grammar. `stack_encrypt::json` re-exports all
+  three at the same paths, and `JsonPathError` keeps its code, help and
+  payload. The JSON text parser decodes strings with the same decoder as a
+  path's quoted names, which also moved. No stored byte changes: the
+  selector and token encodings of a path stay in this crate.
+- **A data plan lowers to the combinators directly** (#1488, first part).
+  `dynamic::planned::compose` and `opening` build each field's combinator
+  from the parsed plan, and the dynamic entry points run them:
+  `encrypt_with`, `decrypt_with`, `check_source`, `check_record`, and
+  `Plan::contexts`. The checks a binding asks without a cipher share
+  `check_names`, `check_stored` and `opening_base` with the lowering. The
+  plan builder is no longer in the dynamic path. No stored byte changes:
+  the record shape, the terms, and the contexts are the ones the
+  builder's lowering produced, and the conformance vectors pin them.
+- **`dynamic::record::encrypt_with` and `decrypt_with` build a `Planned`**
+  (#1669). They were a second caller of the lowering beside `Planned`. Now
+  each builds a `Planned` record or stored row and runs it, so a record is
+  encrypted and opened only through `Planned`. `Plan::contexts()` still
+  composes the plan itself, to read the contexts. Their signatures, their
+  refusals and when they report them are unchanged: a refusal of the input
+  still comes back before the pending exists, as a `dynamic::Error`.
+  `decrypt_with`'s `expected` context is checked inside the `Planned`
+  lowering. No stored byte changes.
+- **The `MatchConfig` and `Match` documentation says how a field and its
+  query agree** (#1671), where it said they agree "by construction". A
+  query made from the field's reference answers through the field's own
+  `Match<O>`, and a data plan's query reads the field's one match index. A
+  filter derived directly with `match_terms` matches a stored one only
+  under the field's configuration.
+- **The context parameter of the cipher-directed methods is named
+  `context`, not `aad`** (#1568): `KeysetCipher::encrypt_tree`,
+  `KeysetCipher::decrypt_tree`, `StackCipher::decrypt`,
+  `PendingStackCipherText::plan`, `seal`, and `into_pending`. A positional
+  call does not change. The stored format does not change.
+- `vitaminc-aead-frame` is now always built, with its `serde` feature.
+  Before, it was built only with the `dynamic` feature. The `dynamic`
+  feature now adds no dependency.
+- The rustdoc of `stack-encrypt` and `stack-encrypt-derive` states each
+  rule itself. It no longer names design records or plans, since those are
+  not published with the crates.
+
+### Fixed
+
+- **A query on an EQL type whose twin carries every term is refused for
+  what any of its indexes refuses, before any key is requested** (#1668).
+  `eql_v4.query_text_ord_ore` requires its `hm` and its `ob` together, so
+  an `eq` query on a `TextOrdOre` field derives both. `dynamic::check_query`
+  and `dynamic::query_term` checked the equality index alone, so `eq` of
+  text that ends in NUL, or is too long for block ORE, passed a binding's
+  boundary and was refused only while its term was derived, after the
+  keyset's index key was loaded. Both now refuse it first, with
+  `TermError::OreBlockTrailingNul` or `TermError::OreBlockTooLong`, as for
+  an ordering.
+  - `TargetDescriptor::query_carries_every_term` says which types do, set
+    with `with_query_carrying_every_term()`. It is not on the wire. A
+    descriptor without it is taken to carry the answering index's term
+    alone, as before.
+
+- **An empty `Vec` of indexes now wipes an owned plaintext when it
+  refuses it** (#1398). `Indexes::operations` and
+  `Indexes::query_operations` refuse an empty `Vec` with
+  `PlanError::EmptyIndexes`. In `Owned` mode, that refusal dropped the
+  plaintext without wiping it. Now the refusal releases the plaintext as
+  an operation does. The refusal wipes an owned value, and leaves a
+  borrowed value with the caller.
+
+- **`Pending::zip` and `Pending::all` wipe the plaintext they recovered
+  before a later failure** (#1666). When one decrypt in a batch failed
+  after its key arrived, for example with the wrong context or another
+  type, the plaintext the batch had already recovered was dropped without
+  being wiped. A `String` from `String::decrypt_from` was one such value.
+  - Every `DecryptFrom` call now marks the `Pending` it returns as
+    plaintext that can be wiped. `zip` wipes a marked left side when the
+    right side fails. `all` wipes each marked item recovered before the
+    item that failed. A pair or a collection of marked values is itself
+    marked, so a batch nested in another batch is wiped too.
+  - A `Pending` from `Pending::ready`, `Pending::request` or `map` is not
+    marked. Its output is dropped as before.
+  - `Decryption::zip` and `Decryption::all` wipe in the same way. A
+    hand-written `DecryptSource` that joined its leaves with them dropped
+    the plaintext of the earlier leaves unwiped when a later leaf failed,
+    because only the outer `Pending` was marked. Now `target::open` and
+    every target's own opening mark the leaf they return. A description
+    from `Decryption::ready` or `Decryption::map` is not marked.
+
+- **A derived record wipes an owned plaintext when a caller's part is
+  empty.** An empty scope or binding is refused where a field is given
+  its context, before the field's own target runs. The plaintext of that
+  field was then dropped without being wiped. The derive now emits the
+  hidden `Encryption::under_field`, which wipes it. `Encryption::under`
+  is unchanged: its plaintext need not be `Zeroize`.
+
+- The docs of `dynamic::read` said the engine never calls it. `dynamic::query_term`
+  does: it reads a query's input as the field's kind.
+- **A refused context no longer drops a copy of the plaintext unwiped**
+  (#1504). `target::ciphertext()` cloned a borrowed plaintext before it
+  checked the context. When the context was too long for a ZeroKMS
+  descriptor, the clone was dropped without being wiped. This affected
+  every target with a `StackCipherText` or `Encrypted<Terms>` field.
+  - `ciphertext()` now checks the context before it takes the plaintext.
+    So a refused context makes no copy.
+  - In `Owned` mode, a refused context still drops the value as it is,
+    because `ciphertext()` does not require `Zeroize`. The owned forms of
+    `StackCipherText` and `Encrypted<Terms>` wipe it instead.
+  - `json_document()` now guards its copy of the document before it checks
+    the context. So a refused context wipes that copy.
+- **Copies of plaintext are no longer freed unwiped** (#1468). Each was
+  made in a buffer that grew, or was dropped, with the plaintext still in
+  it.
+  - A match index folds its text to lower case. Text that is longer
+    folded than it was, such as text holding `İ`, was folded in a buffer
+    that grew. The tokens are the same as before.
+  - A string literal or a quoted key with an escape in a JSON predicate
+    (`$.name == "a\nb"`) was decoded through `serde_json`'s scratch
+    buffer.
+  - A quoted key with an escape in a `JsonPath` (`$["a\nb"]`) was decoded
+    the same way.
+  - A path or a predicate refused after a key was read (`$.secret[abc]`,
+    `$.secret.x()`, an ordering at a wildcard such as `$.secret[*] < 5`)
+    dropped that key unwiped, quoted or not.
+  - A predicate's variable names, and the path and member text of a
+    document operator's input (`eq_at`, `between_at`, `selector`,
+    `children`, `subtree`, `element_match` and a read), were held in plain
+    `String`s.
+  - A JSON index document with a sealed root was parsed by `serde_json`
+    when it was opened, so a string with an escape left a copy behind. It
+    is now parsed by `json::parse_text`.
+- **A JSON index document with a sealed root is sealed only if it will
+  open** (#1468). `json::parse_text`, which now opens a sealed root,
+  refuses a number that is neither a 64-bit integer nor a double. A
+  `serde_json::Value` holds one only with `serde_json`'s
+  `arbitrary_precision` feature. Such a document is now refused as
+  `Error::Aead` before any key is requested. A sealed root that a build
+  with that feature has already stored with such a number no longer
+  opens.
+
+## [0.3.0] - 2026-10-27
+
+### Breaking
+
+- **`KeysetCipher::encrypt` and `decrypt` are the owned scalar API.**
+  `keyset.encrypt(value)` consumes an `OpaqueEncode` value (`bool`, the fixed-width
+  integers except `u8`, `f32`, `f64`, `String`), wipes it, and returns one
+  opaque `Ciphertext`; `keyset.decrypt::<T>(ciphertext)` opens it to an `OpaqueDecode` type.
+  `encrypt_with_context` and `decrypt_with_context` bind a context. The
+  previous structural forms, which take any `Encrypt` value and a context and
+  return a `StackCipherText`, are renamed `encrypt_tree` and `decrypt_tree`.
+  `Ciphertext`'s bytes are the unchanged `SealedValue` v1 envelope, so
+  stored values open through either API.
+  Nullable `Option<T>` values remain on `encrypt_tree` / `decrypt_tree` in this
+  slice, including Vitamin C's padded-null encoding for fixed-width types.
+- **The root `EncryptInto` and `DecryptFrom` are new owned conversion
+  traits** over `EncryptTarget` / `DecryptSource`. The borrowed traits they
+  replace, and that `#[derive(EncryptFrom, DecryptInto)]` types use, are
+  `stack_encrypt::target::legacy::{EncryptInto, DecryptFrom}`; import one
+  pair or the other, not both.
+- **`OpSpec`, `Operand` and the query term's wire form grow for documents**
+  (#1350). `OpSpec` gains twelve operators and `Operand` gains `Text` and
+  `TextList`; a binding that matches on either adds the arms. The query
+  term an `se_query_term`-style export writes has a sixth key,
+  `encoding` (`bytes`, `eql`, `text`, `text_array`), and an operator entry
+  a fifth, `input` (`value`, `pair`, `json`, `path_json`, `path_pair`,
+  `path`, `path_bound`); a reader that checks every key reads the new
+  ones. `TargetDescriptor` has a `leaf_query_sql_domain`, set with
+  `with_leaf_query_sql_domain`.
+
+- **`TargetResolver::encrypt` takes the field's target options** (#1349):
+  `encrypt(name, options: Option<&TargetOptions>, keyset, label,
+  plaintext)`. A resolver implemented outside this crate adds the
+  parameter; one that resolves no document type ignores it.
+- **`dynamic::ValueKind` gains `Json`, and `ValueKind::ALL` holds 21
+  kinds** (#1349). The enum is not `#[non_exhaustive]`, so an exhaustive
+  `match` on it, or a `[ValueKind; 20]` binding of `ALL`, stops compiling.
+### Changed
+
+- **`->` on a JSON index container with members is `Error::JsonNotALeaf`.**
+  Every entry's ciphertext now commits to its children's ciphertexts (the
+  cascade), so a container's entry does not open on its own, and `->`
+  returns one entry. The client cannot tell a container from an altered
+  entry before the open, so the error names both causes and claims
+  neither; the Go guest maps it to `STATUS_ENCODING`, where a container was
+  `OpenedType` before. Read a container with a subtree read
+  (`KeysetCipher::json_subtree_key`). Decrypting a JSON document whose root
+  is open loads the keyset it was sealed under, beside its data key; a load
+  that fails is `Error::KeysetLoad` on those documents alone.
+- **Awaiting a `Pending` needs an `IndexKeySource` as well as a
+  `DataKeySource`.** A root-open JSON document's keyset is loaded through
+  the cipher's own keyset path when the pending settles, so `IntoFuture for
+  Pending`, `StackCipher::decrypt`, `KeysetCipher::encrypt` and the other
+  settling entry points bound `K: DataKeySource + IndexKeySource`. Every
+  `StackCipher` is built over a source that implements both
+  (`StackCipherBuilder::init` requires it), so a concrete call site is
+  unchanged; generic code written over `K: DataKeySource` alone adds the
+  second bound.
+
+### Fixed
+
+- **A float in a JSON index document opens to the value that was sealed**
+  (#1364). A number leaf is stored as its shortest round-trip text and
+  parsed back when its entry or the sealed root opens, and serde_json's
+  default float parser can land one unit in the last place off the `f64`
+  that text names: `-926809.5051008083` opened as `-926809.5051008085`,
+  through `JsonDocument`, `JsonNode` and `JsonSubtree` alike. The crate now
+  builds serde_json with `float_roundtrip`, whose parser returns the
+  nearest `f64`. The trade is slower float parsing and slightly more code.
+  Cargo unifies features, so every serde_json parse in a program that links
+  this crate (the caller's own included) uses that parser. Integers and
+  short decimals were never affected, and the read side derives no term
+  from the value it parses.
+
+### Added
+
+- **A match index can search words too short for its n-grams:
+  `MatchOptions::short_words`** (#1309). Off by default. With it on, every
+  word of the normalized, case-folded text that is at least 2 characters long
+  and shorter than the n-gram length (two-letter words under the default
+  3-grams) is one more token, the word itself, beside the n-grams of the whole
+  text. So the surname "Ng" stores one token rather than the empty filter,
+  and the query "Ng" is accepted and finds rows holding the word "Ng" or
+  "Mike Ng", but not "Nguyen". A query's short words must be whole words of
+  the row: "Mike Ng" does not find "Mike Nguyen" with the option on. A word
+  is a run of characters between the separators `Tokenizer::Standard` splits
+  on (space, comma, semicolon, colon, exclamation mark). The word token is
+  PRF'd under its own domain (`stack-encrypt/sem/match/word/v1`), so it never
+  sets the bits of an n-gram of the same characters. The option is part of
+  the index's identity, as `k` is (`PlanError::IndexOptions`), is written as
+  `"short_words": true` in a data plan's `{"match": {...}}` (and only when on,
+  so other plans serialize as before), and is refused beside the standard
+  tokenizer or an n-gram length under 3 (`TermError::InvalidOptions`). What
+  it reveals: one more token per short word, under the same PRF, in the same
+  filter, by the same containment rule, so no new class of leakage; the token
+  is specific to the word, so clustering tokens across rows can tell "Ng"
+  from "Nguyen", where before only their shared boundary trigram `" ng"` was
+  visible. `MatchOptions` gains the public field, so a struct literal naming
+  every field names it too. The `sem` module docs carry the match index's
+  leakage in full.
+
+- **A document field's queries and reads through a data plan** (#1350,
+  #1352). A field naming `JsonSearch` answers `contains`,
+  `contained_by`, `eq_at`, `selector`, `subtree`, `children` and
+  `child_count`, and, when it orders a path, `lt_at`, `lte_at`, `gt_at`,
+  `gte_at` and `between_at`, each taking an object of named inputs
+  (`{"json"}`, `{"path", "json"}`, `{"path", "low", "high"}`,
+  `{"path"}`, `{"path", "wildcard_bound"}`; JSON values as JSON text).
+  `query_term` derives the typed chain's operands, bit for bit: the
+  containment needle and the leaf ordering operand as EQL JSON (bound as
+  `eql_v4.query_json` and `eql_v4.query_json_leaf`), the
+  selector as `text` and a read's tokens as `text[]`. A position in a
+  path is refused where the operand is a selector (`json_path_position`),
+  a wildcard where the operator names one node (`json_path_wildcard`).
+  `json_open` opens the rows a read returned against the request that
+  prepared it: the engine derives the selector or the read key again from
+  the request, the field's options and the keyset, checks every row with
+  the index's own checks, and opens each database row's group on its own,
+  in one key request. `check_json_open` is its cipher-free check. A plan
+  whose context comes from a field of each record (`context_field`) is
+  refused by both (`query_context_field`), as it is by `query_term`: a read
+  through the data plan names no record to take a context from.
+
+- **A JSON document through a data plan** (#1349). A plan field may
+  declare the new `json` value kind and name a target that stores a
+  document, `JsonSearch`, with the JSON index's options:
+  `"target": {"name": "JsonSearch", "options": {"sealed_root": true,
+  "ordered": ["$.age"]}}`, or the bare name for the defaults. The plan
+  resolves the options once when it is built (`FieldPlan::target_options`,
+  `TargetOptions::Json`), so writes, queries and reads of the field run
+  under one definition, and refuses options on a target that takes none
+  (`Reason::TargetOptions`), a `json` field with no target
+  (`Reason::JsonNeedsTarget`) and a sealed null on one. The document
+  crosses as UTF-8 JSON text in a text or bytes leaf and opens back to
+  its text in a bytes leaf (`dynamic::read_json`, `dynamic::json_frame`).
+  `json::parse_text` is the one parser, the engine's own (held to
+  serde_json's by a differential property test and the `fuzz:json-text`
+  target), so no heap block it frees holds the document's strings or an
+  array's buffer (a number or boolean in an object of twelve or more
+  members can stay in a map node it frees; those are wiped best-effort):
+  it refuses an object that names a member twice and an integer literal
+  outside
+  `i64::MIN ..= u64::MAX` (which serde_json would read as the nearest
+  `f64`), as well as text that is not JSON, each with a code
+  (`JsonTextError::code`) and a position, never a byte of the text.
+  `json::to_text` sizes its buffer before it writes. `check_source` reads
+  a document by these rules too, so a malformed one is refused before
+  any key, as `encrypt` refuses it. A present `"options": null` is
+  refused (`Reason::InvalidTarget`), not read as the defaults. `TargetError::Json` carries the code
+  when a resolver refuses a document. `json::wipe_value` wipes a parsed
+  document in place. `ValueKind::holds` says whether a value of one kind
+  is a value of a declared one (`json` holds text and bytes).
+
+- **A JSON index, `target::Json`** (`docs/plans/2026-10-17-json-tree-index.md`,
+  ADR-0009). An `Index<serde_json::Value>` whose stored form,
+  `json::JsonDocument`, is one entry per node under one data key per
+  document: a path selector, the node's own ciphertext, a self tag and a
+  parent tag by which the server finds the node a client-derived token
+  names and walks beneath it, every token derivable from its node's path
+  alone,
+  a stored containment projection that agrees with `jsonb @>` across array
+  elements, and, at the paths `JsonOptions::ordered` names, an ordering
+  term on number and string leaves. It is what EQL v4's `json_tree` family
+  stores. `target::json_document` seals one, `JsonDocument` is an
+  `EncryptFrom<Value>` / `DecryptInto<Value>` target, and it answers
+  `op::Contains`, `op::ContainedBy`, `op::AtPath(op::Eq)` (a scalar at a
+  path) and the orderings at an ordered path; `KeysetCipher::json_selector`
+  and `json_subtree_key` derive the extraction keys. What the server
+  returns (`JsonNode` rows) opens only through what the client derived for
+  the read, which checks that the rows are the ones it asked for: an
+  entry's ciphertext is bound to its own selector and position, so any
+  entry of the row would otherwise open. `JsonSelector::open(node)` builds
+  a `JsonExtracted`, which refuses an entry that does not carry the
+  selector (another path's, or the sealed root in place of a node) before
+  any key is retrieved; `JsonSubtreeKey::open(rows)` builds a
+  `JsonSubtree`, which refuses a row that is not where the read's rows
+  must be: a node a token names without the path's selector or last step
+  (its key, its position, or the root), a row without the selector of its
+  parent's path and its own label (the key holds the keyset's index-key
+  PRF and the column's context to derive it), a row that does not follow
+  the one before it in the document or whose parent is not among the
+  rows, a row whose self tag is not the one the client recomputes
+  (unauthenticated, so a consistency check), an entry returned twice, and
+  rows of two documents. Each refusal is the new `Error::JsonWrongEntry`.
+  Not checked, by design: which row of the column
+  an entry comes from (ADR 0010), which element a node at a selector sits
+  under, and whether the database withheld rows. `JsonOptions::sealed_root`,
+  on by default, makes the root entry the whole document and chains the
+  top-level fields from nothing, so the root's token finds the root entry
+  and nothing beneath it. A document is at most 127 levels deep. New
+  `TermError` variants: `JsonPath`, `JsonTooDeep`, `JsonTooWide`,
+  `JsonWildcardTooWide`, `JsonLeafNotOrdered`, `JsonPathNotOrdered`,
+  `JsonOrderingAtPosition` and `JsonValueNotScalar`. `JsonTooWide` also
+  refuses a subtree key for a path naming an array position, or a
+  wildcard bound, past 2^31 - 1, PostgreSQL's `integer`: no stored
+  document has an element there. `JsonOptions::ordering([..])` names the
+  ordered paths, `JsonPath::covers` is the rule that matches them, and a
+  path naming an array position is refused there and in an ordering
+  query, since the comparison extracts by selector and reads a position as
+  the wildcard. A data plan reads and writes the index (`"json"`, or
+  `{"json": {"sealed_root": bool, "ordered": [path, …]}}`) and refuses to
+  run it with `Reason::JsonIndexPending`. `JsonPath` implements `Serialize`
+  and `Deserialize` as its text, read back through `JsonPath::parse`. A subtree key
+  (`KeysetCipher::json_subtree_key`, or `json_subtree_key_with_bound`) is
+  one token per concrete path its path names, in document order:
+  exactly one for a path with no wildcard, `$` included, and for each
+  wildcard level the positions below its bound (64 by default,
+  `JsonSubtreeKey::DEFAULT_BOUND`) and a probe at the bound
+  (`JsonSubtreeKey::tokens()`, `probes()`, `bound()`), which
+  `json_tree_subtree(doc, tokens, budget)` takes. A read whose probe finds
+  an element, an array longer than the bound, fails with the new
+  `Error::JsonWildcardTruncated { bound }` rather than return part of the
+  answer, and a read that would send more than 8,192 tokens is refused
+  as `JsonWildcardTooWide`. The rows open as a `Value` (the node at the
+  path, `{}`, `[]` and scalars included), an `Option<Value>` (`None` where
+  the row has no node there) or a `Vec<Value>` (one value per concrete
+  path reached). A read past its budget returns the sealed root in place
+  of the rows; the key carries the path it was derived from
+  (`JsonSubtreeKey::path`) and builds the rows' wrapper,
+  `key.open(rows) -> JsonSubtree`, the wrapper's only constructor, and
+  evaluates its concrete paths and probes over the whole document, so the
+  rows open to the same answer either way, the truncation included, over
+  `JsonPath::select`, which evaluates a path over a value. On the wire every field the SQL reads (`s`, the pairs
+  of `q`, `x`, `p`, `op`, `h` and the tokens) is padded standard base64, and
+  the ciphertext `c` is RFC 1924 base85 (`base85-simd`). The document's
+  plaintext is held under `Protected` throughout, as the scalar paths hold
+  theirs: each node's plaintext is encoded straight from the caller's value
+  into a `Protected<Vec<u8>>` for the cipher, and what an entry opens to
+  (a key, a scalar, a sealed root's document) stays wrapped until it is
+  handed to the caller. The sealed-root fallback moves the nodes at the
+  read's paths out of the whole document rather than copying them, so their
+  plaintext exists once, and the rest of the document is wiped.
+
+- **A layout chosen by value, `target::Layout`, and
+  `Plan::value().encrypt_with_layout(layout)`.** `EncryptFrom` is a type's
+  own layout, fixed where the type is written; a `Layout<S>` is a value
+  with options that seals the same target under them and names the index
+  a query answers through. `Json::new(options)` is one.
+  `encrypt_with_layout` builds a `ValuePlan<S, plan::Laid<X, T>>` that
+  seals under the layout and resolves every query through its index, so a
+  query does not name the options again; `ValuePlan::specs` and
+  `ValuePlan::layout` report them.
+  `Error` gains `From<json::JsonPathError>`.
+
+- **The order terms are serde types.** `OreTerm`, `OpeTerm` and
+  `OreBlockTerm` serialize as the lowercase hex of their bytes in a
+  human-readable format such as JSON, and as the raw bytes in a binary one,
+  through `serdect`, whose hex is constant-time. Deserializing decodes
+  through `from_bytes`, so it refuses what `from_bytes` refuses, and no
+  error carries a byte of the term. EQL v4's bindings store them this way.
+
+- **Dates, timestamps and decimals are ordered** (#1236). The new
+  `value` module holds `Date`, `Timestamp` and `Decimal` (and their
+  `RangeError`), moved here from eql-bindings, which re-exports them at
+  `v4::plaintext`: wipeable, `Clone` plaintexts with no Rust standard type,
+  with conversions to chrono's and rust_decimal's types behind the new
+  `chrono` and `rust_decimal` features. Each is `sem::Orderable` and
+  `op::Ordered`, so ORE, OPE and block ORE terms derive over it and `Lt`,
+  `Lte`, `Gt`, `Gte` and `Between` answer it, at vitaminc-ore's `Date`,
+  `Timestamp` and `Decimal` targets: a date by its day, a timestamp by the
+  microsecond (floored, as its equality term is), a decimal by value
+  whatever its scale, so `1.5` ties `1.50`. On the data-plan path a
+  `decimal`, `date` or `timestamp` field admits `ore`, `ope` and
+  `ore_block`, and its order terms are the typed path's. Block ORE puts a
+  date through the 6-bit fixed-width engine and a timestamp or decimal
+  through the chained one.
+
+- **The vitaminc a binding speaks through is re-exported.** `dynamic::frame`
+  is `vitaminc-aead-frame` (the transport frame and ciphertext codec, with
+  its `serde` module), `dynamic::plaintext` is vitaminc-aead's value model,
+  for implementing `Encrypt` on a binding's own values, and the crate root
+  adds `DecodeError`, `Protected` and `Controlled`. A binding that takes
+  these from stack-encrypt cannot resolve a second vitaminc, which would
+  fail only at a `ValueFrame: Decrypt` bound. The Go guest now takes
+  vitaminc only this way.
+
+- **A data plan field says how it stores a null** (`dynamic` feature,
+  #1298). A field spec takes `"null": "sealed"` or `"null": "sql"`
+  (`dynamic::NullMode`, `FieldPlan::with_null`). `"sealed"` seals a null
+  like a value, under the field's label, as vitaminc 0.8's typed null of
+  the field's type, as long as a present value, so the stored record does
+  not show which rows are absent; it opens as a null. Beside an equality
+  index it stores a null's equality term, the one every null of the field
+  shares, so the absent rows are one equality group, as any repeated value
+  is, and an `eq` query whose input is a null finds them (`query_term`,
+  `record::query`). It needs a declared type of fixed width (a bool's plain
+  null is already as long as its value) and no index but equality, on the
+  field or on the EQL type it names, since a null has no other term:
+  refused otherwise with `Reason::SealedNullType` or
+  `Reason::SealedNullIndex`. A null query of any other field or operator is
+  `Reason::NullQuery`. `"sql"`
+  stores nothing for a null, or for a row with no entry for the field: the
+  stored record has no entry, so a host writes SQL `NULL`, and a stored
+  record with no entry for the field opens it as a null. A batch's rows are
+  run by one lowered plan per set of fields they leave out, and every
+  group's requests go in the one ZeroKMS call. A passthrough takes no
+  `"null"` (`Reason::NullPassthrough`), and an unknown mode is
+  `Reason::UnknownNull`. A field with no `"null"` is unchanged: every row
+  has it, and a typed field refuses a null.
+- **A block ORE index, `OreBlock`** (ADR-0002 and ADR-0009, amended
+  2026-10-19). It derives ore-rs 0.9.0's 6-bit block ORE under its own key
+  domain, over the same order keys as the CLLW indexes:
+  `ore_rs::vitaminc::Bit6BlockOre` for targets of at most ten bytes (the
+  integers from 16 to 64 bits and both floats) and `ChainedBlockOre` for
+  text, bytes and the 128-bit integers, text padded to a power-of-two bucket
+  of at least 16 bytes. As for ORE and OPE, a boolean and an 8-bit integer
+  have no block ORE term. `sem::OreBlockTerm` is the term, the whole ciphertext; it carries
+  a random nonce, so it compares by the scheme's comparator (`compare`,
+  `PartialEq`, `PartialOrd`), never by its bytes, and
+  `OreBlockTerm::from_bytes` checks a stored term's structure. The typed
+  path reaches it with `.via(OreBlock)` and `target::ore_block()`, the
+  dynamic path as the index `ore_block`, and `KeysetCipher::ore_block_term`
+  derives one directly. A query is the full ciphertext too: EQL v4's
+  comparator reads the right half of the operand a btree index passes
+  second. Text whose fold is longer than 1023 bytes is refused with
+  `TermError::OreBlockTooLong`, text whose fold ends in NUL with
+  `TermError::OreBlockTrailingNul`, before any key is touched on the query
+  path; `TermError::OreBlock` carries a scheme failure and
+  `TermBytesError::MalformedOreBlockCiphertext` a malformed stored term. The
+  CLLW `Ore` and `Ope` indexes are unchanged, byte for byte.
+
+- **Every integer width, 128-bit integers, dates, timestamps and decimals
+  as dynamic values** (`dynamic` feature; #1144, ADR-0002). They are
+  vitaminc leaves in a `ValueFrame`, with no new `FfiValue` variant:
+  `ValueKind` gains `Int8`, `Int16`, `Int128`, `UInt8`, `UInt16`,
+  `UInt128`, `Decimal`, `Date` and `Timestamp` (named `int8`, `int16`,
+  `int128`, `uint8`, `uint16`, `uint128`, `decimal`, `date`, `timestamp`
+  in a plan's `type`), and the value model keeps each integer at its own
+  width (8- and 16-bit integers are no longer widened to 32 bits). A
+  timestamp is held at nanosecond precision. Equality applies to all of
+  them, through vitaminc-normalize: one term per integer value at every
+  width, decimals at any scale, timestamps to the microsecond. ORE and OPE
+  apply to every integer width, each passed to cllw-ore as its own type.
+  A decimal, a date and a timestamp take an order index too (see
+  "Dates, timestamps and decimals are ordered"). `dynamic::not_admitted`
+  says why a kind does not admit an index. `dynamic::read` converts between the new
+  kinds where a value fits (an integer into any width that holds it, a
+  whole integer into a decimal at scale 0). `tests/value_kinds.rs` and its
+  fixture hold the record path, the data query path and the typed path to
+  the same bytes, and the Go SDK reads the fixture too.
+- **A target sealed under a context of its own can opt in to queries on
+  its plan** (#1238). `op::LabelledTarget` says a target type's stored terms
+  were derived under the context a plan's label names. A typed plan for such
+  a type (`Plan::value::<S>().encrypt_into::<T>()`) answers the operators its
+  `op::Answers` impls name, and needs only the indexes `T` declares, not a
+  context the label converts into: an EQL v4 type, sealed under its column,
+  is queried through its plan though it cannot be encrypted through it.
+  A target type answers queries on its plan only when it implements this
+  as well as `op::Answers`, whatever context it is sealed under; this
+  crate's term targets implement both. A type sealed under a context no
+  label names must not implement it, so its plan answers no query. Naming
+  an index with `.via(..)` still needs a type sealed under the label itself.
+  `op::QueryToken` carries the context the query's terms were derived under
+  (`label`, `is_extended`), for a query term that records it, and
+  `op::Supports::check_label` (defaulted to `Ok`) lets such an index refuse
+  a context it cannot record when the query is awaited, before any keyset
+  is resolved or term derived.
+- **A binding queries by operator** (`dynamic` feature; ADR-0009, ADR-0007
+  amended 2026-10-16). `dynamic::query_term(keyset, &plan, field, op,
+  input, &resolver)` derives the query term for a field of a data plan, an
+  operator (`dynamic::OpSpec`, named `eq`, `lt`, `lte`, `gt`, `gte`,
+  `between` or `matches`) and its input, reading the input as the field's
+  declared type first. The index that answers is the typed path's default
+  (`OpSpec::answered_by`), and the term is the bytes the typed query chain
+  derives for the same query. A field that names an EQL type answers through
+  the type's query twin. An operator the field does not answer is refused
+  as a mistyped value is, `dynamic::Error::Source` naming the field with
+  `Reason::OperatorNotAnswered`; `check_query` refuses the same without a
+  cipher. `dynamic::verify` checks a page of decrypted values against a
+  probabilistic query and `dynamic::target_limit` sizes its fetch from the
+  term's bytes and `Stats` (`Stats::from_frame` reads their wire form), by
+  the code the typed `MatchQuery` runs, with the field's own match options;
+  neither uses a key. The catalog entry of an EQL type
+  (a serialized `TargetDescriptor`) lists the operators the engine answers for
+  it, each with its fidelity (`dynamic::Fidelity`), arity and index
+  (`TargetDescriptor::operators`).
+- **An EQL type with a match index answers `matches` through its twin.**
+  `TargetDescriptor::with_match_options` gives the engine the options a
+  type's match index is built under (`TargetDescriptor::match_options`, not
+  on the wire), and such a type answers `matches` (probabilistic) as well as
+  its exact operators: `query_term` derives the type's query twin, and
+  `verify` and `target_limit` run under the type's options, the latter
+  reading the twin's `bf`. A type with a match index and no options still
+  answers no probabilistic operator. The Go guest gives `TextMatch` EQL's
+  match options, so it answers `matches` through `TextMatchQuery`.
+- **A binding asks which operators a field answers.**
+  `dynamic::field_operators(&plan, field, &resolver)` lists the operators a
+  field of a data plan answers, each with the index that answers it: what
+  `query_term` derives a term for on that field and nothing else, for a
+  field declared with indexes as for one that names an EQL type.
+  `dynamic::OperatorEntry` is one entry in the catalog's wire form.
+  A generator asks this before the program runs, so it writes one query
+  method per operator and holds no copy of the table.
+- **A query names an operator, not an index.**
+  `cipher.query(op::Eq, "bob@example.com").on(&plan)` and
+  `cipher.query(op::Matches, "ali").on(&plan)`: the operator comes first, as
+  a value, and the plan named by `on` finds the index that answers it
+  (ADR-0009). An index declares the operators it answers (`op::Supports`), a
+  target type names the index that answers each one for it (`op::Answers`),
+  and a plan that declares indexes uses the operator's default index
+  (`op::DefaultIndex`); both name the index by its type, whose `Default` is
+  the index. `.via(index)` before `.on(&plan)` names another index the plan
+  declares, such as a match index with its own configuration.
+  `op::Matches` is the case-insensitive operator, as a value;
+  `op::Matches.case_sensitive()` is the other, and the case types are
+  `op::CaseInsensitive` and `op::CaseSensitive`. What the plan's type shows
+  is checked at compile time: a match query on an integer, an operator a
+  target does not answer, and on a one-value plan an index it does not hold
+  or a case-sensitive `Matches` against a case-folding index. On a field of
+  a fields plan those are refused when the query is awaited, before any key
+  is requested, as is a match configuration whose `op::MatchCase` disagrees
+  with its options (`PlanError::MatchCase`).
+- **A match query has its own type, `sem::MatchQuery`.** It is the filter over
+  the query's value; test a stored filter against it with
+  `MatchTerms::matches(&query)`. It comes only from a query chain:
+  `op::Supports::query` takes an `op::QueryToken` that only this crate can
+  make.
+- **`Match` is a value.** `.with((Equality, Match))` declares the match index
+  under the default configuration, as `Equality` declares equality;
+  `Match::<MyConfig>::new()` is another configuration.
+- **`verify` drops a match query's false positives after decrypt.** A
+  `MatchQuery` is `op::Probabilistic`: `query.verify(&value)` is `true` when
+  every token of the query's value, cut by the index's own tokenizer and
+  case folding, is a token of the decrypted value. Filter decrypted rows
+  with it. The query keeps its value's tokens to do this; they are zeroized
+  on drop and never shown by `Debug`, and the tokenizer now zeroizes its own
+  copies of the text. An exact term has no `verify`, and none of this
+  crate's indexes can answer `op::Matches` but with a probabilistic term
+  (`op::TermFor`).
+- **The ordering operators, and `Between` as one term.** `op::Lt`, `Lte`,
+  `Gt` and `Gte` take one value and `op::Between` a pair of bounds,
+  `cipher.query(op::Between, &(18, 65)).on(&age_plan)`, inclusive at both
+  ends. They are answered over the integer types, the floats and text
+  (`op::Ordered`) by the `Ore` index by default and by `Ope` through
+  `.via(Ope)`; an ordering on bytes does not compile. A comparison's query term is the index's own term
+  for the value (`OreTerm`, `OpeTerm`); a range's is one `sem::RangeQuery`
+  carrying both bounds' terms, read with `lo()` and `hi()`, so no statement
+  can pair the low bound of one query with the high bound of another. A
+  range whose low bound is above its high bound is not refused: as SQL's
+  `BETWEEN`, it matches nothing.
+  What a query takes is the operator's `op::Arity` (`op::One` or
+  `op::Pair`), and `op::Input` relates the value given to the plaintext the
+  plan is checked against (ADR-0009, decision 7).
+- **The JSON operators are declared.** `op::Contains` and `op::ContainedBy`
+  (`@>` and `<@`) and the accessor `op::AtPath<Op>`, `op::AtPath(op::Eq)`,
+  which applies another operator at a JSON path and inherits its fidelity
+  (`op::TermFor`): `AtPath<Eq>` and `AtPath<Lt>` are exact. The JSON index
+  above answers them. `AtPath<Op>` takes a leaf
+  operator (`op::Leaf`: `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between`,
+  `Matches`), so `AtPath<Contains>` and a nested `AtPath<AtPath<_>>` do not
+  compile, and its arity, `op::Pathed<A>`, carries the leaf's (`Pathed<One>`
+  for `AtPath<Eq>`, `Pathed<Pair>` for `AtPath<Between>`), and its
+  `op::Input` is the JSON index's `(path, value)` and `(path, (lo, hi))`
+  (ADR-0009, decision 1).
+- **`target_limit` says how many rows a match query should fetch.**
+  `query.target_limit(want, &stats)` is `want` plus the false positives
+  expected at the confidence `stats` names (99% by default), as an
+  `op::Limit`. `op::Stats::declared(rows)` uses the new
+  `MatchConfig::expected_tokens()` prior; `op::Stats::measured(rows,
+  histogram)` uses a histogram of the stored filters' set-bit counts. With
+  neither, the limit is `Limit::Unbounded`, and the caller pages with a
+  cursor. A `want` of 0 is `Limit::Rows(0)`. A limit, and `fetch_or`'s
+  page, never exceeds `op::MAX_ROWS` (`i64::MAX`), the largest SQL `LIMIT`.
+  `rows` counts the non-NULL rows; a table never analysed has an unknown
+  count, not 0, and gets no `Stats` (the docs give the catalog read). The
+  bound assumes a non-matching row shares no token with
+  the query, so on natural text its confidence is nominal; `verify` still
+  decides every row.
+
 - **Errors now expose stable codes, help text, and structured details.**
   All error types implement `miette::Diagnostic` with codes such as
   `stack_encrypt::foreign_keyset`. Help text explains how to resolve
@@ -28,8 +2050,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   output form, `dynamic::record::plan_with` reads `{"context": [...],
   "target": "TextEq", "type"?: ...}` — the two forms are exclusive — and
   resolves the name through a `dynamic::TargetResolver` the host installs:
-  the EQL types a build holds (`targets()`, serializable as
-  `TargetDescriptor::to_value()` for a guest's `se_targets` export) and how
+  the EQL types a build holds (`targets()`, each a `Serialize`
+  `TargetDescriptor` for a guest's `se_targets` export) and how
   to run one. `encrypt_with` zips the type's own `Pending` into the record's,
   so a record with target fields is still one ZeroKMS request, and stores
   the EQL value's JSON bytes under the field's `"eql"` key
@@ -46,6 +2068,381 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Plan::new_with`.
 
 ### Breaking
+
+- **`IndexSpec` has a sixth variant, `Json(JsonOptions)`** (the JSON index
+  above), so a `match` over it needs an arm for it.
+
+- **The order terms' `from_bytes` takes the buffer.** `OreTerm`, `OpeTerm`
+  and `OreBlockTerm::from_bytes` take a `Vec<u8>` and keep it, copying
+  nothing; each also implements `TryFrom<Vec<u8>>`. `TryFrom<&[u8]>`
+  remains, and copies once. `OpeTerm` now refuses a term whose leading
+  carry byte is not 0 or 1, which clww-ore's comparator already refuses
+  (`TermBytesError::MalformedCllwCiphertext`).
+
+- **stack-encrypt requires stack-kms 0.2 and stack-auth 0.44.** It
+  re-exports `stack_kms::{diagnostic, ErrorPayload}` and stack-kms as
+  `stack_encrypt::kms`, so a crate that names a stack-kms or stack-auth type
+  stack-encrypt takes or returns moves to those versions with it.
+- **stack-encrypt requires the vitaminc 0.8 crates, clww-ore 0.6 and
+  ore-rs 0.10.** A crate that names a vitaminc type stack-encrypt takes or
+  returns moves to 0.8 with it. What changes for a caller:
+  - **Every order term changes.** cllw-ore is now `clww-ore`. Its
+    keystream was fixed, and its schemes' names (`clww-ore`, `clww-ope`),
+    which every term's salt binds, changed, so ORE and OPE terms written
+    before do not compare with new ones. Block ORE goes through ore-rs's
+    single `BlockOre` scheme, which keys its 6-bit and chained engines
+    under a new label, so its terms change too. The wire formats, the key
+    domains of this crate and every sealed ciphertext and equality term are
+    unchanged: a stored row still opens, and its order terms are re-derived.
+    `tests/fixtures/stored_rows_v1.json`'s order terms were re-frozen.
+  - `sem::OreCllw8VariableV1` and `sem::OpeCllw8VariableV1` are renamed
+    `OreClww8VariableV1` and `OpeClww8VariableV1`, as clww-ore names them.
+  - **A sealed `None` of a fixed-width type is as long as a `Some`.**
+    vitaminc 0.8 seals it as a typed null, padded to the type's leaf length,
+    so absent values no longer show in the length of their ciphertexts. A
+    reader on vitaminc 0.7 or older refuses a typed null, so upgrade
+    readers before writers; every null written before still opens. The
+    `dynamic` feature's sinks carry a typed null through the value model,
+    and the frame a binding receives holds the plain null.
+  - **A null has an equality term** (vitaminc-normalize 0.8, #1298), the
+    one term every null of a context shares, on the typed path
+    (`EqualityTerm` of a `None`) and the dynamic one (`IndexSpec::Equality`
+    now defines a null). No other index has a term for a null.
+  - **Block ORE's text ceiling is unchanged, but counted the new way.**
+    `vitaminc-ore` puts the marker byte in front of text itself now, and
+    ore-rs's 1024-byte ceiling counts it, so the fold is still at most 1023
+    bytes.
+
+- **`IndexSpec` has a fifth variant, `OreBlock`** (the block ORE index
+  above). The enum is exhaustive on purpose, since a binding has to be
+  taught each index, so a `match` over it needs an arm for `OreBlock`. The
+  dynamic path answers an ordering through ORE, else block ORE, else OPE,
+  whichever the field declares.
+- **A target's query is handed the index that answers its operator**
+  (`dynamic` feature). `TargetResolver::query` and `record::query` take an
+  `&IndexSpec` after the type's name and the field respectively;
+  `query_term` passes the index `OpSpec::answered_by` picks over the type's
+  indexes. A type whose query carries every term may ignore it. One whose
+  terms are optional derives that index's term alone, so EQL v4's
+  `TextSearch` answers `=` and `<` on text too short to make a match term,
+  and makes one only for `matches`. A resolver adds the parameter; a caller
+  of `record::query` passes the index it queries through.
+- **A ciphertext that opens as the wrong type is `Error::OpenedType`, not
+  `Error::Aead`** (#1118). A typed decrypt of a leaf that authenticates but
+  holds another type (an integer opened as `String`, a value too wide for
+  the target) was reported as `Aead`, the error for a wrong key or a
+  tampered ciphertext, and the Go guest reported it as `STATUS_AUTH`. The new
+  variant names only the type the target reads (`expected`). The Go guest
+  maps it to `STATUS_ENCODING`, as it does a typed record field that opens to
+  another kind. A wrong key, a wrong context and a tampered ciphertext are
+  still `Aead`. A container whose shape the target refuses (a map missing a
+  field) is `OpenedType` too: a container's membership and order are not
+  authenticated, by design, since stored values map to rows and columns a
+  database returns in any order and a query selects in part.
+- **An 8- or 16-bit integer in a dynamic value keeps its width** (`dynamic`
+  feature; #1144). The value model used to widen it to 32 bits before it
+  was sealed; now it is sealed as itself, so a field declared `int16` seals
+  an int16 leaf. A record sealed before under a 32-bit `type` does not open
+  under a plan that declares the narrower kind (`Plan(FieldType)`): the
+  typed decrypt checks the leaf's kind against the plan's. The seal side
+  breaks the same way: a host that sends an 8- or 16-bit leaf for a field
+  whose plan declares a 32-bit `type` is refused (`Reason::FieldType`, naming
+  the field), where the leaf used to be widened. Send the declared width, or
+  declare the narrower kind. The Go SDK converts to the declared width itself,
+  so Go code generated before this change still seals.
+
+- **A dynamic plaintext is a frame, not a value tree** (`dynamic` feature;
+  #1232, vitaminc ADR 0001). vitaminc 0.6 has no shared value type: a value
+  describes itself once, and sinks consume it. `dynamic::ValueFrame` is now
+  the engine's plaintext for a value whose type is known only at run time:
+  one value as its transport frame, in the engine's value model (an 8- or
+  16-bit integer read as the 32-bit integer of its sign, as before; a
+  128-bit integer or a date refused, as before), in a `Protected` buffer
+  wiped when it drops. It walks its own bytes into any sink (`Encrypt`) and
+  is a decrypt target that writes what it opens straight into a frame
+  (`Decrypt`). The plaintext paths walk frames:
+  - `record::encrypt`, `encrypt_with` and `check_source` take the source as
+    any `Encrypt` (a `ValueFrame`, a `vitaminc_aead::Frame`, or a Rust value
+    a test spells), walk it once and write each field's value into a
+    `ValueFrame` of its own, which is all the engine keeps of it. A value
+    refused while the source is split names its field, with the reasons it
+    had (`RepeatedKey`, `Unframeable`, `FieldType`; a value the value model
+    does not hold is `FieldType` inside a passthrough subtree too).
+  - Two refusals changed. The split is one walk of the source that stops
+    at its first fault, so of several faults in one row, those the split
+    finds (a repeated key, a value outside the model) are reported in
+    source order rather than plan order: the walk does not copy the rest of
+    a source it has already refused. And a passthrough value in a field
+    that seals a ciphertext and derives a term is now `Source { reason:
+    Passthrough }` whatever order the field lists its outputs in. It was
+    `Term` when a term output came before `c` in the plan and `Source`
+    otherwise, so the answer depended on how the outputs were spelled.
+  - `record::decrypt` and `decrypt_with` resolve to one `ValueFrame` (the
+    record, or the batch) instead of an `FfiValue`: each field opens into a
+    frame, which is walked into its entry of the record's frame and wiped.
+  - `read`, `query_term`, `check_query` and `verify` take their input as any
+    `Encrypt`, and `read` returns a `ValueFrame`; `verify` takes the page of
+    values as any iterator of sources (`ValueFrame::elements` splits a list
+    a binding handed over).
+  - `ValueFrame::check` checks frame bytes as `ValueFrame::from_bytes` does
+    and hands them back as a `Frame` to walk in place, with no copy: the Go
+    guest encrypts and checks a record source, and reads a query's input,
+    that way, so the only copies of a source's plaintext are the per-field
+    frames the split writes.
+  - `IndexSpec` is an `Index` of `ValueFrame` (it was of `FfiValue`), so a
+    Rust chain over dynamic fields names `ValueFrame` fields.
+  - `TargetResolver::encrypt` and `query` take a `ValueFrame`, and
+    `decrypt` resolves to one.
+
+  `FfiValue` is gone (see the entry after next).
+  Ciphertexts, terms and the cross-language fixtures are byte for byte what
+  they were. The Go guest decodes plaintext as `ValueFrame`s and returns an
+  opened record's frame as it is. Copies of an opened string that remain in
+  the guest's memory after a decrypt were traced to the plaintext output of
+  AES-256-GCM's keystream XOR, left in the unwiped stack temporaries of the
+  RustCrypto crates behind vitaminc-encrypt's wasm32 backend (their number varies
+  with the leaf's length), not to this crate, and
+  `TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt` stays skipped with
+  that reason (cipherstash/vitaminc#370). The heap is guarded separately:
+  `tests/heap_hygiene.rs` runs the record encrypt (from a `ValueFrame` and
+  from a raw frame), the record decrypt (with a nested field), `query_term`
+  and `verify` under an allocator that fails the test on any freed block
+  still holding plaintext.
+- **Order terms encrypt through cllw-ore's vitaminc schemes, and text is
+  ordered.** An ORE or OPE term is now cllw-ore 0.5.2-rc.1's
+  `vitaminc::Ore`/`vitaminc::Ope` encryption of the value's `vitaminc-ore`
+  order encoding: the engine passes the value through and names its type's
+  target (`sem::Orderable`: integers at their own width, `f32`/`f64` as
+  `F64`, text as `Text`, bytes as `Bytes`), and cllw-ore does the encoding.
+  Text is ordered by the system ADR-0002's fold (Unicode 16 NFC with case
+  and accents folded), so `Café`, `cafe`, `CAFÉ` and `cafe` with a
+  combining accent are one term and tie, `alice` orders before `Zoe`, and
+  `é` orders with `e`, not after `z`. Every order term changes bytes: the
+  key labels move to `/v2`, the column salt binds the scheme and the
+  target, and text and bytes go in behind cllw-ore's marker byte. An order
+  term written by 0.1.0 or 0.2.0 (or by the Go module's v0.1.0-alpha.1)
+  does not compare with one this release derives, and nothing refuses it:
+  a `<`, `BETWEEN` or `ORDER BY` over a column holding the old terms
+  silently misses or misplaces rows. Re-derive a column's ORE and OPE terms
+  (encrypt its rows again) before querying it with this release. Every source type's term is one ciphertext type,
+  `OreCllw8VariableV1` or `OpeCllw8VariableV1`; `OreTerm<T>` and
+  `OpeTerm<T>` keep `T` to name the source, and `new`, `inner` and
+  `into_inner`, `KeysetCipher::ore_term` and `ope_term` take or return those
+  types. `sem::CllwOreEncrypt` and `sem::CllwOpeEncrypt` are no longer
+  re-exported, and the term bounds are `sem::Orderable`: a sealed trait
+  with one item, `const TARGET: OrderTarget`, the `vitaminc-ore` target a
+  type's values are encoded as. The value goes to the scheme as the
+  `vitaminc-aead` `Encrypt` source it is, by reference, and the engine
+  holds the one copy in a `Zeroizing` and wipes it; so an order term's
+  source is an owned `String` or `Vec<u8>`, and `&'static str`,
+  `&'static [u8]`, `Zeroizing<String>` and `Zeroizing<Vec<u8>>` are no
+  longer sources. Text holding a code point Unicode 16 does not assign has
+  no order term (`TermError::Normalize`), on write and on query. The
+  ordering operators are answered on text, on the typed path
+  (`op::Ordered` for `String`) and on the data-plan path, so a binding
+  generates them too.
+- **A `u8` and an `i8` have no order term, as a `bool` has none.** An order
+  term over 256 values ranks every row among 256, which a few known rows
+  resolve to the values, the leak the crate already refuses for a boolean's
+  two. `u8` and `i8` leave `op::Ordered` and `sem::Orderable`, so
+  `OreTerm<u8>`, `OpeTerm<i8>` and an `Ore` or `Ope` index on either do not
+  compile; `dynamic::admits` refuses ORE and OPE on `int8` and `uint8`
+  (`Reason::IndexNotAdmitted`, as for a boolean), and a data plan naming
+  one is refused when it is built. Both keep their equality term. The
+  refusal is a compile error now, so `TermError::NoOrderTerm` (code
+  `stack_encrypt::no_order_term`), which `bool` raised at run time, is
+  gone. The `value_kinds.json` fixture's `i8` and `u8` fields carry
+  equality alone, and the frozen `stored_rows_v1.json` loses its four
+  8-bit order terms under the order-term exception; every other stored
+  byte is as it was.
+- **Floats are ordered.** An `f32` or `f64` is encoded at the `F64`
+  target, whose encoding folds `-0.0` into `0.0` and every NaN into one
+  value above `+Infinity`: Postgres's `float8` order. So the ordering
+  operators are answered over `f32` and `f64` (`op::Ordered`) and over a
+  data plan's `float32` and `float64` fields, which they were not. An `f32`
+  is ordered as the `f64` it widens to: vitaminc widens it exactly, so an
+  `f32` and its `f64` are one term. Float order terms change bytes with
+  every other order term (above).
+
+- **A binding's control data is read from its frame with serde, not
+  decoded into an `FfiValue`** (`dynamic` feature). Each message is a typed
+  value read straight from the frame bytes by `vitaminc_aead_frame::serde`,
+  so no tree is built and every message refuses an unknown key, a repeated
+  key or a wrong type the same way:
+  - `dynamic::context` takes the context's frame bytes. An integer is read
+    at the width the frame carries, and only `i32`, `i64`, `u32` and `u64`
+    are contexts: an 8- or 16-bit integer, which was widened to 32 bits
+    before, and a 128-bit one are `Reason::ContextKind`, as are bytes that
+    are not one frame.
+  - `record::plan` and `record::plan_with` take the plan's frame bytes.
+    `IndexSpec::from_frame` replaces `IndexSpec::from_value`, and
+    `Output::from_value` is gone. Each `Reason` a plan was refused with is
+    unchanged, with two exceptions: a key, a field or a match option given
+    twice is refused by the frame before the plan is read, as
+    `Reason::NotAnObject` naming no field (it was `RepeatedKey` or
+    `DuplicateField`), and so are bytes that are not one frame. An index's
+    payload may be missing or null alike: `{"match": null}` is a bare
+    `"match"`, and `{"eq": null}` a bare `"eq"`.
+  - `Stats::from_frame` replaces `Stats::from_value`.
+  - The engine's answers are `Serialize`, written to a frame by serde,
+    byte for byte what the `FfiValue` encoders wrote (pinned in the tests):
+    `QueryTerm`, `TargetDescriptor` and `IndexSpec` replace their
+    `to_value`, `OperatorEntry::new` replaces `operator_to_value`, and
+    `Limit::rows` replaces `limit_to_value` (`None` writes null).
+
+- **`dynamic::FfiValue` is removed** (`dynamic` feature, #1252). Nothing
+  takes a value tree any more: a plaintext is a `ValueFrame`, and control
+  data is read from its frame by serde (above). Gone with it are
+  `Utf8String`, the tree's sink types (`ValueSink`, `ValueSeq`, `ValueMap`,
+  `Put`, `Root`, `Element`, `Entry`), `ValueKind::holds` and
+  `FfiValue::kind`. `ValueKind` and `ParseValueKindError` are unchanged and
+  still exported from `dynamic`, as is `FromFrameError`, now the error of
+  `ValueFrame::from_bytes` and `ValueFrame::check` alone. A value a test or
+  a caller spelled as an `FfiValue` is a Rust value instead
+  (`ValueFrame::of(34u32)`, `ValueFrame::of(&map)`), or the frame bytes a
+  binding sends. Stored records, terms and the frozen fixtures are byte for
+  byte what they were.
+
+- **A match value with no tokens is stored as the empty filter, so
+  `KeysetCipher::match_terms` is no longer a query.** In 0.2.0 the same call
+  served write time and query time, and refused text that cuts no token
+  under the match index's tokenizer (empty or separator-only text, or text
+  shorter than the n-gram length) with `TermError::EmptyTermText`. Now it
+  derives the stored filter only, and returns the empty filter (`bf: []`)
+  for such text with no error. **Do not send the output of `match_terms` as
+  a query:** EQL treats an empty filter as contained by every stored filter,
+  and its query domains do not refuse one, so that query returns every row
+  with no error anywhere. A query comes from `cipher.query(op::Matches, ..)`,
+  which still refuses such text with `TermError::EmptyTermText`, when the
+  query is awaited, before a term exists and before any keyset is loaded
+  (`op::Supports::check` now takes the query's value); `dynamic::term`
+  refuses it for a match kind the same way. The stored side is the change a
+  caller sees: one two-letter name no longer fails a whole row, the value
+  seals and opens as any other, and the `dynamic` record path stores it the
+  same way. Storing the empty filter tells a reader of the database that the
+  value is empty, separator-only or shorter than the n-gram length
+  (ADR-0009).
+- **stack-encrypt requires the vitaminc 0.6 crates.** They are the first
+  release of vitaminc ADR 0001, which the entries below build on. A crate
+  that names a vitaminc type stack-encrypt takes or returns (`Encrypt`,
+  `Decrypt`, `Protected`) moves to 0.6 with it.
+- **Equality terms derive through `vitaminc-normalize`, so `TextEq` compares
+  text in Unicode 16 NFC.** An equality term is the PRF over the value's
+  normalized bytes under vitaminc's domain for its kind: `café` written with
+  a precomposed `é` and with `e` and a combining accent is one term, every
+  integer width of one number is one term (`34u32` and `34i64` match), both
+  float widths of one number are one term, and a date, timestamp, decimal
+  or uuid derives in a domain of its own. `KeysetCipher::equality_term`,
+  `target::equality`, the `Equality` index and `op::Eq` take an `Encrypt`
+  that is one scalar where they took a `PrfValue`. A boolean, a null or a
+  container has no equality term (`TermError::NoEqualityTerm`); a `bool`
+  satisfies the new bound, so equality on one now fails when the term is
+  derived where it used to fail to compile. Text holding a code point
+  unassigned in Unicode 16 (an emoji newer than it, say) is refused
+  (`TermError::Normalize`), when it is written to an equality or match
+  column as well as when it is queried: the whole record's encrypt fails.
+  Match text is tokenized in the same normal form, and refused the same
+  way. Every equality and match term changes
+  bytes (the domains move to `/v2`); ORE and OPE terms do not. No stored
+  term existed to keep; the record fixture is regenerated. Text order
+  terms are encoded in the same normal form, folded further (see "Order
+  terms encrypt through cllw-ore's vitaminc schemes" above), so equality
+  and ordering agree on two forms of `café`.
+- **`dynamic::Value` and `dynamic::Scalar` are gone.** A field lowered from
+  data holds an `FfiValue`, which is now `Clone` (a deep copy into fresh
+  `Protected` payloads, as `Value`'s was) and reads as a context label.
+  `dynamic::term` takes any `Encrypt` (an `&FfiValue`, a transport frame
+  walked in place, a Rust value) and derives at the one scalar it holds;
+  `IndexSpec::defines(value)` replaces `IndexSpec::supports(&scalar)`, and
+  `IndexSpec` is an `Index<FfiValue>`.
+- **A boolean has no order term**, on the typed path and through a plan or
+  `dynamic::term`: with two values, an ORE or OPE term would tell anyone
+  holding the column which rows are `true`. An ORE or OPE term of a `bool`
+  (`KeysetCipher::ore_term`, the `Ore` and `Ope` indexes) is refused with
+  the new `TermError::NoOrderTerm`, before any key is minted, where cllw-ore
+  used to order one. `dynamic::admits` now refuses ORE and OPE on `bool`, and
+  admits equality on `float32` and `float64`, which vitaminc gives an
+  equality domain. A 128-bit integer has an equality term and no order
+  term.
+
+- **Values describe themselves with vitaminc's new `Encrypt` and read back
+  with `Decrypt` (vitaminc ADR 0001).** `KeysetCipher::encrypt`,
+  `StackCipher::decrypt` and every target take the new `Encrypt`, a source
+  that describes its value to a sink, where they took the old
+  visitor-driven `Encrypt`, and `Decrypt` where they took
+  `Decrypt<'static>`; derive both with `vitaminc_aead::{Encrypt, Decrypt}`
+  (`stack_encrypt::{Encrypt, Decrypt}` re-exports them). The name is the
+  same and the trait is not: a hand-written impl of the old one does not
+  compile against the new one. `Decipher`, `Element` and `Cipher` are no
+  longer re-exported, and `StackDecipher` and `BoxedPassthrough` are gone.
+  A pending tree is planned rather than driven:
+  `PendingStackCipherText::plan(value, aad)`, then `seal` or
+  `into_pending` as before. The key fetch is unchanged: one batched
+  `generate_keys` per assembly to seal, one `retrieve_keys` per keyset to
+  open.
+- **Every leaf records its type, so a Rust field and a data-plan field
+  share leaves.** A Rust `u32` and a data plan's `uint32` field seal the
+  same leaf under the same context, and each opens the other's; a reader of
+  another kind (text for an integer, an integer for bytes) is refused rather
+  than handed changed plaintext, as a bare `String` reader used to read a
+  binding's leaf as `"\nalice"` (#1118). An integer reader accepts an integer
+  leaf of any width whose value fits, and an `f64` reader an `f32` leaf,
+  which change no value.
+  Leaves are vitaminc's wire version 2, so a ciphertext sealed by an
+  earlier build does not open.
+- **An absent value is a sealed null leaf**, a `Single` like any other
+  value: the absent marker (`CipherText::None`) and
+  `transcode::Visitor::absent` are gone.
+- **A passthrough travels as its frame.** `StackCipherText` is vitaminc's
+  `Node<SealedValue>`: a passthrough subtree is a `PassthroughFrame`, the
+  transport frame of its value, in place of a boxed value, and
+  `transcode::Visitor::passthrough` takes one.
+  A dynamic passthrough value the frame cannot carry is refused when the
+  source is read, before any key is requested, as `Error::Source` naming
+  the field: a repeated key as `Reason::RepeatedKey`, and a value nested
+  deeper, or holding text, bytes or a key longer, than a frame carries as
+  the new `Reason::Unframeable` (`"unframeable"`).
+- **`dynamic::FfiValue` and `dynamic::ValueKind` are this crate's own**,
+  with the same variants and kind names, since vitaminc no longer has a
+  value tree. A value crosses a binding's boundary as a transport frame
+  (`FfiValue::to_frame`, `FfiValue::from_frame`), and is read through its
+  `Decrypt` sink: an 8- or 16-bit integer in a frame reads as the 32-bit
+  variant of its sign, and a scalar no variant holds is refused.
+
+- **`StackCipher::query_index` is gone**, with `QueryIndexBuilder` and
+  `QueryIndex`. Every query names an operator now that the orderings have
+  arrived:
+  - `query_index(Ore, &v)` over an integer is `query(op::Lt, &v)` (or any
+    ordering; the term is the same `OreTerm`).
+  - `query_index(Match, text)` is `query(op::Matches, text)`, which is not
+    the same call. It returns a `MatchQuery`, not the stored `MatchTerms`;
+    it refuses text that cuts no token (`TermError::EmptyTermText`); and it
+    compiles only for a configuration that implements `op::MatchCase`. A
+    configuration without one needs that one-line impl to be queried.
+  - `query_index(Ore, text)` and `query_index(Ope, text)` are
+    `query(op::Lt, text)` and `query(op::Lt, text).via(Ope)` (or any
+    ordering), whose term is the text's folded order term (see "Order terms
+    encrypt through cllw-ore's vitaminc schemes" above).
+- **`op::Supports`, `op::Answers` and `op::DefaultIndex` are keyed by the
+  query's input**, `Supports<Op, In>` with `In: Input<Op::Arity>`, in
+  place of the plaintext; for every operator but `Between` the input is
+  the plaintext, so `Supports<Eq, S>` reads as before. `Supports::check`
+  takes the input and returns `Error`, and `Supports::query` takes the
+  input's terms (`In::Terms<Self::Term>`: one term, or a pair for a
+  range). `plan::Resolves::resolve` takes the index and the call's context
+  and returns the index and the label.
+- **The query chain starts with the operator.** `cipher.query(op, v)`
+  replaces `cipher.query(v)`: `cipher.query(op::Eq, v).on(&plan)` replaces
+  `cipher.query(v).using(&plan).equality()`, and `on` replaces `using` for
+  queries only (a write still runs `using` a plan). An index's own term, for
+  an index no operator answers yet (`Ore`, `Ope`), is
+  `cipher.query_index(Ore, v).on(&plan)`, which goes when the ordering
+  operators arrive. `QueryUsing` is gone; the chain's types are `QueryBuilder`, `QueryVia`,
+  `QueryIndexBuilder`, `QueryIndex` and `QueryOp`, and the plan shapes
+  implement `plan::Chooses` and `plan::Resolves`.
+- **`Match::default()` is `Match`.** The match index under the default
+  configuration is the value `Match`, and `Default` is now implemented for
+  every `Match<O>`, so `Match::default()` no longer infers the configuration.
 
 - **Update pattern matches for `dynamic::Error`.** `Context`, `Plan`,
   `Source`, and `Record` now carry
@@ -363,7 +2760,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/`). A data key minted through 0.1.0 was bound to the old rendering of the
   same context and cannot be retrieved under this one. 0.1.0 had one known
   consumer, aware of this; see ADR-0006.
-- `#[derive(EncryptFrom)]` with `struct = User, context = "users"` binds each
+- `#[derive(EncryptFrom)]` with `struct = User, scope = "users"` binds each
   field under the pair `("users", "<field>")`, the same context EQL's
   `Identifier` is. A `#[stash(context = "…")]` literal on a field stays one
   text part, exactly as written.

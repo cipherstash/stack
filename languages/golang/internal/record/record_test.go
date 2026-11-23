@@ -105,16 +105,18 @@ func TestTargetFieldWiresItsTypeInsteadOfOutputs(t *testing.T) {
 	if err := both.Validate(); err == nil {
 		t.Fatal("a field with a target and outputs was accepted")
 	}
-	// An EQL column is a table and a column: a two-segment context, or an
-	// extension, leaves the target field no column, and the refusal names
-	// the field — before the guest is asked.
+	// An EQL column is a table and a column: a two-segment context leaves
+	// the target field no column, and the refusal names the field — before
+	// the guest is asked.
 	deep := &Plan{Context: []string{"app", "users"}, Fields: []Field{{Name: "email", Kind: String, Target: "TextEq"}}}
 	if err := deep.Validate(); err == nil || !strings.Contains(err.Error(), `field "email"`) || !strings.Contains(err.Error(), `"app/users" has 2 segments`) {
 		t.Fatalf("a target under app/users: %v", err)
 	}
-	extended := &Plan{Context: []string{"users"}, Extension: []any{uint64(7)}, Fields: []Field{{Name: "email", Kind: String, Target: "TextEq"}}}
-	if err := extended.Validate(); err == nil || !strings.Contains(err.Error(), "extended context has no column") {
-		t.Fatalf("an extended target: %v", err)
+	// A scope and a binding come after the column, so a target field takes
+	// both. The EQL value stores the column alone.
+	scoped := &Plan{Context: []string{"users"}, Extension: []any{uint64(7)}, Bind: []any{uint64(9)}, Fields: []Field{{Name: "email", Kind: String, Target: "TextEq"}}}
+	if err := scoped.Validate(); err != nil {
+		t.Fatalf("a target under a scope and a binding: %v", err)
 	}
 	// The same context seals a plain field as before.
 	plain := &Plan{Context: []string{"app", "users"}, Fields: []Field{{Name: "email", Kind: String, Outputs: []Output{Ciphertext}}}}
@@ -126,21 +128,26 @@ func TestTargetFieldWiresItsTypeInsteadOfOutputs(t *testing.T) {
 func TestValidateRefusals(t *testing.T) {
 	one := func(f Field) *Plan { return &Plan{Context: []string{"users"}, Fields: []Field{f}} }
 	cases := map[string]*Plan{
-		"no context":          {Fields: []Field{{Name: "a", Outputs: []Output{Ciphertext}}}},
-		"bad segment":         {Context: []string{"users/x"}, Fields: []Field{{Name: "a", Outputs: []Output{Ciphertext}}}},
-		"no field":            {Context: []string{"users"}},
-		"no name":             one(Field{Outputs: []Output{Ciphertext}}),
-		"name twice":          {Context: []string{"users"}, Fields: []Field{{Name: "a", Outputs: []Output{Ciphertext}}, {Name: "a", Outputs: []Output{Ciphertext}}}},
-		"identity twice":      {Context: []string{"users"}, Fields: []Field{{Name: "a", Identity: "x", Outputs: []Output{Ciphertext}}, {Name: "b", Identity: "x", Outputs: []Output{Ciphertext}}}},
-		"identity not plain":  one(Field{Name: "a", Identity: "1x", Outputs: []Output{Ciphertext}}),
-		"unknown kind":        one(Field{Name: "a", Kind: "integer", Outputs: []Output{Ciphertext}}),
-		"no output":           one(Field{Name: "a"}),
-		"unknown output":      one(Field{Name: "a", Outputs: []Output{"json"}}),
-		"output twice":        one(Field{Name: "a", Kind: Uint32, Outputs: []Output{Equality, Equality}}),
-		"bad extension part":  {Context: []string{"users"}, Extension: []any{1.5}, Fields: []Field{{Name: "a", Outputs: []Output{Ciphertext}}}},
-		"name is not a label": one(Field{Name: "b64:x", Outputs: []Output{Ciphertext}}),
-		"indexed and untyped": one(Field{Name: "a", Outputs: []Output{Ciphertext, Equality}}),
-		"index alone untyped": one(Field{Name: "a", Outputs: []Output{Ope}}),
+		"no context":                {Fields: []Field{{Name: "a", Outputs: []Output{Ciphertext}}}},
+		"bad segment":               {Context: []string{"users/x"}, Fields: []Field{{Name: "a", Outputs: []Output{Ciphertext}}}},
+		"no field":                  {Context: []string{"users"}},
+		"no name":                   one(Field{Outputs: []Output{Ciphertext}}),
+		"name twice":                {Context: []string{"users"}, Fields: []Field{{Name: "a", Outputs: []Output{Ciphertext}}, {Name: "a", Outputs: []Output{Ciphertext}}}},
+		"identity twice":            {Context: []string{"users"}, Fields: []Field{{Name: "a", Identity: "x", Outputs: []Output{Ciphertext}}, {Name: "b", Identity: "x", Outputs: []Output{Ciphertext}}}},
+		"identity not plain":        one(Field{Name: "a", Identity: "1x", Outputs: []Output{Ciphertext}}),
+		"unknown kind":              one(Field{Name: "a", Kind: "integer", Outputs: []Output{Ciphertext}}),
+		"no output":                 one(Field{Name: "a"}),
+		"unknown output":            one(Field{Name: "a", Outputs: []Output{"json"}}),
+		"output twice":              one(Field{Name: "a", Kind: Uint32, Outputs: []Output{Equality, Equality}}),
+		"bad extension part":        {Context: []string{"users"}, Extension: []any{1.5}, Fields: []Field{{Name: "a", Outputs: []Output{Ciphertext}}}},
+		"bad binding part":          {Context: []string{"users"}, Bind: []any{1.5}, Fields: []Field{{Name: "a", Outputs: []Output{Ciphertext}}}},
+		"empty text binding":        {Context: []string{"users"}, Bind: []any{""}, Fields: []Field{{Name: "a", Outputs: []Output{Ciphertext}}}},
+		"empty bytes binding":       {Context: []string{"users"}, Bind: []any{[]byte{}}, Fields: []Field{{Name: "a", Outputs: []Output{Ciphertext}}}},
+		"field named bind":          one(Field{Name: "bind", Outputs: []Output{Ciphertext}}),
+		"field named context_field": one(Field{Name: "context_field", Outputs: []Output{Ciphertext}}),
+		"name is not a label":       one(Field{Name: "b64:x", Outputs: []Output{Ciphertext}}),
+		"indexed and untyped":       one(Field{Name: "a", Outputs: []Output{Ciphertext, Equality}}),
+		"index alone untyped":       one(Field{Name: "a", Outputs: []Output{Ope}}),
 	}
 	for name, p := range cases {
 		if err := p.Validate(); err == nil {
@@ -176,5 +183,75 @@ func TestParseContext(t *testing.T) {
 	}
 	if err := CheckSegment("x/y"); err == nil || !strings.Contains(err.Error(), "separator") {
 		t.Fatalf("CheckSegment: %v", err)
+	}
+}
+
+// A target with options is the object {"name", "options"}, with only the
+// options set; a target with none is its name.
+func TestWireGivesATargetItsOptions(t *testing.T) {
+	sealed := false
+	p := &Plan{Context: []string{"users"}, Fields: []Field{
+		{Name: "profile", Kind: JSON, Target: "JsonSearch", Null: SQLNull, TargetOptions: &TargetOptions{SealedRoot: &sealed, Ordered: []string{"$.age"}}},
+		{Name: "prefs", Kind: JSON, Target: "JsonSearch", Null: SQLNull, TargetOptions: &TargetOptions{}},
+		{Name: "notes", Kind: JSON, Target: "JsonSearch"},
+	}}
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	wire := p.Wire()
+	target := func(i int) any { return wire[i].Value.(vcvalue.Object)[1].Value }
+	want := vcvalue.Object{{Key: "name", Value: "JsonSearch"}, {Key: "options", Value: vcvalue.Object{
+		{Key: "sealed_root", Value: false}, {Key: "ordered", Value: []any{"$.age"}},
+	}}}
+	if !reflect.DeepEqual(target(0), want) {
+		t.Fatalf("target = %#v", target(0))
+	}
+	if !reflect.DeepEqual(target(1), vcvalue.Object{{Key: "name", Value: "JsonSearch"}, {Key: "options", Value: vcvalue.Object{}}}) {
+		t.Fatalf("empty options = %#v", target(1))
+	}
+	if target(2) != "JsonSearch" {
+		t.Fatalf("no options = %#v", target(2))
+	}
+	if typ := wire[0].Value.(vcvalue.Object)[2]; typ.Key != "type" || typ.Value != "json" {
+		t.Fatalf("type = %#v", typ)
+	}
+	bad := &Plan{Context: []string{"users"}, Fields: []Field{{Name: "a", Kind: String, Outputs: []Output{Ciphertext}, TargetOptions: &TargetOptions{}}}}
+	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "no target") {
+		t.Fatalf("options with no target: %v", err)
+	}
+	noTarget := &Plan{Context: []string{"users"}, Fields: []Field{{Name: "profile", Kind: JSON, Outputs: []Output{Ciphertext}}}}
+	if err := noTarget.Validate(); err == nil || !strings.Contains(err.Error(), `"profile" is a JSON document and names no target`) {
+		t.Fatalf("a json field with no target: %v", err)
+	}
+	if !JSON.Known() {
+		t.Fatal("json is a kind")
+	}
+}
+
+// Ordered paths group by the array their last wildcard names, each one a
+// member of an element of it; a path with no member below a wildcard, or
+// one that crosses another array, is none.
+func TestElementArraysGroupOrderedPathsByTheirLastWildcard(t *testing.T) {
+	o := &TargetOptions{Ordered: []string{
+		"$.age",
+		"$.extra.contacts[*].relationship",
+		"$.tags[*]",
+		"$.extra.contacts[*].calls",
+		"$.orders[*].lines[*].sku",
+		"$.orders[*].lines[*].qty.units",
+		"$.visits[*].stops[2]",
+		"$.m[*][*].x",
+		`$["a b"][*].c`,
+	}}
+	want := []ElementArray{
+		{Path: "$.extra.contacts[*]", Members: []string{"relationship", "calls"}},
+		{Path: "$.orders[*].lines[*]", Members: []string{"sku", "qty.units"}},
+		{Path: "$.m[*][*]", Members: []string{"x"}},
+	}
+	if got := o.ElementArrays(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("ElementArrays = %+v, want %+v", got, want)
+	}
+	if got := (*TargetOptions)(nil).ElementArrays(); got != nil {
+		t.Fatalf("nil options: %+v", got)
 	}
 }

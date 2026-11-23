@@ -1,34 +1,67 @@
-error[E0277]: the trait bound `SerdeOnly: stack_encrypt::Encrypt` is not satisfied
- --> tests/ui/plaintext_needs_encrypt.rs:9:33
-  |
-9 |     let _=keyset.encrypt_as::<_,Target>(&SerdeOnly {value:"x".into()},nonempty!("column").into());
-  |                  ----------     ^^^^^^ unsatisfied trait bound
-  |                  |
-  |                  required by a bound introduced by this call
-  |
-help: the trait `stack_encrypt::Encrypt` is not implemented for `SerdeOnly`
- --> tests/ui/plaintext_needs_encrypt.rs:4:1
-  |
-4 | struct SerdeOnly { value: String }
-  | ^^^^^^^^^^^^^^^^
-  = help: the following other types implement trait `stack_encrypt::Encrypt`:
-            &str
-            ContextTag<Tag, T>
-            FfiValue
-            HashMap<K, T>
-            Vec<T>
-            Vec<u8>
-            [u8; N]
-            stack_encrypt::Element<T>
-          and $N others
-  = note: required for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` to implement `EncryptFrom<SerdeOnly>`
-  = note: 1 redundant requirement hidden
-  = note: required for `Target` to implement `EncryptFrom<SerdeOnly>`
-note: required by a bound in `target::operations::<impl KeysetCipher<'_, K>>::encrypt_as`
- --> src/target/operations.rs
-  |
-  |     pub fn encrypt_as<'a, S, T>(&'a self, source: &S, context: T::Context) -> Pending<'a, T, K>
-  |            ---------- required by a bound in this associated function
-  |     where
-  |         T: EncryptFrom<S>,
-  |            ^^^^^^^^^^^^^^ required by this bound in `target::operations::<impl KeysetCipher<'_, K>>::encrypt_as`
+error[E0277]: the trait bound `SerdeOnly: Encrypt` is not satisfied
+  --> tests/ui/plaintext_needs_encrypt.rs:20:23
+   |
+20 |     let _ = plaintext.encrypt_into_with_context::<Target, _>(&keyset, nonempty!("column"));
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `Encrypt` is not implemented for `SerdeOnly`
+  --> tests/ui/plaintext_needs_encrypt.rs:8:1
+   |
+ 8 | struct SerdeOnly {
+   | ^^^^^^^^^^^^^^^^
+note: there are multiple different versions of crate `vitaminc_aead` in the dependency graph
+  --> $CARGO/vitaminc-aead-$VERSION/src/plaintext/mod.rs
+   |
+   | pub trait Encrypt {
+   | ^^^^^^^^^^^^^^^^^ this is the expected trait
+   |
+  ::: $CARGO/vitaminc-aead-$VERSION/src/encrypt/mod.rs
+   |
+   | pub trait Encrypt {
+   | ----------------- this is the trait that was imported
+   = help: you can use `cargo tree` to explore your dependency tree
+   = help: the following other types implement trait `Encrypt`:
+             &&T
+             &BTreeMap<K, V>
+             &HashMap<K, V>
+             &JsonPlaintext
+             &Lent<'_, T>
+             &PassthroughFrame
+             &Protected<T>
+             &ProtectedRef<'_, T>
+           and $N others
+   = note: required for `CipherText<SealedValue, PassthroughFrame>` to implement `EncryptTarget<SerdeOnly>`
+   = note: 1 redundant requirement hidden
+   = note: required for `Target` to implement `EncryptTarget<SerdeOnly>`
+
+error[E0277]: the trait bound `for<'a> &'a SerdeOnly: Encrypt` is not satisfied
+  --> tests/ui/plaintext_needs_encrypt.rs:20:23
+   |
+20 |     let _ = plaintext.encrypt_into_with_context::<Target, _>(&keyset, nonempty!("column"));
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `for<'a> Encrypt` is not implemented for `&'a SerdeOnly`
+   |
+note: there are multiple different versions of crate `vitaminc_aead` in the dependency graph
+  --> $CARGO/vitaminc-aead-$VERSION/src/plaintext/mod.rs
+   |
+   | pub trait Encrypt {
+   | ^^^^^^^^^^^^^^^^^ this is the expected trait
+   |
+  ::: $CARGO/vitaminc-aead-$VERSION/src/encrypt/mod.rs
+   |
+   | pub trait Encrypt {
+   | ----------------- this is the found trait
+   = help: you can use `cargo tree` to explore your dependency tree
+   = help: the following other types implement trait `Encrypt`:
+             &&T
+             &BTreeMap<K, V>
+             &HashMap<K, V>
+             &JsonPlaintext
+             &Lent<'_, T>
+             &PassthroughFrame
+             &Protected<T>
+             &ProtectedRef<'_, T>
+           and $N others
+   = note: required for `SerdeOnly` to implement `EncryptRef`
+   = note: required for `CipherText<SealedValue, PassthroughFrame>` to implement `EncryptTarget<SerdeOnly>`
+   = note: 1 redundant requirement hidden
+   = note: required for `Target` to implement `EncryptTarget<SerdeOnly>`

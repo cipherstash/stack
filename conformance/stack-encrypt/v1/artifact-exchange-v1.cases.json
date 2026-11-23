@@ -1,0 +1,155 @@
+{
+  "version": 1,
+  "profile": "artifact-exchange-v1",
+  "seed": "737461636b2d656e63727970742061727469666163742065786368616e676520",
+  "required_capabilities": [
+    "records",
+    "equality",
+    "order",
+    "passthrough",
+    "value-kinds",
+    "null-policies",
+    "opaque-blobs"
+  ],
+  "values": {
+    "corpus": "record-values-v1.cases.json",
+    "profile": "record-values-v1",
+    "context": ["conformance", "exchange"],
+    "field": "value"
+  },
+  "record": {
+    "context": ["conformance", "exchange", "people"],
+    "fields": [
+      {
+        "name": "id",
+        "kind": "int64",
+        "passthrough": true
+      },
+      {
+        "name": "name",
+        "kind": "string",
+        "outputs": ["c", "eq"]
+      },
+      {
+        "name": "age",
+        "kind": "uint32",
+        "outputs": ["c", "eq", "ore"]
+      },
+      {
+        "name": "balance",
+        "kind": "decimal",
+        "outputs": ["c", "eq", "ore"]
+      },
+      {
+        "name": "born",
+        "kind": "date",
+        "outputs": ["c", "eq", "ore"]
+      },
+      {
+        "name": "joined",
+        "kind": "timestamp",
+        "outputs": ["c", "eq", "ope"]
+      },
+      {
+        "name": "note",
+        "kind": "string",
+        "outputs": ["c"],
+        "null": "sql"
+      },
+      {
+        "name": "rating",
+        "kind": "float32",
+        "outputs": ["c", "eq"],
+        "null": "sealed"
+      }
+    ],
+    "rows": [
+      {
+        "id": "ada",
+        "values": {
+          "id": { "type": "int64", "text": "1" },
+          "name": { "type": "string", "text": "Ada Lovelace" },
+          "age": { "type": "uint32", "text": "36" },
+          "balance": { "type": "decimal", "text": "1234.5600" },
+          "born": { "type": "date", "text": "1815-12-10" },
+          "joined": {
+            "type": "timestamp",
+            "text": "2026-10-17T01:02:03.123456789Z"
+          },
+          "note": { "type": "string", "text": "first programmer" },
+          "rating": { "type": "float32", "text": "4.5" }
+        }
+      },
+      {
+        "id": "nulls",
+        "values": {
+          "id": { "type": "int64", "text": "-9223372036854775808" },
+          "name": { "type": "string", "text": "" },
+          "age": { "type": "uint32", "text": "0" },
+          "balance": { "type": "decimal", "text": "-0.01" },
+          "born": { "type": "date", "text": "1970-01-01" },
+          "joined": { "type": "timestamp", "text": "1970-01-01T00:00:00Z" },
+          "note": { "type": "null", "text": "" },
+          "rating": { "type": "null", "text": "" }
+        }
+      },
+      {
+        "id": "unicode",
+        "values": {
+          "id": { "type": "int64", "text": "9223372036854775807" },
+          "name": { "type": "string", "text": "Grüße, 世界 🌏" },
+          "age": { "type": "uint32", "text": "4294967295" },
+          "balance": {
+            "type": "decimal",
+            "text": "79228162514264337593543950335"
+          },
+          "born": { "type": "date", "text": "9999-12-31" },
+          "joined": {
+            "type": "timestamp",
+            "text": "1969-12-31T23:59:59.999999999Z"
+          },
+          "note": { "type": "string", "text": "max" },
+          "rating": { "type": "float32", "text": "-0" }
+        }
+      }
+    ]
+  },
+  "blob": {
+    "context": ["conformance", "exchange", "blob"],
+    "field": "value",
+    "cases": [
+      {
+        "id": "ada",
+        "value": {
+          "name": "Ada Lovelace",
+          "age": 36,
+          "tags": ["maths", "engines"],
+          "nickname": "ada"
+        }
+      },
+      {
+        "id": "empty",
+        "value": {
+          "name": "",
+          "age": 0,
+          "tags": [],
+          "nickname": null
+        }
+      },
+      {
+        "id": "unicode",
+        "value": {
+          "name": "Grüße, 世界 🌏",
+          "age": 4294967295,
+          "tags": ["ü", "世界", ""],
+          "nickname": "🌏"
+        }
+      }
+    ]
+  },
+  "eql": {
+    "table": "profiles",
+    "fixture": "packages/eql/tests/encryption/fixtures/v4_rows.json",
+    "schema": "eql_v4"
+  }
+}

@@ -1,6 +1,9 @@
-use stack_encrypt::{DecryptInto, StackCipherText};
+//! A `plaintext` record opens through one ciphertext. With two, and neither
+//! marked `#[stash(decrypt)]`, the derive cannot choose.
+use stack_encrypt::target::DecryptSource;
+use stack_encrypt::StackCipherText;
 
-#[derive(DecryptInto)]
+#[derive(DecryptSource)]
 #[stash(plaintext = u32)]
 struct Rec {
     a: StackCipherText,

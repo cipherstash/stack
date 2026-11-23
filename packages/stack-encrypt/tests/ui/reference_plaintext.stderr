@@ -1,5 +1,5 @@
-error: `plaintext` must be an owned type: a reference plaintext has no lifetime the generated impl can name. Omit `plaintext` for an impl generic over the source, which accepts references too.
- --> tests/ui/reference_plaintext.rs:4:21
+error: `plaintext` must be an owned type: a reference plaintext has no lifetime the generated impl can name, and a plaintext is passed by value and wiped. Name the owned type, such as `String` for `&str`.
+ --> tests/ui/reference_plaintext.rs:7:21
   |
-4 | #[stash(plaintext = &str)]
+7 | #[stash(plaintext = &str)]
   |                     ^^^^

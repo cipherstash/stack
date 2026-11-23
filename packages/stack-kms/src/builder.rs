@@ -5,7 +5,7 @@ use crate::connection::HttpConnectionOpts;
 use crate::endpoint::{InvalidEndpoint, ZeroKmsEndpoint};
 use crate::key::ClientKey;
 use crate::key_provider::{KeyProvider, KeyProviderError};
-use stack_auth::{AuthStrategy, AuthStrategyBounds};
+use stack_auth::AuthStrategyBounds;
 use thiserror::Error;
 
 /// Error type for [`StackKmsBuilder`] operations.
@@ -125,7 +125,6 @@ impl StackKmsBuilder<stack_auth::AutoStrategy, ()> {
 impl<C> StackKmsBuilder<C, ()>
 where
     C: AuthStrategyBounds,
-    for<'a> &'a C: AuthStrategy,
 {
     /// Create a new [`StackKmsBuilder`].
     ///
@@ -264,7 +263,6 @@ impl<C, S> StackKmsBuilder<C, S> {
 impl<C> StackKmsBuilder<C, ClientKey>
 where
     C: AuthStrategyBounds,
-    for<'a> &'a C: AuthStrategy,
 {
     /// Build a [`StackKms`] client.
     pub fn build(self) -> Result<StackKms<C>, StackKmsBuilderError> {
@@ -282,7 +280,6 @@ pub struct WithKeyProvider<K: KeyProvider>(K);
 impl<C, K> StackKmsBuilder<C, WithKeyProvider<K>>
 where
     C: AuthStrategyBounds,
-    for<'a> &'a C: AuthStrategy,
     K: KeyProvider,
 {
     /// Build a [`StackKms`] client by loading the key from the provider.

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "profile": "record-bindings-v1",
+  "producer": "rust-native",
+  "cases": {
+    "bind-row": {
+      "descriptor": "(users/text)/9u64",
+      "equality": "7cc383b27a53f75bd06bf941c370a09932a18a89ca0673f9bf00fb33e69c6310",
+      "ciphertext": "010000000000000000000000000000000096223155634bc8c5d219bc3eb34c73c520009d802d87ef86313ecd30ef6808a4965070a3a64193df36cb51ad183c4e139f2402e53fba89758f1c90e2e82c19e4e185dd172d44e7c23026233169997981b758a73277",
+      "contexts": "text\n  query context:  users / text\n  stored context: (users / text) / 9u64\n"
+    },
+    "scope-then-bind": {
+      "descriptor": "((users/text)/42u64)/9u64",
+      "equality": "3be6f2b8c1c1b96d008101a3e1cd90a7114001fa0cd73ed9c76867b4b402f772",
+      "ciphertext": "0100000000000000000000000000000000f9c0da3e24b68af03533cfba6a9a507e2000076185c49aa3f46d6a2b4658ce65fd558f6ba8cc57e3cc8f35c8d86d2816678e02120f210e87ac66b1482aa3901864447ff3ab943adc19bfcfdbfbbc5f224094e0c2d3",
+      "contexts": "text\n  query context:  (users / text) / 42u64\n  stored context: ((users / text) / 42u64) / 9u64\n"
+    },
+    "scope-then-two-binds": {
+      "descriptor": "(((tenants/acme/text)/18446744073709551613u64)/9u64)/row-a",
+      "equality": "f497f570e70d0de22160b1ec71fe3397ac79d715dd338e96dbfce8cbaedb039a",
+      "ciphertext": "010000000000000000000000000000000071c7ceaea40be16ca3e267d2f845e2df2000100b8c046189c664ee7236eb08363302107e960d5dffe304815489a0d9961c02023fa7bc75ace10e7b201f386fe90d382cedddeaa9050a138c588de8846cabd6864962",
+      "contexts": "text\n  query context:  (tenants / acme / text) / -3i64\n  stored context: (((tenants / acme / text) / -3i64) / 9u64) / row-a\n"
+    },
+    "two-scopes-then-bind": {
+      "descriptor": "(((users/text)/42u64)/eu)/b64:AQI=",
+      "equality": "62040e9c1194a8b7de427afa05baed8fbc944da6d1ad710f97d87073233aa1ee",
+      "ciphertext": "01000000000000000000000000000000003208155c8b6cda75a7cc6438736eb1ad2000198dfcb486d1accb1284b01fbd4b7ee89a08c946c0a77f72b7123736b0d1e57e0211195eba17603642be4b2cb04df15b68e453c9590e9ef4413ad29fbc5b46569d1656",
+      "contexts": "text\n  query context:  ((users / text) / 42u64) / eu\n  stored context: (((users / text) / 42u64) / eu) / 0x0102\n"
+    }
+  }
+}

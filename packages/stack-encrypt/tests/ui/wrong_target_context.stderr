@@ -1,9 +1,30 @@
-error[E0308]: mismatched types
-  --> tests/ui/wrong_target_context.rs:12:64
+error[E0277]: the trait bound `NonEmpty<u32>: From<NonEmpty<&str>>` is not satisfied
+  --> tests/ui/wrong_target_context.rs:19:58
    |
-12 |     let _ = keyset.encrypt_as::<_,Target>(&"value".to_owned(), nonempty!("wrong type"));
-   |                                                                ^^^^^^^^^^^^^^^^^^^^^^^ expected `NonEmpty<u32>`, found `NonEmpty<&str>`
+19 |         .encrypt_into_with_context::<Target, _>(&keyset, nonempty!("wrong type"));
+   |          -------------------------                       ^^^^^^^^^^^^^^^^^^^^^^^ the trait `From<NonEmpty<&str>>` is not implemented for `NonEmpty<u32>`
+   |          |
+   |          required by a bound introduced by this call
    |
-   = note: expected struct `NonEmpty<u32>`
-              found struct `NonEmpty<&'static str>`
-   = note: this error originates in the macro `nonempty` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: the trait `From<NonEmpty<&str>>` is not implemented for `NonEmpty<u32>`
+      but trait `From<u32>` is implemented for it
+  --> $CARGO/vitaminc-protected-$VERSION/src/non_empty.rs
+   |
+   |         impl From<$ty> for NonEmpty<$ty> {
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+   | never_empty!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+   | -------------------------------------------------------------- in this macro invocation
+   = help: for that trait implementation, expected `u32`, found `NonEmpty<&str>`
+   = note: there are multiple different versions of crate `vitaminc_protected` in the dependency graph
+   = help: you can use `cargo tree` to explore your dependency tree
+   = note: required for `NonEmpty<&str>` to implement `Into<NonEmpty<u32>>`
+note: required by a bound in `encrypt_into_with_context`
+  --> src/target/conversion.rs
+   |
+   |     fn encrypt_into_with_context<'a, T, K: 'static>(
+   |        ------------------------- required by a bound in this associated function
+...
+   |         context: impl Into<<T::ContextInput as AcceptsContext>::Value>,
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into_with_context`
+   = note: this error originates in the macro `never_empty` (in Nightly builds, run with -Z macro-backtrace for more info)
