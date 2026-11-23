@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-10-18
-amended: 2026-10-26
+amended: 2026-11-23
 extends: vitaminc ADR 0002
 ---
 
@@ -94,3 +94,37 @@ Three things stay outside it, by design, as they were before the cascade:
   by naming a type that carries that rule, the way `serde_bytes` selects a
   different encoding by type (vitaminc ADR 0002). It is not a default and
   not a flag, and it does not exist yet.
+
+## Amended 2026-11-23 (ADR-0016)
+
+[ADR-0016](0016-a-context-is-a-field-path-and-named-parts.md) names the
+parts of a context and lets a part be added after encryption. This changes
+what "the context it was sealed under" covers.
+
+**Authenticated by the leaf, as before:** the field path, and every
+partition and label that was present at encryption. Each part is bound as
+its wire name and its value. A leaf that opens was sealed under exactly
+those parts. A label's stored copy, such as a row ID in a passthrough
+field, is still not authenticated by itself: a changed copy leaves the
+leaf unable to open.
+
+**Authenticated by the key tag, and not by the leaf:** a part added by a
+refinement. The key provider replays the chain of refinements before it
+returns a key. The leaf's AAD does not change when a value is refined.
+
+**Not authenticated, by design:**
+
+- **A label refinement against rollback.** A label refinement is a local
+  step that anyone who can write the row can compute. Someone who holds an
+  older tag can write it back and drop a later label, or copy the value to
+  another row and add that row's ID. A label that must resist this is set
+  at encryption.
+- **Which row a leaf belongs to**, unless a label names the row. This is
+  the row rule above, in the new words: the label is `RecordId`.
+
+A policy refinement is different. Only the key provider can produce its
+step, and the provider refuses a chain that has been rolled back.
+
+A finding that a label refinement can be undone by a writer is not a
+defect. A finding that a part present at encryption is not bound to the
+leaf is one.

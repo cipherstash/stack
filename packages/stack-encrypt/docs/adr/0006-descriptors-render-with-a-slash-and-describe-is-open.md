@@ -143,3 +143,30 @@ bytes Go and Rust must agree on.
 The derive's `struct = .., context = "<prefix>"` form and the Go tag bind the
 same pair, so a row the derive writes opens through the Go SDK and the
 reverse. That is the interoperability this ADR was for.
+
+## Amended 2026-11-23 (ADR-0016)
+
+[ADR-0016](0016-a-context-is-a-field-path-and-named-parts.md) reverses one
+part of this decision and renames one type.
+
+**`Describe` is removed.** This record made `Describe` an open trait,
+because the renderer carries the safety property and a consumer's own
+column type was the expected implementor. Nothing takes `Describe` as a
+bound. Its two implementors were `Label` and EQL's `Identifier`. A context
+is now a field path and named parts, and a part carries its name and its
+value, so the trait has no work left. `Descriptor::from_piece` is still
+the only renderer. No implementor writes rendered text, so the safety rule
+holds.
+
+**The `Label` struct is renamed `FieldPath`.** The segment rule and the
+rendering do not change. The name `Label` goes to the trait for a part
+whose value is safe to show. `IntoLabel`, and parsing a path from text,
+are removed (#1663).
+
+**An own context is no longer any `IntoContext`.** The last point of the
+decision said an own context is any `NonEmpty<impl IntoContext>`. It is a
+`FieldPath` or EQL's `Identifier`.
+
+The separator, the escaping and "a column is the pair" are unchanged. A
+value whose whole context is a field path renders the descriptor it
+rendered before.
