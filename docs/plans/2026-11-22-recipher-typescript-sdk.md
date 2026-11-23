@@ -51,7 +51,7 @@ uses the current name. The Rust crates of the TypeScript SDK are named
 - [Packaging and release](#packaging-and-release)
 - [Documentation and skills](#documentation-and-skills)
 - [Order of work](#order-of-work)
-- [Decisions needed](#decisions-needed)
+- [Decisions](#decisions)
 - [What was checked](#what-was-checked)
 
 ## What it is
@@ -120,7 +120,7 @@ the first starts now.
 
 | Phase | Starts | What it builds |
 |---|---|---|
-| 1 | Now | Everything that needs no context from the caller. The core first: values, records, query terms, credentials and the wasm build. Then the EQL extension. |
+| 1 | Now | Everything that needs no context from the caller. The core first: values, records, query terms, credentials and the wasm build. Then the EQL extension, and a pre-release of both on npm. |
 | 2 | When #1663 is closed and the context design is settled | Scopes, bindings, context fields and the expected context of a decrypt. |
 | 3 | When the issues that change stored bytes are closed | The first stable release. Then, when `recipher-compat` exists, the adapters. |
 
@@ -715,7 +715,7 @@ they cannot read.
 - **Installing EQL v4.** `@cipherstash/eql` ships the v3 bundle, and
   `stash eql install` installs it. Both need the v4 bundle before an
   adapter can move. That is its own piece of work, in the CLI and in
-  `packages/eql`, and step 15 depends on it.
+  `packages/eql`, and step 17 depends on it.
 - **Supabase.js.** The v3 adapter refuses some operators because PostgREST
   cannot write the `eql_v3.query_*` cast they need. Whether PostgREST can
   write the v4 query domains is checked before the Supabase step; the
@@ -816,7 +816,7 @@ The packages follow `@cipherstash/auth`:
   value, then a record, then a query term. It needs no database. The
   README of `@cipherstash/eql` gains the steps to a working round trip
   through PostgreSQL. Both are tested in CI, as Python's is.
-- A skill under `skills/` for the core once it is published, since skills
+- A skill under `skills/` for the core at its stable release, since skills
   ship to customers. `skills/stash-postgres` and `skills/stash-indexing`
   gain the extension.
 - `AGENTS.md` (repository layout) and `SECURITY.md` (package list) gain
@@ -861,38 +861,41 @@ Then the EQL extension:
 9. **Exchange.** The exchange enrolment, so TypeScript, Rust and Go open
    each other's values in one run.
 
+10. **Pre-release.** The platform packages, the release jobs and npm
+    trusted publishing, and the READMEs. Both packages are published to
+    npm under a pre-release version and tag, never as `latest`.
+
 Phase 1 ends with a core and an extension that pass every conformance case
-with no caller context, on Node and on wasm. Neither is published as
-stable.
+with no caller context, on Node and on wasm, and that anyone can install
+as a pre-release. Each README says that a pre-release makes no promise
+that a later version opens its stored values.
 
 ### Phase 2: after #1663
 
-10. **Context.** Scopes, bindings and context fields, under the names the
+11. **Context.** Scopes, bindings and context fields, under the names the
     context design settles on, with the context, context-boundary and
     binding profiles.
-11. **Expected context.** A decrypt that names the context it expects, and
+12. **Expected context.** A decrypt that names the context it expects, and
     the context-mismatch error.
+
+Each phase 2 step is published as a pre-release too.
 
 ### Phase 3: after the issues that change stored bytes
 
-12. **Catch up with the engine.** Match options (#1673), the plan checked
+13. **Catch up with the engine.** Match options (#1673), the plan checked
     against the JSON Schemas (#1678), and any rename from #1489 not yet
     taken.
-13. **Stored rows.** The frozen stored-rows file.
-14. **Release.** The platform packages, the release jobs, the READMEs and
-    the skills.
-15. **The adapters.** Drizzle, then Prisma Next, then Supabase, each a
+14. **Stored rows.** The frozen stored-rows file.
+15. **Stable release.** The first versions published as `latest`, with the
+    promise that later versions open their stored values, and the skills.
+16. **The adapters.** Drizzle, then Prisma Next, then Supabase, each a
     major version in its own pull request. This step waits for EQL v4 to
     install through `stash eql install`, and for `recipher-compat`.
-16. **DynamoDB.** `@cipherstash/recipher/dynamodb`, on the core.
+17. **DynamoDB.** `@cipherstash/recipher/dynamodb`, on the core.
 
-## Decisions needed
+## Decisions
 
-1. **A pre-release after phase 1.** Phase 1 could publish to npm under a
-   pre-release tag, so early users can try it. Its stored values would
-   carry no promise that a later version opens them. The other choice is
-   to publish nothing until phase 3. Publishing early moves the release
-   jobs of step 14 into phase 1.
+None is open.
 
 Decided on 2026-11-23:
 
@@ -915,6 +918,7 @@ Decided on 2026-11-23:
 - One value returns one result. An array returns an array.
 - Calls return a `Result` and never throw. `Result` is the core's own
   type, with Rust's methods.
+- Phase 1 ends with a pre-release on npm.
 
 ## What was checked
 
