@@ -2,7 +2,7 @@
 //! How a Stack Encrypt typed query, from a field reference, queries a producible EQL v4 type: per type that answers an operator, its `op::Answers` impls, its `op::LabelledTarget` impl and its query twin's assembly (`crate::encryption::query`). Generated from the catalog, by the rule the data path answers a field that names the type with.
 use crate::encryption::query::{QueryTwin, TwinIndex};
 use crate::encryption::EqlMatch;
-use crate::v4::terms::{BloomFilter, Hmac256};
+use crate::v4::terms::{Hmac256, QueryBloomFilter};
 use crate::v4::SchemaVersion;
 use crate::Identifier;
 use stack_encrypt::op;
@@ -758,9 +758,9 @@ impl op::Answers<op::Eq, String> for super::text::TextEq {
 /// `TextMatch` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
 impl op::LabelledTarget for super::text::TextMatch {}
 /// `TextMatchQuery` from the column it queries and its `bf` term, at version 4.
-impl QueryTwin<BloomFilter> for super::text::TextMatchQuery {
+impl QueryTwin<QueryBloomFilter> for super::text::TextMatchQuery {
     type Plaintext = String;
-    fn assemble(i: Identifier, bf: BloomFilter) -> Self {
+    fn assemble(i: Identifier, bf: QueryBloomFilter) -> Self {
         Self {
             v: SchemaVersion::default(),
             i,
@@ -909,9 +909,9 @@ impl QueryTwin<OreBlockTerm<String>> for super::text::TextSearchOreQuery {
     }
 }
 /// `TextSearchOreQuery` from the column it queries and its `bf` term alone, at version 4: the query through its match index.
-impl QueryTwin<BloomFilter> for super::text::TextSearchOreQuery {
+impl QueryTwin<QueryBloomFilter> for super::text::TextSearchOreQuery {
     type Plaintext = String;
-    fn assemble(i: Identifier, bf: BloomFilter) -> Self {
+    fn assemble(i: Identifier, bf: QueryBloomFilter) -> Self {
         Self {
             v: SchemaVersion::default(),
             i,
@@ -976,9 +976,9 @@ impl QueryTwin<OpeTerm<String>> for super::text::TextSearchQuery {
     }
 }
 /// `TextSearchQuery` from the column it queries and its `bf` term alone, at version 4: the query through its match index.
-impl QueryTwin<BloomFilter> for super::text::TextSearchQuery {
+impl QueryTwin<QueryBloomFilter> for super::text::TextSearchQuery {
     type Plaintext = String;
-    fn assemble(i: Identifier, bf: BloomFilter) -> Self {
+    fn assemble(i: Identifier, bf: QueryBloomFilter) -> Self {
         Self {
             v: SchemaVersion::default(),
             i,

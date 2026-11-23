@@ -465,6 +465,11 @@ impl Index<String> for Labelled {
     ) -> Encryption<'s, String, EqualityTerm, K, CallerContext, M> {
         Index::<String>::operation(&Equality)
     }
+    fn query_operation<'s, K: 'static, M: WipeSource<'s, String>>(
+        &self,
+    ) -> Encryption<'s, String, EqualityTerm, K, CallerContext, M> {
+        Index::<String>::query_operation(&Equality)
+    }
 }
 
 impl op::Supports<op::Eq, String> for Labelled {
@@ -519,6 +524,11 @@ impl Index<String> for Unextendable {
         &self,
     ) -> Encryption<'s, String, EqualityTerm, K, CallerContext, M> {
         Index::<String>::operation(&Equality)
+    }
+    fn query_operation<'s, K: 'static, M: WipeSource<'s, String>>(
+        &self,
+    ) -> Encryption<'s, String, EqualityTerm, K, CallerContext, M> {
+        Index::<String>::query_operation(&Equality)
     }
 }
 

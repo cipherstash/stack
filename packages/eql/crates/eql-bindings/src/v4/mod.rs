@@ -38,9 +38,10 @@
 //! The other term newtypes and the [`DomainType`] trait are shared with v3:
 //! a v4 `Ciphertext` or `Hmac256` is v3's type, so a change to its
 //! validation in `v3::terms` changes v4 too. v3's order terms
-//! (`OreBlock256`, `OpeCllw`) are not among them. The one v4 term v3 has no
-//! use for is [`terms::SearchBloomFilter`], the stored filter of a search
-//! domain. What separates the two on the wire is the envelope's
+//! (`OreBlock256`, `OpeCllw`) are not among them. Two v4 terms have no use
+//! in v3: [`terms::SearchBloomFilter`], the stored filter of a search
+//! domain, and [`terms::QueryBloomFilter`], the filter of a match query.
+//! What separates the two generations on the wire is the envelope's
 //! [`SchemaVersion`], which refuses the other generation's `v`.
 
 /// Generated: the `op::Answers` impls through which a field reference of a
@@ -83,10 +84,14 @@ pub mod timestamp;
 pub use crate::v3::domain_type::{DomainType, SQL_SCHEMA};
 pub use inventory::{all, all_query, all_range_query};
 
-/// The wire-field types of the v4 payloads: v3's that are not order terms,
-/// shared; [`SearchBloomFilter`](terms::SearchBloomFilter); and the JSON of
-/// the order terms, [`OreBlockHex`](terms::OreBlockHex) and
-/// [`OpeHex`](terms::OpeHex), whose fields hold Stack Encrypt's terms.
+/// The wire-field types of the v4 payloads:
+///
+/// - v3's types that are not order terms, shared with v3;
+/// - [`SearchBloomFilter`](terms::SearchBloomFilter) and
+///   [`QueryBloomFilter`](terms::QueryBloomFilter);
+/// - the JSON of the order terms, [`OreBlockHex`](terms::OreBlockHex),
+///   and [`OpeHex`](terms::OpeHex), whose fields contain Stack Encrypt's
+///   terms.
 pub mod terms {
     pub use super::term_formats::{OpeHex, OreBlockHex};
     pub use crate::v3::terms::{BloomFilter, Ciphertext, Hmac256};
@@ -107,10 +112,11 @@ pub mod terms {
     /// query's, and an EQL v4 search query's filter is never empty (the
     /// match projection refuses such text, and the SQL refuses `"bf": []`).
     ///
-    /// [`BloomFilter`], the filter of `TextMatch` and of every query, still
-    /// refuses such text: `TextMatch` has no other term to find it by. The
-    /// JSON is [`BloomFilter`]'s, and so is the JSON Schema; only what Stack
-    /// Encrypt derives into it differs.
+    /// [`BloomFilter`], `TextMatch`'s stored filter, still refuses such
+    /// text, since `TextMatch` has no other term to find it by.
+    /// [`QueryBloomFilter`], the filter of every query, refuses it too. The
+    /// JSON and JSON Schema are [`BloomFilter`]'s. Only what Stack Encrypt
+    /// derives into it differs.
     #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
     #[serde(transparent)]
     pub struct SearchBloomFilter(pub BloomFilter);
@@ -132,6 +138,55 @@ pub mod terms {
 
     impl From<SearchBloomFilter> for BloomFilter {
         fn from(filter: SearchBloomFilter) -> Self {
+            filter.0
+        }
+    }
+
+    /// The `bf` term of a match query: a [`BloomFilter`] of the tokens the
+    /// query keeps. `QueryBloomFilter` is the `bf` of `TextMatchQuery`,
+    /// `TextSearchMatchQuery`, `TextSearchOreMatchQuery`, `TextSearchQuery`,
+    /// and `TextSearchOreQuery`.
+    ///
+    /// A stored value's filter contains every token of its text: its
+    /// 3-grams, and each two-letter word as a whole word. A query keeps its
+    /// two-letter words only when the whole query is one two-letter word.
+    /// A query of three characters or more keeps its 3-grams alone.
+    ///
+    /// - The query "ng" is the word token `ng`. The query finds the rows
+    ///   that contain the word "Ng", such as "Ng" and "Mike Ng", and not
+    ///   "Nguyen".
+    /// - The query "Mike Ng" is its 3-grams alone. The query finds "Mike Ng"
+    ///   and "Mike Nguyen", as does "ke Ng".
+    /// - The query "san fr" finds "San Francisco".
+    ///
+    /// A query sends no token that a stored value of its own text lacks. So
+    /// the rule changes no stored filter.
+    ///
+    /// Text with no token is refused, as for [`BloomFilter`]: a query's
+    /// filter is never empty. Such text is empty, separators only, or one
+    /// letter. The JSON and JSON Schema are [`BloomFilter`]'s. Only what
+    /// Stack Encrypt derives into it differs.
+    #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+    #[serde(transparent)]
+    pub struct QueryBloomFilter(pub BloomFilter);
+
+    /// [`BloomFilter`]'s schema, under its name: the wire format is one.
+    impl JsonSchema for QueryBloomFilter {
+        fn schema_name() -> std::borrow::Cow<'static, str> {
+            BloomFilter::schema_name()
+        }
+
+        fn schema_id() -> std::borrow::Cow<'static, str> {
+            BloomFilter::schema_id()
+        }
+
+        fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+            BloomFilter::json_schema(generator)
+        }
+    }
+
+    impl From<QueryBloomFilter> for BloomFilter {
+        fn from(filter: QueryBloomFilter) -> Self {
             filter.0
         }
     }

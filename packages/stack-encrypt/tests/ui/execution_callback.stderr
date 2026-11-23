@@ -30,5 +30,12 @@ help: you might have meant to use an associated function to build this type
 7 -             stack_encrypt::Pending::failed(cipher, stack_encrypt::Error::Aead)
 8 -         }),
 9 -     };
+5 +     let _: Encryption<'_, u32, StackCipherText, (), CallerContext> = Encryption::failed_wiping(_);
+  |
+5 -     let _: Encryption<'_, u32, StackCipherText, (), CallerContext> = Encryption {
+6 -         build: Box::new(|_, cipher, _| {
+7 -             stack_encrypt::Pending::failed(cipher, stack_encrypt::Error::Aead)
+8 -         }),
+9 -     };
 5 +     let _: Encryption<'_, u32, StackCipherText, (), CallerContext> = Encryption::from_build(_, _);
   |

@@ -4,11 +4,16 @@
 //!
 //! - **Round trip.** "Ng" stored is found by the query "Ng"; "Mike Ng" is
 //!   found by "Ng" and by "Mike Ng"; "Nguyen" is not found by "Ng".
+//! - **Queries.** A query keeps its short words only when its whole text is
+//!   shorter than one n-gram. "Ng" is its word token. "Mike Ng" is its
+//!   trigrams alone, so it finds "Mike Nguyen", as it does with the option
+//!   off. The filter and `verify` agree.
 //! - **Identity.** The option is part of the index, which is the field's
 //!   type: a field is stored and queried under the options its type
 //!   declares, and options the index cannot use are refused on both sides.
-//! - **Containment.** For random text, the stored filter holds the filter of
-//!   any run of its whole words.
+//! - **Containment.** For random text, the stored filter contains the filter
+//!   of any run of its whole words. The stored filter also contains the
+//!   filter of any run of its characters that has an n-gram.
 //! - **Calibration.** A one-word query sets as many bits as a one-trigram
 //!   query, and a row's chance of matching either falsely is the same.
 
@@ -132,27 +137,80 @@ mod given_short_words {
         }
     }
 
+    /// A query with an n-gram asks for its n-grams alone. So a short word in
+    /// it need not be a whole word of the row. A name typed in part finds
+    /// its row, as it does with the option off. A query of one short
+    /// word is that word, whole. The filter and `verify` agree on every row.
     #[tokio::test]
-    async fn a_query_of_words_and_ngrams_needs_every_short_word_whole() {
+    async fn a_query_keeps_its_short_words_only_when_it_cuts_no_ngram() {
         let cipher = stack_cipher().await;
         let keyset = cipher.default_keyset();
-        let mike_ng = query(&keyset, "Mike Ng").await.expect("a query");
-        let stored = store(&keyset, "Mike Ng").await;
-        assert!(stored.matches(&mike_ng), "\"Mike Ng\" finds itself");
-        assert!(mike_ng.verify("mike ng"), "case folded");
-        let longer = store(&keyset, "Mike Nguyen").await;
-        assert!(
-            !mike_ng.verify("Mike Nguyen"),
-            "the query's short word must be a whole word of the row"
+        for (asked, text, found) in [
+            ("Ng", "Ng", true),
+            ("Ng", "Mike Ng", true),
+            ("Ng", "Mike Nguyen", false),
+            ("Mike Ng", "Mike Ng", true),
+            ("Mike Ng", "mike ng", true),
+            ("Mike Ng", "Mike Nguyen", true),
+            ("Mike Ng", "Mike Ngo", true),
+            ("Mike Ng", "Ng", false),
+            ("Mike Ng", "Mike Smith", false),
+            ("ke Ng", "Mike Ng", true),
+            ("san fr", "San Francisco", true),
+            ("Li Wu", "Li Wu", true),
+            ("Li Wu", "Li Wuhan", true),
+            ("Li Wu", "Wu Li", false),
+        ] {
+            let query = query(&keyset, asked)
+                .await
+                .unwrap_or_else(|error| panic!("{asked:?} is a query: {error}"));
+            let stored = store(&keyset, text).await;
+            // The filter alone. A row without the tokens could have their
+            // bits by chance. Under the test key and these rows, none does.
+            assert_eq!(
+                stored.matches(&query),
+                found,
+                "the filter of {asked:?} on {text:?}"
+            );
+            assert_eq!(
+                query.verify(text),
+                found,
+                "verify agrees with the filter of {asked:?} on {text:?}"
+            );
+        }
+    }
+
+    /// A person whose name is under the default match index, under the
+    /// same label as [`EncryptedPerson`]'s.
+    #[derive(EncryptTarget)]
+    #[stash(struct = Person, scope = "people")]
+    struct PlainPerson {
+        name: Encrypted<MatchTerms>,
+    }
+
+    /// A query with an n-gram sends the filter that the index stores for the
+    /// same text without the option: its n-grams, and no word.
+    #[tokio::test]
+    async fn a_query_of_ngrams_is_the_filter_the_index_without_the_option_stores() {
+        let cipher = stack_cipher().await;
+        let keyset = cipher.default_keyset();
+        let asked = query(&keyset, "Mike Ng").await.expect("a query");
+        let plain: PlainPerson = Person {
+            name: "Mike Ng".into(),
+        }
+        .encrypt_into(&keyset)
+        .await
+        .expect("stores");
+        let trigrams = plain.name.terms;
+        assert_eq!(
+            asked.positions(),
+            trigrams.positions(),
+            "\"Mike Ng\" sends its trigrams alone"
         );
-        assert!(
-            !longer.matches(&mike_ng),
-            "and the filter says so: \"Mike Nguyen\" has no word token ng"
-        );
-        let mike = query(&keyset, "Mike").await.expect("a query");
-        assert!(
-            longer.matches(&mike) && stored.matches(&mike),
-            "a query of trigrams alone finds both"
+        assert_ne!(
+            asked.positions(),
+            store(&keyset, "Mike Ng").await.positions(),
+            "not the stored filter, which holds the word token too"
         );
     }
 
@@ -172,6 +230,95 @@ mod given_short_words {
             stored.positions().is_empty(),
             "a one-letter value is still the empty filter"
         );
+    }
+
+    /// `matching_query` run on its own, as a binding or an index defined
+    /// elsewhere runs it. `matching_query` refuses text with no token, as a
+    /// field query does, because the empty filter would match every row.
+    /// `matching` stores such text as the empty filter.
+    mod given_the_query_cut_alone {
+        use super::*;
+        use stack_encrypt::sem::DefaultMatch;
+        use stack_encrypt::target::{matching, matching_query, Borrowed, CallerContext};
+
+        fn caller() -> CallerContext {
+            CallerContext::from(nonempty!("people/name"))
+        }
+
+        async fn derive_query<O: MatchConfig>(
+            keyset: &Keyset<'_>,
+            text: &str,
+        ) -> Result<MatchTerms<O>, Error> {
+            keyset
+                .run(
+                    matching_query::<_, _, Borrowed, O>(),
+                    &text.to_owned(),
+                    caller(),
+                )
+                .await
+        }
+
+        #[tokio::test]
+        async fn text_that_cuts_no_token_is_refused() {
+            let cipher = stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            for text in ["", "a", "Ng", "  "] {
+                assertions::refused_as_empty(
+                    text,
+                    derive_query::<DefaultMatch>(&keyset, text).await,
+                );
+            }
+            for text in ["", "N", "n "] {
+                assertions::refused_as_empty(text, derive_query::<ShortWords>(&keyset, text).await);
+            }
+        }
+
+        #[tokio::test]
+        async fn the_stored_cut_of_that_text_is_the_empty_filter() {
+            let cipher = stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            let stored: MatchTerms = keyset
+                .run(
+                    matching::<_, _, Borrowed, DefaultMatch>(),
+                    &"Ng".to_owned(),
+                    caller(),
+                )
+                .await
+                .expect("a stored value of short text derives");
+            assert!(
+                stored.positions().is_empty(),
+                "\"Ng\" stores the empty filter under the default index: {:?}",
+                stored.positions()
+            );
+        }
+
+        #[tokio::test]
+        async fn text_that_cuts_a_token_derives_its_filter() {
+            let cipher = stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            let queried = derive_query::<ShortWords>(&keyset, "Ng")
+                .await
+                .expect("a short word is a token of the short-word index");
+            assert!(
+                !queried.positions().is_empty(),
+                "the word token sets positions"
+            );
+        }
+
+        mod assertions {
+            use super::*;
+
+            pub(super) fn refused_as_empty<O: MatchConfig>(
+                text: &str,
+                derived: Result<MatchTerms<O>, Error>,
+            ) {
+                assert!(
+                    matches!(derived, Err(Error::Term(TermError::EmptyTermText))),
+                    "{text:?} cuts no token, and its query is refused: {:?}",
+                    derived.map(|terms| terms.positions().to_vec())
+                );
+            }
+        }
     }
 
     /// A person with one name under each index: the short-word index on
@@ -347,6 +494,44 @@ mod given_random_text {
                     }
                     Err(error) => prop_assert!(false, "{asked:?}: {error}"),
                 }
+                Ok(())
+            })?;
+        }
+
+        /// A query of any run of a text's characters that has an n-gram
+        /// finds the text, by filter and by `verify`. The run can start or
+        /// end inside a word. So with short words on, a query typed in part
+        /// finds its row, as does a partial name.
+        #[test]
+        fn a_run_of_characters_that_cuts_an_ngram_finds_its_text(
+            words in prop::collection::vec(word(), 1..8),
+            separators in prop::collection::vec(separator(), 8),
+            run in (0usize..40, 0usize..40),
+        ) {
+            let mut text = String::new();
+            for (i, word) in words.iter().enumerate() {
+                if i > 0 {
+                    text.push(separators[i - 1]);
+                }
+                text.push_str(word);
+            }
+            let chars: Vec<char> = text.chars().collect();
+            let (first, last) = (run.0 % chars.len(), run.1 % chars.len());
+            let asked: String = chars[first.min(last)..=first.max(last)].iter().collect();
+            prop_assume!(asked.chars().count() >= 3, "a run too short for a trigram");
+
+            runtime().block_on(async {
+                let cipher = stack_cipher().await;
+                let keyset = cipher.default_keyset();
+                let stored = store(&keyset, &text).await;
+                let query = query(&keyset, &asked)
+                    .await
+                    .map_err(|error| TestCaseError::fail(format!("{asked:?}: {error}")))?;
+                prop_assert!(
+                    stored.matches(&query),
+                    "{text:?} holds the filter of {asked:?}"
+                );
+                prop_assert!(query.verify(&text), "{text:?} verifies {asked:?}");
                 Ok(())
             })?;
         }

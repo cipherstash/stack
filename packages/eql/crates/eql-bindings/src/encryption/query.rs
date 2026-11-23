@@ -257,7 +257,8 @@ use stack_encrypt::{Encrypt, EncryptRef, Equality, Error, Label, Match, NonEmpty
 use zeroize::Zeroize;
 
 use super::{bloom_filter, hmac256, EqlMatch};
-use crate::v3::terms::{BloomFilter, Hmac256};
+use crate::v3::terms::Hmac256;
+use crate::v4::terms::QueryBloomFilter;
 use crate::Identifier;
 
 /// An EQL v4 query twin, assembled from the column it queries and the
@@ -265,7 +266,7 @@ use crate::Identifier;
 /// stores them. eql-codegen implements it for the twin of every type that
 /// answers an operator, with the version every v4 value carries:
 /// [`TextEqQuery`] from an [`Hmac256`], [`TextMatchQuery`] from a
-/// [`BloomFilter`], `IntegerOrdQuery` from an
+/// [`QueryBloomFilter`], `IntegerOrdQuery` from an
 /// [`OpeTerm<i32>`](stack_encrypt::sem::OpeTerm), and
 /// [`TextOrdQuery`] from the pair `(Hmac256, OpeTerm<String>)`, its terms in
 /// catalog order. A twin whose terms are optional, such as
@@ -346,7 +347,9 @@ impl<I: fmt::Debug, Q, D: fmt::Debug> fmt::Debug for TwinIndex<I, Q, D> {
 
 /// Declared as `I` is, so it is the index that answers the operator, and
 /// derives the terms of `D` for one value, under one context: `I`'s term
-/// alone when `D` is `I`.
+/// alone when `D` is `I`. A query derives each index's query term
+/// ([`Indexes::query_operations`]). So a match term is the filter of the
+/// tokens the query keeps, as in `I`'s own query.
 impl<S, I: Index<S>, Q, D: Indexes<S>> Index<S> for TwinIndex<I, Q, D> {
     type Term = D::Terms;
     fn spec(&self) -> IndexSpec {
@@ -359,6 +362,14 @@ impl<S, I: Index<S>, Q, D: Indexes<S>> Index<S> for TwinIndex<I, Q, D> {
         S: 's,
     {
         self.terms.operations()
+    }
+    fn query_operation<'s, K: 'static, M: WipeSource<'s, S>>(
+        &self,
+    ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
+    where
+        S: 's,
+    {
+        self.terms.query_operations()
     }
 }
 
@@ -544,15 +555,17 @@ macro_rules! twin_orderings {
 }
 twin_orderings!(Lt, Lte, Gt, Gte);
 
-/// Text match: the twin's `bf` is the filter EQL's match index derives
-/// over the query's text, and the query keeps that text's tokens to
-/// [`verify`](Probabilistic::verify) each decrypted row, as Stack Encrypt's
-/// `MatchQuery` does. A query whose text cuts no token is refused before
-/// any term exists. Only for the plaintext the twin's type is produced
-/// from.
+/// Text match. The twin's `bf` is the filter EQL's match index derives over
+/// the tokens the query keeps ([`QueryBloomFilter`]). The query keeps its
+/// two-letter words only when the whole query is one two-letter word. The
+/// query also keeps those tokens to [`verify`](Probabilistic::verify) each
+/// decrypted row, as Stack Encrypt's `MatchQuery` does.
+///
+/// A query whose text has no token is refused before any term exists. Only
+/// for the plaintext the twin's type is produced from.
 impl<Q> Supports<op::Matches, Q::Plaintext> for TwinIndex<Match<EqlMatch>, Q>
 where
-    Q: QueryTwin<BloomFilter> + MaybeSend + 'static,
+    Q: QueryTwin<QueryBloomFilter> + MaybeSend + 'static,
     Q::Plaintext: AsRef<str> + Zeroize + 'static,
 {
     type Query = MatchTwin<Q>;
@@ -573,7 +586,7 @@ where
         let bf = bloom_filter(query.positions())
             .expect("EqlMatch's 2048-bit filter keeps every position within a smallint");
         MatchTwin {
-            twin: Q::assemble(column, bf),
+            twin: Q::assemble(column, QueryBloomFilter(bf)),
             query,
         }
     }

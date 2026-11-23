@@ -1,7 +1,7 @@
 error[E0277]: `EqualityTerm` cannot answer `stack_encrypt::op::Matches`
-  --> tests/ui/op_inexact_operator_needs_probabilistic.rs:24:18
+  --> tests/ui/op_inexact_operator_needs_probabilistic.rs:29:18
    |
-24 |     type Query = EqualityTerm;
+29 |     type Query = EqualityTerm;
    |                  ^^^^^^^^^^^^ this query term does not meet the operator's requirement
    |
    = help: the trait `stack_encrypt::op::Probabilistic` is not implemented for `EqualityTerm`

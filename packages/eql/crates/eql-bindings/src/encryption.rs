@@ -125,7 +125,7 @@ use zeroize::Zeroize;
 
 use crate::{
     v3::terms::{BloomFilter, Ciphertext, Hmac256},
-    v4::terms::SearchBloomFilter,
+    v4::terms::{QueryBloomFilter, SearchBloomFilter},
     Identifier,
 };
 
@@ -365,15 +365,23 @@ impl<P, Ctx> DecryptField<P, Ctx> for Hmac256 {
 ///
 /// The short-word tokens are what make a two-letter surname searchable: "Ng"
 /// cuts no 3-gram, so without them it would be no `TextMatch` value at all,
-/// and the query "ng" would be refused. With them "Ng" stores one token, and
-/// `@@` with the query "ng" finds the rows holding the word "Ng" ("Ng",
-/// "Mike Ng", "Ng, Mike"), not "Nguyen". A query's two-letter words must be
-/// whole words of the row, so "Mike Ng" does not find "Mike Nguyen". What it
-/// reveals: one more token per two-letter word, under the same PRF (in a
-/// domain of its own), in the same filter, by the same containment rule, so
-/// no new class of leakage; the token is specific to the word, so someone who
-/// clusters tokens across rows can tell "Ng" from "Nguyen", where before only
-/// the boundary trigram `" ng"` they share was visible.
+/// and the query "ng" would be refused. With them, "Ng" stores one token.
+/// `@@` with the query "ng" finds the rows that contain the word "Ng", such
+/// as "Ng", "Mike Ng", and "Ng, Mike". The query does not find "Nguyen".
+///
+/// A query asks for its word token only when the whole query is one
+/// two-letter word. A query of three characters or more asks for its
+/// 3-grams alone ([`QueryBloomFilter`]). So "Mike Ng" finds "Mike Ng" and
+/// "Mike Nguyen", and "san fr" finds "San Francisco".
+///
+/// What it reveals: one more token per two-letter word, in every stored
+/// value that contains one. The token uses the same PRF in a domain of its
+/// own, the same filter, and the same containment rule. The token is unique
+/// to the word. Someone who clusters tokens across rows can tell "Ng" from
+/// "Nguyen". Without the word token, they see only the trigram `" ng"` that
+/// both share.
+///
+/// [`QueryBloomFilter`]: crate::v4::terms::QueryBloomFilter
 ///
 /// Pinned here rather than taken from Stack Encrypt's default, because it is
 /// part of the stored format: a stored filter and a query filter agree only
@@ -401,20 +409,23 @@ impl MatchConfig for EqlMatch {
 }
 
 /// Builds EQL's bloom filter, the set bit positions as `smallint`s, from the
-/// native match terms built under [`EqlMatch`]. Stored values and queries
-/// take it from the same type, so they always agree; matching
+/// native match terms built under [`EqlMatch`]: `TextMatch`'s stored
+/// filter. Every stored filter and every query filter is built under
+/// [`EqlMatch`], so they agree on every token a query keeps. A query can
+/// keep fewer tokens than the same text stores. A query's filter is a
+/// [`QueryBloomFilter`] ([`QueryMatchVisitor`]). Matching
 /// cipherstash-client's parameters is not a goal, because cipherstash-client
 /// never writes an `eql_v4` column.
 ///
 /// Text that cuts no token (empty, separator-only, or shorter than a 3-gram
 /// with no two-letter word, such as one letter) is refused with
-/// [`TermError::EmptyTermText`], stored or queried. Stack
-/// Encrypt stores such a value as the empty filter, but this type is the
-/// filter of every match query, and a query's filter must never be empty;
-/// it is also `TextMatch`'s stored filter, and a `TextMatch` value with an
-/// empty filter is a row no operator can find. A search domain's stored
-/// filter, which `=` and `<` find through its other terms, is
-/// [`SearchBloomFilter`] and takes the empty filter ([`SearchMatchVisitor`]).
+/// [`TermError::EmptyTermText`]. Stack Encrypt stores such a value as the
+/// empty filter, but a `TextMatch` value with an empty filter is a row no
+/// operator can find. A query's filter is refused for such text too,
+/// because it must never be empty. A search domain's stored filter is a
+/// [`SearchBloomFilter`]. That filter can be empty
+/// ([`SearchMatchVisitor`]), since `=` and `<` find the value through its
+/// other terms.
 #[doc(hidden)]
 pub struct MatchVisitor;
 impl Visitor for MatchVisitor {
@@ -511,6 +522,51 @@ impl Decryptable for SearchBloomFilter {
     const DECRYPTABLE: bool = false;
 }
 impl<P, Ctx> DecryptField<P, Ctx> for SearchBloomFilter {
+    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
+        None
+    }
+}
+
+/// Builds a query's filter from the tokens the query keeps (see
+/// [`QueryBloomFilter`]). The filter is [`MatchVisitor`]'s, so text with no
+/// token is refused.
+#[doc(hidden)]
+pub struct QueryMatchVisitor;
+impl Visitor for QueryMatchVisitor {
+    type Value = QueryBloomFilter;
+    fn matching<O: MatchConfig>(self, terms: MatchTerms<O>) -> Result<Self::Value, Error> {
+        MatchVisitor.matching(terms).map(QueryBloomFilter)
+    }
+}
+impl Transcode for QueryBloomFilter {
+    type Visitor = QueryMatchVisitor;
+    fn visitor() -> Self::Visitor {
+        QueryMatchVisitor
+    }
+}
+impl<S: AsRef<str> + Zeroize> EncryptTarget<S> for QueryBloomFilter {
+    type ContextInput = RequiredContext<CallerContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
+    where
+        S: 's,
+    {
+        // A query's tokens: its two-letter words only when the whole query is
+        // one two-letter word. The annotation names the match configuration,
+        // as for `BloomFilter`.
+        let terms: Encryption<'s, S, MatchTerms<EqlMatch>, K, CallerContext> =
+            target::matching_query();
+        terms.accepting().transcode()
+    }
+    /// The match index under [`EqlMatch`], as for [`BloomFilter`]. A query
+    /// twin with a `bf` is a query of that index.
+    fn indexes() -> Vec<IndexSpec> {
+        vec![IndexSpec::Match(EqlMatch::options())]
+    }
+}
+impl Decryptable for QueryBloomFilter {
+    const DECRYPTABLE: bool = false;
+}
+impl<P, Ctx> DecryptField<P, Ctx> for QueryBloomFilter {
     fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
         None
     }

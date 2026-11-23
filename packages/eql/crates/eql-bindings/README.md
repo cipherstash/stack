@@ -186,14 +186,29 @@ not `=` either. Text with a code point Unicode 16 does not assign has no
 order term and is refused, stored or queried. A family's `Ord` and `OrdOpe`
 types store the same term under one column. The query value carries one
 bound: `BETWEEN` needs EQL v4's range query domains and is not produced yet.
-`TextMatch` builds its filter under a configuration pinned in this crate
-(`EqlMatch`: 3-grams of the lower-cased text, plus each two-letter word whole
-as one more token, `k = 6`, a 2048-bit filter) for stored values and queries
-alike. The word token makes a two-letter surname such as "Ng" storable and
-searchable: `@@` with "ng" finds "Ng" and "Mike Ng", not "Nguyen". A query's
-two-letter words must be whole words of the row (words split on space,
-comma, semicolon, colon and exclamation mark), so "Mike Ng" does not find
-"Mike Nguyen", and a query is not a plain substring test. The configuration is part of the stored
+
+`TextMatch` builds its filter under a configuration pinned in this crate,
+`EqlMatch`. Stored values and queries both use it.
+
+`EqlMatch` takes the 3-grams of the lower-cased text. A 3-gram is a run of
+three characters, such as "mik" in "Mike". `EqlMatch` also takes each
+two-letter word as one more token, whole. Each token sets `k = 6`
+positions in a 2048-bit filter. Words are split on space, comma, semicolon,
+colon, and exclamation mark.
+
+The word token lets you store and search a two-letter surname such as "Ng".
+`@@` with "ng" finds "Ng" and "Mike Ng", and not "Nguyen". A query asks for
+its two-letter words only when the whole query is one two-letter word. A
+query of three characters or more asks for its 3-grams alone. So "Mike Ng"
+finds "Mike Ng" and "Mike Nguyen", and "san fr" finds "San Francisco".
+
+A query's filter is a `QueryBloomFilter`, with the same JSON as
+`BloomFilter`. A query is not a plain substring test. The word token adds
+one token for each two-letter word in a stored value. The token is unique
+to the word, so someone can tell the rows that contain "Ng" from the rows
+that contain "Nguyen".
+
+The configuration is part of the stored
 format, so changing it means a new domain or payload version. A filter can
 match a row that does not contain the query, so re-check after decrypting
 where that matters. Write the stored column on the left, `col @@ query`: the

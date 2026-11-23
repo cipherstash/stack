@@ -920,7 +920,7 @@ async fn text_match_filters_contain_their_substrings() {
             .await
             .unwrap();
         assert_eq!(
-            positions(&query.bf).is_subset(&all),
+            positions(&query.bf.0).is_subset(&all),
             contained,
             "{needle:?} in Alice@Example.com"
         );
@@ -972,7 +972,7 @@ async fn two_letter_surnames_store_and_are_found() {
             .await
             .unwrap_or_else(|error| panic!("{surname:?} is a query: {error}"));
         assert_eq!(
-            query.bf, bare.bf,
+            query.bf.0, bare.bf,
             "{surname:?}: the query's filter is the stored one's"
         );
         let full: text::TextMatch = format!("Mike {surname}")
@@ -980,7 +980,7 @@ async fn two_letter_surnames_store_and_are_found() {
             .await
             .unwrap();
         assert!(
-            positions(&query.bf).is_subset(&positions(&full.bf)),
+            positions(&query.bf.0).is_subset(&positions(&full.bf)),
             "{surname:?} is found in \"Mike {surname}\""
         );
         let longer: text::TextMatch = format!("Mike {surname}ward")
@@ -988,7 +988,7 @@ async fn two_letter_surnames_store_and_are_found() {
             .await
             .unwrap();
         assert!(
-            !positions(&query.bf).is_subset(&positions(&longer.bf)),
+            !positions(&query.bf.0).is_subset(&positions(&longer.bf)),
             "{surname:?} is not found in \"Mike {surname}ward\""
         );
         let named: text::TextMatch = by_name(&keyset, "TextMatch", frame(surname)).await;
@@ -997,6 +997,98 @@ async fn two_letter_surnames_store_and_are_found() {
             "{surname:?}: the dispatch derives the same filter"
         );
     }
+}
+
+/// A query keeps its two-letter words only when the whole query is one
+/// two-letter word. The rule applies to every path that builds a query: the
+/// query twins directly (`TextMatchQuery`, `TextSearchMatchQuery`), and the
+/// by-name query dispatch that a binding runs.
+///
+/// - "Mike Ng" is its 3-grams alone, and finds "Mike Nguyen".
+/// - A name typed in part, such as "ke Ng" or "san fr", finds its row.
+/// - "Ng" alone is its word token. The query does not find "Nguyen".
+///
+/// Stored values do not change. Each still contains its word tokens.
+#[tokio::test]
+async fn a_query_keeps_its_two_letter_words_only_when_it_cuts_no_trigram() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let stored = |text: &'static str| {
+        let keyset = &keyset;
+        async move {
+            let value: text::TextMatch = text
+                .to_owned()
+                .encrypt_into_with_context(keyset, column())
+                .await
+                .unwrap();
+            positions(&value.bf)
+        }
+    };
+    for (needle, text, found) in [
+        ("Ng", "Ng", true),
+        ("Ng", "Mike Ng", true),
+        ("Ng", "Mike Nguyen", false),
+        ("Mike Ng", "Mike Ng", true),
+        ("Mike Ng", "Mike Nguyen", true),
+        ("Mike Ng", "Mike Ngo", true),
+        ("Mike Ng", "Ng", false),
+        ("ke Ng", "Mike Ng", true),
+        ("san fr", "San Francisco", true),
+    ] {
+        let row = stored(text).await;
+        let matched: text::TextMatchQuery = needle
+            .to_owned()
+            .encrypt_into_with_context(&keyset, column())
+            .await
+            .unwrap();
+        let search: text::TextSearchMatchQuery = needle
+            .to_owned()
+            .encrypt_into_with_context(&keyset, column())
+            .await
+            .unwrap();
+        assert_eq!(
+            search.bf, matched.bf,
+            "{needle:?}: one filter for both query twins"
+        );
+        let bytes = targets::query(
+            "TextMatch",
+            &stack_encrypt::target::IndexSpec::parse("match").unwrap(),
+            &keyset,
+            &label(),
+            frame(needle),
+        )
+        .unwrap()
+        .await
+        .unwrap();
+        let named: text::TextMatchQuery = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            named.bf, matched.bf,
+            "{needle:?}: the dispatch derives the same filter"
+        );
+        assert_eq!(
+            positions(&matched.bf.0).is_subset(&row),
+            found,
+            "{needle:?} on {text:?}"
+        );
+    }
+    // A query of 3-grams has no word token. The query's filter is the filter
+    // of its 3-grams. A stored value of the same text contains them beside its
+    // words.
+    let query: text::TextMatchQuery = "Mike Ng"
+        .to_owned()
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
+    let sent = positions(&query.bf.0);
+    let whole = stored("Mike Ng").await;
+    assert!(
+        sent.is_subset(&whole) && sent != whole,
+        "\"Mike Ng\" sends part of the filter it stores"
+    );
+    assert!(
+        !stored("Ng").await.is_subset(&sent),
+        "and not its word's token"
+    );
 }
 
 /// Common two-letter surnames.
@@ -1018,7 +1110,7 @@ async fn text_match_filter_positions_are_pinned() {
         .await
         .unwrap();
     // 3 tokens ("ali", "lic", "ice") at 6 positions each, de-duplicated.
-    assert_eq!(query.bf.0, PINNED_ALICE);
+    assert_eq!(query.bf.0 .0, PINNED_ALICE);
 }
 
 const PINNED_ALICE: [i16; 18] = [
@@ -1110,9 +1202,10 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
 }
 
 /// Needs an EQL v4 installation. Two-letter surnames in a `TextMatch` and a
-/// `TextSearch` column: `@@` with the query of the surname finds the rows
-/// holding it as a word, bare or in a full name, and not a longer name it
-/// begins; a full-name query needs its two-letter word whole.
+/// `TextSearch` column. `@@` with the query of the surname finds the rows
+/// that contain it as a whole word, such as "Ng" and "Mike Ng". The query
+/// does not find a longer name that the surname begins. A full-name query
+/// is its 3-grams, so it finds a longer name too.
 #[test]
 #[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
 fn postgres_finds_two_letter_surnames() {
@@ -1202,7 +1295,8 @@ fn postgres_finds_two_letter_surnames() {
     for (needle, want) in [
         ("ng", vec![1, 2, 6]),
         ("Ng", vec![1, 2, 6]),
-        ("Mike Ng", vec![2]),
+        ("Mike Ng", vec![2, 4]),
+        ("ke Ng", vec![2, 4]),
         ("Nguyen", vec![3, 4]),
         ("li", vec![5]),
         ("Wei", vec![5]),

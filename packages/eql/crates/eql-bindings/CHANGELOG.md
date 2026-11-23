@@ -224,6 +224,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A match query asks for its two-letter words only when the whole query
+  is one two-letter word** (#1398, `stack-encrypt` feature). Before this
+  fix, "Mike Ng" did not find "Mike Nguyen". `EqlMatch` stores the 3-grams
+  of a value, and each two-letter word as a whole-word token. A 3-gram is
+  a run of three characters, such as "mik" in "Mike". A query that
+  contained a two-letter word also asked for that word whole. "Nguyen"
+  contains "ng" only inside a longer word, so the query missed it.
+
+  Now a query of three characters or more asks for its 3-grams alone.
+  "Mike Ng" finds "Mike Ng" and "Mike Nguyen". "ke Ng" and "san fr" find
+  the names they are part of. A query of one two-letter word asks for that
+  word: "Ng" finds "Ng" and "Mike Ng", and not "Nguyen". Stored values do
+  not change.
+  - The `bf` of every v4 query twin is now the new
+    `v4::terms::QueryBloomFilter`. A query twin is the struct that contains
+    a query's terms. The twins are `TextMatchQuery`,
+    `TextSearchMatchQuery`, `TextSearchOreMatchQuery`, `TextSearchQuery`,
+    and `TextSearchOreQuery`. In the last two, `bf` is an
+    `Option<QueryBloomFilter>`.
+  - `QueryBloomFilter` has the JSON and JSON Schema of `BloomFilter`.
+    `From<QueryBloomFilter> for BloomFilter` unwraps it.
+  - The `EncryptTarget` of `QueryBloomFilter` derives the query's filter.
+    So a query twin follows the rule however it is built: directly, by a
+    field reference's `matches`, or by the by-name query dispatch.
+  - `TwinIndex` forwards Stack Encrypt's `Index::query_operation` to the
+    indexes whose terms its twin contains, through
+    `Indexes::query_operations`. So `matches` on `TextMatch`, `TextSearch`,
+    and `TextSearchOre` sends the query's filter. Every other operator
+    sends the term its index stores.
 - **A v4 order term is Stack Encrypt's own, typed by its plaintext**
   (`stack-encrypt` feature). An `ob` field is
   `stack_encrypt::sem::OreBlockTerm<T>` and an `op` field

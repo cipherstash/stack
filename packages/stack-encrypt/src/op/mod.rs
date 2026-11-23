@@ -511,8 +511,9 @@ pub trait Input<A: Arity>: Sized + 'static {
     /// The index's terms for this input: one, or a pair of them.
     type Terms<T: 'static>: 'static;
 
-    /// Derive the index's term for each plaintext of the input under
-    /// `label`, as one pending. Only a field query calls this.
+    /// Derive the term a query sends for each plaintext of the input
+    /// ([`Index::query_operation`]) under `label`, as one pending. Only a
+    /// field query calls this.
     #[doc(hidden)]
     fn derive<'a, 'p, I, K>(
         self,
@@ -543,7 +544,7 @@ impl<S: zeroize::Zeroize + 'static> Input<One> for S {
     {
         keyset.run(
             index
-                .operation::<K, Owned>()
+                .query_operation::<K, Owned>()
                 .under_field(NonEmpty::from(label)),
             self,
             extend,
@@ -570,14 +571,14 @@ impl<S: zeroize::Zeroize + 'static> Input<Pair> for (S, S) {
         let (lo, hi) = self;
         let lo = keyset.run(
             index
-                .operation::<K, Owned>()
+                .query_operation::<K, Owned>()
                 .under_field(NonEmpty::from(label.clone())),
             lo,
             extend.clone(),
         );
         let hi = keyset.run(
             index
-                .operation::<K, Owned>()
+                .query_operation::<K, Owned>()
                 .under_field(NonEmpty::from(label)),
             hi,
             extend,

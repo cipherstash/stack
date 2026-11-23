@@ -44,7 +44,8 @@ use quote::{format_ident, quote};
 use eql_domains::{Domain, DomainFamily, Shape, Term};
 
 use crate::bindings::{
-    encryption_gap, format_rs, plaintext_of, query_projection_ident, stored_payload_domains,
+    encryption_gap, format_rs, plaintext_of, query_projection_ident, query_term_newtype,
+    stored_payload_domains,
 };
 use crate::context::v4_optional_query_terms;
 use crate::render::EqlVersion;
@@ -162,23 +163,30 @@ impl IndexKey {
     }
 
     /// The type a query twin stores the index's term in, over the type's
-    /// plaintext `source`: the EQL newtype of an `hm` or a `bf`, Stack
-    /// Encrypt's own term of an `op` or an `ob`.
+    /// plaintext `source`. An `hm` or a `bf` is an EQL newtype
+    /// ([`query_term_newtype`]). A `bf` is a `QueryBloomFilter`. An `op` or
+    /// an `ob` is Stack Encrypt's own term.
     fn twin_term_type(self, source: &syn::Path) -> TokenStream {
-        match self {
-            IndexKey::Eq => quote!(Hmac256),
-            IndexKey::Match => quote!(BloomFilter),
-            IndexKey::Ope => quote!(OpeTerm<#source>),
-            IndexKey::OreBlock => quote!(OreBlockTerm<#source>),
+        match self.term_import() {
+            TermImport::Newtype(name) => {
+                let newtype = format_ident!("{name}");
+                quote!(#newtype)
+            }
+            TermImport::OrderTerm(name) => {
+                let term = format_ident!("{name}");
+                quote!(#term<#source>)
+            }
         }
     }
 
     /// The name `answers.rs` imports the twin's term type by, and where
-    /// from.
+    /// from. An `hm` or a `bf` is the newtype a query contains
+    /// ([`query_term_newtype`]): `Hmac256`, or `QueryBloomFilter`.
     fn term_import(self) -> TermImport {
         match self {
-            IndexKey::Eq => TermImport::Newtype("Hmac256"),
-            IndexKey::Match => TermImport::Newtype("BloomFilter"),
+            IndexKey::Eq | IndexKey::Match => {
+                TermImport::Newtype(query_term_newtype(TARGET_VERSION, self.term()))
+            }
             IndexKey::Ope => TermImport::OrderTerm("OpeTerm"),
             IndexKey::OreBlock => TermImport::OrderTerm("OreBlockTerm"),
         }

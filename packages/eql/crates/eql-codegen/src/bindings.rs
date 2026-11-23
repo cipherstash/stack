@@ -310,7 +310,7 @@ fn render_query_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) 
     fields.extend(quote! { #context pub i: Identifier, });
     for term in Term::payload_terms(domain.terms) {
         let fid = format_ident!("{}", term.json_key());
-        let ty = term_type(eql, family, term, term.binding_newtype());
+        let ty = term_type(eql, family, term, query_term_newtype(eql, term));
         let attrs = term_field_attrs(eql, term, optional);
         fields.extend(if optional {
             quote! {
@@ -452,11 +452,26 @@ fn render_range_query_struct(family: &DomainFamily, term: Term) -> TokenStream {
 /// `SearchBloomFilter`, the same JSON as `BloomFilter`, into which Stack
 /// Encrypt derives the empty filter for text too short for a 3-gram instead
 /// of refusing it. Such a value is still found by `=` and `<` through its
-/// other terms; a query, and `TextMatch`, which has no other term, keep
-/// `BloomFilter` and keep refusing that text.
+/// other terms. `TextMatch` has no other term, so it keeps `BloomFilter`
+/// and keeps refusing that text. A query's filter is `QueryBloomFilter`
+/// ([`query_term_newtype`]). `QueryBloomFilter` refuses that text too.
 pub fn stored_term_newtype(eql: EqlVersion, domain: &Domain, term: Term) -> &'static str {
     if eql == EqlVersion::V4 && term == Term::Bloom && v4_optional_query_terms(domain) {
         "SearchBloomFilter"
+    } else {
+        term.binding_newtype()
+    }
+}
+
+/// The newtype of a query struct's `term` field: the term's own
+/// ([`Term::binding_newtype`]). The exception is an EQL v4 match term, whose
+/// newtype is `QueryBloomFilter`, with the same JSON as `BloomFilter`. Stack
+/// Encrypt derives into it the filter of the tokens a query keeps. A query
+/// keeps its two-letter words only when the whole query is one two-letter
+/// word. A stored value's filter contains them all.
+pub fn query_term_newtype(eql: EqlVersion, term: Term) -> &'static str {
+    if eql == EqlVersion::V4 && term == Term::Bloom {
+        "QueryBloomFilter"
     } else {
         term.binding_newtype()
     }
@@ -514,7 +529,7 @@ fn term_field_attrs(eql: EqlVersion, term: Term, optional: bool) -> TokenStream 
 /// What a family module imports for its terms, in first-use order: the
 /// names it takes from its version's `terms` module, `Ciphertext` first
 /// (each stored struct's newtype, [`stored_term_newtype`], each query
-/// struct's, [`Term::binding_newtype`], and a v4 order term's JSON shape),
+/// struct's, [`query_term_newtype`], and a v4 order term's JSON shape),
 /// and the Stack Encrypt term types it names (`OreBlockTerm`, `OpeTerm`).
 struct FamilyTerms {
     terms: Vec<&'static str>,
@@ -540,7 +555,7 @@ fn family_terms<'d>(eql: EqlVersion, domains: impl Iterator<Item = &'d Domain>) 
                 }
                 _ => {
                     add(&mut used.terms, stored_term_newtype(eql, d, term));
-                    add(&mut used.terms, term.binding_newtype());
+                    add(&mut used.terms, query_term_newtype(eql, term));
                 }
             }
         }
@@ -591,7 +606,7 @@ fn render_query_projections(
         .map(|&term| {
             let ident = format_ident!("{}", query_projection_ident(family, domain, term));
             let fid = format_ident!("{}", term.json_key());
-            let tid = term_type(eql, family, term, term.binding_newtype());
+            let tid = term_type(eql, family, term, query_term_newtype(eql, term));
             let ops = Term::operators_for_terms(domain.terms)
                 .into_iter()
                 .filter(|op| Term::extractor_for_operator(domain.terms, op) == Some(term.extractor()))
@@ -1855,9 +1870,10 @@ mod tests {
         );
     }
 
-    /// A v4 search domain's stored filter is `SearchBloomFilter`, which takes
-    /// the empty filter of text too short for a 3-gram; `TextMatch` and every
-    /// query keep `BloomFilter`, which refuses that text. v3 is untouched.
+    /// A v4 search domain's stored filter is `SearchBloomFilter`. That type
+    /// takes the empty filter of text too short for a 3-gram. `TextMatch` keeps
+    /// `BloomFilter`, and so refuses that text. Every query's filter is
+    /// `QueryBloomFilter`, built by the query rule. v3 is untouched.
     #[test]
     fn a_v4_search_domain_stores_a_filter_that_may_be_empty() {
         let v4 = render_family_bindings(EqlVersion::V4, family("text"));
@@ -1885,18 +1901,23 @@ mod tests {
         );
         assert_eq!(
             field(&v4, "TextMatchQuery").as_deref(),
-            Some("pub bf: BloomFilter,")
+            Some("pub bf: QueryBloomFilter,")
         );
         assert_eq!(
             field(&v4, "TextSearchMatchQuery").as_deref(),
-            Some("pub bf: BloomFilter,")
+            Some("pub bf: QueryBloomFilter,")
+        );
+        assert_eq!(
+            field(&v4, "TextSearchOreMatchQuery").as_deref(),
+            Some("pub bf: QueryBloomFilter,")
         );
         assert_eq!(
             field(&v4, "TextSearchQuery").as_deref(),
-            Some("pub bf: Option<BloomFilter>,")
+            Some("pub bf: Option<QueryBloomFilter>,")
         );
         let v3 = render_family_bindings(EqlVersion::V3, family("text"));
         assert!(!v3.contains("SearchBloomFilter"));
+        assert!(!v3.contains("QueryBloomFilter"));
     }
 
     #[test]

@@ -297,6 +297,15 @@ func TestV4QueriesMatchTheRustFixture(t *testing.T) {
 	if ok, err := ng.Verify(ctx, []string{"Ng", "Mike Ng", "Nguyen"}); err != nil || !ok[0] || !ok[1] || ok[2] {
 		t.Errorf("Verify(Ng, Mike Ng, Nguyen) = %v, %v, want true, true, false", ok, err)
 	}
+	// A query of three characters or more keeps no two-letter word. So a
+	// name typed in part finds the longer name too.
+	mikeNg, err := testusers.ProfileFields.Name.Matches(ctx, cipher, "Mike Ng")
+	if err != nil {
+		t.Fatalf("Name.Matches(%q): %v", "Mike Ng", err)
+	}
+	if ok, err := mikeNg.Verify(ctx, []string{"Mike Ng", "Mike Nguyen", "Ng"}); err != nil || !ok[0] || !ok[1] || ok[2] {
+		t.Errorf("Verify(Mike Ng, Mike Nguyen, Ng) = %v, %v, want true, true, false", ok, err)
+	}
 }
 
 // rowsFixture is v4_rows.json: the profiles above as the generated code seals
