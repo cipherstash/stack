@@ -194,8 +194,8 @@ thin crate for each build target.
 | Path | Name | What it is |
 |---|---|---|
 | `languages/typescript/packages/recipher-js/crates/core` | crate `recipher-js` | Rust, no JavaScript types. Builds plans, runs operations through the engine, maps errors. Depends on `stack-encrypt` (`dynamic`) by path. It takes the engine's `TargetResolver` as a parameter and names no EQL type. |
-| `languages/typescript/packages/recipher-js/crates/node` | crate `recipher-js-node` | Rust, napi-rs. Converts between JavaScript values and frames, and exposes the core as a Node addon. |
-| `languages/typescript/packages/recipher-js/crates/wasm` | crate `recipher-js-wasm` | Rust, `wasm-bindgen`, for `wasm32-unknown-unknown`. The same conversions over `JsValue`. |
+| `languages/typescript/packages/recipher-js/crates/node` | crate `recipher-js-node` | Rust, napi-rs 3. Exposes the core as a Node addon. It converts between JavaScript values and frames with vitaminc's `vitaminc-aead-napi`, and holds no conversion of its own. |
+| `languages/typescript/packages/recipher-js/crates/wasm` | crate `recipher-js-wasm` | Rust, `wasm-bindgen`, for `wasm32-unknown-unknown`. The same mapping over `JsValue`. vitaminc has no bridge for wasm yet; see [Values](#values). |
 | `languages/typescript/packages/recipher-js` | npm `@cipherstash/recipher` | The core SDK, its types and the loaders. Its builds hold no EQL type (`NoTargets`). |
 | `languages/typescript/packages/recipher-js/platforms/*` | npm `@cipherstash/recipher-<platform>` | One package per Node platform, holding its `.node` file. |
 | `packages/eql/packages/eql` | npm `@cipherstash/eql`, entry `./recipher` | The EQL extension: the EQL v4 types in TypeScript, and the loaders of the builds that hold them. The package exists; the entry is new. |
@@ -278,21 +278,18 @@ const opened = await cipher.decrypt(sealed.value);
 This is plain encryption, with no context. It is the engine's
 `keyset.encrypt(value)`.
 
-- **One value in, one ciphertext out.** An array of values is a batch: it
-  returns an array, in one ZeroKMS request. This is the engine's rule for a
-  scalar and a collection.
+- **One value in, one ciphertext out.** The next section encrypts an
+  array.
 - **No call throws.** Every call resolves to a `Result`. See
   [Results and errors](#results-and-errors).
 - **The value's type picks how it is encrypted.** A `string` is encrypted
-  as a string, a `boolean` as a boolean, a `number` as a double, a `bigint`
-  as a 64-bit integer, a `Uint8Array` as bytes and a `Date` as a timestamp.
-  [Values](#values) has the table.
-- **A kind is named only to choose another encoding.** `kinds.int32(36)`
-  encrypts the number as a 32-bit integer, and `kinds.date(day)` encrypts
-  a `Date` as a calendar date. Nothing else needs one.
-- **A plain object or array is refused.** It has no one encoding, so the
-  caller chooses `opaque(..)` or `kinds.json(..)`. The engine has the same
-  rule: it has no fallback that picks the stored bytes of a struct.
+  as text, a `boolean` as a boolean, a `number` as a float, a `bigint` as
+  an integer, a `Uint8Array` as bytes and a `Date` as a timestamp. This is
+  vitaminc's mapping for JavaScript, and [Values](#values) has the table.
+  No call names a kind.
+- **A plain object is refused.** It has no one encoding, so the caller
+  chooses `opaque(..)` or `json(..)`. The engine has the same rule: it has
+  no fallback that picks the stored bytes of a struct.
 - **Encrypting needs a keyset; decrypting does not.** Every data key is
   made under one keyset, and a ciphertext names the keyset it was made
   under. `cipher.decrypt` opens a value from any of the cipher's keysets.
@@ -303,10 +300,24 @@ This is plain encryption, with no context. It is the engine's
   Each ciphertext has its own data key.
 - **A ciphertext knows its type.** `encrypt("..")` returns a
   `Ciphertext<string>`, and decrypting it gives a `string`. A ciphertext
-  read from storage is typed by naming the kind:
-  `Ciphertext.fromBytes(bytes, kinds.string)`. Decrypting it refuses a
-  value that was encrypted as another kind. With no kind named, the value
-  comes back as the kind it was encrypted as, typed as the union of them.
+  read from storage is typed by naming the type:
+  `Ciphertext.fromBytes(bytes, kinds.string)`. Decrypting it refuses a value
+  that was encrypted as another type. With no type named, the value comes
+  back as what it was encrypted as, typed as the union of them.
+
+### An array of values
+
+```ts
+const sealed = await keyset.encrypt(["first secret", "second secret"]);
+// sealed.value is an array of two ciphertexts, in the same order.
+
+const opened = await cipher.decrypt(sealed.unwrap());
+```
+
+An array in is an array out, and it makes one ZeroKMS request however long
+it is. This is the engine's rule for a collection. There is one `encrypt`
+and one `decrypt`: no second function for a batch, and no loop over single
+calls.
 
 ### A value with a context
 
@@ -357,20 +368,20 @@ export const user = record("users", {
   notes: encrypt(kinds.string),
 });
 
-// One row, or an array of rows in one ZeroKMS request.
+// One row. An array of rows returns an array, in one ZeroKMS request.
 const stored = await keyset.encrypt(user, row);
 const opened = await cipher.decrypt(user, stored.unwrap());
 ```
 
 - **A field names its kind.** A declaration has no value to read a type
   from, and the stored type is fixed before any row exists. So
-  `encrypt(kinds.string)` is where a kind is always written.
+  `encrypt(kinds.string)` names it, in the engine's word for the kind.
 - **The stored row has one object for each sealed field**, with one
   property for each output: `ciphertext`, and `equality`, `match`, `ore`
   or `ope` for each index the field declares. Each is opaque bytes. A
   passthrough field keeps its value. This is the shape Go stores.
 - **The compiler checks the row.** `Plaintext<typeof user>` is
-  `{ id: bigint; email: string; name: string; age: number; notes: string }`.
+  `{ id: bigint; email: string; name: string; age: bigint; notes: string }`.
   A row of another shape does not compile. `Stored<typeof user>` is the
   stored type, and `stored.notes.equality` does not compile.
 - **The engine checks the declaration when the cipher is built.**
@@ -406,7 +417,7 @@ const byEmail = await keyset.query(user, { field: "email", op: "eq", value: "ada
 // An array of queries is a batch, which may span fields.
 const terms = await keyset.query(user, [
   { field: "email", op: "eq", value: "ada@example.com" },
-  { field: "age", op: "gte", value: 36 },
+  { field: "age", op: "gte", value: 36n },
 ]);
 ```
 
@@ -425,16 +436,13 @@ const terms = await keyset.query(user, [
 
 ### The shape of a call
 
-- **One value or a batch.** Every call takes one value or an array of
-  them. One value returns one result. An array returns an array, in the
-  same order, and makes at most one key request however long it is. So a
-  loop over single calls is never needed, and the README says so.
+- **Batch by default.** Every call takes one value or an array of them.
+  One value returns one result. An array returns an array, in the same
+  order, and makes at most one key request however long it is. It is the
+  same call, so the natural way to encrypt many values is the efficient
+  way.
 - **All or nothing.** A batch that fails is one `Err`. It returns no
   partial array.
-- **Principle 5 changes with this.** The SDK design principles allow a
-  single-value form only for one field of a record. This plan allows one
-  for every call, because the same call takes the batch. The principles
-  document is amended in the pull request for step 1.
 - **Each call returns a builder.** Awaiting it runs it and gives a
   `Result`. `.withContext`, `.audit`, `.withCredential` and `.signal` come
   before the `await`. Phase 2 adds
@@ -446,48 +454,76 @@ const terms = await keyset.query(user, [
 
 ## Values
 
-The native crate converts each JavaScript value straight into a frame, by
-its kind, with `ValueFrame::of` over a type that describes itself
-to vitaminc. Python's `Typed` does the same. No JSON text of a row crosses
-the boundary.
+The conversion between JavaScript values and the engine is vitaminc's, not
+this SDK's. The node crate uses `vitaminc-aead-napi`, vitaminc's bridge for
+Node addons:
 
-A value encrypted alone takes its kind from its TypeScript type. The kind
-in bold is the default for that type. Any other kind is named, as
-`kinds.int32(36)` or as a record field's `encrypt(kinds.int32)`.
+- `JsRef` reads a live JavaScript value as an `Encrypt`, on the JavaScript
+  thread. `JsRef::to_frame` snapshots it as a frame, which a worker thread
+  then seals with no access to JavaScript.
+- `JsBuilder` is a `Sink` that builds the JavaScript value of a decrypt.
+- `Wrappers` defines the classes for the types JavaScript lacks.
 
-| TypeScript type | Kinds | Rule |
+So no JSON text of a row crosses the boundary, and the mapping below is
+the one every vitaminc program in JavaScript has.
+
+| JavaScript | Encrypted as | Decrypts as |
 |---|---|---|
-| `string` | **string**, decimal | A decimal is decimal text, parsed in Rust |
-| `boolean` | **boolean** | |
-| `number` | **double**, real, int16, int32 | An integer kind takes a safe integer in range, else it is refused |
-| `bigint` | **int64**, uint64, int128 | A value outside the kind's range is refused. A `number` is refused for these kinds, so no 64-bit value passes through a double |
-| `Uint8Array` | **bytes** | |
-| `Date` | **timestamp**, date | A timestamp is to the millisecond; see below. A date is midnight UTC of the day, else it is refused |
-| a JSON value | json | Always named. An integer outside the safe range is a `bigint`; see below |
-| `null` | | Only where a record field declares `null` |
+| `string` | text | `string` |
+| `boolean` | boolean | `boolean` |
+| `number` | a 64-bit float | `number`. A 32-bit float widens exactly |
+| `bigint` | an integer, at the narrowest width that holds it | `bigint`, for every width |
+| `Uint8Array`, `Buffer` | bytes | `Uint8Array` |
+| `Date` | a timestamp, in milliseconds | `Date` |
+| `VcTimestamp("2026-11-23T01:02:03.000000001Z")` | a timestamp, in nanoseconds | `Date` when it is whole milliseconds, else `VcTimestamp` |
+| `VcDate("2026-11-23")` | a calendar date | `VcDate` |
+| `VcDecimal("1.50")` | a decimal, with its scale | `VcDecimal` |
+| `VcUuid("..")` | a UUID | `VcUuid` |
+| `null` | null | `null`. In a record, only where the field declares `null` |
 
-A default never depends on the value, only on its type. So `36` and `36.5`
-are both a double, and the same code always writes the same kind.
+- **Integers are a `bigint`.** A `number` is a float, and `5` does not
+  match the integer `5n` in a query. Integer data uses `bigint`.
+- **An integer's width is not chosen.** vitaminc stores a `bigint` at the
+  narrowest width that holds it. Equality terms are the same across
+  widths, so `5n` here matches an `int64` 5 from Go.
+- **No precision is lost.** A timestamp finer than a millisecond opens as
+  a `VcTimestamp`, never as a rounded `Date`.
+- **The wrapper classes are vitaminc's.** Each holds its text, such as
+  `new VcDecimal("1.50")`, and is frozen. The core package re-exports the
+  four the addon defines.
+- **vitaminc's safety rules apply.** Only a plain object is read, by its
+  own enumerable string keys. A `Map`, a `Set`, a class instance, a sparse
+  array and a string with an unpaired surrogate are refused. Nesting is
+  limited to 128 levels. A polluted prototype cannot add a key or see a
+  decrypted value.
+- **A failed conversion is an `Err`.** vitaminc throws a `TypeError` with a
+  stable code, such as `ERR_INTEGER_RANGE`. The SDK returns it as an `Err`
+  with that code.
 
-**JSON numbers.** A JavaScript `number` cannot hold every integer a JSON
-document can. So a JSON value is a tree in which an integer outside the
-safe range is a `bigint`. On encrypt, a `number` that is an unsafe integer
-is refused, and a `bigint` is written as its digits. On decrypt, an integer
+**A record field's kind.** A record field declares its kind, because the
+stored type is fixed before any row exists. The kind checks the value: an
+`int32` field refuses a `bigint` outside 32 bits. The TypeScript type of
+each kind is the one in the table, so an integer field is a `bigint`.
+
+**The wasm build.** `vitaminc-aead-napi` is for Node addons only. The wasm
+crate needs the same mapping over `wasm-bindgen`'s `JsValue`, with the same
+wrapper classes and the same refusals. Its right home is vitaminc, beside
+the napi bridge. Until it is there, the wasm crate holds it, and both
+builds run vitaminc's value conformance cases
+(`packages/aead-napi/tests/value-conformance.cjs`).
+
+**JSON documents.** `json(value)` encrypts a JSON document, for a `json`
+field or an EQL `Json` type. A JavaScript `number` cannot hold every
+integer a JSON document can. So an integer outside the safe range is a
+`bigint` in the tree. On encrypt, a `number` that is an unsafe integer is
+refused, and a `bigint` is written as its digits. On decrypt, an integer
 outside the safe range comes back as a `bigint`. The conversion is in Rust,
 and the engine's one parser reads the result. The `eql-json-v1` case that
 holds `18446744073709551615` round-trips on both builds.
 
-**Timestamps.** A `Date` holds milliseconds, and the engine's timestamp
-holds nanoseconds. So a timestamp written here has no part below a
-millisecond. A timestamp that Rust or Go wrote with a finer part opens
-truncated to the millisecond, never rounded. The conformance runner
-compares such a case to the millisecond and lists it as truncated. A
-finer TypeScript type can be added later without a change to stored
-bytes.
-
 The value profile of the conformance suite (`record-values-v1`) is the
-contract for this table. Its cases include every kind at its edges and the
-conversions the host refuses.
+contract for the record kinds. Its cases include every kind at its edges
+and the conversions the host refuses.
 
 ## The EQL extension
 
@@ -589,12 +625,15 @@ if (sealed.isOk()) {
 const bytes = sealed.map((ciphertext) => ciphertext.toBytes()).unwrapOr(null);
 ```
 
-- **The combinators are Rust's:** `isOk`, `isErr`, `map`, `mapErr`,
-  `andThen`, `orElse`, `unwrapOr` and `match`. `unwrap()` and `expect(..)`
-  are the only functions that throw, and only when the caller asks. They
-  are for a script, a test or a startup path.
-- **`Result` is the core's own type**, with no dependency. Its shape
-  follows `neverthrow`, the common TypeScript library for it.
+- **The methods are Rust's `Result` methods,** in camelCase: `isOk`,
+  `isErr`, `ok`, `err`, `map`, `mapErr`, `mapOr`, `and`, `andThen`, `or`,
+  `orElse`, `unwrapOr`, `unwrapOrElse`, `unwrap` and `expect`. Each does
+  what Rust's does. `unwrap()` and `expect(..)` are the only functions that
+  throw, as they are the only ones that panic in Rust. They are for a
+  script, a test or a startup path.
+- **`Result` is the core's own type**, with no dependency, so it can stay
+  as close to Rust's as TypeScript allows. `Ok` and `Err` are its two
+  cases, and `isOk()` narrows the type as a Rust `match` does.
 - **An error is a value.** A `RecipherError` has `kind`, `code`, `reason`
   and `field`, from the engine's error. `kind` is a closed set a caller
   switches on: a refused declaration, a value of the wrong type, a refused
@@ -615,9 +654,9 @@ const bytes = sealed.map((ciphertext) => ciphertext.toBytes()).unwrapOr(null);
 A JavaScript string cannot be wiped. The SDK keeps the number of copies
 down instead:
 
-- The native crate reads a JavaScript value into a frame, which lives in a
-  buffer wiped when it drops. No intermediate Rust `String` or JSON text
-  holds the row.
+- `vitaminc-aead-napi` reads a JavaScript value into a frame, which lives
+  in a buffer wiped when it drops. Every copy Rust makes of a string on
+  the way in is wiped. No intermediate JSON text holds the row.
 - A decrypted frame is converted straight into JavaScript values.
 - The wasm build follows the same rules. When a call ends, the buffers
   that call owned are wiped: on success, on failure and on cancellation.
@@ -632,7 +671,8 @@ can check, and the README says so.
 ## Promises and cancellation
 
 - Every operation returns a `Promise` of a `Result`, which never rejects.
-  napi-rs runs the engine's future on its tokio runtime. The wasm build runs it through `wasm-bindgen-futures`,
+  napi-rs runs the engine's future on its tokio runtime. The wasm build
+  runs it through `wasm-bindgen-futures`,
   and ZeroKMS requests go out through the runtime's `fetch`.
 - A call takes an `AbortSignal`. Aborting drops the future, which wipes what
   it held, and the call resolves to an `Err` of kind `cancelled`. Only that call fails; the
@@ -720,9 +760,9 @@ these rules are checked then.
   `./sql` entry of `@cipherstash/eql` imports the core or loads a build.
 - **A frozen stored-rows file** (phase 3). Rows the first stable release
   wrote, opened on every build and never regenerated.
-- **Value conversion.** The value profile, plus a fuzz target that converts
-  a host value to a frame and compares it with `ValueFrame::of` for the same
-  value.
+- **Value conversion.** vitaminc's value conformance cases on both builds,
+  and the value profile for the record kinds. A fuzz target on the wasm
+  crate compares its frame for a value with the napi bridge's.
 - **Type tests.** A wrong row, a wrong value, an unknown field, an
   operator a field cannot answer, an unhandled error kind, and an EQL type
   against a cipher without the extension do not compile.
@@ -785,8 +825,8 @@ The core, with no EQL:
    `string` value on Node, with no context. CI builds it on Linux. Proves that the engine's futures run on
    napi-rs's runtime. Adds the tests that the core crate names no `Label`
    and links no `eql-bindings`.
-2. **Values.** Every kind in the table above, the default kind of each
-   type, a batch, a value with a context,
+2. **Values.** `vitaminc-aead-napi` for every type in the table above,
+   the wrapper classes, an array of values, a value with a context,
    `bytes` for a file, `opaque` for a whole object, the value profile and
    the fuzz target.
 3. **Records.** `record`, `encrypt`, `passthrough`, nulls, the stored row
@@ -798,8 +838,9 @@ The core, with no EQL:
    query-refusal profiles.
 5. **Credentials, keysets, audit metadata and cancellation.** The
    per-call credential type, the testing cipher and the lifecycle profile.
-6. **The wasm build.** The `wasm-bindgen` crate, the export conditions, the
-   inlined build and the edge-runtime test.
+6. **The wasm build.** The `wasm-bindgen` crate, vitaminc's mapping over
+   `JsValue`, the export conditions, the inlined build and the edge-runtime
+   test.
 
 Then the EQL extension:
 
@@ -847,16 +888,21 @@ Decided on 2026-11-23:
 
 - The adapters' new majors wait for `recipher-compat`. No customer
   upgrades before it.
-- Dates and timestamps are a `Date`, for now.
+- A timestamp is a `Date`. The types JavaScript lacks are vitaminc's
+  wrapper classes, not `Temporal`.
 - DynamoDB moves onto the core, after the adapters.
 - The EQL extension is part of `@cipherstash/eql`, not a new package.
 - The core has plain encryption, with no context.
 - The core and EQL are released apart, so several EQL versions work with
   one core. The EQL builds are published beside `@cipherstash/eql`, as
   `@cipherstash/eql-<platform>`.
-- A value's type picks its kind. A kind is named only to choose another.
-- One value returns one result, and an array is a batch.
-- Calls return a `Result` and never throw.
+- Values convert through `vitaminc-aead-napi`. A value's type picks how it
+  is encrypted, and no call names a kind.
+- A plain object is refused, as in Rust. The caller chooses `opaque` or
+  `json`.
+- One value returns one result. An array returns an array.
+- Calls return a `Result` and never throw. `Result` is the core's own
+  type, with Rust's methods.
 
 ## What was checked
 
@@ -918,6 +964,16 @@ Read on 2026-11-23, on `next` at `e62420d8e`:
   the root, `./schema` and `./sql`, and it has no dependencies. The CLI,
   `@cipherstash/stack` and `@cipherstash/stack-prisma` depend on it.
 
+Read on 2026-11-23, in `cipherstash/vitaminc` at `222f1ad39`:
+
+- `packages/aead-napi` (`vitaminc-aead-napi`) is a Rust library for a Node
+  addon, on napi-rs 3. It is not an npm package and not a wasm binding. It
+  supplies `JsRef`, `JsBuilder`, `JsCipherText` and `Wrappers`, and its
+  README holds the mapping and the safety rules this plan repeats.
+- Its test addon (`tests/addon/src/lib.rs`) exports the wrapper classes
+  and seals a frame from `JsRef::to_frame` in an `AsyncTask`.
+- vitaminc has no `wasm-bindgen` counterpart to it.
+
 Not checked:
 
 - That the engine's pending calls are `Send`, as napi-rs's async
@@ -930,8 +986,12 @@ Not checked:
   fields, which `decryptField` needs. Step 3 proves it or finds the change
   the engine needs.
 - The largest value one call can seal, which bounds the size of a file.
-- That a sealed value's bytes name its kind, which a decrypt with no kind
+- That a sealed value's bytes name its type, which a decrypt with no type
   named needs. Step 2 proves it or finds the change the engine needs.
+- That `vitaminc-aead-napi` (napi-rs 3) builds with the engine at the
+  vitaminc version the root workspace pins, and is on crates.io at it.
+- That napi-rs 3 packages and publishes as `@cipherstash/auth`'s napi-rs 2
+  build does.
 - The size of each wasm build, with and without the EQL types.
 - How `@cipherstash/eql` declares its platform packages so that an
   install for the SQL entries alone downloads no native build.
