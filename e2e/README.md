@@ -53,6 +53,10 @@ The native build needs the repository's Rust toolchain and trusted mise configur
 
 See the [migration guide](../docs/migration/protect-dynamodb-to-stack.md) for the tested scope and limitations.
 
+## Migration Harness
+
+The [Migration Harness](migration-harness/run/README.md) runs an isolated Fixture App upgrade and records a Run Report. Its self-tests and credential-free Docker probes use dedicated commands and a dedicated CI workflow; ordinary `pnpm test` and `test:e2e` do not invoke them. A real Run additionally needs CipherStash credentials. See the harness README for commands that build workspace dependencies first and for the remaining acceptance limitations.
+
 ## Adding a new e2e test
 
 - File name must end in `.e2e.test.ts` to be picked up by `vitest.config.ts`.
