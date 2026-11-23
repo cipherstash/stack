@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use super::derive::{JsonTerms, Selectors, TermNode};
 use super::path::JsonPath;
-use super::{base64, JsonExtracted, JsonNode, JsonOptions, JsonSubtree, Tag};
+use super::{base64, JsonChild, JsonExtracted, JsonNode, JsonOptions, JsonSubtree, Tag};
 use crate::op::{Op, QueryTerm};
 use crate::target::Json;
 use vitaminc_protected::{Choice, OpaqueDebug, TimingSafeEq};
@@ -605,6 +605,153 @@ impl JsonSubtreeKey {
     /// the rest.
     pub fn open(&self, rows: Vec<JsonNode>) -> JsonSubtree {
         JsonSubtree::keyed(rows, self.clone())
+    }
+
+    /// Pairs one entry that `eql_v4.json_tree_children` returned with this
+    /// key, the key of the entry's parent node. Decrypt the [`JsonChild`] it
+    /// returns to read that child. Your app reads one level of a document
+    /// this way, without fetching the parent's whole subtree.
+    ///
+    /// An **entry** is one encrypted node of a stored document: an object,
+    /// an array, or a scalar. Reading a node's children takes three steps.
+    ///
+    /// 1. **Your app** derives the parent's token and key from the parent's
+    ///    path. A **token** is a value the database uses to find a node's
+    ///    entry. [`KeysetCipher::json_subtree_key`](crate::KeysetCipher::json_subtree_key)
+    ///    returns this key. The key contains the token. A field reference's
+    ///    `children(path).encrypt_keyed(&keyset)` returns the token and the
+    ///    key together. Neither call asks ZeroKMS for anything. Your app
+    ///    keeps the key and sends the token.
+    /// 2. **The database (EQL)** runs `eql_v4.json_tree_children(doc, $1)`,
+    ///    with the token as `$1`. In each stored document, it finds the
+    ///    parent's entry and returns the parent's direct children as
+    ///    entries. The database never decrypts anything, and it never
+    ///    receives a key.
+    /// 3. **Your app** deserializes each returned entry into a [`JsonNode`],
+    ///    and passes it to `open_child`. Decrypting the result checks that
+    ///    the entry is a child of this parent. Then it fetches the data key
+    ///    from ZeroKMS and decrypts the child.
+    ///
+    /// ```
+    /// # async fn example() -> Result<(), stack_encrypt::Error> {
+    /// use serde_json::json;
+    /// use stack_encrypt::json::{JsonDocument, JsonOptions, JsonPath, JsonPlaintext};
+    /// use stack_encrypt::target::{AeadContext, CallerContext};
+    /// use stack_encrypt::{nonempty, DecryptFrom, EncryptInto, StackCipher};
+    ///
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
+    /// let keyset = cipher.default_keyset();
+    /// let profile = json!({"tags": ["admin"]});
+    /// let stored: JsonDocument = JsonPlaintext::from(profile)
+    ///     .encrypt_into_with_context(
+    ///         &keyset,
+    ///         CallerContext::from(nonempty!("users").with("profile")),
+    ///     )
+    ///     .await?;
+    ///
+    /// // Step 1, your app: derive the parent's key. Send `parent.tokens()[0]`
+    /// // as $1.
+    /// let parent = keyset
+    ///     .json_subtree_key(
+    ///         &JsonPath::parse("$.tags").unwrap(),
+    ///         &JsonOptions::default(),
+    ///         nonempty!("users").with("profile"),
+    ///     )
+    ///     .await?;
+    ///
+    /// // Step 2, the database. In production, the entries come from:
+    /// //   SELECT eql_v4.json_tree_children(profile, $1::text) FROM users WHERE id = $2
+    /// // Here the example reads the same entries from the stored document, so
+    /// // it runs without a database.
+    /// let token = &parent.token_bytes()[0];
+    /// let entries = stored
+    ///     .children(token)
+    ///     .into_iter()
+    ///     .filter_map(|(slot, _, _)| stored.node(slot));
+    ///
+    /// // Step 3, your app: pair each entry with the parent's key, and decrypt.
+    /// for entry in entries {
+    ///     let tag = JsonPlaintext::decrypt_from_with_context(
+    ///         parent.open_child(entry),
+    ///         &cipher,
+    ///         AeadContext::from(nonempty!("users").with("profile")),
+    ///     )
+    ///     .await?;
+    ///     assert_eq!(tag.value(), &json!("admin"));
+    /// }
+    /// # Ok(())
+    /// # }
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+    /// ```
+    ///
+    /// # Choosing what to decrypt into
+    ///
+    /// - Decrypt into a [`JsonPlaintext`](super::JsonPlaintext) to get the
+    ///   child's value alone.
+    /// - Decrypt into a [`JsonChildPlaintext`](super::JsonChildPlaintext) to
+    ///   also get the member's key or the element's index.
+    ///
+    /// The database returns an object's members in a random order. The
+    /// database returns an array's elements in index order, but nothing
+    /// checks that order. So with a `JsonPlaintext`, your app cannot tell
+    /// which member or element a value is. Use a `JsonChildPlaintext` when
+    /// that matters.
+    /// Both run the same checks.
+    ///
+    /// # What decrypting checks
+    ///
+    /// Each entry stores four things that decrypting checks:
+    ///
+    /// - a **selector**: a keyed hash of the entry's path, with array
+    ///   indexes left out;
+    /// - a **self tag**: the tag the database computes from the entry's own
+    ///   token, to find the entry;
+    /// - a **parent tag**: the tag the database computes from the parent's
+    ///   token, to find the parent's children;
+    /// - a **label**: the member's key, or the element's index. The label is
+    ///   encrypted with the value.
+    ///
+    /// Decrypting refuses the entry with
+    /// [`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry) unless every
+    /// one of these checks passes:
+    ///
+    /// - The entry has a parent tag. The root has none. Under a sealed root,
+    ///   the top-level fields have none either.
+    /// - If the database reported a depth, it is one level below the parent.
+    /// - The entry's selector is the parent's path extended by the label.
+    /// - The entry's self tag is the one its label gives. Your app computes
+    ///   that tag from the parent's token and the label.
+    ///
+    /// The label is encrypted and authenticated with the value. So the
+    /// database cannot pass off one element as another index, or a member
+    /// as an element. A missing parent tag is refused before any key is
+    /// fetched.
+    ///
+    /// # Limits
+    ///
+    /// - A child that has children of its own does not decrypt alone.
+    ///   Decrypting refuses it with
+    ///   [`Error::JsonNotALeaf`](crate::Error::JsonNotALeaf).
+    ///   Read it with a subtree read of its own path ([`open`](Self::open)).
+    /// - A key for a path with a wildcard names no single parent. Decrypting
+    ///   refuses it with [`Error::Input`](crate::Error::Input), reason
+    ///   `JsonPathWildcard`, before any key is fetched.
+    ///
+    /// Decrypting does not check these things:
+    ///
+    /// - the database row the entry came from, unless the context names the
+    ///   row;
+    /// - that the database returned every child;
+    /// - the array element the parent is. The self tags and parent tags are
+    ///   not authenticated. The database has the parent's token, so it can
+    ///   compute them. So a database that forges tags can return the children of
+    ///   `$.items[0]` for a read of `$.items[1]`. A subtree read has the
+    ///   same limit for the node it starts at.
+    pub fn open_child(&self, node: JsonNode) -> JsonChild {
+        JsonChild::keyed(node, self.clone())
     }
 }
 

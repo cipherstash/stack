@@ -560,7 +560,7 @@ reasons! {
         /// object the operator takes ([`json_open`](crate::dynamic::json_open), the JSON operators of
         /// [`Op`](crate::dynamic::Op)): a missing or unknown key, a value of another kind,
         /// a row that is not an entry, or more than one entry for a
-        /// selector.
+        /// selector or a child.
         JsonInput => "json_input", "the input is not the object the JSON operator takes";
         /// A JSON value in an input is not JSON text the engine reads.
         JsonSyntax => "json_syntax", "a JSON value is not JSON text";

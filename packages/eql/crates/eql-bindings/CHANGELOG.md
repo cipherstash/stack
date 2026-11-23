@@ -9,6 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Read one child of a JSON tree node** (#1677). Your app can now decrypt
+  one entry that `eql_v4.json_tree_children` returned, without fetching
+  the parent's whole subtree.
+  - `JsonTreeChild::from_key(&key, entry)` pairs the entry with the
+    `JsonSubtreeKey` of the parent's path.
+  - A `JsonTreeChild` decrypts into a `JsonPlaintext` for the child's
+    value. A `JsonTreeChild` also decrypts into a `JsonChildPlaintext` for
+    the value with its key or index.
+  - The database returns an object's members in a random order. So the key
+    is how your app tells the members apart.
+  - Decrypting checks the entry against the parent, as Stack Encrypt's
+    `JsonSubtreeKey::open_child` does.
+  - A child with members of its own does not decrypt alone. Read it
+    through `JsonTreeSubtree`.
+  - A field reference's `children(path).encrypt_keyed(&keyset)` returns
+    the `JsonTreeToken` to send. The call also returns the key that
+    decrypts what the query returns.
+  - The stored format and the SQL do not change.
+- **Order queries from a field reference** (#1668). The field reference of a
+  field typed with an ordered EQL v4 type has `lt`, `lte`, `gt` and `gte`:
+  `EncryptedMember::AGE.gt(30).encrypt(&keyset)` returns the type's query
+  twin (`IntegerOrdQuery`, `DateOrdOreQuery`, …). This covers every
+  producible `…Ord`, `…OrdOpe` and `…OrdOre` type. `TextOrd`, `TextOrdOpe`
+  and `TextOrdOre` answer `eq` too. `TextSearch` and `TextSearchOre` answer
+  `eq`, the orderings and `matches`. Each query is the one a data plan
+  derives for a field that names the type, for the same operator and value,
+  and binds as the twin's query domain. A block ORE term carries a random
+  nonce, so its bytes differ between derivations, and it compares equal.
+  - A twin that requires several terms carries all of them whatever the
+    operator: a `TextOrd` query derives both its `hm` and its `op` for the
+    one value, since `eql_v4.query_text_ord` requires both. A text search
+    twin's terms are optional, so its query carries only the term of the
+    index that answers the operator. No EQL SQL and no stored form changes.
+  - `TwinIndex` takes a third type parameter, the indexes whose terms the
+    twin carries. It defaults to the answering index, so
+    `TwinIndex<Equality, TextEqQuery>` is unchanged. `TextOrd` answers
+    `op::Lt` through `TwinIndex<Ope, TextOrdQuery, (Equality, Ope)>`.
+  - `QueryTwin<T>` is implemented for an order term (`OpeTerm<S>`,
+    `OreBlockTerm<S>`), for a pair `(Hmac256, OpeTerm<String>)` or
+    `(Hmac256, OreBlockTerm<String>)`, and, for a twin whose terms are
+    optional, once per term.
+  - A query on a twin that carries an order term beside its `hm` is
+    refused, before any key is requested, for what either index refuses:
+    `TextOrdOre` `eq` of text that ends in NUL or is too long for block ORE
+    is refused as an ordering of it is. The descriptor `EqlTargets` gives
+    Stack Encrypt says which types' twins carry every term
+    (`Target::query_carries_every_term`), so a data plan refuses the same
+    queries at the same point.
+  - A field reference has no `between` yet. A range query sends both
+    bounds in one operand, and no SDK builds that operand. A data plan
+    refuses `between` on an EQL type for the same reason. #1286 tracks it.
+
 - **A `JsonTreeDocument` field is queried from its field reference** (#1459,
   #1687). As a field of a derived record, a `JsonTreeDocument` (and an
   `Option<JsonTreeDocument>`) has Stack Encrypt's JSON field queries,

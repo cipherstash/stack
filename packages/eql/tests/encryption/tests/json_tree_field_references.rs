@@ -27,12 +27,13 @@ use std::num::NonZeroU32;
 
 use eql_bindings::encryption::EqlTargets;
 use eql_bindings::v4::json_tree::{
-    JsonTreeDocument, JsonTreeElementsQuery, JsonTreeLeafQuery, JsonTreePredicateQuery,
-    JsonTreeQuery, JsonTreeSelector, JsonTreeToken,
+    JsonTreeChild, JsonTreeDocument, JsonTreeElementsQuery, JsonTreeLeafQuery,
+    JsonTreePredicateQuery, JsonTreeQuery, JsonTreeSelector, JsonTreeToken,
 };
+use eql_bindings::Identifier;
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::{self, record, ValueFrame};
-use stack_encrypt::json::{JsonDocument, JsonPlaintext, JsonQuery};
+use stack_encrypt::json::{JsonChildPlaintext, JsonDocument, JsonPlaintext, JsonQuery};
 use stack_encrypt::sem::TermError;
 use stack_encrypt::target::{DecryptSource, EncryptTarget};
 use stack_encrypt::{AsProtectedRef as _, DecryptFrom, EncryptInto, Error, KeysetCipher};
@@ -218,6 +219,64 @@ async fn the_plans_json_query_example_runs() {
 
     let opened = Customer::decrypt_from(stored, &keyset).await.unwrap();
     assert_eq!(opened.profile.value(), &profile());
+}
+
+/// `children(path).encrypt_keyed` gives the token `encrypt` gives, to
+/// bind, with the key that holds it, which opens each entry
+/// `json_tree_children` returns for that token to its key and value.
+#[tokio::test]
+async fn the_children_token_comes_with_the_key_that_opens_each_child() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let stored: EncryptedCustomer = Customer {
+        profile: profile().into(),
+    }
+    .encrypt_into(&keyset)
+    .await
+    .unwrap();
+    let (token, key): (JsonTreeToken, _) = EncryptedCustomer::PROFILE
+        .children("$.visits[0]")
+        .encrypt_keyed(&keyset)
+        .await
+        .unwrap();
+    let alone: JsonTreeToken = EncryptedCustomer::PROFILE
+        .children("$.visits[0]")
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    assert_eq!(token, alone, "the token encrypt derives");
+    assert_eq!(
+        serde_json::to_value(&token).unwrap(),
+        json!(key.tokens()[0]),
+        "the key holds the token sent"
+    );
+    // The entries `json_tree_children(profile, token)` returns: each child
+    // of the token's node, with the document's header, its slot and its
+    // depth below the node.
+    let document = &stored.profile;
+    let mut members = Vec::new();
+    for (slot, _, _) in index_document(document).children(&key.token_bytes()[0]) {
+        let mut entry = document.sv[slot].clone();
+        entry.h = Some(document.h.clone());
+        entry.j = Some(slot as u64);
+        entry.d = Some(1);
+        entry.i = Some(document.i.clone());
+        entry.v = Some(document.v);
+        let child = JsonChildPlaintext::decrypt_from_with_context(
+            JsonTreeChild::from_key(&key, entry),
+            &keyset,
+            Identifier::for_column("customers", "profile").unwrap(),
+        )
+        .await
+        .unwrap();
+        members.push((child.key().unwrap().to_owned(), child.value().clone()));
+    }
+    members.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        members,
+        [("at".into(), json!(15)), ("place".into(), json!("home"))],
+        "each member of the first visit, with its key"
+    );
 }
 
 /// Every field query derives the operand the data plan derives for the

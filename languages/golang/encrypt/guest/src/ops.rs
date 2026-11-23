@@ -303,18 +303,22 @@ where
 }
 
 /// Open the rows a read of a document field returned
-/// ([`dynamic::json_open`]): a codec-encoded list per database row of the
+/// ([`dynamic::json_open`]). In: a codec-encoded list of groups of the
 /// entries the SQL returned (`public.eql_v4_json_entry` JSON, text or
 /// bytes), the plan, the field's name and the codec-encoded read request
-/// (`{"operation": "selector" | "subtree", "path", "wildcard_bound"?}`) in;
-/// a codec-encoded list per row of JSON texts (bytes) out, which is
-/// **plaintext**. The selector or the read key is derived again from the
-/// request under `keyset`, which the host names as it named it to prepare
-/// the read, and the rows open through that keyset only: a document sealed
-/// under another is refused before any key is retrieved. One batched key
-/// request for every row, sent with `audit`: the audit metadata from the
-/// options object's `audit` key (see [`crate::options`]). Empty metadata
-/// sends nothing.
+/// (`{"operation": "selector" | "subtree" | "children", "path",
+/// "wildcard_bound"?}`). Out: a codec-encoded list per group. The list is
+/// **plaintext**. For `selector` and `subtree`, each list contains JSON
+/// texts (bytes). For `children`, each list contains one map per child,
+/// `{"key" | "index", "json"}`.
+///
+/// The selector or the read key is derived again from the request under
+/// `keyset`. The host names `keyset` as it named it to prepare the read.
+/// The rows open through that keyset only, so a document sealed under another
+/// is refused before any key is retrieved. One batched key request serves
+/// every group, sent with `audit`: the audit metadata from the options
+/// object's `audit` key (see [`crate::options`]). Empty metadata sends
+/// nothing.
 pub async fn json_open<K>(
     keyset: &KeysetCipher<'_, K>,
     rows: &Bytes,

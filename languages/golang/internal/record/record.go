@@ -664,6 +664,30 @@ const (
 	Probabilistic Fidelity = "probabilistic"
 )
 
+// The operators of a JSON document field that derive a node's selector or
+// token. The spellings are wire format: stack-encrypt's dynamic::Op.
+//
+// The first three prepare a read. A read's operand derives under a cipher's
+// scopes alone. se_json_open takes the operator's name as the "operation"
+// of the read it opens. JSONChildCount derives the same token as
+// JSONChildren, but for a query. A query opens nothing.
+const (
+	JSONSelector   = "selector"
+	JSONSubtree    = "subtree"
+	JSONChildren   = "children"
+	JSONChildCount = "child_count"
+)
+
+// IsJSONRead reports whether operator prepares a read of a JSON document:
+// [JSONSelector], [JSONSubtree] or [JSONChildren].
+func IsJSONRead(operator string) bool {
+	switch operator {
+	case JSONSelector, JSONSubtree, JSONChildren:
+		return true
+	}
+	return false
+}
+
 // Operator is one operator the engine answers for a field: for an EQL type,
 // as se_targets lists it, and for any field of a plan, as se_operators
 // lists it.

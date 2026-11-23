@@ -1,6 +1,8 @@
 //! The `cipherstash_transport::transport_send` host import: one HTTP
-//! request performed by the host on the guest's behalf. wasm32-only —
-//! everything here calls an imported function.
+//! request performed by the host on the guest's behalf. The import and
+//! [`send`] are wasm32-only. Reclaiming the two buffers the host hands back
+//! (`reclaim_response`, private to this crate) has no wasm in it, so its
+//! tests run natively and under Miri.
 //!
 //! # Import contract (module `cipherstash_transport`)
 //!
@@ -31,8 +33,7 @@
 use vitaminc_protected::OpaqueDebug;
 use zeroize::Zeroizing;
 
-use crate::buffers;
-
+#[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "cipherstash_transport")]
 extern "C" {
     fn transport_send(
@@ -59,7 +60,8 @@ pub struct HostBufferError;
 
 /// What the host handed back for one request, both buffers reclaimed.
 ///
-/// Only [`send`] builds one, and `Debug` shows the status alone: the body
+/// Only [`send`] builds one: the struct is `#[non_exhaustive]`, so no other
+/// crate can. `Debug` shows the status alone: the body
 /// can carry wrapped key material or a credential, and the headers are
 /// treated the same way rather than audited per name.
 #[derive(OpaqueDebug)]
@@ -80,12 +82,10 @@ pub struct Response {
 
 /// Perform one HTTP request through the host.
 ///
-/// The host call is synchronous from the guest's perspective. The two
-/// response slots are reclaimed *before* either is judged: a `?` on the
-/// headers slot would otherwise strand the body buffer — a 2xx JSON body
-/// full of wrapped data keys — registered, unfreed and unwiped for the life
-/// of the instance. A slot the host did not fill (or filled with a pointer
-/// the registry does not know) is [`HostBufferError`].
+/// The host call is synchronous from the guest's perspective. Both response
+/// buffers are taken back from the registry before either is judged, so a
+/// broken headers slot cannot strand the body.
+#[cfg(target_arch = "wasm32")]
 pub fn send(
     method: &str,
     url: &str,
@@ -116,12 +116,46 @@ pub fn send(
         )
     };
 
-    // SAFETY: pointers come from the host's `se_alloc` calls; the registry
-    // validates them before any Vec is rebuilt.
-    let resp_headers =
-        unsafe { buffers::take(resp_headers_ptr as *mut u8, resp_headers_len as usize) };
-    let resp_body = unsafe { buffers::take(resp_body_ptr as *mut u8, resp_body_len as usize) }
-        .map(Zeroizing::new);
+    // SAFETY: the slots are what the host wrote: addresses of buffers it
+    // obtained from `se_alloc`, or anything at all from a broken host. The
+    // registry validates each before a Vec is rebuilt.
+    unsafe {
+        reclaim_response(
+            status,
+            (resp_headers_ptr as *mut u8, resp_headers_len as usize),
+            (resp_body_ptr as *mut u8, resp_body_len as usize),
+        )
+    }
+}
+
+/// Reclaim the two response buffers the host filled, then judge them.
+///
+/// Both slots are taken back from the registry *before* either is judged:
+/// a `?` on the headers slot would otherwise strand the body buffer (a 2xx
+/// JSON body full of wrapped data keys) registered, unfreed and unwiped for
+/// the life of the instance. A slot the host did not fill, or filled with a
+/// pointer the registry does not know or a length it does not hold, is
+/// [`HostBufferError`].
+///
+/// Private to the crate: [`send`] is its only caller. It exists apart from
+/// `send` so that its tests run natively and under Miri.
+///
+/// # Safety
+///
+/// As for [`crate::buffers::take`]: each pointer should be one the registry
+/// handed out. Any other pointer is refused rather than undefined
+/// behaviour, unless it aliases a different live registered buffer of the
+/// same length.
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) unsafe fn reclaim_response(
+    status: i32,
+    headers: (*mut u8, usize),
+    body: (*mut u8, usize),
+) -> Result<Response, HostBufferError> {
+    // SAFETY: the caller's contract; the registry validates each pair.
+    let resp_headers = unsafe { crate::buffers::take(headers.0, headers.1) };
+    // SAFETY: as above.
+    let resp_body = unsafe { crate::buffers::take(body.0, body.1) }.map(Zeroizing::new);
 
     let headers = resp_headers.ok_or(HostBufferError)?;
     let body = resp_body.ok_or(HostBufferError)?;
@@ -130,4 +164,86 @@ pub fn send(
         headers,
         body,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::buffers;
+
+    /// A buffer as the host fills one: allocated through the registry and
+    /// written.
+    fn host_filled(bytes: &[u8]) -> (*mut u8, usize) {
+        let ptr = buffers::alloc(bytes.len());
+        // SAFETY: `alloc` returned a live, registered buffer of this length.
+        unsafe { std::slice::from_raw_parts_mut(ptr, bytes.len()) }.copy_from_slice(bytes);
+        (ptr, bytes.len())
+    }
+
+    #[test]
+    fn both_buffers_come_back_and_leave_the_registry() {
+        let headers = host_filled(b"content-type: application/json\n");
+        let body = host_filled(b"{}");
+        // SAFETY: both were handed out by the registry.
+        let response = unsafe { reclaim_response(200, headers, body) }.unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(response.headers, b"content-type: application/json\n");
+        assert_eq!(&response.body[..], b"{}");
+        assert_eq!(buffers::live(), (0, 0));
+    }
+
+    #[test]
+    fn empty_slots_are_empty_buffers() {
+        // SAFETY: a null pointer with zero length is the canonical empty.
+        let response =
+            unsafe { reclaim_response(-1, (std::ptr::null_mut(), 0), (std::ptr::null_mut(), 0)) }
+                .unwrap();
+        assert!(
+            response.headers.is_empty() && response.body.is_empty(),
+            "an empty slot reclaims as an empty buffer"
+        );
+    }
+
+    /// A broken headers slot does not strand the body: it is reclaimed (and
+    /// wiped on drop) before the error is returned.
+    #[test]
+    fn an_unknown_headers_slot_still_reclaims_the_body() {
+        let body = host_filled(b"wrapped key material");
+        let stray = std::ptr::without_provenance_mut::<u8>(0x40);
+        // SAFETY: `stray` is not registered, so it is refused, not read.
+        let result = unsafe { reclaim_response(200, (stray, 4), body) };
+        assert!(result.is_err(), "an unregistered headers slot is refused");
+        assert_eq!(buffers::live(), (0, 0));
+    }
+
+    /// A length the registry does not hold is refused, and the buffer stays
+    /// registered for the host's `se_dealloc`, as the registry does.
+    #[test]
+    fn a_mismatched_length_is_refused_and_left_registered() {
+        let headers = host_filled(b"x: y\n");
+        let body = host_filled(b"body");
+        // SAFETY: both were handed out by the registry.
+        let result = unsafe { reclaim_response(200, headers, (body.0, body.1 + 1)) };
+        assert!(
+            result.is_err(),
+            "a length the registry does not hold is refused"
+        );
+        assert_eq!(buffers::live(), (1, 0));
+        // SAFETY: the registered pointer and its true length.
+        unsafe { buffers::dealloc(body.0, body.1) };
+        assert_eq!(buffers::live(), (0, 0));
+    }
+
+    /// Reclaiming the same slot twice yields it once.
+    #[test]
+    fn a_slot_is_reclaimed_once() {
+        let headers = host_filled(b"a: b\n");
+        let body = host_filled(b"c");
+        // SAFETY: both were handed out by the registry.
+        let first = unsafe { reclaim_response(200, headers, body) };
+        assert!(first.is_ok(), "the first reclaim takes both buffers");
+        // SAFETY: both are now unknown to the registry, so refused.
+        let second = unsafe { reclaim_response(200, headers, body) };
+        assert!(second.is_err(), "a buffer already reclaimed is refused");
+    }
 }

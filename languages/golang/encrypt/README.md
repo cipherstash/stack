@@ -739,12 +739,12 @@ The EQL value stores the table and the column alone, in `i`, so:
 
 - open the value through a cipher with the same scope and binding;
 - query it through a cipher with the same scope. A binding is in no query;
-- read part of a `JsonSearch` document (`Selector`, `Subtree`) through a
-  cipher with the same scope and binding. The selector or the tokens derive
-  under the scope alone, as a query does, and the entries open under the
-  scope and the binding. Every row of one `Open` call opens under that
-  binding, so a read through a cipher with a binding reads that binding's
-  row.
+- read part of a `JsonSearch` document (`Selector`, `Subtree`, `Children`)
+  through a cipher with the same scope and binding. The selector or the
+  tokens derive under the scope alone, as a query does, and the entries
+  open under the scope and the binding. Every row of one `Open` call opens
+  under that binding, so a read through a cipher with a binding reads that
+  binding's row.
 
 ### Encrypted JSON documents
 
@@ -800,14 +800,55 @@ and a selector or token as `text`; cast each parameter, as above, so
 PostgreSQL picks EQL's operator and not `jsonb`'s; a zero one is refused
 rather than bound. A token is a capability over its node's subtree in every
 row of the column, and a path's keys can be your customer's data, so
-`JSONToken`, `JSONTokens`, `JSONSelection` and `JSONRead` print and log with
-the tokens, the selector and the path redacted. A `JSONValue` holds the
-plaintext a read opened, and prints it. Numbers order as `float64`,
-so integers past 2^53 can tie at an ordered path; containment and `EqAt`
+`JSONToken`, `JSONTokens`, `JSONSelection`, `JSONRead`, and `JSONChildren`
+print and log with the tokens, the selector, and the path redacted. A
+`JSONValue` contains the plaintext a read opened, and prints it. A
+`JSONChildValue` contains a child's key or index and its value. A
+`JSONChildValue` prints and logs redacted, since a key can be your
+customer's data. Numbers order as
+`float64`, so integers past 2^53 can tie at an ordered path; containment and `EqAt`
 compare them exactly. At a wildcard path, `->` returns an unspecified
 element of each row, so an ordering over every element is written over
 `eql_v4.json_tree_path_query(col, $sel)`, its matches (the stashgen README
 shows the SQL).
+
+#### Read the children of one node
+
+`Children` reads one level of a document, without fetching the parent's
+whole subtree. It takes three steps.
+
+1. **Your app** calls `Children` with the parent's path, a path with no
+   wildcard. `Children` derives the parent's token. A token is a value the
+   database uses to find a node's entry. Deriving it asks ZeroKMS for
+   nothing.
+2. **The database (EQL)** runs `eql_v4.json_tree_children(profile, $1::text)`,
+   with `children.Token()` as `$1`. In each row, it finds the parent's
+   entry and returns the parent's direct children as encrypted entries. It
+   never decrypts anything, and it never receives a key.
+3. **Your app** passes the returned entries to `children.Open`. The engine
+   checks that each entry is a child of the parent. Then it fetches the
+   data keys from ZeroKMS and decrypts each child.
+
+```go
+// Step 1: derive the parent's token.
+children, err := users.Fields.Profile.Children(ctx, cipher, "$.address")
+
+// Step 2: run this query with children.Token() as $1, and collect every entry.
+// SELECT e FROM users, eql_v4.json_tree_children(profile, $1::text) AS e WHERE id = $2
+
+// Step 3: decrypt the entries.
+members, err := children.Open(ctx, entries)
+for _, member := range members {
+	key, _ := member.Key() // "city", "street", ...
+	value, err := encrypt.DecodeJSON[string](member.JSON)
+}
+```
+
+Each child has a key, for a member of an object, or an index, for an
+element of an array. The database returns an object's members in a random
+order, so the key is how your app tells them apart. A child that is an
+object or an array with members does not decrypt alone. Read it with
+`Subtree` at its own path.
 
 #### Choosing a JSON query
 

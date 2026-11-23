@@ -23,18 +23,29 @@
 //! | `TimestampEq` | `eq` | [`op::Eq`](struct@op::Eq) | `TimestampEqQuery` |
 //! | `NumericEq` | `eq` | [`op::Eq`](struct@op::Eq) | `NumericEqQuery` |
 //! | `TextMatch` | `matches` | [`op::Matches`](struct@op::Matches) | [`MatchTwin<TextMatchQuery>`](MatchTwin) |
+//! | `SmallintOrd`, `IntegerOrd`, `BigintOrd`, `RealOrd`, `DoubleOrd`, `DateOrd`, `TimestampOrd`, `NumericOrd`, and each `…OrdOpe` and `…OrdOre` | `lt`, `lte`, `gt`, `gte` | [`op::Lt`], [`op::Lte`], [`op::Gt`], [`op::Gte`] | `IntegerOrdQuery`, … |
+//! | `TextOrd`, `TextOrdOpe`, `TextOrdOre` | `eq`, `lt`, `lte`, `gt`, `gte` | [`op::Eq`](struct@op::Eq) and the orderings | `TextOrdQuery`, `TextOrdOpeQuery`, `TextOrdOreQuery` |
+//! | `TextSearch`, `TextSearchOre` | `eq`, `lt`, `lte`, `gt`, `gte`, `matches` | [`op::Eq`](struct@op::Eq), the orderings and [`op::Matches`](struct@op::Matches) | `TextSearchQuery`, `TextSearchOreQuery`; [`MatchTwin`] of one for `matches` |
 //!
 //! eql-codegen writes those impls from the catalog, by the rule Stack
 //! Encrypt's data path answers an EQL type's operators with: `Eq` through
-//! the equality index, `Matches` through the match index. Each type is also
-//! an [`op::LabelledTarget`], which is what lets its field reference be queried. The
-//! ordered types (`IntegerOrd`, `TextOrdOre` and the rest) and the text
-//! search types answer nothing from a field reference yet: their twins need an order
-//! term, or several terms at once, and a field query sends one index's
-//! term. Query them through the data path
-//! (`stack_encrypt::dynamic::query_term`). An operator a type does not
-//! answer does not compile. A field reference names its field's type and no index,
-//! so a query cannot send another index's term in place of the type's twin.
+//! the equality index, `Matches` through the match index, and the orderings
+//! through the type's order index (OPE or block ORE). Each type is also an
+//! [`op::LabelledTarget`], which is what lets its field reference be
+//! queried. An operator a type does not answer does not compile: no EQL
+//! type answers [`op::Between`] from a field reference, as the data path
+//! answers no `between` on an EQL type. A field reference names its
+//! field's type and no index, so a query cannot send another index's term
+//! in place of the type's twin.
+//!
+//! The twin carries what the type's query domain requires, as the data
+//! path's does. The twin of an ordered type other than text carries its one
+//! order term. A `TextOrd` twin carries the equality term and the order
+//! term whatever the operator, since `eql_v4.query_text_ord` requires both:
+//! the query derives the two terms for the one value, and is refused,
+//! before any key is requested, for text either index refuses. A text
+//! search twin's terms are optional, so its query carries the term of the
+//! index that answers the operator alone.
 //!
 //! The query is derived under the field reference's label: the record's scope, then
 //! the field's name (or its `identity`). That is the column the field
@@ -144,6 +155,65 @@
 //!
 //! let _ = EncryptedUser::AGE.matches("42");
 //! ```
+//! An `IntegerOrd` field answers the orderings:
+//! ```
+//! use eql_bindings::v4::integer::IntegerOrd;
+//! use stack_encrypt::EncryptTarget;
+//! use zeroize::Zeroize;
+//!
+//! #[derive(Zeroize)]
+//! struct User {
+//!     age: i32,
+//! }
+//!
+//! #[derive(EncryptTarget)]
+//! #[stash(struct = User, scope = "users")]
+//! struct EncryptedUser {
+//!     age: IntegerOrd,
+//! }
+//!
+//! let _ = EncryptedUser::AGE.gt(30i32);
+//! let _ = EncryptedUser::AGE.lte(65i32);
+//! ```
+//! and no `eq`, since `IntegerOrd` carries no equality term:
+//! ```compile_fail
+//! use eql_bindings::v4::integer::IntegerOrd;
+//! use stack_encrypt::EncryptTarget;
+//! use zeroize::Zeroize;
+//!
+//! #[derive(Zeroize)]
+//! struct User {
+//!     age: i32,
+//! }
+//!
+//! #[derive(EncryptTarget)]
+//! #[stash(struct = User, scope = "users")]
+//! struct EncryptedUser {
+//!     age: IntegerOrd,
+//! }
+//!
+//! let _ = EncryptedUser::AGE.eq(42i32);
+//! ```
+//! nor `between`. A range query sends both bounds in one operand, and a
+//! field reference cannot build that operand yet:
+//! ```compile_fail
+//! use eql_bindings::v4::integer::IntegerOrd;
+//! use stack_encrypt::EncryptTarget;
+//! use zeroize::Zeroize;
+//!
+//! #[derive(Zeroize)]
+//! struct User {
+//!     age: i32,
+//! }
+//!
+//! #[derive(EncryptTarget)]
+//! #[stash(struct = User, scope = "users")]
+//! struct EncryptedUser {
+//!     age: IntegerOrd,
+//! }
+//!
+//! let _ = EncryptedUser::AGE.between(18i32, 65i32);
+//! ```
 //! The index a type answers through is a [`TwinIndex`]. It answers for its
 //! twin's own plaintext only ([`QueryTwin::Plaintext`]): `TextEqQuery`'s
 //! for a `String`,
@@ -182,80 +252,103 @@ use serde::{Serialize, Serializer};
 use stack_encrypt::kms::MaybeSend;
 use stack_encrypt::op::{self, Limit, Probabilistic, QueryTerm, QueryToken, Stats, Supports};
 use stack_encrypt::sem::{EqualityTerm, MatchQuery, MatchTerms, QueryTokens};
-use stack_encrypt::target::{CallerContext, Encryption, Index, IndexSpec, WipeSource};
-use stack_encrypt::{Encrypt, EncryptRef, Equality, Error, Label, Match, NonEmpty};
+use stack_encrypt::target::{CallerContext, Encryption, Index, IndexSpec, Indexes, WipeSource};
+use stack_encrypt::{Encrypt, EncryptRef, Equality, Error, Label, Match, NonEmpty, Orderable};
 use zeroize::Zeroize;
 
 use super::{bloom_filter, hmac256, EqlMatch};
 use crate::v3::terms::{BloomFilter, Hmac256};
 use crate::Identifier;
 
-/// An EQL v4 query twin, assembled from the column it queries and the one
-/// term its type's index derived for the query's value. eql-codegen
-/// implements it for the twin of every type that answers an operator
-/// ([`TextEqQuery`] from an [`Hmac256`], [`TextMatchQuery`] from a
-/// [`BloomFilter`]), with the version every v4 value carries.
+/// An EQL v4 query twin, assembled from the column it queries and the
+/// terms `T` its type's indexes derived for the query's value, as EQL
+/// stores them. eql-codegen implements it for the twin of every type that
+/// answers an operator, with the version every v4 value carries:
+/// [`TextEqQuery`] from an [`Hmac256`], [`TextMatchQuery`] from a
+/// [`BloomFilter`], `IntegerOrdQuery` from an
+/// [`OpeTerm<i32>`](stack_encrypt::sem::OpeTerm), and
+/// [`TextOrdQuery`] from the pair `(Hmac256, OpeTerm<String>)`, its terms in
+/// catalog order. A twin whose terms are optional, such as
+/// `TextSearchQuery`, implements it once per term, each assembling that
+/// term alone.
 ///
 /// [`TextEqQuery`]: crate::v4::text::TextEqQuery
 /// [`TextMatchQuery`]: crate::v4::text::TextMatchQuery
+/// [`TextOrdQuery`]: crate::v4::text::TextOrdQuery
 pub trait QueryTwin<T>: Sized {
     /// The plaintext the twin's type is produced from: `String` for
     /// `TextEqQuery`, `i32` for `IntegerEqQuery`. A [`TwinIndex`] answers
     /// for this plaintext only, so no query can send one type's twin for
     /// another type's value.
     type Plaintext;
-    /// The twin of `term`, derived under `column`.
-    fn assemble(column: Identifier, term: T) -> Self;
+    /// The twin of `terms`, derived under `column`.
+    fn assemble(column: Identifier, terms: T) -> Self;
 }
 
 /// The index an EQL v4 type answers an operator through: Stack Encrypt's
-/// index `I`, whose query term is sent as the type's query twin `Q`.
+/// index `I`, whose query is sent as the type's query twin `Q`, built from
+/// the terms of the indexes `D`.
 ///
-/// It derives exactly what `I` derives, under the label of the field's
-/// field reference and any scope the query carries, and checks and refuses what `I`
-/// refuses, as well as a label that names no column; it then writes the
-/// term into the twin, with the column the label names. It answers for the
-/// twin's own plaintext
+/// `D` is the indexes whose terms the twin carries. It is `I` alone for a
+/// twin that carries one term (`TextEqQuery`, `IntegerOrdQuery`) or whose
+/// terms are optional (`TextSearchQuery`), and every index of the type, in
+/// catalog order, for a twin that carries them all whatever the operator:
+/// `TextOrd` answers [`op::Lt`] through
+/// `TwinIndex<Ope, TextOrdQuery, (Equality, Ope)>`, and [`op::Eq`](struct@op::Eq) through
+/// `TwinIndex<Equality, TextOrdQuery, (Equality, Ope)>`.
+///
+/// It derives the terms of `D`, under the label of the field's field
+/// reference and any scope the query carries. Before any key is requested
+/// it refuses what each index of `D` refuses for the value, as the data
+/// path does, and a label that names no column; it then writes the terms
+/// into the twin, with the column the label names. It is declared as
+/// `I` is ([`Index::spec`]). It answers for the twin's own plaintext
 /// ([`QueryTwin::Plaintext`]) only. `TextEq` answers [`op::Eq`](struct@op::Eq) through
-/// `TwinIndex<Equality, TextEqQuery>`, and `TextMatch` answers
+/// `TwinIndex<Equality, TextEqQuery>`, `IntegerOrd` answers [`op::Gt`]
+/// through `TwinIndex<Ope, IntegerOrdQuery>`, and `TextMatch` answers
 /// [`op::Matches`](struct@op::Matches) through
 /// `TwinIndex<Match<EqlMatch>, TextMatchQuery>`.
-pub struct TwinIndex<I, Q> {
+pub struct TwinIndex<I, Q, D = I> {
     index: I,
+    terms: D,
     twin: PhantomData<fn() -> Q>,
 }
 
-impl<I: Default, Q> Default for TwinIndex<I, Q> {
+impl<I: Default, Q, D: Default> Default for TwinIndex<I, Q, D> {
     fn default() -> Self {
         Self {
             index: I::default(),
+            terms: D::default(),
             twin: PhantomData,
         }
     }
 }
 
-impl<I: Clone, Q> Clone for TwinIndex<I, Q> {
+impl<I: Clone, Q, D: Clone> Clone for TwinIndex<I, Q, D> {
     fn clone(&self) -> Self {
         Self {
             index: self.index.clone(),
+            terms: self.terms.clone(),
             twin: PhantomData,
         }
     }
 }
 
-impl<I: fmt::Debug, Q> fmt::Debug for TwinIndex<I, Q> {
+impl<I: fmt::Debug, Q, D: fmt::Debug> fmt::Debug for TwinIndex<I, Q, D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TwinIndex")
             .field("index", &self.index)
+            .field("terms", &self.terms)
             .field("twin", &std::any::type_name::<Q>())
             .finish()
     }
 }
 
-/// The index `I`, unchanged: the same spec, so it is declared as `I` is,
-/// and the same derivation, so its term is `I`'s.
-impl<S, I: Index<S>, Q> Index<S> for TwinIndex<I, Q> {
-    type Term = I::Term;
+/// Declared as `I` is, so it is the index that answers the operator, and
+/// derives the terms of `D` for one value, under one context: `I`'s term
+/// alone when `D` is `I`.
+impl<S, I: Index<S>, Q, D: Indexes<S>> Index<S> for TwinIndex<I, Q, D> {
+    type Term = D::Terms;
     fn spec(&self) -> IndexSpec {
         self.index.spec()
     }
@@ -265,7 +358,7 @@ impl<S, I: Index<S>, Q> Index<S> for TwinIndex<I, Q> {
     where
         S: 's,
     {
-        self.index.operation()
+        self.terms.operations()
     }
 }
 
@@ -349,6 +442,107 @@ where
         Q::assemble(column(&token), hmac256(&term))
     }
 }
+
+/// Equality on a twin that carries an order term beside its `hm`
+/// (`TextOrdQuery`, from `(Equality, O)`): the HMAC the equality index
+/// derives, hex encoded as the stored value's is, and the term the order
+/// index `O` derives for the same value, under the same context,
+/// since the type's query domain requires both. Refuses what the equality
+/// index refuses, then what `O` refuses, as the data path does for `=` on a
+/// field that names the type: the query derives both terms. An order index
+/// refuses the same values for every ordering, so its `Lt` stands for
+/// them. Only for the plaintext the twin's type is produced from.
+impl<Q, O, P> Supports<op::Eq, P> for TwinIndex<Equality, Q, (Equality, O)>
+where
+    O: Supports<op::Lt, P, Verifier = ()> + Index<P>,
+    Q: QueryTwin<(Hmac256, <O as Index<P>>::Term), Plaintext = P> + QueryTerm + MaybeSend + 'static,
+    P: Orderable + Encrypt + EncryptRef + Zeroize + 'static,
+{
+    type Query = Q;
+    type Verifier = ();
+    fn prepare(&self, value: &P) -> Result<(), Error> {
+        let (equality, order) = &self.terms;
+        Supports::<op::Eq, P>::prepare(equality, value)?;
+        Supports::<op::Lt, P>::prepare(order, value)
+    }
+    fn check_label(&self, label: &Label, _extended: bool) -> Result<(), Error> {
+        check_column(label)
+    }
+    fn query(
+        (): (),
+        (equality, order): (EqualityTerm, <O as Index<P>>::Term),
+        token: QueryToken,
+    ) -> Q {
+        Q::assemble(column(&token), (hmac256(&equality), order))
+    }
+}
+
+// The orderings, through an order index `O` (OPE or block ORE): on a twin
+// that carries `O`'s term alone (`IntegerOrdQuery` from an `OpeTerm<i32>`),
+// and on one that carries an `hm` beside it (`TextOrdQuery`, from
+// `(Equality, O)`), as the pair's equality impl does. The term is the one
+// `O` sends for the operator, which is what it stores, so the twin compares
+// against the stored value's term under the same column. Refuses what `O`
+// refuses for the operator; on the pair, what the equality index refuses
+// first, since the query derives both terms. Only for the plaintext the
+// twin's type is produced from.
+macro_rules! twin_orderings {
+    ($($operator:ident),+ $(,)?) => {$(
+        #[doc = concat!("`op::", stringify!($operator), "` on a twin that carries the order index's term alone.")]
+        impl<Q, O, P> Supports<op::$operator, P> for TwinIndex<O, Q>
+        where
+            O: Supports<op::$operator, P, Verifier = ()> + Indexes<P>,
+            Q: QueryTwin<<O as Indexes<P>>::Terms, Plaintext = P> + QueryTerm + MaybeSend + 'static,
+            P: Orderable + Zeroize + 'static,
+        {
+            type Query = Q;
+            type Verifier = ();
+            fn prepare(&self, value: &P) -> Result<(), Error> {
+                Supports::<op::$operator, P>::prepare(&self.index, value)
+            }
+            fn check_label(&self, label: &Label, _extended: bool) -> Result<(), Error> {
+                check_column(label)
+            }
+            fn query(
+                (): (),
+                order: <O as Indexes<P>>::Terms,
+                token: QueryToken,
+            ) -> Q {
+                Q::assemble(column(&token), order)
+            }
+        }
+
+        #[doc = concat!("`op::", stringify!($operator), "` on a twin that carries an `hm` beside the order index's term.")]
+        impl<Q, O, P> Supports<op::$operator, P> for TwinIndex<O, Q, (Equality, O)>
+        where
+            O: Supports<op::$operator, P, Verifier = ()> + Index<P>,
+            Q: QueryTwin<(Hmac256, <O as Index<P>>::Term), Plaintext = P>
+                + QueryTerm
+                + MaybeSend
+                + 'static,
+            P: Orderable + Encrypt + EncryptRef + Zeroize + 'static,
+        {
+            type Query = Q;
+            type Verifier = ();
+            fn prepare(&self, value: &P) -> Result<(), Error> {
+                let (equality, order) = &self.terms;
+                Supports::<op::Eq, P>::prepare(equality, value)?;
+                Supports::<op::$operator, P>::prepare(order, value)
+            }
+            fn check_label(&self, label: &Label, _extended: bool) -> Result<(), Error> {
+                check_column(label)
+            }
+            fn query(
+                (): (),
+                (equality, order): (EqualityTerm, <O as Index<P>>::Term),
+                token: QueryToken,
+            ) -> Q {
+                Q::assemble(column(&token), (hmac256(&equality), order))
+            }
+        }
+    )+};
+}
+twin_orderings!(Lt, Lte, Gt, Gte);
 
 /// Text match: the twin's `bf` is the filter EQL's match index derives
 /// over the query's text, and the query keeps that text's tokens to

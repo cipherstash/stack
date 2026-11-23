@@ -799,6 +799,11 @@ mise run fuzz:access-key -- -runs=0           # replay seed corpus only (CI regr
 
 CI is split into a blocking per-PR regression replay and a nightly,
 non-blocking bug-finding campaign (`.github/workflows/fuzz.yml`).
+The guests' ABI (the `(ptr, len)` checks, which compile only for wasm32) is
+fuzzed from Go instead: `Fuzz*` targets in `languages/golang/encrypt` and
+`languages/golang/auth` call the real guests through wazero, `go test`
+replays their seeds, and `mise run go:fuzz` fuzzes them (nightly in
+`fuzz.yml`'s `go-fuzz-campaign`, one matrix row per target).
 Full walkthrough — layout, adding a target, the CI split — in
 [`docs/fuzzing.md`](docs/fuzzing.md). For cargo-fuzz mechanics (sanitizers,
 corpus, crash triage) use the Trail of Bits `cargo-fuzz` skill rather than a
@@ -814,10 +819,17 @@ buffers from them. Its unit tests run under Miri with strict provenance:
 mise run miri:stack-guest-abi           # nightly + the miri component
 ```
 
-Only the native half (the buffer registry, headers, status table) is
-interpretable; the wasm32-only `abi` and `transport` modules read the wasm
-`memory_size` intrinsic, so their hostile-input behaviour is pinned from the
-Go side (`mise run go:test`).
+That covers the code that turns a host `(ptr, len)` pair into a slice
+(`memory.rs`, run over a buffer the test owns), the buffer registry, and the
+reclaim of the transport's response buffers, as well as the headers and the
+status table. Miri cannot run wasm, so the `memory_size` intrinsic and the
+host imports stay outside it. The code that calls them (`abi.rs`,
+`transport::send`, and the guests' own `abi.rs` and `host.rs`) reads through
+no host pointer itself: it hands each one, or each address the host wrote into
+an out-slot, to the checked code (`memory`, the buffer registry, or the
+transport's response reclaim). Its hostile-input behaviour is pinned from the
+Go side (`mise run go:test`). Keep new pointer handling in
+`stack-guest-abi`, where Miri reaches it, not in a guest.
 
 ### Mutation testing
 

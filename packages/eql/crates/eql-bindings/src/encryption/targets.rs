@@ -196,6 +196,20 @@ impl Target {
             .contains(&"match")
             .then(super::EqlMatch::options)
     }
+
+    /// Whether the type's query twin carries the term of every index the
+    /// type carries, whatever index answers the operator: true for every
+    /// type with a query twin but the text search types, whose query terms
+    /// are optional in EQL v4 (a match index beside another), so their
+    /// twin carries the answering index's term alone. `TextOrd`'s twin
+    /// carries its `hm` and its `op` for `=` and `<` alike. Stack Encrypt
+    /// refuses a query on such a type for what any of its indexes refuses
+    /// (`TargetDescriptor::with_query_carrying_every_term`), as the typed
+    /// query does.
+    pub fn query_carries_every_term(&self) -> bool {
+        let optional_terms = self.indexes.len() > 1 && self.indexes.contains(&"match");
+        self.query.is_some() && !optional_terms
+    }
 }
 
 /// Every EQL type a plan may name as a target, in catalog order — the

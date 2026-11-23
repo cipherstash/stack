@@ -201,7 +201,8 @@ The field's `Fields` entry has a method per operation:
 | `At.Age.Lt(ctx, c, v)`, `Lte`, `Gt`, `Gte`, `Between` | `eql.JSONSearchLeafQuery` | `(col -> $sel::text) < $1::eql_v4.query_json_leaf`, `$sel` from `At.Age.Selector(ctx, c)` |
 | `Selector(ctx, c, path)` | `encrypt.JSONSelection`: `Selector()` and `Open` | `col -> $1::text` |
 | `Subtree(ctx, c, path, opts)` | `encrypt.JSONRead`: `Tokens()`, `Open` and `OpenOne` | `eql_v4.json_tree_subtree(col, $1::text[], 64)` |
-| `Children(ctx, c, path)`, `ChildCount(ctx, c, path)` | `encrypt.JSONToken` | `eql_v4.json_tree_children(col, $1::text)`, `eql_v4.json_tree_child_count(col, $1::text)` |
+| `Children(ctx, c, path)` | `encrypt.JSONChildren`: `Token()`, and `Open` to each child's key or index and value | `eql_v4.json_tree_children(col, $1::text)` |
+| `ChildCount(ctx, c, path)` | `encrypt.JSONToken` | `eql_v4.json_tree_child_count(col, $1::text)` |
 | `Elements.Visits.Match(ctx, c, opts, predicates...)` | `eql.JSONSearchElementsQuery` | `eql_v4.json_tree_element_match(col, $1::eql_v4.query_json_elements)` |
 | `Match(ctx, c, predicate, vars, opts)` | `eql.JSONSearchPredicateQuery` | `col @@ $1::eql_v4.query_json_predicate`, or `eql_v4.json_tree_match(col, $1::eql_v4.query_json_predicate)` |
 

@@ -963,16 +963,23 @@ The generated file builds its
 declaration through `gensupport` calls, and the module builds the frames
 it sends to the engine. So a change to the serialised `Planned`'s shape is a change inside the
 module. A program generates again only to adopt a new
-declaration, such as a scope or binding on a field. The generator keeps its output identical for unchanged input. So an
-upgrade alone does not change a committed `*_stash.go` file, apart from
-the one regeneration the handle rename needs.
+declaration, such as a scope or binding on a field, or a new generated
+method. The generator keeps its output identical for unchanged input. So
+an upgrade alone does not change a committed `*_stash.go` file.
 
-Two parts of the target state are not in Go yet:
+A regeneration picks up two changes to the generated code. The handle
+rename is the one a program needs. The other is the new `Children`. The
+new `Children` returns `encrypt.JSONChildren`, and that type opens each
+child.
+
+A file generated before this change still compiles and runs. That file's
+`Children` returns the token alone.
+
+One part of the target state is not in Go yet:
 
 - A Go program cannot set match options.
-- A Go program cannot open one child of a JSON node, bound to its parent.
 
-Both are in [Remaining work](#remaining-work).
+[Remaining work](#remaining-work) lists it.
 
 ### Rules in the target state
 
@@ -1284,8 +1291,22 @@ release leaves behind.
 - **Why.** Today a program must read and open the parent's whole subtree to
   see one child. That transfers more data and reveals a different set of
   tokens.
-- **Done already.** Nothing.
-- **Tracked in.** Issue #1677 is open. Pull request #1353, the Go JSON plan document, lists it as remaining.
+- **Done already.**
+  - The engine opens one entry that `json_tree_children` returned. The
+    engine checks the entry against the key of the parent's path, with
+    the same parent-link checks as a subtree read
+    (`JsonSubtreeKey::open_child`, a `JsonChild`).
+  - A child opens to its value (`JsonPlaintext`). A child also opens to
+    its value with its authenticated key or index (`JsonChildPlaintext`;
+    Go's `JSONChildValue`).
+  - `eql-bindings` has `JsonTreeChild`. `children(path).encrypt_keyed`
+    returns the token with the key that opens what the query returns.
+  - The dynamic interface's `json_open` takes the `children` operation.
+  - Go's generated `Children` returns an `encrypt.JSONChildren`.
+    `JSONChildren.Open` opens each entry.
+  - The `eql-json-v1` profile enrolls the read as `json-child-v1`, with
+    Rust, Go, and PostgreSQL evidence.
+- **Tracked in.** Issue #1677. Pull request #1353, the Go JSON plan document, lists it as remaining.
 - **Finished when** Go can open one child, and the `eql-json-v1`
   conformance profile covers it.
 
@@ -1566,18 +1587,31 @@ Base64.
     `DecryptSource<JsonPlaintext>`.
   - A query from a field reference works for the equality and match
     types, with the record's scope. A data plan's query for an EQL type
-    takes a scope too. The order types do not implement `Answers` yet, so
-    a field reference cannot query them (#1668).
+    takes a scope too.
+  - In #1668, a field reference queries the order types too: `lt`, `lte`,
+    `gt` and `gte` on every ordered type, `eq` as well on `TextOrd`, and
+    the orderings and `matches` on text search. A twin that requires
+    several terms (`TextOrdQuery`'s `hm` and `op`) gets all of them for the
+    one value; a twin whose terms are optional gets the answering index's
+    term alone, as the data plan's does. No SQL or stored form changes.
+    Each query is the data plan's for the same value, and each finds the
+    rows the other finds
+    (`packages/eql/tests/encryption/tests/typed_queries.rs`,
+    `typed_order_queries.rs`). A `TextOrd*` query is refused, before any
+    key is requested, for text either of its indexes refuses, by both
+    paths. `between` is not answered from a field reference, as the data
+    plan answers it on no EQL type; #1286 answers it on both.
   - A data plan that names an EQL type takes a scope and a binding too.
     `TargetResolver` receives them after the field's label, and
     `TargetError::Extended` is removed. Under the same scope and binding,
     a data plan and a derived record write the same terms, and each
     opens the other's values. A Go struct with an `encrypt_into` field
     seals through `cipher.Scope(..).Bind(..)`.
-- **Tracked in.** Issue #1658 is open. Pull request #1659, open, closes it. Issue #1668 is open for order queries from a field reference. `eql-bindings` builds against the crates.io `stack-encrypt`, so a `stack-encrypt` release with `ContextFromField` must come before the `eql-bindings` release that uses it.
+- **Tracked in.** Issue #1658 is closed: pull request #1659 closed it and merged on 2026-11-21. Issue #1668 is for order queries from a field reference, and pull request #1752 closes it. Issue #1286 is for `between` from a field reference and from a data plan. `eql-bindings` builds against the crates.io `stack-encrypt`, so a `stack-encrypt` release with `ContextFromField` must come before the `eql-bindings` release that uses it.
 - **Finished when** these are all true:
   - a Rust record with EQL fields encrypts, decrypts, and queries through
-    the new API, including order queries;
+    the new API, including the order queries `lt`, `lte`, `gt` and `gte`,
+    and `between` (#1286);
   - it writes the same terms as a Go record with the same declaration,
     with and without a scope.
 
@@ -1644,7 +1678,9 @@ Base64.
   program runs it is `predicate(text).var(..)`, so the operand is the text
   form's and the data plan's `match` operand.
 - **Tracked in.** Issue #1459 closes with the `predicate!` pull request.
-  Issue #1677 is open for opening one child. Issue #1486 is closed.
+  Issue #1677, for opening one child, closes with its pull request: a
+  `JsonDocument` field's `children(path)` key opens each child
+  (`open_child`). Issue #1486 is closed.
 - **Finished when** these are all true:
   - the [JSON query example](#query-a-json-document) compiles;
   - a path, a member or a value type the field does not declare does not
@@ -1751,7 +1787,8 @@ Decided on 7 November 2026, as area one of the query design review.
     `Planned` with the engine's expected answer beside it;
   - a Go program generated for rc.3 runs against the module that sends
     serialised `Planned` values, apart from the one regeneration the
-    handle rename needs;
+    handle rename needs. That regeneration also changes `Children` to
+    return `encrypt.JSONChildren`. That type still binds as the token;
   - the chain in `plan/chain.rs` and the builder in `plan/build.rs`
     are gone.
 

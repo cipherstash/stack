@@ -69,6 +69,12 @@
 //! nothing above it is read. The entries are stored in a random order, root
 //! first, and no check reads a slot as a position in the document.
 //!
+//! Your app can also read one level of a document. It passes each entry
+//! `json_tree_children` returns to [`JsonSubtreeKey::open_child`], with the
+//! parent's key. The [`JsonChild`] it gets back decrypts to the child's
+//! value ([`JsonPlaintext`]). The child can also decrypt to its value with
+//! its key or index ([`JsonChildPlaintext`]).
+//!
 //! # A document with no index
 //!
 //! [`JsonPlaintext`] is a JSON document as a plaintext that is wiped when
@@ -146,7 +152,9 @@ mod text;
 pub use derive::JsonTerms;
 pub(crate) use path::IndexPath;
 pub use path::{JsonPath, JsonPathError, Segment};
-pub use plaintext::JsonPlaintext;
+#[cfg(feature = "dynamic")]
+pub(crate) use plaintext::ChildLabel;
+pub use plaintext::{JsonChildPlaintext, JsonPlaintext};
 pub(crate) use query::JsonElementsMember;
 pub use query::{
     JsonElementsQuery, JsonLeafQuery, JsonPredicateQuery, JsonQuery, JsonSelector, JsonSelectorSet,
@@ -735,6 +743,40 @@ where
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
         Some(self.decryption(context.into()))
+    }
+}
+
+/// One entry that `eql_v4.json_tree_children` returned, paired with the key
+/// of its parent node. Decrypt it into a [`JsonPlaintext`] for the child's
+/// value. Decrypt it into a [`JsonChildPlaintext`] for its key or index too.
+///
+/// [`JsonSubtreeKey::open_child`] is the only way to build one, so a
+/// `JsonChild` always contains the parent's key. That method shows the
+/// whole read, step by step. It also lists what decrypting checks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JsonChild {
+    node: JsonNode,
+    parent: JsonSubtreeKey,
+}
+
+impl JsonChild {
+    pub(crate) fn keyed(node: JsonNode, parent: JsonSubtreeKey) -> Self {
+        Self { node, parent }
+    }
+
+    /// The entry, as the database returned it.
+    pub fn node(&self) -> &JsonNode {
+        &self.node
+    }
+
+    /// The path of the parent node that decrypting checks the entry
+    /// against.
+    pub fn parent_path(&self) -> &JsonPath {
+        &self.parent.path
+    }
+
+    pub(crate) fn into_parts(self) -> (JsonNode, JsonSubtreeKey) {
+        (self.node, self.parent)
     }
 }
 

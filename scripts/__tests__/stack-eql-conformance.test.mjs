@@ -26,6 +26,7 @@ describe('required EQL/JSON conformance', () => {
       'json-predicate-match-v1',
       'json-extraction-v1',
       'json-subtree-v1',
+      'json-child-v1',
       'json-tamper-v1',
     ])
     const contract = read('conformance/stack-encrypt/eql-json-contract.md')
