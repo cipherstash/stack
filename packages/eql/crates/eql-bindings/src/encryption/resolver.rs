@@ -94,7 +94,7 @@ impl TargetResolver for EqlTargets {
 /// Converts a row of the target table to the descriptor that Stack
 /// Encrypt uses. The row and the descriptor have the same wire format.
 ///
-/// The descriptor also contains two things that Stack Encrypt needs and
+/// The descriptor also contains three things that Stack Encrypt needs and
 /// the wire format leaves out:
 ///
 /// - The match options, for a type with a match index. Stack Encrypt runs
@@ -102,6 +102,9 @@ impl TargetResolver for EqlTargets {
 /// - The three query domains, for a type that stores a JSON document. An
 ///   ordering at a path uses the leaf domain. `element_match` uses the
 ///   elements domain. `match` uses the predicate domain.
+/// - Whether the query twin carries the term of every index the type
+///   carries. Stack Encrypt then refuses a query for what any of those
+///   indexes refuses, before any term is derived.
 impl From<&Target> for TargetDescriptor {
     fn from(target: &Target) -> Self {
         let mut descriptor = TargetDescriptor::new(
@@ -127,6 +130,9 @@ impl From<&Target> for TargetDescriptor {
         }
         if let Some(domain) = target.predicate_query_sql_domain() {
             descriptor = descriptor.with_predicate_query_sql_domain(domain);
+        }
+        if target.query_carries_every_term() {
+            descriptor = descriptor.with_query_carrying_every_term();
         }
         descriptor
     }

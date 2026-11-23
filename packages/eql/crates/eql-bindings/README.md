@@ -429,6 +429,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `SmallintEq`, `IntegerEq`, `BigintEq`, `RealEq`, `DoubleEq` | `eq` | `op::Eq` | `SmallintEqQuery`, `IntegerEqQuery`, `BigintEqQuery`, `RealEqQuery`, `DoubleEqQuery` |
 | `DateEq`, `TimestampEq`, `NumericEq` | `eq` | `op::Eq` | `DateEqQuery`, `TimestampEqQuery`, `NumericEqQuery` (from `v4::plaintext::Date`, `Timestamp`, `Decimal`) |
 | `TextMatch` | `matches` | `op::Matches` | `MatchTwin<TextMatchQuery>` |
+| `SmallintOrd`, `IntegerOrd`, `BigintOrd`, `RealOrd`, `DoubleOrd`, `DateOrd`, `TimestampOrd`, `NumericOrd`, and each `…OrdOpe` and `…OrdOre` | `lt`, `lte`, `gt`, `gte` | `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte` | the type's twin: `IntegerOrdQuery`, `IntegerOrdOreQuery`, … |
+| `TextOrd`, `TextOrdOpe`, `TextOrdOre` | `eq`, `lt`, `lte`, `gt`, `gte` | `op::Eq` and the orderings | `TextOrdQuery`, `TextOrdOpeQuery`, `TextOrdOreQuery` |
+| `TextSearch`, `TextSearchOre` | `eq`, `lt`, `lte`, `gt`, `gte`, `matches` | `op::Eq`, the orderings and `op::Matches` | `TextSearchQuery`, `TextSearchOreQuery`, and a `MatchTwin` of one for `matches` |
 
 `MatchTwin` serializes as the twin and adds `verify` and `target_limit`
 under `EqlMatch`: a filter can match a row that does not hold the query's
@@ -436,11 +439,20 @@ text, so keep only the decrypted rows that verify. An exact query has no
 `verify`. An operator a type does not answer does not compile: `.lt(..)` on
 a `TextEq` field, or `.matches(..)` on an `IntegerEq` field. A field reference names
 its field's type and no index, so a query cannot send another index's term,
-such as the bare `Equality` term, which the type's SQL does not take. The
-ordered types (`IntegerOrd`, `TextOrd`, …) and the text search types answer
-nothing from a field reference yet: their twins need an order term, or several terms
-at once, and a field query sends one index's term. Query them through
-the data path (`stack_encrypt::dynamic::query_term`) for now.
+such as the bare `Equality` term, which the type's SQL does not take. No
+type answers `between` from a field reference, as no data plan answers it
+for an EQL type.
+
+A twin carries what its query domain requires. The twin of an ordered
+type other than text carries its one order term (`op` or `ob`). A
+`TextOrd` twin carries both its `hm` and its order term whatever the
+operator, because `eql_v4.query_text_ord` requires both, so a field query
+derives the two terms for the one value. It is refused, before any key is
+requested, for text either index refuses: `TextOrdOre.eq(..)` of text that
+ends in NUL or is too long for block ORE, as the data path refuses it. A
+text search twin's terms are optional, so its query carries only the term
+of the index that answers the operator: `hm` for `eq`, `op` or `ob` for an
+ordering, `bf` for `matches`.
 
 The query is derived under the field reference's label: the record's scope, then the
 field's name (or its `identity`). That is the column the field stores in
@@ -541,6 +553,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .encrypt(&keyset)
         .await?;
     assert_eq!(query.hm, stored.email.hm);
+
+    // An order query: an `IntegerOrdQuery`, bound as
+    // WHERE age > $1::eql_v4.query_integer_ord.
+    let older = EncryptedMember::AGE.gt(30).encrypt(&keyset).await?;
+    assert_eq!(older.i, stored.age.i);
+    // Its order term sorts below the stored age of 36.
+    assert!(older.op < stored.age.op);
 
     let opened = Member::decrypt_from(stored, &keyset).await?;
     assert_eq!(opened.email, "alice@example.com");

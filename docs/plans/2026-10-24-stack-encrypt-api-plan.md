@@ -1587,18 +1587,31 @@ Base64.
     `DecryptSource<JsonPlaintext>`.
   - A query from a field reference works for the equality and match
     types, with the record's scope. A data plan's query for an EQL type
-    takes a scope too. The order types do not implement `Answers` yet, so
-    a field reference cannot query them (#1668).
+    takes a scope too.
+  - In #1668, a field reference queries the order types too: `lt`, `lte`,
+    `gt` and `gte` on every ordered type, `eq` as well on `TextOrd`, and
+    the orderings and `matches` on text search. A twin that requires
+    several terms (`TextOrdQuery`'s `hm` and `op`) gets all of them for the
+    one value; a twin whose terms are optional gets the answering index's
+    term alone, as the data plan's does. No SQL or stored form changes.
+    Each query is the data plan's for the same value, and each finds the
+    rows the other finds
+    (`packages/eql/tests/encryption/tests/typed_queries.rs`,
+    `typed_order_queries.rs`). A `TextOrd*` query is refused, before any
+    key is requested, for text either of its indexes refuses, by both
+    paths. `between` is not answered from a field reference, as the data
+    plan answers it on no EQL type; #1286 answers it on both.
   - A data plan that names an EQL type takes a scope and a binding too.
     `TargetResolver` receives them after the field's label, and
     `TargetError::Extended` is removed. Under the same scope and binding,
     a data plan and a derived record write the same terms, and each
     opens the other's values. A Go struct with an `encrypt_into` field
     seals through `cipher.Scope(..).Bind(..)`.
-- **Tracked in.** Issue #1658 is open. Pull request #1659, open, closes it. Issue #1668 is open for order queries from a field reference. `eql-bindings` builds against the crates.io `stack-encrypt`, so a `stack-encrypt` release with `ContextFromField` must come before the `eql-bindings` release that uses it.
+- **Tracked in.** Issue #1658 is closed: pull request #1659 closed it and merged on 2026-11-21. Issue #1668 is for order queries from a field reference, and pull request #1752 closes it. Issue #1286 is for `between` from a field reference and from a data plan. `eql-bindings` builds against the crates.io `stack-encrypt`, so a `stack-encrypt` release with `ContextFromField` must come before the `eql-bindings` release that uses it.
 - **Finished when** these are all true:
   - a Rust record with EQL fields encrypts, decrypts, and queries through
-    the new API, including order queries;
+    the new API, including the order queries `lt`, `lte`, `gt` and `gte`,
+    and `between` (#1286);
   - it writes the same terms as a Go record with the same declaration,
     with and without a scope.
 

@@ -6,8 +6,8 @@ use crate::v4::terms::{BloomFilter, Hmac256};
 use crate::v4::SchemaVersion;
 use crate::Identifier;
 use stack_encrypt::op;
-use stack_encrypt::Equality;
-use stack_encrypt::Match;
+use stack_encrypt::sem::{OpeTerm, OreBlockTerm};
+use stack_encrypt::{Equality, Match, Ope, OreBlock};
 /// The operators each EQL type answers in Stack Encrypt's typed
 /// query (`op::Answers`), by the wire names
 /// `stack_encrypt::dynamic::Op` gives them, in catalog order:
@@ -18,15 +18,47 @@ use stack_encrypt::Match;
 #[doc(hidden)]
 pub const ANSWERS: &[(&str, &[&str])] = &[
     ("IntegerEq", &["eq"]),
+    ("IntegerOrdOre", &["lt", "lte", "gt", "gte"]),
+    ("IntegerOrd", &["lt", "lte", "gt", "gte"]),
+    ("IntegerOrdOpe", &["lt", "lte", "gt", "gte"]),
     ("SmallintEq", &["eq"]),
+    ("SmallintOrdOre", &["lt", "lte", "gt", "gte"]),
+    ("SmallintOrd", &["lt", "lte", "gt", "gte"]),
+    ("SmallintOrdOpe", &["lt", "lte", "gt", "gte"]),
     ("BigintEq", &["eq"]),
+    ("BigintOrdOre", &["lt", "lte", "gt", "gte"]),
+    ("BigintOrd", &["lt", "lte", "gt", "gte"]),
+    ("BigintOrdOpe", &["lt", "lte", "gt", "gte"]),
     ("DateEq", &["eq"]),
+    ("DateOrdOre", &["lt", "lte", "gt", "gte"]),
+    ("DateOrd", &["lt", "lte", "gt", "gte"]),
+    ("DateOrdOpe", &["lt", "lte", "gt", "gte"]),
     ("TimestampEq", &["eq"]),
+    ("TimestampOrdOre", &["lt", "lte", "gt", "gte"]),
+    ("TimestampOrd", &["lt", "lte", "gt", "gte"]),
+    ("TimestampOrdOpe", &["lt", "lte", "gt", "gte"]),
     ("NumericEq", &["eq"]),
+    ("NumericOrdOre", &["lt", "lte", "gt", "gte"]),
+    ("NumericOrd", &["lt", "lte", "gt", "gte"]),
+    ("NumericOrdOpe", &["lt", "lte", "gt", "gte"]),
     ("TextEq", &["eq"]),
     ("TextMatch", &["matches"]),
+    ("TextOrdOre", &["eq", "lt", "lte", "gt", "gte"]),
+    ("TextOrd", &["eq", "lt", "lte", "gt", "gte"]),
+    ("TextOrdOpe", &["eq", "lt", "lte", "gt", "gte"]),
+    (
+        "TextSearchOre",
+        &["eq", "lt", "lte", "gt", "gte", "matches"],
+    ),
+    ("TextSearch", &["eq", "lt", "lte", "gt", "gte", "matches"]),
     ("RealEq", &["eq"]),
+    ("RealOrdOre", &["lt", "lte", "gt", "gte"]),
+    ("RealOrd", &["lt", "lte", "gt", "gte"]),
+    ("RealOrdOpe", &["lt", "lte", "gt", "gte"]),
     ("DoubleEq", &["eq"]),
+    ("DoubleOrdOre", &["lt", "lte", "gt", "gte"]),
+    ("DoubleOrd", &["lt", "lte", "gt", "gte"]),
+    ("DoubleOrdOpe", &["lt", "lte", "gt", "gte"]),
 ];
 /// `IntegerEq` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
 impl op::LabelledTarget for super::integer::IntegerEq {}
@@ -47,6 +79,99 @@ impl op::QueryTerm for super::integer::IntegerEqQuery {}
 impl op::Answers<op::Eq, i32> for super::integer::IntegerEq {
     type Via = TwinIndex<Equality, super::integer::IntegerEqQuery>;
 }
+/// `IntegerOrdOre` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::integer::IntegerOrdOre {}
+/// `IntegerOrdOreQuery` from the column it queries and its `ob` term, at version 4.
+impl QueryTwin<OreBlockTerm<i32>> for super::integer::IntegerOrdOreQuery {
+    type Plaintext = i32;
+    fn assemble(i: Identifier, ob: OreBlockTerm<i32>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            ob,
+        }
+    }
+}
+/// `IntegerOrdOreQuery` is exact: the query term of `IntegerOrdOre`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::integer::IntegerOrdOreQuery {}
+/// `IntegerOrdOre` answers `op::Lt` through its block ORE index. The query term is `IntegerOrdOreQuery`, bound as `eql_v4.query_integer_ord_ore`.
+impl op::Answers<op::Lt, i32> for super::integer::IntegerOrdOre {
+    type Via = TwinIndex<OreBlock, super::integer::IntegerOrdOreQuery>;
+}
+/// `IntegerOrdOre` answers `op::Lte` through its block ORE index. The query term is `IntegerOrdOreQuery`, bound as `eql_v4.query_integer_ord_ore`.
+impl op::Answers<op::Lte, i32> for super::integer::IntegerOrdOre {
+    type Via = TwinIndex<OreBlock, super::integer::IntegerOrdOreQuery>;
+}
+/// `IntegerOrdOre` answers `op::Gt` through its block ORE index. The query term is `IntegerOrdOreQuery`, bound as `eql_v4.query_integer_ord_ore`.
+impl op::Answers<op::Gt, i32> for super::integer::IntegerOrdOre {
+    type Via = TwinIndex<OreBlock, super::integer::IntegerOrdOreQuery>;
+}
+/// `IntegerOrdOre` answers `op::Gte` through its block ORE index. The query term is `IntegerOrdOreQuery`, bound as `eql_v4.query_integer_ord_ore`.
+impl op::Answers<op::Gte, i32> for super::integer::IntegerOrdOre {
+    type Via = TwinIndex<OreBlock, super::integer::IntegerOrdOreQuery>;
+}
+/// `IntegerOrd` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::integer::IntegerOrd {}
+/// `IntegerOrdQuery` from the column it queries and its `op` term, at version 4.
+impl QueryTwin<OpeTerm<i32>> for super::integer::IntegerOrdQuery {
+    type Plaintext = i32;
+    fn assemble(i: Identifier, op: OpeTerm<i32>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            op,
+        }
+    }
+}
+/// `IntegerOrdQuery` is exact: the query term of `IntegerOrd`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::integer::IntegerOrdQuery {}
+/// `IntegerOrd` answers `op::Lt` through its OPE index. The query term is `IntegerOrdQuery`, bound as `eql_v4.query_integer_ord`.
+impl op::Answers<op::Lt, i32> for super::integer::IntegerOrd {
+    type Via = TwinIndex<Ope, super::integer::IntegerOrdQuery>;
+}
+/// `IntegerOrd` answers `op::Lte` through its OPE index. The query term is `IntegerOrdQuery`, bound as `eql_v4.query_integer_ord`.
+impl op::Answers<op::Lte, i32> for super::integer::IntegerOrd {
+    type Via = TwinIndex<Ope, super::integer::IntegerOrdQuery>;
+}
+/// `IntegerOrd` answers `op::Gt` through its OPE index. The query term is `IntegerOrdQuery`, bound as `eql_v4.query_integer_ord`.
+impl op::Answers<op::Gt, i32> for super::integer::IntegerOrd {
+    type Via = TwinIndex<Ope, super::integer::IntegerOrdQuery>;
+}
+/// `IntegerOrd` answers `op::Gte` through its OPE index. The query term is `IntegerOrdQuery`, bound as `eql_v4.query_integer_ord`.
+impl op::Answers<op::Gte, i32> for super::integer::IntegerOrd {
+    type Via = TwinIndex<Ope, super::integer::IntegerOrdQuery>;
+}
+/// `IntegerOrdOpe` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::integer::IntegerOrdOpe {}
+/// `IntegerOrdOpeQuery` from the column it queries and its `op` term, at version 4.
+impl QueryTwin<OpeTerm<i32>> for super::integer::IntegerOrdOpeQuery {
+    type Plaintext = i32;
+    fn assemble(i: Identifier, op: OpeTerm<i32>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            op,
+        }
+    }
+}
+/// `IntegerOrdOpeQuery` is exact: the query term of `IntegerOrdOpe`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::integer::IntegerOrdOpeQuery {}
+/// `IntegerOrdOpe` answers `op::Lt` through its OPE index. The query term is `IntegerOrdOpeQuery`, bound as `eql_v4.query_integer_ord_ope`.
+impl op::Answers<op::Lt, i32> for super::integer::IntegerOrdOpe {
+    type Via = TwinIndex<Ope, super::integer::IntegerOrdOpeQuery>;
+}
+/// `IntegerOrdOpe` answers `op::Lte` through its OPE index. The query term is `IntegerOrdOpeQuery`, bound as `eql_v4.query_integer_ord_ope`.
+impl op::Answers<op::Lte, i32> for super::integer::IntegerOrdOpe {
+    type Via = TwinIndex<Ope, super::integer::IntegerOrdOpeQuery>;
+}
+/// `IntegerOrdOpe` answers `op::Gt` through its OPE index. The query term is `IntegerOrdOpeQuery`, bound as `eql_v4.query_integer_ord_ope`.
+impl op::Answers<op::Gt, i32> for super::integer::IntegerOrdOpe {
+    type Via = TwinIndex<Ope, super::integer::IntegerOrdOpeQuery>;
+}
+/// `IntegerOrdOpe` answers `op::Gte` through its OPE index. The query term is `IntegerOrdOpeQuery`, bound as `eql_v4.query_integer_ord_ope`.
+impl op::Answers<op::Gte, i32> for super::integer::IntegerOrdOpe {
+    type Via = TwinIndex<Ope, super::integer::IntegerOrdOpeQuery>;
+}
 /// `SmallintEq` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
 impl op::LabelledTarget for super::smallint::SmallintEq {}
 /// `SmallintEqQuery` from the column it queries and its `hm` term, at version 4.
@@ -65,6 +190,99 @@ impl op::QueryTerm for super::smallint::SmallintEqQuery {}
 /// `SmallintEq` answers `op::Eq` through its equality index. The query term is `SmallintEqQuery`, bound as `eql_v4.query_smallint_eq`.
 impl op::Answers<op::Eq, i16> for super::smallint::SmallintEq {
     type Via = TwinIndex<Equality, super::smallint::SmallintEqQuery>;
+}
+/// `SmallintOrdOre` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::smallint::SmallintOrdOre {}
+/// `SmallintOrdOreQuery` from the column it queries and its `ob` term, at version 4.
+impl QueryTwin<OreBlockTerm<i16>> for super::smallint::SmallintOrdOreQuery {
+    type Plaintext = i16;
+    fn assemble(i: Identifier, ob: OreBlockTerm<i16>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            ob,
+        }
+    }
+}
+/// `SmallintOrdOreQuery` is exact: the query term of `SmallintOrdOre`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::smallint::SmallintOrdOreQuery {}
+/// `SmallintOrdOre` answers `op::Lt` through its block ORE index. The query term is `SmallintOrdOreQuery`, bound as `eql_v4.query_smallint_ord_ore`.
+impl op::Answers<op::Lt, i16> for super::smallint::SmallintOrdOre {
+    type Via = TwinIndex<OreBlock, super::smallint::SmallintOrdOreQuery>;
+}
+/// `SmallintOrdOre` answers `op::Lte` through its block ORE index. The query term is `SmallintOrdOreQuery`, bound as `eql_v4.query_smallint_ord_ore`.
+impl op::Answers<op::Lte, i16> for super::smallint::SmallintOrdOre {
+    type Via = TwinIndex<OreBlock, super::smallint::SmallintOrdOreQuery>;
+}
+/// `SmallintOrdOre` answers `op::Gt` through its block ORE index. The query term is `SmallintOrdOreQuery`, bound as `eql_v4.query_smallint_ord_ore`.
+impl op::Answers<op::Gt, i16> for super::smallint::SmallintOrdOre {
+    type Via = TwinIndex<OreBlock, super::smallint::SmallintOrdOreQuery>;
+}
+/// `SmallintOrdOre` answers `op::Gte` through its block ORE index. The query term is `SmallintOrdOreQuery`, bound as `eql_v4.query_smallint_ord_ore`.
+impl op::Answers<op::Gte, i16> for super::smallint::SmallintOrdOre {
+    type Via = TwinIndex<OreBlock, super::smallint::SmallintOrdOreQuery>;
+}
+/// `SmallintOrd` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::smallint::SmallintOrd {}
+/// `SmallintOrdQuery` from the column it queries and its `op` term, at version 4.
+impl QueryTwin<OpeTerm<i16>> for super::smallint::SmallintOrdQuery {
+    type Plaintext = i16;
+    fn assemble(i: Identifier, op: OpeTerm<i16>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            op,
+        }
+    }
+}
+/// `SmallintOrdQuery` is exact: the query term of `SmallintOrd`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::smallint::SmallintOrdQuery {}
+/// `SmallintOrd` answers `op::Lt` through its OPE index. The query term is `SmallintOrdQuery`, bound as `eql_v4.query_smallint_ord`.
+impl op::Answers<op::Lt, i16> for super::smallint::SmallintOrd {
+    type Via = TwinIndex<Ope, super::smallint::SmallintOrdQuery>;
+}
+/// `SmallintOrd` answers `op::Lte` through its OPE index. The query term is `SmallintOrdQuery`, bound as `eql_v4.query_smallint_ord`.
+impl op::Answers<op::Lte, i16> for super::smallint::SmallintOrd {
+    type Via = TwinIndex<Ope, super::smallint::SmallintOrdQuery>;
+}
+/// `SmallintOrd` answers `op::Gt` through its OPE index. The query term is `SmallintOrdQuery`, bound as `eql_v4.query_smallint_ord`.
+impl op::Answers<op::Gt, i16> for super::smallint::SmallintOrd {
+    type Via = TwinIndex<Ope, super::smallint::SmallintOrdQuery>;
+}
+/// `SmallintOrd` answers `op::Gte` through its OPE index. The query term is `SmallintOrdQuery`, bound as `eql_v4.query_smallint_ord`.
+impl op::Answers<op::Gte, i16> for super::smallint::SmallintOrd {
+    type Via = TwinIndex<Ope, super::smallint::SmallintOrdQuery>;
+}
+/// `SmallintOrdOpe` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::smallint::SmallintOrdOpe {}
+/// `SmallintOrdOpeQuery` from the column it queries and its `op` term, at version 4.
+impl QueryTwin<OpeTerm<i16>> for super::smallint::SmallintOrdOpeQuery {
+    type Plaintext = i16;
+    fn assemble(i: Identifier, op: OpeTerm<i16>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            op,
+        }
+    }
+}
+/// `SmallintOrdOpeQuery` is exact: the query term of `SmallintOrdOpe`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::smallint::SmallintOrdOpeQuery {}
+/// `SmallintOrdOpe` answers `op::Lt` through its OPE index. The query term is `SmallintOrdOpeQuery`, bound as `eql_v4.query_smallint_ord_ope`.
+impl op::Answers<op::Lt, i16> for super::smallint::SmallintOrdOpe {
+    type Via = TwinIndex<Ope, super::smallint::SmallintOrdOpeQuery>;
+}
+/// `SmallintOrdOpe` answers `op::Lte` through its OPE index. The query term is `SmallintOrdOpeQuery`, bound as `eql_v4.query_smallint_ord_ope`.
+impl op::Answers<op::Lte, i16> for super::smallint::SmallintOrdOpe {
+    type Via = TwinIndex<Ope, super::smallint::SmallintOrdOpeQuery>;
+}
+/// `SmallintOrdOpe` answers `op::Gt` through its OPE index. The query term is `SmallintOrdOpeQuery`, bound as `eql_v4.query_smallint_ord_ope`.
+impl op::Answers<op::Gt, i16> for super::smallint::SmallintOrdOpe {
+    type Via = TwinIndex<Ope, super::smallint::SmallintOrdOpeQuery>;
+}
+/// `SmallintOrdOpe` answers `op::Gte` through its OPE index. The query term is `SmallintOrdOpeQuery`, bound as `eql_v4.query_smallint_ord_ope`.
+impl op::Answers<op::Gte, i16> for super::smallint::SmallintOrdOpe {
+    type Via = TwinIndex<Ope, super::smallint::SmallintOrdOpeQuery>;
 }
 /// `BigintEq` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
 impl op::LabelledTarget for super::bigint::BigintEq {}
@@ -85,6 +303,99 @@ impl op::QueryTerm for super::bigint::BigintEqQuery {}
 impl op::Answers<op::Eq, i64> for super::bigint::BigintEq {
     type Via = TwinIndex<Equality, super::bigint::BigintEqQuery>;
 }
+/// `BigintOrdOre` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::bigint::BigintOrdOre {}
+/// `BigintOrdOreQuery` from the column it queries and its `ob` term, at version 4.
+impl QueryTwin<OreBlockTerm<i64>> for super::bigint::BigintOrdOreQuery {
+    type Plaintext = i64;
+    fn assemble(i: Identifier, ob: OreBlockTerm<i64>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            ob,
+        }
+    }
+}
+/// `BigintOrdOreQuery` is exact: the query term of `BigintOrdOre`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::bigint::BigintOrdOreQuery {}
+/// `BigintOrdOre` answers `op::Lt` through its block ORE index. The query term is `BigintOrdOreQuery`, bound as `eql_v4.query_bigint_ord_ore`.
+impl op::Answers<op::Lt, i64> for super::bigint::BigintOrdOre {
+    type Via = TwinIndex<OreBlock, super::bigint::BigintOrdOreQuery>;
+}
+/// `BigintOrdOre` answers `op::Lte` through its block ORE index. The query term is `BigintOrdOreQuery`, bound as `eql_v4.query_bigint_ord_ore`.
+impl op::Answers<op::Lte, i64> for super::bigint::BigintOrdOre {
+    type Via = TwinIndex<OreBlock, super::bigint::BigintOrdOreQuery>;
+}
+/// `BigintOrdOre` answers `op::Gt` through its block ORE index. The query term is `BigintOrdOreQuery`, bound as `eql_v4.query_bigint_ord_ore`.
+impl op::Answers<op::Gt, i64> for super::bigint::BigintOrdOre {
+    type Via = TwinIndex<OreBlock, super::bigint::BigintOrdOreQuery>;
+}
+/// `BigintOrdOre` answers `op::Gte` through its block ORE index. The query term is `BigintOrdOreQuery`, bound as `eql_v4.query_bigint_ord_ore`.
+impl op::Answers<op::Gte, i64> for super::bigint::BigintOrdOre {
+    type Via = TwinIndex<OreBlock, super::bigint::BigintOrdOreQuery>;
+}
+/// `BigintOrd` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::bigint::BigintOrd {}
+/// `BigintOrdQuery` from the column it queries and its `op` term, at version 4.
+impl QueryTwin<OpeTerm<i64>> for super::bigint::BigintOrdQuery {
+    type Plaintext = i64;
+    fn assemble(i: Identifier, op: OpeTerm<i64>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            op,
+        }
+    }
+}
+/// `BigintOrdQuery` is exact: the query term of `BigintOrd`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::bigint::BigintOrdQuery {}
+/// `BigintOrd` answers `op::Lt` through its OPE index. The query term is `BigintOrdQuery`, bound as `eql_v4.query_bigint_ord`.
+impl op::Answers<op::Lt, i64> for super::bigint::BigintOrd {
+    type Via = TwinIndex<Ope, super::bigint::BigintOrdQuery>;
+}
+/// `BigintOrd` answers `op::Lte` through its OPE index. The query term is `BigintOrdQuery`, bound as `eql_v4.query_bigint_ord`.
+impl op::Answers<op::Lte, i64> for super::bigint::BigintOrd {
+    type Via = TwinIndex<Ope, super::bigint::BigintOrdQuery>;
+}
+/// `BigintOrd` answers `op::Gt` through its OPE index. The query term is `BigintOrdQuery`, bound as `eql_v4.query_bigint_ord`.
+impl op::Answers<op::Gt, i64> for super::bigint::BigintOrd {
+    type Via = TwinIndex<Ope, super::bigint::BigintOrdQuery>;
+}
+/// `BigintOrd` answers `op::Gte` through its OPE index. The query term is `BigintOrdQuery`, bound as `eql_v4.query_bigint_ord`.
+impl op::Answers<op::Gte, i64> for super::bigint::BigintOrd {
+    type Via = TwinIndex<Ope, super::bigint::BigintOrdQuery>;
+}
+/// `BigintOrdOpe` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::bigint::BigintOrdOpe {}
+/// `BigintOrdOpeQuery` from the column it queries and its `op` term, at version 4.
+impl QueryTwin<OpeTerm<i64>> for super::bigint::BigintOrdOpeQuery {
+    type Plaintext = i64;
+    fn assemble(i: Identifier, op: OpeTerm<i64>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            op,
+        }
+    }
+}
+/// `BigintOrdOpeQuery` is exact: the query term of `BigintOrdOpe`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::bigint::BigintOrdOpeQuery {}
+/// `BigintOrdOpe` answers `op::Lt` through its OPE index. The query term is `BigintOrdOpeQuery`, bound as `eql_v4.query_bigint_ord_ope`.
+impl op::Answers<op::Lt, i64> for super::bigint::BigintOrdOpe {
+    type Via = TwinIndex<Ope, super::bigint::BigintOrdOpeQuery>;
+}
+/// `BigintOrdOpe` answers `op::Lte` through its OPE index. The query term is `BigintOrdOpeQuery`, bound as `eql_v4.query_bigint_ord_ope`.
+impl op::Answers<op::Lte, i64> for super::bigint::BigintOrdOpe {
+    type Via = TwinIndex<Ope, super::bigint::BigintOrdOpeQuery>;
+}
+/// `BigintOrdOpe` answers `op::Gt` through its OPE index. The query term is `BigintOrdOpeQuery`, bound as `eql_v4.query_bigint_ord_ope`.
+impl op::Answers<op::Gt, i64> for super::bigint::BigintOrdOpe {
+    type Via = TwinIndex<Ope, super::bigint::BigintOrdOpeQuery>;
+}
+/// `BigintOrdOpe` answers `op::Gte` through its OPE index. The query term is `BigintOrdOpeQuery`, bound as `eql_v4.query_bigint_ord_ope`.
+impl op::Answers<op::Gte, i64> for super::bigint::BigintOrdOpe {
+    type Via = TwinIndex<Ope, super::bigint::BigintOrdOpeQuery>;
+}
 /// `DateEq` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
 impl op::LabelledTarget for super::date::DateEq {}
 /// `DateEqQuery` from the column it queries and its `hm` term, at version 4.
@@ -103,6 +414,99 @@ impl op::QueryTerm for super::date::DateEqQuery {}
 /// `DateEq` answers `op::Eq` through its equality index. The query term is `DateEqQuery`, bound as `eql_v4.query_date_eq`.
 impl op::Answers<op::Eq, crate::v4::plaintext::Date> for super::date::DateEq {
     type Via = TwinIndex<Equality, super::date::DateEqQuery>;
+}
+/// `DateOrdOre` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::date::DateOrdOre {}
+/// `DateOrdOreQuery` from the column it queries and its `ob` term, at version 4.
+impl QueryTwin<OreBlockTerm<crate::v4::plaintext::Date>> for super::date::DateOrdOreQuery {
+    type Plaintext = crate::v4::plaintext::Date;
+    fn assemble(i: Identifier, ob: OreBlockTerm<crate::v4::plaintext::Date>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            ob,
+        }
+    }
+}
+/// `DateOrdOreQuery` is exact: the query term of `DateOrdOre`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::date::DateOrdOreQuery {}
+/// `DateOrdOre` answers `op::Lt` through its block ORE index. The query term is `DateOrdOreQuery`, bound as `eql_v4.query_date_ord_ore`.
+impl op::Answers<op::Lt, crate::v4::plaintext::Date> for super::date::DateOrdOre {
+    type Via = TwinIndex<OreBlock, super::date::DateOrdOreQuery>;
+}
+/// `DateOrdOre` answers `op::Lte` through its block ORE index. The query term is `DateOrdOreQuery`, bound as `eql_v4.query_date_ord_ore`.
+impl op::Answers<op::Lte, crate::v4::plaintext::Date> for super::date::DateOrdOre {
+    type Via = TwinIndex<OreBlock, super::date::DateOrdOreQuery>;
+}
+/// `DateOrdOre` answers `op::Gt` through its block ORE index. The query term is `DateOrdOreQuery`, bound as `eql_v4.query_date_ord_ore`.
+impl op::Answers<op::Gt, crate::v4::plaintext::Date> for super::date::DateOrdOre {
+    type Via = TwinIndex<OreBlock, super::date::DateOrdOreQuery>;
+}
+/// `DateOrdOre` answers `op::Gte` through its block ORE index. The query term is `DateOrdOreQuery`, bound as `eql_v4.query_date_ord_ore`.
+impl op::Answers<op::Gte, crate::v4::plaintext::Date> for super::date::DateOrdOre {
+    type Via = TwinIndex<OreBlock, super::date::DateOrdOreQuery>;
+}
+/// `DateOrd` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::date::DateOrd {}
+/// `DateOrdQuery` from the column it queries and its `op` term, at version 4.
+impl QueryTwin<OpeTerm<crate::v4::plaintext::Date>> for super::date::DateOrdQuery {
+    type Plaintext = crate::v4::plaintext::Date;
+    fn assemble(i: Identifier, op: OpeTerm<crate::v4::plaintext::Date>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            op,
+        }
+    }
+}
+/// `DateOrdQuery` is exact: the query term of `DateOrd`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::date::DateOrdQuery {}
+/// `DateOrd` answers `op::Lt` through its OPE index. The query term is `DateOrdQuery`, bound as `eql_v4.query_date_ord`.
+impl op::Answers<op::Lt, crate::v4::plaintext::Date> for super::date::DateOrd {
+    type Via = TwinIndex<Ope, super::date::DateOrdQuery>;
+}
+/// `DateOrd` answers `op::Lte` through its OPE index. The query term is `DateOrdQuery`, bound as `eql_v4.query_date_ord`.
+impl op::Answers<op::Lte, crate::v4::plaintext::Date> for super::date::DateOrd {
+    type Via = TwinIndex<Ope, super::date::DateOrdQuery>;
+}
+/// `DateOrd` answers `op::Gt` through its OPE index. The query term is `DateOrdQuery`, bound as `eql_v4.query_date_ord`.
+impl op::Answers<op::Gt, crate::v4::plaintext::Date> for super::date::DateOrd {
+    type Via = TwinIndex<Ope, super::date::DateOrdQuery>;
+}
+/// `DateOrd` answers `op::Gte` through its OPE index. The query term is `DateOrdQuery`, bound as `eql_v4.query_date_ord`.
+impl op::Answers<op::Gte, crate::v4::plaintext::Date> for super::date::DateOrd {
+    type Via = TwinIndex<Ope, super::date::DateOrdQuery>;
+}
+/// `DateOrdOpe` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::date::DateOrdOpe {}
+/// `DateOrdOpeQuery` from the column it queries and its `op` term, at version 4.
+impl QueryTwin<OpeTerm<crate::v4::plaintext::Date>> for super::date::DateOrdOpeQuery {
+    type Plaintext = crate::v4::plaintext::Date;
+    fn assemble(i: Identifier, op: OpeTerm<crate::v4::plaintext::Date>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            op,
+        }
+    }
+}
+/// `DateOrdOpeQuery` is exact: the query term of `DateOrdOpe`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::date::DateOrdOpeQuery {}
+/// `DateOrdOpe` answers `op::Lt` through its OPE index. The query term is `DateOrdOpeQuery`, bound as `eql_v4.query_date_ord_ope`.
+impl op::Answers<op::Lt, crate::v4::plaintext::Date> for super::date::DateOrdOpe {
+    type Via = TwinIndex<Ope, super::date::DateOrdOpeQuery>;
+}
+/// `DateOrdOpe` answers `op::Lte` through its OPE index. The query term is `DateOrdOpeQuery`, bound as `eql_v4.query_date_ord_ope`.
+impl op::Answers<op::Lte, crate::v4::plaintext::Date> for super::date::DateOrdOpe {
+    type Via = TwinIndex<Ope, super::date::DateOrdOpeQuery>;
+}
+/// `DateOrdOpe` answers `op::Gt` through its OPE index. The query term is `DateOrdOpeQuery`, bound as `eql_v4.query_date_ord_ope`.
+impl op::Answers<op::Gt, crate::v4::plaintext::Date> for super::date::DateOrdOpe {
+    type Via = TwinIndex<Ope, super::date::DateOrdOpeQuery>;
+}
+/// `DateOrdOpe` answers `op::Gte` through its OPE index. The query term is `DateOrdOpeQuery`, bound as `eql_v4.query_date_ord_ope`.
+impl op::Answers<op::Gte, crate::v4::plaintext::Date> for super::date::DateOrdOpe {
+    type Via = TwinIndex<Ope, super::date::DateOrdOpeQuery>;
 }
 /// `TimestampEq` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
 impl op::LabelledTarget for super::timestamp::TimestampEq {}
@@ -123,6 +527,103 @@ impl op::QueryTerm for super::timestamp::TimestampEqQuery {}
 impl op::Answers<op::Eq, crate::v4::plaintext::Timestamp> for super::timestamp::TimestampEq {
     type Via = TwinIndex<Equality, super::timestamp::TimestampEqQuery>;
 }
+/// `TimestampOrdOre` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::timestamp::TimestampOrdOre {}
+/// `TimestampOrdOreQuery` from the column it queries and its `ob` term, at version 4.
+impl QueryTwin<OreBlockTerm<crate::v4::plaintext::Timestamp>>
+    for super::timestamp::TimestampOrdOreQuery
+{
+    type Plaintext = crate::v4::plaintext::Timestamp;
+    fn assemble(i: Identifier, ob: OreBlockTerm<crate::v4::plaintext::Timestamp>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            ob,
+        }
+    }
+}
+/// `TimestampOrdOreQuery` is exact: the query term of `TimestampOrdOre`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::timestamp::TimestampOrdOreQuery {}
+/// `TimestampOrdOre` answers `op::Lt` through its block ORE index. The query term is `TimestampOrdOreQuery`, bound as `eql_v4.query_timestamp_ord_ore`.
+impl op::Answers<op::Lt, crate::v4::plaintext::Timestamp> for super::timestamp::TimestampOrdOre {
+    type Via = TwinIndex<OreBlock, super::timestamp::TimestampOrdOreQuery>;
+}
+/// `TimestampOrdOre` answers `op::Lte` through its block ORE index. The query term is `TimestampOrdOreQuery`, bound as `eql_v4.query_timestamp_ord_ore`.
+impl op::Answers<op::Lte, crate::v4::plaintext::Timestamp> for super::timestamp::TimestampOrdOre {
+    type Via = TwinIndex<OreBlock, super::timestamp::TimestampOrdOreQuery>;
+}
+/// `TimestampOrdOre` answers `op::Gt` through its block ORE index. The query term is `TimestampOrdOreQuery`, bound as `eql_v4.query_timestamp_ord_ore`.
+impl op::Answers<op::Gt, crate::v4::plaintext::Timestamp> for super::timestamp::TimestampOrdOre {
+    type Via = TwinIndex<OreBlock, super::timestamp::TimestampOrdOreQuery>;
+}
+/// `TimestampOrdOre` answers `op::Gte` through its block ORE index. The query term is `TimestampOrdOreQuery`, bound as `eql_v4.query_timestamp_ord_ore`.
+impl op::Answers<op::Gte, crate::v4::plaintext::Timestamp> for super::timestamp::TimestampOrdOre {
+    type Via = TwinIndex<OreBlock, super::timestamp::TimestampOrdOreQuery>;
+}
+/// `TimestampOrd` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::timestamp::TimestampOrd {}
+/// `TimestampOrdQuery` from the column it queries and its `op` term, at version 4.
+impl QueryTwin<OpeTerm<crate::v4::plaintext::Timestamp>> for super::timestamp::TimestampOrdQuery {
+    type Plaintext = crate::v4::plaintext::Timestamp;
+    fn assemble(i: Identifier, op: OpeTerm<crate::v4::plaintext::Timestamp>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            op,
+        }
+    }
+}
+/// `TimestampOrdQuery` is exact: the query term of `TimestampOrd`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::timestamp::TimestampOrdQuery {}
+/// `TimestampOrd` answers `op::Lt` through its OPE index. The query term is `TimestampOrdQuery`, bound as `eql_v4.query_timestamp_ord`.
+impl op::Answers<op::Lt, crate::v4::plaintext::Timestamp> for super::timestamp::TimestampOrd {
+    type Via = TwinIndex<Ope, super::timestamp::TimestampOrdQuery>;
+}
+/// `TimestampOrd` answers `op::Lte` through its OPE index. The query term is `TimestampOrdQuery`, bound as `eql_v4.query_timestamp_ord`.
+impl op::Answers<op::Lte, crate::v4::plaintext::Timestamp> for super::timestamp::TimestampOrd {
+    type Via = TwinIndex<Ope, super::timestamp::TimestampOrdQuery>;
+}
+/// `TimestampOrd` answers `op::Gt` through its OPE index. The query term is `TimestampOrdQuery`, bound as `eql_v4.query_timestamp_ord`.
+impl op::Answers<op::Gt, crate::v4::plaintext::Timestamp> for super::timestamp::TimestampOrd {
+    type Via = TwinIndex<Ope, super::timestamp::TimestampOrdQuery>;
+}
+/// `TimestampOrd` answers `op::Gte` through its OPE index. The query term is `TimestampOrdQuery`, bound as `eql_v4.query_timestamp_ord`.
+impl op::Answers<op::Gte, crate::v4::plaintext::Timestamp> for super::timestamp::TimestampOrd {
+    type Via = TwinIndex<Ope, super::timestamp::TimestampOrdQuery>;
+}
+/// `TimestampOrdOpe` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::timestamp::TimestampOrdOpe {}
+/// `TimestampOrdOpeQuery` from the column it queries and its `op` term, at version 4.
+impl QueryTwin<OpeTerm<crate::v4::plaintext::Timestamp>>
+    for super::timestamp::TimestampOrdOpeQuery
+{
+    type Plaintext = crate::v4::plaintext::Timestamp;
+    fn assemble(i: Identifier, op: OpeTerm<crate::v4::plaintext::Timestamp>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            op,
+        }
+    }
+}
+/// `TimestampOrdOpeQuery` is exact: the query term of `TimestampOrdOpe`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::timestamp::TimestampOrdOpeQuery {}
+/// `TimestampOrdOpe` answers `op::Lt` through its OPE index. The query term is `TimestampOrdOpeQuery`, bound as `eql_v4.query_timestamp_ord_ope`.
+impl op::Answers<op::Lt, crate::v4::plaintext::Timestamp> for super::timestamp::TimestampOrdOpe {
+    type Via = TwinIndex<Ope, super::timestamp::TimestampOrdOpeQuery>;
+}
+/// `TimestampOrdOpe` answers `op::Lte` through its OPE index. The query term is `TimestampOrdOpeQuery`, bound as `eql_v4.query_timestamp_ord_ope`.
+impl op::Answers<op::Lte, crate::v4::plaintext::Timestamp> for super::timestamp::TimestampOrdOpe {
+    type Via = TwinIndex<Ope, super::timestamp::TimestampOrdOpeQuery>;
+}
+/// `TimestampOrdOpe` answers `op::Gt` through its OPE index. The query term is `TimestampOrdOpeQuery`, bound as `eql_v4.query_timestamp_ord_ope`.
+impl op::Answers<op::Gt, crate::v4::plaintext::Timestamp> for super::timestamp::TimestampOrdOpe {
+    type Via = TwinIndex<Ope, super::timestamp::TimestampOrdOpeQuery>;
+}
+/// `TimestampOrdOpe` answers `op::Gte` through its OPE index. The query term is `TimestampOrdOpeQuery`, bound as `eql_v4.query_timestamp_ord_ope`.
+impl op::Answers<op::Gte, crate::v4::plaintext::Timestamp> for super::timestamp::TimestampOrdOpe {
+    type Via = TwinIndex<Ope, super::timestamp::TimestampOrdOpeQuery>;
+}
 /// `NumericEq` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
 impl op::LabelledTarget for super::numeric::NumericEq {}
 /// `NumericEqQuery` from the column it queries and its `hm` term, at version 4.
@@ -141,6 +642,99 @@ impl op::QueryTerm for super::numeric::NumericEqQuery {}
 /// `NumericEq` answers `op::Eq` through its equality index. The query term is `NumericEqQuery`, bound as `eql_v4.query_numeric_eq`.
 impl op::Answers<op::Eq, crate::v4::plaintext::Decimal> for super::numeric::NumericEq {
     type Via = TwinIndex<Equality, super::numeric::NumericEqQuery>;
+}
+/// `NumericOrdOre` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::numeric::NumericOrdOre {}
+/// `NumericOrdOreQuery` from the column it queries and its `ob` term, at version 4.
+impl QueryTwin<OreBlockTerm<crate::v4::plaintext::Decimal>> for super::numeric::NumericOrdOreQuery {
+    type Plaintext = crate::v4::plaintext::Decimal;
+    fn assemble(i: Identifier, ob: OreBlockTerm<crate::v4::plaintext::Decimal>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            ob,
+        }
+    }
+}
+/// `NumericOrdOreQuery` is exact: the query term of `NumericOrdOre`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::numeric::NumericOrdOreQuery {}
+/// `NumericOrdOre` answers `op::Lt` through its block ORE index. The query term is `NumericOrdOreQuery`, bound as `eql_v4.query_numeric_ord_ore`.
+impl op::Answers<op::Lt, crate::v4::plaintext::Decimal> for super::numeric::NumericOrdOre {
+    type Via = TwinIndex<OreBlock, super::numeric::NumericOrdOreQuery>;
+}
+/// `NumericOrdOre` answers `op::Lte` through its block ORE index. The query term is `NumericOrdOreQuery`, bound as `eql_v4.query_numeric_ord_ore`.
+impl op::Answers<op::Lte, crate::v4::plaintext::Decimal> for super::numeric::NumericOrdOre {
+    type Via = TwinIndex<OreBlock, super::numeric::NumericOrdOreQuery>;
+}
+/// `NumericOrdOre` answers `op::Gt` through its block ORE index. The query term is `NumericOrdOreQuery`, bound as `eql_v4.query_numeric_ord_ore`.
+impl op::Answers<op::Gt, crate::v4::plaintext::Decimal> for super::numeric::NumericOrdOre {
+    type Via = TwinIndex<OreBlock, super::numeric::NumericOrdOreQuery>;
+}
+/// `NumericOrdOre` answers `op::Gte` through its block ORE index. The query term is `NumericOrdOreQuery`, bound as `eql_v4.query_numeric_ord_ore`.
+impl op::Answers<op::Gte, crate::v4::plaintext::Decimal> for super::numeric::NumericOrdOre {
+    type Via = TwinIndex<OreBlock, super::numeric::NumericOrdOreQuery>;
+}
+/// `NumericOrd` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::numeric::NumericOrd {}
+/// `NumericOrdQuery` from the column it queries and its `op` term, at version 4.
+impl QueryTwin<OpeTerm<crate::v4::plaintext::Decimal>> for super::numeric::NumericOrdQuery {
+    type Plaintext = crate::v4::plaintext::Decimal;
+    fn assemble(i: Identifier, op: OpeTerm<crate::v4::plaintext::Decimal>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            op,
+        }
+    }
+}
+/// `NumericOrdQuery` is exact: the query term of `NumericOrd`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::numeric::NumericOrdQuery {}
+/// `NumericOrd` answers `op::Lt` through its OPE index. The query term is `NumericOrdQuery`, bound as `eql_v4.query_numeric_ord`.
+impl op::Answers<op::Lt, crate::v4::plaintext::Decimal> for super::numeric::NumericOrd {
+    type Via = TwinIndex<Ope, super::numeric::NumericOrdQuery>;
+}
+/// `NumericOrd` answers `op::Lte` through its OPE index. The query term is `NumericOrdQuery`, bound as `eql_v4.query_numeric_ord`.
+impl op::Answers<op::Lte, crate::v4::plaintext::Decimal> for super::numeric::NumericOrd {
+    type Via = TwinIndex<Ope, super::numeric::NumericOrdQuery>;
+}
+/// `NumericOrd` answers `op::Gt` through its OPE index. The query term is `NumericOrdQuery`, bound as `eql_v4.query_numeric_ord`.
+impl op::Answers<op::Gt, crate::v4::plaintext::Decimal> for super::numeric::NumericOrd {
+    type Via = TwinIndex<Ope, super::numeric::NumericOrdQuery>;
+}
+/// `NumericOrd` answers `op::Gte` through its OPE index. The query term is `NumericOrdQuery`, bound as `eql_v4.query_numeric_ord`.
+impl op::Answers<op::Gte, crate::v4::plaintext::Decimal> for super::numeric::NumericOrd {
+    type Via = TwinIndex<Ope, super::numeric::NumericOrdQuery>;
+}
+/// `NumericOrdOpe` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::numeric::NumericOrdOpe {}
+/// `NumericOrdOpeQuery` from the column it queries and its `op` term, at version 4.
+impl QueryTwin<OpeTerm<crate::v4::plaintext::Decimal>> for super::numeric::NumericOrdOpeQuery {
+    type Plaintext = crate::v4::plaintext::Decimal;
+    fn assemble(i: Identifier, op: OpeTerm<crate::v4::plaintext::Decimal>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            op,
+        }
+    }
+}
+/// `NumericOrdOpeQuery` is exact: the query term of `NumericOrdOpe`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::numeric::NumericOrdOpeQuery {}
+/// `NumericOrdOpe` answers `op::Lt` through its OPE index. The query term is `NumericOrdOpeQuery`, bound as `eql_v4.query_numeric_ord_ope`.
+impl op::Answers<op::Lt, crate::v4::plaintext::Decimal> for super::numeric::NumericOrdOpe {
+    type Via = TwinIndex<Ope, super::numeric::NumericOrdOpeQuery>;
+}
+/// `NumericOrdOpe` answers `op::Lte` through its OPE index. The query term is `NumericOrdOpeQuery`, bound as `eql_v4.query_numeric_ord_ope`.
+impl op::Answers<op::Lte, crate::v4::plaintext::Decimal> for super::numeric::NumericOrdOpe {
+    type Via = TwinIndex<Ope, super::numeric::NumericOrdOpeQuery>;
+}
+/// `NumericOrdOpe` answers `op::Gt` through its OPE index. The query term is `NumericOrdOpeQuery`, bound as `eql_v4.query_numeric_ord_ope`.
+impl op::Answers<op::Gt, crate::v4::plaintext::Decimal> for super::numeric::NumericOrdOpe {
+    type Via = TwinIndex<Ope, super::numeric::NumericOrdOpeQuery>;
+}
+/// `NumericOrdOpe` answers `op::Gte` through its OPE index. The query term is `NumericOrdOpeQuery`, bound as `eql_v4.query_numeric_ord_ope`.
+impl op::Answers<op::Gte, crate::v4::plaintext::Decimal> for super::numeric::NumericOrdOpe {
+    type Via = TwinIndex<Ope, super::numeric::NumericOrdOpeQuery>;
 }
 /// `TextEq` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
 impl op::LabelledTarget for super::text::TextEq {}
@@ -178,6 +772,248 @@ impl QueryTwin<BloomFilter> for super::text::TextMatchQuery {
 impl op::Answers<op::Matches, String> for super::text::TextMatch {
     type Via = TwinIndex<Match<EqlMatch>, super::text::TextMatchQuery>;
 }
+/// `TextOrdOre` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::text::TextOrdOre {}
+/// `TextOrdOreQuery` from the column it queries and its `hm` and `ob` terms, at version 4.
+impl QueryTwin<(Hmac256, OreBlockTerm<String>)> for super::text::TextOrdOreQuery {
+    type Plaintext = String;
+    fn assemble(i: Identifier, (hm, ob): (Hmac256, OreBlockTerm<String>)) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            hm,
+            ob,
+        }
+    }
+}
+/// `TextOrdOreQuery` is exact: the query term of `TextOrdOre`'s `op::Eq`, `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::text::TextOrdOreQuery {}
+/// `TextOrdOre` answers `op::Eq` through its equality index. The query term is `TextOrdOreQuery`, bound as `eql_v4.query_text_ord_ore`, which carries the terms of all its indexes.
+impl op::Answers<op::Eq, String> for super::text::TextOrdOre {
+    type Via = TwinIndex<Equality, super::text::TextOrdOreQuery, (Equality, OreBlock)>;
+}
+/// `TextOrdOre` answers `op::Lt` through its block ORE index. The query term is `TextOrdOreQuery`, bound as `eql_v4.query_text_ord_ore`, which carries the terms of all its indexes.
+impl op::Answers<op::Lt, String> for super::text::TextOrdOre {
+    type Via = TwinIndex<OreBlock, super::text::TextOrdOreQuery, (Equality, OreBlock)>;
+}
+/// `TextOrdOre` answers `op::Lte` through its block ORE index. The query term is `TextOrdOreQuery`, bound as `eql_v4.query_text_ord_ore`, which carries the terms of all its indexes.
+impl op::Answers<op::Lte, String> for super::text::TextOrdOre {
+    type Via = TwinIndex<OreBlock, super::text::TextOrdOreQuery, (Equality, OreBlock)>;
+}
+/// `TextOrdOre` answers `op::Gt` through its block ORE index. The query term is `TextOrdOreQuery`, bound as `eql_v4.query_text_ord_ore`, which carries the terms of all its indexes.
+impl op::Answers<op::Gt, String> for super::text::TextOrdOre {
+    type Via = TwinIndex<OreBlock, super::text::TextOrdOreQuery, (Equality, OreBlock)>;
+}
+/// `TextOrdOre` answers `op::Gte` through its block ORE index. The query term is `TextOrdOreQuery`, bound as `eql_v4.query_text_ord_ore`, which carries the terms of all its indexes.
+impl op::Answers<op::Gte, String> for super::text::TextOrdOre {
+    type Via = TwinIndex<OreBlock, super::text::TextOrdOreQuery, (Equality, OreBlock)>;
+}
+/// `TextOrd` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::text::TextOrd {}
+/// `TextOrdQuery` from the column it queries and its `hm` and `op` terms, at version 4.
+impl QueryTwin<(Hmac256, OpeTerm<String>)> for super::text::TextOrdQuery {
+    type Plaintext = String;
+    fn assemble(i: Identifier, (hm, op): (Hmac256, OpeTerm<String>)) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            hm,
+            op,
+        }
+    }
+}
+/// `TextOrdQuery` is exact: the query term of `TextOrd`'s `op::Eq`, `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::text::TextOrdQuery {}
+/// `TextOrd` answers `op::Eq` through its equality index. The query term is `TextOrdQuery`, bound as `eql_v4.query_text_ord`, which carries the terms of all its indexes.
+impl op::Answers<op::Eq, String> for super::text::TextOrd {
+    type Via = TwinIndex<Equality, super::text::TextOrdQuery, (Equality, Ope)>;
+}
+/// `TextOrd` answers `op::Lt` through its OPE index. The query term is `TextOrdQuery`, bound as `eql_v4.query_text_ord`, which carries the terms of all its indexes.
+impl op::Answers<op::Lt, String> for super::text::TextOrd {
+    type Via = TwinIndex<Ope, super::text::TextOrdQuery, (Equality, Ope)>;
+}
+/// `TextOrd` answers `op::Lte` through its OPE index. The query term is `TextOrdQuery`, bound as `eql_v4.query_text_ord`, which carries the terms of all its indexes.
+impl op::Answers<op::Lte, String> for super::text::TextOrd {
+    type Via = TwinIndex<Ope, super::text::TextOrdQuery, (Equality, Ope)>;
+}
+/// `TextOrd` answers `op::Gt` through its OPE index. The query term is `TextOrdQuery`, bound as `eql_v4.query_text_ord`, which carries the terms of all its indexes.
+impl op::Answers<op::Gt, String> for super::text::TextOrd {
+    type Via = TwinIndex<Ope, super::text::TextOrdQuery, (Equality, Ope)>;
+}
+/// `TextOrd` answers `op::Gte` through its OPE index. The query term is `TextOrdQuery`, bound as `eql_v4.query_text_ord`, which carries the terms of all its indexes.
+impl op::Answers<op::Gte, String> for super::text::TextOrd {
+    type Via = TwinIndex<Ope, super::text::TextOrdQuery, (Equality, Ope)>;
+}
+/// `TextOrdOpe` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::text::TextOrdOpe {}
+/// `TextOrdOpeQuery` from the column it queries and its `hm` and `op` terms, at version 4.
+impl QueryTwin<(Hmac256, OpeTerm<String>)> for super::text::TextOrdOpeQuery {
+    type Plaintext = String;
+    fn assemble(i: Identifier, (hm, op): (Hmac256, OpeTerm<String>)) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            hm,
+            op,
+        }
+    }
+}
+/// `TextOrdOpeQuery` is exact: the query term of `TextOrdOpe`'s `op::Eq`, `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::text::TextOrdOpeQuery {}
+/// `TextOrdOpe` answers `op::Eq` through its equality index. The query term is `TextOrdOpeQuery`, bound as `eql_v4.query_text_ord_ope`, which carries the terms of all its indexes.
+impl op::Answers<op::Eq, String> for super::text::TextOrdOpe {
+    type Via = TwinIndex<Equality, super::text::TextOrdOpeQuery, (Equality, Ope)>;
+}
+/// `TextOrdOpe` answers `op::Lt` through its OPE index. The query term is `TextOrdOpeQuery`, bound as `eql_v4.query_text_ord_ope`, which carries the terms of all its indexes.
+impl op::Answers<op::Lt, String> for super::text::TextOrdOpe {
+    type Via = TwinIndex<Ope, super::text::TextOrdOpeQuery, (Equality, Ope)>;
+}
+/// `TextOrdOpe` answers `op::Lte` through its OPE index. The query term is `TextOrdOpeQuery`, bound as `eql_v4.query_text_ord_ope`, which carries the terms of all its indexes.
+impl op::Answers<op::Lte, String> for super::text::TextOrdOpe {
+    type Via = TwinIndex<Ope, super::text::TextOrdOpeQuery, (Equality, Ope)>;
+}
+/// `TextOrdOpe` answers `op::Gt` through its OPE index. The query term is `TextOrdOpeQuery`, bound as `eql_v4.query_text_ord_ope`, which carries the terms of all its indexes.
+impl op::Answers<op::Gt, String> for super::text::TextOrdOpe {
+    type Via = TwinIndex<Ope, super::text::TextOrdOpeQuery, (Equality, Ope)>;
+}
+/// `TextOrdOpe` answers `op::Gte` through its OPE index. The query term is `TextOrdOpeQuery`, bound as `eql_v4.query_text_ord_ope`, which carries the terms of all its indexes.
+impl op::Answers<op::Gte, String> for super::text::TextOrdOpe {
+    type Via = TwinIndex<Ope, super::text::TextOrdOpeQuery, (Equality, Ope)>;
+}
+/// `TextSearchOre` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::text::TextSearchOre {}
+/// `TextSearchOreQuery` from the column it queries and its `hm` term alone, at version 4: the query through its equality index.
+impl QueryTwin<Hmac256> for super::text::TextSearchOreQuery {
+    type Plaintext = String;
+    fn assemble(i: Identifier, hm: Hmac256) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            hm: Some(hm),
+            ob: None,
+            bf: None,
+        }
+    }
+}
+/// `TextSearchOreQuery` from the column it queries and its `ob` term alone, at version 4: the query through its block ORE index.
+impl QueryTwin<OreBlockTerm<String>> for super::text::TextSearchOreQuery {
+    type Plaintext = String;
+    fn assemble(i: Identifier, ob: OreBlockTerm<String>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            ob: Some(ob),
+            hm: None,
+            bf: None,
+        }
+    }
+}
+/// `TextSearchOreQuery` from the column it queries and its `bf` term alone, at version 4: the query through its match index.
+impl QueryTwin<BloomFilter> for super::text::TextSearchOreQuery {
+    type Plaintext = String;
+    fn assemble(i: Identifier, bf: BloomFilter) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            bf: Some(bf),
+            hm: None,
+            ob: None,
+        }
+    }
+}
+/// `TextSearchOreQuery` is exact: the query term of `TextSearchOre`'s `op::Eq`, `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::text::TextSearchOreQuery {}
+/// `TextSearchOre` answers `op::Eq` through its equality index. The query term is `TextSearchOreQuery`, bound as `eql_v4.query_text_search_ore`, which carries that index's term alone.
+impl op::Answers<op::Eq, String> for super::text::TextSearchOre {
+    type Via = TwinIndex<Equality, super::text::TextSearchOreQuery>;
+}
+/// `TextSearchOre` answers `op::Lt` through its block ORE index. The query term is `TextSearchOreQuery`, bound as `eql_v4.query_text_search_ore`, which carries that index's term alone.
+impl op::Answers<op::Lt, String> for super::text::TextSearchOre {
+    type Via = TwinIndex<OreBlock, super::text::TextSearchOreQuery>;
+}
+/// `TextSearchOre` answers `op::Lte` through its block ORE index. The query term is `TextSearchOreQuery`, bound as `eql_v4.query_text_search_ore`, which carries that index's term alone.
+impl op::Answers<op::Lte, String> for super::text::TextSearchOre {
+    type Via = TwinIndex<OreBlock, super::text::TextSearchOreQuery>;
+}
+/// `TextSearchOre` answers `op::Gt` through its block ORE index. The query term is `TextSearchOreQuery`, bound as `eql_v4.query_text_search_ore`, which carries that index's term alone.
+impl op::Answers<op::Gt, String> for super::text::TextSearchOre {
+    type Via = TwinIndex<OreBlock, super::text::TextSearchOreQuery>;
+}
+/// `TextSearchOre` answers `op::Gte` through its block ORE index. The query term is `TextSearchOreQuery`, bound as `eql_v4.query_text_search_ore`, which carries that index's term alone.
+impl op::Answers<op::Gte, String> for super::text::TextSearchOre {
+    type Via = TwinIndex<OreBlock, super::text::TextSearchOreQuery>;
+}
+/// `TextSearchOre` answers `op::Matches` through its match index, under `EqlMatch`. The query term is a `MatchTwin<TextSearchOreQuery>`: the twin, bound as `eql_v4.query_text_search_ore`, which carries that index's term alone, and the tokens that verify a row.
+impl op::Answers<op::Matches, String> for super::text::TextSearchOre {
+    type Via = TwinIndex<Match<EqlMatch>, super::text::TextSearchOreQuery>;
+}
+/// `TextSearch` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::text::TextSearch {}
+/// `TextSearchQuery` from the column it queries and its `hm` term alone, at version 4: the query through its equality index.
+impl QueryTwin<Hmac256> for super::text::TextSearchQuery {
+    type Plaintext = String;
+    fn assemble(i: Identifier, hm: Hmac256) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            hm: Some(hm),
+            op: None,
+            bf: None,
+        }
+    }
+}
+/// `TextSearchQuery` from the column it queries and its `op` term alone, at version 4: the query through its OPE index.
+impl QueryTwin<OpeTerm<String>> for super::text::TextSearchQuery {
+    type Plaintext = String;
+    fn assemble(i: Identifier, op: OpeTerm<String>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            op: Some(op),
+            hm: None,
+            bf: None,
+        }
+    }
+}
+/// `TextSearchQuery` from the column it queries and its `bf` term alone, at version 4: the query through its match index.
+impl QueryTwin<BloomFilter> for super::text::TextSearchQuery {
+    type Plaintext = String;
+    fn assemble(i: Identifier, bf: BloomFilter) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            bf: Some(bf),
+            hm: None,
+            op: None,
+        }
+    }
+}
+/// `TextSearchQuery` is exact: the query term of `TextSearch`'s `op::Eq`, `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::text::TextSearchQuery {}
+/// `TextSearch` answers `op::Eq` through its equality index. The query term is `TextSearchQuery`, bound as `eql_v4.query_text_search`, which carries that index's term alone.
+impl op::Answers<op::Eq, String> for super::text::TextSearch {
+    type Via = TwinIndex<Equality, super::text::TextSearchQuery>;
+}
+/// `TextSearch` answers `op::Lt` through its OPE index. The query term is `TextSearchQuery`, bound as `eql_v4.query_text_search`, which carries that index's term alone.
+impl op::Answers<op::Lt, String> for super::text::TextSearch {
+    type Via = TwinIndex<Ope, super::text::TextSearchQuery>;
+}
+/// `TextSearch` answers `op::Lte` through its OPE index. The query term is `TextSearchQuery`, bound as `eql_v4.query_text_search`, which carries that index's term alone.
+impl op::Answers<op::Lte, String> for super::text::TextSearch {
+    type Via = TwinIndex<Ope, super::text::TextSearchQuery>;
+}
+/// `TextSearch` answers `op::Gt` through its OPE index. The query term is `TextSearchQuery`, bound as `eql_v4.query_text_search`, which carries that index's term alone.
+impl op::Answers<op::Gt, String> for super::text::TextSearch {
+    type Via = TwinIndex<Ope, super::text::TextSearchQuery>;
+}
+/// `TextSearch` answers `op::Gte` through its OPE index. The query term is `TextSearchQuery`, bound as `eql_v4.query_text_search`, which carries that index's term alone.
+impl op::Answers<op::Gte, String> for super::text::TextSearch {
+    type Via = TwinIndex<Ope, super::text::TextSearchQuery>;
+}
+/// `TextSearch` answers `op::Matches` through its match index, under `EqlMatch`. The query term is a `MatchTwin<TextSearchQuery>`: the twin, bound as `eql_v4.query_text_search`, which carries that index's term alone, and the tokens that verify a row.
+impl op::Answers<op::Matches, String> for super::text::TextSearch {
+    type Via = TwinIndex<Match<EqlMatch>, super::text::TextSearchQuery>;
+}
 /// `RealEq` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
 impl op::LabelledTarget for super::real::RealEq {}
 /// `RealEqQuery` from the column it queries and its `hm` term, at version 4.
@@ -197,6 +1033,99 @@ impl op::QueryTerm for super::real::RealEqQuery {}
 impl op::Answers<op::Eq, f32> for super::real::RealEq {
     type Via = TwinIndex<Equality, super::real::RealEqQuery>;
 }
+/// `RealOrdOre` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::real::RealOrdOre {}
+/// `RealOrdOreQuery` from the column it queries and its `ob` term, at version 4.
+impl QueryTwin<OreBlockTerm<f32>> for super::real::RealOrdOreQuery {
+    type Plaintext = f32;
+    fn assemble(i: Identifier, ob: OreBlockTerm<f32>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            ob,
+        }
+    }
+}
+/// `RealOrdOreQuery` is exact: the query term of `RealOrdOre`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::real::RealOrdOreQuery {}
+/// `RealOrdOre` answers `op::Lt` through its block ORE index. The query term is `RealOrdOreQuery`, bound as `eql_v4.query_real_ord_ore`.
+impl op::Answers<op::Lt, f32> for super::real::RealOrdOre {
+    type Via = TwinIndex<OreBlock, super::real::RealOrdOreQuery>;
+}
+/// `RealOrdOre` answers `op::Lte` through its block ORE index. The query term is `RealOrdOreQuery`, bound as `eql_v4.query_real_ord_ore`.
+impl op::Answers<op::Lte, f32> for super::real::RealOrdOre {
+    type Via = TwinIndex<OreBlock, super::real::RealOrdOreQuery>;
+}
+/// `RealOrdOre` answers `op::Gt` through its block ORE index. The query term is `RealOrdOreQuery`, bound as `eql_v4.query_real_ord_ore`.
+impl op::Answers<op::Gt, f32> for super::real::RealOrdOre {
+    type Via = TwinIndex<OreBlock, super::real::RealOrdOreQuery>;
+}
+/// `RealOrdOre` answers `op::Gte` through its block ORE index. The query term is `RealOrdOreQuery`, bound as `eql_v4.query_real_ord_ore`.
+impl op::Answers<op::Gte, f32> for super::real::RealOrdOre {
+    type Via = TwinIndex<OreBlock, super::real::RealOrdOreQuery>;
+}
+/// `RealOrd` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::real::RealOrd {}
+/// `RealOrdQuery` from the column it queries and its `op` term, at version 4.
+impl QueryTwin<OpeTerm<f32>> for super::real::RealOrdQuery {
+    type Plaintext = f32;
+    fn assemble(i: Identifier, op: OpeTerm<f32>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            op,
+        }
+    }
+}
+/// `RealOrdQuery` is exact: the query term of `RealOrd`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::real::RealOrdQuery {}
+/// `RealOrd` answers `op::Lt` through its OPE index. The query term is `RealOrdQuery`, bound as `eql_v4.query_real_ord`.
+impl op::Answers<op::Lt, f32> for super::real::RealOrd {
+    type Via = TwinIndex<Ope, super::real::RealOrdQuery>;
+}
+/// `RealOrd` answers `op::Lte` through its OPE index. The query term is `RealOrdQuery`, bound as `eql_v4.query_real_ord`.
+impl op::Answers<op::Lte, f32> for super::real::RealOrd {
+    type Via = TwinIndex<Ope, super::real::RealOrdQuery>;
+}
+/// `RealOrd` answers `op::Gt` through its OPE index. The query term is `RealOrdQuery`, bound as `eql_v4.query_real_ord`.
+impl op::Answers<op::Gt, f32> for super::real::RealOrd {
+    type Via = TwinIndex<Ope, super::real::RealOrdQuery>;
+}
+/// `RealOrd` answers `op::Gte` through its OPE index. The query term is `RealOrdQuery`, bound as `eql_v4.query_real_ord`.
+impl op::Answers<op::Gte, f32> for super::real::RealOrd {
+    type Via = TwinIndex<Ope, super::real::RealOrdQuery>;
+}
+/// `RealOrdOpe` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::real::RealOrdOpe {}
+/// `RealOrdOpeQuery` from the column it queries and its `op` term, at version 4.
+impl QueryTwin<OpeTerm<f32>> for super::real::RealOrdOpeQuery {
+    type Plaintext = f32;
+    fn assemble(i: Identifier, op: OpeTerm<f32>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            op,
+        }
+    }
+}
+/// `RealOrdOpeQuery` is exact: the query term of `RealOrdOpe`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::real::RealOrdOpeQuery {}
+/// `RealOrdOpe` answers `op::Lt` through its OPE index. The query term is `RealOrdOpeQuery`, bound as `eql_v4.query_real_ord_ope`.
+impl op::Answers<op::Lt, f32> for super::real::RealOrdOpe {
+    type Via = TwinIndex<Ope, super::real::RealOrdOpeQuery>;
+}
+/// `RealOrdOpe` answers `op::Lte` through its OPE index. The query term is `RealOrdOpeQuery`, bound as `eql_v4.query_real_ord_ope`.
+impl op::Answers<op::Lte, f32> for super::real::RealOrdOpe {
+    type Via = TwinIndex<Ope, super::real::RealOrdOpeQuery>;
+}
+/// `RealOrdOpe` answers `op::Gt` through its OPE index. The query term is `RealOrdOpeQuery`, bound as `eql_v4.query_real_ord_ope`.
+impl op::Answers<op::Gt, f32> for super::real::RealOrdOpe {
+    type Via = TwinIndex<Ope, super::real::RealOrdOpeQuery>;
+}
+/// `RealOrdOpe` answers `op::Gte` through its OPE index. The query term is `RealOrdOpeQuery`, bound as `eql_v4.query_real_ord_ope`.
+impl op::Answers<op::Gte, f32> for super::real::RealOrdOpe {
+    type Via = TwinIndex<Ope, super::real::RealOrdOpeQuery>;
+}
 /// `DoubleEq` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
 impl op::LabelledTarget for super::double::DoubleEq {}
 /// `DoubleEqQuery` from the column it queries and its `hm` term, at version 4.
@@ -215,4 +1144,97 @@ impl op::QueryTerm for super::double::DoubleEqQuery {}
 /// `DoubleEq` answers `op::Eq` through its equality index. The query term is `DoubleEqQuery`, bound as `eql_v4.query_double_eq`.
 impl op::Answers<op::Eq, f64> for super::double::DoubleEq {
     type Via = TwinIndex<Equality, super::double::DoubleEqQuery>;
+}
+/// `DoubleOrdOre` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::double::DoubleOrdOre {}
+/// `DoubleOrdOreQuery` from the column it queries and its `ob` term, at version 4.
+impl QueryTwin<OreBlockTerm<f64>> for super::double::DoubleOrdOreQuery {
+    type Plaintext = f64;
+    fn assemble(i: Identifier, ob: OreBlockTerm<f64>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            ob,
+        }
+    }
+}
+/// `DoubleOrdOreQuery` is exact: the query term of `DoubleOrdOre`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::double::DoubleOrdOreQuery {}
+/// `DoubleOrdOre` answers `op::Lt` through its block ORE index. The query term is `DoubleOrdOreQuery`, bound as `eql_v4.query_double_ord_ore`.
+impl op::Answers<op::Lt, f64> for super::double::DoubleOrdOre {
+    type Via = TwinIndex<OreBlock, super::double::DoubleOrdOreQuery>;
+}
+/// `DoubleOrdOre` answers `op::Lte` through its block ORE index. The query term is `DoubleOrdOreQuery`, bound as `eql_v4.query_double_ord_ore`.
+impl op::Answers<op::Lte, f64> for super::double::DoubleOrdOre {
+    type Via = TwinIndex<OreBlock, super::double::DoubleOrdOreQuery>;
+}
+/// `DoubleOrdOre` answers `op::Gt` through its block ORE index. The query term is `DoubleOrdOreQuery`, bound as `eql_v4.query_double_ord_ore`.
+impl op::Answers<op::Gt, f64> for super::double::DoubleOrdOre {
+    type Via = TwinIndex<OreBlock, super::double::DoubleOrdOreQuery>;
+}
+/// `DoubleOrdOre` answers `op::Gte` through its block ORE index. The query term is `DoubleOrdOreQuery`, bound as `eql_v4.query_double_ord_ore`.
+impl op::Answers<op::Gte, f64> for super::double::DoubleOrdOre {
+    type Via = TwinIndex<OreBlock, super::double::DoubleOrdOreQuery>;
+}
+/// `DoubleOrd` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::double::DoubleOrd {}
+/// `DoubleOrdQuery` from the column it queries and its `op` term, at version 4.
+impl QueryTwin<OpeTerm<f64>> for super::double::DoubleOrdQuery {
+    type Plaintext = f64;
+    fn assemble(i: Identifier, op: OpeTerm<f64>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            op,
+        }
+    }
+}
+/// `DoubleOrdQuery` is exact: the query term of `DoubleOrd`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::double::DoubleOrdQuery {}
+/// `DoubleOrd` answers `op::Lt` through its OPE index. The query term is `DoubleOrdQuery`, bound as `eql_v4.query_double_ord`.
+impl op::Answers<op::Lt, f64> for super::double::DoubleOrd {
+    type Via = TwinIndex<Ope, super::double::DoubleOrdQuery>;
+}
+/// `DoubleOrd` answers `op::Lte` through its OPE index. The query term is `DoubleOrdQuery`, bound as `eql_v4.query_double_ord`.
+impl op::Answers<op::Lte, f64> for super::double::DoubleOrd {
+    type Via = TwinIndex<Ope, super::double::DoubleOrdQuery>;
+}
+/// `DoubleOrd` answers `op::Gt` through its OPE index. The query term is `DoubleOrdQuery`, bound as `eql_v4.query_double_ord`.
+impl op::Answers<op::Gt, f64> for super::double::DoubleOrd {
+    type Via = TwinIndex<Ope, super::double::DoubleOrdQuery>;
+}
+/// `DoubleOrd` answers `op::Gte` through its OPE index. The query term is `DoubleOrdQuery`, bound as `eql_v4.query_double_ord`.
+impl op::Answers<op::Gte, f64> for super::double::DoubleOrd {
+    type Via = TwinIndex<Ope, super::double::DoubleOrdQuery>;
+}
+/// `DoubleOrdOpe` is sealed under the column a two-segment label names, so a field of this type is queried under its field reference's label.
+impl op::LabelledTarget for super::double::DoubleOrdOpe {}
+/// `DoubleOrdOpeQuery` from the column it queries and its `op` term, at version 4.
+impl QueryTwin<OpeTerm<f64>> for super::double::DoubleOrdOpeQuery {
+    type Plaintext = f64;
+    fn assemble(i: Identifier, op: OpeTerm<f64>) -> Self {
+        Self {
+            v: SchemaVersion::default(),
+            i,
+            op,
+        }
+    }
+}
+/// `DoubleOrdOpeQuery` is exact: the query term of `DoubleOrdOpe`'s `op::Lt`, `op::Lte`, `op::Gt`, `op::Gte`.
+impl op::QueryTerm for super::double::DoubleOrdOpeQuery {}
+/// `DoubleOrdOpe` answers `op::Lt` through its OPE index. The query term is `DoubleOrdOpeQuery`, bound as `eql_v4.query_double_ord_ope`.
+impl op::Answers<op::Lt, f64> for super::double::DoubleOrdOpe {
+    type Via = TwinIndex<Ope, super::double::DoubleOrdOpeQuery>;
+}
+/// `DoubleOrdOpe` answers `op::Lte` through its OPE index. The query term is `DoubleOrdOpeQuery`, bound as `eql_v4.query_double_ord_ope`.
+impl op::Answers<op::Lte, f64> for super::double::DoubleOrdOpe {
+    type Via = TwinIndex<Ope, super::double::DoubleOrdOpeQuery>;
+}
+/// `DoubleOrdOpe` answers `op::Gt` through its OPE index. The query term is `DoubleOrdOpeQuery`, bound as `eql_v4.query_double_ord_ope`.
+impl op::Answers<op::Gt, f64> for super::double::DoubleOrdOpe {
+    type Via = TwinIndex<Ope, super::double::DoubleOrdOpeQuery>;
+}
+/// `DoubleOrdOpe` answers `op::Gte` through its OPE index. The query term is `DoubleOrdOpeQuery`, bound as `eql_v4.query_double_ord_ope`.
+impl op::Answers<op::Gte, f64> for super::double::DoubleOrdOpe {
+    type Via = TwinIndex<Ope, super::double::DoubleOrdOpeQuery>;
 }
