@@ -176,9 +176,9 @@ fn parse_term(value: Frame<'_>, kind: u32) -> Result<IndexSpec, u32> {
 /// the one batched `generate_keys` for all rows and fields. That batch
 /// reaches ZeroKMS as one request per
 /// [`ClientOpts::max_keys_per_req`](stack_kms::ClientOpts::with_max_keys_per_req)
-/// keyed leaves (500 by default, sent sequentially: the guest pins
-/// `max_concurrent_reqs` to 1), so "one call" is exact up to 500 leaves and
-/// "one call per 500" past it. Everything else about the shape — the plan
+/// keyed leaves (500 by default, up to 3 of them sent at the same time:
+/// the guest's `MAX_CONCURRENT_REQS`), so "one call" is exact up to 500
+/// leaves and "one call per 500" past it. Everything else about the shape — the plan
 /// grammar, the one-context rule, why terms ride as passthrough — is
 /// [`dynamic::record`]'s to state.
 ///

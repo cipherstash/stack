@@ -165,6 +165,13 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
     take 1 to 2 ms. Two steps are still long: the one that builds a batch
     (36 ms to encrypt 1,410 values, which derives every search term) and
     the one that decodes each ZeroKMS response.
+- **A batch waits for ZeroKMS once per 1,500 keys, not once per 500.** The
+  guest split a batch into requests of 500 keys and sent them one after
+  another. It now sends up to 3 at the same time, and the client performs
+  them in parallel. Decrypting 100 rows of 14 columns (1,400 values) takes
+  about 138 ms of wall time, against 297 ms, and encrypting them about
+  114 ms, against 232. CPU does not change, and the guest still yields
+  every 64 keys. At most 1,500 keys' material is held at a time.
 - **A stuck call is no longer interrupted.** A call that runs on 30 seconds
   after its context ended is a bug. The option that interrupted it is gone,
   so it now runs on.
