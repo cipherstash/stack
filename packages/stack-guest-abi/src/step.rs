@@ -38,8 +38,20 @@
 //! again only once its waker has been woken (`FuturesOrdered`, `buffered`).
 //! So each request stores the waker it was polled with, and [`resume`] wakes
 //! it when its response arrives, before polling the operation again. The
-//! operation itself is polled with a waker that does nothing: the loop polls
-//! it on every step regardless.
+//! operation itself is polled with a waker that only records that it was
+//! woken: the loop polls it on every step regardless.
+//!
+//! # Yields
+//!
+//! Work that has run for a while can yield: wake its own waker and return
+//! pending without asking for anything, as a cooperative yield to any async
+//! runtime does. The step then pauses the operation under a handle with no
+//! requests, and the host resumes it with no responses. This is how a long
+//! batch hands control back to the host between chunks, so the host can run
+//! other work (a Go host: its garbage collector, other callers) while a guest
+//! cannot be preempted. Work that returns pending without asking for
+//! anything and without waking itself would never be woken: that is still
+//! an internal failure.
 //!
 //! This module holds no encoding: the guest decides how a step's requests
 //! and the host's responses cross the boundary.
@@ -49,7 +61,9 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::task::{Context, Poll, Waker};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::task::{Context, Poll, Wake, Waker};
 
 use vitaminc_protected::OpaqueDebug;
 use zeroize::Zeroizing;
@@ -256,7 +270,9 @@ impl Future for HostRequest {
 ///
 /// The operation's own failure, or `STATUS_STATE` when [`MAX_OPEN`]
 /// operations are already paused (the operation is dropped), or
-/// `STATUS_INTERNAL` when it paused without asking for anything.
+/// `STATUS_INTERNAL` when it paused without asking for anything and without
+/// waking itself. Work that woke itself and asked for nothing has yielded:
+/// it comes back as a [`Step::NeedsIo`] with no requests.
 pub fn start(work: Operation) -> Result<Step, u32> {
     clear_pending();
     step(None, work, Rc::default())
@@ -329,7 +345,9 @@ pub fn open_count() -> usize {
 /// of it.
 fn step(handle: Option<u64>, mut work: Operation, io: Rc<Io>) -> Result<Step, u32> {
     let previous = CURRENT.with(|current| current.replace(Some(io.clone())));
-    let polled = work.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+    let woken = Arc::new(Woken::default());
+    let waker = Waker::from(woken.clone());
+    let polled = work.as_mut().poll(&mut Context::from_waker(&waker));
     CURRENT.with(|current| *current.borrow_mut() = previous);
     if let Poll::Ready(result) = polled {
         return result.map(Step::Done);
@@ -343,8 +361,10 @@ fn step(handle: Option<u64>, mut work: Operation, io: Rc<Io>) -> Result<Step, u3
             .filter_map(|(index, exchange)| exchange.request.take().map(|r| (index, r)))
             .unzip()
     };
-    if requests.is_empty() {
-        // Nothing to wait for, so nothing would ever wake it.
+    if requests.is_empty() && !woken.0.load(Ordering::Relaxed) {
+        // Nothing to wait for and not woken, so nothing would ever wake it.
+        // Woken with nothing to wait for is a yield: it pauses below with
+        // no requests, and the host resumes it at once.
         drop(work);
         return Err(last_error::internal(
             "an operation paused without asking the host for anything",
@@ -368,6 +388,21 @@ fn step(handle: Option<u64>, mut work: Operation, io: Rc<Io>) -> Result<Step, u3
             .insert(handle, Open { work, io, awaiting });
     });
     Ok(Step::NeedsIo { handle, requests })
+}
+
+/// The waker a step polls its operation with. It records a wake, which is
+/// how a yield is told apart from work that stalled.
+#[derive(Default)]
+struct Woken(AtomicBool);
+
+impl Wake for Woken {
+    fn wake(self: Arc<Self>) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.store(true, Ordering::Relaxed);
+    }
 }
 
 /// The next handle.
@@ -626,6 +661,83 @@ mod tests {
         let work: Operation = Box::pin(futures::future::pending());
         assert_eq!(start(work).unwrap_err(), STATUS_INTERNAL);
         assert_eq!(open_count(), 0);
+    }
+
+    /// A cooperative yield: wake, then pending, once.
+    struct YieldOnce(bool);
+
+    impl Future for YieldOnce {
+        type Output = ();
+
+        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+            if self.0 {
+                return Poll::Ready(());
+            }
+            self.0 = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    }
+
+    #[test]
+    fn work_that_yields_pauses_with_no_requests_and_resumes_with_no_responses() {
+        let _reset = reset();
+        let work: Operation = Box::pin(async {
+            YieldOnce(false).await;
+            YieldOnce(false).await;
+            Ok(b"done".to_vec())
+        });
+        let (handle, requests) = needs_io(start(work));
+        assert!(requests.is_empty(), "a yield asks for nothing");
+        assert_eq!(
+            open_count(),
+            1,
+            "a yielded operation is paused under its handle"
+        );
+        let (again, requests) = needs_io(resume(handle, vec![]));
+        assert_eq!(again, handle);
+        assert!(requests.is_empty());
+        let done = resume(handle, vec![]).unwrap();
+        assert!(matches!(done, Step::Done(out) if out == b"done"));
+        assert_eq!(open_count(), 0);
+    }
+
+    /// A yield between requests: the host can tell the two kinds of pause
+    /// apart only by whether the step asks for anything.
+    #[test]
+    fn a_yield_between_requests_keeps_the_responses_in_order() {
+        let _reset = reset();
+        let work: Operation = Box::pin(async {
+            let a = request(get("https://kms/0"))
+                .await
+                .map_err(|_| STATUS_INTERNAL)?;
+            YieldOnce(false).await;
+            let b = request(get("https://kms/1"))
+                .await
+                .map_err(|_| STATUS_INTERNAL)?;
+            Ok([a.body.as_slice(), b.body.as_slice()].concat())
+        });
+        let (handle, requests) = needs_io(start(work));
+        assert_eq!(requests.len(), 1);
+        let (_, requests) = needs_io(resume(handle, vec![ok(b"a")]));
+        assert!(requests.is_empty(), "the yield");
+        let (_, requests) = needs_io(resume(handle, vec![]));
+        assert_eq!(requests[0].url, "https://kms/1");
+        let done = resume(handle, vec![ok(b"b")]).unwrap();
+        assert!(matches!(done, Step::Done(out) if out == b"ab"));
+    }
+
+    #[test]
+    fn a_yield_counts_against_max_open() {
+        let _reset = reset();
+        for _ in 0..MAX_OPEN {
+            needs_io(start(sequential(1)));
+        }
+        let work: Operation = Box::pin(async {
+            YieldOnce(false).await;
+            Ok(Vec::new())
+        });
+        assert_eq!(start(work).unwrap_err(), STATUS_STATE);
     }
 
     #[test]
