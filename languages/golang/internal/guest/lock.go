@@ -36,7 +36,7 @@ import (
 //     closed if the call ever returns.
 
 // StuckAfter is how long a guest call may go on after its caller's context
-// ends before the guest is treated as stuck and closed. Once the network
+// ends before the guest is treated as stuck (see [Stuck]). Once the network
 // wait is cancelled, what remains of a call is the guest's own work, which
 // takes milliseconds; the margin is wide so that a large batch cancelled
 // mid-way still finishes and leaves the instance open.
@@ -44,7 +44,7 @@ const StuckAfter = 30 * time.Second
 
 // ErrStuck is the cause of a call context that [Detach]'s backstop ended:
 // the call ran on [StuckAfter] after its caller's context ended.
-var ErrStuck = errors.New("guest: the call ran on long after its caller's context ended")
+var ErrStuck = errors.New("a call ran on long after its caller's context ended")
 
 // ErrAbandoned is what [Lock.AcquireUnless] returns when its abandon
 // channel closes before the lock is free.
@@ -67,28 +67,15 @@ func (l *Lock) slot() chan struct{} {
 // context that has already ended is refused even when the lock is free,
 // so a call that would start with nothing to wait for never starts.
 func (l *Lock) Acquire(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	select {
-	case l.slot() <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	// Both cases can be ready at once, and select picks either: a context
-	// that ended while the lock was free must not run the call.
-	if err := ctx.Err(); err != nil {
-		l.Unlock()
-		return err
-	}
-	return nil
+	// A nil channel never receives, so nothing abandons this wait.
+	return l.AcquireUnless(ctx, nil)
 }
 
 // AcquireUnless is [Acquire] that also gives up, with [ErrAbandoned], once
 // abandon is closed: for a lock whose holder may be stuck in a guest call
 // that cannot be interrupted, so the callers queued behind it, and the ones
 // that come later, leave rather than wait on it for ever. A closed abandon
-// is refused even when the lock is free.
+// is refused even when the lock is free. A nil abandon is [Acquire].
 func (l *Lock) AcquireUnless(ctx context.Context, abandon <-chan struct{}) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -105,7 +92,9 @@ func (l *Lock) AcquireUnless(ctx context.Context, abandon <-chan struct{}) error
 	case <-abandon:
 		return ErrAbandoned
 	}
-	// As in Acquire, more than one case can be ready at once.
+	// More than one case can be ready at once, and select picks any: a
+	// context that ended, or a lock abandoned, while the lock was free must
+	// not run the call.
 	if err := ctx.Err(); err != nil {
 		l.Unlock()
 		return err

@@ -140,11 +140,12 @@ request giving up never closes the shared client for the others.
   would leave the strategy unable to refresh.
 
 A client closes itself, and every later call returns `ErrState`, only when
-the guest's state is unknown: the guest trapped, or a call ran on for 30
-seconds after its `ctx` ended, which means a bug. Such a call cannot be
-interrupted, so it goes on running, but nothing waits for it: the calls
-queued behind it, and `Close`, return `ErrState` at once. A service that
-sees `ErrState` from a client it did not close builds a new one.
+the guest's state is unknown. Either the guest trapped, or a call ran on
+for 30 seconds after its `ctx` ended, which means a bug. Nothing can
+interrupt such a call, so its own caller waits until it returns. Every
+other call returns `ErrState` at once, and `Close` returns it without
+waiting for the stuck call. A service that sees `ErrState` from a client
+it did not close builds a new one.
 
 Every other setting is a functional option with a default:
 

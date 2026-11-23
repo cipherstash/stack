@@ -212,43 +212,78 @@ func TestAStepThatRunsOnAfterItsContextEndsClosesTheClient(t *testing.T) {
 
 // The runtime cannot interrupt a step (it is built without
 // WithCloseOnContextDone), so the backstop wedges the client while the
-// stuck step still runs: the callers queued behind it, and Close, leave
-// with ErrState at once rather than wait on it. When the step does return,
-// the module is closed and the instance released.
+// stuck step still runs. A caller already queued behind it, a later
+// caller, an abort and Close all leave at once rather than wait on it, and
+// Close releases the credentials then. When the step does return, the
+// module is closed and the instance released.
 func TestAStuckStepFailsEveryoneWaitingBehindIt(t *testing.T) {
 	rt := &switchable{rt: unauthorized}
 	c := cancelClient(t, rt, staticToken("t"))
-	c.stuck = 20 * time.Millisecond
+	// Long enough to queue a caller behind the step before the backstop
+	// fires.
+	c.stuck = 300 * time.Millisecond
+	var credentialsReleased atomic.Int32
+	c.releaseCredentials = sync.OnceValue(func() error {
+		credentialsReleased.Add(1)
+		return nil
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	entered := make(chan struct{})
 	release := make(chan struct{})
 	stuck := make(chan error, 1)
 	go func() {
 		_, err := c.call(ctx, func(run context.Context, inst *instance) ([]byte, error) {
 			cancel()
+			close(entered)
 			<-release // a guest loop that does not end, until the test lets it
 			return inst.call(run, inst.targets)
 		})
 		stuck <- err
 	}()
+	<-entered
+	// A caller with no deadline, queued on the lock before the backstop
+	// fires: it would otherwise wait for ever.
+	queued := make(chan error, 1)
+	go func() { queued <- cipherInit(context.Background(), c) }()
 	select {
-	case <-c.wedged:
+	case err := <-queued:
+		t.Fatalf("a call behind a running step returned before the backstop: %v", err)
+	case <-c.wedged.Done():
+		t.Fatal("the backstop fired before the queued caller could be checked; lengthen c.stuck")
+	case <-time.After(30 * time.Millisecond):
+	}
+	select {
+	case <-c.wedged.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("the backstop did not wedge the client")
 	}
-	// A caller with no deadline, which would otherwise wait for ever.
-	waited := make(chan error, 1)
-	go func() { waited <- cipherInit(context.Background(), c) }()
 	select {
-	case err := <-waited:
+	case err := <-queued:
 		if !errors.Is(err, ErrState) {
-			t.Fatalf("a call behind the stuck one: %v, want ErrState", err)
+			t.Fatalf("a call queued behind the stuck one: %v, want ErrState", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("a call behind the stuck one waited on it")
+		t.Fatal("a call queued behind the stuck one waited on it")
+	}
+	// A caller that comes after the wedge.
+	if err := cipherInit(context.Background(), c); !errors.Is(err, ErrState) {
+		t.Fatalf("a call after the stuck one: %v, want ErrState", err)
+	}
+	// An abort of an operation paused before the step: dropped with the
+	// instance, not waited for.
+	aborted := make(chan struct{})
+	go func() { c.abort(1); close(aborted) }()
+	select {
+	case <-aborted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("an abort waited on the stuck step")
 	}
 	if err := c.Close(); !errors.Is(err, ErrState) {
 		t.Fatalf("Close while a call is stuck: %v, want ErrState", err)
+	}
+	if n := credentialsReleased.Load(); n != 1 {
+		t.Fatalf("Close while a call is stuck released the credentials %d times, want 1", n)
 	}
 	if c.inst.module.IsClosed() {
 		t.Fatal("the module was closed under a running step")
@@ -256,8 +291,8 @@ func TestAStuckStepFailsEveryoneWaitingBehindIt(t *testing.T) {
 	close(release)
 	select {
 	case err := <-stuck:
-		if err == nil || !strings.Contains(err.Error(), "the client is closed") {
-			t.Fatalf("the stuck call: %v, want the client closed", err)
+		if !errors.Is(err, ErrState) || !strings.Contains(err.Error(), "the client is closed") {
+			t.Fatalf("the stuck call: %v, want ErrState and the client closed", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the stuck call did not return")
@@ -265,12 +300,103 @@ func TestAStuckStepFailsEveryoneWaitingBehindIt(t *testing.T) {
 	if !c.inst.module.IsClosed() {
 		t.Error("the module is open after the stuck step returned")
 	}
-	if !c.released {
-		t.Error("the Close that found the client wedged did not release it when the step returned")
+	if !c.released.Load() {
+		t.Error("the stuck step did not release the instance when it returned")
+	}
+	if n := credentialsReleased.Load(); n != 1 {
+		t.Errorf("the credentials were released %d times, want 1", n)
 	}
 	if err := c.Close(); err != nil {
 		t.Errorf("Close after the release: %v, want nil (idempotent)", err)
 	}
+}
+
+// An operation waits for a paused slot and for its token before it waits for
+// the lock. A wedged client ends those waits too, so a caller with no
+// deadline gets ErrState rather than waiting, and a new call fetches no
+// token. Each client here is wedged with no stuck step, so the test
+// releases its instance itself.
+func TestAWedgedClientEndsEveryWaitBeforeAStep(t *testing.T) {
+	wedgedClient := func(t *testing.T, token tokenSource) (*Client, *switchable) {
+		t.Helper()
+		rt := &switchable{rt: unauthorized}
+		c := cancelClient(t, rt, token)
+		t.Cleanup(func() { _ = c.release() })
+		return c, rt
+	}
+	wantStuck := func(t *testing.T, errs <-chan error) {
+		t.Helper()
+		select {
+		case err := <-errs:
+			if !errors.Is(err, ErrState) {
+				t.Fatalf("a call on the wedged client: %v, want ErrState", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("a call waited on after the client was wedged")
+		}
+	}
+
+	t.Run("a full slot pool", func(t *testing.T) {
+		c, rt := wedgedClient(t, staticToken("t"))
+		// Every slot is held by an operation that is not coming back.
+		for range maxPaused {
+			c.paused <- struct{}{}
+		}
+		errs := make(chan error, 1)
+		go func() { errs <- cipherInit(context.Background(), c) }()
+		select {
+		case err := <-errs:
+			t.Fatalf("a call with every slot held returned before the wedge: %v", err)
+		case <-time.After(30 * time.Millisecond):
+		}
+		c.wedge()
+		wantStuck(t, errs)
+		if n := rt.sent.Load(); n != 0 {
+			t.Fatalf("%d request(s) sent", n)
+		}
+	})
+
+	t.Run("a token fetch in flight", func(t *testing.T) {
+		fetching := make(chan struct{})
+		stopped := make(chan struct{})
+		c, rt := wedgedClient(t, tokenFunc(func(ctx context.Context) (string, error) {
+			close(fetching)
+			<-ctx.Done()
+			close(stopped)
+			return "", ctx.Err()
+		}))
+		errs := make(chan error, 1)
+		go func() { errs <- cipherInit(context.Background(), c) }()
+		<-fetching
+		c.wedge()
+		wantStuck(t, errs)
+		select {
+		case <-stopped:
+		default:
+			t.Error("the token fetch was not stopped")
+		}
+		if n := rt.sent.Load(); n != 0 {
+			t.Fatalf("%d request(s) sent", n)
+		}
+	})
+
+	t.Run("a new call", func(t *testing.T) {
+		var asked atomic.Int32
+		c, rt := wedgedClient(t, tokenFunc(func(context.Context) (string, error) {
+			asked.Add(1)
+			return "t", nil
+		}))
+		c.wedge()
+		errs := make(chan error, 1)
+		go func() { errs <- cipherInit(context.Background(), c) }()
+		wantStuck(t, errs)
+		if n := asked.Load(); n != 0 {
+			t.Errorf("the token was fetched %d time(s) for a call on a wedged client", n)
+		}
+		if n := rt.sent.Load(); n != 0 {
+			t.Fatalf("%d request(s) sent", n)
+		}
+	})
 }
 
 // A guest call whose context has already ended still runs: the runtime does
@@ -420,11 +546,11 @@ func TestAClosedModuleIsState(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close after the module closed: %v", err)
 	}
-	// The close must reach the runtime. A stuck call closes the module and
+	// The close must reach the runtime. A trapped call closes the module and
 	// marks the client closed; a Close that treated that as "already done"
 	// would leave the runtime and the host module it carries allocated for
 	// the life of the process.
-	if !c.released {
+	if !c.released.Load() {
 		t.Error("Close after the module closed left the runtime unreleased")
 	}
 	if m := c.inst.runtime.Module(transportModule); m != nil {
