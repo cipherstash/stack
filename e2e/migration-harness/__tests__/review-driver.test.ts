@@ -361,6 +361,16 @@ test.each([
     'infrastructure',
   ],
   [
+    'Postgres out of memory',
+    Object.assign(Error('out of memory'), { code: '53200' }),
+    'infrastructure',
+  ],
+  [
+    'Postgres connection capacity',
+    Object.assign(Error('too many connections'), { code: '53300' }),
+    'infrastructure',
+  ],
+  [
     'fetch transport failure',
     new TypeError('fetch failed', {
       cause: Object.assign(Error('socket closed'), { code: 'UND_ERR_SOCKET' }),

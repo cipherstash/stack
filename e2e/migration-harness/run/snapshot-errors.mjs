@@ -19,6 +19,7 @@ const connectionCodes = new Set([
 
 /** Preserve retryable store transport failures without hiding app-caused damage.
  * PostgreSQL class 08 is connection errors; 57P01-03 are server shutdown/startup.
+ * PostgreSQL 53200 and 53300 are server capacity failures.
  * HTTP 5xx and 429 store responses are availability failures.
  * Schema/data errors and unrecognized failures remain behaviour failures.
  * @param {unknown} error @returns {boolean} */
@@ -37,7 +38,10 @@ export function isSnapshotInfrastructureError(error) {
       if (connectionCodes.has(error.code)) return true
       if (/^[0-9A-Z]{5}$/.test(error.code))
         return (
-          /^08[0-9A-Z]{3}$/.test(error.code) || /^57P0[123]$/.test(error.code)
+          /^08[0-9A-Z]{3}$/.test(error.code) ||
+          /^57P0[123]$/.test(error.code) ||
+          error.code === '53200' ||
+          error.code === '53300'
         )
     }
     error = 'cause' in error ? error.cause : undefined

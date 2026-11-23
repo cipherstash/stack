@@ -7,6 +7,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'vitest'
 import { createIsolation } from '../isolation.mjs'
+import { createIsolationTrailWriter } from '../run/isolation-trail.mjs'
 import { createRealDriver } from '../run/real-driver.mjs'
 import { run } from '../run/run.mjs'
 
@@ -39,7 +40,6 @@ for (const rewrite of [false, true]) {
         ? `node --input-type=module -e '${script}'`
         : `printf '[]' > friction.json`
       const driver = createRealDriver({
-        // Store names use the first eight characters, so they must vary per Run.
         id: randomUUID(),
         root: fileURLToPath(new URL('../../..', import.meta.url)),
         output,
@@ -56,6 +56,7 @@ for (const rewrite of [false, true]) {
           manifest,
           driver,
           supervision: isolation,
+          writeIsolationTrail: createIsolationTrailWriter(output),
         })
         const check = report.evidence.find(
           (e) => e.checkId === 'no-rewrite.legacy-bytes',
