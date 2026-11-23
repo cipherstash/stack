@@ -21,6 +21,7 @@ use stack_encrypt::dynamic::{
     self, record, Op, Operand, QueryTerm, Reason, TargetDescriptor, TargetError, TargetOptions,
     TargetResolver, ValueFrame, ValueKind,
 };
+use stack_encrypt::eql_simulator;
 use stack_encrypt::json::{JsonDocument, Tag};
 use stack_encrypt::target::{Borrowed, IndexSpec};
 use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, NonEmpty, Pending, StackCipher};
@@ -244,7 +245,7 @@ fn extracted(doc: &JsonDocument, selector: &str) -> Vec<String> {
         .iter()
         .position(|entry| entry.selector() == &selector)
         .map(|j| {
-            serde_json::to_value(doc.node(j).unwrap())
+            serde_json::to_value(eql_simulator::entry_row(doc, j).unwrap())
                 .unwrap()
                 .to_string()
         })
@@ -255,10 +256,10 @@ fn extracted(doc: &JsonDocument, selector: &str) -> Vec<String> {
 /// The rows `json_tree_children(doc, token)` returns, one group each: the
 /// children of the node the token names, in ordinal order, at depth 1.
 fn children(doc: &JsonDocument, token: &str) -> Vec<Vec<String>> {
-    doc.children(&tag(token))
+    eql_simulator::json_tree_children(doc, &tag(token))
         .into_iter()
         .map(|(j, _, _)| {
-            let mut wire = serde_json::to_value(doc.node(j).unwrap()).unwrap();
+            let mut wire = serde_json::to_value(eql_simulator::entry_row(doc, j).unwrap()).unwrap();
             wire["d"] = json!(1);
             vec![wire.to_string()]
         })
@@ -269,10 +270,10 @@ fn children(doc: &JsonDocument, token: &str) -> Vec<Vec<String>> {
 /// its depth grafted.
 fn subtree(doc: &JsonDocument, tokens: &[String]) -> Vec<String> {
     let tokens: Vec<Tag> = tokens.iter().map(|t| tag(t)).collect();
-    doc.subtree(&tokens)
+    eql_simulator::json_tree_subtree(doc, &tokens)
         .into_iter()
         .map(|(j, _, d)| {
-            let mut wire = serde_json::to_value(doc.node(j).unwrap()).unwrap();
+            let mut wire = serde_json::to_value(eql_simulator::entry_row(doc, j).unwrap()).unwrap();
             wire["d"] = json!(d);
             wire.to_string()
         })
@@ -1576,8 +1577,8 @@ fn a_malformed_read_is_refused_before_any_key() {
 /// `element_match`: a predicate on one element of an array, its operand the
 /// members' subtree reads and their bounds, as the `subtree` operator and
 /// the orderings derive them. `json_tree_element_match` is modelled over
-/// the rows `JsonDocument::subtree` returns, as the subtree tests model
-/// `json_tree_subtree`; `packages/eql/tests/encryption` runs the SQL.
+/// the rows `eql_simulator::json_tree_subtree` returns, as the subtree tests
+/// model `json_tree_subtree`; `packages/eql/tests/encryption` runs the SQL.
 mod element_match {
     use super::*;
 
@@ -1676,7 +1677,10 @@ mod element_match {
                     .collect();
                 let selector = tag(bounds[0].1["s"].as_str().unwrap());
                 let token = tag(member["t"][k].as_str().unwrap());
-                let Some((j, entry, _)) = doc.subtree(&[token]).into_iter().next() else {
+                let Some((j, entry, _)) = eql_simulator::json_tree_subtree(doc, &[token])
+                    .into_iter()
+                    .next()
+                else {
                     all = false;
                     continue;
                 };
@@ -1685,7 +1689,7 @@ mod element_match {
                     all = false;
                     continue;
                 }
-                let node = serde_json::to_value(doc.node(j).unwrap()).unwrap();
+                let node = serde_json::to_value(eql_simulator::entry_row(doc, j).unwrap()).unwrap();
                 if node.get("op").is_none() {
                     all = false;
                     continue;

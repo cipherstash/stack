@@ -501,6 +501,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `operation`. That index would compile. The index's queries would then
   send the stored value's tokens, and miss rows. No stored byte changes.
 
+- **The JSON document read helpers moved to `eql_simulator`** (#1755).
+  `JsonDocument` had four methods that copy, in Rust, what the database
+  (EQL) does when your app reads part of a document. Production code does
+  not call them, because the database does that work. The four methods are
+  now functions in the module `stack_encrypt::eql_simulator`. The module is
+  behind a new feature, `eql-simulator`. The feature is off by default. Use
+  it in tests and examples that run without PostgreSQL.
+
+  | Removed method | Replacement | What it copies |
+  |---|---|---|
+  | `doc.children(token)` | `eql_simulator::json_tree_children(&doc, token)` | `eql_v4.json_tree_children` |
+  | `doc.subtree(tokens)` | `eql_simulator::json_tree_subtree(&doc, tokens)` | `eql_v4.json_tree_subtree(doc, tokens, 0)` |
+  | `doc.find(token)` | `eql_simulator::find_by_token(&doc, token)` | How EQL finds the entry a token names |
+  | `doc.node(slot)` | `eql_simulator::entry_row(&doc, slot)` | The row EQL returns for one entry |
+
+  Pass the document first, then the method's argument. Each function
+  returns what its method returned. To upgrade:
+
+  1. Turn the feature on in your dev-dependencies:
+     `stack-encrypt = { version = "0.4", features = ["eql-simulator"] }`.
+  2. Change each call to the function in the table.
+
+  No stored byte changes.
+
 - **Seven `PlanError` variants that nothing raised are removed** (#1671).
   Only the plan builder and `plan::all` raised them, and both are gone,
   so no call returned them: `IdentityWithoutField`, `IndexNotDeclared`,

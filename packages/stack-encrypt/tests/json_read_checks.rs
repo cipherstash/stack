@@ -23,6 +23,7 @@ use std::sync::atomic::Ordering;
 
 use common::CountingSource;
 use serde_json::{json, Value};
+use stack_encrypt::eql_simulator;
 use stack_encrypt::json::{
     JsonChild, JsonChildPlaintext, JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonPath,
     JsonPlaintext, JsonSelector, JsonSubtree, JsonSubtreeKey,
@@ -126,7 +127,7 @@ async fn slot_with(
     options: &JsonOptions,
 ) -> usize {
     let key = key_with(cipher, path, options).await;
-    doc.find(&key.token_bytes()[0])
+    eql_simulator::find_by_token(doc, &key.token_bytes()[0])
         .unwrap_or_else(|| panic!("the document has {path}"))
         .0
 }
@@ -134,7 +135,7 @@ async fn slot_with(
 /// The entry at `j` as an extractor returns it, at depth `d` when a walk
 /// returned it.
 fn row(doc: &JsonDocument, j: usize, d: Option<u32>) -> JsonNode {
-    let mut wire = serde_json::to_value(doc.node(j).unwrap()).unwrap();
+    let mut wire = serde_json::to_value(eql_simulator::entry_row(doc, j).unwrap()).unwrap();
     if let Some(d) = d {
         wire["d"] = json!(d);
     }
@@ -145,7 +146,7 @@ fn row(doc: &JsonDocument, j: usize, d: Option<u32>) -> JsonNode {
 /// read as the SQL reads them: for each token, the node it names at depth
 /// 0 and everything beneath it.
 fn walk(doc: &JsonDocument, key: &JsonSubtreeKey) -> Vec<JsonNode> {
-    doc.subtree(&key.token_bytes())
+    eql_simulator::json_tree_subtree(doc, &key.token_bytes())
         .iter()
         .map(|(j, _, d)| row(doc, *j, Some(*d)))
         .collect()
@@ -297,7 +298,8 @@ mod given_the_entry_arrow_returned {
         // Passing the check by rewriting `s` breaks the ciphertext's
         // binding to its own selector instead.
         let number = slot(&cipher, &doc, "$.number").await;
-        let mut wire = serde_json::to_value(doc.node(number).unwrap()).unwrap();
+        let mut wire =
+            serde_json::to_value(eql_simulator::entry_row(&doc, number).unwrap()).unwrap();
         wire["s"] = json!(hello.to_string());
         let relabelled: JsonNode = serde_json::from_value(wire).unwrap();
         let opened = open_extracted(&cipher, hello.open(relabelled)).await;
@@ -858,7 +860,7 @@ mod given_one_child_of_a_node {
     /// The rows `json_tree_children(doc, key.tokens()[0])` returns: one per
     /// child, in ordinal order, each at depth 1.
     fn children(doc: &JsonDocument, key: &JsonSubtreeKey) -> Vec<JsonNode> {
-        doc.children(&key.token_bytes()[0])
+        eql_simulator::json_tree_children(doc, &key.token_bytes()[0])
             .iter()
             .map(|(j, _, _)| row(doc, *j, Some(1)))
             .collect()
@@ -1323,12 +1325,11 @@ async fn the_model_keeps_the_last_entry_carrying_a_tag_as_the_sql_index_does() {
     sv.push(copy);
     let forged: JsonDocument = serde_json::from_value(wire).unwrap();
     assert_eq!(
-        forged.find(&hello.token_bytes()[0]).map(|(j, _)| j),
+        eql_simulator::find_by_token(&forged, &hello.token_bytes()[0]).map(|(j, _)| j),
         Some(10),
         "the last entry with the self tag"
     );
-    let children: Vec<usize> = forged
-        .children(&root.token_bytes()[0])
+    let children: Vec<usize> = eql_simulator::json_tree_children(&forged, &root.token_bytes()[0])
         .iter()
         .map(|(j, _, _)| *j)
         .collect();
@@ -1342,7 +1343,8 @@ async fn the_model_keeps_the_last_entry_carrying_a_tag_as_the_sql_index_does() {
 /// The self tag the stored node at `key`'s only token carries, as the
 /// database could write it on any entry: it holds the token and the `iv`.
 fn x_of(doc: &JsonDocument, key: &JsonSubtreeKey) -> String {
-    let (j, _) = doc.find(&key.token_bytes()[0]).expect("the node is there");
+    let (j, _) =
+        eql_simulator::find_by_token(doc, &key.token_bytes()[0]).expect("the node is there");
     base64(doc.entries()[j].self_tag())
 }
 

@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use common::CountingSource;
 use serde_json::{json, Value};
+use stack_encrypt::eql_simulator;
 use stack_encrypt::json::{
     JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonPath, JsonPlaintext, JsonSelector,
     JsonSubtree, JsonSubtreeKey,
@@ -86,7 +87,7 @@ async fn key(cipher: &Cipher, path: &str) -> JsonSubtreeKey {
 /// server finds it: by the self tag of the path's token.
 async fn slot(cipher: &Cipher, doc: &JsonDocument, path: &str) -> usize {
     let key = key(cipher, path).await;
-    doc.find(&key.token_bytes()[0])
+    eql_simulator::find_by_token(doc, &key.token_bytes()[0])
         .unwrap_or_else(|| panic!("the document has {path}"))
         .0
 }
@@ -94,7 +95,7 @@ async fn slot(cipher: &Cipher, doc: &JsonDocument, path: &str) -> usize {
 /// The entry at `j` as an extractor returns it, at depth `d` when a walk
 /// returned it.
 fn row(doc: &JsonDocument, j: usize, d: Option<u32>) -> JsonNode {
-    let mut wire = serde_json::to_value(doc.node(j).unwrap()).unwrap();
+    let mut wire = serde_json::to_value(eql_simulator::entry_row(doc, j).unwrap()).unwrap();
     if let Some(d) = d {
         wire["d"] = json!(d);
     }
@@ -104,7 +105,7 @@ fn row(doc: &JsonDocument, j: usize, d: Option<u32>) -> JsonNode {
 /// The rows a subtree read returns for `key`: for each token, the node it
 /// names at depth 0 and everything beneath it.
 fn walk(doc: &JsonDocument, key: &JsonSubtreeKey) -> Vec<JsonNode> {
-    doc.subtree(&key.token_bytes())
+    eql_simulator::json_tree_subtree(doc, &key.token_bytes())
         .iter()
         .map(|(j, _, d)| row(doc, *j, Some(*d)))
         .collect()

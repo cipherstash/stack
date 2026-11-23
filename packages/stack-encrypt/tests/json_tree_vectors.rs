@@ -36,6 +36,7 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 
 use serde_json::{json, Value};
+use stack_encrypt::eql_simulator;
 use stack_encrypt::json::{JsonDocument, JsonOptions, JsonPath};
 use stack_encrypt::nonempty;
 use stack_encrypt::target::CallerContext;
@@ -124,8 +125,7 @@ async fn vectors(options: &JsonOptions) -> Value {
             )
             .await
             .unwrap();
-        let (j, _) = doc
-            .find(&key.token_bytes()[0])
+        let (j, _) = eql_simulator::find_by_token(&doc, &key.token_bytes()[0])
             .expect("every node is stored");
         order[j] = json!(path);
     }

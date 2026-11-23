@@ -712,6 +712,14 @@ monorepo, which is where the silent failures are.
   `jsonb @>` over the plaintexts, is `packages/eql/tests/encryption/tests/json_tree.rs`,
   run by `mise run test:encryption:postgres`. The design and its
   implementation notes are `docs/plans/2026-10-17-json-tree-index.md`.
+  Tests that read a stored document without PostgreSQL use
+  `stack_encrypt::eql_simulator`, Rust copies of the EQL read functions
+  (`json_tree_children`, `json_tree_subtree`). Production code never calls
+  them. The functions are behind the `eql-simulator` feature.
+  stack-encrypt's own tests turn it on with a dev-dependency on the crate
+  itself. The EQL encryption test crate turns it on in its `Cargo.toml`. A
+  change to how a read finds or walks entries changes the SQL and the
+  simulator together.
   In v4 it carries v3's names for the searchable JSON document: the target
   `JsonSearch` stores `public.eql_v4_json_search`, queried with
   `eql_v4.query_json` and `eql_v4.query_json_leaf`, with entries

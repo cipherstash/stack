@@ -138,7 +138,7 @@ use vitaminc_protected::OpaqueDebug;
 use crate::target::{DecryptField, DecryptSource, Decryptable, Decryption};
 
 mod cascade;
-mod derive;
+pub(crate) mod derive;
 pub(crate) mod inputs;
 mod path;
 mod plain;
@@ -502,8 +502,8 @@ impl JsonDocument {
 
     /// The entries, in their stored order: the root first, the rest in a
     /// uniformly random order drawn when the document was sealed, which says
-    /// nothing of the tree. A node's children are found by the chain
-    /// ([`children`](Self::children)), not by position.
+    /// nothing of the tree. The database finds a node's children through
+    /// the chain, not by position.
     pub fn entries(&self) -> &[JsonEntry] {
         &self.entries
     }
@@ -517,116 +517,20 @@ impl JsonDocument {
         &self.selectors
     }
 
-    /// The entry whose self tag is `token`'s, as the server finds the node
-    /// a token names: its ordinal and the entry. `None` for a token that
-    /// names no node of this document.
-    ///
-    /// Where several entries carry the tag, which no sealing produces, the
-    /// last of them, as the server's index keeps it
-    /// (`eql_v4_internal.json_tree_index` builds it with
-    /// `jsonb_object_agg`, which keeps the last value of a repeated key).
-    pub fn find(&self, token: &Tag) -> Option<(usize, &JsonEntry)> {
+    /// The entry whose self tag matches `token`, with the slot it is stored
+    /// at. Decrypting a whole document uses it to check that the root's
+    /// token enters the document's chain. `eql_simulator::find_by_token`
+    /// is the public form, and its docs say which entry this returns.
+    pub(crate) fn find(&self, token: &Tag) -> Option<(usize, &JsonEntry)> {
         let x = derive::self_tag(&self.header.iv, token);
+        // The last entry with the tag. `eql_v4_internal.json_tree_index`
+        // builds its index with `jsonb_object_agg`. That function keeps the
+        // last value of a repeated key.
         self.entries
             .iter()
             .enumerate()
             .rev()
             .find(|(_, e)| e.x == x)
-    }
-
-    /// The children of the node whose token is `token`, as the server
-    /// enumerates them: the entries at the ordinals `0, 1, 2, …` under it,
-    /// probed until the first miss, each with the token the server derives
-    /// for it, by the member rule or the element rule, whichever the entry's
-    /// self tag matches, and `None` when it matches neither. A token that
-    /// names no node yields nothing.
-    ///
-    /// What `json_tree_children(doc, token)` returns; one level of the
-    /// walk [`subtree`](Self::subtree) runs to the bottom.
-    pub fn children(&self, token: &Tag) -> Vec<(usize, &JsonEntry, Option<Tag>)> {
-        let iv = &self.header.iv;
-        let mut out = Vec::new();
-        if self.find(token).is_none() {
-            return out;
-        }
-        // A node has at most as many children as the document has entries,
-        // so the probe loop is bounded whatever the entries say.
-        let most = u32::try_from(self.entries.len()).unwrap_or(u32::MAX);
-        for o in 0..most {
-            let tag = derive::parent_tag(iv, token, o);
-            // The last entry carrying the tag, as the server's index keeps
-            // it ([`find`](Self::find)).
-            let Some((j, entry)) = self
-                .entries
-                .iter()
-                .enumerate()
-                .rev()
-                .find(|(_, e)| e.p.as_ref() == Some(&tag))
-            else {
-                break;
-            };
-            out.push((j, entry, derive::hit_token(iv, token, entry, o)));
-        }
-        out
-    }
-
-    /// The rows the server's read returns for `tokens` with no budget:
-    /// for each token in order, the node it names at depth `0` and every
-    /// entry beneath it with its depth below that node, each node followed
-    /// by its children in ordinal order. (The SQL returns the rows of a
-    /// token by slot instead, which the client does not rely on.)
-    /// A token that names no node yields nothing. What
-    /// `json_tree_subtree(doc, tokens, 0)` returns.
-    ///
-    /// A stored document is untrusted, and its tags need not form a tree:
-    /// whoever holds a token can write a chain deeper than any document the
-    /// index seals, or a cycle. Each token's walk stops descending below the
-    /// deepest level a sealed document has, and stops once it has returned
-    /// as many entries as the document holds, which a tree never exceeds,
-    /// so it ends, and in bounded stack, on any document.
-    pub fn subtree(&self, tokens: &[Tag]) -> Vec<(usize, &JsonEntry, u32)> {
-        let mut out = Vec::new();
-        for token in tokens {
-            let Some((j, entry)) = self.find(token) else {
-                continue;
-            };
-            let mut rows = vec![(j, entry, 0)];
-            self.walk(token, 1, &mut rows);
-            out.extend(rows);
-        }
-        out
-    }
-
-    fn walk<'a>(&'a self, token: &Tag, depth: u32, out: &mut Vec<(usize, &'a JsonEntry, u32)>) {
-        // A walk finds each entry at most once, so a document whose tags do
-        // not form a tree (which no sealing produces) ends the walk once it
-        // has returned as many entries as the document holds, instead of
-        // looping; and no sealed document nests deeper than MAX_DEPTH, so a
-        // chain of tags longer than that stops there, in bounded stack.
-        if out.len() >= self.entries.len() || depth as usize > derive::MAX_DEPTH {
-            return;
-        }
-        for (j, entry, child) in self.children(token) {
-            if out.len() >= self.entries.len() {
-                return;
-            }
-            out.push((j, entry, depth));
-            if let Some(child) = child {
-                self.walk(&child, depth + 1, out);
-            }
-        }
-    }
-
-    /// The node stored at `slot` as an extraction returns it: the entry
-    /// with the header beside it. A scalar or an empty container opens on
-    /// its own; a container with children opens only with its subtree.
-    pub fn node(&self, slot: usize) -> Option<JsonNode> {
-        self.entries.get(slot).map(|entry| JsonNode {
-            entry: entry.clone(),
-            header: self.header.clone(),
-            slot: slot as u64,
-            depth: None,
-        })
     }
 
     pub(crate) fn new(
@@ -695,6 +599,17 @@ impl JsonNode {
     /// The entry's depth below the walk's start, when the walk reported one.
     pub fn depth(&self) -> Option<u32> {
         self.depth
+    }
+
+    /// The row for `entry`, stored at `slot`, with no depth.
+    #[cfg(any(test, feature = "eql-simulator"))]
+    pub(crate) fn new(entry: JsonEntry, header: JsonHeader, slot: u64) -> Self {
+        Self {
+            entry,
+            header,
+            slot,
+            depth: None,
+        }
     }
 }
 
@@ -1147,7 +1062,7 @@ mod tests {
             entries,
             JsonSelectorSet::default(),
         );
-        let walked = chain.subtree(&[token]);
+        let walked = crate::eql_simulator::json_tree_subtree(&chain, &[token]);
         assert_eq!(
             walked.len(),
             derive::MAX_DEPTH + 1,

@@ -1,7 +1,8 @@
 //! Properties of the JSON index's reads over random documents, with no
 //! database: the rows the server's read returns are modelled by
-//! `JsonDocument::subtree`, the Rust twin of `json_tree_subtree`, and
-//! opened through the key, as a caller opens what PostgreSQL returns.
+//! `eql_simulator::json_tree_subtree`, the Rust copy of
+//! `eql_v4.json_tree_subtree`, and opened through the key, as a caller opens
+//! what PostgreSQL returns.
 //!
 //! - **Metamorphic.** A read of `$.a` with `.b` applied on the client is the
 //!   read of `$.a.b`; a read of `$` (the open root walked, the sealed root
@@ -29,6 +30,7 @@ use common::stack_cipher;
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 use serde_json::{json, Map, Value};
+use stack_encrypt::eql_simulator;
 use stack_encrypt::json::{
     JsonDocument, JsonNode, JsonOptions, JsonPath, JsonPlaintext, JsonSubtree, Segment,
 };
@@ -88,14 +90,14 @@ async fn key(
 
 /// The rows the server's read returns for `key`, in full.
 fn rows(doc: &JsonDocument, key: &stack_encrypt::json::JsonSubtreeKey) -> Vec<JsonNode> {
-    doc.subtree(&key.token_bytes())
+    eql_simulator::json_tree_subtree(doc, &key.token_bytes())
         .iter()
         .map(|(j, _, d)| with_depth(doc, *j, *d))
         .collect()
 }
 
 fn with_depth(doc: &JsonDocument, j: usize, d: u32) -> JsonNode {
-    let mut wire = serde_json::to_value(doc.node(j).unwrap()).unwrap();
+    let mut wire = serde_json::to_value(eql_simulator::entry_row(doc, j).unwrap()).unwrap();
     wire["d"] = json!(d);
     serde_json::from_value(wire).unwrap()
 }
@@ -168,7 +170,7 @@ async fn slot(
     options: &JsonOptions,
 ) -> Option<usize> {
     let k = key(cipher, path, options, 0).await;
-    doc.find(&k.token_bytes()[0]).map(|(j, _)| j)
+    eql_simulator::find_by_token(doc, &k.token_bytes()[0]).map(|(j, _)| j)
 }
 
 /// `items` in the order a Fisher–Yates shuffle driven by `seed` puts them:
@@ -336,7 +338,7 @@ proptest! {
             for path in node_paths(&value) {
                 let node = path.select(&value)[0].clone();
                 let k = key(&cipher, &path, &options, 4).await;
-                let children = doc.children(&k.token_bytes()[0]).len();
+                let children = eql_simulator::json_tree_children(&doc, &k.token_bytes()[0]).len();
                 let count = match &node {
                     Value::Object(m) => m.len(),
                     Value::Array(a) => a.len(),
@@ -353,7 +355,7 @@ proptest! {
                     .await
                     .unwrap();
                 let j = doc.entries().iter().position(|e| e.selector() == selector.as_bytes()).unwrap();
-                let entry = selector.open(doc.node(j).unwrap());
+                let entry = selector.open(eql_simulator::entry_row(&doc, j).unwrap());
                 let arrow = JsonPlaintext::decrypt_from_with_context(entry, &cipher, aead())
                     .await
                     .map(held)
@@ -556,7 +558,7 @@ proptest! {
             let mut found = Vec::new();
             for siblings in [&left, &right] {
                 let doc = seal(&cipher, &row(siblings), &options(true)).await;
-                let (j, entry) = doc.find(&k.token_bytes()[0]).expect("found by its token");
+                let (j, entry) = eql_simulator::find_by_token(&doc, &k.token_bytes()[0]).expect("found by its token");
                 found.push(*entry.selector());
                 prop_assert_eq!(read(&cipher, &doc, &path, &options(true)).await, Some(json!(1)));
                 prop_assert!(j > 0);
@@ -625,7 +627,7 @@ proptest! {
             let found: Vec<usize> = k
                 .token_bytes()
                 .iter()
-                .map(|t| doc.find(t).map(|(j, _)| j).expect("every token names a node of the witness"))
+                .map(|t| eql_simulator::find_by_token(&doc, t).map(|(j, _)| j).expect("every token names a node of the witness"))
                 .collect();
             // Where each node of the witness is stored, by its own path's
             // key: the slots are random, so the read's tokens are checked
@@ -740,7 +742,7 @@ async fn every_seal_draws_its_own_member_ordinals() {
     let mut orders = BTreeSet::new();
     for _ in 0..10 {
         let doc = seal(&cipher, &value, &options).await;
-        let children = doc.children(&root.token_bytes()[0]);
+        let children = eql_simulator::json_tree_children(&doc, &root.token_bytes()[0]);
         assert_eq!(children.len(), 6, "every member at an ordinal from 0 to 5");
         let order: Vec<Vec<u8>> = children
             .iter()

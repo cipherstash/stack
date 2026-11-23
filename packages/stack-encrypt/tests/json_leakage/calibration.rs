@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 
 use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRunner};
 use serde_json::json;
+use stack_encrypt::eql_simulator;
 use stack_encrypt::json::{JsonOptions, JsonPath};
 use stack_encrypt::StackCipher;
 use stack_kms::FakeDataKeySource;
@@ -428,8 +429,8 @@ mod the_harness {
 
     /// The harness's hash chain is the crate's: reading a sealed
     /// document's observed bytes with a subtree key's tokens finds exactly
-    /// the entries `JsonDocument::subtree` does, at the same depths, for
-    /// paths through members, positions and wildcards, and `$`.
+    /// the entries `eql_simulator::json_tree_subtree` does, at the same
+    /// depths, for paths through members, positions, wildcards, and `$`.
     #[test]
     fn chain_is_the_crates_chain() {
         let runtime = runtime();
@@ -479,11 +480,11 @@ mod the_harness {
                     })
                     .expect("derives");
                 let tokens = key.token_bytes();
-                let crates: Vec<(usize, usize)> = sealed
-                    .subtree(&tokens)
-                    .iter()
-                    .map(|(j, _, d)| (*j, *d as usize))
-                    .collect();
+                let crates: Vec<(usize, usize)> =
+                    eql_simulator::json_tree_subtree(&sealed, &tokens)
+                        .iter()
+                        .map(|(j, _, d)| (*j, *d as usize))
+                        .collect();
                 assert_eq!(
                     walk_positions(&observed.rows[0], &tokens),
                     crates,

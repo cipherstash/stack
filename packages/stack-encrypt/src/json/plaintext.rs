@@ -252,7 +252,9 @@ impl fmt::Debug for JsonPlaintext {
 ///     JsonChildPlaintext, JsonDocument, JsonOptions, JsonPath, JsonPlaintext,
 /// };
 /// use stack_encrypt::target::{AeadContext, CallerContext};
-/// use stack_encrypt::{nonempty, DecryptFrom, EncryptInto, StackCipher};
+/// // `eql_simulator` needs this crate's `eql-simulator` feature. The
+/// // feature is off by default.
+/// use stack_encrypt::{eql_simulator, nonempty, DecryptFrom, EncryptInto, StackCipher};
 ///
 /// let cipher = StackCipher::builder()
 /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
@@ -276,15 +278,12 @@ impl fmt::Debug for JsonPlaintext {
 ///     )
 ///     .await?;
 ///
-/// // In production, the entries come from the database:
+/// // The database returns the entries. In production, this query does it:
 /// //   SELECT eql_v4.json_tree_children(profile, $1::text) FROM users WHERE id = $2
-/// // Here the example reads the same entries from the stored document, so
-/// // it runs without a database.
 /// let token = &parent.token_bytes()[0];
-/// let entries = stored
-///     .children(token)
+/// let entries = eql_simulator::json_tree_children(&stored, token)
 ///     .into_iter()
-///     .filter_map(|(slot, _, _)| stored.node(slot));
+///     .filter_map(|(slot, _, _)| eql_simulator::entry_row(&stored, slot));
 ///
 /// // Your app decrypts each entry. The key says which member it is.
 /// let mut limits = serde_json::Map::new();

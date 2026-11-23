@@ -57,6 +57,7 @@ use std::sync::{Arc, Mutex};
 
 use common::frames::{frame, object};
 use stack_encrypt::dynamic::{query_term, record, verify, NoTargets, Op, ValueFrame};
+use stack_encrypt::eql_simulator;
 use stack_encrypt::nonempty;
 use vitaminc_aead::plaintext::{Physical, Raw};
 use vitaminc_aead::Frame;
@@ -2495,11 +2496,11 @@ mod json_index {
                 })
                 .unwrap();
             // The rows as the SQL returns them, built before the watch.
-            let rows: Vec<JsonNode> = doc
-                .subtree(&key.token_bytes())
+            let rows: Vec<JsonNode> = eql_simulator::json_tree_subtree(&doc, &key.token_bytes())
                 .iter()
                 .map(|(j, _, d)| {
-                    let mut wire = serde_json::to_value(doc.node(*j).unwrap()).unwrap();
+                    let mut wire =
+                        serde_json::to_value(eql_simulator::entry_row(&doc, *j).unwrap()).unwrap();
                     wire["d"] = json!(d);
                     serde_json::from_value(wire).unwrap()
                 })
@@ -2527,8 +2528,8 @@ mod json_index {
                         .await
                 })
                 .unwrap();
-            let (j, _) = doc.find(&key.token_bytes()[0]).unwrap();
-            let node = selector.open(doc.node(j).unwrap());
+            let (j, _) = eql_simulator::find_by_token(&doc, &key.token_bytes()[0]).unwrap();
+            let node = selector.open(eql_simulator::entry_row(&doc, j).unwrap());
             watched(&format!("-> (sealed_root: {sealed_root})"), || {
                 let opened = rt.block_on(async {
                     JsonPlaintext::decrypt_from_with_context(node, &cipher, aead())
@@ -2736,7 +2737,8 @@ mod json_index {
         let tag =
             |text: &str| -> [u8; 16] { Base64::decode_vec(text).unwrap().try_into().unwrap() };
         let row = |j: usize, d: Option<u64>| {
-            let mut wire = serde_json::to_value(doc.node(j).unwrap()).unwrap();
+            let mut wire =
+                serde_json::to_value(eql_simulator::entry_row(&doc, j).unwrap()).unwrap();
             if let Some(d) = d {
                 wire["d"] = json!(d);
             }
@@ -2759,8 +2761,7 @@ mod json_index {
             panic!("a subtree read's tokens are a text array")
         };
         let tokens: Vec<[u8; 16]> = tokens.iter().map(|t| tag(t)).collect();
-        let read = vec![doc
-            .subtree(&tokens)
+        let read = vec![eql_simulator::json_tree_subtree(&doc, &tokens)
             .into_iter()
             .map(|(j, _, d)| row(j, Some(u64::from(d))))
             .collect::<Vec<_>>()];

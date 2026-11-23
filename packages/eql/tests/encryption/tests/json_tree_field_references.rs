@@ -33,6 +33,7 @@ use eql_bindings::v4::json_tree::{
 use eql_bindings::Identifier;
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::{self, record, ValueFrame};
+use stack_encrypt::eql_simulator;
 use stack_encrypt::json::{JsonChildPlaintext, JsonDocument, JsonPlaintext, JsonQuery};
 use stack_encrypt::sem::TermError;
 use stack_encrypt::target::{DecryptSource, EncryptTarget};
@@ -255,7 +256,8 @@ async fn the_children_token_comes_with_the_key_that_opens_each_child() {
     // depth below the node.
     let document = &stored.profile;
     let mut members = Vec::new();
-    for (slot, _, _) in index_document(document).children(&key.token_bytes()[0]) {
+    let indexed = index_document(document);
+    for (slot, _, _) in eql_simulator::json_tree_children(&indexed, &key.token_bytes()[0]) {
         let mut entry = document.sv[slot].clone();
         entry.h = Some(document.h.clone());
         entry.j = Some(slot as u64);
