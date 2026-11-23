@@ -296,7 +296,11 @@ async function behaviourWith(
 ) {
   observed.snapshot.mockReset()
   const queue = [legacySnapshot(), ...snapshots]
-  observed.snapshot.mockImplementation(() => queue.shift())
+  observed.snapshot.mockImplementation(() => {
+    const snapshot = queue.shift()
+    if (snapshot instanceof Error) throw snapshot
+    return snapshot
+  })
   const output = await mkdtemp(resolve(tmpdir(), 'mh-postgres-order-'))
   let fresh: unknown = null
   let execs = 0
@@ -449,3 +453,41 @@ test('Postgres driver fails a fresh write that deletes a pre-existing row', asyn
     }),
   )
 })
+
+test.each([
+  ['ECONNRESET', true],
+  ['42703', false],
+])(
+  'Postgres preserves completed checks when the fresh-write snapshot fails with %s',
+  async (code, infrastructure) => {
+    const converted = convertedSnapshot()
+    const error = Object.assign(Error('fresh write snapshot failed'), { code })
+    await expect(
+      behaviourWith([converted, converted, converted, error]),
+    ).rejects.toMatchObject({
+      infrastructure,
+      checks: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'migration.postgres-migrate',
+          passed: true,
+        }),
+        expect.objectContaining({
+          id: 'behaviour.postgres-row-retention',
+          passed: true,
+        }),
+        expect.objectContaining({
+          id: 'behaviour.postgres-age-lookup',
+          passed: true,
+        }),
+        ...(infrastructure
+          ? []
+          : [
+              expect.objectContaining({
+                id: 'migration.postgres-fresh-v3-storage',
+                passed: false,
+              }),
+            ]),
+      ]),
+    })
+  },
+)

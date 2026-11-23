@@ -495,15 +495,19 @@ export function createRealDriver({
           )
           const checks = await result.mutate()
           if (freshSnapshotFailure) {
-            throw Object.assign(
-              Error('PostgreSQL fresh storage inspection failed', {
-                cause: freshSnapshotFailure,
-              }),
-              {
-                infrastructure:
-                  isSnapshotInfrastructureError(freshSnapshotFailure),
-              },
-            )
+            const infrastructure =
+              isSnapshotInfrastructureError(freshSnapshotFailure)
+            const cause = 'PostgreSQL fresh storage inspection failed'
+            if (!infrastructure)
+              checks.push({
+                id: 'migration.postgres-fresh-v3-storage',
+                passed: false,
+                cause,
+              })
+            throw Object.assign(Error(cause, { cause: freshSnapshotFailure }), {
+              infrastructure,
+              checks,
+            })
           }
           checks.push(postgresFreshWriteCheck(freshSnapshot, 'new', current))
           checks.push(

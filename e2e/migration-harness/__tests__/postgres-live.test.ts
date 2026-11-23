@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import 'dotenv/config'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -5,6 +6,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from 'vitest'
 import { createIsolation } from '../isolation.mjs'
+import { createIsolationTrailWriter } from '../run/isolation-trail.mjs'
 import { createRealDriver } from '../run/real-driver.mjs'
 import { run } from '../run/run.mjs'
 
@@ -14,8 +16,7 @@ const keys = [
   'CS_CLIENT_KEY',
   'CS_CLIENT_ACCESS_KEY',
 ]
-const enabled =
-  process.env.HARNESS_LIVE === '1' && keys.every((key) => process.env[key])
+const enabled = process.env.HARNESS_LIVE === '1'
 const cases = [
   ['reference', 'pass', null],
   ['noop', 'behaviour', 'migration.postgres-v3-columns'],
@@ -30,6 +31,10 @@ for (const [kind, outcome, checkId] of cases)
   test.skipIf(!enabled)(
     `Postgres v2 real Run: ${kind}`,
     async () => {
+      const missing = keys.filter((key) => !process.env[key])
+      if (missing.length)
+        throw Error(`HARNESS_LIVE=1 requires ${missing.join(', ')}`)
+      const id = randomUUID()
       const output = await mkdtemp(resolve(tmpdir(), 'mh-postgres-'))
       const isolation = createIsolation()
       const manifest = {
@@ -38,7 +43,7 @@ for (const [kind, outcome, checkId] of cases)
         procedure: 'postgres-v2-to-v3' as const,
       }
       const driver = createRealDriver({
-        id: `pg-${Date.now()}`,
+        id,
         root: fileURLToPath(new URL('../../..', import.meta.url)),
         output,
         command: '',
@@ -51,10 +56,11 @@ for (const [kind, outcome, checkId] of cases)
       })
       try {
         const report = await run({
-          id: kind,
+          id,
           manifest,
           driver,
           supervision: isolation,
+          writeIsolationTrail: createIsolationTrailWriter(output),
         })
         const diagnostics = JSON.stringify({
           failures: report.failures,
