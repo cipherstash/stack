@@ -137,16 +137,27 @@ func guestModuleConfig() wazero.ModuleConfig {
 // strict policy, memory that cannot be locked fails instantiation with
 // ErrMemoryLock.
 func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.LockPolicy) (*instance, error) {
-	// WithCloseOnContextDone closes the module when a call's context ends.
-	// A guest call never runs under the caller's context: Client.call runs
-	// it under guest.Detach, whose context ends only when the guest has run
-	// on long after its caller gave up. Closing the module then frees the
-	// Client's lock, which a stuck call would otherwise hold against every
-	// other user, at the cost of the Client: the alternative is a wedged
-	// process.
+	// No WithCloseOnContextDone. That option makes wazero compile a call
+	// back into Go at the top of every loop the guest runs, so that a call
+	// whose context ends can be interrupted. The guest is cryptography,
+	// which is tight loops (the ZeroKMS key derivation, software AES and
+	// GHASH, copies and wipes), and the option cost the guest 3.5 to 5 times
+	// its CPU on a decrypt. Nothing else needs it: a guest call never runs under
+	// the caller's context (Client.step runs it under guest.Detach) and
+	// never waits inside the guest (the host runs every request between
+	// steps), so the only call it would interrupt is a guest step that does
+	// not finish, which is a bug. Client.step's backstop handles that one
+	// without interrupting it: the client is closed for everyone else, and
+	// released if the step returns.
+	//
+	// The cost of leaving it off: the Go scheduler cannot preempt native
+	// wasm code, and those calls into Go were the guest's only safe points.
+	// A stop-the-world GC pause now waits for the running guest step, so
+	// the pause can be as long as one step (about 10 to 25 ms for a
+	// 1,400-value decrypt, against 0.3 ms with the option). Keeping each
+	// step short bounds it.
 	config := wazero.NewRuntimeConfig().
-		WithCompilationCache(compilationCache()).
-		WithCloseOnContextDone(true)
+		WithCompilationCache(compilationCache())
 	runtime := wazero.NewRuntimeWithConfig(ctx, config)
 	// The Must* form of this panics on any error, which is the wrong
 	// failure mode for a constructor in a library and would strand the
@@ -228,10 +239,10 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.Lo
 // release runs the guest's shutdown — the client key and every loaded
 // index key wiped inside the instance — and closes the runtime, which
 // frees the linear memory through the allocator's wipe. It is what Close
-// does, and what the cleanup on an unreachable Client does. A module a
-// stuck call or a trap already closed cannot run se_shutdown; the
-// runtime close still wipes and frees its memory, so nothing is left
-// behind either way.
+// does, what a stuck step does once it returns, and what the cleanup on an
+// unreachable Client does. A module a trap already closed cannot run
+// se_shutdown; the runtime close still wipes and frees its memory, so
+// nothing is left behind either way.
 func (inst *instance) release() error {
 	ctx := context.Background()
 	if !inst.module.IsClosed() {
