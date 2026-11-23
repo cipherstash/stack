@@ -1347,8 +1347,10 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         };
         let mut fulfil = self.fulfil;
         loop {
-            // Only the rest of the work, never an output, is held across
-            // the yield.
+            // The rest of the work is held across the yield, and with it
+            // the items recovered so far, which can be plaintext. Its guard
+            // releases and wipes them if the operation is dropped at the
+            // yield.
             fulfil = match fulfil(&mut responses)? {
                 Fulfilled::Done(value) => return Ok(value),
                 Fulfilled::More(rest) => rest,
