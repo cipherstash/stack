@@ -164,4 +164,33 @@ mod tests {
         drop(work);
         assert_eq!(active.load(Ordering::SeqCst), 0);
     }
+
+    #[test]
+    fn a_yield_wakes_itself_and_is_pending_once_then_ready() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use std::task::{Wake, Waker};
+
+        /// A waker that counts its wakes.
+        #[derive(Default)]
+        struct Wakes(AtomicUsize);
+        impl Wake for Wakes {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let wakes = Arc::new(Wakes::default());
+        let waker = Waker::from(wakes.clone());
+        let mut cx = Context::from_waker(&waker);
+        let mut yielded = yield_now();
+
+        assert!(Pin::new(&mut yielded).poll(&mut cx).is_pending());
+        assert_eq!(
+            wakes.0.load(Ordering::SeqCst),
+            1,
+            "a yield that did not wake itself would never be polled again"
+        );
+        assert!(Pin::new(&mut yielded).poll(&mut cx).is_ready());
+        assert_eq!(wakes.0.load(Ordering::SeqCst), 1, "it wakes itself once");
+    }
 }

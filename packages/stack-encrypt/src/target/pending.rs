@@ -2514,6 +2514,35 @@ mod tests {
         })
     }
 
+    /// A waker that counts its wakes.
+    #[derive(Default)]
+    struct Wakes(AtomicUsize);
+
+    impl std::task::Wake for Wakes {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// No native fulfilment stops part way, so nothing else polls a yield
+    /// here: a wasm guest's column is what awaits one.
+    #[test]
+    fn a_yield_wakes_itself_and_is_pending_once_then_ready() {
+        let wakes = Arc::new(Wakes::default());
+        let waker = std::task::Waker::from(wakes.clone());
+        let mut cx = std::task::Context::from_waker(&waker);
+        let mut yielded = YieldNow(false);
+
+        assert!(Pin::new(&mut yielded).poll(&mut cx).is_pending());
+        assert_eq!(
+            wakes.0.load(Ordering::SeqCst),
+            1,
+            "a yield that did not wake itself would never be polled again"
+        );
+        assert!(Pin::new(&mut yielded).poll(&mut cx).is_ready());
+        assert_eq!(wakes.0.load(Ordering::SeqCst), 1, "it wakes itself once");
+    }
+
     #[tokio::test]
     async fn a_ready_pending_resolves_without_any_io() {
         let cipher = cipher().await;
