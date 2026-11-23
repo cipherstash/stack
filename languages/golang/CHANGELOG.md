@@ -143,16 +143,17 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ### Changed
 
-- **Decrypt uses about a quarter of the CPU it did in rc.6.** The guest's
+- **Decrypt uses about a tenth of the CPU it did in rc.6.** The guest's
   runtime was built with wazero's `WithCloseOnContextDone`. That option
   puts a call back into Go at the top of every loop the guest runs, and the
   guest's cryptography is almost all loops. The runtime no longer sets the
   option, and the guest is now built at `opt-level = 3` rather than for
-  size. These figures are medians of 9 calls on one Apple silicon laptop.
-  - 100 rows of 14 columns, against ZeroKMS: about 410 ms of CPU before,
-    about 105 ms now. Wall time falls from about 670 ms to 340.
-  - 100 rows of one 2 KB text or JSON column: 90 to 100 ms of CPU before,
-    about 25 ms now.
+  size. These figures are medians of 9 calls on one Apple silicon laptop,
+  with its CPU clock held steady.
+  - 100 rows of 14 columns, against ZeroKMS: about 400 ms of CPU before,
+    about 39 ms now. Wall time falls from about 660 ms to 280.
+  - 100 rows of one 2 KB text or JSON column: 90 to 105 ms of CPU before,
+    about 8 ms now.
   - The EQL build of the guest is about 1.9 MB larger: 6.8 MB, against
     4.9 MB.
   - The option's calls into Go were also the points where the Go
