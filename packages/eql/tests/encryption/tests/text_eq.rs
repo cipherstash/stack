@@ -6,6 +6,7 @@ use eql_bindings::v3::terms::{Ciphertext, Hmac256};
 use eql_bindings::v4::text::{TextEq, TextEqQuery};
 use eql_bindings::v4::SchemaVersion;
 use eql_bindings::Identifier;
+use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::transcode::{Reader, Transcode};
 use stack_encrypt::{DecryptFrom, Encrypt, EncryptInto, NonEmpty};
 use vitaminc_aead::plaintext::Sink;
@@ -62,8 +63,9 @@ async fn text_round_trips_through_json_and_both_canonical_directions() {
             v: SchemaVersion::CURRENT,
             i: column().into_inner(),
             c: native.read(Ciphertext::visitor()).unwrap(),
-            hm: keyset
-                .equality_term(value.clone(), column())
+            hm: value
+                .clone()
+                .encrypt_into_with_context::<EqualityTerm, _>(&keyset, column())
                 .await
                 .unwrap()
                 .read(Hmac256::visitor())
@@ -125,9 +127,9 @@ async fn independent_queries_match_native_terms_without_requesting_data_keys() {
         .await
         .unwrap();
     assert_eq!(query.hm, stored.hm);
-    let canonical = reader
-        .default_keyset()
-        .equality_term(value.clone(), column())
+    let canonical = value
+        .clone()
+        .encrypt_into_with_context::<EqualityTerm, _>(&reader.default_keyset(), column())
         .await
         .unwrap()
         .read(Hmac256::visitor())

@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
+use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::{
     nonempty, CipherText, DecryptFrom, EncryptInto, Error, SealedValue, StackCipher,
     StackCipherText,
@@ -551,16 +552,16 @@ async fn keysets_derive_distinct_index_keys() {
     let a = load(&cipher, Uuid::from_u128(1)).await.expect("a");
     let b = load(&cipher, Uuid::from_u128(2)).await.expect("b");
 
-    let term_a = a
-        .equality_term(7u32, nonempty!("users/age"))
+    let term_a: EqualityTerm = 7u32
+        .encrypt_into_with_context(&a, nonempty!("users/age"))
         .await
         .expect("term");
-    let term_b = b
-        .equality_term(7u32, nonempty!("users/age"))
+    let term_b: EqualityTerm = 7u32
+        .encrypt_into_with_context(&b, nonempty!("users/age"))
         .await
         .expect("term");
-    let term_a_again = a
-        .equality_term(7u32, nonempty!("users/age"))
+    let term_a_again: EqualityTerm = 7u32
+        .encrypt_into_with_context(&a, nonempty!("users/age"))
         .await
         .expect("term");
 
@@ -616,8 +617,6 @@ async fn a_sealed_leaf_names_the_keyset_it_was_sealed_under() {
 /// leaf. A new selection by the name gets the other keyset.
 #[tokio::test]
 async fn calls_built_before_the_load_settle_under_the_keyset_their_handle_keeps() {
-    use stack_encrypt::sem::EqualityTerm;
-
     // No name is trusted, so every lookup of a name asks.
     let cipher = StackCipher::builder()
         .kms(Observed::default())
@@ -632,7 +631,8 @@ async fn calls_built_before_the_load_settle_under_the_keyset_their_handle_keeps(
     let first = acme.encrypt_tree("hello".to_string(), "greeting");
     let second = acme.encrypt_tree("hello".to_string(), "greeting");
     let third = acme.encrypt_tree("hello".to_string(), "greeting");
-    let term = acme.equality_term(String::from("a@example.com"), field());
+    let term =
+        String::from("a@example.com").encrypt_into_with_context::<EqualityTerm, _>(&acme, field());
 
     let first = first.await.expect("seal");
     let kept = acme.keyset_id().await.unwrap();
@@ -660,13 +660,13 @@ async fn calls_built_before_the_load_settle_under_the_keyset_their_handle_keeps(
     assert_eq!(opened, "hello");
 
     let term: EqualityTerm = term.await.expect("term");
-    let same = acme
-        .equality_term(String::from("a@example.com"), field())
+    let same: EqualityTerm = String::from("a@example.com")
+        .encrypt_into_with_context(&acme, field())
         .await
         .expect("term");
     assert_eq!(term, same, "derived under the handle's keyset");
-    let under_the_other = elsewhere
-        .equality_term(String::from("a@example.com"), field())
+    let under_the_other: EqualityTerm = String::from("a@example.com")
+        .encrypt_into_with_context(&elsewhere, field())
         .await
         .expect("term");
     assert_ne!(term, under_the_other);

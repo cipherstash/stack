@@ -666,19 +666,21 @@ async fn init_still_checks_a_key_source_with_its_own_identity_at_startup() {
 /// the loaded keyset derives. The first one awaited loads the keyset.
 #[tokio::test]
 async fn terms_built_before_the_load_are_the_terms_built_after_it() {
-    use stack_encrypt::sem::DefaultMatch;
+    use stack_encrypt::sem::{MatchTerms, OpeTerm, OreBlockTerm, OreTerm};
 
     let (shared, source) = unloaded().await;
     let early = shared.default_keyset();
     let field = || nonempty!("users").with("email");
 
     // Built before the load: none of these has a keyset to derive under.
-    let equality = early.equality_term(String::from("bob@example.com"), field());
-    let refused = early.equality_term(true, field());
-    let matching = early.match_terms::<DefaultMatch>("bob the builder", field());
-    let ore = early.ore_term(42u32, field());
-    let ope = early.ope_term(42u32, field());
-    let block = early.ore_block_term(42u32, field());
+    let equality = String::from("bob@example.com")
+        .encrypt_into_with_context::<EqualityTerm, _>(&early, field());
+    let refused = true.encrypt_into_with_context::<EqualityTerm, _>(&early, field());
+    let matching =
+        String::from("bob the builder").encrypt_into_with_context::<MatchTerms, _>(&early, field());
+    let ore = 42u32.encrypt_into_with_context::<OreTerm<u32>, _>(&early, field());
+    let ope = 42u32.encrypt_into_with_context::<OpeTerm<u32>, _>(&early, field());
+    let block = 42u32.encrypt_into_with_context::<OreBlockTerm<u32>, _>(&early, field());
     assert_eq!(source.take(), vec![], "building makes no request");
 
     let equality = equality.with_credential(bob()).await.unwrap();
@@ -704,34 +706,42 @@ async fn terms_built_before_the_load_are_the_terms_built_after_it() {
     let late = shared.default_keyset();
     assert_eq!(
         equality,
-        late.equality_term(String::from("bob@example.com"), field())
+        String::from("bob@example.com")
+            .encrypt_into_with_context::<EqualityTerm, _>(&late, field())
             .with_credential(alice())
             .await
-            .unwrap()
+            .unwrap(),
+        "the equality term built before the load"
     );
     assert_eq!(
         matching,
-        late.match_terms::<DefaultMatch>("bob the builder", field())
+        String::from("bob the builder")
+            .encrypt_into_with_context::<MatchTerms, _>(&late, field())
             .with_credential(alice())
             .await
-            .unwrap()
+            .unwrap(),
+        "the match filter built before the load"
     );
     assert_eq!(
         ore,
-        late.ore_term(42u32, field())
+        42u32
+            .encrypt_into_with_context::<OreTerm<u32>, _>(&late, field())
             .with_credential(alice())
             .await
-            .unwrap()
+            .unwrap(),
+        "the ORE term built before the load"
     );
     assert_eq!(
         ope,
-        late.ope_term(42u32, field())
+        42u32
+            .encrypt_into_with_context::<OpeTerm<u32>, _>(&late, field())
             .with_credential(alice())
             .await
-            .unwrap()
+            .unwrap(),
+        "the OPE term built before the load"
     );
-    let late_block = late
-        .ore_block_term(42u32, field())
+    let late_block = 42u32
+        .encrypt_into_with_context::<OreBlockTerm<u32>, _>(&late, field())
         .with_credential(alice())
         .await
         .unwrap();
@@ -740,7 +750,8 @@ async fn terms_built_before_the_load_are_the_terms_built_after_it() {
         "block ORE terms of one value under one keyset compare equal"
     );
     assert!(
-        late.ore_block_term(41u32, field())
+        41u32
+            .encrypt_into_with_context::<OreBlockTerm<u32>, _>(&late, field())
             .with_credential(alice())
             .await
             .unwrap()

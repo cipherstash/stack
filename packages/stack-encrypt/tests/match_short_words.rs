@@ -587,11 +587,15 @@ mod calibration {
             Config::default(),
             TestRng::from_seed(RngAlgorithm::ChaCha, &[7; 32]),
         );
+        // The stored filter of the text, for the rows and the queries
+        // alike: a one-word or one-trigram query's filter is its stored
+        // filter, and the control's stored filter keeps its two words.
         let derive = |text: String| {
             let keyset = &keyset;
             async move {
-                let filter = keyset
-                    .match_terms::<ShortWords>(&text, nonempty!("people/name"))
+                let filter: MatchTerms<ShortWords> = text
+                    .clone()
+                    .encrypt_into_with_context(keyset, nonempty!("people/name"))
                     .await
                     .expect("derives");
                 (text, filter)

@@ -275,16 +275,18 @@ async fn an_audited_call_that_requests_no_data_key_succeeds_and_sends_nothing() 
     let email = String::from("bob@example.com");
 
     // A query term is derived from the keyset's index key.
-    let audited = keyset
-        .equality_term(email.clone(), nonempty!("users/email"))
+    let audited = AccountTerms::EMAIL
+        .eq(&email)
+        .encrypt(&keyset)
         .audit(list_issues())
         .await
         .unwrap();
-    let plain = keyset
-        .equality_term(email.clone(), nonempty!("users/email"))
+    let plain = AccountTerms::EMAIL
+        .eq(&email)
+        .encrypt(&keyset)
         .await
         .unwrap();
-    assert_eq!(audited, plain);
+    assert_eq!(audited, plain, "the audited query is the plain query");
 
     // A record whose only field is a term.
     let account = Account { email };

@@ -3,8 +3,8 @@
 //! Everything else in this crate is typed: a target names its source type,
 //! and the operations it composes are reached through bounds — `Encrypt` for
 //! a ciphertext or an equality term, `AsRef<str>` for a match term. That is what makes a term a cross-language
-//! contract: `equality_term(34u32)` derives the same bytes wherever it is
-//! called from, because `34u32` is the same value everywhere.
+//! contract. `34u32` encrypted into an `EqualityTerm` derives the same bytes
+//! wherever it is encrypted, because `34u32` is the same value everywhere.
 //!
 //! An FFI binding cannot reach those bounds. Its field types arrive as wire
 //! data, so there is no Rust type to name — and no dynamic value can satisfy

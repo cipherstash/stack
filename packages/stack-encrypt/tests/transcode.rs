@@ -130,8 +130,9 @@ async fn stored_identifier_supplies_every_operations_context() {
         1,
         "one ciphertext leaf means one data key, in one batch"
     );
-    let probe = keyset
-        .equality_term(email.clone(), Identifier::email())
+    let probe: EqualityTerm = email
+        .clone()
+        .encrypt_into_with_context(&keyset, Identifier::email())
         .await
         .unwrap();
     assert_eq!(
@@ -161,8 +162,9 @@ async fn canonical_ciphertext_opens_through_the_record() {
         .encrypt_tree(email.clone(), Identifier::email())
         .await
         .unwrap();
-    let probe = keyset
-        .equality_term(email.clone(), Identifier::email())
+    let probe: EqualityTerm = email
+        .clone()
+        .encrypt_into_with_context(&keyset, Identifier::email())
         .await
         .unwrap();
     let record = TextEq {

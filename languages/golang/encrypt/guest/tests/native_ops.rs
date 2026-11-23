@@ -6,7 +6,8 @@
 //! * a leaf inside a guest ciphertext tree **is** the frozen `SealedValue`
 //!   storage encoding — a native cipher decrypts it;
 //! * terms derived through the guest dispatch are byte-identical to the
-//!   native `sem` calls (the cross-language contract);
+//!   terms a native value encrypted into its term type derives (the
+//!   cross-language contract);
 //! * record encryption follows its plan, keeps to **one** ZeroKMS call per
 //!   invocation however many rows, and round-trips;
 //! * hostile/malformed inputs and wrong-AAD decrypts map to the documented
@@ -22,10 +23,10 @@ use std::future::IntoFuture;
 mod support;
 
 use stack_encrypt::dynamic::frame::{decode_ciphertext, encode_ciphertext};
-use stack_encrypt::sem::DefaultMatch;
+use stack_encrypt::sem::{DefaultMatch, EqualityTerm, MatchTerms, OpeTerm, OreTerm};
 use stack_encrypt::{
-    nonempty, CipherText, Label, Node, PassthroughFrame, PendingStackCipherText, SealedValue,
-    StackCipher,
+    nonempty, CipherText, EncryptInto, Label, Node, PassthroughFrame, PendingStackCipherText,
+    SealedValue, StackCipher,
 };
 use stack_encrypt::{AuditMetadata, Controlled, Protected};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
@@ -269,12 +270,9 @@ fn guest_terms_match_the_native_sem_derivations() {
         TERM_EQUALITY,
     ))
     .expect("eq term");
-    let native = block_on(
-        cipher
-            .default_keyset()
-            .equality_term(42u32, nonempty!("users/age")),
-    )
-    .expect("native eq");
+    let native: EqualityTerm =
+        block_on(42u32.encrypt_into_with_context(&cipher.default_keyset(), nonempty!("users/age")))
+            .expect("native eq");
     assert_eq!(eq, native.as_bytes());
 
     let ore = block_on(ops::term(
@@ -284,12 +282,9 @@ fn guest_terms_match_the_native_sem_derivations() {
         TERM_ORE,
     ))
     .expect("ore term");
-    let native = block_on(
-        cipher
-            .default_keyset()
-            .ore_term(42u32, nonempty!("users/age")),
-    )
-    .expect("native ore");
+    let native: OreTerm<u32> =
+        block_on(42u32.encrypt_into_with_context(&cipher.default_keyset(), nonempty!("users/age")))
+            .expect("native ore");
     assert_eq!(ore, native.as_ref());
 
     let ope = block_on(ops::term(
@@ -299,12 +294,9 @@ fn guest_terms_match_the_native_sem_derivations() {
         TERM_OPE,
     ))
     .expect("ope term");
-    let native = block_on(
-        cipher
-            .default_keyset()
-            .ope_term(42u32, nonempty!("users/age")),
-    )
-    .expect("native ope");
+    let native: OpeTerm<u32> =
+        block_on(42u32.encrypt_into_with_context(&cipher.default_keyset(), nonempty!("users/age")))
+            .expect("native ope");
     assert_eq!(ope, native.as_ref());
 
     let m = block_on(ops::term(
@@ -314,10 +306,10 @@ fn guest_terms_match_the_native_sem_derivations() {
         TERM_MATCH,
     ))
     .expect("match term");
-    let native = block_on(
-        cipher
-            .default_keyset()
-            .match_terms::<DefaultMatch>("alice smith", nonempty!("users/name")),
+    let native: MatchTerms<DefaultMatch> = block_on(
+        "alice smith"
+            .to_string()
+            .encrypt_into_with_context(&cipher.default_keyset(), nonempty!("users/name")),
     )
     .expect("native");
     assert_eq!(m, native.to_bytes());
@@ -339,17 +331,15 @@ fn guest_terms_match_the_native_sem_derivations() {
     ))
     .expect("bytes term");
     assert_ne!(eq_text, eq_bytes);
-    let native_text = block_on(
-        cipher
-            .default_keyset()
-            .equality_term("ab".to_string(), nonempty!("f")),
+    let native_text: EqualityTerm = block_on(
+        "ab".to_string()
+            .encrypt_into_with_context(&cipher.default_keyset(), nonempty!("f")),
     )
     .expect("native");
     assert_eq!(eq_text, native_text.as_bytes());
-    let native_bytes = block_on(
-        cipher
-            .default_keyset()
-            .equality_term(Protected::new(b"ab".to_vec()), nonempty!("f")),
+    let native_bytes: EqualityTerm = block_on(
+        Protected::new(b"ab".to_vec())
+            .encrypt_into_with_context(&cipher.default_keyset(), nonempty!("f")),
     )
     .expect("native");
     assert_eq!(eq_bytes, native_bytes.as_bytes());
@@ -840,19 +830,17 @@ fn record_terms_equal_the_native_derivations_and_probe_them() {
         "output order is the plan's"
     );
 
-    // The stored terms are byte-identical to query-time probes built the
-    // native way — the property that makes the index searchable.
-    let eq_probe = block_on(
-        cipher
-            .default_keyset()
-            .equality_term(34u32, nonempty!("users").with("age")),
+    // The stored terms are byte-identical to the terms a native value
+    // encrypted into its term type derives. For equality, ORE, and this
+    // match text, that is also the query's term. That is what makes the
+    // index searchable.
+    let eq_probe: EqualityTerm = block_on(
+        34u32.encrypt_into_with_context(&cipher.default_keyset(), nonempty!("users").with("age")),
     )
     .expect("probe");
     assert_eq!(term_bytes(&age_outputs[1].1), eq_probe.as_bytes());
-    let ore_probe = block_on(
-        cipher
-            .default_keyset()
-            .ore_term(34u32, nonempty!("users").with("age")),
+    let ore_probe: OreTerm<u32> = block_on(
+        34u32.encrypt_into_with_context(&cipher.default_keyset(), nonempty!("users").with("age")),
     )
     .expect("probe");
     assert_eq!(term_bytes(&age_outputs[2].1), ore_probe.as_ref());
@@ -860,10 +848,10 @@ fn record_terms_equal_the_native_derivations_and_probe_them() {
     let (_, CipherText::Map(name_outputs)) = &fields[1] else {
         panic!("expected an output map for the second field");
     };
-    let match_probe = block_on(
-        cipher
-            .default_keyset()
-            .match_terms::<DefaultMatch>("alice smith", nonempty!("users").with("name")),
+    let match_probe: MatchTerms<DefaultMatch> = block_on(
+        "alice smith"
+            .to_string()
+            .encrypt_into_with_context(&cipher.default_keyset(), nonempty!("users").with("name")),
     )
     .expect("probe");
     assert_eq!(term_bytes(&name_outputs[1].1), match_probe.to_bytes());
@@ -920,14 +908,14 @@ fn a_structured_plan_context_seals_what_the_native_extended_context_does() {
     };
 
     let native = nonempty!("users").with("age").with(7u64);
-    let eq_probe = block_on(cipher.default_keyset().equality_term(34u32, native)).expect("probe");
+    let eq_probe: EqualityTerm =
+        block_on(34u32.encrypt_into_with_context(&cipher.default_keyset(), native)).expect("probe");
     assert_eq!(term_bytes(&age_outputs[1].1), eq_probe.as_bytes());
-    let ore_probe = block_on(cipher.default_keyset().ore_term(34u32, native)).expect("probe");
+    let ore_probe: OreTerm<u32> =
+        block_on(34u32.encrypt_into_with_context(&cipher.default_keyset(), native)).expect("probe");
     assert_eq!(term_bytes(&age_outputs[2].1), ore_probe.as_ref());
-    let flat_probe = block_on(
-        cipher
-            .default_keyset()
-            .equality_term(34u32, nonempty!("users").with("age")),
+    let flat_probe: EqualityTerm = block_on(
+        34u32.encrypt_into_with_context(&cipher.default_keyset(), nonempty!("users").with("age")),
     )
     .expect("probe");
     assert_ne!(
@@ -948,12 +936,12 @@ fn a_structured_plan_context_seals_what_the_native_extended_context_does() {
     let (_, CipherText::Map(name_outputs)) = &fields[1] else {
         panic!("expected an output map for the second field");
     };
-    let match_probe = block_on(
-        cipher
-            .default_keyset()
-            .match_terms::<DefaultMatch>("alice smith", nonempty!("users").with("name").with(7u64)),
-    )
-    .expect("probe");
+    let match_probe: MatchTerms<DefaultMatch> =
+        block_on("alice smith".to_string().encrypt_into_with_context(
+            &cipher.default_keyset(),
+            nonempty!("users").with("name").with(7u64),
+        ))
+        .expect("probe");
     assert_eq!(term_bytes(&name_outputs[1].1), match_probe.to_bytes());
 
     let CipherText::Single(leaf) = &age_outputs[0].1 else {
@@ -1367,7 +1355,8 @@ fn terms_derive_under_the_selected_keyset() {
     .expect("globex term");
     assert_ne!(acme_term, globex_term);
 
-    let native = block_on(acme.equality_term(42u32, nonempty!("users/age"))).expect("native");
+    let native: EqualityTerm =
+        block_on(42u32.encrypt_into_with_context(&acme, nonempty!("users/age"))).expect("native");
     assert_eq!(acme_term, native.into_bytes().to_vec());
 }
 

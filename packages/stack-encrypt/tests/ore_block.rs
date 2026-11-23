@@ -15,11 +15,13 @@
 use std::cmp::Ordering;
 
 use stack_encrypt::sem::{OreBlockTerm, TermBytesError, TermError};
+use stack_encrypt::target::{self, Borrowed, CallerContext};
 #[cfg(all(feature = "jiff", feature = "rust_decimal"))]
 use stack_encrypt::value::{Date, Decimal, Timestamp};
 use stack_encrypt::Orderable;
-use stack_encrypt::{nonempty, Error, KeysetCipher, StackCipher};
+use stack_encrypt::{nonempty, EncryptInto, EncryptRef, Error, KeysetCipher, StackCipher};
 use stack_kms::FakeDataKeySource;
+use zeroize::Zeroize;
 
 async fn cipher() -> StackCipher<FakeDataKeySource> {
     StackCipher::builder()
@@ -33,12 +35,12 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-async fn term<T: Orderable + 'static>(
+async fn term<T: Orderable + EncryptRef + Zeroize + 'static>(
     keyset: &KeysetCipher<'_, FakeDataKeySource>,
     value: T,
 ) -> OreBlockTerm<T> {
-    keyset
-        .ore_block_term(value, nonempty!("users/n"))
+    value
+        .encrypt_into_with_context(keyset, nonempty!("users/n"))
         .await
         .expect("a block ORE term")
 }
@@ -365,16 +367,17 @@ async fn every_view_of_a_term_is_its_ciphertext() {
 async fn left_halves_are_pinned() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
-    let i32_term = keyset
-        .ore_block_term(42i32, nonempty!("users/age"))
+    let i32_term: OreBlockTerm<i32> = 42i32
+        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
         .await
         .unwrap();
-    let f64_term = keyset
-        .ore_block_term(1.5f64, nonempty!("users/score"))
+    let f64_term: OreBlockTerm<f64> = 1.5f64
+        .encrypt_into_with_context(&keyset, nonempty!("users/score"))
         .await
         .unwrap();
-    let text_term = keyset
-        .ore_block_term("Ab".to_string(), nonempty!("users/surname"))
+    let text_term: OreBlockTerm<String> = "Ab"
+        .to_string()
+        .encrypt_into_with_context(&keyset, nonempty!("users/surname"))
         .await
         .unwrap();
     assert_eq!(
@@ -398,12 +401,12 @@ const PINNED_TEXT: &str = "02030016010010172510373d14172510363017212d163e161a103
 async fn terms_are_keyed_by_their_context() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
-    let users = keyset
-        .ore_block_term(7i32, nonempty!("users/age"))
+    let users: OreBlockTerm<i32> = 7i32
+        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
         .await
         .unwrap();
-    let orders = keyset
-        .ore_block_term(7i32, nonempty!("orders/age"))
+    let orders: OreBlockTerm<i32> = 7i32
+        .encrypt_into_with_context(&keyset, nonempty!("orders/age"))
         .await
         .unwrap();
     assert_ne!(left(users.as_bytes()), left(orders.as_bytes()));
@@ -420,43 +423,31 @@ async fn refusals_name_no_part_of_the_value() {
         Error::Term(error) => error,
         other => panic!("not a term refusal: {other:?}"),
     };
+    let derive = |text: String| {
+        text.encrypt_into_with_context::<OreBlockTerm<String>, _>(&keyset, nonempty!("users/n"))
+    };
     let long = "secret".repeat(200);
-    assert!(keyset
-        .ore_block_term("a".repeat(1023), nonempty!("users/n"))
-        .await
-        .is_ok());
-    let too_long = refused(
-        keyset
-            .ore_block_term(long.clone(), nonempty!("users/n"))
-            .await
-            .unwrap_err(),
+    assert!(
+        derive("a".repeat(1023)).await.is_ok(),
+        "a fold of 1023 bytes fits"
     );
+    let too_long = refused(derive(long.clone()).await.unwrap_err());
     assert!(
         matches!(too_long, TermError::OreBlockTooLong),
         "{too_long:?}"
     );
     assert!(!too_long.to_string().contains("secret"));
-    let nul = refused(
-        keyset
-            .ore_block_term("secret\0".to_string(), nonempty!("users/n"))
-            .await
-            .unwrap_err(),
-    );
+    let nul = refused(derive("secret\0".to_string()).await.unwrap_err());
     assert!(matches!(nul, TermError::OreBlockTrailingNul), "{nul:?}");
     assert!(!nul.to_string().contains("secret"));
-    let unassigned = refused(
-        keyset
-            .ore_block_term("a\u{378}b".to_string(), nonempty!("users/n"))
-            .await
-            .unwrap_err(),
-    );
+    let unassigned = refused(derive("a\u{378}b".to_string()).await.unwrap_err());
     assert!(
         matches!(unassigned, TermError::Normalize(_)),
         "{unassigned:?}"
     );
     // A boolean and an 8-bit integer have no block ORE term, as they have
-    // no ORE or OPE term: `ore_block_term(true, ..)` and
-    // `ore_block_term(7u8, ..)` do not compile (`Orderable`).
+    // no ORE or OPE term: `OreBlockTerm<bool>` and `OreBlockTerm<u8>` do
+    // not compile (`Orderable`).
 }
 
 /// Decoding is structural: a ciphertext of either scheme decodes, and
@@ -494,20 +485,26 @@ async fn decoding_checks_the_shape() {
     assert!(a != b);
 }
 
-/// A reference to a local value takes a term too, read in place, and it
+/// The borrowed operation reads a local value in place, and its term
 /// orders equal to the term of the value itself.
 #[tokio::test]
 async fn a_borrowed_value_takes_the_term_its_value_takes() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let local = String::from("ada");
-    let borrowed = keyset
-        .ore_block_term(&local, nonempty!("users/n"))
+    let borrowed: OreBlockTerm<String> = keyset
+        .run(
+            target::ore_block::<_, _, Borrowed>(),
+            &local,
+            CallerContext::from(nonempty!("users/n")),
+        )
         .await
         .unwrap();
     let owned = term(&keyset, String::from("ada")).await;
-    // The term of a `&String` is an `OreBlockTerm<&String>`; read its bytes
-    // back as a `String`'s to compare them.
-    let borrowed = OreBlockTerm::<String>::try_from(borrowed.into_bytes()).unwrap();
-    assert_eq!(borrowed.compare(&owned), Some(Ordering::Equal));
+    assert_eq!(
+        borrowed.compare(&owned),
+        Some(Ordering::Equal),
+        "the borrowed term orders equal to the owned one"
+    );
+    assert_eq!(local, "ada", "the caller keeps the value");
 }

@@ -22,7 +22,7 @@ use stack_encrypt::target::{
 };
 use stack_encrypt::target::{EncryptTarget, RequiredContext, StoredContext};
 use stack_encrypt::{
-    nonempty, DecryptFrom, Encrypt, EncryptInto, Label, NonEmpty, StackCipherText,
+    nonempty, DecryptFrom, Encrypt, EncryptInto, KeysetCipher, Label, NonEmpty, StackCipherText,
 };
 use stack_kms::FakeDataKeySource;
 use vitaminc_aead::plaintext::Sink;
@@ -43,6 +43,25 @@ fn aead() -> AeadContext {
 }
 fn caller() -> CallerContext {
     CallerContext::from(context())
+}
+
+/// The equality term `NUMBER` stores as a `String`: what each operation
+/// below must derive from a plaintext holding the same text.
+async fn text_equality(keyset: &KeysetCipher<'_, FakeDataKeySource>) -> EqualityTerm {
+    NUMBER
+        .to_string()
+        .encrypt_into_with_context(keyset, context())
+        .await
+        .expect("the text's equality term")
+}
+
+/// The match filter `NUMBER` stores as a `String`.
+async fn text_filter(keyset: &KeysetCipher<'_, FakeDataKeySource>) -> MatchTerms {
+    NUMBER
+        .to_string()
+        .encrypt_into_with_context(keyset, context())
+        .await
+        .expect("the text's match filter")
 }
 
 /// A secret that is deliberately not `Clone`: it is moved, never copied, and
@@ -177,7 +196,7 @@ async fn a_plaintext_that_is_not_clone_derives_an_equality_term_alone() {
         .await
         .unwrap();
 
-    let expected = keyset.equality_term(NUMBER, context()).await.unwrap();
+    let expected = text_equality(&keyset).await;
     assert_eq!(
         term, expected,
         "an owned equality term should be byte-identical to the same text's term"
@@ -194,7 +213,7 @@ async fn a_plaintext_that_is_not_clone_derives_a_match_term_alone() {
         .await
         .unwrap();
 
-    let expected: MatchTerms = keyset.match_terms(NUMBER, context()).await.unwrap();
+    let expected = text_filter(&keyset).await;
     assert_eq!(
         term, expected,
         "an owned match term should be byte-identical to the same text's term"
@@ -282,7 +301,7 @@ async fn an_owned_zip_makes_no_copy() {
         .await
         .unwrap();
     assert_eq!(opened, NUMBER, "the zipped ciphertext opens to the text");
-    let expected = keyset.equality_term(NUMBER, context()).await.unwrap();
+    let expected = text_equality(&keyset).await;
     assert_eq!(term, expected, "the zipped term is the text's term");
 
     let (value, clones) = Counted::new(NUMBER);
@@ -316,7 +335,7 @@ async fn a_plaintext_that_is_not_clone_seals_beside_a_term() {
         .await
         .unwrap();
     assert_eq!(opened, NUMBER, "the ciphertext opens to the text");
-    let expected = keyset.equality_term(NUMBER, context()).await.unwrap();
+    let expected = text_equality(&keyset).await;
     assert_eq!(term, expected, "the term is the text's term");
 }
 
@@ -346,7 +365,7 @@ async fn a_borrowed_operation_makes_no_copy() {
         0,
         "a borrowed ciphertext beside a borrowed term reads the one value"
     );
-    let expected = keyset.equality_term(NUMBER, context()).await.unwrap();
+    let expected = text_equality(&keyset).await;
     assert_eq!(term, expected, "the borrowed term is the text's term");
 }
 
@@ -493,7 +512,7 @@ async fn a_record_with_two_derived_fields_copies_nothing() {
         .await
         .unwrap();
     assert_eq!(opened, NUMBER);
-    let expected = keyset.equality_term(NUMBER, context()).await.unwrap();
+    let expected = text_equality(&keyset).await;
     assert_eq!(record.hm, expected);
 }
 
@@ -600,7 +619,7 @@ async fn an_owned_plaintext_is_dropped_before_its_key_request_is_sent() {
         1,
         "equality: dropped exactly once"
     );
-    let expected = keyset.equality_term(NUMBER, context()).await.unwrap();
+    let expected = text_equality(&keyset).await;
     assert_eq!(term, expected, "the term is the text's term");
 
     let (value, drops) = Dropped::new(NUMBER);
@@ -616,7 +635,7 @@ async fn an_owned_plaintext_is_dropped_before_its_key_request_is_sent() {
         1,
         "matching: dropped exactly once"
     );
-    let expected: MatchTerms = keyset.match_terms(NUMBER, context()).await.unwrap();
+    let expected = text_filter(&keyset).await;
     assert_eq!(term, expected, "the term is the text's term");
 }
 
@@ -694,10 +713,14 @@ async fn a_value_with_a_ciphertext_and_two_terms_is_wiped_once() {
     let (equal, matched) = sealed.terms;
     assert_eq!(
         equal,
-        keyset.equality_term(NUMBER, context()).await.unwrap()
+        text_equality(&keyset).await,
+        "the equality term is the text's"
     );
-    let expected: MatchTerms = keyset.match_terms(NUMBER, context()).await.unwrap();
-    assert_eq!(matched, expected);
+    assert_eq!(
+        matched,
+        text_filter(&keyset).await,
+        "the match filter is the text's"
+    );
 
     let (value, wipes) = Wiped::new(NUMBER);
     let refused = keyset
@@ -919,8 +942,8 @@ async fn a_date_with_a_ciphertext_and_two_terms_is_not_copied() {
         .encrypt_into_with_context(&keyset, context())
         .await
         .unwrap();
-    let later = keyset
-        .ore_block_term(Date::new(jiff::civil::date(2024, 3, 1)), context())
+    let later: OreBlockTerm<Date> = Date::new(jiff::civil::date(2024, 3, 1))
+        .encrypt_into_with_context(&keyset, context())
         .await
         .unwrap();
     assert_eq!(

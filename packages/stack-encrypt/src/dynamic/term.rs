@@ -5,9 +5,9 @@
 //! [`ValueFrame`] the engine holds, a Rust value. It is walked to the one
 //! scalar it must be, and the term derives there, from the scalar vitaminc
 //! hands the sink, so this module restates none of vitaminc's vocabulary.
-//! The derivation is the typed path's, which is what makes a term a
-//! cross-language contract: an equality term for a frame holding `34` is the
-//! term `equality_term(34u32)` derives.
+//! The derivation is the typed path's. That makes a term a cross-language
+//! contract: an equality term for a frame that contains `34` is the term
+//! that `34u32` derives as an [`EqualityTerm`](crate::sem::EqualityTerm).
 //!
 //! - **Equality** normalizes the scalar with `vitaminc-normalize` and runs
 //!   the PRF over the result, as the typed path does through that crate's
@@ -429,8 +429,9 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 ///
 /// ```
 /// use stack_encrypt::dynamic::{context, term};
+/// use stack_encrypt::sem::EqualityTerm;
 /// use stack_encrypt::target::IndexSpec;
-/// use stack_encrypt::{AsProtectedRef, StackCipher};
+/// use stack_encrypt::{AsProtectedRef, EncryptInto, StackCipher};
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
@@ -444,7 +445,7 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 /// // `["users", "age"]`, as a binding writes it.
 /// let ctx = context(vitaminc_aead_frame::serde::to_vec(&("users", "age"))?.as_protected_ref())?;
 /// let probe = term(&keyset, &34u32, &IndexSpec::Equality, ctx.clone()).await?;
-/// let typed = keyset.equality_term(34u32, ctx).await?;
+/// let typed: EqualityTerm = 34u32.encrypt_into_with_context(&keyset, ctx).await?;
 /// assert_eq!(probe, typed.into_bytes().to_vec());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// # }).unwrap();
@@ -970,8 +971,8 @@ mod tests {
     use super::*;
     use crate::dynamic::test_frame::Tree;
     use crate::dynamic::{context, Output};
-    use crate::sem::TermError;
-    use crate::{nonempty, StackCipher};
+    use crate::sem::{EqualityTerm, MatchTerms, OpeTerm, OreTerm, TermError};
+    use crate::{nonempty, EncryptInto, StackCipher};
     use stack_kms::FakeDataKeySource;
     use vitaminc_aead::plaintext::Raw;
     use vitaminc_protected::AsProtectedRef as _;
@@ -1152,8 +1153,8 @@ mod tests {
     async fn term_bytes_read_as_the_typed_terms_bytes() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let typed = keyset
-            .equality_term(34u32, nonempty!("users/age"))
+        let typed = 34u32
+            .encrypt_into_with_context::<EqualityTerm, _>(&keyset, nonempty!("users/age"))
             .await
             .expect("typed")
             .into_bytes()
@@ -1263,12 +1264,14 @@ mod tests {
                 let ctx = ctx.clone();
                 async move { term(ks, &value, &kind, ctx).await }
             };
-            let eq = |t: crate::sem::EqualityTerm| t.into_bytes().to_vec();
+            let eq = |t: EqualityTerm| t.into_bytes().to_vec();
 
             // Equality, per variant with an equality domain.
             macro_rules! equal {
                 ($value:expr, $leaf:expr, $label:literal) => {
-                    let typed = keyset.equality_term($value, nonempty!("users/x")).await;
+                    let typed = $value
+                        .encrypt_into_with_context::<EqualityTerm, _>(&keyset, nonempty!("users/x"))
+                        .await;
                     assert_eq!(
                         dynamic($leaf, IndexSpec::Equality).await.expect("eq"),
                         eq(typed.expect("typed")),
@@ -1289,8 +1292,8 @@ mod tests {
             equal!(b"ab".to_vec(), bytes(b"ab"), "bytes");
 
             // Match, text only.
-            let typed = keyset
-                .match_terms::<DefaultMatch>("alice smith", nonempty!("users/x"))
+            let typed = String::from("alice smith")
+                .encrypt_into_with_context::<MatchTerms, _>(&keyset, nonempty!("users/x"))
                 .await
                 .expect("typed");
             assert_eq!(
@@ -1306,16 +1309,20 @@ mod tests {
             // because each is its own type.
             macro_rules! ordered {
                 ($value:expr, $leaf:expr, $label:literal) => {
-                    let typed = keyset.ore_term($value, nonempty!("users/x")).await;
+                    let typed = $value
+                        .encrypt_into_with_context::<OreTerm<_>, _>(&keyset, nonempty!("users/x"))
+                        .await;
                     assert_eq!(
                         dynamic($leaf, IndexSpec::Ore).await.expect("ore"),
-                        typed.expect("typed").as_ref().to_vec(),
+                        typed.expect("typed").inner().as_ref().to_vec(),
                         concat!($label, " ore")
                     );
-                    let typed = keyset.ope_term($value, nonempty!("users/x")).await;
+                    let typed = $value
+                        .encrypt_into_with_context::<OpeTerm<_>, _>(&keyset, nonempty!("users/x"))
+                        .await;
                     assert_eq!(
                         dynamic($leaf, IndexSpec::Ope).await.expect("ope"),
-                        typed.expect("typed").as_ref().to_vec(),
+                        typed.expect("typed").inner().as_ref().to_vec(),
                         concat!($label, " ope")
                     );
                 };
@@ -1357,11 +1364,21 @@ mod tests {
             // is `F64`, so a dynamic `f32` and the typed `f64` it widens to
             // are one term.
             let ore = term(ks, 1.5f32, &IndexSpec::Ore, ctx.clone()).await;
-            let typed = keyset.ore_term(1.5f64, nonempty!("users/x")).await;
-            assert_eq!(ore.expect("ore"), typed.expect("typed").as_ref().to_vec());
+            let typed: Result<OreTerm<f64>, _> = 1.5f64
+                .encrypt_into_with_context(&keyset, nonempty!("users/x"))
+                .await;
+            assert_eq!(
+                ore.expect("ore"),
+                typed.expect("typed").inner().as_ref().to_vec()
+            );
             let ope = term(ks, 1.5f32, &IndexSpec::Ope, ctx.clone()).await;
-            let typed = keyset.ope_term(1.5f64, nonempty!("users/x")).await;
-            assert_eq!(ope.expect("ope"), typed.expect("typed").as_ref().to_vec());
+            let typed: Result<OpeTerm<f64>, _> = 1.5f64
+                .encrypt_into_with_context(&keyset, nonempty!("users/x"))
+                .await;
+            assert_eq!(
+                ope.expect("ope"),
+                typed.expect("typed").inner().as_ref().to_vec()
+            );
         }
 
         /// Equality normalizes: every integer width of one number is one
@@ -1395,8 +1412,8 @@ mod tests {
             assert_eq!(composed, eq(s("caf\u{e9}")).await, "one string in NFC");
             assert_eq!(
                 composed,
-                keyset
-                    .equality_term("caf\u{e9}", nonempty!("users/x"))
+                String::from("caf\u{e9}")
+                    .encrypt_into_with_context::<EqualityTerm, _>(&keyset, nonempty!("users/x"))
                     .await
                     .expect("typed")
                     .into_bytes()
@@ -1430,8 +1447,11 @@ mod tests {
                         .to_vec();
                     assert_eq!(
                         derive(frame.clone(), IndexSpec::Equality).await,
-                        keyset
-                            .equality_term($value, nonempty!("users/x"))
+                        $value
+                            .encrypt_into_with_context::<EqualityTerm, _>(
+                                &keyset,
+                                nonempty!("users/x")
+                            )
                             .await
                             .expect("typed")
                             .into_bytes()
@@ -1440,20 +1460,28 @@ mod tests {
                     );
                     assert_eq!(
                         derive(frame.clone(), IndexSpec::Ore).await,
-                        keyset
-                            .ore_term($value, nonempty!("users/x"))
+                        $value
+                            .encrypt_into_with_context::<OreTerm<_>, _>(
+                                &keyset,
+                                nonempty!("users/x")
+                            )
                             .await
                             .expect("typed")
+                            .inner()
                             .as_ref()
                             .to_vec(),
                         concat!($label, " ore")
                     );
                     assert_eq!(
                         derive(frame, IndexSpec::Ope).await,
-                        keyset
-                            .ope_term($value, nonempty!("users/x"))
+                        $value
+                            .encrypt_into_with_context::<OpeTerm<_>, _>(
+                                &keyset,
+                                nonempty!("users/x")
+                            )
                             .await
                             .expect("typed")
+                            .inner()
                             .as_ref()
                             .to_vec(),
                         concat!($label, " ope")
@@ -2090,8 +2118,8 @@ mod tests {
             )
             .await
             .expect("wide");
-            let typed = keyset
-                .match_terms::<Wide>("Alice Smith", nonempty!("users/x"))
+            let typed = String::from("Alice Smith")
+                .encrypt_into_with_context::<MatchTerms<Wide>, _>(&keyset, nonempty!("users/x"))
                 .await
                 .expect("typed");
             assert_eq!(wide, typed.to_bytes(), "the options are the typed config's");
@@ -2134,8 +2162,11 @@ mod tests {
             let stored = |text: &'static str| {
                 let keyset = &keyset;
                 async move {
-                    keyset
-                        .match_terms::<ShortWords>(text, nonempty!("users/x"))
+                    String::from(text)
+                        .encrypt_into_with_context::<MatchTerms<ShortWords>, _>(
+                            keyset,
+                            nonempty!("users/x"),
+                        )
                         .await
                         .expect("stored")
                         .to_bytes()
@@ -2146,8 +2177,8 @@ mod tests {
                 stored("Ng").await,
                 "\"Ng\" is its word token, the filter it stores"
             );
-            let trigrams = keyset
-                .match_terms::<DefaultMatch>("Mike Ng", nonempty!("users/x"))
+            let trigrams = String::from("Mike Ng")
+                .encrypt_into_with_context::<MatchTerms, _>(&keyset, nonempty!("users/x"))
                 .await
                 .expect("stored without the option")
                 .to_bytes();
