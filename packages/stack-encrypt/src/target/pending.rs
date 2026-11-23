@@ -64,7 +64,8 @@ enum Fulfilled<'a, T> {
 }
 
 /// How many data keys' worth of items a column fulfils between yields, in
-/// a wasm guest.
+/// a wasm guest. `stack-kms` has its own copy (`futures::YIELD_EVERY`, for
+/// deriving keys), and the two are meant to stay equal.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 const YIELD_EVERY: usize = 64;
 
@@ -94,7 +95,8 @@ fn then<'a, T: 'a, U: 'a>(
 /// Yield to the async runtime once: wake this task and return pending, so
 /// the runtime polls it again after other work. On tokio that reschedules
 /// the task. In a wasm guest's step loop it hands control back to the host
-/// (see `stack-guest-abi`'s step module).
+/// (see `stack-guest-abi`'s step module). `stack-kms` has its own copy
+/// (`futures::YieldNow`), and the two are meant to stay equal.
 struct YieldNow(bool);
 
 impl Future for YieldNow {

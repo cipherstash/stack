@@ -5,7 +5,9 @@ use std::task::{Context, Poll};
 
 /// How many keys a batch derives between yields. A key costs tens of
 /// microseconds in a wasm guest, so a chunk is a few milliseconds there and
-/// far less natively.
+/// far less natively. `stack-encrypt` has its own copy (in
+/// `target::pending`, for a column's items), and the two are meant to stay
+/// equal.
 pub(crate) const YIELD_EVERY: usize = 64;
 
 /// Yield to the async runtime once: wake this task and return pending, so
@@ -17,7 +19,8 @@ pub(crate) fn yield_now() -> YieldNow {
     YieldNow(false)
 }
 
-/// The future [`yield_now`] returns.
+/// The future [`yield_now`] returns. `stack-encrypt` has its own copy (in
+/// `target::pending`), and the two are meant to stay equal.
 pub(crate) struct YieldNow(bool);
 
 impl Future for YieldNow {
