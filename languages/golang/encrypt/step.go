@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
@@ -160,28 +161,66 @@ func decodeRequest(item any) (ioRequest, bool) {
 	return r, true
 }
 
-// performStep performs every request of a step, in order, and encodes the
-// responses for se_resume: `[{"status": i32, "headers": bytes, "body":
-// bytes}, ...]`. The responses can carry wrapped keys: the caller wipes the
-// encoding once the guest has it, and every other copy is wiped here.
+// maxParallelRequests bounds how many of a step's requests are performed at
+// once. The guest asks for at most `max_concurrent_reqs` in a step (3, in
+// its cipher_init), so this never binds for it; it keeps a step from
+// starting any number of goroutines.
+const maxParallelRequests = 8
+
+// performStep performs a step's requests, up to maxParallelRequests at once,
+// and encodes the responses, in the order of the requests, for se_resume:
+// `[{"status": i32, "headers": bytes, "body": bytes}, ...]`. A step's
+// requests are independent: the guest sends several at once only when it
+// can use their responses in any order. The responses can carry wrapped
+// keys: the caller wipes the encoding once the guest has it, and every
+// other copy is wiped here.
 func (t *transport) performStep(ctx context.Context, step *ioStep) ([]byte, error) {
 	defer step.wipe()
-	responses := make([]any, 0, len(step.requests))
-	var bodies [][]byte
+	type result struct {
+		status        int32
+		headers, body []byte
+	}
+	results := make([]result, len(step.requests))
 	defer func() {
-		for _, b := range bodies {
-			wipe(b)
+		for _, r := range results {
+			wipe(r.body)
 		}
 	}()
-	for _, r := range step.requests {
-		status, headers, body := t.perform(ctx, r.method, r.url, r.headers, r.body)
+	slots := make(chan struct{}, maxParallelRequests)
+	var wg sync.WaitGroup
+	// A panic in the caller's RoundTripper is recovered in its goroutine
+	// and raised again here, on the caller's goroutine, once every request
+	// has finished, as when the requests were performed one at a time. A
+	// panic left in the goroutine would end the process, past any recover
+	// of the caller's, such as net/http's in each handler.
+	var panicOnce sync.Once
+	var panicked any
+	for i, r := range step.requests {
+		slots <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			defer func() {
+				if p := recover(); p != nil {
+					panicOnce.Do(func() { panicked = p })
+				}
+			}()
+			status, headers, body := t.perform(ctx, r.method, r.url, r.headers, r.body)
+			results[i] = result{status, headers, body}
+		})
+	}
+	wg.Wait()
+	if panicked != nil {
+		panic(panicked)
+	}
+	responses := make([]any, 0, len(results))
+	for _, r := range results {
+		status, headers, body := r.status, r.headers, r.body
 		if headers == nil {
 			headers = []byte{}
 		}
 		if body == nil {
 			body = []byte{}
 		}
-		bodies = append(bodies, body)
 		responses = append(responses, vcvalue.Object{
 			{Key: "status", Value: status},
 			{Key: "headers", Value: headers},

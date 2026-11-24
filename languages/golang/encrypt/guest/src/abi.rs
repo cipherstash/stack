@@ -211,6 +211,13 @@ fn parse_init(bytes: &[u8]) -> Result<InitConfig, u32> {
     InitConfig::parse(bytes)
 }
 
+/// How many ZeroKMS requests one batch may have in flight at a time: 3
+/// requests of 500 keys cover a page of 100 rows of 14 columns in one
+/// round trip. The Go host performs up to 8 of a step's requests at once
+/// (`maxParallelRequests` in `encrypt/step.go`), so it never limits this.
+#[cfg(not(feature = "deterministic-kms"))]
+const MAX_CONCURRENT_REQS: usize = 3;
+
 #[cfg(not(feature = "deterministic-kms"))]
 fn cipher_init(config: InitConfig) -> Result<Vec<u8>, u32> {
     use crate::host::{HostTokenStrategy, WasiHostConnection};
@@ -221,19 +228,23 @@ fn cipher_init(config: InitConfig) -> Result<Vec<u8>, u32> {
         return Err(init_out_of_order());
     }
 
-    // One request at a time: a step hands the host one request, and the
-    // first version of the step loop keeps it that way. Raising it later
-    // changes no ABI: a step's request list can hold several.
+    // Up to `MAX_CONCURRENT_REQS` requests at a time. `Client::send_chunked`
+    // splits a batch into requests of at most `max_keys_per_req` keys, and
+    // sends up to this many of them in one step, which the host performs at
+    // the same time. The guest never runs while a request is in
+    // flight, so without this a batch waits one round trip per request:
+    // sending them together roughly halves the wall time of a 1,400-value
+    // decrypt.
     //
     // `max_keys_per_req` stays at the client default (500). That is what
     // bounds "one ZeroKMS call": a batch is assembled once, then
-    // `Client::send_chunked` splits it into sequential requests of at most
-    // that many keys — so a 1200-leaf record batch is three calls, not one.
-    // Raising it here would trade a documented, server-friendly request size
-    // for a claim the server need not honour, so the bound is kept and the
-    // docs say 500 rather than "one".
+    // `Client::send_chunked` splits it into requests of at most that many
+    // keys — so a 1200-leaf record batch is three calls, not one. Raising it
+    // here would trade a documented, server-friendly request size for a
+    // claim the server need not honour, so the bound is kept and the docs
+    // say 500 rather than "one".
     let opts = ClientOpts::new(config.endpoint)
-        .with_max_concurrent_reqs(1)
+        .with_max_concurrent_reqs(MAX_CONCURRENT_REQS)
         .map_err(|e| last_error::record(&e, e.payload(), STATUS_INTERNAL))?;
     let kms = StackKms::<HostTokenStrategy, WasiHostConnection>::connect(
         opts,
@@ -449,7 +460,8 @@ pub unsafe extern "C" fn se_term(
 /// [`ops::encrypt_record`] for the source, plan, and result encodings. All
 /// rows and fields seal from **one** batched key request regardless of row
 /// count — dispatched as one `generate-data-key` call per 500 keyed leaves,
-/// sequentially — and terms derive under the same keyset's index key.
+/// up to `MAX_CONCURRENT_REQS` (3) at a time — and terms derive under the
+/// same keyset's index key.
 /// `opts` may carry `audit`, the audit metadata the engine sends with each
 /// of those key requests ([`crate::options`]).
 ///
