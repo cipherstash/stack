@@ -4399,6 +4399,114 @@ mod tests {
             );
         }
 
+        /// What a sealed tree shows in the clear, by path: each passthrough
+        /// node (a term, a carried value) as the value it carries. A sealed
+        /// leaf is listed with no value: its bytes are random.
+        fn in_the_clear(
+            tree: &StackCipherText,
+            path: String,
+            out: &mut Vec<(String, Option<Tree>)>,
+        ) {
+            match tree {
+                CipherText::Map(entries) => {
+                    for (key, node) in entries {
+                        in_the_clear(node, format!("{path}/{key}"), out);
+                    }
+                }
+                CipherText::Sequence(items) => {
+                    for (at, node) in items.iter().enumerate() {
+                        in_the_clear(node, format!("{path}/{at}"), out);
+                    }
+                }
+                CipherText::Passthrough(payload) => out.push((path, passthrough_tree(payload))),
+                _ => out.push((path, None)),
+            }
+        }
+
+        fn clear(tree: &StackCipherText) -> Vec<(String, Option<Tree>)> {
+            let mut out = Vec::new();
+            in_the_clear(tree, String::new(), &mut out);
+            out
+        }
+
+        /// The shared plan with a `"null": "sql"` field, so that a batch
+        /// whose rows leave it out in places runs as more than one group.
+        fn nullable_plan() -> Plan {
+            let Tree::Object(mut fields) = plan_value() else {
+                unreachable!("the shared plan is an object")
+            };
+            fields.push((
+                "score".to_owned(),
+                obj(vec![
+                    ("context", label("score")),
+                    ("outputs", strings(&["c", "eq"])),
+                    ("type", s("uint32")),
+                    ("null", s("sql")),
+                ]),
+            ));
+            plan(Tree::Object(fields)).expect("parses")
+        }
+
+        fn scored(age: u32, nick: &str, score: Option<u32>) -> Tree {
+            let Tree::Object(mut entries) = row(age) else {
+                unreachable!("a row is an object")
+            };
+            for (key, value) in &mut entries {
+                if key == "nick" {
+                    *value = s(nick);
+                }
+            }
+            if let Some(score) = score {
+                entries.push(("score".to_owned(), Tree::UInt32(score)));
+            }
+            Tree::Object(entries)
+        }
+
+        proptest::proptest! {
+            #![proptest_config(proptest::prelude::ProptestConfig::with_cases(12))]
+
+            /// A batch is built a chunk at a time, and in a wasm guest with
+            /// a yield between two chunks. Whatever the chunks, each row
+            /// seals to what it seals to alone, its terms and carried
+            /// values byte for byte, and the batch opens to the rows that
+            /// each open alone.
+            #[test]
+            fn a_batch_seals_and_opens_each_row_as_it_would_alone(
+                rows in proptest::collection::vec(
+                    (
+                        proptest::prelude::any::<u32>(),
+                        proptest::sample::select(vec!["al smith", "bo", "carol ann", ""]),
+                        proptest::option::of(proptest::prelude::any::<u32>()),
+                    ),
+                    1..150,
+                )
+            ) {
+                let rows: Vec<Tree> = rows
+                    .into_iter()
+                    .map(|(age, nick, score)| scored(age, nick, score))
+                    .collect();
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("runtime")
+                    .block_on(async {
+                        let cipher = cipher().await;
+                        let keyset = cipher.default_keyset();
+                        let plan = nullable_plan();
+                        let batch = sequence(seal(&keyset, Tree::Array(rows.clone()), &plan).await);
+                        assert_eq!(batch.len(), rows.len());
+                        let mut alone = Vec::with_capacity(rows.len());
+                        for (sealed, row) in batch.iter().zip(&rows) {
+                            let single = seal(&keyset, row.clone(), &plan).await;
+                            assert_eq!(clear(sealed), clear(&single));
+                            alone.push(open(&cipher, single, &plan).await);
+                        }
+                        let opened = open(&cipher, CipherText::Sequence(batch), &plan).await;
+                        assert_eq!(opened, Tree::Array(alone));
+                    });
+            }
+        }
+
         #[tokio::test]
         async fn an_empty_batch_is_an_empty_batch() {
             let cipher = cipher().await;

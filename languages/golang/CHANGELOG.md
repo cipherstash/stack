@@ -162,9 +162,23 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
     guest now yields to the host every 64 data keys while it derives keys
     or opens or seals a batch (#1762). Decrypting 1,410 values against
     ZeroKMS, its longest step falls from 42 ms to 11 ms, and most steps
-    take 1 to 2 ms. Two steps are still long: the one that builds a batch
-    (36 ms to encrypt 1,410 values, which derives every search term) and
-    the one that decodes each ZeroKMS response.
+    take 1 to 2 ms. The step that decodes each ZeroKMS response is still
+    long. The step that built a batch was long too (36 ms to encrypt 1,410
+    values, which derives every search term): see the next item.
+- **Building a batch no longer holds the guest in one long step**
+  (#1768). The first step of an encrypt or a decrypt built every row of
+  the batch before it paused, and for an encrypt that derives every search
+  term. The guest now builds a batch's rows 64 data keys' worth at a time,
+  and yields to the host between two chunks, as it does while it seals or
+  opens them. So a batch yields about twice as often as before. The output
+  does not change. Figures against a fake ZeroKMS that answers after
+  40 ms, for 3,334 rows of 3 sealed fields (10,002 values):
+  - Encrypt: the first step takes about 27 ms, against about 450 ms
+    before. Each chunk takes about 3 ms.
+  - Decrypt: the first step takes about 20 ms, against about 49 ms.
+  - The first step still decodes and checks every row, and the last step
+    writes the whole result (about 22 ms to encrypt, 10 ms to decrypt).
+    Those two are now the longest steps.
 - **A batch waits for ZeroKMS once per 1,500 keys, not once per 500.** The
   guest split a batch into requests of 500 keys and sent them one after
   another. The guest now sends up to 3 at the same time, and the client

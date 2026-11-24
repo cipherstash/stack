@@ -202,6 +202,10 @@ pub use operations::{
     ore_block, passthrough, scalar_ciphertext, DecryptField, Decryptable, Decryption, Encryption,
 };
 pub(crate) use pending::KeysetSelector;
+#[cfg(all(feature = "dynamic", target_arch = "wasm32"))]
+pub(crate) use pending::Step;
+#[cfg(feature = "dynamic")]
+pub(crate) use pending::YIELD_EVERY;
 pub use pending::{CipherRef, Pending, PendingFuture};
 pub use request::{Request, Responses};
 pub(crate) use source::Held;

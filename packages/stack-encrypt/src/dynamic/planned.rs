@@ -90,6 +90,9 @@ use super::value_frame::ValueFrame;
 use super::{Error, Op, Reason, TermBytes};
 use crate::contexts::{self, CallerShape, Contexts, LeafContext, Placeholder};
 use crate::plan::{field_label, join, FieldValues, IntoLabel, Slot, FROM_CALL, FROM_PLAN};
+#[cfg(target_arch = "wasm32")]
+use crate::target::Step;
+use crate::target::YIELD_EVERY;
 use crate::target::{
     ciphertext, indexed, inspect, open, AeadContext, Borrowed, CallerContext, DeclaredContext,
     DecryptSource, Decryption, EncryptTarget, Encrypted, Encryption, ExpectedContext, IndexSpec,
@@ -448,6 +451,12 @@ where
     /// one [`Pending`], so awaiting it is one batched `generate_keys` for
     /// every ciphertext leaf of every row and every target field.
     ///
+    /// A batch's rows are lowered and run a chunk at a time
+    /// ([`built_in_chunks`]): in a wasm guest when the pending settles, with
+    /// a yield between two chunks, so building a large batch is no one
+    /// long step. Everything that refuses the call before the pending
+    /// exists still runs here.
+    ///
     /// # Errors
     ///
     /// As [`record::encrypt_with`].
@@ -518,33 +527,41 @@ where
                 );
                 // One lowered plan per group of rows that leave out the same
                 // fields, every group's requests merged into the one call.
-                let mut runs = Vec::with_capacity(groups.len());
-                let mut positions = Vec::with_capacity(groups.len());
-                for (absent, at, values) in groups {
-                    let mut rows = Vec::with_capacity(values.len());
-                    for values in values {
-                        let description =
-                            compose::<K>(plan, &absent).map_err(|_| Error::Internal)?;
-                        rows.push(cipher.run(description, values, extend.clone()));
-                    }
-                    runs.push(Pending::all(cipher, rows));
-                    positions.push(at);
+                // Each row lowers its own when it is built. Lowering depends
+                // on the plan and the group alone, so a group whose plan
+                // does not lower is refused here, before the pending exists.
+                for (absent, _, _) in &groups {
+                    let _ = compose::<K>(plan, absent).map_err(|_| Error::Internal)?;
                 }
+                let (groups, positions) = GroupRows::new(groups);
+                let plan = plan.clone();
+                let row =
+                    move |absent: &Absent, values: FieldValues| match compose::<K>(&plan, absent) {
+                        Ok(description) => cipher.run(description, values, extend.clone()),
+                        Err(_) => Pending::failed(cipher, wrap(Error::Internal)),
+                    };
                 let eql = Pending::all(cipher, pendings);
-                Pending::all(cipher, runs)
-                    .zip(eql)
-                    .try_map(move |(groups, eql)| {
-                        let rows = in_row_order(len, positions.into_iter().zip(groups))?;
-                        let mut eql = eql.into_iter();
-                        rows.into_iter()
-                            .zip(per_row)
-                            .map(|(values, (absent, count))| {
-                                let own: Vec<Vec<u8>> = eql.by_ref().take(count).collect();
-                                shape_record(values, own, &shape, &absent)
-                            })
-                            .collect::<Result<Vec<_>, _>>()
-                            .map(CipherText::Sequence)
-                    })
+                let finish = move |groups: Vec<Vec<Pending<'a, FieldValues, K>>>| {
+                    let runs = groups
+                        .into_iter()
+                        .map(|rows| Pending::all(cipher, rows))
+                        .collect();
+                    Pending::all(cipher, runs)
+                        .zip(eql)
+                        .try_map(move |(groups, eql)| {
+                            let rows = in_row_order(len, positions.into_iter().zip(groups))?;
+                            let mut eql = eql.into_iter();
+                            rows.into_iter()
+                                .zip(per_row)
+                                .map(|(values, (absent, count))| {
+                                    let own: Vec<Vec<u8>> = eql.by_ref().take(count).collect();
+                                    shape_record(values, own, &shape, &absent)
+                                })
+                                .collect::<Result<Vec<_>, _>>()
+                                .map(CipherText::Sequence)
+                        })
+                };
+                built_in_chunks(cipher, groups, row, finish)
             }
         })
     }
@@ -565,6 +582,9 @@ where
     /// context from a field to find there, checked against each row before
     /// any key is requested; `None` opens each row under the context it
     /// stores. The owned entry point passes `None`.
+    ///
+    /// A batch's rows are opened a chunk at a time, as
+    /// [`run_encrypt`](Self::run_encrypt)'s are lowered.
     ///
     /// # Errors
     ///
@@ -633,34 +653,41 @@ where
                         })
                         .collect(),
                 );
-                let mut opens = Vec::with_capacity(groups.len());
-                let mut positions = Vec::with_capacity(groups.len());
-                for (absent, at, values) in groups {
-                    let rows = values.into_iter().map(|values| {
-                        opening::<K>(plan, values, expected.clone(), extend.clone(), &absent)
-                    });
-                    opens.push(confine(
-                        cipher.run_decryption(Decryption::all(rows)),
-                        &cipher_ref,
-                    ));
-                    positions.push(at);
-                }
+                let (groups, positions) = GroupRows::new(groups);
+                let plan = plan.clone();
+                let row = move |absent: &Absent, values: FieldValues| {
+                    cipher.run_decryption(opening::<K>(
+                        &plan,
+                        values,
+                        expected.clone(),
+                        extend.clone(),
+                        absent,
+                    ))
+                };
                 let eql = Pending::all(cipher, pendings);
-                Pending::all(cipher, opens)
-                    .zip(eql)
-                    .try_map(move |(groups, eql)| {
-                        let rows = in_row_order(len, positions.into_iter().zip(groups))?;
-                        let mut eql = eql.into_iter();
-                        let rows = rows
-                            .into_iter()
-                            .zip(per_row)
-                            .map(|(values, (absent, count))| {
-                                let own: Vec<ValueFrame> = eql.by_ref().take(count).collect();
-                                open_record(values, own, &shape, &absent)
-                            })
-                            .collect::<Result<Vec<_>, _>>()?;
-                        write_record(Rows::Batch(rows))
-                    })
+                let into = cipher_ref.clone();
+                let finish = move |groups: Vec<Vec<Pending<'a, FieldValues, K>>>| {
+                    let opens = groups
+                        .into_iter()
+                        .map(|rows| confine(Pending::collect(cipher, rows), &into))
+                        .collect();
+                    Pending::all(cipher, opens)
+                        .zip(eql)
+                        .try_map(move |(groups, eql)| {
+                            let rows = in_row_order(len, positions.into_iter().zip(groups))?;
+                            let mut eql = eql.into_iter();
+                            let rows = rows
+                                .into_iter()
+                                .zip(per_row)
+                                .map(|(values, (absent, count))| {
+                                    let own: Vec<ValueFrame> = eql.by_ref().take(count).collect();
+                                    open_record(values, own, &shape, &absent)
+                                })
+                                .collect::<Result<Vec<_>, _>>()?;
+                            write_record(Rows::Batch(rows))
+                        })
+                };
+                built_in_chunks(cipher_ref, groups, row, finish)
             }
         })
     }
@@ -675,6 +702,131 @@ fn confine<'a, T: 'a, K>(
     cipher_ref: &CipherRef<'a, K>,
 ) -> Pending<'a, T, K> {
     pending.confined_to(cipher_ref.keyset())
+}
+
+/// The rows of a batch, group by group, each row built into its own
+/// pending a chunk at a time ([`build`](Self::build)).
+struct GroupRows<'a, R, T: 'a, K> {
+    groups: Vec<GroupOfRows<'a, R, T, K>>,
+    /// The first group with rows still to build.
+    at: usize,
+}
+
+/// One group of [`GroupRows`]: the rows still to build and the pendings
+/// built.
+struct GroupOfRows<'a, R, T: 'a, K> {
+    absent: Absent,
+    rows: std::vec::IntoIter<R>,
+    built: Vec<Pending<'a, T, K>>,
+}
+
+impl<'a, R, T: 'a, K> GroupRows<'a, R, T, K> {
+    /// The groups [`by_absent`] makes, to build, and the positions of each
+    /// group's rows in the batch.
+    fn new(groups: Vec<(Absent, Vec<usize>, Vec<R>)>) -> (Self, Vec<Vec<usize>>) {
+        let mut positions = Vec::with_capacity(groups.len());
+        let groups = groups
+            .into_iter()
+            .map(|(absent, at, rows)| {
+                positions.push(at);
+                GroupOfRows {
+                    absent,
+                    built: Vec::with_capacity(rows.len()),
+                    rows: rows.into_iter(),
+                }
+            })
+            .collect();
+        (Self { groups, at: 0 }, positions)
+    }
+
+    /// Build rows in order through `row`, until the rows this call built
+    /// ask for `budget` data keys or more, as a column weighs its items
+    /// between yields ([`YIELD_EVERY`]). A row that asks for none weighs
+    /// one, so a batch of rows with no data key is chunked too. Returns
+    /// whether rows are left to build.
+    ///
+    /// A row whose pending already failed ends the build: the batch fails
+    /// with the first such row, as a column stops at it, so the rows after
+    /// it are dropped unbuilt.
+    fn build(
+        &mut self,
+        budget: usize,
+        row: &mut impl FnMut(&Absent, R) -> Pending<'a, T, K>,
+    ) -> bool {
+        let mut weight = 0;
+        while let Some(group) = self.groups.get_mut(self.at) {
+            for next in group.rows.by_ref() {
+                let pending = row(&group.absent, next);
+                let failed = pending.has_failed();
+                weight += pending.keys().max(1);
+                group.built.push(pending);
+                if failed {
+                    for group in &mut self.groups {
+                        group.rows.by_ref().for_each(drop);
+                    }
+                    return false;
+                }
+                if weight >= budget {
+                    return self.groups[self.at..]
+                        .iter()
+                        .any(|group| group.rows.len() > 0);
+                }
+            }
+            self.at += 1;
+        }
+        false
+    }
+
+    /// The pendings built for each group's rows.
+    fn into_built(self) -> Vec<Vec<Pending<'a, T, K>>> {
+        self.groups.into_iter().map(|group| group.built).collect()
+    }
+}
+
+/// The pendings `row` builds for `rows`, handed to `finish` to merge.
+///
+/// In a wasm guest the rows are built when the pending settles
+/// ([`Pending::in_steps`]), [`YIELD_EVERY`] data keys' worth at a time with
+/// a yield between two chunks, so a host that cannot preempt the guest
+/// (the Go SDK, whose garbage collector waits for a running guest call)
+/// gets control back while a large batch is built. Natively they are built
+/// now, by the same chunks, with no yield between them: a step would hold
+/// `row`, which holds the cipher, across the yield, and a native step must
+/// be `Send`, which would ask the key source to be `Sync`.
+///
+/// The rows are built in the same order, into the same pendings, either
+/// way, and nothing is requested until every row is built.
+fn built_in_chunks<'a, R: 'a, T: 'a, U: 'a, K: 'a>(
+    cipher_ref: impl Into<CipherRef<'a, K>>,
+    rows: GroupRows<'a, R, T, K>,
+    row: impl FnMut(&Absent, R) -> Pending<'a, T, K> + 'a,
+    finish: impl FnOnce(Vec<Vec<Pending<'a, T, K>>>) -> Pending<'a, U, K> + 'a,
+) -> Pending<'a, U, K> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        Pending::in_steps(cipher_ref, move |_| chunk(rows, row, finish))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = cipher_ref.into();
+        let (mut rows, mut row) = (rows, row);
+        while rows.build(YIELD_EVERY, &mut row) {}
+        finish(rows.into_built())
+    }
+}
+
+/// One chunk of [`built_in_chunks`] in a wasm guest, and the rest after it.
+#[cfg(target_arch = "wasm32")]
+fn chunk<'a, R: 'a, T: 'a, U: 'a, K: 'a>(
+    mut rows: GroupRows<'a, R, T, K>,
+    mut row: impl FnMut(&Absent, R) -> Pending<'a, T, K> + 'a,
+    finish: impl FnOnce(Vec<Vec<Pending<'a, T, K>>>) -> Pending<'a, U, K> + 'a,
+) -> Step<'a, U, K> {
+    if rows.build(YIELD_EVERY, &mut row) {
+        Step::More(Box::new(move |_| chunk(rows, row, finish)))
+    } else {
+        Step::Built(finish(rows.into_built()))
+    }
 }
 
 /// The rows of a batch grouped by the fields they leave out, each group
@@ -1404,6 +1556,110 @@ mod tests {
             crate::Error::Plan(error) => error,
             other => panic!("not a plan refusal: {other:?}"),
         }
+    }
+
+    /// A batch's rows are built a chunk at a time, each chunk ending once
+    /// its rows ask for [`YIELD_EVERY`] data keys: the rows of the shared
+    /// plan seal one value each, so 200 rows are built 64 at a time, and a
+    /// wasm guest yields three times while it builds them. The rows come
+    /// back in order, each group's apart, and settle as one call.
+    #[tokio::test]
+    async fn a_batch_is_built_a_chunk_of_yield_every_keys_at_a_time() {
+        let cipher = StackCipher::builder()
+            .kms(FakeDataKeySource::new())
+            .init()
+            .await
+            .expect("build cipher");
+        let keyset = cipher.default_keyset();
+        let plan = the_plan();
+        let extend = plan.declared_context();
+        let row = |i: u32| values(Some(Tree::UInt32(i)), Some(Tree::UInt64(i.into())));
+        let mut no_id = Absent::new();
+        let _ = no_id.insert("id".to_owned());
+        // Two groups: 150 whole rows, then 50 that leave out `id`.
+        let (mut rows, positions) = GroupRows::new(vec![
+            (
+                Absent::new(),
+                (0..150).collect(),
+                (0..150).map(row).collect(),
+            ),
+            (
+                no_id,
+                (150..200).collect(),
+                (150..200)
+                    .map(|i| values(Some(Tree::UInt32(i)), None))
+                    .collect(),
+            ),
+        ]);
+        assert_eq!(positions[1], (150..200).collect::<Vec<usize>>());
+        let mut build = |absent: &Absent, values: FieldValues| {
+            let description = compose::<FakeDataKeySource>(&plan, absent).expect("lowers");
+            keyset.run(description, values, extend.clone())
+        };
+        let mut chunks = Vec::new();
+        loop {
+            let more = rows.build(YIELD_EVERY, &mut build);
+            chunks.push(
+                rows.groups
+                    .iter()
+                    .map(|group| group.built.len())
+                    .sum::<usize>(),
+            );
+            if !more {
+                break;
+            }
+        }
+        assert_eq!(chunks, [64, 128, 192, 200]);
+        let yields = chunks.len() - 1;
+        assert_eq!(yields, 200 / YIELD_EVERY, "a yield between each two chunks");
+
+        let groups = rows.into_built();
+        assert_eq!(groups.iter().map(Vec::len).collect::<Vec<_>>(), [150, 50]);
+        let runs = groups
+            .into_iter()
+            .map(|rows| Pending::all(&keyset, rows))
+            .collect();
+        let sealed = Pending::all(&keyset, runs).await.expect("seals");
+        assert_eq!(sealed[0].len() + sealed[1].len(), 200);
+    }
+
+    /// A row with no data key weighs one, so a batch that seals nothing is
+    /// chunked too; and a row that failed ends the build, with the rows
+    /// after it never built, as a column stops at it.
+    #[tokio::test]
+    async fn a_batch_build_weighs_a_row_with_no_key_and_stops_at_a_failed_row() {
+        let cipher = StackCipher::builder()
+            .kms(FakeDataKeySource::new())
+            .init()
+            .await
+            .expect("build cipher");
+        let keyset = cipher.default_keyset();
+        let built = std::cell::Cell::new(0);
+        let mut build = |_: &Absent, i: usize| {
+            built.set(built.get() + 1);
+            if i == 100 {
+                Pending::failed(&keyset, crate::Error::ResponseShape)
+            } else {
+                Pending::ready(&keyset, Ok(i))
+            }
+        };
+        let (mut rows, _) = GroupRows::new(vec![(
+            Absent::new(),
+            (0..200).collect(),
+            (0..200).collect(),
+        )]);
+        assert!(
+            rows.build(YIELD_EVERY, &mut build),
+            "64 rows that weigh one each"
+        );
+        assert_eq!(built.get(), 64);
+        assert!(
+            !rows.build(YIELD_EVERY, &mut build),
+            "the failed row ends the build"
+        );
+        assert_eq!(built.get(), 101, "no row after the failed one is built");
+        let column = Pending::all(&keyset, rows.into_built().remove(0)).await;
+        assert!(matches!(column, Err(crate::Error::ResponseShape)));
     }
 
     /// What `check_source` asks without a cipher refuses what the

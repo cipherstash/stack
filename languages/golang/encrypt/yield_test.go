@@ -22,17 +22,18 @@ func countYields(c *encrypt.Client) *atomic.Uint64 {
 }
 
 // A batch yields to the host between chunks of its rows, so the Go runtime
-// gets control back while the guest seals or opens it (the garbage
-// collector's stop-the-world pause cannot preempt a running guest call),
-// and the batch still comes back whole and in order.
+// gets control back while the guest builds the batch and while it seals or
+// opens it (the garbage collector's stop-the-world pause cannot preempt a
+// running guest call), and the batch still comes back whole and in order.
 //
 // The count is exact. A User takes three data keys (Age, Email, Notes), and
-// a column yields once its items have taken 64 keys or more and items
-// remain: every 22 rows (66 keys). So 200 rows yield after rows 22, 44, ...,
-// 198, nine times each way. The guest's chunking runs only in wasm, where
-// no Rust test reaches it, so this count is what pins it.
+// a chunk ends once its rows have taken 64 keys or more and rows remain:
+// every 22 rows (66 keys). So 200 rows yield after rows 22, 44, ..., 198,
+// nine times while the batch is built (#1768) and nine more while it is
+// sealed or opened: eighteen each way. The guest's chunking runs only in
+// wasm, where no Rust test reaches it, so this count is what pins it.
 func TestABigBatchYieldsAndRoundTrips(t *testing.T) {
-	const wantYields = 9
+	const wantYields = 2 * 9
 	c := deterministicClient(t)
 	ctx := context.Background()
 	cipher := c.DefaultKeyset()
