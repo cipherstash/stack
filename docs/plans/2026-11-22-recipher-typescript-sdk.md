@@ -544,7 +544,7 @@ const opened = await tenant.decrypt(notes, stored.unwrap());
 - **The order is the engine's.** Parts are sorted by wire name, not by
   the order they are written in.
 - **A label that does not match is refused before any key is requested**,
-  as an `Err` of kind `context_mismatch`.
+  as an `Err` with the code `stack_encrypt::context_mismatch`.
 - **Refinements** (phase 3). `refine` adds a label or a policy to a stored
   value without encrypting it again. It waits for #1567.
 
@@ -724,7 +724,7 @@ const sealed = await keyset.encrypt("a secret message");
 if (sealed.isOk()) {
   store(sealed.value.toBytes());
 } else {
-  log(sealed.error.kind);
+  log(sealed.error.code);
 }
 
 // Or combine it.
@@ -749,12 +749,15 @@ const bytes = sealed.map((ciphertext) => ciphertext.toBytes()).unwrapOr(null);
   `causes` behind it. `field` and `record` name the field and the record
   at fault, which the SDK knows where the engine does not. A cause from another library is
   named as one and its message is never copied. The engine sets no `url`
-  yet (#1790); the property shows the link when it does. `kind` is the
-  SDK's own, coarser than the code. It is a closed set a caller
-  switches on: a refused declaration, a value of the wrong type, a refused
-  credential, a ZeroKMS refusal, a foreign keyset, a context mismatch, a
-  value that did not open, and a cancelled call. The compiler checks that
-  a `switch` covers every kind.
+  yet (#1790); the property shows the link when it does.
+- **The SDK adds nothing of its own to an error's description.** A caller
+  switches on `code`. There is no coarser grouping that the SDK invents:
+  a grouping the SDK made up would have to be kept in step with every
+  engine error, in every language. The SDK's own errors (a value that is
+  not a record, a build that did not load) are diagnostics too, declared
+  the way the engine declares its own, with codes under `recipher::`. The
+  value bridge says which rule a refused value broke as a typed value, so
+  nothing reads the wording of a message.
 - **Nothing escapes as an exception.** A failure in the binding, such as a
   build that does not load, is an `Err` too. A test passes each call a
   wrong argument and a failing key service, and asserts that none throws
@@ -789,7 +792,7 @@ can check, and the README says so.
   runs it through `wasm-bindgen-futures`,
   and ZeroKMS requests go out through the runtime's `fetch`.
 - A call takes an `AbortSignal`. Aborting drops the future, which wipes what
-  it held, and the call resolves to an `Err` of kind `cancelled`. Only that call fails; the
+  it held, and the call resolves to an `Err` with a code of its own for a cancelled call. Only that call fails; the
   cipher goes on serving others. The Go SDK's cancellation tests
   (`languages/golang/encrypt/cancel_test.go`) are the list of cases.
 
@@ -879,7 +882,7 @@ these rules are checked then.
   and the value profile for the record kinds. A fuzz target on the wasm
   build compares its frame for a value with the napi bridge's.
 - **Type tests.** A wrong row, a wrong value, an unknown field, an
-  operator a field cannot answer, an unhandled error kind, and an EQL type
+  operator a field cannot answer, and an EQL type
   against a cipher without the extension do not compile.
 - **Nothing throws.** Every call is run with a wrong argument, a failing
   key service and an aborted signal. Each must resolve to an `Err`.
