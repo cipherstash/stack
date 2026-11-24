@@ -100,6 +100,27 @@ The working loop is:
 4. To confirm, trust the event stream or run any authenticated command —
    never inspect `~/.cipherstash` (see "Never read these").
 
+**When to start it.** Start this loop yourself whenever local work stops on
+missing credentials. That includes a `stash` command, a test, or an SDK in any
+language (TypeScript, Rust, Go) reporting `NOT_AUTHENTICATED`, "no
+credentials", "no client key", or "run `stash auth login`". It also includes a
+profile that exists but has no key for the current workspace: a login fixes
+that too. Do not stop the task to hand the problem back. Do not ask the user
+to paste `CS_*` values. And do not run `stash env` to get local credentials,
+because it mints a new access key each time it runs. The user only has to
+open one link.
+
+**Choose the region; do not guess it.** Without a terminal, `auth login`
+needs `--region` (or `STASH_REGION`), and exits with "Cannot resolve a region
+without a prompt" if it has neither. A workspace lives in one region:
+
+- If a `CS_WORKSPACE_CRN` is in view, use the region it names
+  (`crn:<region>.<provider>:<workspace-id>`).
+- Otherwise ask the user, offering the slugs from
+  `npx stash auth regions --json`.
+
+A login in another region does not reach a workspace in this one.
+
 **Authenticate before `stash init`.** Init's authenticate step uses the interactive path, so an agent running `init` unauthenticated makes the CLI try to open a browser on the agent's machine — and in a non-TTY it exits with `region_required` unless `--region` or `STASH_REGION` is set. Once a valid token exists, init logs `Using workspace X (region)` and moves on silently.
 
 Flags: `--region <slug>` (env `STASH_REGION`), `--json`, `--no-open`, `--supabase` / `--drizzle` / `--prisma` (referrer tracking only).
