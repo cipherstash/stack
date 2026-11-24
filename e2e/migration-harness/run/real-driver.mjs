@@ -5,13 +5,14 @@ import { cp, mkdir, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { behaviour, legacy, mutation } from './behaviour.mjs'
-import {
-  legacyBytes,
-  migrationChecks,
-  noRewriteCheck,
-} from './migration-checks.mjs'
+import { migrationChecks } from './migration-checks.mjs'
 import { runMigrator } from './migrator.mjs'
+import { noRewrite, validateLegacySnapshot } from './no-rewrite.mjs'
 import { createStoreSet, disposeStores } from './real-stores.mjs'
+import {
+  isSnapshotInfrastructureError,
+  snapshotErrorCode,
+} from './snapshot-errors.mjs'
 import { prepareWorkspace } from './workspace.mjs'
 
 /** @typedef {Awaited<ReturnType<typeof createStoreSet>>} StoreSet
@@ -45,25 +46,6 @@ export function createRealDriver({
   function assigned(stores) {
     if (!stores) throw Error('Run Store Set has not been provisioned')
     return stores
-  }
-  /** Snapshot the oracle stores, filing a store failure as infrastructure so a
-   * DynamoDB Local or relay hiccup is not blamed on the guide or the Migrator.
-   * @param {string} [pk]
-   */
-  async function oracleSnapshot(pk) {
-    const stores = assigned(oracleStores)
-    try {
-      return pk === undefined
-        ? await stores.snapshot()
-        : await stores.snapshot(pk)
-    } catch (error) {
-      throw Object.assign(
-        new Error(error instanceof Error ? error.message : String(error), {
-          cause: error,
-        }),
-        { infrastructure: true },
-      )
-    }
   }
   const serviceNames = new Set(['registry.npmjs.org'])
   for (const key of ['CS_CTS_HOST', 'CS_ZEROKMS_HOST'])
@@ -233,7 +215,7 @@ export function createRealDriver({
     },
     async snapshot() {
       legacySnapshot = await assigned(oracleStores).snapshot()
-      legacyBytes(legacySnapshot)
+      validateLegacySnapshot(legacySnapshot)
       await writeFile(
         resolve(output, 'legacy-snapshot.json'),
         JSON.stringify(legacySnapshot),
@@ -378,29 +360,55 @@ export function createRealDriver({
         const result = await behaviour((method, args) =>
           application.call(method, args),
         )
-        const comparison = noRewriteCheck(
-          legacySnapshot,
-          await oracleSnapshot(),
+        const checks = result.checks
+        /** A store outage stays infrastructure and carries the checks already
+         * completed; app-caused damage (a dropped table, a renamed column)
+         * becomes a failed check, so the Editor sees what broke.
+         * @param {string} [pk]
+         * @returns {Promise<{snapshot: unknown} | {cause: string}>} */
+        async function read(pk) {
+          try {
+            return { snapshot: await assigned(oracleStores).snapshot(pk) }
+          } catch (error) {
+            if (isSnapshotInfrastructureError(error))
+              throw Object.assign(
+                new Error('Oracle snapshot read failed', { cause: error }),
+                { infrastructure: true, checks: [...checks] },
+              )
+            return {
+              cause: `Oracle snapshot read failed: ${snapshotErrorCode(error)}`,
+            }
+          }
+        }
+        const current = await read()
+        checks.push(
+          'cause' in current
+            ? { id: 'no-rewrite.legacy-bytes', passed: false, ...current }
+            : noRewrite(legacySnapshot, current.snapshot),
         )
-        result.checks.push(comparison)
-        // Inspect the stored active field straight after setActive: the copy
-        // checks then put the full record twice, which would replace a stale
-        // legacy HMAC left by a broken setActive before it could be seen.
-        /** @type {unknown} */
-        let mutationSnapshot
-        const checks = await result.mutate({
+        // Inspect setActive before later full writes can repair stale HMACs.
+        /** @type {{snapshot: unknown} | {cause: string}} */
+        let mutationRead = { snapshot: undefined }
+        await result.mutate({
           afterSetActive: async () => {
-            mutationSnapshot = await oracleSnapshot(mutation.pk)
+            mutationRead = await read(mutation.pk)
           },
         })
+        const migration = await migrationChecks({
+          workspace,
+          installedWorkspace: oracleWorkspace,
+          stackVersion: manifest.stack,
+          ffiRange,
+          mutationSnapshot:
+            'snapshot' in mutationRead ? mutationRead.snapshot : undefined,
+        })
         checks.push(
-          ...(await migrationChecks({
-            workspace,
-            installedWorkspace: oracleWorkspace,
-            stackVersion: manifest.stack,
-            ffiRange,
-            mutationSnapshot,
-          })),
+          ...migration.map((check) =>
+            'cause' in mutationRead &&
+            check.id === 'migration.active-hmac-absent'
+              ? { ...check, passed: false, cause: mutationRead.cause }
+              : check,
+          ),
         )
         return checks
       } finally {

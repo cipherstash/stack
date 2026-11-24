@@ -4,6 +4,7 @@ import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs, promisify } from 'node:util'
+import { createIsolationTrailWriter } from './isolation-trail.mjs'
 import { createRealDriver } from './real-driver.mjs'
 import { run } from './run.mjs'
 
@@ -88,13 +89,7 @@ try {
     manifest,
     driver,
     supervision: isolation,
-    // One NDJSON file per stage beside the report, referenced by digest.
-    writeIsolationTrail: async (stage, body) => {
-      const file = `isolation-events/${stage}.ndjson`
-      await mkdir(resolve(output, 'isolation-events'), { recursive: true })
-      await writeFile(resolve(output, file), body)
-      return file
-    },
+    writeIsolationTrail: createIsolationTrailWriter(output),
   })
   await writeFile(
     resolve(output, 'run-report.json'),
