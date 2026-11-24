@@ -7,8 +7,8 @@ supersedes: ADR-0002
 
 In November 2026 we decided to move every Blacksmith job in this repository to
 RunsOn. Each job gets the same vCPU count, architecture, and Ubuntu version.
-`.github/CONTEXT.md` calls this a same-size swap. Nothing else about the jobs
-changes: their triggers, steps, and trigger paths stay as they are.
+`.github/CONTEXT.md` calls this a same-size swap. The jobs' triggers and
+trigger paths stay as they are.
 
 We made the change to cut cost at once. At November 2026's pace, CI for this
 repository costs about $3,470 a month on Blacksmith. On RunsOn machines of the

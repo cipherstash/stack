@@ -84,7 +84,8 @@ _Avoid_: big job, 16-core job
 **Same-size swap**:
 The change that moves each Blacksmith job to a RunsOn machine with the same
 vCPU count, architecture, and Ubuntu version. Memory and disk may be smaller.
-The job's triggers and steps stay the same.
+The job's triggers stay the same. The swap can add steps, such as a Docker Hub
+login before an image pull.
 _Avoid_: like-for-like replacement, migration
 
 ## Relationships
