@@ -87,8 +87,11 @@ is a deliberate request. The queue still runs the gate checks again.
 GitHub cannot start a workflow on one label only, so every workflow starts
 when any label is added. On every such run, the selector job selects the push
 checks again, and the gate checks too for `ci:full`. GitHub counts the newest
-result for a check name. So a label run gives fresh results and cannot hide an
-earlier failure.
+result for a check name. So a label run gives fresh push check results. It
+cannot hide an earlier push check failure.
+
+A later push or label run without `ci:full` skips the gate checks. If its
+summary job passes, that result replaces the failed result of an early run.
 
 ## Mutants
 
@@ -101,7 +104,8 @@ earlier failure.
 - It starts at the same time as the push checks, in the queue and on early
   runs. A watcher job cancels it when a push check fails.
 - On an early run, a cancelled Mutants run counts as a failure. The pull
-  request cannot join the queue until Mutants runs again.
+  request cannot join the queue until Mutants runs again, or a later push or
+  label run replaces the result.
 - The other heavy gate checks also start at once.
 
 ## Considered options
