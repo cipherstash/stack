@@ -745,8 +745,9 @@ const bytes = sealed.map((ciphertext) => ciphertext.toBytes()).unwrapOr(null);
   Go SDK's `Diagnostic` does: the stable `code` (`stack_encrypt::aead`),
   the one-line `message`, the `help`, the `url` of its documentation page,
   the `severity`,
-  the structured `fields` (`reason` and `field` among them, also as typed
-  properties), and the `causes` behind it. A cause from another library is
+  the structured `fields` (a refusal's `reason` among them), and the
+  `causes` behind it. `field` and `record` name the field and the record
+  at fault, which the SDK knows where the engine does not. A cause from another library is
   named as one and its message is never copied. The engine sets no `url`
   yet (#1790); the property shows the link when it does. `kind` is the
   SDK's own, coarser than the code. It is a closed set a caller
