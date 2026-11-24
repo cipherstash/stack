@@ -1462,12 +1462,12 @@ mod window_tests {
     use super::*;
     use crate::connection::ZeroKMSConnectionInit;
     use crate::key::V1KeySet;
-    use recipher::keyset::{EncryptionKeySet, ProxyKeySet};
     use std::future::Future;
     use std::pin::pin;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::task::{Context, Poll, Wake, Waker};
+    use zerokms_keyset::keyset::{EncryptionKeySet, ProxyKeySet};
     use zerokms_protocol::{RetrieveKeyResponse, ViturKeyMaterial};
 
     /// Every request sent so far: how many keys it asked for, and whether
