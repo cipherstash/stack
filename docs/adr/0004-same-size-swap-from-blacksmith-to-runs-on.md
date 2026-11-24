@@ -1,5 +1,6 @@
 ---
 status: accepted
+supersedes: ADR-0002
 ---
 
 # Swap Blacksmith for RunsOn machines of the same size
