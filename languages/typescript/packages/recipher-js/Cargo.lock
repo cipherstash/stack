@@ -2515,6 +2515,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "recipher-value-napi",
  "rust_decimal",
  "serde",
  "serde_json",
@@ -2524,7 +2525,20 @@ dependencies = [
  "tokio",
  "uuid",
  "vitaminc-aead 0.10.0",
- "vitaminc-aead-napi",
+ "vitaminc-protected 0.10.0",
+ "zeroize",
+]
+
+[[package]]
+name = "recipher-value-napi"
+version = "0.0.0"
+dependencies = [
+ "jiff",
+ "mutants",
+ "napi",
+ "rust_decimal",
+ "thiserror 2.0.21",
+ "vitaminc-aead 0.10.0",
  "vitaminc-protected 0.10.0",
  "zeroize",
 ]
@@ -3827,22 +3841,6 @@ dependencies = [
  "serde",
  "vitaminc-aead 0.10.0",
  "vitaminc-protected 0.10.0",
-]
-
-[[package]]
-name = "vitaminc-aead-napi"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a582a96e2f78489bdd02b3bbb0f953dc6deb14f3b652c12ce14ce12455524446"
-dependencies = [
- "jiff",
- "mutants",
- "napi",
- "rust_decimal",
- "thiserror 2.0.21",
- "vitaminc-aead 0.10.0",
- "vitaminc-protected 0.10.0",
- "zeroize",
 ]
 
 [[package]]

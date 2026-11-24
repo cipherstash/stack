@@ -1,0 +1,21 @@
+[package]
+name = "recipher-value-napi-test-addon"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "3", default-features = false, features = ["napi6"] }
+napi-derive = "3"
+vitaminc-aead = { version = "0.10.0", features = ["rust_decimal"] }
+recipher-value-napi = { path = "../.." }
+vitaminc-encrypt = "0.10.0"
+vitaminc-protected = "0.10.0"
+
+[build-dependencies]
+napi-build = "2"

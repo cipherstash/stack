@@ -34,8 +34,8 @@ const opened = await cipher.decrypt(sealed.value)
 
 ## Values
 
-A value's type picks how it is encrypted. The mapping is vitaminc's, read
-and built by its `vitaminc-aead-napi` bridge:
+A value's type picks how it is encrypted. The mapping is the one vitaminc
+defines, read and built by the `recipher-value-napi` crate (`value-napi/`):
 
 | Value | Encrypted as | Decrypts as |
 |---|---|---|
@@ -220,7 +220,8 @@ debug build of the addon (`build:debug`) has it.
 
 The classes are written in Rust, in one crate (`crate/`, crate
 `recipher-js`): a napi-rs 3 addon over the engine. It reads and builds
-JavaScript values only through vitaminc's `vitaminc-aead-napi`. napi-rs's
+JavaScript values only through the value bridge beside it (`value-napi/`,
+crate `recipher-value-napi`). napi-rs's
 CLI builds it, and writes its TypeScript declarations to `native.d.ts`,
 which is committed. The package's TypeScript holds what Rust cannot:
 `Result`, `RecipherError`, and typed signatures over the native methods.

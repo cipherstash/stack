@@ -1,4 +1,4 @@
-//! JavaScript values in and out, through vitaminc's `vitaminc-aead-napi`.
+//! JavaScript values in and out, through `recipher-value-napi`.
 //!
 //! A value is read with `JsRef::to_frame`, on the JavaScript thread, into
 //! the engine's [`ValueFrame`]: a buffer wiped when it drops, which a worker
@@ -15,10 +15,10 @@
 use napi::bindgen_prelude::{FromNapiValue, JsObjectValue, JsValue, Object, Unknown};
 use napi::{Env, Status, ValueType};
 use napi::{Property, PropertyAttributes};
+use recipher_value_napi::{JsBuilder, JsRef, Wrapper, Wrappers};
 use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::AsProtectedRef;
 use vitaminc_aead::Frame;
-use vitaminc_aead_napi::{JsBuilder, JsRef, Wrapper, Wrappers};
 use vitaminc_protected::Controlled;
 
 use crate::error::{ErrorKind, RecipherErrorFields};

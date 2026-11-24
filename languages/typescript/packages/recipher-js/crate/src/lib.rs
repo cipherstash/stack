@@ -3,8 +3,8 @@
 //! It defines the classes the package exports, [`Cipher`], [`Keyset`] and
 //! [`Ciphertext`], and runs every operation through the Stack Encrypt engine.
 //! napi-rs generates their TypeScript declarations (`native.d.ts`) from this
-//! crate. It reads and builds JavaScript values only through vitaminc's
-//! `vitaminc-aead-napi` (see [`js`]).
+//! crate. It reads and builds JavaScript values only through
+//! `recipher-value-napi` (see [`js`]).
 //!
 //! # Outcomes
 //!
@@ -76,8 +76,8 @@ pub fn binding_interface() -> u32 {
 #[cfg_attr(test, allow(dead_code))]
 #[napi(module_exports)]
 fn wrappers(mut exports: Object<'_>, env: Env) -> napi::Result<()> {
-    let classes = vitaminc_aead_napi::Wrappers::exports(&env)?;
-    for wrapper in vitaminc_aead_napi::Wrapper::ALL {
+    let classes = recipher_value_napi::Wrappers::exports(&env)?;
+    for wrapper in recipher_value_napi::Wrapper::ALL {
         let name = wrapper.class_name();
         exports.set_named_property(name, classes.get_named_property::<Unknown<'_>>(name)?)?;
     }

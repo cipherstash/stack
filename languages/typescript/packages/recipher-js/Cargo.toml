@@ -2,10 +2,10 @@
 # own Cargo.lock. The root `Cargo.toml` excludes it, as it excludes
 # protect-ffi and EQL, so napi-rs 3 and this lock never enter a stack-* build.
 #
-# It has one crate, `crate` (crate `recipher-js`): the napi-rs 3 addon. It
-# defines the classes the TypeScript exports, runs every operation through
-# the engine, and converts JavaScript values with vitaminc's
-# `vitaminc-aead-napi`.
+# It has two crates. `crate` (crate `recipher-js`) is the napi-rs 3 addon: it
+# defines the classes the TypeScript exports and runs every operation
+# through the engine. `value-napi` (crate `recipher-value-napi`) is the value
+# bridge the addon reads and builds every JavaScript value through.
 #
 # The package's `build` and `test` scripts never run cargo. `build:native`,
 # `build:debug` and `test:cargo` do.
@@ -13,7 +13,7 @@
 resolver = "2"
 # Listed by name, not by glob: scripts/__tests__/dependabot-cargo-cross-workspace.test.mjs
 # reads this list and expands no globs.
-members = ["crate"]
+members = ["crate", "value-napi"]
 
 [workspace.package]
 edition = "2021"

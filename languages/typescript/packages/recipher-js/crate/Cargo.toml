@@ -26,7 +26,7 @@ testing = ["stack-encrypt/test-support"]
 stack-encrypt = { path = "../../../../../packages/stack-encrypt", default-features = false, features = ["dynamic", "http"] }
 # The auth strategy the detected cipher's key source is generic over.
 stack-auth = { path = "../../../../../packages/stack-auth", default-features = false, features = ["http"] }
-# napi-rs 3, as `vitaminc-aead-napi` is. Its default features load Node-API
+# napi-rs 3, as `recipher-value-napi` is. Its default features load Node-API
 # by name at run time (`dyn-symbols`), so the crate's own tests link without
 # Node. `napi6` for BigInt and property enumeration, which vitaminc's walk
 # needs, and `napi9` (Node 18.17 and later) for `Symbol.for`, which keys a
@@ -34,10 +34,8 @@ stack-auth = { path = "../../../../../packages/stack-auth", default-features = f
 # runtime.
 napi = { version = "3", features = ["napi9", "tokio_rt", "serde-json"] }
 napi-derive = "3"
-# vitaminc's value bridge for Node addons: every JavaScript value is read
-# and built through it. At the vitaminc version the engine is built with,
-# so one vitaminc is in the build.
-vitaminc-aead-napi = "0.10.0"
+# The value bridge: every JavaScript value is read and built through it.
+recipher-value-napi = { path = "../value-napi" }
 # The frame `JsBuilder::build` takes, and the frame writer a row is split
 # with. The version the engine resolves.
 vitaminc-aead = "0.10.0"
