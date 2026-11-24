@@ -841,7 +841,7 @@ fn run(case: &Case) -> Result<(), TestCaseError> {
                     let n = chunks(case.keys, case.keys_per_req);
                     let c = case.concurrent_reqs;
                     let mut want = vec![c; n / c];
-                    if n % c != 0 {
+                    if !n.is_multiple_of(c) {
                         want.push(n % c);
                     }
                     prop_assert_eq!(&t.request_steps, &want, "windows: {:?}", t);
@@ -878,6 +878,10 @@ proptest! {
 }
 
 #[test]
+#[allow(
+    clippy::print_stderr,
+    reason = "a report for whoever runs the oracle with --nocapture; it asserts nothing"
+)]
 fn zz_report() {
     eprintln!(
         "oracle cases run so far in this process: {}, extra yields outside the guest driver: {}",

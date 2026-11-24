@@ -309,9 +309,9 @@ func batchSize(r *rand.Rand) int {
 }
 
 // guarded runs f, turning a panic into a value.
-func guarded(f func() error) (err error, p any) {
+func guarded(f func() error) (p any, err error) {
 	defer func() { p = recover() }()
-	return f(), nil
+	return nil, f()
 }
 
 func TestVerifyChaos(t *testing.T) {
@@ -417,7 +417,7 @@ func TestVerifyChaos(t *testing.T) {
 					}
 				}()
 				calls.Add(1)
-				err, p := guarded(func() error { return check(callCtx, r, n) })
+				p, err := guarded(func() error { return check(callCtx, r, n) })
 				close(done)
 				cancel()
 				switch {
@@ -443,7 +443,7 @@ func TestVerifyChaos(t *testing.T) {
 
 	// The client still works.
 	after := func() error { return check(ctx, rand.New(rand.NewPCG(3, 4)), 900) }
-	err, p := guarded(after)
+	p, err := guarded(after)
 
 	// Goroutines settle back to where they were.
 	var now int
