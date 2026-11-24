@@ -80,9 +80,9 @@ depends = ["mutants:*"]
 #   host (see the plan), so it must be out of the WASI build by construction.
 #
 # The suite's version of this task also checked the suite crates the stack
-# crates depend on (zerokms-protocol, cipherstash-core, recipher, cts-common,
-# cllw-ore). Here they come from crates.io and are checked through the stack
-# crates' graphs.
+# crates depend on (zerokms-protocol, cipherstash-core, zerokms-keyset, then
+# named recipher, cts-common and cllw-ore). Here they come from crates.io and
+# are checked through the stack crates' graphs.
 [tasks."wasm:wasi-check"]
 description = "Check the stack crates compile for wasm32-wasip1 with no JS-host or native-HTTP deps (Go/wazero target)"
 # bash, not the default sh: the script uses `set -o pipefail` (Ubuntu's sh is
@@ -288,7 +288,7 @@ echo "test build at languages/golang/encrypt/encrypttest/wasm/stack_encrypt_gues
 """
 
 [tasks."wasm:guest:test"]
-description = "Lint and natively test the stack-encrypt WASI guest (ops/config/status modules run on the host target)"
+description = "Lint and test the stack-encrypt WASI guest: natively, plus its key-derivation known answers on wasm32 under wazero"
 shell = "bash -c"
 run = """
 set -euo pipefail
@@ -321,6 +321,14 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --target wasm32-wasip1
 # runs from here rather than a root `-p`. nextest is in mise.test.toml.
 mise x --env test -- cargo nextest run
 mise x --env test -- cargo nextest run --features eql
+# The key-derivation known answers again, on wasm32 under wazero, the Go
+# module's runtime. The guest turns on stack-kms's `wasm-simd`, so there the
+# keys come from the SIMD re-encryption path, which no native run reaches.
+# `go -C ../..` runs wazero from the Go module, at the version go.mod pins.
+# On wasm a panic aborts before libtest prints captured output, so
+# --nocapture keeps a failure's assertion message.
+CARGO_TARGET_WASM32_WASIP1_RUNNER="go -C ../.. run github.com/tetratelabs/wazero/cmd/wazero run" \\
+  cargo test --target wasm32-wasip1 --test key_derivation -- --nocapture
 """
 
 [tasks."wasm:auth-guest:build"]
