@@ -1,26 +1,48 @@
 name: Tests (recipher-js)
 
-# The Rust half of `@cipherstash/recipher`, the TypeScript SDK on the Stack
-# Encrypt engine: its detached Cargo workspace. For now the workspace has one
-# crate, `recipher-value-napi` (`value-napi/`), the value bridge that reads
-# JavaScript values into vitaminc's plaintext model and builds them back.
+# `@cipherstash/recipher`, the TypeScript SDK on the Stack Encrypt engine:
+# its detached Cargo workspace (the napi-rs 3 addon `recipher-js`, and the
+# value bridge `recipher-value-napi`) and the suites that load the addon.
 #
-# `cargo test` runs the bridge's unit tests and `tests/node.rs`, which builds
-# the bridge's test addon (`value-napi/tests/addon`, a workspace of its own)
-# and runs the Node suites against it. Every test here is offline, so the job
-# takes no credentials.
+# This workflow runs every test the package has: `test:cargo`, `build:debug`
+# (napi-rs's CLI, which also writes the committed `native.d.ts`),
+# `test:addon`, and `test` (the suites that need no addon, and the typecheck
+# with the type tests). tests.yml's live jobs skip a change that touches only
+# this package, so nothing else runs them for it. Every test here
+# is offline, over the engine's deterministic test keys, so the job takes no
+# credentials.
+#
+# The engine crates and the root Cargo.toml are in the filter: the crate
+# depends on stack-encrypt by path, and stack-encrypt's `workspace = true`
+# dependencies resolve against the root manifest.
 
 on:
   pull_request:
     paths:
       - languages/typescript/packages/recipher-js/**
+      - packages/stack-auth/**
+      - packages/stack-profile/**
+      - packages/stack-kms/**
+      - packages/stack-encrypt/**
+      - packages/stack-encrypt-derive/**
+      - packages/stack-encrypt-jsonpath/**
+      - Cargo.toml
       - mise.toml
+      - pnpm-lock.yaml
       - .github/workflows/tests-recipher-js.yml
   push:
     branches: [main]
     paths:
       - languages/typescript/packages/recipher-js/**
+      - packages/stack-auth/**
+      - packages/stack-profile/**
+      - packages/stack-kms/**
+      - packages/stack-encrypt/**
+      - packages/stack-encrypt-derive/**
+      - packages/stack-encrypt-jsonpath/**
+      - Cargo.toml
       - mise.toml
+      - pnpm-lock.yaml
       - .github/workflows/tests-recipher-js.yml
   workflow_dispatch: {}
 
@@ -42,7 +64,7 @@ env:
 
 jobs:
   recipher-js:
-    name: cargo checks (Linux)
+    name: cargo checks, the addon, and its suites (Linux)
     runs-on: blacksmith-16vcpu-ubuntu-2204
     # The slowest run so far took under three minutes. A run that is still
     # going at ten is stuck, not slow: stop it rather than pay for 45.
@@ -72,23 +94,70 @@ jobs:
         with:
           workspaces: languages/typescript/packages/recipher-js -> target
 
-      # `tests/node.rs` runs the bridge's Node suites with `node`.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
+          cache: 'pnpm'
+
+      # node-pty falls back to `node-gyp rebuild` on Linux during any
+      # workspace install. See scripts/__tests__/workflow-node-gyp.test.mjs.
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       # `cargo test --locked`, `cargo fmt --check` and clippy, with every
-      # feature. The test addon is a workspace of its own, which `--all`
-      # does not reach, so it is checked by its manifest. Its clippy shares
-      # the directory `tests/node.rs` builds it in. It has no tests, and
-      # without them `--all-targets` would report its module entry point
-      # unused.
+      # feature. The tests include the checks that the addon links no
+      # eql-bindings, and that a build with its default features (the
+      # release build) has no test cipher. They also run the value bridge's
+      # Node suites against its test addon.
       - name: cargo checks
+        run: pnpm --filter @cipherstash/recipher run test:cargo
+
+      # The debug addon, with the test cipher, as `recipher.node`. napi-rs
+      # writes the addon's TypeScript declarations to `native.d.ts`, which is
+      # committed: the package's TypeScript imports its types from it.
+      - name: Build the addon
+        run: pnpm --filter @cipherstash/recipher run build:debug
+
+      # The build must leave the tracked tree as it found it. Nothing else
+      # regenerates `native.d.ts`, so a change to a `#[napi]` item that is not
+      # rebuilt and committed would leave declarations that disagree with the
+      # addon; `git status` also catches an untracked file the build leaves.
+      - name: Guard the committed declarations and Cargo.lock against drift
+        run: |
+          dirty=$(git status --porcelain -- languages/typescript/packages/recipher-js)
+          if [ -n "$dirty" ]; then
+            echo "$dirty"
+            git diff -- languages/typescript/packages/recipher-js
+            echo "::error::the recipher-js build changed tracked files or left untracked ones. Run 'pnpm --filter @cipherstash/recipher run build:debug' and commit native.d.ts and Cargo.lock; ignore other build outputs in the package's .gitignore."
+            exit 1
+          fi
+
+      # Builds the TypeScript (tsup) first: one suite runs the ESM and the
+      # CommonJS build in one process.
+      - name: Suites that load the addon
+        run: pnpm --filter @cipherstash/recipher run test:addon
+
+      # The value bridge's test addon is a workspace of its own, which
+      # `test:cargo` does not reach, so it is checked by its manifest. Its
+      # clippy shares the directory `tests/node.rs` builds it in. It has no
+      # tests, and without them `--all-targets` would report its module entry
+      # point unused.
+      - name: The value bridge's test addon
         working-directory: languages/typescript/packages/recipher-js
         run: |
-          cargo test --locked --all-features
-          cargo fmt --all --check
-          cargo clippy --locked --all-targets --all-features -- -D warnings
           cargo fmt --manifest-path value-napi/tests/addon/Cargo.toml --check
           cargo clippy --locked --manifest-path value-napi/tests/addon/Cargo.toml \
             --target-dir target/napi-test-addon -- -D warnings
+
+      # The package's `test`: the suites that need no addon, and the
+      # typecheck with the type tests. tests.yml's live jobs skip a change
+      # that touches only this package, so this workflow runs it.
+      - name: Suites that need no addon, and the typecheck
+        run: pnpm --filter @cipherstash/recipher run test
