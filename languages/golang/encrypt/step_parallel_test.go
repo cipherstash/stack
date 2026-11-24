@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,7 +42,7 @@ func TestAStepsRequestsArePerformedAtTheSameTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := responseBodies(t, encoded); !equalStrings(got, paths) {
+	if got := responseBodies(t, encoded); !slices.Equal(got, paths) {
 		t.Fatalf("responses %q, want them in the requests' order %q", got, paths)
 	}
 }
@@ -72,12 +73,73 @@ func TestAStepPerformsAtMostMaxParallelRequestsAtOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := responseBodies(t, encoded); !equalStrings(got, paths) {
+	if got := responseBodies(t, encoded); !slices.Equal(got, paths) {
 		t.Fatalf("responses %q, want %q", got, paths)
 	}
 	if m := most.Load(); m > maxParallelRequests || m < 2 {
 		t.Fatalf("%d requests ran at once, want between 2 and %d", m, maxParallelRequests)
 	}
+}
+
+// A caller that gives up mid-step cancels every request of the step in
+// flight, and the step returns without waiting for them to finish.
+func TestCancellingAStepCancelsEveryRequestInFlight(t *testing.T) {
+	paths := []string{"/a", "/b", "/c"}
+	var arrived, cancelled sync.WaitGroup
+	arrived.Add(len(paths))
+	cancelled.Add(len(paths))
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		arrived.Done()
+		select {
+		case <-r.Context().Done():
+			cancelled.Done()
+			return nil, r.Context().Err()
+		case <-time.After(10 * time.Second):
+			return nil, errors.New("the request was not cancelled")
+		}
+	})
+	tr := &transport{rt: rt, token: staticToken("t")}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { arrived.Wait(); cancel() }()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = tr.performStep(ctx, &ioStep{requests: requestsTo(paths...)})
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the step did not return after its context was cancelled")
+	}
+	// Every request saw the cancellation: none ran out its 10 s.
+	cancelled.Wait()
+}
+
+// A panic in the caller's RoundTripper reaches the caller's goroutine, where
+// the caller can recover it, after the step's other requests finish.
+func TestAPanickingRoundTripperPanicsOnTheCallersGoroutine(t *testing.T) {
+	var finished atomic.Int64
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/b" {
+			panic("boom")
+		}
+		time.Sleep(20 * time.Millisecond)
+		finished.Add(1)
+		return okResponse(r.URL.Path), nil
+	})
+	tr := &transport{rt: rt, token: staticToken("t")}
+
+	defer func() {
+		if p := recover(); p != "boom" {
+			t.Fatalf("recovered %v, want the RoundTripper's panic", p)
+		}
+		if n := finished.Load(); n != 2 {
+			t.Fatalf("%d of the other 2 requests finished before the panic reached the caller", n)
+		}
+	}()
+	_, _ = tr.performStep(context.Background(), &ioStep{requests: requestsTo("/a", "/b", "/c")})
+	t.Fatal("performStep returned, want it to panic")
 }
 
 func requestsTo(paths ...string) []ioRequest {
@@ -121,16 +183,4 @@ func responseBodies(t *testing.T, encoded []byte) []string {
 		}
 	}
 	return bodies
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

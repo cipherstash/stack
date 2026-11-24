@@ -230,8 +230,8 @@ fn cipher_init(config: InitConfig) -> Result<Vec<u8>, u32> {
 
     // Up to `MAX_CONCURRENT_REQS` requests at a time. `Client::send_chunked`
     // splits a batch into requests of at most `max_keys_per_req` keys, and
-    // sends a window of up to this many of them in one step, which the host
-    // performs at the same time. The guest never runs while a request is in
+    // sends up to this many of them in one step, which the host performs at
+    // the same time. The guest never runs while a request is in
     // flight, so without this a batch waits one round trip per request:
     // sending them together roughly halves the wall time of a 1,400-value
     // decrypt.
@@ -460,7 +460,8 @@ pub unsafe extern "C" fn se_term(
 /// [`ops::encrypt_record`] for the source, plan, and result encodings. All
 /// rows and fields seal from **one** batched key request regardless of row
 /// count — dispatched as one `generate-data-key` call per 500 keyed leaves,
-/// sequentially — and terms derive under the same keyset's index key.
+/// up to `MAX_CONCURRENT_REQS` (3) at a time — and terms derive under the
+/// same keyset's index key.
 /// `opts` may carry `audit`, the audit metadata the engine sends with each
 /// of those key requests ([`crate::options`]).
 ///

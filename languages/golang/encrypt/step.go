@@ -188,15 +188,30 @@ func (t *transport) performStep(ctx context.Context, step *ioStep) ([]byte, erro
 	}()
 	slots := make(chan struct{}, maxParallelRequests)
 	var wg sync.WaitGroup
+	// A panic in the caller's RoundTripper is recovered in its goroutine
+	// and raised again here, on the caller's goroutine, once every request
+	// has finished, as when the requests were performed one at a time. A
+	// panic left in the goroutine would end the process, past any recover
+	// of the caller's, such as net/http's in each handler.
+	var panicOnce sync.Once
+	var panicked any
 	for i, r := range step.requests {
 		slots <- struct{}{}
 		wg.Go(func() {
 			defer func() { <-slots }()
+			defer func() {
+				if p := recover(); p != nil {
+					panicOnce.Do(func() { panicked = p })
+				}
+			}()
 			status, headers, body := t.perform(ctx, r.method, r.url, r.headers, r.body)
 			results[i] = result{status, headers, body}
 		})
 	}
 	wg.Wait()
+	if panicked != nil {
+		panic(panicked)
+	}
 	responses := make([]any, 0, len(results))
 	for _, r := range results {
 		status, headers, body := r.status, r.headers, r.body
