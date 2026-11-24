@@ -25,8 +25,7 @@ engine's own documentation (`packages/stack-encrypt/src/lib.rs`) sets the
 order: a value first, then a whole object, then a record, then search
 terms. A database comes last, through EQL. The Go SDK
 (`languages/golang/encrypt`, with `encrypt/eql`) is the reference for what
-an SDK does. The Python SDK (PR #1284) is the nearest example of a native
-binding.
+an SDK does.
 
 The engine crate, `stack-encrypt`, is to be renamed `recipher`. This plan
 uses the current name. The Rust crates of the TypeScript SDK are named
@@ -142,12 +141,11 @@ value with no context, and a value whose whole context is a field path.
 
 Three rules keep phase 1 clear of the open design:
 
-- **The core crate does not name `Label` or `IntoLabel`.** A test fails if
+- **The crate does not name `Label` or `IntoLabel`.** A test fails if
   its source does. #1663 then removes them without a change here. Its
   acceptance says a context made of the same names gives the same bytes.
-- **Only the core crate names an engine type.** The node crate, the wasm
-  crate and the TypeScript code see the core crate's own types. A rename in
-  the engine changes one crate.
+- **Only the Rust crate names an engine type.** The TypeScript code does
+  not. A rename in the engine changes one crate.
 - **No phase 1 build promises that a later build opens its stored values.**
   The README says so. The promise starts with the first stable release.
 
@@ -158,12 +156,12 @@ phase 1 when it lands.
 
 | Issue | State on 2026-11-23 | What it changes here |
 |---|---|---|
-| #1669 (`encrypt_with` and `decrypt_with` become `Planned`) | Closed | Nothing. The core crate calls `Planned` from the first record step. |
-| #1489 (the naming review) | Open | The engine names in the core crate (`StackCipher` becomes `Cipher`, `stack-kms` becomes `stack-zerokms`, and the rest). The TypeScript names already follow the review: `Cipher` and `Keyset`. |
-| #1594 (a binding sends a serialised `Planned`) | Open | The conformance runners' reader of the corpus. The core crate calls `Planned` directly. |
-| #1672 (the closed `FieldIndexes` shape) | Open | The one function in the core crate that writes a plan from a declaration. |
+| #1669 (`encrypt_with` and `decrypt_with` become `Planned`) | Closed | Nothing. The crate calls `Planned` from the first record step. |
+| #1489 (the naming review) | Open | The engine names in the crate (`StackCipher` becomes `Cipher`, `stack-kms` becomes `stack-zerokms`, and the rest). The TypeScript names already follow the review: `Cipher` and `Keyset`. |
+| #1594 (a binding sends a serialised `Planned`) | Open | The conformance runners' reader of the corpus. The crate calls `Planned` directly. |
+| #1672 (the closed `FieldIndexes` shape) | Open | The one function in the crate that writes a plan from a declaration. |
 | #1673 (match options as one analyzer pipeline) | Open | The options of a `match` index. Phase 1 offers the default options only. |
-| #1678 (JSON Schemas and a protocol version) | Open | Nothing in phase 1, because TypeScript writes no frame. Phase 3 checks the plan the core crate writes against the schema. |
+| #1678 (JSON Schemas and a protocol version) | Open | Nothing in phase 1, because TypeScript writes no frame. Phase 3 checks the plan the crate writes against the schema. |
 
 Phase 2 waits for the engine to have ADR-0016:
 
@@ -196,15 +194,12 @@ do not change a binding. #1572 is to be rewritten or closed by ADR-0016. #1479 (
 
 ## Packages and build targets
 
-The Python SDK splits its Rust code in two: a core crate with the logic and
-a thin crate that converts at the boundary. This SDK does the same, with one
-thin crate for each build target.
+The SDK has one Rust crate. It is the Node addon, and it holds everything
+between JavaScript and the engine.
 
 | Path | Name | What it is |
 |---|---|---|
-| `languages/typescript/packages/recipher-js/crates/core` | crate `recipher-js` | Rust, no JavaScript types. Builds plans, runs operations through the engine, maps errors. Depends on `stack-encrypt` (`dynamic`) by path. It takes the engine's `TargetResolver` as a parameter and names no EQL type. |
-| `languages/typescript/packages/recipher-js/crates/node` | crate `recipher-js-node` | Rust, napi-rs 3. Exposes the core as a Node addon. It converts between JavaScript values and frames with vitaminc's `vitaminc-aead-napi`, and holds no conversion of its own. |
-| `languages/typescript/packages/recipher-js/crates/wasm` | crate `recipher-js-wasm` | Rust, `wasm-bindgen`, for `wasm32-unknown-unknown`. The same mapping over `JsValue`. vitaminc has no bridge for wasm yet; see [Values](#values). |
+| `languages/typescript/packages/recipher-js/crate` | crate `recipher-js` | Rust, napi-rs 3. The Node addon. It defines the classes TypeScript uses, runs every operation through the engine, and maps errors. It depends on `stack-encrypt` (`dynamic`) by path, and converts values with vitaminc's `vitaminc-aead-napi`. |
 | `languages/typescript/packages/recipher-js` | npm `@cipherstash/recipher` | The core SDK, its types and the loaders. Its builds hold no EQL type (`NoTargets`). |
 | `languages/typescript/packages/recipher-js/platforms/*` | npm `@cipherstash/recipher-<platform>` | One package per Node platform, holding its `.node` file. |
 | `packages/eql/packages/eql` | npm `@cipherstash/eql`, entry `./recipher` | The EQL extension: the EQL v4 types in TypeScript, and the loaders of the builds that hold them. The package exists; the entry is new. |
@@ -212,9 +207,9 @@ thin crate for each build target.
 
 **How the extension reaches the engine.** The engine runs a named type
 through a `TargetResolver` that the host links in. `NoTargets` is the
-build without one. So the node crate and the wasm crate each have a cargo
-feature, `eql`, which links `eql-bindings` (`targets`) by path and passes
-its resolver to the core crate. The core package ships the builds without
+build without one. So the crate has a cargo feature, `eql`, which links
+`eql-bindings` (`targets`) by path and uses its resolver. The core package
+ships the builds without
 the feature. `@cipherstash/eql` ships the builds with it. This is what Go
 does: `encrypt/eql` holds a second build of the guest, with the EQL types.
 
@@ -239,6 +234,30 @@ the number it implements, and `Cipher.create` refuses a build with another
 number. A change to EQL's SQL changes `eql-bindings` with it, so those two
 are released together, as they are today.
 
+**One crate, until a second build needs a second.** The wasm build of
+step 6 cannot use napi, so it needs a crate of its own. The code the two
+builds share moves into a common crate then, when both exist and what
+they share can be seen. No crate is split off before that.
+
+**Rust defines the API, and TypeScript does not copy it.** `Cipher`,
+`Keyset` and `Ciphertext` are napi classes written in Rust. napi-rs
+generates their TypeScript types, and the generated file is committed and
+checked for drift in CI, as `@cipherstash/auth`'s `native.d.ts` is. There
+is no hand-written description of the native interface, and no TypeScript
+class that wraps a native one. TypeScript holds only what Rust cannot
+express:
+
+- `Result` and its methods, because `isOk()` narrows a type;
+- the types of a declaration, such as `Plaintext<..>` and `Stored<..>`,
+  and the compile-time checks of a query;
+- the typed signatures over the Rust methods, such as one value in and
+  one out, an array in and an array out.
+
+**The crate uses the engine's and vitaminc's types.** It does not wrap
+`ValueFrame`, a ciphertext or an error in a type of its own. A type that
+holds a secret derives vitaminc's `OpaqueDebug`. The vitaminc skill
+(`.claude/skills/vitaminc/`, added by #1777) lists the type for each task.
+
 **What `@cipherstash/eql` keeps.** Its root, `./schema` and `./sql` entries
 load no native build and do not import the core. The CLI and
 `stash eql install` use those entries, and they stay as light as they are.
@@ -258,7 +277,7 @@ The six platforms are the ones `@cipherstash/auth` ships: `darwin-arm64`,
 `darwin-x64`, `linux-arm64-gnu`, `linux-x64-gnu`, `linux-x64-musl` and
 `win32-x64-msvc`.
 
-The cargo workspace is detached, with its own `Cargo.lock`, as Python's is.
+The cargo workspace is detached, with its own `Cargo.lock`.
 Each package's `build` and `test` scripts never run cargo, so root
 `pnpm test` needs no Rust toolchain; `build:native`, `build:wasm` and
 `test:cargo` do. This is the rule protect-ffi and `@cipherstash/auth` follow.
@@ -532,7 +551,7 @@ const opened = await tenant.decrypt(notes, stored.unwrap());
 ## Values
 
 The conversion between JavaScript values and the engine is vitaminc's, not
-this SDK's. The node crate uses `vitaminc-aead-napi`, vitaminc's bridge for
+this SDK's. The crate uses `vitaminc-aead-napi`, vitaminc's bridge for
 Node addons:
 
 - `JsRef` reads a live JavaScript value as an `Encrypt`, on the JavaScript
@@ -590,11 +609,11 @@ as a `number`. The adapter converts, because it knows the column's type: a
 The core has one mapping, and it is vitaminc's.
 
 **The wasm build.** `vitaminc-aead-napi` is for Node addons only. The wasm
-crate needs the same mapping over `wasm-bindgen`'s `JsValue`, with the same
+build needs the same mapping over `wasm-bindgen`'s `JsValue`, with the same
 wrapper classes and the same refusals. Its right home is vitaminc, beside
 the napi bridge: cipherstash/vitaminc#632 asks for it. vitaminc's other
 binding package, `vcffi`, is the Go transport into a WASI guest and does
-not apply here. Until the crate exists, the wasm crate holds the mapping,
+not apply here. Until that crate exists, the wasm build holds the mapping,
 and both
 builds run vitaminc's value conformance cases
 (`packages/aead-napi/tests/value-conformance.cjs`).
@@ -749,9 +768,8 @@ down instead:
   that call owned are wiped: on success, on failure and on cancellation.
   Other calls in flight share the same linear memory and still hold theirs.
 
-A heap-hygiene test in the native crate runs each operation under the
-watching allocator of `packages/stack-encrypt/tests/heap_hygiene.rs`, as
-the Python engine crate does. A wasm test checks the three endings of a
+A heap-hygiene test in the crate runs each operation under the watching
+allocator of `packages/stack-encrypt/tests/heap_hygiene.rs`. A wasm test checks the three endings of a
 call. The plaintext the JavaScript engine holds is outside what any test
 can check, and the README says so.
 
@@ -817,8 +835,9 @@ three rules:
   declaration names an EQL v4 type from the catalog. A v3 type would be
   another type in the same record, through the same `encrypt`, `query` and
   `decrypt`.
-- **The core never names a resolver.** The core crate takes the engine's
-  `TargetResolver` as a parameter, and an extension's build passes its own.
+- **The core never names an EQL type.** The crate takes its
+  `TargetResolver` from a cargo feature, and an extension's build turns on
+  its own.
   A resolver that knows the v3 and v2 types is another extension's.
 - **Nothing outside an extension's generated catalog knows a type's
   version.** Query terms carry their SQL domain, and adapters write casts
@@ -849,7 +868,7 @@ these rules are checked then.
   wrote, opened on every build and never regenerated.
 - **Value conversion.** vitaminc's value conformance cases on both builds,
   and the value profile for the record kinds. A fuzz target on the wasm
-  crate compares its frame for a value with the napi bridge's.
+  build compares its frame for a value with the napi bridge's.
 - **Type tests.** A wrong row, a wrong value, an unknown field, an
   operator a field cannot answer, an unhandled error kind, and an EQL type
   against a cipher without the extension do not compile.
@@ -892,7 +911,7 @@ The packages follow `@cipherstash/auth`:
 - The core's README starts with the steps to encrypt and decrypt one
   value, then a record, then a query term. It needs no database. The
   README of `@cipherstash/eql` gains the steps to a working round trip
-  through PostgreSQL. Both are tested in CI, as Python's is.
+  through PostgreSQL. Both are tested in CI.
 - A skill under `skills/` for the core at its stable release, since skills
   ship to customers. `skills/stash-postgres` and `skills/stash-indexing`
   gain the extension.
@@ -907,11 +926,12 @@ Each step is one pull request, and each ends with its tests passing in CI.
 
 The core, with no EQL:
 
-1. **Walking skeleton.** The three crates and the core npm package.
+1. **Walking skeleton.** The crate, its generated types and the core npm
+   package.
    `Cipher.create`, `Result`, and plain `encrypt` and `decrypt` of one
    `string` value on Node, with no context. CI builds it on Linux. Proves that the engine's futures run on
-   napi-rs's runtime. Adds the tests that the core crate names no `Label`
-   and links no `eql-bindings`.
+   napi-rs's runtime. Adds the tests that the crate names no `Label` and
+   links no `eql-bindings`.
 2. **Values.** `vitaminc-aead-napi` for every type in the table above,
    the wrapper classes, an array of values,
    `bytes` for a file, `opaque` for a whole object, the value profile and
@@ -925,7 +945,8 @@ The core, with no EQL:
    query-refusal profiles.
 5. **Credentials, keysets, audit metadata and cancellation.** The
    per-call credential type, the testing cipher and the lifecycle profile.
-6. **The wasm build.** The `wasm-bindgen` crate, vitaminc's mapping over
+6. **The wasm build.** The `wasm-bindgen` crate, the common crate for
+   what the two builds share, vitaminc's mapping over
    `JsValue` (from cipherstash/vitaminc#632 if it has landed), the export conditions, the inlined build and the edge-runtime
    test.
 
@@ -998,6 +1019,9 @@ Decided on 2026-11-23:
 - Calls return a `Result` and never throw. `Result` is the core's own
   type, with Rust's methods.
 - Phase 1 ends with a pre-release on npm.
+- One Rust crate, until the wasm build needs a second.
+- Rust defines the classes and napi-rs generates their types. TypeScript
+  keeps `Result`, the declaration types and the typed signatures.
 - A context follows ADR-0016: policies, labels and partitions, with the
   engine's wire names. Parts attach to the keyset with `with(..)`.
 
