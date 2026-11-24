@@ -717,19 +717,6 @@ func TestARecoveredRoundTripperPanicAbortsThePausedOperation(t *testing.T) {
 	wantOpen(t, c, rt)
 }
 
-// More recovered panics than the guest has paused slots: none of them
-// leaves its operation behind.
-func TestAClientServesCallsAfterMoreRecoveredPanicsThanThePausedCap(t *testing.T) {
-	rt := &switchable{rt: panicking}
-	c := cancelClient(t, rt, staticToken("t"))
-	for i := range maxPaused + 1 {
-		if p, err := initRecovering(c); p != "roundtripper panic" {
-			t.Fatalf("call %d: got panic %v (err %v), want the RoundTripper's panic", i, p, err)
-		}
-	}
-	wantOpen(t, c, rt)
-}
-
 // A RoundTripper that panics while NewClient loads the default keyset: the
 // panic reaches the caller, and the client it was building, which the
 // caller never gets, is closed on the way, its credentials released.

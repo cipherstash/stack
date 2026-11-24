@@ -222,9 +222,10 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ### Fixed
 
-- **A client goes on working after its RoundTripper panics** (#1780). A
-  panic in the `http.RoundTripper` given to `WithTransport` reaches the
-  caller, which can recover it, as `net/http` does in each handler. But the
+- **A client goes on working after its RoundTripper panics during a
+  ZeroKMS request** (#1780). A panic in the `http.RoundTripper` given to
+  `WithTransport`, while it sends a ZeroKMS request, reaches the caller,
+  which can recover it, as `net/http` does in each handler. But the
   operation that sent the request stayed paused in the guest.
   - A panic in `NewClient`, while it loaded the default keyset, left the
     client it was building open, with its guest memory and credentials.
@@ -237,6 +238,10 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
   The operation is now dropped, and its memory wiped, before the panic
   reaches the caller. `NewClient` also closes the client it was building.
+
+  The same RoundTripper also sends the credentials' token requests. A
+  panic during one of those still closes the credentials for good, and the
+  caller does not see it (#1793).
 
 ## [0.1.0-rc.6] - 2026-11-18
 

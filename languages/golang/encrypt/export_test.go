@@ -53,6 +53,13 @@ func withZeroKMSURL(url string) ClientOption {
 // WithZeroKMSURL is withZeroKMSURL for the external tests.
 func WithZeroKMSURL(url string) ClientOption { return withZeroKMSURL(url) }
 
+// MaxPaused is maxPaused for the external tests.
+const MaxPaused = maxPaused
+
+// FixedCredentials are the test credentials with a fixed token, for the
+// external tests that talk to a ZeroKMS fake.
+func FixedCredentials() Credentials { return testCredentials(staticToken("stub-token")) }
+
 // JSONOpensForTest asks se_json_open to open no rows of a read whose request
 // names operator as its operation, at path: nil when the engine opens a
 // read of that operation.
