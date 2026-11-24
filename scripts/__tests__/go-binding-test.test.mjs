@@ -62,7 +62,7 @@ printf '%s|%s|%s\\n' "\${GOOS:-}" "\${GOARCH:-}" "$*" >> "$GO_BINDING_LOG"
             },
           )
           expect(result.status, result.stderr).toBe(0)
-          const flags = producer ? '-count=1 ' : ''
+          const flags = producer ? '-timeout=25m -count=1 ' : '-timeout=25m '
           expect(readFileSync(log, 'utf8').trim().split('\n')).toEqual([
             '||vet ./...',
             '||test -v ./auth -run ^TestDeviceRefresh',

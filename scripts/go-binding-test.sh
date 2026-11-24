@@ -50,9 +50,14 @@ CGO_ENABLED=0 go test -v ./auth -run '^TestDeviceRefresh'
 # A producer must execute even if Go has cached a previous successful run.
 # The guest paths have been checked; reuse positional arguments for test flags.
 # Unlike an empty array, "$@" is safe under nounset in macOS's Bash 3.2.
-set --
+#
+# Each package gets 25 minutes, inside the macOS and Windows jobs' 30, not go
+# test's default of 10. The encrypt package alone takes 300 to 600 seconds
+# on a Windows runner, depending on the runner, so at the default it failed
+# on the slow ones with a timeout in whichever test was running.
+set -- -timeout=25m
 if [[ -n "${STACK_CONFORMANCE_OUTPUT:-}" ]]; then
-  set -- -count=1
+  set -- "$@" -count=1
 fi
 CGO_ENABLED=0 go test "$@" ./...
 
