@@ -116,10 +116,6 @@ const DISPATCH_SKIPPED_JOBS = [
  * the un-run check hides.
  */
 const EXPECTED_FORK_GUARDED_JOBS = [
-  // Anthropic federation is available only to same-repository pull requests.
-  '.github/workflows/claude-review.yml / review',
-  // The routine token is a repository secret, which forks are not given.
-  '.github/workflows/code-review.yml / request',
   '.github/workflows/integration-drizzle.yml / integration',
   '.github/workflows/integration-prisma-next.yml / integration',
   '.github/workflows/integration-protect-ffi.yml / integration',
@@ -214,11 +210,11 @@ const PERMISSIVE_NEEDS = {
 
 /**
  * Repository variables a condition reads, set to the value that lets the run
- * PROCEED, for the same reason as `PERMISSIVE_NEEDS`. `claude-review.yml` is
- * switched on by `CLAUDE_REVIEW_ENABLED`; left unset it would read as skipped
- * on every event, and the fork guard would be credited with the skip.
+ * PROCEED, for the same reason as `PERMISSIVE_NEEDS`: a job switched on by a
+ * variable left unset would read as skipped on every event, and the fork guard
+ * would be credited with the skip. No guarded job reads one today.
  */
-const PERMISSIVE_VARS = { CLAUDE_REVIEW_ENABLED: 'true' }
+const PERMISSIVE_VARS = {}
 
 /**
  * `github.event` carries the webhook payload of the triggering event, so on a
