@@ -1,41 +1,23 @@
 /**
  * `RecipherError`: every failure, as a value.
  *
- * The native build defines the error's fields and its kinds
- * (`RecipherErrorFields` and `ErrorKind`, in the generated `native.d.ts`).
- * This class exists in TypeScript because an error has to exist when the
- * native build did not load.
+ * The native build defines the error's fields (`RecipherErrorFields`, in the
+ * generated `native.d.ts`) and every error it reports. This class exists in
+ * TypeScript because an error has to exist when the native build did not
+ * load.
  */
-import type {
-  ErrorCause,
-  ErrorKind,
-  RecipherErrorFields,
-  Severity,
-} from '../native'
+import type { ErrorCause, RecipherErrorFields, Severity } from '../native'
 
-export type { ErrorCause, ErrorKind, RecipherErrorFields, Severity }
-
-const KINDS: ReadonlySet<string> = new Set<ErrorKind>([
-  'declaration',
-  'value',
-  'credential',
-  'zerokms',
-  'foreign_keyset',
-  'context_mismatch',
-  'open',
-  'cancelled',
-  'internal',
-])
+export type { ErrorCause, RecipherErrorFields, Severity }
 
 /**
  * A failure, as a value. Every call that fails resolves to an `Err` holding
  * one; none throws.
  *
- * - `kind` is the closed set to switch on. A `switch` that leaves a kind
- *   out does not compile when its default case is checked as `never`.
- * - `code` is stable: the engine's diagnostic code, such as
- *   `stack_encrypt::aead`, vitaminc's code for a value it refused, such as
- *   `ERR_INTEGER_RANGE`, or the SDK's own, such as `recipher::load`.
+ * - `code` is stable, and is what to switch on: the engine's diagnostic
+ *   code, such as `stack_encrypt::aead`, vitaminc's code for a value it
+ *   refused, such as `ERR_INTEGER_RANGE`, or the SDK's own, such as
+ *   `recipher::not_a_ciphertext`.
  * - `message` says what went wrong, in one line.
  * - `help` says what to do about it, and `url` is a documentation page for
  *   the error, where the error has them.
@@ -53,7 +35,6 @@ const KINDS: ReadonlySet<string> = new Set<ErrorKind>([
  * ciphertext.
  */
 export class RecipherError {
-  readonly kind: ErrorKind
   readonly code: string
   readonly message: string
   readonly help: string | undefined
@@ -65,10 +46,9 @@ export class RecipherError {
   readonly record: string | undefined
 
   constructor(
-    fields: Pick<RecipherErrorFields, 'kind' | 'code' | 'message'> &
+    fields: Pick<RecipherErrorFields, 'code' | 'message'> &
       Partial<RecipherErrorFields>,
   ) {
-    this.kind = fields.kind
     this.code = fields.code
     this.message = fields.message
     this.help = fields.help
@@ -83,46 +63,32 @@ export class RecipherError {
     Object.freeze(this)
   }
 
-  /** The kind, code and message, then the help where there is one. */
+  /** The code and message, then the help where there is one. */
   toString(): string {
-    const text = `RecipherError(${this.kind}, ${this.code}): ${this.message}`
+    const text = `RecipherError(${this.code}): ${this.message}`
     return this.help === undefined ? text : `${text}\nhelp: ${this.help}`
   }
 }
 
 /**
  * The error of a native outcome. The native build writes it, so this only
- * checks that it has the shape and a known kind.
+ * checks that it has the shape.
  */
 export function fromNative(error: unknown): RecipherError {
-  if (typeof error !== 'object' || error === null) {
-    return internal(
+  const { code, message, help, url, severity, fields, causes, field, record } =
+    typeof error === 'object' && error !== null
+      ? (error as Record<string, unknown>)
+      : {}
+  if (typeof code !== 'string' || typeof message !== 'string') {
+    return sdkError(
       'recipher::outcome',
       'the native build returned an error of an unknown shape',
     )
   }
-  const {
-    kind,
+  return new RecipherError({
     code,
     message,
-    help,
-    url,
-    severity,
-    fields,
-    causes,
-    field,
-    record,
-  } = error as Record<string, unknown>
-  if (typeof kind !== 'string' || !KINDS.has(kind)) {
-    return internal(
-      'recipher::outcome',
-      'the native build returned an error of an unknown kind',
-    )
-  }
-  return new RecipherError({
-    kind: kind as ErrorKind,
-    code: typeof code === 'string' ? code : 'recipher::unknown',
-    message: typeof message === 'string' ? message : '',
+
     ...(typeof help === 'string' ? { help } : {}),
     ...(typeof url === 'string' ? { url } : {}),
     ...(severity === 'warning' || severity === 'advice' ? { severity } : {}),
@@ -147,7 +113,11 @@ function causeOf(cause: unknown): ErrorCause[] {
   return [typeof code === 'string' ? { code, message } : { message }]
 }
 
-/** An `internal` error of the SDK's own. */
-export function internal(code: string, message: string): RecipherError {
-  return new RecipherError({ kind: 'internal', code, message })
+/**
+ * An error the TypeScript raises itself, for a native build that did not
+ * load or did not answer as it should. Every other error is the native
+ * build's.
+ */
+export function sdkError(code: string, message: string): RecipherError {
+  return new RecipherError({ code, message })
 }

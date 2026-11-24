@@ -38,7 +38,7 @@ use stack_encrypt::{Encrypt, EncryptRef};
 use vitaminc_protected::OpaqueDebug;
 use zeroize::Zeroizing;
 
-use crate::error::{ErrorKind, RecipherErrorFields};
+use crate::error::{Error, RecipherErrorFields};
 use crate::js;
 
 /// The deepest a document nests: the engine's parser reads 127 levels of
@@ -111,39 +111,13 @@ pub fn json_document(env: &Env, document: Unknown<'_>) -> Json {
     }
 }
 
-/// Why a value is not a JSON document. Each message is fixed text, with no
-/// part of the value in it.
-#[derive(Debug)]
-enum NotJson {
-    /// A value of a kind JSON has no form for.
-    Kind(&'static str),
-    /// Nested deeper than the engine's parser reads.
-    TooDeep,
-    /// The source failed while it was read.
-    Source,
-}
-
-impl SinkError for NotJson {
+/// The JSON sink's error is the SDK's: [`Error::NotJson`] or
+/// [`Error::JsonTooDeep`], each fixed text with no part of the value in it.
+impl SinkError for Error {
     fn source(_: SourceError) -> Self {
-        Self::Source
-    }
-}
-
-impl NotJson {
-    fn error(&self) -> RecipherErrorFields {
-        let (code, reason) = match self {
-            Self::Kind(what) => ("recipher::not_json", *what),
-            Self::TooDeep => (
-                "recipher::too_deep",
-                "it is nested deeper than 127 levels of arrays and objects",
-            ),
-            Self::Source => ("recipher::not_json", "it could not be read"),
-        };
-        RecipherErrorFields::new(
-            ErrorKind::Value,
-            code,
-            format!("the value is not a JSON document the engine seals: {reason}"),
-        )
+        Self::NotJson {
+            what: "it could not be read",
+        }
     }
 }
 
@@ -155,31 +129,20 @@ pub(crate) fn document(frame: &ValueFrame) -> Result<JsonPlaintext, RecipherErro
             depth: 0,
         })
         .map(JsonPlaintext::from)
-        .map_err(|error| error.error())
+        .map_err(RecipherErrorFields::from)
 }
 
 /// The value of an opened document's text, as a frame, by the rules in the
 /// module docs.
 pub(crate) fn opened(frame: &ValueFrame) -> Result<ValueFrame, RecipherErrorFields> {
-    let document = read_json(frame).map_err(|_| {
-        RecipherErrorFields::new(
-            ErrorKind::Open,
-            "recipher::not_a_document",
-            "the value opened, but it is not a JSON document",
-        )
-    })?;
-    ValueFrame::of(&FromJson(document.value())).map_err(|_| {
-        RecipherErrorFields::internal(
-            "recipher::build_value",
-            "an opened JSON document could not be written as a frame",
-        )
-    })
+    let document = read_json(frame).map_err(|_| Error::NotADocument)?;
+    ValueFrame::of(&FromJson(document.value())).map_err(|_| Error::BuildValue.into())
 }
 
 /// Where a built value goes.
 trait Out {
     type Ok;
-    fn put(self, value: Value) -> Result<Self::Ok, NotJson>;
+    fn put(self, value: Value) -> Result<Self::Ok, Error>;
 }
 
 /// The value is the result.
@@ -187,7 +150,7 @@ struct Root;
 
 impl Out for Root {
     type Ok = Value;
-    fn put(self, value: Value) -> Result<Value, NotJson> {
+    fn put(self, value: Value) -> Result<Value, Error> {
         Ok(value)
     }
 }
@@ -197,7 +160,7 @@ struct Element<'s>(&'s mut Vec<Value>);
 
 impl Out for Element<'_> {
     type Ok = ();
-    fn put(self, value: Value) -> Result<(), NotJson> {
+    fn put(self, value: Value) -> Result<(), Error> {
         self.0.push(value);
         Ok(())
     }
@@ -213,7 +176,7 @@ struct Member<'s> {
 
 impl Out for Member<'_> {
     type Ok = ();
-    fn put(mut self, value: Value) -> Result<(), NotJson> {
+    fn put(mut self, value: Value) -> Result<(), Error> {
         let key = std::mem::take(&mut *self.key);
         let _ = self.object.insert(key, value);
         Ok(())
@@ -228,9 +191,11 @@ struct ToJson<O> {
 }
 
 /// A JSON number for a float, by the rules in the module docs.
-fn float(value: f64) -> Result<Value, NotJson> {
+fn float(value: f64) -> Result<Value, Error> {
     if !value.is_finite() {
-        return Err(NotJson::Kind("a number that is not finite"));
+        return Err(Error::NotJson {
+            what: "a number that is not finite",
+        });
     }
     let magnitude = value.abs();
     if value.fract() == 0.0 && magnitude <= MAX_SAFE as f64 {
@@ -239,18 +204,20 @@ fn float(value: f64) -> Result<Value, NotJson> {
         return Ok(Value::Number(Number::from(value as i64)));
     }
     if value.fract() == 0.0 && magnitude < TWO_TO_64 {
-        return Err(NotJson::Kind(
-            "a whole number between 2^53 and 2^64 held as a number, whose digits may not be \
+        return Err(Error::NotJson {
+            what: "a whole number between 2^53 and 2^64 held as a number, whose digits may not be \
              the ones meant; use a bigint",
-        ));
+        });
     }
     Number::from_f64(value)
         .map(Value::Number)
-        .ok_or(NotJson::Kind("a number that is not finite"))
+        .ok_or(Error::NotJson {
+            what: "a number that is not finite",
+        })
 }
 
 /// A JSON number for an integer, refused outside the 64-bit range.
-fn integer(value: Int) -> Result<Value, NotJson> {
+fn integer(value: Int) -> Result<Value, Error> {
     let wide = match value {
         Int::I8(n) => i128::from(n),
         Int::I16(n) => i128::from(n),
@@ -269,17 +236,17 @@ fn integer(value: Int) -> Result<Value, NotJson> {
     if let Ok(n) = u64::try_from(wide) {
         return Ok(Value::Number(Number::from(n)));
     }
-    Err(NotJson::Kind(
-        "a bigint outside the 64-bit range (below -2^63 or above 2^64 - 1)",
-    ))
+    Err(Error::NotJson {
+        what: "a bigint outside the 64-bit range (below -2^63 or above 2^64 - 1)",
+    })
 }
 
 impl<O: Out> ToJson<O> {
     /// The depth of a container opened here, refused past the limit.
-    fn nested(&self) -> Result<usize, NotJson> {
+    fn nested(&self) -> Result<usize, Error> {
         let depth = self.depth + 1;
         if depth > MAX_DEPTH {
-            return Err(NotJson::TooDeep);
+            return Err(Error::JsonTooDeep);
         }
         Ok(depth)
     }
@@ -287,11 +254,11 @@ impl<O: Out> ToJson<O> {
 
 impl<O: Out> Sink for ToJson<O> {
     type Ok = O::Ok;
-    type Error = NotJson;
+    type Error = Error;
     type Seq = JsonArray<O>;
     type Map = JsonObject<O>;
 
-    fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<O::Ok, NotJson> {
+    fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<O::Ok, Error> {
         let value = match (ty, value) {
             (None, Physical::Null) => Value::Null,
             (None, Physical::Bool(b)) => Value::Bool(b),
@@ -299,22 +266,22 @@ impl<O: Out> Sink for ToJson<O> {
             (None, Physical::Float(Float::F64(n))) => float(n)?,
             (None, Physical::Float(Float::F32(n))) => float(f64::from(n))?,
             (None, Physical::Int(n)) => integer(n)?,
-            (None, Physical::Bytes(_)) => return Err(NotJson::Kind("bytes")),
-            (Some(Logical::Undefined), _) => return Err(NotJson::Kind("undefined")),
+            (None, Physical::Bytes(_)) => return Err(Error::NotJson { what: "bytes" }),
+            (Some(Logical::Undefined), _) => return Err(Error::NotJson { what: "undefined" }),
             (Some(_), _) => {
-                return Err(NotJson::Kind(
-                    "a date, a timestamp, a decimal or a UUID; write it as text",
-                ))
+                return Err(Error::NotJson {
+                    what: "a date, a timestamp, a decimal or a UUID; write it as text",
+                })
             }
         };
         self.out.put(value)
     }
 
-    fn typed_null(self, _: FixedType) -> Result<O::Ok, NotJson> {
+    fn typed_null(self, _: FixedType) -> Result<O::Ok, Error> {
         self.out.put(Value::Null)
     }
 
-    fn seq(self, len: Option<usize>) -> Result<JsonArray<O>, NotJson> {
+    fn seq(self, len: Option<usize>) -> Result<JsonArray<O>, Error> {
         let depth = self.nested()?;
         Ok(JsonArray {
             out: Some(self.out),
@@ -323,7 +290,7 @@ impl<O: Out> Sink for ToJson<O> {
         })
     }
 
-    fn map(self, _: Option<usize>) -> Result<JsonObject<O>, NotJson> {
+    fn map(self, _: Option<usize>) -> Result<JsonObject<O>, Error> {
         let depth = self.nested()?;
         Ok(JsonObject {
             out: Some(self.out),
@@ -332,8 +299,10 @@ impl<O: Out> Sink for ToJson<O> {
         })
     }
 
-    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<O::Ok, NotJson> {
-        Err(NotJson::Kind("a passthrough"))
+    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<O::Ok, Error> {
+        Err(Error::NotJson {
+            what: "a passthrough",
+        })
     }
 }
 
@@ -354,24 +323,26 @@ impl<O> Drop for JsonArray<O> {
 
 impl<O: Out> SeqSink for JsonArray<O> {
     type Ok = O::Ok;
-    type Error = NotJson;
+    type Error = Error;
     type Element<'s>
         = ToJson<Element<'s>>
     where
         Self: 's;
 
-    fn element(&mut self) -> Result<ToJson<Element<'_>>, NotJson> {
+    fn element(&mut self) -> Result<ToJson<Element<'_>>, Error> {
         Ok(ToJson {
             out: Element(&mut self.items),
             depth: self.depth,
         })
     }
 
-    fn end(mut self) -> Result<O::Ok, NotJson> {
+    fn end(mut self) -> Result<O::Ok, Error> {
         let items = std::mem::take(&mut self.items);
         match self.out.take() {
             Some(out) => out.put(Value::Array(items)),
-            None => Err(NotJson::Source),
+            None => Err(Error::NotJson {
+                what: "it could not be read",
+            }),
         }
     }
 }
@@ -393,13 +364,13 @@ impl<O> Drop for JsonObject<O> {
 
 impl<O: Out> MapSink for JsonObject<O> {
     type Ok = O::Ok;
-    type Error = NotJson;
+    type Error = Error;
     type Entry<'s>
         = ToJson<Member<'s>>
     where
         Self: 's;
 
-    fn entry(&mut self, key: &str) -> Result<ToJson<Member<'_>>, NotJson> {
+    fn entry(&mut self, key: &str) -> Result<ToJson<Member<'_>>, Error> {
         Ok(ToJson {
             out: Member {
                 object: &mut self.members,
@@ -409,11 +380,13 @@ impl<O: Out> MapSink for JsonObject<O> {
         })
     }
 
-    fn end(mut self) -> Result<O::Ok, NotJson> {
+    fn end(mut self) -> Result<O::Ok, Error> {
         let members = std::mem::take(&mut self.members);
         match self.out.take() {
             Some(out) => out.put(Value::Object(members)),
-            None => Err(NotJson::Source),
+            None => Err(Error::NotJson {
+                what: "it could not be read",
+            }),
         }
     }
 }

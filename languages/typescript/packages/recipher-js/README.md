@@ -55,8 +55,7 @@ defines, read and built by the `recipher-value-napi` crate (`value-napi/`):
   the integer `5n`.
 - A plain object is refused. Wrap it in `json(..)`.
 - `VcUuid` is exported, but the engine's value model does not hold a UUID
-  yet, so encrypting one is an `Err` of kind `value`, code
-  `recipher::uuid`.
+  yet, so encrypting one is an `Err` with the code `recipher::uuid`.
 - vitaminc's rules apply: a `Map`, a `Set`, a class instance, a sparse
   array, a typed array other than a `Uint8Array`, a string with an
   unpaired surrogate, and a property named `__proto__`, `constructor` or
@@ -85,8 +84,8 @@ const opened = await cipher.decrypt(sealed.unwrap())
   and are refused. So is a document nested deeper than 127 levels.
 - A property named `__proto__`, `constructor` or `prototype` cannot be
   encrypted, and a document another SDK wrote with one opens as an `Err`
-  of kind `open`, code `recipher::reserved_key`: vitaminc does not build
-  those properties in JavaScript.
+  with the code `recipher::reserved_key`: vitaminc does not build those
+  properties in JavaScript.
 - **Read a stored document back with `kinds.json`.** The bytes do not say
   a value is JSON. `Ciphertext.fromBytes(bytes, kinds.json)` opens it as
   the document. With no kind it opens as its JSON text, and `JSON.parse`
@@ -173,12 +172,12 @@ This holds for a method passed on its own (`ciphertexts.map(cipher.decrypt)`
 keeps its cipher), for an argument of the wrong type, and when the native
 build is missing.
 
-A `RecipherError` is the engine's diagnostic, as a value:
+A `RecipherError` is a diagnostic, as a value. Most come from the engine.
+The SDK's own have a `recipher::` code. Switch on `code`:
 
 ```ts
 const opened = await cipher.decrypt(damaged)
 if (opened.isErr()) {
-  opened.error.kind // 'open'
   opened.error.code // 'stack_encrypt::aead'
   opened.error.message // 'AEAD operation failed (wrong key, AAD mismatch, or malformed ciphertext)'
   opened.error.help // 'Open the value under the context it was sealed with. ...'
@@ -187,12 +186,11 @@ if (opened.isErr()) {
 
 | Property | What it holds |
 | --- | --- |
-| `kind` | The closed set to switch on: `declaration`, `value`, `credential`, `zerokms`, `foreign_keyset`, `context_mismatch`, `open`, `cancelled` or `internal`. |
-| `code` | Stable, and finer than the kind: the engine's code (`stack_encrypt::aead`), vitaminc's for a value it refused (`ERR_INTEGER_RANGE`), or the SDK's own (`recipher::not_a_ciphertext`). |
+| `code` | Stable, and what to switch on: the engine's code (`stack_encrypt::aead`), vitaminc's for a value it refused (`ERR_INTEGER_RANGE`), or the SDK's own (`recipher::not_a_ciphertext`). |
 | `message` | What went wrong, in one line. |
 | `help` | What to do about it, where the error knows. |
 | `url` | A documentation page for the error, where it has one. |
-| `severity` | `error`, unless the engine's diagnostic states `warning` or `advice`. |
+| `severity` | `error`, unless the diagnostic states `warning` or `advice`. |
 | `fields` | The error's structured fields, by `snake_case` name: a refused declaration's `reason`, a ZeroKMS failure's `request_kind`. |
 | `field` | The field at fault, where one is known. |
 | `record` | The record at fault, where one is. |

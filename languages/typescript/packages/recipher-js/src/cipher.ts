@@ -96,8 +96,8 @@ export interface Keyset {
   ): Promise<Result<Stored<R>[], RecipherError>>
   /**
    * Open a ciphertext sealed under this keyset, or an array of them in one
-   * key request. A ciphertext from another keyset is an `Err` of kind
-   * `foreign_keyset`, refused before any key is requested.
+   * key request. A ciphertext from another keyset is an `Err` with the code
+   * `stack_encrypt::foreign_keyset`, refused before any key is requested.
    */
   decrypt<T>(ciphertext: Ciphertext<T>): Promise<Result<T, RecipherError>>
   decrypt<T>(
@@ -215,8 +215,8 @@ export interface CipherClass {
   /**
    * A cipher over ZeroKMS, with the credentials it finds: the `CS_*`
    * variables, then the profile that `stash auth login` writes. Resolves
-   * to an `Err` of kind `credential` when there are none, and of kind
-   * `declaration` when the engine refuses one of `options.records`.
+   * to an `Err` with the code `stack_encrypt::config` when there are none,
+   * and to the engine's refusal when it refuses one of `options.records`.
    */
   create(options?: CipherOptions): Promise<Result<Cipher, RecipherError>>
 }

@@ -1,12 +1,6 @@
 // Compile-time tests: `pnpm run typecheck` compiles this file and nothing
 // runs it. Each `@ts-expect-error` is a line that must not compile.
-import type {
-  Ciphertext,
-  ErrorKind,
-  Keyset,
-  RecipherError,
-  Result,
-} from '../src/index'
+import type { Ciphertext, Keyset, RecipherError, Result } from '../src/index'
 
 declare const sealed: Result<Ciphertext<string>, RecipherError>
 
@@ -36,46 +30,14 @@ const bytes: Uint8Array | null = sealed
   .unwrapOr(null)
 void bytes
 
-// A switch over the kinds covers every one, or the `never` does not compile.
-function describe(kind: ErrorKind): string {
-  switch (kind) {
-    case 'declaration':
-    case 'value':
-    case 'credential':
-    case 'zerokms':
-    case 'foreign_keyset':
-    case 'context_mismatch':
-    case 'open':
-    case 'cancelled':
-    case 'internal':
-      return kind
-    default: {
-      const unhandled: never = kind
-      return unhandled
-    }
-  }
+// An error is its diagnostic: a caller switches on its code, a string.
+function describe(error: RecipherError): string {
+  const code: string = error.code
+  // @ts-expect-error: an error has no kind; its code says what it is.
+  void error.kind
+  return code
 }
 void describe
-
-function missesOne(kind: ErrorKind): string {
-  switch (kind) {
-    case 'declaration':
-    case 'value':
-    case 'credential':
-    case 'zerokms':
-    case 'foreign_keyset':
-    case 'context_mismatch':
-    case 'open':
-    case 'cancelled':
-      return kind
-    default: {
-      // @ts-expect-error: `internal` is not handled.
-      const unhandled: never = kind
-      return unhandled
-    }
-  }
-}
-void missesOne
 
 declare const keyset: Keyset
 // @ts-expect-error: a plain object is not a value.

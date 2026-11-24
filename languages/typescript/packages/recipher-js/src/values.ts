@@ -56,8 +56,8 @@ export interface VcDecimal {
 
 /**
  * A UUID. vitaminc's class. The engine's value model does not hold a UUID
- * yet, so encrypting one is an `Err` of kind `value` (code
- * `recipher::uuid`), and it is not a `Scalar`.
+ * yet, so encrypting one is an `Err` with the code `recipher::uuid`, and it
+ * is not a `Scalar`.
  */
 export interface VcUuid {
   /** The UUID as hyphenated hex. */

@@ -156,7 +156,7 @@ describe('an array of values', () => {
     const keyset = (await cipher()).defaultKeyset()
     // @ts-expect-error: an array inside an array is not a value.
     const result = await keyset.encrypt(['fine', ['nested']])
-    expect(result.err()?.kind).toBe('value')
+    expect(result.err()?.code).toBe('recipher::not_a_scalar')
   })
 })
 
@@ -224,7 +224,6 @@ describe('a JSON document', () => {
     expect((await keyset.encrypt(json(nested(127) as any))).isOk()).toBe(true)
     // biome-ignore lint/suspicious/noExplicitAny: a nested array of any depth.
     const deep = await keyset.encrypt(json(nested(128) as any))
-    expect(deep.err()?.kind).toBe('value')
     expect(deep.err()?.code).toBe('recipher::too_deep')
   })
 
@@ -249,14 +248,12 @@ describe('a JSON document', () => {
     const keyset = c.defaultKeyset()
     for (const text of ['{"constructor":1}', '{"prototype":1}']) {
       const refused = await keyset.encrypt(json(JSON.parse(text)))
-      expect(refused.err()?.kind).toBe('value')
       expect(refused.err()?.code).toBe('recipher::reserved_key')
       // A document another SDK wrote, sealed as the engine seals one: as its
       // JSON text.
       const sealed = (await keyset.encrypt(text)).unwrap()
       const stored = Ciphertext.fromBytes(sealed.toBytes(), kinds.json).unwrap()
       const opened = await c.decrypt(stored)
-      expect(opened.err()?.kind).toBe('open')
       expect(opened.err()?.code).toBe('recipher::reserved_key')
     }
   })
@@ -286,7 +283,6 @@ describe('a ciphertext read back with a kind', () => {
     const sealed = (await c.defaultKeyset().encrypt('text')).unwrap()
     const stored = Ciphertext.fromBytes(sealed.toBytes(), kinds.int64).unwrap()
     const opened = await c.decrypt(stored)
-    expect(opened.err()?.kind).toBe('open')
     expect(opened.err()?.code).toBe('recipher::opened_type')
   })
 
@@ -304,7 +300,6 @@ describe('refusals', () => {
     const uuid = new VcUuid('123e4567-e89b-12d3-a456-426614174000')
     // @ts-expect-error: a UUID is not a scalar of the engine's value model.
     const result = await keyset.encrypt(uuid)
-    expect(result.err()?.kind).toBe('value')
     expect(result.err()?.code).toBe('recipher::uuid')
     expect(result.err()?.message).toContain('UUID')
   })
@@ -313,7 +308,6 @@ describe('refusals', () => {
     const keyset = (await cipher()).defaultKeyset()
     const result = await keyset.encrypt(2n ** 128n)
     expect(result.isErr()).toBe(true)
-    expect(result.err()?.kind).toBe('value')
     expect(result.err()?.code).toBe('ERR_INTEGER_RANGE')
     expect(result.err()?.message).not.toContain(String(2n ** 128n))
   })
@@ -365,7 +359,6 @@ describe('refusals', () => {
       },
     }
     const result = await keyset.encrypt(json(document))
-    expect(result.err()?.kind).toBe('value')
     expect(result.err()?.code).toBe('recipher::threw')
     expect(result.err()?.message).not.toContain('4111')
   })

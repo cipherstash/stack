@@ -31,11 +31,11 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type * as Native from '../native'
 import type { Outcome } from '../native'
-import { fromNative, internal, type RecipherError } from './error'
+import { fromNative, type RecipherError, sdkError } from './error'
 import { err, ok, type Result } from './result'
 
 /** The binding interface this TypeScript speaks. */
-export const BINDING_INTERFACE = 3
+export const BINDING_INTERFACE = 4
 
 /** What the native build exports. */
 export type Binding = typeof Native
@@ -69,7 +69,7 @@ export function load(
     exported = require(path)
   } catch {
     return err(
-      internal(
+      sdkError(
         'recipher::load',
         `the native build of @cipherstash/recipher did not load from ${path}. ` +
           'Build it with `pnpm --filter @cipherstash/recipher build:debug`.',
@@ -84,7 +84,7 @@ export function load(
     )
   ) {
     return err(
-      internal(
+      sdkError(
         'recipher::load',
         'the native build of @cipherstash/recipher does not export its classes',
       ),
@@ -100,7 +100,7 @@ export function load(
   }
   if (version !== BINDING_INTERFACE) {
     return err(
-      internal(
+      sdkError(
         'recipher::binding_interface',
         `the native build implements binding interface ${String(version)}, ` +
           `and this TypeScript needs ${BINDING_INTERFACE}`,
@@ -118,8 +118,8 @@ export const binding: Result<Binding, RecipherError> = load(
 
 /** The error of a native call that threw or rejected, which it never should. */
 function threw(): RecipherError {
-  return internal(
-    'recipher::threw',
+  return sdkError(
+    'recipher::native_threw',
     'a call into the native build threw. A method called on something that ' +
       'is not its class does; otherwise, report this as a bug in @cipherstash/recipher.',
   )
@@ -129,7 +129,7 @@ function threw(): RecipherError {
 function fromOutcome<T>(outcome: Outcome<unknown>): Result<T, RecipherError> {
   if (typeof outcome !== 'object' || outcome === null) {
     return err(
-      internal(
+      sdkError(
         'recipher::outcome',
         'the native build returned something that is not an outcome',
       ),

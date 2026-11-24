@@ -6,7 +6,7 @@ use stack_encrypt::json::JsonPlaintext;
 use stack_encrypt::Encrypt;
 use vitaminc_protected::OpaqueDebug;
 
-use crate::error::{ErrorKind, RecipherErrorFields};
+use crate::error::{Error, RecipherErrorFields};
 
 /// A value checked to be one leaf: one scalar of the value model, or a JSON
 /// document. The engine seals it through its opaque scalar path, as Rust's
@@ -34,19 +34,12 @@ impl OneValue {
     ///
     /// # Errors
     ///
-    /// A failure of kind `value` for an array or an object.
+    /// `recipher::not_a_scalar` for an array, `recipher::plain_object` for an
+    /// object.
     pub(crate) fn scalar(value: ValueFrame) -> Result<Self, RecipherErrorFields> {
         match value.kind() {
-            Some(ValueKind::Array) => Err(RecipherErrorFields::new(
-                ErrorKind::Value,
-                "recipher::not_a_scalar",
-                "an array inside an array is not a value; wrap it in json(..)",
-            )),
-            Some(ValueKind::Object) => Err(RecipherErrorFields::new(
-                ErrorKind::Value,
-                "recipher::plain_object",
-                "an object is not a value: wrap it in json(..)",
-            )),
+            Some(ValueKind::Array) => Err(Error::NotAScalar.into()),
+            Some(ValueKind::Object) => Err(Error::PlainObject.into()),
             _ => Ok(Self(Some(Leaf::Scalar(value)))),
         }
     }

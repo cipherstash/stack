@@ -174,7 +174,6 @@ describe('one field', () => {
     // differs. The key service refuses the key, which it binds to the
     // field path the value was sealed under.
     const result = await c.decryptField(pair, 'a', row.b)
-    expect(result.err()?.kind).toBe('zerokms')
     expect(result.err()?.code).toBe('stack_kms::retrieve_key_failed')
 
     // A row opened under a record of another name is refused the same way.
@@ -244,7 +243,6 @@ describe('refusals', () => {
     const result = await c
       .defaultKeyset()
       .encrypt(user, { ...ada, age: 2n ** 40n })
-    expect(result.err()?.kind).toBe('value')
     expect(result.err()?.code).toBe('recipher::field_type')
     expect(result.err()?.field).toBe('age')
     expect(result.err()?.record).toBe('users')
@@ -281,13 +279,13 @@ describe('refusals', () => {
       n: encrypt(kinds.int32, { index: ['match'] }),
     })
     const checked = checkDeclarations([bad])
-    expect(checked.err()?.kind).toBe('declaration')
+    expect(checked.err()?.code).toBe('stack_encrypt::dynamic_plan')
     expect(checked.err()?.field).toBe('n')
     expect(checked.err()?.record).toBe('bad')
 
     const c = await cipher()
     const result = await c.defaultKeyset().encrypt(bad, { n: 1n })
-    expect(result.err()?.kind).toBe('declaration')
+    expect(result.err()?.code).toBe('stack_encrypt::dynamic_plan')
   })
 
   it('Cipher.create refuses a bad declaration before it looks for credentials', async () => {
@@ -295,7 +293,7 @@ describe('refusals', () => {
       flag: encrypt(kinds.boolean, { index: ['ore'] }),
     })
     const result = await Cipher.create({ records: [user, bad] })
-    expect(result.err()?.kind).toBe('declaration')
+    expect(result.err()?.code).toBe('stack_encrypt::dynamic_plan')
     expect(result.err()?.record).toBe('bad')
   })
 
@@ -304,7 +302,7 @@ describe('refusals', () => {
       const checked = checkDeclarations([
         record(name, { x: encrypt(kinds.string) }),
       ])
-      expect(checked.err()?.kind).toBe('declaration')
+      expect(checked.err()?.code).toBe('recipher::record_name')
       expect(checked.err()?.record).toBe(name)
       expect(checked.err()?.field).toBeUndefined()
       expect(checked.err()?.message).toContain('record name')
@@ -350,6 +348,6 @@ describe('refusals', () => {
       ...stored,
       email: { ...stored.email, ciphertext },
     })
-    expect(result.err()?.kind).toBe('open')
+    expect(result.err()?.code).toBe('stack_encrypt::aead')
   })
 })

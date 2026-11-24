@@ -42,8 +42,11 @@ vitaminc-aead = "0.10.0"
 # `OpaqueDebug`, and the protected buffer a frame is held in. The version
 # the engine resolves.
 vitaminc-protected = "0.10.0"
-# For the engine error's diagnostic: its code, help, URL and causes.
+# Every error is a miette diagnostic: the engine's, the value bridge's, and
+# the SDK's own, which derive `Diagnostic` and `thiserror::Error`. The
+# versions the engine resolves.
 miette = "7.5.0"
+thiserror = "1.0.56"
 # For the structured fields of an engine error (`ErrorPayload::payload`).
 serde_json = "1"
 # The engine's opaque path wipes a value it did not seal. The version the
@@ -56,9 +59,6 @@ serde = { version = "1", features = ["derive"] }
 [dev-dependencies]
 stack-encrypt = { path = "../../../../../packages/stack-encrypt", default-features = false, features = ["dynamic", "http", "test-support"] }
 tokio = { version = "1", features = ["rt", "macros"] }
-# The probe errors the cause-chain test builds. The version the engine
-# resolves.
-thiserror = "1.0.56"
 # The values the engine-interop tests seal through the engine's typed API,
 # and the types the counting key source names. The versions the engine
 # resolves.

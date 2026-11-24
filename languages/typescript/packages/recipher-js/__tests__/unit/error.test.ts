@@ -2,34 +2,31 @@ import { describe, expect, it } from 'vitest'
 import { fromNative, RecipherError } from '../../src/error'
 
 describe('RecipherError', () => {
-  it('is frozen and prints its kind, code and message', () => {
+  it('is frozen and prints its code and message', () => {
     const error = new RecipherError({
-      kind: 'open',
       code: 'stack_encrypt::aead',
       message: 'did not open',
     })
     expect(Object.isFrozen(error)).toBe(true)
     expect(String(error)).toBe(
-      'RecipherError(open, stack_encrypt::aead): did not open',
+      'RecipherError(stack_encrypt::aead): did not open',
     )
   })
 
   it('prints its help on a line of its own', () => {
     const error = new RecipherError({
-      kind: 'open',
       code: 'stack_encrypt::aead',
       message: 'did not open',
       help: 'check the context',
     })
     expect(error.message).toBe('did not open')
     expect(String(error)).toBe(
-      'RecipherError(open, stack_encrypt::aead): did not open\nhelp: check the context',
+      'RecipherError(stack_encrypt::aead): did not open\nhelp: check the context',
     )
   })
 
   it('keeps the help, URL, fields and causes of a native error', () => {
     const read = fromNative({
-      kind: 'zerokms',
       code: 'stack_kms::x',
       message: 'refused',
       help: 'try again',
@@ -54,28 +51,29 @@ describe('RecipherError', () => {
     expect(Object.isFrozen(read.causes)).toBe(true)
   })
 
-  it('reads a native error, and refuses one of an unknown kind or shape', () => {
+  it('reads a native error, and refuses one of an unknown shape', () => {
     const read = fromNative({
-      kind: 'zerokms',
       code: 'stack_kms::x',
       message: 'refused',
       help: null,
       field: 'email',
     })
-    expect(read.kind).toBe('zerokms')
+    expect(read.code).toBe('stack_kms::x')
+    expect(read.message).toBe('refused')
     expect(read.field).toBe('email')
     expect(read.help).toBeUndefined()
     // An error that states no severity, or an unknown one, is an error.
     expect(read.severity).toBe('error')
     expect(
-      fromNative({ kind: 'open', code: 'c', message: 'm', severity: 'loud' })
-        .severity,
+      fromNative({ code: 'c', message: 'm', severity: 'loud' }).severity,
     ).toBe('error')
     expect(read.fields).toEqual({})
     expect(read.causes).toEqual([])
 
-    expect(fromNative({ kind: 'surprise' }).kind).toBe('internal')
-    expect(fromNative(null).kind).toBe('internal')
-    expect(fromNative('text').kind).toBe('internal')
+    // An error with no code or no message is not one the native build
+    // writes.
+    for (const shape of [{ message: 'm' }, { code: 'c' }, null, 'text']) {
+      expect(fromNative(shape).code).toBe('recipher::outcome')
+    }
   })
 })

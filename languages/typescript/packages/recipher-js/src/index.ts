@@ -28,7 +28,6 @@ export {
 } from './cipher'
 export {
   type ErrorCause,
-  type ErrorKind,
   RecipherError,
   type RecipherErrorFields,
   type Severity,

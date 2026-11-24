@@ -16,7 +16,6 @@ use stack_encrypt::kms::{
 use stack_encrypt::{AsProtectedRef, StackCipher};
 use uuid::Uuid;
 
-use crate::error::ErrorKind;
 use crate::frames::{bytes_of, entries, Entry, Map};
 use crate::outcome::Outcome;
 use crate::record::{conform_row, field_value, one_field_row, open_rows, seal_rows, RecordPlan};
@@ -220,7 +219,6 @@ fn an_integer_is_read_at_its_fields_width_and_refused_outside_it() {
     )]))
     .unwrap();
     let refused = conform_row(&small, &too_big).unwrap_err();
-    assert_eq!(refused.kind, ErrorKind::Value);
     assert_eq!(refused.code, "recipher::field_type");
     assert_eq!(refused.field.as_deref(), Some("n"));
     assert_eq!(refused.record.as_deref(), Some("t"));
@@ -234,7 +232,7 @@ fn the_engine_refuses_a_declaration_naming_the_record_and_the_field() {
         "fields": { "n": { "type": "sealed", "kind": { "name": "int32" }, "index": ["match"] } },
     }))
     .unwrap_err();
-    assert_eq!(refused.kind, ErrorKind::Declaration);
+    assert_eq!(refused.code, "stack_encrypt::dynamic_plan");
     assert_eq!(refused.field.as_deref(), Some("n"));
     assert_eq!(refused.record.as_deref(), Some("t"));
 
@@ -255,7 +253,7 @@ fn a_json_field_needs_the_eql_extension() {
         "fields": { "doc": { "type": "sealed", "kind": { "name": "json" } } },
     }))
     .unwrap_err();
-    assert_eq!(refused.kind, ErrorKind::Declaration);
+    assert_eq!(refused.code, "stack_encrypt::dynamic_plan");
     assert_eq!(refused.reason(), Some("json_needs_target"));
 }
 
@@ -267,6 +265,7 @@ fn a_bad_record_name_is_the_records_fault_and_a_bad_field_name_the_fields() {
         "fields": { "x": { "type": "sealed", "kind": { "name": "string" } } },
     }))
     .unwrap_err();
+    assert_eq!(bad_record.code, "recipher::record_name");
     assert_eq!(bad_record.record.as_deref(), Some("a/b"));
     assert_eq!(bad_record.field, None);
 
@@ -276,7 +275,9 @@ fn a_bad_record_name_is_the_records_fault_and_a_bad_field_name_the_fields() {
         "fields": { "a/b": { "type": "sealed", "kind": { "name": "string" } } },
     }))
     .unwrap_err();
+    assert_eq!(bad_field.reason(), Some("context_not_label"));
     assert_eq!(bad_field.field.as_deref(), Some("a/b"));
+    assert_eq!(bad_field.record.as_deref(), Some("users"));
 }
 
 /// A deterministic key source that counts the key requests it is sent.

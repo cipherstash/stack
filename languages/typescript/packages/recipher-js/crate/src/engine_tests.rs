@@ -17,7 +17,6 @@ use uuid::Uuid;
 
 use crate::cipher::{seal, unseal};
 use crate::ciphertext::Ciphertext;
-use crate::error::ErrorKind;
 use crate::value::OneValue;
 
 const SEED: [u8; 32] = [7; 32];
@@ -179,7 +178,7 @@ async fn an_altered_ciphertext_does_not_open() {
     bytes[last] ^= 0x01;
     let altered = stack_encrypt::Ciphertext::from_bytes(&bytes).unwrap();
     let error = unseal(&engine().await, vec![altered]).await.unwrap_err();
-    assert_eq!(error.kind, ErrorKind::Open);
+    assert_eq!(error.code, "stack_encrypt::aead");
     assert!(!error.message.contains("intact"));
 }
 

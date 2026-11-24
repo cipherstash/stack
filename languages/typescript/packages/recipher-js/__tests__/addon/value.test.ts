@@ -77,11 +77,9 @@ describe('one string, with no context', () => {
 })
 
 describe('failures are values', () => {
-  const kindOf = (error: RecipherError | undefined) => error?.kind
-
   it('refuses bytes that are not a ciphertext, without quoting them', () => {
     const result = Ciphertext.fromBytes(new TextEncoder().encode('plain text'))
-    expect(kindOf(result.err())).toBe('open')
+    expect(result.err()?.code).toBe('stack_encrypt::leaf_version')
     expect(result.err()?.message).not.toContain('plain text')
   })
 
@@ -92,7 +90,6 @@ describe('failures are values', () => {
     bytes[last] = (bytes[last] ?? 0) ^ 0x01
     const opened = await c.decrypt(Ciphertext.fromBytes(bytes).unwrap())
     const error = opened.err()
-    expect(kindOf(error)).toBe('open')
     expect(error?.code).toBe('stack_encrypt::aead')
     expect(error?.message).toBe(
       'AEAD operation failed (wrong key, AAD mismatch, or malformed ciphertext)',
@@ -121,7 +118,6 @@ describe('failures are values', () => {
 
   it('refuses a string with an unpaired surrogate, with a code of its own', async () => {
     const result = await (await cipher()).defaultKeyset().encrypt('\uD800')
-    expect(result.err()?.kind).toBe('value')
     expect(result.err()?.code).toBe('recipher::unpaired_surrogate')
   })
 
@@ -171,7 +167,7 @@ describe('no call throws', () => {
     const decrypt = Object.getOwnPropertyDescriptor(Cipher.prototype, 'decrypt')
     const method = decrypt?.get?.call({}) as (value: unknown) => unknown
     const result = (await method('x')) as { err(): RecipherError | undefined }
-    expect(result.err()?.kind).toBe('internal')
+    expect(result.err()?.code).toBe('recipher::native_threw')
   })
 
   it('arguments of every wrong type resolve to an Err', async () => {
@@ -208,7 +204,6 @@ describe('no call throws', () => {
       },
     }
     const result = await keyset.encrypt(hostile as never)
-    expect(result.err()?.kind).toBe('value')
     expect(result.err()?.code).toBe('recipher::threw')
     expect(result.err()?.message).not.toContain('4111')
   })
@@ -247,8 +242,8 @@ describe('Cipher.create', () => {
     }
   })
 
-  it('resolves to a credential error, and does not throw, with no credentials', async () => {
+  it('resolves to a configuration error, and does not throw, with no credentials', async () => {
     const result = await Cipher.create()
-    expect(result.err()?.kind).toBe('credential')
+    expect(result.err()?.code).toBe('stack_encrypt::config')
   })
 })

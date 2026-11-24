@@ -184,8 +184,8 @@ export type SealedFieldName<R> =
 
 /**
  * Check declarations with the engine, with no credentials and no request:
- * for a test or a CI step. The first refusal is the `Err`, of kind
- * `declaration`, naming the record and, where there is one, the field.
+ * for a test or a CI step. The first refusal is the `Err`, naming the
+ * record and, where there is one, the field.
  */
 export function checkDeclarations(
   declarations: readonly RecordDeclaration[],

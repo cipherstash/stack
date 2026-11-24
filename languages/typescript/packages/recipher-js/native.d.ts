@@ -17,13 +17,12 @@ export declare class Cipher {
    * A cipher over ZeroKMS, with the credentials the engine finds: the
    * `CS_*` variables, then the profile `stash auth login` writes.
    *
-   * Resolves to a failure of kind `credential` when there are none or
-   * they are refused, and of kind `zerokms` when ZeroKMS refuses to load
-   * the default keyset.
+   * Resolves to the engine's error when there are no credentials, when
+   * they are refused, or when ZeroKMS refuses to load the default keyset.
    *
    * `options.records` are declarations to check now, before any
    * credential is looked for: a declaration the engine refuses is a
-   * failure of kind `declaration`, naming the record.
+   * failure naming the record.
    */
   static create(options?: unknown | undefined | null): Promise<Outcome<Cipher>>
   /**
@@ -114,9 +113,9 @@ export declare class Keyset {
   encrypt(first: unknown, second?: unknown | undefined | null): Promise<Outcome<unknown>>
   /**
    * Open a ciphertext sealed under this keyset, or an array of them. A
-   * ciphertext of another keyset is a failure of kind `foreign_keyset`,
-   * before any key is requested. With a record first, open its stored
-   * row, or an array of them.
+   * ciphertext of another keyset is a failure with the code
+   * `stack_encrypt::foreign_keyset`, before any key is requested. With a
+   * record first, open its stored row, or an array of them.
    */
   decrypt(first: unknown, second?: unknown | undefined | null): Promise<Outcome<unknown>>
   /**
@@ -142,9 +141,8 @@ export declare function bindingInterface(): number
 
 /**
  * Check declarations with the engine, with no credentials and no
- * request: for a test or a CI step. The first refusal is the failure, of
- * kind `declaration`, naming the record and, where there is one, the
- * field.
+ * request: for a test or a CI step. The first refusal is the failure,
+ * naming the record and, where there is one, the field.
  */
 export declare function checkDeclarations(records: unknown): Outcome<undefined>
 
@@ -156,7 +154,7 @@ export declare function checkDeclarations(records: unknown): Outcome<undefined>
  * who knows the seed.
  *
  * Only a build with the `testing` feature has one; any other resolves to
- * a failure of kind `internal`, code `recipher::no_testing`.
+ * a failure with the code `recipher::no_testing`.
  */
 export declare function createTesting(seed: unknown): Promise<Outcome<Cipher>>
 
@@ -171,9 +169,6 @@ export interface ErrorCause {
   message: string
 }
 
-/** The closed set of things that can go wrong, for a caller to switch on. */
-export type ErrorKind = 'declaration' | 'value' | 'credential' | 'zerokms' | 'foreign_keyset' | 'context_mismatch' | 'open' | 'cancelled' | 'internal'
-
 /**
  * A JSON document, to encrypt as one ciphertext: a plain object, an array,
  * text, a number, a `bigint`, a boolean or `null`, nested at most 127
@@ -186,10 +181,8 @@ export declare function json(document: unknown): Json
 
 /** A failure, as JavaScript receives it. */
 export interface RecipherErrorFields {
-  /** What kind of failure it is. */
-  kind: ErrorKind
   /**
-   * Stable: the engine's diagnostic code, such as `stack_encrypt::aead`,
+   * Stable: the diagnostic's code, such as `stack_encrypt::aead`,
    * vitaminc's code for a value it refused, such as `ERR_INTEGER_RANGE`,
    * or the SDK's own, such as `recipher::not_a_ciphertext`.
    */
@@ -200,10 +193,7 @@ export interface RecipherErrorFields {
   help?: string
   /** A documentation page for the error, where it has one. */
   url?: string
-  /**
-   * How serious it is: `error` unless the engine's diagnostic says
-   * otherwise.
-   */
+  /** How serious it is: `error` unless the diagnostic says otherwise. */
   severity: Severity
   /**
    * The error's structured fields, by `snake_case` name: a refused
@@ -222,5 +212,5 @@ export interface RecipherErrorFields {
   record?: string
 }
 
-/** How serious a failure is, as the engine's diagnostic states it. */
+/** How serious a failure is, as the diagnostic states it. */
 export type Severity = 'error' | 'warning' | 'advice'

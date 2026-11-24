@@ -50,7 +50,7 @@ mod record_tests;
 
 pub use cipher::{check_declarations, create_testing, Cipher, Keyset};
 pub use ciphertext::Ciphertext;
-pub use error::{ErrorKind, RecipherErrorFields};
+pub use error::RecipherErrorFields;
 pub use json::{json_document, Json};
 
 use napi::bindgen_prelude::{JsObjectValue, Object, Unknown};
@@ -59,7 +59,7 @@ use napi_derive::napi;
 
 /// The version of the interface between the package's TypeScript and this
 /// build.
-pub const BINDING_INTERFACE: u32 = 3;
+pub const BINDING_INTERFACE: u32 = 4;
 
 /// The version of the interface between the package's TypeScript and this
 /// build. The TypeScript refuses a build that reports another.

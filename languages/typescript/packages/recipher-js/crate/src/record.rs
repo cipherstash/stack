@@ -31,11 +31,11 @@ use stack_encrypt::dynamic::{
 use stack_encrypt::kms::{DataKeySource, IndexKeySource};
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{
-    AsProtectedRef, CipherRef, CipherText, Controlled, DecryptFrom, EncryptInto, ErrorPayload as _,
-    KeysetCipher, PassthroughFrame, StackCipherText,
+    AsProtectedRef, CipherRef, CipherText, Controlled, DecryptFrom, EncryptInto, KeysetCipher,
+    PassthroughFrame, StackCipherText,
 };
 
-use crate::error::{ErrorKind, RecipherErrorFields};
+use crate::error::{Error, RecipherErrorFields};
 use crate::frames::{bytes_of, entries, Entry, Map};
 use crate::outcome::Outcome;
 
@@ -149,14 +149,6 @@ struct KindDeclaration {
     name: String,
 }
 
-/// A failure of the declaration of `record`, at `field` when there is one.
-fn refused(record: &str, field: Option<&str>, code: &str, message: String) -> RecipherErrorFields {
-    let mut error = RecipherErrorFields::new(ErrorKind::Declaration, code, message);
-    error.record = Some(record.to_owned());
-    error.field = field.map(str::to_owned);
-    error
-}
-
 /// The plans built so far, by the declaration's frame bytes. A declaration
 /// holds no secret.
 static PLANS: LazyLock<Mutex<HashMap<Vec<u8>, Arc<RecordPlan>>>> =
@@ -168,8 +160,8 @@ impl RecordPlan {
     ///
     /// # Errors
     ///
-    /// A failure of kind `declaration`, naming the record and, where there
-    /// is one, the field.
+    /// `recipher::not_a_record`, or a refusal of the declaration naming the
+    /// record and, where there is one, the field.
     pub(crate) fn of(frame: &ValueFrame) -> Outcome<Arc<RecordPlan>> {
         let key = frame.risky_ref().to_vec();
         if let Some(plan) = PLANS
@@ -180,19 +172,10 @@ impl RecordPlan {
             return Ok(Arc::clone(plan));
         }
         let declaration: Declaration =
-            stack_encrypt::dynamic::frame::serde::from_slice(frame.risky_ref()).map_err(|_| {
-                RecipherErrorFields::new(
-                    ErrorKind::Declaration,
-                    "recipher::not_a_record",
-                    "a record is declared with record(..)",
-                )
-            })?;
+            stack_encrypt::dynamic::frame::serde::from_slice(frame.risky_ref())
+                .map_err(|_| Error::NotARecord)?;
         if declaration.tag != "record" {
-            return Err(RecipherErrorFields::new(
-                ErrorKind::Declaration,
-                "recipher::not_a_record",
-                "a record is declared with record(..)",
-            ));
+            return Err(Error::NotARecord.into());
         }
         let plan = Arc::new(Self::build(declaration.name, declaration.fields.0)?);
         // Another call may have built the same plan meanwhile: the first one
@@ -255,24 +238,13 @@ impl RecordPlan {
     ///
     /// # Errors
     ///
-    /// A failure of kind `declaration` for a name the record does not
-    /// declare, or that it passes through.
+    /// `recipher::no_field` for a name the record does not declare, or that
+    /// it passes through.
     pub(crate) fn field(&self, name: &str) -> Outcome<Arc<RecordPlan>> {
         self.alone.get(name).cloned().ok_or_else(|| {
-            let passthrough = self.fields.iter().any(|field| field.name == name);
-            refused(
-                &self.name,
-                Some(name),
-                "recipher::no_field",
-                if passthrough {
-                    format!(
-                        "the record `{}` passes this field through: it has no ciphertext",
-                        self.name
-                    )
-                } else {
-                    format!("the record `{}` declares no such field", self.name)
-                },
-            )
+            RecipherErrorFields::from(Error::NoField)
+                .in_record(&self.name)
+                .at_field(Some(name))
         })
     }
 }
@@ -283,51 +255,38 @@ fn field_of(
     name: String,
     declaration: FieldDeclaration,
 ) -> Outcome<(Field, FieldPlan)> {
-    let at = |code: &str, message: String| refused(record, Some(&name), code, message);
+    let at = |error: Error| {
+        RecipherErrorFields::from(error)
+            .in_record(record)
+            .at_field(Some(&name))
+    };
     if RESERVED.contains(&name.as_str()) {
-        return Err(at(
-            "recipher::reserved_field",
-            format!("`{name}` is a name the engine reserves; name the field something else"),
-        ));
+        return Err(at(Error::ReservedField));
     }
     let passthrough = match declaration.tag.as_str() {
         "sealed" => false,
         "passthrough" => true,
-        _ => {
-            return Err(at(
-                "recipher::declaration",
-                "a field is declared with encrypt(..) or passthrough()".to_owned(),
-            ))
-        }
+        _ => return Err(at(Error::Declaration)),
     };
-    let kind = match &declaration.kind {
-        Some(kind) => Some(kind.name.parse::<ValueKind>().map_err(|_| {
-            at(
-                "recipher::kind",
-                format!("`{}` is not one of `kinds`", kind.name),
-            )
-        })?),
+    let kind = match declaration.kind {
+        Some(kind) => Some(
+            kind.name
+                .parse::<ValueKind>()
+                .map_err(|_| at(Error::Kind { name: kind.name }))?,
+        ),
         None => None,
     };
     let mut indexes = Vec::with_capacity(declaration.index.len());
-    for index in &declaration.index {
-        indexes.push(
-            index_named(index)
-                .ok_or_else(|| at("recipher::index", format!("`{index}` is not an index")))?,
-        );
+    for index in declaration.index {
+        indexes.push(index_named(&index).ok_or_else(|| at(Error::Index { name: index }))?);
     }
-    let null = match declaration.null.as_deref() {
+    let null = match declaration.null {
         None => None,
         Some(mode) => Some(
             [NullMode::Sealed, NullMode::Sql]
                 .into_iter()
                 .find(|known| known.name() == mode)
-                .ok_or_else(|| {
-                    at(
-                        "recipher::null",
-                        format!("`{mode}` is not a null mode: `sealed` or `sql`"),
-                    )
-                })?,
+                .ok_or_else(|| at(Error::Null { mode }))?,
         ),
     };
     let outputs = if passthrough {
@@ -337,12 +296,7 @@ fn field_of(
             .chain(indexes.iter().cloned().map(Output::Term))
             .collect()
     };
-    let field_context = field_path(record, &name).ok_or_else(|| {
-        at(
-            "recipher::context",
-            "the field path could not be written".to_owned(),
-        )
-    })?;
+    let field_context = field_path(record, &name).ok_or_else(|| at(Error::Context))?;
     let mut plan = FieldPlan::new(name.clone(), field_context, outputs)
         .map_err(|error| engine_refused(record, &error))?;
     if let Some(kind) = kind {
@@ -375,24 +329,13 @@ fn field_path(
 }
 
 /// The engine's refusal of a declaration of `record`. When the engine says
-/// a context is not a label, the record's name or the field's is at fault,
-/// and the record's is tried alone to say which.
+/// a context is not a label, the record's name or the field's is at fault.
+/// The record's is tried alone to say which: the engine names the field
+/// either way.
 fn engine_refused(record: &str, error: &stack_encrypt::dynamic::Error) -> RecipherErrorFields {
-    let mut refused =
-        RecipherErrorFields::diagnostic(ErrorKind::Declaration, error, Some(error.payload()));
-    refused.record = Some(record.to_owned());
+    let refused = RecipherErrorFields::engine(error).in_record(record);
     if refused.reason() == Some("context_not_label") && !plain_segment(record) {
-        refused.field = None;
-        refused.message = format!(
-            "the record name `{record}` is not a plain segment of a field path: it is \
-             empty, or holds a character the engine refuses in one"
-        );
-    } else if refused.reason() == Some("context_not_label") {
-        refused.message = format!(
-            "the field name is not a plain segment of a field path: it is empty, or holds \
-             a character the engine refuses in one. {}",
-            refused.message
-        );
+        return RecipherErrorFields::from(Error::RecordName).in_record(record);
     }
     refused
 }
@@ -404,34 +347,16 @@ fn plain_segment(record: &str) -> bool {
         .is_some_and(|context| FieldPlan::new("field", context, vec![Output::Ciphertext]).is_ok())
 }
 
-/// A failure of a row of `plan`'s record.
-fn row_refused(
-    plan: &RecordPlan,
-    field: Option<&str>,
-    code: &str,
-    message: &str,
-) -> RecipherErrorFields {
-    let mut error = RecipherErrorFields::new(ErrorKind::Value, code, message.to_owned());
-    error.record = Some(plan.name.clone());
-    error.field = field.map(str::to_owned);
-    error
-}
-
 /// A row's fields, each read as its field's kind, in the row's order.
 ///
 /// # Errors
 ///
-/// A failure of kind `value` for a row that is not an object, or a value
-/// that is not of its field's kind or does not fit it, naming the field.
+/// `recipher::not_a_row` for a row that is not an object, and
+/// `recipher::field_type` for a value that is not of its field's kind or
+/// does not fit it, naming the field.
 pub(crate) fn conform_row(plan: &RecordPlan, row: &ValueFrame) -> Outcome<ValueFrame> {
-    let values = entries(row).ok_or_else(|| {
-        row_refused(
-            plan,
-            None,
-            "recipher::not_a_row",
-            "a row is an object of the record's fields",
-        )
-    })?;
+    let not_a_row = || RecipherErrorFields::from(Error::NotARow).in_record(&plan.name);
+    let values = entries(row).ok_or_else(not_a_row)?;
     let mut conformed: Vec<(String, ValueFrame)> = Vec::with_capacity(values.len());
     for (name, value) in values {
         let kind = plan
@@ -442,12 +367,9 @@ pub(crate) fn conform_row(plan: &RecordPlan, row: &ValueFrame) -> Outcome<ValueF
         let value = match kind {
             // A null is checked by the engine against the field's null mode.
             Some(kind) if value.kind().is_some() => read(kind, &value).map_err(|_| {
-                row_refused(
-                    plan,
-                    Some(&name),
-                    "recipher::field_type",
-                    &format!("the value is not of the field's kind, {kind}, or does not fit it"),
-                )
+                RecipherErrorFields::from(Error::FieldType { kind })
+                    .in_record(&plan.name)
+                    .at_field(Some(&name))
             })?,
             _ => value,
         };
@@ -457,14 +379,7 @@ pub(crate) fn conform_row(plan: &RecordPlan, row: &ValueFrame) -> Outcome<ValueF
         .iter()
         .map(|(name, value)| (name.as_str(), Entry::Value(value)))
         .collect());
-    ValueFrame::of(&map).map_err(|_| {
-        row_refused(
-            plan,
-            None,
-            "recipher::not_a_row",
-            "a row is an object of the record's fields",
-        )
-    })
+    ValueFrame::of(&map).map_err(|_| not_a_row())
 }
 
 /// Seal rows under a record's plan, in one key request however many there
@@ -488,7 +403,7 @@ where
     let stored = planned
         .encrypt_into::<Vec<StackCipherText>, K>(keyset)
         .await
-        .map_err(|error| with_record(&plan, RecipherErrorFields::engine(&error)))?;
+        .map_err(|error| RecipherErrorFields::engine(&error).in_record(&plan.name))?;
     stored
         .into_iter()
         .map(|row| stored_row(&plan, row))
@@ -501,8 +416,8 @@ where
 ///
 /// # Errors
 ///
-/// A failure of kind `value` for a stored row of another shape, naming the
-/// field, and the engine's refusal of one that does not open.
+/// `recipher::not_a_stored_row` for a stored row of another shape, naming
+/// the field, and the engine's refusal of one that does not open.
 pub(crate) async fn open_rows<'c, K>(
     cipher: impl Into<CipherRef<'c, K>>,
     plan: Arc<RecordPlan>,
@@ -521,30 +436,16 @@ where
         .collect();
     Vec::<ValueFrame>::decrypt_from(planned, cipher)
         .await
-        .map_err(|error| with_record(&plan, RecipherErrorFields::engine(&error)))
-}
-
-/// `error`, naming the record.
-fn with_record(plan: &RecordPlan, mut error: RecipherErrorFields) -> RecipherErrorFields {
-    error.record = Some(plan.name.clone());
-    error
-}
-
-/// A failure in the engine's result: a bug, never the caller's input.
-fn engine_fault(what: &str) -> RecipherErrorFields {
-    RecipherErrorFields::internal(
-        "recipher::engine_result",
-        format!(
-            "the engine's stored row does not have the shape the SDK reads: {what}. Report \
-             this as a bug in @cipherstash/recipher."
-        ),
-    )
+        .map_err(|error| RecipherErrorFields::engine(&error).in_record(&plan.name))
 }
 
 /// The stored row the engine returned, as the frame the SDK hands back.
 fn stored_row(plan: &RecordPlan, tree: StackCipherText) -> Outcome<ValueFrame> {
     let CipherText::Map(entries) = tree else {
-        return Err(engine_fault("a row is not a map of fields"));
+        return Err(Error::EngineResult {
+            what: "a row is not a map of fields",
+        }
+        .into());
     };
     let mut fields: Vec<(&str, Entry<'_>)> = Vec::with_capacity(plan.fields.len());
     for field in &plan.fields {
@@ -554,14 +455,20 @@ fn stored_row(plan: &RecordPlan, tree: StackCipherText) -> Outcome<ValueFrame> {
             continue;
         };
         let CipherText::Map(outputs) = outputs else {
-            return Err(engine_fault("a field is not a map of outputs"));
+            return Err(Error::EngineResult {
+                what: "a field is not a map of outputs",
+            }
+            .into());
         };
         if field.passthrough {
             let Some((_, CipherText::Passthrough(PassthroughFrame(frame)))) = outputs
                 .iter()
                 .find(|(key, _)| key == Output::Passthrough.key())
             else {
-                return Err(engine_fault("a passthrough field has no passthrough"));
+                return Err(Error::EngineResult {
+                    what: "a passthrough field has no passthrough",
+                }
+                .into());
             };
             fields.push((field.name.as_str(), Entry::Frame(frame)));
             continue;
@@ -574,28 +481,35 @@ fn stored_row(plan: &RecordPlan, tree: StackCipherText) -> Outcome<ValueFrame> {
                     stored.push((CIPHERTEXT, Entry::Bytes(bytes)));
                 }
                 (Some(Output::Term(index)), CipherText::Passthrough(PassthroughFrame(term))) => {
-                    let name = index_name(&index)
-                        .ok_or_else(|| engine_fault("an index the SDK does not name"))?;
+                    let name = index_name(&index).ok_or(Error::EngineResult {
+                        what: "an index the SDK does not name",
+                    })?;
                     stored.push((name, Entry::Frame(term)));
                 }
-                _ => return Err(engine_fault("an output of an unexpected shape")),
+                _ => {
+                    return Err(Error::EngineResult {
+                        what: "an output of an unexpected shape",
+                    }
+                    .into())
+                }
             }
         }
         fields.push((field.name.as_str(), Entry::Map(Map(stored))));
     }
-    ValueFrame::of(&Map(fields))
-        .map_err(|_| engine_fault("the stored row could not be written as a frame"))
+    ValueFrame::of(&Map(fields)).map_err(|_| {
+        Error::EngineResult {
+            what: "the stored row could not be written as a frame",
+        }
+        .into()
+    })
 }
 
 /// The engine's stored record for a stored row the SDK handed back.
 fn stored_tree(plan: &RecordPlan, row: &ValueFrame) -> Outcome<StackCipherText> {
-    let misfit = |field: Option<&str>, what: &str| {
-        row_refused(
-            plan,
-            field,
-            "recipher::not_a_stored_row",
-            &format!("the stored row does not have the record's shape: {what}"),
-        )
+    let misfit = |field: Option<&str>, what: &'static str| {
+        RecipherErrorFields::from(Error::NotAStoredRow { what })
+            .in_record(&plan.name)
+            .at_field(field)
     };
     let stored = entries(row)
         .ok_or_else(|| misfit(None, "a stored row is an object of the record's fields"))?;
@@ -631,11 +545,9 @@ fn stored_tree(plan: &RecordPlan, row: &ValueFrame) -> Outcome<StackCipherText> 
             if key == CIPHERTEXT {
                 let ciphertext =
                     stack_encrypt::Ciphertext::from_bytes(&bytes).map_err(|error| {
-                        let mut error =
-                            RecipherErrorFields::diagnostic(ErrorKind::Open, &error, None);
-                        error.record = Some(plan.name.clone());
-                        error.field = Some(name.clone());
-                        error
+                        RecipherErrorFields::engine(&error)
+                            .in_record(&plan.name)
+                            .at_field(Some(&name))
                     })?;
                 nodes.push((
                     Output::Ciphertext.key().to_owned(),
@@ -665,11 +577,17 @@ fn stored_tree(plan: &RecordPlan, row: &ValueFrame) -> Outcome<StackCipherText> 
 /// The value of the field `name` in a one-field row, or a null when the
 /// row has none (a null stored as SQL `NULL`).
 pub(crate) fn field_value(row: &ValueFrame, name: &str) -> Outcome<ValueFrame> {
-    let entries =
-        entries(row).ok_or_else(|| engine_fault("a one-field row is not a map of fields"))?;
+    let entries = entries(row).ok_or(Error::EngineResult {
+        what: "a one-field row is not a map of fields",
+    })?;
     match entries.into_iter().find(|(key, _)| key == name) {
         Some((_, value)) => Ok(value),
-        None => ValueFrame::of(&Null).map_err(|_| engine_fault("a null could not be written")),
+        None => ValueFrame::of(&Null).map_err(|_| {
+            Error::EngineResult {
+                what: "a null could not be written",
+            }
+            .into()
+        }),
     }
 }
 
@@ -684,6 +602,10 @@ impl stack_encrypt::Encrypt for &Null {
 
 /// A one-field row: `{ name: value }`.
 pub(crate) fn one_field_row(name: &str, value: &ValueFrame) -> Outcome<ValueFrame> {
-    ValueFrame::of(&Map(vec![(name, Entry::Value(value))]))
-        .map_err(|_| engine_fault("a one-field row could not be written"))
+    ValueFrame::of(&Map(vec![(name, Entry::Value(value))])).map_err(|_| {
+        Error::EngineResult {
+            what: "a one-field row could not be written",
+        }
+        .into()
+    })
 }

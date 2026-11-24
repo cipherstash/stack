@@ -5,7 +5,7 @@ use std::future::Future;
 use napi::bindgen_prelude::{JsObjectValue, Object, PromiseRaw, ToNapiValue, Unknown};
 use napi::Env;
 
-use crate::error::RecipherErrorFields;
+use crate::error::{Error, RecipherErrorFields};
 
 /// What a call's work comes to before JavaScript sees it.
 pub(crate) type Outcome<T> = Result<T, RecipherErrorFields>;
@@ -37,15 +37,8 @@ pub(crate) fn settle<'e, T>(
 
 /// The failure for a value napi could not make, which is never the
 /// caller's to fix.
-pub(crate) fn not_made(error: napi::Error) -> RecipherErrorFields {
-    RecipherErrorFields::internal(
-        "recipher::build_value",
-        format!(
-            "the result could not be given to JavaScript ({}). Report this as a bug in \
-             @cipherstash/recipher.",
-            error.status
-        ),
-    )
+pub(crate) fn not_made(_: napi::Error) -> RecipherErrorFields {
+    Error::BuildValue.into()
 }
 
 /// A failure, as an outcome object.

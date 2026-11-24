@@ -11,7 +11,7 @@ use stack_encrypt::dynamic::{read, ValueFrame, ValueKind};
 use stack_encrypt::AsProtectedRef;
 use vitaminc_protected::OpaqueDebug;
 
-use crate::error::{ErrorKind, RecipherErrorFields};
+use crate::error::{Error, RecipherErrorFields};
 use crate::js;
 use crate::outcome::{failed, not_made, settle, Outcome};
 
@@ -57,8 +57,9 @@ impl Ciphertext {
     ///
     /// # Errors
     ///
-    /// A failure of kind `open` for a value sealed as another type, or for
-    /// one named JSON that is not a JSON document.
+    /// `recipher::opened_type` for a value sealed as another type, and
+    /// `recipher::not_a_document` for one named JSON that is not a JSON
+    /// document.
     pub(crate) fn opened(&self, value: ValueFrame) -> Outcome<ValueFrame> {
         match self.opens_as {
             None => Ok(value),
@@ -87,19 +88,12 @@ impl Ciphertext {
         kind: Option<Unknown<'_>>,
     ) -> napi::Result<Object<'e>> {
         let Some(bytes) = bytes_of(bytes) else {
-            return failed(
-                env,
-                RecipherErrorFields::new(
-                    ErrorKind::Value,
-                    "recipher::not_bytes",
-                    "a ciphertext is read from a Uint8Array",
-                ),
-            );
+            return failed(env, Error::NotBytes.into());
         };
         let outcome = kind_of(env, kind).and_then(|opens_as| {
             stack_encrypt::Ciphertext::from_bytes(&bytes)
                 .map(|sealed| Ciphertext::new(sealed, opens_as))
-                .map_err(|error| RecipherErrorFields::diagnostic(ErrorKind::Open, &error, None))
+                .map_err(|error| RecipherErrorFields::engine(&error))
         });
         settle(env, outcome, |env, ciphertext| {
             Ok(ciphertext
@@ -134,24 +128,17 @@ fn kind_of(env: &Env, value: Option<Unknown<'_>>) -> Outcome<Option<ValueKind>> 
     else {
         return Ok(None);
     };
-    let not_a_kind = || {
-        RecipherErrorFields::new(
-            ErrorKind::Value,
-            "recipher::not_a_kind",
-            "a ciphertext opens as one of `kinds`, such as `kinds.string`",
-        )
-    };
-    let frame = js::read(env, value).map_err(|_| not_a_kind())?;
+    let frame = js::read(env, value).map_err(|_| Error::NotAKind)?;
     let argument: KindArgument =
         stack_encrypt::dynamic::frame::serde::from_slice(frame.as_protected_ref().risky_ref())
-            .map_err(|_| not_a_kind())?;
-    argument
+            .map_err(|_| Error::NotAKind)?;
+    let kind = argument
         .name
         .parse::<ValueKind>()
         .ok()
         .filter(|kind| !matches!(kind, ValueKind::Array | ValueKind::Object))
-        .map(Some)
-        .ok_or_else(not_a_kind)
+        .ok_or(Error::NotAKind)?;
+    Ok(Some(kind))
 }
 
 /// Whether `kind` is an integer kind.
@@ -175,13 +162,7 @@ fn integer(kind: ValueKind) -> bool {
 /// width, or a float of another width, converted by the engine's `read`
 /// when the conversion is exact; anything else refused.
 fn as_kind(kind: ValueKind, value: ValueFrame) -> Outcome<ValueFrame> {
-    let refused = || {
-        RecipherErrorFields::new(
-            ErrorKind::Open,
-            "recipher::opened_type",
-            format!("the value opened, but it was not sealed as the kind named, {kind}"),
-        )
-    };
+    let refused = || RecipherErrorFields::from(Error::OpenedType { kind });
     let opened = value.kind();
     if opened == Some(kind) {
         return Ok(value);

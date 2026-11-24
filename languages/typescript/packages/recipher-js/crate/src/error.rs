@@ -1,52 +1,191 @@
 //! Every failure the addon reports, as the object JavaScript receives.
 //!
-//! A failure is a [`RecipherErrorFields`]: an [`ErrorKind`] a caller switches
-//! on, and the engine's diagnostic as it stands: its stable code, message,
-//! help, documentation URL, severity, structured fields and causes. An engine error is
-//! mapped here, once, by its variant. The engine's errors never hold a
-//! plaintext, a key, a token or a ciphertext, and nothing here adds one.
+//! An error is a miette diagnostic: the engine's, the value bridge's
+//! [`Refusal`](recipher_value_napi::Refusal), or one of the SDK's own in
+//! [`Error`]. [`RecipherErrorFields::diagnostic`] turns any of them into a
+//! [`RecipherErrorFields`]: its code, message, help, documentation URL,
+//! severity, structured fields and causes. No error here holds a plaintext,
+//! a key, a token or a ciphertext.
 //!
 //! A cause that is one of the engine's own diagnostics gives its code and
 //! message. A cause from another library gives [`UNDESCRIBED_CAUSE`] and
 //! nothing else: its message is text the engine does not vouch for, and is
 //! never copied.
 
-use std::error::Error;
+use std::error::Error as StdError;
 
 use miette::Diagnostic;
 use napi_derive::napi;
+use stack_encrypt::dynamic::ValueKind;
 use stack_encrypt::ErrorPayload;
 
-/// The closed set of things that can go wrong, for a caller to switch on.
-#[napi(string_enum = "snake_case")]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ErrorKind {
-    /// A declaration the engine refused.
-    Declaration,
-    /// A value the SDK or the engine refused: a type it does not encrypt,
-    /// or a value outside what its type holds.
+/// The SDK's own errors: what the addon refuses before the engine sees it,
+/// and what goes wrong between the engine and JavaScript.
+#[derive(Debug, thiserror::Error, Diagnostic)]
+pub(crate) enum Error {
+    /// `undefined` given as a value.
+    #[error("`undefined` is not a value")]
+    #[diagnostic(
+        code(recipher::undefined),
+        help("Use `null` for a value that is not there.")
+    )]
+    Undefined,
+    /// A `VcUuid`, which the engine's value model does not hold.
+    #[error("a UUID cannot be encrypted yet: the engine's value model does not hold one")]
+    #[diagnostic(code(recipher::uuid), help("Encrypt its text instead."))]
+    Uuid,
+    /// A value outside the engine's value model, or one Node-API failed to
+    /// read.
+    #[error("the value cannot be encrypted: it is not one the engine reads")]
+    #[diagnostic(code(recipher::value))]
     Value,
-    /// No credentials, or credentials that were refused.
-    Credential,
-    /// ZeroKMS refused a request, or could not be reached.
-    Zerokms,
-    /// A value sealed under another keyset than the one asked to open it.
-    ForeignKeyset,
-    /// A value opened under another context than the one it was sealed
-    /// under, found before any key was requested.
-    ContextMismatch,
-    /// A ciphertext that did not open: damaged, altered, not a ciphertext,
-    /// or holding a value of another type than the one asked for.
-    Open,
-    /// The call was cancelled before it finished.
-    Cancelled,
-    /// A failure that is not the caller's to fix: the native build did not
-    /// load, or the engine or the addon did something the SDK does not
-    /// expect.
-    Internal,
+    /// A getter of the application's threw while the value was read.
+    #[error(
+        "reading the value threw. The thrown error is not kept, because its message may hold the value"
+    )]
+    #[diagnostic(code(recipher::threw))]
+    Threw,
+    /// An array inside an array, given as one value.
+    #[error("an array inside an array is not a value")]
+    #[diagnostic(code(recipher::not_a_scalar), help("Wrap it in json(..)."))]
+    NotAScalar,
+    /// An object given as one value.
+    #[error("an object is not a value")]
+    #[diagnostic(code(recipher::plain_object), help("Wrap it in json(..)."))]
+    PlainObject,
+    /// A value that is not a JSON document the engine seals.
+    #[error("the value is not a JSON document the engine seals: {what}")]
+    #[diagnostic(code(recipher::not_json))]
+    NotJson { what: &'static str },
+    /// A JSON document nested deeper than the engine's parser reads.
+    #[error(
+        "the value is not a JSON document the engine seals: it is nested deeper than 127 levels of arrays and objects"
+    )]
+    #[diagnostic(code(recipher::too_deep))]
+    JsonTooDeep,
+    /// The engine refused to seal a value as it was given.
+    #[error("the engine could not seal the value as given")]
+    #[diagnostic(code(recipher::not_sealed))]
+    NotSealed,
+    /// `decrypt` given something that is not a `Ciphertext`.
+    #[error("decrypt takes a Ciphertext, or an array of them")]
+    #[diagnostic(
+        code(recipher::not_a_ciphertext),
+        help("Read stored bytes with Ciphertext.fromBytes.")
+    )]
+    NotACiphertext,
+    /// `Ciphertext.fromBytes` given something that is not bytes.
+    #[error("a ciphertext is read from a Uint8Array")]
+    #[diagnostic(code(recipher::not_bytes))]
+    NotBytes,
+    /// A kind that is not one of `kinds`.
+    #[error("a ciphertext opens as one of `kinds`, such as `kinds.string`")]
+    #[diagnostic(code(recipher::not_a_kind))]
+    NotAKind,
+    /// A ciphertext that opened as another kind than the one named.
+    #[error("the value opened, but it was not sealed as the kind named, {kind}")]
+    #[diagnostic(code(recipher::opened_type))]
+    OpenedType { kind: ValueKind },
+    /// A ciphertext named JSON that opened as text that is not JSON.
+    #[error("the value opened, but it is not a JSON document")]
+    #[diagnostic(code(recipher::not_a_document))]
+    NotADocument,
+    /// A test cipher's seed that is not 32 bytes.
+    #[error("a test cipher's seed is a Uint8Array of 32 bytes")]
+    #[diagnostic(code(recipher::testing_seed))]
+    TestingSeed,
+    /// `createTesting` in a build without the test cipher.
+    // A build with the test cipher never raises it.
+    #[cfg_attr(feature = "testing", allow(dead_code))]
+    #[error("this native build has no test cipher")]
+    #[diagnostic(
+        code(recipher::no_testing),
+        help("Build it with `pnpm --filter @cipherstash/recipher build:debug`.")
+    )]
+    NoTesting,
+    /// A declaration that `record(..)` did not make.
+    #[error("the value is not a record")]
+    #[diagnostic(
+        code(recipher::not_a_record),
+        help("Declare a record with record(..).")
+    )]
+    NotARecord,
+    /// A field declared with something other than `encrypt(..)` or
+    /// `passthrough()`.
+    #[error("a field is declared with encrypt(..) or passthrough()")]
+    #[diagnostic(code(recipher::declaration))]
+    Declaration,
+    /// A field named with a name the engine reserves.
+    #[error("the field's name is one the engine reserves")]
+    #[diagnostic(code(recipher::reserved_field), help("Name the field something else."))]
+    ReservedField,
+    /// A field's kind that is not one of `kinds`.
+    #[error("`{name}` is not one of `kinds`")]
+    #[diagnostic(code(recipher::kind))]
+    Kind { name: String },
+    /// A field's index that is not one the SDK names.
+    #[error("`{name}` is not an index")]
+    #[diagnostic(code(recipher::index))]
+    Index { name: String },
+    /// A field's null mode that is not one the engine has.
+    #[error("`{mode}` is not a null mode")]
+    #[diagnostic(code(recipher::null), help("A null mode is `sealed` or `sql`."))]
+    Null { mode: String },
+    /// A field path that could not be written as a context.
+    #[error("the field path could not be written")]
+    #[diagnostic(code(recipher::context))]
+    Context,
+    /// A record name the engine refuses as a segment of a field path.
+    #[error("the record name is not a plain segment of a field path")]
+    #[diagnostic(
+        code(recipher::record_name),
+        help("Use a record name that is not empty and holds no character the engine refuses in a field path, such as `/`.")
+    )]
+    RecordName,
+    /// A field named that the record does not seal: no such field, a
+    /// passthrough field, or a name that is not a string.
+    #[error("the record declares no sealed field of that name")]
+    #[diagnostic(
+        code(recipher::no_field),
+        help("Name a field the record declares with encrypt(..). A passthrough field has no ciphertext.")
+    )]
+    NoField,
+    /// A row that is not an object of the record's fields.
+    #[error("a row is an object of the record's fields")]
+    #[diagnostic(code(recipher::not_a_row))]
+    NotARow,
+    /// A row's value that is not of its field's kind.
+    #[error("the value is not of the field's kind, {kind}, or does not fit it")]
+    #[diagnostic(code(recipher::field_type))]
+    FieldType { kind: ValueKind },
+    /// A stored row that does not have the record's shape.
+    #[error("the stored row does not have the record's shape: {what}")]
+    #[diagnostic(code(recipher::not_a_stored_row))]
+    NotAStoredRow { what: &'static str },
+    /// A stored row from the engine that the SDK cannot read.
+    #[error("the engine's stored row does not have the shape the SDK reads: {what}")]
+    #[diagnostic(
+        code(recipher::engine_result),
+        help("Report this as a bug in @cipherstash/recipher.")
+    )]
+    EngineResult { what: &'static str },
+    /// A call whose engine work returned no result.
+    #[error("the engine returned no result")]
+    #[diagnostic(
+        code(recipher::outcome),
+        help("Report this as a bug in @cipherstash/recipher.")
+    )]
+    NoResult,
+    /// A result that could not be made into a JavaScript value.
+    #[error("the result could not be given to JavaScript")]
+    #[diagnostic(
+        code(recipher::build_value),
+        help("Report this as a bug in @cipherstash/recipher.")
+    )]
+    BuildValue,
 }
 
-/// How serious a failure is, as the engine's diagnostic states it.
+/// How serious a failure is, as the diagnostic states it.
 #[napi(string_enum = "snake_case")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Severity {
@@ -72,9 +211,7 @@ impl From<miette::Severity> for Severity {
 #[napi(object)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecipherErrorFields {
-    /// What kind of failure it is.
-    pub kind: ErrorKind,
-    /// Stable: the engine's diagnostic code, such as `stack_encrypt::aead`,
+    /// Stable: the diagnostic's code, such as `stack_encrypt::aead`,
     /// vitaminc's code for a value it refused, such as `ERR_INTEGER_RANGE`,
     /// or the SDK's own, such as `recipher::not_a_ciphertext`.
     pub code: String,
@@ -84,8 +221,7 @@ pub struct RecipherErrorFields {
     pub help: Option<String>,
     /// A documentation page for the error, where it has one.
     pub url: Option<String>,
-    /// How serious it is: `error` unless the engine's diagnostic says
-    /// otherwise.
+    /// How serious it is: `error` unless the diagnostic says otherwise.
     pub severity: Severity,
     /// The error's structured fields, by `snake_case` name: a refused
     /// plan's `field` and `reason`, a ZeroKMS failure's `request_kind`.
@@ -123,7 +259,7 @@ enum Cause<'a> {
     /// One of the engine's errors, reached as a diagnostic source.
     Ours(&'a dyn Diagnostic),
     /// Anything reached as a plain source.
-    Foreign(&'a (dyn Error + 'static)),
+    Foreign(&'a (dyn StdError + 'static)),
 }
 
 /// The cause after a diagnostic: its diagnostic source, or else its plain
@@ -165,51 +301,16 @@ fn causes_of(error: &dyn Diagnostic) -> Vec<ErrorCause> {
 }
 
 impl RecipherErrorFields {
-    /// The engine's reason token, such as `no_fields`, where the error's
-    /// fields hold one.
-    pub(crate) fn reason(&self) -> Option<&str> {
-        self.fields
-            .get("reason")
-            .and_then(serde_json::Value::as_str)
-    }
-
-    /// A failure of the SDK's own, with no help, fields or causes.
-    pub(crate) fn new(kind: ErrorKind, code: &str, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            code: code.to_owned(),
-            message: message.into(),
-            help: None,
-            url: None,
-            severity: Severity::Error,
-            fields: serde_json::Map::new(),
-            causes: Vec::new(),
-            field: None,
-            record: None,
-        }
-    }
-
-    /// The failure for an engine error, of the kind its variant names.
-    pub(crate) fn engine(error: &stack_encrypt::Error) -> Self {
-        Self::diagnostic(kind_of(error), error, Some(error.payload()))
-    }
-
-    /// The failure for a diagnostic of `kind`, with the structured fields of
-    /// `payload` where there is one.
+    /// The failure for any diagnostic, with the structured fields of
+    /// `payload` where there is one. `field` is the payload's `field`, where
+    /// it names one.
     pub(crate) fn diagnostic(
-        kind: ErrorKind,
         error: &dyn Diagnostic,
         payload: Option<serde_json::Map<String, serde_json::Value>>,
     ) -> Self {
         let fields = payload.unwrap_or_default();
-        let text_of = |key: &str| {
-            fields
-                .get(key)
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-        };
         Self {
-            kind,
+            // Every error the addon reports has a code; this is never seen.
             code: error
                 .code()
                 .map_or_else(|| "recipher::unknown".to_owned(), |code| code.to_string()),
@@ -217,49 +318,56 @@ impl RecipherErrorFields {
             help: error.help().map(|help| help.to_string()),
             url: error.url().map(|url| url.to_string()),
             severity: error.severity().map_or(Severity::Error, Severity::from),
-            field: text_of("field"),
+            field: fields
+                .get("field")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
             causes: causes_of(error),
             fields,
             record: None,
         }
     }
 
-    /// An `internal` failure: something the SDK does not expect happened.
-    pub(crate) fn internal(code: &str, message: impl Into<String>) -> Self {
-        Self::new(ErrorKind::Internal, code, message)
+    /// The failure for an engine error, with its structured fields.
+    pub(crate) fn engine<E: ErrorPayload>(error: &E) -> Self {
+        Self::diagnostic(error, Some(error.payload()))
+    }
+
+    /// This failure, naming the record at fault.
+    pub(crate) fn in_record(mut self, record: &str) -> Self {
+        self.record = Some(record.to_owned());
+        self
+    }
+
+    /// This failure, naming the field at fault, or none.
+    pub(crate) fn at_field(mut self, field: Option<&str>) -> Self {
+        self.field = field.map(str::to_owned);
+        self
+    }
+
+    /// The engine's reason token, such as `no_fields`, where the error's
+    /// fields hold one.
+    pub(crate) fn reason(&self) -> Option<&str> {
+        self.fields
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
     }
 }
 
-/// The kind of an engine error.
-fn kind_of(error: &stack_encrypt::Error) -> ErrorKind {
-    use stack_encrypt::Error;
-    match error {
-        Error::Kms(stack_encrypt::kms::Error::Auth(_)) | Error::Config(_) => ErrorKind::Credential,
-        Error::Kms(_) | Error::KeysetLoad { .. } | Error::NoKeyset => ErrorKind::Zerokms,
-        Error::Aead | Error::OpenedType { .. } => ErrorKind::Open,
-        Error::ForeignKeyset { .. } => ErrorKind::ForeignKeyset,
-        Error::ContextMismatch { .. } => ErrorKind::ContextMismatch,
-        Error::Input(_) | Error::Blob(_) | Error::Term(_) => ErrorKind::Value,
-        Error::Plan(_) => ErrorKind::Declaration,
-        // A decrypt target that did not open a field it declares, a
-        // destination that takes no such output, and two pendings confined
-        // to different keysets are each a fault in the code that drove the
-        // engine (here, this addon), never in the caller's ciphertext.
-        Error::NotOpened | Error::UnsupportedShape | Error::KeysetMismatch { .. } => {
-            ErrorKind::Internal
-        }
-        _ => ErrorKind::Internal,
+impl From<Error> for RecipherErrorFields {
+    fn from(error: Error) -> Self {
+        Self::diagnostic(&error, None)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ErrorCause, ErrorKind, RecipherErrorFields, Severity, UNDESCRIBED_CAUSE};
+    use super::{Error, ErrorCause, RecipherErrorFields, Severity, UNDESCRIBED_CAUSE};
+    use stack_encrypt::dynamic::ValueKind;
 
     #[test]
-    fn an_aead_failure_is_an_open_failure_with_the_engine_code() {
+    fn an_aead_failure_keeps_the_engine_code_message_and_help() {
         let error = RecipherErrorFields::engine(&stack_encrypt::Error::Aead);
-        assert_eq!(error.kind, ErrorKind::Open);
         assert_eq!(error.code, "stack_encrypt::aead");
         // The message is the engine's one line. Its help is a field of
         // its own, never appended.
@@ -303,7 +411,7 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let error = RecipherErrorFields::diagnostic(ErrorKind::Value, &outer, Some(payload));
+        let error = RecipherErrorFields::diagnostic(&outer, Some(payload));
         assert_eq!(error.code, "probe::outer");
         assert_eq!(error.message, "outer");
         assert_eq!(error.help.as_deref(), Some("try again"));
@@ -331,99 +439,107 @@ mod tests {
     }
 
     #[test]
-    fn a_fault_in_driving_the_engine_is_internal() {
-        for error in [
-            stack_encrypt::Error::NotOpened,
-            stack_encrypt::Error::UnsupportedShape,
-        ] {
-            assert_eq!(
-                RecipherErrorFields::engine(&error).kind,
-                ErrorKind::Internal
-            );
-        }
+    fn an_error_of_the_sdks_own_has_its_code_message_and_help() {
+        let error = RecipherErrorFields::from(Error::Undefined);
+        assert_eq!(error.code, "recipher::undefined");
+        assert_eq!(error.message, "`undefined` is not a value");
+        assert_eq!(
+            error.help.as_deref(),
+            Some("Use `null` for a value that is not there.")
+        );
+        assert_eq!(error.severity, Severity::Error);
+        assert!(error.fields.is_empty() && error.causes.is_empty());
     }
 
-    /// Every code the SDK gives an error of its own, in order. A caller
-    /// branches on a code and a documentation page is written for each, so
-    /// a new one is added here by hand.
-    const SDK_CODES: &[&str] = &[
-        "recipher::binding_interface",
-        "recipher::build_value",
-        "recipher::changed_while_read",
-        "recipher::context",
-        "recipher::declaration",
-        "recipher::engine_result",
-        "recipher::field_type",
-        "recipher::index",
-        "recipher::kind",
-        "recipher::load",
-        "recipher::no_field",
-        "recipher::no_testing",
-        "recipher::not_a_ciphertext",
-        "recipher::not_a_document",
-        "recipher::not_a_kind",
-        "recipher::not_a_record",
-        "recipher::not_a_row",
-        "recipher::not_a_scalar",
-        "recipher::not_a_stored_row",
-        "recipher::not_a_value",
-        "recipher::not_bytes",
-        "recipher::not_json",
-        "recipher::not_plain",
-        "recipher::not_sealed",
-        "recipher::null",
-        "recipher::opened_type",
-        "recipher::outcome",
-        "recipher::plain_object",
-        "recipher::reserved_field",
-        "recipher::reserved_key",
-        "recipher::sparse_array",
-        "recipher::testing_seed",
-        "recipher::threw",
-        "recipher::too_deep",
-        "recipher::undefined",
-        "recipher::unknown",
-        "recipher::unpaired_surrogate",
-        "recipher::uuid",
-        "recipher::value",
-    ];
-
-    /// The `recipher::` codes written in the files of `dir`, as string
-    /// literals in either quote.
-    fn codes_written_in(dir: &std::path::Path, found: &mut std::collections::BTreeSet<String>) {
-        for entry in std::fs::read_dir(dir).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                codes_written_in(&path, found);
-                continue;
-            }
-            let text = std::fs::read_to_string(&path).unwrap();
-            for quote in ['"', '\''] {
-                let start = format!("{quote}recipher::");
-                for (at, _) in text.match_indices(&start) {
-                    let literal = &text[at + 1..];
-                    let end = literal.find(quote).unwrap();
-                    let _ = found.insert(literal[..end].to_owned());
-                }
+    /// One of every variant of [`Error`]. The match has no wildcard, so a
+    /// variant added without a row here does not compile.
+    fn every_error() -> Vec<Error> {
+        let name = || "x".to_owned();
+        let all = vec![
+            Error::Undefined,
+            Error::Uuid,
+            Error::Value,
+            Error::Threw,
+            Error::NotAScalar,
+            Error::PlainObject,
+            Error::NotJson { what: "bytes" },
+            Error::JsonTooDeep,
+            Error::NotSealed,
+            Error::NotACiphertext,
+            Error::NotBytes,
+            Error::NotAKind,
+            Error::OpenedType {
+                kind: ValueKind::String,
+            },
+            Error::NotADocument,
+            Error::TestingSeed,
+            Error::NoTesting,
+            Error::NotARecord,
+            Error::Declaration,
+            Error::ReservedField,
+            Error::Kind { name: name() },
+            Error::Index { name: name() },
+            Error::Null { mode: name() },
+            Error::Context,
+            Error::RecordName,
+            Error::NoField,
+            Error::NotARow,
+            Error::FieldType {
+                kind: ValueKind::Int8,
+            },
+            Error::NotAStoredRow { what: "x" },
+            Error::EngineResult { what: "x" },
+            Error::NoResult,
+            Error::BuildValue,
+        ];
+        for error in &all {
+            match error {
+                Error::Undefined
+                | Error::Uuid
+                | Error::Value
+                | Error::Threw
+                | Error::NotAScalar
+                | Error::PlainObject
+                | Error::NotJson { .. }
+                | Error::JsonTooDeep
+                | Error::NotSealed
+                | Error::NotACiphertext
+                | Error::NotBytes
+                | Error::NotAKind
+                | Error::OpenedType { .. }
+                | Error::NotADocument
+                | Error::TestingSeed
+                | Error::NoTesting
+                | Error::NotARecord
+                | Error::Declaration
+                | Error::ReservedField
+                | Error::Kind { .. }
+                | Error::Index { .. }
+                | Error::Null { .. }
+                | Error::Context
+                | Error::RecordName
+                | Error::NoField
+                | Error::NotARow
+                | Error::FieldType { .. }
+                | Error::NotAStoredRow { .. }
+                | Error::EngineResult { .. }
+                | Error::NoResult
+                | Error::BuildValue => {}
             }
         }
+        all
     }
 
     #[test]
-    fn every_sdk_code_is_well_formed_and_listed() {
-        let package = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let mut found = std::collections::BTreeSet::new();
-        codes_written_in(&package.join("crate/src"), &mut found);
-        codes_written_in(&package.join("src"), &mut found);
-        for code in &found {
+    fn every_error_has_a_recipher_code_of_its_own() {
+        let mut codes = std::collections::BTreeSet::new();
+        for error in every_error() {
+            let code = RecipherErrorFields::from(error).code;
             assert!(
-                stack_encrypt::diagnostic::is_code_of("recipher", code),
+                stack_encrypt::diagnostic::is_code_of("recipher", &code),
                 "{code} is not `recipher::` and a snake_case name"
             );
+            assert!(codes.insert(code.clone()), "{code} is used twice");
         }
-        assert_eq!(
-            found.iter().map(String::as_str).collect::<Vec<_>>(),
-            SDK_CODES
-        );
     }
 }

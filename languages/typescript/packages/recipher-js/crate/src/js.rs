@@ -7,8 +7,9 @@
 //! converts a value itself.
 //!
 //! When the bridge refuses a value it says which rule the value broke, and
-//! for a scalar it also throws into JavaScript. [`read`] turns either into a [`RecipherErrorFields`] of kind `value`, so a
-//! call that reads a value returns an outcome rather than throwing. What a
+//! for a scalar it also throws into JavaScript. [`read`] turns either into a
+//! [`RecipherErrorFields`], so a call that reads a value returns an outcome
+//! rather than throwing. What a
 //! getter of the application's threw is caught and dropped, never copied:
 //! its message may hold the value.
 
@@ -21,51 +22,34 @@ use stack_encrypt::AsProtectedRef;
 use vitaminc_aead::Frame;
 use vitaminc_protected::Controlled;
 
-use crate::error::{ErrorKind, RecipherErrorFields};
+use crate::error::{Error, RecipherErrorFields};
 use crate::outcome::not_made;
 
 /// Read a JavaScript value into the engine's value model.
 ///
 /// # Errors
 ///
-/// A failure of kind `value`: `undefined`, a value vitaminc refused or that
-/// threw while it was read, or one outside the engine's value model, such
-/// as a `VcUuid`.
+/// `recipher::undefined`, `recipher::uuid` for a `VcUuid`, `recipher::value`
+/// for another value outside the engine's value model, `recipher::threw`
+/// when reading it threw, or the bridge's code for a value it refused.
 pub fn read(env: &Env, value: Unknown<'_>) -> Result<ValueFrame, RecipherErrorFields> {
     if value.get_type().ok() == Some(ValueType::Undefined) {
-        return Err(RecipherErrorFields::new(
-            ErrorKind::Value,
-            "recipher::undefined",
-            "`undefined` is not a value; use `null` for a value that is not there",
-        ));
+        return Err(Error::Undefined.into());
     }
     let uuid = is_uuid(env, &value);
     let frame = JsRef::new(value)
         .to_frame()
         .map_err(|error| refused(env, &error))?;
-    ValueFrame::from_bytes(frame.as_protected_ref()).map_err(|error| {
-        if uuid {
-            return RecipherErrorFields::new(
-                ErrorKind::Value,
-                "recipher::uuid",
-                "a UUID cannot be encrypted yet: the engine's value model does not hold \
-                 one. Encrypt its text instead",
-            );
-        }
-        RecipherErrorFields::new(
-            ErrorKind::Value,
-            "recipher::value",
-            format!("the value cannot be encrypted: {error}"),
-        )
-    })
+    ValueFrame::from_bytes(frame.as_protected_ref())
+        .map_err(|_| RecipherErrorFields::from(if uuid { Error::Uuid } else { Error::Value }))
 }
 
 /// The elements of `value` when it is an array, or `None` when it is not.
 ///
 /// # Errors
 ///
-/// A failure of kind `value` when an element cannot be read, such as one
-/// behind a getter that throws.
+/// The bridge's refusal, or `recipher::threw`, when an element cannot be
+/// read, such as one behind a getter that throws.
 pub fn elements<'e>(
     env: &Env,
     value: Unknown<'e>,
@@ -87,14 +71,12 @@ pub fn elements<'e>(
 ///
 /// # Errors
 ///
-/// A failure of kind `open` for a value JavaScript cannot hold as it was
-/// sealed (a map key vitaminc does not build), and of kind `internal` for
-/// any other failure.
+/// `recipher::reserved_key` for a value JavaScript cannot hold as it was
+/// sealed (a map key vitaminc does not build), and `recipher::build_value`
+/// for any other failure.
 pub fn build(env: &Env, value: ValueFrame) -> Result<Unknown<'_>, RecipherErrorFields> {
     let bytes = value.into_inner();
-    let frame = Frame::parse(bytes.risky_ref()).map_err(|_| {
-        RecipherErrorFields::internal("recipher::build_value", "an opened value is not a frame")
-    })?;
+    let frame = Frame::parse(bytes.risky_ref()).map_err(|_| Error::BuildValue)?;
     JsBuilder::build(env, frame).map_err(|error| not_built(env, &error))
 }
 
@@ -103,17 +85,10 @@ fn not_built(env: &Env, fault: &JsFault) -> RecipherErrorFields {
     if fault.status() == Status::PendingException {
         let _ = take_exception(env);
     }
-    if let Some(refusal @ Refusal::ReservedKey) = fault.refusal() {
-        return RecipherErrorFields::diagnostic(ErrorKind::Open, &refusal, None);
+    match fault.refusal() {
+        Some(refusal @ Refusal::ReservedKey) => RecipherErrorFields::diagnostic(&refusal, None),
+        _ => Error::BuildValue.into(),
     }
-    RecipherErrorFields::internal(
-        "recipher::build_value",
-        format!(
-            "the opened value could not be given to JavaScript ({}). Report this as a bug \
-             in @cipherstash/recipher.",
-            fault.status()
-        ),
-    )
 }
 
 /// Whether `value` is one of vitaminc's `VcUuid`s.
@@ -127,8 +102,8 @@ fn is_uuid(env: &Env, value: &Unknown<'_>) -> bool {
 ///
 /// # Errors
 ///
-/// A failure of kind `value` when reading it throws, as a getter may; what
-/// it threw is dropped.
+/// `recipher::threw` when reading it throws, as a getter may; what it threw
+/// is dropped.
 pub(crate) fn property<'e>(
     env: &Env,
     value: Unknown<'e>,
@@ -176,13 +151,7 @@ pub(crate) fn second_without_record(
     let plain = Wrappers::get(env)
         .and_then(|wrappers| wrappers.is_plain(*first))
         .unwrap_or(false);
-    plain.then(|| {
-        RecipherErrorFields::new(
-            ErrorKind::Declaration,
-            "recipher::not_a_record",
-            "the first argument is not a record: a record is declared with record(..)",
-        )
-    })
+    plain.then(|| Error::NotARecord.into())
 }
 
 /// The text of a JavaScript string, or `None` for any other value.
@@ -239,18 +208,9 @@ fn refused(env: &Env, fault: &JsFault) -> RecipherErrorFields {
         let _ = take_exception(env);
     }
     match fault.refusal() {
-        Some(refusal) => RecipherErrorFields::diagnostic(ErrorKind::Value, &refusal, None),
-        None if fault.status() == Status::PendingException => RecipherErrorFields::new(
-            ErrorKind::Value,
-            "recipher::threw",
-            "reading the value threw. The thrown error is not kept, because its \
-             message may hold the value",
-        ),
-        None => RecipherErrorFields::new(
-            ErrorKind::Value,
-            "recipher::value",
-            "the value cannot be encrypted: it could not be read",
-        ),
+        Some(refusal) => RecipherErrorFields::diagnostic(&refusal, None),
+        None if fault.status() == Status::PendingException => Error::Threw.into(),
+        None => Error::Value.into(),
     }
 }
 

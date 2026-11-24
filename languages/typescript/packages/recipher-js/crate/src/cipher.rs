@@ -17,7 +17,7 @@ use stack_encrypt::{CipherRef, DecryptFrom, EncryptInto, KeysetCipher, StackCiph
 use vitaminc_protected::OpaqueDebug;
 
 use crate::ciphertext::Ciphertext;
-use crate::error::{ErrorKind, RecipherErrorFields};
+use crate::error::{Error, RecipherErrorFields};
 use crate::js;
 use crate::json::Json;
 use crate::outcome::{not_made, refused, spawn, Outcome};
@@ -73,13 +73,12 @@ impl Cipher {
     /// A cipher over ZeroKMS, with the credentials the engine finds: the
     /// `CS_*` variables, then the profile `stash auth login` writes.
     ///
-    /// Resolves to a failure of kind `credential` when there are none or
-    /// they are refused, and of kind `zerokms` when ZeroKMS refuses to load
-    /// the default keyset.
+    /// Resolves to the engine's error when there are no credentials, when
+    /// they are refused, or when ZeroKMS refuses to load the default keyset.
     ///
     /// `options.records` are declarations to check now, before any
     /// credential is looked for: a declaration the engine refuses is a
-    /// failure of kind `declaration`, naming the record.
+    /// failure naming the record.
     // Configurable, as an instance method is, so the package's TypeScript
     // can wrap it (`adapt`).
     #[napi(configurable = true, ts_return_type = "Promise<Outcome<Cipher>>")]
@@ -218,17 +217,15 @@ impl Keyset {
                 if many {
                     return instances.into_unknown(env).map_err(not_made);
                 }
-                instances.pop().ok_or_else(|| {
-                    RecipherErrorFields::internal("recipher::outcome", "the engine sealed no value")
-                })
+                instances.pop().ok_or_else(|| Error::NoResult.into())
             },
         )
     }
 
     /// Open a ciphertext sealed under this keyset, or an array of them. A
-    /// ciphertext of another keyset is a failure of kind `foreign_keyset`,
-    /// before any key is requested. With a record first, open its stored
-    /// row, or an array of them.
+    /// ciphertext of another keyset is a failure with the code
+    /// `stack_encrypt::foreign_keyset`, before any key is requested. With a
+    /// record first, open its stored row, or an array of them.
     #[napi(ts_return_type = "Promise<Outcome<unknown>>")]
     pub fn decrypt<'e>(
         &self,
@@ -293,7 +290,7 @@ impl Keyset {
 /// who knows the seed.
 ///
 /// Only a build with the `testing` feature has one; any other resolves to
-/// a failure of kind `internal`, code `recipher::no_testing`.
+/// a failure with the code `recipher::no_testing`.
 #[napi(ts_return_type = "Promise<Outcome<Cipher>>")]
 pub fn create_testing<'e>(
     env: &'e Env,
@@ -301,14 +298,7 @@ pub fn create_testing<'e>(
 ) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
     let seed = crate::ciphertext::bytes_of(seed).and_then(|bytes| <[u8; 32]>::try_from(bytes).ok());
     let Some(seed) = seed else {
-        return refused(
-            env,
-            RecipherErrorFields::new(
-                ErrorKind::Value,
-                "recipher::testing_seed",
-                "a test cipher's seed is a Uint8Array of 32 bytes",
-            ),
-        );
+        return refused(env, Error::TestingSeed.into());
     };
     testing(env, seed)
 }
@@ -331,17 +321,7 @@ fn testing(env: &Env, seed: [u8; 32]) -> napi::Result<PromiseRaw<'_, Object<'_>>
 
 #[cfg(not(feature = "testing"))]
 fn testing(env: &Env, _seed: [u8; 32]) -> napi::Result<PromiseRaw<'_, Object<'_>>> {
-    refused(env, no_testing())
-}
-
-/// The failure of `createTesting` in a build without the test cipher.
-#[cfg_attr(feature = "testing", allow(dead_code))]
-fn no_testing() -> RecipherErrorFields {
-    RecipherErrorFields::internal(
-        "recipher::no_testing",
-        "this native build has no test cipher. Build it with \
-         `pnpm --filter @cipherstash/recipher build:debug`.",
-    )
+    refused(env, Error::NoTesting.into())
 }
 
 /// A new cipher's JavaScript value.
@@ -380,17 +360,7 @@ fn open<'e>(
     for value in values {
         match Ciphertext::of(env, value) {
             Some(ciphertext) => ciphertexts.push(ciphertext),
-            None => {
-                return refused(
-                    env,
-                    RecipherErrorFields::new(
-                        ErrorKind::Value,
-                        "recipher::not_a_ciphertext",
-                        "decrypt takes a Ciphertext, or an array of them; read stored bytes \
-                         with Ciphertext.fromBytes",
-                    ),
-                )
-            }
+            None => return refused(env, Error::NotACiphertext.into()),
         }
     }
     let sealed = ciphertexts
@@ -419,9 +389,7 @@ fn open<'e>(
             if many {
                 return values.into_unknown(env).map_err(not_made);
             }
-            values.pop().ok_or_else(|| {
-                RecipherErrorFields::internal("recipher::outcome", "the engine opened no value")
-            })
+            values.pop().ok_or_else(|| Error::NoResult.into())
         },
     )
 }
@@ -437,9 +405,8 @@ fn one_value(env: &Env, value: Unknown<'_>) -> Outcome<(OneValue, Option<ValueKi
 }
 
 /// Check declarations with the engine, with no credentials and no
-/// request: for a test or a CI step. The first refusal is the failure, of
-/// kind `declaration`, naming the record and, where there is one, the
-/// field.
+/// request: for a test or a CI step. The first refusal is the failure,
+/// naming the record and, where there is one, the field.
 #[napi(ts_return_type = "Outcome<undefined>")]
 pub fn check_declarations<'e>(env: &'e Env, records: Unknown<'_>) -> napi::Result<Object<'e>> {
     let checked = check(env, records);
@@ -471,11 +438,7 @@ fn records_of_options<'e>(env: &Env, options: Option<Unknown<'e>>) -> Outcome<Op
 /// The plan of the declaration `record`.
 fn plan_of(env: &Env, record: Unknown<'_>) -> Outcome<Arc<RecordPlan>> {
     if !js::is_record(env, &record) {
-        return Err(RecipherErrorFields::new(
-            ErrorKind::Declaration,
-            "recipher::not_a_record",
-            "a record is declared with record(..)",
-        ));
+        return Err(Error::NotARecord.into());
     }
     RecordPlan::of(&js::read(env, record)?)
 }
@@ -498,37 +461,23 @@ fn one_or_array<'e>(
     if many {
         return values.into_unknown(env).map_err(not_made);
     }
-    values.pop().ok_or_else(|| {
-        RecipherErrorFields::internal("recipher::outcome", "the engine returned no result")
-    })
+    values.pop().ok_or_else(|| Error::NoResult.into())
 }
 
 /// A row of `plan`'s record, read and each field read as its kind. A value
 /// vitaminc refuses is named by the field it was read from.
 fn read_row(env: &Env, plan: &RecordPlan, row: Unknown<'_>) -> Outcome<ValueFrame> {
-    let not_a_row = || {
-        let mut error = RecipherErrorFields::new(
-            ErrorKind::Value,
-            "recipher::not_a_row",
-            "a row is an object of the record's fields",
-        );
-        error.record = Some(plan.name().to_owned());
-        error
-    };
+    let not_a_row = || RecipherErrorFields::from(Error::NotARow).in_record(plan.name());
     if row.get_type().ok() != Some(napi::ValueType::Object) || row.is_array().unwrap_or(false) {
         return Err(not_a_row());
     }
-    let frame = js::read(env, row).map_err(|mut error| {
-        error.record = Some(plan.name().to_owned());
-        error.field = plan
-            .field_names()
-            .find(|name| {
-                js::property(env, row, name)
-                    .map(|value| value.is_some_and(|value| js::read(env, value).is_err()))
-                    .unwrap_or(true)
-            })
-            .map(str::to_owned);
-        error
+    let frame = js::read(env, row).map_err(|error| {
+        let field = plan.field_names().find(|name| {
+            js::property(env, row, name)
+                .map(|value| value.is_some_and(|value| js::read(env, value).is_err()))
+                .unwrap_or(true)
+        });
+        error.in_record(plan.name()).at_field(field)
     })?;
     crate::record::conform_row(plan, &frame)
 }
@@ -586,12 +535,7 @@ fn open_rows_of<'e>(
         let (many, rows) = one_or_many(env, stored)?;
         let rows = rows
             .into_iter()
-            .map(|row| {
-                js::read(env, row).map_err(|mut error| {
-                    error.record = Some(plan.name().to_owned());
-                    error
-                })
-            })
+            .map(|row| js::read(env, row).map_err(|error| error.in_record(plan.name())))
             .collect::<Outcome<Vec<_>>>()?;
         Ok((plan, many, rows))
     };
@@ -627,15 +571,8 @@ fn field_plan_of(
     field: Unknown<'_>,
 ) -> Outcome<(Arc<RecordPlan>, String)> {
     let plan = plan_of(env, record)?;
-    let name = js::string(field).ok_or_else(|| {
-        let mut error = RecipherErrorFields::new(
-            ErrorKind::Declaration,
-            "recipher::no_field",
-            "a field is named by a string",
-        );
-        error.record = Some(plan.name().to_owned());
-        error
-    })?;
+    let name = js::string(field)
+        .ok_or_else(|| RecipherErrorFields::from(Error::NoField).in_record(plan.name()))?;
     Ok((plan.field(&name)?, name))
 }
 
@@ -653,11 +590,8 @@ fn seal_field<'e>(
         let rows = values
             .into_iter()
             .map(|value| {
-                let value = js::read(env, value).map_err(|mut error| {
-                    error.record = Some(plan.name().to_owned());
-                    error.field = Some(name.clone());
-                    error
-                })?;
+                let value = js::read(env, value)
+                    .map_err(|error| error.in_record(plan.name()).at_field(Some(&name)))?;
                 crate::record::conform_row(&plan, &one_field_row(&name, &value)?)
             })
             .collect::<Outcome<Vec<_>>>()?;
@@ -701,11 +635,8 @@ fn open_field<'e>(
         let rows = values
             .into_iter()
             .map(|value| {
-                let value = js::read(env, value).map_err(|mut error| {
-                    error.record = Some(plan.name().to_owned());
-                    error.field = Some(name.clone());
-                    error
-                })?;
+                let value = js::read(env, value)
+                    .map_err(|error| error.in_record(plan.name()).at_field(Some(&name)))?;
                 one_field_row(&name, &value)
             })
             .collect::<Outcome<Vec<_>>>()?;
@@ -752,11 +683,7 @@ where
         .await
         .map_err(|error| match error {
             // No ciphertext exists yet, so this is the value, not damage.
-            stack_encrypt::Error::Aead => RecipherErrorFields::new(
-                ErrorKind::Value,
-                "recipher::not_sealed",
-                "the engine could not seal the value as given",
-            ),
+            stack_encrypt::Error::Aead => Error::NotSealed.into(),
             error => RecipherErrorFields::engine(&error),
         })
 }
@@ -781,9 +708,8 @@ mod tests {
 
     #[test]
     fn a_build_without_the_test_cipher_says_how_to_get_one() {
-        let error = no_testing();
-        assert_eq!(error.kind, ErrorKind::Internal);
+        let error = RecipherErrorFields::from(Error::NoTesting);
         assert_eq!(error.code, "recipher::no_testing");
-        assert!(error.message.contains("build:debug"));
+        assert!(error.help.is_some_and(|help| help.contains("build:debug")));
     }
 }
