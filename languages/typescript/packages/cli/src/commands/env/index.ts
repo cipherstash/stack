@@ -309,14 +309,14 @@ const LOGIN_HINT = 'Run `{cli} auth login` and try again.'
 // shapes, not this repo — so each one is validated before any field reaches
 // the emitted env block. An `as`-cast here would print `undefined` into a
 // credentials file after a live, shown-exactly-once key was already minted.
-const workspaceListSchema = z.array(z.object({ id: z.string() }).passthrough())
+const workspaceListSchema = z.array(z.object({ id: z.string() }).loose())
 const workspaceRegionSchema = z.object({ region: z.string().min(1) })
 const createClientSchema = z
   .object({ id: z.string().min(1), client_key: z.string().min(1) })
-  .passthrough()
+  .loose()
 const accessKeySchema = z
   .object({ accessKey: z.string().min(1), role: z.string().optional() })
-  .passthrough()
+  .loose()
 
 /** Standard padded base64 — rejected BEFORE Node's lenient decoder can turn
  *  a hex/enveloped/garbled key into plausible-looking wrong bytes. */

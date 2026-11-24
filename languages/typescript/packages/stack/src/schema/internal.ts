@@ -95,6 +95,11 @@ const tokenFilterSchema = z.object({
   kind: z.literal('downcase'),
 })
 
+// The index options below fill in no defaults: an option left out stays out
+// of the config, and protect-ffi's own default applies, as it always has.
+// They used to be written `.default(x).optional()`, which zod 3 never applied
+// to a missing key, and which zod 4 would apply, changing the config sent to
+// protect-ffi.
 const tokenizerSchema = z
   .union([
     z.object({
@@ -105,7 +110,6 @@ const tokenizerSchema = z
       token_length: z.number(),
     }),
   ])
-  .default({ kind: 'ngram', token_length: 3 })
   .optional()
 
 const oreIndexOptsSchema = z.object({})
@@ -116,15 +120,15 @@ const oreIndexOptsSchema = z.object({})
 const opeIndexOptsSchema = z.object({})
 
 const uniqueIndexOptsSchema = z.object({
-  token_filters: z.array(tokenFilterSchema).default([]).optional(),
+  token_filters: z.array(tokenFilterSchema).optional(),
 })
 
 const matchIndexOptsSchema = z.object({
   tokenizer: tokenizerSchema,
-  token_filters: z.array(tokenFilterSchema).default([]).optional(),
-  k: z.number().default(6).optional(),
-  m: z.number().default(2048).optional(),
-  include_original: z.boolean().default(false).optional(),
+  token_filters: z.array(tokenFilterSchema).optional(),
+  k: z.number().optional(),
+  m: z.number().optional(),
+  include_original: z.boolean().optional(),
 })
 
 const arrayIndexModeSchema = z.union([
@@ -153,16 +157,18 @@ const indexesSchema = z
   })
   .default({})
 
+// `prefault`, not `default`: a missing column parses as `{}` would, so it
+// gets `cast_as` and `indexes` filled in, as zod 3's `default` did.
 const columnSchema = z
   .object({
     cast_as: castAsEnum,
     indexes: indexesSchema,
   })
-  .default({})
+  .prefault({})
 
-const tableSchema = z.record(columnSchema).default({})
+const tableSchema = z.record(z.string(), columnSchema).default({})
 
-const tablesSchema = z.record(tableSchema).default({})
+const tablesSchema = z.record(z.string(), tableSchema).default({})
 
 /** @internal */
 export const encryptConfigSchema = z.object({
