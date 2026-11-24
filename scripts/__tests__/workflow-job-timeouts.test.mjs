@@ -18,6 +18,8 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 const EXTERNAL_CALLS = {
   '.github/workflows/osv-scanner.yml#osv-scan':
     'Calls the OSV-Scanner reusable workflow from google/osv-scanner-action. Its jobs, and their timeouts, are defined in that repository.',
+  '.github/workflows/claude-review.yml#review':
+    'Calls the shared Claude review workflow from cipherstash/workflows, pinned to v1.0.0. Its jobs are defined in that repository, and each sets a 5-minute timeout there.',
 }
 
 const jobs = workflowFiles().flatMap((file) =>

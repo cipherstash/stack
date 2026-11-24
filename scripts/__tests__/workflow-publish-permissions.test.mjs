@@ -70,13 +70,9 @@ const PUBLISH_OIDC_JOBS = [
  * exchange and reason so an arbitrary new holder still fails closed below.
  */
 const NON_PUBLISH_OIDC_JOBS = [
-  // Exchanges GitHub identity for a short-lived, inference-only Anthropic
-  // credential. It cannot publish a package; pull-requests: write is solely for
-  // the advisory review comments. That holds only while the job passes
-  // `github_token`: without it the action makes a second OIDC exchange, for a
-  // Claude GitHub App token with write access to contents, pull requests and
-  // issues (asserted in claude-review-workflow.test.mjs).
-  '.github/workflows/claude-review.yml / review',
+  // None today. The Claude review that exchanged OIDC with Anthropic was
+  // replaced by claude-review.yml's call to the shared workflow in
+  // cipherstash/workflows, which holds no `id-token: write`.
 ]
 
 const OIDC_JOBS = [...PUBLISH_OIDC_JOBS, ...NON_PUBLISH_OIDC_JOBS]
