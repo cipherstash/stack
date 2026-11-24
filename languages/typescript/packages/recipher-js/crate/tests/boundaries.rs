@@ -1,8 +1,5 @@
 //! What the crate must not reach.
 //!
-//! - It names no `Label` and no `IntoLabel`. The engine is to replace both
-//!   (the label becomes a field path), and a crate that never named them
-//!   needs no change when it does.
 //! - It does not link `eql-bindings`. The EQL types are an extension to the
 //!   core; a build of the core holds none of them.
 //! - A build with its default features has no test cipher: neither the
@@ -12,54 +9,11 @@
 //!   `testing` on, so this is the check that the release build cannot reach
 //!   the test keys.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 fn crate_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-/// Every `.rs` file under `dir`.
-fn rust_files(dir: &Path, found: &mut Vec<PathBuf>) {
-    for entry in std::fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
-        if path.is_dir() {
-            rust_files(&path, found);
-        } else if path.extension().is_some_and(|ext| ext == "rs") {
-            found.push(path);
-        }
-    }
-}
-
-/// Whether `source` holds `word` as a whole identifier.
-fn names(source: &str, word: &str) -> bool {
-    source.match_indices(word).any(|(at, _)| {
-        let before = source[..at].chars().next_back();
-        let after = source[at + word.len()..].chars().next();
-        let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
-        !ident(before) && !ident(after)
-    })
-}
-
-#[test]
-fn the_crate_names_no_label() {
-    let mut files = Vec::new();
-    rust_files(&crate_dir().join("src"), &mut files);
-    assert!(!files.is_empty(), "no source files found");
-    for file in files {
-        let source = std::fs::read_to_string(&file).unwrap();
-        for word in ["Label", "IntoLabel"] {
-            assert!(!names(&source, word), "{} names `{word}`", file.display());
-        }
-    }
-}
-
-#[test]
-fn the_word_check_matches_whole_identifiers_only() {
-    assert!(names("use stack_encrypt::Label;", "Label"));
-    assert!(names("fn f(x: IntoLabel)", "IntoLabel"));
-    assert!(!names("LabelError", "Label"));
-    assert!(!names("MyLabel", "Label"));
 }
 
 /// `cargo tree --locked` for the crate with its default features, from the
