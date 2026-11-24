@@ -26,9 +26,9 @@ _Avoid_: fast check, PR check
 
 **Gate check**:
 A check that runs when a pull request is in a merge queue, instead of on every
-PR push. `main` and `next` each have a merge queue. An author can ask for a
-gate check to run earlier on the pull request. A failed gate check blocks the
-merge.
+PR push. A failed gate check blocks the merge. ADR 0003 plans a merge queue
+for `main` and one for `next`, and neither exists yet. Under ADR 0003, an
+author can ask for a gate check to run earlier on the pull request.
 _Avoid_: heavy check, full CI, merge check
 
 **Early run**:
