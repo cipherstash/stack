@@ -12,7 +12,7 @@ Five layers, Layer 1 already shipped:
 
 ### Layer 1 — Pure crypto/protocol crates [DONE]
 
-Six crates compile clean for `wasm32-unknown-unknown`: `recipher`, `cipherstash-core`, `cipherstash-config`, `cllw-ore` (`--no-default-features`), `cts-common` (`--no-default-features`), `zerokms-protocol`. See "Layer 1 — what shipped" below.
+Six crates compile clean for `wasm32-unknown-unknown`: `zerokms-keyset` (published as `recipher` up to 0.3.3), `cipherstash-core`, `cipherstash-config`, `cllw-ore` (`--no-default-features`), `cts-common` (`--no-default-features`), `zerokms-protocol`. See "Layer 1 — what shipped" below.
 
 `vitaminc-encrypt` got a cfg-based dual backend (aws-lc-rs on native, RustCrypto on wasm32) so cipherstash-suite can use AEAD types from `vitaminc::encrypt` on both targets without a feature-gate workaround. Available from vitaminc 0.2.0-pre on crates.io (vitaminc PR #163, shipped as part of the 0.2.0-pre minor-bump release).
 
@@ -115,7 +115,7 @@ But wazero is **not** a JS host. It targets `wasm32-wasip1` (WASI preview 1) —
 
 **The plan** lives in [`docs/plans/stack-encrypt-go-bindings.md`](plans/stack-encrypt-go-bindings.md): phases, the vitaminc `bindings/go` layering (`vcvalue` value model + FFI codec are reused; the stack-encrypt side is the cipher/KMS side), the frozen byte formats stack-encrypt owns, and the open decisions. Terminology fixed there: *storage format* (sealed leaf, into a database), *FFI codec* (host ↔ guest marshalling, throwaway), *transport* (HTTP, out of the process).
 
-**Gate.** `mise run wasm:wasi-check` compiles the HTTP-free core for `wasm32-wasip1` and fails if any crate's normal-dependency tree contains a JS-host backend (`wasm-bindgen`/`web-sys`/`js-sys`) **or** the native HTTP/TLS stack (`reqwest`/`hyper`/`aws-lc-sys`). Phase 0 gates `zerokms-protocol`, `cipherstash-core`, `recipher`, `cts-common`, `cllw-ore`; Phase 1 adds `stack-auth`, `stack-kms`, `stack-encrypt` once reqwest is behind a feature in each.
+**Gate.** `mise run wasm:wasi-check` compiles the HTTP-free core for `wasm32-wasip1` and fails if any crate's normal-dependency tree contains a JS-host backend (`wasm-bindgen`/`web-sys`/`js-sys`) **or** the native HTTP/TLS stack (`reqwest`/`hyper`/`aws-lc-sys`). Phase 0 gates `zerokms-protocol`, `cipherstash-core`, `zerokms-keyset`, `cts-common`, `cllw-ore`; Phase 1 adds `stack-auth`, `stack-kms`, `stack-encrypt` once reqwest is behind a feature in each.
 
 ## Medium-term direction — `stack-encrypt` replaces `cipherstash-client`
 
@@ -166,7 +166,7 @@ Verified on `cargo check --target wasm32-unknown-unknown`:
 
 | Crate | Invocation |
 |---|---|
-| `recipher` | `cargo check --target wasm32-unknown-unknown -p recipher` |
+| `zerokms-keyset` | `cargo check --target wasm32-unknown-unknown -p zerokms-keyset` |
 | `cipherstash-core` | `cargo check --target wasm32-unknown-unknown -p cipherstash-core` |
 | `cipherstash-config` | `cargo check --target wasm32-unknown-unknown -p cipherstash-config` |
 | `cllw-ore` | `cargo check --target wasm32-unknown-unknown -p cllw-ore --no-default-features` (postgres-types is server-only) |
@@ -201,7 +201,7 @@ Net delta: 19 files changed, +14 / -2042. Verified via `cargo check --workspace 
 
 ## Known follow-ups
 
-- Layer 1's `cargo check` verification is now partially exercised by Layer 3.5's `wasm-pack build` (pulls `cts-common`, `cipherstash-config`, `zerokms-protocol` transitively). Crates outside that dep graph (`recipher`, `cipherstash-core`, `cllw-ore`) still need a real artifact build.
+- Layer 1's `cargo check` verification is now partially exercised by Layer 3.5's `wasm-pack build` (pulls `cts-common`, `cipherstash-config`, `zerokms-protocol` transitively). Crates outside that dep graph (`zerokms-keyset`, `cipherstash-core`, `cllw-ore`) still need a real artifact build.
 - `cllw-ore` requires `--no-default-features` because the default `postgres-types` feature has C deps. Consider flipping the default off in a future major version (already noted in its Cargo.toml).
 - Cipherstash-client 0.35 release containing the legacy delete; proxy bump to 0.35 with `AccessKeyStrategy` migration. See Layer 2c.
 - `ServiceToken` JSON contract migration (Layer 2b) — design conversation needed before code.

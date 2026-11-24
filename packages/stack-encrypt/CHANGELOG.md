@@ -1168,6 +1168,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the key is plaintext. A record source still reports `Reason::RepeatedKey`
     for the field.
 
+- **`kms` takes its keyset types from `zerokms-keyset`** (#1779). stack-kms
+  now depends on `zerokms-keyset` 0.3.4, the `recipher` crate renamed. So
+  the field of `kms::InvalidKeyMaterialError` is now `zerokms_keyset::Error`
+  (was `recipher::errors::RecipherError`), and `kms::GenRandom` and
+  `kms::Iv` come from `zerokms_keyset::key`. Code that reaches these
+  through `kms::` and never names `recipher` needs no change, except a
+  `match` on the error: `zerokms_keyset::Error` is `#[non_exhaustive]`, so
+  it needs a `_` arm. To migrate code that names `recipher`, see the
+  stack-kms CHANGELOG.
+
 ### Added
 
 - **A declaration and a call show the context they use, before any key is

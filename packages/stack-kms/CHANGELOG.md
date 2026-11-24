@@ -13,8 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same crate, renamed. The field of `InvalidKeyMaterialError` is now
   `zerokms_keyset::Error` (was `recipher::errors::RecipherError`), and the
   re-exported `GenRandom` and `Iv` now come from `zerokms_keyset::key`. To
-  migrate, replace `recipher` with `zerokms-keyset` in `Cargo.toml` and
-  `recipher::` with `zerokms_keyset::` in your code.
+  migrate:
+
+  - In `Cargo.toml`, replace `recipher` with `zerokms-keyset = "0.3.4"`.
+  - Replace `recipher::errors::RecipherError` with `zerokms_keyset::Error`.
+    The error type is renamed, not only its crate.
+  - Replace the other `recipher::` paths with `zerokms_keyset::`, such as
+    `recipher::key::Iv` with `zerokms_keyset::key::Iv`.
+  - `zerokms_keyset::Error` is `#[non_exhaustive]`, so a `match` on the
+    field of `InvalidKeyMaterialError` needs a `_` arm.
 
 ### Features
 
