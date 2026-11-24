@@ -67,10 +67,7 @@ enum Fulfilled<'a, T> {
 /// a wasm guest, and how many a batch of records builds between them
 /// ([`in_steps`](Pending::in_steps)). `stack-kms` has its own copy (`futures::YIELD_EVERY`, for
 /// deriving keys), and the two are meant to stay equal.
-#[cfg_attr(
-    not(all(feature = "dynamic", any(target_arch = "wasm32", test))),
-    allow(dead_code)
-)]
+#[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
 pub(crate) const YIELD_EVERY: usize = 64;
 
 /// Run `fulfil` to its end, without yielding.
@@ -152,10 +149,7 @@ pub(crate) enum Step<'a, T: 'a, K> {
     /// The pending, built.
     Built(Pending<'a, T, K>),
     /// The rest of the build.
-    #[cfg_attr(
-        not(all(feature = "dynamic", target_arch = "wasm32")),
-        allow(dead_code)
-    )]
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
     More(StepBox<'a, T, K>),
 }
 
@@ -639,7 +633,8 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// fails fails the whole pending without I/O.
     ///
     /// No request is known until the pending is built, so its
-    /// [`context`](Self::context) shows none. Merging it with another
+    /// [`context`](Self::context) shows none, and does not say that a row
+    /// will fail. Merging it with another
     /// pending ([`zip`](Self::zip), [`all`](Self::all)) builds it whole,
     /// without yielding, when the merged pending settles.
     #[cfg_attr(
@@ -861,6 +856,19 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// run. No key has been requested: a pending holds its requests until it
     /// is awaited. A pending that has already failed shows no context, and
     /// says that it failed.
+    ///
+    /// A pending that is not built yet shows no context either, and does
+    /// not say that it failed, even when it will fail as it is built. Its
+    /// contexts, and any failure, are known only once it settles, and until
+    /// then its [`CallContexts`] prints as a call that seals and indexes
+    /// nothing. Two kinds of pending are built when they settle:
+    ///
+    /// - one whose requests depend on a keyset that is not loaded yet, such
+    ///   as a read of an encrypted JSON document, which is built once the
+    ///   keyset is loaded;
+    /// - in a `wasm32` build, a batch of records, whose rows are built a
+    ///   chunk at a time so that the host gets control back between chunks.
+    ///   A native build builds every row before it returns the pending.
     ///
     /// See [`CallContexts`] for an example, and
     /// [`Encryption::contexts`](super::Encryption::contexts) for the same

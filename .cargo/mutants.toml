@@ -99,11 +99,6 @@ exclude_re = [
   'stack-encrypt/src/target/pending\.rs:\d+:\d+: replace (fulfil_column|fulfil_pair) -> FulfilBox<.*> with FulfilBox::',
   'stack-encrypt/src/target/pending\.rs:\d+:\d+: replace (fulfil_column_from|fulfil_column_item|fulfil_pair_right) ',
   'stack-encrypt/src/target/pending\.rs:\d+:\d+: replace .* in (fulfil_column_from|fulfil_column_item|fulfil_pair_right)$',
-  # A wasm guest's batch build, one chunk of rows per step. Natively a batch
-  # is built in one pass, so `chunk` exists only in wasm32. The chunks are
-  # pinned by `GroupRows::build`'s tests, and the yields between them from
-  # Go by the same `TestABigBatchYieldsAndRoundTrips`.
-  'stack-encrypt/src/dynamic/planned\.rs:\d+:\d+: replace chunk -> Step<.*> with Default::default\(\)$',
   # stack-encrypt — equivalent.
   # An operator and an index are unit structs, whose `Default` is the value
   # `clone` and `case_sensitive` already return.

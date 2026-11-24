@@ -171,7 +171,10 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   term. The guest now builds a batch's rows 64 data keys' worth at a time,
   and yields to the host between two chunks, as it does while it seals or
   opens them. So a batch yields about twice as often as before. The output
-  does not change. Figures against a fake ZeroKMS that answers after
+  does not change. Fields with an EQL type (the types in `encrypt/eql`)
+  are not built in chunks yet: the first step still prepares every such
+  field of every row before it yields, and for an encrypt that derives all
+  of their search terms. Figures against a fake ZeroKMS that answers after
   40 ms, for 3,334 rows of 3 sealed fields (10,002 values):
   - Encrypt: the first step takes about 27 ms, against about 450 ms
     before. Each chunk takes about 3 ms.

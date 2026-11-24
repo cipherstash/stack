@@ -4465,11 +4465,12 @@ mod tests {
         proptest::proptest! {
             #![proptest_config(proptest::prelude::ProptestConfig::with_cases(12))]
 
-            /// A batch is built a chunk at a time, and in a wasm guest with
-            /// a yield between two chunks. Whatever the chunks, each row
-            /// seals to what it seals to alone, its terms and carried
-            /// values byte for byte, and the batch opens to the rows that
-            /// each open alone.
+            /// Each row of a batch seals to what it seals to alone, its
+            /// terms and carried values byte for byte, and the batch opens
+            /// to the rows that each open alone. This runs the native build,
+            /// which builds every row before it returns the pending. The
+            /// wasm build's steps are run natively by `planned`'s
+            /// `a_batch_built_in_steps_yields_between_chunks_and_settles_in_row_order`.
             #[test]
             fn a_batch_seals_and_opens_each_row_as_it_would_alone(
                 rows in proptest::collection::vec(
