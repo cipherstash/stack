@@ -13,6 +13,35 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+## [0.1.0-rc.7] - 2026-11-25
+
+### Upgrading from rc.6
+
+Update the SDK, and `encrypttest` if your program imports it. The two
+modules are released at the same version:
+
+```sh
+go get github.com/cipherstash/stack/languages/golang@v0.1.0-rc.7
+go get github.com/cipherstash/stack/languages/golang/encrypt/encrypttest@v0.1.0-rc.7
+```
+
+Run `go generate ./...` again. Two changes in the Breaking section need
+it:
+
+- `Children` now returns `encrypt.JSONChildren`.
+- A `[]byte` field with an order index (`index=ore` or `index=ope`) is
+  refused. Remove the index from the field's tag first, or `stashgen`
+  fails on it. Until that type is generated again, its `Encrypt` and
+  `Decrypt` fail with `index_not_admitted`.
+
+Before you upgrade, check that you have not stored a date or timestamp
+outside the years -9999 to 9999. A value outside that range no longer
+decrypts. The Breaking section says how to check.
+
+The EQL SQL has not changed since rc.6. The `eql-v4-install.sql` attached
+to this release differs from rc.6's only in its version stamp. If you
+installed rc.6's bundle, you do not need to run it again.
+
 ### Added
 
 - **Read one child of a JSON node** (#1677). Your app can now read one
