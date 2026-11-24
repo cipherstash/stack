@@ -496,6 +496,37 @@ test('a schema error on the Mutation Data snapshot fails the active-HMAC check w
   )
 })
 
+test('inspects the stored active field before later full puts can overwrite it', async () => {
+  const { driver, calls } = await setup()
+  await driver.snapshot()
+  await driver.installAppHost()
+  let callsAtMutationSnapshot: string[] | undefined
+  observed.snapshot.mockImplementation(async (pk?: string) => {
+    if (pk === 'mutation') callsAtMutationSnapshot = calls.slice()
+    return {
+      dynamo: { Item: { email__source: { S: 'original' } } },
+      postgres: [{ pk: 'legacy', email: { c: 'original', hm: 'term' } }],
+    }
+  })
+  try {
+    await driver.behaviour()
+  } finally {
+    observed.snapshot.mockReset()
+    observed.snapshot.mockImplementation(async () => ({
+      dynamo: { Item: { email__source: { S: 'original' } } },
+      postgres: [{ pk: 'legacy', email: { c: 'original', hm: 'term' } }],
+    }))
+  }
+  expect(callsAtMutationSnapshot).toBeDefined()
+  const seen = callsAtMutationSnapshot ?? []
+  const setActive = seen.lastIndexOf('setActive')
+  expect(setActive).toBeGreaterThanOrEqual(0)
+  // No later write may run between setActive and the inspected snapshot.
+  expect(seen.slice(setActive + 1)).not.toContain('put')
+  expect(seen).not.toContain('copyToPostgres')
+  expect(seen).not.toContain('copyToDynamo')
+})
+
 test('F12 disposes stores even when the isolation supervisor fails to stop', async () => {
   const { driver } = await setup({ stopFails: true })
   await expect(driver.close()).rejects.toThrow('supervisor stop failed')

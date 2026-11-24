@@ -14,15 +14,43 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { legacy } from '../run/behaviour.mjs'
+import {
+  dynamoColumns,
+  hasHmac,
+  postgresColumns,
+} from '../run/legacy-columns.mjs'
 import { runMigrator } from '../run/migrator.mjs'
 import { createRealDriver } from '../run/real-driver.mjs'
+import { dynamoSnapshotError } from '../run/snapshot-errors.mjs'
 import type { IsolationOptions } from '../types.js'
 
 // Regression tests for PR #1576 review items 5, 6 and 7 (F9, F10, F11).
 
+// A snapshot the driver accepts as a legacy record: every legacy column, with
+// an HMAC wherever the fixture stores one.
 const original = () => ({
-  dynamo: { Item: { email__source: { S: 'original' } } },
-  postgres: [{ pk: 'legacy', email: { c: 'original', hm: 'term' } }],
+  dynamo: {
+    Item: {
+      pk: { S: 'legacy' },
+      ...Object.fromEntries(
+        dynamoColumns.flatMap((key) => [
+          [`${key}__source`, { S: 'original' }],
+          ...(hasHmac(key) ? [[`${key}__hmac`, { S: 'term' }]] : []),
+        ]),
+      ),
+    },
+  },
+  postgres: [
+    {
+      pk: 'legacy',
+      ...Object.fromEntries(
+        postgresColumns.map((column) => [
+          column,
+          { c: 'original', ...(hasHmac(column) ? { hm: 'term' } : {}) },
+        ]),
+      ),
+    },
+  ],
 })
 const observed = vi.hoisted(() => ({
   snapshot: vi.fn(async (_pk?: string): Promise<unknown> => undefined),
@@ -158,7 +186,9 @@ test.each([
     await driver.snapshot()
     await driver.installAppHost()
     observed.snapshot.mockImplementation(async (pk?: string) => {
-      if (pk === failingPk) throw Error('Dynamo snapshot failed: 500')
+      // The status is what makes this a store outage: an unrecognised
+      // failure is app damage here and becomes a failed check instead.
+      if (pk === failingPk) throw dynamoSnapshotError(500)
       return original()
     })
     const failure = await driver.behaviour().then(

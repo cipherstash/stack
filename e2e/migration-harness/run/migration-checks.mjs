@@ -1,6 +1,5 @@
 import { lstat, readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { isDeepStrictEqual } from 'node:util'
 import { satisfies, valid } from 'semver'
 import ts from 'typescript'
 import { noRewrite } from './no-rewrite.mjs'
@@ -21,14 +20,7 @@ const hostSetting = /^(CS_CTS_HOST|CS_ZEROKMS_HOST)$/
  * @param {unknown} before @param {unknown} after @returns {import('../types.js').OracleCheck} */
 export function noRewriteCheck(before, after) {
   try {
-    const passed = isDeepStrictEqual(legacyBytes(before), legacyBytes(after))
-    return {
-      id: 'no-rewrite.legacy-bytes',
-      passed,
-      ...(!passed
-        ? { cause: 'Legacy ciphertext or equality terms changed during reads' }
-        : {}),
-    }
+    return noRewrite(before, after)
   } catch {
     return {
       id: 'no-rewrite.legacy-bytes',
