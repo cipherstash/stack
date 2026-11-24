@@ -30,7 +30,7 @@
 use napi::bindgen_prelude::{
     Array, BigInt, FromNapiValue, JsObjectValue, JsValue, Object, Uint8ArraySlice, Unknown,
 };
-use napi::{Env, Error, Status, ValueType};
+use napi::{Env, Status, ValueType};
 use vitaminc_aead::frame::FrameWriteError;
 use vitaminc_aead::plaintext::{Error as _, SourceError};
 use vitaminc_aead::{
@@ -38,7 +38,7 @@ use vitaminc_aead::{
 };
 use vitaminc_protected::Buffer;
 
-use crate::error::JsFault;
+use crate::error::{JsFault, Refusal};
 use crate::js::{
     depth_error, forbidden_key, forbidden_key_error, get_own, lossless_string, not_plain_error,
     own_enumerable_keys, MAX_DEPTH,
@@ -67,7 +67,12 @@ impl<'e> JsRef<'e> {
     /// Snapshot the value as a frame, on the JavaScript thread, so it can be
     /// encrypted on a worker with no JavaScript access. The frame is
     /// plaintext and comes back wiped on drop.
-    pub fn to_frame(self) -> napi::Result<Buffer> {
+    ///
+    /// # Errors
+    ///
+    /// A [`JsFault`]: its [`refusal`](JsFault::refusal) names the rule a
+    /// refused value broke.
+    pub fn to_frame(self) -> Result<Buffer, JsFault> {
         to_frame(self).map_err(frame_error)
     }
 }
@@ -78,28 +83,27 @@ impl Encrypt for JsRef<'_> {
     }
 }
 
-/// A frame writer's refusal as the napi error to hand back.
-pub(crate) fn frame_error(error: FrameWriteError) -> Error {
+/// A frame writer's refusal as the fault to hand back.
+pub(crate) fn frame_error(error: FrameWriteError) -> JsFault {
     match error {
-        FrameWriteError::Source(source) => JsFault::from_source(&source),
+        FrameWriteError::Source(source) => JsFault::of_source(&source),
         FrameWriteError::TooDeep => depth_error(),
-        other => Error::new(Status::InvalidArg, other.to_string()),
+        other => JsFault::new(Status::InvalidArg, other.to_string()),
     }
 }
 
 /// A JavaScript-side failure, as the sink's error.
-fn js_fault<S: Sink>(error: Error) -> S::Error {
-    S::Error::source(SourceError::new(JsFault::from(error)))
+fn js_fault<S: Sink>(error: impl Into<JsFault>) -> S::Error {
+    S::Error::source(SourceError::new(error.into()))
 }
 
 /// A scalar conversion failure: thrown into JavaScript as a `TypeError`
 /// with the error's stable code, and carried as the pending exception.
 fn js_conversion<S: Sink>(env: &Env, error: ConversionError) -> S::Error {
-    let error = match env.throw_type_error(&error.to_string(), Some(error.code())) {
-        Ok(()) => Error::new(Status::PendingException, error.to_string()),
-        Err(error) => error,
-    };
-    js_fault::<S>(error)
+    match env.throw_type_error(&error.to_string(), Some(error.code())) {
+        Ok(()) => js_fault::<S>(JsFault::pending(error)),
+        Err(error) => js_fault::<S>(error),
+    }
 }
 
 fn js_walk<S: Sink>(value: Unknown<'_>, depth: usize, sink: S) -> Result<S::Ok, S::Error> {
@@ -131,8 +135,8 @@ fn js_walk<S: Sink>(value: Unknown<'_>, depth: usize, sink: S) -> Result<S::Ok, 
             sink.scalar(None, Physical::Text(&text))
         }
         ValueType::Object => js_object(value, depth, sink),
-        other => Err(js_fault::<S>(Error::new(
-            Status::InvalidArg,
+        other => Err(js_fault::<S>(JsFault::refused(
+            Refusal::NotAValue,
             format!("JS type cannot be encrypted: {other}"),
         ))),
     }
@@ -180,9 +184,9 @@ fn js_bytes<S: Sink>(value: Unknown<'_>, sink: S) -> Result<S::Ok, S::Error> {
     sink.scalar(None, Physical::Bytes(&arr))
 }
 
-fn not_bytes_error(what: &str) -> Error {
-    Error::new(
-        Status::InvalidArg,
+fn not_bytes_error(what: &str) -> JsFault {
+    JsFault::refused(
+        Refusal::NotBytes,
         format!("only a Buffer or a Uint8Array can be encrypted as bytes, not a {what}"),
     )
 }
@@ -200,7 +204,7 @@ fn js_date<S: Sink>(value: Unknown<'_>, sink: S) -> Result<S::Ok, S::Error> {
 
 /// Which wrapper class an object is an instance of, or none for a plain
 /// object. Anything else is refused.
-fn js_classify(value: Unknown<'_>) -> napi::Result<Option<Wrapper>> {
+fn js_classify(value: Unknown<'_>) -> Result<Option<Wrapper>, JsFault> {
     let env = Env::from_raw(value.value().env);
     let wrappers = Wrappers::get(&env)?;
     // Most objects are plain, and a plain object has no wrapper prototype
@@ -243,7 +247,7 @@ fn js_array<S: Sink>(value: Unknown<'_>, depth: usize, sink: S) -> Result<S::Ok,
         // A hole has no own property; an explicit `undefined` element does.
         // `[undefined]` round-trips; `[, , "x"]` and `new Array(n)` are
         // rejected.
-        let sparse = || Error::new(Status::InvalidArg, "sparse arrays are not supported");
+        let sparse = || JsFault::refused(Refusal::SparseArray, "sparse arrays are not supported");
         if !obj
             .has_own_property(&i.to_string())
             .map_err(js_fault::<S>)?
@@ -307,18 +311,29 @@ mod tests {
     #[test]
     fn a_frame_writers_refusal_becomes_the_napi_error_the_host_expects() {
         let too_deep = frame_error(FrameWriteError::TooDeep);
-        assert_eq!(too_deep.status, Status::InvalidArg);
-        assert!(too_deep.reason.contains("nested too deeply"), "{too_deep}");
+        assert_eq!(too_deep.status(), Status::InvalidArg);
+        assert!(
+            too_deep.reason().contains("nested too deeply"),
+            "{too_deep}"
+        );
+        assert_eq!(too_deep.refusal(), Some(Refusal::TooDeep));
 
         let too_long = frame_error(FrameWriteError::TooLong);
-        assert_eq!(too_long.status, Status::InvalidArg);
-        assert_eq!(too_long.reason, FrameWriteError::TooLong.to_string());
+        assert_eq!(too_long.status(), Status::InvalidArg);
+        assert_eq!(too_long.reason(), FrameWriteError::TooLong.to_string());
 
         // A getter that threw comes back as the error it threw.
-        let thrown = Error::new(Status::PendingException, "the getter threw");
+        let thrown = napi::Error::new(Status::PendingException, "the getter threw");
         let source = FrameWriteError::Source(SourceError::new(JsFault::from(thrown)));
         let back = frame_error(source);
-        assert_eq!(back.status, Status::PendingException);
-        assert_eq!(back.reason, "the getter threw");
+        assert_eq!(back.status(), Status::PendingException);
+        assert_eq!(back.reason(), "the getter threw");
+        // What the application threw is no refusal of this crate's.
+        assert_eq!(back.refusal(), None);
+
+        // A refusal keeps its variant through the sink's source error.
+        let sparse = JsFault::refused(Refusal::SparseArray, "sparse arrays are not supported");
+        let back = frame_error(FrameWriteError::Source(SourceError::new(sparse)));
+        assert_eq!(back.refusal(), Some(Refusal::SparseArray));
     }
 }

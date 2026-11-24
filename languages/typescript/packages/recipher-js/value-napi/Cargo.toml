@@ -11,6 +11,8 @@ repository.workspace = true
 [dependencies]
 rust_decimal = { version = "1.41", default-features = false, features = ["std"] }
 thiserror = "2.0.18"
+# A refusal is a diagnostic: a stable code, a message and help.
+miette = "7.5.0"
 jiff = { version = "1.0.0", default-features = false }
 # The plaintext model this crate reads JavaScript values into, and the
 # protected buffer a frame is held in. The versions the engine resolves.

@@ -148,6 +148,14 @@ reason. At the boundary, `JsFault::from_source` turns it back into the
 napi error, and a pending JavaScript exception surfaces unchanged: the
 application sees the error its getter threw.
 
+When the fault is this crate's refusal of a value, `JsFault::refusal()` says
+which rule the value broke, as a `Refusal`: a diagnostic with a stable code
+(`recipher::sparse_array`, `ERR_INTEGER_RANGE`), a message and, where there
+is something to do, help. A caller reports the refusal from that, and never
+reads the reason's text. It is `None` for a failure of Node-API's own and
+for an exception the application threw. `JsRef::to_frame` and
+`JsBuilder::build` return the `JsFault` itself.
+
 This crate is a library consumed by the Node addon (cdylib/npm package);
 it is not itself loadable from Node.
 

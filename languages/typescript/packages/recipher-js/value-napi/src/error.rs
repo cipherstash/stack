@@ -4,6 +4,64 @@
 use napi::{Error, Status};
 use vitaminc_aead::plaintext::{self, SourceError};
 
+use crate::scalar::ConversionError;
+
+/// Why a JavaScript value was refused, for a caller that reports it by
+/// its code.
+///
+/// Each variant is a diagnostic: a stable code, a message, and help where
+/// there is something to do. No message holds any part of the value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, miette::Diagnostic)]
+#[non_exhaustive]
+pub enum Refusal {
+    /// An object that is neither plain nor one of the wrapper classes.
+    #[error(
+        "a Map, a Set, a class instance or another object that is not plain cannot be encrypted"
+    )]
+    #[diagnostic(code(recipher::not_plain), help("Make it a plain object first."))]
+    NotPlain,
+    /// A property named `__proto__`, `constructor` or `prototype`.
+    #[error("an object has a property named `__proto__`, `constructor` or `prototype`, which is refused in both directions")]
+    #[diagnostic(code(recipher::reserved_key))]
+    ReservedKey,
+    /// A value nested past [`MAX_DEPTH`](crate::MAX_DEPTH).
+    #[error("the value is nested deeper than 128 levels")]
+    #[diagnostic(code(recipher::too_deep))]
+    TooDeep,
+    /// An array with a hole.
+    #[error("an array has a hole")]
+    #[diagnostic(
+        code(recipher::sparse_array),
+        help("Write `undefined` or `null` where a value is missing.")
+    )]
+    SparseArray,
+    /// A typed array other than a `Uint8Array`, or a `DataView`.
+    #[error(
+        "only a Buffer or a Uint8Array is bytes; another typed array or a DataView is refused"
+    )]
+    #[diagnostic(code(recipher::not_bytes))]
+    NotBytes,
+    /// A function, a symbol or another type with no value in the model.
+    #[error("a function, a symbol or another type JavaScript has no value of cannot be encrypted")]
+    #[diagnostic(code(recipher::not_a_value))]
+    NotAValue,
+    /// A property removed while its object was being read.
+    #[error("an object changed while it was read")]
+    #[diagnostic(code(recipher::changed_while_read))]
+    ChangedWhileRead,
+    /// A string or a property name with an unpaired surrogate.
+    #[error(
+        "a string or a property name has an unpaired surrogate, so it has no exact UTF-8 form"
+    )]
+    #[diagnostic(code(recipher::unpaired_surrogate))]
+    UnpairedSurrogate,
+    /// A scalar outside what its type holds. A `TypeError` with the same
+    /// code is pending in JavaScript.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Scalar(#[from] ConversionError),
+}
+
 /// A failure on the JavaScript side of a walk or a build: a getter threw, a
 /// string had an unpaired surrogate, a value was of a type that cannot be
 /// encrypted, a tree was too deep.
@@ -13,11 +71,15 @@ use vitaminc_aead::plaintext::{self, SourceError};
 /// caller needs to hand it back to JavaScript. A [`Status::PendingException`]
 /// means the original JavaScript exception is still pending in the engine,
 /// and returning this error lets it surface unchanged.
+///
+/// When the fault is this crate's refusal of a value, [`refusal`](Self::refusal)
+/// says which one, so a caller never reads the reason's text to find out.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{reason}")]
 pub struct JsFault {
     status: Status,
     reason: String,
+    refusal: Option<Refusal>,
 }
 
 impl JsFault {
@@ -25,6 +87,40 @@ impl JsFault {
         Self {
             status,
             reason: reason.into(),
+            refusal: None,
+        }
+    }
+
+    /// This crate's refusal of a value, with the reason JavaScript sees.
+    pub(crate) fn refused(refusal: Refusal, reason: impl Into<String>) -> Self {
+        Self {
+            status: Status::InvalidArg,
+            reason: reason.into(),
+            refusal: Some(refusal),
+        }
+    }
+
+    /// A refused scalar, whose `TypeError` is pending in JavaScript.
+    pub(crate) fn pending(error: ConversionError) -> Self {
+        Self {
+            status: Status::PendingException,
+            reason: error.to_string(),
+            refusal: Some(Refusal::Scalar(error)),
+        }
+    }
+
+    /// Which refusal this is, when it is one of this crate's. `None` for a
+    /// failure of Node-API itself, or an exception the application threw.
+    pub fn refusal(&self) -> Option<Refusal> {
+        self.refusal
+    }
+
+    /// The fault a sink's source error carries, or the error's own text
+    /// when it carries none.
+    pub(crate) fn of_source(error: &SourceError) -> Self {
+        match error.inner().downcast_ref::<JsFault>() {
+            Some(fault) => fault.clone(),
+            None => Self::new(Status::InvalidArg, error.to_string()),
         }
     }
 
@@ -55,7 +151,8 @@ impl From<Error> for JsFault {
     fn from(error: Error) -> Self {
         Self {
             status: error.status,
-            reason: error.reason,
+            reason: error.reason.clone(),
+            refusal: None,
         }
     }
 }
@@ -68,10 +165,7 @@ impl From<JsFault> for Error {
 
 impl plaintext::Error for JsFault {
     fn source(error: SourceError) -> Self {
-        match error.inner().downcast_ref::<JsFault>() {
-            Some(fault) => fault.clone(),
-            None => Self::new(Status::InvalidArg, error.to_string()),
-        }
+        Self::of_source(&error)
     }
 }
 
@@ -119,5 +213,91 @@ mod tests {
         let error = JsFault::from_source(&SourceError::msg("frame is malformed"));
         assert_eq!(error.status, Status::InvalidArg);
         assert_eq!(error.reason, "frame is malformed");
+    }
+
+    /// One of every refusal. The match has no wildcard, so a variant added
+    /// without a row here does not compile.
+    fn every_refusal() -> Vec<Refusal> {
+        use crate::scalar::ConversionError as C;
+        let all = vec![
+            Refusal::NotPlain,
+            Refusal::ReservedKey,
+            Refusal::TooDeep,
+            Refusal::SparseArray,
+            Refusal::NotBytes,
+            Refusal::NotAValue,
+            Refusal::ChangedWhileRead,
+            Refusal::UnpairedSurrogate,
+            Refusal::Scalar(C::IntegerRange),
+            Refusal::Scalar(C::InvalidDate),
+            Refusal::Scalar(C::InvalidTimestamp),
+            Refusal::Scalar(C::InvalidDecimal),
+            Refusal::Scalar(C::NonFiniteDecimal),
+            Refusal::Scalar(C::InvalidUuid),
+        ];
+        for refusal in &all {
+            match refusal {
+                Refusal::NotPlain
+                | Refusal::ReservedKey
+                | Refusal::TooDeep
+                | Refusal::SparseArray
+                | Refusal::NotBytes
+                | Refusal::NotAValue
+                | Refusal::ChangedWhileRead
+                | Refusal::UnpairedSurrogate => {}
+                Refusal::Scalar(scalar) => match scalar {
+                    C::IntegerRange
+                    | C::InvalidDate
+                    | C::InvalidTimestamp
+                    | C::InvalidDecimal
+                    | C::NonFiniteDecimal
+                    | C::InvalidUuid => {}
+                },
+            }
+        }
+        all
+    }
+
+    #[test]
+    fn every_refusal_has_a_code_of_its_own() {
+        use miette::Diagnostic;
+        let mut codes = std::collections::BTreeSet::new();
+        for refusal in every_refusal() {
+            let code = refusal.code().expect("a code").to_string();
+            match refusal {
+                // A refused scalar keeps the code its `TypeError` is thrown
+                // with.
+                Refusal::Scalar(scalar) => assert_eq!(code, scalar.code()),
+                _ => {
+                    let name = code.strip_prefix("recipher::").expect("the namespace");
+                    assert!(
+                        !name.is_empty()
+                            && name.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                        "{code}"
+                    );
+                }
+            }
+            assert!(codes.insert(code.clone()), "{code} is used twice");
+        }
+    }
+
+    #[test]
+    fn a_fault_says_which_refusal_it_is() {
+        let refused = JsFault::refused(Refusal::NotPlain, "only plain objects");
+        assert_eq!(refused.refusal(), Some(Refusal::NotPlain));
+        assert_eq!(refused.status(), Status::InvalidArg);
+        // The reason JavaScript sees is unchanged by the variant.
+        assert_eq!(refused.reason(), "only plain objects");
+
+        let pending = JsFault::pending(crate::scalar::ConversionError::InvalidUuid);
+        assert_eq!(pending.status(), Status::PendingException);
+        assert_eq!(
+            pending.refusal(),
+            Some(Refusal::Scalar(crate::scalar::ConversionError::InvalidUuid))
+        );
+
+        // A failure of Node-API's own is no refusal.
+        let napi = JsFault::from(Error::new(Status::GenericFailure, "napi failed"));
+        assert_eq!(napi.refusal(), None);
     }
 }

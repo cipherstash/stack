@@ -93,7 +93,7 @@ impl NapiPassthrough for () {
 
     fn from_js(value: Unknown<'_>, depth: usize) -> Result<Self> {
         if depth > MAX_DEPTH {
-            return Err(depth_error());
+            return Err(depth_error().into());
         }
         // napi-rs's own `()` conversion accepts any value; check instead.
         if value.get_type()? == ValueType::Undefined {
@@ -117,7 +117,7 @@ impl NapiPassthrough for PassthroughFrame {
     fn to_js(self, env: &Env) -> Result<Unknown<'_>> {
         // `exceeds_depth` has passed for this payload, which validated it.
         let frame = Frame::parse(&self.0).map_err(|_| shape_error())?;
-        JsBuilder::build(env, frame)
+        Ok(JsBuilder::build(env, frame)?)
     }
 
     fn from_js(value: Unknown<'_>, depth: usize) -> Result<Self> {
