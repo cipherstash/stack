@@ -13,26 +13,32 @@ use vitaminc_aead::{Int, Logical, TimeUnit};
 
 /// Host scalar conversion errors. Node receives a TypeError with the same
 /// stable code; errors contain no user plaintext.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum ConversionError {
     /// The integer fits neither `i128` nor `u128`.
     #[error("BigInt is outside the signed/unsigned 128-bit range")]
+    #[diagnostic(code("ERR_INTEGER_RANGE"))]
     IntegerRange,
     /// The calendar date is malformed or outside the supported range.
     #[error("invalid calendar date")]
+    #[diagnostic(code("ERR_INVALID_DATE"))]
     InvalidDate,
     /// The timestamp is malformed or outside the supported range.
     #[error("invalid or out-of-range timestamp")]
+    #[diagnostic(code("ERR_INVALID_TIMESTAMP"))]
     InvalidTimestamp,
     /// The decimal is malformed or exceeds the supported precision or scale.
     #[error("invalid or out-of-range decimal")]
+    #[diagnostic(code("ERR_INVALID_DECIMAL"))]
     InvalidDecimal,
     /// The decimal is NaN or infinite.
     #[error("decimal must be finite")]
+    #[diagnostic(code("ERR_NON_FINITE_DECIMAL"))]
     NonFiniteDecimal,
     /// The UUID text is malformed.
     #[error("invalid UUID")]
+    #[diagnostic(code("ERR_INVALID_UUID"))]
     InvalidUuid,
 }
 

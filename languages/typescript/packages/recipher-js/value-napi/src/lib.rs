@@ -23,7 +23,7 @@ mod scalar;
 mod wrappers;
 
 pub use ciphertext::{JsCipherText, NapiPassthrough};
-pub use error::JsFault;
+pub use error::{JsFault, Refusal};
 pub use js::MAX_DEPTH;
 pub use js_builder::JsBuilder;
 pub use js_ref::JsRef;

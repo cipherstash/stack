@@ -10,6 +10,8 @@ use napi::bindgen_prelude::{
 use napi::{check_status, sys, Env, Error, Property, Result, Status, ValueType};
 use zeroize::Zeroizing;
 
+use crate::error::{JsFault, Refusal};
+
 /// Maximum nesting depth, in both directions: walking a JavaScript value
 /// and building one. Bounds recursion so a deeply nested input cannot
 /// overflow the stack. The same limit, counted the same way, as the
@@ -24,13 +26,13 @@ pub(crate) fn forbidden_key(key: &str) -> bool {
     matches!(key, "__proto__" | "constructor" | "prototype")
 }
 
-pub(crate) fn depth_error() -> Error {
-    Error::new(Status::InvalidArg, "value is nested too deeply")
+pub(crate) fn depth_error() -> JsFault {
+    JsFault::refused(Refusal::TooDeep, "value is nested too deeply")
 }
 
-pub(crate) fn forbidden_key_error(key: &str) -> Error {
-    Error::new(
-        Status::InvalidArg,
+pub(crate) fn forbidden_key_error(key: &str) -> JsFault {
+    JsFault::refused(
+        Refusal::ReservedKey,
         format!("property name is not allowed: {key}"),
     )
 }
@@ -66,7 +68,9 @@ pub(crate) struct OwnKey<'e> {
 ///
 /// A key holding an unpaired surrogate is refused, as string values are: it
 /// has no UTF-8 spelling, so it could not be sealed as written.
-pub(crate) fn own_enumerable_keys<'e>(obj: &Object<'e>) -> Result<Vec<OwnKey<'e>>> {
+pub(crate) fn own_enumerable_keys<'e>(
+    obj: &Object<'e>,
+) -> std::result::Result<Vec<OwnKey<'e>>, JsFault> {
     // napi-rs takes a single key filter, so symbol keys are skipped below
     // rather than by an `enumerable | skip_symbols` filter.
     let names = obj.get_all_property_names(
@@ -93,17 +97,20 @@ pub(crate) fn own_enumerable_keys<'e>(obj: &Object<'e>) -> Result<Vec<OwnKey<'e>
 /// this property; `[[Get]]` would then read it from a (possibly polluted)
 /// prototype. So ownership is checked again immediately before the read,
 /// where no JS can run in between for an ordinary object.
-pub(crate) fn get_own<'e>(obj: &Object<'e>, key: &OwnKey<'e>) -> Result<Unknown<'e>> {
+pub(crate) fn get_own<'e>(
+    obj: &Object<'e>,
+    key: &OwnKey<'e>,
+) -> std::result::Result<Unknown<'e>, JsFault> {
     if !obj.has_own_property_js(key.handle)? {
-        return Err(Error::new(
-            Status::InvalidArg,
+        return Err(JsFault::refused(
+            Refusal::ChangedWhileRead,
             format!(
                 "property was removed while it was being read: {}",
                 *key.name
             ),
         ));
     }
-    obj.get_property_unchecked(key.handle)
+    Ok(obj.get_property_unchecked(key.handle)?)
 }
 
 /// A JS string as Rust text. Fetched as UTF-16 (JS's native representation)
@@ -116,7 +123,10 @@ pub(crate) fn get_own<'e>(obj: &Object<'e>, key: &OwnKey<'e>) -> Result<Unknown<
 /// UTF-8, are wiped on drop. The V8 original cannot be wiped from here. The
 /// code units are read straight from Node-API rather than through
 /// napi-rs's `Utf16String`, whose buffer cannot be reached to wipe.
-pub(crate) fn lossless_string(value: Unknown<'_>, what: &str) -> Result<Zeroizing<String>> {
+pub(crate) fn lossless_string(
+    value: Unknown<'_>,
+    what: &str,
+) -> std::result::Result<Zeroizing<String>, JsFault> {
     let env = value.value().env;
     let raw = value.raw();
     let mut len = 0usize;
@@ -135,8 +145,8 @@ pub(crate) fn lossless_string(value: Unknown<'_>, what: &str) -> Result<Zeroizin
     };
     check_status!(status, "failed to read a {what}")?;
     from_utf16(&units[..written.min(len)]).ok_or_else(|| {
-        Error::new(
-            Status::InvalidArg,
+        JsFault::refused(
+            Refusal::UnpairedSurrogate,
             format!("{what} contains an unpaired surrogate and cannot be encrypted losslessly"),
         )
     })
@@ -176,9 +186,9 @@ pub(crate) fn get_property_unknown<'e>(obj: &Object<'e>, key: &str) -> Result<Un
 
 /// The refusal of anything but a plain object or a wrapper instance; the
 /// check itself is [`Wrappers::is_plain`](crate::Wrappers::is_plain).
-pub(crate) fn not_plain_error() -> Error {
-    Error::new(
-        Status::InvalidArg,
+pub(crate) fn not_plain_error() -> JsFault {
+    JsFault::refused(
+        Refusal::NotPlain,
         "only plain objects and the wrapper classes can be encrypted; Map, Set, class instances \
          and other exotic objects lose their contents under key enumeration — convert the value \
          to a plain object, array, string, number, Buffer, or Uint8Array first",

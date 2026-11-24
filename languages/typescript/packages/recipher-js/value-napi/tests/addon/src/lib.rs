@@ -76,14 +76,14 @@ pub fn encode(value: Unknown<'_>) -> Result<Buffer> {
 /// Walk a JavaScript value and drop the frame, to test the walk alone.
 #[napi]
 pub fn convert(value: Unknown<'_>) -> Result<()> {
-    JsRef::new(value).to_frame().map(drop)
+    Ok(JsRef::new(value).to_frame().map(drop)?)
 }
 
 /// Build a JavaScript value from a frame.
 #[napi]
 pub fn decode<'e>(env: &'e Env, bytes: Buffer) -> Result<Unknown<'e>> {
     let frame = Frame::parse(&bytes).map_err(|_| Error::from_reason("frame decode failed"))?;
-    JsBuilder::build(env, frame)
+    Ok(JsBuilder::build(env, frame)?)
 }
 
 /// Parse a frame and write it again from its own walk.
@@ -186,7 +186,7 @@ pub fn nested_value<'e>(env: &'e Env, levels: u32, wrap: String) -> Result<Unkno
     })
     .map_err(|e| Error::from_reason(format!("frame: {e}")))?;
     let frame = Frame::parse(frame.risky_ref()).map_err(|_| Error::from_reason("frame"))?;
-    JsBuilder::build(env, frame)
+    Ok(JsBuilder::build(env, frame)?)
 }
 
 #[derive(Clone)]

@@ -100,13 +100,18 @@ impl<'e> JsBuilder<'e> {
     }
 
     /// The JavaScript value of a frame.
-    pub fn build(env: &'e Env, frame: Frame<'_>) -> napi::Result<Unknown<'e>> {
-        frame.visit(Self::new(env)).map_err(Error::from)
+    ///
+    /// # Errors
+    ///
+    /// A [`JsFault`]: its [`refusal`](JsFault::refusal) names the rule a
+    /// value JavaScript cannot hold broke.
+    pub fn build(env: &'e Env, frame: Frame<'_>) -> Result<Unknown<'e>, JsFault> {
+        frame.visit(Self::new(env))
     }
 }
 
 impl<O> JsBuilder<'_, O> {
-    fn check_depth(&self) -> napi::Result<()> {
+    fn check_depth(&self) -> Result<(), JsFault> {
         if self.depth > MAX_DEPTH {
             return Err(depth_error());
         }
@@ -224,7 +229,7 @@ impl<'e, O: Out<'e>> MapSink for JsMap<'e, O> {
         // Keys decrypted from a ciphertext are attacker-influenced in
         // principle; never assign prototype-polluting names.
         if forbidden_key(key) {
-            return Err(forbidden_key_error(key).into());
+            return Err(forbidden_key_error(key));
         }
         Ok(JsBuilder {
             env: self.env,
@@ -348,8 +353,8 @@ mod tests {
         let error = JsBuilder::at_depth(&env, MAX_DEPTH + 1)
             .check_depth()
             .expect_err("past the limit");
-        assert_eq!(error.status, Status::InvalidArg);
-        assert!(error.reason.contains("nested too deeply"), "{error}");
+        assert_eq!(error.status(), Status::InvalidArg);
+        assert!(error.reason().contains("nested too deeply"), "{error}");
     }
 
     // A container at the limit may itself be built, but each of its

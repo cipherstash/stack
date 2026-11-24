@@ -2534,6 +2534,7 @@ name = "recipher-value-napi"
 version = "0.0.0"
 dependencies = [
  "jiff",
+ "miette",
  "mutants",
  "napi",
  "rust_decimal",
