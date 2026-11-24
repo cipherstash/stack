@@ -740,8 +740,15 @@ const bytes = sealed.map((ciphertext) => ciphertext.toBytes()).unwrapOr(null);
 - **`Result` is the core's own type**, with no dependency, so it can stay
   as close to Rust's as TypeScript allows. `Ok` and `Err` are its two
   cases, and `isOk()` narrows the type as a Rust `match` does.
-- **An error is a value.** A `RecipherError` has `kind`, `code`, `reason`
-  and `field`, from the engine's error. `kind` is a closed set a caller
+- **An error is the engine's diagnostic, as a value.** The engine's errors
+  are miette diagnostics, and a `RecipherError` carries all of one, as the
+  Go SDK's `Diagnostic` does: the stable `code` (`stack_encrypt::aead`),
+  the one-line `message`, the `help`, the `url` of its documentation page,
+  the structured `fields` (`reason` and `field` among them, also as typed
+  properties), and the `causes` behind it. A cause from another library is
+  named as one and its message is never copied. The engine sets no `url`
+  yet (#1790); the property shows the link when it does. `kind` is the
+  SDK's own, coarser than the code. It is a closed set a caller
   switches on: a refused declaration, a value of the wrong type, a refused
   credential, a ZeroKMS refusal, a foreign keyset, a context mismatch, a
   value that did not open, and a cancelled call. The compiler checks that
