@@ -400,7 +400,11 @@ jobs:
   e2e-tests:
     name: Run E2E Tests
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 15
+    # The migration harness's live Runs alone take about 12 minutes, and the
+    # job's other suites and its setup take the rest of what was a 15-minute
+    # limit: every run on main since the harness landed took 14 to 15
+    # minutes, and one that passed every test was cancelled at 15.
+    timeout-minutes: 30
 
     # Auth-dependent suites in `e2e/` skip themselves unless these env vars
     # are set. We expose them at the job level so the wizard subprocess
