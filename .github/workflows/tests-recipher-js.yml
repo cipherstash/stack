@@ -1,0 +1,85 @@
+name: Tests (recipher-js)
+
+# The Rust half of `@cipherstash/recipher`, the TypeScript SDK on the Stack
+# Encrypt engine: its detached Cargo workspace. For now the workspace has one
+# crate, `recipher-value-napi` (`value-napi/`), the value bridge that reads
+# JavaScript values into vitaminc's plaintext model and builds them back.
+#
+# `cargo test` runs the bridge's unit tests and `tests/node.rs`, which builds
+# the bridge's test addon (`value-napi/tests/addon`, a workspace of its own)
+# and runs the Node suites against it. Every test here is offline, so the job
+# takes no credentials.
+
+on:
+  pull_request:
+    paths:
+      - languages/typescript/packages/recipher-js/**
+      - mise.toml
+      - .github/workflows/tests-recipher-js.yml
+  push:
+    branches: [main]
+    paths:
+      - languages/typescript/packages/recipher-js/**
+      - mise.toml
+      - .github/workflows/tests-recipher-js.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: full
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+
+jobs:
+  recipher-js:
+    name: cargo checks (Linux)
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      # At the repository root: the root mise.toml pins rust 1.94.1.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          install_args: rust
+          cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
+
+      # As in tests-crates.yml: a cached toolchain can lack the components
+      # mise.toml declares. A no-op when they are there.
+      - name: Add rustfmt and clippy to the pinned toolchain
+        run: rustup component add rustfmt clippy
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: languages/typescript/packages/recipher-js -> target
+
+      # `tests/node.rs` runs the bridge's Node suites with `node`.
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+
+      # `cargo test --locked`, `cargo fmt --check` and clippy, with every
+      # feature.
+      - name: cargo checks
+        working-directory: languages/typescript/packages/recipher-js
+        run: |
+          cargo test --locked --all-features
+          cargo fmt --all --check
+          cargo clippy --locked --all-targets --all-features -- -D warnings

@@ -22,6 +22,9 @@ members = [
 exclude = [
   "packages/eql",
   "languages/typescript/packages/protect-ffi",
+  # The TypeScript SDK's crate (`@cipherstash/recipher`): napi-rs 3, which
+  # the root's napi-rs 2 bindings must not unify with.
+  "languages/typescript/packages/recipher-js",
   # cargo-fuzz crates: nightly-only, run through the `fuzz:*` mise tasks.
   "packages/stack-auth/fuzz",
   "packages/stack-kms/fuzz",
