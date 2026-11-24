@@ -105,6 +105,7 @@ describe('settle', () => {
         kind: 'value',
         code: 'recipher::x',
         message: 'no',
+        severity: 'error',
         fields: {},
         causes: [],
       },

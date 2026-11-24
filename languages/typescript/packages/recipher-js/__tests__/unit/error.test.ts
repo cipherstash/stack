@@ -34,6 +34,7 @@ describe('RecipherError', () => {
       message: 'refused',
       help: 'try again',
       url: 'https://example.com/x',
+      severity: 'warning',
       fields: { request_kind: 'generate', status: 503 },
       causes: [
         { code: 'stack_kms::y', message: 'inner' },
@@ -43,6 +44,7 @@ describe('RecipherError', () => {
     })
     expect(read.help).toBe('try again')
     expect(read.url).toBe('https://example.com/x')
+    expect(read.severity).toBe('warning')
     expect(read.fields).toEqual({ request_kind: 'generate', status: 503 })
     expect(read.causes).toEqual([
       { code: 'stack_kms::y', message: 'inner' },
@@ -64,6 +66,12 @@ describe('RecipherError', () => {
     expect(read.field).toBe('email')
     expect(read.reason).toBeUndefined()
     expect(read.help).toBeUndefined()
+    // An error that states no severity, or an unknown one, is an error.
+    expect(read.severity).toBe('error')
+    expect(
+      fromNative({ kind: 'open', code: 'c', message: 'm', severity: 'loud' })
+        .severity,
+    ).toBe('error')
     expect(read.fields).toEqual({})
     expect(read.causes).toEqual([])
 

@@ -99,6 +99,7 @@ describe('failures are values', () => {
     )
     // The engine's help is a property of its own, never part of the message.
     expect(error?.help).toMatch(/^Open the value under the context/)
+    expect(error?.severity).toBe('error')
     expect(error?.fields).toEqual({})
     expect(error?.causes).toEqual([])
     expect(String(error)).not.toContain('intact')

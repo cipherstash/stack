@@ -2,7 +2,7 @@
 //!
 //! A failure is a [`RecipherErrorFields`]: an [`ErrorKind`] a caller switches
 //! on, and the engine's diagnostic as it stands: its stable code, message,
-//! help, documentation URL, structured fields and causes. An engine error is
+//! help, documentation URL, severity, structured fields and causes. An engine error is
 //! mapped here, once, by its variant. The engine's errors never hold a
 //! plaintext, a key, a token or a ciphertext, and nothing here adds one.
 //!
@@ -46,6 +46,28 @@ pub enum ErrorKind {
     Internal,
 }
 
+/// How serious a failure is, as the engine's diagnostic states it.
+#[napi(string_enum = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Severity {
+    /// A failure: the call did not do what was asked.
+    Error,
+    /// Something a caller should look at.
+    Warning,
+    /// A suggestion.
+    Advice,
+}
+
+impl From<miette::Severity> for Severity {
+    fn from(severity: miette::Severity) -> Self {
+        match severity {
+            miette::Severity::Error => Self::Error,
+            miette::Severity::Warning => Self::Warning,
+            miette::Severity::Advice => Self::Advice,
+        }
+    }
+}
+
 /// A failure, as JavaScript receives it.
 #[napi(object)]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,6 +84,9 @@ pub struct RecipherErrorFields {
     pub help: Option<String>,
     /// A documentation page for the error, where it has one.
     pub url: Option<String>,
+    /// How serious it is: `error` unless the engine's diagnostic says
+    /// otherwise.
+    pub severity: Severity,
     /// The error's structured fields, by `snake_case` name: a refused
     /// plan's `field` and `reason`, a ZeroKMS failure's `request_kind`.
     /// Empty where the error has none.
@@ -150,6 +175,7 @@ impl RecipherErrorFields {
             message: message.into(),
             help: None,
             url: None,
+            severity: Severity::Error,
             fields: serde_json::Map::new(),
             causes: Vec::new(),
             reason: None,
@@ -185,6 +211,7 @@ impl RecipherErrorFields {
             message: error.to_string(),
             help: error.help().map(|help| help.to_string()),
             url: error.url().map(|url| url.to_string()),
+            severity: error.severity().map_or(Severity::Error, Severity::from),
             reason: text_of("reason"),
             field: text_of("field"),
             causes: causes_of(error),
@@ -223,7 +250,7 @@ fn kind_of(error: &stack_encrypt::Error) -> ErrorKind {
 
 #[cfg(test)]
 mod tests {
-    use super::{ErrorCause, ErrorKind, RecipherErrorFields, UNDESCRIBED_CAUSE};
+    use super::{ErrorCause, ErrorKind, RecipherErrorFields, Severity, UNDESCRIBED_CAUSE};
 
     #[test]
     fn an_aead_failure_is_an_open_failure_with_the_engine_code() {
@@ -238,6 +265,8 @@ mod tests {
             .as_deref()
             .is_some_and(|help| help.starts_with("Open the value under the context")));
         assert_eq!(error.url, None);
+        // A diagnostic that states no severity is an error.
+        assert_eq!(error.severity, Severity::Error);
         assert!(error.causes.is_empty());
     }
 
@@ -251,7 +280,8 @@ mod tests {
     #[diagnostic(
         code(probe::outer),
         help("try again"),
-        url("https://example.com/outer")
+        url("https://example.com/outer"),
+        severity(Warning)
     )]
     struct Outer(
         #[source]
@@ -274,6 +304,7 @@ mod tests {
         assert_eq!(error.message, "outer");
         assert_eq!(error.help.as_deref(), Some("try again"));
         assert_eq!(error.url.as_deref(), Some("https://example.com/outer"));
+        assert_eq!(error.severity, Severity::Warning);
         // Every payload field crosses, and `field` is also the typed one.
         assert_eq!(error.fields["count"], 3);
         assert_eq!(error.field.as_deref(), Some("age"));

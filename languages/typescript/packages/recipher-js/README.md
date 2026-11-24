@@ -192,6 +192,7 @@ if (opened.isErr()) {
 | `message` | What went wrong, in one line. |
 | `help` | What to do about it, where the error knows. |
 | `url` | A documentation page for the error, where it has one. |
+| `severity` | `error`, unless the engine's diagnostic states `warning` or `advice`. |
 | `fields` | The error's structured fields, by `snake_case` name. `reason` and `field` are two of them, typed. |
 | `record` | The record at fault, where one is. |
 | `causes` | The errors behind this one, outermost first, each a `message` and, for an engine error, a `code`. A cause from another library has a fixed message, never that library's own text. |

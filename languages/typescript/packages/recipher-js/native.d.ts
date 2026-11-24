@@ -201,6 +201,11 @@ export interface RecipherErrorFields {
   /** A documentation page for the error, where it has one. */
   url?: string
   /**
+   * How serious it is: `error` unless the engine's diagnostic says
+   * otherwise.
+   */
+  severity: Severity
+  /**
    * The error's structured fields, by `snake_case` name: a refused
    * plan's `field` and `reason`, a ZeroKMS failure's `request_kind`.
    * Empty where the error has none.
@@ -218,3 +223,6 @@ export interface RecipherErrorFields {
    */
   record?: string
 }
+
+/** How serious a failure is, as the engine's diagnostic states it. */
+export type Severity = 'error' | 'warning' | 'advice'

@@ -31,6 +31,7 @@ export {
   type ErrorKind,
   RecipherError,
   type RecipherErrorFields,
+  type Severity,
 } from './error'
 export { type Kind, kinds, type ValueOf } from './kinds'
 export {

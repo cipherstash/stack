@@ -6,9 +6,14 @@
  * This class exists in TypeScript because an error has to exist when the
  * native build did not load.
  */
-import type { ErrorCause, ErrorKind, RecipherErrorFields } from '../native'
+import type {
+  ErrorCause,
+  ErrorKind,
+  RecipherErrorFields,
+  Severity,
+} from '../native'
 
-export type { ErrorCause, ErrorKind, RecipherErrorFields }
+export type { ErrorCause, ErrorKind, RecipherErrorFields, Severity }
 
 const KINDS: ReadonlySet<string> = new Set<ErrorKind>([
   'declaration',
@@ -34,6 +39,8 @@ const KINDS: ReadonlySet<string> = new Set<ErrorKind>([
  * - `message` says what went wrong, in one line.
  * - `help` says what to do about it, and `url` is a documentation page for
  *   the error, where the error has them.
+ * - `severity` is `error`, unless the engine's diagnostic states `warning`
+ *   or `advice`.
  * - `fields` holds the error's structured fields by `snake_case` name, and
  *   is empty where it has none. `reason` and `field` are two of them, typed.
  * - `record` names the record a declaration, a row or a stored row is of.
@@ -49,6 +56,7 @@ export class RecipherError {
   readonly message: string
   readonly help: string | undefined
   readonly url: string | undefined
+  readonly severity: Severity
   readonly fields: Readonly<Record<string, unknown>>
   readonly causes: readonly ErrorCause[]
   readonly reason: string | undefined
@@ -64,6 +72,7 @@ export class RecipherError {
     this.message = fields.message
     this.help = fields.help
     this.url = fields.url
+    this.severity = fields.severity ?? 'error'
     this.fields = Object.freeze({ ...fields.fields })
     this.causes = Object.freeze(
       (fields.causes ?? []).map((cause) => Object.freeze({ ...cause })),
@@ -98,6 +107,7 @@ export function fromNative(error: unknown): RecipherError {
     message,
     help,
     url,
+    severity,
     fields,
     causes,
     reason,
@@ -116,6 +126,7 @@ export function fromNative(error: unknown): RecipherError {
     message: typeof message === 'string' ? message : '',
     ...(typeof help === 'string' ? { help } : {}),
     ...(typeof url === 'string' ? { url } : {}),
+    ...(severity === 'warning' || severity === 'advice' ? { severity } : {}),
     ...(typeof fields === 'object' && fields !== null
       ? { fields: fields as Record<string, unknown> }
       : {}),
