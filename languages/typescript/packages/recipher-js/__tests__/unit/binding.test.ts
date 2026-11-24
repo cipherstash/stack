@@ -21,8 +21,14 @@ function fakeBuild(overrides: Record<string, unknown> = {}) {
     Cipher: class {},
     Keyset: class {},
     Ciphertext: class {},
+    Json: class {},
     bindingInterface: () => BINDING_INTERFACE,
     createTesting: () => Promise.resolve({ ok: true, value: 'cipher' }),
+    json: () => ({}),
+    VcDate: class {},
+    VcTimestamp: class {},
+    VcDecimal: class {},
+    VcUuid: class {},
     ...overrides,
   }
 }
@@ -49,8 +55,14 @@ describe('load', () => {
       'Cipher',
       'Keyset',
       'Ciphertext',
+      'Json',
       'bindingInterface',
       'createTesting',
+      'json',
+      'VcDate',
+      'VcTimestamp',
+      'VcDecimal',
+      'VcUuid',
     ]) {
       const loaded = load(
         requiring(fakeBuild({ [name]: undefined })),

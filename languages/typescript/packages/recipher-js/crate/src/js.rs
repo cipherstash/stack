@@ -13,11 +13,11 @@
 //! its message may hold the value.
 
 use napi::bindgen_prelude::{FromNapiValue, JsObjectValue, JsValue, Object, Unknown};
-use napi::{Env, Status};
+use napi::{Env, Status, ValueType};
 use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::AsProtectedRef;
 use vitaminc_aead::Frame;
-use vitaminc_aead_napi::{JsBuilder, JsRef};
+use vitaminc_aead_napi::{JsBuilder, JsRef, Wrapper, Wrappers};
 use vitaminc_protected::Controlled;
 
 use crate::error::{ErrorKind, RecipherErrorFields};
@@ -26,13 +26,30 @@ use crate::error::{ErrorKind, RecipherErrorFields};
 ///
 /// # Errors
 ///
-/// A failure of kind `value`: vitaminc refused the value, it threw while it
-/// was read, or it is outside the engine's value model.
+/// A failure of kind `value`: `undefined`, a value vitaminc refused or that
+/// threw while it was read, or one outside the engine's value model, such
+/// as a `VcUuid`.
 pub fn read(env: &Env, value: Unknown<'_>) -> Result<ValueFrame, RecipherErrorFields> {
+    if value.get_type().ok() == Some(ValueType::Undefined) {
+        return Err(RecipherErrorFields::new(
+            ErrorKind::Value,
+            "recipher::undefined",
+            "`undefined` is not a value; use `null` for a value that is not there",
+        ));
+    }
+    let uuid = is_uuid(env, &value);
     let frame = JsRef::new(value)
         .to_frame()
         .map_err(|error| refused(env, &error))?;
     ValueFrame::from_bytes(frame.as_protected_ref()).map_err(|error| {
+        if uuid {
+            return RecipherErrorFields::new(
+                ErrorKind::Value,
+                "recipher::uuid",
+                "a UUID cannot be encrypted yet: the engine's value model does not hold \
+                 one. Encrypt its text instead",
+            );
+        }
         RecipherErrorFields::new(
             ErrorKind::Value,
             "recipher::value",
@@ -41,17 +58,72 @@ pub fn read(env: &Env, value: Unknown<'_>) -> Result<ValueFrame, RecipherErrorFi
     })
 }
 
+/// The elements of `value` when it is an array, or `None` when it is not.
+///
+/// # Errors
+///
+/// A failure of kind `value` when an element cannot be read, such as one
+/// behind a getter that throws.
+pub fn elements<'e>(
+    env: &Env,
+    value: Unknown<'e>,
+) -> Option<Result<Vec<Unknown<'e>>, RecipherErrorFields>> {
+    if !value.is_array().unwrap_or(false) {
+        return None;
+    }
+    let array = Object::from_unknown(value).ok()?;
+    let read = || -> napi::Result<Vec<Unknown<'e>>> {
+        let len = array.get_array_length()?;
+        (0..len)
+            .map(|at| array.get_element::<Unknown<'e>>(at))
+            .collect()
+    };
+    Some(read().map_err(|error| refused(env, &error)))
+}
+
 /// Build the JavaScript value of an opened frame.
 ///
 /// # Errors
 ///
-/// napi's error when JavaScript refuses the value, such as a map key
-/// vitaminc does not build.
-pub fn build(env: &Env, value: ValueFrame) -> napi::Result<Unknown<'_>> {
+/// A failure of kind `open` for a value JavaScript cannot hold as it was
+/// sealed (a map key vitaminc does not build), and of kind `internal` for
+/// any other failure.
+pub fn build(env: &Env, value: ValueFrame) -> Result<Unknown<'_>, RecipherErrorFields> {
     let bytes = value.into_inner();
-    let frame = Frame::parse(bytes.risky_ref())
-        .map_err(|_| napi::Error::new(Status::GenericFailure, "an opened value is not a frame"))?;
-    JsBuilder::build(env, frame)
+    let frame = Frame::parse(bytes.risky_ref()).map_err(|_| {
+        RecipherErrorFields::internal("recipher::build_value", "an opened value is not a frame")
+    })?;
+    JsBuilder::build(env, frame).map_err(|error| not_built(env, &error))
+}
+
+/// The failure for a value `JsBuilder` did not build.
+fn not_built(env: &Env, error: &napi::Error) -> RecipherErrorFields {
+    if error.status == Status::PendingException {
+        let _ = take_exception(env);
+    }
+    if error.reason.starts_with("property name is not allowed") {
+        return RecipherErrorFields::new(
+            ErrorKind::Open,
+            "recipher::reserved_key",
+            "the value opened, but it has a property named `__proto__`, `constructor` or \
+             `prototype`, which vitaminc does not build in JavaScript",
+        );
+    }
+    RecipherErrorFields::internal(
+        "recipher::build_value",
+        format!(
+            "the opened value could not be given to JavaScript ({}). Report this as a bug \
+             in @cipherstash/recipher.",
+            error.status
+        ),
+    )
+}
+
+/// Whether `value` is one of vitaminc's `VcUuid`s.
+fn is_uuid(env: &Env, value: &Unknown<'_>) -> bool {
+    Wrappers::get(env)
+        .and_then(|wrappers| wrappers.classify(value))
+        .is_ok_and(|wrapper| wrapper == Some(Wrapper::Uuid))
 }
 
 /// The codes vitaminc throws a `TypeError` with for a scalar it cannot

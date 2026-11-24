@@ -7,11 +7,14 @@
  * generates them: untyped arguments, outcome objects. This module exports
  * the same classes, adapted by `adapt` so each method returns a `Result`,
  * under the signatures below, which say what a call takes and gives: one
- * value in and one ciphertext out, and the type a ciphertext opens as.
+ * value in and one ciphertext out, an array in and an array out, and the
+ * type a ciphertext opens as.
  */
 import { adapt, type Binding, binding, settleAsync } from './binding'
 import type { RecipherError } from './error'
+import type { Kind, ValueOf } from './kinds'
 import { err, type Result } from './result'
+import type { Opened, OpenedScalar, Value } from './values'
 
 declare const opens: unique symbol
 
@@ -19,9 +22,11 @@ declare const opens: unique symbol
  * One sealed value: opaque bytes, with its own data key.
  *
  * `T` is the type it decrypts to: `keyset.encrypt('..')` returns a
- * `Ciphertext<string>`. `toString()` and Node's `inspect` hide the bytes.
+ * `Ciphertext<string>`. A ciphertext read from stored bytes with no kind
+ * named opens as whatever it was sealed as, typed as any scalar.
+ * `toString()` and Node's `inspect` hide the bytes.
  */
-export interface Ciphertext<T = string> {
+export interface Ciphertext<T = OpenedScalar> {
   /** The bytes to store. A copy: changing it changes no ciphertext. */
   toBytes(): Uint8Array
   /** Names the type and hides the bytes. */
@@ -38,8 +43,18 @@ export interface CiphertextClass {
   /**
    * Read a ciphertext from stored bytes. This checks the bytes' shape only;
    * decrypting is what authenticates them.
+   *
+   * With a kind, such as `kinds.string`, it opens as that kind, and
+   * decrypting refuses a value sealed as another type. Read a JSON
+   * document back with `kinds.json`: with no kind, it opens as its JSON
+   * text, and `JSON.parse` of that text loses the digits of an integer
+   * outside a `number`'s safe range.
    */
-  fromBytes(bytes: Uint8Array): Result<Ciphertext<string>, RecipherError>
+  fromBytes<K extends Kind>(
+    bytes: Uint8Array,
+    kind: K,
+  ): Result<Ciphertext<ValueOf<K>>, RecipherError>
+  fromBytes(bytes: Uint8Array): Result<Ciphertext, RecipherError>
 }
 
 /**
@@ -49,15 +64,26 @@ export interface CiphertextClass {
 export interface Keyset {
   /**
    * Encrypt a value, with no context, as one ciphertext with its own data
-   * key.
+   * key. The value's type picks how it is encrypted. An array of values is
+   * an array of ciphertexts, in the same order, made with one key request
+   * however long it is. All or nothing: one value refused is an `Err` for
+   * the whole array.
    */
-  encrypt(value: string): Promise<Result<Ciphertext<string>, RecipherError>>
+  encrypt<V extends Value>(
+    value: V,
+  ): Promise<Result<Ciphertext<Opened<V>>, RecipherError>>
+  encrypt<V extends Value>(
+    values: readonly V[],
+  ): Promise<Result<Ciphertext<Opened<V>>[], RecipherError>>
   /**
-   * Open a ciphertext sealed under this keyset. A ciphertext from another
-   * keyset is an `Err` of kind `foreign_keyset`, refused before any key is
-   * requested.
+   * Open a ciphertext sealed under this keyset, or an array of them in one
+   * key request. A ciphertext from another keyset is an `Err` of kind
+   * `foreign_keyset`, refused before any key is requested.
    */
   decrypt<T>(ciphertext: Ciphertext<T>): Promise<Result<T, RecipherError>>
+  decrypt<T>(
+    ciphertexts: readonly Ciphertext<T>[],
+  ): Promise<Result<T[], RecipherError>>
   /** Names the type. */
   toString(): string
 }
@@ -81,8 +107,15 @@ export interface Cipher {
    * it. Encrypting needs a keyset.
    */
   defaultKeyset(): Keyset
-  /** Open a ciphertext from any of this cipher's keysets. */
+  /**
+   * Open a ciphertext from any of this cipher's keysets, as the type it
+   * opens as. An array opens as an array, in the same order, with one key
+   * request for each keyset its ciphertexts were sealed under.
+   */
   decrypt<T>(ciphertext: Ciphertext<T>): Promise<Result<T, RecipherError>>
+  decrypt<T>(
+    ciphertexts: readonly Ciphertext<T>[],
+  ): Promise<Result<T[], RecipherError>>
   /** Names the type. */
   toString(): string
 }

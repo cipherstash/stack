@@ -109,14 +109,6 @@ describe('failures are values', () => {
     expect(opened.isErr()).toBe(true)
   })
 
-  it('refuses a value that is not a string', async () => {
-    const keyset = (await cipher()).defaultKeyset()
-    // @ts-expect-error: this build encrypts a string.
-    const result = await keyset.encrypt(5)
-    expect(kindOf(result.err())).toBe('value')
-    expect(result.err()?.code).toBe('recipher::not_a_string')
-  })
-
   it('refuses a string with an unpaired surrogate, with a code of its own', async () => {
     const result = await (await cipher()).defaultKeyset().encrypt('\uD800')
     expect(result.err()?.kind).toBe('value')
@@ -153,9 +145,10 @@ describe('no call throws', () => {
   it('a method passed on its own keeps its cipher', async () => {
     const c = await cipher()
     const keyset = c.defaultKeyset()
-    const sealed = (await Promise.all(['a', 'b'].map(keyset.encrypt))).map(
-      (result) => result.unwrap(),
-    )
+    const encrypt = keyset.encrypt
+    const sealed = (
+      await Promise.all(['a', 'b'].map((text) => encrypt(text)))
+    ).map((result) => result.unwrap())
     const opened = await Promise.all(sealed.map(c.decrypt))
     expect(opened.map((result) => result.unwrap())).toEqual(['a', 'b'])
     const { decrypt } = keyset
@@ -174,19 +167,19 @@ describe('no call throws', () => {
   it('arguments of every wrong type resolve to an Err', async () => {
     const c = await cipher()
     const keyset = c.defaultKeyset()
-    const wrong: unknown[] = [
+    const notValues: unknown[] = [
       undefined,
-      null,
-      0,
       {},
-      [],
       Symbol('s'),
       () => 1,
       new Map(),
     ]
-    for (const value of wrong) {
+    for (const value of notValues) {
+      expect((await keyset.encrypt(value as never)).isErr()).toBe(true)
+    }
+    const notCiphertexts: unknown[] = [...notValues, null, 0, 'text', [1]]
+    for (const value of notCiphertexts) {
       const anyValue = value as never
-      expect((await keyset.encrypt(anyValue)).isErr()).toBe(true)
       expect((await keyset.decrypt(anyValue)).isErr()).toBe(true)
       expect((await c.decrypt(anyValue)).isErr()).toBe(true)
       expect(Ciphertext.fromBytes(anyValue).isErr()).toBe(true)

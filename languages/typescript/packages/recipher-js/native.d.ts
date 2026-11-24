@@ -44,18 +44,39 @@ export declare class Cipher {
  * do `toString()` and Node's `inspect`: the class has no own properties.
  *
  * It exists as a class, rather than as the bytes, so that `decrypt` can
- * tell a ciphertext from any other value without reading it.
+ * tell a ciphertext from any other value, and so that it carries the type
+ * it opens as: a JSON document is sealed as its JSON text, and nothing in
+ * the bytes says it is JSON.
  */
 export declare class Ciphertext {
   /**
    * Read a ciphertext from stored bytes, a `Uint8Array` or a `Buffer`.
    * This checks the bytes' shape only; decrypting is what authenticates
    * them. A failure does not quote the bytes.
+   *
+   * With a kind, such as `kinds.string`, it opens as that kind, and
+   * decrypting refuses a value sealed as another type. `kinds.json` opens
+   * a JSON document. With none, it opens as whatever it was sealed as,
+   * and a JSON document opens as its JSON text.
    */
-  static fromBytes(bytes: unknown): Outcome<Ciphertext>
+  static fromBytes(bytes: unknown, kind?: unknown | undefined | null): Outcome<Ciphertext>
   /** The bytes to store: a copy, so changing it changes no ciphertext. */
   toBytes(): Uint8Array
   /** Names the type and hides the bytes. */
+  toString(): string
+}
+
+/**
+ * A JSON document to encrypt as one ciphertext, as its JSON text. Nothing
+ * inside it can be searched. Make one with `json(..)`.
+ *
+ * The document is read when it is made, so a later change to the object
+ * does not change what is encrypted. A document that cannot be encrypted
+ * is held as its failure, which `encrypt` returns. `Debug`, `toString()`
+ * and Node's `inspect` hide the document.
+ */
+export declare class Json {
+  /** Names the type and hides the document. */
   toString(): string
 }
 
@@ -68,9 +89,15 @@ export declare class Ciphertext {
 export declare class Keyset {
   /**
    * Encrypt a value, with no context, as one ciphertext with its own data
-   * key.
+   * key. An array of values is an array of ciphertexts, in the same
+   * order, made with one key request however long it is. All or nothing:
+   * one value refused is a failure for the whole array, before any
+   * request.
+   *
+   * A value's type picks how it is encrypted, by vitaminc's mapping for
+   * JavaScript. A `Json` from `json(..)` is encrypted as a JSON document.
    */
-  encrypt(value: unknown): Promise<Outcome<Ciphertext>>
+  encrypt(value: unknown): Promise<Outcome<Ciphertext | Ciphertext[]>>
   /**
    * Open a ciphertext sealed under this keyset. A ciphertext of another
    * keyset is a failure of kind `foreign_keyset`, before any key is
@@ -101,6 +128,16 @@ export declare function createTesting(seed: unknown): Promise<Outcome<Cipher>>
 
 /** The closed set of things that can go wrong, for a caller to switch on. */
 export type ErrorKind = 'declaration' | 'value' | 'credential' | 'zerokms' | 'foreign_keyset' | 'context_mismatch' | 'open' | 'cancelled' | 'internal'
+
+/**
+ * A JSON document, to encrypt as one ciphertext: a plain object, an array,
+ * text, a number, a `bigint`, a boolean or `null`, nested at most 127
+ * levels. An integer outside a `number`'s safe range is a `bigint`, within
+ * 64 bits; a whole `number` between 2^53 and 2^64 from zero is refused,
+ * since an integer was likely meant. The document is read now. Never
+ * throws: a document that cannot be encrypted is an `Err` from `encrypt`.
+ */
+export declare function json(document: unknown): Json
 
 /** A failure, as JavaScript receives it. */
 export interface RecipherErrorFields {

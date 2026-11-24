@@ -12,7 +12,7 @@ use stack_encrypt::ErrorPayload;
 
 /// The closed set of things that can go wrong, for a caller to switch on.
 #[napi(string_enum = "snake_case")]
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ErrorKind {
     /// A declaration the engine refused.
     Declaration,
@@ -41,7 +41,7 @@ pub enum ErrorKind {
 
 /// A failure, as JavaScript receives it.
 #[napi(object)]
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecipherErrorFields {
     /// What kind of failure it is.
     pub kind: ErrorKind,

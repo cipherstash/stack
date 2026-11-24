@@ -31,7 +31,73 @@ const opened = await cipher.decrypt(sealed.value)
   has its own data key.
 - The bytes are the engine's: Rust's `keyset.decrypt::<String>` opens what
   this package seals, and this package opens what Rust sealed.
-- This build encrypts a `string` only.
+
+## Values
+
+A value's type picks how it is encrypted. The mapping is vitaminc's, read
+and built by its `vitaminc-aead-napi` bridge:
+
+| Value | Encrypted as | Decrypts as |
+|---|---|---|
+| `string` | text | `string` |
+| `boolean` | a boolean | `boolean` |
+| `number` | a 64-bit float | `number` |
+| `bigint` | an integer, at the narrowest width that holds it | `bigint` |
+| `Uint8Array`, `Buffer` | bytes | `Uint8Array` |
+| `Date` | a timestamp | `Date` |
+| `new VcTimestamp('2026-11-23T01:02:03.000000001Z')` | a timestamp, in nanoseconds | `Date` when it is whole milliseconds, else `VcTimestamp` |
+| `new VcDate('2026-11-23')` | a calendar date | `VcDate` |
+| `new VcDecimal('1.50')` | a decimal, with its scale | `VcDecimal` |
+| `null` | null | `null` |
+| `json(value)` | a JSON document, as its JSON text | the document, from the `Ciphertext` that `encrypt` returned or one read with `kinds.json` |
+
+- Integers are a `bigint`. A `number` is a float, and `5` does not equal
+  the integer `5n`.
+- A plain object is refused. Wrap it in `json(..)`.
+- `VcUuid` is exported, but the engine's value model does not hold a UUID
+  yet, so encrypting one is an `Err` of kind `value`, code
+  `recipher::uuid`.
+- vitaminc's rules apply: a `Map`, a `Set`, a class instance, a sparse
+  array, a typed array other than a `Uint8Array`, a string with an
+  unpaired surrogate, and a property named `__proto__`, `constructor` or
+  `prototype` are refused, each with a code of its own.
+
+An array in is an array out, in the same order, with one key request
+however long it is:
+
+```ts
+const sealed = await keyset.encrypt(['first secret', 'second secret'])
+const opened = await cipher.decrypt(sealed.unwrap())
+```
+
+### JSON documents
+
+`json(value)` encrypts a document as one ciphertext, as the engine's
+`JsonPlaintext` does: as its JSON text.
+
+- An integer outside a `number`'s safe range is a `bigint`, in the 64-bit
+  range the engine's parser reads (`-(2n ** 63n)` to `2n ** 64n - 1n`); a
+  `bigint` outside it is refused.
+- A whole `number` between 2^53 and 2^64 from zero is refused: an integer
+  was likely meant, and its digits are not the ones written. Use a
+  `bigint`. Any other finite `number`, such as `1e20`, is a float.
+- Bytes, a `Date`, the wrapper classes and `undefined` have no JSON form
+  and are refused. So is a document nested deeper than 127 levels.
+- A property named `__proto__`, `constructor` or `prototype` cannot be
+  encrypted, and a document another SDK wrote with one opens as an `Err`
+  of kind `open`, code `recipher::reserved_key`: vitaminc does not build
+  those properties in JavaScript.
+- **Read a stored document back with `kinds.json`.** The bytes do not say
+  a value is JSON. `Ciphertext.fromBytes(bytes, kinds.json)` opens it as
+  the document. With no kind it opens as its JSON text, and `JSON.parse`
+  of that text loses the digits of a large integer.
+
+### Stored bytes
+
+`Ciphertext.fromBytes(bytes)` opens as whatever was sealed, typed as any
+scalar. `Ciphertext.fromBytes(bytes, kinds.string)` is typed by the kind,
+and decrypting refuses a value sealed as another type. An integer kind
+takes an integer of any width that fits it.
 
 ## Results, not exceptions
 
@@ -89,8 +155,7 @@ builds load the same addon, so they share its classes.
 
 ## What is not here yet
 
-Values other than a `string`, arrays, JSON documents, `opaque(..)`,
-records, search terms, credentials passed in code, named keysets, audit
+`opaque(..)` for a whole object, records, search terms, credentials passed in code, named keysets, audit
 metadata, cancellation, the wasm build and the platform packages.
 
 The JavaScript engine holds the plaintext strings it is given, and no test

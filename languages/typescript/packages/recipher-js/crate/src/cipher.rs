@@ -11,7 +11,7 @@ use std::sync::Arc;
 use napi::bindgen_prelude::{JavaScriptClassExt, JsValue, Object, PromiseRaw, Unknown};
 use napi::Env;
 use napi_derive::napi;
-use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::{ValueFrame, ValueKind};
 use stack_encrypt::kms::{DataKeySource, IndexKeySource, StackKms};
 use stack_encrypt::{CipherRef, DecryptFrom, EncryptInto, KeysetCipher, StackCipher};
 use vitaminc_protected::OpaqueDebug;
@@ -19,8 +19,10 @@ use vitaminc_protected::OpaqueDebug;
 use crate::ciphertext::Ciphertext;
 use crate::error::{ErrorKind, RecipherErrorFields};
 use crate::js;
-use crate::outcome::{refused, spawn, Outcome};
+use crate::json::Json;
+use crate::outcome::{not_made, refused, spawn, Outcome};
 use crate::value::OneValue;
+use napi::bindgen_prelude::ToNapiValue;
 
 /// The engine cipher, over the key source it was built with. A napi class
 /// cannot be generic, so the two key sources are the two variants.
@@ -119,30 +121,60 @@ impl Cipher {
 #[napi]
 impl Keyset {
     /// Encrypt a value, with no context, as one ciphertext with its own data
-    /// key.
-    #[napi(ts_return_type = "Promise<Outcome<Ciphertext>>")]
+    /// key. An array of values is an array of ciphertexts, in the same
+    /// order, made with one key request however long it is. All or nothing:
+    /// one value refused is a failure for the whole array, before any
+    /// request.
+    ///
+    /// A value's type picks how it is encrypted, by vitaminc's mapping for
+    /// JavaScript. A `Json` from `json(..)` is encrypted as a JSON document.
+    #[napi(ts_return_type = "Promise<Outcome<Ciphertext | Ciphertext[]>>")]
     pub fn encrypt<'e>(
         &self,
         env: &'e Env,
         value: Unknown<'_>,
     ) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
-        let value = match js::read(env, value).and_then(OneValue::new) {
-            Ok(value) => value,
-            Err(error) => return refused(env, error),
+        let (many, values) = match js::elements(env, value) {
+            Some(Ok(elements)) => (true, elements),
+            Some(Err(error)) => return refused(env, error),
+            None => (false, vec![value]),
         };
+        let mut sealable = Vec::with_capacity(values.len());
+        let mut opens_as = Vec::with_capacity(values.len());
+        for value in values {
+            match one_value(env, value) {
+                Ok((value, kind)) => {
+                    sealable.push(value);
+                    opens_as.push(kind);
+                }
+                Err(error) => return refused(env, error),
+            }
+        }
         let engine = Arc::clone(&self.engine);
         spawn(
             env,
             async move {
                 with_engine!(&*engine, |cipher| {
-                    seal(&cipher.default_keyset(), vec![value]).await
+                    seal(&cipher.default_keyset(), sealable).await
                 })
             },
-            |env, mut sealed| match sealed.pop() {
-                Some(ciphertext) => {
-                    Ok(Ciphertext::new(ciphertext).into_instance(env)?.to_unknown())
+            move |env, sealed| {
+                let mut instances = sealed
+                    .into_iter()
+                    .zip(opens_as)
+                    .map(|(sealed, opens_as)| {
+                        Ok(Ciphertext::new(sealed, opens_as)
+                            .into_instance(env)
+                            .map_err(not_made)?
+                            .to_unknown())
+                    })
+                    .collect::<Outcome<Vec<_>>>()?;
+                if many {
+                    return instances.into_unknown(env).map_err(not_made);
                 }
-                None => Err(napi::Error::from_reason("the engine sealed no value")),
+                instances.pop().ok_or_else(|| {
+                    RecipherErrorFields::internal("recipher::outcome", "the engine sealed no value")
+                })
             },
         )
     }
@@ -225,11 +257,12 @@ fn no_testing() -> RecipherErrorFields {
 }
 
 /// A new cipher's JavaScript value.
-fn cipher_value(env: &Env, engine: Engine) -> napi::Result<Unknown<'_>> {
+fn cipher_value(env: &Env, engine: Engine) -> Outcome<Unknown<'_>> {
     Ok(Cipher {
         engine: Arc::new(engine),
     }
-    .into_instance(env)?
+    .into_instance(env)
+    .map_err(not_made)?
     .to_unknown())
 }
 
@@ -242,43 +275,82 @@ enum Confined {
     ToDefault,
 }
 
-/// Open `ciphertext`, as `cipher.decrypt` and `keyset.decrypt` do.
+/// Open a ciphertext, or an array of them, as `cipher.decrypt` and
+/// `keyset.decrypt` do.
 fn open<'e>(
     env: &'e Env,
     engine: &Arc<Engine>,
-    ciphertext: Unknown<'_>,
+    value: Unknown<'_>,
     confined: Confined,
 ) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
-    let Some(ciphertext) = Ciphertext::of(env, ciphertext) else {
-        return refused(
-            env,
-            RecipherErrorFields::new(
-                ErrorKind::Value,
-                "recipher::not_a_ciphertext",
-                "decrypt takes a Ciphertext; read stored bytes with Ciphertext.fromBytes",
-            ),
-        );
+    let (many, values) = match js::elements(env, value) {
+        Some(Ok(elements)) => (true, elements),
+        Some(Err(error)) => return refused(env, error),
+        None => (false, vec![value]),
     };
-    let sealed = vec![ciphertext.sealed().clone()];
+    let mut ciphertexts = Vec::with_capacity(values.len());
+    for value in values {
+        match Ciphertext::of(env, value) {
+            Some(ciphertext) => ciphertexts.push(ciphertext),
+            None => {
+                return refused(
+                    env,
+                    RecipherErrorFields::new(
+                        ErrorKind::Value,
+                        "recipher::not_a_ciphertext",
+                        "decrypt takes a Ciphertext, or an array of them; read stored bytes \
+                         with Ciphertext.fromBytes",
+                    ),
+                )
+            }
+        }
+    }
+    let sealed = ciphertexts
+        .iter()
+        .map(|ciphertext| ciphertext.sealed().clone())
+        .collect();
     let engine = Arc::clone(engine);
     spawn(
         env,
         async move {
-            with_engine!(&*engine, |cipher| match confined {
+            let opened = with_engine!(&*engine, |cipher| match confined {
                 Confined::No => unseal(&**cipher, sealed).await,
                 Confined::ToDefault => unseal(&cipher.default_keyset(), sealed).await,
-            })
+            })?;
+            opened
+                .into_iter()
+                .zip(&ciphertexts)
+                .map(|(value, ciphertext)| ciphertext.opened(value))
+                .collect::<Outcome<Vec<_>>>()
         },
-        |env, mut opened| match opened.pop() {
-            Some(value) => js::build(env, value),
-            None => Err(napi::Error::from_reason("the engine opened no value")),
+        move |env, opened| {
+            let mut values = opened
+                .into_iter()
+                .map(|value| js::build(env, value))
+                .collect::<Outcome<Vec<_>>>()?;
+            if many {
+                return values.into_unknown(env).map_err(not_made);
+            }
+            values.pop().ok_or_else(|| {
+                RecipherErrorFields::internal("recipher::outcome", "the engine opened no value")
+            })
         },
     )
 }
 
+/// One value to seal, and the kind its ciphertext opens as: a `Json`'s
+/// document, which opens as JSON, or any other value, which opens as what
+/// it was sealed as.
+fn one_value(env: &Env, value: Unknown<'_>) -> Outcome<(OneValue, Option<ValueKind>)> {
+    if let Some(document) = Json::of(env, value) {
+        return Ok((OneValue::json(document?), Some(ValueKind::Json)));
+    }
+    Ok((OneValue::scalar(js::read(env, value)?)?, None))
+}
+
 /// Seal values under `keyset`, each as one ciphertext with its own data
 /// key, in one key request however many there are.
-async fn seal<K>(
+pub(crate) async fn seal<K>(
     keyset: &KeysetCipher<'_, K>,
     values: Vec<OneValue>,
 ) -> Outcome<Vec<stack_encrypt::Ciphertext>>
@@ -288,12 +360,20 @@ where
     values
         .encrypt_into::<Vec<stack_encrypt::Ciphertext>, K>(keyset)
         .await
-        .map_err(|error| RecipherErrorFields::engine(&error))
+        .map_err(|error| match error {
+            // No ciphertext exists yet, so this is the value, not damage.
+            stack_encrypt::Error::Aead => RecipherErrorFields::new(
+                ErrorKind::Value,
+                "recipher::not_sealed",
+                "the engine could not seal the value as given",
+            ),
+            error => RecipherErrorFields::engine(&error),
+        })
 }
 
 /// Open ciphertexts through `cipher` (a cipher, or one keyset of it), in
 /// one key request for each keyset they were sealed under.
-async fn unseal<'c, K>(
+pub(crate) async fn unseal<'c, K>(
     cipher: impl Into<CipherRef<'c, K>>,
     sealed: Vec<stack_encrypt::Ciphertext>,
 ) -> Outcome<Vec<ValueFrame>>
@@ -315,76 +395,5 @@ mod tests {
         assert_eq!(error.kind, ErrorKind::Internal);
         assert_eq!(error.code, "recipher::no_testing");
         assert!(error.message.contains("build:debug"));
-    }
-
-    /// The SDK's seal and the engine's typed API read each other's
-    /// ciphertexts, so the bytes are the engine's.
-    #[cfg(feature = "testing")]
-    mod with_the_engine {
-        use super::super::{seal, unseal, OneValue};
-        use crate::error::ErrorKind;
-        use stack_encrypt::dynamic::ValueFrame;
-        use stack_encrypt::kms::DeterministicSource;
-        use stack_encrypt::StackCipher;
-
-        async fn engine(seed: u8) -> StackCipher<DeterministicSource> {
-            StackCipher::builder()
-                .kms(DeterministicSource::new([seed; 32]))
-                .init()
-                .await
-                .unwrap()
-        }
-
-        fn one(text: &str) -> OneValue {
-            OneValue::new(ValueFrame::of(text).unwrap()).unwrap()
-        }
-
-        #[tokio::test]
-        async fn the_engine_opens_what_the_sdk_sealed() {
-            let cipher = engine(7).await;
-            let sealed = seal(&cipher.default_keyset(), vec![one("from the sdk")])
-                .await
-                .unwrap()
-                .remove(0);
-            let stored = stack_encrypt::Ciphertext::from_bytes(&sealed.to_bytes()).unwrap();
-            let opened: String = cipher.default_keyset().decrypt(stored).await.unwrap();
-            assert_eq!(opened, "from the sdk");
-        }
-
-        #[tokio::test]
-        async fn the_sdk_opens_what_the_engine_sealed() {
-            let cipher = engine(7).await;
-            let sealed = cipher
-                .default_keyset()
-                .encrypt("from the engine".to_owned())
-                .await
-                .unwrap();
-            let opened = unseal(&cipher, vec![sealed]).await.unwrap().remove(0);
-            assert_eq!(opened, ValueFrame::of("from the engine").unwrap());
-        }
-
-        #[tokio::test]
-        async fn an_altered_ciphertext_does_not_open() {
-            let cipher = engine(7).await;
-            let mut bytes = seal(&cipher.default_keyset(), vec![one("intact")])
-                .await
-                .unwrap()
-                .remove(0)
-                .to_bytes();
-            let last = bytes.len() - 1;
-            bytes[last] ^= 0x01;
-            let altered = stack_encrypt::Ciphertext::from_bytes(&bytes).unwrap();
-            let error = unseal(&cipher, vec![altered]).await.unwrap_err();
-            assert_eq!(error.kind, ErrorKind::Open);
-            assert!(!error.message.contains("intact"));
-        }
-
-        #[tokio::test]
-        async fn a_ciphertext_of_another_seed_does_not_open() {
-            let sealed = seal(&engine(1).await.default_keyset(), vec![one("elsewhere")])
-                .await
-                .unwrap();
-            assert!(unseal(&engine(2).await, sealed).await.is_err());
-        }
     }
 }

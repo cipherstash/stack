@@ -12,26 +12,15 @@ pub(crate) type Outcome<T> = Result<T, RecipherErrorFields>;
 
 /// The outcome object for `outcome`: `{ ok: true, value }`, with `value`
 /// building the success's JavaScript value, or `{ ok: false, error }`. A
-/// failure to build the value is an `internal` failure, so the call still
-/// returns an outcome. The `napi::Result` is an error only when napi cannot
-/// make the object itself.
+/// failure to build the value is a failure too, so the call still returns
+/// an outcome. The `napi::Result` is an error only when napi cannot make the
+/// object itself.
 pub(crate) fn settle<'e, T>(
     env: &'e Env,
     outcome: Outcome<T>,
-    value: impl FnOnce(&'e Env, T) -> napi::Result<Unknown<'e>>,
+    value: impl FnOnce(&'e Env, T) -> Outcome<Unknown<'e>>,
 ) -> napi::Result<Object<'e>> {
-    let built = outcome.and_then(|ok| {
-        value(env, ok).map_err(|error| {
-            RecipherErrorFields::internal(
-                "recipher::build_value",
-                format!(
-                    "the result could not be given to JavaScript ({}). Report this as a \
-                     bug in @cipherstash/recipher.",
-                    error.status
-                ),
-            )
-        })
-    });
+    let built = outcome.and_then(|ok| value(env, ok));
     let mut object = Object::new(env)?;
     match built {
         Ok(value) => {
@@ -46,9 +35,24 @@ pub(crate) fn settle<'e, T>(
     Ok(object)
 }
 
+/// The failure for a value napi could not make, which is never the
+/// caller's to fix.
+pub(crate) fn not_made(error: napi::Error) -> RecipherErrorFields {
+    RecipherErrorFields::internal(
+        "recipher::build_value",
+        format!(
+            "the result could not be given to JavaScript ({}). Report this as a bug in \
+             @cipherstash/recipher.",
+            error.status
+        ),
+    )
+}
+
 /// A failure, as an outcome object.
 pub(crate) fn failed(env: &Env, error: RecipherErrorFields) -> napi::Result<Object<'_>> {
-    settle(env, Err::<(), _>(error), |env, ()| ().into_unknown(env))
+    settle(env, Err::<(), _>(error), |env, ()| {
+        ().into_unknown(env).map_err(not_made)
+    })
 }
 
 /// Run `work` on napi's runtime and resolve the promise to its outcome
@@ -61,7 +65,7 @@ pub(crate) fn spawn<'e, T, F, V>(
 where
     T: Send + 'static,
     F: Future<Output = Outcome<T>> + Send + 'static,
-    V: FnOnce(&'e Env, T) -> napi::Result<Unknown<'e>> + 'static,
+    V: FnOnce(&'e Env, T) -> Outcome<Unknown<'e>> + 'static,
 {
     env.spawn_future_with_callback(async move { Ok(work.await) }, move |env, outcome| {
         settle(env, outcome, value)
@@ -75,6 +79,6 @@ pub(crate) fn refused(
     error: RecipherErrorFields,
 ) -> napi::Result<PromiseRaw<'_, Object<'_>>> {
     spawn(env, async move { Err::<(), _>(error) }, |env, ()| {
-        ().into_unknown(env)
+        ().into_unknown(env).map_err(not_made)
     })
 }

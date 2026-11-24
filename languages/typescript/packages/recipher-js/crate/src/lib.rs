@@ -33,23 +33,46 @@
 mod cipher;
 mod ciphertext;
 mod error;
-pub mod js;
+mod js;
+mod json;
 mod outcome;
 mod value;
+
+#[cfg(all(test, feature = "testing"))]
+mod engine_tests;
 
 pub use cipher::{create_testing, Cipher, Keyset};
 pub use ciphertext::Ciphertext;
 pub use error::{ErrorKind, RecipherErrorFields};
+pub use json::{json_document, Json};
 
+use napi::bindgen_prelude::{JsObjectValue, Object, Unknown};
+use napi::Env;
 use napi_derive::napi;
 
 /// The version of the interface between the package's TypeScript and this
 /// build.
-pub const BINDING_INTERFACE: u32 = 1;
+pub const BINDING_INTERFACE: u32 = 2;
 
 /// The version of the interface between the package's TypeScript and this
 /// build. The TypeScript refuses a build that reports another.
 #[napi]
 pub fn binding_interface() -> u32 {
     BINDING_INTERFACE
+}
+
+/// vitaminc's wrapper classes, `VcDate`, `VcTimestamp`, `VcDecimal` and
+/// `VcUuid`, for the types JavaScript lacks: exported so JavaScript can
+/// construct them, and so the values it decrypts are instances of them.
+// napi's module registration calls it; `clippy --all-targets` also builds
+// the crate as a test, where nothing does.
+#[cfg_attr(test, allow(dead_code))]
+#[napi(module_exports)]
+fn wrappers(mut exports: Object<'_>, env: Env) -> napi::Result<()> {
+    let classes = vitaminc_aead_napi::Wrappers::exports(&env)?;
+    for wrapper in vitaminc_aead_napi::Wrapper::ALL {
+        let name = wrapper.class_name();
+        exports.set_named_property(name, classes.get_named_property::<Unknown<'_>>(name)?)?;
+    }
+    Ok(())
 }
