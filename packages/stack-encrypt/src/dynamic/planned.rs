@@ -92,6 +92,7 @@ use crate::contexts::{self, CallerShape, Contexts, LeafContext, Placeholder};
 use crate::plan::{field_label, join, FieldValues, IntoLabel, Slot, FROM_CALL, FROM_PLAN};
 #[cfg(target_arch = "wasm32")]
 use crate::target::Step;
+#[cfg(any(target_arch = "wasm32", test))]
 use crate::target::YIELD_EVERY;
 use crate::target::{
     ciphertext, indexed, inspect, open, AeadContext, Borrowed, CallerContext, DeclaredContext,
@@ -708,8 +709,6 @@ fn confine<'a, T: 'a, K>(
 /// pending a chunk at a time ([`build`](Self::build)).
 struct GroupRows<'a, R, T: 'a, K> {
     groups: Vec<GroupOfRows<'a, R, T, K>>,
-    /// The first group with rows still to build.
-    at: usize,
 }
 
 /// One group of [`GroupRows`]: the rows still to build and the pendings
@@ -736,7 +735,7 @@ impl<'a, R, T: 'a, K> GroupRows<'a, R, T, K> {
                 }
             })
             .collect();
-        (Self { groups, at: 0 }, positions)
+        (Self { groups }, positions)
     }
 
     /// Build rows in order through `row`, until the rows this call built
@@ -754,27 +753,26 @@ impl<'a, R, T: 'a, K> GroupRows<'a, R, T, K> {
         row: &mut impl FnMut(&Absent, R) -> Pending<'a, T, K>,
     ) -> bool {
         let mut weight = 0;
-        while let Some(group) = self.groups.get_mut(self.at) {
+        let mut failed = false;
+        // A group whose rows are all built yields none, so each chunk
+        // starts where the last one stopped.
+        'build: for group in &mut self.groups {
             for next in group.rows.by_ref() {
                 let pending = row(&group.absent, next);
-                let failed = pending.has_failed();
+                failed = pending.has_failed();
                 weight += pending.keys().max(1);
                 group.built.push(pending);
-                if failed {
-                    for group in &mut self.groups {
-                        group.rows.by_ref().for_each(drop);
-                    }
-                    return false;
-                }
-                if weight >= budget {
-                    return self.groups[self.at..]
-                        .iter()
-                        .any(|group| group.rows.len() > 0);
+                if failed || weight >= budget {
+                    break 'build;
                 }
             }
-            self.at += 1;
         }
-        false
+        if failed {
+            for group in &mut self.groups {
+                group.rows.by_ref().for_each(drop);
+            }
+        }
+        self.groups.iter().any(|group| group.rows.len() > 0)
     }
 
     /// The pendings built for each group's rows.
@@ -789,10 +787,10 @@ impl<'a, R, T: 'a, K> GroupRows<'a, R, T, K> {
 /// ([`Pending::in_steps`]), [`YIELD_EVERY`] data keys' worth at a time with
 /// a yield between two chunks, so a host that cannot preempt the guest
 /// (the Go SDK, whose garbage collector waits for a running guest call)
-/// gets control back while a large batch is built. Natively they are built
-/// now, by the same chunks, with no yield between them: a step would hold
-/// `row`, which holds the cipher, across the yield, and a native step must
-/// be `Send`, which would ask the key source to be `Sync`.
+/// gets control back while a large batch is built. Natively they are all
+/// built now, in one pass with no yield: a step would hold `row`, which
+/// holds the cipher, across the yield, and a native step must be `Send`,
+/// which would ask the key source to be `Sync`.
 ///
 /// The rows are built in the same order, into the same pendings, either
 /// way, and nothing is requested until every row is built.
@@ -810,7 +808,8 @@ fn built_in_chunks<'a, R: 'a, T: 'a, U: 'a, K: 'a>(
     {
         let _ = cipher_ref.into();
         let (mut rows, mut row) = (rows, row);
-        while rows.build(YIELD_EVERY, &mut row) {}
+        // No budget: every row, or every row up to a failed one.
+        let _ = rows.build(usize::MAX, &mut row);
         finish(rows.into_built())
     }
 }
@@ -1558,6 +1557,27 @@ mod tests {
         }
     }
 
+    /// Build `rows` a chunk at a time, as a wasm guest does, and say how
+    /// many rows were built once each chunk was. A build that never says it
+    /// is done fails here instead of hanging the test.
+    fn chunks<'a, R, T: 'a, K>(
+        rows: &mut GroupRows<'a, R, T, K>,
+        row: &mut impl FnMut(&Absent, R) -> Pending<'a, T, K>,
+    ) -> Vec<usize> {
+        let mut built = Vec::new();
+        for _ in 0..1_000 {
+            let more = rows.build(YIELD_EVERY, row);
+            built.push(rows.groups.iter().map(|group| group.built.len()).sum());
+            if !more {
+                return built;
+            }
+        }
+        panic!(
+            "the build still had rows to build after {} chunks",
+            built.len()
+        );
+    }
+
     /// A batch's rows are built a chunk at a time, each chunk ending once
     /// its rows ask for [`YIELD_EVERY`] data keys: the rows of the shared
     /// plan seal one value each, so 200 rows are built 64 at a time, and a
@@ -1596,19 +1616,7 @@ mod tests {
             let description = compose::<FakeDataKeySource>(&plan, absent).expect("lowers");
             keyset.run(description, values, extend.clone())
         };
-        let mut chunks = Vec::new();
-        loop {
-            let more = rows.build(YIELD_EVERY, &mut build);
-            chunks.push(
-                rows.groups
-                    .iter()
-                    .map(|group| group.built.len())
-                    .sum::<usize>(),
-            );
-            if !more {
-                break;
-            }
-        }
+        let chunks = chunks(&mut rows, &mut build);
         assert_eq!(chunks, [64, 128, 192, 200]);
         let yields = chunks.len() - 1;
         assert_eq!(yields, 200 / YIELD_EVERY, "a yield between each two chunks");
@@ -1621,6 +1629,56 @@ mod tests {
             .collect();
         let sealed = Pending::all(&keyset, runs).await.expect("seals");
         assert_eq!(sealed[0].len() + sealed[1].len(), 200);
+    }
+
+    /// A chunk is weighed in data keys, not rows: rows that seal two values
+    /// each are built 32 at a time.
+    #[tokio::test]
+    async fn a_chunk_ends_at_yield_every_keys_whatever_each_row_asks_for() {
+        let cipher = StackCipher::builder()
+            .kms(FakeDataKeySource::new())
+            .init()
+            .await
+            .expect("build cipher");
+        let keyset = cipher.default_keyset();
+        let value = obj(vec![
+            field("age", &["c", "eq"], "uint32"),
+            field("id", &["c"], "uint64"),
+        ]);
+        let plan = record::plan(frame_of(&value).as_protected_ref().as_deref()).expect("parses");
+        let extend = plan.declared_context();
+        let (mut rows, _) = GroupRows::new(vec![(
+            Absent::new(),
+            (0..100).collect(),
+            (0..100u32)
+                .map(|i| values(Some(Tree::UInt32(i)), Some(Tree::UInt64(i.into()))))
+                .collect(),
+        )]);
+        let mut build = |absent: &Absent, values: FieldValues| {
+            let description = compose::<FakeDataKeySource>(&plan, absent).expect("lowers");
+            let pending = keyset.run(description, values, extend.clone());
+            assert_eq!(pending.keys(), 2, "a row asks for a key per sealed value");
+            pending
+        };
+        assert_eq!(chunks(&mut rows, &mut build), [32, 64, 96, 100]);
+    }
+
+    /// A batch that ends on a chunk's boundary is done with that chunk: no
+    /// empty chunk, so no yield, after it.
+    #[tokio::test]
+    async fn a_batch_that_fills_its_last_chunk_is_done_with_it() {
+        let cipher = StackCipher::builder()
+            .kms(FakeDataKeySource::new())
+            .init()
+            .await
+            .expect("build cipher");
+        let keyset = cipher.default_keyset();
+        let mut build = |_: &Absent, i: usize| Pending::ready(&keyset, Ok(i));
+        let (mut rows, _) = GroupRows::new(vec![
+            (Absent::new(), (0..100).collect(), (0..100).collect()),
+            (Absent::new(), (100..128).collect(), (100..128).collect()),
+        ]);
+        assert_eq!(chunks(&mut rows, &mut build), [64, 128]);
     }
 
     /// A row with no data key weighs one, so a batch that seals nothing is

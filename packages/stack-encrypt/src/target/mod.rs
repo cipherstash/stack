@@ -204,7 +204,7 @@ pub use operations::{
 pub(crate) use pending::KeysetSelector;
 #[cfg(all(feature = "dynamic", target_arch = "wasm32"))]
 pub(crate) use pending::Step;
-#[cfg(feature = "dynamic")]
+#[cfg(all(feature = "dynamic", any(target_arch = "wasm32", test)))]
 pub(crate) use pending::YIELD_EVERY;
 pub use pending::{CipherRef, Pending, PendingFuture};
 pub use request::{Request, Responses};

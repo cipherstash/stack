@@ -67,7 +67,10 @@ enum Fulfilled<'a, T> {
 /// a wasm guest, and how many a batch of records builds between them
 /// ([`in_steps`](Pending::in_steps)). `stack-kms` has its own copy (`futures::YIELD_EVERY`, for
 /// deriving keys), and the two are meant to stay equal.
-#[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+#[cfg_attr(
+    not(all(feature = "dynamic", any(target_arch = "wasm32", test))),
+    allow(dead_code)
+)]
 pub(crate) const YIELD_EVERY: usize = 64;
 
 /// Run `fulfil` to its end, without yielding.
