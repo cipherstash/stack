@@ -124,11 +124,17 @@ jobs:
       #
       # A fresh RunsOn machine can still be running apt from boot, and apt-get
       # fails at once on a held lock unless told to wait for it.
+      # DPkg::Lock::Timeout makes install wait. It does not make update wait
+      # for the package-list lock, so update retries for up to 5 minutes.
       - name: Install cross-compile toolchain (linux-arm64-gnu)
         if: ${{ matrix.cfg.platform == 'linux-arm64-gnu' }}
         run: |
           set -euo pipefail
-          sudo apt-get -o DPkg::Lock::Timeout=300 update
+          for attempt in $(seq 1 20); do
+            sudo apt-get -o DPkg::Lock::Timeout=300 update && break
+            if [ "$attempt" -eq 20 ]; then exit 1; fi
+            sleep 15
+          done
           sudo apt-get -o DPkg::Lock::Timeout=300 install -y gcc-13-aarch64-linux-gnu
           sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc-13 /usr/bin/aarch64-linux-gnu-gcc
 

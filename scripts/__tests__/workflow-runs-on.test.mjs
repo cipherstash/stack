@@ -49,11 +49,18 @@ const expressionRunnerRefs = () =>
 const APT_COMMAND =
   /\bapt(?:-get)?\s.*\b(?:update|install|upgrade|dist-upgrade|remove|purge|autoremove)\b/
 
+// DPkg::Lock::Timeout covers only the dpkg locks. apt-get update takes the
+// package-list lock without waiting, whatever the option says, so it must
+// be retried in a loop that ends with `&& break`.
+const APT_UPDATE = /\bapt(?:-get)?\s.*\bupdate\b/
+
 export function aptFinding(run) {
   for (const line of String(run).split('\n')) {
     if (/^\s*#/.test(line)) continue
     if (APT_COMMAND.test(line) && !line.includes('DPkg::Lock::Timeout='))
       return `runs apt without waiting for the lock: "${line.trim()}". Add -o DPkg::Lock::Timeout=300.`
+    if (APT_UPDATE.test(line) && !/&&\s*break\b/.test(line))
+      return `runs apt-get update without retrying it: "${line.trim()}". It does not wait for the package-list lock, so retry it in a loop with && break.`
   }
   return null
 }
@@ -155,6 +162,18 @@ describe('apt on a new RunsOn machine', () => {
     ).toBeNull()
     expect(aptFinding('# sudo apt-get update')).toBeNull()
     expect(aptFinding('apt-cache policy doxygen')).toBeNull()
+  })
+
+  it('recognises an apt-get update that is not retried', () => {
+    expect(
+      aptFinding('sudo apt-get -o DPkg::Lock::Timeout=300 update'),
+    ).toMatch(/&& break/)
+    expect(
+      aptFinding('  sudo apt-get -o DPkg::Lock::Timeout=300 update && break'),
+    ).toBeNull()
+    expect(
+      aptFinding('sudo apt-get -o DPkg::Lock::Timeout=300 upgrade -y'),
+    ).toBeNull()
   })
 
   it('waits for the apt lock in every RunsOn job', () => {
