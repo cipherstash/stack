@@ -309,32 +309,59 @@ export function createRealDriver({
     },
     async migrate() {
       if (!stackSource) throw Error('Stack source not resolved')
-      if (stackSource.tarball)
-        await cp(stackSource.tarball, resolve(workspace, 'resolved-stack.tgz'))
-      const result = fakeMigration
-        ? await fakeMigrate({
-            root,
-            workspace,
-            kind: fakeMigration,
-            stack: stackSource.install,
-            procedure,
-          })
-        : await runMigrator({
-            command,
-            timeoutMs: manifest.agents?.limits?.timeMs,
-            maxToolCalls: manifest.agents?.limits?.toolCalls,
-            maxModelTurns: manifest.agents?.limits?.turns,
-            stop: () => isolation.stop({ expected: true }),
-            execute: (argv, timeoutMs) =>
-              isolation.exec({
-                actor: 'migrator',
-                workspace,
-                env: env(migratorStores),
-                command: argv,
-                forwards: forwards(migratorStores),
-                timeoutMs,
-              }),
-          })
+      const source = stackSource
+      if (source.tarball)
+        await cp(source.tarball, resolve(workspace, 'resolved-stack.tgz'))
+      /** @param {{stdout?:string, stderr?:string}} transcript */
+      const writeTranscript = async (transcript) => {
+        await writeFile(
+          resolve(output, 'migrator-transcript.log'),
+          `${transcript.stdout ?? ''}\n${transcript.stderr ?? ''}`,
+        )
+        manifest.artifacts = {
+          transcript: 'migrator-transcript.log',
+          snapshot: 'legacy-snapshot.json',
+        }
+      }
+      const migration = async () =>
+        fakeMigration
+          ? await fakeMigrate({
+              root,
+              workspace,
+              kind: fakeMigration,
+              stack: source.install,
+              procedure,
+            })
+          : await runMigrator({
+              command,
+              timeoutMs: manifest.agents?.limits?.timeMs,
+              maxToolCalls: manifest.agents?.limits?.toolCalls,
+              maxModelTurns: manifest.agents?.limits?.turns,
+              stop: () => isolation.stop({ expected: true }),
+              execute: (argv, timeoutMs) =>
+                isolation.exec({
+                  actor: 'migrator',
+                  workspace,
+                  env: env(migratorStores),
+                  command: argv,
+                  forwards: forwards(migratorStores),
+                  timeoutMs,
+                }),
+            })
+      /** @type {Awaited<ReturnType<typeof migration>>} */
+      let result
+      try {
+        result = await migration()
+      } catch (error) {
+        // A rejected Migrator carries its partial transcript; keep it on disk,
+        // since the failed Runs are the ones that most need diagnosing.
+        await writeTranscript(
+          error && typeof error === 'object'
+            ? /** @type {{stdout?:string, stderr?:string}} */ (error)
+            : {},
+        )
+        throw error
+      }
       if ('runtime' in result && result.runtime)
         manifest.agents = { ...manifest.agents, runtime: result.runtime }
       if (fakeMigration && fakeMigration !== 'noop')
@@ -436,6 +463,8 @@ export function createRealDriver({
           ? 'file:./resolved-stack.tgz'
           : `@cipherstash/stack@${manifest.stack}`,
       ])
+      if (tarball)
+        await verifyInstalledTarball({ workspace: oracleWorkspace, tarball })
       // PostgreSQL starts createApp only after its conversion, in behaviour().
       if (postgresUpgrade) return
       host = await isolation.openAppHost({
@@ -521,7 +550,8 @@ export function createRealDriver({
           )
           return checks
         }
-        let mutationSnapshot
+        /** @type {{snapshot: unknown} | {cause: string}} */
+        let mutationRead = { snapshot: undefined }
         const result = await behaviour(
           (method, args) => application.call(method, args),
           async () => {

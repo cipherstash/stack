@@ -66,6 +66,12 @@ export async function behaviour(call, afterSetActive = async () => {}) {
   /** @type {import('../types.js').OracleCheck[]} */
   const checks = []
   const check = createCheck(checks)
+  /** @param {string} method @param {unknown} value
+   * @param {unknown[]} expected @param {unknown} absent */
+  async function lookup(method, value, expected, absent) {
+    equal(orderedRows(await call(method, [value])), orderedRows(expected))
+    equal(await call(method, [absent]), [])
+  }
   await check('behaviour.legacy-get', async () =>
     equal(await call('get', [legacy.pk]), legacy),
   )

@@ -81,8 +81,8 @@ beforeEach(() => {
         return []
       }
       return Object.assign(query, {
-        unsafe: async (text: string) => {
-          statements.push({ database, username, text, values: [] })
+        unsafe: async (text: string, values: unknown[] = []) => {
+          statements.push({ database, username, text, values })
           if (cleanupFailure && text.startsWith(cleanupFailure))
             throw Error(`${cleanupFailure} failed`)
           return []
@@ -238,5 +238,23 @@ test('the EQL v2 bundle download is bounded and refused unless its digest matche
     expect(statements.some((query) => query.text === eqlV2Sql)).toBe(false)
   } finally {
     await disposeStores(resources)
+  }
+})
+
+test('independent store acquisitions with the same Run ID have unique Dynamo names', async () => {
+  const first: import('../run/real-stores.mjs').Resource[] = []
+  const second: import('../run/real-stores.mjs').Resource[] = []
+  const options = {
+    runId: 'same-prefix',
+    actor: `oracle${++actorOrdinal}`,
+    eqlBundle: fileURLToPath(new URL('../run/stores.mjs', import.meta.url)),
+  }
+  try {
+    const a = await createStoreSet({ ...options, resources: first })
+    const b = await createStoreSet({ ...options, resources: second })
+    expect(a.forwards[1].targetHost).not.toBe(b.forwards[1].targetHost)
+  } finally {
+    await disposeStores(second)
+    await disposeStores(first)
   }
 })
