@@ -95,7 +95,7 @@ Run: the command in Step 2. Expected: PASS.
 
 - [ ] **Step 5: Commit and push**
 
-If Step 2 passed, push nothing, because the pull request already merges cleanly. Otherwise:
+If Step 1 had no conflict and Step 2 passed, push nothing, because the pull request already merges cleanly. If Step 1 had a conflict and Step 2 passed, run `git push` to publish the merge commit. Otherwise:
 
 ```bash
 git add .github/workflows
