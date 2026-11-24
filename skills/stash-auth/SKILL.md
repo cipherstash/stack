@@ -484,8 +484,10 @@ client-side strategy model applies to apps behind the Proxy.
    show the user the `verificationUriComplete` URL it prints and wait for
    `device_bound` (the loop, and how to pick the region, are in `stash-cli`
    under Authentication). The same goes for an SDK in any language that
-   reports no credentials or no client key. Never run `stash env` to get
-   local credentials: it mints a new access key. With `@cipherstash/auth`'s
+   reports no credentials or no client key. The CLI needs Node 22 or later;
+   where there is none, ask the user to install it or to log in there
+   themselves. Never run `stash env` to get local credentials: it mints a
+   new access key. With `@cipherstash/auth`'s
    `AutoStrategy` and `CS_WORKSPACE_CRN` set, log in to that workspace, or
    unset it; the default client follows the CLI's current workspace.
 2. **Works locally, 401 in CI/production** → the deployed environment lacks
