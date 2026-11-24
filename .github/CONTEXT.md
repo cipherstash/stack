@@ -20,8 +20,8 @@ again.
 _Avoid_: PR run, CI run
 
 **Push check**:
-A check that runs on every PR push, so the author learns of a failure while
-still working on the change.
+A check that runs on each PR push, if the change touches its trigger paths.
+The author then learns of a failure while still working on the change.
 _Avoid_: fast check, PR check
 
 **Gate check**:
