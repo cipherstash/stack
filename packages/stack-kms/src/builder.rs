@@ -310,7 +310,7 @@ mod tests {
     }
 
     fn random_client_key() -> ClientKey {
-        use recipher::keyset::{EncryptionKeySet, ProxyKeySet};
+        use zerokms_keyset::keyset::{EncryptionKeySet, ProxyKeySet};
         let ek_a = EncryptionKeySet::generate().unwrap();
         let ek_b = EncryptionKeySet::generate().unwrap();
         ClientKey::new_v1(uuid::Uuid::new_v4(), ProxyKeySet::generate(&ek_a, &ek_b))

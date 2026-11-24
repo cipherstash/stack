@@ -915,12 +915,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
-name = "hex"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
-
-[[package]]
 name = "hex-literal"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1642,27 +1636,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "recipher"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e14e156e2d485b51cc67c19241e7d81ad524bda9fd4f77791b698ab10c8e26e9"
-dependencies = [
- "aes",
- "cmac",
- "getrandom 0.2.17",
- "hex",
- "hex-literal",
- "opaque-debug",
- "rand 0.8.6",
- "rand_chacha 0.3.1",
- "serde",
- "serde_cbor",
- "sha2",
- "thiserror 1.0.69",
- "zeroize",
-]
-
-[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1981,7 +1954,6 @@ dependencies = [
  "futures",
  "miette",
  "opaque-debug",
- "recipher",
  "serde",
  "serde_cbor",
  "serde_json",
@@ -1995,6 +1967,7 @@ dependencies = [
  "vitaminc 0.10.0",
  "vitaminc-protected 0.10.0",
  "zeroize",
+ "zerokms-keyset",
  "zerokms-protocol",
 ]
 
@@ -3211,6 +3184,26 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "zerokms-keyset"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b29117bf96605cf6ddb18b4050a9aa10b0256c72bb0a0f8f7ef4835ca9c6c12"
+dependencies = [
+ "aes",
+ "cmac",
+ "getrandom 0.2.17",
+ "hex-literal",
+ "opaque-debug",
+ "rand 0.8.6",
+ "rand_chacha 0.3.1",
+ "serde",
+ "serde_cbor",
+ "sha2",
+ "thiserror 1.0.69",
+ "zeroize",
 ]
 
 [[package]]

@@ -419,7 +419,7 @@ impl KeyProvider for ProfileKeyProvider {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use recipher::keyset::{EncryptionKeySet, ProxyKeySet};
+    use zerokms_keyset::keyset::{EncryptionKeySet, ProxyKeySet};
 
     fn random_client_key() -> ClientKey {
         let ek_a = EncryptionKeySet::generate().unwrap();

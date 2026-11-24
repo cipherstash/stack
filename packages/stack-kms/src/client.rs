@@ -6,9 +6,9 @@ use zerokms_protocol::{
     RetrievedKey, UnverifiedContext, ViturRequest, ViturRequestError,
 };
 
-use recipher::key::Iv;
 use stack_auth::{AuthStrategy, AuthStrategyBounds, CredentialAuthStrategy, SecretToken};
 use vitaminc::random::{Generatable, SafeRand};
+use zerokms_keyset::key::Iv;
 
 #[cfg(feature = "http")]
 use crate::connection::HttpConnection;
@@ -195,7 +195,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
                 tracing::trace!(target: "stack_kms::client", operation, "received {} keys - creating data keys", keys.len());
 
                 // Deriving a key from its key material is the costly part of
-                // a batch (a recipher re-encryption and a hash per key), so
+                // a batch (a proxy re-encryption and a hash per key), so
                 // the loop yields to the runtime every `YIELD_EVERY` keys. A
                 // host that cannot preempt the work (a wasm guest) gets
                 // control back between chunks.
@@ -705,9 +705,9 @@ mod tests {
     use super::test_connection::*;
     use super::*;
     use crate::key::V1KeySet;
-    use recipher::keyset::{EncryptionKeySet, ProxyKeySet};
     use std::borrow::Cow;
     use uuid::uuid;
+    use zerokms_keyset::keyset::{EncryptionKeySet, ProxyKeySet};
     use zerokms_protocol::{
         GenerateKeyResponse, GeneratedKey, RetrieveKeyResponse, RetrievedKey, ViturKeyMaterial,
     };
@@ -736,7 +736,7 @@ mod tests {
     }
 
     // 528 bytes is the size of the key material returned by ZeroKMS for the
-    // recipher proxy re-encryption scheme.
+    // zerokms-keyset proxy re-encryption scheme.
     fn key_material() -> ViturKeyMaterial {
         ViturKeyMaterial::from(vec![7u8; 528])
     }

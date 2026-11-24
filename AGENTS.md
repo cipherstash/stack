@@ -735,9 +735,10 @@ monorepo, which is where the silent failures are.
 ## Working on the Rust crates
 
 The stack-* crates came from `cipherstash/cipherstash-suite`, which still owns
-`cipherstash-client`, `cts-common`, `zerokms-protocol` and `recipher`. Here
-those come from crates.io, and `Cargo.lock` holds their exact versions. In the
-root `Cargo.toml`, `recipher` is pinned with `=`, and so are the order
+`cipherstash-client`, `cts-common`, `zerokms-protocol` and `zerokms-keyset`
+(published as `recipher` up to 0.3.3). Here those come from crates.io, and
+`Cargo.lock` holds their exact versions. In the root `Cargo.toml`,
+`zerokms-keyset` is pinned with `=`, and so are the order
 schemes `clww-ore` (formerly `cllw-ore`) and `ore-rs`, which live in
 `cipherstash/ore.rs`: a new release of either can change every stored order
 term. `cts-common` and `zerokms-protocol` take caret

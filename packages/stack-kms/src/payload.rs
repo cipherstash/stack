@@ -1,5 +1,5 @@
-use recipher::key::Iv;
 use std::borrow::Cow;
+use zerokms_keyset::key::Iv;
 use zerokms_protocol::{Context, DecryptionPolicy, KeyId, RetrieveKeySpec};
 
 /// The requirements for generating a data key from ZeroKMS.

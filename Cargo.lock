@@ -2750,27 +2750,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "recipher"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e14e156e2d485b51cc67c19241e7d81ad524bda9fd4f77791b698ab10c8e26e9"
-dependencies = [
- "aes",
- "cmac",
- "getrandom 0.2.17",
- "hex",
- "hex-literal",
- "opaque-debug",
- "rand 0.8.8",
- "rand_chacha 0.3.1",
- "serde",
- "serde_cbor",
- "sha2 0.10.9",
- "thiserror 1.0.69",
- "zeroize",
-]
-
-[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3545,7 +3524,6 @@ dependencies = [
  "lazy_static",
  "miette",
  "opaque-debug",
- "recipher",
  "reqwest",
  "rustls",
  "serde",
@@ -3565,6 +3543,7 @@ dependencies = [
  "vitaminc 0.10.0",
  "vitaminc-protected 0.10.0",
  "zeroize",
+ "zerokms-keyset",
  "zerokms-protocol",
 ]
 
@@ -5402,6 +5381,26 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "zerokms-keyset"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b29117bf96605cf6ddb18b4050a9aa10b0256c72bb0a0f8f7ef4835ca9c6c12"
+dependencies = [
+ "aes",
+ "cmac",
+ "getrandom 0.2.17",
+ "hex-literal",
+ "opaque-debug",
+ "rand 0.8.8",
+ "rand_chacha 0.3.1",
+ "serde",
+ "serde_cbor",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "zeroize",
 ]
 
 [[package]]
