@@ -104,7 +104,9 @@ revert the swap only if CI stops working.
 - **Pay for a Docker Team or Pro plan.** Either plan removes the pull limit.
   Billed yearly, Team costs $15 a user a month, for at least 2 users. Pro
   costs $9 a month. A Team plan also gives a token that belongs to the
-  organisation, not to one person.
+  organisation, not to one person. We keep the free account, for two
+  reasons. The swap is meant to reduce costs. It is also an experiment to
+  prove that RunsOn is viable for this repository.
 
 ## Consequences
 
