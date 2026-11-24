@@ -256,7 +256,7 @@ fn a_json_field_needs_the_eql_extension() {
     }))
     .unwrap_err();
     assert_eq!(refused.kind, ErrorKind::Declaration);
-    assert_eq!(refused.reason.as_deref(), Some("json_needs_target"));
+    assert_eq!(refused.reason(), Some("json_needs_target"));
 }
 
 #[test]

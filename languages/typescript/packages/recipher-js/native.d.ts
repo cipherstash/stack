@@ -213,8 +213,6 @@ export interface RecipherErrorFields {
   fields: Record<string, any>
   /** The errors behind this one, outermost first. */
   causes: Array<ErrorCause>
-  /** The engine's reason token, such as `no_fields`, where it gives one. */
-  reason?: string
   /** The field at fault, where one is known. */
   field?: string
   /**

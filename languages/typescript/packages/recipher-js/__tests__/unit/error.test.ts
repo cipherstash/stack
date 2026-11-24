@@ -59,12 +59,11 @@ describe('RecipherError', () => {
       kind: 'zerokms',
       code: 'stack_kms::x',
       message: 'refused',
-      reason: null,
+      help: null,
       field: 'email',
     })
     expect(read.kind).toBe('zerokms')
     expect(read.field).toBe('email')
-    expect(read.reason).toBeUndefined()
     expect(read.help).toBeUndefined()
     // An error that states no severity, or an unknown one, is an error.
     expect(read.severity).toBe('error')

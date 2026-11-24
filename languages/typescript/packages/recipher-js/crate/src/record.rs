@@ -381,13 +381,13 @@ fn engine_refused(record: &str, error: &stack_encrypt::dynamic::Error) -> Reciph
     let mut refused =
         RecipherErrorFields::diagnostic(ErrorKind::Declaration, error, Some(error.payload()));
     refused.record = Some(record.to_owned());
-    if refused.reason.as_deref() == Some("context_not_label") && !plain_segment(record) {
+    if refused.reason() == Some("context_not_label") && !plain_segment(record) {
         refused.field = None;
         refused.message = format!(
             "the record name `{record}` is not a plain segment of a field path: it is \
              empty, or holds a character the engine refuses in one"
         );
-    } else if refused.reason.as_deref() == Some("context_not_label") {
+    } else if refused.reason() == Some("context_not_label") {
         refused.message = format!(
             "the field name is not a plain segment of a field path: it is empty, or holds \
              a character the engine refuses in one. {}",

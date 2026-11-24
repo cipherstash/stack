@@ -93,8 +93,6 @@ pub struct RecipherErrorFields {
     pub fields: serde_json::Map<String, serde_json::Value>,
     /// The errors behind this one, outermost first.
     pub causes: Vec<ErrorCause>,
-    /// The engine's reason token, such as `no_fields`, where it gives one.
-    pub reason: Option<String>,
     /// The field at fault, where one is known.
     pub field: Option<String>,
     /// The record at fault, where one is known: a declaration, a row or a
@@ -167,6 +165,14 @@ fn causes_of(error: &dyn Diagnostic) -> Vec<ErrorCause> {
 }
 
 impl RecipherErrorFields {
+    /// The engine's reason token, such as `no_fields`, where the error's
+    /// fields hold one.
+    pub(crate) fn reason(&self) -> Option<&str> {
+        self.fields
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
+    }
+
     /// A failure of the SDK's own, with no help, fields or causes.
     pub(crate) fn new(kind: ErrorKind, code: &str, message: impl Into<String>) -> Self {
         Self {
@@ -178,7 +184,6 @@ impl RecipherErrorFields {
             severity: Severity::Error,
             fields: serde_json::Map::new(),
             causes: Vec::new(),
-            reason: None,
             field: None,
             record: None,
         }
@@ -212,7 +217,6 @@ impl RecipherErrorFields {
             help: error.help().map(|help| help.to_string()),
             url: error.url().map(|url| url.to_string()),
             severity: error.severity().map_or(Severity::Error, Severity::from),
-            reason: text_of("reason"),
             field: text_of("field"),
             causes: causes_of(error),
             fields,

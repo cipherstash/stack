@@ -42,7 +42,9 @@ const KINDS: ReadonlySet<string> = new Set<ErrorKind>([
  * - `severity` is `error`, unless the engine's diagnostic states `warning`
  *   or `advice`.
  * - `fields` holds the error's structured fields by `snake_case` name, and
- *   is empty where it has none. `reason` and `field` are two of them, typed.
+ *   is empty where it has none: a refused declaration's `reason`, a
+ *   ZeroKMS failure's `request_kind`.
+ * - `field` names the field at fault, where one is known.
  * - `record` names the record a declaration, a row or a stored row is of.
  * - `causes` lists the errors behind this one, outermost first. A cause
  *   from another library has no code and a fixed message.
@@ -59,7 +61,6 @@ export class RecipherError {
   readonly severity: Severity
   readonly fields: Readonly<Record<string, unknown>>
   readonly causes: readonly ErrorCause[]
-  readonly reason: string | undefined
   readonly field: string | undefined
   readonly record: string | undefined
 
@@ -77,7 +78,6 @@ export class RecipherError {
     this.causes = Object.freeze(
       (fields.causes ?? []).map((cause) => Object.freeze({ ...cause })),
     )
-    this.reason = fields.reason
     this.field = fields.field
     this.record = fields.record
     Object.freeze(this)
@@ -110,7 +110,6 @@ export function fromNative(error: unknown): RecipherError {
     severity,
     fields,
     causes,
-    reason,
     field,
     record,
   } = error as Record<string, unknown>
@@ -131,7 +130,6 @@ export function fromNative(error: unknown): RecipherError {
       ? { fields: fields as Record<string, unknown> }
       : {}),
     causes: Array.isArray(causes) ? causes.flatMap(causeOf) : [],
-    ...(typeof reason === 'string' ? { reason } : {}),
     ...(typeof field === 'string' ? { field } : {}),
     ...(typeof record === 'string' ? { record } : {}),
   })
