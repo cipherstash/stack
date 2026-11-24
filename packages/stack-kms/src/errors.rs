@@ -40,7 +40,7 @@ fn count_payload(expected: usize, received: usize) -> serde_json::Map<String, se
 #[derive(Diagnostic, Error, Debug)]
 #[error("Invalid keyset key material: {0}")]
 #[diagnostic(code(stack_kms::invalid_key_material))]
-pub struct InvalidKeyMaterialError(#[from] pub recipher::errors::RecipherError);
+pub struct InvalidKeyMaterialError(#[from] pub zerokms_keyset::Error);
 
 impl ErrorPayload for InvalidKeyMaterialError {}
 
@@ -223,7 +223,7 @@ mod codes {
     }
 
     fn material() -> InvalidKeyMaterialError {
-        recipher::errors::RecipherError::InvalidInputLength {
+        zerokms_keyset::Error::InvalidInputLength {
             expected: 32,
             received: 3,
         }

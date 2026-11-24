@@ -25,6 +25,11 @@ http = ["dep:reqwest", "dep:lazy_static", "dep:rustls", "stack-auth/http"]
 # Disable for consumers that only ever source the key in-memory or from the
 # environment. Never compiled on wasm32 regardless.
 profile = ["dep:stack-profile"]
+# On wasm32, re-encrypts key material with wasm SIMD (zerokms-keyset's
+# `wasm-simd`), which makes deriving a key faster. A wasm runtime without
+# SIMD refuses to load a module that contains a SIMD instruction, so this is
+# off by default. No effect on other targets.
+wasm-simd = ["zerokms-keyset/wasm-simd"]
 # Exposes `FakeDataKeySource`, a deterministic in-memory `DataKeySource` for
 # downstream crates (e.g. `stack-encrypt`) to unit-test encrypt/decrypt without
 # ZeroKMS credentials or network access, and `DeterministicSource`, whose keys
@@ -39,7 +44,7 @@ test-support = []
 http2 = ["http", "reqwest/http2"]
 
 [dependencies]
-recipher = { workspace = true }
+zerokms-keyset = { workspace = true }
 # The workspace entry is already `default-features = false`, so stack-auth's
 # `http` feature rides on this crate's `http` feature rather than arriving by
 # default.
@@ -83,7 +88,7 @@ rustls = { workspace = true, optional = true }
 
 [dev-dependencies]
 async-mutex = "1.4.0"
-recipher = { workspace = true }
+zerokms-keyset = { workspace = true }
 stack-auth = { workspace = true, features = ["test-utils"] }
 tempfile = "3.21.0"
 tokio = { workspace = true }

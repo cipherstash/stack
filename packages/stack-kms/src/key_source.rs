@@ -423,11 +423,11 @@ mod fake {
     use super::*;
     use crate::errors::{GenerateKeyError, RetrieveKeyError};
     use crate::key::DataKey;
-    use recipher::key::{Iv, Key};
     use sha2::{Digest, Sha256};
     use std::collections::HashMap;
     use std::sync::Mutex;
     use vitaminc::random::{Generatable, SafeRand};
+    use zerokms_keyset::key::{Iv, Key};
 
     /// An in-memory stub [`DataKeySource`] for tests and examples that need
     /// `generate_keys` → `retrieve_keys` to round-trip without ZeroKMS

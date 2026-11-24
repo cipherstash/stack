@@ -188,7 +188,7 @@ impl KeyProvider for ProfileStore {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use recipher::keyset::{EncryptionKeySet, ProxyKeySet};
+    use zerokms_keyset::keyset::{EncryptionKeySet, ProxyKeySet};
 
     /// Build a random `SecretKey` and return it alongside the `client_id` and raw keyset bytes.
     fn random_secret_key() -> (SecretKey, Uuid, Vec<u8>) {

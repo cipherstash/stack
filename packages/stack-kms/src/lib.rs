@@ -166,7 +166,7 @@ pub use stack_profile::ProfileStore;
 pub use payload::{GenerateKeyPayload, RetrieveKeyPayload};
 
 // Commonly needed re-exports from the protocol / crypto layers
-pub use recipher::key::{GenRandom, Iv};
+pub use zerokms_keyset::key::{GenRandom, Iv};
 pub use zerokms_protocol::{
     Context, DecryptionPolicy, IdentifiedBy, KeyId, Keyset, UnverifiedContext,
     UnverifiedContextValue, ViturKeyMaterial, MAX_DESCRIPTOR_LEN,

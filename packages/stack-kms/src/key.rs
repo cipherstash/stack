@@ -1,4 +1,4 @@
-pub(crate) use recipher::{
+pub(crate) use zerokms_keyset::{
     cipher::ProxyCipher,
     key::{Iv, Key},
     keyset::ProxyKeySet as KeySet,
@@ -96,7 +96,7 @@ impl DataKey {
     /// (IV) and key material obtained from ZeroKMS.
     ///
     /// Returns [`InvalidKeyMaterialError`] when the material is not the exact
-    /// length the keyset accepts (recipher validates up front) — the material
+    /// length the keyset accepts (zerokms-keyset validates up front) — the material
     /// is network-supplied, so a truncated or corrupt response must not panic.
     pub fn from_key_material(
         key: &ClientKey,
@@ -105,7 +105,7 @@ impl DataKey {
     ) -> Result<Self, InvalidKeyMaterialError> {
         let cipher = ProxyCipher::new(key.keyset.keyset());
         // `rect` is reencrypted key material — the derived data key is a hash of
-        // it — so wipe the returned copy on drop; recipher wipes its own
+        // it — so wipe the returned copy on drop; zerokms-keyset wipes its own
         // intermediate block buffer. (The Sha256 block buffer keeps the final
         // <=64-byte block; sha2 0.10 doesn't implement Zeroize and changing the
         // hash would alter the derived key, so that residue is accepted.)
@@ -181,8 +181,8 @@ impl IndexKey {
     /// keyset-root key material obtained from ZeroKMS.
     ///
     /// Returns [`LoadKeysetError::InvalidKeyMaterial`] when the material is
-    /// not the exact length the keyset accepts (33 16-byte blocks; recipher
-    /// owns the fact and validates up front) — the material is
+    /// not the exact length the keyset accepts (33 16-byte blocks;
+    /// zerokms-keyset owns the fact and validates up front) — the material is
     /// network-supplied, so a truncated or corrupt response must not panic.
     pub fn from_key_material(
         key: &ClientKey,
@@ -195,7 +195,7 @@ impl IndexKey {
         let iv = Iv::default();
         let cipher = ProxyCipher::new(key.keyset.keyset());
         // `rect` is reencrypted key material — the derived index key is a hash
-        // of it — so wipe the returned copy on drop; recipher wipes its own
+        // of it — so wipe the returned copy on drop; zerokms-keyset wipes its own
         // intermediate block buffer (matches `DataKey::from_key_material`).
         let rect = Zeroizing::new(
             cipher
@@ -244,7 +244,7 @@ impl ClientKey {
     /// Panics if the system random number generator fails.
     #[allow(clippy::expect_used)]
     pub fn generate_for_test() -> Self {
-        use recipher::keyset::{EncryptionKeySet, ProxyKeySet};
+        use zerokms_keyset::keyset::{EncryptionKeySet, ProxyKeySet};
 
         let generate =
             || EncryptionKeySet::generate().expect("the system random number generator failed");
@@ -335,7 +335,7 @@ impl<'de> Deserialize<'de> for V1KeySet {
 #[cfg(test)]
 mod tests {
     use super::{ClientKey, DataKey};
-    use recipher::keyset::{EncryptionKeySet, ProxyKeySet};
+    use zerokms_keyset::keyset::{EncryptionKeySet, ProxyKeySet};
 
     fn random_keyset() -> ProxyKeySet {
         let ek_a = EncryptionKeySet::generate().unwrap();
@@ -493,12 +493,12 @@ mod tests {
 
         #[test]
         fn from_key_material_rejects_invalid_lengths_instead_of_panicking() {
-            use recipher::errors::RecipherError;
+            use zerokms_keyset::Error as KeysetError;
 
             let ck = kat_client_key();
             let expected_len = index_key_kat::key_material().len();
             // Truncated, empty, non-block-multiple and over-long payloads: all
-            // network-supplied shapes that previously panicked inside recipher.
+            // network-supplied shapes that previously panicked inside the keyset crate.
             for len in [0usize, 1, 16, 527, 529, expected_len * 2] {
                 let material: zerokms_protocol::ViturKeyMaterial = vec![0u8; len].into();
                 match IndexKey::from_key_material(&ck, &material) {
@@ -506,7 +506,7 @@ mod tests {
                         assert!(
                             matches!(
                                 e.0,
-                                RecipherError::InvalidInputLength { expected, received }
+                                KeysetError::InvalidInputLength { expected, received }
                                     if expected == expected_len && received == len
                             ),
                             "unexpected inner error: {e:?}"

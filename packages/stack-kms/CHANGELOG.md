@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Breaking
+
+- Depends on `zerokms-keyset` 0.3.4 in place of `recipher` 0.3.1. It is the
+  same crate, renamed. The field of `InvalidKeyMaterialError` is now
+  `zerokms_keyset::Error` (was `recipher::errors::RecipherError`), and the
+  re-exported `GenRandom` and `Iv` now come from `zerokms_keyset::key`. To
+  migrate:
+
+  - In `Cargo.toml`, replace `recipher` with `zerokms-keyset = "0.3.4"`.
+  - Replace `recipher::errors::RecipherError` with `zerokms_keyset::Error`.
+    The error type is renamed, not only its crate.
+  - Replace the other `recipher::` paths with `zerokms_keyset::`, such as
+    `recipher::key::Iv` with `zerokms_keyset::key::Iv`.
+  - `zerokms_keyset::Error` is `#[non_exhaustive]`, so a `match` on the
+    field of `InvalidKeyMaterialError` needs a `_` arm.
+
+### Features
+
+- The `wasm-simd` feature. On wasm32 it re-encrypts key material with wasm
+  SIMD, which makes deriving a key faster. It is off by default, because a
+  wasm runtime without SIMD refuses to load a module that uses it.
+
 ## [0.2.0] - 2026-10-27
 
 ### Breaking

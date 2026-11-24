@@ -44,7 +44,7 @@ import (
 
 const (
 	testClientID = "6a70bd18-99ac-4650-b104-37eec3a15b09"
-	// A generated v1 client key (a recipher proxy keyset, CBOR, hex) with no
+	// A generated v1 client key (a zerokms-keyset proxy keyset, CBOR, hex) with no
 	// ZeroKMS behind it: the guest parses it, and it is distinctive enough
 	// for the residency scan.
 	testClientKey = "a4627031a16b7065726d75746174696f6e90090a0d070806020f0e010503040b0c006770325f66726f6da16b7065726d75746174696f6e90000e08070c030a01050d06040f0b09026570325f746fa16b7065726d75746174696f6e9005030c0f060702000e010a0b0804090d627033a16b7065726d75746174696f6e982102010c0a182008181b061116120b070f10051509181c0d131403181a0e181d18180400181f17181e1819"

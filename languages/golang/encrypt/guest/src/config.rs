@@ -136,7 +136,7 @@ mod tests {
     /// A valid v1 client key for fixtures, minted through the real key type
     /// so the hex exercises the actual `from_hex_v1` decoder.
     fn client_key_hex() -> (Uuid, String) {
-        use recipher::keyset::{EncryptionKeySet, ProxyKeySet};
+        use zerokms_keyset::keyset::{EncryptionKeySet, ProxyKeySet};
         let id = Uuid::from_u128(7);
         let authority = EncryptionKeySet::generate().expect("generate");
         let domain = EncryptionKeySet::generate().expect("generate");

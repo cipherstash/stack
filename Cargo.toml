@@ -77,11 +77,12 @@ stack-profile = { path = "./packages/stack-profile", version = "0.44.0" }
 # cts-common and zerokms-protocol take caret requirements because the
 # published stack-auth inherits them: an exact pin would stop the suite
 # unifying stack-auth with a later compatible cts-common, and a second copy
-# breaks the shared Crn, Region and WorkspaceId types. recipher feeds
-# only unpublished crates, so it stays exact.
+# breaks the shared Crn, Region and WorkspaceId types. zerokms-keyset (the
+# crate published as `recipher` up to 0.3.3) is pinned exactly and moved by
+# hand.
 cts-common = { version = "0.43.0", default-features = false }
 zerokms-protocol = "0.12.31"
-recipher = "=0.3.1"
+zerokms-keyset = "=0.3.4"
 # The two order-preserving schemes Stack Encrypt's order terms encrypt
 # through. Both implement vitaminc-ore's `OrderScheme` against vitaminc 0.10:
 # `clww-ore` (cllw-ore renamed) for CLWW ORE and OPE, and ore-rs's
