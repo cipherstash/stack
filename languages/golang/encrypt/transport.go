@@ -115,6 +115,9 @@ func (t *transport) perform(ctx context.Context, method, url string, headers, bo
 	// NewRequest only infers a length from the readers it knows; without
 	// one the transport would send the body chunked.
 	req.ContentLength = int64(len(body))
+	replay := &replaySource{body: body}
+	defer replay.end()
+	req.GetBody = replay.open
 	req.Header = parseHeaders(headers)
 	resp, err := t.rt.RoundTrip(req)
 	if err != nil {
@@ -155,10 +158,8 @@ func (t *transport) perform(ctx context.Context, method, url string, headers, bo
 // was handed; a Close before the send is complete fails the read rather
 // than sending zeros in place of the request.
 //
-// A body of this type has no GetBody, so net/http cannot replay the
-// request on a reused connection that turns out to be dead. Replay would
-// need the plaintext to outlive Close, and the guest only ever POSTs,
-// which net/http does not replay in any case.
+// A request that is sent again reads a body of its own, from the request's
+// GetBody (see replaySource).
 type requestBody struct {
 	mu     sync.Mutex
 	buf    []byte
@@ -198,6 +199,41 @@ func (b *requestBody) Close() error {
 		b.closed = true
 	}
 	return nil
+}
+
+// replaySource is a request's GetBody: each call opens a new requestBody,
+// a copy of its own wiped when it is closed. net/http calls GetBody to send
+// a request again on a new connection. HTTP/2 does so for any method when
+// the server closes the connection with a GOAWAY that says the request was
+// not processed, which ZeroKMS does after a fixed number of requests on a
+// connection. Without GetBody those requests failed.
+//
+// It reads the caller's copy of the body, which stays whole until perform
+// returns. perform ends the source before that, so a GetBody after
+// RoundTrip has returned fails rather than read a wiped body. The standard
+// transports call GetBody only inside RoundTrip.
+type replaySource struct {
+	mu    sync.Mutex
+	body  []byte
+	ended bool
+}
+
+var errRequestReplayEnded = errors.New("encrypt: request body asked for again after the request ended")
+
+func (s *replaySource) open() (io.ReadCloser, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ended {
+		return nil, errRequestReplayEnded
+	}
+	return newRequestBody(s.body), nil
+}
+
+// end lets go of the caller's body: no GetBody reads it after this.
+func (s *replaySource) end() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ended, s.body = true, nil
 }
 
 // tokenGet is token_get: hand the guest the token fetched for this step.

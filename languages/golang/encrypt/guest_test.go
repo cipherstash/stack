@@ -410,6 +410,56 @@ func TestRequestBodyOutlivesTheRoundTrip(t *testing.T) {
 	}
 }
 
+// A request net/http sends again, as HTTP/2 does after a GOAWAY that says
+// the server did not process it, reads the same bytes from GetBody, each
+// time from a copy of its own that is wiped when it is closed. GetBody
+// fails once the request has ended.
+func TestARequestSentAgainReadsTheSameBodyFromGetBody(t *testing.T) {
+	want := []byte(`{"keys":["a","b"]}`)
+	var getBody func() (io.ReadCloser, error)
+	var again []*requestBody
+	tr := &transport{rt: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		first, err := io.ReadAll(r.Body)
+		_ = r.Body.Close()
+		if err != nil || !bytes.Equal(first, want) {
+			return nil, fmt.Errorf("first send: %q, %v", first, err)
+		}
+		if r.GetBody == nil {
+			return nil, errors.New("no GetBody: the request cannot be sent again")
+		}
+		for range 2 {
+			b, err := r.GetBody()
+			if err != nil {
+				return nil, fmt.Errorf("GetBody: %w", err)
+			}
+			got, err := io.ReadAll(b)
+			_ = b.Close()
+			if err != nil || !bytes.Equal(got, want) {
+				return nil, fmt.Errorf("sent again: %q, %v", got, err)
+			}
+			rb, ok := b.(*requestBody)
+			if !ok {
+				return nil, fmt.Errorf("GetBody's body is %T, want *requestBody", b)
+			}
+			again = append(again, rb)
+		}
+		getBody = r.GetBody
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok")), Header: http.Header{}}, nil
+	})}
+	status, _, resp := tr.perform(context.Background(), http.MethodPost, "http://zerokms.invalid/retrieve-data-key", nil, bytes.Clone(want))
+	if status != http.StatusOK {
+		t.Fatalf("status %d: %s", status, resp)
+	}
+	for i, rb := range again {
+		if !bytes.Equal(rb.buf, make([]byte, len(rb.buf))) {
+			t.Errorf("copy %d was not wiped on Close", i)
+		}
+	}
+	if _, err := getBody(); !errors.Is(err, errRequestReplayEnded) {
+		t.Errorf("GetBody after the request ended: %v, want errRequestReplayEnded", err)
+	}
+}
+
 // failingReader fails every read.
 type failingReader struct{ err error }
 

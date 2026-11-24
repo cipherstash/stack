@@ -243,6 +243,16 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   panic during one of those still closes the credentials for good, and the
   caller does not see it (#1793).
 
+- **ZeroKMS requests no longer fail when ZeroKMS closes an HTTP/2
+  connection** (#1781). ZeroKMS closes each connection after a fixed number
+  of requests, and tells the client which requests it did not process. Go
+  sends those again on a new connection, but only when it can read the
+  request body again, and the SDK gave it no way to. So a long-lived
+  client saw an occasional encrypt or decrypt fail with `ErrTransport`:
+  6 to 13 of 10,000 one-value decrypts, 16 at a time, in rc.6. The request
+  now gives Go a fresh copy of its body each time it asks, and each copy is
+  wiped when it is closed.
+
 ## [0.1.0-rc.6] - 2026-11-18
 
 ### Upgrading from rc.5
