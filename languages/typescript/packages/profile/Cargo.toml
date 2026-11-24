@@ -9,8 +9,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 stack-profile = { workspace = true }
-napi = "2"
-napi-derive = "2"
+napi = "3"
+napi-derive = "3"
 
 [build-dependencies]
 napi-build = "2"

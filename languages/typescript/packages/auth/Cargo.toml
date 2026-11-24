@@ -12,8 +12,8 @@ stack-auth = { workspace = true, features = ["http"] }
 stack-profile = { workspace = true }
 cts-common = { workspace = true }
 vitaminc-protected = { workspace = true }
-napi = { version = "2", features = ["async", "tokio_rt"] }
-napi-derive = "2"
+napi = { version = "3", features = ["async", "tokio_rt"] }
+napi-derive = "3"
 serde_json = "1"
 zeroize = { workspace = true }
 

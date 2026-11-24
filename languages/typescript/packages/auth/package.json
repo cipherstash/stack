@@ -43,18 +43,15 @@
     }
   },
   "napi": {
-    "name": "stack-auth-node",
-    "triples": {
-      "defaults": false,
-      "additional": [
-        "x86_64-apple-darwin",
-        "aarch64-apple-darwin",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "x86_64-unknown-linux-musl",
-        "x86_64-pc-windows-msvc"
-      ]
-    }
+    "binaryName": "stack-auth-node",
+    "targets": [
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl",
+      "x86_64-pc-windows-msvc"
+    ]
   },
   "files": [
     "index.js",
@@ -121,7 +118,7 @@
     "@byteslice/result": "^0.3.0"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^2",
+    "@napi-rs/cli": "^3",
     "typescript": "^5",
     "vitest": "catalog:repo",
     "@tanstack/react-start": "^1.168.60"
