@@ -8,15 +8,25 @@ import { createIsolationTrailWriter } from './isolation-trail.mjs'
 import { createRealDriver } from './real-driver.mjs'
 import { run } from './run.mjs'
 
-const args = process.argv.slice(2)
-const command = args[args.indexOf('--migrator') + 1]
-const fakeMigration = args.includes('--fake')
-  ? args[args.indexOf('--fake') + 1]
-  : undefined
-if ((!args.includes('--migrator') || !command) && !fakeMigration)
-  throw Error(
-    'Usage: harness:run --migrator <command> | --fake <variant> [--stack <range|tree|tarball>]',
-  )
+const { values } = parseArgs({
+  args: process.argv.slice(2),
+  options: {
+    migrator: { type: 'string' },
+    fake: { type: 'string' },
+    output: { type: 'string' },
+    stack: { type: 'string' },
+  },
+  strict: true,
+})
+const command = values.migrator ?? ''
+const fakeMigration = values.fake
+if (
+  (!command && !fakeMigration) ||
+  (command && fakeMigration) ||
+  values.output === '' ||
+  values.stack === ''
+)
+  throw Error('Usage: harness:run --migrator <command> | --fake <variant>')
 const id = randomUUID()
 const root = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const output = resolve(values.output ?? `.migration-harness-runs/${id}`)

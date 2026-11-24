@@ -15,10 +15,8 @@ Docker socket mount. The isolation probe builds that image, including its
 Python supervisor, and checks denial and supervisor termination paths.
 
 The `Migration harness` PR workflow runs these four commands without service
-credentials. The existing credentialed E2E job additionally runs the complete
-Fixture App matrix with deterministic Fake Migrators, including the Reference
-Migration, Broken Migrations, lifecycle denials and an in-tree Stack tarball.
-No model calls are made by either self-test path.
+credentials. It verifies the skeleton and backend probes, not the complete
+credentialed Fixture App migration.
 
 For a real Run, first build workspace dependencies with
 `pnpm --filter @cipherstash/e2e... build`, then use
@@ -30,13 +28,9 @@ Each stage's full supervisor access trail is written beside the report as
 failed events inline, plus one `isolation-trail` evidence record per stage
 naming that file, its event count and its SHA-256.
 Real application execution is gated on the backend capability proof. The full
-credentialed no-op and rewrite-on-read acceptance Runs are covered in CI.
+credentialed no-op Migrator acceptance run remains unverified in this PR.
 
-Use `harness:run --fake reference` for a deterministic known-correct migration.
-Other Fake Migrator variants are `noop`, `downcase`, `stale-hmac`, `bigint`,
-`rewrite`, `missing-log`, `legacy-ffi`, `denied-app` and `denied-lifecycle`.
-The harness copies only the selected application into the workspace; the hidden
-Reference Migration directory is never mounted into an actor.
+## Host model adapter
 
 `--migrator` is a **trusted host adapter command**. It runs in a fresh temporary
 directory with the host's model authentication available. The harness removes

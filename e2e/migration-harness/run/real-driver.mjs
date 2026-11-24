@@ -1,14 +1,19 @@
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { cp, mkdir, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { relative, resolve, sep } from 'node:path'
+import { promisify } from 'node:util'
 import { behaviour, legacy, mutation } from './behaviour.mjs'
 import { fakeMigrate } from './fake-migrator.mjs'
 import { declaredStack, migrationChecks } from './migration-checks.mjs'
 import { runMigrator } from './migrator.mjs'
 import { noRewrite, validateLegacySnapshot } from './no-rewrite.mjs'
 import { createStoreSet, disposeStores } from './real-stores.mjs'
-import { isSnapshotInfrastructureError } from './snapshot-errors.mjs'
+import {
+  isSnapshotInfrastructureError,
+  snapshotErrorCode,
+} from './snapshot-errors.mjs'
 import { resolveStack, verifyInstalledTarball } from './stack-source.mjs'
 import { prepareWorkspace } from './workspace.mjs'
 
@@ -38,10 +43,10 @@ export function createRealDriver({
   let host = null
   let baseCommit = ''
   let ffiRange = ''
-  /** @type {unknown} */
-  let legacySnapshot
   /** @type {Awaited<ReturnType<typeof resolveStack>>|undefined} */
   let stackSource
+  /** @type {unknown} */
+  let legacySnapshot
   /** @param {StoreSet|null} stores */
   function assigned(stores) {
     if (!stores) throw Error('Run Store Set has not been provisioned')
@@ -103,6 +108,7 @@ export function createRealDriver({
       stackSource = await resolveStack({ source: manifest.stack, root, output })
       manifest.stack = stackSource.version
       manifest.stackSource = stackSource
+      ffiRange = stackSource.ffiRange
       const guide = resolve(root, 'docs/migration/protect-dynamodb-to-stack.md')
       const content = await readFile(guide, 'utf8')
       manifest.guideHash = createHash('sha256').update(content).digest('hex')
@@ -198,28 +204,65 @@ export function createRealDriver({
     },
     async migrate() {
       if (!stackSource) throw Error('Stack source not resolved')
-      if (stackSource.tarball)
-        await cp(stackSource.tarball, resolve(workspace, 'resolved-stack.tgz'))
-      const result = fakeMigration
-        ? await fakeMigrate({
-            root,
-            workspace,
-            kind: fakeMigration,
-            stack: stackSource.install,
-          })
-        : await isolation.exec({
-            actor: 'migrator',
-            workspace,
-            env: env(migratorStores),
-            command: ['/bin/sh', '-lc', command],
-            forwards: forwards(migratorStores),
-            timeoutMs: manifest.agents?.limits?.timeMs,
-          })
-      await writeFile(
-        resolve(output, 'migrator-transcript.log'),
-        `${result.stdout ?? ''}\n${result.stderr ?? ''}`,
-      )
-      await isolation.exec({
+      const source = stackSource
+      if (source.tarball)
+        await cp(source.tarball, resolve(workspace, 'resolved-stack.tgz'))
+      /** @param {{stdout?:string, stderr?:string}} transcript */
+      const writeTranscript = async (transcript) => {
+        await writeFile(
+          resolve(output, 'migrator-transcript.log'),
+          `${transcript.stdout ?? ''}\n${transcript.stderr ?? ''}`,
+        )
+        manifest.artifacts = {
+          transcript: 'migrator-transcript.log',
+          snapshot: 'legacy-snapshot.json',
+        }
+      }
+      const migration = async () =>
+        fakeMigration
+          ? await fakeMigrate({
+              root,
+              workspace,
+              kind: fakeMigration,
+              stack: source.install,
+            })
+          : await runMigrator({
+              command,
+              timeoutMs: manifest.agents?.limits?.timeMs,
+              maxToolCalls: manifest.agents?.limits?.toolCalls,
+              maxModelTurns: manifest.agents?.limits?.turns,
+              stop: () => isolation.stop({ expected: true }),
+              execute: (argv, timeoutMs) =>
+                isolation.exec({
+                  actor: 'migrator',
+                  workspace,
+                  env: env(migratorStores),
+                  command: argv,
+                  forwards: forwards(migratorStores),
+                  timeoutMs,
+                }),
+            })
+      /** @type {Awaited<ReturnType<typeof migration>>} */
+      let result
+      try {
+        result = await migration()
+      } catch (error) {
+        // A rejected Migrator carries its partial transcript; keep it on disk,
+        // since the failed Runs are the ones that most need diagnosing.
+        await writeTranscript(
+          error && typeof error === 'object'
+            ? /** @type {{stdout?:string, stderr?:string}} */ (error)
+            : {},
+        )
+        throw error
+      }
+      if (fakeMigration && fakeMigration !== 'noop')
+        await execute('migrator', workspace, migratorStores, ['npm', 'install'])
+      await writeTranscript(result)
+      // A timed-out broker has stopped its isolated tools and proof relays.
+      // Preserve its agent-limit result rather than restarting work for a diff.
+      if (result.exitCode !== 0 || result.limit) return result
+      const intent = await isolation.exec({
         actor: 'migrator',
         workspace,
         env: env(migratorStores),
@@ -325,19 +368,24 @@ export function createRealDriver({
       const application = host
       if (!application) throw Error('App Host has not started')
       try {
-        let activeItem
+        /** @type {{snapshot: unknown} | {cause: string}} */
+        let mutationRead = { snapshot: undefined }
         const result = await behaviour(
           (method, args) => application.call(method, args),
           async () => {
-            try {
-              activeItem = (await assigned(oracleStores).snapshot('mutation'))
-                .dynamo.Item
-            } catch (error) {
-              throw Object.assign(
-                new Error('Mutation Data inspection failed', { cause: error }),
-                { infrastructure: isSnapshotInfrastructureError(error) },
-              )
-            }
+            mutationRead = await read(mutation.pk)
+            if ('cause' in mutationRead)
+              throw Object.assign(new Error(mutationRead.cause), {
+                infrastructure: false,
+                checks: [
+                  ...checks,
+                  {
+                    id: 'migration.active-hmac-absent',
+                    passed: false,
+                    cause: mutationRead.cause,
+                  },
+                ],
+              })
           },
         )
         const checks = result.checks
@@ -360,14 +408,28 @@ export function createRealDriver({
             }
           }
         }
-        result.checks.push(noRewrite(legacySnapshot, current))
-        const checks = await result.mutate()
+        const current = await read()
         checks.push(
-          ...(await migrationChecks({
-            workspace: oracleWorkspace,
-            activeItem,
-            stackVersion: manifest.stack,
-          })),
+          'cause' in current
+            ? { id: 'no-rewrite.legacy-bytes', passed: false, ...current }
+            : noRewrite(legacySnapshot, current.snapshot),
+        )
+        await result.mutate()
+        const migration = await migrationChecks({
+          workspace,
+          installedWorkspace: oracleWorkspace,
+          stackVersion: manifest.stack,
+          ffiRange,
+          mutationSnapshot:
+            'snapshot' in mutationRead ? mutationRead.snapshot : undefined,
+        })
+        checks.push(
+          ...migration.map((check) =>
+            'cause' in mutationRead &&
+            check.id === 'migration.active-hmac-absent'
+              ? { ...check, passed: false, cause: mutationRead.cause }
+              : check,
+          ),
         )
         return checks
       } finally {

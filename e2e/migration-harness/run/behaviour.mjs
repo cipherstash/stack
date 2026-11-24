@@ -126,17 +126,16 @@ export async function behaviour(call, afterSetActive = async () => {}) {
   // Mutation checks are deliberately separate so #1535 can insert no-rewrite here.
   return {
     checks,
-    /** @param {{afterSetActive?: ()=>Promise<void>}} [hooks] afterSetActive
-     * runs before any later full put can overwrite the setActive result. */
-    async mutate(hooks = {}) {
+    async mutate() {
       await check('behaviour.fresh-write', async () => {
         equal(await call('get', [fresh.pk]), null)
         await call('put', [fresh])
-        const actual = record(await call('get', [fresh.pk]))
-        equal(
-          { ...actual, emailLower: String(actual.emailLower).toLowerCase() },
-          { ...fresh, emailLower: fresh.emailLower.toLowerCase() },
-        )
+        const actual = await call('get', [fresh.pk])
+        if (!isDeepStrictEqual(actual, fresh))
+          equal(actual, {
+            ...fresh,
+            emailLower: fresh.emailLower.toLowerCase(),
+          })
       })
       await check('behaviour.downcase-new-write-lookup', async () => {
         await lookup(

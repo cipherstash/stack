@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'vitest'
-import { migrationChecks } from '../run/migration.mjs'
+import { migrationChecks } from '../run/migration-checks.mjs'
 import { run } from '../run/run.mjs'
 
 for (const stale of [false, true]) {
@@ -43,14 +43,22 @@ for (const stale of [false, true]) {
           migrate: async () => ({ exitCode: 0 }),
           friction: async () => [],
           installAppHost: async () => {},
-          behaviour: async () =>
-            migrationChecks({
+          behaviour: async () => [
+            { id: 'no-rewrite.legacy-bytes', passed: true },
+            ...(await migrationChecks({
               workspace,
-              activeItem: stale
-                ? { active__source: 'cipher', active__hmac: 'old' }
-                : { active__source: 'cipher' },
+              installedWorkspace: workspace,
+              ffiRange: '0.31.0',
+              mutationSnapshot: {
+                dynamo: {
+                  Item: stale
+                    ? { active__source: 'cipher', active__hmac: 'old' }
+                    : { active__source: 'cipher' },
+                },
+              },
               stackVersion: '1.2.1',
-            }),
+            })),
+          ],
         },
       })
       assert.equal(report.outcome, stale ? 'behaviour' : 'pass')
