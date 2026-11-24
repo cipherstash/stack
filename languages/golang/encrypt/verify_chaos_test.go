@@ -16,8 +16,11 @@ package encrypt_test
 // credentials are needed. VERIFY_CHAOS_LIVE=1 uses real ZeroKMS and the
 // default credentials (the environment, then the developer profile).
 //
-// VERIFY_WORKERS (default 24), VERIFY_MAX_DELAY_MS (default 500) and
-// VERIFY_PANIC_PER_MILLE (default 1) tune it.
+// VERIFY_KEYSETS names keysets, comma-separated, to spread the calls
+// over with the default keyset: live, keysets the credentials are granted;
+// the fake answers any name. VERIFY_WORKERS (default 24),
+// VERIFY_MAX_DELAY_MS (default 500) and VERIFY_PANIC_PER_MILLE (default 1)
+// tune it.
 
 import (
 	"bytes"
@@ -78,6 +81,16 @@ func jsonResponse(v any) (*http.Response, error) {
 	}, nil
 }
 
+const fakeDefaultKeyset = "3f8a7c1e-6b2d-4e59-9a14-2c7d5e0f8b31"
+
+// fakeKeysetID is the id the fake gives the keyset called name.
+func fakeKeysetID(name string) string {
+	h := sha256.Sum256([]byte("keyset" + name))
+	h[6] = h[6]&0x0f | 0x40
+	h[8] = h[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", h[0:4], h[4:6], h[6:8], h[8:10], h[10:16])
+}
+
 // fakeKMS answers load-keyset, generate and retrieve.
 type fakeKMS struct{}
 
@@ -90,6 +103,10 @@ func (fakeKMS) RoundTrip(r *http.Request) (*http.Response, error) {
 		Keys []struct {
 			IV string `json:"iv"`
 		} `json:"keys"`
+		Keyset *struct {
+			Name string `json:"Name"`
+			UUID string `json:"Uuid"`
+		} `json:"keyset_id"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, err
@@ -98,11 +115,25 @@ func (fakeKMS) RoundTrip(r *http.Request) (*http.Response, error) {
 	path := r.URL.Path
 	switch {
 	case strings.HasSuffix(path, "load-keyset"):
+		// The default keyset, or one named or given by id: each its own id
+		// and index key.
+		id, name, isDefault := fakeDefaultKeyset, "default", true
+		if k := req.Keyset; k != nil {
+			isDefault = false
+			switch {
+			case k.Name != "":
+				id, name = fakeKeysetID(k.Name), k.Name
+			case k.UUID == fakeDefaultKeyset:
+				isDefault = true
+			default:
+				id, name = k.UUID, "keyset-"+k.UUID
+			}
+		}
 		return jsonResponse(map[string]any{
-			"partial_index_key": map[string]any{"key_material": b64(materialFor([]byte("index")))},
+			"partial_index_key": map[string]any{"key_material": b64(materialFor([]byte("index" + id)))},
 			"dataset": map[string]any{
-				"id": "3f8a7c1e-6b2d-4e59-9a14-2c7d5e0f8b31", "name": "default",
-				"description": "", "is_disabled": false, "is_default": true,
+				"id": id, "name": name,
+				"description": "", "is_disabled": false, "is_default": isDefault,
 			},
 		})
 	case strings.HasSuffix(path, "generate-data-key"),
@@ -308,16 +339,38 @@ func TestVerifyChaos(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	cipher := client.DefaultKeyset()
+	// The default keyset and each keyset VERIFY_KEYSETS names. Each call
+	// encrypts under one chosen at random.
+	ciphers := []*encrypt.Cipher{client.DefaultKeyset()}
+	if names := os.Getenv("VERIFY_KEYSETS"); names != "" {
+		for _, name := range strings.Split(names, ",") {
+			ciphers = append(ciphers, client.Keyset(encrypt.KeysetName(name)))
+		}
+	}
 
-	// One clean round trip, which also loads the keyset.
+	// One round trip under a random keyset. The decrypt goes through that
+	// keyset's cipher or through the client, which opens each record under
+	// the keyset that sealed it. With more than one keyset, a call in ten
+	// first checks that another keyset's cipher refuses the records.
 	check := func(ctx context.Context, r *rand.Rand, n int) error {
+		i := r.IntN(len(ciphers))
+		cipher := ciphers[i]
 		users := genUsers(r, n)
 		enc, err := testusers.Encrypt(ctx, cipher, users)
 		if err != nil {
 			return err
 		}
-		dec, err := testusers.Decrypt(ctx, cipher, enc)
+		if len(ciphers) > 1 && r.IntN(10) == 0 {
+			other := ciphers[(i+1+r.IntN(len(ciphers)-1))%len(ciphers)]
+			if _, err := testusers.Decrypt(ctx, other, enc); err == nil {
+				return fmt.Errorf("WRONG: another keyset's cipher opened %d records", n)
+			}
+		}
+		var d encrypt.Decrypter = cipher
+		if r.IntN(2) == 0 {
+			d = client
+		}
+		dec, err := testusers.Decrypt(ctx, d, enc)
 		if err != nil {
 			return err
 		}
