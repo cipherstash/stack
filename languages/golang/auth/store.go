@@ -250,6 +250,7 @@ func (s *ProfileStore) callArgs(ctx context.Context, fn export, args ...guest.Ar
 		return nil, ErrState
 	}
 	growth := r.inst.mem.GrowthRefusal()
+	ctx, panicked := withHostPanic(ctx)
 	run, done := guest.Detach(ctx, r.stuck)
 	out, err := guest.Call(run, r.inst.mem, r.inst.module, r.inst.exports, fn(r.inst), args...)
 	done()
@@ -274,6 +275,10 @@ func (s *ProfileStore) callArgs(ctx context.Context, fn export, args ...guest.Ar
 	if g := r.inst.mem.GrowthRefusal(); err != nil && g.Refused != growth.Refused {
 		err = fmt.Errorf("%w (growth refused under RequireLockedMemory): %w", guest.MemoryLockError(g.Reason), err)
 	}
+	// A panic of the application's code in a host function reaches the
+	// caller here, once the guest has failed the call as it fails a
+	// transport failure, and the profile stays open.
+	panicked.raise()
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
 			err = fmt.Errorf("%w: %w", ctxErr, err)

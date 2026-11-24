@@ -170,31 +170,164 @@ func (t *authTransport) send(ctx context.Context, m api.Module,
 	}
 	req.ContentLength = int64(len(body))
 	req.Header = parseAuthHeaders(headers)
-	resp, err := t.rt.RoundTrip(req)
+	resp, err := callApplication(reqCtx, func() (authResponse, error) { return t.exchange(req) },
+		func(r authResponse) { guest.Wipe(r.body) })
+	defer guest.Wipe(resp.body)
+	if status, ok := ctx.Value(authHTTPStatusKey{}).(*authHTTPStatus); ok && resp.status != 0 {
+		status.code = resp.status
+	}
 	if err != nil {
 		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, []byte(err.Error()))
+	}
+	return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, int32(resp.status), encodeAuthHeaders(resp.header), resp.body) //nolint:gosec // range-checked in exchange
+}
+
+// authResponse is a token service response, read whole.
+type authResponse struct {
+	// status is the HTTP status, or 0 when no valid response arrived.
+	status int
+	header http.Header
+	body   []byte
+}
+
+// exchange sends req through the RoundTripper and reads the response. A
+// response it refuses (too large, or an unreadable body) still reports its
+// status, for authHTTPStatus.
+func (t *authTransport) exchange(req *http.Request) (authResponse, error) {
+	resp, err := t.rt.RoundTrip(req)
+	if err != nil {
+		return authResponse{}, err
 	}
 	defer resp.Body.Close()
 	// A caller's RoundTripper can return any int; the guest gets an i32.
 	if resp.StatusCode < 100 || resp.StatusCode > 999 {
-		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, fmt.Appendf(nil, "invalid HTTP status %d", resp.StatusCode))
+		return authResponse{}, fmt.Errorf("invalid HTTP status %d", resp.StatusCode)
 	}
-	if status, ok := ctx.Value(authHTTPStatusKey{}).(*authHTTPStatus); ok {
-		status.code = resp.StatusCode
-	}
+	refused := authResponse{status: resp.StatusCode}
 	if resp.ContentLength > maxAuthResponseBytes {
-		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, []byte("auth response exceeds limit"))
+		return refused, errors.New("auth response exceeds limit")
 	}
-	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, maxAuthResponseBytes+1))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxAuthResponseBytes+1))
 	if err != nil {
-		guest.Wipe(responseBody)
-		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, []byte(err.Error()))
+		guest.Wipe(body)
+		return refused, err
 	}
-	defer guest.Wipe(responseBody)
-	if len(responseBody) > maxAuthResponseBytes {
-		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, []byte("auth response exceeds limit"))
+	if len(body) > maxAuthResponseBytes {
+		guest.Wipe(body)
+		return refused, errors.New("auth response exceeds limit")
 	}
-	return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, int32(resp.StatusCode), encodeAuthHeaders(resp.Header), responseBody) //nolint:gosec // range-checked above
+	return authResponse{status: resp.StatusCode, header: resp.Header, body: body}, nil
+}
+
+// The application's code that the guest's host functions call (the
+// RoundTripper, an OIDCProvider) runs in the middle of a guest call, with
+// the ProfileStore locked. callApplication keeps it from ending that call
+// badly. Without it, a panic there was recovered by wazero as a guest trap,
+// which closed the profile for good and never reached the caller; and a
+// RoundTripper that ignored its request's context held the store's lock,
+// and every caller that needed a token, until it returned, or until the
+// stuck-call backstop closed the profile.
+
+// errApplicationPanicked is the failure a host function gives the guest
+// when the application's code it called panicked. The guest fails the
+// request as it fails any transport failure, and callArgs raises the panic
+// again on the caller's goroutine (hostPanic).
+var errApplicationPanicked = errors.New("the application's code panicked")
+
+// hostPanic holds a panic of the application's code, recorded by a host
+// function during a guest call, for callArgs to raise again on the
+// caller's goroutine once the call has returned: as a panic in encrypt's
+// RoundTripper reaches the caller, which can recover it as net/http does
+// in each handler.
+type hostPanic struct {
+	mu    sync.Mutex
+	value any
+	set   bool
+}
+
+type hostPanicKey struct{}
+
+// withHostPanic gives ctx a hostPanic for the guest call it runs.
+func withHostPanic(ctx context.Context) (context.Context, *hostPanic) {
+	h := &hostPanic{}
+	return context.WithValue(ctx, hostPanicKey{}, h), h
+}
+
+// record keeps the first panic of a call.
+func (h *hostPanic) record(p any) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.set {
+		h.value, h.set = p, true
+	}
+}
+
+// raise panics with the recorded panic, if there is one.
+func (h *hostPanic) raise() {
+	h.mu.Lock()
+	value, set := h.value, h.set
+	h.mu.Unlock()
+	if set {
+		panic(value)
+	}
+}
+
+// callApplication runs f, application code a host function calls, on a
+// goroutine of its own, and waits for f or for ctx to end, whichever comes
+// first.
+//
+//   - When ctx ends first, it returns ctx's error at once, and the guest
+//     fails the request as a transport failure. f is left to finish; what it
+//     returns then goes to discard, and a panic of it is dropped: there is
+//     no caller left to raise it to.
+//   - When f panics, the panic is recorded on the call (hostPanic), and
+//     callApplication returns errApplicationPanicked.
+func callApplication[T any](ctx context.Context, f func() (T, error), discard func(T)) (T, error) {
+	type result struct {
+		value    T
+		err      error
+		panicked bool
+		panic    any
+	}
+	done := make(chan result, 1)
+	go func() {
+		var r result
+		defer func() {
+			if p := recover(); p != nil {
+				r = result{panicked: true, panic: p}
+			}
+			done <- r
+		}()
+		r.value, r.err = f()
+	}()
+	settle := func(r result) (T, error) {
+		if r.panicked {
+			if h, ok := ctx.Value(hostPanicKey{}).(*hostPanic); ok {
+				h.record(r.panic)
+			}
+			var zero T
+			return zero, errApplicationPanicked
+		}
+		return r.value, r.err
+	}
+	select {
+	case r := <-done:
+		return settle(r)
+	case <-ctx.Done():
+		// f that finished as ctx ended still answers.
+		select {
+		case r := <-done:
+			return settle(r)
+		default:
+		}
+		go func() {
+			if r := <-done; !r.panicked && discard != nil {
+				discard(r.value)
+			}
+		}()
+		var zero T
+		return zero, ctx.Err()
+	}
 }
 
 func (t *authTransport) placeResponse(ctx context.Context, m api.Module,
@@ -213,7 +346,8 @@ func (t *authTransport) oidcTokenGet(ctx context.Context, m api.Module, provider
 	if source == nil {
 		return 1
 	}
-	token, err := source.Token(guest.Caller(ctx))
+	caller := guest.Caller(ctx)
+	token, err := callApplication(caller, func() (string, error) { return source.Token(caller) }, nil)
 	if err != nil || token == "" || strings.ContainsAny(token, "\r\n\x00") {
 		return 1
 	}

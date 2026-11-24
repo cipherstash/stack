@@ -273,31 +273,174 @@ func TestATokenRequestWhoseContextEndsInTheQueueNeverReachesTheGuest(t *testing.
 	}
 }
 
-// The backstop: a call still running long after its caller gave up closes
-// the profile. The caller has returned by then; the next call is ErrState.
-func TestATokenFetchThatRunsOnAfterItsContextEndsClosesTheProfile(t *testing.T) {
-	guestOrSkip(t)
-	profile, err := Open(context.Background(), t.TempDir(), WithRoundTripper(roundTripFunc(func(*http.Request) (*http.Response, error) {
-		// A RoundTripper that ignores the request's context.
-		time.Sleep(300 * time.Millisecond)
+// The application's code that a guest call reaches (the RoundTripper, an
+// OIDC provider) can hang, ignoring its context, or panic. Neither may close
+// the profile or hold its lock past the caller.
+
+// modalRoundTripper sends each request through next, or, while mode says
+// so, panics or hangs until release closes, ignoring the request's context.
+type modalRoundTripper struct {
+	next     http.RoundTripper
+	mode     atomic.Value // "", "panic" or "hang"
+	release  chan struct{}
+	finished atomic.Int32 // hung requests that have returned
+}
+
+func newModalRoundTripper(next http.RoundTripper) *modalRoundTripper {
+	m := &modalRoundTripper{next: next, release: make(chan struct{})}
+	m.mode.Store("")
+	return m
+}
+
+func (m *modalRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	switch m.mode.Load() {
+	case "panic":
+		panic("roundtripper panic")
+	case "hang":
+		<-m.release
+		m.finished.Add(1)
 		return nil, errors.New("too late")
-	})))
+	}
+	return m.next.RoundTrip(r)
+}
+
+// accessKeyWith builds an access-key strategy whose requests go through rt
+// to a token service that answers every exchange.
+func accessKeyWith(t *testing.T, rt *modalRoundTripper) (*ProfileStore, *Strategy) {
+	t.Helper()
+	var hold atomic.Bool
+	server := tokenServer(t, &hold)
+	profile, err := Open(context.Background(), t.TempDir(), WithRoundTripper(rt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = profile.Close() })
+	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = strategy.Close() })
+	return profile, strategy
+}
+
+func wantProfileOpen(t *testing.T, profile *ProfileStore) {
+	t.Helper()
+	if profile.root.closed || profile.root.inst.module.IsClosed() {
+		t.Fatal("the profile was closed")
+	}
+}
+
+// tokenRecovering calls Token and returns what it panicked with.
+func tokenRecovering(ctx context.Context, s *Strategy) (p any, err error) {
+	defer func() { p = recover() }()
+	_, err = s.Token(ctx)
+	return nil, err
+}
+
+// A RoundTripper that panics during a token request: the panic reaches the
+// caller of Token, which can recover it, and the profile stays open. It
+// used to be recovered by wazero as a guest trap, which closed the profile
+// for good and never reached the caller (#1793).
+func TestARoundTripperPanicDuringATokenRequestReachesTheCaller(t *testing.T) {
+	guestOrSkip(t)
+	rt := newModalRoundTripper(http.DefaultTransport)
+	profile, strategy := accessKeyWith(t, rt)
+	rt.mode.Store("panic")
+	if p, err := tokenRecovering(context.Background(), strategy); p != "roundtripper panic" {
+		t.Fatalf("Token: got panic %v (err %v), want the RoundTripper's panic", p, err)
+	}
+	wantProfileOpen(t, profile)
+	rt.mode.Store("")
+	if token, err := strategy.Token(context.Background()); err != nil || token == "" {
+		t.Fatalf("the next Token: %q, %v", token, err)
+	}
+}
+
+// A RoundTripper that ignores its request's context: the caller's Token
+// returns at its deadline, the next caller is not held behind the hung
+// request, and the profile stays open. The hung request used to hold the
+// profile's lock until it returned, and the stuck-call backstop then closed
+// the profile (#1795). The backstop is short here, so a guest call still
+// waiting on the request would trip it.
+func TestATokenRequestWhoseRoundTripperIgnoresItsContextEndsAtTheDeadline(t *testing.T) {
+	guestOrSkip(t)
+	rt := newModalRoundTripper(http.DefaultTransport)
+	profile, strategy := accessKeyWith(t, rt)
+	profile.root.stuck = 20 * time.Millisecond
+	rt.mode.Store("hang")
+	defer close(rt.release)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := strategy.Token(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Token: %v, want the deadline", err)
+	}
+	if waited := time.Since(start); waited > 2*time.Second {
+		t.Fatalf("Token returned after %v", waited)
+	}
+	// The hung request has not returned, and the next caller is served.
+	rt.mode.Store("")
+	next, cancelNext := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelNext()
+	if token, err := strategy.Token(next); err != nil || token == "" {
+		t.Fatalf("the next Token, with the first request still hung: %q, %v", token, err)
+	}
+	if n := rt.finished.Load(); n != 0 {
+		t.Fatalf("%d hung request(s) returned early", n)
+	}
+	wantProfileOpen(t, profile)
+}
+
+// An OIDC provider is the application's code too: one that panics reaches
+// the caller of Token, and one that ignores its context ends at the
+// caller's deadline. Either way the profile stays open.
+func TestAnOIDCProviderThatPanicsOrHangsLeavesTheProfileOpen(t *testing.T) {
+	guestOrSkip(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, testJWT(t, "https://cts.example"), time.Now().Add(time.Hour).Unix())
+	}))
+	defer server.Close()
+	profile, err := Open(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL("https://cts.example.com"))
+	var mode atomic.Value
+	mode.Store("")
+	release := make(chan struct{})
+	defer close(release)
+	strategy, err := profile.OIDC(context.Background(), testCRN, OIDCProviderFunc(func(context.Context) (string, error) {
+		switch mode.Load() {
+		case "panic":
+			panic("provider panic")
+		case "hang":
+			<-release
+			return "", errors.New("too late")
+		}
+		return "idp-token", nil
+	}), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer strategy.Close()
-	profile.root.stuck = 20 * time.Millisecond
+
+	mode.Store("panic")
+	if p, err := tokenRecovering(context.Background(), strategy); p != "provider panic" {
+		t.Fatalf("Token: got panic %v (err %v), want the provider's panic", p, err)
+	}
+	wantProfileOpen(t, profile)
+
+	mode.Store("hang")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	if _, err := strategy.Token(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("stuck Token: %v, want the deadline", err)
+		t.Fatalf("Token with a hung provider: %v, want the deadline", err)
 	}
-	if _, err := strategy.Token(context.Background()); !errors.Is(err, ErrState) {
-		t.Fatalf("a Token after the close: %v, want ErrState", err)
+	wantProfileOpen(t, profile)
+
+	mode.Store("")
+	if token, err := strategy.Token(context.Background()); err != nil || token == "" {
+		t.Fatalf("the next Token: %q, %v", token, err)
 	}
 }

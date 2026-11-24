@@ -52,6 +52,13 @@
 // every later call is [ErrState], only when its guest traps or a call runs
 // on for 30 seconds after its context ended.
 //
+// A call can run the application's own code: the RoundTripper given to
+// [WithRoundTripper], and an [OIDCProvider]. A panic in it reaches the
+// caller, as a panic in a net/http handler does, and the store stays open.
+// Code that ignores its context is left running when the caller's context
+// ends: the call fails with the context's error, the store's next call goes
+// ahead, and what the code returns later is discarded.
+//
 // # Why a second guest
 //
 // The crypto guest behind encrypt has no filesystem and no
