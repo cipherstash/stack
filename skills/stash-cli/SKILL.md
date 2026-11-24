@@ -103,7 +103,10 @@ The working loop is:
 **When to start it.** Start this loop yourself whenever local work stops on
 missing credentials. That includes a `stash` command, a test, or an SDK in any
 language (TypeScript, Rust, Go) reporting `NOT_AUTHENTICATED`, "no
-credentials", "no client key", or "run `stash auth login`". It also includes a
+credentials", "no client key", or "run `stash auth login`", except a client
+built from `@cipherstash/stack/wasm-inline`. That one never reads the profile,
+so a login does not help it: it needs `clientId` and `clientKey` in its config
+(see `stash-edge`). It also includes a
 profile that exists but has no key for the workspace the code uses. A login
 gives a key for the workspace the user approves in the browser, and the
 command has no flag to choose it. So tell the user which workspace to
