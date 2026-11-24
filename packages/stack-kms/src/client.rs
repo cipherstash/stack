@@ -1,3 +1,4 @@
+use futures::StreamExt;
 use std::borrow::Cow;
 use uuid::Uuid;
 use zerokms_protocol::{
@@ -14,7 +15,7 @@ use zerokms_keyset::key::Iv;
 use crate::connection::HttpConnection;
 use crate::connection::ZeroKMSConnection;
 use crate::errors::{Error, GenerateKeyError, LoadKeysetError, RetrieveKeyError};
-use crate::futures::{map_async_chunked, yield_now, YIELD_EVERY};
+use crate::futures::{map_chunks_buffered, yield_now, YIELD_EVERY};
 use crate::key::{ClientKey, DataKey, DataKeyWithTag, IndexKey};
 use crate::payload::{GenerateKeyPayload, RetrieveKeyPayload};
 
@@ -154,19 +155,20 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
     /// per spec, and zip the entries back onto their specs — in order — with
     /// `map_key`.
     ///
-    /// The batch is worked through in windows of `max_concurrent_reqs`
-    /// chunks: send every request of a window at once, then derive the
-    /// window's keys, then move to the next window. So at most one window of
-    /// key material is held at a time, and a runtime that polls the batch
-    /// one step at a time (a wasm guest) gets every request of a window in
-    /// one step. Deriving waits for the window's last response; a
-    /// derivation is a few µs per key, small beside a round trip.
+    /// The keys are derived outside the requests' futures, one response at a
+    /// time and in order, yielding to the runtime every [`YIELD_EVERY`] keys
+    /// however many requests are in flight. (Inside the futures, `buffered`
+    /// would poll every ready future before it passed a yield on, so a step
+    /// would derive `YIELD_EVERY` keys for each response that had arrived.)
+    /// The next request goes out once a response's keys are derived, while
+    /// the others are still in flight, so at most `max_concurrent_reqs`
+    /// responses' wrapped material is held at a time.
     ///
-    /// Deriving yields to the runtime every [`YIELD_EVERY`] keys, however
-    /// many requests were in flight. The keys are not derived inside each
-    /// request's future, because `buffered` polls every ready future before
-    /// it passes a yield on: a step would then derive `YIELD_EVERY` keys for
-    /// each chunk in flight.
+    /// A wasm guest's host performs every request of a step before it
+    /// resumes the guest. So every response is in hand when the batch
+    /// resumes, and `buffered` hands them over without polling the next
+    /// requests' futures; those go out together, in one step, once the keys
+    /// are derived. The `window_tests` pin this.
     ///
     /// `operation` is recorded as a field on the per-chunk trace lines, so
     /// operators can filter by operation (`retrieve_keys`,
@@ -189,40 +191,37 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         Req: ViturRequest,
         E: From<ViturRequestError> + std::fmt::Display,
     {
-        let window = self
-            .max_keys_per_req
-            .saturating_mul(self.max_concurrent_reqs);
         let result: Result<Vec<Out>, E> = async {
             let mut out = Vec::with_capacity(specs.len());
-            for specs in specs.chunks(window) {
-                let items: Vec<Item> = map_async_chunked(
-                    specs,
-                    |chunk| async {
-                        tracing::trace!(target: "stack_kms::client", operation, "sending request with {} keys", chunk.len());
+            let mut responses = std::pin::pin!(map_chunks_buffered(
+                specs,
+                |chunk| async {
+                    tracing::trace!(target: "stack_kms::client", operation, "sending request with {} keys", chunk.len());
 
-                        let keys = self
-                            .connection
-                            .send(make_request(chunk), access_token)
-                            .await
-                            .map(&response_keys)
-                            .map_err(E::from)?;
+                    let keys = self
+                        .connection
+                        .send(make_request(chunk), access_token)
+                        .await
+                        .map(&response_keys)
+                        .map_err(E::from)?;
 
-                        // This should never happen with ZeroKMS but check just to be sure.
-                        if keys.len() != chunk.len() {
-                            return Err(count_mismatch(chunk.len(), keys.len()));
-                        }
-                        Ok(keys)
-                    },
-                    self.max_keys_per_req,
-                    self.max_concurrent_reqs,
-                )
-                .await?;
+                    // This should never happen with ZeroKMS but check just to be sure.
+                    if keys.len() != chunk.len() {
+                        return Err(count_mismatch(chunk.len(), keys.len()));
+                    }
+                    Ok(keys)
+                },
+                self.max_keys_per_req,
+                self.max_concurrent_reqs,
+            ));
 
-                tracing::trace!(target: "stack_kms::client", operation, "received {} keys - creating data keys", items.len());
+            while let Some((chunk, keys)) = responses.next().await {
+                let keys = keys?;
+                tracing::trace!(target: "stack_kms::client", operation, "received {} keys - creating data keys", keys.len());
 
-                for (spec, item) in specs.iter().zip(items) {
-                    // `out.len()` counts across windows, so the yields keep
-                    // their spacing when a window ends mid-count.
+                for (spec, item) in chunk.iter().zip(keys) {
+                    // `out.len()` counts across responses, so the yields keep
+                    // their spacing.
                     if !out.is_empty() && out.len() % YIELD_EVERY == 0 {
                         yield_now().await;
                     }
@@ -1481,13 +1480,22 @@ mod window_tests {
     }
 
     /// A connection whose requests stay pending until the test releases
-    /// them, then answer with one key per key asked for.
+    /// them, then answer with [`material`] of the request's index for every
+    /// key asked for.
     #[derive(Clone, Default)]
     struct Held(Arc<Mutex<Sent>>);
 
     impl Held {
         fn sent(&self) -> Vec<usize> {
             self.0.lock().unwrap().keys.clone()
+        }
+
+        /// The requests not yet released, oldest first.
+        fn in_flight(&self) -> Vec<usize> {
+            let sent = self.0.lock().unwrap();
+            (0..sent.released.len())
+                .filter(|&i| !sent.released[i])
+                .collect()
         }
 
         fn release(&self, i: usize) {
@@ -1499,11 +1507,22 @@ mod window_tests {
         }
     }
 
+    /// The key material in the response to the `i`th request: different for
+    /// every request, so a key derived from another request's response
+    /// is a different key.
+    fn material(i: usize) -> ViturKeyMaterial {
+        ViturKeyMaterial::from(
+            (0..528)
+                .map(|b| (b as u8).wrapping_mul(31).wrapping_add(i as u8))
+                .collect::<Vec<u8>>(),
+        )
+    }
+
     impl ZeroKMSConnectionInit for Held {
         type ConnectionOpts = Held;
         type Error = std::convert::Infallible;
 
-        fn init(held: Held) -> Result<Self, Self::Error> {
+        fn init(held: Self) -> Result<Self, Self::Error> {
             Ok(held)
         }
     }
@@ -1538,7 +1557,7 @@ mod window_tests {
             let response = RetrieveKeyResponse {
                 keys: (0..keys)
                     .map(|_| RetrievedKey {
-                        key_material: ViturKeyMaterial::from(vec![7u8; 528]),
+                        key_material: material(i),
                     })
                     .collect(),
             };
@@ -1554,11 +1573,32 @@ mod window_tests {
         }
     }
 
+    /// One poll of the batch that returned pending.
     #[derive(Debug, PartialEq)]
     enum Step {
-        /// The step sent requests for these numbers of keys.
+        /// The poll sent requests for these numbers of keys.
         Requests(Vec<usize>),
+        /// The poll sent nothing and woke itself.
         Yield,
+        /// The poll sent nothing and waits for a response.
+        Wait,
+    }
+
+    /// When the test answers the requests in flight.
+    #[derive(Clone, Copy)]
+    enum Answer {
+        /// As a wasm guest's host does: every request a step sent, at once,
+        /// before the next poll.
+        EachStepAtOnce,
+        /// Every request a step sent, before the next poll, but newest
+        /// first, one at a time with a poll after each, so they finish in
+        /// reverse order.
+        EachStepsNewestFirst,
+        /// As a network might: whenever the batch waits, the oldest request
+        /// in flight.
+        OldestWhenWaiting,
+        /// Whenever the batch waits, the newest request in flight.
+        NewestWhenWaiting,
     }
 
     fn iv(i: usize) -> Iv {
@@ -1567,10 +1607,15 @@ mod window_tests {
         iv
     }
 
-    /// Retrieve `keys` keys, polling one step at a time. Each step's
-    /// requests are released in reverse order, so responses arrive out of
-    /// order. Returns the steps and the keys' IVs.
-    fn retrieve(keys_per_req: usize, concurrent_reqs: usize, keys: usize) -> (Vec<Step>, Vec<Iv>) {
+    /// Retrieve `keys` keys, polling one step at a time and answering
+    /// requests as `answer` says. Returns the steps, and whether each key is
+    /// the one derived from its own request's response.
+    fn retrieve(
+        answer: Answer,
+        keys_per_req: usize,
+        concurrent_reqs: usize,
+        keys: usize,
+    ) -> (Vec<Step>, Vec<bool>) {
         let held = Held::default();
         let opts = ClientOpts::new(held.clone())
             .with_max_keys_per_req(keys_per_req)
@@ -1593,43 +1638,77 @@ mod window_tests {
         let mut cx = Context::from_waker(&waker);
         let mut steps = Vec::new();
         let mut seen = 0;
-        loop {
+        let result = loop {
             woken.0.store(false, Ordering::SeqCst);
-            match call.as_mut().poll(&mut cx) {
-                Poll::Ready(result) => {
-                    let ivs = result
-                        .expect("retrieve_keys succeeds")
-                        .iter()
-                        .map(|k| k.iv)
-                        .collect();
-                    return (steps, ivs);
-                }
-                Poll::Pending => {
-                    let sent = held.sent();
-                    if sent.len() > seen {
-                        steps.push(Step::Requests(sent[seen..].to_vec()));
-                        for i in (seen..sent.len()).rev() {
-                            held.release(i);
-                        }
-                        seen = sent.len();
-                    } else {
-                        assert!(
-                            woken.0.load(Ordering::SeqCst),
-                            "pending with nothing sent and not woken: it would never be polled again"
-                        );
-                        steps.push(Step::Yield);
+            if let Poll::Ready(result) = call.as_mut().poll(&mut cx) {
+                break result;
+            }
+            // As a guest's step loop does: a poll that sent requests waits
+            // for them; one that sent nothing yields if it woke itself.
+            let sent = held.sent();
+            let new = seen..sent.len();
+            seen = sent.len();
+            if !new.is_empty() {
+                steps.push(Step::Requests(sent[new.clone()].to_vec()));
+            } else if woken.0.load(Ordering::SeqCst) {
+                steps.push(Step::Yield);
+                continue;
+            } else {
+                steps.push(Step::Wait);
+            }
+            let in_flight = held.in_flight();
+            match answer {
+                Answer::EachStepAtOnce => {
+                    assert!(
+                        !new.is_empty(),
+                        "a step that waits but sent nothing would never be resumed"
+                    );
+                    for i in new {
+                        held.release(i);
                     }
                 }
+                Answer::EachStepsNewestFirst => {
+                    assert!(
+                        !new.is_empty(),
+                        "a step that waits but sent nothing would never be resumed"
+                    );
+                    for i in new.clone().rev() {
+                        held.release(i);
+                        if i > new.start {
+                            // An earlier request is still in flight, so the
+                            // batch waits for it.
+                            woken.0.store(false, Ordering::SeqCst);
+                            assert!(call.as_mut().poll(&mut cx).is_pending());
+                            assert!(!woken.0.load(Ordering::SeqCst), "nothing derived");
+                            assert_eq!(held.sent().len(), seen, "nothing sent");
+                        }
+                    }
+                }
+                Answer::OldestWhenWaiting => held.release(in_flight[0]),
+                Answer::NewestWhenWaiting => held.release(in_flight[in_flight.len() - 1]),
             }
-        }
+        };
+        let matches = result
+            .expect("retrieve_keys succeeds")
+            .iter()
+            .enumerate()
+            .map(|(k, key)| {
+                let own =
+                    DataKey::from_key_material(&client_key, iv(k), &material(k / keys_per_req))
+                        .unwrap();
+                *key == own
+            })
+            .collect();
+        (steps, matches)
     }
 
-    fn requests(steps: &[Step]) -> Vec<&Vec<usize>> {
+    /// The requests of each step that sent any.
+    fn requests(steps: &[Step]) -> Vec<&[usize]> {
         steps
             .iter()
             .filter_map(|s| match s {
-                Step::Requests(r) => Some(r),
-                Step::Yield => None,
+                Step::Requests(r) => Some(&r[..]),
+                _ => None,
             })
             .collect()
     }
@@ -1640,31 +1719,44 @@ mod window_tests {
 
     #[test]
     fn a_window_of_requests_goes_out_in_one_step() {
-        // 1,000 keys in requests of 100, 3 at a time: windows of 3, 3, 3
-        // and 1 requests, each sent in one step.
-        let (steps, _) = retrieve(100, 3, 1000);
-        assert_eq!(
-            requests(&steps),
-            [&vec![100; 3], &vec![100; 3], &vec![100; 3], &vec![100]]
-        );
-        // A window's keys are derived before the next window is sent, so
-        // at most one window of key material is held at a time: the steps
-        // after each window's requests yield before the next requests.
-        let firsts: Vec<usize> = steps
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| matches!(s, Step::Requests(_)))
-            .map(|(i, _)| i)
-            .collect();
-        for pair in firsts.windows(2) {
-            assert!(
-                steps[pair[0] + 1..pair[1]]
-                    .iter()
-                    .all(|s| *s == Step::Yield)
-                    && pair[1] > pair[0] + 1,
-                "a window's keys are derived, yielding, before the next window is sent: {steps:?}"
+        // A guest's host answers a step's requests before resuming it. Then
+        // 1,000 keys in requests of 100, 3 at a time, go out in windows of
+        // 3, 3, 3 and 1 requests, each sent in one step, and each window's
+        // keys are derived, yielding, before the next window is sent.
+        for answer in [Answer::EachStepAtOnce, Answer::EachStepsNewestFirst] {
+            let (steps, _) = retrieve(answer, 100, 3, 1000);
+            assert_eq!(
+                requests(&steps),
+                [&[100; 3][..], &[100; 3], &[100; 3], &[100]]
             );
+            let sends: Vec<usize> = steps
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| matches!(s, Step::Requests(_)))
+                .map(|(i, _)| i)
+                .collect();
+            for pair in sends.windows(2) {
+                assert!(
+                    steps[pair[0] + 1..pair[1]]
+                        .iter()
+                        .all(|s| *s == Step::Yield)
+                        && pair[1] > pair[0] + 1,
+                    "a window's keys are derived, yielding, before the next window is sent: {steps:?}"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn otherwise_the_next_request_goes_out_once_a_responses_keys_are_derived() {
+        // Natively, responses arrive one at a time. Then 1,000 keys in
+        // requests of 100, 3 at a time, go out as 3 requests, then one more
+        // as each response's keys are derived, while the other two are
+        // still in flight.
+        let (steps, _) = retrieve(Answer::OldestWhenWaiting, 100, 3, 1000);
+        let mut expected = vec![&[100; 3][..]];
+        expected.extend([&[100][..]; 7]);
+        assert_eq!(requests(&steps), expected);
     }
 
     #[test]
@@ -1673,25 +1765,38 @@ mod window_tests {
         // keys, whether one request is in flight or several.
         let keys = 1000;
         for concurrent_reqs in [1, 3, 5] {
-            let (steps, _) = retrieve(100, concurrent_reqs, keys);
-            assert_eq!(
-                yields(&steps),
-                (keys - 1) / YIELD_EVERY,
-                "{concurrent_reqs} requests in flight"
-            );
+            for steps in [
+                retrieve(Answer::EachStepAtOnce, 100, concurrent_reqs, keys).0,
+                retrieve(Answer::EachStepsNewestFirst, 100, concurrent_reqs, keys).0,
+                retrieve(Answer::OldestWhenWaiting, 100, concurrent_reqs, keys).0,
+                retrieve(Answer::NewestWhenWaiting, 100, concurrent_reqs, keys).0,
+            ] {
+                assert_eq!(
+                    yields(&steps),
+                    (keys - 1) / YIELD_EVERY,
+                    "{concurrent_reqs} requests in flight: {steps:?}"
+                );
+            }
         }
     }
 
     #[test]
-    fn keys_come_back_in_order_when_responses_arrive_out_of_order() {
-        let (_, ivs) = retrieve(100, 3, 1000);
-        assert_eq!(ivs, (0..1000).map(iv).collect::<Vec<_>>());
+    fn each_key_comes_from_its_own_response_when_responses_arrive_in_reverse() {
+        // Each response has its own key material, so a response paired with
+        // another request's specs gives different keys.
+        for (_, matches) in [
+            retrieve(Answer::EachStepsNewestFirst, 100, 3, 1000),
+            retrieve(Answer::NewestWhenWaiting, 100, 3, 1000),
+        ] {
+            assert_eq!(matches.len(), 1000);
+            assert!(matches.iter().all(|m| *m), "{matches:?}");
+        }
     }
 
     #[test]
     fn a_batch_smaller_than_one_request_is_one_step() {
-        let (steps, ivs) = retrieve(500, 3, 10);
+        let (steps, matches) = retrieve(Answer::EachStepAtOnce, 500, 3, 10);
         assert_eq!(steps, [Step::Requests(vec![10])]);
-        assert_eq!(ivs.len(), 10);
+        assert_eq!(matches.len(), 10);
     }
 }

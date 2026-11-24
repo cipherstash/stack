@@ -29,6 +29,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SIMD, which makes deriving a key faster. It is off by default, because a
   wasm runtime without SIMD refuses to load a module that uses it.
 
+### Changed
+
+- A batch now yields to the async runtime every 64 keys while it derives
+  data keys. On tokio, the yield reschedules the task. In a wasm guest, it
+  hands control back to the host. The host cannot preempt the guest.
+- A batch derives its keys outside the futures of its ZeroKMS requests, one
+  response at a time and in order. So the yields come every 64 keys, however
+  many requests are waiting for a response.
+- The next request still goes out as soon as the keys of a response are
+  derived, so requests overlap derivation as before. A batch holds the
+  wrapped material of at most `max_concurrent_reqs` responses at a time.
+
 ## [0.2.0] - 2026-10-27
 
 ### Breaking
