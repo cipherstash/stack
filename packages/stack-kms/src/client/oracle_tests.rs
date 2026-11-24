@@ -101,6 +101,25 @@ fn retrieve_iv(k: usize, salt: u64) -> [u8; 16] {
     iv
 }
 
+/// The descriptor of the `k`th spec of a batch. The connection reads `k`
+/// back from it with [`spec_index`].
+fn descriptor(k: usize) -> String {
+    format!("d{k}")
+}
+
+/// The index of the spec a [`descriptor`] was made for.
+fn spec_index(descriptor: &str) -> usize {
+    descriptor
+        .strip_prefix('d')
+        .and_then(|k| k.parse().ok())
+        .unwrap_or_else(|| panic!("{descriptor:?} is not a descriptor of a spec"))
+}
+
+/// The descriptors of a batch of `keys` specs.
+fn descriptors(keys: usize) -> Vec<String> {
+    (0..keys).map(descriptor).collect()
+}
+
 // ------------------------------------------------------------ the connection
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,6 +132,26 @@ enum Fault {
     Long { chunk: usize },
     /// The material for this key, the index of its spec, is a byte short.
     BadMaterial { key: usize },
+}
+
+impl Fault {
+    /// This fault, its chunk or key drawn as any number, moved into a batch
+    /// of `keys` specs (at least one) sent `per` to a request.
+    fn placed(self, keys: usize, per: usize) -> Self {
+        let n = chunks(keys, per);
+        match self {
+            Fault::Fail { chunk } => Fault::Fail { chunk: chunk % n },
+            Fault::Short { chunk } => Fault::Short { chunk: chunk % n },
+            Fault::Long { chunk } => Fault::Long { chunk: chunk % n },
+            Fault::BadMaterial { key } => Fault::BadMaterial { key: key % keys },
+        }
+    }
+
+    /// Whether this fault fails the whole call. A fallible retrieval keeps a
+    /// bad key's failure to that key.
+    fn fails_the_call(self, op: Op) -> bool {
+        !matches!((self, op), (Fault::BadMaterial { .. }, Op::Fallible))
+    }
 }
 
 struct ReqState {
@@ -213,8 +252,7 @@ impl ZeroKMSConnection for Oracle {
             .iter()
             .map(|s| {
                 let iv: KeyId = serde_json::from_value(s["iv"].clone()).unwrap();
-                let k: usize = s["descriptor"].as_str().unwrap()[1..].parse().unwrap();
-                (*iv.as_ref(), k)
+                (*iv.as_ref(), spec_index(s["descriptor"].as_str().unwrap()))
             })
             .collect();
         assert!(!specs.is_empty(), "a request for no keys");
@@ -358,6 +396,10 @@ enum Op {
     Retrieve,
     Fallible,
     Generate,
+}
+
+impl Op {
+    const ALL: [Op; 3] = [Op::Retrieve, Op::Fallible, Op::Generate];
 }
 
 /// What a call returned for one spec.
@@ -516,7 +558,7 @@ impl SplitMix {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Drive {
     /// Polled by hand, one poll at a time.
     Hand(HandDrive),
@@ -546,8 +588,17 @@ struct Trace {
     yields: usize,
     /// Steps that sent requests and woke themselves.
     sent_and_woke: usize,
-    /// Steps that left the batch pending, not woken, with nothing in flight.
-    hung: bool,
+}
+
+/// How a driven call ended.
+enum Outcome {
+    /// The call returned this.
+    Done(Result<Vec<Got>, CallErr>),
+    /// The call was pending when the case's `drop_after` came, and could
+    /// still make progress, so it was dropped.
+    Dropped,
+    /// The call was pending and nothing would wake it: why.
+    Hung(&'static str),
 }
 
 struct Woken(AtomicBool);
@@ -566,15 +617,15 @@ enum Polled<T> {
     },
 }
 
-/// Drive `fut` by hand. Returns its output, or `None` if it was still
-/// pending after `drop_after` polls (and was dropped) or hung.
+/// Drive `fut` by hand, dropping it if it is still pending after
+/// `drop_after` polls.
 fn drive_by_hand(
     mut fut: Call<'_>,
     conn: &Oracle,
     drive: HandDrive,
     rng: &mut SplitMix,
     drop_after: Option<usize>,
-) -> (Option<Result<Vec<Got>, CallErr>>, Trace) {
+) -> (Outcome, Trace) {
     let woken = Arc::new(Woken(AtomicBool::new(false)));
     let waker = Waker::from(woken.clone());
     let mut cx = Context::from_waker(&waker);
@@ -607,37 +658,36 @@ fn drive_by_hand(
     loop {
         let (polled, polls) = poll(&mut fut, &mut trace, &mut seen);
         let (sent, woke) = match polled {
-            Polled::Ready(r) => return (Some(r), trace),
+            Polled::Ready(r) => return (Outcome::Done(r), trace),
             Polled::Pending { sent, woke } => (sent, woke),
         };
+        // A hang is checked before the drop, so a call that hangs on the
+        // poll it is dropped after is a hang, not a clean drop.
+        let in_flight = conn.in_flight();
+        if !woke && in_flight.is_empty() {
+            return (Outcome::Hung("not woken, nothing in flight"), trace);
+        }
+        if drive == HandDrive::GuestAtOnce
+            && !in_flight.is_empty()
+            && in_flight != sent.collect::<Vec<_>>()
+        {
+            // In a guest, a step that waits sent everything it waits on.
+            return (Outcome::Hung("waits on a request it did not send"), trace);
+        }
         if drop_after.is_some_and(|d| polls >= d) {
             drop(fut);
-            return (None, trace);
-        }
-        let in_flight = conn.in_flight();
-        if sent.is_empty() && !woke && in_flight.is_empty() {
-            trace.hung = true;
-            return (None, trace);
+            return (Outcome::Dropped, trace);
         }
         match drive {
             HandDrive::GuestAtOnce | HandDrive::GuestPollBetween => {
                 // The host answers what the guest has asked for: this
                 // step's requests, and (polling between answers) any sent
-                // by a poll between answers.
+                // by a poll between answers. With none, the step woke
+                // itself.
                 if in_flight.is_empty() {
-                    if woke {
-                        continue;
-                    }
-                    trace.hung = true;
-                    return (None, trace);
+                    continue;
                 }
                 let poll_between = drive == HandDrive::GuestPollBetween;
-                if !poll_between && in_flight != sent.clone().collect::<Vec<_>>() {
-                    // In a guest, a step that waits sent everything it
-                    // waits on.
-                    trace.hung = true;
-                    return (None, trace);
-                }
                 let mut order = in_flight;
                 rng.shuffle(&mut order);
                 let last = order.len() - 1;
@@ -645,7 +695,7 @@ fn drive_by_hand(
                     conn.release(i);
                     if poll_between && j < last && rng.coin() {
                         match poll(&mut fut, &mut trace, &mut seen).0 {
-                            Polled::Ready(r) => return (Some(r), trace),
+                            Polled::Ready(r) => return (Outcome::Done(r), trace),
                             Polled::Pending { .. } => {}
                         }
                     }
@@ -673,16 +723,71 @@ fn drive_by_hand(
     }
 }
 
-fn drive_tokio(fut: Call<'_>, timeout: Option<Duration>) -> Option<Result<Vec<Got>, CallErr>> {
+/// On tokio, how long a call with no `drop_after` may take. Each request
+/// takes under 500 ms, so even one at a time 7,200 of them fit. The clock is
+/// paused, so once the runtime has nothing to run it jumps straight here: a
+/// call that is never woken again fails at once instead of hanging the test.
+const TOKIO_DEADLINE: Duration = Duration::from_secs(60 * 60);
+
+/// Records a wake, and passes it on to the task.
+struct Forward {
+    woken: Arc<Woken>,
+    task: Waker,
+}
+
+impl Wake for Forward {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.woken.0.store(true, Ordering::SeqCst);
+        self.task.wake_by_ref();
+    }
+}
+
+/// Drive `fut` on tokio, dropping it if it is still pending at `drop_at`.
+///
+/// On tokio a call waits only on its requests and on its own yields. So a
+/// call that is pending at the drop, has not been woken since its last poll
+/// began, and has no request in flight is parked: nothing will wake it, and
+/// it is a hang, not a drop. A call that loses the wake of a request still
+/// in flight is not told apart from one waiting on it, and a call that only
+/// parks after the drop is not seen. Without a drop, both fail at the
+/// deadline.
+fn drive_tokio(mut fut: Call<'_>, conn: &Oracle, drop_at: Option<Duration>) -> Outcome {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)
         .build()
         .unwrap();
     rt.block_on(async move {
-        match timeout {
-            Some(d) => tokio::time::timeout(d, fut).await.ok(),
-            None => Some(fut.await),
+        // Whether the call has been woken since its last poll began.
+        let woken = Arc::new(Woken(AtomicBool::new(false)));
+        let mut deadline = std::pin::pin!(tokio::time::sleep(drop_at.unwrap_or(TOKIO_DEADLINE)));
+        let result = std::future::poll_fn(|cx| {
+            // The deadline comes first, so the call is judged as its last
+            // poll left it: one more poll could wake a parked call.
+            if deadline.as_mut().poll(cx).is_ready() {
+                return Poll::Ready(None);
+            }
+            woken.0.store(false, Ordering::SeqCst);
+            let waker = Waker::from(Arc::new(Forward {
+                woken: woken.clone(),
+                task: cx.waker().clone(),
+            }));
+            fut.as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .map(Some)
+        })
+        .await;
+        match result {
+            Some(r) => Outcome::Done(r),
+            None if !woken.0.load(Ordering::SeqCst) && conn.live() == 0 => {
+                Outcome::Hung("not woken, nothing in flight")
+            }
+            None if drop_at.is_some() => Outcome::Dropped,
+            None => Outcome::Hung("still pending at the deadline"),
         }
     })
 }
@@ -735,15 +840,6 @@ fn max_keys() -> usize {
     })
 }
 
-/// Which kind of fault a case has, before it is placed in the batch.
-#[derive(Clone, Copy, Debug)]
-enum FaultKind {
-    Fail,
-    Short,
-    Long,
-    BadMaterial,
-}
-
 fn case() -> impl Strategy<Value = Case> {
     let max_keys = max_keys();
     let drive = prop_oneof![
@@ -752,14 +848,16 @@ fn case() -> impl Strategy<Value = Case> {
         Just(Drive::Hand(HandDrive::Network)),
         Just(Drive::Tokio)
     ];
+    // Drawn with any chunk or key, and placed once the batch size is known.
     let fault = prop_oneof![
         4 => Just(None),
-        1 => (
-            any::<usize>(),
-            prop_oneof![Just(FaultKind::Fail), Just(FaultKind::Short), Just(FaultKind::Long)],
-        )
-            .prop_map(Some),
-        2 => any::<usize>().prop_map(|i| Some((i, FaultKind::BadMaterial))),
+        1 => prop_oneof![
+            any::<usize>().prop_map(|chunk| Fault::Fail { chunk }),
+            any::<usize>().prop_map(|chunk| Fault::Short { chunk }),
+            any::<usize>().prop_map(|chunk| Fault::Long { chunk }),
+        ]
+        .prop_map(Some),
+        2 => any::<usize>().prop_map(|key| Some(Fault::BadMaterial { key })),
     ];
     let drop_after = prop_oneof![8 => Just(None), 1 => (1usize..40).prop_map(Some)];
     (
@@ -773,14 +871,15 @@ fn case() -> impl Strategy<Value = Case> {
     )
         .prop_flat_map(
             move |(op, drive, keys_per_req, concurrent_reqs, fault, drop_after, seed)| {
-                // Whole chunks, up to the cap (one chunk at least).
+                // Whole chunks, give or take a key, up to the cap.
                 let max_chunks = (max_keys / keys_per_req).clamp(1, 6);
                 let keys = prop_oneof![
                     3 => prop::sample::select(vec![
                         0usize, 1, 499, 500, 501, 999, 1000, 1001, 1499, 1500, 1501, 2501
                     ]),
-                    2 => (1usize..=max_chunks, 0usize..=2)
-                        .prop_map(move |(m, d)| (m * keys_per_req + d).saturating_sub(1)),
+                    2 => (1usize..=max_chunks, 0usize..=2).prop_map(move |(m, d)| {
+                        (m * keys_per_req + d).saturating_sub(1).min(max_keys)
+                    }),
                     2 => 0usize..=max_keys,
                 ];
                 keys.prop_map(move |keys| Case {
@@ -789,15 +888,9 @@ fn case() -> impl Strategy<Value = Case> {
                     keys,
                     keys_per_req,
                     concurrent_reqs,
-                    fault: fault.filter(|_| keys > 0).map(|(i, kind)| {
-                        let chunk = i % chunks(keys, keys_per_req);
-                        match kind {
-                            FaultKind::Fail => Fault::Fail { chunk },
-                            FaultKind::Short => Fault::Short { chunk },
-                            FaultKind::Long => Fault::Long { chunk },
-                            FaultKind::BadMaterial => Fault::BadMaterial { key: i % keys },
-                        }
-                    }),
+                    fault: fault
+                        .filter(|_| keys > 0)
+                        .map(|f| f.placed(keys, keys_per_req)),
                     drop_after,
                     seed,
                 })
@@ -807,7 +900,7 @@ fn case() -> impl Strategy<Value = Case> {
 
 fn run(case: &Case) -> Result<(), TestCaseError> {
     let mut rng = SplitMix(case.seed);
-    let delays = matches!(case.drive, Drive::Tokio).then(|| {
+    let delays = (case.drive == Drive::Tokio).then(|| {
         (0..chunks(case.keys, case.keys_per_req))
             .map(|_| Duration::from_millis(rng.below(500) as u64))
             .collect()
@@ -815,186 +908,220 @@ fn run(case: &Case) -> Result<(), TestCaseError> {
     let conn = Oracle::new(case.keys_per_req, case.fault, delays);
     let client = client(&conn, case.keys_per_req, case.concurrent_reqs);
     let client_key = client_key();
-    let descriptors: Vec<String> = (0..case.keys).map(|k| format!("d{k}")).collect();
+    let descriptors = descriptors(case.keys);
     let salt = rng.next();
     let fut = call(&client, &client_key, case.op, &descriptors, salt);
 
-    let (result, trace) = match case.drive {
-        Drive::Tokio => (
-            drive_tokio(
-                fut,
-                case.drop_after.map(|units| TOKIO_DROP_UNIT * units as u32),
-            ),
-            None,
-        ),
+    let (outcome, trace) = match case.drive {
+        Drive::Tokio => {
+            let drop_at = case.drop_after.map(|units| TOKIO_DROP_UNIT * units as u32);
+            (drive_tokio(fut, &conn, drop_at), None)
+        }
         Drive::Hand(drive) => {
-            let (r, t) = drive_by_hand(fut, &conn, drive, &mut rng, case.drop_after);
-            (r, Some(t))
+            let (outcome, trace) = drive_by_hand(fut, &conn, drive, &mut rng, case.drop_after);
+            (outcome, Some(trace))
         }
     };
-    let at_once = matches!(case.drive, Drive::Hand(HandDrive::GuestAtOnce));
 
-    // Whatever happened, no request future outlives the call.
+    // Whatever happened, no request future outlives the call, and no more
+    // than the limit are in flight at once.
     prop_assert_eq!(conn.live(), 0, "request futures outlived the call");
     prop_assert!(
         conn.0.max_live.load(Ordering::SeqCst) <= case.concurrent_reqs,
         "more than {} requests in flight",
         case.concurrent_reqs
     );
-    if let Some(t) = &trace {
-        prop_assert!(!t.hung, "the call hung: {t:?}");
-    }
-
-    let Some(result) = result else {
-        prop_assert!(case.drop_after.is_some(), "no result, and not dropped");
-        return Ok(());
+    let result = match outcome {
+        Outcome::Done(result) => result,
+        Outcome::Dropped => return Ok(()),
+        Outcome::Hung(why) => {
+            return Err(TestCaseError::fail(format!(
+                "the call hung ({why}): {trace:?}"
+            )))
+        }
     };
 
+    match case.fault {
+        Some(fault) if fault.fails_the_call(case.op) => {
+            check_failure(case, fault, result)?;
+            if let (Fault::BadMaterial { key }, Some(t)) = (fault, &trace) {
+                // The call failed on the poll that derived `key`, so the
+                // yields before it are those of keys `0..=key`.
+                check_trace(case, t, key + 1)?;
+            }
+        }
+        _ => {
+            let got = result.map_err(|e| TestCaseError::fail(format!("the call failed: {e:?}")))?;
+            check_keys(case, &conn, &client_key, salt, &got)?;
+            if let Some(t) = &trace {
+                check_trace(case, t, case.keys)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Check that a fault that fails the whole call failed it with that fault's
+/// error.
+fn check_failure(
+    case: &Case,
+    fault: Fault,
+    result: Result<Vec<Got>, CallErr>,
+) -> Result<(), TestCaseError> {
     let chunk_len = |c: usize| case.keys_per_req.min(case.keys - c * case.keys_per_req);
-    // A fallible retrieval keeps a bad key's failure to that key.
+    let count = |c: usize, received: usize| CallErr::Count {
+        expected: chunk_len(c),
+        received,
+    };
+    let want = match fault {
+        Fault::Fail { chunk } => {
+            return match &result {
+                Err(CallErr::Other(s)) => {
+                    prop_assert!(
+                        s.contains(&format!("injected failure of chunk {chunk}")),
+                        "the wrong error: {}",
+                        s
+                    );
+                    Ok(())
+                }
+                Err(e) => Err(TestCaseError::fail(format!("the wrong error: {e:?}"))),
+                Ok(_) => Err(TestCaseError::fail(
+                    "a failed request did not fail the call",
+                )),
+            }
+        }
+        Fault::Short { chunk } => count(chunk, chunk_len(chunk) - 1),
+        Fault::Long { chunk } => count(chunk, chunk_len(chunk) + 1),
+        Fault::BadMaterial { .. } => CallErr::BadMaterial,
+    };
+    prop_assert_eq!(result.err(), Some(want));
+    Ok(())
+}
+
+/// Check the keys of a call that returned: one for every spec, each the key
+/// derived from that spec's own response, and each failure the one ZeroKMS
+/// gave for that spec.
+fn check_keys(
+    case: &Case,
+    conn: &Oracle,
+    client_key: &ClientKey,
+    salt: u64,
+    got: &[Got],
+) -> Result<(), TestCaseError> {
+    // Only a fallible retrieval returns with a bad key.
     let bad_key = match case.fault {
-        Some(Fault::BadMaterial { key }) if matches!(case.op, Op::Fallible) => Some(key),
+        Some(Fault::BadMaterial { key }) => Some(key),
         _ => None,
     };
-    match case.fault {
-        Some(Fault::Fail { chunk: c }) => match &result {
-            Err(CallErr::Other(s)) => prop_assert!(
-                s.contains(&format!("injected failure of chunk {c}")),
-                "the wrong error: {s}"
-            ),
-            Err(e) => prop_assert!(false, "the wrong error: {e:?}"),
-            Ok(_) => prop_assert!(false, "a failed request did not fail the call"),
-        },
-        Some(Fault::Short { chunk: c }) => prop_assert_eq!(
-            result.err(),
-            Some(CallErr::Count {
-                expected: chunk_len(c),
-                received: chunk_len(c) - 1
-            })
-        ),
-        Some(Fault::Long { chunk: c }) => prop_assert_eq!(
-            result.err(),
-            Some(CallErr::Count {
-                expected: chunk_len(c),
-                received: chunk_len(c) + 1
-            })
-        ),
-        Some(Fault::BadMaterial { key }) if bad_key.is_none() => {
-            prop_assert_eq!(result.err(), Some(CallErr::BadMaterial));
-            // The call failed on the poll that derived `key`. Keys are
-            // derived in order, with a yield before every YIELD_EVERYth, so
-            // exactly `key / YIELD_EVERY` yields come before it: no step
-            // derives keys from two runs of YIELD_EVERY.
-            if let Some(t) = &trace {
-                let before = key / YIELD_EVERY;
-                if at_once {
+    prop_assert_eq!(got.len(), case.keys);
+    let ivs = conn.0.ivs.lock().unwrap();
+    prop_assert_eq!(ivs.len(), case.keys, "every spec sent once");
+    for (k, g) in got.iter().enumerate() {
+        let expected_iv = match case.op {
+            Op::Retrieve | Op::Fallible => retrieve_iv(k, salt),
+            Op::Generate => match g {
+                Got::Key { iv, .. } => {
                     prop_assert_eq!(
-                        t.yields,
-                        before,
-                        "key {} was derived after {} yields, not {}: {:?}",
-                        key,
-                        t.yields,
-                        before,
-                        t
+                        ivs.get(iv),
+                        Some(&k),
+                        "key {} has spec {:?}'s IV",
+                        k,
+                        ivs.get(iv)
                     );
-                } else {
-                    prop_assert!(
-                        t.yields + t.sent_and_woke >= before,
-                        "key {} was derived after too few yields: {:?}",
-                        key,
-                        t
-                    );
+                    *iv
+                }
+                Got::KeyErr(_) | Got::BadMaterial => {
+                    return Err(TestCaseError::fail(format!("key {k} failed")))
+                }
+            },
+        };
+        // ZeroKMS's own failure comes first: that key has no material.
+        let want_err = matches!(case.op, Op::Fallible) && fails_for(&expected_iv);
+        let want_bad = !want_err && bad_key == Some(k);
+        match g {
+            Got::KeyErr(m) => {
+                prop_assert!(want_err, "key {} failed: {}", k, m);
+                prop_assert_eq!(
+                    m,
+                    &failure_for(&expected_iv),
+                    "key {}'s error is another's",
+                    k
+                );
+            }
+            Got::BadMaterial => {
+                prop_assert!(want_bad, "key {}'s material was not valid", k);
+            }
+            Got::Key { iv, key, tag } => {
+                prop_assert!(!want_err, "key {} should have failed", k);
+                prop_assert!(!want_bad, "key {}'s bad material made a key", k);
+                prop_assert_eq!(iv, &expected_iv, "key {} has the wrong IV", k);
+                prop_assert!(
+                    *key == oracle_key(client_key, &expected_iv),
+                    "key {} is not the key derived from its own response",
+                    k
+                );
+                if let Op::Generate = case.op {
+                    prop_assert_eq!(tag.as_deref(), Some(&tag_for(&expected_iv)[..]));
                 }
             }
         }
-        None | Some(Fault::BadMaterial { .. }) => {
-            let got = match result {
-                Ok(got) => got,
-                Err(e) => return Err(TestCaseError::fail(format!("the call failed: {e:?}"))),
-            };
-            prop_assert_eq!(got.len(), case.keys);
-            let ivs = conn.0.ivs.lock().unwrap();
-            prop_assert_eq!(ivs.len(), case.keys, "every spec sent once");
-            for (k, g) in got.iter().enumerate() {
-                let expected_iv = match case.op {
-                    Op::Retrieve | Op::Fallible => retrieve_iv(k, salt),
-                    Op::Generate => match g {
-                        Got::Key { iv, .. } => {
-                            prop_assert_eq!(
-                                ivs.get(iv),
-                                Some(&k),
-                                "key {} has spec {:?}'s IV",
-                                k,
-                                ivs.get(iv)
-                            );
-                            *iv
-                        }
-                        Got::KeyErr(_) | Got::BadMaterial => {
-                            return Err(TestCaseError::fail(format!("key {k} failed")))
-                        }
-                    },
-                };
-                // ZeroKMS's own failure comes first: that key has no material.
-                let want_err = matches!(case.op, Op::Fallible) && fails_for(&expected_iv);
-                let want_bad = !want_err && bad_key == Some(k);
-                match g {
-                    Got::KeyErr(m) => {
-                        prop_assert!(want_err, "key {} failed: {}", k, m);
-                        prop_assert_eq!(
-                            m,
-                            &failure_for(&expected_iv),
-                            "key {}'s error is another's",
-                            k
-                        );
-                    }
-                    Got::BadMaterial => {
-                        prop_assert!(want_bad, "key {}'s material was not valid", k);
-                    }
-                    Got::Key { iv, key, tag } => {
-                        prop_assert!(!want_err, "key {} should have failed", k);
-                        prop_assert!(!want_bad, "key {}'s bad material made a key", k);
-                        prop_assert_eq!(iv, &expected_iv, "key {} has the wrong IV", k);
-                        prop_assert!(
-                            *key == oracle_key(&client_key, &expected_iv),
-                            "key {} is not the key derived from its own response",
-                            k
-                        );
-                        if let Op::Generate = case.op {
-                            prop_assert_eq!(tag.as_deref(), Some(&tag_for(&expected_iv)[..]));
-                        }
-                    }
-                }
-            }
+    }
+    Ok(())
+}
 
-            // How the batch went out, as a guest polls it. (A step that
-            // sends requests can also wake itself: `FuturesUnordered` does
-            // when it has polled every future it holds. The guest's step
-            // loop looks at the requests first, so that is no yield.)
-            if let Some(t) = &trace {
-                let derive_yields = case.keys.saturating_sub(1) / YIELD_EVERY;
-                if at_once {
-                    // Exactly one yield per YIELD_EVERY keys, and every step
-                    // but the last sends as many requests as the
-                    // concurrency allows.
-                    prop_assert_eq!(t.yields, derive_yields, "yields: {:?}", t);
-                    let n = chunks(case.keys, case.keys_per_req);
-                    let c = case.concurrent_reqs;
-                    let mut want = vec![c; n / c];
-                    if !n.is_multiple_of(c) {
-                        want.push(n % c);
-                    }
-                    prop_assert_eq!(&t.request_steps, &want, "windows: {:?}", t);
-                } else {
-                    // Here a poll can send a request and then derive up to
-                    // a yield, so a yield can come in a step that sent.
-                    prop_assert!(
-                        t.yields + t.sent_and_woke >= derive_yields,
-                        "too few yields: {:?}",
-                        t
-                    );
-                }
-            }
+/// Check where a call driven by hand yielded, given that it derived (or, the
+/// last failing, tried to derive) its first `derived` keys.
+///
+/// Keys are derived in order, with a yield before every `YIELD_EVERY`th, so
+/// exactly `(derived - 1) / YIELD_EVERY` yields came first: no step derives
+/// keys from two runs of `YIELD_EVERY`. Each yield is a poll that woke
+/// itself. Such a poll that also sent requests counts as `sent_and_woke`,
+/// not as a yield: `FuturesUnordered` wakes itself when it has polled every
+/// future it holds, so a step that sends can wake itself without a yield,
+/// and the trace cannot tell the two apart. A poll that sends nothing
+/// polls only requests that were answered, and returns at the first, so
+/// only a yield wakes it.
+fn check_trace(case: &Case, t: &Trace, derived: usize) -> Result<(), TestCaseError> {
+    let yields = derived.saturating_sub(1) / YIELD_EVERY;
+    if case.drive != Drive::Hand(HandDrive::GuestAtOnce) {
+        // Here a poll can send a request and then derive up to a yield, so
+        // a yield can come in a step that sent.
+        prop_assert!(
+            t.yields + t.sent_and_woke >= yields,
+            "{} keys derived after too few yields: {:?}",
+            derived,
+            t
+        );
+        prop_assert!(
+            t.yields <= yields,
+            "{} keys derived after too many yields: {:?}",
+            derived,
+            t
+        );
+        return Ok(());
+    }
+    // As a guest's host polls it, the step loop looks at the requests
+    // first, so a step that sent and woke is no yield: the yields are
+    // exact.
+    prop_assert_eq!(
+        t.yields,
+        yields,
+        "{} keys derived after {} yields, not {}: {:?}",
+        derived,
+        t.yields,
+        yields,
+        t
+    );
+    if derived == case.keys {
+        // Every step but the last sends as many requests as the
+        // concurrency allows.
+        let n = chunks(case.keys, case.keys_per_req);
+        let c = case.concurrent_reqs;
+        let mut want = vec![c; n / c];
+        if !n.is_multiple_of(c) {
+            want.push(n % c);
         }
+        prop_assert_eq!(&t.request_steps, &want, "windows: {:?}", t);
     }
     Ok(())
 }
@@ -1021,26 +1148,115 @@ fn a_call_that_completes_on_its_last_poll_before_the_drop_is_returned() {
     let client = client(&conn, 10, 1);
     let client_key = client_key();
     let fut = call(&client, &client_key, Op::Retrieve, &[], 7);
-    let (result, _) = drive_by_hand(
+    let (outcome, _) = drive_by_hand(
         fut,
         &conn,
         HandDrive::GuestAtOnce,
         &mut SplitMix(0),
         Some(1),
     );
-    assert!(matches!(result, Some(Ok(ref keys)) if keys.is_empty()));
+    assert!(matches!(outcome, Outcome::Done(Ok(ref keys)) if keys.is_empty()));
+}
+
+/// A call that is never woken again is a hang under every driver, even on
+/// the poll (or at the time) it would be dropped after, and on tokio with
+/// no drop it fails rather than waiting forever.
+#[test]
+fn a_call_that_is_never_woken_hangs_under_every_driver() {
+    let never = || -> Call<'static> { Box::pin(std::future::pending()) };
+    let conn = Oracle::new(10, None, None);
+    for drive in [
+        HandDrive::GuestAtOnce,
+        HandDrive::GuestPollBetween,
+        HandDrive::Network,
+    ] {
+        for drop_after in [None, Some(1)] {
+            let (outcome, _) = drive_by_hand(never(), &conn, drive, &mut SplitMix(0), drop_after);
+            assert!(
+                matches!(outcome, Outcome::Hung(_)),
+                "{drive:?}, drop_after {drop_after:?}: not a hang"
+            );
+        }
+    }
+    for drop_at in [None, Some(TOKIO_DROP_UNIT)] {
+        assert!(
+            matches!(drive_tokio(never(), &conn, drop_at), Outcome::Hung(_)),
+            "tokio, drop at {drop_at:?}: not a hang"
+        );
+    }
+}
+
+/// On tokio, a call waiting on its requests when it is dropped is a drop,
+/// not a hang.
+#[test]
+fn a_call_waiting_on_its_requests_on_tokio_is_dropped() {
+    let conn = Oracle::new(10, None, Some(vec![Duration::from_millis(400); 10]));
+    let client = client(&conn, 10, 3);
+    let client_key = client_key();
+    let descriptors = descriptors(100);
+    let fut = call(&client, &client_key, Op::Retrieve, &descriptors, 7);
+    assert!(matches!(
+        drive_tokio(fut, &conn, Some(TOKIO_DROP_UNIT)),
+        Outcome::Dropped
+    ));
+    assert_eq!(conn.live(), 0, "request futures outlived the call");
+}
+
+/// Every fault, at the first, a middle and the last chunk or key, on every
+/// operation and driver. The proptest gives each of `Fail`, `Short` and
+/// `Long` about one case in 21, so a given operation, driver and fault can
+/// go a whole run without one. 70 keys at 25 a request is three requests,
+/// the last one short, and one yield.
+#[test]
+fn every_fault_on_every_operation_and_driver() {
+    let (keys, keys_per_req) = (70, 25);
+    let mut faults = vec![None];
+    for chunk in 0..3 {
+        faults.push(Some(Fault::Fail { chunk }));
+        faults.push(Some(Fault::Short { chunk }));
+        faults.push(Some(Fault::Long { chunk }));
+    }
+    for key in [0, 40, keys - 1] {
+        faults.push(Some(Fault::BadMaterial { key }));
+    }
+    let mut failures = Vec::new();
+    for op in Op::ALL {
+        for drive in [
+            Drive::Hand(HandDrive::GuestAtOnce),
+            Drive::Hand(HandDrive::GuestPollBetween),
+            Drive::Hand(HandDrive::Network),
+            Drive::Tokio,
+        ] {
+            for (seed, &fault) in faults.iter().enumerate() {
+                let case = Case {
+                    op,
+                    drive,
+                    keys,
+                    keys_per_req,
+                    concurrent_reqs: 2,
+                    fault,
+                    drop_after: None,
+                    seed: seed as u64,
+                };
+                if let Err(e) = run(&case) {
+                    failures.push(format!("{case:?}: {e}"));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 /// Dropping the call while every request of a window is in flight drops
 /// every request future, on each operation.
 #[test]
 fn dropping_the_call_drops_every_request_in_flight() {
-    for op in [Op::Retrieve, Op::Fallible, Op::Generate] {
+    for op in Op::ALL {
         for concurrent in [1, 3, 8] {
             let conn = Oracle::new(10, None, None);
             let client = client(&conn, 10, concurrent);
             let client_key = client_key();
-            let descriptors: Vec<String> = (0..100).map(|k| format!("d{k}")).collect();
+            let descriptors = descriptors(100);
             let mut fut = call(&client, &client_key, op, &descriptors, 7);
             let mut cx = Context::from_waker(Waker::noop());
             assert!(fut.as_mut().poll(&mut cx).is_pending());
