@@ -69,7 +69,9 @@ fn index_name(index: &IndexSpec) -> Option<&'static str> {
     }
 }
 
-/// A record's plan, built once from its declaration.
+/// A record's plan, built once from its declaration. A declaration holds no
+/// secret, so the whole plan prints.
+#[derive(Debug)]
 pub(crate) struct RecordPlan {
     name: String,
     plan: Plan,
@@ -80,22 +82,12 @@ pub(crate) struct RecordPlan {
 }
 
 /// A field as the rows read it.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Field {
     name: String,
     kind: Option<ValueKind>,
     indexes: Vec<IndexSpec>,
     passthrough: bool,
-}
-
-impl std::fmt::Debug for RecordPlan {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // A declaration is not secret, but a plan's debug form is the
-        // engine's, which nothing here needs to show.
-        f.debug_struct("RecordPlan")
-            .field("name", &self.name)
-            .finish_non_exhaustive()
-    }
 }
 
 /// A declaration, as `record(..)` writes it.
