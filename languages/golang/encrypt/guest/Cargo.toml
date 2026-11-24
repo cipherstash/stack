@@ -56,7 +56,11 @@ stack-encrypt = { path = "../../../../packages/stack-encrypt", default-features 
 # packed-result helpers, the status table and the step loop.
 # This crate defines only the exports that are its own.
 stack-guest-abi = { path = "../../../../packages/stack-guest-abi" }
-stack-kms = { path = "../../../../packages/stack-kms", default-features = false }
+# `wasm-simd`: re-encrypts key material with wasm SIMD, the costly part of
+# deriving a data key. The module then holds SIMD instructions, which wazero
+# accepts: its default runtime config enables the WebAssembly 2.0 core
+# features, SIMD among them, and encrypt/guest.go does not narrow them.
+stack-kms = { path = "../../../../packages/stack-kms", default-features = false, features = ["wasm-simd"] }
 # The EQL types, for the `eql` build only. By path, like every other
 # eql-bindings dependency in the repository: the SQL that stores a payload
 # and the Rust that emits it must agree (scripts/lint-no-eql-registry-pins.mjs).
