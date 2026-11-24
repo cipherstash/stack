@@ -34,7 +34,8 @@ _Avoid_: heavy check, full CI, merge check
 **Early run**:
 A run of the gate checks on a pull request before it joins a merge queue. An
 author asks for one by adding the `ci:full` label. Each time the label is
-added gives one early run.
+added gives one early run. No workflow reads the label yet, because work on
+ADR 0003 is paused.
 _Avoid_: full run, ci:full run
 
 **Queue commit**:
