@@ -41,7 +41,7 @@ These are not tasks for the executor, and no task waits for them. Until the secr
 
 1. **A reusable workflow whose caller passes no secrets.** In a called workflow, `secrets.*` is empty unless the caller passes it. The login would skip. The job would then pull anonymously without an error. Task 3 adds a test that every such caller passes both secrets.
 2. **A RunsOn runner chosen by a matrix.** The FFI `binaries` job takes its runner from `matrix.cfg.os`. The login test from #1419 checks only jobs with a literal `runs-on=` label. So it would miss the musl build. That build pulls Alpine from Docker Hub. Task 2 lists each matrix runner job, and Task 3 checks the RunsOn ones.
-3. **apt on a fresh machine.** A new RunsOn machine can still be running apt from boot. `apt-get` then fails at once on the held lock. Task 4 adds a test that every apt command in a RunsOn job sets `DPkg::Lock::Timeout`. That option does not make `apt-get update` wait, as Task 4 explains.
+3. **apt on a fresh machine.** A new RunsOn machine can still be running apt from boot. `apt-get` then fails at once on the held lock. Task 4 adds a test that every apt command in a RunsOn job sets `DPkg::Lock::Timeout`. That option does not make `apt-get update` wait, so #1419 also retries each `apt-get update`, as Task 4 explains.
 4. **A label of the wrong size.** #1419 used `cpu=8`. A label left at `cpu=8` would give a job the wrong machine. A label with no run ID would be shared by every run. Task 2's tests accept only the labels in Global Constraints, and refuse an FFI label with no run ID.
 5. **A 16 vCPU job that needs more than 32 GB.** No repository test can show this. The pull request's own CI run is the test. Task 5 watches it and applies the `m8a` rule to any job killed for lack of memory.
 
@@ -363,6 +363,8 @@ git commit -S -m "ci(runners): log in to Docker Hub before every RunsOn job pull
 #1419 added `-o DPkg::Lock::Timeout=300` to the two `apt-get` steps that run on RunsOn. Nothing yet stops a new step without it.
 
 `DPkg::Lock::Timeout` makes apt wait for the dpkg lock only. `apt-get update` takes the package-list lock instead. It does not wait for that lock, with or without the option. So `apt-get update` can still fail at once on a fresh machine.
+
+Commit b283c2234 on #1419 handles this. Each `apt-get update` runs in a loop of up to 20 tries, 15 seconds apart, that ends with `&& break`. `aptFinding` also fails on an `apt-get update` line without `&& break`.
 
 **Files:**
 - Modify: `scripts/__tests__/workflow-runs-on.test.mjs`
