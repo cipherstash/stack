@@ -102,15 +102,20 @@ jobs:
         if: ${{ matrix.platform != 'linux-x64-musl' }}
         run: pnpm install --frozen-lockfile
 
-      # `--js false` is load-bearing. With `--platform`, napi v2 also writes its
-      # own `index.js` loader over the committed one, which is a published,
-      # frozen file (release-gate.mjs FROZEN_ARTEFACT_DIGESTS).
+      # `--no-js` is load-bearing. With `--platform`, napi also writes its own
+      # `index.js` loader over the committed one, which is a published file
+      # the package's `main` names. napi v2 turned that off with `--js false`;
+      # napi v3 reads `--js false` as a path and writes its loader to a file
+      # named `false`, which the diff check below cannot see because the file
+      # is untracked. The binary lands in this directory as
+      # `stack-auth-node.<platform>.node` (`napi.binaryName` plus the
+      # platform), and `native.d.ts` is rewritten in place.
       - name: Build the native binding
         if: ${{ matrix.platform != 'linux-x64-musl' }}
         working-directory: languages/typescript/packages/auth
         env:
           TARGET: ${{ matrix.target }}
-        run: mise x -- pnpm exec napi build --platform --release --target "$TARGET" --strip --dts native.d.ts --js false
+        run: mise x -- pnpm exec napi build --platform --release --target "$TARGET" --strip --dts native.d.ts --no-js
 
       # The musl binary is built inside Alpine Linux, a musl system, so the
       # compiler and its runtime libraries are musl's own. Built on the Ubuntu
@@ -147,7 +152,7 @@ jobs:
               corepack prepare "$PNPM_SPEC" --activate
               pnpm install --frozen-lockfile --ignore-scripts --filter "@cipherstash/auth..."
               cd languages/typescript/packages/auth
-              pnpm exec napi build --platform --release --target "$TARGET" --strip --dts native.d.ts --js false
+              pnpm exec napi build --platform --release --target "$TARGET" --strip --dts native.d.ts --no-js
               # Load it here, on musl: readelf only infers that it will load,
               # and this also catches a missing runtime library or an
               # unresolved symbol, in every build, release builds included.
@@ -156,9 +161,19 @@ jobs:
 
       # The build must leave the tracked tree alone: `native.d.ts` is
       # regenerated and has to equal the committed copy, and nothing else may
-      # change.
+      # change. The diff covers tracked files; the status check catches a file
+      # the build added, such as a loader written to a stray path. The binary
+      # itself is gitignored (`*.node`), so it does not show.
       - name: Verify the build changed no tracked file
-        run: git diff --exit-code -- languages/typescript/packages/auth
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- languages/typescript/packages/auth
+          added=$(git status --porcelain -- languages/typescript/packages/auth)
+          if [ -n "$added" ]; then
+            echo "$added"
+            echo "::error::the build added files to the auth package"
+            exit 1
+          fi
 
       - name: Place the binding in its platform package
         working-directory: languages/typescript/packages/auth

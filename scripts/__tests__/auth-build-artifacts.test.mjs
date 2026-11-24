@@ -11,15 +11,18 @@ import { readWorkflow } from './lib/workflows.mjs'
  * to undo in an edit that still looks right, and each one ships a broken
  * package rather than failing a build:
  *
- * 1. `napi build --platform` with no `--js false` writes napi's own loader over
- *    the committed `index.js`, one of the wrapper's frozen published files.
- *    The workflow runs `git diff --exit-code` on the package after the build,
- *    so the build must leave the tracked tree as it found it.
+ * 1. `napi build --platform` with no `--no-js` writes napi's own loader over
+ *    the committed `index.js`, the wrapper's published `main`. napi v2 turned
+ *    that off with `--js false`; napi v3 reads `--js false` as a path and
+ *    writes the loader to a file named `false` instead, so the old flag still
+ *    looks right and no longer does the job. The workflow checks the package
+ *    after the build, for changed tracked files and for added ones, so the
+ *    build must leave the tree as it found it.
  * 2. The wrapper's six platform peers are `workspace:*`. `pnpm pack` rewrites
  *    them to the exact version; `npm pack` publishes `workspace:*`, which no
  *    registry resolves.
  * 3. The matrix is a third list of the six platforms, beside the `platforms/`
- *    folders and the napi triples in the wrapper's `package.json`.
+ *    folders and the napi `targets` in the wrapper's `package.json`.
  */
 
 const WORKFLOW = '.github/workflows/_build-auth-artifacts.yml'
@@ -48,7 +51,7 @@ describe('_build-auth-artifacts.yml', () => {
       readFileSync(join(AUTH, 'package.json'), 'utf8'),
     )
     expect(matrix.map((leg) => leg.target).sort()).toEqual(
-      [...napi.triples.additional].sort(),
+      [...napi.targets].sort(),
     )
   })
 
@@ -62,13 +65,16 @@ describe('_build-auth-artifacts.yml', () => {
       '--target',
       '--strip',
       '--dts native.d.ts',
-      '--js false',
+      '--no-js',
     ]) {
       for (const run of build) expect(run).toContain(flag)
     }
+    // `--js <path>` names where the loader goes; it never turns it off. In
+    // napi v3, `--js false` writes the loader to `./false`.
+    for (const run of build) expect(run).not.toMatch(/--js(-binding)?[\s=]/)
   })
 
-  it('fails the leg when either build changed a tracked file', () => {
+  it('fails the leg when either build changed a tracked file or added one', () => {
     const all = runs(binaries)
     const builds = all
       .map((_, index) => index)
@@ -78,6 +84,12 @@ describe('_build-auth-artifacts.yml', () => {
     )
     expect(builds).toHaveLength(2)
     for (const build of builds) expect(check).toBeGreaterThan(build)
+    // `git diff` sees only tracked files. A loader written to a new path is
+    // untracked, so the same step also fails on anything `git status` lists.
+    expect(all[check]).toMatch(
+      new RegExp(`git status --porcelain -- ${AUTH_DIR}\\b`),
+    )
+    expect(all[check]).toMatch(/exit 1/)
   })
 
   it('builds the musl binding inside Alpine, from the pinned Dockerfile', () => {

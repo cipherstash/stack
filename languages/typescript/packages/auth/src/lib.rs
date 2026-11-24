@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use cts_common::Region;
 use napi::bindgen_prelude::*;
-use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode};
+use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi::tokio::sync::oneshot;
 use napi_derive::napi;
 use stack_auth::{
@@ -225,6 +225,28 @@ impl DeviceSessionStrategy {
 // OidcFederationStrategy — federate a third-party OIDC JWT into a CTS service token
 // ---------------------------------------------------------------------------
 
+/// A JS callback taking `Args` and returning a `Promise` of `Resolves`.
+///
+/// `CalleeHandled = false`: the callback is called with `Args` alone, not
+/// with an error-first `(err, ...args)`. A callback that throws, or returns
+/// something that is not a `Promise`, reaches the `?` in its
+/// `call_with_return_value` closure below, and napi raises that error as an
+/// uncaught exception (`napi_fatal_exception`) rather than handing it back
+/// to Rust. A rejected `Promise` is handed back, and handled.
+///
+/// The `#[napi]` factories spell these types out in full instead of using
+/// the aliases: napi generates `native.d.ts` from the type as written, and
+/// would print an alias's name rather than the function type it stands for.
+type PromiseCallback<Args, Resolves> =
+    ThreadsafeFunction<Args, Promise<Resolves>, Args, Status, false>;
+
+/// `getJwt`: `() => Promise<string>`.
+type GetJwtCallback = PromiseCallback<(), String>;
+/// `loadToken`: `() => Promise<string | null | undefined>`.
+type LoadTokenCallback = PromiseCallback<(), Option<String>>;
+/// `saveToken`: `(json: string) => Promise<void>`.
+type SaveTokenCallback = PromiseCallback<String, ()>;
+
 /// Bridges a JS `getJwt` callback into a Rust [`OidcProvider`].
 ///
 /// The binding keeps this provider itself, and does not give it to the Rust
@@ -238,7 +260,7 @@ impl DeviceSessionStrategy {
 /// (running on napi's tokio pool) schedule the call onto the Node event-loop
 /// thread; the JS-returned `Promise` is ferried back and awaited here.
 struct NapiOidcProvider {
-    get_jwt: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
+    get_jwt: GetJwtCallback,
 }
 
 impl OidcProvider for NapiOidcProvider {
@@ -247,8 +269,8 @@ impl OidcProvider for NapiOidcProvider {
         let status = self.get_jwt.call_with_return_value(
             (),
             ThreadsafeFunctionCallMode::NonBlocking,
-            move |promise: Promise<String>| {
-                let _ = tx.send(promise);
+            move |promise: Result<Promise<String>>, _env| {
+                let _ = tx.send(promise?);
                 Ok(())
             },
         );
@@ -280,8 +302,8 @@ impl OidcProvider for NapiOidcProvider {
 /// Both are best-effort, mirroring [`stack_auth::TokenStoreFn`] semantics: a
 /// `load` failure becomes a cache miss, a `save` failure is swallowed.
 struct NapiTokenStore {
-    load: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
-    save: ThreadsafeFunction<String, ErrorStrategy::Fatal>,
+    load: LoadTokenCallback,
+    save: SaveTokenCallback,
 }
 
 impl TokenStore for NapiTokenStore {
@@ -290,8 +312,8 @@ impl TokenStore for NapiTokenStore {
         let status = self.load.call_with_return_value(
             (),
             ThreadsafeFunctionCallMode::NonBlocking,
-            move |promise: Promise<Option<String>>| {
-                let _ = tx.send(promise);
+            move |promise: Result<Promise<Option<String>>>, _env| {
+                let _ = tx.send(promise?);
                 Ok(())
             },
         );
@@ -310,8 +332,8 @@ impl TokenStore for NapiTokenStore {
         let status = self.save.call_with_return_value(
             json.to_string(),
             ThreadsafeFunctionCallMode::NonBlocking,
-            move |promise: Promise<()>| {
-                let _ = tx.send(promise);
+            move |promise: Result<Promise<()>>, _env| {
+                let _ = tx.send(promise?);
                 Ok(())
             },
         );
@@ -389,7 +411,7 @@ impl OidcFederationStrategy {
     #[napi(factory)]
     pub fn create(
         workspace_crn: String,
-        get_jwt: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
+        get_jwt: ThreadsafeFunction<(), Promise<String>, (), Status, false>,
         base_url: Option<String>,
         cache_capacity: Option<u32>,
     ) -> Result<Self> {
@@ -423,9 +445,9 @@ impl OidcFederationStrategy {
     #[napi(factory)]
     pub fn create_with_store(
         workspace_crn: String,
-        get_jwt: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
-        load_token: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
-        save_token: ThreadsafeFunction<String, ErrorStrategy::Fatal>,
+        get_jwt: ThreadsafeFunction<(), Promise<String>, (), Status, false>,
+        load_token: ThreadsafeFunction<(), Promise<Option<String>>, (), Status, false>,
+        save_token: ThreadsafeFunction<String, Promise<()>, String, Status, false>,
         base_url: Option<String>,
         cache_capacity: Option<u32>,
     ) -> Result<Self> {

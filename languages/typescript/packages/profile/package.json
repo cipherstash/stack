@@ -5,18 +5,15 @@
   "main": "index.js",
   "types": "index.d.ts",
   "napi": {
-    "name": "stack-profile-node",
-    "triples": {
-      "defaults": false,
-      "additional": [
-        "x86_64-apple-darwin",
-        "aarch64-apple-darwin",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "x86_64-unknown-linux-musl",
-        "x86_64-pc-windows-msvc"
-      ]
-    }
+    "binaryName": "stack-profile-node",
+    "targets": [
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl",
+      "x86_64-pc-windows-msvc"
+    ]
   },
   "files": [
     "index.js",
@@ -39,7 +36,7 @@
     "@cipherstash/profile-win32-x64-msvc": "workspace:*"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^2",
+    "@napi-rs/cli": "^3",
     "vitest": "catalog:repo",
     "typescript": "^5"
   }
