@@ -27,7 +27,10 @@ const fromEsm = (await (await import(pathToFileURL(esmTesting).href)).testCipher
 const fromCjs = (await require(cjsTesting).testCipher()).unwrap()
 const sealed = (await fromEsm.defaultKeyset().encrypt('shared')).unwrap()
 const read = cjs.Ciphertext.fromBytes(sealed.toBytes()).unwrap()
+const people = cjs.record('people', { email: cjs.encrypt(cjs.kinds.string, { index: ['equality'] }) })
+const row = (await fromEsm.defaultKeyset().encrypt(people, { email: 'a@example.com' })).unwrap()
 const out = {
+  recordAcrossBuilds: (await fromEsm.decrypt(people, row)).unwrap().email,
   sameClasses: esm.Cipher === cjs.Cipher && esm.Ciphertext === cjs.Ciphertext,
   cipherIsCipher: fromCjs instanceof esm.Cipher && fromEsm instanceof cjs.Cipher,
   ciphertextIsCiphertext: sealed instanceof cjs.Ciphertext,
@@ -104,6 +107,7 @@ describe('the ESM and CommonJS builds in one process', () => {
       { encoding: 'utf8' },
     )
     expect(JSON.parse(output)).toEqual({
+      recordAcrossBuilds: 'a@example.com',
       sameClasses: true,
       cipherIsCipher: true,
       ciphertextIsCiphertext: true,

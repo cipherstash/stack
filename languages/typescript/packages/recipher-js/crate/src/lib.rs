@@ -26,6 +26,9 @@
 #![warn(clippy::print_stdout)]
 #![warn(clippy::print_stderr)]
 #![warn(clippy::dbg_macro)]
+// A failure is the object JavaScript receives, field for field, and it is
+// built on a cold path; boxing it would buy nothing.
+#![allow(clippy::result_large_err)]
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 #![cfg_attr(test, allow(clippy::expect_used))]
 #![cfg_attr(test, allow(clippy::panic))]
@@ -33,15 +36,19 @@
 mod cipher;
 mod ciphertext;
 mod error;
+mod frames;
 mod js;
 mod json;
 mod outcome;
+mod record;
 mod value;
 
 #[cfg(all(test, feature = "testing"))]
 mod engine_tests;
+#[cfg(all(test, feature = "testing"))]
+mod record_tests;
 
-pub use cipher::{create_testing, Cipher, Keyset};
+pub use cipher::{check_declarations, create_testing, Cipher, Keyset};
 pub use ciphertext::Ciphertext;
 pub use error::{ErrorKind, RecipherErrorFields};
 pub use json::{json_document, Json};
@@ -52,7 +59,7 @@ use napi_derive::napi;
 
 /// The version of the interface between the package's TypeScript and this
 /// build.
-pub const BINDING_INTERFACE: u32 = 2;
+pub const BINDING_INTERFACE: u32 = 3;
 
 /// The version of the interface between the package's TypeScript and this
 /// build. The TypeScript refuses a build that reports another.

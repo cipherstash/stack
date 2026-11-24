@@ -55,6 +55,9 @@ pub struct RecipherErrorFields {
     pub reason: Option<String>,
     /// The field at fault, where one is known.
     pub field: Option<String>,
+    /// The record at fault, where one is known: a declaration, a row or a
+    /// stored row of it.
+    pub record: Option<String>,
 }
 
 impl RecipherErrorFields {
@@ -66,6 +69,7 @@ impl RecipherErrorFields {
             message: message.into(),
             reason: None,
             field: None,
+            record: None,
         }
     }
 
@@ -102,6 +106,7 @@ impl RecipherErrorFields {
             message,
             reason: text_of("reason"),
             field: text_of("field"),
+            record: None,
         }
     }
 

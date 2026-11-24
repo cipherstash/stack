@@ -35,7 +35,7 @@ import { fromNative, internal, type RecipherError } from './error'
 import { err, ok, type Result } from './result'
 
 /** The binding interface this TypeScript speaks. */
-export const BINDING_INTERFACE = 2
+export const BINDING_INTERFACE = 3
 
 /** What the native build exports. */
 export type Binding = typeof Native
@@ -47,6 +47,7 @@ const EXPORTS = [
   'Ciphertext',
   'Json',
   'bindingInterface',
+  'checkDeclarations',
   'createTesting',
   'json',
   'VcDate',

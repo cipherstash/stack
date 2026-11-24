@@ -21,6 +21,7 @@ use crate::error::{ErrorKind, RecipherErrorFields};
 use crate::js;
 use crate::json::Json;
 use crate::outcome::{not_made, refused, spawn, Outcome};
+use crate::record::{field_value, one_field_row, open_rows, seal_rows, RecordPlan};
 use crate::value::OneValue;
 use napi::bindgen_prelude::ToNapiValue;
 
@@ -75,10 +76,22 @@ impl Cipher {
     /// Resolves to a failure of kind `credential` when there are none or
     /// they are refused, and of kind `zerokms` when ZeroKMS refuses to load
     /// the default keyset.
+    ///
+    /// `options.records` are declarations to check now, before any
+    /// credential is looked for: a declaration the engine refuses is a
+    /// failure of kind `declaration`, naming the record.
     // Configurable, as an instance method is, so the package's TypeScript
     // can wrap it (`adapt`).
     #[napi(configurable = true, ts_return_type = "Promise<Outcome<Cipher>>")]
-    pub fn create(env: &Env) -> napi::Result<PromiseRaw<'_, Object<'_>>> {
+    pub fn create<'e>(
+        env: &'e Env,
+        options: Option<Unknown<'_>>,
+    ) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
+        if let Err(error) = records_of_options(env, options)
+            .and_then(|records| records.map(|records| check(env, records)).unwrap_or(Ok(())))
+        {
+            return refused(env, error);
+        }
         spawn(
             env,
             async {
@@ -101,14 +114,36 @@ impl Cipher {
     }
 
     /// Open a ciphertext from any of this cipher's keysets, as the value it
-    /// was sealed as.
+    /// was sealed as, or an array of them. With a record first, open its
+    /// stored row, or an array of them, in one key request for each keyset
+    /// they were sealed under.
     #[napi(ts_return_type = "Promise<Outcome<unknown>>")]
     pub fn decrypt<'e>(
         &self,
         env: &'e Env,
-        ciphertext: Unknown<'_>,
+        first: Unknown<'_>,
+        second: Option<Unknown<'_>>,
     ) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
-        open(env, &self.engine, ciphertext, Confined::No)
+        if js::is_record(env, &first) {
+            return open_rows_of(env, &self.engine, first, second, Confined::No);
+        }
+        if let Some(error) = js::second_without_record(env, &first, second.as_ref()) {
+            return refused(env, error);
+        }
+        open(env, &self.engine, first, Confined::No)
+    }
+
+    /// Open one field of a record's stored row, as `encryptField` or
+    /// `encrypt` stored it, or an array of them in one key request.
+    #[napi(ts_return_type = "Promise<Outcome<unknown>>")]
+    pub fn decrypt_field<'e>(
+        &self,
+        env: &'e Env,
+        record: Unknown<'_>,
+        field: Unknown<'_>,
+        stored: Unknown<'_>,
+    ) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
+        open_field(env, &self.engine, record, field, stored, Confined::No)
     }
 
     /// Names the type.
@@ -128,12 +163,23 @@ impl Keyset {
     ///
     /// A value's type picks how it is encrypted, by vitaminc's mapping for
     /// JavaScript. A `Json` from `json(..)` is encrypted as a JSON document.
-    #[napi(ts_return_type = "Promise<Outcome<Ciphertext | Ciphertext[]>>")]
+    ///
+    /// With a record first, encrypt its row, or an array of them in one key
+    /// request: each field under its field path.
+    #[napi(ts_return_type = "Promise<Outcome<unknown>>")]
     pub fn encrypt<'e>(
         &self,
         env: &'e Env,
-        value: Unknown<'_>,
+        first: Unknown<'_>,
+        second: Option<Unknown<'_>>,
     ) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
+        if js::is_record(env, &first) {
+            return seal_rows_of(env, &self.engine, first, second);
+        }
+        if let Some(error) = js::second_without_record(env, &first, second.as_ref()) {
+            return refused(env, error);
+        }
+        let value = first;
         let (many, values) = match js::elements(env, value) {
             Some(Ok(elements)) => (true, elements),
             Some(Err(error)) => return refused(env, error),
@@ -179,16 +225,58 @@ impl Keyset {
         )
     }
 
-    /// Open a ciphertext sealed under this keyset. A ciphertext of another
-    /// keyset is a failure of kind `foreign_keyset`, before any key is
-    /// requested.
+    /// Open a ciphertext sealed under this keyset, or an array of them. A
+    /// ciphertext of another keyset is a failure of kind `foreign_keyset`,
+    /// before any key is requested. With a record first, open its stored
+    /// row, or an array of them.
     #[napi(ts_return_type = "Promise<Outcome<unknown>>")]
     pub fn decrypt<'e>(
         &self,
         env: &'e Env,
-        ciphertext: Unknown<'_>,
+        first: Unknown<'_>,
+        second: Option<Unknown<'_>>,
     ) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
-        open(env, &self.engine, ciphertext, Confined::ToDefault)
+        if js::is_record(env, &first) {
+            return open_rows_of(env, &self.engine, first, second, Confined::ToDefault);
+        }
+        if let Some(error) = js::second_without_record(env, &first, second.as_ref()) {
+            return refused(env, error);
+        }
+        open(env, &self.engine, first, Confined::ToDefault)
+    }
+
+    /// Encrypt one field of a record, for an update of that field: its
+    /// stored form, as the field has it in a whole stored row. An array of
+    /// values is an array of stored fields, in one key request.
+    #[napi(ts_return_type = "Promise<Outcome<unknown>>")]
+    pub fn encrypt_field<'e>(
+        &self,
+        env: &'e Env,
+        record: Unknown<'_>,
+        field: Unknown<'_>,
+        value: Unknown<'_>,
+    ) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
+        seal_field(env, &self.engine, record, field, value)
+    }
+
+    /// Open one field of a record's stored row sealed under this keyset, or
+    /// an array of them in one key request.
+    #[napi(ts_return_type = "Promise<Outcome<unknown>>")]
+    pub fn decrypt_field<'e>(
+        &self,
+        env: &'e Env,
+        record: Unknown<'_>,
+        field: Unknown<'_>,
+        stored: Unknown<'_>,
+    ) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
+        open_field(
+            env,
+            &self.engine,
+            record,
+            field,
+            stored,
+            Confined::ToDefault,
+        )
     }
 
     /// Names the type.
@@ -346,6 +434,308 @@ fn one_value(env: &Env, value: Unknown<'_>) -> Outcome<(OneValue, Option<ValueKi
         return Ok((OneValue::json(document?), Some(ValueKind::Json)));
     }
     Ok((OneValue::scalar(js::read(env, value)?)?, None))
+}
+
+/// Check declarations with the engine, with no credentials and no
+/// request: for a test or a CI step. The first refusal is the failure, of
+/// kind `declaration`, naming the record and, where there is one, the
+/// field.
+#[napi(ts_return_type = "Outcome<undefined>")]
+pub fn check_declarations<'e>(env: &'e Env, records: Unknown<'_>) -> napi::Result<Object<'e>> {
+    let checked = check(env, records);
+    crate::outcome::settle(env, checked, |env, ()| {
+        ().into_unknown(env).map_err(not_made)
+    })
+}
+
+/// Build the plan of each declaration in `records`, an array of them.
+fn check(env: &Env, records: Unknown<'_>) -> Outcome<()> {
+    let records = match js::elements(env, records) {
+        Some(records) => records?,
+        None => vec![records],
+    };
+    for record in records {
+        let _ = plan_of(env, record)?;
+    }
+    Ok(())
+}
+
+/// The `records` of `Cipher.create`'s options, if it names any.
+fn records_of_options<'e>(env: &Env, options: Option<Unknown<'e>>) -> Outcome<Option<Unknown<'e>>> {
+    match options {
+        None => Ok(None),
+        Some(options) => js::property(env, options, "records"),
+    }
+}
+
+/// The plan of the declaration `record`.
+fn plan_of(env: &Env, record: Unknown<'_>) -> Outcome<Arc<RecordPlan>> {
+    if !js::is_record(env, &record) {
+        return Err(RecipherErrorFields::new(
+            ErrorKind::Declaration,
+            "recipher::not_a_record",
+            "a record is declared with record(..)",
+        ));
+    }
+    RecordPlan::of(&js::read(env, record)?)
+}
+
+/// The values of `value`: its elements when it is an array, and whether it
+/// was one.
+fn one_or_many<'e>(env: &Env, value: Unknown<'e>) -> Outcome<(bool, Vec<Unknown<'e>>)> {
+    match js::elements(env, value) {
+        Some(elements) => Ok((true, elements?)),
+        None => Ok((false, vec![value])),
+    }
+}
+
+/// One JavaScript value for each result, or the one result alone.
+fn one_or_array<'e>(
+    env: &'e Env,
+    many: bool,
+    mut values: Vec<Unknown<'e>>,
+) -> Outcome<Unknown<'e>> {
+    if many {
+        return values.into_unknown(env).map_err(not_made);
+    }
+    values.pop().ok_or_else(|| {
+        RecipherErrorFields::internal("recipher::outcome", "the engine returned no result")
+    })
+}
+
+/// A row of `plan`'s record, read and each field read as its kind. A value
+/// vitaminc refuses is named by the field it was read from.
+fn read_row(env: &Env, plan: &RecordPlan, row: Unknown<'_>) -> Outcome<ValueFrame> {
+    let not_a_row = || {
+        let mut error = RecipherErrorFields::new(
+            ErrorKind::Value,
+            "recipher::not_a_row",
+            "a row is an object of the record's fields",
+        );
+        error.record = Some(plan.name().to_owned());
+        error
+    };
+    if row.get_type().ok() != Some(napi::ValueType::Object) || row.is_array().unwrap_or(false) {
+        return Err(not_a_row());
+    }
+    let frame = js::read(env, row).map_err(|mut error| {
+        error.record = Some(plan.name().to_owned());
+        error.field = plan
+            .field_names()
+            .find(|name| {
+                js::property(env, row, name)
+                    .map(|value| value.is_some_and(|value| js::read(env, value).is_err()))
+                    .unwrap_or(true)
+            })
+            .map(str::to_owned);
+        error
+    })?;
+    crate::record::conform_row(plan, &frame)
+}
+
+/// `keyset.encrypt(record, row | rows)`.
+fn seal_rows_of<'e>(
+    env: &'e Env,
+    engine: &Arc<Engine>,
+    record: Unknown<'_>,
+    rows: Option<Unknown<'_>>,
+) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
+    let read = || -> Outcome<(Arc<RecordPlan>, bool, Vec<ValueFrame>)> {
+        let plan = plan_of(env, record)?;
+        let rows = rows.unwrap_or(().into_unknown(env).map_err(not_made)?);
+        let (many, rows) = one_or_many(env, rows)?;
+        let rows = rows
+            .into_iter()
+            .map(|row| read_row(env, &plan, row))
+            .collect::<Outcome<Vec<_>>>()?;
+        Ok((plan, many, rows))
+    };
+    let (plan, many, rows) = match read() {
+        Ok(read) => read,
+        Err(error) => return refused(env, error),
+    };
+    let engine = Arc::clone(engine);
+    spawn(
+        env,
+        async move {
+            with_engine!(&*engine, |cipher| {
+                seal_rows(&cipher.default_keyset(), plan, rows).await
+            })
+        },
+        move |env, stored| {
+            let values = stored
+                .into_iter()
+                .map(|row| js::build(env, row))
+                .collect::<Outcome<Vec<_>>>()?;
+            one_or_array(env, many, values)
+        },
+    )
+}
+
+/// `cipher.decrypt(record, stored | stored[])` and `keyset.decrypt`.
+fn open_rows_of<'e>(
+    env: &'e Env,
+    engine: &Arc<Engine>,
+    record: Unknown<'_>,
+    stored: Option<Unknown<'_>>,
+    confined: Confined,
+) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
+    let read = || -> Outcome<(Arc<RecordPlan>, bool, Vec<ValueFrame>)> {
+        let plan = plan_of(env, record)?;
+        let stored = stored.unwrap_or(().into_unknown(env).map_err(not_made)?);
+        let (many, rows) = one_or_many(env, stored)?;
+        let rows = rows
+            .into_iter()
+            .map(|row| {
+                js::read(env, row).map_err(|mut error| {
+                    error.record = Some(plan.name().to_owned());
+                    error
+                })
+            })
+            .collect::<Outcome<Vec<_>>>()?;
+        Ok((plan, many, rows))
+    };
+    let (plan, many, rows) = match read() {
+        Ok(read) => read,
+        Err(error) => return refused(env, error),
+    };
+    let engine = Arc::clone(engine);
+    let names: Vec<String> = plan.field_names().map(str::to_owned).collect();
+    let record_name = plan.name().to_owned();
+    spawn(
+        env,
+        async move {
+            with_engine!(&*engine, |cipher| match confined {
+                Confined::No => open_rows(&**cipher, plan, rows).await,
+                Confined::ToDefault => open_rows(&cipher.default_keyset(), plan, rows).await,
+            })
+        },
+        move |env, opened| {
+            let values = opened
+                .into_iter()
+                .map(|row| js::hidden(env, js::build(env, row)?, &record_name, &names))
+                .collect::<Outcome<Vec<_>>>()?;
+            one_or_array(env, many, values)
+        },
+    )
+}
+
+/// The plan of `field` of `record` alone, and the field's name.
+fn field_plan_of(
+    env: &Env,
+    record: Unknown<'_>,
+    field: Unknown<'_>,
+) -> Outcome<(Arc<RecordPlan>, String)> {
+    let plan = plan_of(env, record)?;
+    let name = js::string(field).ok_or_else(|| {
+        let mut error = RecipherErrorFields::new(
+            ErrorKind::Declaration,
+            "recipher::no_field",
+            "a field is named by a string",
+        );
+        error.record = Some(plan.name().to_owned());
+        error
+    })?;
+    Ok((plan.field(&name)?, name))
+}
+
+/// `keyset.encryptField(record, field, value | values)`.
+fn seal_field<'e>(
+    env: &'e Env,
+    engine: &Arc<Engine>,
+    record: Unknown<'_>,
+    field: Unknown<'_>,
+    value: Unknown<'_>,
+) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
+    let read = || -> Outcome<(Arc<RecordPlan>, String, bool, Vec<ValueFrame>)> {
+        let (plan, name) = field_plan_of(env, record, field)?;
+        let (many, values) = one_or_many(env, value)?;
+        let rows = values
+            .into_iter()
+            .map(|value| {
+                let value = js::read(env, value).map_err(|mut error| {
+                    error.record = Some(plan.name().to_owned());
+                    error.field = Some(name.clone());
+                    error
+                })?;
+                crate::record::conform_row(&plan, &one_field_row(&name, &value)?)
+            })
+            .collect::<Outcome<Vec<_>>>()?;
+        Ok((plan, name, many, rows))
+    };
+    let (plan, name, many, rows) = match read() {
+        Ok(read) => read,
+        Err(error) => return refused(env, error),
+    };
+    let engine = Arc::clone(engine);
+    spawn(
+        env,
+        async move {
+            with_engine!(&*engine, |cipher| {
+                seal_rows(&cipher.default_keyset(), plan, rows).await
+            })
+        },
+        move |env, stored| {
+            let values = stored
+                .iter()
+                .map(|row| js::build(env, field_value(row, &name)?))
+                .collect::<Outcome<Vec<_>>>()?;
+            one_or_array(env, many, values)
+        },
+    )
+}
+
+/// `cipher.decryptField(record, field, stored | stored[])` and
+/// `keyset.decryptField`.
+fn open_field<'e>(
+    env: &'e Env,
+    engine: &Arc<Engine>,
+    record: Unknown<'_>,
+    field: Unknown<'_>,
+    stored: Unknown<'_>,
+    confined: Confined,
+) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
+    let read = || -> Outcome<(Arc<RecordPlan>, String, bool, Vec<ValueFrame>)> {
+        let (plan, name) = field_plan_of(env, record, field)?;
+        let (many, values) = one_or_many(env, stored)?;
+        let rows = values
+            .into_iter()
+            .map(|value| {
+                let value = js::read(env, value).map_err(|mut error| {
+                    error.record = Some(plan.name().to_owned());
+                    error.field = Some(name.clone());
+                    error
+                })?;
+                one_field_row(&name, &value)
+            })
+            .collect::<Outcome<Vec<_>>>()?;
+        Ok((plan, name, many, rows))
+    };
+    let (plan, name, many, rows) = match read() {
+        Ok(read) => read,
+        Err(error) => return refused(env, error),
+    };
+    let engine = Arc::clone(engine);
+    spawn(
+        env,
+        async move {
+            let opened = with_engine!(&*engine, |cipher| match confined {
+                Confined::No => open_rows(&**cipher, plan, rows).await,
+                Confined::ToDefault => open_rows(&cipher.default_keyset(), plan, rows).await,
+            })?;
+            opened
+                .iter()
+                .map(|row| field_value(row, &name))
+                .collect::<Outcome<Vec<_>>>()
+        },
+        move |env, values| {
+            let values = values
+                .into_iter()
+                .map(|value| js::build(env, value))
+                .collect::<Outcome<Vec<_>>>()?;
+            one_or_array(env, many, values)
+        },
+    )
 }
 
 /// Seal values under `keyset`, each as one ciphertext with its own data

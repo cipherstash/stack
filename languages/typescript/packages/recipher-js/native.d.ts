@@ -20,8 +20,12 @@ export declare class Cipher {
    * Resolves to a failure of kind `credential` when there are none or
    * they are refused, and of kind `zerokms` when ZeroKMS refuses to load
    * the default keyset.
+   *
+   * `options.records` are declarations to check now, before any
+   * credential is looked for: a declaration the engine refuses is a
+   * failure of kind `declaration`, naming the record.
    */
-  static create(): Promise<Outcome<Cipher>>
+  static create(options?: unknown | undefined | null): Promise<Outcome<Cipher>>
   /**
    * The client's default keyset: the one a ZeroKMS administrator set for
    * it. Encrypting needs a keyset.
@@ -29,9 +33,16 @@ export declare class Cipher {
   defaultKeyset(): Keyset
   /**
    * Open a ciphertext from any of this cipher's keysets, as the value it
-   * was sealed as.
+   * was sealed as, or an array of them. With a record first, open its
+   * stored row, or an array of them, in one key request for each keyset
+   * they were sealed under.
    */
-  decrypt(ciphertext: unknown): Promise<Outcome<unknown>>
+  decrypt(first: unknown, second?: unknown | undefined | null): Promise<Outcome<unknown>>
+  /**
+   * Open one field of a record's stored row, as `encryptField` or
+   * `encrypt` stored it, or an array of them in one key request.
+   */
+  decryptField(record: unknown, field: unknown, stored: unknown): Promise<Outcome<unknown>>
   /** Names the type. */
   toString(): string
 }
@@ -96,14 +107,29 @@ export declare class Keyset {
    *
    * A value's type picks how it is encrypted, by vitaminc's mapping for
    * JavaScript. A `Json` from `json(..)` is encrypted as a JSON document.
+   *
+   * With a record first, encrypt its row, or an array of them in one key
+   * request: each field under its field path.
    */
-  encrypt(value: unknown): Promise<Outcome<Ciphertext | Ciphertext[]>>
+  encrypt(first: unknown, second?: unknown | undefined | null): Promise<Outcome<unknown>>
   /**
-   * Open a ciphertext sealed under this keyset. A ciphertext of another
-   * keyset is a failure of kind `foreign_keyset`, before any key is
-   * requested.
+   * Open a ciphertext sealed under this keyset, or an array of them. A
+   * ciphertext of another keyset is a failure of kind `foreign_keyset`,
+   * before any key is requested. With a record first, open its stored
+   * row, or an array of them.
    */
-  decrypt(ciphertext: unknown): Promise<Outcome<unknown>>
+  decrypt(first: unknown, second?: unknown | undefined | null): Promise<Outcome<unknown>>
+  /**
+   * Encrypt one field of a record, for an update of that field: its
+   * stored form, as the field has it in a whole stored row. An array of
+   * values is an array of stored fields, in one key request.
+   */
+  encryptField(record: unknown, field: unknown, value: unknown): Promise<Outcome<unknown>>
+  /**
+   * Open one field of a record's stored row sealed under this keyset, or
+   * an array of them in one key request.
+   */
+  decryptField(record: unknown, field: unknown, stored: unknown): Promise<Outcome<unknown>>
   /** Names the type. */
   toString(): string
 }
@@ -113,6 +139,14 @@ export declare class Keyset {
  * build. The TypeScript refuses a build that reports another.
  */
 export declare function bindingInterface(): number
+
+/**
+ * Check declarations with the engine, with no credentials and no
+ * request: for a test or a CI step. The first refusal is the failure, of
+ * kind `declaration`, naming the record and, where there is one, the
+ * field.
+ */
+export declare function checkDeclarations(records: unknown): Outcome<undefined>
 
 /**
  * A cipher over the engine's deterministic test keys, from a 32-byte seed:
@@ -155,4 +189,9 @@ export interface RecipherErrorFields {
   reason?: string
   /** The field at fault, where one is known. */
   field?: string
+  /**
+   * The record at fault, where one is known: a declaration, a row or a
+   * stored row of it.
+   */
+  record?: string
 }

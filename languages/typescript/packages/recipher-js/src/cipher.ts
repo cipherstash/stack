@@ -13,6 +13,12 @@
 import { adapt, type Binding, binding, settleAsync } from './binding'
 import type { RecipherError } from './error'
 import type { Kind, ValueOf } from './kinds'
+import type {
+  Plaintext,
+  RecordDeclaration,
+  SealedFieldName,
+  Stored,
+} from './record'
 import { err, type Result } from './result'
 import type { Opened, OpenedScalar, Value } from './values'
 
@@ -76,6 +82,19 @@ export interface Keyset {
     values: readonly V[],
   ): Promise<Result<Ciphertext<Opened<V>>[], RecipherError>>
   /**
+   * Encrypt a row of a record, each field under its field path, or an
+   * array of rows in one key request. The stored row has, for each sealed
+   * field, its ciphertext and its index terms.
+   */
+  encrypt<R extends RecordDeclaration>(
+    record: R,
+    row: Plaintext<R>,
+  ): Promise<Result<Stored<R>, RecipherError>>
+  encrypt<R extends RecordDeclaration>(
+    record: R,
+    rows: readonly Plaintext<R>[],
+  ): Promise<Result<Stored<R>[], RecipherError>>
+  /**
    * Open a ciphertext sealed under this keyset, or an array of them in one
    * key request. A ciphertext from another keyset is an `Err` of kind
    * `foreign_keyset`, refused before any key is requested.
@@ -84,6 +103,41 @@ export interface Keyset {
   decrypt<T>(
     ciphertexts: readonly Ciphertext<T>[],
   ): Promise<Result<T[], RecipherError>>
+  /** Open a stored row of a record sealed under this keyset, or an array of them. */
+  decrypt<R extends RecordDeclaration>(
+    record: R,
+    row: Stored<R>,
+  ): Promise<Result<Plaintext<R>, RecipherError>>
+  decrypt<R extends RecordDeclaration>(
+    record: R,
+    rows: readonly Stored<R>[],
+  ): Promise<Result<Plaintext<R>[], RecipherError>>
+  /**
+   * Encrypt one field of a record, for an update of that field: its stored
+   * form, as the field has it in a whole stored row. An array of values is
+   * an array of stored fields, in one key request.
+   */
+  encryptField<R extends RecordDeclaration, const F extends SealedFieldName<R>>(
+    record: R,
+    field: F,
+    value: NoInfer<Plaintext<R>[F]>,
+  ): Promise<Result<Stored<R>[F], RecipherError>>
+  encryptField<R extends RecordDeclaration, const F extends SealedFieldName<R>>(
+    record: R,
+    field: F,
+    values: readonly NoInfer<Plaintext<R>[F]>[],
+  ): Promise<Result<Stored<R>[F][], RecipherError>>
+  /** Open one field of a stored row sealed under this keyset, or an array of them. */
+  decryptField<R extends RecordDeclaration, const F extends SealedFieldName<R>>(
+    record: R,
+    field: F,
+    stored: NoInfer<Stored<R>[F]>,
+  ): Promise<Result<Plaintext<R>[F], RecipherError>>
+  decryptField<R extends RecordDeclaration, const F extends SealedFieldName<R>>(
+    record: R,
+    field: F,
+    stored: readonly NoInfer<Stored<R>[F]>[],
+  ): Promise<Result<Plaintext<R>[F][], RecipherError>>
   /** Names the type. */
   toString(): string
 }
@@ -116,8 +170,41 @@ export interface Cipher {
   decrypt<T>(
     ciphertexts: readonly Ciphertext<T>[],
   ): Promise<Result<T[], RecipherError>>
+  /**
+   * Open a stored row of a record, or an array of them. The opened row's
+   * `inspect` names its fields and hides their values.
+   */
+  decrypt<R extends RecordDeclaration>(
+    record: R,
+    row: Stored<R>,
+  ): Promise<Result<Plaintext<R>, RecipherError>>
+  decrypt<R extends RecordDeclaration>(
+    record: R,
+    rows: readonly Stored<R>[],
+  ): Promise<Result<Plaintext<R>[], RecipherError>>
+  /** Open one field of a stored row, or an array of them, in one key request. */
+  decryptField<R extends RecordDeclaration, const F extends SealedFieldName<R>>(
+    record: R,
+    field: F,
+    stored: NoInfer<Stored<R>[F]>,
+  ): Promise<Result<Plaintext<R>[F], RecipherError>>
+  decryptField<R extends RecordDeclaration, const F extends SealedFieldName<R>>(
+    record: R,
+    field: F,
+    stored: readonly NoInfer<Stored<R>[F]>[],
+  ): Promise<Result<Plaintext<R>[F][], RecipherError>>
   /** Names the type. */
   toString(): string
+}
+
+/** Options for `Cipher.create`. */
+export interface CipherOptions {
+  /**
+   * Records to check now, before any credential is looked for, so a
+   * declaration the engine refuses is an `Err` here rather than at its
+   * first use.
+   */
+  records?: readonly RecordDeclaration[]
 }
 
 /** The `Cipher` class. */
@@ -128,9 +215,10 @@ export interface CipherClass {
   /**
    * A cipher over ZeroKMS, with the credentials it finds: the `CS_*`
    * variables, then the profile that `stash auth login` writes. Resolves
-   * to an `Err` of kind `credential` when there are none.
+   * to an `Err` of kind `credential` when there are none, and of kind
+   * `declaration` when the engine refuses one of `options.records`.
    */
-  create(): Promise<Result<Cipher, RecipherError>>
+  create(options?: CipherOptions): Promise<Result<Cipher, RecipherError>>
 }
 
 /** The classes, as this package exports them. */
@@ -160,8 +248,14 @@ function adapted(native: Binding): Classes {
   adapt(native.Cipher.prototype, {
     defaultKeyset: 'plain',
     decrypt: 'async',
+    decryptField: 'async',
   })
-  adapt(native.Keyset.prototype, { encrypt: 'async', decrypt: 'async' })
+  adapt(native.Keyset.prototype, {
+    encrypt: 'async',
+    decrypt: 'async',
+    encryptField: 'async',
+    decryptField: 'async',
+  })
   adapt(native.Ciphertext, { fromBytes: 'sync' })
   adapt(native.Ciphertext.prototype, { toBytes: 'plain' })
   return {

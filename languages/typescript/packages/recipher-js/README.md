@@ -99,6 +99,70 @@ scalar. `Ciphertext.fromBytes(bytes, kinds.string)` is typed by the kind,
 and decrypting refuses a value sealed as another type. An integer kind
 takes an integer of any width that fits it.
 
+## Records
+
+A record declares each field once: encrypted, encrypted and indexed, or
+passed through.
+
+```ts
+import { encrypt, kinds, passthrough, record } from '@cipherstash/recipher'
+
+export const user = record('users', {
+  id: passthrough<bigint>(),
+  email: encrypt(kinds.string, { index: ['equality'] }),
+  name: encrypt(kinds.string, { index: ['match'] }),
+  age: encrypt(kinds.int32, { index: ['equality'], null: 'sealed' }),
+  notes: encrypt(kinds.string, { null: 'sql' }),
+})
+
+// One row, or an array of rows in one key request.
+const stored = await keyset.encrypt(user, row)
+const opened = await cipher.decrypt(user, stored.unwrap())
+```
+
+- A declaration is plain, frozen data: `{ type: 'record', name, fields }`.
+  A library reads the record's name, its fields and each field's
+  declaration from it, and a declaration made by either the ESM or the
+  CommonJS build works with a cipher from the other.
+- A field names its kind, in the engine's words: `kinds.string`,
+  `kinds.boolean`, `kinds.int8` to `kinds.int128`, `kinds.uint8` to
+  `kinds.uint128`, `kinds.float32`, `kinds.float64`, `kinds.decimal`,
+  `kinds.date`, `kinds.timestamp` and `kinds.bytes`. An integer field takes
+  a `bigint` at every width, and refuses one outside its range.
+- A field's context is its field path: the record's name, then the
+  field's name. The engine's typed Rust API opens a stored field's
+  ciphertext under `("users", "email")`.
+- The stored row has one object for each sealed field: `ciphertext`, and
+  `equality`, `match`, `ore` or `ope` for each index it declares, each
+  opaque bytes. A passthrough field keeps its value. A field with
+  `null: 'sql'` is `null` in the stored row when the value is absent.
+- `Plaintext<typeof user>` is the row's type and `Stored<typeof user>` the
+  stored row's. A row of another shape does not compile, and neither does
+  `stored.notes.equality`.
+- A passthrough field is **not encrypted and not authenticated.** Use it
+  only for values that are not secret, and treat the value read back as
+  untrusted.
+- The engine checks a declaration the first time a cipher uses it, and the
+  plan it builds is kept. `Cipher.create({ records })` checks them before
+  it looks for credentials, and `checkDeclarations(records)` checks them
+  with no credentials. A refusal names the record (`error.record`) and,
+  where there is one, the field (`error.field`).
+- A decrypted row's `inspect` (and so `console.log`) names its fields and
+  hides their values. The values are ordinary properties, so
+  `JSON.stringify` or a spread still shows them.
+
+One field of a record, for an update of that field. An array of values is
+an array of stored fields, in one key request:
+
+```ts
+const email = await keyset.encryptField(user, 'email', 'ada@example.com')
+const value = await cipher.decryptField(user, 'email', email.unwrap())
+
+const emails = await keyset.encryptField(user, 'email', ['a@example.com', 'b@example.com'])
+```
+
+The field's stored form is the one it has in a whole row.
+
 ## Results, not exceptions
 
 No call throws and no promise rejects. Every call resolves to a `Result`,
@@ -109,10 +173,10 @@ This holds for a method passed on its own (`ciphertexts.map(cipher.decrypt)`
 keeps its cipher), for an argument of the wrong type, and when the native
 build is missing.
 
-A `RecipherError` has a `kind` to switch on (`value`, `credential`,
-`zerokms`, `foreign_keyset`, `open`, `internal` and the rest), a stable
-`code`, a `message`, and the engine's `reason` and `field` where it gives
-them. No error holds a plaintext, a key, a token or a ciphertext.
+A `RecipherError` has a `kind` to switch on (`declaration`, `value`,
+`credential`, `zerokms`, `foreign_keyset`, `open`, `internal` and the rest),
+a stable `code`, a `message`, the engine's `reason` and `field` where it
+gives them, and the `record` where one is at fault. No error holds a plaintext, a key, a token or a ciphertext.
 
 `Cipher`, `Keyset` and `Ciphertext` have no constructor: get a cipher from
 `Cipher.create()`, a keyset from `cipher.defaultKeyset()` and a ciphertext
@@ -155,8 +219,10 @@ builds load the same addon, so they share its classes.
 
 ## What is not here yet
 
-`opaque(..)` for a whole object, records, search terms, credentials passed in code, named keysets, audit
-metadata, cancellation, the wasm build and the platform packages.
+`opaque(..)` for a whole object, a `json` record field (it needs the EQL
+extension's `JsonSearch`), search terms, credentials passed in code, named
+keysets, audit metadata, cancellation, the wasm build and the platform
+packages.
 
 The JavaScript engine holds the plaintext strings it is given, and no test
 can check what it does with them.

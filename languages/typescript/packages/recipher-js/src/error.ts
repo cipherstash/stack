@@ -32,7 +32,9 @@ const KINDS: ReadonlySet<string> = new Set<ErrorKind>([
  *   `stack_encrypt::aead`, vitaminc's code for a value it refused, such as
  *   `ERR_INTEGER_RANGE`, or the SDK's own, such as `recipher::load`.
  * - `message` says what went wrong.
- * - `reason` and `field` are the engine's, where it names them.
+ * - `reason` and `field` are the engine's, where it names them, and
+ *   `record` names the record a declaration, a row or a stored row is
+ *   of.
  *
  * No property, and no text it gives, holds a plaintext, a key, a token or a
  * ciphertext.
@@ -43,6 +45,7 @@ export class RecipherError {
   readonly message: string
   readonly reason: string | undefined
   readonly field: string | undefined
+  readonly record: string | undefined
 
   constructor(fields: RecipherErrorFields) {
     this.kind = fields.kind
@@ -50,6 +53,7 @@ export class RecipherError {
     this.message = fields.message
     this.reason = fields.reason
     this.field = fields.field
+    this.record = fields.record
     Object.freeze(this)
   }
 
@@ -69,7 +73,7 @@ export function fromNative(error: unknown): RecipherError {
       'the native build returned an error of an unknown shape',
     )
   }
-  const { kind, code, message, reason, field } = error as Record<
+  const { kind, code, message, reason, field, record } = error as Record<
     string,
     unknown
   >
@@ -85,6 +89,7 @@ export function fromNative(error: unknown): RecipherError {
     message: typeof message === 'string' ? message : '',
     ...(typeof reason === 'string' ? { reason } : {}),
     ...(typeof field === 'string' ? { field } : {}),
+    ...(typeof record === 'string' ? { record } : {}),
   })
 }
 
