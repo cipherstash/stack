@@ -21,7 +21,7 @@ describe('matchNeedleMinLength', () => {
     ).toBe(4)
   })
 
-  it('defaults an absent tokenizer to the schema default rather than skipping the floor', () => {
+  it('defaults an absent tokenizer to defaultMatchOpts() rather than skipping the floor', () => {
     expect(matchNeedleMinLength({})).toBe(3)
   })
 })

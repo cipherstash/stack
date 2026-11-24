@@ -371,9 +371,9 @@ function indexesForCapabilities(
     // ignores the flag entirely (measured across 0.24 and 0.29, EQL v2 and v3:
     // the emitted bloom is trigram-only either way, and a value shorter than
     // `token_length` blooms to nothing regardless), so this is inert today. It
-    // is set to the value a substring-search domain actually wants — matching
-    // the zod schema's own default — so that a protect-ffi release which starts
-    // honouring the flag cannot silently break `contains`.
+    // is set to the value a substring-search domain actually wants, so that a
+    // protect-ffi release which starts honouring the flag cannot silently break
+    // `contains`.
     indexes.match = { ...defaultMatchOpts(), include_original: false }
   }
 

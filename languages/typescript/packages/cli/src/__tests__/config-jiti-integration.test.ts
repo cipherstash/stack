@@ -90,6 +90,6 @@ describe('loadStashConfig — real jiti', () => {
 
     const allCalls = errSpy.mock.calls.flat().join('\n')
     expect(allCalls).toContain('Invalid stash.config.ts')
-    expect(allCalls).toContain('databaseUrl')
+    expect(allCalls).toContain('databaseUrl: databaseUrl is required')
   })
 })

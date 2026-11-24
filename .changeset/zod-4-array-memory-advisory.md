@@ -17,3 +17,5 @@ options left out.
 `castAsEnum`, `eqlCastAsEnum`), and these are now zod 4 schemas. Calling
 `.parse` or `.safeParse` on them works as before. Code that combines them with
 its own zod 3 schemas, or reads zod 3 error fields such as `.errors`, needs zod 4.
+zod 4's type declarations need TypeScript 5.4 or later, unless the project sets
+`skipLibCheck`.
