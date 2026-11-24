@@ -4,10 +4,20 @@ package encrypt_test
 //
 // How a batch goes through the guest, step by step: how many steps send
 // requests and how many requests each sends, how many yield, and how long
-// the steps are. ZeroKMS is the fake in verify_chaos_test.go, answering
-// every request after a fixed delay, so the requests one step sends arrive
-// together and steps are told apart by the gaps between them. A step is a
-// call of an operation export or of se_resume.
+// the steps are. A step is a call of an operation export or of se_resume.
+// ZeroKMS is the fake in verify_chaos_test.go, answering every request
+// after a fixed delay. Each request is put down to the step that sent it
+// by counting the steps that had returned when it arrived, so no timing
+// decides which step a request belongs to.
+//
+// Asserted, for every call: the call sends one request per keysPerRequest
+// keys; every step that sends requests sends requestsAtOnce of them,
+// except the last, which sends what is left; every step either sends
+// requests, yields, or ends the call; and every call of one case yields
+// as often as the others, and at least once per yieldEvery keys derived.
+// The exact yield count is not asserted: the guest also yields while it
+// fills each column, and how often depends on the record's layout. The
+// timings are only logged.
 //
 //	VERIFY_STEPS=1 go test ./encrypt/ -run TestVerifySteps -v
 
@@ -30,12 +40,28 @@ import (
 	"github.com/tetratelabs/wazero/experimental"
 )
 
+// The guest's batching: stack-kms's default request size, the number of
+// requests the Go guest sends at once, and stack-kms's YIELD_EVERY, the
+// keys it derives between yields.
+const (
+	keysPerRequest = 500
+	requestsAtOnce = 3
+	yieldEvery     = 64
+)
+
 // stepTimer times every outermost call of a guest step export.
 type stepTimer struct {
 	mu    sync.Mutex
 	depth int
 	start time.Time
 	steps []time.Duration
+}
+
+// returned is the number of steps that have returned.
+func (t *stepTimer) returned() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.steps)
 }
 
 type stepListener struct{ t *stepTimer }
@@ -73,35 +99,48 @@ func (t *stepTimer) NewFunctionListener(def api.FunctionDefinition) experimental
 	return nil
 }
 
-// delayed answers every request after delay, and records when each
-// arrived.
+// delayed answers every request after delay, and records for each the
+// step that sent it: the host performs a step's requests after the step
+// returns and before the next one starts, so it is the step whose number
+// is the count of steps returned when the request arrives.
 type delayed struct {
-	delay    time.Duration
-	mu       sync.Mutex
-	arrivals []time.Time
+	delay time.Duration
+	timer *stepTimer
+	mu    sync.Mutex
+	sent  []int
 }
 
 func (d *delayed) RoundTrip(r *http.Request) (*http.Response, error) {
 	if strings.Contains(r.URL.Path, "data-key") {
 		d.mu.Lock()
-		d.arrivals = append(d.arrivals, time.Now())
+		d.sent = append(d.sent, d.timer.returned())
 		d.mu.Unlock()
 		time.Sleep(d.delay)
 	}
 	return fakeKMS{}.RoundTrip(r)
 }
 
-// groups splits arrivals into the steps that sent them: a gap longer than
-// half the delay starts a new step.
-func groups(arrivals []time.Time, delay time.Duration) []int {
+// perStep counts the requests each step sent, in step order, from the step
+// each request was sent by.
+func perStep(sent []int) []int {
 	var out []int
-	for i, a := range arrivals {
-		if i == 0 || a.Sub(arrivals[i-1]) > delay/2 {
+	for i, s := range sent {
+		if i == 0 || s != sent[i-1] {
 			out = append(out, 0)
 		}
 		out[len(out)-1]++
 	}
 	return out
+}
+
+// wantPerStep is the requests per step a call of keys keys sends.
+func wantPerStep(keys int) []int {
+	requests := (keys + keysPerRequest - 1) / keysPerRequest
+	var out []int
+	for ; requests > requestsAtOnce; requests -= requestsAtOnce {
+		out = append(out, requestsAtOnce)
+	}
+	return append(out, requests)
 }
 
 func percentile(ds []time.Duration, p float64) time.Duration {
@@ -119,7 +158,7 @@ func TestVerifySteps(t *testing.T) {
 	}
 	const delay = 40 * time.Millisecond
 	timer := &stepTimer{}
-	rt := &delayed{delay: delay}
+	rt := &delayed{delay: delay, timer: timer}
 	ctx := experimental.WithFunctionListenerFactory(context.Background(), timer)
 	client, err := encrypt.NewClient(ctx, encrypt.WithCredentials(encrypt.VerifyTestCredentials()),
 		encrypt.WithZeroKMSURL("https://zerokms.fake"), encrypt.WithTransport(rt))
@@ -128,13 +167,14 @@ func TestVerifySteps(t *testing.T) {
 	}
 	defer client.Close()
 	var yields atomic.Int64
-	encrypt.VerifySetOnYield(client, func() { yields.Add(1) })
+	encrypt.OnYield(client, func() { yields.Add(1) })
 	cipher := client.DefaultKeyset()
 	run := context.Background()
 	const calls = 5
 
 	// User has three sealed fields, one key each.
 	for _, rows := range []int{467, 3334} {
+		keys := 3 * rows
 		users := genUsers(rand.New(rand.NewPCG(9, uint64(rows))), rows)
 		sealed, err := testusers.Encrypt(run, cipher, users)
 		if err != nil {
@@ -156,43 +196,64 @@ func TestVerifySteps(t *testing.T) {
 			var sizes []int
 			var nSteps, nYields int
 			var longestAt []string
-			for range calls {
+			firstYields := -1
+			for c := range calls {
 				timer.mu.Lock()
 				timer.steps = nil
 				timer.mu.Unlock()
 				rt.mu.Lock()
-				rt.arrivals = nil
+				rt.sent = nil
 				rt.mu.Unlock()
 				yields.Store(0)
 				if err := call(); err != nil {
 					t.Fatal(err)
 				}
 				timer.mu.Lock()
-				if len(timer.steps) > 0 {
+				callSteps := slices.Clone(timer.steps)
+				timer.mu.Unlock()
+				rt.mu.Lock()
+				callSizes := perStep(rt.sent)
+				rt.mu.Unlock()
+				callYields := int(yields.Load())
+
+				if want := wantPerStep(keys); !slices.Equal(callSizes, want) {
+					t.Errorf("%s %d keys, call %d: requests per request step %v, want %v", op, keys, c, callSizes, want)
+				}
+				if want := len(callSizes) + callYields + 1; len(callSteps) != want {
+					t.Errorf("%s %d keys, call %d: %d steps, want %d request steps + %d yields + 1 = %d",
+						op, keys, c, len(callSteps), len(callSizes), callYields, want)
+				}
+				if least := (keys - 1) / yieldEvery; callYields < least {
+					t.Errorf("%s %d keys, call %d: %d yields, want at least %d", op, keys, c, callYields, least)
+				}
+				if firstYields < 0 {
+					firstYields = callYields
+				} else if callYields != firstYields {
+					t.Errorf("%s %d keys, call %d: %d yields, the first call %d", op, keys, c, callYields, firstYields)
+				}
+
+				if len(callSteps) > 0 {
 					at := 0
-					for i, d := range timer.steps {
-						if d > timer.steps[at] {
+					for i, d := range callSteps {
+						if d > callSteps[at] {
 							at = i
 						}
 					}
-					longestAt = append(longestAt, fmt.Sprintf("%d/%d", at+1, len(timer.steps)))
+					longestAt = append(longestAt, fmt.Sprintf("%d/%d", at+1, len(callSteps)))
 				}
-				steps = append(steps, timer.steps...)
-				nSteps += len(timer.steps)
-				timer.mu.Unlock()
-				rt.mu.Lock()
-				sizes = append(sizes, groups(rt.arrivals, delay)...)
-				rt.mu.Unlock()
-				nYields += int(yields.Load())
+				steps = append(steps, callSteps...)
+				nSteps += len(callSteps)
+				sizes = append(sizes, callSizes...)
+				nYields += callYields
 			}
 			hist := map[int]int{}
 			for _, s := range sizes {
 				hist[s]++
 			}
 			t.Logf("RESULT %s %d values: %.1f steps/call, %.1f request steps/call, requests per request step %v, %.1f yields/call, longest step %.2f ms, p99 %.2f ms, median %.3f ms",
-				op, 3*rows, float64(nSteps)/calls, float64(len(sizes))/calls, fmtHist(hist, calls), float64(nYields)/calls,
+				op, keys, float64(nSteps)/calls, float64(len(sizes))/calls, fmtHist(hist, calls), float64(nYields)/calls,
 				ms(slices.Max(steps)), ms(percentile(steps, 0.99)), ms(percentile(steps, 0.5)))
-			t.Logf("RESULT %s %d values: the longest step of each call is step (index/steps) %v", op, 3*rows, longestAt)
+			t.Logf("RESULT %s %d values: the longest step of each call is step (index/steps) %v", op, keys, longestAt)
 		}
 	}
 }

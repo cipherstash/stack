@@ -95,6 +95,11 @@ func fakeKeysetID(name string) string {
 type fakeKMS struct{}
 
 func (fakeKMS) RoundTrip(r *http.Request) (*http.Response, error) {
+	// A RoundTripper closes the request body on every path, errors
+	// included: the client wipes its copy of the body when it is closed.
+	if r.Body != nil {
+		defer r.Body.Close()
+	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		return nil, err
@@ -163,19 +168,64 @@ func (fakeKMS) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // ------------------------------------------------------------- the faults
 
+// fault is what chaos does to one ZeroKMS request.
+type fault int
+
+const (
+	faultNone     fault = iota
+	faultPanic          // RoundTrip panics
+	fault5xx            // a 500 or 503 response
+	faultNetErr         // RoundTrip returns an error
+	faultTruncate       // the response body is cut short
+	faultShortKey       // the response is one key short
+	faultCount
+)
+
+var faultNames = [faultCount]string{"untouched", "panics", "5xx", "network errors", "truncated", "short a key"}
+
+// chaosRates is each fault's share of ZeroKMS requests, per mille. The
+// panic rate comes from VERIFY_PANIC_PER_MILLE. The other requests are
+// untouched.
+var chaosRates = [faultCount]int{
+	fault5xx:      40,
+	faultNetErr:   30,
+	faultTruncate: 30,
+	faultShortKey: 30,
+}
+
 type chaos struct {
 	next     http.RoundTripper
 	on       atomic.Bool
 	maxDelay time.Duration
-	panicPM  int
+	rates    [faultCount]int // per mille; faultNone's is unused
 
-	requests, delayed, status5xx, netErr, truncated, shortKey, panics atomic.Int64
+	requests, delayed atomic.Int64
+	injected          [faultCount]atomic.Int64
+}
+
+// pick draws the fault for one request from c.rates.
+func (c *chaos) pick() fault {
+	roll := rand.IntN(1000)
+	for f := faultNone + 1; f < faultCount; f++ {
+		if roll < c.rates[f] {
+			return f
+		}
+		roll -= c.rates[f]
+	}
+	return faultNone
 }
 
 func (c *chaos) RoundTrip(r *http.Request) (*http.Response, error) {
 	isKMS := strings.Contains(r.URL.Path, "data-key")
 	if !c.on.Load() || !isKMS {
 		return c.next.RoundTrip(r)
+	}
+	// A RoundTripper closes the request body on every path. The paths that
+	// never hand r to c.next close it here.
+	closeBody := func() {
+		if r.Body != nil {
+			_ = r.Body.Close()
+		}
 	}
 	c.requests.Add(1)
 	if c.maxDelay > 0 {
@@ -184,40 +234,42 @@ func (c *chaos) RoundTrip(r *http.Request) (*http.Response, error) {
 		select {
 		case <-time.After(d):
 		case <-r.Context().Done():
+			closeBody()
 			return nil, r.Context().Err()
 		}
 	}
-	roll := rand.IntN(1000)
-	switch {
-	case roll < c.panicPM:
-		c.panics.Add(1)
+	f := c.pick()
+	switch f {
+	case faultPanic:
+		c.injected[f].Add(1)
+		closeBody()
 		panic("chaos: injected RoundTripper panic")
-	case roll < c.panicPM+40:
-		c.status5xx.Add(1)
+	case fault5xx:
+		c.injected[f].Add(1)
+		closeBody()
 		code := []int{http.StatusInternalServerError, http.StatusServiceUnavailable}[rand.IntN(2)]
 		return &http.Response{StatusCode: code, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("injected"))}, nil
-	case roll < c.panicPM+70:
-		c.netErr.Add(1)
+	case faultNetErr:
+		c.injected[f].Add(1)
+		closeBody()
 		return nil, errors.New("chaos: injected network error")
 	}
 	resp, err := c.next.RoundTrip(r)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return resp, err
 	}
-	switch {
-	case roll < c.panicPM+100:
-		// Truncate the body.
+	switch f {
+	case faultTruncate:
 		b, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
 			return nil, err
 		}
-		c.truncated.Add(1)
+		c.injected[f].Add(1)
 		resp.Body = io.NopCloser(bytes.NewReader(b[:rand.IntN(len(b))]))
 		resp.ContentLength = -1
 		resp.Header.Del("Content-Length")
-	case roll < c.panicPM+130:
-		// Remove one key.
+	case faultShortKey:
 		b, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
@@ -229,7 +281,7 @@ func (c *chaos) RoundTrip(r *http.Request) (*http.Response, error) {
 				i := rand.IntN(len(keys))
 				v["keys"] = slices.Delete(keys, i, i+1)
 				b, _ = json.Marshal(v)
-				c.shortKey.Add(1)
+				c.injected[f].Add(1)
 			}
 		}
 		resp.Body = io.NopCloser(bytes.NewReader(b))
@@ -237,6 +289,16 @@ func (c *chaos) RoundTrip(r *http.Request) (*http.Response, error) {
 		resp.Header.Del("Content-Length")
 	}
 	return resp, nil
+}
+
+// summary is the request and fault counts, for the log.
+func (c *chaos) summary() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d KMS requests, %d delayed", c.requests.Load(), c.delayed.Load())
+	for f := faultNone + 1; f < faultCount; f++ {
+		fmt.Fprintf(&b, ", %d %s", c.injected[f].Load(), faultNames[f])
+	}
+	return b.String()
 }
 
 // ---------------------------------------------------------------- the test
@@ -248,9 +310,13 @@ func envInt(name string, def int) int {
 	return def
 }
 
+// tally counts the calls' outcomes by kind, and keeps the failures the
+// workers find, for the test goroutine to report: a worker still blocked
+// when the test ends must not call t.
 type tally struct {
-	mu   sync.Mutex
-	kind map[string]int
+	mu       sync.Mutex
+	kind     map[string]int
+	failures []string
 }
 
 func (t *tally) add(k string) {
@@ -259,27 +325,53 @@ func (t *tally) add(k string) {
 	t.kind[k]++
 }
 
-// classify names an error for the tally, coarsely.
+func (t *tally) fail(msg string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.failures = append(t.failures, msg)
+}
+
+// errorMarkers name an error by a phrase in its text, most specific first.
+// Each phrase is one a fault's error carries, never a bare status code,
+// which other text can contain.
+var errorMarkers = []struct{ phrase, name string }{
+	{"too many operations", "TOO MANY OPERATIONS PAUSED"},
+	{"invalid number of keys", "a key short"},
+	{"InvalidNumberOfKeys", "a key short"},
+	{"ParseResponse", "unparseable response"},
+	{"Failed to deserialize", "unparseable response"},
+	{"unexpected end", "unparseable response"},
+	{"Server returned failure response", "server error"},
+	{"injected network error", "network error"},
+	{"Host transport reported a failure", "host transport failure"},
+	{"injected RoundTripper panic", "RoundTripper panic"},
+}
+
+// classify names an error for the tally, coarsely: by its sentinel, then
+// by the first marker its text carries. Only the tally reads it.
 func classify(op string, err error) string {
 	switch {
 	case errors.Is(err, context.Canceled):
 		return op + ": context canceled"
 	case errors.Is(err, context.DeadlineExceeded):
 		return op + ": deadline exceeded"
-	case strings.Contains(err.Error(), "too many operations"):
-		return op + ": TOO MANY OPERATIONS PAUSED"
-	case errors.Is(err, encrypt.ErrTransport):
-		msg := err.Error()
-		for _, s := range []string{"InvalidNumberOfKeys", "invalid number of keys", "500", "503", "network error", "ParseResponse", "parse", "EOF", "unexpected end"} {
-			if strings.Contains(msg, s) {
-				return op + ": ErrTransport (" + s + ")"
-			}
-		}
-		return op + ": ErrTransport (other)"
 	case errors.Is(err, encrypt.ErrState):
 		return op + ": ErrState: " + err.Error()
 	}
-	return op + ": " + digits.ReplaceAllString(err.Error(), "N")
+	sentinel := "error"
+	switch {
+	case errors.Is(err, encrypt.ErrTransport):
+		sentinel = "ErrTransport"
+	case errors.Is(err, encrypt.ErrKMS):
+		sentinel = "ErrKMS"
+	}
+	msg := err.Error()
+	for _, m := range errorMarkers {
+		if strings.Contains(msg, m.phrase) {
+			return op + ": " + sentinel + " (" + m.name + ")"
+		}
+	}
+	return op + ": " + sentinel + ": " + digits.ReplaceAllString(msg, "N")
 }
 
 var digits = regexp.MustCompile(`[0-9]+`)
@@ -314,6 +406,14 @@ func guarded(f func() error) (p any, err error) {
 	return nil, f()
 }
 
+// hangAfter is how long a call may run before the test reports it hung and
+// cancels it. A call that still does not return within hangGrace of that
+// is left blocked, and the test ends without waiting for it.
+const (
+	hangAfter = 5 * time.Minute
+	hangGrace = hangAfter / 5
+)
+
 func TestVerifyChaos(t *testing.T) {
 	dur, err := time.ParseDuration(os.Getenv("VERIFY_CHAOS"))
 	if err != nil {
@@ -321,37 +421,67 @@ func TestVerifyChaos(t *testing.T) {
 	}
 	live := os.Getenv("VERIFY_CHAOS_LIVE") == "1"
 	workers := envInt("VERIFY_WORKERS", 24)
-	ch := &chaos{
+	faults := &chaos{
 		next:     fakeKMS{},
 		maxDelay: time.Duration(envInt("VERIFY_MAX_DELAY_MS", 500)) * time.Millisecond,
-		panicPM:  envInt("VERIFY_PANIC_PER_MILLE", 1),
+		rates:    chaosRates,
 	}
+	faults.rates[faultPanic] = envInt("VERIFY_PANIC_PER_MILLE", 1)
 	ctx := context.Background()
 	var client *encrypt.Client
 	if live {
-		ch.next = http.DefaultTransport
-		client, err = encrypt.NewClient(ctx, encrypt.WithTransport(ch))
+		faults.next = http.DefaultTransport
+		client, err = encrypt.NewClient(ctx, encrypt.WithTransport(faults))
 	} else {
 		client, err = encrypt.NewClient(ctx, encrypt.WithCredentials(encrypt.VerifyTestCredentials()),
-			encrypt.WithZeroKMSURL("https://zerokms.fake"), encrypt.WithTransport(ch))
+			encrypt.WithZeroKMSURL("https://zerokms.fake"), encrypt.WithTransport(faults))
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
-	// The default keyset and each keyset VERIFY_KEYSETS names. Each call
-	// encrypts under one chosen at random.
-	ciphers := []*encrypt.Cipher{client.DefaultKeyset()}
+	// A call still blocked when the test ends may hold the client's lock,
+	// and Close would wait for it.
+	stuck := false
+	defer func() {
+		if !stuck {
+			_ = client.Close()
+		}
+	}()
+
+	// The default keyset and each keyset VERIFY_KEYSETS names, each keyset
+	// once: a name given twice, or one naming the default keyset, would
+	// make "another keyset" the same keyset. Each call encrypts under one
+	// chosen at random.
+	labels := []string{"default"}
+	candidates := []*encrypt.Cipher{client.DefaultKeyset()}
 	if names := os.Getenv("VERIFY_KEYSETS"); names != "" {
 		for _, name := range strings.Split(names, ",") {
-			ciphers = append(ciphers, client.Keyset(encrypt.KeysetName(name)))
+			labels = append(labels, name)
+			candidates = append(candidates, client.Keyset(encrypt.KeysetName(name)))
 		}
+	}
+	var ciphers []*encrypt.Cipher
+	seen := map[encrypt.KeysetID]string{}
+	for i, cipher := range candidates {
+		id, err := cipher.KeysetID(ctx)
+		if err != nil {
+			t.Fatalf("keyset %s: %v", labels[i], err)
+		}
+		if first, ok := seen[id]; ok {
+			t.Logf("keyset %s is keyset %s (%v): it is used once", labels[i], first, id)
+			continue
+		}
+		seen[id] = labels[i]
+		ciphers = append(ciphers, cipher)
 	}
 
 	// One round trip under a random keyset. The decrypt goes through that
 	// keyset's cipher or through the client, which opens each record under
 	// the keyset that sealed it. With more than one keyset, a call in ten
-	// first checks that another keyset's cipher refuses the records.
+	// first checks that another keyset's cipher refuses the records with
+	// ErrForeignKeyset.
+	// refusals counts the times another keyset's cipher refused, as it must.
+	var refusals atomic.Int64
 	check := func(ctx context.Context, r *rand.Rand, n int) error {
 		i := r.IntN(len(ciphers))
 		cipher := ciphers[i]
@@ -362,8 +492,18 @@ func TestVerifyChaos(t *testing.T) {
 		}
 		if len(ciphers) > 1 && r.IntN(10) == 0 {
 			other := ciphers[(i+1+r.IntN(len(ciphers)-1))%len(ciphers)]
-			if _, err := testusers.Decrypt(ctx, other, enc); err == nil {
+			_, err := testusers.Decrypt(ctx, other, enc)
+			switch {
+			case errors.Is(err, encrypt.ErrForeignKeyset):
+				// Refused, as it must be.
+				refusals.Add(1)
+			case err == nil:
 				return fmt.Errorf("WRONG: another keyset's cipher opened %d records", n)
+			case ctx.Err() != nil:
+				// The call was cancelled before the refusal was checked.
+				return err
+			default:
+				return fmt.Errorf("WRONG: another keyset's cipher refused %d records with %w, want ErrForeignKeyset", n, err)
 			}
 		}
 		var d encrypt.Decrypter = cipher
@@ -390,9 +530,9 @@ func TestVerifyChaos(t *testing.T) {
 	runtime.GC()
 	before := runtime.NumGoroutine()
 
-	ch.on.Store(true)
+	faults.on.Store(true)
 	deadline := time.Now().Add(dur)
-	tl := &tally{kind: map[string]int{}}
+	outcomes := &tally{kind: map[string]int{}}
 	var calls, wrong, hung atomic.Int64
 	var wg sync.WaitGroup
 	for w := range workers {
@@ -409,11 +549,12 @@ func TestVerifyChaos(t *testing.T) {
 				go func() {
 					select {
 					case <-done:
-					case <-time.After(5 * time.Minute):
+					case <-time.After(hangAfter):
 						hung.Add(1)
 						var b strings.Builder
 						_ = pprof.Lookup("goroutine").WriteTo(&b, 1)
-						t.Errorf("a call of %d rows ran 5 minutes:\n%s", n, b.String())
+						outcomes.fail(fmt.Sprintf("a call of %d rows ran %v, and is cancelled:\n%s", n, hangAfter, b.String()))
+						cancel()
 					}
 				}()
 				calls.Add(1)
@@ -422,28 +563,73 @@ func TestVerifyChaos(t *testing.T) {
 				cancel()
 				switch {
 				case p != nil:
-					tl.add(fmt.Sprintf("panic recovered: %v", p))
+					outcomes.add(fmt.Sprintf("panic recovered: %v", p))
 				case err == nil:
-					tl.add("ok")
+					outcomes.add("ok")
 				case strings.HasPrefix(err.Error(), "WRONG"):
 					wrong.Add(1)
-					t.Errorf("%v", err)
+					outcomes.fail(err.Error())
 				default:
-					c := classify("call", err)
-					if cancels && !strings.Contains(c, "context canceled") {
-						c += " (cancelling call)"
+					kind := classify("call", err)
+					if cancels && !strings.Contains(kind, "context canceled") {
+						kind += " (cancelling call)"
 					}
-					tl.add(c)
+					outcomes.add(kind)
 				}
 			}
 		})
 	}
-	wg.Wait()
-	ch.on.Store(false)
+	// Every call starts before the deadline, so hangAfter after it every
+	// call still running has been reported hung and cancelled. One that has
+	// not returned hangGrace later is left blocked, and so is the client.
+	workersDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(workersDone)
+	}()
+	select {
+	case <-workersDone:
+	case <-time.After(time.Until(deadline) + hangAfter + hangGrace):
+		stuck = true
+	}
+	faults.on.Store(false)
+
+	outcomes.mu.Lock()
+	kinds := make([]string, 0, len(outcomes.kind))
+	for k := range outcomes.kind {
+		kinds = append(kinds, k)
+	}
+	sort.Strings(kinds)
+	t.Logf("calls %d over %v with %d workers (live=%v)", calls.Load(), dur, workers, live)
+	for _, k := range kinds {
+		t.Logf("  %6d  %s", outcomes.kind[k], k)
+	}
+	failures := slices.Clone(outcomes.failures)
+	outcomes.mu.Unlock()
+	t.Logf("faults: %s", faults.summary())
+	if len(ciphers) > 1 {
+		t.Logf("another keyset's cipher refused with ErrForeignKeyset %d times", refusals.Load())
+	}
+	for _, f := range failures {
+		t.Error(f)
+	}
+	if wrong.Load() > 0 {
+		t.Errorf("%d calls went WRONG", wrong.Load())
+	}
+	if hung.Load() > 0 {
+		t.Errorf("%d calls hung", hung.Load())
+	}
+	if stuck {
+		t.Errorf("calls still blocked %v after they were cancelled: the client is not checked again, closed, or checked for leaks", hangGrace)
+		return
+	}
 
 	// The client still works.
 	after := func() error { return check(ctx, rand.New(rand.NewPCG(3, 4)), 900) }
 	p, err := guarded(after)
+	if p != nil || err != nil {
+		t.Errorf("after the faults stopped, the client failed: err %v, panic %v", err, p)
+	}
 
 	// Goroutines settle back to where they were.
 	var now int
@@ -454,28 +640,7 @@ func TestVerifyChaos(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-
-	kinds := make([]string, 0, len(tl.kind))
-	for k := range tl.kind {
-		kinds = append(kinds, k)
-	}
-	sort.Strings(kinds)
-	t.Logf("calls %d over %v with %d workers (live=%v)", calls.Load(), dur, workers, live)
-	for _, k := range kinds {
-		t.Logf("  %6d  %s", tl.kind[k], k)
-	}
-	t.Logf("faults: %d KMS requests, %d 5xx, %d network errors, %d truncated, %d short a key, %d panics",
-		ch.requests.Load(), ch.status5xx.Load(), ch.netErr.Load(), ch.truncated.Load(), ch.shortKey.Load(), ch.panics.Load())
 	t.Logf("goroutines: %d before, %d after", before, now)
-	if wrong.Load() > 0 {
-		t.Errorf("%d calls returned wrong data", wrong.Load())
-	}
-	if hung.Load() > 0 {
-		t.Errorf("%d calls hung", hung.Load())
-	}
-	if p != nil || err != nil {
-		t.Errorf("after the faults stopped, the client failed: err %v, panic %v", err, p)
-	}
 	if now > before {
 		var b strings.Builder
 		_ = pprof.Lookup("goroutine").WriteTo(&b, 1)
