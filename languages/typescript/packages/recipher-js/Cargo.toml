@@ -1,0 +1,20 @@
+# The Rust half of `@cipherstash/recipher`: its own Cargo workspace, with its
+# own Cargo.lock. The root `Cargo.toml` excludes it, as it excludes
+# protect-ffi and EQL, so napi-rs 3 and this lock never enter a stack-* build.
+#
+# It has one crate, `crate` (crate `recipher-js`): the napi-rs 3 addon. It
+# defines the classes the TypeScript exports, runs every operation through
+# the engine, and converts JavaScript values with vitaminc's
+# `vitaminc-aead-napi`.
+#
+# The package's `build` and `test` scripts never run cargo. `build:native`,
+# `build:debug` and `test:cargo` do.
+[workspace]
+resolver = "2"
+# Listed by name, not by glob: scripts/__tests__/dependabot-cargo-cross-workspace.test.mjs
+# reads this list and expands no globs.
+members = ["crate"]
+
+[workspace.package]
+edition = "2021"
+repository = "https://github.com/cipherstash/stack"

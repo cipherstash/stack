@@ -1,0 +1,57 @@
+[package]
+name = "recipher-js"
+description = "The Node addon of @cipherstash/recipher: the classes its TypeScript exports, over the Stack Encrypt engine"
+version = "0.0.0"
+edition.workspace = true
+# Literal, not inherited: scripts/__tests__/cargo-publish-opt-out.test.mjs
+# greps each member for this exact line.
+publish = false
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+# `createTesting`: a cipher over the engine's deterministic test key source
+# (`stack_encrypt::kms::DeterministicSource`), for
+# `@cipherstash/recipher/testing`. No credentials, no network. The debug
+# build (`build:debug`) has it; the release build (`build:native`) does not,
+# and `tests/boundaries.rs` checks that a default build cannot reach it.
+testing = ["stack-encrypt/test-support"]
+
+[dependencies]
+# The engine, by path, so a build carries the engine of its own commit.
+# `dynamic` is the runtime value model a binding speaks. `http` builds a
+# cipher over ZeroKMS from the credentials it detects.
+stack-encrypt = { path = "../../../../../packages/stack-encrypt", default-features = false, features = ["dynamic", "http"] }
+# The auth strategy the detected cipher's key source is generic over.
+stack-auth = { path = "../../../../../packages/stack-auth", default-features = false, features = ["http"] }
+# napi-rs 3, as `vitaminc-aead-napi` is. Its default features load Node-API
+# by name at run time (`dyn-symbols`), so the crate's own tests link without
+# Node. `napi6` for BigInt and property enumeration, which vitaminc's walk
+# needs; `tokio_rt` runs the engine's futures on napi's runtime.
+napi = { version = "3", features = ["napi6", "tokio_rt"] }
+napi-derive = "3"
+# vitaminc's value bridge for Node addons: every JavaScript value is read
+# and built through it. At the vitaminc version the engine is built with,
+# so one vitaminc is in the build.
+vitaminc-aead-napi = "0.10.0"
+# The frame `JsBuilder::build` takes. The version the engine resolves.
+vitaminc-aead = "0.10.0"
+# `OpaqueDebug`, and the protected buffer a frame is held in. The version
+# the engine resolves.
+vitaminc-protected = "0.10.0"
+# For the engine error's diagnostic code and help.
+miette = "7.5.0"
+# For the structured fields of an engine error (`ErrorPayload::payload`).
+serde_json = "1"
+# The engine's opaque path wipes a value it did not seal. The version the
+# engine resolves.
+zeroize = "1"
+
+[dev-dependencies]
+stack-encrypt = { path = "../../../../../packages/stack-encrypt", default-features = false, features = ["dynamic", "http", "test-support"] }
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[build-dependencies]
+napi-build = "2"

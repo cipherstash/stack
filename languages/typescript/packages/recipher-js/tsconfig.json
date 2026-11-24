@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleDetection": "force",
+    "moduleResolution": "bundler",
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": ["node"]
+  },
+  // Source, the tests and the type tests. The `typecheck` gate must compile
+  // source, not build output (`pnpm run lint:typecheck-scope`).
+  "include": ["src", "__tests__", "type-tests"],
+  "exclude": ["dist", "node_modules"]
+}

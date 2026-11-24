@@ -51,6 +51,7 @@
       "!languages/typescript/packages/auth/LICENSE",
       "!languages/typescript/packages/profile/index.d.ts",
       "!languages/typescript/packages/profile/native.d.ts",
+      "!languages/typescript/packages/recipher-js/native.d.ts",
       "!languages/golang",
       "!**/*.grit",
       "!**/*.yml",

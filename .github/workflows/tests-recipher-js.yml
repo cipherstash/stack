@@ -1,0 +1,141 @@
+name: Tests (recipher-js)
+
+# `@cipherstash/recipher`, the TypeScript SDK on the Stack Encrypt engine:
+# its detached Cargo workspace (one crate, `recipher-js`, the napi-rs 3
+# addon) and the suites that load the addon.
+#
+# Root `pnpm test` runs the package's `test` (the suites that need no
+# addon, and the typecheck with the type tests) in tests.yml. This workflow
+# runs what needs Rust: `test:cargo`, `build:debug` (napi-rs's CLI, which
+# also writes the committed `native.d.ts`) and `test:addon`. Every test here
+# is offline, over the engine's deterministic test keys, so the job takes no
+# credentials.
+#
+# The engine crates and the root Cargo.toml are in the filter: the crate
+# depends on stack-encrypt by path, and stack-encrypt's `workspace = true`
+# dependencies resolve against the root manifest.
+
+on:
+  pull_request:
+    paths:
+      - languages/typescript/packages/recipher-js/**
+      - packages/stack-auth/**
+      - packages/stack-profile/**
+      - packages/stack-kms/**
+      - packages/stack-encrypt/**
+      - packages/stack-encrypt-derive/**
+      - packages/stack-encrypt-jsonpath/**
+      - Cargo.toml
+      - mise.toml
+      - pnpm-lock.yaml
+      - .github/workflows/tests-recipher-js.yml
+  push:
+    branches: [main]
+    paths:
+      - languages/typescript/packages/recipher-js/**
+      - packages/stack-auth/**
+      - packages/stack-profile/**
+      - packages/stack-kms/**
+      - packages/stack-encrypt/**
+      - packages/stack-encrypt-derive/**
+      - packages/stack-encrypt-jsonpath/**
+      - Cargo.toml
+      - mise.toml
+      - pnpm-lock.yaml
+      - .github/workflows/tests-recipher-js.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: full
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+
+jobs:
+  recipher-js:
+    name: cargo checks, the addon, and its suites (Linux)
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      # At the repository root: the root mise.toml pins rust 1.94.1.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          install_args: rust
+          cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
+
+      # As in tests-crates.yml: a cached toolchain can lack the components
+      # mise.toml declares. A no-op when they are there.
+      - name: Add rustfmt and clippy to the pinned toolchain
+        run: rustup component add rustfmt clippy
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: languages/typescript/packages/recipher-js -> target
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      # node-pty falls back to `node-gyp rebuild` on Linux during any
+      # workspace install. See scripts/__tests__/workflow-node-gyp.test.mjs.
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `cargo test --locked`, `cargo fmt --check` and clippy, with every
+      # feature. The tests include the checks that the crate names no
+      # `Label`, links no eql-bindings, and that a build with its default
+      # features (the release build) has no test cipher.
+      - name: cargo checks
+        run: pnpm --filter @cipherstash/recipher run test:cargo
+
+      # The debug addon, with the test cipher, as `recipher.node`. napi-rs
+      # writes the addon's TypeScript declarations to `native.d.ts`, which is
+      # committed: the package's TypeScript imports its types from it.
+      - name: Build the addon
+        run: pnpm --filter @cipherstash/recipher run build:debug
+
+      # The build must leave the tracked tree as it found it. Nothing else
+      # regenerates `native.d.ts`, so a change to a `#[napi]` item that is not
+      # rebuilt and committed would leave declarations that disagree with the
+      # addon; `git status` also catches an untracked file the build leaves.
+      - name: Guard the committed declarations and Cargo.lock against drift
+        run: |
+          dirty=$(git status --porcelain -- languages/typescript/packages/recipher-js)
+          if [ -n "$dirty" ]; then
+            echo "$dirty"
+            git diff -- languages/typescript/packages/recipher-js
+            echo "::error::the recipher-js build changed tracked files or left untracked ones. Run 'pnpm --filter @cipherstash/recipher run build:debug' and commit native.d.ts and Cargo.lock; ignore other build outputs in the package's .gitignore."
+            exit 1
+          fi
+
+      # Builds the TypeScript (tsup) first: one suite runs the ESM and the
+      # CommonJS build in one process.
+      - name: Suites that load the addon
+        run: pnpm --filter @cipherstash/recipher run test:addon
