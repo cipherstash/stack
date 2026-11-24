@@ -101,7 +101,13 @@ describe('settle', () => {
     expect(settle(() => ({ ok: true, value: 5 })).unwrap()).toBe(5)
     const failed = settle(() => ({
       ok: false,
-      error: { kind: 'value', code: 'recipher::x', message: 'no' },
+      error: {
+        kind: 'value',
+        code: 'recipher::x',
+        message: 'no',
+        fields: {},
+        causes: [],
+      },
     }))
     expect(failed.err()).toBeInstanceOf(RecipherError)
     expect(failed.err()?.code).toBe('recipher::x')

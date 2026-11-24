@@ -27,6 +27,7 @@ export {
   type KeysetClass,
 } from './cipher'
 export {
+  type ErrorCause,
   type ErrorKind,
   RecipherError,
   type RecipherErrorFields,

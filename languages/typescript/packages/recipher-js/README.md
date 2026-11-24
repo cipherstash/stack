@@ -173,10 +173,30 @@ This holds for a method passed on its own (`ciphertexts.map(cipher.decrypt)`
 keeps its cipher), for an argument of the wrong type, and when the native
 build is missing.
 
-A `RecipherError` has a `kind` to switch on (`declaration`, `value`,
-`credential`, `zerokms`, `foreign_keyset`, `open`, `internal` and the rest),
-a stable `code`, a `message`, the engine's `reason` and `field` where it
-gives them, and the `record` where one is at fault. No error holds a plaintext, a key, a token or a ciphertext.
+A `RecipherError` is the engine's diagnostic, as a value:
+
+```ts
+const opened = await cipher.decrypt(damaged)
+if (opened.isErr()) {
+  opened.error.kind // 'open'
+  opened.error.code // 'stack_encrypt::aead'
+  opened.error.message // 'AEAD operation failed (wrong key, AAD mismatch, or malformed ciphertext)'
+  opened.error.help // 'Open the value under the context it was sealed with. ...'
+}
+```
+
+| Property | What it holds |
+| --- | --- |
+| `kind` | The closed set to switch on: `declaration`, `value`, `credential`, `zerokms`, `foreign_keyset`, `context_mismatch`, `open`, `cancelled` or `internal`. |
+| `code` | Stable, and finer than the kind: the engine's code (`stack_encrypt::aead`), vitaminc's for a value it refused (`ERR_INTEGER_RANGE`), or the SDK's own (`recipher::not_a_ciphertext`). |
+| `message` | What went wrong, in one line. |
+| `help` | What to do about it, where the error knows. |
+| `url` | A documentation page for the error, where it has one. |
+| `fields` | The error's structured fields, by `snake_case` name. `reason` and `field` are two of them, typed. |
+| `record` | The record at fault, where one is. |
+| `causes` | The errors behind this one, outermost first, each a `message` and, for an engine error, a `code`. A cause from another library has a fixed message, never that library's own text. |
+
+No error holds a plaintext, a key, a token or a ciphertext.
 
 `Cipher`, `Keyset` and `Ciphertext` have no constructor: get a cipher from
 `Cipher.create()`, a keyset from `cipher.defaultKeyset()` and a ciphertext

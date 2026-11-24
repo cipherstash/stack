@@ -32,7 +32,7 @@ stack-auth = { path = "../../../../../packages/stack-auth", default-features = f
 # needs, and `napi9` (Node 18.17 and later) for `Symbol.for`, which keys a
 # decrypted row's `inspect`; `tokio_rt` runs the engine's futures on napi's
 # runtime.
-napi = { version = "3", features = ["napi9", "tokio_rt"] }
+napi = { version = "3", features = ["napi9", "tokio_rt", "serde-json"] }
 napi-derive = "3"
 # vitaminc's value bridge for Node addons: every JavaScript value is read
 # and built through it. At the vitaminc version the engine is built with,
@@ -44,7 +44,7 @@ vitaminc-aead = "0.10.0"
 # `OpaqueDebug`, and the protected buffer a frame is held in. The version
 # the engine resolves.
 vitaminc-protected = "0.10.0"
-# For the engine error's diagnostic code and help.
+# For the engine error's diagnostic: its code, help, URL and causes.
 miette = "7.5.0"
 # For the structured fields of an engine error (`ErrorPayload::payload`).
 serde_json = "1"
@@ -58,6 +58,9 @@ serde = { version = "1", features = ["derive"] }
 [dev-dependencies]
 stack-encrypt = { path = "../../../../../packages/stack-encrypt", default-features = false, features = ["dynamic", "http", "test-support"] }
 tokio = { version = "1", features = ["rt", "macros"] }
+# The probe errors the cause-chain test builds. The version the engine
+# resolves.
+thiserror = "1.0.56"
 # The values the engine-interop tests seal through the engine's typed API,
 # and the types the counting key source names. The versions the engine
 # resolves.

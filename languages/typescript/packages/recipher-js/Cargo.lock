@@ -1916,6 +1916,8 @@ dependencies = [
  "napi-sys",
  "nohash-hasher",
  "rustc-hash",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -2518,6 +2520,7 @@ dependencies = [
  "serde_json",
  "stack-auth",
  "stack-encrypt",
+ "thiserror 1.0.69",
  "tokio",
  "uuid",
  "vitaminc-aead 0.10.0",

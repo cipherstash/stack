@@ -160,6 +160,17 @@ export declare function checkDeclarations(records: unknown): Outcome<undefined>
  */
 export declare function createTesting(seed: unknown): Promise<Outcome<Cipher>>
 
+/** One error in a failure's cause chain. */
+export interface ErrorCause {
+  /** The cause's code, where it is one of the engine's own errors. */
+  code?: string
+  /**
+   * The engine error's message. For an error from another library, the
+   * fixed text `an error from another library`.
+   */
+  message: string
+}
+
 /** The closed set of things that can go wrong, for a caller to switch on. */
 export type ErrorKind = 'declaration' | 'value' | 'credential' | 'zerokms' | 'foreign_keyset' | 'context_mismatch' | 'open' | 'cancelled' | 'internal'
 
@@ -183,8 +194,20 @@ export interface RecipherErrorFields {
    * or the SDK's own, such as `recipher::not_a_ciphertext`.
    */
   code: string
-  /** What went wrong, with the engine's help after it where it gives one. */
+  /** What went wrong, in one line. */
   message: string
+  /** What to do about it, where the error knows. */
+  help?: string
+  /** A documentation page for the error, where it has one. */
+  url?: string
+  /**
+   * The error's structured fields, by `snake_case` name: a refused
+   * plan's `field` and `reason`, a ZeroKMS failure's `request_kind`.
+   * Empty where the error has none.
+   */
+  fields: Record<string, any>
+  /** The errors behind this one, outermost first. */
+  causes: Array<ErrorCause>
   /** The engine's reason token, such as `no_fields`, where it gives one. */
   reason?: string
   /** The field at fault, where one is known. */

@@ -91,8 +91,17 @@ describe('failures are values', () => {
     const last = bytes.length - 1
     bytes[last] = (bytes[last] ?? 0) ^ 0x01
     const opened = await c.decrypt(Ciphertext.fromBytes(bytes).unwrap())
-    expect(kindOf(opened.err())).toBe('open')
-    expect(opened.err()?.message).not.toContain('intact')
+    const error = opened.err()
+    expect(kindOf(error)).toBe('open')
+    expect(error?.code).toBe('stack_encrypt::aead')
+    expect(error?.message).toBe(
+      'AEAD operation failed (wrong key, AAD mismatch, or malformed ciphertext)',
+    )
+    // The engine's help is a property of its own, never part of the message.
+    expect(error?.help).toMatch(/^Open the value under the context/)
+    expect(error?.fields).toEqual({})
+    expect(error?.causes).toEqual([])
+    expect(String(error)).not.toContain('intact')
   })
 
   it('refuses a value from another seed, which is another key', async () => {
