@@ -1,10 +1,11 @@
 /**
- * The kinds of value, in the engine's words: what a stored ciphertext is
- * read back as (`Ciphertext.fromBytes(bytes, kinds.string)`).
+ * Kinds: the types of value, by the engine's names for them. A kind says
+ * what type a stored ciphertext decrypts to, as in
+ * `Ciphertext.fromBytes(bytes, kinds.string)`.
  *
- * A kind is plain data, `{ name }`, with the engine's name for it. Its type
- * records the TypeScript type a value of the kind is: an integer kind's
- * values are a `bigint` at every width.
+ * A kind is plain data, `{ name }`, that contains the engine's name for the
+ * type. The kind's TypeScript type records the type of the kind's values.
+ * An integer kind's values are a `bigint` at every width.
  */
 import type { OpenedJson, VcDate, VcDecimal, VcTimestamp } from './values'
 
@@ -12,7 +13,7 @@ import type { OpenedJson, VcDate, VcDecimal, VcTimestamp } from './values'
 export interface Kind<Name extends string = string, T = unknown> {
   /** The engine's name for the kind, such as `int32`. */
   readonly name: Name
-  /** Records `T`, which nothing at run time holds. */
+  /** Carries `T` for the type checker. The property never exists at run time. */
   readonly __value?: T
 }
 
@@ -20,12 +21,13 @@ function kind<Name extends string, T>(name: Name): Kind<Name, T> {
   return Object.freeze({ name })
 }
 
-/** The type a value of kind `K` is. */
+/** The TypeScript type of a value of kind `K`. */
 export type ValueOf<K> = K extends Kind<string, infer T> ? T : never
 
 /**
- * The kinds, in the engine's words. An integer kind's values are a `bigint`
- * at every width. `json` is a JSON document, sealed as its JSON text.
+ * The kinds, by the engine's names for them. An integer kind's values are a
+ * `bigint` at every width. `json` is a JSON document, encrypted as its JSON
+ * text.
  */
 export const kinds = Object.freeze({
   string: kind<'string', string>('string'),

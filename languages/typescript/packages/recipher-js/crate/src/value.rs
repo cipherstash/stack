@@ -1,4 +1,7 @@
-//! A value the engine seals as one leaf.
+//! A value that the engine encrypts as one leaf.
+//!
+//! The engine is the Stack Encrypt engine, the `stack-encrypt` crate. A
+//! leaf is one value that the engine encrypts as a single ciphertext.
 
 use stack_encrypt::dynamic::plaintext::{depth, Error as _, Scalar, Sink, SourceError};
 use stack_encrypt::dynamic::{ValueFrame, ValueKind};
@@ -8,21 +11,32 @@ use vitaminc_protected::OpaqueDebug;
 
 use crate::error::{Error, RecipherErrorFields};
 
-/// A value checked to be one leaf: one scalar of the value model, or a JSON
-/// document. The engine seals it through its opaque scalar path, as Rust's
-/// `keyset.encrypt(value)` does, so each ciphertext is the one Rust and Go
-/// write for the same value.
+/// A value checked to be one leaf: one scalar of the engine's value model,
+/// or one JSON document.
 ///
-/// The engine seals a value as one opaque leaf only when its type is one of
-/// vitaminc's scalars (`Scalar`). A [`ValueFrame`] can hold any value of the
-/// model, an array or a map too, so it is not one; this type is the check
-/// that it holds one scalar, made once, before the engine sees it. The
-/// engine's opaque path also needs a value it can wipe (`Zeroize`): wiping
-/// drops the value, which wipes its own buffer. `Debug` hides the value.
+/// The value model is the set of value types the engine reads. A scalar is
+/// a value of the model that is not an array or a map, such as text, a
+/// number or bytes.
+///
+/// The engine encrypts the value through its opaque scalar path. That path
+/// encrypts a whole value as one leaf. Rust's `keyset.encrypt(value)` uses
+/// the same path. So each ciphertext has the form that Rust and Go write
+/// for the same value.
+///
+/// The engine encrypts a value as one opaque leaf only when its type
+/// implements `Scalar`, a trait of vitaminc, CipherStash's cryptography
+/// library. A [`ValueFrame`] can contain any value of the model, including
+/// an array or a map. So a [`ValueFrame`] is not a `Scalar`. This type
+/// checks that the frame contains one scalar. The check runs once, before
+/// the engine reads the value.
+///
+/// The opaque path also needs a value it can wipe (`Zeroize`). Wiping drops
+/// the value, and the value wipes its own buffer when it drops. `Debug`
+/// hides the value.
 #[derive(OpaqueDebug)]
 pub(crate) struct OneValue(Option<Leaf>);
 
-/// What a [`OneValue`] holds.
+/// The value inside a [`OneValue`]: a scalar, or a JSON document.
 #[derive(OpaqueDebug)]
 enum Leaf {
     Scalar(ValueFrame),
@@ -30,12 +44,12 @@ enum Leaf {
 }
 
 impl OneValue {
-    /// `value`, if it is one scalar.
+    /// Returns `value` as a [`OneValue`], if it is one scalar.
     ///
     /// # Errors
     ///
-    /// `recipher::not_a_scalar` for an array, `recipher::plain_object` for an
-    /// object.
+    /// Returns `recipher::not_a_scalar` for an array, and
+    /// `recipher::plain_object` for an object.
     pub(crate) fn scalar(value: ValueFrame) -> Result<Self, RecipherErrorFields> {
         match value.kind() {
             Some(ValueKind::Array) => Err(Error::NotAScalar.into()),
@@ -44,8 +58,8 @@ impl OneValue {
         }
     }
 
-    /// A JSON document, sealed as the engine's `JsonPlaintext` is: as its
-    /// JSON text.
+    /// Returns a JSON document as a [`OneValue`]. The engine encrypts it as
+    /// it encrypts any `JsonPlaintext`: as its JSON text.
     pub(crate) fn json(document: JsonPlaintext) -> Self {
         Self(Some(Leaf::Json(document)))
     }
@@ -53,7 +67,7 @@ impl OneValue {
 
 impl zeroize::Zeroize for OneValue {
     fn zeroize(&mut self) {
-        // Each leaf wipes its buffer when it is dropped.
+        // Dropping the leaf wipes its buffer.
         self.0 = None;
     }
 }

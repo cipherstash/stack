@@ -1,24 +1,52 @@
-//! A record: a declaration of fields, turned into the engine's [`Plan`] once,
-//! and the rows encrypted and decrypted through `dynamic::Planned`.
+//! Records: declarations of fields, and the rows encrypted and decrypted
+//! under them.
 //!
-//! A declaration is the plain object `record(..)` makes:
-//! `{ type: "record", name, fields }`, each field
-//! `{ type: "sealed", kind: { name }, index: [..], null? }` or
-//! `{ type: "passthrough" }`. Each field's context is its field path: the
-//! record's name, then the field's name. The plan is built from the
-//! declaration with the engine's own types ([`FieldPlan`], [`Output`],
-//! [`IndexSpec`], [`NullMode`], [`ValueKind`]), so the engine checks it
-//! and its refusals are the engine's. A plan is built once for each
-//! declaration and kept for the life of the process.
+//! A record declares the fields of a row and how to store each one. The
+//! addon turns each declaration into the engine's [`Plan`] once. A plan is
+//! the engine's description of how to encrypt each field of a row. The
+//! engine is the Stack Encrypt engine, the `stack-encrypt` crate. Rows are
+//! encrypted and decrypted through the engine's `dynamic::Planned`.
 //!
-//! A row crosses as one frame, a map of the record's fields. A value is
-//! read as its field's kind by the engine's [`read`] before the engine
-//! sees it, because vitaminc reads a JavaScript `bigint` at the narrowest
-//! width that holds it.
+//! # Declarations
 //!
-//! A stored row crosses as one frame too: for each sealed field an object
-//! of `ciphertext` and the field's index terms, each as bytes; for a
-//! passthrough field its value; for an absent field a null.
+//! A declaration is the plain object that `record(..)` makes:
+//! `{ type: "record", name, fields }`. Each field is one of these:
+//!
+//! - `{ type: "sealed", kind: { name }, index: [..], null? }`, a sealed
+//!   field, which the engine encrypts;
+//! - `{ type: "passthrough" }`, a passthrough field, which the engine
+//!   stores as given, without encryption.
+//!
+//! Each field's context is its field path: the record's name, then the
+//! field's name. A context is a value that a ciphertext is bound to, and
+//! decrypting needs the same context.
+//!
+//! The addon builds the plan from the declaration with the engine's own
+//! types: [`FieldPlan`], [`Output`], [`IndexSpec`], [`NullMode`] and
+//! [`ValueKind`]. So the engine checks the plan, and the refusals are the
+//! engine's. The addon builds a plan once for each declaration, and keeps
+//! it for the life of the process.
+//!
+//! # Rows
+//!
+//! A row passes to the engine as one frame. A frame is a byte buffer that
+//! contains one value. A row's frame contains a map of the record's fields.
+//!
+//! Before the engine reads a value, the engine's [`read`] reads it as its
+//! field's kind. That step is needed because vitaminc, CipherStash's
+//! cryptography library, reads a JavaScript `bigint` at the narrowest width
+//! that fits it.
+//!
+//! A stored row is what encrypting a row returns. The stored row also
+//! passes as one frame, with one entry for each field:
+//!
+//! - for a sealed field, an object of `ciphertext` and the field's index
+//!   terms, each as bytes;
+//! - for a passthrough field, its value;
+//! - for an absent field, a null.
+//!
+//! An index term is a value derived from a field's plaintext that lets a
+//! database search the field without decrypting it.
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
@@ -39,18 +67,18 @@ use crate::error::{Error, RecipherErrorFields};
 use crate::frames::{bytes_of, entries, Entry, Map};
 use crate::outcome::Outcome;
 
-/// The stored row's name for a field's ciphertext.
+/// The key of a field's ciphertext in a stored row.
 const CIPHERTEXT: &str = "ciphertext";
 
-/// Field names the engine reserves at the top of a plan.
+/// Field names that the engine reserves for the top level of a plan.
 const RESERVED: [&str; 2] = ["bind", "context_field"];
 
-/// An index a declaration names, by the SDK's name for it.
+/// Returns the index that a declaration names, from the SDK's name for it.
 fn index_named(name: &str) -> Option<IndexSpec> {
     match name {
         "equality" => Some(IndexSpec::Equality),
-        // The match index under its default options, as the engine reads
-        // its key in a plan.
+        // The match index with its default options, as the engine reads the
+        // key `match` in a plan.
         "match" => IndexSpec::parse("match"),
         "ore" => Some(IndexSpec::Ore),
         "ope" => Some(IndexSpec::Ope),
@@ -58,7 +86,7 @@ fn index_named(name: &str) -> Option<IndexSpec> {
     }
 }
 
-/// The SDK's name for an index, as a stored row spells it.
+/// Returns the SDK's name for an index, as a stored row writes it.
 fn index_name(index: &IndexSpec) -> Option<&'static str> {
     match index {
         IndexSpec::Equality => Some("equality"),
@@ -69,19 +97,19 @@ fn index_name(index: &IndexSpec) -> Option<&'static str> {
     }
 }
 
-/// A record's plan, built once from its declaration. A declaration holds no
-/// secret, so the whole plan prints.
+/// A record's plan, built once from its declaration. A declaration contains
+/// no secret, so `Debug` prints the whole plan.
 #[derive(Debug)]
 pub(crate) struct RecordPlan {
     name: String,
     plan: Plan,
     /// The fields, in declaration order.
     fields: Vec<Field>,
-    /// The plan of each sealed field alone, by its name.
+    /// A plan for each sealed field on its own, keyed by the field's name.
     alone: HashMap<String, Arc<RecordPlan>>,
 }
 
-/// A field as the rows read it.
+/// A field, as the addon uses it to read rows.
 #[derive(Clone, Debug)]
 struct Field {
     name: String,
@@ -135,25 +163,25 @@ struct FieldDeclaration {
     null: Option<String>,
 }
 
-/// A field's kind, as `kinds` spells it.
+/// A field's kind, as the package's `kinds` object writes it.
 #[derive(Deserialize)]
 struct KindDeclaration {
     name: String,
 }
 
-/// The plans built so far, by the declaration's frame bytes. A declaration
-/// holds no secret.
+/// The plans built so far, keyed by the bytes of the declaration's frame. A
+/// declaration contains no secret.
 static PLANS: LazyLock<Mutex<HashMap<Vec<u8>, Arc<RecordPlan>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 impl RecordPlan {
-    /// The plan of the declaration a binding read into `frame`, built the
-    /// first time it is seen.
+    /// Returns the plan of the declaration that the addon read into
+    /// `frame`. The plan is built the first time the declaration is seen.
     ///
     /// # Errors
     ///
-    /// `recipher::not_a_record`, or a refusal of the declaration naming the
-    /// record and, where there is one, the field.
+    /// Returns `recipher::not_a_record`, or a refusal of the declaration.
+    /// A refusal names the record and, where there is one, the field.
     pub(crate) fn of(frame: &ValueFrame) -> Outcome<Arc<RecordPlan>> {
         let key = frame.risky_ref().to_vec();
         if let Some(plan) = PLANS
@@ -170,8 +198,8 @@ impl RecordPlan {
             return Err(Error::NotARecord.into());
         }
         let plan = Arc::new(Self::build(declaration.name, declaration.fields.0)?);
-        // Another call may have built the same plan meanwhile: the first one
-        // kept is the one every call uses.
+        // Another call may have built the same plan at the same time. Every
+        // call uses the first plan stored.
         let kept = PLANS
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -215,23 +243,24 @@ impl RecordPlan {
         })
     }
 
-    /// The record's name.
+    /// Returns the record's name.
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
 
-    /// The names of the fields, in declaration order.
+    /// Returns the names of the fields, in declaration order.
     pub(crate) fn field_names(&self) -> impl Iterator<Item = &str> {
         self.fields.iter().map(|field| field.name.as_str())
     }
 
-    /// The plan of the sealed field `name` alone: the same field path, so
-    /// the field's bytes are the bytes it has in a whole row.
+    /// Returns the plan of the sealed field `name` on its own. The plan
+    /// uses the same field path, so the field's stored bytes have the same
+    /// form as in a whole row.
     ///
     /// # Errors
     ///
-    /// `recipher::no_field` for a name the record does not declare, or that
-    /// it passes through.
+    /// Returns `recipher::no_field` for a name that the record does not
+    /// declare, or that names a passthrough field.
     pub(crate) fn field(&self, name: &str) -> Outcome<Arc<RecordPlan>> {
         self.alone.get(name).cloned().ok_or_else(|| {
             RecipherErrorFields::from(Error::NoField)
@@ -241,7 +270,7 @@ impl RecordPlan {
     }
 }
 
-/// A field, and the engine's plan of it.
+/// Returns a field, and the engine's plan for it.
 fn field_of(
     record: &str,
     name: String,
@@ -310,8 +339,8 @@ fn field_of(
     ))
 }
 
-/// A field's context: its field path, `[record, field]`, read by the
-/// engine's own context reader.
+/// Returns a field's context: its field path, `[record, field]`, read by
+/// the engine's own context reader.
 fn field_path(
     record: &str,
     field: &str,
@@ -320,10 +349,12 @@ fn field_path(
     context(frame.as_protected_ref()).ok()
 }
 
-/// The engine's refusal of a declaration of `record`. When the engine says
-/// a context is not a label, the record's name or the field's is at fault.
-/// The record's is tried alone to say which: the engine names the field
-/// either way.
+/// Returns the engine's refusal of a declaration of `record`.
+///
+/// The engine can refuse a context with the reason `context_not_label`.
+/// Then either the record's name or the field's name is at fault. The
+/// engine names the field in both cases. So this function checks the
+/// record's name on its own, to find which name is at fault.
 fn engine_refused(record: &str, error: &stack_encrypt::dynamic::Error) -> RecipherErrorFields {
     let refused = RecipherErrorFields::engine(error).in_record(record);
     if refused.reason() == Some("context_not_label") && !plain_segment(record) {
@@ -332,20 +363,22 @@ fn engine_refused(record: &str, error: &stack_encrypt::dynamic::Error) -> Reciph
     refused
 }
 
-/// Whether `record` is a name the engine takes as the first segment of a
-/// field path, asked of the engine with a field it takes.
+/// Returns whether the engine accepts `record` as the first segment of a
+/// field path. The function asks the engine, by building a plan with a
+/// field name that the engine accepts.
 fn plain_segment(record: &str) -> bool {
     field_path(record, "field")
         .is_some_and(|context| FieldPlan::new("field", context, vec![Output::Ciphertext]).is_ok())
 }
 
-/// A row's fields, each read as its field's kind, in the row's order.
+/// Returns a row with each value read as its field's kind, in the row's
+/// order.
 ///
 /// # Errors
 ///
-/// `recipher::not_a_row` for a row that is not an object, and
-/// `recipher::field_type` for a value that is not of its field's kind or
-/// does not fit it, naming the field.
+/// Returns `recipher::not_a_row` for a row that is not an object. Returns
+/// `recipher::field_type`, naming the field, for a value that is not of its
+/// field's kind or does not fit it.
 pub(crate) fn conform_row(plan: &RecordPlan, row: &ValueFrame) -> Outcome<ValueFrame> {
     let not_a_row = || RecipherErrorFields::from(Error::NotARow).in_record(&plan.name);
     let values = entries(row).ok_or_else(not_a_row)?;
@@ -357,7 +390,7 @@ pub(crate) fn conform_row(plan: &RecordPlan, row: &ValueFrame) -> Outcome<ValueF
             .find(|field| field.name == name)
             .and_then(|field| field.kind);
         let value = match kind {
-            // A null is checked by the engine against the field's null mode.
+            // The engine checks a null against the field's null mode.
             Some(kind) if value.kind().is_some() => read(kind, &value).map_err(|_| {
                 RecipherErrorFields::from(Error::FieldType { kind })
                     .in_record(&plan.name)
@@ -374,12 +407,14 @@ pub(crate) fn conform_row(plan: &RecordPlan, row: &ValueFrame) -> Outcome<ValueF
     ValueFrame::of(&map).map_err(|_| not_a_row())
 }
 
-/// Seal rows under a record's plan, in one key request however many there
-/// are. Each row is a frame from [`conform_row`]; each result a stored row.
+/// Encrypts rows under a record's plan, in one key request for any number
+/// of rows. A key request is one request to ZeroKMS, CipherStash's key
+/// service, for data keys. Each row is a frame from [`conform_row`]. Each
+/// result is a stored row.
 ///
 /// # Errors
 ///
-/// The engine's refusal of a row that does not fit the plan.
+/// Returns the engine's refusal of a row that does not fit the plan.
 pub(crate) async fn seal_rows<K>(
     keyset: &KeysetCipher<'_, K>,
     plan: Arc<RecordPlan>,
@@ -402,14 +437,18 @@ where
         .collect()
 }
 
-/// Open stored rows under a record's plan, in one key request for each
-/// keyset they were sealed under. Each stored row is a frame as
-/// [`seal_rows`] returns it; each result a row.
+/// Decrypts stored rows under a record's plan. The function makes one key
+/// request for each keyset the rows were encrypted under. A keyset is a
+/// group of keys in ZeroKMS. Each data key is made under one keyset.
+///
+/// Each stored row is a frame in the form [`seal_rows`] returns. Each
+/// result is a row.
 ///
 /// # Errors
 ///
-/// `recipher::not_a_stored_row` for a stored row of another shape, naming
-/// the field, and the engine's refusal of one that does not open.
+/// Returns `recipher::not_a_stored_row`, naming the field, for a stored row
+/// of another shape. Returns the engine's refusal of a stored row that does
+/// not decrypt.
 pub(crate) async fn open_rows<'c, K>(
     cipher: impl Into<CipherRef<'c, K>>,
     plan: Arc<RecordPlan>,
@@ -431,7 +470,8 @@ where
         .map_err(|error| RecipherErrorFields::engine(&error).in_record(&plan.name))
 }
 
-/// The stored row the engine returned, as the frame the SDK hands back.
+/// Converts the stored row that the engine returned into the frame that the
+/// SDK returns to JavaScript.
 fn stored_row(plan: &RecordPlan, tree: StackCipherText) -> Outcome<ValueFrame> {
     let CipherText::Map(entries) = tree else {
         return Err(Error::EngineResult {
@@ -496,7 +536,8 @@ fn stored_row(plan: &RecordPlan, tree: StackCipherText) -> Outcome<ValueFrame> {
     })
 }
 
-/// The engine's stored record for a stored row the SDK handed back.
+/// Converts a stored row that the SDK returned earlier into the engine's
+/// stored record.
 fn stored_tree(plan: &RecordPlan, row: &ValueFrame) -> Outcome<StackCipherText> {
     let misfit = |field: Option<&str>, what: &'static str| {
         RecipherErrorFields::from(Error::NotAStoredRow { what })
@@ -521,7 +562,7 @@ fn stored_tree(plan: &RecordPlan, row: &ValueFrame) -> Outcome<StackCipherText> 
             continue;
         }
         if value.kind().is_none() {
-            // A null: the field is absent, as SQL `NULL` stores it.
+            // A null means the field is absent, as SQL `NULL` stores it.
             continue;
         }
         let outputs = entries(&value).ok_or_else(|| {
@@ -566,8 +607,9 @@ fn stored_tree(plan: &RecordPlan, row: &ValueFrame) -> Outcome<StackCipherText> 
     Ok(CipherText::Map(tree))
 }
 
-/// The value of the field `name` in a one-field row, or a null when the
-/// row has none (a null stored as SQL `NULL`).
+/// Returns the value of the field `name` in a one-field row. Returns a null
+/// when the row has no such field. A null stored as SQL `NULL` gives a row
+/// with no such field.
 pub(crate) fn field_value(row: &ValueFrame, name: &str) -> Outcome<ValueFrame> {
     let entries = entries(row).ok_or(Error::EngineResult {
         what: "a one-field row is not a map of fields",
@@ -592,7 +634,7 @@ impl stack_encrypt::Encrypt for &Null {
     }
 }
 
-/// A one-field row: `{ name: value }`.
+/// Returns a one-field row: `{ name: value }`.
 pub(crate) fn one_field_row(name: &str, value: &ValueFrame) -> Outcome<ValueFrame> {
     ValueFrame::of(&Map(vec![(name, Entry::Value(value))])).map_err(|_| {
         Error::EngineResult {

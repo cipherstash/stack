@@ -1,6 +1,7 @@
 /**
- * `@cipherstash/recipher`: encrypt values with per-value ZeroKMS data keys,
- * through the Stack Encrypt engine.
+ * `@cipherstash/recipher` encrypts values through the Stack Encrypt engine,
+ * CipherStash's encryption engine. Each value gets a data key of its own
+ * from ZeroKMS, CipherStash's key service.
  *
  * ```ts
  * import { Cipher } from '@cipherstash/recipher'
@@ -15,7 +16,7 @@
  * const opened = await cipher.decrypt(sealed.value)
  * ```
  *
- * No call throws and no promise rejects: every call resolves to a `Result`.
+ * No call throws, and no promise rejects. Every call resolves to a `Result`.
  */
 export {
   Cipher,

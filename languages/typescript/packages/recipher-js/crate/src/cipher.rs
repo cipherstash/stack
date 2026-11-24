@@ -1,10 +1,15 @@
-//! [`Cipher`] and [`Keyset`]: the engine, and the calls that run on it.
+//! The [`Cipher`] and [`Keyset`] classes, and the calls that run on the
+//! engine. The engine is the Stack Encrypt engine, the `stack-encrypt`
+//! crate.
 //!
-//! Each call reads its arguments on the JavaScript thread, then runs the
-//! engine's future on napi's runtime, holding only what it owns: the
-//! engine (shared by every handle of one cipher) and the values read. The
-//! future is `Send` and `'static`, which `spawn_future_with_callback`
-//! requires, so this compiles only because the engine's pending calls are.
+//! Each call reads its arguments on the JavaScript thread. The call then
+//! runs the engine's future on napi's runtime. The future owns everything
+//! it uses: the engine and the values read. Every `Cipher` and `Keyset`
+//! object of one cipher shares the same engine.
+//!
+//! `spawn_future_with_callback` requires the future to be `Send` and
+//! `'static`. So this module compiles only because the engine's pending
+//! calls are `Send` and `'static` too.
 
 use std::sync::Arc;
 
@@ -25,18 +30,18 @@ use crate::record::{field_value, one_field_row, open_rows, seal_rows, RecordPlan
 use crate::value::OneValue;
 use napi::bindgen_prelude::ToNapiValue;
 
-/// The engine cipher, over the key source it was built with. A napi class
-/// cannot be generic, so the two key sources are the two variants.
+/// The engine's cipher, with the key source it was built with. A napi class
+/// cannot be generic, so each key source is one variant.
 #[derive(OpaqueDebug)]
 enum Engine {
-    /// Over ZeroKMS, with the credentials the engine detected.
+    /// Keys from ZeroKMS, with the credentials the engine found.
     Detected(Box<StackCipher<StackKms<stack_auth::AutoStrategy>>>),
-    /// Over the engine's deterministic test key source.
+    /// Keys from the engine's deterministic test key source.
     #[cfg(feature = "testing")]
     Testing(Box<StackCipher<stack_encrypt::kms::DeterministicSource>>),
 }
 
-/// Run `$body` with `$cipher` bound to the engine cipher, whatever its key
+/// Runs `$body` with `$cipher` bound to the engine's cipher, for either key
 /// source.
 macro_rules! with_engine {
     ($engine:expr, |$cipher:ident| $body:expr) => {
@@ -48,20 +53,24 @@ macro_rules! with_engine {
     };
 }
 
-/// A cipher: the engine, and the keysets it reaches.
+/// A cipher: the engine, and the keysets it can use. A keyset is a group
+/// of keys in ZeroKMS, CipherStash's key service.
 ///
-/// Build one with `Cipher.create()`, or, in a test, with `testCipher()`
-/// from `@cipherstash/recipher/testing`. It has no constructor.
+/// Make a cipher with `Cipher.create()`. In a test, make one with
+/// `testCipher()` from `@cipherstash/recipher/testing`. The class has no
+/// constructor.
 #[napi]
 #[derive(OpaqueDebug)]
 pub struct Cipher {
     engine: Arc<Engine>,
 }
 
-/// One keyset of a cipher. Every data key is made under one keyset, and a
-/// ciphertext names the keyset it was made under.
+/// One keyset of a cipher. A data key is the key that encrypts one value.
+/// Each data key is made under one keyset. A ciphertext names the keyset it
+/// was made under.
 ///
-/// Get one from `cipher.defaultKeyset()`. It has no constructor.
+/// Get a keyset from `cipher.defaultKeyset()`. The class has no
+/// constructor.
 #[napi]
 #[derive(OpaqueDebug)]
 pub struct Keyset {
@@ -70,17 +79,21 @@ pub struct Keyset {
 
 #[napi]
 impl Cipher {
-    /// A cipher over ZeroKMS, with the credentials the engine finds: the
-    /// `CS_*` variables, then the profile `stash auth login` writes.
+    /// Makes a cipher that gets its keys from ZeroKMS. The engine looks for
+    /// credentials in the `CS_*` environment variables first, then in the
+    /// profile that `stash auth login` writes.
     ///
-    /// Resolves to the engine's error when there are no credentials, when
-    /// they are refused, or when ZeroKMS refuses to load the default keyset.
+    /// The promise resolves to the engine's error in these cases:
     ///
-    /// `options.records` are declarations to check now, before any
-    /// credential is looked for: a declaration the engine refuses is a
-    /// failure naming the record.
-    // Configurable, as an instance method is, so the package's TypeScript
-    // can wrap it (`adapt`).
+    /// - there are no credentials;
+    /// - the credentials are refused;
+    /// - ZeroKMS refuses to load the default keyset.
+    ///
+    /// `options.records` lists record declarations to check now, before the
+    /// engine looks for credentials. If the engine refuses a declaration,
+    /// the result is a failure that names the record.
+    // An instance method is configurable. This static method is made
+    // configurable too, so the package's TypeScript can wrap it (`adapt`).
     #[napi(configurable = true, ts_return_type = "Promise<Outcome<Cipher>>")]
     pub fn create<'e>(
         env: &'e Env,
@@ -103,8 +116,8 @@ impl Cipher {
         )
     }
 
-    /// The client's default keyset: the one a ZeroKMS administrator set for
-    /// it. Encrypting needs a keyset.
+    /// Returns the client's default keyset: the keyset that a ZeroKMS
+    /// administrator set for this client. Encrypting needs a keyset.
     #[napi]
     pub fn default_keyset(&self) -> Keyset {
         Keyset {
@@ -112,10 +125,15 @@ impl Cipher {
         }
     }
 
-    /// Open a ciphertext from any of this cipher's keysets, as the value it
-    /// was sealed as, or an array of them. With a record first, open its
-    /// stored row, or an array of them, in one key request for each keyset
-    /// they were sealed under.
+    /// Decrypts a ciphertext, or an array of ciphertexts, made under any of
+    /// this cipher's keysets. Each value decrypts as the type it was
+    /// encrypted as.
+    ///
+    /// With a record declaration as the first argument, decrypts a stored
+    /// row of that record, or an array of stored rows. A stored row is what
+    /// `keyset.encrypt` returns for a row. The cipher makes one key request
+    /// for each keyset the rows were encrypted under. A key request is one
+    /// request to ZeroKMS for data keys.
     #[napi(ts_return_type = "Promise<Outcome<unknown>>")]
     pub fn decrypt<'e>(
         &self,
@@ -132,8 +150,9 @@ impl Cipher {
         open(env, &self.engine, first, Confined::No)
     }
 
-    /// Open one field of a record's stored row, as `encryptField` or
-    /// `encrypt` stored it, or an array of them in one key request.
+    /// Decrypts one field of a record's stored row, as `encryptField` or
+    /// `encrypt` stored it. An array of stored fields decrypts in one key
+    /// request.
     #[napi(ts_return_type = "Promise<Outcome<unknown>>")]
     pub fn decrypt_field<'e>(
         &self,
@@ -145,7 +164,7 @@ impl Cipher {
         open_field(env, &self.engine, record, field, stored, Confined::No)
     }
 
-    /// Names the type.
+    /// Returns the type's name.
     #[napi(js_name = "toString")]
     pub fn describe(&self) -> &'static str {
         "Cipher"
@@ -154,17 +173,23 @@ impl Cipher {
 
 #[napi]
 impl Keyset {
-    /// Encrypt a value, with no context, as one ciphertext with its own data
-    /// key. An array of values is an array of ciphertexts, in the same
-    /// order, made with one key request however long it is. All or nothing:
-    /// one value refused is a failure for the whole array, before any
-    /// request.
+    /// Encrypts a value as one ciphertext with its own data key, with no
+    /// context. A context is a value that a ciphertext is bound to, and
+    /// decrypting needs the same context.
     ///
-    /// A value's type picks how it is encrypted, by vitaminc's mapping for
-    /// JavaScript. A `Json` from `json(..)` is encrypted as a JSON document.
+    /// An array of values returns an array of ciphertexts, in the same
+    /// order. The keyset makes one key request for the whole array, however
+    /// long it is. A key request is one request to ZeroKMS for data keys. If
+    /// any value is refused, the whole array fails, before any request.
     ///
-    /// With a record first, encrypt its row, or an array of them in one key
-    /// request: each field under its field path.
+    /// A value's type sets how it is encrypted. The mapping of JavaScript
+    /// types comes from vitaminc, CipherStash's cryptography library. A
+    /// `Json` from `json(..)` is encrypted as a JSON document.
+    ///
+    /// With a record declaration as the first argument, encrypts a row of
+    /// that record, or an array of rows in one key request. Each field is
+    /// encrypted under its field path: the record's name, then the field's
+    /// name.
     #[napi(ts_return_type = "Promise<Outcome<unknown>>")]
     pub fn encrypt<'e>(
         &self,
@@ -222,10 +247,12 @@ impl Keyset {
         )
     }
 
-    /// Open a ciphertext sealed under this keyset, or an array of them. A
-    /// ciphertext of another keyset is a failure with the code
-    /// `stack_encrypt::foreign_keyset`, before any key is requested. With a
-    /// record first, open its stored row, or an array of them.
+    /// Decrypts a ciphertext made under this keyset, or an array of them. A
+    /// ciphertext of another keyset fails with the code
+    /// `stack_encrypt::foreign_keyset`, before any key is requested.
+    ///
+    /// With a record declaration as the first argument, decrypts a stored
+    /// row of that record, or an array of stored rows.
     #[napi(ts_return_type = "Promise<Outcome<unknown>>")]
     pub fn decrypt<'e>(
         &self,
@@ -242,9 +269,10 @@ impl Keyset {
         open(env, &self.engine, first, Confined::ToDefault)
     }
 
-    /// Encrypt one field of a record, for an update of that field: its
-    /// stored form, as the field has it in a whole stored row. An array of
-    /// values is an array of stored fields, in one key request.
+    /// Encrypts one field of a record, to update that field alone. The
+    /// result is the field's stored form, the same form as in a whole stored
+    /// row. An array of values returns an array of stored fields, in one key
+    /// request.
     #[napi(ts_return_type = "Promise<Outcome<unknown>>")]
     pub fn encrypt_field<'e>(
         &self,
@@ -256,8 +284,8 @@ impl Keyset {
         seal_field(env, &self.engine, record, field, value)
     }
 
-    /// Open one field of a record's stored row sealed under this keyset, or
-    /// an array of them in one key request.
+    /// Decrypts one field of a record's stored row made under this keyset.
+    /// An array of stored fields decrypts in one key request.
     #[napi(ts_return_type = "Promise<Outcome<unknown>>")]
     pub fn decrypt_field<'e>(
         &self,
@@ -276,21 +304,24 @@ impl Keyset {
         )
     }
 
-    /// Names the type.
+    /// Returns the type's name.
     #[napi(js_name = "toString")]
     pub fn describe(&self) -> &'static str {
         "Keyset"
     }
 }
 
-/// A cipher over the engine's deterministic test keys, from a 32-byte seed:
-/// every key is a function of the seed and the value's context, so a value
-/// sealed by one test cipher opens in another with the same seed. It needs
-/// no credentials and makes no request. Its keys are no secret from anyone
-/// who knows the seed.
+/// Makes a cipher over the engine's deterministic test keys, from a 32-byte
+/// seed. Every key is derived from the seed and the value's context. So a
+/// value encrypted by one test cipher decrypts in another with the same
+/// seed.
 ///
-/// Only a build with the `testing` feature has one; any other resolves to
-/// a failure with the code `recipher::no_testing`.
+/// The test cipher needs no credentials and makes no request. Anyone who
+/// knows the seed can derive its keys.
+///
+/// Only a build with the `testing` feature has the test cipher. In any
+/// other build, the promise resolves to a failure with the code
+/// `recipher::no_testing`.
 #[napi(ts_return_type = "Promise<Outcome<Cipher>>")]
 pub fn create_testing<'e>(
     env: &'e Env,
@@ -324,7 +355,7 @@ fn testing(env: &Env, _seed: [u8; 32]) -> napi::Result<PromiseRaw<'_, Object<'_>
     refused(env, Error::NoTesting.into())
 }
 
-/// A new cipher's JavaScript value.
+/// Returns the JavaScript value of a new cipher.
 fn cipher_value(env: &Env, engine: Engine) -> Outcome<Unknown<'_>> {
     Ok(Cipher {
         engine: Arc::new(engine),
@@ -334,17 +365,17 @@ fn cipher_value(env: &Env, engine: Engine) -> Outcome<Unknown<'_>> {
     .to_unknown())
 }
 
-/// Which keysets a decrypt opens a value of.
+/// The keysets whose values a decrypt call accepts.
 #[derive(Clone, Copy)]
 enum Confined {
-    /// Any of the cipher's.
+    /// Any of the cipher's keysets.
     No,
-    /// The default keyset's alone.
+    /// Only the default keyset.
     ToDefault,
 }
 
-/// Open a ciphertext, or an array of them, as `cipher.decrypt` and
-/// `keyset.decrypt` do.
+/// Decrypts a ciphertext, or an array of them, for `cipher.decrypt` and
+/// `keyset.decrypt`.
 fn open<'e>(
     env: &'e Env,
     engine: &Arc<Engine>,
@@ -394,9 +425,9 @@ fn open<'e>(
     )
 }
 
-/// One value to seal, and the kind its ciphertext opens as: a `Json`'s
-/// document, which opens as JSON, or any other value, which opens as what
-/// it was sealed as.
+/// Returns one value to encrypt, and the kind its ciphertext decrypts as. A
+/// `Json`'s document decrypts as JSON. Any other value decrypts as the type
+/// it was encrypted as.
 fn one_value(env: &Env, value: Unknown<'_>) -> Outcome<(OneValue, Option<ValueKind>)> {
     if let Some(document) = Json::of(env, value) {
         return Ok((OneValue::json(document?), Some(ValueKind::Json)));
@@ -404,9 +435,10 @@ fn one_value(env: &Env, value: Unknown<'_>) -> Outcome<(OneValue, Option<ValueKi
     Ok((OneValue::scalar(js::read(env, value)?)?, None))
 }
 
-/// Check declarations with the engine, with no credentials and no
-/// request: for a test or a CI step. The first refusal is the failure,
-/// naming the record and, where there is one, the field.
+/// Checks record declarations with the engine, without credentials and
+/// without any request. Use it in a test or a CI step. The failure is the
+/// engine's first refusal. The failure names the record and, where there is
+/// one, the field.
 #[napi(ts_return_type = "Outcome<undefined>")]
 pub fn check_declarations<'e>(env: &'e Env, records: Unknown<'_>) -> napi::Result<Object<'e>> {
     let checked = check(env, records);
@@ -415,7 +447,8 @@ pub fn check_declarations<'e>(env: &'e Env, records: Unknown<'_>) -> napi::Resul
     })
 }
 
-/// Build the plan of each declaration in `records`, an array of them.
+/// Builds the plan of each declaration in `records`. The argument is one
+/// declaration or an array of them.
 fn check(env: &Env, records: Unknown<'_>) -> Outcome<()> {
     let records = match js::elements(env, records) {
         Some(records) => records?,
@@ -427,7 +460,8 @@ fn check(env: &Env, records: Unknown<'_>) -> Outcome<()> {
     Ok(())
 }
 
-/// The `records` of `Cipher.create`'s options, if it names any.
+/// Returns the `records` property of `Cipher.create`'s options, if the
+/// options have one.
 fn records_of_options<'e>(env: &Env, options: Option<Unknown<'e>>) -> Outcome<Option<Unknown<'e>>> {
     match options {
         None => Ok(None),
@@ -435,7 +469,8 @@ fn records_of_options<'e>(env: &Env, options: Option<Unknown<'e>>) -> Outcome<Op
     }
 }
 
-/// The plan of the declaration `record`.
+/// Returns the plan of the declaration `record`. A plan is the engine's
+/// description of how to encrypt each field of a record.
 fn plan_of(env: &Env, record: Unknown<'_>) -> Outcome<Arc<RecordPlan>> {
     if !js::is_record(env, &record) {
         return Err(Error::NotARecord.into());
@@ -443,8 +478,8 @@ fn plan_of(env: &Env, record: Unknown<'_>) -> Outcome<Arc<RecordPlan>> {
     RecordPlan::of(&js::read(env, record)?)
 }
 
-/// The values of `value`: its elements when it is an array, and whether it
-/// was one.
+/// Returns the values in `value`, and whether `value` was an array. The
+/// values are the array's elements, or `value` alone.
 fn one_or_many<'e>(env: &Env, value: Unknown<'e>) -> Outcome<(bool, Vec<Unknown<'e>>)> {
     match js::elements(env, value) {
         Some(elements) => Ok((true, elements?)),
@@ -452,7 +487,8 @@ fn one_or_many<'e>(env: &Env, value: Unknown<'e>) -> Outcome<(bool, Vec<Unknown<
     }
 }
 
-/// One JavaScript value for each result, or the one result alone.
+/// Returns a JavaScript array with one value for each result when `many`
+/// is true, or the one result alone when it is false.
 fn one_or_array<'e>(
     env: &'e Env,
     many: bool,
@@ -464,8 +500,9 @@ fn one_or_array<'e>(
     values.pop().ok_or_else(|| Error::NoResult.into())
 }
 
-/// A row of `plan`'s record, read and each field read as its kind. A value
-/// vitaminc refuses is named by the field it was read from.
+/// Reads a row of `plan`'s record, with each value read as its field's
+/// kind. When vitaminc refuses a value, the failure names the field the
+/// value was read from.
 fn read_row(env: &Env, plan: &RecordPlan, row: Unknown<'_>) -> Outcome<ValueFrame> {
     let not_a_row = || RecipherErrorFields::from(Error::NotARow).in_record(plan.name());
     if row.get_type().ok() != Some(napi::ValueType::Object) || row.is_array().unwrap_or(false) {
@@ -482,7 +519,7 @@ fn read_row(env: &Env, plan: &RecordPlan, row: Unknown<'_>) -> Outcome<ValueFram
     crate::record::conform_row(plan, &frame)
 }
 
-/// `keyset.encrypt(record, row | rows)`.
+/// Runs `keyset.encrypt(record, row | rows)`.
 fn seal_rows_of<'e>(
     env: &'e Env,
     engine: &Arc<Engine>,
@@ -521,7 +558,7 @@ fn seal_rows_of<'e>(
     )
 }
 
-/// `cipher.decrypt(record, stored | stored[])` and `keyset.decrypt`.
+/// Runs `cipher.decrypt(record, stored | stored[])` and `keyset.decrypt`.
 fn open_rows_of<'e>(
     env: &'e Env,
     engine: &Arc<Engine>,
@@ -564,7 +601,8 @@ fn open_rows_of<'e>(
     )
 }
 
-/// The plan of `field` of `record` alone, and the field's name.
+/// Returns the plan of the field `field` of `record` on its own, and the
+/// field's name.
 fn field_plan_of(
     env: &Env,
     record: Unknown<'_>,
@@ -576,7 +614,7 @@ fn field_plan_of(
     Ok((plan.field(&name)?, name))
 }
 
-/// `keyset.encryptField(record, field, value | values)`.
+/// Runs `keyset.encryptField(record, field, value | values)`.
 fn seal_field<'e>(
     env: &'e Env,
     engine: &Arc<Engine>,
@@ -619,7 +657,7 @@ fn seal_field<'e>(
     )
 }
 
-/// `cipher.decryptField(record, field, stored | stored[])` and
+/// Runs `cipher.decryptField(record, field, stored | stored[])` and
 /// `keyset.decryptField`.
 fn open_field<'e>(
     env: &'e Env,
@@ -669,8 +707,9 @@ fn open_field<'e>(
     )
 }
 
-/// Seal values under `keyset`, each as one ciphertext with its own data
-/// key, in one key request however many there are.
+/// Encrypts values under `keyset`. Each value becomes one ciphertext with
+/// its own data key. All the values use one key request, however many
+/// there are.
 pub(crate) async fn seal<K>(
     keyset: &KeysetCipher<'_, K>,
     values: Vec<OneValue>,
@@ -682,14 +721,16 @@ where
         .encrypt_into::<Vec<stack_encrypt::Ciphertext>, K>(keyset)
         .await
         .map_err(|error| match error {
-            // No ciphertext exists yet, so this is the value, not damage.
+            // No ciphertext exists yet, so the value caused this failure,
+            // not a damaged ciphertext.
             stack_encrypt::Error::Aead => Error::NotSealed.into(),
             error => RecipherErrorFields::engine(&error),
         })
 }
 
-/// Open ciphertexts through `cipher` (a cipher, or one keyset of it), in
-/// one key request for each keyset they were sealed under.
+/// Decrypts ciphertexts through `cipher`: a cipher, or one keyset of it.
+/// The function makes one key request for each keyset the ciphertexts
+/// were made under.
 pub(crate) async fn unseal<'c, K>(
     cipher: impl Into<CipherRef<'c, K>>,
     sealed: Vec<stack_encrypt::Ciphertext>,

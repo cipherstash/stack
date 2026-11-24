@@ -1,28 +1,41 @@
-//! A JSON document: [`Json`], made by `json(..)`, and the conversion between
-//! a frame and the engine's [`JsonPlaintext`].
+//! JSON documents: the [`Json`] class that `json(..)` makes, and the
+//! conversion between a frame and the engine's [`JsonPlaintext`].
 //!
-//! JavaScript has one number type, and a `number` cannot hold every integer
-//! a JSON document can. So on the way in:
+//! The engine is the Stack Encrypt engine, the `stack-encrypt` crate. The
+//! engine's value model is the set of value types it reads. A frame is a
+//! byte buffer that contains one value of the model. A sink receives a
+//! value from a frame one part at a time: one scalar, array or map.
 //!
-//! - an object, an array, text, a boolean and null are themselves;
-//! - a `number` that is a safe integer (at most 2^53 - 1 from zero) is
-//!   written as that integer, as `JSON.stringify` writes it, and any other
-//!   finite `number` as a float, except one that is a whole number between
-//!   2^53 and 2^64 from zero: that is refused, because an integer was likely
-//!   meant and its digits are not the number the caller wrote;
-//! - a `bigint` is written as its digits, and is refused outside the 64-bit
-//!   range the engine's parser reads;
-//! - anything else (bytes, a date, a timestamp, a decimal, a UUID,
-//!   `undefined`) is refused: it has no JSON form;
-//! - a document nested deeper than 127 levels is refused, as the engine's
-//!   parser would refuse it on the way out.
+//! # Encrypting
 //!
-//! On the way out, an integer in the safe range is a `number`, and one
-//! outside it a `bigint`, so no digit is lost. A float is a `number`.
+//! JavaScript has one number type, and a `number` cannot represent every
+//! integer that a JSON document can. So a document's values become JSON
+//! values by these rules:
 //!
-//! The document is sealed by the engine's [`JsonPlaintext`], as its JSON
-//! text, and read back by the engine's parser. Everything built on the way,
-//! map keys included, is wiped when it is dropped.
+//! - An object, an array, text, a boolean and null stay as they are.
+//! - A `number` that is a safe integer is written as that integer, as
+//!   `JSON.stringify` writes it. A safe integer is at most 2^53 - 1 from
+//!   zero.
+//! - A whole `number` between 2^53 and 2^64 from zero is refused. The
+//!   caller probably meant an integer, and the `number`'s digits are not the
+//!   ones the caller wrote.
+//! - Any other finite `number` is written as a float.
+//! - A `bigint` is written as its digits. A `bigint` outside the 64-bit
+//!   range that the engine's parser reads is refused.
+//! - Any other value is refused, because it has no JSON form. Examples are
+//!   bytes, a date, a timestamp, a decimal, a UUID and `undefined`.
+//! - A document nested deeper than 127 levels is refused, because the
+//!   engine's parser would refuse it when the document is decrypted.
+//!
+//! # Decrypting
+//!
+//! An integer in the safe range becomes a `number`, and an integer outside
+//! it becomes a `bigint`, so no digit is lost. A float becomes a `number`.
+//!
+//! The engine encrypts the document as its JSON text, through
+//! [`JsonPlaintext`], and reads it back with the engine's JSON parser.
+//! Everything built along the way, including map keys, is wiped when it is
+//! dropped.
 
 use napi::bindgen_prelude::{ClassInstance, FromNapiValue, JavaScriptClassExt, Unknown};
 use napi::Env;
@@ -41,23 +54,25 @@ use zeroize::Zeroizing;
 use crate::error::{Error, RecipherErrorFields};
 use crate::js;
 
-/// The deepest a document nests: the engine's parser reads 127 levels of
-/// arrays and objects.
+/// The deepest a document can nest. The engine's JSON parser reads 127
+/// levels of arrays and objects.
 const MAX_DEPTH: usize = 127;
 
-/// The largest integer a JavaScript `number` holds exactly: 2^53 - 1.
+/// The largest integer that a JavaScript `number` represents exactly:
+/// 2^53 - 1.
 const MAX_SAFE: u64 = (1 << 53) - 1;
 
-/// 2^64, the first magnitude past every 64-bit integer.
+/// 2^64: the smallest magnitude larger than every 64-bit integer.
 const TWO_TO_64: f64 = 18_446_744_073_709_551_616.0;
 
 /// A JSON document to encrypt as one ciphertext, as its JSON text. Nothing
-/// inside it can be searched. Make one with `json(..)`.
+/// inside the document can be searched. Make one with `json(..)`.
 ///
-/// The document is read when it is made, so a later change to the object
-/// does not change what is encrypted. A document that cannot be encrypted
-/// is held as its failure, which `encrypt` returns. `Debug`, `toString()`
-/// and Node's `inspect` hide the document.
+/// `json(..)` reads the document when it makes the `Json`. So a later
+/// change to the object does not change what is encrypted. If the document
+/// cannot be encrypted, the `Json` keeps the failure, and `encrypt` returns
+/// that failure. `Debug`, `toString()` and Node's `inspect` hide the
+/// document.
 #[napi]
 #[derive(OpaqueDebug)]
 pub struct Json {
@@ -66,7 +81,7 @@ pub struct Json {
 
 #[napi]
 impl Json {
-    /// Names the type and hides the document.
+    /// Returns the type's name, and hides the document.
     #[napi(js_name = "toString")]
     pub fn describe(&self) -> &'static str {
         "Json(***)"
@@ -74,8 +89,9 @@ impl Json {
 }
 
 impl Json {
-    /// The document of `value` when it is a `Json`, as a value to seal, or
-    /// why it cannot be one; `None` when `value` is not a `Json`.
+    /// Returns the document of `value` as a value to encrypt, when `value`
+    /// is a `Json`. Returns the failure instead when the document cannot be
+    /// encrypted. Returns `None` when `value` is not a `Json`.
     pub(crate) fn of(
         env: &Env,
         value: Unknown<'_>,
@@ -88,22 +104,29 @@ impl Json {
             .map(|json| json.document())
     }
 
-    /// The document, as a value to seal, or why it cannot be one.
+    /// Returns the document as a value to encrypt, or the failure that
+    /// stops it being encrypted.
     pub(crate) fn document(&self) -> Result<JsonPlaintext, RecipherErrorFields> {
         match &self.document {
-            // The copy is wiped when the `JsonPlaintext` holding it drops.
+            // The copy is wiped when the `JsonPlaintext` that contains it
+            // drops.
             Ok(document) => Ok(JsonPlaintext::from(document.value().clone())),
             Err(error) => Err(error.clone()),
         }
     }
 }
 
-/// A JSON document, to encrypt as one ciphertext: a plain object, an array,
-/// text, a number, a `bigint`, a boolean or `null`, nested at most 127
-/// levels. An integer outside a `number`'s safe range is a `bigint`, within
-/// 64 bits; a whole `number` between 2^53 and 2^64 from zero is refused,
-/// since an integer was likely meant. The document is read now. Never
-/// throws: a document that cannot be encrypted is an `Err` from `encrypt`.
+/// Makes a JSON document to encrypt as one ciphertext. The document is a
+/// plain object, an array, text, a number, a `bigint`, a boolean or `null`,
+/// nested at most 127 levels.
+///
+/// Give an integer outside a `number`'s safe range as a `bigint`, within 64
+/// bits. The safe range is at most 2^53 - 1 from zero. A whole `number`
+/// between 2^53 and 2^64 from zero is refused, because the caller probably
+/// meant an integer.
+///
+/// `json(..)` reads the document now. `json(..)` never throws: `encrypt`
+/// returns an `Err` for a document that cannot be encrypted.
 #[napi(js_name = "json")]
 pub fn json_document(env: &Env, document: Unknown<'_>) -> Json {
     Json {
@@ -111,8 +134,9 @@ pub fn json_document(env: &Env, document: Unknown<'_>) -> Json {
     }
 }
 
-/// The JSON sink's error is the SDK's: [`Error::NotJson`] or
-/// [`Error::JsonTooDeep`], each fixed text with no part of the value in it.
+/// The JSON sink returns the SDK's own errors: [`Error::NotJson`] or
+/// [`Error::JsonTooDeep`]. Each has fixed text that includes no part of the
+/// value.
 impl SinkError for Error {
     fn source(_: SourceError) -> Self {
         Self::NotJson {
@@ -121,7 +145,7 @@ impl SinkError for Error {
     }
 }
 
-/// The document a frame holds, as the engine's [`JsonPlaintext`].
+/// Returns the document in a frame, as the engine's [`JsonPlaintext`].
 pub(crate) fn document(frame: &ValueFrame) -> Result<JsonPlaintext, RecipherErrorFields> {
     frame
         .visit(ToJson {
@@ -132,20 +156,20 @@ pub(crate) fn document(frame: &ValueFrame) -> Result<JsonPlaintext, RecipherErro
         .map_err(RecipherErrorFields::from)
 }
 
-/// The value of an opened document's text, as a frame, by the rules in the
-/// module docs.
+/// Returns the value of a decrypted document's text, as a frame. The
+/// conversion follows the rules in the module docs.
 pub(crate) fn opened(frame: &ValueFrame) -> Result<ValueFrame, RecipherErrorFields> {
     let document = read_json(frame).map_err(|_| Error::NotADocument)?;
     ValueFrame::of(&FromJson(document.value())).map_err(|_| Error::BuildValue.into())
 }
 
-/// Where a built value goes.
+/// The place a built JSON value goes.
 trait Out {
     type Ok;
     fn put(self, value: Value) -> Result<Self::Ok, Error>;
 }
 
-/// The value is the result.
+/// The built value is the result.
 struct Root;
 
 impl Out for Root {
@@ -155,7 +179,7 @@ impl Out for Root {
     }
 }
 
-/// The value is the next element of an array.
+/// The built value is the next element of an array.
 struct Element<'s>(&'s mut Vec<Value>);
 
 impl Out for Element<'_> {
@@ -166,9 +190,9 @@ impl Out for Element<'_> {
     }
 }
 
-/// The value is the member `key` of an object. The key is held wiped on
-/// drop until it is in the object, so a member refused or dropped
-/// unfinished leaves no copy of its key behind.
+/// The built value is the member `key` of an object. Until the key is in
+/// the object, it is kept in a buffer that is wiped when dropped. So a
+/// member that is refused, or dropped unfinished, leaves no copy of its key.
 struct Member<'s> {
     object: &'s mut Map<String, Value>,
     key: Zeroizing<String>,
@@ -183,14 +207,14 @@ impl Out for Member<'_> {
     }
 }
 
-/// A sink that builds a JSON value at `depth` levels of nesting, and hands
+/// A sink that builds a JSON value at `depth` levels of nesting, and passes
 /// it to `O`.
 struct ToJson<O> {
     out: O,
     depth: usize,
 }
 
-/// A JSON number for a float, by the rules in the module docs.
+/// Returns the JSON number for a float, by the rules in the module docs.
 fn float(value: f64) -> Result<Value, Error> {
     if !value.is_finite() {
         return Err(Error::NotJson {
@@ -199,7 +223,7 @@ fn float(value: f64) -> Result<Value, Error> {
     }
     let magnitude = value.abs();
     if value.fract() == 0.0 && magnitude <= MAX_SAFE as f64 {
-        // A safe integer, so the conversion is exact.
+        // The value is a safe integer, so the conversion is exact.
         #[allow(clippy::cast_possible_truncation)]
         return Ok(Value::Number(Number::from(value as i64)));
     }
@@ -216,7 +240,8 @@ fn float(value: f64) -> Result<Value, Error> {
         })
 }
 
-/// A JSON number for an integer, refused outside the 64-bit range.
+/// Returns the JSON number for an integer. An integer outside the 64-bit
+/// range is refused.
 fn integer(value: Int) -> Result<Value, Error> {
     let wide = match value {
         Int::I8(n) => i128::from(n),
@@ -242,7 +267,8 @@ fn integer(value: Int) -> Result<Value, Error> {
 }
 
 impl<O: Out> ToJson<O> {
-    /// The depth of a container opened here, refused past the limit.
+    /// Returns the depth of an array or object that starts here. A depth
+    /// past the limit is refused.
     fn nested(&self) -> Result<usize, Error> {
         let depth = self.depth + 1;
         if depth > MAX_DEPTH {
@@ -306,7 +332,7 @@ impl<O: Out> Sink for ToJson<O> {
     }
 }
 
-/// An array being built. What it holds is wiped if it is dropped unfinished.
+/// An array being built. Its items are wiped if it is dropped unfinished.
 struct JsonArray<O> {
     out: Option<O>,
     depth: usize,
@@ -347,7 +373,7 @@ impl<O: Out> SeqSink for JsonArray<O> {
     }
 }
 
-/// An object being built. What it holds is wiped if it is dropped
+/// An object being built. Its members are wiped if it is dropped
 /// unfinished.
 struct JsonObject<O> {
     out: Option<O>,
@@ -391,7 +417,7 @@ impl<O: Out> MapSink for JsonObject<O> {
     }
 }
 
-/// A JSON value walked into a sink, by the rules in the module docs.
+/// A JSON value, written into a sink by the rules in the module docs.
 struct FromJson<'v>(&'v Value);
 
 impl Encrypt for &FromJson<'_> {
@@ -423,12 +449,12 @@ fn walk<S: Sink>(value: &Value, sink: S) -> Result<S::Ok, S::Error> {
     }
 }
 
-/// A number as JavaScript reads it: a `number` for a float or a safe
-/// integer, a `bigint` for any other integer.
+/// Returns a number in the form JavaScript reads it: a `number` for a float
+/// or a safe integer, and a `bigint` for any other integer.
 fn number_of(number: &Number) -> Physical<'static> {
     if let Some(n) = number.as_i64() {
         if n.unsigned_abs() <= MAX_SAFE {
-            // In range, so the conversion is exact.
+            // The integer is in the safe range, so the conversion is exact.
             #[allow(clippy::cast_precision_loss)]
             return Physical::Float(Float::F64(n as f64));
         }
@@ -451,7 +477,7 @@ mod tests {
         ValueFrame::of(text).unwrap()
     }
 
-    /// Arrays nested `.0` deep, the innermost empty.
+    /// Arrays nested `.0` levels deep. The innermost array is empty.
     struct Nested(usize);
 
     impl stack_encrypt::Encrypt for &Nested {
@@ -468,7 +494,7 @@ mod tests {
         }
     }
 
-    /// `depth` arrays, each holding the next, as a frame.
+    /// Returns a frame of `depth` nested arrays, each inside the one before.
     fn nested(depth: usize) -> ValueFrame {
         ValueFrame::of(&Nested(depth)).unwrap()
     }
@@ -529,8 +555,9 @@ mod tests {
             r#"{"small": 5, "big": 18446744073709551615, "f": 1.5}"#,
         ))
         .unwrap();
-        // Read back as a document: the small integer is a float now, the
-        // big one is still an integer.
+        // In the decrypted frame, the small integer is now a float, and the
+        // big one is still an integer. The frame reads back as the same
+        // document.
         let read = document(&opened).unwrap();
         assert_eq!(
             read.value(),

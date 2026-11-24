@@ -1,5 +1,6 @@
-//! The crate's seal and open against the engine's typed API: each reads the
-//! other's ciphertexts, so the bytes are the engine's, for every type.
+//! Tests of the crate's encrypt and decrypt against the engine's typed
+//! Rust API. Each side decrypts the other's ciphertexts. So the tests show
+//! that the crate writes the engine's bytes, for every type.
 
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -33,14 +34,14 @@ fn one<P: Encrypt>(value: P) -> OneValue {
     OneValue::scalar(ValueFrame::of(value).unwrap()).unwrap()
 }
 
-/// Seal `values` through the crate, under the test keys.
+/// Encrypts `values` through the crate, with the test keys.
 async fn sdk_seal(values: Vec<OneValue>) -> Vec<stack_encrypt::Ciphertext> {
     seal(&engine().await.default_keyset(), values)
         .await
         .unwrap()
 }
 
-/// Open `sealed` through the crate, under the test keys.
+/// Decrypts `sealed` through the crate, with the test keys.
 async fn sdk_open(sealed: stack_encrypt::Ciphertext) -> ValueFrame {
     unseal(&engine().await, vec![sealed])
         .await
@@ -55,8 +56,8 @@ async fn the_engine_opens_what_the_sdk_sealed() {
     let sealed = sdk_seal(vec![one("from the sdk"), one(42i8), one(1.5f64)]).await;
     let mut sealed = sealed.into_iter();
     let text: String = keyset.decrypt(sealed.next().unwrap()).await.unwrap();
-    // vitaminc reads a `bigint` at its narrowest width; the engine opens it
-    // at any width that holds it.
+    // vitaminc reads a `bigint` at its narrowest width. The engine decrypts
+    // it at any width that fits it.
     let int: i64 = keyset.decrypt(sealed.next().unwrap()).await.unwrap();
     let float: f64 = keyset.decrypt(sealed.next().unwrap()).await.unwrap();
     assert_eq!((text.as_str(), int, float), ("from the sdk", 42, 1.5));
@@ -112,8 +113,9 @@ async fn a_json_document_the_engine_sealed_opens_as_json_with_its_big_integer() 
         .unwrap();
     let ciphertext = Ciphertext::new(sealed.clone(), Some(ValueKind::Json));
     let opened = ciphertext.opened(sdk_open(sealed).await).unwrap();
-    // A safe integer opens as a float, as a JavaScript `number`; one outside
-    // the safe range as an integer, a `bigint`.
+    // A safe integer decrypts as a float, for a JavaScript `number`. An
+    // integer outside the safe range decrypts as an integer, for a
+    // JavaScript `bigint`.
     let expected = crate::json::document(&opened).unwrap();
     assert_eq!(
         expected.value(),
@@ -126,7 +128,7 @@ async fn a_json_document_the_engine_sealed_opens_as_json_with_its_big_integer() 
     );
 }
 
-/// `{"id": u64::MAX, "n": 5.0}`, as the crate opens the document above.
+/// `{"id": u64::MAX, "n": 5.0}`, as the crate decrypts the document above.
 struct OpenedDocument;
 
 impl Encrypt for &OpenedDocument {
@@ -156,8 +158,9 @@ async fn a_json_document_the_sdk_sealed_is_the_engines_json_plaintext() {
     );
 }
 
-/// `{"name": "Ada", "age": 36.0, "big": u64::MAX}` as a JavaScript caller
-/// hands it over: a number is a float, a `bigint` an integer.
+/// `{"name": "Ada", "age": 36.0, "big": u64::MAX}`, in the form a
+/// JavaScript caller passes it: a number is a float, and a `bigint` is an
+/// integer.
 struct Document;
 
 impl Encrypt for &Document {
@@ -193,7 +196,7 @@ async fn a_ciphertext_of_another_seed_does_not_open() {
     assert!(unseal(&other, sealed).await.is_err());
 }
 
-/// A deterministic key source that counts the key requests it is sent.
+/// A deterministic key source that counts the key requests it receives.
 struct Counting {
     inner: DeterministicSource,
     generates: AtomicUsize,

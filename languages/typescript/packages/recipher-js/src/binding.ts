@@ -1,30 +1,40 @@
 /**
- * The native build, and the one job the TypeScript does over it: make each
- * native call a `Result`.
+ * Loads the native addon, and makes each native call return a `Result`.
  *
- * The classes the package exports (`Cipher`, `Keyset`, `Ciphertext`) are the
- * native build's own, written in Rust, and `native.d.ts` is what napi-rs
- * generates for them. A native method takes untyped arguments and checks
- * them itself, and returns an outcome object, `{ ok, value }` or
- * `{ ok, error }`, rather than throwing. What is left for TypeScript:
+ * The native addon is the compiled Rust code that Node loads from
+ * `recipher.node`. The classes this package exports (`Cipher`, `Keyset`,
+ * and `Ciphertext`) are defined in the addon, in Rust. napi-rs, the Rust
+ * framework the addon is written with, generates their declarations in
+ * `native.d.ts`.
  *
- * - turning an outcome into a `Result`, which Rust cannot build because
- *   `Result` is a TypeScript class;
- * - turning what napi itself throws (a method called on something that is
- *   not its class) into an `Err`, so no call throws;
- * - binding each method to its instance, so a method passed on its own,
- *   as in `stored.map(cipher.decrypt)`, still has its cipher;
- * - stand-ins that resolve to an `Err` when the native build did not load,
- *   since then there are no classes to export.
+ * A native method takes untyped arguments and checks them itself. A native
+ * method does not throw. It returns an outcome object instead: `{ ok, value }`
+ * when the call worked, or `{ ok, error }` when it failed.
  *
- * `adapt` does the first three by replacing each method on a class with a
- * getter that returns the method, bound and wrapped. It runs once per class,
- * however many copies of this module load it: the ESM and the CommonJS build
- * share the addon, which Node loads once per process, and its classes.
+ * This module does four jobs that the Rust cannot do:
  *
- * The addon is loaded when this module is imported. A build that does not
- * load, or that implements another binding interface than this TypeScript,
- * is an `Err` from every call, never an exception.
+ * - Turn an outcome into a `Result`. Rust cannot build a `Result`, because
+ *   `Result` is a TypeScript class.
+ * - Turn an exception that napi itself throws into an `Err`, so that no call
+ *   throws. napi throws when a method is called on an object that is not an
+ *   instance of the method's class.
+ * - Bind each method to its instance. A method passed on its own, as in
+ *   `stored.map(cipher.decrypt)`, then still has its cipher.
+ * - Provide stand-ins that resolve to an `Err` when the addon did not load.
+ *   Without the addon, there are no classes to export.
+ *
+ * `adapt` does the first three jobs. `adapt` replaces each method on a class
+ * with a getter. The getter returns the method, bound to its instance, with
+ * its outcome turned into a `Result`. `adapt` changes each class once,
+ * however many copies of this module load. The ECMAScript module (ESM) build
+ * and the CommonJS build share the addon and its classes, because Node loads
+ * the addon once per process.
+ *
+ * The addon is loaded when this module is imported. If the addon does not
+ * load, every call returns an `Err` and none throws. The same happens when
+ * the addon reports a binding interface version other than this
+ * TypeScript's. The binding interface version is a number that the addon and
+ * this TypeScript both state, and the two numbers must match.
  */
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
@@ -34,13 +44,16 @@ import type { Outcome } from '../native'
 import { fromNative, type RecipherError, sdkError } from './error'
 import { err, ok, type Result } from './result'
 
-/** The binding interface this TypeScript speaks. */
+/**
+ * The binding interface version of this TypeScript. The addon must report
+ * the same number.
+ */
 export const BINDING_INTERFACE = 4
 
-/** What the native build exports. */
+/** The native addon's exports, as `native.d.ts` declares them. */
 export type Binding = typeof Native
 
-/** The exports `load` checks for. */
+/** The exports that `load` checks the addon has. */
 const EXPORTS = [
   'Cipher',
   'Keyset',
@@ -57,8 +70,9 @@ const EXPORTS = [
 ] as const
 
 /**
- * Load the native build at `path` with `require`, and check that it is one
- * this TypeScript can call.
+ * Load the native addon at `path` with `require`. Then check that this
+ * TypeScript can call it: the addon must export every name in `EXPORTS`, and
+ * report the binding interface version `BINDING_INTERFACE`.
  */
 export function load(
   require: (path: string) => unknown,
@@ -90,7 +104,8 @@ export function load(
       ),
     )
   }
-  // Every export `EXPORTS` names is a function, as `Binding` says.
+  // The check above found a function for every name in `EXPORTS`, as
+  // `Binding` declares.
   const binding = exported as Binding
   let version: unknown
   try {
@@ -110,13 +125,16 @@ export function load(
   return ok(binding)
 }
 
-/** The native build of this package, loaded once, when it is imported. */
+/** This package's native addon, loaded once, when this module is imported. */
 export const binding: Result<Binding, RecipherError> = load(
   createRequire(import.meta.url),
   join(dirname(fileURLToPath(import.meta.url)), '..', 'recipher.node'),
 )
 
-/** The error of a native call that threw or rejected, which it never should. */
+/**
+ * The error for a native call that threw or rejected. A native call should
+ * never do either.
+ */
 function threw(): RecipherError {
   return sdkError(
     'recipher::native_threw',
@@ -125,7 +143,7 @@ function threw(): RecipherError {
   )
 }
 
-/** The `Result` of a native outcome. */
+/** Turn a native outcome into a `Result`. */
 function fromOutcome<T>(outcome: Outcome<unknown>): Result<T, RecipherError> {
   if (typeof outcome !== 'object' || outcome === null) {
     return err(
@@ -135,12 +153,12 @@ function fromOutcome<T>(outcome: Outcome<unknown>): Result<T, RecipherError> {
       ),
     )
   }
-  // The native build's declarations type `value` for each method; the
-  // typed signature over the method names `T`.
+  // `native.d.ts` gives `value` a type for each method. Here the type comes
+  // from the typed signature over the method, which names `T`.
   return outcome.ok ? ok(outcome.value as T) : err(fromNative(outcome.error))
 }
 
-/** A synchronous native call as a `Result`. Never throws. */
+/** Run a synchronous native call, and return its `Result`. Never throws. */
 export function settle<T>(
   call: () => Outcome<unknown>,
 ): Result<T, RecipherError> {
@@ -151,7 +169,7 @@ export function settle<T>(
   }
 }
 
-/** An asynchronous native call as a `Result`. Never rejects. */
+/** Run an asynchronous native call, and return its `Result`. Never rejects. */
 export async function settleAsync<T>(
   call: () => Promise<Outcome<unknown>>,
 ): Promise<Result<T, RecipherError>> {
@@ -162,23 +180,29 @@ export async function settleAsync<T>(
   }
 }
 
-/** How a method's return value reaches the caller. */
+/** How `adapt` changes what a method returns to the caller. */
 export type Adaptation =
-  /** A promise of an outcome, as a promise of a `Result`. */
+  /** A promise of an outcome becomes a promise of a `Result`. */
   | 'async'
-  /** An outcome, as a `Result`. */
+  /** An outcome becomes a `Result`. */
   | 'sync'
-  /** As it is: the method does not fail. Only bound. */
+  /**
+   * The return value is unchanged, because the method does not fail. The
+   * method is only bound to its instance.
+   */
   | 'plain'
 
-/** Set on a class or a prototype `adapt` has run on. */
+/** The marker that `adapt` sets on a class or a prototype it has changed. */
 const ADAPTED = Symbol.for('@cipherstash/recipher.adapted')
 
 /**
- * Replace each method named in `methods` on `target` (a class, for its
- * static methods, or its prototype) with a getter that gives the method
- * bound to the object it is read from, its outcome a `Result`. Then freeze
- * `target`. A target already adapted is left as it is.
+ * Replace each method named in `methods` on `target` with a getter. Then
+ * freeze `target`.
+ *
+ * `target` is a class, for its static methods, or a class's prototype. The
+ * getter returns the method bound to the object it is read from. The bound
+ * method returns a `Result` in place of an outcome, as `methods` says. If
+ * `adapt` has already changed `target`, `adapt` leaves it as it is.
  */
 export function adapt(
   target: object,

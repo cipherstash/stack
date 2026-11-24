@@ -1,4 +1,7 @@
-//! [`Ciphertext`]: one sealed value, as JavaScript holds it.
+//! The [`Ciphertext`] class: one encrypted value, as a JavaScript object.
+//!
+//! The engine that encrypts it is the Stack Encrypt engine, the
+//! `stack-encrypt` crate.
 
 use napi::bindgen_prelude::{
     ClassInstance, FromNapiValue, JavaScriptClassExt, JsValue, Object, Uint8Array, Uint8ArraySlice,
@@ -15,16 +18,18 @@ use crate::error::{Error, RecipherErrorFields};
 use crate::js;
 use crate::outcome::{failed, not_made, settle, Outcome};
 
-/// One sealed value: the engine's opaque ciphertext, with its own data key.
+/// One encrypted value: the engine's opaque ciphertext of the whole value,
+/// with its own data key. A data key is the key that encrypts one value.
 ///
-/// Its bytes are the engine's sealed-value envelope, the bytes Rust's
-/// `Ciphertext::to_bytes` and the Go SDK write. `Debug` hides them, and so
-/// do `toString()` and Node's `inspect`: the class has no own properties.
+/// The ciphertext's bytes are the engine's envelope for an encrypted value.
+/// Rust's `Ciphertext::to_bytes` and the Go SDK write the same bytes.
+/// `Debug` hides the bytes. So do `toString()` and Node's `inspect`,
+/// because the class has no own properties.
 ///
-/// It exists as a class, rather than as the bytes, so that `decrypt` can
-/// tell a ciphertext from any other value, and so that it carries the type
-/// it opens as: a JSON document is sealed as its JSON text, and nothing in
-/// the bytes says it is JSON.
+/// The SDK uses a class rather than plain bytes for two reasons. First,
+/// `decrypt` can tell a ciphertext from any other value. Second, the class
+/// records the type the value decrypts as. A JSON document is encrypted as
+/// its JSON text, and nothing in the bytes says that it is JSON.
 #[napi]
 #[derive(Clone, OpaqueDebug)]
 pub struct Ciphertext {
@@ -33,17 +38,19 @@ pub struct Ciphertext {
 }
 
 impl Ciphertext {
-    /// `sealed`, opening as what it was sealed as (`None`), or as `kind`.
+    /// Wraps `sealed`. When `opens_as` is `None`, the ciphertext decrypts as
+    /// the type it was encrypted as. Otherwise it decrypts as that kind.
     pub(crate) fn new(sealed: stack_encrypt::Ciphertext, opens_as: Option<ValueKind>) -> Self {
         Self { sealed, opens_as }
     }
 
-    /// The engine's ciphertext.
+    /// Returns the engine's ciphertext.
     pub(crate) fn sealed(&self) -> &stack_encrypt::Ciphertext {
         &self.sealed
     }
 
-    /// The ciphertext `value` is, or `None` when it is not a `Ciphertext`.
+    /// Returns a copy of `value` when it is a `Ciphertext`, or `None` when
+    /// it is not.
     pub(crate) fn of(env: &Env, value: Unknown<'_>) -> Option<Self> {
         if !Self::instance_of(env, &value).unwrap_or(false) {
             return None;
@@ -53,13 +60,13 @@ impl Ciphertext {
             .map(|instance| Ciphertext::clone(&instance))
     }
 
-    /// An opened value, as the kind this ciphertext opens as.
+    /// Returns a decrypted value as the kind this ciphertext decrypts as.
     ///
     /// # Errors
     ///
-    /// `recipher::opened_type` for a value sealed as another type, and
-    /// `recipher::not_a_document` for one named JSON that is not a JSON
-    /// document.
+    /// Returns `recipher::opened_type` for a value encrypted as another
+    /// type. Returns `recipher::not_a_document` when the kind is JSON but
+    /// the value is not a JSON document.
     pub(crate) fn opened(&self, value: ValueFrame) -> Outcome<ValueFrame> {
         match self.opens_as {
             None => Ok(value),
@@ -71,16 +78,18 @@ impl Ciphertext {
 
 #[napi]
 impl Ciphertext {
-    /// Read a ciphertext from stored bytes, a `Uint8Array` or a `Buffer`.
-    /// This checks the bytes' shape only; decrypting is what authenticates
-    /// them. A failure does not quote the bytes.
+    /// Reads a ciphertext from stored bytes, a `Uint8Array` or a `Buffer`.
+    /// This method checks only the shape of the bytes. Decrypting is what
+    /// checks that they are authentic. A failure does not quote the bytes.
     ///
-    /// With a kind, such as `kinds.string`, it opens as that kind, and
-    /// decrypting refuses a value sealed as another type. `kinds.json` opens
-    /// a JSON document. With none, it opens as whatever it was sealed as,
-    /// and a JSON document opens as its JSON text.
-    // Configurable, as an instance method is, so the package's TypeScript
-    // can wrap it (`adapt`).
+    /// Give a kind, such as `kinds.string`, to decrypt the value as that
+    /// kind. Decrypting then refuses a value encrypted as another type.
+    /// `kinds.json` decrypts a JSON document.
+    ///
+    /// With no kind, the value decrypts as the type it was encrypted as. A
+    /// JSON document then decrypts as its JSON text.
+    // An instance method is configurable. This static method is made
+    // configurable too, so the package's TypeScript can wrap it (`adapt`).
     #[napi(configurable = true, ts_return_type = "Outcome<Ciphertext>")]
     pub fn from_bytes<'e>(
         env: &'e Env,
@@ -103,26 +112,29 @@ impl Ciphertext {
         })
     }
 
-    /// The bytes to store: a copy, so changing it changes no ciphertext.
+    /// Returns the bytes to store. They are a copy, so changing them does
+    /// not change any ciphertext.
     #[napi]
     pub fn to_bytes(&self) -> Uint8Array {
         Uint8Array::from(self.sealed.to_bytes())
     }
 
-    /// Names the type and hides the bytes.
+    /// Returns the type's name, and hides the bytes.
     #[napi(js_name = "toString")]
     pub fn describe(&self) -> &'static str {
         "Ciphertext(***)"
     }
 }
 
-/// A kind, as the package's `kinds` spells it: `{ name: "string" }`.
+/// A kind, in the form the package's `kinds` object writes it:
+/// `{ name: "string" }`.
 #[derive(Deserialize)]
 struct KindArgument {
     name: String,
 }
 
-/// The kind `value` names, or `None` for `undefined`.
+/// Returns the kind that `value` names, or `None` when `value` is absent or
+/// `undefined`.
 fn kind_of(env: &Env, value: Option<Unknown<'_>>) -> Outcome<Option<ValueKind>> {
     let Some(value) = value.filter(|value| value.get_type().ok() != Some(ValueType::Undefined))
     else {
@@ -141,7 +153,7 @@ fn kind_of(env: &Env, value: Option<Unknown<'_>>) -> Outcome<Option<ValueKind>> 
     Ok(Some(kind))
 }
 
-/// Whether `kind` is an integer kind.
+/// Returns whether `kind` is an integer kind.
 fn integer(kind: ValueKind) -> bool {
     matches!(
         kind,
@@ -158,9 +170,11 @@ fn integer(kind: ValueKind) -> bool {
     )
 }
 
-/// `value` as `kind`: itself when it is of that kind; an integer of another
-/// width, or a float of another width, converted by the engine's `read`
-/// when the conversion is exact; anything else refused.
+/// Returns `value` as `kind`.
+///
+/// A value of that kind is returned unchanged. The engine's `read` converts
+/// an integer to another integer width, or a float to another float width,
+/// when the conversion is exact. Any other value is refused.
 fn as_kind(kind: ValueKind, value: ValueFrame) -> Outcome<ValueFrame> {
     let refused = || RecipherErrorFields::from(Error::OpenedType { kind });
     let opened = value.kind();
@@ -176,10 +190,13 @@ fn as_kind(kind: ValueKind, value: ValueFrame) -> Outcome<ValueFrame> {
     read(kind, &value).map_err(|_| refused())
 }
 
-/// The bytes of a `Uint8Array` (a `Buffer` is one), copied, or `None` for
-/// any other value. Read as a borrowed slice, as vitaminc reads bytes:
-/// napi's owned `Uint8Array` keeps a reference to a typed array of another
-/// element type it refuses.
+/// Returns a copy of the bytes of a `Uint8Array`, or `None` for any other
+/// value. A `Buffer` is a `Uint8Array`.
+///
+/// The function reads the bytes as a borrowed slice. That is how vitaminc,
+/// CipherStash's cryptography library, reads bytes. napi's owned
+/// `Uint8Array` is not used. When it refuses a typed array of another
+/// element type, it still keeps a reference to that array.
 pub(crate) fn bytes_of(value: Unknown<'_>) -> Option<Vec<u8>> {
     if !value.is_typedarray().unwrap_or(false) {
         return None;

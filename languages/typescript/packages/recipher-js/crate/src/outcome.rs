@@ -1,4 +1,8 @@
-//! The outcome object every call that can fail returns.
+//! Outcome objects: what every call that can fail returns to JavaScript.
+//!
+//! An outcome object is `{ ok: true, value }` on success, or
+//! `{ ok: false, error }` on failure. A call returns one instead of
+//! throwing.
 
 use std::future::Future;
 
@@ -7,14 +11,17 @@ use napi::Env;
 
 use crate::error::{Error, RecipherErrorFields};
 
-/// What a call's work comes to before JavaScript sees it.
+/// The result of a call's work, before the addon builds it into an outcome
+/// object for JavaScript.
 pub(crate) type Outcome<T> = Result<T, RecipherErrorFields>;
 
-/// The outcome object for `outcome`: `{ ok: true, value }`, with `value`
-/// building the success's JavaScript value, or `{ ok: false, error }`. A
-/// failure to build the value is a failure too, so the call still returns
-/// an outcome. The `napi::Result` is an error only when napi cannot make the
-/// object itself.
+/// Builds the outcome object for `outcome`.
+///
+/// A success becomes `{ ok: true, value }`, and the `value` function builds
+/// its JavaScript value. A failure becomes `{ ok: false, error }`. If the
+/// `value` function fails, the outcome object is a failure too, so the call
+/// still returns an outcome object. The returned `napi::Result` is an error
+/// only when napi cannot make the object itself.
 pub(crate) fn settle<'e, T>(
     env: &'e Env,
     outcome: Outcome<T>,
@@ -35,21 +42,22 @@ pub(crate) fn settle<'e, T>(
     Ok(object)
 }
 
-/// The failure for a value napi could not make, which is never the
-/// caller's to fix.
+/// Returns the failure for a JavaScript value that napi could not make.
+/// The caller did not cause this failure and cannot fix it.
 pub(crate) fn not_made(_: napi::Error) -> RecipherErrorFields {
     Error::BuildValue.into()
 }
 
-/// A failure, as an outcome object.
+/// Builds a failed outcome object for `error`.
 pub(crate) fn failed(env: &Env, error: RecipherErrorFields) -> napi::Result<Object<'_>> {
     settle(env, Err::<(), _>(error), |env, ()| {
         ().into_unknown(env).map_err(not_made)
     })
 }
 
-/// Run `work` on napi's runtime and resolve the promise to its outcome
-/// object, built on the JavaScript thread by `value`.
+/// Runs `work` on napi's asynchronous runtime, and returns a promise of its
+/// outcome object. The `value` function builds the success's JavaScript
+/// value on the JavaScript thread.
 pub(crate) fn spawn<'e, T, F, V>(
     env: &'e Env,
     work: F,
@@ -65,8 +73,9 @@ where
     })
 }
 
-/// A promise of `error`'s outcome, for a call refused before any work
-/// starts, so the call still returns a promise and never throws.
+/// Returns a promise of a failed outcome object for `error`. A call uses it
+/// when it refuses its arguments before any work starts. The call then
+/// still returns a promise, and does not throw.
 pub(crate) fn refused(
     env: &Env,
     error: RecipherErrorFields,

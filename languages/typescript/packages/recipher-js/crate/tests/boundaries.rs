@@ -1,13 +1,14 @@
-//! What the crate must not reach.
+//! Checks of what the crate must not depend on.
 //!
-//! - It does not link `eql-bindings`. The EQL types are an extension to the
-//!   core; a build of the core holds none of them.
-//! - A build with its default features has no test cipher: neither the
-//!   crate's `testing` feature nor the engine's `test-support`, whose key
-//!   source derives every key from a public seed. `build:native` makes the
-//!   release addon with the default features, and every CI build turns
-//!   `testing` on, so this is the check that the release build cannot reach
-//!   the test keys.
+//! - The crate does not link `eql-bindings`. The EQL (Encrypt Query
+//!   Language) types are an extension to the core. A build of the core
+//!   contains none of them.
+//! - A build with the default features has no test cipher. That build turns
+//!   on neither the crate's `testing` feature nor the engine's
+//!   `test-support` feature. The `test-support` key source derives every
+//!   key from a public seed. `build:native` makes the release addon with
+//!   the default features, and every CI build turns `testing` on. So this
+//!   test is what checks that the release build cannot reach the test keys.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -16,8 +17,8 @@ fn crate_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// `cargo tree --locked` for the crate with its default features, from the
-/// committed lock: no build is needed.
+/// Runs `cargo tree --locked` for the crate with its default features.
+/// The command reads the committed lock file, so no build is needed.
 fn tree(edges: &str, format: Option<&str>) -> String {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let mut args = vec![

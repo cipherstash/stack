@@ -1,5 +1,6 @@
 /**
- * A cipher for tests: no credentials, no network.
+ * A cipher for tests. A test cipher needs no credentials and makes no
+ * network requests.
  *
  * ```ts
  * import { testCipher } from '@cipherstash/recipher/testing'
@@ -7,16 +8,19 @@
  * const cipher = (await testCipher()).unwrap()
  * ```
  *
- * Every key is a function of a seed and the value's context, so a value
- * sealed by one test cipher opens in another with the same seed, in the same
- * process or a later one. The keys are no secret from anyone who knows the
- * seed: never use a test cipher for data you keep.
+ * Every key is derived from a seed and the value's context. The context is
+ * data that a ciphertext is bound to. A value encrypted by one test cipher
+ * decrypts with another test cipher that has the same seed. That works in
+ * the same process or in a later one.
+ *
+ * Anyone who knows the seed can derive the keys. Never use a test cipher for
+ * data you keep.
  */
 import { type Cipher, classes } from './cipher'
 import type { RecipherError } from './error'
 import type { Result } from './result'
 
-/** The byte the seed of a test cipher is filled with when none is given. */
+/** The byte that fills a test cipher's seed when no seed is given. */
 const DEFAULT_SEED_BYTE = 0x2a
 
 /** Options for `testCipher`. */
@@ -26,10 +30,13 @@ export interface TestCipherOptions {
 }
 
 /**
- * A cipher over the engine's deterministic test keys. Resolves to an `Err`
- * with the code `recipher::testing_seed` for a seed that is not 32 bytes,
- * or one whose getter throws, and `recipher::no_testing` when the native
- * build has no test cipher: only the debug build (`build:debug`) has one.
+ * A cipher that uses the engine's deterministic test keys. The same seed
+ * always gives the same keys.
+ *
+ * Resolves to an `Err` with the code `recipher::testing_seed` when the seed
+ * is not 32 bytes, or when reading `options.seed` throws. Resolves to an
+ * `Err` with the code `recipher::no_testing` when the native addon has no
+ * test cipher. Only the debug build of the addon (`build:debug`) has one.
  */
 export async function testCipher(
   options?: TestCipherOptions | null,
@@ -38,7 +45,8 @@ export async function testCipher(
   try {
     seed = options?.seed ?? new Uint8Array(32).fill(DEFAULT_SEED_BYTE)
   } catch {
-    // Not a seed, so the native build refuses it as one.
+    // `undefined` is not a seed, so the addon refuses it with
+    // `recipher::testing_seed`.
     seed = undefined
   }
   return classes.createTesting(seed)

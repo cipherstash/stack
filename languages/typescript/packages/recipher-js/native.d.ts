@@ -7,207 +7,257 @@ export type Outcome<T> =
   | { ok: false; error: RecipherErrorFields }
 
 /**
- * A cipher: the engine, and the keysets it reaches.
+ * A cipher: the engine, and the keysets it can use. A keyset is a group
+ * of keys in ZeroKMS, CipherStash's key service.
  *
- * Build one with `Cipher.create()`, or, in a test, with `testCipher()`
- * from `@cipherstash/recipher/testing`. It has no constructor.
+ * Make a cipher with `Cipher.create()`. In a test, make one with
+ * `testCipher()` from `@cipherstash/recipher/testing`. The class has no
+ * constructor.
  */
 export declare class Cipher {
   /**
-   * A cipher over ZeroKMS, with the credentials the engine finds: the
-   * `CS_*` variables, then the profile `stash auth login` writes.
+   * Makes a cipher that gets its keys from ZeroKMS. The engine looks for
+   * credentials in the `CS_*` environment variables first, then in the
+   * profile that `stash auth login` writes.
    *
-   * Resolves to the engine's error when there are no credentials, when
-   * they are refused, or when ZeroKMS refuses to load the default keyset.
+   * The promise resolves to the engine's error in these cases:
    *
-   * `options.records` are declarations to check now, before any
-   * credential is looked for: a declaration the engine refuses is a
-   * failure naming the record.
+   * - there are no credentials;
+   * - the credentials are refused;
+   * - ZeroKMS refuses to load the default keyset.
+   *
+   * `options.records` lists record declarations to check now, before the
+   * engine looks for credentials. If the engine refuses a declaration,
+   * the result is a failure that names the record.
    */
   static create(options?: unknown | undefined | null): Promise<Outcome<Cipher>>
   /**
-   * The client's default keyset: the one a ZeroKMS administrator set for
-   * it. Encrypting needs a keyset.
+   * Returns the client's default keyset: the keyset that a ZeroKMS
+   * administrator set for this client. Encrypting needs a keyset.
    */
   defaultKeyset(): Keyset
   /**
-   * Open a ciphertext from any of this cipher's keysets, as the value it
-   * was sealed as, or an array of them. With a record first, open its
-   * stored row, or an array of them, in one key request for each keyset
-   * they were sealed under.
+   * Decrypts a ciphertext, or an array of ciphertexts, made under any of
+   * this cipher's keysets. Each value decrypts as the type it was
+   * encrypted as.
+   *
+   * With a record declaration as the first argument, decrypts a stored
+   * row of that record, or an array of stored rows. A stored row is what
+   * `keyset.encrypt` returns for a row. The cipher makes one key request
+   * for each keyset the rows were encrypted under. A key request is one
+   * request to ZeroKMS for data keys.
    */
   decrypt(first: unknown, second?: unknown | undefined | null): Promise<Outcome<unknown>>
   /**
-   * Open one field of a record's stored row, as `encryptField` or
-   * `encrypt` stored it, or an array of them in one key request.
+   * Decrypts one field of a record's stored row, as `encryptField` or
+   * `encrypt` stored it. An array of stored fields decrypts in one key
+   * request.
    */
   decryptField(record: unknown, field: unknown, stored: unknown): Promise<Outcome<unknown>>
-  /** Names the type. */
+  /** Returns the type's name. */
   toString(): string
 }
 
 /**
- * One sealed value: the engine's opaque ciphertext, with its own data key.
+ * One encrypted value: the engine's opaque ciphertext of the whole value,
+ * with its own data key. A data key is the key that encrypts one value.
  *
- * Its bytes are the engine's sealed-value envelope, the bytes Rust's
- * `Ciphertext::to_bytes` and the Go SDK write. `Debug` hides them, and so
- * do `toString()` and Node's `inspect`: the class has no own properties.
+ * The ciphertext's bytes are the engine's envelope for an encrypted value.
+ * Rust's `Ciphertext::to_bytes` and the Go SDK write the same bytes.
+ * `Debug` hides the bytes. So do `toString()` and Node's `inspect`,
+ * because the class has no own properties.
  *
- * It exists as a class, rather than as the bytes, so that `decrypt` can
- * tell a ciphertext from any other value, and so that it carries the type
- * it opens as: a JSON document is sealed as its JSON text, and nothing in
- * the bytes says it is JSON.
+ * The SDK uses a class rather than plain bytes for two reasons. First,
+ * `decrypt` can tell a ciphertext from any other value. Second, the class
+ * records the type the value decrypts as. A JSON document is encrypted as
+ * its JSON text, and nothing in the bytes says that it is JSON.
  */
 export declare class Ciphertext {
   /**
-   * Read a ciphertext from stored bytes, a `Uint8Array` or a `Buffer`.
-   * This checks the bytes' shape only; decrypting is what authenticates
-   * them. A failure does not quote the bytes.
+   * Reads a ciphertext from stored bytes, a `Uint8Array` or a `Buffer`.
+   * This method checks only the shape of the bytes. Decrypting is what
+   * checks that they are authentic. A failure does not quote the bytes.
    *
-   * With a kind, such as `kinds.string`, it opens as that kind, and
-   * decrypting refuses a value sealed as another type. `kinds.json` opens
-   * a JSON document. With none, it opens as whatever it was sealed as,
-   * and a JSON document opens as its JSON text.
+   * Give a kind, such as `kinds.string`, to decrypt the value as that
+   * kind. Decrypting then refuses a value encrypted as another type.
+   * `kinds.json` decrypts a JSON document.
+   *
+   * With no kind, the value decrypts as the type it was encrypted as. A
+   * JSON document then decrypts as its JSON text.
    */
   static fromBytes(bytes: unknown, kind?: unknown | undefined | null): Outcome<Ciphertext>
-  /** The bytes to store: a copy, so changing it changes no ciphertext. */
+  /**
+   * Returns the bytes to store. They are a copy, so changing them does
+   * not change any ciphertext.
+   */
   toBytes(): Uint8Array
-  /** Names the type and hides the bytes. */
+  /** Returns the type's name, and hides the bytes. */
   toString(): string
 }
 
 /**
  * A JSON document to encrypt as one ciphertext, as its JSON text. Nothing
- * inside it can be searched. Make one with `json(..)`.
+ * inside the document can be searched. Make one with `json(..)`.
  *
- * The document is read when it is made, so a later change to the object
- * does not change what is encrypted. A document that cannot be encrypted
- * is held as its failure, which `encrypt` returns. `Debug`, `toString()`
- * and Node's `inspect` hide the document.
+ * `json(..)` reads the document when it makes the `Json`. So a later
+ * change to the object does not change what is encrypted. If the document
+ * cannot be encrypted, the `Json` keeps the failure, and `encrypt` returns
+ * that failure. `Debug`, `toString()` and Node's `inspect` hide the
+ * document.
  */
 export declare class Json {
-  /** Names the type and hides the document. */
+  /** Returns the type's name, and hides the document. */
   toString(): string
 }
 
 /**
- * One keyset of a cipher. Every data key is made under one keyset, and a
- * ciphertext names the keyset it was made under.
+ * One keyset of a cipher. A data key is the key that encrypts one value.
+ * Each data key is made under one keyset. A ciphertext names the keyset it
+ * was made under.
  *
- * Get one from `cipher.defaultKeyset()`. It has no constructor.
+ * Get a keyset from `cipher.defaultKeyset()`. The class has no
+ * constructor.
  */
 export declare class Keyset {
   /**
-   * Encrypt a value, with no context, as one ciphertext with its own data
-   * key. An array of values is an array of ciphertexts, in the same
-   * order, made with one key request however long it is. All or nothing:
-   * one value refused is a failure for the whole array, before any
-   * request.
+   * Encrypts a value as one ciphertext with its own data key, with no
+   * context. A context is a value that a ciphertext is bound to, and
+   * decrypting needs the same context.
    *
-   * A value's type picks how it is encrypted, by vitaminc's mapping for
-   * JavaScript. A `Json` from `json(..)` is encrypted as a JSON document.
+   * An array of values returns an array of ciphertexts, in the same
+   * order. The keyset makes one key request for the whole array, however
+   * long it is. A key request is one request to ZeroKMS for data keys. If
+   * any value is refused, the whole array fails, before any request.
    *
-   * With a record first, encrypt its row, or an array of them in one key
-   * request: each field under its field path.
+   * A value's type sets how it is encrypted. The mapping of JavaScript
+   * types comes from vitaminc, CipherStash's cryptography library. A
+   * `Json` from `json(..)` is encrypted as a JSON document.
+   *
+   * With a record declaration as the first argument, encrypts a row of
+   * that record, or an array of rows in one key request. Each field is
+   * encrypted under its field path: the record's name, then the field's
+   * name.
    */
   encrypt(first: unknown, second?: unknown | undefined | null): Promise<Outcome<unknown>>
   /**
-   * Open a ciphertext sealed under this keyset, or an array of them. A
-   * ciphertext of another keyset is a failure with the code
-   * `stack_encrypt::foreign_keyset`, before any key is requested. With a
-   * record first, open its stored row, or an array of them.
+   * Decrypts a ciphertext made under this keyset, or an array of them. A
+   * ciphertext of another keyset fails with the code
+   * `stack_encrypt::foreign_keyset`, before any key is requested.
+   *
+   * With a record declaration as the first argument, decrypts a stored
+   * row of that record, or an array of stored rows.
    */
   decrypt(first: unknown, second?: unknown | undefined | null): Promise<Outcome<unknown>>
   /**
-   * Encrypt one field of a record, for an update of that field: its
-   * stored form, as the field has it in a whole stored row. An array of
-   * values is an array of stored fields, in one key request.
+   * Encrypts one field of a record, to update that field alone. The
+   * result is the field's stored form, the same form as in a whole stored
+   * row. An array of values returns an array of stored fields, in one key
+   * request.
    */
   encryptField(record: unknown, field: unknown, value: unknown): Promise<Outcome<unknown>>
   /**
-   * Open one field of a record's stored row sealed under this keyset, or
-   * an array of them in one key request.
+   * Decrypts one field of a record's stored row made under this keyset.
+   * An array of stored fields decrypts in one key request.
    */
   decryptField(record: unknown, field: unknown, stored: unknown): Promise<Outcome<unknown>>
-  /** Names the type. */
+  /** Returns the type's name. */
   toString(): string
 }
 
 /**
- * The version of the interface between the package's TypeScript and this
- * build. The TypeScript refuses a build that reports another.
+ * Returns the version of the interface between the package's TypeScript
+ * and this addon build. The TypeScript refuses a build that returns
+ * another version.
  */
 export declare function bindingInterface(): number
 
 /**
- * Check declarations with the engine, with no credentials and no
- * request: for a test or a CI step. The first refusal is the failure,
- * naming the record and, where there is one, the field.
+ * Checks record declarations with the engine, without credentials and
+ * without any request. Use it in a test or a CI step. The failure is the
+ * engine's first refusal. The failure names the record and, where there is
+ * one, the field.
  */
 export declare function checkDeclarations(records: unknown): Outcome<undefined>
 
 /**
- * A cipher over the engine's deterministic test keys, from a 32-byte seed:
- * every key is a function of the seed and the value's context, so a value
- * sealed by one test cipher opens in another with the same seed. It needs
- * no credentials and makes no request. Its keys are no secret from anyone
- * who knows the seed.
+ * Makes a cipher over the engine's deterministic test keys, from a 32-byte
+ * seed. Every key is derived from the seed and the value's context. So a
+ * value encrypted by one test cipher decrypts in another with the same
+ * seed.
  *
- * Only a build with the `testing` feature has one; any other resolves to
- * a failure with the code `recipher::no_testing`.
+ * The test cipher needs no credentials and makes no request. Anyone who
+ * knows the seed can derive its keys.
+ *
+ * Only a build with the `testing` feature has the test cipher. In any
+ * other build, the promise resolves to a failure with the code
+ * `recipher::no_testing`.
  */
 export declare function createTesting(seed: unknown): Promise<Outcome<Cipher>>
 
 /** One error in a failure's cause chain. */
 export interface ErrorCause {
-  /** The cause's code, where it is one of the engine's own errors. */
+  /** The cause's code, when the cause is one of the engine's own errors. */
   code?: string
   /**
-   * The engine error's message. For an error from another library, the
-   * fixed text `an error from another library`.
+   * The message of the engine's error. For an error from another
+   * library, the message is this fixed text:
+   * `an error from another library`.
    */
   message: string
 }
 
 /**
- * A JSON document, to encrypt as one ciphertext: a plain object, an array,
- * text, a number, a `bigint`, a boolean or `null`, nested at most 127
- * levels. An integer outside a `number`'s safe range is a `bigint`, within
- * 64 bits; a whole `number` between 2^53 and 2^64 from zero is refused,
- * since an integer was likely meant. The document is read now. Never
- * throws: a document that cannot be encrypted is an `Err` from `encrypt`.
+ * Makes a JSON document to encrypt as one ciphertext. The document is a
+ * plain object, an array, text, a number, a `bigint`, a boolean or `null`,
+ * nested at most 127 levels.
+ *
+ * Give an integer outside a `number`'s safe range as a `bigint`, within 64
+ * bits. The safe range is at most 2^53 - 1 from zero. A whole `number`
+ * between 2^53 and 2^64 from zero is refused, because the caller probably
+ * meant an integer.
+ *
+ * `json(..)` reads the document now. `json(..)` never throws: `encrypt`
+ * returns an `Err` for a document that cannot be encrypted.
  */
 export declare function json(document: unknown): Json
 
 /** A failure, as JavaScript receives it. */
 export interface RecipherErrorFields {
   /**
-   * Stable: the diagnostic's code, such as `stack_encrypt::aead`,
-   * vitaminc's code for a value it refused, such as `ERR_INTEGER_RANGE`,
-   * or the SDK's own, such as `recipher::not_a_ciphertext`.
+   * The error's code. A code is stable, so a caller can match on it.
+   * The code is one of three kinds:
+   *
+   * - a diagnostic's code, such as the engine's `stack_encrypt::aead`;
+   * - the code of vitaminc, CipherStash's cryptography library, for a
+   *   value it refused, such as `ERR_INTEGER_RANGE`;
+   * - the SDK's own code, such as `recipher::not_a_ciphertext`.
    */
   code: string
   /** What went wrong, in one line. */
   message: string
-  /** What to do about it, where the error knows. */
+  /** What to do about the error, when the error says. */
   help?: string
-  /** A documentation page for the error, where it has one. */
+  /** A documentation page for the error, when it has one. */
   url?: string
-  /** How serious it is: `error` unless the diagnostic says otherwise. */
+  /**
+   * How serious the failure is. The severity is `error` unless the
+   * diagnostic states another one.
+   */
   severity: Severity
   /**
-   * The error's structured fields, by `snake_case` name: a refused
-   * plan's `field` and `reason`, a ZeroKMS failure's `request_kind`.
-   * Empty where the error has none.
+   * The error's structured fields, keyed by `snake_case` name. For
+   * example, a refused plan has `field` and `reason`, and a ZeroKMS
+   * failure has `request_kind`. A plan is the engine's rules for
+   * encrypting a record. The map is empty when the error has no fields.
    */
   fields: Record<string, any>
-  /** The errors behind this one, outermost first. */
+  /** The errors that caused this one, outermost first. */
   causes: Array<ErrorCause>
-  /** The field at fault, where one is known. */
+  /** The field at fault, when it is known. */
   field?: string
   /**
-   * The record at fault, where one is known: a declaration, a row or a
-   * stored row of it.
+   * The record at fault, when it is known. The fault is in the record's
+   * declaration, in a row of it, or in a stored row of it.
    */
   record?: string
 }

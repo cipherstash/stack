@@ -1,12 +1,12 @@
 /**
- * A `Result`: the value of a call that worked, or the error of one that did
- * not. It has Rust's `Result` methods, in camelCase, and each does what
- * Rust's does.
+ * A `Result`: the value of a call that worked, or the error of a call that
+ * failed. A `Result` has the methods of Rust's `Result`, named in camelCase.
+ * Each method does what the Rust method does.
  *
- * `unwrap()` and `expect(..)` are the only methods that throw, as they are
- * the only ones that panic in Rust. Use them in a script, a test or a
- * startup path. Everywhere else, narrow with `isOk()` or `isErr()`, or
- * combine with `map`, `andThen` and `unwrapOr`.
+ * Only `unwrap()` and `expect(..)` throw. In Rust, they are also the only
+ * `Result` methods that panic. Use them in a script, a test, or code that
+ * runs at startup. Everywhere else, narrow the type with `isOk()` or
+ * `isErr()`, or combine results with `map`, `andThen`, and `unwrapOr`.
  *
  * ```ts
  * const sealed = await keyset.encrypt('a secret message')
@@ -19,40 +19,46 @@
 export type Result<T, E> = Ok<T, E> | Err<T, E>
 
 interface Methods<T, E> {
-  /** Whether this is an `Ok`. Narrows the type, as a Rust `match` does. */
+  /** Whether this is an `Ok`. Narrows the type, as a `match` does in Rust. */
   isOk(): this is Ok<T, E>
-  /** Whether this is an `Err`. Narrows the type, as a Rust `match` does. */
+  /** Whether this is an `Err`. Narrows the type, as a `match` does in Rust. */
   isErr(): this is Err<T, E>
-  /** The value, or `undefined` for an `Err`. */
+  /** Returns the value, or `undefined` for an `Err`. */
   ok(): T | undefined
-  /** The error, or `undefined` for an `Ok`. */
+  /** Returns the error, or `undefined` for an `Ok`. */
   err(): E | undefined
-  /** An `Ok` with `f` applied to its value; an `Err` as it is. */
+  /**
+   * For an `Ok`, returns an `Ok` of `f` applied to the value. Returns an
+   * `Err` unchanged.
+   */
   map<U>(f: (value: T) => U): Result<U, E>
-  /** An `Err` with `f` applied to its error; an `Ok` as it is. */
+  /**
+   * For an `Err`, returns an `Err` of `f` applied to the error. Returns an
+   * `Ok` unchanged.
+   */
   mapErr<F>(f: (error: E) => F): Result<T, F>
-  /** `f` applied to the value, or `fallback` for an `Err`. */
+  /** Returns `f` applied to the value, or `fallback` for an `Err`. */
   mapOr<U>(fallback: U, f: (value: T) => U): U
-  /** `other` for an `Ok`; this `Err` as it is. */
+  /** For an `Ok`, returns `other`. Returns this `Err` unchanged. */
   and<U>(other: Result<U, E>): Result<U, E>
-  /** `f` applied to the value for an `Ok`; this `Err` as it is. */
+  /** For an `Ok`, returns `f` applied to the value. Returns this `Err` unchanged. */
   andThen<U>(f: (value: T) => Result<U, E>): Result<U, E>
-  /** This `Ok` as it is; `other` for an `Err`. */
+  /** Returns this `Ok` unchanged. For an `Err`, returns `other`. */
   or<F>(other: Result<T, F>): Result<T, F>
-  /** This `Ok` as it is; `f` applied to the error for an `Err`. */
+  /** Returns this `Ok` unchanged. For an `Err`, returns `f` applied to the error. */
   orElse<F>(f: (error: E) => Result<T, F>): Result<T, F>
-  /** The value, or `fallback` for an `Err`. */
+  /** Returns the value, or `fallback` for an `Err`. */
   unwrapOr<U = T>(fallback: U): T | U
-  /** The value, or `f` applied to the error for an `Err`. */
+  /** Returns the value, or `f` applied to the error for an `Err`. */
   unwrapOrElse<U = T>(f: (error: E) => U): T | U
   /**
-   * The value. Throws for an `Err`, with the error as the thrown error's
-   * `cause`.
+   * Returns the value. For an `Err`, throws an `Error` whose `cause` is the
+   * error.
    */
   unwrap(): T
   /**
-   * The value. Throws for an `Err`, with `message` and the error as the
-   * thrown error's `cause`.
+   * Returns the value. For an `Err`, throws an `Error` whose message starts
+   * with `message`, and whose `cause` is the error.
    */
   expect(message: string): T
 }
@@ -113,7 +119,7 @@ export class Ok<T, E> implements Methods<T, E> {
   }
 }
 
-/** The result of a call that did not work. */
+/** The result of a call that failed. */
 export class Err<T, E> implements Methods<T, E> {
   readonly error: E
 
@@ -173,12 +179,12 @@ export class Err<T, E> implements Methods<T, E> {
   }
 }
 
-/** An `Ok` holding `value`. */
+/** Make an `Ok` that contains `value`. */
 export function ok<T, E = never>(value: T): Result<T, E> {
   return new Ok(value)
 }
 
-/** An `Err` holding `error`. */
+/** Make an `Err` that contains `error`. */
 export function err<E, T = never>(error: E): Result<T, E> {
   return new Err(error)
 }

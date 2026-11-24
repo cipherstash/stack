@@ -1,17 +1,25 @@
-//! JavaScript values in and out, through `recipher-value-napi`.
+//! Converts JavaScript values to and from the engine's values, through the
+//! value bridge, the `recipher-value-napi` crate.
 //!
-//! A value is read with `JsRef::to_frame`, on the JavaScript thread, into
-//! the engine's [`ValueFrame`]: a buffer wiped when it drops, which a worker
-//! thread then seals with no access to JavaScript. An opened frame is built
-//! back into a JavaScript value with `JsBuilder::build`. Nothing here
-//! converts a value itself.
+//! The engine is the Stack Encrypt engine, the `stack-encrypt` crate. The
+//! engine's value model is the set of value types it reads.
 //!
-//! When the bridge refuses a value it says which rule the value broke, and
-//! for a scalar it also throws into JavaScript. [`read`] turns either into a
-//! [`RecipherErrorFields`], so a call that reads a value returns an outcome
-//! rather than throwing. What a
-//! getter of the application's threw is caught and dropped, never copied:
-//! its message may hold the value.
+//! `JsRef::to_frame` reads a JavaScript value, on the JavaScript thread,
+//! into the engine's [`ValueFrame`]. A frame is a byte buffer that contains
+//! one value. The buffer is wiped when it drops. A worker thread then
+//! encrypts the frame, with no access to JavaScript. `JsBuilder::build`
+//! builds a decrypted frame back into a JavaScript value. This module does
+//! not convert any value itself.
+//!
+//! When the bridge refuses a value, it says which rule the value broke. A
+//! scalar is a value that is not an array or an object. For a scalar, the
+//! bridge also throws a JavaScript exception. [`read`] turns either into a
+//! [`RecipherErrorFields`]. So a call that reads a value returns a failed
+//! outcome object, `{ ok: false, error }`, instead of throwing.
+//!
+//! When an application's getter throws, the addon catches the exception
+//! and drops it without copying it. The exception's message may contain
+//! the value.
 
 use napi::bindgen_prelude::{FromNapiValue, JsObjectValue, JsValue, Object, Unknown};
 use napi::{Env, Status, ValueType};
@@ -25,13 +33,17 @@ use vitaminc_protected::Controlled;
 use crate::error::{Error, RecipherErrorFields};
 use crate::outcome::not_made;
 
-/// Read a JavaScript value into the engine's value model.
+/// Reads a JavaScript value into a frame of the engine's value model.
 ///
 /// # Errors
 ///
-/// `recipher::undefined`, `recipher::uuid` for a `VcUuid`, `recipher::value`
-/// for another value outside the engine's value model, `recipher::threw`
-/// when reading it threw, or the bridge's code for a value it refused.
+/// Returns one of these errors:
+///
+/// - `recipher::undefined` for `undefined`;
+/// - `recipher::uuid` for a `VcUuid`;
+/// - `recipher::value` for another value outside the engine's value model;
+/// - `recipher::threw` when reading the value threw;
+/// - the bridge's code, for a value the bridge refused.
 pub fn read(env: &Env, value: Unknown<'_>) -> Result<ValueFrame, RecipherErrorFields> {
     if value.get_type().ok() == Some(ValueType::Undefined) {
         return Err(Error::Undefined.into());
@@ -44,12 +56,14 @@ pub fn read(env: &Env, value: Unknown<'_>) -> Result<ValueFrame, RecipherErrorFi
         .map_err(|_| RecipherErrorFields::from(if uuid { Error::Uuid } else { Error::Value }))
 }
 
-/// The elements of `value` when it is an array, or `None` when it is not.
+/// Returns the elements of `value` when it is an array, or `None` when it
+/// is not.
 ///
 /// # Errors
 ///
-/// The bridge's refusal, or `recipher::threw`, when an element cannot be
-/// read, such as one behind a getter that throws.
+/// Returns the bridge's refusal, or `recipher::threw`, when an element
+/// cannot be read. For example, an element behind a getter that throws
+/// cannot be read.
 pub fn elements<'e>(
     env: &Env,
     value: Unknown<'e>,
@@ -67,20 +81,21 @@ pub fn elements<'e>(
     Some(read().map_err(|error| refused(env, &error.into())))
 }
 
-/// Build the JavaScript value of an opened frame.
+/// Builds the JavaScript value of a decrypted frame.
 ///
 /// # Errors
 ///
-/// `recipher::reserved_key` for a value JavaScript cannot hold as it was
-/// sealed (a map key vitaminc does not build), and `recipher::build_value`
-/// for any other failure.
+/// Returns `recipher::reserved_key` for a value that JavaScript cannot
+/// represent in the form it was encrypted. That is a value with a map key
+/// that vitaminc, CipherStash's cryptography library, does not build.
+/// Returns `recipher::build_value` for any other failure.
 pub fn build(env: &Env, value: ValueFrame) -> Result<Unknown<'_>, RecipherErrorFields> {
     let bytes = value.into_inner();
     let frame = Frame::parse(bytes.risky_ref()).map_err(|_| Error::BuildValue)?;
     JsBuilder::build(env, frame).map_err(|error| not_built(env, &error))
 }
 
-/// The failure for a value `JsBuilder` did not build.
+/// Returns the failure for a value that `JsBuilder` did not build.
 fn not_built(env: &Env, fault: &JsFault) -> RecipherErrorFields {
     if fault.status() == Status::PendingException {
         let _ = take_exception(env);
@@ -91,19 +106,20 @@ fn not_built(env: &Env, fault: &JsFault) -> RecipherErrorFields {
     }
 }
 
-/// Whether `value` is one of vitaminc's `VcUuid`s.
+/// Returns whether `value` is a vitaminc `VcUuid`.
 fn is_uuid(env: &Env, value: &Unknown<'_>) -> bool {
     Wrappers::get(env)
         .and_then(|wrappers| wrappers.classify(value))
         .is_ok_and(|wrapper| wrapper == Some(Wrapper::Uuid))
 }
 
-/// The property `name` of `value`, when `value` is an object and has it.
+/// Returns the property `name` of `value`, when `value` is an object and
+/// the property is not `undefined`.
 ///
 /// # Errors
 ///
-/// `recipher::threw` when reading it throws, as a getter may; what it threw
-/// is dropped.
+/// Returns `recipher::threw` when reading the property throws, as a getter
+/// can. The addon drops what the getter threw.
 pub(crate) fn property<'e>(
     env: &Env,
     value: Unknown<'e>,
@@ -119,9 +135,11 @@ pub(crate) fn property<'e>(
     Ok((property.get_type().ok() != Some(ValueType::Undefined)).then_some(property))
 }
 
-/// Whether `value` is a record's declaration, as `record(..)` makes it: an
-/// object whose `type` is `"record"`. The check reads only that property,
-/// so it holds for a declaration from any copy of the package.
+/// Returns whether `value` is a record declaration, as `record(..)` makes
+/// it. A record declaration lists a record's fields and how to store each
+/// one. A declaration is an object whose `type` is `"record"`. The check
+/// reads only that property, so it works for a declaration from any copy
+/// of the package.
 pub(crate) fn is_record(env: &Env, value: &Unknown<'_>) -> bool {
     if value.is_array().unwrap_or(true) {
         return false;
@@ -132,10 +150,11 @@ pub(crate) fn is_record(env: &Env, value: &Unknown<'_>) -> bool {
     )
 }
 
-/// The failure for a call given a second argument whose first is a plain
-/// object that is not a declaration: a row with a record that is not one.
-/// `None` for anything else, such as a value passed with an index by
-/// `Array.prototype.map`.
+/// Returns the failure for a call that has a second argument, when the
+/// first argument is a plain object but not a record declaration. Such a
+/// call passes a row with a record argument that is not a record. Returns
+/// `None` for any other call. For example, `Array.prototype.map` passes a
+/// value with its index, and that call gets `None`.
 pub(crate) fn second_without_record(
     env: &Env,
     first: &Unknown<'_>,
@@ -154,7 +173,7 @@ pub(crate) fn second_without_record(
     plain.then(|| Error::NotARecord.into())
 }
 
-/// The text of a JavaScript string, or `None` for any other value.
+/// Returns the text of a JavaScript string, or `None` for any other value.
 pub(crate) fn string(value: Unknown<'_>) -> Option<String> {
     if value.get_type().ok() != Some(ValueType::String) {
         return None;
@@ -162,11 +181,12 @@ pub(crate) fn string(value: Unknown<'_>) -> Option<String> {
     String::from_unknown(value).ok()
 }
 
-/// `row`, an opened row of `record`, with an `inspect` that names its
-/// fields and hides their values: Node's `util.inspect` and `console.log`
-/// print `users { email: [hidden], .. }`. The method is a property keyed
-/// by `Symbol.for('nodejs.util.inspect.custom')` that is not enumerable,
-/// so the row's own fields are as they were.
+/// Returns `row`, a decrypted row of `record`, with an added `inspect`
+/// method. The method names the row's fields and hides their values. So
+/// Node's `util.inspect` and `console.log` print
+/// `users { email: [hidden], .. }`. The method is a property keyed by
+/// `Symbol.for('nodejs.util.inspect.custom')`. The property is not
+/// enumerable, so the row's own fields do not change.
 pub(crate) fn hidden<'e>(
     env: &'e Env,
     row: Unknown<'e>,
@@ -192,17 +212,19 @@ pub(crate) fn hidden<'e>(
         .with_name(env, key)
         .map_err(not_made)?
         .with_value(&inspect)
-        // Not enumerable, writable or configurable: no copy, spread or
-        // comparison of the row sees it, and nothing replaces it.
+        // The property is not enumerable, writable or configurable. So a
+        // copy, spread or comparison of the row does not include it, and
+        // nothing can replace it.
         .with_property_attributes(PropertyAttributes::Default);
     object.define_properties(&[property]).map_err(not_made)?;
     Ok(row)
 }
 
-/// The failure for a value the bridge refused. The bridge says which rule
-/// the value broke; nothing here reads its text. An exception may still be
-/// pending in JavaScript, and is cleared: what the application threw is
-/// never kept, because its message may hold the value.
+/// Returns the failure for a value the bridge refused. The bridge says
+/// which rule the value broke, and this function does not read the
+/// bridge's text. An exception may still be pending in JavaScript, and this
+/// function clears it. What the application threw is never kept, because
+/// its message may contain the value.
 fn refused(env: &Env, fault: &JsFault) -> RecipherErrorFields {
     if fault.status() == Status::PendingException {
         let _ = take_exception(env);
@@ -214,7 +236,7 @@ fn refused(env: &Env, fault: &JsFault) -> RecipherErrorFields {
     }
 }
 
-/// The exception pending in `env`, cleared, if there is one.
+/// Clears and returns the exception pending in `env`, if there is one.
 #[allow(unsafe_code)]
 fn take_exception(env: &Env) -> Option<Unknown<'_>> {
     let mut raw = std::ptr::null_mut();

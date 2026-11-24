@@ -1,16 +1,24 @@
-//! Every failure the addon reports, as the object JavaScript receives.
+//! Every failure the addon reports, in the form of the object JavaScript
+//! receives.
 //!
-//! An error is a miette diagnostic: the engine's, the value bridge's
-//! [`Refusal`](recipher_value_napi::Refusal), or one of the SDK's own in
-//! [`Error`]. [`RecipherErrorFields::diagnostic`] turns any of them into a
-//! [`RecipherErrorFields`]: its code, message, help, documentation URL,
-//! severity, structured fields and causes. No error here holds a plaintext,
-//! a key, a token or a ciphertext.
+//! Each error is a miette diagnostic: an error with a code, a message and
+//! optional help. An error comes from one of three places:
 //!
-//! A cause that is one of the engine's own diagnostics gives its code and
-//! message. A cause from another library gives [`UNDESCRIBED_CAUSE`] and
-//! nothing else: its message is text the engine does not vouch for, and is
-//! never copied.
+//! - the engine: the Stack Encrypt engine, the `stack-encrypt` crate;
+//! - the value bridge, the `recipher-value-napi` crate that converts
+//!   JavaScript values, as a [`Refusal`](recipher_value_napi::Refusal);
+//! - the SDK itself, as an [`Error`].
+//!
+//! [`RecipherErrorFields::diagnostic`] turns any of them into a
+//! [`RecipherErrorFields`]. That object has the error's code, message,
+//! help, documentation URL, severity, structured fields and causes. No
+//! error here contains a plaintext, a key, a token or a ciphertext.
+//!
+//! A cause is an error that led to another error. For a cause that is one
+//! of the engine's own diagnostics, the failure includes its code and
+//! message. A cause from another library is reported as
+//! [`UNDESCRIBED_CAUSE`] and nothing else. Its message is text that the
+//! engine does not control, so the addon never copies it.
 
 use std::error::Error as StdError;
 
@@ -19,8 +27,8 @@ use napi_derive::napi;
 use stack_encrypt::dynamic::ValueKind;
 use stack_encrypt::ErrorPayload;
 
-/// The SDK's own errors: what the addon refuses before the engine sees it,
-/// and what goes wrong between the engine and JavaScript.
+/// The SDK's own errors. They cover what the addon refuses before the
+/// engine reads it, and what goes wrong between the engine and JavaScript.
 #[derive(Debug, thiserror::Error, Diagnostic)]
 pub(crate) enum Error {
     /// `undefined` given as a value.
@@ -30,16 +38,17 @@ pub(crate) enum Error {
         help("Use `null` for a value that is not there.")
     )]
     Undefined,
-    /// A `VcUuid`, which the engine's value model does not hold.
+    /// A `VcUuid`. The engine's value model, the set of value types the
+    /// engine reads, has no UUID type.
     #[error("a UUID cannot be encrypted yet: the engine's value model does not hold one")]
     #[diagnostic(code(recipher::uuid), help("Encrypt its text instead."))]
     Uuid,
-    /// A value outside the engine's value model, or one Node-API failed to
-    /// read.
+    /// A value outside the engine's value model, or a value that Node-API
+    /// failed to read.
     #[error("the value cannot be encrypted: it is not one the engine reads")]
     #[diagnostic(code(recipher::value))]
     Value,
-    /// A getter of the application's threw while the value was read.
+    /// A getter in the application threw while the addon read the value.
     #[error(
         "reading the value threw. The thrown error is not kept, because its message may hold the value"
     )]
@@ -53,17 +62,17 @@ pub(crate) enum Error {
     #[error("an object is not a value")]
     #[diagnostic(code(recipher::plain_object), help("Wrap it in json(..)."))]
     PlainObject,
-    /// A value that is not a JSON document the engine seals.
+    /// A value that the engine cannot encrypt as a JSON document.
     #[error("the value is not a JSON document the engine seals: {what}")]
     #[diagnostic(code(recipher::not_json))]
     NotJson { what: &'static str },
-    /// A JSON document nested deeper than the engine's parser reads.
+    /// A JSON document nested deeper than the engine's JSON parser reads.
     #[error(
         "the value is not a JSON document the engine seals: it is nested deeper than 127 levels of arrays and objects"
     )]
     #[diagnostic(code(recipher::too_deep))]
     JsonTooDeep,
-    /// The engine refused to seal a value as it was given.
+    /// The engine refused to encrypt a value in the form it was given.
     #[error("the engine could not seal the value as given")]
     #[diagnostic(code(recipher::not_sealed))]
     NotSealed,
@@ -82,11 +91,11 @@ pub(crate) enum Error {
     #[error("a ciphertext opens as one of `kinds`, such as `kinds.string`")]
     #[diagnostic(code(recipher::not_a_kind))]
     NotAKind,
-    /// A ciphertext that opened as another kind than the one named.
+    /// A ciphertext that decrypted to another kind than the one named.
     #[error("the value opened, but it was not sealed as the kind named, {kind}")]
     #[diagnostic(code(recipher::opened_type))]
     OpenedType { kind: ValueKind },
-    /// A ciphertext named JSON that opened as text that is not JSON.
+    /// A ciphertext named as JSON that decrypted to text that is not JSON.
     #[error("the value opened, but it is not a JSON document")]
     #[diagnostic(code(recipher::not_a_document))]
     NotADocument,
@@ -94,8 +103,8 @@ pub(crate) enum Error {
     #[error("a test cipher's seed is a Uint8Array of 32 bytes")]
     #[diagnostic(code(recipher::testing_seed))]
     TestingSeed,
-    /// `createTesting` in a build without the test cipher.
-    // A build with the test cipher never raises it.
+    /// `createTesting`, called in a build without the test cipher.
+    // A build with the test cipher never returns this error.
     #[cfg_attr(feature = "testing", allow(dead_code))]
     #[error("this native build has no test cipher")]
     #[diagnostic(
@@ -115,7 +124,7 @@ pub(crate) enum Error {
     #[error("a field is declared with encrypt(..) or passthrough()")]
     #[diagnostic(code(recipher::declaration))]
     Declaration,
-    /// A field named with a name the engine reserves.
+    /// A field whose name the engine reserves.
     #[error("the field's name is one the engine reserves")]
     #[diagnostic(code(recipher::reserved_field), help("Name the field something else."))]
     ReservedField,
@@ -123,15 +132,20 @@ pub(crate) enum Error {
     #[error("`{name}` is not one of `kinds`")]
     #[diagnostic(code(recipher::kind))]
     Kind { name: String },
-    /// A field's index that is not one the SDK names.
+    /// A field's index that is not one of the indexes the SDK names.
     #[error("`{name}` is not an index")]
     #[diagnostic(code(recipher::index))]
     Index { name: String },
-    /// A field's null mode that is not one the engine has.
+    /// A field's null mode that the engine does not have. A null mode says
+    /// how the engine stores a field's null.
     #[error("`{mode}` is not a null mode")]
     #[diagnostic(code(recipher::null), help("A null mode is `sealed` or `sql`."))]
     Null { mode: String },
     /// A field path that could not be written as a context.
+    ///
+    /// A context is a value that a ciphertext is bound to, and decrypting
+    /// needs the same context. A field's context is its field path: the
+    /// record's name, then the field's name.
     #[error("the field path could not be written")]
     #[diagnostic(code(recipher::context))]
     Context,
@@ -142,8 +156,10 @@ pub(crate) enum Error {
         help("Use a record name that is not empty and holds no character the engine refuses in a field path, such as `/`.")
     )]
     RecordName,
-    /// A field named that the record does not seal: no such field, a
-    /// passthrough field, or a name that is not a string.
+    /// A field name that the record does not encrypt. The record does not
+    /// declare the name, the name is a passthrough field's, or the name is
+    /// not a string. A passthrough field is stored as given, without
+    /// encryption.
     #[error("the record declares no sealed field of that name")]
     #[diagnostic(
         code(recipher::no_field),
@@ -158,7 +174,8 @@ pub(crate) enum Error {
     #[error("the value is not of the field's kind, {kind}, or does not fit it")]
     #[diagnostic(code(recipher::field_type))]
     FieldType { kind: ValueKind },
-    /// A stored row that does not have the record's shape.
+    /// A stored row that does not have the record's shape. A stored row is
+    /// what encrypting a row returns.
     #[error("the stored row does not have the record's shape: {what}")]
     #[diagnostic(code(recipher::not_a_stored_row))]
     NotAStoredRow { what: &'static str },
@@ -211,28 +228,34 @@ impl From<miette::Severity> for Severity {
 #[napi(object)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecipherErrorFields {
-    /// Stable: the diagnostic's code, such as `stack_encrypt::aead`,
-    /// vitaminc's code for a value it refused, such as `ERR_INTEGER_RANGE`,
-    /// or the SDK's own, such as `recipher::not_a_ciphertext`.
+    /// The error's code. A code is stable, so a caller can match on it.
+    /// The code is one of three kinds:
+    ///
+    /// - a diagnostic's code, such as the engine's `stack_encrypt::aead`;
+    /// - the code of vitaminc, CipherStash's cryptography library, for a
+    ///   value it refused, such as `ERR_INTEGER_RANGE`;
+    /// - the SDK's own code, such as `recipher::not_a_ciphertext`.
     pub code: String,
     /// What went wrong, in one line.
     pub message: String,
-    /// What to do about it, where the error knows.
+    /// What to do about the error, when the error says.
     pub help: Option<String>,
-    /// A documentation page for the error, where it has one.
+    /// A documentation page for the error, when it has one.
     pub url: Option<String>,
-    /// How serious it is: `error` unless the diagnostic says otherwise.
+    /// How serious the failure is. The severity is `error` unless the
+    /// diagnostic states another one.
     pub severity: Severity,
-    /// The error's structured fields, by `snake_case` name: a refused
-    /// plan's `field` and `reason`, a ZeroKMS failure's `request_kind`.
-    /// Empty where the error has none.
+    /// The error's structured fields, keyed by `snake_case` name. For
+    /// example, a refused plan has `field` and `reason`, and a ZeroKMS
+    /// failure has `request_kind`. A plan is the engine's rules for
+    /// encrypting a record. The map is empty when the error has no fields.
     pub fields: serde_json::Map<String, serde_json::Value>,
-    /// The errors behind this one, outermost first.
+    /// The errors that caused this one, outermost first.
     pub causes: Vec<ErrorCause>,
-    /// The field at fault, where one is known.
+    /// The field at fault, when it is known.
     pub field: Option<String>,
-    /// The record at fault, where one is known: a declaration, a row or a
-    /// stored row of it.
+    /// The record at fault, when it is known. The fault is in the record's
+    /// declaration, in a row of it, or in a stored row of it.
     pub record: Option<String>,
 }
 
@@ -240,30 +263,32 @@ pub struct RecipherErrorFields {
 #[napi(object)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ErrorCause {
-    /// The cause's code, where it is one of the engine's own errors.
+    /// The cause's code, when the cause is one of the engine's own errors.
     pub code: Option<String>,
-    /// The engine error's message. For an error from another library, the
-    /// fixed text `an error from another library`.
+    /// The message of the engine's error. For an error from another
+    /// library, the message is this fixed text:
+    /// `an error from another library`.
     pub message: String,
 }
 
-/// What a cause from another library is reported as.
+/// The message reported for a cause from another library.
 pub const UNDESCRIBED_CAUSE: &str = "an error from another library";
 
-/// How deep the cause chain is followed. A chain this long is a loop or a
-/// bug, and a bounded walk cannot be made to spin.
+/// The most causes the addon reads from a cause chain. A chain this long
+/// is a loop or a bug. The limit means a looping chain cannot make the walk
+/// run forever.
 const MAX_CAUSES: usize = 16;
 
-/// One link of a cause chain.
+/// One cause in a cause chain.
 enum Cause<'a> {
-    /// One of the engine's errors, reached as a diagnostic source.
+    /// One of the engine's errors, found as a diagnostic source.
     Ours(&'a dyn Diagnostic),
-    /// Anything reached as a plain source.
+    /// Any error found as a plain source.
     Foreign(&'a (dyn StdError + 'static)),
 }
 
-/// The cause after a diagnostic: its diagnostic source, or else its plain
-/// source.
+/// Returns the cause of a diagnostic: its diagnostic source if it has one,
+/// or else its plain source.
 fn next_of(diagnostic: &dyn Diagnostic) -> Option<Cause<'_>> {
     diagnostic
         .diagnostic_source()
@@ -271,8 +296,9 @@ fn next_of(diagnostic: &dyn Diagnostic) -> Option<Cause<'_>> {
         .or_else(|| diagnostic.source().map(Cause::Foreign))
 }
 
-/// The error's causes, in order. Once the chain leaves the diagnostics it
-/// follows plain sources to the end.
+/// Returns the error's causes, in order. After the first cause that is not
+/// a diagnostic, the walk follows only plain sources, to the end of the
+/// chain.
 fn causes_of(error: &dyn Diagnostic) -> Vec<ErrorCause> {
     let mut out = Vec::new();
     let mut next = next_of(error);
@@ -301,16 +327,17 @@ fn causes_of(error: &dyn Diagnostic) -> Vec<ErrorCause> {
 }
 
 impl RecipherErrorFields {
-    /// The failure for any diagnostic, with the structured fields of
-    /// `payload` where there is one. `field` is the payload's `field`, where
-    /// it names one.
+    /// Returns the failure for any diagnostic. The structured fields come
+    /// from `payload`, when there is one. The failure's `field` is the
+    /// payload's `field`, when the payload has one.
     pub(crate) fn diagnostic(
         error: &dyn Diagnostic,
         payload: Option<serde_json::Map<String, serde_json::Value>>,
     ) -> Self {
         let fields = payload.unwrap_or_default();
         Self {
-            // Every error the addon reports has a code; this is never seen.
+            // Every error the addon reports has a code, so JavaScript never
+            // receives this fallback.
             code: error
                 .code()
                 .map_or_else(|| "recipher::unknown".to_owned(), |code| code.to_string()),
@@ -328,25 +355,26 @@ impl RecipherErrorFields {
         }
     }
 
-    /// The failure for an engine error, with its structured fields.
+    /// Returns the failure for an engine error, with its structured fields.
     pub(crate) fn engine<E: ErrorPayload>(error: &E) -> Self {
         Self::diagnostic(error, Some(error.payload()))
     }
 
-    /// This failure, naming the record at fault.
+    /// Returns this failure, with the name of the record at fault.
     pub(crate) fn in_record(mut self, record: &str) -> Self {
         self.record = Some(record.to_owned());
         self
     }
 
-    /// This failure, naming the field at fault, or none.
+    /// Returns this failure, with the name of the field at fault, or with
+    /// no field.
     pub(crate) fn at_field(mut self, field: Option<&str>) -> Self {
         self.field = field.map(str::to_owned);
         self
     }
 
-    /// The engine's reason token, such as `no_fields`, where the error's
-    /// fields hold one.
+    /// Returns the engine's `reason` field, such as `no_fields`, when the
+    /// error's fields include one.
     pub(crate) fn reason(&self) -> Option<&str> {
         self.fields
             .get("reason")
@@ -369,8 +397,8 @@ mod tests {
     fn an_aead_failure_keeps_the_engine_code_message_and_help() {
         let error = RecipherErrorFields::engine(&stack_encrypt::Error::Aead);
         assert_eq!(error.code, "stack_encrypt::aead");
-        // The message is the engine's one line. Its help is a field of
-        // its own, never appended.
+        // The message is the engine's one-line message. The help is a
+        // separate field, and is never appended to the message.
         assert_eq!(error.message, stack_encrypt::Error::Aead.to_string());
         assert!(error
             .help
@@ -417,11 +445,13 @@ mod tests {
         assert_eq!(error.help.as_deref(), Some("try again"));
         assert_eq!(error.url.as_deref(), Some("https://example.com/outer"));
         assert_eq!(error.severity, Severity::Warning);
-        // Every payload field crosses, and `field` is also the typed one.
+        // Every payload field reaches the failure, and the payload's
+        // `field` also sets the typed `field`.
         assert_eq!(error.fields["count"], 3);
         assert_eq!(error.field.as_deref(), Some("age"));
-        // The engine's own cause keeps its code. The other library's is
-        // named as one and its message is not copied.
+        // The engine's own cause keeps its code. The other library's cause
+        // is reported as one from another library, and its message is not
+        // copied.
         assert_eq!(
             error.causes,
             [
@@ -451,8 +481,8 @@ mod tests {
         assert!(error.fields.is_empty() && error.causes.is_empty());
     }
 
-    /// One of every variant of [`Error`]. The match has no wildcard, so a
-    /// variant added without a row here does not compile.
+    /// Returns one of each variant of [`Error`]. The match has no wildcard,
+    /// so the crate does not compile when a new variant has no entry here.
     fn every_error() -> Vec<Error> {
         let name = || "x".to_owned();
         let all = vec![

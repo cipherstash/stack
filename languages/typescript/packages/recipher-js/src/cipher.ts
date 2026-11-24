@@ -1,14 +1,18 @@
 /**
- * `Cipher`, `Keyset` and `Ciphertext`: the native build's classes, with the
- * typed signatures TypeScript callers see.
+ * The `Cipher`, `Keyset`, and `Ciphertext` classes of the native addon, with
+ * the typed signatures that TypeScript callers see.
  *
- * The classes are written in Rust (`crate/src/cipher.rs` and
- * `crate/src/ciphertext.rs`), and `native.d.ts` declares them as napi-rs
- * generates them: untyped arguments, outcome objects. This module exports
- * the same classes, adapted by `adapt` so each method returns a `Result`,
- * under the signatures below, which say what a call takes and gives: one
- * value in and one ciphertext out, an array in and an array out, and the
- * type a ciphertext opens as.
+ * The classes are written in Rust, in `crate/src/cipher.rs` and
+ * `crate/src/ciphertext.rs`. `native.d.ts` declares them as napi-rs
+ * generates them: with untyped arguments, and returning outcome objects
+ * (`{ ok, value }` or `{ ok, error }`). This module exports the same classes
+ * after `adapt` has changed each method to return a `Result`.
+ *
+ * The signatures below say what each call takes and returns:
+ *
+ * - one value in gives one ciphertext out;
+ * - an array in gives an array out;
+ * - a ciphertext's type parameter is the type it decrypts to.
  */
 import { adapt, type Binding, binding, settleAsync } from './binding'
 import type { RecipherError } from './error'
@@ -25,36 +29,44 @@ import type { Opened, OpenedScalar, Value } from './values'
 declare const opens: unique symbol
 
 /**
- * One sealed value: opaque bytes, with its own data key.
+ * One encrypted value: opaque bytes, encrypted with a data key of its own.
  *
- * `T` is the type it decrypts to: `keyset.encrypt('..')` returns a
- * `Ciphertext<string>`. A ciphertext read from stored bytes with no kind
- * named opens as whatever it was sealed as, typed as any scalar.
+ * `T` is the type the ciphertext decrypts to. For example,
+ * `keyset.encrypt('..')` returns a `Ciphertext<string>`. A ciphertext read
+ * from stored bytes with no kind named decrypts to whatever type was
+ * encrypted. The type of such a ciphertext allows any scalar.
+ *
  * `toString()` and Node's `inspect` hide the bytes.
  */
 export interface Ciphertext<T = OpenedScalar> {
-  /** The bytes to store. A copy: changing it changes no ciphertext. */
+  /**
+   * The bytes to store. The array is a copy, so changing it does not change
+   * any ciphertext.
+   */
   toBytes(): Uint8Array
-  /** Names the type and hides the bytes. */
+  /** Text that names the type and hides the bytes. */
   toString(): string
-  /** Records `T`, which nothing at run time holds. */
+  /** Carries `T` for the type checker. The property never exists at run time. */
   readonly [opens]?: T
 }
 
 /** The `Ciphertext` class. */
 export interface CiphertextClass {
   readonly prototype: Ciphertext<unknown>
-  /** `value instanceof Ciphertext`. */
+  /** Whether `value` is a `Ciphertext`, for `value instanceof Ciphertext`. */
   [Symbol.hasInstance](value: unknown): value is Ciphertext<unknown>
   /**
-   * Read a ciphertext from stored bytes. This checks the bytes' shape only;
-   * decrypting is what authenticates them.
+   * Read a ciphertext from stored bytes. This method checks only the shape
+   * of the bytes. Decrypting checks that the bytes are genuine and
+   * unchanged.
    *
-   * With a kind, such as `kinds.string`, it opens as that kind, and
-   * decrypting refuses a value sealed as another type. Read a JSON
-   * document back with `kinds.json`: with no kind, it opens as its JSON
-   * text, and `JSON.parse` of that text loses the digits of an integer
-   * outside a `number`'s safe range.
+   * With a kind, such as `kinds.string`, the ciphertext decrypts to that
+   * kind. Decrypting then refuses a value that was encrypted as another
+   * type.
+   *
+   * Read a JSON document back with `kinds.json`. With no kind, the document
+   * decrypts to its JSON text. `JSON.parse` of that text loses the digits of
+   * an integer outside a `number`'s safe range.
    */
   fromBytes<K extends Kind>(
     bytes: Uint8Array,
@@ -64,16 +76,20 @@ export interface CiphertextClass {
 }
 
 /**
- * One keyset of a cipher. Every data key is made under one keyset, and a
+ * One keyset of a cipher. A keyset is a group of keys in ZeroKMS,
+ * CipherStash's key service. Every data key is made under one keyset. A
  * ciphertext names the keyset it was made under.
  */
 export interface Keyset {
   /**
-   * Encrypt a value, with no context, as one ciphertext with its own data
-   * key. The value's type picks how it is encrypted. An array of values is
-   * an array of ciphertexts, in the same order, made with one key request
-   * however long it is. All or nothing: one value refused is an `Err` for
-   * the whole array.
+   * Encrypt a value as one ciphertext, with a data key of its own and no
+   * context. A context is data that a ciphertext is bound to. The ciphertext
+   * decrypts only under the same context. The value's type decides how it is
+   * encrypted.
+   *
+   * An array of values gives an array of ciphertexts, in the same order. The
+   * whole array takes one key request to ZeroKMS, however long it is. If one
+   * value is refused, the whole array is an `Err`.
    */
   encrypt<V extends Value>(
     value: V,
@@ -82,9 +98,10 @@ export interface Keyset {
     values: readonly V[],
   ): Promise<Result<Ciphertext<Opened<V>>[], RecipherError>>
   /**
-   * Encrypt a row of a record, each field under its field path, or an
-   * array of rows in one key request. The stored row has, for each sealed
-   * field, its ciphertext and its index terms.
+   * Encrypt a row of a record, or an array of rows with one key request.
+   * Each field is encrypted under its field path: the record's name, then
+   * the field's name. For each encrypted field, the stored row has the
+   * field's ciphertext and its index terms.
    */
   encrypt<R extends RecordDeclaration>(
     record: R,
@@ -95,15 +112,16 @@ export interface Keyset {
     rows: readonly Plaintext<R>[],
   ): Promise<Result<Stored<R>[], RecipherError>>
   /**
-   * Open a ciphertext sealed under this keyset, or an array of them in one
-   * key request. A ciphertext from another keyset is an `Err` with the code
-   * `stack_encrypt::foreign_keyset`, refused before any key is requested.
+   * Decrypt a ciphertext made under this keyset, or an array of them with
+   * one key request. A ciphertext from another keyset is an `Err` with the
+   * code `stack_encrypt::foreign_keyset`. The keyset refuses it before any
+   * key is requested.
    */
   decrypt<T>(ciphertext: Ciphertext<T>): Promise<Result<T, RecipherError>>
   decrypt<T>(
     ciphertexts: readonly Ciphertext<T>[],
   ): Promise<Result<T[], RecipherError>>
-  /** Open a stored row of a record sealed under this keyset, or an array of them. */
+  /** Decrypt a stored row of a record made under this keyset, or an array of rows. */
   decrypt<R extends RecordDeclaration>(
     record: R,
     row: Stored<R>,
@@ -113,9 +131,9 @@ export interface Keyset {
     rows: readonly Stored<R>[],
   ): Promise<Result<Plaintext<R>[], RecipherError>>
   /**
-   * Encrypt one field of a record, for an update of that field: its stored
-   * form, as the field has it in a whole stored row. An array of values is
-   * an array of stored fields, in one key request.
+   * Encrypt one field of a record, to update that field. The stored field
+   * has the same form as that field in a whole stored row. An array of
+   * values gives an array of stored fields, with one key request.
    */
   encryptField<R extends RecordDeclaration, const F extends SealedFieldName<R>>(
     record: R,
@@ -127,7 +145,7 @@ export interface Keyset {
     field: F,
     values: readonly NoInfer<Plaintext<R>[F]>[],
   ): Promise<Result<Stored<R>[F][], RecipherError>>
-  /** Open one field of a stored row sealed under this keyset, or an array of them. */
+  /** Decrypt one field of a stored row made under this keyset, or an array of them. */
   decryptField<R extends RecordDeclaration, const F extends SealedFieldName<R>>(
     record: R,
     field: F,
@@ -138,41 +156,43 @@ export interface Keyset {
     field: F,
     stored: readonly NoInfer<Stored<R>[F]>[],
   ): Promise<Result<Plaintext<R>[F][], RecipherError>>
-  /** Names the type. */
+  /** Text that names the type. */
   toString(): string
 }
 
 /** The `Keyset` class. Get a keyset from `cipher.defaultKeyset()`. */
 export interface KeysetClass {
   readonly prototype: Keyset
-  /** `value instanceof Keyset`. */
+  /** Whether `value` is a `Keyset`, for `value instanceof Keyset`. */
   [Symbol.hasInstance](value: unknown): value is Keyset
 }
 
 /**
- * A cipher: the engine, and the keysets it reaches.
+ * A cipher: the Stack Encrypt engine, and the keysets it can use.
  *
- * Build one with `Cipher.create()`, or, in a test, with `testCipher()` from
- * `@cipherstash/recipher/testing`.
+ * Make one with `Cipher.create()`. In a test, make one with `testCipher()`
+ * from `@cipherstash/recipher/testing`.
  */
 export interface Cipher {
   /**
-   * The client's default keyset: the one a ZeroKMS administrator set for
-   * it. Encrypting needs a keyset.
+   * The client's default keyset: the keyset that a ZeroKMS administrator set
+   * for the client. The client is the ZeroKMS client whose credentials the
+   * cipher uses. Encrypting needs a keyset.
    */
   defaultKeyset(): Keyset
   /**
-   * Open a ciphertext from any of this cipher's keysets, as the type it
-   * opens as. An array opens as an array, in the same order, with one key
-   * request for each keyset its ciphertexts were sealed under.
+   * Decrypt a ciphertext from any of this cipher's keysets, to the type it
+   * was encrypted as. An array gives an array, in the same order. Decrypting
+   * an array takes one key request for each keyset that its ciphertexts were
+   * made under.
    */
   decrypt<T>(ciphertext: Ciphertext<T>): Promise<Result<T, RecipherError>>
   decrypt<T>(
     ciphertexts: readonly Ciphertext<T>[],
   ): Promise<Result<T[], RecipherError>>
   /**
-   * Open a stored row of a record, or an array of them. The opened row's
-   * `inspect` names its fields and hides their values.
+   * Decrypt a stored row of a record, or an array of rows. Node's `inspect`
+   * shows the decrypted row's field names and hides their values.
    */
   decrypt<R extends RecordDeclaration>(
     record: R,
@@ -182,7 +202,7 @@ export interface Cipher {
     record: R,
     rows: readonly Stored<R>[],
   ): Promise<Result<Plaintext<R>[], RecipherError>>
-  /** Open one field of a stored row, or an array of them, in one key request. */
+  /** Decrypt one field of a stored row, or an array of them with one key request. */
   decryptField<R extends RecordDeclaration, const F extends SealedFieldName<R>>(
     record: R,
     field: F,
@@ -193,16 +213,16 @@ export interface Cipher {
     field: F,
     stored: readonly NoInfer<Stored<R>[F]>[],
   ): Promise<Result<Plaintext<R>[F][], RecipherError>>
-  /** Names the type. */
+  /** Text that names the type. */
   toString(): string
 }
 
 /** Options for `Cipher.create`. */
 export interface CipherOptions {
   /**
-   * Records to check now, before any credential is looked for, so a
-   * declaration the engine refuses is an `Err` here rather than at its
-   * first use.
+   * Records to check when the cipher is created, before any credentials are
+   * looked for. A declaration that the engine refuses then gives an `Err`
+   * here, not at its first use.
    */
   records?: readonly RecordDeclaration[]
 }
@@ -210,13 +230,16 @@ export interface CipherOptions {
 /** The `Cipher` class. */
 export interface CipherClass {
   readonly prototype: Cipher
-  /** `value instanceof Cipher`. */
+  /** Whether `value` is a `Cipher`, for `value instanceof Cipher`. */
   [Symbol.hasInstance](value: unknown): value is Cipher
   /**
-   * A cipher over ZeroKMS, with the credentials it finds: the `CS_*`
-   * variables, then the profile that `stash auth login` writes. Resolves
-   * to an `Err` with the code `stack_encrypt::config` when there are none,
-   * and to the engine's refusal when it refuses one of `options.records`.
+   * Create a cipher that uses ZeroKMS. The cipher looks for credentials in
+   * the `CS_*` environment variables, then in the profile that
+   * `stash auth login` writes.
+   *
+   * Resolves to an `Err` with the code `stack_encrypt::config` when there
+   * are no credentials. Resolves to the engine's error when the engine
+   * refuses one of `options.records`.
    */
   create(options?: CipherOptions): Promise<Result<Cipher, RecipherError>>
 }
@@ -230,11 +253,12 @@ export interface Classes {
 }
 
 /**
- * A class, frozen, under the type this module gives it. For a native class,
- * `adapt` has replaced each method the type names with its form that
- * returns a `Result`; `type-tests/native.ts` checks that each is a method
- * the class has. A stand-in has the static methods its type names, and no
- * instances.
+ * Freeze a class, and give it the type that this module declares for it.
+ *
+ * For a native class, `adapt` has already replaced each method that the type
+ * names with a version that returns a `Result`. `type-tests/native.ts`
+ * checks that the class has each of those methods. A stand-in class has the
+ * static methods that its type names, and no instances.
  */
 function retyped<T>(cls: object): T {
   Object.freeze(cls)
@@ -242,7 +266,7 @@ function retyped<T>(cls: object): T {
   return cls as unknown as T
 }
 
-/** The native classes, adapted so each method returns a `Result`. */
+/** The native classes, after `adapt` has changed each method to return a `Result`. */
 function adapted(native: Binding): Classes {
   adapt(native.Cipher, { create: 'async' })
   adapt(native.Cipher.prototype, {
@@ -268,8 +292,9 @@ function adapted(native: Binding): Classes {
 }
 
 /**
- * Stand-ins for a native build that did not load: every call resolves to
- * the `Err` that says why, and `instanceof` is false for every value.
+ * Stand-in classes for when the native addon did not load. Every call
+ * resolves to the `Err` that says why the addon did not load. `instanceof`
+ * is false for every value.
  */
 function missing(error: RecipherError): Classes {
   return {
@@ -295,8 +320,8 @@ function missing(error: RecipherError): Classes {
 }
 
 /**
- * The classes for a native build, or the stand-ins for one that did not
- * load.
+ * The changed native classes when the addon loaded, or the stand-ins when
+ * it did not.
  */
 export function classesOf(loaded: Result<Binding, RecipherError>): Classes {
   return loaded.isOk() ? adapted(loaded.value) : missing(loaded.error)
@@ -305,9 +330,9 @@ export function classesOf(loaded: Result<Binding, RecipherError>): Classes {
 /** The classes this package exports. */
 export const classes: Classes = classesOf(binding)
 
-/** The `Cipher` class: the native build's, adapted. */
+/** The `Cipher` class: the native addon's class, with each method returning a `Result`. */
 export const Cipher: CipherClass = classes.Cipher
-/** The `Keyset` class: the native build's, adapted. */
+/** The `Keyset` class: the native addon's class, with each method returning a `Result`. */
 export const Keyset: KeysetClass = classes.Keyset
-/** The `Ciphertext` class: the native build's, adapted. */
+/** The `Ciphertext` class: the native addon's class, with each method returning a `Result`. */
 export const Ciphertext: CiphertextClass = classes.Ciphertext

@@ -1,9 +1,10 @@
 /**
- * `RecipherError`: every failure, as a value.
+ * `RecipherError`: the error that a failed call returns, as a value.
  *
- * The native build defines the error's fields (`RecipherErrorFields`, in the
- * generated `native.d.ts`) and every error it reports. This class exists in
- * TypeScript because an error has to exist when the native build did not
+ * The native addon is the compiled Rust code that this package loads. The
+ * addon defines the error's fields (`RecipherErrorFields`, in the generated
+ * `native.d.ts`), and every error the addon reports. This class is written
+ * in TypeScript because an error must still exist when the addon did not
  * load.
  */
 import type { ErrorCause, RecipherErrorFields, Severity } from '../native'
@@ -11,28 +12,32 @@ import type { ErrorCause, RecipherErrorFields, Severity } from '../native'
 export type { ErrorCause, RecipherErrorFields, Severity }
 
 /**
- * A failure, as a value. Every call that fails resolves to an `Err` holding
- * one; none throws.
+ * A failure, as a value. Every call that fails resolves to an `Err` that
+ * contains a `RecipherError`. No call throws.
  *
- * - `code` is stable, and is what to switch on: the engine's diagnostic
- *   code, such as `stack_encrypt::aead`, vitaminc's code for a value it
- *   refused, such as `ERR_INTEGER_RANGE`, or the SDK's own, such as
- *   `recipher::not_a_ciphertext`.
+ * - `code` is the code to switch on. It is stable. It is one of these:
+ *   - the engine's error code, such as `stack_encrypt::aead`;
+ *   - vitaminc's code for a value it refused, such as `ERR_INTEGER_RANGE`.
+ *     vitaminc is the CipherStash Rust library that the engine's plaintext
+ *     types come from;
+ *   - the SDK's own code, such as `recipher::not_a_ciphertext`.
  * - `message` says what went wrong, in one line.
- * - `help` says what to do about it, and `url` is a documentation page for
- *   the error, where the error has them.
- * - `severity` is `error`, unless the engine's diagnostic states `warning`
- *   or `advice`.
- * - `fields` holds the error's structured fields by `snake_case` name, and
- *   is empty where it has none: a refused declaration's `reason`, a
- *   ZeroKMS failure's `request_kind`.
+ * - `help` says what to do about it, where the error knows.
+ * - `url` is a documentation page for the error, where it has one.
+ * - `severity` is `error`, unless the engine's error report states
+ *   `warning` or `advice`.
+ * - `fields` contains the error's structured fields, by `snake_case` name.
+ *   Examples are a refused declaration's `reason` and a ZeroKMS failure's
+ *   `request_kind`. `fields` is empty when the error has no structured
+ *   fields.
  * - `field` names the field at fault, where one is known.
- * - `record` names the record a declaration, a row or a stored row is of.
+ * - `record` names the record that the failed declaration, row, or stored
+ *   row belongs to.
  * - `causes` lists the errors behind this one, outermost first. A cause
- *   from another library has no code and a fixed message.
+ *   from another library has no code, and a fixed message.
  *
- * No property, and no text it gives, holds a plaintext, a key, a token or a
- * ciphertext.
+ * No property, and no text that the error gives, contains a plaintext, a
+ * key, a token, or a ciphertext.
  */
 export class RecipherError {
   readonly code: string
@@ -63,7 +68,7 @@ export class RecipherError {
     Object.freeze(this)
   }
 
-  /** The code and message, then the help where there is one. */
+  /** Text with the code and the message, then the help where there is one. */
   toString(): string {
     const text = `RecipherError(${this.code}): ${this.message}`
     return this.help === undefined ? text : `${text}\nhelp: ${this.help}`
@@ -71,8 +76,10 @@ export class RecipherError {
 }
 
 /**
- * The error of a native outcome. The native build writes it, so this only
- * checks that it has the shape.
+ * Make a `RecipherError` from the error in a native outcome. A native
+ * outcome is the object a native method returns: `{ ok, value }` or
+ * `{ ok, error }`. The addon writes the error, so this function only checks
+ * the error's shape.
  */
 export function fromNative(error: unknown): RecipherError {
   const { code, message, help, url, severity, fields, causes, field, record } =
@@ -101,7 +108,10 @@ export function fromNative(error: unknown): RecipherError {
   })
 }
 
-/** A cause of the shape the native build writes, or nothing. */
+/**
+ * The cause, in a one-item array, when it has the shape that the addon
+ * writes. Otherwise, an empty array.
+ */
 function causeOf(cause: unknown): ErrorCause[] {
   if (typeof cause !== 'object' || cause === null) {
     return []
@@ -114,9 +124,9 @@ function causeOf(cause: unknown): ErrorCause[] {
 }
 
 /**
- * An error the TypeScript raises itself, for a native build that did not
- * load or did not answer as it should. Every other error is the native
- * build's.
+ * An error that the TypeScript makes itself. The TypeScript makes one when
+ * the addon did not load, or when the addon did not return what it should.
+ * The addon makes every other error.
  */
 export function sdkError(code: string, message: string): RecipherError {
   return new RecipherError({ code, message })

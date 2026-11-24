@@ -1,6 +1,7 @@
-//! Records through the crate against the engine: the plan built from a
-//! declaration, rows in and stored rows out, and what the engine's typed
-//! API reads of them.
+//! Tests of records through the crate against the engine. The tests cover
+//! the plan built from a declaration, and rows encrypted to stored rows and
+//! back. The tests also cover what the engine's typed Rust API reads from
+//! stored rows.
 
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -42,7 +43,8 @@ fn users() -> Arc<RecordPlan> {
     .unwrap()
 }
 
-/// A row as JavaScript hands it over: an integer at its narrowest width.
+/// A row in the form JavaScript passes it, with an integer at its narrowest
+/// width.
 fn row(age: Option<i8>, notes: Option<&str>) -> ValueFrame {
     let id = ValueFrame::of(7u64).unwrap();
     let email = ValueFrame::of("ada@example.com").unwrap();
@@ -161,7 +163,7 @@ async fn one_field_opens_alone_and_a_field_alone_opens_through_the_engine() {
     let cipher = engine().await;
     let email = users().field("email").unwrap();
 
-    // A field of a whole row opens through the field's own plan.
+    // A field of a whole row decrypts through the field's own plan.
     let stored = seal_rows(&cipher.default_keyset(), users(), vec![row(Some(36), None)])
         .await
         .unwrap()
@@ -176,8 +178,8 @@ async fn one_field_opens_alone_and_a_field_alone_opens_through_the_engine() {
         ValueFrame::of("ada@example.com").unwrap()
     );
 
-    // A field sealed alone opens through the engine's typed API under its
-    // field path.
+    // A field encrypted on its own decrypts through the engine's typed API,
+    // under its field path.
     let value = ValueFrame::of("grace@example.com").unwrap();
     let row = conform_row(&email, &one_field_row("email", &value).unwrap()).unwrap();
     let sealed = seal_rows(&cipher.default_keyset(), email, vec![row])
@@ -280,7 +282,7 @@ fn a_bad_record_name_is_the_records_fault_and_a_bad_field_name_the_fields() {
     assert_eq!(bad_field.record.as_deref(), Some("users"));
 }
 
-/// A deterministic key source that counts the key requests it is sent.
+/// A deterministic key source that counts the key requests it receives.
 struct Counting {
     inner: DeterministicSource,
     generates: AtomicUsize,
@@ -345,7 +347,8 @@ async fn many_rows_and_many_fields_alone_are_one_key_request_each_way() {
     let _ = open_rows(&cipher, users(), stored).await.unwrap();
     assert_eq!(cipher.kms().retrieves.load(Ordering::SeqCst), 1);
 
-    // Three values of one field, as `encryptField` seals an array of them.
+    // Three values of one field, as `encryptField` encrypts an array of
+    // them.
     let email = users().field("email").unwrap();
     let rows = ["a", "b", "c"]
         .into_iter()

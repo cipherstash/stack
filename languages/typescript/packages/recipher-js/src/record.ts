@@ -1,6 +1,6 @@
 /**
- * Records: a declaration of fields, each encrypted, encrypted and indexed,
- * or passed through.
+ * Records: declarations of a row's fields. Each field is encrypted,
+ * encrypted with indexes, or passed through unencrypted.
  *
  * ```ts
  * import { encrypt, kinds, passthrough, record } from '@cipherstash/recipher'
@@ -14,32 +14,42 @@
  * })
  * ```
  *
- * A declaration is plain, frozen data: `{ type: 'record', name, fields }`,
- * each field with its own declaration. The native build reads it, builds
- * the engine's plan from it once, and checks it then: when a cipher first
- * uses it, or when `Cipher.create({ records })` or `checkDeclarations(..)`
- * is called. The types below are what TypeScript checks a row against.
+ * A declaration is a plain, frozen object: `{ type: 'record', name, fields }`,
+ * with a declaration for each field. The native addon reads the declaration
+ * and builds the engine's plan from it, once. The engine checks the
+ * declaration at that time. That happens when a cipher first uses the
+ * declaration, or when `Cipher.create({ records })` or
+ * `checkDeclarations(..)` is called.
+ *
+ * TypeScript checks a row against the types below.
  */
 import { binding, settle } from './binding'
 import type { RecipherError } from './error'
 import type { Kind, ValueOf } from './kinds'
 import { err, type Result } from './result'
 
-/** An index a sealed field stores beside its ciphertext. */
+/**
+ * An index that an encrypted field stores beside its ciphertext. An index
+ * stores index terms: bytes that a search can compare without decrypting the
+ * field.
+ */
 export type Index = 'equality' | 'match' | 'ore' | 'ope'
 
 /**
- * How a field stores a value that is not there.
+ * How a field stores a missing value.
  *
- * - `sealed`: the null is sealed like a value, as long as one, so the
- *   stored row does not show which rows have none. For a field of fixed
- *   width (a boolean, a number, a date, a timestamp or a decimal) whose
- *   only index is `equality`.
+ * - `sealed`: the null is encrypted like a value, to the same length as a
+ *   value. The stored row does not show which rows have no value. Only for
+ *   a field of fixed width whose only index is `equality`. The fixed-width
+ *   fields are a boolean, a number, a date, a timestamp, and a decimal.
  * - `sql`: the stored row has `null` for the field, as SQL `NULL` does.
  */
 export type NullMode = 'sealed' | 'sql'
 
-/** A field that is encrypted, and indexed if it names indexes. */
+/**
+ * A field that is encrypted, and indexed if it names indexes. The code calls
+ * an encrypted field a sealed field.
+ */
 export interface SealedField<
   K extends Kind = Kind,
   I extends readonly Index[] = readonly Index[],
@@ -52,14 +62,14 @@ export interface SealedField<
 }
 
 /**
- * A field passed through as it is: **not encrypted and not
- * authenticated.** Anyone with the stored row can read it, change it or
- * remove it, and the sealed fields still decrypt. Use it only for values
- * that are not secret, and treat the value read back as untrusted.
+ * A field stored as it is: **not encrypted and not authenticated.** Anyone
+ * with the stored row can read the field, change it, or remove it. The
+ * encrypted fields still decrypt after that. Use a passthrough field only
+ * for values that are not secret. Treat the value read back as untrusted.
  */
 export interface PassthroughField<T = unknown> {
   readonly type: 'passthrough'
-  /** Records `T`, which nothing at run time holds. */
+  /** Carries `T` for the type checker. The property never exists at run time. */
   readonly __value?: T
 }
 
@@ -73,11 +83,14 @@ export interface SealedOptions<
 > {
   /** The indexes the field stores. */
   index?: I
-  /** How the field stores a null. With none, every row needs a value. */
+  /**
+   * How the field stores a null. Without this option, every row needs a
+   * value for the field.
+   */
   null?: N
 }
 
-/** An encrypted field of `kind`. */
+/** An encrypted field of the kind `kind`. */
 export function encrypt<
   K extends Kind,
   const I extends readonly Index[] = readonly [],
@@ -85,8 +98,9 @@ export function encrypt<
 >(
   kind: K,
   options: SealedOptions<I, N> = {},
-  // `NoInfer`: what a field declares is read from `options` alone, never from
-  // the type a caller's context expects, which names every index and mode.
+  // `NoInfer`: TypeScript reads what a field declares from `options` only.
+  // TypeScript never takes it from the type that the caller's code expects.
+  // That type names every index and every null mode.
 ): SealedField<K, NoInfer<I>, NoInfer<N>> {
   const index = Object.freeze([...(options.index ?? [])])
   const field =
@@ -102,14 +116,17 @@ export function passthrough<T>(): PassthroughField<T> {
   return Object.freeze({ type: 'passthrough' })
 }
 
-/** A record's declaration: plain, frozen data. */
+/** A record's declaration: a plain, frozen object. */
 export interface RecordDeclaration<
   Name extends string = string,
   F extends { readonly [field: string]: Field } = {
     readonly [field: string]: Field
   },
 > {
-  /** Marks a declaration, for every copy of the package. */
+  /**
+   * Marks the object as a declaration. Every copy of the package reads this
+   * marker, including the ESM build and the CommonJS build.
+   */
   readonly type: 'record'
   /** The record's name: the first part of each field's context. */
   readonly name: Name
@@ -119,7 +136,9 @@ export interface RecordDeclaration<
 
 /**
  * A record named `name`, with `fields`. Each field's context is its field
- * path: the record's name, then the field's name.
+ * path: the record's name, then the field's name. A context is data that a
+ * ciphertext is bound to. The ciphertext decrypts only under the same
+ * context.
  */
 export function record<
   const Name extends string,
@@ -132,7 +151,7 @@ export function record<
   })
 }
 
-/** The plaintext row of a record. A field that takes a null may be `null`. */
+/** The plaintext row of a record. A field that takes a null can be `null`. */
 export type Plaintext<R> =
   R extends RecordDeclaration<string, infer F>
     ? {
@@ -148,15 +167,16 @@ export type Plaintext<R> =
       }
     : never
 
-/** A sealed field as it is stored: its ciphertext and its index terms. */
+/** An encrypted field as it is stored: its ciphertext and its index terms. */
 export type StoredField<I extends readonly Index[] = readonly Index[]> = {
   readonly ciphertext: Uint8Array
 } & { readonly [X in I[number]]: Uint8Array }
 
 /**
- * The stored row of a record: for each sealed field its ciphertext and
- * terms, each opaque bytes; for each passthrough field its value. A field
- * that stores a null as SQL `NULL` is `null` for an absent value.
+ * The stored row of a record. Each encrypted field has its ciphertext and
+ * its index terms, each as opaque bytes. Each passthrough field has its
+ * value. A field that stores a null as SQL `NULL` is `null` when its value
+ * is missing.
  */
 export type Stored<R> =
   R extends RecordDeclaration<string, infer F>
@@ -173,7 +193,7 @@ export type Stored<R> =
       }
     : never
 
-/** The field names of a record whose fields are sealed. */
+/** The names of a record's encrypted fields. */
 export type SealedFieldName<R> =
   R extends RecordDeclaration<string, infer F>
     ? {
@@ -183,9 +203,11 @@ export type SealedFieldName<R> =
     : never
 
 /**
- * Check declarations with the engine, with no credentials and no request:
- * for a test or a CI step. The first refusal is the `Err`, naming the
- * record and, where there is one, the field.
+ * Check declarations with the engine, with no credentials and no network
+ * request. Use it in a test or a continuous integration (CI) step.
+ *
+ * The `Err` is the first refusal. The error names the record and, where
+ * there is one, the field.
  */
 export function checkDeclarations(
   declarations: readonly RecordDeclaration[],
