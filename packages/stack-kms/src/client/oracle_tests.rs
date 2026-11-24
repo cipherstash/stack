@@ -29,7 +29,6 @@ use super::*;
 use crate::connection::ZeroKMSConnectionInit;
 use crate::key::V1KeySet;
 use proptest::prelude::*;
-use recipher::keyset::{EncryptionKeySet, ProxyKeySet};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::future::Future;
@@ -38,6 +37,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::Duration;
+use zerokms_keyset::keyset::{EncryptionKeySet, ProxyKeySet};
 use zerokms_protocol::{
     GenerateKeyResponse, GeneratedKey, KeyId, RetrieveKeyResponse, RetrieveKeyResponseFallible,
     RetrievedKey, ViturKeyMaterial, ViturRequestErrorKind,
