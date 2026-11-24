@@ -49,12 +49,14 @@ go vet ./...
 CGO_ENABLED=0 go test -v ./auth -run '^TestDeviceRefresh'
 # A producer must execute even if Go has cached a previous successful run.
 # The guest paths have been checked; reuse positional arguments for test flags.
-# Unlike an empty array, "$@" is safe under nounset in macOS's Bash 3.2.
 #
-# Each package gets 25 minutes, inside the macOS and Windows jobs' 30, not go
-# test's default of 10. The encrypt package alone takes 300 to 600 seconds
-# on a Windows runner, depending on the runner, so at the default it failed
-# on the slow ones with a timeout in whichever test was running.
+# Each of the main module's packages gets 25 minutes, not go test's default
+# of 10. The encrypt package alone takes 300 to 600 seconds on a Windows
+# runner, depending on the runner, so at the default it failed on the slow
+# ones with a timeout in whichever test was running. The main module's tests
+# start about two minutes into the macOS and Windows jobs' 30, so a package
+# that hangs still gets go test's goroutine dump before the job is
+# cancelled. The nested modules below get less (nested_timeout).
 set -- -timeout=25m
 if [[ -n "${STACK_CONFORMANCE_OUTPUT:-}" ]]; then
   set -- "$@" -count=1
@@ -75,10 +77,20 @@ fi
 # directory with its own go.mod, so each is vetted and tested in turn.
 # go-nested-modules.sh lists them for every tool that needs to. gofmt above
 # already walked their files.
+#
+# Their tests take seconds, and they start after the main module's, up to
+# about 12 minutes into a 30-minute job on a slow runner. Each package gets
+# 5 minutes, so one that hangs is dumped by go test, not cancelled silently
+# with the job.
+nested_timeout=5m
 "$scripts/go-nested-modules.sh" | while IFS= read -r nested; do
   echo "nested module $nested"
   (
     cd "$nested"
+    set -- -timeout="$nested_timeout"
+    if [[ -n "${STACK_CONFORMANCE_OUTPUT:-}" ]]; then
+      set -- "$@" -count=1
+    fi
     go vet ./...
     CGO_ENABLED=0 go test "$@" ./...
     if [ "$(uname -s)" = "Linux" ]; then
