@@ -57,7 +57,11 @@
 // caller, as a panic in a net/http handler does, and the store stays open.
 // Code that ignores its context is left running when the caller's context
 // ends: the call fails with the context's error, the store's next call goes
-// ahead, and what the code returns later is discarded.
+// ahead, and what the code returns later is discarded. At most four such
+// calls are left running for a store; past that a call fails at once with
+// [ErrTransport] until one returns. A device session's refresh is waited
+// for until the 30-second backstop instead, so the rotated refresh token
+// the service sends back is kept.
 //
 // # Why a second guest
 //

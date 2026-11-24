@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -278,12 +280,16 @@ func TestATokenRequestWhoseContextEndsInTheQueueNeverReachesTheGuest(t *testing.
 // the profile or hold its lock past the caller.
 
 // modalRoundTripper sends each request through next, or, while mode says
-// so, panics or hangs until release closes, ignoring the request's context.
+// so, panics, or hangs until release closes, or answers late. Each of those
+// ignores the request's context, and keeps the request's body to check.
 type modalRoundTripper struct {
 	next     http.RoundTripper
-	mode     atomic.Value // "", "panic" or "hang"
+	mode     atomic.Value // "", "panic", "hang" or "late"
 	release  chan struct{}
+	started  atomic.Int32 // hung requests
 	finished atomic.Int32 // hung requests that have returned
+	mu       sync.Mutex
+	bodies   []*authRequestBody
 }
 
 func newModalRoundTripper(next http.RoundTripper) *modalRoundTripper {
@@ -293,15 +299,58 @@ func newModalRoundTripper(next http.RoundTripper) *modalRoundTripper {
 }
 
 func (m *modalRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
-	switch m.mode.Load() {
+	mode := m.mode.Load()
+	if mode != "" {
+		if body, ok := r.Body.(*authRequestBody); ok {
+			m.mu.Lock()
+			m.bodies = append(m.bodies, body)
+			m.mu.Unlock()
+		}
+	}
+	switch mode {
 	case "panic":
 		panic("roundtripper panic")
 	case "hang":
+		m.started.Add(1)
 		<-m.release
 		m.finished.Add(1)
 		return nil, errors.New("too late")
+	case "late":
+		// Answers after the refresh grace, whatever the request's context.
+		time.Sleep(300 * time.Millisecond)
+		return m.next.RoundTrip(r.WithContext(context.Background()))
 	}
 	return m.next.RoundTrip(r)
+}
+
+// wantWiped fails unless every request body the RoundTripper kept was
+// closed and wiped.
+func (m *modalRoundTripper) wantWiped(t *testing.T) {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.bodies) == 0 {
+		t.Fatal("the RoundTripper kept no request body")
+	}
+	for i, b := range m.bodies {
+		b.mu.Lock()
+		closed, wiped := b.closed, bytes.Equal(b.buf, make([]byte, len(b.buf)))
+		b.mu.Unlock()
+		if !closed || !wiped {
+			t.Errorf("request body %d: closed %v, wiped %v; the access key is still in it", i, closed, wiped)
+		}
+	}
+}
+
+// eventually waits up to 5 seconds for cond.
+func eventually(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); !cond(); {
+		if time.Now().After(deadline) {
+			t.Fatalf("still waiting for %s", what)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // accessKeyWith builds an access-key strategy whose requests go through rt
@@ -350,6 +399,7 @@ func TestARoundTripperPanicDuringATokenRequestReachesTheCaller(t *testing.T) {
 		t.Fatalf("Token: got panic %v (err %v), want the RoundTripper's panic", p, err)
 	}
 	wantProfileOpen(t, profile)
+	rt.wantWiped(t)
 	rt.mode.Store("")
 	if token, err := strategy.Token(context.Background()); err != nil || token == "" {
 		t.Fatalf("the next Token: %q, %v", token, err)
@@ -358,17 +408,25 @@ func TestARoundTripperPanicDuringATokenRequestReachesTheCaller(t *testing.T) {
 
 // A RoundTripper that ignores its request's context: the caller's Token
 // returns at its deadline, the next caller is not held behind the hung
-// request, and the profile stays open. The hung request used to hold the
-// profile's lock until it returned, and the stuck-call backstop then closed
-// the profile (#1795). The backstop is short here, so a guest call still
-// waiting on the request would trip it.
+// request, the request body is wiped, and the profile stays open. Once the
+// RoundTripper returns, nothing is left running. The hung request used to
+// hold the profile's lock until it returned, and the stuck-call backstop
+// then closed the profile (#1795). The backstop is short here: wazero
+// cannot stop a host function, but a guest call that came back from one
+// after it fired would close the profile.
 func TestATokenRequestWhoseRoundTripperIgnoresItsContextEndsAtTheDeadline(t *testing.T) {
 	guestOrSkip(t)
 	rt := newModalRoundTripper(http.DefaultTransport)
 	profile, strategy := accessKeyWith(t, rt)
 	profile.root.stuck = 20 * time.Millisecond
+	before := runtime.NumGoroutine()
 	rt.mode.Store("hang")
-	defer close(rt.release)
+	released := false
+	defer func() {
+		if !released {
+			close(rt.release)
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	start := time.Now()
@@ -389,6 +447,154 @@ func TestATokenRequestWhoseRoundTripperIgnoresItsContextEndsAtTheDeadline(t *tes
 		t.Fatalf("%d hung request(s) returned early", n)
 	}
 	wantProfileOpen(t, profile)
+	rt.wantWiped(t)
+	close(rt.release)
+	released = true
+	eventually(t, "the hung request to return", func() bool { return rt.finished.Load() == 1 })
+	// The next Token's request left a keep-alive connection, whose
+	// goroutines are not the hung call's.
+	eventually(t, "the goroutines left behind to end", func() bool {
+		http.DefaultTransport.(*http.Transport).CloseIdleConnections()
+		return runtime.NumGoroutine() <= before
+	})
+}
+
+// Callers that give up leave hung code running, but only maxAbandoned
+// calls of it: past that a call fails at once, as a transport failure,
+// without calling the RoundTripper. Once they return, nothing is left
+// running and calls go through again.
+func TestHungRequestsLeftRunningAreCapped(t *testing.T) {
+	guestOrSkip(t)
+	rt := newModalRoundTripper(http.DefaultTransport)
+	profile, strategy := accessKeyWith(t, rt)
+	before := runtime.NumGoroutine()
+	rt.mode.Store("hang")
+	released := false
+	defer func() {
+		if !released {
+			close(rt.release)
+		}
+	}()
+	for range 3 * maxAbandoned {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		_, _ = strategy.Token(ctx)
+		cancel()
+	}
+	if n := rt.started.Load(); n != maxAbandoned {
+		t.Fatalf("%d hung requests, want %d", n, maxAbandoned)
+	}
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := strategy.Token(ctx); !errors.Is(err, ErrTransport) {
+		t.Fatalf("Token with %d requests hung: %v, want ErrTransport", maxAbandoned, err)
+	}
+	if waited := time.Since(start); waited > time.Second {
+		t.Fatalf("Token with the limit reached took %v, want at once", waited)
+	}
+	if n := rt.started.Load(); n != maxAbandoned {
+		t.Fatalf("the RoundTripper was called %d times, want %d: the limit did not hold", n, maxAbandoned)
+	}
+	wantProfileOpen(t, profile)
+	close(rt.release)
+	released = true
+	eventually(t, "the hung requests to return", func() bool { return rt.finished.Load() == maxAbandoned })
+	eventually(t, "the goroutines left behind to end", func() bool { return runtime.NumGoroutine() <= before })
+	rt.mode.Store("")
+	if token, err := strategy.Token(context.Background()); err != nil || token == "" {
+		t.Fatalf("the next Token: %q, %v", token, err)
+	}
+}
+
+// A refresh whose RoundTripper ignores its context and answers after the
+// refresh grace: the answer still reaches the guest, so the rotated
+// refresh token is kept and the next Token is served from it.
+func TestARefreshAnsweredAfterTheGraceByARoundTripperThatIgnoresItsContextIsKept(t *testing.T) {
+	guestOrSkip(t)
+	dir, _ := expiredDeviceProfile(t)
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) > 1 {
+			// The old refresh token is retired once the service answers.
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":"invalid_grant"}`)
+			return
+		}
+		_, _ = io.Copy(io.Discard, r.Body)
+		fmt.Fprint(w, `{"access_token":"fresh","token_type":"Bearer","expires_in":3600,"refresh_token":"refresh-2"}`)
+	}))
+	t.Cleanup(server.Close)
+	rt := newModalRoundTripper(http.DefaultTransport)
+	profile, err := Open(context.Background(), dir, WithRoundTripper(rt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profile.Close()
+	profile.root.inst.transport.grace = 100 * time.Millisecond
+	ws, err := profile.WorkspaceStore(context.Background(), wsA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	strategy, err := ws.DeviceSession(context.Background(), WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strategy.Close()
+
+	rt.mode.Store("late")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if _, err := strategy.Token(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("cancelled Token: %v, want the deadline", err)
+	}
+	eventually(t, "the late answer", func() bool { return requests.Load() == 1 })
+	rt.mode.Store("")
+	if token, err := strategy.Token(context.Background()); err != nil || token != "fresh" {
+		t.Fatalf("the next Token: %q, %v, want the refreshed token", token, err)
+	}
+	if n := requests.Load(); n != 1 {
+		t.Fatalf("%d refresh requests, want 1: the late answer was dropped", n)
+	}
+}
+
+// The backstop: a refresh is waited for until the stuck-call backstop,
+// past its grace, and one still hung then closes the profile. The caller
+// has returned by then; the next call is ErrState.
+func TestARefreshStillHungAtTheBackstopClosesTheProfile(t *testing.T) {
+	guestOrSkip(t)
+	dir, _ := expiredDeviceProfile(t)
+	rt := newModalRoundTripper(http.DefaultTransport)
+	defer close(rt.release)
+	profile, err := Open(context.Background(), dir, WithRoundTripper(rt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profile.Close()
+	profile.root.stuck = 50 * time.Millisecond
+	ws, err := profile.WorkspaceStore(context.Background(), wsA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	strategy, err := ws.DeviceSession(context.Background(), WithBaseURL("https://cts.example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strategy.Close()
+
+	rt.mode.Store("hang")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := strategy.Token(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stuck Token: %v, want the deadline", err)
+	}
+	eventually(t, "the backstop to close the profile", func() bool {
+		profile.root.mu.Lock()
+		defer profile.root.mu.Unlock()
+		return profile.root.closed || profile.root.inst.module.IsClosed()
+	})
+	if _, err := strategy.Token(context.Background()); !errors.Is(err, ErrState) {
+		t.Fatalf("a Token after the backstop: %v, want ErrState", err)
+	}
 }
 
 // An OIDC provider is the application's code too: one that panics reaches

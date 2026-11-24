@@ -277,8 +277,10 @@ func (s *ProfileStore) callArgs(ctx context.Context, fn export, args ...guest.Ar
 	}
 	// A panic of the application's code in a host function reaches the
 	// caller here, once the guest has failed the call as it fails a
-	// transport failure, and the profile stays open.
-	panicked.raise()
+	// transport failure, and the profile stays open. The guest can still
+	// succeed (a refresh that failed falls back to a cached token), so what
+	// it returned is wiped first.
+	panicked.raise(func() { guest.Wipe(out) })
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
 			err = fmt.Errorf("%w: %w", ctxErr, err)

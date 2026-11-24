@@ -250,20 +250,26 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   wiped when it is closed.
 
 - **A panic or a hang in the application's code during a token request no
-  longer closes the credentials** (#1793, #1795). The `auth` package calls
-  the application's own code during a credential call: the
+  longer closes the auth profile** (#1793, #1795). The `auth` package calls
+  the application's own code during a call to its profile: the
   `http.RoundTripper` given to `auth.WithRoundTripper` (or to
   `encrypt.WithTransport`, which passes it on), and an `OIDCProvider`.
   - A panic there was recovered by wazero as a guest trap. That closed the
     profile for good, and the caller never saw the panic. Every later call
-    that needed a token failed until the application built new
-    credentials. Now the panic reaches the caller, which can recover it, as
+    that needed a token failed until the application opened the profile
+    again. Now the panic reaches the caller, which can recover it, as
     `net/http` does in each handler, and the profile stays open.
   - A RoundTripper or provider that ignored its context held the profile's
     lock until it returned, so every caller that needed a token waited
     behind it. After 30 seconds the stuck-call backstop closed the profile.
     Now the call returns at its caller's deadline, other callers go on, and
-    what the hung code returns later is discarded.
+    what the hung code returns later is discarded. At most 4 such calls are
+    left running per profile; past that a call fails at once, with
+    `ErrTransport`, until one returns. A device session's refresh is the
+    exception: it is waited for until the backstop, so a rotated refresh
+    token that comes back late is still kept.
+  - Either way, the request body, which carries the access key or the
+    refresh grant, is wiped.
 
 ## [0.1.0-rc.6] - 2026-11-18
 

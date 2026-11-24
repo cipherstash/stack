@@ -272,42 +272,20 @@ func (s *Strategy) Token(ctx context.Context) (string, error) {
 	// OIDCProvider) is raised again on the caller's goroutine, as callArgs
 	// raises it, rather than ending the process from this one. A caller that
 	// has left does not get it.
-	type result struct {
-		token    string
-		err      error
-		panicked bool
-		panic    any
-	}
-	done := make(chan result, 1)
-	go func() {
+	ctx, panicked := withHostPanic(ctx)
+	token, err := callApplication(ctx, nil, func() (string, error) {
 		defer s.mu.Unlock()
-		defer func() {
-			if p := recover(); p != nil {
-				done <- result{panicked: true, panic: p}
-			}
-		}()
 		ctx, status := withAuthHTTPStatus(ctx)
 		token, err := s.token(ctx)
-		done <- result{token: token, err: status.wrap(err)}
-	}()
-	answer := func(r result) (string, error) {
-		if r.panicked {
-			panic(r.panic)
-		}
-		return r.token, r.err
+		return token, status.wrap(err)
+	}, nil)
+	panicked.raise(nil)
+	if errors.Is(err, errAbandoned) {
+		// The caller sees its context's error, as when it waits anywhere
+		// else.
+		return "", ctx.Err()
 	}
-	select {
-	case r := <-done:
-		return answer(r)
-	case <-ctx.Done():
-		// A call that finished as the context ended still answers.
-		select {
-		case r := <-done:
-			return answer(r)
-		default:
-			return "", ctx.Err()
-		}
-	}
+	return token, err
 }
 
 // token is Token under the strategy's lock: a read, then a locked refresh

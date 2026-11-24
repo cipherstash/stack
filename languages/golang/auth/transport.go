@@ -77,6 +77,9 @@ type authTransport struct {
 	mu           sync.Mutex
 	providers    map[uint32]OIDCProvider
 	nextProvider uint32
+	// abandoned limits the calls of the application's code that callers
+	// gave up on and that are still running (callApplication).
+	abandoned abandonLimit
 }
 
 func newAuthTransport(rt http.RoundTripper) *authTransport {
@@ -131,11 +134,19 @@ func withRefresh(ctx context.Context) context.Context {
 // the caller's, so a caller that gives up cancels it, except for a refresh,
 // which runs on for the grace (see refreshGrace). done must be called when
 // the request is finished with.
-func (t *authTransport) requestContext(ctx context.Context) (context.Context, func()) {
+//
+// wait is how long send waits for the application's RoundTripper
+// (callApplication). For most requests it is the request's own context.
+// For a refresh it is the guest call's: the RoundTripper may ignore its
+// request's context, and a rotated refresh token it brings back after the
+// grace must still reach the guest, so send waits for it until the
+// stuck-call backstop, as it did before it could leave a hung call.
+func (t *authTransport) requestContext(ctx context.Context) (req, wait context.Context, done func()) {
 	if refresh, _ := ctx.Value(refreshKey{}).(bool); refresh {
-		return guest.Detach(guest.Caller(ctx), t.grace)
+		req, done := guest.Detach(guest.Caller(ctx), t.grace)
+		return req, ctx, done
 	}
-	return guest.Caller(ctx), func() {}
+	return guest.Caller(ctx), guest.Caller(ctx), func() {}
 }
 
 func (t *authTransport) instantiate(ctx context.Context, r wazero.Runtime) error {
@@ -161,7 +172,7 @@ func (t *authTransport) send(ctx context.Context, m api.Module,
 		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, []byte("request buffer out of range"))
 	}
 	requestBody := newAuthRequestBody(body)
-	reqCtx, done := t.requestContext(ctx)
+	reqCtx, waitCtx, done := t.requestContext(ctx)
 	defer done()
 	req, err := http.NewRequestWithContext(reqCtx, string(method), string(url), requestBody)
 	if err != nil {
@@ -170,9 +181,16 @@ func (t *authTransport) send(ctx context.Context, m api.Module,
 	}
 	req.ContentLength = int64(len(body))
 	req.Header = parseAuthHeaders(headers)
-	resp, err := callApplication(reqCtx, func() (authResponse, error) { return t.exchange(req) },
+	resp, err := callApplication(waitCtx, &t.abandoned, func() (authResponse, error) { return t.exchange(req) },
 		func(r authResponse) { guest.Wipe(r.body) })
 	defer guest.Wipe(resp.body)
+	// The body carries the access key or the refresh grant. The transport
+	// wipes it by closing it, as the RoundTripper contract asks, but code
+	// that panicked or was left running may never close it; a read after
+	// this Close fails rather than send a wiped body.
+	if errors.Is(err, errApplicationPanicked) || errors.Is(err, errAbandoned) || errors.Is(err, errTooManyAbandoned) {
+		_ = requestBody.Close()
+	}
 	if status, ok := ctx.Value(authHTTPStatusKey{}).(*authHTTPStatus); ok && resp.status != 0 {
 		status.code = resp.status
 	}
@@ -234,6 +252,49 @@ func (t *authTransport) exchange(req *http.Request) (authResponse, error) {
 // again on the caller's goroutine (hostPanic).
 var errApplicationPanicked = errors.New("the application's code panicked")
 
+// errAbandoned is the failure a host function gives the guest when its
+// caller gave up before the application's code returned.
+var errAbandoned = errors.New("the caller gave up before the application's code returned")
+
+// errTooManyAbandoned is the failure a host function gives the guest, without
+// calling the application's code, while maxAbandoned calls of it that callers
+// gave up on are still running.
+var errTooManyAbandoned = errors.New("too many calls of the application's code that callers gave up on are still running")
+
+// maxAbandoned is how many calls of the application's code that callers
+// gave up on may still be running for one store. Each holds a goroutine,
+// and a request the application has not let go of. Code that ignores its
+// context could otherwise leave one behind for every caller that gives up,
+// where before it could leave one: it held the store's lock. Past the limit
+// a call fails at once, as a transport failure, until one of them returns.
+const maxAbandoned = 4
+
+// abandonLimit counts the running calls of the application's code whose
+// callers gave up.
+type abandonLimit struct {
+	mu sync.Mutex
+	n  int
+}
+
+// full reports whether no more calls may be left running.
+func (l *abandonLimit) full() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.n >= maxAbandoned
+}
+
+func (l *abandonLimit) add() {
+	l.mu.Lock()
+	l.n++
+	l.mu.Unlock()
+}
+
+func (l *abandonLimit) done() {
+	l.mu.Lock()
+	l.n--
+	l.mu.Unlock()
+}
+
 // hostPanic holds a panic of the application's code, recorded by a host
 // function during a guest call, for callArgs to raise again on the
 // caller's goroutine once the call has returned: as a panic in encrypt's
@@ -262,12 +323,16 @@ func (h *hostPanic) record(p any) {
 	}
 }
 
-// raise panics with the recorded panic, if there is one.
-func (h *hostPanic) raise() {
+// raise panics with the recorded panic, if there is one, after calling
+// before (to wipe what the call returned, say).
+func (h *hostPanic) raise(before func()) {
 	h.mu.Lock()
 	value, set := h.value, h.set
 	h.mu.Unlock()
 	if set {
+		if before != nil {
+			before()
+		}
 		panic(value)
 	}
 }
@@ -276,13 +341,26 @@ func (h *hostPanic) raise() {
 // goroutine of its own, and waits for f or for ctx to end, whichever comes
 // first.
 //
-//   - When ctx ends first, it returns ctx's error at once, and the guest
-//     fails the request as a transport failure. f is left to finish; what it
-//     returns then goes to discard, and a panic of it is dropped: there is
-//     no caller left to raise it to.
-//   - When f panics, the panic is recorded on the call (hostPanic), and
+//   - When ctx ends first, it returns errAbandoned, with ctx's error, at
+//     once. f is left to finish; what it returns then goes to discard, and a
+//     panic of it is dropped: there is no caller left to raise it to.
+//   - When f panics, the panic is recorded on ctx's hostPanic, and
 //     callApplication returns errApplicationPanicked.
-func callApplication[T any](ctx context.Context, f func() (T, error), discard func(T)) (T, error) {
+//   - When ctx has already ended, it returns errAbandoned and does not
+//     call f.
+//   - limit, when not nil, counts the calls left running. While it is full,
+//     callApplication returns errTooManyAbandoned and does not call f.
+func callApplication[T any](ctx context.Context, limit *abandonLimit, f func() (T, error), discard func(T)) (T, error) {
+	var zero T
+	// A caller that has already gone starts nothing: the guest may retry a
+	// request whose caller gave up, and the retry would leave another call
+	// running.
+	if err := ctx.Err(); err != nil {
+		return zero, fmt.Errorf("%w: %w", errAbandoned, err)
+	}
+	if limit != nil && limit.full() {
+		return zero, errTooManyAbandoned
+	}
 	type result struct {
 		value    T
 		err      error
@@ -305,7 +383,6 @@ func callApplication[T any](ctx context.Context, f func() (T, error), discard fu
 			if h, ok := ctx.Value(hostPanicKey{}).(*hostPanic); ok {
 				h.record(r.panic)
 			}
-			var zero T
 			return zero, errApplicationPanicked
 		}
 		return r.value, r.err
@@ -320,13 +397,18 @@ func callApplication[T any](ctx context.Context, f func() (T, error), discard fu
 			return settle(r)
 		default:
 		}
+		if limit != nil {
+			limit.add()
+		}
 		go func() {
 			if r := <-done; !r.panicked && discard != nil {
 				discard(r.value)
 			}
+			if limit != nil {
+				limit.done()
+			}
 		}()
-		var zero T
-		return zero, ctx.Err()
+		return zero, fmt.Errorf("%w: %w", errAbandoned, ctx.Err())
 	}
 }
 
@@ -347,7 +429,7 @@ func (t *authTransport) oidcTokenGet(ctx context.Context, m api.Module, provider
 		return 1
 	}
 	caller := guest.Caller(ctx)
-	token, err := callApplication(caller, func() (string, error) { return source.Token(caller) }, nil)
+	token, err := callApplication(caller, &t.abandoned, func() (string, error) { return source.Token(caller) }, nil)
 	if err != nil || token == "" || strings.ContainsAny(token, "\r\n\x00") {
 		return 1
 	}
