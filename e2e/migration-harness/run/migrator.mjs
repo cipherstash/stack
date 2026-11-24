@@ -346,7 +346,15 @@ export async function runMigrator({
             value: outcome,
             configurable: true,
           })
-          reject(failure)
+          // The Run reads the partial transcript and tool calls straight off
+          // the failure, to record agent-tool evidence for a rejected Migrator.
+          reject(
+            Object.assign(failure, {
+              stdout,
+              stderr,
+              toolCalls: [...toolCalls],
+            }),
+          )
           return
         }
         resolve(outcome)

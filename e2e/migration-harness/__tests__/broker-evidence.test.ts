@@ -138,6 +138,7 @@ test.each(['openat', 'stat'])(
         behaviour: async () =>
           requiredOracleChecks.map((id) => ({ id, passed: true })),
       },
+      writeIsolationTrail: async (stage: string) => `${stage}.ndjson`,
       supervision: {
         stop: async () => {},
         drain: () => {

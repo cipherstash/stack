@@ -110,7 +110,10 @@ export async function run({
           )
         }
         for (const event of events) {
-          evidence(name, 'isolation-event', event.actor, event, false)
+          // Inline only the events a verdict or a denial record turns on; the
+          // routine allowed-and-successful ones live in the stage trail file.
+          if (event.decision === 'forbidden' || event.result !== 'success')
+            evidence(name, 'isolation-event', event.actor, event, false)
           if (
             event.actor === 'migrator' &&
             event.stage === 'command' &&

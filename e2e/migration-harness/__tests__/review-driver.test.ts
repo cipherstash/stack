@@ -1,5 +1,14 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -100,6 +109,8 @@ async function setup(
     timeoutMs?: number
     toolResponse?: { exitCode: number; stdout: string; stderr: string }
     toolFailsOnCall?: number
+    stack?: string
+    npm?: (invocation: IsolationOptions) => Promise<void>
   } = {},
 ) {
   const output = await mkdtemp(join(tmpdir(), 'mh-review-driver-'))
@@ -128,6 +139,7 @@ async function setup(
         const result = await execute(file, args, { cwd: invocation.workspace })
         return { exitCode: 0, stdout: result.stdout, stderr: result.stderr }
       }
+      if (file === 'npm') await options.npm?.(invocation)
       if (++toolCalls === options.toolFailsOnCall)
         throw Object.assign(Error('isolation broke'), { infrastructure: true })
       return options.toolResponse ?? { exitCode: 0, stdout: '', stderr: '' }
@@ -156,7 +168,7 @@ async function setup(
   }
   const manifest: Manifest & { stack: string } = {
     guideHash: 'guide',
-    stack: '1.2.1',
+    stack: options.stack ?? '1.2.1',
     agents: { limits: { timeMs: options.timeoutMs ?? 5000, turns: 5 } },
   }
   const driver = createRealDriver({
