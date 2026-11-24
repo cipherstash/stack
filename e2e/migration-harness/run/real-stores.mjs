@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import postgres from 'postgres'
@@ -67,11 +67,39 @@ net.createServer((client) => {
   return Number(match[1])
 }
 
+// The v2 bundle is a mutable remote asset executed as superuser, so it is
+// pinned to the digest GitHub records for the eql-2.2.1 release asset.
+const EQL_V2_URL =
+  'https://github.com/cipherstash/encrypt-query-language/releases/download/eql-2.2.1/cipherstash-encrypt.sql'
+const EQL_V2_SHA256 =
+  '7f23177714e1891c97413a1fbe22277c4c633b950b9e6f68819ac6e87cc92ef9'
+const EQL_V2_TIMEOUT_MS = 60_000
+/** @type {Promise<string>|null} */
+let eqlV2Bundle = null
+/** Downloads and verifies the bundle once per process; a failure is not cached. */
+function loadEqlV2Bundle() {
+  eqlV2Bundle ??= (async () => {
+    const response = await fetch(EQL_V2_URL, {
+      signal: AbortSignal.timeout(EQL_V2_TIMEOUT_MS),
+    })
+    if (!response.ok)
+      throw Error(`EQL v2 bundle download failed: ${response.status}`)
+    const sql = await response.text()
+    if (createHash('sha256').update(sql).digest('hex') !== EQL_V2_SHA256)
+      throw Error('EQL v2 bundle digest mismatch')
+    return sql
+  })().catch((error) => {
+    eqlV2Bundle = null
+    throw error
+  })
+  return eqlV2Bundle
+}
+
 // Runs in an Iteration share one server per actor; databases and roles remain per Run.
 /** @type {Map<string, ReturnType<typeof initializePostgres>>} */
 const sharedServers = new Map()
-/** @param {string} actor @param {string} eqlBundle */
-async function initializePostgres(actor, eqlBundle) {
+/** @param {string} actor @param {string} eqlBundle @param {boolean} postgresV2 */
+async function initializePostgres(actor, eqlBundle, postgresV2) {
   const password = randomBytes(24).toString('hex')
   const pg = `mh-pg-${randomBytes(8).toString('hex')}-${actor}`
   const network = `${pg}-network`
@@ -132,6 +160,7 @@ async function initializePostgres(actor, eqlBundle) {
       max: 1,
     })
     try {
+      if (postgresV2) await template.unsafe(await loadEqlV2Bundle())
       await template.unsafe(await readFile(eqlBundle, 'utf8'))
       await template.unsafe(
         'REVOKE CONNECT ON DATABASE mh_template FROM PUBLIC',
@@ -149,17 +178,27 @@ async function initializePostgres(actor, eqlBundle) {
 
 /** Harness-only store administration; none of these handles enters an actor.
  * @typedef {string|(()=>Promise<unknown>)} Resource
- * @param {{runId:string,actor:string,eqlBundle:string,resources:Resource[]}} options */
-export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
-  if (!sharedServers.has(actor))
-    sharedServers.set(actor, initializePostgres(actor, eqlBundle))
-  const pending = sharedServers.get(actor)
+ * @param {{runId:string,actor:string,eqlBundle:string,resources:Resource[],postgresV2?:boolean}} options */
+export async function createStoreSet({
+  runId,
+  actor,
+  eqlBundle,
+  resources,
+  postgresV2 = false,
+}) {
+  const serverKey = `${actor}:${postgresV2 ? 'v2-v3' : 'v3'}`
+  if (!sharedServers.has(serverKey))
+    sharedServers.set(
+      serverKey,
+      initializePostgres(actor, eqlBundle, postgresV2),
+    )
+  const pending = sharedServers.get(serverKey)
   if (!pending) throw Error('Postgres server initialization missing')
   let shared
   try {
     shared = await pending
   } catch (error) {
-    sharedServers.delete(actor)
+    sharedServers.delete(serverKey)
     throw error
   }
   const { pg, pgPort, password, admin, network } = shared
@@ -180,7 +219,7 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
     } finally {
       shared.leases--
       if (!shared.leases) {
-        sharedServers.delete(actor)
+        sharedServers.delete(serverKey)
         await admin.end({ timeout: 1 }).catch(() => {})
         await disposeStores(shared.resources)
       }
@@ -215,6 +254,8 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
     actor,
     template: 'mh_template',
   })
+  // Grants on the template's EQL schemas need the superuser; this connection
+  // closes before any migrated object exists.
   const grantSql = postgres({
     host: '127.0.0.1',
     port: pgPort,
@@ -224,7 +265,11 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
     max: 1,
   })
   try {
-    for (const schema of ['eql_v3', 'eql_v3_internal']) {
+    for (const schema of [
+      ...(postgresV2 ? ['eql_v2'] : []),
+      'eql_v3',
+      'eql_v3_internal',
+    ]) {
       await grantSql.unsafe(
         `GRANT USAGE ON SCHEMA ${schema} TO "${identity.role}"`,
       )
@@ -235,7 +280,9 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
   } finally {
     await grantSql.end({ timeout: 1 })
   }
-  // Snapshot queries read application-owned objects under the assigned role.
+  // Snapshots read objects a migration created. Read as the Run's own role so a
+  // view or function planted there runs with that role's privileges, never as
+  // the superuser that could reach other Runs on the shared server.
   const snapshotSql = postgres({
     host: '127.0.0.1',
     port: pgPort,
@@ -252,6 +299,9 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
   }
   return {
     env,
+    async postgresSnapshot() {
+      return snapshotPostgres(snapshotSql)
+    },
     async verify() {
       const own = postgres({
         host: '127.0.0.1',
@@ -358,5 +408,37 @@ export async function disposeStores(resources) {
   for (const resource of [...resources].reverse()) {
     if (typeof resource === 'function') await resource().catch(() => {})
     else await docker(['rm', '-f', '-v', resource]).catch(() => {})
+  }
+}
+
+/** @param {import('postgres').Sql} snapshotSql */
+export async function snapshotPostgres(snapshotSql) {
+  const attributes =
+    await snapshotSql`SELECT attname, atttypid::regtype::text AS type FROM pg_attribute
+    WHERE attrelid = 'public.customers'::regclass AND attnum > 0 AND NOT attisdropped`
+  // Composite to_jsonb does not reliably unwrap encrypted domains. Cast each
+  // known encrypted column to its JSONB base type, as application reads do.
+  const encryptedColumns = [
+    'email',
+    'age',
+    'notes',
+    'email_v3',
+    'age_v3',
+    'notes_v3',
+  ].filter((name) => attributes.some((attribute) => attribute.attname === name))
+  const rows = await snapshotSql.unsafe(
+    `SELECT pk${encryptedColumns.map((name) => `, "${name}"::jsonb AS "${name}"`).join('')} FROM customers ORDER BY pk`,
+  )
+  const indexes =
+    await snapshotSql`SELECT pg_get_indexdef(ix.indexrelid, 1, true) AS expression,
+    ix.indisvalid AS valid, ix.indisready AS ready, (ix.indpred IS NOT NULL) AS partial, am.amname AS method
+    FROM pg_index ix JOIN pg_class idx ON idx.oid = ix.indexrelid JOIN pg_am am ON am.oid = idx.relam
+    WHERE ix.indrelid = 'public.customers'::regclass AND ix.indnatts = 1`
+  return {
+    rows: [...rows],
+    columns: Object.fromEntries(
+      attributes.map((entry) => [entry.attname, entry.type]),
+    ),
+    indexes,
   }
 }
