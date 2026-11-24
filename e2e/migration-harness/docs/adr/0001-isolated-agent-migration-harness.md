@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-09
 ---
 
@@ -11,7 +11,10 @@ Migration Harness: a Migrator upgrades a fresh Fixture App, a deterministic Orac
 checks it through a restricted App Host, and an Editor revises the guide from
 Iteration Results. This ADR is the authoritative architecture and implementation
 contract for [epic #1540](https://github.com/cipherstash/stack/issues/1540),
-using the [context glossary](../../CONTEXT.md). Status remains proposed pending review.
+using the [context glossary](../../CONTEXT.md). The design was accepted in
+[PR #1575](https://github.com/cipherstash/stack/pull/1575), merged on 2026-11-11.
+Acceptance of the design does not imply implementation completion: real Migrator
+evidence, Editor/Iteration automation and Loop convergence remain outstanding.
 The full implementation contract remains in this ADR at the maintainer's direction,
 as an explicit exception to the usual short ADR format.
 

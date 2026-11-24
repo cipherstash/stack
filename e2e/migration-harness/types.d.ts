@@ -20,7 +20,28 @@ export interface OracleCheck {
   passed: boolean
   cause?: string
 }
+export interface DocumentationExposure {
+  status: 'observed' | 'possible' | 'unknown'
+  reviewRequired: true
+  evidenceComplete: boolean
+}
 export interface MigratorResult {
+  /** Private raw evidence; never put these records into exported Run evidence. */
+  brokerEvidence?: Array<{
+    id: string
+    command: string[]
+    result: IsolationResult
+    /** Exact reply when it differs from result, or null if forwarding was skipped. */
+    deliveredResult?: IsolationResult | null
+  }>
+  documentationExposure?: DocumentationExposure
+  runtime?: {
+    provider: 'claude-code'
+    version: string
+    model: string
+    numTurns: number
+    permissionMode: 'acceptEdits'
+  }
   exitCode: number
   limit?: string
   toolCalls?: Array<{ id: string; exitCode: number }>
@@ -81,7 +102,13 @@ export interface Manifest {
   }
   isolation?: unknown
   fixtureRevision?: string
-  artifacts?: { transcript: string; diff?: string; snapshot: string }
+  artifacts?: {
+    transcript: string
+    diff?: string
+    snapshot: string
+    brokerEvidence?: string
+  }
+  documentationExposure?: DocumentationExposure
   storeCapabilities?: unknown
   /** The Stack the migrated workspace declares. Evidence only: the Run
    * installs `stack` regardless. */

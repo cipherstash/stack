@@ -294,11 +294,17 @@ def invoke(argv, stage):
                         forbidden = not any(f['address'] == address and f['port'] == int(port)
                                             for f in config.get('forwards', []))
                     else:
-                        peer = re.search(r'<(?:TCP|UDP):\[[^]]*->([^]]+)\]>', operation)
+                        peer = re.search(r'<(?:TCP|UDP):\[([^]]*)->([^]]+)\]>', operation)
                         if peer:
-                            resource = peer.group(1)
-                            forbidden = not any(resource == '%s:%s' % (f['address'], f['port'])
-                                                for f in config.get('forwards', []))
+                            local, resource = peer.groups()
+                            # A socket whose peer is its own local endpoint is
+                            # connected to itself. The kernel does this when a
+                            # connect to a loopback port with no listener draws
+                            # that same port as its source port; a listener
+                            # would hold the port, so nothing else was reached.
+                            forbidden = local != resource and not any(
+                                resource == '%s:%s' % (f['address'], f['port'])
+                                for f in config.get('forwards', []))
                         elif 'AF_UNIX' in operation or 'AF_INET6' in operation:
                             forbidden = True
                         elif ('<NETLINK:[ROUTE:' in operation
