@@ -97,3 +97,32 @@ Diff evidence uses the host-recorded fixture commit, so an adapter can commit
 its changes without hiding them. Failed Git commands fail the migration stage
 instead of publishing an empty diff. Raw transcripts and snapshots remain local
 Run artifacts; this command does not export them to an Editor.
+
+## Deterministic acceptance matrix
+
+Use `harness:run --fake reference` for the known-correct migration. Other variants
+are `noop`, `downcase`, `stale-hmac`, `bigint`, `rewrite`, `missing-log`,
+`legacy-ffi`, `denied-app` and `denied-lifecycle`. These harness-owned substitutes
+copy application files; dependency installation and application execution stay
+inside isolation. The hidden Reference Migration is never mounted into an actor.
+
+`--stack` also accepts `tree` or a `.tgz` path. Tree mode requires Stack build
+outputs and packs them with pnpm. Exact versions and tarball SHA-256 digests are
+recorded in the manifest. After installing a tarball, the host compares the
+installed Stack package's files and directories with the trusted tarball, in
+addition to checking npm's lockfile integrity. Changed, missing or added files,
+symlinks and special files fail installation. This checks Stack's own artifact;
+npm's unbundled transitive dependencies may occupy a separate `node_modules`
+directory within Stack and are outside this comparison, as are hoisted
+dependencies. It does not attest the complete dependency graph.
+
+The manifest also records `declaredStack`: the `@cipherstash/stack` specifier in
+the migrated workspace's `package.json` and the version in its
+`package-lock.json`, each `null` when absent. This is evidence, not a check. The
+App Host always installs the Stack the Run selected, so a Run passes or fails
+against that Stack even when the workspace declares another one. A real Migrator
+follows the published guide and is not told about a tree or tarball Stack, so
+failing on a mismatch would fail every such Run.
+
+Set `HARNESS_LIVE=1` and the four `CS_*` credentials
+to run the credentialed self-test matrix; CI runs it without model calls.

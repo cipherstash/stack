@@ -22,7 +22,7 @@ import {
 import { runMigrator } from '../run/migrator.mjs'
 import { createRealDriver } from '../run/real-driver.mjs'
 import { dynamoSnapshotError } from '../run/snapshot-errors.mjs'
-import type { IsolationOptions } from '../types.js'
+import type { IsolationOptions, Manifest } from '../types.js'
 
 // Regression tests for PR #1576 review items 5, 6 and 7 (F9, F10, F11).
 
@@ -140,6 +140,11 @@ async function setup(options: { command?: string } = {}) {
       close: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     }),
   }
+  const manifest: Manifest & { stack: string } = {
+    guideHash: 'guide',
+    stack: '1.2.1',
+    agents: { limits: { timeMs: 5000, turns: 5 } },
+  }
   const driver = createRealDriver({
     id: 'review-fixes',
     root,
@@ -147,14 +152,10 @@ async function setup(options: { command?: string } = {}) {
     command: options.command ?? 'true',
     isolation,
     credentials: { CS_CLIENT_KEY: 'app-secret' },
-    manifest: {
-      guideHash: 'guide',
-      stack: '1.2.1',
-      agents: { limits: { timeMs: 5000, turns: 5 } },
-    },
+    manifest,
   })
   await driver.provision()
-  return { driver, output }
+  return { driver, output, manifest }
 }
 
 async function adapter(source: string) {
@@ -227,6 +228,23 @@ test('F10 the App Host copy keeps relative symlinks relative', async () => {
   expect(await readlink(join(output, 'app-host', 'current.mjs'))).toBe(
     './lib/v3.mjs',
   )
+})
+
+test('the Run records the Stack the migrated workspace declares', async () => {
+  const { driver, output, manifest } = await setup()
+  const workspace = join(output, 'migrator')
+  const path = join(workspace, 'package.json')
+  const declared = JSON.parse(await readFile(path, 'utf8'))
+  declared.dependencies = {
+    ...declared.dependencies,
+    '@cipherstash/stack': '^9.9.9',
+  }
+  await writeFile(path, JSON.stringify(declared))
+  await driver.installAppHost()
+  await driver.close()
+  // The Run installed 1.2.1; the declaration is evidence, not a check.
+  expect(manifest.stack).toBe('1.2.1')
+  expect(manifest.declaredStack).toMatchObject({ specifier: '^9.9.9' })
 })
 
 test('F11 a rejected Migrator exposes its partial transcript and tool calls', async () => {
