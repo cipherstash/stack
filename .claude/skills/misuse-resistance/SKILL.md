@@ -70,4 +70,4 @@ Done when every public item in scope has been checked against every rule, with i
 
 For Rust techniques at each rung (newtypes, typestate, sealed traits, const generics, withheld traits, compile-fail tests, the assumptions behind "if it compiles, it is secure"), read [RUST.md](RUST.md).
 
-In Rust, the vitaminc crates provide ready-made types for rules 3, 4 and 5: secret wrappers, randomness, encryption, key wrapping and keyed hashing. Reach for them before writing your own. The `vitaminc` skill shows how to use them. That skill is in the vitaminc repository, at `.claude/skills/vitaminc/`. It is not installed here.
+In Rust, the vitaminc crates provide ready-made types for rules 3, 4 and 5: secret wrappers, randomness, encryption, key wrapping and keyed hashing. Reach for them before writing your own. The `vitaminc` skill shows how to use them. It is installed here, at `.claude/skills/vitaminc/`.

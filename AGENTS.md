@@ -870,6 +870,23 @@ ways a rule can be enforced, from "impossible to get wrong" down to
 ciphertext. The skill is a copy from `cipherstash/vitaminc`. Its first
 section says which commit it was copied from, and how to update it.
 
+### vitaminc
+
+Read `.claude/skills/vitaminc/SKILL.md` before you write or review Rust that
+holds a key, a token, a plaintext or another secret. That covers the stack-*
+crates, the Go guests and every language binding crate. The skill maps each
+task to the vitaminc type for it, such as `Protected<T>` in place of a
+`String`, and `RECIPES.md` beside it has working code. It is a copy from
+`cipherstash/vitaminc`, and its first section says how to update it.
+
+Two rules the skill does not state yet:
+
+- A type that holds a secret derives `OpaqueDebug` (`vitaminc-protected`),
+  as `ValueFrame` in `packages/stack-encrypt/src/dynamic/value_frame.rs`
+  does. Do not write `impl Debug` by hand to hide a value.
+- Use a type the engine or vitaminc already has before you wrap it in a new
+  one.
+
 ## Designing a language SDK
 
 Read [`docs/sdk-design-principles.md`](docs/sdk-design-principles.md) before you
