@@ -688,3 +688,74 @@ func TestACallCancelledDuringATokenExchangeLeavesTheProfileOpen(t *testing.T) {
 		t.Fatalf("%d ZeroKMS request(s), want the one after the token arrived", n)
 	}
 }
+
+// panicking is a RoundTripper that panics, as a caller's may.
+func panicking(*http.Request) (*http.Response, error) { panic("roundtripper panic") }
+
+// initRecovering runs se_cipher_init on c and returns what it panicked
+// with, as a caller that recovers the RoundTripper's panic sees it.
+func initRecovering(c *Client) (p any, err error) {
+	defer func() { p = recover() }()
+	return nil, cipherInit(context.Background(), c)
+}
+
+// A RoundTripper's panic is raised again on the caller's goroutine (see
+// performStep in step.go). The operation paused on the request is aborted
+// on the way, as it is when the caller gives up, so it holds no slot in
+// the guest and the client goes on.
+func TestARecoveredRoundTripperPanicAbortsThePausedOperation(t *testing.T) {
+	rt := &switchable{rt: panicking}
+	c := cancelClient(t, rt, staticToken("t"))
+	if p, err := initRecovering(c); p != "roundtripper panic" {
+		t.Fatalf("got panic %v (err %v), want the RoundTripper's panic", p, err)
+	}
+	// The first operation's handle is 1. Aborted, it is no longer the
+	// guest's to abort.
+	if _, err := c.inst.call(context.Background(), c.inst.abort, scalar(1)); !errors.Is(err, ErrState) {
+		t.Fatalf("aborting the panicked operation again: %v, want ErrState: it was left paused in the guest", err)
+	}
+	wantOpen(t, c, rt)
+}
+
+// More recovered panics than the guest has paused slots: none of them
+// leaves its operation behind.
+func TestAClientServesCallsAfterMoreRecoveredPanicsThanThePausedCap(t *testing.T) {
+	rt := &switchable{rt: panicking}
+	c := cancelClient(t, rt, staticToken("t"))
+	for i := range maxPaused + 1 {
+		if p, err := initRecovering(c); p != "roundtripper panic" {
+			t.Fatalf("call %d: got panic %v (err %v), want the RoundTripper's panic", i, p, err)
+		}
+	}
+	wantOpen(t, c, rt)
+}
+
+// A RoundTripper that panics while NewClient loads the default keyset: the
+// panic reaches the caller, and the client it was building, which the
+// caller never gets, is closed on the way, its credentials released.
+func TestNewClientClosesItsClientWhenTheRoundTripperPanics(t *testing.T) {
+	guestOrSkip(t)
+	var released atomic.Int32
+	creds := credentialsFunc(func(ctx context.Context, opts resolveOptions) (*resolvedCredentials, error) {
+		r, err := testCredentials(staticToken("t")).resolve(ctx, opts)
+		if err != nil {
+			return r, err
+		}
+		r.Close = func() error {
+			released.Add(1)
+			return nil
+		}
+		return r, nil
+	})
+	p := func() (p any) {
+		defer func() { p = recover() }()
+		_, _ = NewClient(context.Background(), WithCredentials(creds), withZeroKMSURL("http://zerokms.invalid"), WithTransport(roundTripFunc(panicking)))
+		return nil
+	}()
+	if p != "roundtripper panic" {
+		t.Fatalf("NewClient: got panic %v, want the RoundTripper's panic", p)
+	}
+	if n := released.Load(); n != 1 {
+		t.Fatalf("the credentials were released %d times, want once: the client was left open", n)
+	}
+}

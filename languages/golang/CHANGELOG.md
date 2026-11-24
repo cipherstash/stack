@@ -220,6 +220,24 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   0.10.0 was released from. The host now checks the same date and
   timestamp range as the guests.
 
+### Fixed
+
+- **A client goes on working after its RoundTripper panics** (#1780). A
+  panic in the `http.RoundTripper` given to `WithTransport` reaches the
+  caller, which can recover it, as `net/http` does in each handler. But the
+  operation that sent the request stayed paused in the guest.
+  - A panic in `NewClient`, while it loaded the default keyset, left the
+    client it was building open, with its guest memory and credentials.
+    The caller never got that client, so could not close it.
+  - Each panic during an encrypt or decrypt held one of the 64 slots for
+    calls that reach ZeroKMS. Once enough were held, calls failed with "too
+    many operations are paused". After 64, every such call failed.
+  - The paused operation kept its plaintext and keys in the guest's
+    memory until the client closed.
+
+  The operation is now dropped, and its memory wiped, before the panic
+  reaches the caller. `NewClient` also closes the client it was building.
+
 ## [0.1.0-rc.6] - 2026-11-18
 
 ### Upgrading from rc.5
