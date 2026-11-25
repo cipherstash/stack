@@ -441,8 +441,10 @@ Expected: all three pass. `code:check` fails on errors only, and may print warni
 - [x] **Step 2: Check that no job name changed**
 
 ```bash
-git diff origin/main -U0 -- .github/workflows | grep -E '^[-+][[:space:]]+(- )?name:'
+git diff origin/main...HEAD -U0 -- .github/workflows | grep -E '^[-+][[:space:]]+(- )?name:'
 ```
+
+The three dots compare with the commit where the branch left `main`. Without them, the diff also shows `main`'s newer changes, as if the branch had made them.
 
 Expected: only added lines that read `+      - name: Log in to Docker Hub`. A removed or changed job `name:` means the diff changes more than ADR 0004 allows.
 
