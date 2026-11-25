@@ -1,0 +1,18 @@
+# The Rust half of `@cipherstash/recipher`: its own Cargo workspace, with its
+# own Cargo.lock. The root workspace names its members, so this one needs no
+# `exclude` entry there: napi-rs 3 and this lock never enter a stack-* build,
+# and a change here leaves the root `Cargo.toml`, and the stack-* crates'
+# workflows that watch it, alone.
+#
+# It has one crate. `value-napi` (crate `recipher-value-napi`) is the value
+# bridge: it reads JavaScript values into vitaminc's plaintext model, and
+# builds JavaScript values from it.
+[workspace]
+resolver = "2"
+# Listed by name, not by glob: scripts/__tests__/dependabot-cargo-cross-workspace.test.mjs
+# reads this list and expands no globs.
+members = ["value-napi"]
+
+[workspace.package]
+edition = "2021"
+repository = "https://github.com/cipherstash/stack"

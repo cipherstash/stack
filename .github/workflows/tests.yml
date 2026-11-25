@@ -109,6 +109,15 @@ jobs:
               - '!packages/stack-kms/**'
               - '!packages/stack-guest-abi/**'
               - '!packages/stack-auth/fuzz/**'
+              # The TypeScript SDK on Stack Encrypt. Nothing these jobs build
+              # depends on it, and tests-recipher-js.yml runs its tests.
+              - '!languages/typescript/packages/recipher-js/**'
+              # Dependabot's config and the repo tooling's own tests. Their
+              # readers (`test:scripts`, the supply-chain test) run in
+              # `repo-checks`, which is not gated. `biome.json` stays in: the
+              # auth and profile packages run Biome in their `test` script.
+              - '!.github/dependabot.yml'
+              - '!scripts/__tests__/**'
               # EQL's SQL sources, test suites, codegen and tasks. What the
               # jobs do read from here is selected by `direct` below.
               - '!packages/eql/**'

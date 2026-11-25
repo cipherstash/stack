@@ -1,0 +1,36 @@
+[package]
+name = "recipher-value-napi"
+description = "The JavaScript value bridge of @cipherstash/recipher: reads a Node-API value as vitaminc's plaintext model, and builds one from it"
+version = "0.0.0"
+edition.workspace = true
+# Literal, not inherited: scripts/__tests__/cargo-publish-opt-out.test.mjs
+# greps each member for this exact line.
+publish = false
+repository.workspace = true
+
+[dependencies]
+rust_decimal = { version = "1.41", default-features = false, features = ["std"] }
+thiserror = "2.0.18"
+# A refusal is a diagnostic: a stable code, a message and help.
+miette = "7.5.0"
+jiff = { version = "1.0.0", default-features = false }
+# The plaintext model this crate reads JavaScript values into, and the
+# protected buffer a frame is held in. The versions the engine resolves.
+vitaminc-aead = { version = "0.10.0", features = ["jiff", "rust_decimal"] }
+vitaminc-protected = "0.10.0"
+
+# napi5 (Node ≥ 12) is needed for Date detection; napi6 (implies napi5) for
+# BigInt and for `napi_get_all_property_names` — the only own-property
+# enumeration Node-API offers. Every supported Node release is far beyond
+# both levels.
+napi = { version = "3", default-features = false, features = ["napi6"] }
+zeroize = { version = "1", features = ["derive"] }
+# Only for `#[cfg_attr(test, mutants::skip)]`; consumers never see it.
+mutants = "0.0.4"
+
+[dev-dependencies]
+# `noop` disables automatic addon registration in unit tests. The live
+# Node suites, including the cipher round trips, run against the test addon
+# in `tests/addon`, which is its own workspace so this feature cannot stub
+# the real Node-API symbols there.
+napi = { version = "3", default-features = false, features = ["noop"] }

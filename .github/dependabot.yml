@@ -314,6 +314,47 @@ updates:
         update-types:
           - version-update:semver-major
 
+  # ── Cargo (recipher-js, the Rust half of @cipherstash/recipher) ──
+  # The recipher-js workspace and the value bridge's test addon, a workspace
+  # of its own that depends on the bridge by path. Grouped by dependency
+  # name, so one PR moves a crate in both lockfiles:
+  # scripts/__tests__/recipher-js-lock-parity.test.mjs fails when they
+  # resolve different napi or vitaminc crates.
+  - package-ecosystem: cargo
+    directories:
+      - /languages/typescript/packages/recipher-js
+      - /languages/typescript/packages/recipher-js/value-napi/tests/addon
+    # Lockfile only, like the other cargo entries: the addon shares a crate
+    # with the workspace by path.
+    versioning-strategy: lockfile-only
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - supply-chain
+    commit-message:
+      prefix: "chore"
+      include: scope
+    groups:
+      recipher-js-cargo:
+        group-by: dependency-name
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # The bridge reads values into the plaintext model the engine uses, so
+      # vitaminc moves with the engine, by hand.
+      - dependency-name: "vitaminc*"
+      # Major bumps are reviewed and applied manually, not by Dependabot.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
   # ── Go (languages/golang) ──────────────────────────────────────
   # One entry for the three modules, grouped by dependency name, so one PR
   # moves a dependency in all of them. The nested modules replace the SDK
