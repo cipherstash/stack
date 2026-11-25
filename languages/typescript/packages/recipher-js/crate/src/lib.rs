@@ -9,24 +9,32 @@
 //! from this crate. The crate reads and builds JavaScript values only
 //! through the `recipher-value-napi` crate (see [`js`]).
 //!
-//! # Outcomes
+//! # Results
 //!
-//! A call that can fail returns an outcome object instead of throwing. An
-//! outcome object is `{ ok: true, value }` on success, or
-//! `{ ok: false, error }` on failure. The `error` is a
-//! [`RecipherErrorFields`]. An asynchronous call resolves to an outcome
-//! object, and does not reject for a failure it can report.
+//! A call that can fail returns the package's `Result` instead of throwing:
+//! an `Ok` of the value, or an `Err` of a `RecipherError`. An asynchronous
+//! call resolves to a `Result`, and does not reject. The addon builds each
+//! `Result` itself, from the classes the package's TypeScript installs when
+//! it loads the addon ([`install_result`]).
 //!
 //! Every argument arrives as an untyped JavaScript value, and the addon
-//! checks it. So a value of the wrong type gives a failed outcome object,
-//! not an exception. The package's TypeScript turns each outcome object
-//! into its `Result` type.
+//! checks it. So a value of the wrong type gives an `Err`, not an
+//! exception.
+//!
+//! The one call that throws is a method called without its object, as in
+//! `stored.map(cipher.decrypt)`. The JavaScript engine checks the object
+//! and throws a `TypeError` before any of the addon's code runs.
+//!
+//! The `ts_type`, `ts_args_type` and `ts_return_type` attributes give each
+//! method the signature the package exports. napi-rs writes them to
+//! `native.d.ts`, with the header in `native-header.d.ts`, and that file is
+//! the package's public type.
 //!
 //! # The interface number
 //!
 //! [`binding_interface`] returns [`BINDING_INTERFACE`]. That number is the
 //! version of the interface that the package's TypeScript calls. The number
-//! changes whenever a class, a method or an outcome object changes shape.
+//! changes whenever a class, a method or a returned value changes shape.
 //! The TypeScript refuses an addon build that returns another number.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![warn(clippy::mem_forget)]
@@ -53,12 +61,13 @@ mod engine_tests;
 pub use cipher::{create_testing, Cipher, Keyset};
 pub use ciphertext::Ciphertext;
 pub use error::RecipherErrorFields;
+pub use outcome::install_result;
 
 use napi_derive::napi;
 
 /// The version of the interface between the package's TypeScript and this
 /// addon build.
-pub const BINDING_INTERFACE: u32 = 2;
+pub const BINDING_INTERFACE: u32 = 3;
 
 /// Returns the version of the interface between the package's TypeScript
 /// and this addon build. The TypeScript refuses a build that returns

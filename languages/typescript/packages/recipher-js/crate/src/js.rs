@@ -14,8 +14,8 @@
 //! When the bridge refuses a value, it says which rule the value broke. A
 //! scalar is a value that is not an array or an object. For a scalar, the
 //! bridge also throws a JavaScript exception. [`read`] turns either into a
-//! [`RecipherErrorFields`]. So a call that reads a value returns a failed
-//! outcome object, `{ ok: false, error }`, instead of throwing.
+//! [`RecipherErrorFields`]. So a call that reads a value returns an `Err`
+//! instead of throwing.
 //!
 //! When an application's getter throws, the addon catches the exception
 //! and drops it without copying it. The exception's message may contain

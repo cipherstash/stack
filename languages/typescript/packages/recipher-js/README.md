@@ -47,8 +47,8 @@ const opened = await cipher.decrypt(sealed.value)
 
 ## Results, not exceptions
 
-No call throws, and no promise rejects.
-Every call resolves to a `Result`.
+Every call returns, or resolves to, a `Result`.
+No promise rejects.
 A `Result` has the methods of Rust's `Result`, in camelCase:
 
 - `isOk`, `isErr`, `ok`, and `err`;
@@ -57,11 +57,23 @@ A `Result` has the methods of Rust's `Result`, in camelCase:
 - `unwrapOr`, `unwrapOrElse`, `unwrap`, and `expect`.
 
 Only `unwrap` and `expect` throw.
-The other calls do not throw in these cases either:
+The other calls return an `Err` in these cases too:
 
-- a method passed on its own: `ciphertexts.map(cipher.decrypt)` keeps its cipher;
-- an argument of the wrong type;
+- an argument of the wrong type, or a missing argument;
 - a native addon that did not load.
+
+One call throws: a method called without its object.
+`ciphertexts.map(cipher.decrypt)` passes `decrypt` on its own, without its cipher.
+The JavaScript engine throws a `TypeError` when it is called, before any of the package's code runs.
+Call the method on its object instead:
+
+```ts
+const opened = await Promise.all(
+  ciphertexts.map((ciphertext) => cipher.decrypt(ciphertext)),
+)
+```
+
+A static method, such as `Ciphertext.fromBytes`, works on its own.
 
 A `RecipherError` is an error report that a call returns as a value.
 Most errors come from the engine.
@@ -117,8 +129,15 @@ The value bridge is the `recipher-value-napi` crate in `value-napi/`.
 
 napi-rs's command-line tool builds the addon.
 The tool also writes the addon's TypeScript declarations to `native.d.ts`.
+Those declarations are the package's public types.
+Each method's signature is written in Rust, in the method's `ts_type`, `ts_args_type` or `ts_return_type` attribute.
+The documentation comments on the Rust code become the declarations' documentation.
+`native-header.d.ts` is the start of `native.d.ts`: it imports the TypeScript types the signatures name, and gives `Ciphertext` its type parameter.
 `native.d.ts` is committed.
-The package's TypeScript contains what Rust cannot provide: `Result`, `RecipherError`, and typed signatures over the native methods.
+
+Each native method returns a `Result` itself.
+The package's TypeScript gives the addon the `Ok`, `Err` and `RecipherError` classes when it loads the addon.
+The package's TypeScript contains what Rust cannot provide: `Result`, `RecipherError`, the loader, and stand-in classes for when the addon did not load.
 
 The package's `build` and `test` scripts never run cargo.
 

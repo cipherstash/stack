@@ -3,17 +3,18 @@
  *
  * The native addon is the compiled Rust code that this package loads. The
  * addon defines the error's fields (`RecipherErrorFields`, in the generated
- * `native.d.ts`), and every error the addon reports. This class is written
- * in TypeScript because an error must still exist when the addon did not
- * load.
+ * `native.d.ts`), and every error the addon reports. The addon makes each
+ * error by calling this class's constructor with those fields. This class
+ * is written in TypeScript because an error must still exist when the addon
+ * did not load.
  */
 import type { ErrorCause, RecipherErrorFields, Severity } from '../native'
 
 export type { ErrorCause, RecipherErrorFields, Severity }
 
 /**
- * A failure, as a value. Every call that fails resolves to an `Err` that
- * contains a `RecipherError`. No call throws.
+ * A failure, as a value. Every call that fails returns, or resolves to, an
+ * `Err` that contains a `RecipherError`.
  *
  * - `code` is the code to switch on. It is stable. It is one of these:
  *   - the engine's error code, such as `stack_encrypt::aead`;
@@ -75,56 +76,8 @@ export class RecipherError {
 }
 
 /**
- * Make a `RecipherError` from the error in a native outcome. A native
- * outcome is the object a native method returns: `{ ok, value }` or
- * `{ ok, error }`. The addon writes the error, so this function only checks
- * the error's shape.
- */
-export function fromNative(error: unknown): RecipherError {
-  const { code, message, help, url, severity, fields, causes, field, record } =
-    typeof error === 'object' && error !== null
-      ? (error as Record<string, unknown>)
-      : {}
-  if (typeof code !== 'string' || typeof message !== 'string') {
-    return sdkError(
-      'recipher_js::outcome',
-      'the native build returned an error of an unknown shape',
-    )
-  }
-  return new RecipherError({
-    code,
-    message,
-
-    ...(typeof help === 'string' ? { help } : {}),
-    ...(typeof url === 'string' ? { url } : {}),
-    ...(severity === 'warning' || severity === 'advice' ? { severity } : {}),
-    ...(typeof fields === 'object' && fields !== null
-      ? { fields: fields as Record<string, unknown> }
-      : {}),
-    causes: Array.isArray(causes) ? causes.flatMap(causeOf) : [],
-    ...(typeof field === 'string' ? { field } : {}),
-    ...(typeof record === 'string' ? { record } : {}),
-  })
-}
-
-/**
- * The cause, in a one-item array, when it has the shape that the addon
- * writes. Otherwise, an empty array.
- */
-function causeOf(cause: unknown): ErrorCause[] {
-  if (typeof cause !== 'object' || cause === null) {
-    return []
-  }
-  const { code, message } = cause as Record<string, unknown>
-  if (typeof message !== 'string') {
-    return []
-  }
-  return [typeof code === 'string' ? { code, message } : { message }]
-}
-
-/**
  * An error that the TypeScript makes itself. The TypeScript makes one when
- * the addon did not load, or when the addon did not return what it should.
+ * the addon did not load, or is not one this TypeScript can call.
  * The addon makes every other error.
  */
 export function sdkError(code: string, message: string): RecipherError {

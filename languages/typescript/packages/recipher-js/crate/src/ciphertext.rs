@@ -17,10 +17,9 @@ use crate::outcome::{failed, not_made, settle};
 /// One encrypted value: the engine's opaque ciphertext of the whole value,
 /// with its own data key. A data key is the key that encrypts one value.
 ///
-/// The ciphertext's bytes are the engine's envelope for an encrypted value.
-/// Rust's `Ciphertext::to_bytes` and the Go SDK write the same bytes.
-/// `Debug` hides the bytes. So do `toString()` and Node's `inspect`,
-/// because the class has no own properties.
+/// The ciphertext's bytes are the engine's format for an encrypted value.
+/// The Rust and Go SDKs write the same bytes. `toString()` and Node's
+/// `inspect` hide the bytes, because the object has no own properties.
 ///
 /// The SDK uses a class rather than plain bytes so that `decrypt` can tell a
 /// ciphertext from any other value.
@@ -58,9 +57,13 @@ impl Ciphertext {
     /// Reads a ciphertext from stored bytes, a `Uint8Array` or a `Buffer`.
     /// This method checks only the shape of the bytes. Decrypting is what
     /// checks that they are authentic. A failure does not quote the bytes.
-    // An instance method is configurable. This static method is made
-    // configurable too, so the package's TypeScript can wrap it (`adapt`).
-    #[napi(configurable = true, ts_return_type = "Outcome<Ciphertext>")]
+    ///
+    /// Returns an `Err` with the code `recipher_js::not_bytes` when the
+    /// argument is not a `Uint8Array`. Does not throw.
+    #[napi(
+        ts_args_type = "bytes: Uint8Array",
+        ts_return_type = "Result<Ciphertext, RecipherError>"
+    )]
     pub fn from_bytes<'e>(env: &'e Env, bytes: Unknown<'_>) -> napi::Result<Object<'e>> {
         let Some(bytes) = bytes_of(bytes) else {
             return failed(env, Error::NotBytes.into());

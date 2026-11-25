@@ -1,19 +1,12 @@
 /**
- * The loader and the adapter, against fake native builds: none of these
- * tests needs the addon.
+ * The loader, against fake native builds: none of these tests needs the
+ * addon.
  */
 import { describe, expect, it } from 'vitest'
-import {
-  adapt,
-  BINDING_INTERFACE,
-  type Binding,
-  load,
-  settle,
-  settleAsync,
-} from '../../src/binding'
+import { BINDING_INTERFACE, type Binding, load } from '../../src/binding'
 import { classesOf } from '../../src/cipher'
 import { RecipherError } from '../../src/error'
-import { err } from '../../src/result'
+import { Err, err, Ok } from '../../src/result'
 
 /** A fake native build that exports every name the loader checks. */
 function fakeBuild(overrides: Record<string, unknown> = {}) {
@@ -22,7 +15,8 @@ function fakeBuild(overrides: Record<string, unknown> = {}) {
     Keyset: class {},
     Ciphertext: class {},
     bindingInterface: () => BINDING_INTERFACE,
-    createTesting: () => Promise.resolve({ ok: true, value: 'cipher' }),
+    createTesting: () => Promise.resolve('cipher'),
+    installResult: () => true,
     ...overrides,
   }
 }
@@ -50,6 +44,7 @@ describe('load', () => {
       'Ciphertext',
       'bindingInterface',
       'createTesting',
+      'installResult',
     ]) {
       const loaded = load(
         requiring(fakeBuild({ [name]: undefined })),
@@ -80,98 +75,40 @@ describe('load', () => {
   })
 })
 
-describe('settle', () => {
-  it('reads an outcome as a Result', () => {
-    expect(settle(() => ({ ok: true, value: 5 })).unwrap()).toBe(5)
-    const failed = settle(() => ({
-      ok: false,
-      error: {
-        code: 'recipher_js::x',
-        message: 'no',
-        severity: 'error',
-        fields: {},
-        causes: [],
-      },
-    }))
-    expect(failed.err()).toBeInstanceOf(RecipherError)
-    expect(failed.err()?.code).toBe('recipher_js::x')
-  })
-
-  it('turns a throw or a rejection into an Err, keeping no text', async () => {
-    const thrown = settle(() => {
-      throw new TypeError('card 4111 1111 1111 1111')
-    })
-    expect(thrown.err()?.code).toBe('recipher_js::native_threw')
-    expect(thrown.err()?.message).not.toContain('4111')
-
-    const rejected = await settleAsync(() =>
-      Promise.reject(new Error('card 4111')),
+describe('installResult', () => {
+  it('gives the build the classes of a Result when it loads', () => {
+    const given: unknown[] = []
+    const loaded = load(
+      requiring(
+        fakeBuild({ installResult: (classes: unknown) => given.push(classes) }),
+      ),
+      '/x/recipher.node',
     )
-    expect(rejected.err()?.code).toBe('recipher_js::native_threw')
-    expect(rejected.err()?.message).not.toContain('4111')
+    expect(loaded.isOk()).toBe(true)
+    expect(given).toEqual([{ Ok, Err, RecipherError }])
   })
 
-  it('refuses something that is not an outcome', () => {
-    expect(settle(() => 7 as never).err()?.code).toBe('recipher_js::outcome')
-  })
-})
-
-describe('adapt', () => {
-  class Native {
-    readonly name: string
-    constructor(name: string) {
-      this.name = name
-    }
-    greet(other: unknown) {
-      if (!(this instanceof Native)) {
-        throw new TypeError('not a Native')
-      }
-      return Promise.resolve({ ok: true, value: `${this.name}:${other}` })
-    }
-    plain() {
-      return this.name
-    }
-    static make(name: unknown) {
-      return { ok: true, value: new Native(String(name)) }
-    }
-  }
-  adapt(Native.prototype, { greet: 'async', plain: 'plain' })
-  adapt(Native, { make: 'sync' })
-  const adapted = Native as unknown as {
-    make(name: string): { unwrap(): Adapted }
-    prototype: Adapted
-  }
-  interface Adapted {
-    greet(other: unknown): Promise<{ unwrap(): string; isErr(): boolean }>
-    plain(): string
-  }
-
-  it('makes a method a Result, bound to its instance when passed alone', async () => {
-    const one = adapted.make('one').unwrap()
-    expect((await one.greet('x')).unwrap()).toBe('one:x')
-    const detached = one.greet
-    expect((await detached('y')).unwrap()).toBe('one:y')
-    const all = await Promise.all(['a', 'b'].map(one.greet))
-    expect(all.map((result) => result.unwrap())).toEqual(['one:a', 'one:b'])
-    const { plain } = one
-    expect(plain()).toBe('one')
-    const { make } = adapted
-    expect(make('two').unwrap().plain()).toBe('two')
-  })
-
-  it('turns a call on something that is not the class into an Err', async () => {
-    const greet = adapted.prototype.greet
-    const result = await greet.call({}, 'x')
-    expect(result.isErr()).toBe(true)
-  })
-
-  it('adapts a class once, and freezes it', () => {
-    const before = Object.getOwnPropertyDescriptor(Native.prototype, 'greet')
-    adapt(Native.prototype, { greet: 'sync' })
-    expect(Object.getOwnPropertyDescriptor(Native.prototype, 'greet')).toEqual(
-      before,
+  it('is an Err, not a throw, when the build refuses them', () => {
+    const loaded = load(
+      requiring(
+        fakeBuild({
+          installResult: () => {
+            throw new TypeError('no')
+          },
+        }),
+      ),
+      '/x/recipher.node',
     )
-    expect(Object.isFrozen(Native.prototype)).toBe(true)
+    expect(loaded.err()?.code).toBe('recipher_js::load')
+  })
+
+  it('freezes the classes of a build that loaded', () => {
+    const build = fakeBuild()
+    load(requiring(build), '/x/recipher.node')
+    for (const cls of [build.Cipher, build.Keyset, build.Ciphertext]) {
+      expect(Object.isFrozen(cls)).toBe(true)
+      expect(Object.isFrozen(cls.prototype)).toBe(true)
+    }
   })
 })
 

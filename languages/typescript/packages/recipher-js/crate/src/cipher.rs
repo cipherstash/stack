@@ -56,6 +56,10 @@ macro_rules! with_engine {
 /// Make a cipher with `Cipher.create()`. In a test, make one with
 /// `testCipher()` from `@cipherstash/recipher/testing`. The class has no
 /// constructor.
+///
+/// Call each method on its cipher. A method taken off its cipher, as in
+/// `stored.map(cipher.decrypt)`, throws a `TypeError` when it is called.
+/// Write `stored.map((ciphertext) => cipher.decrypt(ciphertext))` instead.
 #[napi]
 #[derive(OpaqueDebug)]
 pub struct Cipher {
@@ -68,6 +72,9 @@ pub struct Cipher {
 ///
 /// Get a keyset from `cipher.defaultKeyset()`. The class has no
 /// constructor.
+///
+/// Call each method on its keyset. A method taken off its keyset, as in
+/// `values.map(keyset.encrypt)`, throws a `TypeError` when it is called.
 #[napi]
 #[derive(OpaqueDebug)]
 pub struct Keyset {
@@ -85,9 +92,9 @@ impl Cipher {
     /// - there are no credentials;
     /// - the credentials are refused;
     /// - ZeroKMS refuses to load the default keyset.
-    // An instance method is configurable. This static method is made
-    // configurable too, so the package's TypeScript can wrap it (`adapt`).
-    #[napi(configurable = true, ts_return_type = "Promise<Outcome<Cipher>>")]
+    ///
+    /// The promise does not reject.
+    #[napi(ts_return_type = "Promise<Result<Cipher, RecipherError>>")]
     pub fn create(env: &Env) -> napi::Result<PromiseRaw<'_, Object<'_>>> {
         spawn(
             env,
@@ -112,7 +119,10 @@ impl Cipher {
 
     /// Decrypts a ciphertext made under any of this cipher's keysets. The
     /// value decrypts as the type it was encrypted as.
-    #[napi(ts_return_type = "Promise<Outcome<unknown>>")]
+    ///
+    /// Resolves to an `Err` with the code `recipher_js::not_a_ciphertext`
+    /// when the argument is not a `Ciphertext`. The promise does not reject.
+    #[napi(ts_type = "<T>(ciphertext: Ciphertext<T>): Promise<Result<T, RecipherError>>")]
     pub fn decrypt<'e>(
         &self,
         env: &'e Env,
@@ -132,8 +142,14 @@ impl Cipher {
 impl Keyset {
     /// Encrypts a string as one ciphertext with its own data key, with no
     /// context. A context is a value that a ciphertext is bound to, and
-    /// decrypting needs the same context. Any other value is refused.
-    #[napi(ts_return_type = "Promise<Outcome<Ciphertext>>")]
+    /// decrypting needs the same context.
+    ///
+    /// Resolves to an `Err` with the code `recipher_js::not_a_string` when
+    /// the value is not a string. The promise does not reject.
+    #[napi(
+        ts_args_type = "value: string",
+        ts_return_type = "Promise<Result<Ciphertext<string>, RecipherError>>"
+    )]
     pub fn encrypt<'e>(
         &self,
         env: &'e Env,
@@ -163,8 +179,8 @@ impl Keyset {
 
     /// Decrypts a ciphertext made under this keyset. A ciphertext of another
     /// keyset fails with the code `stack_encrypt::foreign_keyset`, before
-    /// any key is requested.
-    #[napi(ts_return_type = "Promise<Outcome<unknown>>")]
+    /// any key is requested. The promise does not reject.
+    #[napi(ts_type = "<T>(ciphertext: Ciphertext<T>): Promise<Result<T, RecipherError>>")]
     pub fn decrypt<'e>(
         &self,
         env: &'e Env,
@@ -188,10 +204,17 @@ impl Keyset {
 /// The test cipher needs no credentials and makes no request. Anyone who
 /// knows the seed can derive its keys.
 ///
-/// Only a build with the `testing` feature has the test cipher. In any
-/// other build, the promise resolves to a failure with the code
-/// `recipher_js::no_testing`.
-#[napi(ts_return_type = "Promise<Outcome<Cipher>>")]
+/// Only the debug build of the addon has the test cipher. In any other
+/// build, the promise resolves to an `Err` with the code
+/// `recipher_js::no_testing`. A seed that is not 32 bytes is an `Err` with
+/// the code `recipher_js::testing_seed`. The promise does not reject.
+///
+/// Call `testCipher()` from `@cipherstash/recipher/testing` rather than
+/// this function.
+#[napi(
+    ts_args_type = "seed: unknown",
+    ts_return_type = "Promise<Result<Cipher, RecipherError>>"
+)]
 pub fn create_testing<'e>(
     env: &'e Env,
     seed: Unknown<'_>,

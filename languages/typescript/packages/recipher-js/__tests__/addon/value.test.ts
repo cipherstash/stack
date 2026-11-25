@@ -1,6 +1,6 @@
 import { inspect } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { Cipher, Ciphertext, Keyset, type RecipherError } from '../../src/index'
+import { Cipher, Ciphertext, Keyset } from '../../src/index'
 import { testCipher } from '../../src/testing'
 
 async function cipher(seed?: Uint8Array): Promise<Cipher> {
@@ -154,27 +154,73 @@ describe('failures are values', () => {
   })
 })
 
-describe('no call throws', () => {
-  it('a method passed on its own keeps its cipher', async () => {
+describe('a method called without its object throws a TypeError', () => {
+  // The JavaScript engine checks a native method's object before any of
+  // the addon's code runs, so this is the one case that throws rather than
+  // returning an Err. A static method has no object, and works on its own.
+  it('an instance method taken off its object throws, synchronously', async () => {
     const c = await cipher()
     const keyset = c.defaultKeyset()
-    const encrypt = keyset.encrypt
-    const sealed = (
-      await Promise.all(['a', 'b'].map((text) => encrypt(text)))
-    ).map((result) => result.unwrap())
-    const opened = await Promise.all(sealed.map(c.decrypt))
-    expect(opened.map((result) => result.unwrap())).toEqual(['a', 'b'])
-    const { decrypt } = keyset
-    expect((await decrypt(sealed[0] as Ciphertext)).unwrap()).toBe('a')
-    const { fromBytes } = Ciphertext
-    expect(fromBytes((sealed[0] as Ciphertext).toBytes()).isOk()).toBe(true)
+    const sealed = (await keyset.encrypt('a')).unwrap()
+    const { encrypt, decrypt } = keyset
+    const { decrypt: cipherDecrypt, defaultKeyset } = c
+    const { toBytes } = sealed
+    expect(() => encrypt('a')).toThrow(TypeError)
+    expect(() => decrypt(sealed)).toThrow(TypeError)
+    expect(() => cipherDecrypt(sealed)).toThrow(TypeError)
+    expect(() => defaultKeyset()).toThrow(TypeError)
+    expect(() => toBytes()).toThrow(TypeError)
+    expect(() => [sealed].map(c.decrypt)).toThrow(TypeError)
   })
 
-  it('a method called on something that is not its class is an Err', async () => {
-    const decrypt = Object.getOwnPropertyDescriptor(Cipher.prototype, 'decrypt')
-    const method = decrypt?.get?.call({}) as (value: unknown) => unknown
-    const result = (await method('x')) as { err(): RecipherError | undefined }
-    expect(result.err()?.code).toBe('recipher_js::native_threw')
+  it('a method called on something that is not its class throws', () => {
+    const decrypt = Cipher.prototype.decrypt as (value: unknown) => unknown
+    expect(() => decrypt.call({}, 'x')).toThrow(TypeError)
+    const fromKeyset = Keyset.prototype.decrypt as (value: unknown) => unknown
+    expect(() => fromKeyset.call(Cipher, 'x')).toThrow(TypeError)
+  })
+
+  it('a method called on its object, or through a closure, works', async () => {
+    const c = await cipher()
+    const keyset = c.defaultKeyset()
+    const sealed = (
+      await Promise.all(['a', 'b'].map((text) => keyset.encrypt(text)))
+    ).map((result) => result.unwrap())
+    const opened = await Promise.all(
+      sealed.map((ciphertext) => c.decrypt(ciphertext)),
+    )
+    expect(opened.map((result) => result.unwrap())).toEqual(['a', 'b'])
+    const bound = keyset.decrypt.bind(keyset)
+    expect((await bound(sealed[0] as Ciphertext)).unwrap()).toBe('a')
+  })
+
+  it('a static method taken off its class works', async () => {
+    const sealed = (
+      await (await cipher()).defaultKeyset().encrypt('a')
+    ).unwrap()
+    const { fromBytes } = Ciphertext
+    expect(fromBytes(sealed.toBytes()).isOk()).toBe(true)
+  })
+})
+
+describe('every other call returns or resolves to a Result', () => {
+  it('a missing or extra argument is an Err, not a throw', async () => {
+    const c = await cipher()
+    const keyset = c.defaultKeyset()
+    const loose = keyset as unknown as {
+      encrypt(...args: unknown[]): ReturnType<Keyset['encrypt']>
+      decrypt(...args: unknown[]): ReturnType<Keyset['decrypt']>
+    }
+    expect((await loose.encrypt()).err()?.code).toBe(
+      'recipher_js::not_a_string',
+    )
+    expect((await loose.decrypt()).err()?.code).toBe(
+      'recipher_js::not_a_ciphertext',
+    )
+    const sealed = (await loose.encrypt('a', 'extra')).unwrap()
+    expect((await loose.decrypt(sealed, 'extra')).unwrap()).toBe('a')
+    const fromBytes = Ciphertext.fromBytes as (...args: unknown[]) => unknown
+    expect((fromBytes() as { isErr(): boolean }).isErr()).toBe(true)
   })
 
   it('arguments of every wrong type resolve to an Err', async () => {
