@@ -1,6 +1,8 @@
 # The Rust half of `@cipherstash/recipher`: its own Cargo workspace, with its
-# own Cargo.lock. The root `Cargo.toml` excludes it, as it excludes
-# protect-ffi and EQL, so napi-rs 3 and this lock never enter a stack-* build.
+# own Cargo.lock. The root workspace names its members, so this one needs no
+# `exclude` entry there: napi-rs 3 and this lock never enter a stack-* build,
+# and a change here leaves the root `Cargo.toml`, and the stack-* crates'
+# workflows that watch it, alone.
 #
 # It has one crate. `value-napi` (crate `recipher-value-napi`) is the value
 # bridge: it reads JavaScript values into vitaminc's plaintext model, and
