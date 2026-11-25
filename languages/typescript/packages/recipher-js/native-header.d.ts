@@ -14,8 +14,18 @@ import type {
   OpenedScalar,
   Value,
 } from './src/value-types'
+import type { WrapperClasses } from './value-napi/src/wrappers'
 
 // biome-ignore-end lint/correctness/noUnusedImports: the generated signatures after this header use these imports.
+
+/**
+ * The value bridge's wrapper classes, which the addon exports by name.
+ * napi-rs does not declare them, so this header does.
+ */
+export declare const VcDate: WrapperClasses['VcDate']
+export declare const VcTimestamp: WrapperClasses['VcTimestamp']
+export declare const VcDecimal: WrapperClasses['VcDecimal']
+export declare const VcUuid: WrapperClasses['VcUuid']
 
 declare const opens: unique symbol
 

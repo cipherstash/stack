@@ -14,6 +14,11 @@ import {
   type OpenedScalar,
   type RecipherError,
   type Result,
+  type VcDate,
+  type VcDecimal,
+  type VcTimestamp,
+  type VcUuid,
+  type WrapperConstructor,
 } from '../src/index'
 
 function check<_ extends true>(): void {}
@@ -29,6 +34,12 @@ check<Equal<Keyset, Native.Keyset>>()
 check<Equal<Ciphertext<number>, Native.Ciphertext<number>>>()
 check<Equal<Json, Native.Json>>()
 check<Equal<typeof json, typeof Native.json>>()
+// The wrapper classes are the ones the header says the addon exports.
+check<Equal<typeof VcDate, typeof Native.VcDate>>()
+check<Equal<typeof VcTimestamp, typeof Native.VcTimestamp>>()
+check<Equal<typeof VcDecimal, typeof Native.VcDecimal>>()
+check<Equal<typeof VcUuid, typeof Native.VcUuid>>()
+check<Equal<typeof VcDate, WrapperConstructor<VcDate>>>()
 // A ciphertext with no type named, as one read from stored bytes with no
 // kind, decrypts to any scalar.
 check<Equal<Ciphertext, Ciphertext<OpenedScalar>>>()

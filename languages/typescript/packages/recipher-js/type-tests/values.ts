@@ -13,6 +13,7 @@ import type {
   VcUuid,
 } from '../src/index'
 import { Ciphertext, json, kinds } from '../src/index'
+import type { ScalarKinds } from '../value-napi/src/values'
 
 declare const keyset: Keyset
 declare const cipher: Cipher
@@ -90,3 +91,8 @@ const untyped = Ciphertext.fromBytes(stored)
 check<Exact<typeof untyped, Result<Ciphertext<OpenedScalar>, RecipherError>>>()
 // @ts-expect-error: a kind is one of `kinds`.
 void Ciphertext.fromBytes(stored, 'string')
+
+// `kinds` names every kind the value bridge declares a type for, and
+// `json`, and no other.
+type KindName = (typeof kinds)[keyof typeof kinds]['name']
+check<Exact<KindName, keyof ScalarKinds | 'json'>>()

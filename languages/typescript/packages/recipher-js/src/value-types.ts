@@ -1,62 +1,30 @@
 /**
  * The types of the values the SDK encrypts, and of what they decrypt to.
  *
- * This module holds types only, and imports nothing. The addon's generated
- * declarations (`native.d.ts`) name these types in their signatures, so a
- * module here that loaded the addon would make the declarations import
- * themselves.
+ * The value bridge declares how a scalar maps to JavaScript and back
+ * (`value-napi/src/values.d.ts`). This module adds what the SDK decides:
+ * which scalars `encrypt` takes, and JSON documents, which the addon
+ * converts itself.
+ *
+ * This module holds types only, and imports only types. The addon's
+ * generated declarations (`native.d.ts`) name these types in their
+ * signatures, so a module here that loaded the addon would make the
+ * declarations import themselves.
  */
-
-declare const wrapper: unique symbol
-
-/** A calendar date, such as `new VcDate('2026-11-23')`. The class comes from vitaminc. */
-export interface VcDate {
-  /** The date as `YYYY-MM-DD`. */
-  readonly value: string
-  toJSON(): string
-  readonly [wrapper]: 'VcDate'
-}
-
-/** A UTC instant, to the nanosecond. The class comes from vitaminc. */
-export interface VcTimestamp {
-  /** The instant as RFC 3339 text, with nanoseconds. */
-  readonly value: string
-  toJSON(): string
-  readonly [wrapper]: 'VcTimestamp'
-}
-
-/** A decimal with its scale, such as `new VcDecimal('1.50')`. The class comes from vitaminc. */
-export interface VcDecimal {
-  /** The decimal as text, with its scale. */
-  readonly value: string
-  toJSON(): string
-  readonly [wrapper]: 'VcDecimal'
-}
+import type {
+  Opened as BridgeOpened,
+  Scalar as BridgeScalar,
+} from '../value-napi/src/values'
+import type { VcUuid } from '../value-napi/src/wrappers'
 
 /**
- * A universally unique identifier (UUID). The class comes from vitaminc.
- * The engine has no plaintext type for a UUID yet. Encrypting a `VcUuid` is
- * an `Err` with the code `recipher_js::uuid`. `VcUuid` is not a `Scalar`.
+ * A value that is one scalar: a single value, not a JSON document.
+ *
+ * The bridge also reads `undefined` and a `VcUuid`, and `encrypt` refuses
+ * both. The engine has no plaintext type for a UUID yet: encrypting a
+ * `VcUuid` is an `Err` with the code `recipher_js::uuid`.
  */
-export interface VcUuid {
-  /** The UUID as hyphenated hex. */
-  readonly value: string
-  toJSON(): string
-  readonly [wrapper]: 'VcUuid'
-}
-
-/** A value that is one scalar: a single value, not a JSON document. */
-export type Scalar =
-  | string
-  | boolean
-  | number
-  | bigint
-  | Uint8Array
-  | Date
-  | VcTimestamp
-  | VcDate
-  | VcDecimal
-  | null
+export type Scalar = Exclude<BridgeScalar, undefined | VcUuid>
 
 /**
  * A JSON value. An integer outside the safe range of a `number` is a
@@ -99,29 +67,7 @@ export interface JsonMarker {
 export type Value = Scalar | JsonMarker
 
 /** The type that a value of type `V` decrypts to. */
-export type Opened<V> = V extends string
-  ? string
-  : V extends boolean
-    ? boolean
-    : V extends number
-      ? number
-      : V extends bigint
-        ? bigint
-        : V extends Uint8Array
-          ? Uint8Array
-          : V extends Date
-            ? Date
-            : V extends VcTimestamp
-              ? Date | VcTimestamp
-              : V extends VcDate
-                ? VcDate
-                : V extends VcDecimal
-                  ? VcDecimal
-                  : V extends null
-                    ? null
-                    : V extends JsonMarker
-                      ? OpenedJson
-                      : never
+export type Opened<V> = V extends JsonMarker ? OpenedJson : BridgeOpened<V>
 
 /** Any scalar type that a stored ciphertext can decrypt to. */
 export type OpenedScalar = Opened<Scalar>

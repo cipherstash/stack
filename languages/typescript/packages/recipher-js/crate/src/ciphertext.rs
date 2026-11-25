@@ -230,4 +230,39 @@ mod tests {
         assert!(as_kind(ValueKind::String, ValueFrame::of(true).unwrap()).is_err());
         assert!(as_kind(ValueKind::String, ValueFrame::of("x").unwrap()).is_ok());
     }
+
+    /// The names of the kinds in the value bridge's `ScalarKinds`
+    /// declaration: one `name: Type` line each.
+    fn declared_kinds(declarations: &str) -> Vec<&str> {
+        let body = declarations
+            .split_once("export interface ScalarKinds {")
+            .expect("values.d.ts declares ScalarKinds")
+            .1
+            .split_once("\n}")
+            .expect("the end of ScalarKinds")
+            .0;
+        body.lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(|line| line.split_once(':').expect("a `name: Type` line").0)
+            .collect()
+    }
+
+    /// The value bridge declares, in TypeScript, the type each scalar kind
+    /// decrypts to, by the engine's name for the kind. The list must name
+    /// every kind the engine has, and no other. The exceptions are the
+    /// containers, which `kinds` does not offer, and `json`, which the
+    /// addon converts and the package's `kinds` adds.
+    #[test]
+    fn the_bridge_declares_a_type_for_every_scalar_kind() {
+        let mut declared = declared_kinds(include_str!("../../value-napi/src/values.d.ts"));
+        declared.sort_unstable();
+        let mut engine: Vec<&str> = ValueKind::ALL
+            .into_iter()
+            .filter(|kind| !matches!(kind, ValueKind::Array | ValueKind::Object | ValueKind::Json))
+            .map(ValueKind::name)
+            .collect();
+        engine.sort_unstable();
+        assert_eq!(declared, engine);
+    }
 }

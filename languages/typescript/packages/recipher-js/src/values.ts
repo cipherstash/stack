@@ -28,14 +28,10 @@
  * `encrypt` then resolves to the `Err` that says why the addon did not load.
  */
 import type * as Native from '../native'
+import type * as Bridge from '../value-napi/src/wrappers'
 import { type Binding, binding } from './binding'
-import type {
-  VcDate as VcDateValue,
-  VcDecimal as VcDecimalValue,
-  VcTimestamp as VcTimestampValue,
-  VcUuid as VcUuidValue,
-} from './value-types'
 
+export type { WrapperConstructor } from '../value-napi/src/wrappers'
 export type {
   JsonValue,
   Opened,
@@ -45,37 +41,28 @@ export type {
   Value,
 } from './value-types'
 
-/** A calendar date, such as `new VcDate('2026-11-23')`. The class comes from vitaminc. */
-export type VcDate = VcDateValue
-/** A UTC instant, to the nanosecond. The class comes from vitaminc. */
-export type VcTimestamp = VcTimestampValue
-/** A decimal with its scale, such as `new VcDecimal('1.50')`. The class comes from vitaminc. */
-export type VcDecimal = VcDecimalValue
-/**
- * A universally unique identifier (UUID). The class comes from vitaminc.
- * The engine has no plaintext type for a UUID yet. Encrypting a `VcUuid` is
- * an `Err` with the code `recipher_js::uuid`. `VcUuid` is not a `Scalar`.
- */
-export type VcUuid = VcUuidValue
-
-/** The constructor of one of vitaminc's wrapper classes. */
-export interface WrapperConstructor<W> {
-  new (text: string): W
-  readonly prototype: W
-}
-
-type WrapperName = 'VcDate' | 'VcTimestamp' | 'VcDecimal' | 'VcUuid'
+// Each class is a value and a type of the same name. TypeScript cannot
+// re-export a type under a name this module also gives a value, so each
+// type is named again here.
+/** A calendar date, such as `new VcDate('2026-11-23')`. */
+export type VcDate = Bridge.VcDate
+/** A UTC instant, to the nanosecond. */
+export type VcTimestamp = Bridge.VcTimestamp
+/** A decimal with its scale, such as `new VcDecimal('1.50')`. */
+export type VcDecimal = Bridge.VcDecimal
+/** A universally unique identifier (UUID). `encrypt` refuses one. */
+export type VcUuid = Bridge.VcUuid
 
 /**
- * The class that the native addon defines. When the addon did not load, a
+ * The class that the native addon exports. When the addon did not load, a
  * stand-in class instead. The stand-in keeps its text, is frozen, and
- * serialises to JSON as vitaminc's class does.
+ * serialises to JSON as the class does.
  */
-function wrapperClass<W>(name: WrapperName): WrapperConstructor<W> {
+function wrapperClass<N extends keyof Bridge.WrapperClasses>(
+  name: N,
+): Binding[N] {
   if (binding.isOk()) {
-    // The addon exports each class under its name (`crate/src/lib.rs`).
-    // napi-rs does not declare these classes, so this code gives them types.
-    return Reflect.get(binding.value, name) as WrapperConstructor<W>
+    return binding.value[name]
   }
   const StandIn = class {
     readonly value: string
@@ -89,19 +76,17 @@ function wrapperClass<W>(name: WrapperName): WrapperConstructor<W> {
   }
   Object.defineProperty(StandIn, 'name', { value: name })
   // biome-ignore lint/plugin: a stand-in for the class, which constructs as it does.
-  return Object.freeze(StandIn) as unknown as WrapperConstructor<W>
+  return Object.freeze(StandIn) as unknown as Binding[N]
 }
 
 /** A calendar date. */
-export const VcDate: WrapperConstructor<VcDate> = wrapperClass('VcDate')
+export const VcDate = wrapperClass('VcDate')
 /** A UTC instant to the nanosecond. */
-export const VcTimestamp: WrapperConstructor<VcTimestamp> =
-  wrapperClass('VcTimestamp')
+export const VcTimestamp = wrapperClass('VcTimestamp')
 /** A decimal with its scale. */
-export const VcDecimal: WrapperConstructor<VcDecimal> =
-  wrapperClass('VcDecimal')
+export const VcDecimal = wrapperClass('VcDecimal')
 /** A UUID. */
-export const VcUuid: WrapperConstructor<VcUuid> = wrapperClass('VcUuid')
+export const VcUuid = wrapperClass('VcUuid')
 
 /**
  * A JSON document to encrypt as one ciphertext, as its JSON text. Make one

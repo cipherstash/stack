@@ -52,7 +52,7 @@ const EXPORTS = [
   'VcTimestamp',
   'VcDecimal',
   'VcUuid',
-] as const
+] as const satisfies readonly (keyof Binding)[]
 
 /**
  * Load the native addon at `path` with `require`. Then check that this
