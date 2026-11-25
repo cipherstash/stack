@@ -77,6 +77,24 @@ assert.throws(() => addon.encode(new Proxy([1, 2], {})));
 assert.throws(() => addon.encode(new Proxy(new (class { #x = 1 })(), {})));
 assert.deepEqual(roundTrip(new Proxy({ a: 1 }, {})), { a: 1 });
 
+// An object whose state is in internal slots is refused whatever its
+// prototype says. Given a plain prototype, it would pass as a plain object
+// and seal as an empty map.
+for (const make of [
+  () => new Map([['k', 'secret']]),
+  () => new Set(['secret']),
+  () => new WeakMap([[{}, 'secret']]),
+  () => new WeakSet([{}]),
+  () => /secret/g,
+  () => Buffer.from('secret').buffer,
+  () => new SharedArrayBuffer(8),
+]) {
+  for (const proto of [null, Object.prototype]) {
+    const collection = Object.setPrototypeOf(make(), proto);
+    assert.throws(() => addon.encode(collection), /not plain|only plain objects/, String(proto));
+  }
+}
+
 // Only a Buffer or a Uint8Array is bytes. Every other view would seal as
 // its raw bytes and come back as a Buffer, so it is refused.
 assert.deepEqual(roundTrip(new Uint8Array([1, 2, 3])), Buffer.from([1, 2, 3]));
@@ -137,9 +155,9 @@ assert.deepEqual(addon.ciphertextRoundTrip(ct), ct);
 assert.throws(() => addon.ciphertextRoundTrip({ t: 'none', v: leaf }), /malformed ciphertext/);
 
 // A ciphertext map reads own keys only and writes own properties.
-const map = Object.create({ inherited: { t: 'ct', v: leaf } });
-map.own = { t: 'ct', v: leaf };
+const map = { own: { t: 'ct', v: leaf } };
 map[Symbol('s')] = { t: 'ct', v: leaf };
+Object.prototype.inherited = { t: 'ct', v: leaf };
 Object.defineProperty(Object.prototype, 'own', {
   set(v) { captured = v; },
   configurable: true,
@@ -150,7 +168,13 @@ try {
   assert.deepEqual(Object.keys(out.v), ['own']);
 } finally {
   delete Object.prototype.own;
+  delete Object.prototype.inherited;
 }
+// Its entries object is plain, as a value's is: any other prototype is refused.
+assert.throws(
+  () => addon.ciphertextRoundTrip({ t: 'map', v: Object.create({ inherited: { t: 'ct', v: leaf } }) }),
+  /malformed ciphertext/,
+);
 {
   const v = JSON.parse('{"__proto__": {"t": "ct"}}');
   v.__proto__.v = leaf;
@@ -279,13 +303,16 @@ try {
 }
 
 // Ownership is checked right before each read, so a getter that deletes a
-// later property cannot make that read fall through to the prototype.
-Object.prototype.b = 'injected';
+// later property cannot make that read fall through to the prototype. The
+// refusal does not name the property: a key is part of the value.
+const removedWithoutItsName = (error) =>
+  /removed while it was being read/.test(error.message) && !error.message.includes('secretField');
+Object.prototype.secretField = 'injected';
 Object.prototype.v = leaf;
 try {
   assert.throws(
-    () => addon.encode({ get a() { delete this.b; return 1; }, b: 2 }),
-    /removed while it was being read/,
+    () => addon.encode({ get a() { delete this.secretField; return 1; }, secretField: 2 }),
+    removedWithoutItsName,
   );
   assert.throws(
     () => addon.readCiphertext({ get t() { delete this.v; return 'ct'; }, v: leaf }),
@@ -294,14 +321,27 @@ try {
   assert.throws(
     () => addon.readCiphertext({
       t: 'map',
-      v: { get a() { delete this.b; return { t: 'ct', v: leaf }; }, b: { t: 'ct', v: leaf } },
+      v: {
+        get a() { delete this.secretField; return { t: 'ct', v: leaf }; },
+        secretField: { t: 'ct', v: leaf },
+      },
     }),
-    /removed while it was being read/,
+    removedWithoutItsName,
   );
 } finally {
-  delete Object.prototype.b;
+  delete Object.prototype.secretField;
   delete Object.prototype.v;
 }
+
+// A ciphertext map's entries are a plain object's own properties. A Map
+// has none, so reading one would give an empty map; it is refused instead.
+assert.throws(
+  () => addon.readCiphertext({ t: 'map', v: new Map([['a', { t: 'ct', v: leaf }]]) }),
+  /malformed ciphertext/,
+);
+const bareNodes = Object.create(null);
+bareNodes.a = { t: 'ct', v: leaf };
+assert.deepEqual(Object.keys(addon.ciphertextRoundTrip({ t: 'map', v: bareNodes }).v), ['a']);
 Object.prototype.t = 'pt';
 Object.prototype.v = 'injected';
 try {

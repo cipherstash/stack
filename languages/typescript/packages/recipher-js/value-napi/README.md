@@ -166,10 +166,10 @@ it is not itself loadable from Node.
   makes of a string is wiped on drop: the UTF-16 code units and the UTF-8
   text of each value, key and wrapper class's text. The UTF-8 text is built
   in a buffer of its final size, so no smaller buffer is left behind, and
-  the wrapper text is parsed in place without further copies. The one
-  exception is an error message, which names a property a getter removed
-  while the walk was reading it. A frame snapshot is `Protected` and wiped
-  on drop.
+  the wrapper text is parsed in place without further copies. An error
+  message names no property of the value, except one of the three refused
+  names below, and holds no other part of it. A frame snapshot is `Protected` and
+  wiped on drop.
 - On the way out, the build hands decrypted text and bytes to JavaScript,
   where the engine owns them. The Rust copies made along the way are not
   wiped: the text of each wrapper class (formatted by the binding or
@@ -231,3 +231,4 @@ Node.js addons; it is not a WebAssembly binding.
 <!-- src/lib.rs resolves these for rustdoc. -->
 [`Encrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Encrypt.html
 [`Sink`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Sink.html
+[`JsFault`]: src/error.rs

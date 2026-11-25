@@ -46,6 +46,7 @@ use crate::js::{
 };
 use crate::js_builder::JsBuilder;
 use crate::js_ref::{frame_error, JsRef};
+use crate::wrappers::Wrappers;
 
 const T_CIPHERTEXT: &str = "ct";
 const T_SEQ: &str = "seq";
@@ -288,6 +289,22 @@ fn own_field<'e>(obj: &Object<'e>, key: &str) -> Result<Unknown<'e>> {
     get_property_unknown(obj, key)
 }
 
+/// A map node's own `v`, the object holding its entries. The entries are
+/// own properties, so it must be a plain object: a `Map`, or any object
+/// that is not plain, has none to read and would give an empty map.
+///
+/// A helper of its own, so its frame is gone before the map recurses and a
+/// tree at the depth limit reads in a debug build too.
+#[inline(never)]
+fn map_entries<'e>(obj: &Object<'e>) -> Result<Object<'e>> {
+    let map = node_object(own_field(obj, V_KEY)?)?;
+    let env = Env::from_raw(map.value().env);
+    if !Wrappers::get(&env)?.is_plain(map.to_unknown())? {
+        return Err(shape_error());
+    }
+    Ok(map)
+}
+
 fn node_from_js<Leaf, P>(obj: &Object<'_>, depth: usize) -> Result<CipherText<Leaf, P>>
 where
     Leaf: From<Vec<u8>>,
@@ -333,7 +350,7 @@ where
             Ok(CipherText::Sequence(items))
         }
         T_MAP => {
-            let map = node_object(own_field(obj, V_KEY)?)?;
+            let map = map_entries(obj)?;
             // Own keys only — `Object::keys` walks the prototype chain, so
             // a hostile node object with enumerable prototype members would
             // otherwise have its inherited keys become ciphertext map

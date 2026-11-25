@@ -20,6 +20,31 @@
   const freeze = Object.freeze;
   const getPrototypeOf = Object.getPrototypeOf;
   const objectPrototype = Object.prototype;
+  const apply = Reflect.apply;
+  // Methods and getters that throw on any receiver but their own type, so a
+  // call that returns is a brand check a prototype cannot forge.
+  const getter = (proto, name) => Object.getOwnPropertyDescriptor(proto, name).get;
+  const brands = freeze([
+    Map.prototype.has,
+    Set.prototype.has,
+    WeakMap.prototype.has,
+    WeakSet.prototype.has,
+    getter(RegExp.prototype, "source"),
+    getter(ArrayBuffer.prototype, "byteLength"),
+    getter(SharedArrayBuffer.prototype, "byteLength"),
+  ]);
+  const brandCount = brands.length;
+  const isSlotted = (value) => {
+    for (let i = 0; i < brandCount; i++) {
+      try {
+        apply(brands[i], value, [undefined]);
+        return true;
+      } catch {
+        // Not this collection type.
+      }
+    }
+    return false;
+  };
   const define = (name) => {
     const cls = {
       [name]: class {
@@ -54,10 +79,13 @@
     // `null`. Asked through `Object.getPrototypeOf`, not `napi_get_prototype`,
     // because the latter reads a Proxy's own map and reports `null` for
     // every proxy; this runs the proxy's trap instead, so a proxied Map or
-    // Date reports its target's prototype and is refused.
+    // Date reports its target's prototype and is refused. A Map, Set,
+    // WeakMap, WeakSet, RegExp or ArrayBuffer is refused whatever its
+    // prototype: its state is no own property, so given a plain prototype
+    // it would read as an empty object.
     isPlain: (value) => {
       const proto = getPrototypeOf(value);
-      return proto === null || proto === objectPrototype;
+      return (proto === null || proto === objectPrototype) && !isSlotted(value);
     },
   });
 })()

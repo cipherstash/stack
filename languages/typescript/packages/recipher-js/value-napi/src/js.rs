@@ -102,12 +102,10 @@ pub(crate) fn get_own<'e>(
     key: &OwnKey<'e>,
 ) -> std::result::Result<Unknown<'e>, JsFault> {
     if !obj.has_own_property_js(key.handle)? {
+        // The key is not named: it is part of the value.
         return Err(JsFault::refused(
             Refusal::ChangedWhileRead,
-            format!(
-                "property was removed while it was being read: {}",
-                *key.name
-            ),
+            "a property was removed while it was being read",
         ));
     }
     Ok(obj.get_property_unchecked(key.handle)?)

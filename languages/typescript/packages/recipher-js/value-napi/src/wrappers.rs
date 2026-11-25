@@ -139,7 +139,9 @@ impl<'e> Wrappers<'e> {
     }
 
     /// Whether `value` is a plain object: prototype `Object.prototype` or
-    /// `null` (`Object.create(null)`).
+    /// `null` (`Object.create(null)`). A `Map`, `Set`, `WeakMap`, `WeakSet`,
+    /// `RegExp`, `ArrayBuffer` or `SharedArrayBuffer` is not, whatever its
+    /// prototype has been set to.
     ///
     /// Anything else stores its state in internal slots or carries class
     /// behaviour that key/value enumeration silently loses: a `Map`'s or
