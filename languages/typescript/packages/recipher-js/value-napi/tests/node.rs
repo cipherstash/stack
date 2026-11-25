@@ -1,4 +1,27 @@
 //! Exercise live N-API conversions, including in package-scoped mutation runs.
+
+/// A directory of this run's own under the build directory, removed when
+/// the run ends.
+struct Stage(std::path::PathBuf);
+
+impl Stage {
+    fn new(target: &std::path::Path) -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after 1970")
+            .as_nanos();
+        let dir = target.join(format!("run-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create the run's directory");
+        Self(dir)
+    }
+}
+
+impl Drop for Stage {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[test]
 fn node_value_conformance() {
     use std::{path::Path, process::Command};
@@ -23,7 +46,10 @@ fn node_value_conformance() {
         std::env::consts::DLL_PREFIX,
         std::env::consts::DLL_SUFFIX
     ));
-    let module = target.join("addon.node");
+    // The build is shared, and Cargo locks it; the files Node loads are
+    // staged per run, so a concurrent run cannot rewrite them mid-load.
+    let stage = Stage::new(&target);
+    let module = stage.0.join("addon.node");
     std::fs::copy(library, &module).expect("copy Node module");
     let example = include_str!("../README.md")
         .split_once("```javascript\n")
@@ -32,7 +58,7 @@ fn node_value_conformance() {
         .split_once("\n```")
         .expect("end of README JavaScript example")
         .0;
-    let example_path = target.join("readme-example.cjs");
+    let example_path = stage.0.join("readme-example.cjs");
     std::fs::write(&example_path, example).expect("write README example");
     for suite in [
         "tests/value-conformance.cjs",
