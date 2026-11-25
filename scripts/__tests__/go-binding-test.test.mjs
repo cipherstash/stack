@@ -23,6 +23,12 @@ describe('Go binding script test flags', () => {
           mkdirSync(bin)
           mkdirSync(module)
           writeFileSync(join(module, 'guest.wasm'), 'test guest')
+          // A nested module, so the script's loop over them runs too.
+          mkdirSync(join(module, 'encrypttest'))
+          writeFileSync(
+            join(module, 'encrypttest', 'go.mod'),
+            'module example.com/encrypttest\n',
+          )
           writeFileSync(join(bin, 'gofmt'), '#!/bin/sh\nexit 0\n', {
             mode: 0o755,
           })
@@ -34,7 +40,7 @@ describe('Go binding script test flags', () => {
           writeFileSync(
             join(bin, 'go'),
             `#!/bin/sh
-printf '%s|%s|%s\\n' "\${GOOS:-}" "\${GOARCH:-}" "$*" >> "$GO_BINDING_LOG"
+printf '%s|%s|%s|%s\\n' "\$(basename "\$PWD")" "\${GOOS:-}" "\${GOARCH:-}" "$*" >> "$GO_BINDING_LOG"
 `,
             { mode: 0o755 },
           )
@@ -62,14 +68,21 @@ printf '%s|%s|%s\\n' "\${GOOS:-}" "\${GOARCH:-}" "$*" >> "$GO_BINDING_LOG"
             },
           )
           expect(result.status, result.stderr).toBe(0)
-          const flags = producer ? '-count=1 ' : ''
+          const count = producer ? '-count=1 ' : ''
+          const main = 'module with spaces'
+          const nested = 'encrypttest'
           expect(readFileSync(log, 'utf8').trim().split('\n')).toEqual([
-            '||vet ./...',
-            '||test -v ./auth -run ^TestDeviceRefresh',
-            `||test ${flags}./...`,
+            `${main}|||vet ./...`,
+            `${main}|||test -v ./auth -run ^TestDeviceRefresh`,
+            `${main}|||test -timeout=25m ${count}./...`,
             platform === 'Linux'
-              ? `linux|386|test ${flags}./...`
-              : 'linux|386|vet ./...',
+              ? `${main}|linux|386|test -timeout=25m ${count}./...`
+              : `${main}|linux|386|vet ./...`,
+            `${nested}|||vet ./...`,
+            `${nested}|||test -timeout=5m ${count}./...`,
+            platform === 'Linux'
+              ? `${nested}|linux|386|test -timeout=5m ${count}./...`
+              : `${nested}|linux|386|vet ./...`,
           ])
         } finally {
           rmSync(root, { recursive: true, force: true })
