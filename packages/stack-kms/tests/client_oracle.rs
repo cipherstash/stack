@@ -25,11 +25,10 @@
 //! - `ORACLE_OP=Retrieve|Fallible|Generate` runs only that operation. Any
 //!   other value fails the test.
 
-use super::*;
-use crate::connection::ZeroKMSConnectionInit;
-use crate::key::V1KeySet;
 use proptest::prelude::*;
 use sha2::{Digest, Sha256};
+use stack_kms::*;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -37,11 +36,18 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::Duration;
+use uuid::Uuid;
 use zerokms_keyset::keyset::{EncryptionKeySet, ProxyKeySet};
 use zerokms_protocol::{
     GenerateKeyResponse, GeneratedKey, KeyId, RetrieveKeyResponse, RetrieveKeyResponseFallible,
-    RetrievedKey, ViturKeyMaterial, ViturRequestErrorKind,
+    RetrievedKey, ViturKeyMaterial, ViturRequest, ViturRequestError, ViturRequestErrorKind,
 };
+
+/// How many keys stack-kms derives between two yields (its crate-private
+/// `YIELD_EVERY`). The yield checks below are written against it, so a
+/// change to stack-kms's value fails them until this one is changed to
+/// match.
+const YIELD_EVERY: usize = 64;
 
 // ---------------------------------------------------------------- the oracle
 
@@ -380,13 +386,13 @@ fn client(conn: &Oracle, keys_per_req: usize, concurrent_reqs: usize) -> Client<
 }
 
 fn client_key() -> ClientKey {
-    ClientKey {
-        key_id: Uuid::nil(),
-        keyset: V1KeySet(ProxyKeySet::generate(
+    ClientKey::new_v1(
+        Uuid::nil(),
+        ProxyKeySet::generate(
             &EncryptionKeySet::generate().unwrap(),
             &EncryptionKeySet::generate().unwrap(),
-        )),
-    }
+        ),
+    )
 }
 
 // ------------------------------------------------------------ the operations
