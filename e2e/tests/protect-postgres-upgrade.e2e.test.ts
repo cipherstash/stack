@@ -1,3 +1,6 @@
+import { spawn } from 'node:child_process'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { installEqlV3 } from '@cipherstash/test-kit/install'
 import postgres from 'postgres'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -74,6 +77,53 @@ describe('Protect Postgres v2 to Stack v3', () => {
     ).toEqual(before)
   }, 120_000)
 
+  it('runs the standalone guide script against Protect-written source columns', async () => {
+    const guide = await readFile(
+      new URL(
+        '../../docs/migration/protect-dynamodb-to-stack.md',
+        import.meta.url,
+      ),
+      'utf8',
+    )
+    const snippet = [...guide.matchAll(/```typescript\n([\s\S]*?)\n```/g)]
+      .map((match) => match[1])
+      .find((code) => code.includes('ACCESS EXCLUSIVE'))
+    expect(snippet).toBeDefined()
+    if (!snippet) throw new Error('Missing standalone conversion')
+    // The temporary sibling resolves the same installed packages as the npm
+    // example. Execute the guide verbatim, including its real CLI entry point.
+    const directory = await mkdtemp(
+      fileURLToPath(new URL('../.guide-script-', import.meta.url)),
+    )
+    try {
+      const script = `${directory}/migrate.ts`
+      await writeFile(script, snippet)
+      const exitCode = await new Promise<number | null>((resolve, reject) => {
+        const child = spawn(process.execPath, [script], {
+          env: {
+            ...process.env,
+            DATABASE_URL: databaseUrl,
+            MIGRATION_TABLE: table,
+          },
+          stdio: 'ignore',
+          timeout: 110_000,
+        })
+        child.once('error', reject)
+        child.once('exit', resolve)
+      })
+      expect(
+        exitCode,
+        'standalone guide conversion must commit successfully',
+      ).toBe(0)
+      expect(await app.read('v3')).toEqual(app.corpus)
+      expect(await app.find('v3', 'age', 36)).toEqual(['ada', 'alan'])
+      await app.rollback()
+      expect(await app.read('v2')).toEqual(app.corpus)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 120_000)
+
   it('reads and queries fresh Stack writes beside legacy rows and refuses stale rollback', async () => {
     await app.migrate()
     const fresh = await app.write()
@@ -102,6 +152,81 @@ describe('Protect Postgres v2 to Stack v3', () => {
     expect(JSON.stringify(agePlan)).toContain(`${table}_age_v3_idx`)
     expect(await app.find('v3', 'email', 'ada@example.com')).toEqual(['ada'])
     expect(await app.find('v3', 'age', 36)).toEqual(['ada', 'alan'])
+  }, 120_000)
+
+  it('accepts the supported shape after a physical column before pk was dropped', async () => {
+    const relation = `public.${table}`
+    const replacement = `public.${table}_replacement`
+    await sql.begin(async (tx) => {
+      await tx`CREATE TABLE ${tx(replacement)} (
+        discarded text, pk text PRIMARY KEY,
+        email public.eql_v2_encrypted,
+        age public.eql_v2_encrypted,
+        notes public.eql_v2_encrypted
+      )`
+      await tx`INSERT INTO ${tx(replacement)} (pk, email, age, notes)
+        SELECT pk, email, age, notes FROM ${tx(relation)}`
+      await tx`ALTER TABLE ${tx(replacement)} DROP COLUMN discarded`
+      await tx`DROP TABLE ${tx(relation)}`
+      await tx`ALTER TABLE ${tx(replacement)} RENAME TO ${tx(table)}`
+    })
+    const [fixture] =
+      await sql`SELECT pg_catalog.to_regclass(${relation})::text AS relation`
+    expect(
+      fixture.relation,
+      'fixture must create the public migration source',
+    ).not.toBeNull()
+    const attributes = await sql`SELECT attnum FROM pg_catalog.pg_attribute
+      WHERE attrelid = pg_catalog.to_regclass(${relation}) AND attname = 'pk' AND NOT attisdropped`
+    expect(
+      attributes.map((attribute) => attribute.attnum),
+      'pk must retain physical attribute 2 after its predecessor is dropped',
+    ).toEqual([2])
+    await app.migrate()
+    expect(await app.read('v3')).toEqual(app.corpus)
+    await app.rollback()
+    expect(await app.read('v2')).toEqual(app.corpus)
+  }, 120_000)
+
+  it.each(['pg_catalog', 'eql_v3,pg_catalog'])(
+    'accepts the supported public table with search_path %s',
+    async (searchPath) => {
+      const restricted = postgres(databaseUrl, {
+        prepare: false,
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: searchPath },
+      })
+      try {
+        const restrictedApp = await createExample(restricted, table)
+        await restrictedApp.migrate()
+        expect(await restrictedApp.read('v3')).toEqual(app.corpus)
+        expect(await restrictedApp.find('v3', 'age', 36)).toEqual([
+          'ada',
+          'alan',
+        ])
+        expect(
+          await restrictedApp.find('v3', 'email', 'nobody@example.com'),
+        ).toEqual([])
+        await restrictedApp.rollback()
+        expect(await restrictedApp.read('v2')).toEqual(app.corpus)
+      } finally {
+        await restricted.end()
+      }
+    },
+    120_000,
+  )
+
+  it('refuses a source table without the required primary key', async () => {
+    await sql`ALTER TABLE ${sql(table)} DROP CONSTRAINT ${sql(`${table}_pkey`)}`
+    const before = await sql`SELECT * FROM ${sql(table)} ORDER BY pk`
+    await expect(app.migrate()).rejects.toThrow(
+      'Unsupported table dependencies',
+    )
+    expect(await sql`SELECT * FROM ${sql(table)} ORDER BY pk`).toEqual(before)
+    expect(
+      await sql`SELECT attname FROM pg_attribute WHERE attrelid = ${table}::regclass AND attname = 'email_v3'`,
+    ).toHaveLength(0)
   }, 120_000)
 
   it('refuses unsupported payload capabilities before changing source data or columns', async () => {
