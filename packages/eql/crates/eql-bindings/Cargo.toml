@@ -43,7 +43,7 @@ schemars = "1"
 # from the PACKAGED crate against the registry stack-encrypt instead:
 # `cargo publish --dry-run --all-features` in test-eql.yml at PR time, and
 # `publish_all_features` in ../../release-plz.toml at release time.
-stack-encrypt = { path = "../../../stack-encrypt", version = "0.2.0", optional = true, default-features = false }
+stack-encrypt = { path = "../../../stack-encrypt", version = "0.3.0", optional = true, default-features = false }
 # The vitaminc line stack-encrypt is built on. `PrfValue` is named from this
 # crate directly (stack-encrypt re-exports only `IntoPrfContext` and
 # `PrfContext`), and two vitaminc lines in one graph do not interoperate, so

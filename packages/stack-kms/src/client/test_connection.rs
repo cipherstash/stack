@@ -5,6 +5,7 @@ use async_mutex::Mutex;
 use zerokms_protocol::{ViturRequest, ViturRequestError};
 
 use crate::connection::{ZeroKMSConnection, ZeroKMSConnectionInit};
+use crate::endpoint::ZeroKmsEndpoint;
 
 type EffectHandlers = Vec<(String, Box<dyn FnOnce(&str) + Send>)>;
 type RequestHandlers = Vec<(String, Result<String, ViturRequestError>)>;
@@ -93,12 +94,13 @@ impl ZeroKMSConnectionInit for TestConnection {
 
 impl ZeroKMSConnection for TestConnection {
     // The stub has no URL to resolve — it dispatches on the request's endpoint
-    // name — so the trait's defaults (no-op `ensure_base_url`, `has_base_url`
-    // of `true`) are exactly right here.
+    // name — so the trait's default `has_base_url` of `true` is exactly
+    // right here, and no endpoint is ever passed to it.
     async fn send<Request: ViturRequest>(
         &self,
         request: Request,
         _access_token: &str,
+        _endpoint: Option<&ZeroKmsEndpoint>,
     ) -> Result<Request::Response, ViturRequestError> {
         let endpoint = Request::ENDPOINT;
 

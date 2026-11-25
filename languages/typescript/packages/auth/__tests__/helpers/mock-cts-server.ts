@@ -17,6 +17,7 @@ export class MockCtsServer {
   #server: Server
   #routes = new Map<string, Handler>()
   #baseUrl = ''
+  #requestCount = 0
 
   private constructor(server: Server) {
     this.#server = server
@@ -26,6 +27,7 @@ export class MockCtsServer {
   static async start(): Promise<MockCtsServer> {
     const mock = new MockCtsServer(
       createServer((req, res) => {
+        mock.#requestCount += 1
         const handler = mock.#routes.get(`${req.method} ${req.url}`)
         if (!handler) {
           res.writeHead(404, { 'content-type': 'application/json' })
@@ -203,6 +205,11 @@ export class MockCtsServer {
       status: 409,
       json: { error: 'conflict' },
     }))
+  }
+
+  /** How many requests reached the server, matched or not. */
+  get requestCount(): number {
+    return this.#requestCount
   }
 
   clearMocks(): void {
