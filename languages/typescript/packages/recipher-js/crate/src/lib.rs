@@ -1,7 +1,7 @@
 //! The Node addon of `@cipherstash/recipher`.
 //!
 //! The addon defines the classes the package exports: [`Cipher`],
-//! [`Keyset`] and [`Ciphertext`]. Every operation runs through the
+//! [`Keyset`], [`Ciphertext`] and [`Json`]. Every operation runs through the
 //! Stack Encrypt engine, the `stack-encrypt` crate. The engine encrypts and
 //! decrypts values with keys from ZeroKMS, CipherStash's key service.
 //!
@@ -54,6 +54,7 @@ mod cipher;
 mod ciphertext;
 mod error;
 mod js;
+mod json;
 mod outcome;
 mod value;
 
@@ -63,8 +64,11 @@ mod engine_tests;
 pub use cipher::{create_testing, Cipher, Keyset};
 pub use ciphertext::Ciphertext;
 pub use error::RecipherErrorFields;
+pub use json::{json_document, Json};
 pub use outcome::install_result;
 
+use napi::bindgen_prelude::{JsObjectValue, Object, Unknown};
+use napi::Env;
 use napi_derive::napi;
 
 /// The version of the interface between the package's TypeScript and this
@@ -77,4 +81,22 @@ pub const BINDING_INTERFACE: u32 = 1;
 #[napi]
 pub fn binding_interface() -> u32 {
     BINDING_INTERFACE
+}
+
+/// Exports the wrapper classes of vitaminc, CipherStash's cryptography
+/// library: `VcDate`, `VcTimestamp`, `VcDecimal` and `VcUuid`. Each class
+/// stands for a type that JavaScript does not have. The addon exports them
+/// so JavaScript can construct them, and so decrypted values are instances
+/// of them.
+// napi's module registration calls this function. `clippy --all-targets`
+// also builds the crate as a test, where nothing calls it.
+#[cfg_attr(test, allow(dead_code))]
+#[napi(module_exports)]
+fn wrappers(mut exports: Object<'_>, env: Env) -> napi::Result<()> {
+    let classes = recipher_value_napi::Wrappers::exports(&env)?;
+    for wrapper in recipher_value_napi::Wrapper::ALL {
+        let name = wrapper.class_name();
+        exports.set_named_property(name, classes.get_named_property::<Unknown<'_>>(name)?)?;
+    }
+    Ok(())
 }

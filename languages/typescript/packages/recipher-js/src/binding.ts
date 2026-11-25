@@ -43,9 +43,15 @@ const EXPORTS = [
   'Cipher',
   'Keyset',
   'Ciphertext',
+  'Json',
   'bindingInterface',
   'createTesting',
   'installResult',
+  'json',
+  'VcDate',
+  'VcTimestamp',
+  'VcDecimal',
+  'VcUuid',
 ] as const
 
 /**
@@ -112,7 +118,12 @@ export function load(
       ),
     )
   }
-  for (const cls of [binding.Cipher, binding.Keyset, binding.Ciphertext]) {
+  for (const cls of [
+    binding.Cipher,
+    binding.Keyset,
+    binding.Ciphertext,
+    binding.Json,
+  ]) {
     Object.freeze(cls.prototype)
     Object.freeze(cls)
   }

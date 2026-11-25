@@ -38,4 +38,21 @@ export {
   type RecipherErrorFields,
   type Severity,
 } from './error'
+export { type Kind, kinds, type ValueOf } from './kinds'
 export { Err, err, Ok, ok, type Result } from './result'
+export {
+  type Json,
+  type JsonFunction,
+  type JsonValue,
+  json,
+  type Opened,
+  type OpenedJson,
+  type OpenedScalar,
+  type Scalar,
+  type Value,
+  VcDate,
+  VcDecimal,
+  VcTimestamp,
+  VcUuid,
+  type WrapperConstructor,
+} from './values'

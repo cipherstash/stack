@@ -26,12 +26,25 @@ use std::error::Error as StdError;
 
 use miette::Diagnostic;
 use napi_derive::napi;
+use stack_encrypt::dynamic::ValueKind;
 use stack_encrypt::ErrorPayload;
 
 /// The SDK's own errors. They cover what the addon refuses before the
 /// engine reads it, and what goes wrong between the engine and JavaScript.
 #[derive(Debug, thiserror::Error, Diagnostic)]
 pub(crate) enum Error {
+    /// `undefined` given as a value.
+    #[error("`undefined` is not a value")]
+    #[diagnostic(
+        code(recipher_js::undefined),
+        help("Use `null` for a value that is not there.")
+    )]
+    Undefined,
+    /// A `VcUuid`. The engine's value model, the set of value types the
+    /// engine reads, has no UUID type.
+    #[error("a UUID cannot be encrypted yet: the engine's value model does not hold one")]
+    #[diagnostic(code(recipher_js::uuid), help("Encrypt its text instead."))]
+    Uuid,
     /// A value outside the engine's value model, or a value that Node-API
     /// failed to read.
     #[error("the value cannot be encrypted: it is not one the engine reads")]
@@ -43,12 +56,30 @@ pub(crate) enum Error {
     )]
     #[diagnostic(code(recipher_js::threw))]
     Threw,
-    /// A value other than a string, given to `encrypt`.
-    #[error("this build encrypts a string only")]
-    #[diagnostic(code(recipher_js::not_a_string))]
-    NotAString,
+    /// An array inside an array, given as one value.
+    #[error("an array inside an array is not a value")]
+    #[diagnostic(code(recipher_js::not_a_scalar), help("Wrap it in json(..)."))]
+    NotAScalar,
+    /// An object given as one value.
+    #[error("an object is not a value")]
+    #[diagnostic(code(recipher_js::plain_object), help("Wrap it in json(..)."))]
+    PlainObject,
+    /// A value that the engine cannot encrypt as a JSON document.
+    #[error("the value is not a JSON document the engine seals: {what}")]
+    #[diagnostic(code(recipher_js::not_json))]
+    NotJson { what: &'static str },
+    /// A JSON document nested deeper than the engine's JSON parser reads.
+    #[error(
+        "the value is not a JSON document the engine seals: it is nested deeper than 127 levels of arrays and objects"
+    )]
+    #[diagnostic(code(recipher_js::too_deep))]
+    JsonTooDeep,
+    /// The engine refused to encrypt a value in the form it was given.
+    #[error("the engine could not seal the value as given")]
+    #[diagnostic(code(recipher_js::not_sealed))]
+    NotSealed,
     /// `decrypt` given something that is not a `Ciphertext`.
-    #[error("decrypt takes a Ciphertext")]
+    #[error("decrypt takes a Ciphertext, or an array of them")]
     #[diagnostic(
         code(recipher_js::not_a_ciphertext),
         help("Read stored bytes with Ciphertext.fromBytes.")
@@ -58,6 +89,18 @@ pub(crate) enum Error {
     #[error("a ciphertext is read from a Uint8Array")]
     #[diagnostic(code(recipher_js::not_bytes))]
     NotBytes,
+    /// A kind that is not one of `kinds`.
+    #[error("a ciphertext opens as one of `kinds`, such as `kinds.string`")]
+    #[diagnostic(code(recipher_js::not_a_kind))]
+    NotAKind,
+    /// A ciphertext that decrypted to another kind than the one named.
+    #[error("the value opened, but it was not sealed as the kind named, {kind}")]
+    #[diagnostic(code(recipher_js::opened_type))]
+    OpenedType { kind: ValueKind },
+    /// A ciphertext named as JSON that decrypted to text that is not JSON.
+    #[error("the value opened, but it is not a JSON document")]
+    #[diagnostic(code(recipher_js::not_a_document))]
+    NotADocument,
     /// A test cipher's seed that is not 32 bytes.
     #[error("a test cipher's seed is a Uint8Array of 32 bytes")]
     #[diagnostic(code(recipher_js::testing_seed))]
@@ -285,6 +328,7 @@ impl From<Error> for RecipherErrorFields {
 #[cfg(test)]
 mod tests {
     use super::{Error, ErrorCause, RecipherErrorFields, Severity, UNDESCRIBED_CAUSE};
+    use stack_encrypt::dynamic::ValueKind;
 
     #[test]
     fn an_aead_failure_keeps_the_engine_code_message_and_help() {
@@ -363,12 +407,12 @@ mod tests {
 
     #[test]
     fn an_error_of_the_sdks_own_has_its_code_message_and_help() {
-        let error = RecipherErrorFields::from(Error::NotACiphertext);
-        assert_eq!(error.code, "recipher_js::not_a_ciphertext");
-        assert_eq!(error.message, "decrypt takes a Ciphertext");
+        let error = RecipherErrorFields::from(Error::Undefined);
+        assert_eq!(error.code, "recipher_js::undefined");
+        assert_eq!(error.message, "`undefined` is not a value");
         assert_eq!(
             error.help.as_deref(),
-            Some("Read stored bytes with Ciphertext.fromBytes.")
+            Some("Use `null` for a value that is not there.")
         );
         assert_eq!(error.severity, Severity::Error);
         assert!(error.fields.is_empty() && error.causes.is_empty());
@@ -469,11 +513,22 @@ mod tests {
     /// so the crate does not compile when a new variant has no entry here.
     fn every_error() -> Vec<Error> {
         let all = vec![
+            Error::Undefined,
+            Error::Uuid,
             Error::Value,
             Error::Threw,
-            Error::NotAString,
+            Error::NotAScalar,
+            Error::PlainObject,
+            Error::NotJson { what: "bytes" },
+            Error::JsonTooDeep,
+            Error::NotSealed,
             Error::NotACiphertext,
             Error::NotBytes,
+            Error::NotAKind,
+            Error::OpenedType {
+                kind: ValueKind::String,
+            },
+            Error::NotADocument,
             Error::TestingSeed,
             Error::NoTesting,
             Error::NoResult,
@@ -481,11 +536,20 @@ mod tests {
         ];
         for error in &all {
             match error {
-                Error::Value
+                Error::Undefined
+                | Error::Uuid
+                | Error::Value
                 | Error::Threw
-                | Error::NotAString
+                | Error::NotAScalar
+                | Error::PlainObject
+                | Error::NotJson { .. }
+                | Error::JsonTooDeep
+                | Error::NotSealed
                 | Error::NotACiphertext
                 | Error::NotBytes
+                | Error::NotAKind
+                | Error::OpenedType { .. }
+                | Error::NotADocument
                 | Error::TestingSeed
                 | Error::NoTesting
                 | Error::NoResult

@@ -49,10 +49,19 @@ serde_json = "1"
 # The engine's opaque path wipes a value it did not seal. The version the
 # engine resolves.
 zeroize = "1"
+# A kind named to `Ciphertext.fromBytes`, read from its frame through
+# vitaminc's frame serde.
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 stack-encrypt = { path = "../../../../../packages/stack-encrypt", default-features = false, features = ["dynamic", "http", "test-support"] }
 tokio = { version = "1", features = ["rt", "macros"] }
+# The values the engine-interop tests seal through the engine's typed API,
+# and the types the counting key source names. The versions the engine
+# resolves.
+jiff = { version = "1.0.0", default-features = false }
+rust_decimal = { version = "1", default-features = false }
+uuid = "1"
 
 [build-dependencies]
 napi-build = "2"

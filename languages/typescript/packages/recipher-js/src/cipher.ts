@@ -16,14 +16,17 @@ import type * as Native from '../native'
 import { type Binding, binding } from './binding'
 import type { RecipherError } from './error'
 import { err, type Result } from './result'
+import type { OpenedScalar } from './value-types'
 
 /**
  * One encrypted value: opaque bytes, encrypted with a data key of its own.
  *
  * `T` is the type the ciphertext decrypts to. For example,
- * `keyset.encrypt('..')` returns a `Ciphertext<string>`.
+ * `keyset.encrypt('..')` returns a `Ciphertext<string>`. A ciphertext read
+ * from stored bytes with no kind named decrypts to whatever type was
+ * encrypted, so its type allows any scalar.
  */
-export type Ciphertext<T = string> = Native.Ciphertext<T>
+export type Ciphertext<T = OpenedScalar> = Native.Ciphertext<T>
 /** A cipher: the Stack Encrypt engine, and the keysets it can use. */
 export type Cipher = Native.Cipher
 /** One keyset of a cipher. A keyset is a group of keys in ZeroKMS. */

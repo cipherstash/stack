@@ -13,10 +13,12 @@
 
 use std::sync::Arc;
 
-use napi::bindgen_prelude::{JavaScriptClassExt, JsValue, Object, PromiseRaw, Unknown};
+use napi::bindgen_prelude::{
+    JavaScriptClassExt, JsValue, Object, PromiseRaw, ToNapiValue, Unknown,
+};
 use napi::Env;
 use napi_derive::napi;
-use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::{ValueFrame, ValueKind};
 use stack_encrypt::kms::{DataKeySource, IndexKeySource, StackKms};
 use stack_encrypt::{CipherRef, DecryptFrom, EncryptInto, KeysetCipher, StackCipher};
 use vitaminc_protected::OpaqueDebug;
@@ -24,6 +26,7 @@ use vitaminc_protected::OpaqueDebug;
 use crate::ciphertext::Ciphertext;
 use crate::error::{Error, RecipherErrorFields};
 use crate::js;
+use crate::json::Json;
 use crate::outcome::{not_made, refused, spawn, Outcome};
 use crate::value::OneValue;
 
@@ -120,9 +123,17 @@ impl Cipher {
     /// Decrypts a ciphertext made under any of this cipher's keysets. The
     /// value decrypts as the type it was encrypted as.
     ///
+    /// An array of ciphertexts returns an array of values, in the same
+    /// order. The cipher makes one key request for each keyset the
+    /// ciphertexts were made under.
+    ///
     /// Resolves to an `Err` with the code `recipher_js::not_a_ciphertext`
-    /// when the argument is not a `Ciphertext`. The promise does not reject.
-    #[napi(ts_type = "<T>(ciphertext: Ciphertext<T>): Promise<Result<T, RecipherError>>")]
+    /// when the argument, or an element of the array, is not a
+    /// `Ciphertext`. The promise does not reject.
+    #[napi(
+        ts_type = "<T>(ciphertext: Ciphertext<T>): Promise<Result<T, RecipherError>>
+decrypt<T>(ciphertexts: readonly Ciphertext<T>[]): Promise<Result<T[], RecipherError>>"
+    )]
     pub fn decrypt<'e>(
         &self,
         env: &'e Env,
@@ -140,47 +151,82 @@ impl Cipher {
 
 #[napi]
 impl Keyset {
-    /// Encrypts a string as one ciphertext with its own data key, with no
+    /// Encrypts a value as one ciphertext with its own data key, with no
     /// context. A context is a value that a ciphertext is bound to, and
     /// decrypting needs the same context.
     ///
-    /// Resolves to an `Err` with the code `recipher_js::not_a_string` when
-    /// the value is not a string. The promise does not reject.
+    /// An array of values returns an array of ciphertexts, in the same
+    /// order. The keyset makes one key request for the whole array, however
+    /// long it is. A key request is one request to ZeroKMS for data keys. If
+    /// any value is refused, the whole array fails, before any request.
+    ///
+    /// A value's type sets how it is encrypted. The mapping of JavaScript
+    /// types comes from vitaminc, CipherStash's cryptography library. A
+    /// `Json` from `json(..)` is encrypted as a JSON document.
+    ///
+    /// A value that cannot be encrypted resolves to an `Err`. For example, a
+    /// plain object is an `Err` with the code `recipher_js::plain_object`.
+    /// The promise does not reject.
     #[napi(
-        ts_args_type = "value: string",
-        ts_return_type = "Promise<Result<Ciphertext<string>, RecipherError>>"
+        ts_type = "<V extends Value>(value: V): Promise<Result<Ciphertext<Opened<V>>, RecipherError>>
+encrypt<V extends Value>(values: readonly V[]): Promise<Result<Ciphertext<Opened<V>>[], RecipherError>>"
     )]
     pub fn encrypt<'e>(
         &self,
         env: &'e Env,
         value: Unknown<'_>,
     ) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
-        let value = match js::read(env, value).and_then(OneValue::new) {
-            Ok(value) => value,
-            Err(error) => return refused(env, error),
+        let (many, values) = match js::elements(env, value) {
+            Some(Ok(elements)) => (true, elements),
+            Some(Err(error)) => return refused(env, error),
+            None => (false, vec![value]),
         };
+        let mut sealable = Vec::with_capacity(values.len());
+        let mut opens_as = Vec::with_capacity(values.len());
+        for value in values {
+            match one_value(env, value) {
+                Ok((value, kind)) => {
+                    sealable.push(value);
+                    opens_as.push(kind);
+                }
+                Err(error) => return refused(env, error),
+            }
+        }
         let engine = Arc::clone(&self.engine);
         spawn(
             env,
             async move {
                 with_engine!(&*engine, |cipher| {
-                    seal(&cipher.default_keyset(), vec![value]).await
+                    seal(&cipher.default_keyset(), sealable).await
                 })
             },
-            |env, mut sealed| match sealed.pop() {
-                Some(sealed) => Ok(Ciphertext::new(sealed)
-                    .into_instance(env)
-                    .map_err(not_made)?
-                    .to_unknown()),
-                None => Err(Error::NoResult.into()),
+            move |env, sealed| {
+                let mut instances = sealed
+                    .into_iter()
+                    .zip(opens_as)
+                    .map(|(sealed, opens_as)| {
+                        Ok(Ciphertext::new(sealed, opens_as)
+                            .into_instance(env)
+                            .map_err(not_made)?
+                            .to_unknown())
+                    })
+                    .collect::<Outcome<Vec<_>>>()?;
+                if many {
+                    return instances.into_unknown(env).map_err(not_made);
+                }
+                instances.pop().ok_or_else(|| Error::NoResult.into())
             },
         )
     }
 
-    /// Decrypts a ciphertext made under this keyset. A ciphertext of another
-    /// keyset fails with the code `stack_encrypt::foreign_keyset`, before
-    /// any key is requested. The promise does not reject.
-    #[napi(ts_type = "<T>(ciphertext: Ciphertext<T>): Promise<Result<T, RecipherError>>")]
+    /// Decrypts a ciphertext made under this keyset, or an array of them. A
+    /// ciphertext of another keyset fails with the code
+    /// `stack_encrypt::foreign_keyset`, before any key is requested. The
+    /// promise does not reject.
+    #[napi(
+        ts_type = "<T>(ciphertext: Ciphertext<T>): Promise<Result<T, RecipherError>>
+decrypt<T>(ciphertexts: readonly Ciphertext<T>[]): Promise<Result<T[], RecipherError>>"
+    )]
     pub fn decrypt<'e>(
         &self,
         env: &'e Env,
@@ -266,24 +312,50 @@ pub(crate) enum Confined {
     ToDefault,
 }
 
-/// Decrypts a ciphertext, for `cipher.decrypt` and `keyset.decrypt`.
+/// Decrypts a ciphertext, or an array of them, for `cipher.decrypt` and
+/// `keyset.decrypt`.
 fn open<'e>(
     env: &'e Env,
     engine: &Arc<Engine>,
-    ciphertext: Unknown<'_>,
+    value: Unknown<'_>,
     confined: Confined,
 ) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
-    let Some(ciphertext) = Ciphertext::of(env, ciphertext) else {
-        return refused(env, Error::NotACiphertext.into());
+    let (many, values) = match js::elements(env, value) {
+        Some(Ok(elements)) => (true, elements),
+        Some(Err(error)) => return refused(env, error),
+        None => (false, vec![value]),
     };
-    let sealed = vec![ciphertext.sealed().clone()];
+    let mut ciphertexts = Vec::with_capacity(values.len());
+    for value in values {
+        match Ciphertext::of(env, value) {
+            Some(ciphertext) => ciphertexts.push(ciphertext),
+            None => return refused(env, Error::NotACiphertext.into()),
+        }
+    }
+    let sealed = ciphertexts
+        .iter()
+        .map(|ciphertext| ciphertext.sealed().clone())
+        .collect();
     let engine = Arc::clone(engine);
     spawn(
         env,
-        async move { open_in(&engine, sealed, confined).await },
-        |env, mut opened| match opened.pop() {
-            Some(value) => js::build(env, value),
-            None => Err(Error::NoResult.into()),
+        async move {
+            let opened = open_in(&engine, sealed, confined).await?;
+            opened
+                .into_iter()
+                .zip(&ciphertexts)
+                .map(|(value, ciphertext)| ciphertext.opened(value))
+                .collect::<Outcome<Vec<_>>>()
+        },
+        move |env, opened| {
+            let mut values = opened
+                .into_iter()
+                .map(|value| js::build(env, value))
+                .collect::<Outcome<Vec<_>>>()?;
+            if many {
+                return values.into_unknown(env).map_err(not_made);
+            }
+            values.pop().ok_or_else(|| Error::NoResult.into())
         },
     )
 }
@@ -301,6 +373,16 @@ pub(crate) async fn open_in(
     })
 }
 
+/// Returns one value to encrypt, and the kind its ciphertext decrypts as. A
+/// `Json`'s document decrypts as JSON. Any other value decrypts as the type
+/// it was encrypted as.
+fn one_value(env: &Env, value: Unknown<'_>) -> Outcome<(OneValue, Option<ValueKind>)> {
+    if let Some(document) = Json::of(env, value) {
+        return Ok((OneValue::json(document?), Some(ValueKind::Json)));
+    }
+    Ok((OneValue::scalar(js::read(env, value)?)?, None))
+}
+
 /// Encrypts values under `keyset`. Each value becomes one ciphertext with
 /// its own data key. All the values use one key request, however many
 /// there are.
@@ -314,7 +396,12 @@ where
     values
         .encrypt_into::<Vec<stack_encrypt::Ciphertext>, K>(keyset)
         .await
-        .map_err(|error| RecipherErrorFields::engine(&error))
+        .map_err(|error| match error {
+            // No ciphertext exists yet, so the value caused this failure,
+            // not a damaged ciphertext.
+            stack_encrypt::Error::Aead => Error::NotSealed.into(),
+            error => RecipherErrorFields::engine(&error),
+        })
 }
 
 /// Decrypts ciphertexts through `cipher`: a cipher, or one keyset of it.

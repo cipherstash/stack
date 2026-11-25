@@ -7,12 +7,16 @@ use napi::bindgen_prelude::{
     ClassInstance, FromNapiValue, JavaScriptClassExt, JsValue, Object, Uint8Array, Uint8ArraySlice,
     Unknown,
 };
-use napi::Env;
+use napi::{Env, ValueType};
 use napi_derive::napi;
+use serde::Deserialize;
+use stack_encrypt::dynamic::{read, ValueFrame, ValueKind};
+use stack_encrypt::AsProtectedRef;
 use vitaminc_protected::OpaqueDebug;
 
 use crate::error::{Error, RecipherErrorFields};
-use crate::outcome::{failed, not_made, settle};
+use crate::js;
+use crate::outcome::{failed, not_made, settle, Outcome};
 
 /// One encrypted value: the engine's opaque ciphertext of the whole value,
 /// with its own data key. A data key is the key that encrypts one value.
@@ -21,18 +25,22 @@ use crate::outcome::{failed, not_made, settle};
 /// The Rust and Go SDKs write the same bytes. `toString()` and Node's
 /// `inspect` hide the bytes, because the object has no own properties.
 ///
-/// The SDK uses a class rather than plain bytes so that `decrypt` can tell a
-/// ciphertext from any other value.
+/// The SDK uses a class rather than plain bytes for two reasons. First,
+/// `decrypt` can tell a ciphertext from any other value. Second, the class
+/// records the type the value decrypts as. A JSON document is encrypted as
+/// its JSON text, and nothing in the bytes says that it is JSON.
 #[napi]
 #[derive(Clone, OpaqueDebug)]
 pub struct Ciphertext {
     sealed: stack_encrypt::Ciphertext,
+    opens_as: Option<ValueKind>,
 }
 
 impl Ciphertext {
-    /// Wraps `sealed`.
-    pub(crate) fn new(sealed: stack_encrypt::Ciphertext) -> Self {
-        Self { sealed }
+    /// Wraps `sealed`. When `opens_as` is `None`, the ciphertext decrypts as
+    /// the type it was encrypted as. Otherwise it decrypts as that kind.
+    pub(crate) fn new(sealed: stack_encrypt::Ciphertext, opens_as: Option<ValueKind>) -> Self {
+        Self { sealed, opens_as }
     }
 
     /// Returns the engine's ciphertext.
@@ -50,6 +58,21 @@ impl Ciphertext {
             .ok()
             .map(|instance| Ciphertext::clone(&instance))
     }
+
+    /// Returns a decrypted value as the kind this ciphertext decrypts as.
+    ///
+    /// # Errors
+    ///
+    /// Returns `recipher_js::opened_type` for a value encrypted as another
+    /// type. Returns `recipher_js::not_a_document` when the kind is JSON but
+    /// the value is not a JSON document.
+    pub(crate) fn opened(&self, value: ValueFrame) -> Outcome<ValueFrame> {
+        match self.opens_as {
+            None => Ok(value),
+            Some(ValueKind::Json) => crate::json::opened(&value),
+            Some(kind) => as_kind(kind, value),
+        }
+    }
 }
 
 #[napi]
@@ -58,19 +81,34 @@ impl Ciphertext {
     /// This method checks only the shape of the bytes. Decrypting is what
     /// checks that they are authentic. A failure does not quote the bytes.
     ///
+    /// Give a kind, such as `kinds.string`, to decrypt the value as that
+    /// kind. Decrypting then refuses a value encrypted as another type.
+    /// `kinds.json` decrypts a JSON document.
+    ///
+    /// With no kind, the value decrypts as the type it was encrypted as. A
+    /// JSON document then decrypts as its JSON text. `JSON.parse` of that
+    /// text loses the digits of an integer outside a `number`'s safe range.
+    ///
     /// Returns an `Err` with the code `recipher_js::not_bytes` when the
-    /// argument is not a `Uint8Array`. Does not throw.
+    /// bytes are not a `Uint8Array`, and `recipher_js::not_a_kind` when the
+    /// kind is not one of `kinds`. Does not throw.
     #[napi(
-        ts_args_type = "bytes: Uint8Array",
-        ts_return_type = "Result<Ciphertext, RecipherError>"
+        ts_type = "<K extends Kind>(bytes: Uint8Array, kind: K): Result<Ciphertext<ValueOf<K>>, RecipherError>
+static fromBytes(bytes: Uint8Array): Result<Ciphertext, RecipherError>"
     )]
-    pub fn from_bytes<'e>(env: &'e Env, bytes: Unknown<'_>) -> napi::Result<Object<'e>> {
+    pub fn from_bytes<'e>(
+        env: &'e Env,
+        bytes: Unknown<'_>,
+        kind: Option<Unknown<'_>>,
+    ) -> napi::Result<Object<'e>> {
         let Some(bytes) = bytes_of(bytes) else {
             return failed(env, Error::NotBytes.into());
         };
-        let outcome = stack_encrypt::Ciphertext::from_bytes(&bytes)
-            .map(Ciphertext::new)
-            .map_err(|error| RecipherErrorFields::engine(&error));
+        let outcome = kind_of(env, kind).and_then(|opens_as| {
+            stack_encrypt::Ciphertext::from_bytes(&bytes)
+                .map(|sealed| Ciphertext::new(sealed, opens_as))
+                .map_err(|error| RecipherErrorFields::engine(&error))
+        });
         settle(env, outcome, |env, ciphertext| {
             Ok(ciphertext
                 .into_instance(env)
@@ -93,6 +131,70 @@ impl Ciphertext {
     }
 }
 
+/// A kind, in the form the package's `kinds` object writes it:
+/// `{ name: "string" }`.
+#[derive(Deserialize)]
+struct KindArgument {
+    name: String,
+}
+
+/// Returns the kind that `value` names, or `None` when `value` is absent or
+/// `undefined`.
+fn kind_of(env: &Env, value: Option<Unknown<'_>>) -> Outcome<Option<ValueKind>> {
+    let Some(value) = value.filter(|value| value.get_type().ok() != Some(ValueType::Undefined))
+    else {
+        return Ok(None);
+    };
+    let frame = js::read(env, value).map_err(|_| Error::NotAKind)?;
+    let argument: KindArgument =
+        stack_encrypt::dynamic::frame::serde::from_slice(frame.as_protected_ref().risky_ref())
+            .map_err(|_| Error::NotAKind)?;
+    let kind = argument
+        .name
+        .parse::<ValueKind>()
+        .ok()
+        .filter(|kind| !matches!(kind, ValueKind::Array | ValueKind::Object))
+        .ok_or(Error::NotAKind)?;
+    Ok(Some(kind))
+}
+
+/// Returns whether `kind` is an integer kind.
+fn integer(kind: ValueKind) -> bool {
+    matches!(
+        kind,
+        ValueKind::Int8
+            | ValueKind::Int16
+            | ValueKind::Int32
+            | ValueKind::Int64
+            | ValueKind::Int128
+            | ValueKind::UInt8
+            | ValueKind::UInt16
+            | ValueKind::UInt32
+            | ValueKind::UInt64
+            | ValueKind::UInt128
+    )
+}
+
+/// Returns `value` as `kind`.
+///
+/// A value of that kind is returned unchanged. The engine's `read` converts
+/// an integer to another integer width, or a float to another float width,
+/// when the conversion is exact. Any other value is refused.
+fn as_kind(kind: ValueKind, value: ValueFrame) -> Outcome<ValueFrame> {
+    let refused = || RecipherErrorFields::from(Error::OpenedType { kind });
+    let opened = value.kind();
+    if opened == Some(kind) {
+        return Ok(value);
+    }
+    let float = |kind| matches!(kind, ValueKind::Float32 | ValueKind::Float64);
+    let same_family = opened
+        .is_some_and(|opened| (integer(opened) && integer(kind)) || (float(opened) && float(kind)));
+    if !same_family {
+        return Err(refused());
+    }
+    read(kind, &value).map_err(|_| refused())
+}
+
 /// Returns a copy of the bytes of a `Uint8Array`, or `None` for any other
 /// value. A `Buffer` is a `Uint8Array`.
 ///
@@ -107,4 +209,25 @@ pub(crate) fn bytes_of(value: Unknown<'_>) -> Option<Vec<u8>> {
     Uint8ArraySlice::from_unknown(value)
         .ok()
         .map(|bytes| bytes.to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::as_kind;
+    use stack_encrypt::dynamic::{ValueFrame, ValueKind};
+
+    #[test]
+    fn an_integer_opens_at_any_width_that_holds_it() {
+        let opened = as_kind(ValueKind::Int64, ValueFrame::of(5i8).unwrap()).unwrap();
+        assert_eq!(opened, ValueFrame::of(5i64).unwrap());
+        assert!(as_kind(ValueKind::UInt8, ValueFrame::of(300i16).unwrap()).is_err());
+    }
+
+    #[test]
+    fn a_value_of_another_type_is_refused_as_not_opened() {
+        let refused = as_kind(ValueKind::Int64, ValueFrame::of(5.0f64).unwrap()).unwrap_err();
+        assert_eq!(refused.code, "recipher_js::opened_type");
+        assert!(as_kind(ValueKind::String, ValueFrame::of(true).unwrap()).is_err());
+        assert!(as_kind(ValueKind::String, ValueFrame::of("x").unwrap()).is_ok());
+    }
 }

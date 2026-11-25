@@ -3,18 +3,32 @@
    The header is `native-header.d.ts`: the types the generated signatures
    take from the package's TypeScript. */
 
-// biome-ignore lint/correctness/noUnusedImports: the generated signatures after this header use it.
+// biome-ignore-start lint/correctness/noUnusedImports: the generated signatures after this header use these imports.
 import type { RecipherError } from './src/error'
-// biome-ignore lint/correctness/noUnusedImports: the generated signatures after this header use them.
+import type { Kind, ValueOf } from './src/kinds'
 import type { Err, Ok, Result } from './src/result'
+import type {
+  JsonMarker,
+  JsonValue,
+  Opened,
+  OpenedScalar,
+  Value,
+} from './src/value-types'
+
+// biome-ignore-end lint/correctness/noUnusedImports: the generated signatures after this header use these imports.
 
 declare const opens: unique symbol
 
 /**
  * `T` is the type the ciphertext decrypts to. For example,
- * `keyset.encrypt('..')` returns a `Ciphertext<string>`.
+ * `keyset.encrypt('..')` returns a `Ciphertext<string>`. A ciphertext read
+ * from stored bytes with no kind named decrypts to whatever type was
+ * encrypted, so its type allows any scalar.
  */
-export interface Ciphertext<T = string> {
+export interface Ciphertext<T = OpenedScalar> {
   /** Stores `T` for the type checker. The property never exists at run time. */
   readonly [opens]?: T
 }
+
+/** The marker stops any other object type-checking as a `Json`. */
+export interface Json extends JsonMarker {}

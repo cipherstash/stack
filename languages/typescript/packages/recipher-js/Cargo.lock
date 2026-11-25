@@ -2489,16 +2489,20 @@ dependencies = [
 name = "recipher-js"
 version = "0.0.0"
 dependencies = [
+ "jiff",
  "miette",
  "napi",
  "napi-build",
  "napi-derive",
  "recipher-value-napi",
+ "rust_decimal",
+ "serde",
  "serde_json",
  "stack-auth",
  "stack-encrypt",
  "thiserror 1.0.69",
  "tokio",
+ "uuid",
  "vitaminc-aead 0.10.0",
  "vitaminc-protected 0.10.0",
  "zeroize",

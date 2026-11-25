@@ -43,7 +43,88 @@ const opened = await cipher.decrypt(sealed.value)
   This package decrypts what Rust encrypted.
 - You cannot make a `Cipher`, a `Keyset`, or a `Ciphertext` with a constructor.
   Get a cipher from `Cipher.create()`, a keyset from `cipher.defaultKeyset()`, and a ciphertext from `encrypt` or `Ciphertext.fromBytes`.
-- This build encrypts a `string` only.
+
+## Values
+
+A value's type decides how it is encrypted.
+vitaminc defines the mapping.
+vitaminc is the CipherStash Rust library that the engine's plaintext types come from.
+The `recipher-value-napi` crate, in `value-napi/`, converts JavaScript values by that mapping, in both directions:
+
+| Value | Encrypted as | Decrypts as |
+|---|---|---|
+| `string` | text | `string` |
+| `boolean` | a boolean | `boolean` |
+| `number` | a 64-bit float | `number` |
+| `bigint` | an integer, at the narrowest width that holds it | `bigint` |
+| `Uint8Array`, `Buffer` | bytes | `Uint8Array` |
+| `Date` | a timestamp | `Date` |
+| `new VcTimestamp('2026-11-23T01:02:03.000000001Z')` | a timestamp, in nanoseconds | `Date` when it is whole milliseconds, else `VcTimestamp` |
+| `new VcDate('2026-11-23')` | a calendar date | `VcDate` |
+| `new VcDecimal('1.50')` | a decimal, with its scale | `VcDecimal` |
+| `null` | null | `null` |
+| `json(value)` | a JSON document, as its JSON text | the document, from the `Ciphertext` that `encrypt` returned or one read with `kinds.json` |
+
+- Integers are a `bigint`.
+  A `number` is a float.
+  The `number` `5` does not equal the integer `5n`.
+- A plain object is refused.
+  Wrap it in `json(..)`.
+- The package exports `VcUuid`, for a universally unique identifier (UUID).
+  The engine has no plaintext type for a UUID yet.
+  Encrypting a `VcUuid` is an `Err` with the code `recipher_js::uuid`.
+- vitaminc's rules refuse each of these values, with an error code for each:
+  - a `Map` or a `Set`;
+  - a class instance;
+  - a sparse array;
+  - a typed array other than a `Uint8Array`;
+  - a string with an unpaired surrogate;
+  - a property named `__proto__`, `constructor`, or `prototype`.
+
+If you encrypt an array, you get back an array of ciphertexts in the same order.
+The whole array needs one key request to ZeroKMS, however long it is:
+
+```ts
+const sealed = await keyset.encrypt(['first secret', 'second secret'])
+const opened = await cipher.decrypt(sealed.unwrap())
+```
+
+### JSON documents
+
+`json(value)` encrypts a whole document as one ciphertext.
+The document is encrypted as its JSON text, as the engine's `JsonPlaintext` type does.
+
+- An integer outside a `number`'s safe range is a `bigint`.
+  The `bigint` must be in the 64-bit range that the engine's parser reads: `-(2n ** 63n)` to `2n ** 64n - 1n`.
+  A `bigint` outside that range is refused.
+- A whole `number` is refused when its absolute value is at least 2^53 but less than 2^64.
+  An integer was likely meant.
+  The `number` does not keep the digits that were written.
+  Use a `bigint` instead.
+  Any other finite `number`, such as `1e20`, is a float.
+- Bytes, a `Date`, the wrapper classes, and `undefined` have no JSON form.
+  The package refuses them.
+  The package also refuses a document nested deeper than 127 levels.
+- A property named `__proto__`, `constructor`, or `prototype` cannot be encrypted.
+  Another SDK can write a document with one of these properties.
+  Decrypting that document here gives an `Err` with the code `recipher_js::reserved_key`.
+  The reason is that vitaminc does not build those properties in JavaScript.
+- **Read a stored document back with `kinds.json`.**
+  The bytes do not record that a value is JSON.
+  `Ciphertext.fromBytes(bytes, kinds.json)` decrypts to the document.
+  With no kind, the document decrypts to its JSON text.
+  `JSON.parse` of that text loses the digits of a large integer.
+
+### Stored bytes
+
+A kind names the type a stored ciphertext decrypts to, such as `kinds.string`.
+
+`Ciphertext.fromBytes(bytes)` decrypts to whatever type was encrypted.
+The ciphertext's TypeScript type allows any scalar: any type in the table above except a JSON document.
+
+`Ciphertext.fromBytes(bytes, kinds.string)` has the kind's type.
+Decrypting it refuses a value that was encrypted as another type.
+An integer kind accepts an integer encrypted at any width, if the value fits the kind.
 
 ## Results, not exceptions
 
@@ -132,7 +213,8 @@ The tool also writes the addon's TypeScript declarations to `native.d.ts`.
 Those declarations are the package's public types.
 Each method's signature is written in Rust, in the method's `ts_type`, `ts_args_type` or `ts_return_type` attribute.
 The documentation comments on the Rust code become the declarations' documentation.
-`native-header.d.ts` is the start of `native.d.ts`: it imports the TypeScript types the signatures name, and gives `Ciphertext` its type parameter.
+`native-header.d.ts` is the start of `native.d.ts`: it imports the TypeScript types the signatures name, gives `Ciphertext` its type parameter, and marks `Json` so that no other object type-checks as one.
+The modules it imports types from never load the addon, so the declarations never import themselves.
 `native.d.ts` is committed.
 
 Each native method returns a `Result` itself.
@@ -157,9 +239,6 @@ The ESM build and the CommonJS build load the same addon, so the two builds shar
 
 These features are not built yet:
 
-- values other than a `string`;
-- arrays;
-- JSON documents;
 - `opaque(..)`, for a whole object;
 - records;
 - search terms;

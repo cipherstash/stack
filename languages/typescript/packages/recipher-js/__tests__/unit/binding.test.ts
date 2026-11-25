@@ -14,9 +14,15 @@ function fakeBuild(overrides: Record<string, unknown> = {}) {
     Cipher: class {},
     Keyset: class {},
     Ciphertext: class {},
+    Json: class {},
     bindingInterface: () => BINDING_INTERFACE,
     createTesting: () => Promise.resolve('cipher'),
     installResult: () => true,
+    json: () => ({}),
+    VcDate: class {},
+    VcTimestamp: class {},
+    VcDecimal: class {},
+    VcUuid: class {},
     ...overrides,
   }
 }
@@ -42,9 +48,15 @@ describe('load', () => {
       'Cipher',
       'Keyset',
       'Ciphertext',
+      'Json',
       'bindingInterface',
       'createTesting',
       'installResult',
+      'json',
+      'VcDate',
+      'VcTimestamp',
+      'VcDecimal',
+      'VcUuid',
     ]) {
       const loaded = load(
         requiring(fakeBuild({ [name]: undefined })),
@@ -105,7 +117,12 @@ describe('installResult', () => {
   it('freezes the classes of a build that loaded', () => {
     const build = fakeBuild()
     load(requiring(build), '/x/recipher.node')
-    for (const cls of [build.Cipher, build.Keyset, build.Ciphertext]) {
+    for (const cls of [
+      build.Cipher,
+      build.Keyset,
+      build.Ciphertext,
+      build.Json,
+    ]) {
       expect(Object.isFrozen(cls)).toBe(true)
       expect(Object.isFrozen(cls.prototype)).toBe(true)
     }

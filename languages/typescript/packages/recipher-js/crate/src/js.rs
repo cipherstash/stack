@@ -21,9 +21,9 @@
 //! and drops it without copying it. The exception's message may contain
 //! the value.
 
-use napi::bindgen_prelude::Unknown;
-use napi::{Env, Status};
-use recipher_value_napi::{JsBuilder, JsFault, JsRef};
+use napi::bindgen_prelude::{FromNapiValue, JsObjectValue, JsValue, Object, Unknown};
+use napi::{Env, Status, ValueType};
+use recipher_value_napi::{JsBuilder, JsFault, JsRef, Refusal, Wrapper, Wrappers};
 use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::AsProtectedRef;
 use vitaminc_aead::Frame;
@@ -37,21 +37,56 @@ use crate::error::{Error, RecipherErrorFields};
 ///
 /// Returns one of these errors:
 ///
-/// - `recipher_js::value` for a value outside the engine's value model;
+/// - `recipher_js::undefined` for `undefined`;
+/// - `recipher_js::uuid` for a `VcUuid`;
+/// - `recipher_js::value` for another value outside the engine's value model;
 /// - `recipher_js::threw` when reading the value threw;
 /// - the bridge's code, for a value the bridge refused.
 pub fn read(env: &Env, value: Unknown<'_>) -> Result<ValueFrame, RecipherErrorFields> {
+    if value.get_type().ok() == Some(ValueType::Undefined) {
+        return Err(Error::Undefined.into());
+    }
+    let uuid = is_uuid(env, &value);
     let frame = JsRef::new(value)
         .to_frame()
         .map_err(|error| refused(env, &error))?;
-    ValueFrame::from_bytes(frame.as_protected_ref()).map_err(|_| Error::Value.into())
+    ValueFrame::from_bytes(frame.as_protected_ref())
+        .map_err(|_| RecipherErrorFields::from(if uuid { Error::Uuid } else { Error::Value }))
+}
+
+/// Returns the elements of `value` when it is an array, or `None` when it
+/// is not.
+///
+/// # Errors
+///
+/// Returns the bridge's refusal, or `recipher_js::threw`, when an element
+/// cannot be read. For example, an element behind a getter that throws
+/// cannot be read.
+pub fn elements<'e>(
+    env: &Env,
+    value: Unknown<'e>,
+) -> Option<Result<Vec<Unknown<'e>>, RecipherErrorFields>> {
+    if !value.is_array().unwrap_or(false) {
+        return None;
+    }
+    let array = Object::from_unknown(value).ok()?;
+    let read = || -> napi::Result<Vec<Unknown<'e>>> {
+        let len = array.get_array_length()?;
+        (0..len)
+            .map(|at| array.get_element::<Unknown<'e>>(at))
+            .collect()
+    };
+    Some(read().map_err(|error| refused(env, &error.into())))
 }
 
 /// Builds the JavaScript value of a decrypted frame.
 ///
 /// # Errors
 ///
-/// Returns `recipher_js::build_value` when the value cannot be built.
+/// Returns `recipher_js::reserved_key` for a value that JavaScript cannot
+/// represent in the form it was encrypted. That is a value with a map key
+/// that vitaminc, CipherStash's cryptography library, does not build.
+/// Returns `recipher_js::build_value` for any other failure.
 pub fn build(env: &Env, value: ValueFrame) -> Result<Unknown<'_>, RecipherErrorFields> {
     let bytes = value.into_inner();
     let frame = Frame::parse(bytes.risky_ref()).map_err(|_| Error::BuildValue)?;
@@ -63,7 +98,17 @@ fn not_built(env: &Env, fault: &JsFault) -> RecipherErrorFields {
     if fault.status() == Status::PendingException {
         clear_exception(env);
     }
-    Error::BuildValue.into()
+    match fault.refusal() {
+        Some(refusal @ Refusal::ReservedKey) => RecipherErrorFields::diagnostic(&refusal, None),
+        _ => Error::BuildValue.into(),
+    }
+}
+
+/// Returns whether `value` is a vitaminc `VcUuid`.
+fn is_uuid(env: &Env, value: &Unknown<'_>) -> bool {
+    Wrappers::get(env)
+        .and_then(|wrappers| wrappers.classify(value))
+        .is_ok_and(|wrapper| wrapper == Some(Wrapper::Uuid))
 }
 
 /// Returns the failure for a value the bridge refused. The bridge says
