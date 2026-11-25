@@ -23,6 +23,7 @@
 
 use napi::bindgen_prelude::{FromNapiValue, JsObjectValue, JsValue, Object, Unknown};
 use napi::{Env, Status, ValueType};
+use napi::{Property, PropertyAttributes};
 use recipher_value_napi::{JsBuilder, JsFault, JsRef, Refusal, Wrapper, Wrappers};
 use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::AsProtectedRef;
@@ -30,6 +31,7 @@ use vitaminc_aead::Frame;
 use vitaminc_protected::Controlled;
 
 use crate::error::{Error, RecipherErrorFields};
+use crate::outcome::not_made;
 
 /// Reads a JavaScript value into a frame of the engine's value model.
 ///
@@ -109,6 +111,113 @@ fn is_uuid(env: &Env, value: &Unknown<'_>) -> bool {
     Wrappers::get(env)
         .and_then(|wrappers| wrappers.classify(value))
         .is_ok_and(|wrapper| wrapper == Some(Wrapper::Uuid))
+}
+
+/// Returns the property `name` of `value`, when `value` is an object and
+/// the property is not `undefined`.
+///
+/// # Errors
+///
+/// Returns `recipher_js::threw` when reading the property throws, as a getter
+/// can. The addon drops what the getter threw.
+pub(crate) fn property<'e>(
+    env: &Env,
+    value: Unknown<'e>,
+    name: &str,
+) -> Result<Option<Unknown<'e>>, RecipherErrorFields> {
+    if value.get_type().ok() != Some(ValueType::Object) {
+        return Ok(None);
+    }
+    let object = Object::from_unknown(value).map_err(|error| refused(env, &error.into()))?;
+    let property = object
+        .get_named_property::<Unknown<'e>>(name)
+        .map_err(|error| refused(env, &error.into()))?;
+    Ok((property.get_type().ok() != Some(ValueType::Undefined)).then_some(property))
+}
+
+/// Returns whether `value` is a record declaration, as `record(..)` makes
+/// it. A record declaration lists a record's fields and how to store each
+/// one. A declaration is an object whose `type` is `"record"`. The check
+/// reads only that property, so it works for a declaration from any copy
+/// of the package.
+pub(crate) fn is_record(env: &Env, value: &Unknown<'_>) -> bool {
+    if value.is_array().unwrap_or(true) {
+        return false;
+    }
+    matches!(
+        property(env, *value, "type").map(|tag| tag.and_then(string)),
+        Ok(Some(tag)) if tag == "record"
+    )
+}
+
+/// Returns the failure for a call that has a second argument, when the
+/// first argument is a plain object but not a record declaration. Such a
+/// call passes a row with a record argument that is not a record. Returns
+/// `None` for any other call. For example, `Array.prototype.map` passes a
+/// value with its index, and that call gets `None`.
+pub(crate) fn second_without_record(
+    env: &Env,
+    first: &Unknown<'_>,
+    second: Option<&Unknown<'_>>,
+) -> Option<RecipherErrorFields> {
+    let second = second?;
+    if second.get_type().ok() == Some(ValueType::Undefined)
+        || first.get_type().ok() != Some(ValueType::Object)
+        || first.is_array().unwrap_or(true)
+    {
+        return None;
+    }
+    let plain = Wrappers::get(env)
+        .and_then(|wrappers| wrappers.is_plain(*first))
+        .unwrap_or(false);
+    plain.then(|| Error::NotARecord.into())
+}
+
+/// Returns the text of a JavaScript string, or `None` for any other value.
+pub(crate) fn string(value: Unknown<'_>) -> Option<String> {
+    if value.get_type().ok() != Some(ValueType::String) {
+        return None;
+    }
+    String::from_unknown(value).ok()
+}
+
+/// Returns `row`, a decrypted row of `record`, with an added `inspect`
+/// method. The method names the row's fields and hides their values. So
+/// Node's `util.inspect` and `console.log` print
+/// `users { email: [hidden], .. }`. The method is a property keyed by
+/// `Symbol.for('nodejs.util.inspect.custom')`. The property is not
+/// enumerable, so the row's own fields do not change.
+pub(crate) fn hidden<'e>(
+    env: &'e Env,
+    row: Unknown<'e>,
+    record: &str,
+    fields: &[String],
+) -> Result<Unknown<'e>, RecipherErrorFields> {
+    let shown = format!(
+        "{record} {{ {} }}",
+        fields
+            .iter()
+            .map(|field| format!("{field}: [hidden]"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let mut object = Object::from_unknown(row).map_err(not_made)?;
+    let inspect = env
+        .create_function_from_closure::<(), String, _>("inspect", move |_| Ok(shown.clone()))
+        .map_err(not_made)?;
+    let key = env
+        .symbol_for("nodejs.util.inspect.custom")
+        .map_err(not_made)?;
+    let property = Property::new()
+        .with_name(env, key)
+        .map_err(not_made)?
+        .with_value(&inspect)
+        // The property is not enumerable, writable or configurable. So a
+        // copy, spread or comparison of the row does not include it, and
+        // nothing can replace it.
+        .with_property_attributes(PropertyAttributes::Default);
+    object.define_properties(&[property]).map_err(not_made)?;
+    Ok(row)
 }
 
 /// Returns the failure for a value the bridge refused. The bridge says

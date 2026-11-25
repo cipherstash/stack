@@ -16,6 +16,7 @@ function fakeBuild(overrides: Record<string, unknown> = {}) {
     Ciphertext: class {},
     Json: class {},
     bindingInterface: () => BINDING_INTERFACE,
+    checkDeclarations: () => undefined,
     createTesting: () => Promise.resolve('cipher'),
     installResult: () => true,
     json: () => ({}),
@@ -50,6 +51,7 @@ describe('load', () => {
       'Ciphertext',
       'Json',
       'bindingInterface',
+      'checkDeclarations',
       'createTesting',
       'installResult',
       'json',
@@ -140,6 +142,7 @@ describe('the classes of a build that did not load', () => {
     expect((await classes.Cipher.create()).err()).toBe(error)
     expect(classes.Ciphertext.fromBytes(new Uint8Array(4)).err()).toBe(error)
     expect((await classes.createTesting(new Uint8Array(32))).err()).toBe(error)
+    expect(classes.checkDeclarations([]).err()).toBe(error)
   })
 
   it('recognise no value as one of theirs', () => {

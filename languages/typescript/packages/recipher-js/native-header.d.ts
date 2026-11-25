@@ -6,6 +6,13 @@
 // biome-ignore-start lint/correctness/noUnusedImports: the generated signatures after this header use these imports.
 import type { RecipherError } from './src/error'
 import type { Kind, ValueOf } from './src/kinds'
+import type {
+  CipherOptions,
+  Plaintext,
+  RecordDeclaration,
+  SealedFieldName,
+  Stored,
+} from './src/record'
 import type { Err, Ok, Result } from './src/result'
 import type {
   JsonMarker,

@@ -53,15 +53,19 @@
 mod cipher;
 mod ciphertext;
 mod error;
+mod frames;
 mod js;
 mod json;
 mod outcome;
+mod record;
 mod value;
 
 #[cfg(all(test, feature = "testing"))]
 mod engine_tests;
+#[cfg(all(test, feature = "testing"))]
+mod record_tests;
 
-pub use cipher::{create_testing, Cipher, Keyset};
+pub use cipher::{check_declarations, create_testing, Cipher, Keyset};
 pub use ciphertext::Ciphertext;
 pub use error::RecipherErrorFields;
 pub use json::{json_document, Json};

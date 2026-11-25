@@ -27,8 +27,10 @@
 export {
   Cipher,
   type CipherClass,
+  type CipherOptions,
   Ciphertext,
   type CiphertextClass,
+  checkDeclarations,
   Keyset,
   type KeysetClass,
 } from './cipher'
@@ -39,6 +41,22 @@ export {
   type Severity,
 } from './error'
 export { type Kind, kinds, type ValueOf } from './kinds'
+export {
+  encrypt,
+  type Field,
+  type Index,
+  type NullMode,
+  type PassthroughField,
+  type Plaintext,
+  passthrough,
+  type RecordDeclaration,
+  record,
+  type SealedField,
+  type SealedFieldName,
+  type SealedOptions,
+  type Stored,
+  type StoredField,
+} from './record'
 export { Err, err, Ok, ok, type Result } from './result'
 export {
   type Json,

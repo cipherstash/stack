@@ -29,8 +29,9 @@ export type { ErrorCause, RecipherErrorFields, Severity }
  * - `severity` is `error`, unless the engine's error report states
  *   `warning` or `advice`.
  * - `fields` contains the error's structured fields, by `snake_case` name.
- *   An example is a ZeroKMS failure's `request_kind`. `fields` is empty
- *   when the error has no structured fields.
+ *   Examples are a refused declaration's `reason` and a ZeroKMS failure's
+ *   `request_kind`. `fields` is empty when the error has no structured
+ *   fields.
  * - `field` names the field at fault, where one is known.
  * - `record` names the record that the failed declaration, row, or stored
  *   row belongs to.

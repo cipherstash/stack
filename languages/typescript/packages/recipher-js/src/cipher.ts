@@ -18,6 +18,8 @@ import type { RecipherError } from './error'
 import { err, type Result } from './result'
 import type { OpenedScalar } from './value-types'
 
+export type { CipherOptions } from './record'
+
 /**
  * One encrypted value: opaque bytes, encrypted with a data key of its own.
  *
@@ -57,6 +59,7 @@ export interface Classes {
   Keyset: KeysetClass
   Ciphertext: CiphertextClass
   createTesting: Binding['createTesting']
+  checkDeclarations: Binding['checkDeclarations']
 }
 
 /**
@@ -77,6 +80,7 @@ function native(loaded: Binding): Classes {
     Keyset: typed<KeysetClass>(loaded.Keyset),
     Ciphertext: typed<CiphertextClass>(loaded.Ciphertext),
     createTesting: loaded.createTesting,
+    checkDeclarations: loaded.checkDeclarations,
   }
 }
 
@@ -108,6 +112,7 @@ function missing(error: RecipherError): Classes {
       },
     ),
     createTesting: () => Promise.resolve(err(error)),
+    checkDeclarations: () => err(error),
   }
 }
 
@@ -128,3 +133,13 @@ export const Cipher: CipherClass = classes.Cipher
 export const Keyset: KeysetClass = classes.Keyset
 /** The `Ciphertext` class: the native addon's class. */
 export const Ciphertext: CiphertextClass = classes.Ciphertext
+
+/**
+ * Check record declarations with the engine, with no credentials and no
+ * network request. Use it in a test or a continuous integration (CI) step.
+ *
+ * The `Err` is the first refusal. The error names the record and, where
+ * there is one, the field.
+ */
+export const checkDeclarations: Binding['checkDeclarations'] =
+  classes.checkDeclarations
