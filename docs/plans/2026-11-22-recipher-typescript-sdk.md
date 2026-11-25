@@ -139,11 +139,8 @@ declared in a record and no `.partition`.
 These are the two forms that ADR-0016 says keep their stored bytes: a
 value with no context, and a value whose whole context is a field path.
 
-Three rules keep phase 1 clear of the open design:
+Two rules keep phase 1 clear of the open design:
 
-- **The crate does not name `Label` or `IntoLabel`.** A test fails if
-  its source does. #1663 then removes them without a change here. Its
-  acceptance says a context made of the same names gives the same bytes.
 - **Only the Rust crate names an engine type.** The TypeScript code does
   not. A rename in the engine changes one crate.
 - **No phase 1 build promises that a later build opens its stored values.**
@@ -946,8 +943,8 @@ The core, with no EQL:
    package.
    `Cipher.create`, `Result`, and plain `encrypt` and `decrypt` of one
    `string` value on Node, with no context. CI builds it on Linux. Proves that the engine's futures run on
-   napi-rs's runtime. Adds the tests that the crate names no `Label` and
-   links no `eql-bindings`.
+   napi-rs's runtime. Adds the test that the crate links no
+   `eql-bindings`.
 2. **Values.** The value bridge for every type in the table above,
    the wrapper classes, an array of values,
    `bytes` for a file, `opaque` for a whole object, the value profile and
