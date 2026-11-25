@@ -367,6 +367,13 @@ const sealed = await keyset.encrypt(opaque(card));
 `opaque` stores what the engine's `OpaqueBlob` stores, in the same format
 as a Go opaque struct. Nothing inside it can be searched.
 
+`opaque` waits on the engine. `OpaqueBlob` writes vitaminc's storage
+profile from a Rust value's `Serialize`. A JavaScript value reaches the
+engine as a frame, and nothing writes a frame in the storage profile. The
+engine's function that seals the profile's bytes is private to the crate.
+The storage profile also stores plain scalars only, so the engine has to
+say what a `Date` or a `VcDecimal` inside an opaque object becomes.
+
 ### A record
 
 A record declares each field once. A field is encrypted, encrypted and
@@ -575,7 +582,7 @@ So no JSON text of a row crosses the boundary.
 | `VcTimestamp("2026-11-23T01:02:03.000000001Z")` | a timestamp, in nanoseconds | `Date` when it is whole milliseconds, else `VcTimestamp` |
 | `VcDate("2026-11-23")` | a calendar date | `VcDate` |
 | `VcDecimal("1.50")` | a decimal, with its scale | `VcDecimal` |
-| `VcUuid("..")` | a UUID | `VcUuid` |
+| `VcUuid("..")` | refused for now, with `recipher::uuid` | |
 | `null` | null | `null`. In a record, only where the field declares `null` |
 
 - **Integers are a `bigint`.** A `number` is a float, and `5` does not
@@ -583,6 +590,10 @@ So no JSON text of a row crosses the boundary.
 - **An integer's width is not chosen.** The bridge stores a `bigint` at the
   narrowest width that holds it. Equality terms are the same across
   widths, so `5n` here matches an `int64` 5 from Go.
+- **A UUID waits on the engine.** vitaminc's value model has a UUID
+  type, and the bridge reads a `VcUuid` into it. The engine's dynamic
+  value model, the types a frame may hold in `dynamic::ValueFrame`, has
+  no UUID, so the SDK refuses one until the engine adds it.
 - **No precision is lost.** A timestamp finer than a millisecond opens as
   a `VcTimestamp`, never as a rounded `Date`.
 - **The wrapper classes are the bridge's.** Each holds its text, such as
@@ -882,6 +893,10 @@ these rules are checked then.
 - **Value conversion.** The bridge's value conformance cases on both builds,
   and the value profile for the record kinds. A fuzz target on the wasm
   build compares its frame for a value with the napi bridge's.
+- **Rust quality gates.** The two crates get the checks the stack-*
+  crates have: mutation testing, the CRAP gate, unused dependencies, and
+  fuzz targets for the bridge's text parsers and the JSON conversion. The
+  copied JavaScript comes under Biome. #1797 lists them.
 - **Type tests.** A wrong row, a wrong value, an unknown field, an
   operator a field cannot answer, and an EQL type
   against a cipher without the extension do not compile.
@@ -947,8 +962,8 @@ The core, with no EQL:
    `eql-bindings`.
 2. **Values.** The value bridge for every type in the table above,
    the wrapper classes, an array of values,
-   `bytes` for a file, `opaque` for a whole object, the value profile and
-   the fuzz target.
+   `bytes` for a file, the value profile and the fuzz target. `opaque`
+   for a whole object and the UUID type follow when the engine has them.
 3. **Records.** `record`, `encrypt`, `passthrough`, nulls, the stored row
    type, `encryptField` and `decryptField`, the type tests, and the
    declaration, runtime and read profiles. This step is the first to call
@@ -1140,22 +1155,28 @@ Read on 2026-11-23, in `cipherstash/vitaminc` at `222f1ad39`:
   for Go: `bindings/go/vcffi` (the transport codec into a wasm guest),
   `vcvalue` and `vcencrypt`.
 
+Found by steps 1 to 3, in #1774 at `872ff2ea2`, #1775 at `30f1d26fd` and
+#1776 at `17a20ffa8`:
+
+- The engine's pending calls are `Send`. The addon runs them with napi's
+  `spawn_future_with_callback`, which requires it, for a value and for a
+  `Planned` call (`crate/src/cipher.rs`).
+- The value bridge builds against the vitaminc 0.10.0 crates the engine
+  resolves.
+- A binding cannot reach `OpaqueBlob`'s format for a value whose type is
+  known only at run time. See [A file, and a whole object](#a-file-and-a-whole-object).
+- The engine's dynamic value model has no UUID. See [Values](#values).
+- The engine opens one field of a stored row without the row's other
+  fields: `decryptField` runs the plan of that field alone, and a field
+  encrypted alone has the same bytes as in a whole row.
+- A sealed scalar's bytes name its type, so it decrypts as what it was
+  encrypted as with no type named. A JSON document's bytes do not say it
+  is JSON: with no kind it decrypts as its JSON text, and
+  `kinds.json` reads it as a document.
+
 Not checked:
 
-- That the engine's pending calls are `Send`, as napi-rs's async
-  functions need. Step 1 proves it for a value and step 3 for a `Planned`
-  call, or finds the change the engine needs.
-- That a binding can reach `OpaqueBlob`'s format for a value whose type is
-  known only at run time. Step 2 proves it or finds the change the engine
-  needs.
-- That the engine opens one field of a stored row without the row's other
-  fields, which `decryptField` needs. Step 3 proves it or finds the change
-  the engine needs.
 - The largest value one call can seal, which bounds the size of a file.
-- That a sealed value's bytes name its type, which a decrypt with no type
-  named needs. Step 2 proves it or finds the change the engine needs.
-- That `vitaminc-aead-napi` (napi-rs 3) builds with the engine at the
-  vitaminc version the root workspace pins, and is on crates.io at it.
 - That napi-rs 3 packages and publishes as `@cipherstash/auth`'s napi-rs 2
   build does.
 - The size of each wasm build, with and without the EQL types.
