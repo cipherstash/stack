@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-13
 revised: 2026-10-04
 extends: ADR-0003
-superseded-in-part-by: ADR-0009 (decision 5)
+superseded-in-part-by: ADR-0009 (decision 5), ADR-0016 (scopes and bindings, nested contexts)
 ---
 
 # One context per target, threaded through the declaration tree
@@ -551,3 +551,42 @@ scope and the binding come after the column in its context, and are not
 stored. An earlier version of this record said that an EQL type refuses
 both. That refusal was removed on 15 November 2026.
 
+## Amended 2026-11-23 (ADR-0016)
+
+[ADR-0016](0016-a-context-is-a-field-path-and-named-parts.md) replaces the
+scopes and bindings of the amendment of 2026-11-10 (#1487), and changes
+the context of a nested record.
+
+Decision 1 holds. One context input still reaches every operation of a
+target.
+
+**Scopes and bindings become named parts.** A part that a query can supply
+is a *partition*. A part that ties a ciphertext to its row is a *label*. A
+part that the key provider checks is a *policy*, which is new. `Scope`,
+`Bind`, and the `scope(..)` and `bind(..)` forms of a declaration are
+removed. A record lists its parts by type, such as
+`context(TenantId<u64>, RecordId<Uuid>)`. A query narrows with
+`.partition(..)`.
+
+**The kind and the name of a part now decide its place in a derivation.**
+The amendment of 2026-11-10 said that the kind of a part is in no
+derivation, and only the values and their order are. That no longer holds
+for a value with parts. Its stored context is the field path, then the
+partitions, then the labels, each group sorted by wire name, and each part
+enters as its name and its value. The query context is still a prefix of
+the stored context. A value with no parts keeps its bytes.
+
+**An own context is a field path.** Decision 2 said an own context is any
+`NonEmpty<impl IntoContext>`. It is now a `FieldPath`, the renamed `Label`
+struct, or EQL's `Identifier`. `under`, `extend` and `context_from` keep
+their meaning.
+
+**A nested record with its own scope keeps the outer names out.** Decision
+2 lets a subtree be a record whose own contexts a caller's extends, and a
+leaf of an inner record took the outer field's names after its own. A
+leaf's field path is now the inner record's scope and the field's name
+alone. The leaf still takes the outer record's parts. A value written
+under the old rule is not kept readable or matching.
+
+The views of the amendment of 2026-11-10 (#1568) stay. `contexts()` also
+prints the kinds of each part.
