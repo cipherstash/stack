@@ -367,12 +367,13 @@ const sealed = await keyset.encrypt(opaque(card));
 `opaque` stores what the engine's `OpaqueBlob` stores, in the same format
 as a Go opaque struct. Nothing inside it can be searched.
 
-`opaque` waits on the engine. `OpaqueBlob` writes vitaminc's storage
-profile from a Rust value's `Serialize`. A JavaScript value reaches the
-engine as a frame, and nothing writes a frame in the storage profile. The
-engine's function that seals the profile's bytes is private to the crate.
-The storage profile also stores plain scalars only, so the engine has to
-say what a `Date` or a `VcDecimal` inside an opaque object becomes.
+An opaque value is a storage blob, vitaminc's storage profile, encrypted
+as bytes. Rust's `OpaqueBlob` writes the blob from a `Serialize`, and Go
+writes it with `vcffi.MarshalStorage`. The SDK needs the same from a
+JavaScript value, which reaches Rust as a frame, and nothing converts a
+frame to a blob yet (#1822). The engine needs no change. Version 1 of the
+profile holds plain scalars only, so a `Date` or a `VcDecimal` inside an
+opaque object is refused.
 
 ### A record
 
@@ -593,7 +594,7 @@ So no JSON text of a row crosses the boundary.
 - **A UUID waits on the engine.** vitaminc's value model has a UUID
   type, and the bridge reads a `VcUuid` into it. The engine's dynamic
   value model, the types a frame may hold in `dynamic::ValueFrame`, has
-  no UUID, so the SDK refuses one until the engine adds it.
+  no UUID, so the SDK refuses one until the engine adds it (#1821).
 - **No precision is lost.** A timestamp finer than a millisecond opens as
   a `VcTimestamp`, never as a rounded `Date`.
 - **The wrapper classes are the bridge's.** Each holds its text, such as
@@ -963,7 +964,8 @@ The core, with no EQL:
 2. **Values.** The value bridge for every type in the table above,
    the wrapper classes, an array of values,
    `bytes` for a file, the value profile and the fuzz target. `opaque`
-   for a whole object and the UUID type follow when the engine has them.
+   for a whole object follows the storage-blob converter (#1822), and
+   the UUID type the engine's (#1821).
 3. **Records.** `record`, `encrypt`, `passthrough`, nulls, the stored row
    type, `encryptField` and `decryptField`, the type tests, and the
    declaration, runtime and read profiles. This step is the first to call
@@ -1163,8 +1165,10 @@ Found by steps 1 to 3, in #1774 at `872ff2ea2`, #1775 at `30f1d26fd` and
   `Planned` call (`crate/src/cipher.rs`).
 - The value bridge builds against the vitaminc 0.10.0 crates the engine
   resolves.
-- A binding cannot reach `OpaqueBlob`'s format for a value whose type is
-  known only at run time. See [A file, and a whole object](#a-file-and-a-whole-object).
+- An `OpaqueBlob` is its storage blob sealed as a bytes value: it
+  decrypts as a `Vec<u8>` holding the blob, and the blob encrypted as
+  bytes decrypts as the `OpaqueBlob`. So a binding reaches the format by
+  writing the blob itself. See [A file, and a whole object](#a-file-and-a-whole-object).
 - The engine's dynamic value model has no UUID. See [Values](#values).
 - The engine opens one field of a stored row without the row's other
   fields: `decryptField` runs the plan of that field alone, and a field
