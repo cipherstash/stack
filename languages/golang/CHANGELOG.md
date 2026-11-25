@@ -239,10 +239,6 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   The operation is now dropped, and its memory wiped, before the panic
   reaches the caller. `NewClient` also closes the client it was building.
 
-  The same RoundTripper also sends the credentials' token requests. A
-  panic during one of those still closes the credentials for good, and the
-  caller does not see it (#1793).
-
 - **ZeroKMS requests no longer fail when ZeroKMS closes an HTTP/2
   connection** (#1781). ZeroKMS closes each connection after a fixed number
   of requests, and tells the client which requests it did not process. Go
@@ -252,6 +248,28 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   6 to 13 of 10,000 one-value decrypts, 16 at a time, in rc.6. The request
   now gives Go a fresh copy of its body each time it asks, and each copy is
   wiped when it is closed.
+
+- **A panic or a hang in the application's code during a token request no
+  longer closes the auth profile** (#1793, #1795). The `auth` package calls
+  the application's own code during a call to its profile: the
+  `http.RoundTripper` given to `auth.WithRoundTripper` (or to
+  `encrypt.WithTransport`, which passes it on), and an `OIDCProvider`.
+  - A panic there was recovered by wazero as a guest trap. That closed the
+    profile for good, and the caller never saw the panic. Every later call
+    that needed a token failed until the application opened the profile
+    again. Now the panic reaches the caller, which can recover it, as
+    `net/http` does in each handler, and the profile stays open.
+  - A RoundTripper or provider that ignored its context held the profile's
+    lock until it returned, so every caller that needed a token waited
+    behind it. After 30 seconds the stuck-call backstop closed the profile.
+    Now the call returns at its caller's deadline, other callers go on, and
+    what the hung code returns later is discarded. At most 4 such calls are
+    left running per profile; past that a call fails at once, with
+    `ErrTransport`, until one returns. A device session's refresh is the
+    exception: it is waited for until the backstop, so a rotated refresh
+    token that comes back late is still kept.
+  - Either way, the request body, which carries the access key or the
+    refresh grant, is wiped.
 
 ## [0.1.0-rc.6] - 2026-11-18
 

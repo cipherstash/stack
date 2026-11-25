@@ -746,3 +746,71 @@ func TestNewClientClosesItsClientWhenTheRoundTripperPanics(t *testing.T) {
 		t.Fatalf("the credentials were released %d times, want once: the client was left open", n)
 	}
 }
+
+// The application's RoundTripper for the token service can panic or ignore
+// its context, as it can for ZeroKMS. Through the encrypt client either way,
+// a panic reaches the caller of the encrypt call and a hang ends at the
+// caller's deadline, and the client and the auth profile stay open.
+func TestATokenRequestThatPanicsOrHangsLeavesTheClientOpen(t *testing.T) {
+	var jwt string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, jwt, time.Now().Add(time.Hour).Unix())
+	}))
+	t.Cleanup(server.Close)
+	claims, err := json.Marshal(map[string]any{"iss": server.URL, "sub": "CS|test", "workspace": "ZVATKW3VHMFG27DY", "exp": time.Now().Add(time.Hour).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwt = "e30." + base64.RawURLEncoding.EncodeToString(claims) + ".c2ln"
+
+	var mode atomic.Value
+	mode.Store("")
+	release := make(chan struct{})
+	defer close(release)
+	tokenRT := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch mode.Load() {
+		case "panic":
+			panic("token roundtripper panic")
+		case "hang":
+			<-release
+			return nil, errors.New("too late")
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	})
+	store, err := auth.OpenWithoutProfile(context.Background(), auth.WithRoundTripper(tokenRT))
+	if errors.Is(err, auth.ErrGuestNotBuilt) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	strategy, err := store.AccessKey(context.Background(), testCRN, testAccessKey, auth.WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strategy.Close()
+	rt := &switchable{rt: unauthorized}
+	c := cancelClient(t, rt, strategy)
+
+	mode.Store("panic")
+	p := func() (p any) {
+		defer func() { p = recover() }()
+		_ = cipherInit(context.Background(), c)
+		return nil
+	}()
+	if p != "token roundtripper panic" {
+		t.Fatalf("a call whose token request panicked: got panic %v, want the RoundTripper's", p)
+	}
+
+	mode.Store("hang")
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := cipherInit(ctx, c); !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrState) {
+		t.Fatalf("a call whose token request hung: %v, want the deadline", err)
+	}
+
+	mode.Store("")
+	wantOpen(t, c, rt)
+}

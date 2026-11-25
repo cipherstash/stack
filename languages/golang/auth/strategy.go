@@ -267,29 +267,25 @@ func (s *Strategy) Token(ctx context.Context) (string, error) {
 	// service sends (see refreshGrace): a rotated refresh token is never
 	// lost. The token it brings is dropped; the next Token reads it. Any
 	// other request ends with the caller.
-	type result struct {
-		token string
-		err   error
-	}
-	done := make(chan result, 1)
-	go func() {
+	//
+	// A panic of the application's code in the call (its RoundTripper, an
+	// OIDCProvider) is raised again on the caller's goroutine, as callArgs
+	// raises it, rather than ending the process from this one. A caller that
+	// has left does not get it.
+	ctx, panicked := withHostPanic(ctx)
+	token, err := callApplication(ctx, nil, func() (string, error) {
 		defer s.mu.Unlock()
 		ctx, status := withAuthHTTPStatus(ctx)
 		token, err := s.token(ctx)
-		done <- result{token, status.wrap(err)}
-	}()
-	select {
-	case r := <-done:
-		return r.token, r.err
-	case <-ctx.Done():
-		// A call that finished as the context ended still answers.
-		select {
-		case r := <-done:
-			return r.token, r.err
-		default:
-			return "", ctx.Err()
-		}
+		return token, status.wrap(err)
+	}, nil)
+	panicked.raise(nil)
+	if errors.Is(err, errAbandoned) {
+		// The caller sees its context's error, as when it waits anywhere
+		// else.
+		return "", ctx.Err()
 	}
+	return token, err
 }
 
 // token is Token under the strategy's lock: a read, then a locked refresh
