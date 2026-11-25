@@ -9,6 +9,7 @@
  * did not load.
  */
 import type { ErrorCause, RecipherErrorFields, Severity } from '../native'
+import { hasBrand } from './result'
 
 export type { ErrorCause, RecipherErrorFields, Severity }
 
@@ -40,6 +41,16 @@ export type { ErrorCause, RecipherErrorFields, Severity }
  * key, a token, or a ciphertext.
  */
 export class RecipherError {
+  /**
+   * Whether `value` is a `RecipherError`, from either build of this
+   * package. The ESM and the CommonJS builds each have their own class, and
+   * the addon makes every error with the class of the build that loaded
+   * first. Both classes check the same brand.
+   */
+  static [Symbol.hasInstance](value: unknown): value is RecipherError {
+    return hasBrand(value, ERROR_BRAND)
+  }
+
   readonly code: string
   readonly message: string
   readonly help: string | undefined
@@ -74,6 +85,10 @@ export class RecipherError {
     return this.help === undefined ? text : `${text}\nhelp: ${this.help}`
   }
 }
+
+/** The brand that `instanceof RecipherError` checks. */
+const ERROR_BRAND = Symbol.for('@cipherstash/recipher.RecipherError')
+Object.defineProperty(RecipherError.prototype, ERROR_BRAND, { value: true })
 
 /**
  * An error that the TypeScript makes itself. The TypeScript makes one when

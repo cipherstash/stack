@@ -15,10 +15,12 @@
 //! error here contains a plaintext, a key, a token or a ciphertext.
 //!
 //! A cause is an error that led to another error. For a cause that is one
-//! of the engine's own diagnostics, the failure includes its code and
-//! message. A cause from another library is reported as
-//! [`UNDESCRIBED_CAUSE`] and nothing else. Its message is text that the
-//! engine does not control, so the addon never copies it.
+//! of CipherStash's own diagnostics, the failure includes its code and
+//! message. A diagnostic is CipherStash's own when its code is in one of
+//! [`OWN_CODES`]. Any other cause, a diagnostic of another library
+//! included, is reported as [`UNDESCRIBED_CAUSE`] and nothing else. Its
+//! message is text that CipherStash does not control, so the addon never
+//! copies it.
 
 use std::error::Error as StdError;
 
@@ -131,6 +133,7 @@ pub struct RecipherErrorFields {
     /// The error's structured fields, keyed by `snake_case` name. For
     /// example, a ZeroKMS failure has `request_kind`. The map is empty when
     /// the error has no fields.
+    #[napi(ts_type = "Record<string, unknown>")]
     pub fields: serde_json::Map<String, serde_json::Value>,
     /// The errors that caused this one, outermost first.
     pub causes: Vec<ErrorCause>,
@@ -161,9 +164,31 @@ pub const UNDESCRIBED_CAUSE: &str = "an error from another library";
 /// run forever.
 const MAX_CAUSES: usize = 16;
 
+/// The code prefixes of CipherStash's own diagnostics: the engine's
+/// crates and this SDK's. A cause whose code has another prefix is from
+/// another library, and its message is not copied.
+const OWN_CODES: [&str; 5] = [
+    "stack_encrypt",
+    "stack_kms",
+    "stack_auth",
+    "stack_profile",
+    "recipher_js",
+];
+
+/// Whether `diagnostic` is one of CipherStash's own, by its code.
+fn is_own(diagnostic: &dyn Diagnostic) -> bool {
+    diagnostic.code().is_some_and(|code| {
+        let code = code.to_string();
+        OWN_CODES
+            .iter()
+            .any(|prefix| stack_encrypt::diagnostic::is_code_of(prefix, &code))
+    })
+}
+
 /// One cause in a cause chain.
 enum Cause<'a> {
-    /// One of the engine's errors, found as a diagnostic source.
+    /// A diagnostic, found as a diagnostic source. It is CipherStash's own
+    /// only when [`is_own`] says so.
     Ours(&'a dyn Diagnostic),
     /// Any error found as a plain source.
     Foreign(&'a (dyn StdError + 'static)),
@@ -179,8 +204,8 @@ fn next_of(diagnostic: &dyn Diagnostic) -> Option<Cause<'_>> {
 }
 
 /// Returns the error's causes, in order. After the first cause that is not
-/// a diagnostic, the walk follows only plain sources, to the end of the
-/// chain.
+/// one of CipherStash's own diagnostics, the walk follows only plain
+/// sources, to the end of the chain.
 fn causes_of(error: &dyn Diagnostic) -> Vec<ErrorCause> {
     let mut out = Vec::new();
     let mut next = next_of(error);
@@ -189,12 +214,19 @@ fn causes_of(error: &dyn Diagnostic) -> Vec<ErrorCause> {
             break;
         }
         next = match cause {
-            Cause::Ours(diagnostic) => {
+            Cause::Ours(diagnostic) if is_own(diagnostic) => {
                 out.push(ErrorCause {
                     code: diagnostic.code().map(|code| code.to_string()),
                     message: diagnostic.to_string(),
                 });
                 next_of(diagnostic)
+            }
+            Cause::Ours(diagnostic) => {
+                out.push(ErrorCause {
+                    code: None,
+                    message: UNDESCRIBED_CAUSE.to_owned(),
+                });
+                diagnostic.source().map(Cause::Foreign)
             }
             Cause::Foreign(foreign) => {
                 out.push(ErrorCause {
@@ -273,7 +305,7 @@ mod tests {
 
     #[derive(Debug, thiserror::Error, miette::Diagnostic)]
     #[error("inner")]
-    #[diagnostic(code(probe::inner))]
+    #[diagnostic(code(stack_encrypt::probe_inner))]
     struct Inner(#[source] std::io::Error);
 
     #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -317,7 +349,7 @@ mod tests {
             error.causes,
             [
                 ErrorCause {
-                    code: Some("probe::inner".to_owned()),
+                    code: Some("stack_encrypt::probe_inner".to_owned()),
                     message: "inner".to_owned(),
                 },
                 ErrorCause {
@@ -340,6 +372,97 @@ mod tests {
         );
         assert_eq!(error.severity, Severity::Error);
         assert!(error.fields.is_empty() && error.causes.is_empty());
+    }
+
+    /// A diagnostic from another library, whose message quotes a value.
+    #[derive(Debug, thiserror::Error, miette::Diagnostic)]
+    #[error("library text that may quote a value")]
+    #[diagnostic(code(other_library::refused))]
+    struct ForeignDiagnostic;
+
+    #[derive(Debug, thiserror::Error, miette::Diagnostic)]
+    #[error("outer")]
+    #[diagnostic(code(stack_encrypt::probe_outer))]
+    struct WrapsForeign(
+        #[source]
+        #[diagnostic_source]
+        ForeignDiagnostic,
+    );
+
+    #[test]
+    fn a_diagnostic_cause_from_another_library_is_not_copied() {
+        let error = RecipherErrorFields::diagnostic(&WrapsForeign(ForeignDiagnostic), None);
+        assert_eq!(
+            error.causes,
+            [ErrorCause {
+                code: None,
+                message: UNDESCRIBED_CAUSE.to_owned(),
+            }]
+        );
+        assert!(!format!("{error:?}").contains("quote a value"));
+    }
+
+    /// A diagnostic that is its own diagnostic source: a looping chain.
+    #[derive(Debug)]
+    struct DiagnosticLoop;
+
+    impl std::fmt::Display for DiagnosticLoop {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("loop")
+        }
+    }
+
+    impl std::error::Error for DiagnosticLoop {}
+
+    impl miette::Diagnostic for DiagnosticLoop {
+        fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+            Some(Box::new("stack_encrypt::probe_loop"))
+        }
+
+        fn diagnostic_source(&self) -> Option<&dyn miette::Diagnostic> {
+            Some(self)
+        }
+    }
+
+    /// An error that is its own source: a looping chain of plain errors.
+    #[derive(Debug)]
+    struct SourceLoop;
+
+    impl std::fmt::Display for SourceLoop {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("library text that may quote a value")
+        }
+    }
+
+    impl std::error::Error for SourceLoop {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(self)
+        }
+    }
+
+    #[derive(Debug, thiserror::Error, miette::Diagnostic)]
+    #[error("outer")]
+    #[diagnostic(code(stack_encrypt::probe_outer))]
+    struct WrapsSourceLoop(#[source] SourceLoop);
+
+    #[test]
+    fn a_looping_diagnostic_chain_stops_at_the_limit() {
+        let error = RecipherErrorFields::diagnostic(&DiagnosticLoop, None);
+        assert_eq!(error.causes.len(), super::MAX_CAUSES);
+        assert!(error
+            .causes
+            .iter()
+            .all(|cause| cause.code.as_deref() == Some("stack_encrypt::probe_loop")));
+    }
+
+    #[test]
+    fn a_looping_chain_of_plain_errors_stops_at_the_limit() {
+        let error = RecipherErrorFields::diagnostic(&WrapsSourceLoop(SourceLoop), None);
+        assert_eq!(error.causes.len(), super::MAX_CAUSES);
+        assert!(error
+            .causes
+            .iter()
+            .all(|cause| cause.code.is_none() && cause.message == UNDESCRIBED_CAUSE));
     }
 
     /// Returns one of each variant of [`Error`]. The match has no wildcard,

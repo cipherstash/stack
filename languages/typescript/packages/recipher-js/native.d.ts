@@ -202,7 +202,7 @@ export interface RecipherErrorFields {
    * example, a ZeroKMS failure has `request_kind`. The map is empty when
    * the error has no fields.
    */
-  fields: Record<string, any>
+  fields: Record<string, unknown>
   /** The errors that caused this one, outermost first. */
   causes: Array<ErrorCause>
   /** The field at fault, when it is known. */

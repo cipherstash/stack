@@ -63,9 +63,33 @@ interface Methods<T, E> {
   expect(message: string): T
 }
 
+/**
+ * The brands that `instanceof` checks. The ESM and the CommonJS builds of
+ * this package each have their own `Ok` and `Err` classes, and the addon
+ * makes every `Result` from the classes of the build that loaded first. A
+ * brand from `Symbol.for` is the same in both builds, so `instanceof`
+ * agrees whichever build made the value.
+ */
+const OK_BRAND = Symbol.for('@cipherstash/recipher.Ok')
+const ERR_BRAND = Symbol.for('@cipherstash/recipher.Err')
+
+/** Whether `value` is an object that carries `brand`. */
+export function hasBrand(value: unknown, brand: symbol): boolean {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Reflect.get(value, brand) === true
+  )
+}
+
 /** The result of a call that worked. */
 export class Ok<T, E> implements Methods<T, E> {
   readonly value: T
+
+  /** Whether `value` is an `Ok`, from either build of this package. */
+  static [Symbol.hasInstance](value: unknown): value is Ok<unknown, unknown> {
+    return hasBrand(value, OK_BRAND)
+  }
 
   constructor(value: T) {
     this.value = value
@@ -123,6 +147,11 @@ export class Ok<T, E> implements Methods<T, E> {
 export class Err<T, E> implements Methods<T, E> {
   readonly error: E
 
+  /** Whether `value` is an `Err`, from either build of this package. */
+  static [Symbol.hasInstance](value: unknown): value is Err<unknown, unknown> {
+    return hasBrand(value, ERR_BRAND)
+  }
+
   constructor(error: E) {
     this.error = error
     Object.freeze(this)
@@ -178,6 +207,9 @@ export class Err<T, E> implements Methods<T, E> {
     })
   }
 }
+
+Object.defineProperty(Ok.prototype, OK_BRAND, { value: true })
+Object.defineProperty(Err.prototype, ERR_BRAND, { value: true })
 
 /** Make an `Ok` that contains `value`. */
 export function ok<T, E = never>(value: T): Result<T, E> {

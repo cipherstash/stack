@@ -1,6 +1,27 @@
 // Compile-time tests: `pnpm run typecheck` compiles this file and nothing
 // runs it. Each `@ts-expect-error` is a line that must not compile.
-import type { Ciphertext, Keyset, RecipherError, Result } from '../src/index'
+import {
+  type Ciphertext,
+  type Keyset,
+  Ok,
+  RecipherError,
+  type Result,
+} from '../src/index'
+
+// `instanceof` narrows as `isOk()` does, and works on an unknown value.
+declare const opened: Result<string, RecipherError>
+if (opened instanceof Ok) {
+  const text: string = opened.value
+  void text
+} else {
+  const error: RecipherError = opened.error
+  void error
+}
+declare const anything: unknown
+if (anything instanceof RecipherError) {
+  const code: string = anything.code
+  void code
+}
 
 declare const sealed: Result<Ciphertext<string>, RecipherError>
 
