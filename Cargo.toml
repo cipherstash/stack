@@ -62,6 +62,16 @@ lto = true   # same as "fat"
 [profile.dev]
 incremental = true
 
+# The profile cargo-mutants builds with (`profile` in .cargo/mutants.toml).
+# Every mutant is an incremental rebuild of the crate and a relink of each of
+# its test binaries, and debug info is most of what the linker writes: without
+# it a stack-encrypt mutant builds in about two thirds of the time. A separate
+# profile, so `cargo test` keeps its debug info and a mutants run does not
+# invalidate the dev build in target/.
+[profile.mutants]
+inherits = "test"
+debug = "none"
+
 [workspace.dependencies]
 # stack-auth and stack-profile, two of this workspace's published crates.
 # Members take them with `workspace = true`.
