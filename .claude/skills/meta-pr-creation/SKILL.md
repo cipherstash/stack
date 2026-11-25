@@ -20,12 +20,18 @@ customers inside the `stash` tarball; this must not.
   pushing:
 
   ```bash
-  git log --format='%h %G? %s' main..HEAD   # G = signed, N = unsigned
+  git log --format='%h %G? %s' origin/main..HEAD   # G = signed, N = unsigned
   ```
 
-  An unsigned commit (`N`) in the stack: `git rebase --force-rebase main`
-  re-commits everything signed, then `git push --force-with-lease`. Always
-  `--force-with-lease`, never bare `--force`.
+  On a branch above the bottom of a stack, this also lists the commits of the
+  branches below it.
+
+  An unsigned commit (`N`) on a branch that targets `main`:
+  `git rebase --force-rebase origin/main` re-commits everything signed, then
+  `git push --force-with-lease`. Always `--force-with-lease`, never bare
+  `--force`. Do not use this rebase on a branch above the bottom of a stack,
+  because it replays the branches below as well. Follow "Re-sign a branch in a
+  stack" in `docs/claude/stacked-pull-requests.md` instead.
 
 ## Before opening the PR
 
