@@ -91,7 +91,8 @@ async-mutex = "1.4.0"
 zerokms-keyset = { workspace = true }
 stack-auth = { workspace = true, features = ["test-utils"] }
 tempfile = "3.21.0"
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+proptest = { version = "1.12", default-features = false, features = ["std"] }
 toml = "0.8.19"
 
 [package.metadata.docs.rs]
