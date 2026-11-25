@@ -100,6 +100,39 @@ The working loop is:
 4. To confirm, trust the event stream or run any authenticated command —
    never inspect `~/.cipherstash` (see "Never read these").
 
+**When to start it.** Start this loop yourself whenever local work stops on
+missing credentials. That includes a `stash` command, a test, or an SDK in any
+language (TypeScript, Rust, Go) reporting `NOT_AUTHENTICATED`, "no
+credentials", "no client key", or "run `stash auth login`", except a client
+built from `@cipherstash/stack/wasm-inline`. That one never reads the profile,
+so a login does not help it: it needs `clientId` and `clientKey` in its config
+(see `stash-edge`). It also includes a
+profile that exists but has no key for the workspace the code uses. A login
+gives a key for the workspace the user approves in the browser, and the
+command has no flag to choose it. So tell the user which workspace to
+approve: the one the error names, or the one in `CS_WORKSPACE_CRN`. After
+`device_bound`, run the failing command again to confirm it works. Do not
+stop the task to hand the problem back. Do not ask the user to paste `CS_*`
+values. And do not run `stash env` to get local credentials, because it mints
+a new access key each time it runs. The user only has to open one link.
+
+`stash` is a Node CLI, and needs Node 22 or later. If `npx` is not available
+where the code runs (a sandbox for a Go or Rust service, say), say so, and ask
+the user to install Node there or to run `stash auth login` in that
+environment themselves.
+
+**Choose the region; do not guess it.** With `--json`, without a terminal, or
+with `CI` set, `auth login` needs `--region` (or `STASH_REGION`), and exits
+with "Cannot resolve a region without a prompt" if it has neither. A workspace
+lives in one region:
+
+- If a `CS_WORKSPACE_CRN` is in view, use the region it names
+  (`crn:<region>.<provider>:<workspace-id>`).
+- Otherwise ask the user, offering the slugs from
+  `npx stash auth regions --json`.
+
+A login in another region does not reach a workspace in this one.
+
 **Authenticate before `stash init`.** Init's authenticate step uses the interactive path, so an agent running `init` unauthenticated makes the CLI try to open a browser on the agent's machine — and in a non-TTY it exits with `region_required` unless `--region` or `STASH_REGION` is set. Once a valid token exists, init logs `Using workspace X (region)` and moves on silently.
 
 Flags: `--region <slug>` (env `STASH_REGION`), `--json`, `--no-open`, `--supabase` / `--drizzle` / `--prisma` (referrer tracking only).

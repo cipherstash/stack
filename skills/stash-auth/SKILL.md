@@ -479,7 +479,18 @@ client-side strategy model applies to apps behind the Proxy.
 ## Quick diagnosis
 
 1. **`NOT_AUTHENTICATED` locally** → `npx stash auth login` (dev profile),
-   or export the four `CS_*` variables. With `@cipherstash/auth`'s
+   or export the four `CS_*` variables. An agent starts the login itself:
+   `npx stash auth login --json --region <slug>` in the background, then
+   show the user the `verificationUriComplete` URL it prints and wait for
+   `device_bound` (the loop, and how to pick the region, are in `stash-cli`
+   under Authentication). The same goes for an SDK in any language that
+   reports no credentials or no client key, except
+   `@cipherstash/stack/wasm-inline`: it never reads the profile, so a login
+   does not help it, and it needs `clientId` and `clientKey` in its config
+   (see `stash-edge`). The CLI needs Node 22 or later;
+   where there is none, ask the user to install it or to log in there
+   themselves. Never run `stash env` to get local credentials: it mints a
+   new access key. With `@cipherstash/auth`'s
    `AutoStrategy` and `CS_WORKSPACE_CRN` set, log in to that workspace, or
    unset it; the default client follows the CLI's current workspace.
 2. **Works locally, 401 in CI/production** → the deployed environment lacks
