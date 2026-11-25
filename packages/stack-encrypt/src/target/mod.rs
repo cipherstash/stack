@@ -203,6 +203,8 @@ pub use operations::{
 };
 pub(crate) use pending::KeysetSelector;
 pub use pending::{CipherRef, Pending, PendingFuture};
+#[cfg(feature = "dynamic")]
+pub(crate) use pending::{Step, YIELD_EVERY};
 pub use request::{Request, Responses};
 pub(crate) use source::Held;
 pub use source::{Borrowed, ConsumeSource, Owned, Source, SourceMode, WipeSource};

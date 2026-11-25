@@ -493,10 +493,12 @@ A negative `status` is a request the host could not perform, with the error
 text as the body.
 
 A step can also pause with no requests: a **yield**. The guest yields
-every 64 data keys while it seals or opens a batch, because a host cannot
-preempt a running guest call. In Go, the garbage collector's
+every 64 data keys while it builds, seals or opens a batch, because a host
+cannot preempt a running guest call. In Go, the garbage collector's
 stop-the-world pause and every other caller would otherwise wait for the
-whole batch. The host resumes a yield at once, with no responses
+whole batch. Fields with an EQL type are not built in chunks: the guest
+prepares every such field of every row before its first yield. The host
+resumes a yield at once, with no responses
 (`languages/golang/encrypt/step.go`). An empty `requests` list is a yield;
 a missing one is a malformed step. The guest is never running while a request is in flight,
 so a host's cancellation never interrupts it: an aborted operation is a

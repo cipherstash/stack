@@ -162,9 +162,37 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
     guest now yields to the host every 64 data keys while it derives keys
     or opens or seals a batch (#1762). Decrypting 1,410 values against
     ZeroKMS, its longest step falls from 42 ms to 11 ms, and most steps
-    take 1 to 2 ms. Two steps are still long: the one that builds a batch
-    (36 ms to encrypt 1,410 values, which derives every search term) and
-    the one that decodes each ZeroKMS response.
+    take 1 to 2 ms. The step that decodes each ZeroKMS response is still
+    long. The step that built a batch was long too (36 ms to encrypt 1,410
+    values, which derives every search term): see the next item.
+- **Building a batch no longer holds the guest in one long step**
+  (#1768). The first step of an encrypt or a decrypt built every row of
+  the batch before it paused, and for an encrypt that derives every search
+  term. The guest now builds a batch's rows 64 data keys' worth at a time,
+  and yields to the host between two chunks, as it does while it seals or
+  opens them. So a batch yields about twice as often as before. A call
+  that succeeds returns the same output. Fields with an EQL type (the
+  types in `encrypt/eql`) are not built in chunks yet: the first step
+  still prepares every such field of every row before it yields, and for
+  an encrypt that derives all of their search terms. A decrypt of a batch
+  with more than one row refused before any request to ZeroKMS now
+  reports the first of those rows in row order, with the rows that leave
+  out the same optional fields taken together, in the order the first of
+  them appears. Before, within one such group of rows, a row whose stored
+  context field was refused (not a context, or not the context the cipher
+  names) was reported ahead of an earlier row whose context was refused as
+  it was opened. Across groups the order does not change. A row whose
+  stored fields do not fit the type is still refused first, before any row
+  is built. The error now comes after the steps that build the rows before
+  it, still with no request to ZeroKMS. Figures against a fake ZeroKMS
+  that answers after 40 ms, for 3,334 rows of 3 sealed fields (10,002
+  values):
+  - Encrypt: the first step takes about 27 ms, against about 450 ms
+    before. Each chunk takes about 3 ms.
+  - Decrypt: the first step takes about 20 ms, against about 49 ms.
+  - The first step still decodes and checks every row, and the last step
+    writes the whole result (about 22 ms to encrypt, 10 ms to decrypt).
+    Those two are now the longest steps.
 - **A batch waits for ZeroKMS once per 1,500 keys, not once per 500.** The
   guest split a batch into requests of 500 keys and sent them one after
   another. The guest now sends up to 3 at the same time, and the client

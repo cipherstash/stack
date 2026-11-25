@@ -522,9 +522,12 @@ func (c *Client) callKMS(ctx context.Context, f stepFunc) ([]byte, error) {
 // guest has run. A source that fails is reported only if the guest asks.
 //
 // An operation without kms takes no slot, because it cannot pause. It
-// never reaches ZeroKMS, and it does not yield either: it asks for no
-// keys, and the guest yields only once a batch's items have taken at least
-// 64 keys (see step.go).
+// never reaches ZeroKMS, and it does not yield either: it runs no batch of
+// records, and the guest yields only while it builds, seals or opens one,
+// after each chunk of rows that take 64 keys (see step.go). Fields with an
+// EQL type are not built in chunks: the guest prepares every such field of
+// every row before its first yield, and for an encrypt that derives all of
+// their search terms.
 //
 // The caller's context governs everything the host waits on: the slot, the
 // token fetch, the wait for the lock and the requests, which run under it.

@@ -21,11 +21,13 @@ import (
 // running at all.
 //
 // A step can also pause with no requests: a yield. The guest's engine yields
-// every few dozen data keys while it opens or seals a batch, because the Go
-// runtime cannot preempt a running guest call: its garbage collector's
-// stop-the-world pause, and every other caller of the client, would otherwise
-// wait for the whole batch. The host resumes a yield at once, with no
-// responses, and the client's lock is released in between like any step.
+// every few dozen data keys while it builds, seals or opens a batch, because
+// the Go runtime cannot preempt a running guest call: its garbage
+// collector's stop-the-world pause, and every other caller of the client,
+// would otherwise wait for the whole batch. Fields with an EQL type are not
+// built in chunks: the guest prepares every such field of every row before
+// its first yield. The host resumes a yield at once, with no responses, and
+// the client's lock is released in between like any step.
 
 // stepFunc runs one step of an operation in the guest, under ctx.
 type stepFunc func(ctx context.Context, inst *instance) ([]byte, error)

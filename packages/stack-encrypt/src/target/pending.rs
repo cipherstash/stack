@@ -64,10 +64,13 @@ enum Fulfilled<'a, T> {
 }
 
 /// How many data keys' worth of items a column fulfils between yields, in
-/// a wasm guest. `stack-kms` has its own copy (`futures::YIELD_EVERY`, for
+/// a wasm guest, and how many a batch of records builds between them
+/// ([`in_steps`](Pending::in_steps)). Both count an item's requests
+/// ([`key_count`](Pending::key_count)): one per data key, and one per
+/// keyset it loads. `stack-kms` has its own copy (`futures::YIELD_EVERY`, for
 /// deriving keys), and the two are meant to stay equal.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-const YIELD_EVERY: usize = 64;
+#[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+pub(crate) const YIELD_EVERY: usize = 64;
 
 /// Run `fulfil` to its end, without yielding.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -130,6 +133,63 @@ type BuildBox<'a, T, K> = Box<dyn FnOnce(&KeysetCipher<'a, K>) -> Pending<'a, T,
 /// See the native definition above; identical minus the `Send` bound.
 #[cfg(target_arch = "wasm32")]
 type BuildBox<'a, T, K> = Box<dyn FnOnce(&KeysetCipher<'a, K>) -> Pending<'a, T, K> + 'a>;
+
+/// One step of a pending built in steps: see [`Pending::in_steps`]. `Send`
+/// split as above.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) type StepBox<'a, T, K> =
+    Box<dyn FnOnce(&'a StackCipher<K>) -> Step<'a, T, K> + Send + 'a>;
+/// See the native definition above; identical minus the `Send` bound.
+#[cfg(target_arch = "wasm32")]
+pub(crate) type StepBox<'a, T, K> = Box<dyn FnOnce(&'a StackCipher<K>) -> Step<'a, T, K> + 'a>;
+
+/// What one step of a pending built in steps produced: the pending, or the
+/// rest of the build, which runs after a yield. See [`Pending::in_steps`].
+// A build makes one `Built`, so the size of the variants does not matter.
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum Step<'a, T: 'a, K> {
+    /// The pending, built.
+    Built(Pending<'a, T, K>),
+    /// The rest of the build.
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+    More(StepBox<'a, T, K>),
+}
+
+/// How a pending that is not built yet is built when it settles.
+enum Unbuilt<'a, T: 'a, K> {
+    /// Once its keyset is loaded: [`Pending::after_load`].
+    AfterLoad(BuildBox<'a, T, K>),
+    /// In steps, with a yield between them: [`Pending::in_steps`].
+    ///
+    /// A merge ([`zip`](Pending::zip), [`all`](Pending::all)) of a pending
+    /// built in steps, where no side waits for its keyset to load, is one of
+    /// these too: one step that builds every side whole, with no yield.
+    InSteps(StepBox<'a, T, K>),
+}
+
+/// Run every step of `step` now, without yielding.
+fn finish_steps<'a, T: 'a, K>(
+    mut step: StepBox<'a, T, K>,
+    cipher: &'a StackCipher<K>,
+) -> Pending<'a, T, K> {
+    loop {
+        match step(cipher) {
+            Step::Built(built) => return built,
+            Step::More(rest) => step = rest,
+        }
+    }
+}
+
+/// `step`, then `change` on the pending it builds, keeping its steps.
+fn steps_then<'a, T: 'a, U: 'a, K: 'a>(
+    step: StepBox<'a, T, K>,
+    change: impl FnOnce(Pending<'a, T, K>) -> Pending<'a, U, K> + MaybeSend + 'a,
+) -> StepBox<'a, U, K> {
+    Box::new(move |cipher| match step(cipher) {
+        Step::Built(built) => Step::Built(change(built)),
+        Step::More(rest) => Step::More(steps_then(rest, change)),
+    })
+}
 
 /// The boxed future a [`Pending`] settles through; `Send` split as above.
 #[cfg(not(target_arch = "wasm32"))]
@@ -194,11 +254,13 @@ pub struct Pending<'a, T: 'a, K> {
     /// plaintext, or whose type is not known to be `Zeroize` here.
     wipe: Option<WipeHook<'a, T>>,
     fulfil: FulfilBox<'a, T>,
-    /// Set for a pending that cannot be built until its keyset is
-    /// loaded ([`after_load`](Self::after_load)). Settling it loads the
-    /// keyset, builds the pending this returns, and settles that one. The
-    /// requests and `fulfil` above are unused until then.
-    build: Option<BuildBox<'a, T, K>>,
+    /// Set for a pending that is built when it settles: one that cannot be
+    /// built until its keyset is loaded ([`after_load`](Self::after_load)),
+    /// which settling loads first, or one built in steps
+    /// ([`in_steps`](Self::in_steps)). Settling builds the pending and
+    /// settles that one. The requests and `fulfil` above are unused until
+    /// then.
+    build: Option<Unbuilt<'a, T, K>>,
 }
 
 /// Which keyset a [`CipherRef`] or a [`Pending`] works under: none, one
@@ -560,15 +622,70 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         Self::unbuilt(
             cipher_ref.cipher(),
             cipher_ref.keyset().clone(),
-            Box::new(build),
+            Unbuilt::AfterLoad(Box::new(build)),
         )
+    }
+
+    /// A pending built in steps when it settles, with a yield to the async
+    /// runtime between two steps: `step` builds part of it and returns the
+    /// rest ([`Step::More`]), or returns the pending ([`Step::Built`]),
+    /// which then settles as any other. The pending is confined to the
+    /// keyset of `cipher_ref`, and to any keyset it is confined to since.
+    ///
+    /// A large batch is built this way in a wasm guest, so the host gets
+    /// control back while its rows are built, as it does while they are
+    /// fulfilled ([`Fulfilled::More`]). The build runs no I/O, so it runs
+    /// before any key is requested, as an eager build does. When a row
+    /// fails, the whole pending fails, without I/O.
+    ///
+    /// No request is known until the pending is built, so its
+    /// [`context`](Self::context) shows none, and does not say that a row
+    /// will fail. Merging it with another
+    /// pending ([`zip`](Self::zip), [`all`](Self::all)) builds it whole,
+    /// without yielding, when the merged pending settles.
+    #[cfg_attr(
+        not(all(feature = "dynamic", target_arch = "wasm32")),
+        allow(dead_code)
+    )]
+    pub(crate) fn in_steps<F>(cipher_ref: impl Into<CipherRef<'a, K>>, step: F) -> Self
+    where
+        F: FnOnce(&'a StackCipher<K>) -> Step<'a, T, K> + MaybeSend + 'a,
+    {
+        let cipher_ref: CipherRef<'a, K> = cipher_ref.into();
+        Self::unbuilt(
+            cipher_ref.cipher(),
+            cipher_ref.keyset().clone(),
+            Unbuilt::InSteps(Box::new(step)),
+        )
+    }
+
+    /// How many requests this pending makes so far: one for each data key
+    /// it seals or opens, and one for each keyset it loads. A column weighs
+    /// an item by this count ([`YIELD_EVERY`]). A pending that is not built
+    /// yet makes none.
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+    pub(crate) fn key_count(&self) -> usize {
+        self.requests.len()
+    }
+
+    /// Whether this pending already failed, during its build: settling it
+    /// returns the error without I/O.
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+    pub(crate) fn has_failed(&self) -> bool {
+        self.failed.is_some()
+    }
+
+    /// Whether this pending waits for its keyset to load before it is
+    /// built ([`after_load`](Self::after_load)).
+    fn is_after_load(&self) -> bool {
+        matches!(self.build, Some(Unbuilt::AfterLoad(_)))
     }
 
     /// A pending that `build` makes when it settles, under `keyset`.
     fn unbuilt(
         cipher: &'a StackCipher<K>,
         keyset: KeysetSelector,
-        build: BuildBox<'a, T, K>,
+        build: Unbuilt<'a, T, K>,
     ) -> Self {
         Self {
             cipher,
@@ -588,17 +705,20 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     }
 
     /// This pending, changed by `change` once it is built. For a pending
-    /// from [`after_load`](Self::after_load) only.
+    /// that is not built yet only ([`after_load`](Self::after_load),
+    /// [`in_steps`](Self::in_steps)).
     fn rebuilt<U: 'a>(
         self,
-        build: BuildBox<'a, T, K>,
+        build: Unbuilt<'a, T, K>,
         change: impl FnOnce(Pending<'a, T, K>) -> Pending<'a, U, K> + MaybeSend + 'a,
     ) -> Pending<'a, U, K> {
-        Pending::unbuilt(
-            self.cipher,
-            self.keyset,
-            Box::new(move |keyset| change(build(keyset))),
-        )
+        let build = match build {
+            Unbuilt::AfterLoad(build) => {
+                Unbuilt::AfterLoad(Box::new(move |keyset| change(build(keyset))))
+            }
+            Unbuilt::InSteps(step) => Unbuilt::InSteps(steps_then(step, change)),
+        };
+        Pending::unbuilt(self.cipher, self.keyset, build)
     }
 
     /// This pending without its cipher: what a merged pending that is not
@@ -744,6 +864,19 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// is awaited. A pending that has already failed shows no context, and
     /// says that it failed.
     ///
+    /// A pending that is not built yet shows no context either, and does
+    /// not say that it failed, even when it will fail as it is built. Its
+    /// contexts, and any failure, are known only once it settles, and until
+    /// then its [`CallContexts`] prints as a call that seals and indexes
+    /// nothing. Two kinds of pending are built when they settle:
+    ///
+    /// - one whose requests depend on a keyset that is not loaded yet, such
+    ///   as a read of an encrypted JSON document, which is built once the
+    ///   keyset is loaded;
+    /// - in a `wasm32` build, a batch of records, whose rows are built a
+    ///   chunk at a time so that the host gets control back between chunks.
+    ///   A native build builds every row before it returns the pending.
+    ///
     /// See [`CallContexts`] for an example, and
     /// [`Encryption::contexts`](super::Encryption::contexts) for the same
     /// view of a declaration, with placeholders for the caller's parts.
@@ -862,17 +995,26 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         }
         if self.build.is_some() || other.build.is_some() {
             // A side that is not built yet has no requests to merge. The
-            // pair is built when it settles, and merged then.
+            // pair is built when it settles, and merged then: once the
+            // keyset is loaded if a side needs it loaded, and otherwise in
+            // one step.
             let cipher = self.cipher;
+            let after_load = self.is_after_load() || other.is_after_load();
             let (left, right) = (self.detached(), other.detached());
-            return Pending::unbuilt(
-                cipher,
-                keyset,
-                Box::new(move |loaded| {
+            let build = if after_load {
+                Unbuilt::AfterLoad(Box::new(move |loaded| {
                     left.built(loaded)
                         .zip_releasing(right.built(loaded), release)
-                }),
-            );
+                }))
+            } else {
+                Unbuilt::InSteps(Box::new(move |cipher| {
+                    Step::Built(
+                        left.finished(cipher)
+                            .zip_releasing(right.finished(cipher), release),
+                    )
+                }))
+            };
+            return Pending::unbuilt(cipher, keyset, build);
         }
         let mut requests = self.requests;
         requests.extend(other.requests);
@@ -985,6 +1127,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         // failed: a lazy column stops building there.
         let mut column: Vec<Pending<'a, T, K>> = Vec::with_capacity(items.size_hint().0);
         let mut unbuilt = false;
+        let mut after_load = false;
         for item in items {
             keyset = match keyset.merge(item.keyset.clone()) {
                 Ok(keyset) => keyset,
@@ -994,21 +1137,36 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
                 return Pending::failed(cipher, error);
             }
             unbuilt |= item.build.is_some();
+            after_load |= item.is_after_load();
             column.push(item);
         }
         if unbuilt {
             // An item that is not built yet has no requests to merge. The
-            // column is built when it settles, and merged then.
+            // column is built when it settles, and merged then: once the
+            // keyset is loaded if an item needs it loaded, and otherwise in
+            // one step.
             let column: Vec<_> = column.into_iter().map(Pending::detached).collect();
-            return Pending::unbuilt(
-                cipher,
-                keyset,
-                Box::new(move |loaded| {
+            let build = if after_load {
+                Unbuilt::AfterLoad(Box::new(move |loaded| {
                     let column: Vec<_> =
                         column.into_iter().map(|item| item.built(loaded)).collect();
                     Pending::collect_releasing(CipherRef::from(loaded), column, release)
-                }),
-            );
+                }))
+            } else {
+                let selector = keyset.clone();
+                Unbuilt::InSteps(Box::new(move |cipher| {
+                    let column: Vec<_> = column
+                        .into_iter()
+                        .map(|item| item.finished(cipher))
+                        .collect();
+                    let cipher_ref = CipherRef {
+                        cipher,
+                        keyset: selector,
+                    };
+                    Step::Built(Pending::collect_releasing(cipher_ref, column, release))
+                }))
+            };
+            return Pending::unbuilt(cipher, keyset, build);
         }
         let mut requests = Vec::new();
         let mut contexts = Vec::new();
@@ -1203,25 +1361,46 @@ struct Detached<'a, T, K> {
     contexts: Vec<(ContextPiece<'static>, ContextPiece<'static>)>,
     wipe: Option<WipeHook<'a, T>>,
     fulfil: FulfilBox<'a, T>,
-    build: Option<BuildBox<'a, T, K>>,
+    build: Option<Unbuilt<'a, T, K>>,
 }
 
 impl<'a, T: 'a, K> Detached<'a, T, K> {
     /// The pending again, on the cipher of `loaded`, and built through
-    /// `loaded` if it was not built yet.
+    /// `loaded` if it was not built yet. One built in steps is built whole.
     fn built(self, loaded: &KeysetCipher<'a, K>) -> Pending<'a, T, K> {
         match self.build {
-            Some(build) => build(loaded),
-            None => Pending {
-                cipher: loaded.cipher(),
-                keyset: self.keyset,
-                requests: self.requests,
-                failed: self.failed,
-                contexts: self.contexts,
-                wipe: self.wipe,
-                fulfil: self.fulfil,
-                build: None,
-            },
+            Some(Unbuilt::AfterLoad(build)) => build(loaded),
+            Some(Unbuilt::InSteps(step)) => finish_steps(step, loaded.cipher()),
+            None => self.attached(loaded.cipher()),
+        }
+    }
+
+    /// The pending again, on `cipher`, and built whole if it was built in
+    /// steps. Never called for one that waits for its keyset to load: a
+    /// merge with one of those is built once the keyset is loaded
+    /// ([`built`](Self::built)).
+    fn finished(self, cipher: &'a StackCipher<K>) -> Pending<'a, T, K> {
+        match self.build {
+            Some(Unbuilt::InSteps(step)) => finish_steps(step, cipher),
+            Some(Unbuilt::AfterLoad(_)) => Pending::failed(
+                cipher,
+                Error::Other("a pending waiting for its keyset was built without it".into()),
+            ),
+            None => self.attached(cipher),
+        }
+    }
+
+    /// The pending again, on `cipher`. For one that is built.
+    fn attached(self, cipher: &'a StackCipher<K>) -> Pending<'a, T, K> {
+        Pending {
+            cipher,
+            keyset: self.keyset,
+            requests: self.requests,
+            failed: self.failed,
+            contexts: self.contexts,
+            wipe: self.wipe,
+            fulfil: self.fulfil,
+            build: None,
         }
     }
 }
@@ -1315,20 +1494,42 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         if let Some(error) = self.failed {
             return Err(error);
         }
-        if let Some(build) = self.build {
-            // Not built yet: load the keyset, build through a handle on
-            // it, and settle what was built, confined to that keyset. A
-            // keyset this pending was confined to since is the same one,
-            // or `resolved_id` has refused it.
-            let Some(id) = Box::pin(resolved_id(self.cipher, &self.keyset, identity)).await? else {
-                return Err(Error::NoKeyset);
-            };
-            let loaded = Box::pin(self.cipher.keyset_state(id, identity)).await?;
-            let keyset = KeysetCipher::new(self.cipher, loaded);
-            let built = build(&keyset).confined_to(&KeysetSelector::keyset(id));
-            // Boxed: the call is recursive, though a built pending has
-            // nothing more to build.
-            return Box::pin(built.settle_with(audit, identity)).await;
+        match self.build {
+            Some(Unbuilt::InSteps(mut step)) => {
+                // Built in steps: each step builds part of the pending, and
+                // the runtime gets control back between two steps. What was
+                // built so far is held across the yield. Dropping the
+                // operation at the yield drops it, as dropping the pending
+                // would.
+                let built = loop {
+                    match step(self.cipher) {
+                        Step::Built(built) => break built,
+                        Step::More(rest) => step = rest,
+                    }
+                    YieldNow(false).await;
+                };
+                // Boxed: the call is recursive, though a built pending has
+                // nothing more to build.
+                let built = built.confined_to(&self.keyset);
+                return Box::pin(built.settle_with(audit, identity)).await;
+            }
+            Some(Unbuilt::AfterLoad(build)) => {
+                // Not built yet: load the keyset, build through a handle on
+                // it, and settle what was built, confined to that keyset. A
+                // keyset this pending was confined to since is the same one,
+                // or `resolved_id` has refused it.
+                let Some(id) = Box::pin(resolved_id(self.cipher, &self.keyset, identity)).await?
+                else {
+                    return Err(Error::NoKeyset);
+                };
+                let loaded = Box::pin(self.cipher.keyset_state(id, identity)).await?;
+                let keyset = KeysetCipher::new(self.cipher, loaded);
+                let built = build(&keyset).confined_to(&KeysetSelector::keyset(id));
+                // Boxed: the call is recursive, though a built pending has
+                // nothing more to build.
+                return Box::pin(built.settle_with(audit, identity)).await;
+            }
+            None => {}
         }
         let unresolved = !self.keyset.not_loaded.is_empty()
             || self.requests.iter().any(Request::is_selected_keyset);
@@ -2541,6 +2742,146 @@ mod tests {
         );
         assert!(Pin::new(&mut yielded).poll(&mut cx).is_ready());
         assert_eq!(wakes.0.load(Ordering::SeqCst), 1, "it wakes itself once");
+    }
+
+    /// Poll `future` by hand to its end, returning its output and how many
+    /// times it was pending. Every pending poll must have woken the task,
+    /// or nothing would poll it again.
+    fn poll_by_hand<F: Future>(future: F) -> (F::Output, usize) {
+        let wakes = Arc::new(Wakes::default());
+        let waker = std::task::Waker::from(wakes.clone());
+        let mut cx = std::task::Context::from_waker(&waker);
+        let mut future = std::pin::pin!(future);
+        let mut pending = 0;
+        loop {
+            match future.as_mut().poll(&mut cx) {
+                std::task::Poll::Ready(output) => return (output, pending),
+                std::task::Poll::Pending => {
+                    pending += 1;
+                    assert_eq!(
+                        wakes.0.load(Ordering::SeqCst),
+                        pending,
+                        "a yield wakes itself"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A pending built in `steps` steps, each step building one item that
+    /// asks for two data keys.
+    fn built_in<'a>(
+        keyset: &'a KeysetCipher<'_, CountingSource>,
+        steps: usize,
+    ) -> Pending<'a, Vec<Vec<Vec<u8>>>, CountingSource> {
+        type Item<'a> = Pending<'a, Vec<Vec<u8>>, CountingSource>;
+        fn step<'a>(
+            keyset: &'a KeysetCipher<'_, CountingSource>,
+            left: usize,
+            mut built: Vec<Item<'a>>,
+        ) -> Step<'a, Vec<Vec<Vec<u8>>>, CountingSource> {
+            built.push(generating(keyset, 2));
+            if left > 1 {
+                Step::More(Box::new(move |_| step(keyset, left - 1, built)))
+            } else {
+                Step::Built(Pending::all(keyset, built))
+            }
+        }
+        Pending::in_steps(keyset, move |_| step(keyset, steps, Vec::new()))
+    }
+
+    /// Settling a pending built in steps runs each step in turn with a
+    /// yield between two of them, and then settles what they built: one
+    /// batched call for every key every step asked for.
+    #[tokio::test]
+    async fn a_pending_built_in_steps_yields_between_them_and_settles_once() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let pending = built_in(&keyset, 5);
+        assert!(
+            pending.context().contexts().is_empty(),
+            "nothing is built yet"
+        );
+        assert_eq!(cipher.kms().generate_calls(), 0);
+
+        let (items, yields) = poll_by_hand(pending.into_future());
+        let items = items.unwrap();
+        assert_eq!(yields, 4, "one yield between each two of five steps");
+        assert_eq!(items.len(), 5, "every step's item, in order");
+        assert!(items.iter().all(|keys| keys.len() == 2));
+        assert_eq!(cipher.kms().generate_calls(), 1, "one call for every key");
+
+        // One step: no yield at all.
+        let (items, yields) = poll_by_hand(built_in(&keyset, 1).into_future());
+        assert_eq!((items.unwrap().len(), yields), (1, 0));
+    }
+
+    /// A change of the output keeps the steps, and their yields.
+    #[tokio::test]
+    async fn a_map_keeps_the_steps_of_a_pending_built_in_steps() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let pending = built_in(&keyset, 3)
+            .map(|items| items.len())
+            .try_map(|n| Ok(n * 10));
+        let (n, yields) = poll_by_hand(pending.into_future());
+        assert_eq!((n.unwrap(), yields), (30, 2));
+    }
+
+    /// Merged with another pending, one built in steps is built whole when
+    /// the merge settles: the merge is right, and does not yield.
+    #[tokio::test]
+    async fn a_merge_builds_a_pending_built_in_steps_whole() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+
+        let pair = built_in(&keyset, 4).zip(generating(&keyset, 1));
+        let ((items, other), yields) = {
+            let (pair, yields) = poll_by_hand(pair.into_future());
+            (pair.unwrap(), yields)
+        };
+        assert_eq!((items.len(), other.len(), yields), (4, 1, 0));
+
+        let column = Pending::all(&keyset, vec![built_in(&keyset, 3), built_in(&keyset, 2)]);
+        let (column, yields) = poll_by_hand(column.into_future());
+        let lens: Vec<usize> = column.unwrap().iter().map(Vec::len).collect();
+        assert_eq!((lens, yields), (vec![3, 2], 0));
+    }
+
+    /// A pending built in steps through the client names no keyset, and a
+    /// merge with it does not wait for one: it is not a pending that loads
+    /// its keyset first, which through the client would have none.
+    #[tokio::test]
+    async fn a_merge_of_a_pending_built_in_steps_through_the_client_needs_no_keyset() {
+        let cipher = cipher().await;
+        let stepped = Pending::in_steps(&cipher, |cipher| {
+            Step::Built(Pending::ready(cipher, Ok(1u8)))
+        });
+        let pair = stepped.zip(Pending::ready(&cipher, Ok(2u8))).await;
+        assert!(matches!(pair, Ok((1, 2))), "{pair:?}");
+
+        let stepped = Pending::in_steps(&cipher, |cipher| {
+            Step::Built(Pending::ready(cipher, Ok(3u8)))
+        });
+        let column = Pending::all(&cipher, vec![stepped, Pending::ready(&cipher, Ok(4u8))]).await;
+        assert!(matches!(column.as_deref(), Ok([3, 4])), "{column:?}");
+    }
+
+    /// A step that builds a failed pending fails the call, with no key
+    /// requested: the build runs before any I/O, as an eager one does.
+    #[tokio::test]
+    async fn a_pending_built_in_steps_that_fails_requests_nothing() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let failing = Pending::in_steps(&keyset, |_| {
+            Step::More(Box::new(|_| {
+                Step::Built(Pending::<'_, (), _>::failed(&keyset, Error::ResponseShape))
+            }))
+        });
+        let (result, yields) = poll_by_hand(failing.zip(generating(&keyset, 3)).into_future());
+        assert!(matches!(result, Err(Error::ResponseShape)), "{result:?}");
+        assert_eq!(yields, 0, "a merge builds it whole");
+        assert_eq!(cipher.kms().generate_calls(), 0, "no key is requested");
     }
 
     #[tokio::test]
