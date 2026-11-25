@@ -160,4 +160,4 @@ jobs:
       # typecheck with the type tests. tests.yml's live jobs skip a change
       # that touches only this package, so this workflow runs it.
       - name: Suites that need no addon, and the typecheck
-        run: pnpm --filter @cipherstash/recipher run test
+        run: pnpm exec turbo run test --filter @cipherstash/recipher
