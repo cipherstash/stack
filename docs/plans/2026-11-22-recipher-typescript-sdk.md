@@ -199,7 +199,7 @@ between JavaScript and the engine.
 
 | Path | Name | What it is |
 |---|---|---|
-| `languages/typescript/packages/recipher-js/crate` | crate `recipher-js` | Rust, napi-rs 3. The Node addon. It defines the classes TypeScript uses, runs every operation through the engine, and maps errors. It depends on `stack-encrypt` (`dynamic`) by path, and converts values with vitaminc's `vitaminc-aead-napi`. |
+| `languages/typescript/packages/recipher-js/crate` | crate `recipher-js` | Rust, napi-rs 3. The Node addon. It defines the classes TypeScript uses, runs every operation through the engine, and maps errors. It depends on `stack-encrypt` (`dynamic`) by path, and converts values with `recipher-value-napi`. |
 | `languages/typescript/packages/recipher-js` | npm `@cipherstash/recipher` | The core SDK, its types and the loaders. Its builds hold no EQL type (`NoTargets`). |
 | `languages/typescript/packages/recipher-js/platforms/*` | npm `@cipherstash/recipher-<platform>` | One package per Node platform, holding its `.node` file. |
 | `packages/eql/packages/eql` | npm `@cipherstash/eql`, entry `./recipher` | The EQL extension: the EQL v4 types in TypeScript, and the loaders of the builds that hold them. The package exists; the entry is new. |
@@ -313,7 +313,7 @@ This is plain encryption, with no context. It is the engine's
 - **The value's type picks how it is encrypted.** A `string` is encrypted
   as text, a `boolean` as a boolean, a `number` as a float, a `bigint` as
   an integer, a `Uint8Array` as bytes and a `Date` as a timestamp. This is
-  vitaminc's mapping for JavaScript, and [Values](#values) has the table.
+  the value bridge's mapping, and [Values](#values) has the table.
   No call names a kind.
 - **A plain object is refused.** It has no one encoding, so the caller
   chooses `opaque(..)` or `json(..)`. The engine has the same rule: it has
@@ -550,9 +550,12 @@ const opened = await tenant.decrypt(notes, stored.unwrap());
 
 ## Values
 
-The conversion between JavaScript values and the engine is vitaminc's, not
-this SDK's. The crate uses `vitaminc-aead-napi`, vitaminc's bridge for
-Node addons:
+The conversion between JavaScript values and the engine is the value
+bridge, `recipher-value-napi`, in `recipher-js/value-napi`. It reads
+JavaScript values into vitaminc's plaintext model, which the engine
+encrypts, and builds them back. It is a copy of vitaminc's
+`vitaminc-aead-napi` 0.10.0, moved here because only this SDK uses it. It
+is not published.
 
 - `JsRef` reads a live JavaScript value as an `Encrypt`, on the JavaScript
   thread. `JsRef::to_frame` snapshots it as a frame, which a worker thread
@@ -560,8 +563,7 @@ Node addons:
 - `JsBuilder` is a `Sink` that builds the JavaScript value of a decrypt.
 - `Wrappers` defines the classes for the types JavaScript lacks.
 
-So no JSON text of a row crosses the boundary, and the mapping below is
-the one every vitaminc program in JavaScript has.
+So no JSON text of a row crosses the boundary.
 
 | JavaScript | Encrypted as | Decrypts as |
 |---|---|---|
@@ -579,22 +581,24 @@ the one every vitaminc program in JavaScript has.
 
 - **Integers are a `bigint`.** A `number` is a float, and `5` does not
   match the integer `5n` in a query. Integer data uses `bigint`.
-- **An integer's width is not chosen.** vitaminc stores a `bigint` at the
+- **An integer's width is not chosen.** The bridge stores a `bigint` at the
   narrowest width that holds it. Equality terms are the same across
   widths, so `5n` here matches an `int64` 5 from Go.
 - **No precision is lost.** A timestamp finer than a millisecond opens as
   a `VcTimestamp`, never as a rounded `Date`.
-- **The wrapper classes are vitaminc's.** Each holds its text, such as
+- **The wrapper classes are the bridge's.** Each holds its text, such as
   `new VcDecimal("1.50")`, and is frozen. The core package re-exports the
   four the addon defines.
-- **vitaminc's safety rules apply.** Only a plain object is read, by its
+- **The bridge's safety rules apply.** Only a plain object is read, by its
   own enumerable string keys. A `Map`, a `Set`, a class instance, a sparse
   array and a string with an unpaired surrogate are refused. Nesting is
   limited to 128 levels. A polluted prototype cannot add a key or see a
   decrypted value.
-- **A failed conversion is an `Err`.** vitaminc throws a `TypeError` with a
-  stable code, such as `ERR_INTEGER_RANGE`. The SDK returns it as an `Err`
-  with that code.
+- **A failed conversion is an `Err`.** The bridge reports which rule a
+  value broke as a typed refusal, a diagnostic with a `recipher::` code,
+  such as `recipher::not_plain` or `recipher::too_deep`. A scalar out of
+  range keeps its own code, such as `ERR_INTEGER_RANGE`. The SDK returns
+  either as an `Err` with that code.
 
 **A record field's kind.** A record field declares its kind, because the
 stored type is fixed before any row exists. The kind checks the value: an
@@ -606,17 +610,15 @@ every width. A `number` in an integer field does not compile.
 as a `number`. The adapter converts, because it knows the column's type: a
 `number` that is a safe integer becomes a `bigint` on the way in, and a
 `bigint` becomes a `number` on the way out. An unsafe integer is refused.
-The core has one mapping, and it is vitaminc's.
+The core has one mapping, and it is the bridge's.
 
-**The wasm build.** `vitaminc-aead-napi` is for Node addons only. The wasm
+**The wasm build.** The value bridge is for Node addons only. The wasm
 build needs the same mapping over `wasm-bindgen`'s `JsValue`, with the same
-wrapper classes and the same refusals. Its right home is vitaminc, beside
-the napi bridge: cipherstash/vitaminc#632 asks for it. vitaminc's other
-binding package, `vcffi`, is the Go transport into a WASI guest and does
-not apply here. Until that crate exists, the wasm build holds the mapping,
-and both
-builds run vitaminc's value conformance cases
-(`packages/aead-napi/tests/value-conformance.cjs`).
+wrapper classes and the same refusals. It belongs beside the napi bridge,
+in `recipher-js`. cipherstash/vitaminc#632 asked for it in vitaminc, and
+moves here. vitaminc's other binding package, `vcffi`, is the Go transport
+into a WASI guest and does not apply here. Both builds run the bridge's
+value conformance cases (`value-napi/tests/value-conformance.cjs`).
 
 **JSON documents.** `json(value)` encrypts a JSON document, for a `json`
 field or an EQL `Json` type. A JavaScript `number` cannot hold every
@@ -772,7 +774,7 @@ const bytes = sealed.map((ciphertext) => ciphertext.toBytes()).unwrapOr(null);
 A JavaScript string cannot be wiped. The SDK keeps the number of copies
 down instead:
 
-- `vitaminc-aead-napi` reads a JavaScript value into a frame, which lives
+- The value bridge reads a JavaScript value into a frame, which lives
   in a buffer wiped when it drops. Every copy Rust makes of a string on
   the way in is wiped. No intermediate JSON text holds the row.
 - A decrypted frame is converted straight into JavaScript values.
@@ -878,7 +880,7 @@ these rules are checked then.
   `./sql` entry of `@cipherstash/eql` imports the core or loads a build.
 - **A frozen stored-rows file** (phase 3). Rows the first stable release
   wrote, opened on every build and never regenerated.
-- **Value conversion.** vitaminc's value conformance cases on both builds,
+- **Value conversion.** The bridge's value conformance cases on both builds,
   and the value profile for the record kinds. A fuzz target on the wasm
   build compares its frame for a value with the napi bridge's.
 - **Type tests.** A wrong row, a wrong value, an unknown field, an
@@ -944,7 +946,7 @@ The core, with no EQL:
    `string` value on Node, with no context. CI builds it on Linux. Proves that the engine's futures run on
    napi-rs's runtime. Adds the tests that the crate names no `Label` and
    links no `eql-bindings`.
-2. **Values.** `vitaminc-aead-napi` for every type in the table above,
+2. **Values.** The value bridge for every type in the table above,
    the wrapper classes, an array of values,
    `bytes` for a file, `opaque` for a whole object, the value profile and
    the fuzz target.
@@ -958,8 +960,8 @@ The core, with no EQL:
 5. **Credentials, keysets, audit metadata and cancellation.** The
    per-call credential type, the testing cipher and the lifecycle profile.
 6. **The wasm build.** The `wasm-bindgen` crate, the common crate for
-   what the two builds share, vitaminc's mapping over
-   `JsValue` (from cipherstash/vitaminc#632 if it has landed), the export conditions, the inlined build and the edge-runtime
+   what the two builds share, the value mapping over
+   `JsValue`, the export conditions, the inlined build and the edge-runtime
    test.
 
 Then the EQL extension:
@@ -1013,15 +1015,15 @@ Decided on 2026-11-23:
 
 - The adapters' new majors wait for `recipher-compat`. No customer
   upgrades before it.
-- A timestamp is a `Date`. The types JavaScript lacks are vitaminc's
-  wrapper classes, not `Temporal`.
+- A timestamp is a `Date`. The types JavaScript lacks are the value
+  bridge's wrapper classes, not `Temporal`.
 - DynamoDB moves onto the core, after the adapters.
 - The EQL extension is part of `@cipherstash/eql`, not a new package.
 - The core has plain encryption, with no context.
 - The core and EQL are released apart, so several EQL versions work with
   one core. The EQL builds are published beside `@cipherstash/eql`, as
   `@cipherstash/eql-<platform>`.
-- Values convert through `vitaminc-aead-napi`. A value's type picks how it
+- Values convert through the value bridge. A value's type picks how it
   is encrypted, and no call names a kind.
 - Integers are a `bigint` in the core, at every width. An adapter converts
   for an ORM whose integer columns are a `number`.
