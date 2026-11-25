@@ -192,6 +192,18 @@ installed rc.6's bundle, you do not need to run it again.
 
 ### Changed
 
+- **Against rc.6, a decrypt uses 13 times less CPU and 5 times less wall
+  time.** The benches in cipherstash/benches#31 ran both releases as
+  tagged, in alternating rounds. They ran on one Apple silicon laptop
+  against ZeroKMS, with the CPU clock held steady. Each figure is the
+  median of 54 calls for 100 rows of 14 columns (1,400 values). The items
+  below give what each change contributes.
+  - Decrypt: 29 ms of CPU, against 390 ms in rc.6. Wall time: 114 ms,
+    against 624 ms. Native Rust: 10 ms of CPU, 97 ms of wall time.
+  - Decrypt a page of 100 rows from a 1M-row table: 29 ms of CPU, against
+    400 ms. Wall time: 116 ms, against 641 ms.
+  - Encrypt: 33 ms of CPU, against 444 ms. Wall time: 99 ms, against
+    618 ms. Native Rust takes the same wall time.
 - **Decrypt uses about a tenth of the CPU it did in rc.6.** The guest's
   runtime was built with wazero's `WithCloseOnContextDone`. That option
   puts a call back into Go at the top of every loop the guest runs, and the
@@ -252,6 +264,17 @@ installed rc.6's bundle, you do not need to run it again.
   guest, and the CPU clock was held steady. CPU time does not change, and the guest still yields
   every 64 keys. The guest holds at most 1,500 keys' wrapped material from
   ZeroKMS at a time.
+- **Deriving a data key uses wasm SIMD** (#1779). The guest now depends on
+  `zerokms-keyset` 0.3.4, in place of `recipher` 0.3.1. It builds that
+  crate with SIMD: instructions that work on several values at once.
+  Re-encrypting key material is the costly part of deriving a data key.
+  Under wazero, 20,000 derivations take 65 ms with SIMD, against 315 ms
+  without, and give the same keys. Decrypting 100 rows of 14 columns
+  against ZeroKMS takes about 29 ms of CPU, against about 38 ms for the
+  same changes without SIMD (cipherstash/benches#31). That is why rc.7
+  decrypts in less than the 39 ms given for removing
+  `WithCloseOnContextDone`. wazero runs SIMD by default, so your app needs
+  no change.
 - **A stuck call is no longer interrupted.** A call that runs on 30 seconds
   after its context ended is a bug. The option that interrupted it is gone,
   so it now runs on.
