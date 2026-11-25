@@ -215,24 +215,31 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	c := newClient(inst, t)
 	// From here the credentials are the client's: every exit below goes
 	// through its Close, which releases them once, and so does the
-	// client's own Close later.
+	// client's own Close later. That includes a panic in the caller's
+	// RoundTripper, which reaches the caller through the init call: a
+	// caller that recovers it never gets the client to close.
 	if resolved.Close != nil {
 		c.releaseCredentials = sync.OnceValue(resolved.Close)
 	}
 	c.credentialsLockErr = resolved.MemoryLockError
 	owned = true
+	ready := false
+	defer func() {
+		if !ready {
+			_ = c.Close()
+		}
+	}()
 	out, err := c.callKMS(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.cipherInit, buf(encoded))
 	})
 	if err != nil {
-		_ = c.Close()
 		return nil, fmt.Errorf("encrypt: cipher init: %w", err)
 	}
 	if len(out) != len(KeysetID{}) {
-		_ = c.Close()
 		return nil, fmt.Errorf("%w: cipher init returned %d bytes for the keyset id", ErrInternal, len(out))
 	}
 	copy(c.def[:], out)
+	ready = true
 	return c, nil
 }
 
@@ -596,7 +603,7 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 			}
 			responses, err = vcffi.Marshal([]any{})
 		} else {
-			responses, err = c.transport.performStep(ctx, io)
+			responses, err = c.performStep(ctx, io)
 		}
 		if err != nil {
 			c.abort(io.handle)
@@ -617,6 +624,25 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 			return inst.call(ctx, inst.resume, scalar(h), buf(pending))
 		}
 	}
+}
+
+// performStep performs a paused operation's requests. A panic in the
+// caller's RoundTripper, which performStep raises again on this goroutine,
+// aborts the operation before it goes on up: a caller that recovers it, as
+// net/http does in each handler, would otherwise leave the operation
+// paused in the guest, holding its plaintext and keys and one of the
+// guest's maxPaused slots, and one paused in se_cipher_init would refuse
+// every later init.
+func (c *Client) performStep(ctx context.Context, io *ioStep) ([]byte, error) {
+	done := false
+	defer func() {
+		if !done {
+			c.abort(io.handle)
+		}
+	}()
+	responses, err := c.transport.performStep(ctx, io)
+	done = true
+	return responses, err
 }
 
 // abandoned is how an operation fails when its caller gave up at a pause:
