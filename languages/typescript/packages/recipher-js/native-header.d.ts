@@ -15,6 +15,6 @@ declare const opens: unique symbol
  * `keyset.encrypt('..')` returns a `Ciphertext<string>`.
  */
 export interface Ciphertext<T = string> {
-  /** Carries `T` for the type checker. The property never exists at run time. */
+  /** Stores `T` for the type checker. The property never exists at run time. */
   readonly [opens]?: T
 }

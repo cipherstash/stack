@@ -33,9 +33,11 @@
 //! # The interface number
 //!
 //! [`binding_interface`] returns [`BINDING_INTERFACE`]. That number is the
-//! version of the interface that the package's TypeScript calls. The number
-//! changes whenever a class, a method or a returned value changes shape.
-//! The TypeScript refuses an addon build that returns another number.
+//! version of the interface that the package's TypeScript calls. The
+//! TypeScript refuses an addon build that returns another number. No build
+//! has been released, so the number is 1. After the first release, the
+//! number changes whenever a class, a method or a returned value changes
+//! shape.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![warn(clippy::mem_forget)]
 #![warn(clippy::print_stdout)]
@@ -67,7 +69,7 @@ use napi_derive::napi;
 
 /// The version of the interface between the package's TypeScript and this
 /// addon build.
-pub const BINDING_INTERFACE: u32 = 3;
+pub const BINDING_INTERFACE: u32 = 1;
 
 /// Returns the version of the interface between the package's TypeScript
 /// and this addon build. The TypeScript refuses a build that returns

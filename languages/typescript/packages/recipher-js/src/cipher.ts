@@ -1,8 +1,8 @@
 /**
  * The `Cipher`, `Keyset`, and `Ciphertext` classes.
  *
- * The classes are the native addon's, written in Rust in `crate/`, and
- * their types are the ones napi-rs generates in `native.d.ts`. Each native
+ * The classes are the native addon's, written in Rust in `crate/`. The
+ * classes' types are the ones napi-rs generates in `native.d.ts`. Each native
  * method returns a `Result` itself.
  *
  * This module adds two things that Rust cannot:
@@ -54,12 +54,13 @@ export interface Classes {
 }
 
 /**
- * Give a class, native or a stand-in, its type without a constructor.
- * TypeScript types a function's `Symbol.hasInstance` as returning a
- * `boolean`, so it cannot see the narrowing that `instanceof` does.
+ * Give a class its type without a constructor. The class is the native
+ * class, or a stand-in. TypeScript types a function's `Symbol.hasInstance`
+ * as returning a `boolean`. So TypeScript does not know that `instanceof`
+ * narrows a value to the class's instances, and this cast tells it.
  */
 function typed<T>(cls: object): T {
-  // biome-ignore lint/plugin: `instanceof` on the class narrows to its instances, which a function's `boolean` `Symbol.hasInstance` does not say.
+  // biome-ignore lint/plugin: the class's `instanceof` narrows to its instances. A function's `boolean` `Symbol.hasInstance` cannot say so.
   return cls as unknown as T
 }
 

@@ -2,23 +2,25 @@
  * Loads the native addon, and gives it the classes that its calls return.
  *
  * The native addon is the compiled Rust code that Node loads from
- * `recipher.node`. The classes this package exports (`Cipher`, `Keyset`,
- * and `Ciphertext`) are the addon's own, written in Rust. napi-rs, the Rust
- * framework the addon is written with, generates their declarations in
- * `native.d.ts`, and those declarations are the package's public types.
+ * `recipher.node`. The addon defines the classes this package exports:
+ * `Cipher`, `Keyset`, and `Ciphertext`. napi-rs is the Rust framework the
+ * addon is written with. napi-rs writes the classes' declarations to
+ * `native.d.ts`. Those declarations are the package's public types.
  *
  * A native method returns a `Result` itself. Rust cannot define `Ok`,
- * `Err` and `RecipherError`, because they are TypeScript classes. So this
+ * `Err`, or `RecipherError`, because they are TypeScript classes. So this
  * module gives the three classes to the addon when it loads it
- * (`installResult`). Node loads the addon once per process, and the ESM
- * and the CommonJS builds of this package share it. The first build to
- * load installs its classes, and the addon keeps them.
+ * (`installResult`).
+ *
+ * Node loads the addon once per process. The ECMAScript module (ESM) build
+ * and the CommonJS build of this package share it. The first build to load
+ * installs its classes, and the addon keeps them.
  *
  * The addon is loaded when this module is imported. If the addon does not
  * load, every call returns an `Err` and none throws. The same happens when
  * the addon reports a binding interface version other than this
- * TypeScript's. The binding interface version is a number that the addon and
- * this TypeScript both state, and the two numbers must match.
+ * TypeScript's. The binding interface version is a number that the addon
+ * and this TypeScript both state. The two numbers must match.
  */
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
@@ -31,7 +33,7 @@ import { Err, err, Ok, ok, type Result } from './result'
  * The binding interface version of this TypeScript. The addon must report
  * the same number.
  */
-export const BINDING_INTERFACE = 3
+export const BINDING_INTERFACE = 1
 
 /** The native addon's exports, as `native.d.ts` declares them. */
 export type Binding = typeof Native
