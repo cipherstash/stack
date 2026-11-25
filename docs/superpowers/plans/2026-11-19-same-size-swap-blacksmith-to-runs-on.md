@@ -87,7 +87,7 @@ Expected: PASS, or FAIL with a list of `<file>#<job>` references that have no li
 
 - [ ] **Step 3: Give each listed job a limit**
 
-Use the rule from commit `c1985b4a8`. The limit is about twice the job's longest successful run in the last 30 days. Round it up to a multiple of 5 minutes, with a floor of 10. Read run times with `gh run list --workflow <file> --status success --limit 50 --json databaseId` and `gh run view <id> --json jobs`.
+Use the rule from #1427's commit `ci(timeouts): set timeout-minutes on every job`. The limit is about twice the job's longest successful run in the last 30 days. Round it up to a multiple of 5 minutes, with a floor of 10. Read run times with `gh run list --workflow <file> --status success --limit 50 --json databaseId` and `gh run view <id> --json jobs`.
 
 - [ ] **Step 4: Run the test again**
 
@@ -364,7 +364,7 @@ git commit -S -m "ci(runners): log in to Docker Hub before every RunsOn job pull
 
 `DPkg::Lock::Timeout` makes apt wait for the dpkg lock only. `apt-get update` takes the package-list lock instead. It does not wait for that lock, with or without the option. So `apt-get update` can still fail at once on a fresh machine.
 
-Commit b283c2234 on #1419 handles this. Each `apt-get update` runs in a loop of up to 20 tries, 15 seconds apart, that ends with `&& break`. `aptFinding` also fails on an `apt-get update` line without `&& break`.
+#1419's commit `ci(runners): retry apt-get update until boot-time apt lets go` handles this. Each `apt-get update` runs in a loop of up to 20 tries, 15 seconds apart, that ends with `&& break`. `aptFinding` also fails on an `apt-get update` line without `&& break`.
 
 **Files:**
 - Modify: `scripts/__tests__/workflow-runs-on.test.mjs`
