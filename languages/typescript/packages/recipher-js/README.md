@@ -65,7 +65,7 @@ The other calls do not throw in these cases either:
 
 A `RecipherError` is an error report that a call returns as a value.
 Most errors come from the engine.
-The SDK's own errors have a code that starts with `recipher::`.
+The SDK's own errors have a code that starts with `recipher_js::`.
 Switch on `code`:
 
 ```ts
@@ -79,7 +79,7 @@ if (opened.isErr()) {
 
 | Property | What it contains |
 | --- | --- |
-| `code` | The code to switch on. It is stable. It is the engine's code (`stack_encrypt::aead`), vitaminc's code for a value it refused (`ERR_INTEGER_RANGE`), or the SDK's own (`recipher::not_a_ciphertext`). |
+| `code` | The code to switch on. It is stable. It is the engine's code (`stack_encrypt::aead`), vitaminc's code for a value it refused (`ERR_INTEGER_RANGE`), or the SDK's own (`recipher_js::not_a_ciphertext`). |
 | `message` | What went wrong, in one line. |
 | `help` | What to do about it, where the error knows. |
 | `url` | A documentation page for the error, where it has one. |

@@ -37,8 +37,8 @@ use crate::error::{Error, RecipherErrorFields};
 ///
 /// Returns one of these errors:
 ///
-/// - `recipher::value` for a value outside the engine's value model;
-/// - `recipher::threw` when reading the value threw;
+/// - `recipher_js::value` for a value outside the engine's value model;
+/// - `recipher_js::threw` when reading the value threw;
 /// - the bridge's code, for a value the bridge refused.
 pub fn read(env: &Env, value: Unknown<'_>) -> Result<ValueFrame, RecipherErrorFields> {
     let frame = JsRef::new(value)
@@ -51,7 +51,7 @@ pub fn read(env: &Env, value: Unknown<'_>) -> Result<ValueFrame, RecipherErrorFi
 ///
 /// # Errors
 ///
-/// Returns `recipher::build_value` when the value cannot be built.
+/// Returns `recipher_js::build_value` when the value cannot be built.
 pub fn build(env: &Env, value: ValueFrame) -> Result<Unknown<'_>, RecipherErrorFields> {
     let bytes = value.into_inner();
     let frame = Frame::parse(bytes.risky_ref()).map_err(|_| Error::BuildValue)?;

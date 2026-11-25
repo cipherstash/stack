@@ -77,7 +77,7 @@ export function load(
   } catch {
     return err(
       sdkError(
-        'recipher::load',
+        'recipher_js::load',
         `the native build of @cipherstash/recipher did not load from ${path}. ` +
           'Build it with `pnpm --filter @cipherstash/recipher build:debug`.',
       ),
@@ -92,7 +92,7 @@ export function load(
   ) {
     return err(
       sdkError(
-        'recipher::load',
+        'recipher_js::load',
         'the native build of @cipherstash/recipher does not export its classes',
       ),
     )
@@ -109,7 +109,7 @@ export function load(
   if (version !== BINDING_INTERFACE) {
     return err(
       sdkError(
-        'recipher::binding_interface',
+        'recipher_js::binding_interface',
         `the native build implements binding interface ${String(version)}, ` +
           `and this TypeScript needs ${BINDING_INTERFACE}`,
       ),
@@ -130,7 +130,7 @@ export const binding: Result<Binding, RecipherError> = load(
  */
 function threw(): RecipherError {
   return sdkError(
-    'recipher::native_threw',
+    'recipher_js::native_threw',
     'a call into the native build threw. A method called on something that ' +
       'is not its class does; otherwise, report this as a bug in @cipherstash/recipher.',
   )
@@ -141,7 +141,7 @@ function fromOutcome<T>(outcome: Outcome<unknown>): Result<T, RecipherError> {
   if (typeof outcome !== 'object' || outcome === null) {
     return err(
       sdkError(
-        'recipher::outcome',
+        'recipher_js::outcome',
         'the native build returned something that is not an outcome',
       ),
     )

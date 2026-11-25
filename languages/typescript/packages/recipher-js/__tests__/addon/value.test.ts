@@ -120,20 +120,20 @@ describe('failures are values', () => {
     const keyset = (await cipher()).defaultKeyset()
     // @ts-expect-error: this build encrypts a string.
     const result = await keyset.encrypt(5)
-    expect(result.err()?.code).toBe('recipher::not_a_string')
+    expect(result.err()?.code).toBe('recipher_js::not_a_string')
   })
 
   it('refuses a string with an unpaired surrogate, with a code of its own', async () => {
     const result = await (await cipher()).defaultKeyset().encrypt('\uD800')
-    expect(result.err()?.code).toBe('recipher::unpaired_surrogate')
+    expect(result.err()?.code).toBe('recipher_js::unpaired_surrogate')
   })
 
   it('names the rule vitaminc refused a value by', async () => {
     const keyset = (await cipher()).defaultKeyset()
     const cases: [unknown, string][] = [
-      [new Map(), 'recipher::not_plain'],
-      [new Uint16Array(2), 'recipher::not_bytes'],
-      [Symbol('s'), 'recipher::not_a_value'],
+      [new Map(), 'recipher_js::not_plain'],
+      [new Uint16Array(2), 'recipher_js::not_bytes'],
+      [Symbol('s'), 'recipher_js::not_a_value'],
     ]
     for (const [value, code] of cases) {
       const result = await keyset.encrypt(value as string)
@@ -145,12 +145,12 @@ describe('failures are values', () => {
     const c = await cipher()
     // @ts-expect-error: decrypt takes a Ciphertext.
     const result = await c.decrypt(new Uint8Array(8))
-    expect(result.err()?.code).toBe('recipher::not_a_ciphertext')
+    expect(result.err()?.code).toBe('recipher_js::not_a_ciphertext')
   })
 
   it('refuses a test cipher seed of the wrong length', async () => {
     const result = await testCipher({ seed: new Uint8Array(3) })
-    expect(result.err()?.code).toBe('recipher::testing_seed')
+    expect(result.err()?.code).toBe('recipher_js::testing_seed')
   })
 })
 
@@ -174,7 +174,7 @@ describe('no call throws', () => {
     const decrypt = Object.getOwnPropertyDescriptor(Cipher.prototype, 'decrypt')
     const method = decrypt?.get?.call({}) as (value: unknown) => unknown
     const result = (await method('x')) as { err(): RecipherError | undefined }
-    expect(result.err()?.code).toBe('recipher::native_threw')
+    expect(result.err()?.code).toBe('recipher_js::native_threw')
   })
 
   it('arguments of every wrong type resolve to an Err', async () => {
@@ -211,7 +211,7 @@ describe('no call throws', () => {
       },
     }
     const result = await keyset.encrypt(hostile as never)
-    expect(result.err()?.code).toBe('recipher::threw')
+    expect(result.err()?.code).toBe('recipher_js::threw')
     expect(result.err()?.message).not.toContain('4111')
   })
 })

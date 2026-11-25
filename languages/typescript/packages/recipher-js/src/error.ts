@@ -20,7 +20,7 @@ export type { ErrorCause, RecipherErrorFields, Severity }
  *   - vitaminc's code for a value it refused, such as `ERR_INTEGER_RANGE`.
  *     vitaminc is the CipherStash Rust library that the engine's plaintext
  *     types come from;
- *   - the SDK's own code, such as `recipher::not_a_ciphertext`.
+ *   - the SDK's own code, such as `recipher_js::not_a_ciphertext`.
  * - `message` says what went wrong, in one line.
  * - `help` says what to do about it, where the error knows.
  * - `url` is a documentation page for the error, where it has one.
@@ -87,7 +87,7 @@ export function fromNative(error: unknown): RecipherError {
       : {}
   if (typeof code !== 'string' || typeof message !== 'string') {
     return sdkError(
-      'recipher::outcome',
+      'recipher_js::outcome',
       'the native build returned an error of an unknown shape',
     )
   }

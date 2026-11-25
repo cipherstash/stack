@@ -33,53 +33,53 @@ pub(crate) enum Error {
     /// A value outside the engine's value model, or a value that Node-API
     /// failed to read.
     #[error("the value cannot be encrypted: it is not one the engine reads")]
-    #[diagnostic(code(recipher::value))]
+    #[diagnostic(code(recipher_js::value))]
     Value,
     /// A getter in the application threw while the addon read the value.
     #[error(
         "reading the value threw. The thrown error is not kept, because its message may hold the value"
     )]
-    #[diagnostic(code(recipher::threw))]
+    #[diagnostic(code(recipher_js::threw))]
     Threw,
     /// A value other than a string, given to `encrypt`.
     #[error("this build encrypts a string only")]
-    #[diagnostic(code(recipher::not_a_string))]
+    #[diagnostic(code(recipher_js::not_a_string))]
     NotAString,
     /// `decrypt` given something that is not a `Ciphertext`.
     #[error("decrypt takes a Ciphertext")]
     #[diagnostic(
-        code(recipher::not_a_ciphertext),
+        code(recipher_js::not_a_ciphertext),
         help("Read stored bytes with Ciphertext.fromBytes.")
     )]
     NotACiphertext,
     /// `Ciphertext.fromBytes` given something that is not bytes.
     #[error("a ciphertext is read from a Uint8Array")]
-    #[diagnostic(code(recipher::not_bytes))]
+    #[diagnostic(code(recipher_js::not_bytes))]
     NotBytes,
     /// A test cipher's seed that is not 32 bytes.
     #[error("a test cipher's seed is a Uint8Array of 32 bytes")]
-    #[diagnostic(code(recipher::testing_seed))]
+    #[diagnostic(code(recipher_js::testing_seed))]
     TestingSeed,
     /// `createTesting`, called in a build without the test cipher.
     // A build with the test cipher never returns this error.
     #[cfg_attr(feature = "testing", allow(dead_code))]
     #[error("this native build has no test cipher")]
     #[diagnostic(
-        code(recipher::no_testing),
+        code(recipher_js::no_testing),
         help("Build it with `pnpm --filter @cipherstash/recipher build:debug`.")
     )]
     NoTesting,
     /// A call whose engine work returned no result.
     #[error("the engine returned no result")]
     #[diagnostic(
-        code(recipher::outcome),
+        code(recipher_js::outcome),
         help("Report this as a bug in @cipherstash/recipher.")
     )]
     NoResult,
     /// A result that could not be made into a JavaScript value.
     #[error("the result could not be given to JavaScript")]
     #[diagnostic(
-        code(recipher::build_value),
+        code(recipher_js::build_value),
         help("Report this as a bug in @cipherstash/recipher.")
     )]
     BuildValue,
@@ -117,7 +117,7 @@ pub struct RecipherErrorFields {
     /// - a diagnostic's code, such as the engine's `stack_encrypt::aead`;
     /// - the code of vitaminc, CipherStash's cryptography library, for a
     ///   value it refused, such as `ERR_INTEGER_RANGE`;
-    /// - the SDK's own code, such as `recipher::not_a_ciphertext`.
+    /// - the SDK's own code, such as `recipher_js::not_a_ciphertext`.
     pub code: String,
     /// What went wrong, in one line.
     pub message: String,
@@ -220,9 +220,10 @@ impl RecipherErrorFields {
         Self {
             // Every error the addon reports has a code, so JavaScript never
             // receives this fallback.
-            code: error
-                .code()
-                .map_or_else(|| "recipher::unknown".to_owned(), |code| code.to_string()),
+            code: error.code().map_or_else(
+                || "recipher_js::unknown".to_owned(),
+                |code| code.to_string(),
+            ),
             message: error.to_string(),
             help: error.help().map(|help| help.to_string()),
             url: error.url().map(|url| url.to_string()),
@@ -331,7 +332,7 @@ mod tests {
     #[test]
     fn an_error_of_the_sdks_own_has_its_code_message_and_help() {
         let error = RecipherErrorFields::from(Error::NotACiphertext);
-        assert_eq!(error.code, "recipher::not_a_ciphertext");
+        assert_eq!(error.code, "recipher_js::not_a_ciphertext");
         assert_eq!(error.message, "decrypt takes a Ciphertext");
         assert_eq!(
             error.help.as_deref(),
@@ -377,8 +378,8 @@ mod tests {
         for error in every_error() {
             let code = RecipherErrorFields::from(error).code;
             assert!(
-                stack_encrypt::diagnostic::is_code_of("recipher", &code),
-                "{code} is not `recipher::` and a snake_case name"
+                stack_encrypt::diagnostic::is_code_of("recipher_js", &code),
+                "{code} is not `recipher_js::` and a snake_case name"
             );
             assert!(codes.insert(code.clone()), "{code} is used twice");
         }

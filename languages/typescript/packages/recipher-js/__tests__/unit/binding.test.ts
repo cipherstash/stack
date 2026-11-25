@@ -38,7 +38,7 @@ describe('load', () => {
     const loaded = load(() => {
       throw new Error('ENOENT: no such file')
     }, '/x/recipher.node')
-    expect(loaded.err()?.code).toBe('recipher::load')
+    expect(loaded.err()?.code).toBe('recipher_js::load')
     expect(loaded.err()?.message).toContain('build:debug')
     expect(loaded.err()?.message).not.toContain('ENOENT')
   })
@@ -55,9 +55,9 @@ describe('load', () => {
         requiring(fakeBuild({ [name]: undefined })),
         '/x/recipher.node',
       )
-      expect(loaded.err()?.code, name).toBe('recipher::load')
+      expect(loaded.err()?.code, name).toBe('recipher_js::load')
     }
-    expect(load(requiring(null), '/x').err()?.code).toBe('recipher::load')
+    expect(load(requiring(null), '/x').err()?.code).toBe('recipher_js::load')
   })
 
   it('is an Err when the build implements another interface', () => {
@@ -65,7 +65,7 @@ describe('load', () => {
       requiring(fakeBuild({ bindingInterface: () => BINDING_INTERFACE + 1 })),
       '/x/recipher.node',
     )
-    expect(loaded.err()?.code).toBe('recipher::binding_interface')
+    expect(loaded.err()?.code).toBe('recipher_js::binding_interface')
     const throwing = load(
       requiring(
         fakeBuild({
@@ -76,7 +76,7 @@ describe('load', () => {
       ),
       '/x/recipher.node',
     )
-    expect(throwing.err()?.code).toBe('recipher::binding_interface')
+    expect(throwing.err()?.code).toBe('recipher_js::binding_interface')
   })
 })
 
@@ -86,7 +86,7 @@ describe('settle', () => {
     const failed = settle(() => ({
       ok: false,
       error: {
-        code: 'recipher::x',
+        code: 'recipher_js::x',
         message: 'no',
         severity: 'error',
         fields: {},
@@ -94,25 +94,25 @@ describe('settle', () => {
       },
     }))
     expect(failed.err()).toBeInstanceOf(RecipherError)
-    expect(failed.err()?.code).toBe('recipher::x')
+    expect(failed.err()?.code).toBe('recipher_js::x')
   })
 
   it('turns a throw or a rejection into an Err, keeping no text', async () => {
     const thrown = settle(() => {
       throw new TypeError('card 4111 1111 1111 1111')
     })
-    expect(thrown.err()?.code).toBe('recipher::native_threw')
+    expect(thrown.err()?.code).toBe('recipher_js::native_threw')
     expect(thrown.err()?.message).not.toContain('4111')
 
     const rejected = await settleAsync(() =>
       Promise.reject(new Error('card 4111')),
     )
-    expect(rejected.err()?.code).toBe('recipher::native_threw')
+    expect(rejected.err()?.code).toBe('recipher_js::native_threw')
     expect(rejected.err()?.message).not.toContain('4111')
   })
 
   it('refuses something that is not an outcome', () => {
-    expect(settle(() => 7 as never).err()?.code).toBe('recipher::outcome')
+    expect(settle(() => 7 as never).err()?.code).toBe('recipher_js::outcome')
   })
 })
 
@@ -177,7 +177,7 @@ describe('adapt', () => {
 
 describe('the classes of a build that did not load', () => {
   const error = new RecipherError({
-    code: 'recipher::load',
+    code: 'recipher_js::load',
     message: 'did not load',
   })
   const classes = classesOf(err<RecipherError, Binding>(error))

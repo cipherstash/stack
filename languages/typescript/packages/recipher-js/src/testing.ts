@@ -33,9 +33,9 @@ export interface TestCipherOptions {
  * A cipher that uses the engine's deterministic test keys. The same seed
  * always gives the same keys.
  *
- * Resolves to an `Err` with the code `recipher::testing_seed` when the seed
+ * Resolves to an `Err` with the code `recipher_js::testing_seed` when the seed
  * is not 32 bytes, or when reading `options.seed` throws. Resolves to an
- * `Err` with the code `recipher::no_testing` when the native addon has no
+ * `Err` with the code `recipher_js::no_testing` when the native addon has no
  * test cipher. Only the debug build of the addon (`build:debug`) has one.
  */
 export async function testCipher(
@@ -46,7 +46,7 @@ export async function testCipher(
     seed = options?.seed ?? new Uint8Array(32).fill(DEFAULT_SEED_BYTE)
   } catch {
     // `undefined` is not a seed, so the addon refuses it with
-    // `recipher::testing_seed`.
+    // `recipher_js::testing_seed`.
     seed = undefined
   }
   return classes.createTesting(seed)

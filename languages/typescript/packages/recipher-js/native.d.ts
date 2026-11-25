@@ -112,7 +112,7 @@ export declare function bindingInterface(): number
  *
  * Only a build with the `testing` feature has the test cipher. In any
  * other build, the promise resolves to a failure with the code
- * `recipher::no_testing`.
+ * `recipher_js::no_testing`.
  */
 export declare function createTesting(seed: unknown): Promise<Outcome<Cipher>>
 
@@ -137,7 +137,7 @@ export interface RecipherErrorFields {
    * - a diagnostic's code, such as the engine's `stack_encrypt::aead`;
    * - the code of vitaminc, CipherStash's cryptography library, for a
    *   value it refused, such as `ERR_INTEGER_RANGE`;
-   * - the SDK's own code, such as `recipher::not_a_ciphertext`.
+   * - the SDK's own code, such as `recipher_js::not_a_ciphertext`.
    */
   code: string
   /** What went wrong, in one line. */

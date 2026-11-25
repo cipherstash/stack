@@ -73,7 +73,7 @@ describe('RecipherError', () => {
     // An error with no code or no message is not one the native build
     // writes.
     for (const shape of [{ message: 'm' }, { code: 'c' }, null, 'text']) {
-      expect(fromNative(shape).code).toBe('recipher::outcome')
+      expect(fromNative(shape).code).toBe('recipher_js::outcome')
     }
   })
 })

@@ -583,7 +583,7 @@ So no JSON text of a row crosses the boundary.
 | `VcTimestamp("2026-11-23T01:02:03.000000001Z")` | a timestamp, in nanoseconds | `Date` when it is whole milliseconds, else `VcTimestamp` |
 | `VcDate("2026-11-23")` | a calendar date | `VcDate` |
 | `VcDecimal("1.50")` | a decimal, with its scale | `VcDecimal` |
-| `VcUuid("..")` | refused for now, with `recipher::uuid` | |
+| `VcUuid("..")` | refused for now, with `recipher_js::uuid` | |
 | `null` | null | `null`. In a record, only where the field declares `null` |
 
 - **Integers are a `bigint`.** A `number` is a float, and `5` does not
@@ -606,8 +606,8 @@ So no JSON text of a row crosses the boundary.
   limited to 128 levels. A polluted prototype cannot add a key or see a
   decrypted value.
 - **A failed conversion is an `Err`.** The bridge reports which rule a
-  value broke as a typed refusal, a diagnostic with a `recipher::` code,
-  such as `recipher::not_plain` or `recipher::too_deep`. A scalar out of
+  value broke as a typed refusal, a diagnostic with a `recipher_js::` code,
+  such as `recipher_js::not_plain` or `recipher_js::too_deep`. A scalar out of
   range keeps its own code, such as `ERR_INTEGER_RANGE`. The SDK returns
   either as an `Err` with that code.
 
@@ -768,7 +768,9 @@ const bytes = sealed.map((ciphertext) => ciphertext.toBytes()).unwrapOr(null);
   a grouping the SDK made up would have to be kept in step with every
   engine error, in every language. The SDK's own errors (a value that is
   not a record, a build that did not load) are diagnostics too, declared
-  the way the engine declares its own, with codes under `recipher::`. The
+  the way the engine declares its own, with codes under `recipher_js::`,
+  named after the crate as the engine's are, so that no SDK code can clash
+  with an engine code when the engine takes the name `recipher`. The
   value bridge says which rule a refused value broke as a typed value, so
   nothing reads the wording of a message.
 - **Nothing escapes as an exception.** A failure in the binding, such as a

@@ -35,7 +35,7 @@ impl OneValue {
     ///
     /// # Errors
     ///
-    /// Returns `recipher::not_a_string` for any other value.
+    /// Returns `recipher_js::not_a_string` for any other value.
     pub(crate) fn new(value: ValueFrame) -> Result<Self, RecipherErrorFields> {
         if value.kind() == Some(ValueKind::String) {
             Ok(Self(Some(value)))
@@ -73,7 +73,7 @@ mod tests {
     fn a_string_is_one_value_and_another_value_is_not() {
         assert!(OneValue::new(ValueFrame::of("text").unwrap()).is_ok());
         let refused = OneValue::new(ValueFrame::of(5i64).unwrap()).unwrap_err();
-        assert_eq!(refused.code, "recipher::not_a_string");
+        assert_eq!(refused.code, "recipher_js::not_a_string");
     }
 
     #[test]

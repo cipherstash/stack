@@ -190,7 +190,7 @@ impl Keyset {
 ///
 /// Only a build with the `testing` feature has the test cipher. In any
 /// other build, the promise resolves to a failure with the code
-/// `recipher::no_testing`.
+/// `recipher_js::no_testing`.
 #[napi(ts_return_type = "Promise<Outcome<Cipher>>")]
 pub fn create_testing<'e>(
     env: &'e Env,
@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn a_build_without_the_test_cipher_says_how_to_get_one() {
         let error = RecipherErrorFields::from(Error::NoTesting);
-        assert_eq!(error.code, "recipher::no_testing");
+        assert_eq!(error.code, "recipher_js::no_testing");
         assert!(error.help.is_some_and(|help| help.contains("build:debug")));
     }
 }

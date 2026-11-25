@@ -150,7 +150,7 @@ application sees the error its getter threw.
 
 When the fault is this crate's refusal of a value, `JsFault::refusal()` says
 which rule the value broke, as a `Refusal`: a diagnostic with a stable code
-(`recipher::sparse_array`, `ERR_INTEGER_RANGE`), a message and, where there
+(`recipher_js::sparse_array`, `ERR_INTEGER_RANGE`), a message and, where there
 is something to do, help. A caller reports the refusal from that, and never
 reads the reason's text. It is `None` for a failure of Node-API's own and
 for an exception the application threw. `JsRef::to_frame` and
