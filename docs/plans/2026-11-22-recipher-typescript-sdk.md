@@ -194,12 +194,13 @@ do not change a binding. #1572 is to be rewritten or closed by ADR-0016. #1479 (
 
 ## Packages and build targets
 
-The SDK has one Rust crate. It is the Node addon, and it holds everything
-between JavaScript and the engine.
+The SDK has two Rust crates: the Node addon, and the value bridge it
+converts values with.
 
 | Path | Name | What it is |
 |---|---|---|
 | `languages/typescript/packages/recipher-js/crate` | crate `recipher-js` | Rust, napi-rs 3. The Node addon. It defines the classes TypeScript uses, runs every operation through the engine, and maps errors. It depends on `stack-encrypt` (`dynamic`) by path, and converts values with `recipher-value-napi`. |
+| `languages/typescript/packages/recipher-js/value-napi` | crate `recipher-value-napi` | Rust, napi-rs 3. The value bridge: reads a JavaScript value into vitaminc's plaintext model, and builds one from it. Not published. |
 | `languages/typescript/packages/recipher-js` | npm `@cipherstash/recipher` | The core SDK, its types and the loaders. Its builds hold no EQL type (`NoTargets`). |
 | `languages/typescript/packages/recipher-js/platforms/*` | npm `@cipherstash/recipher-<platform>` | One package per Node platform, holding its `.node` file. |
 | `packages/eql/packages/eql` | npm `@cipherstash/eql`, entry `./recipher` | The EQL extension: the EQL v4 types in TypeScript, and the loaders of the builds that hold them. The package exists; the entry is new. |
@@ -234,10 +235,11 @@ the number it implements, and `Cipher.create` refuses a build with another
 number. A change to EQL's SQL changes `eql-bindings` with it, so those two
 are released together, as they are today.
 
-**One crate, until a second build needs a second.** The wasm build of
+**No crate is split off before it is needed.** The value bridge is a
+crate of its own because it came from vitaminc as one. The wasm build of
 step 6 cannot use napi, so it needs a crate of its own. The code the two
 builds share moves into a common crate then, when both exist and what
-they share can be seen. No crate is split off before that.
+they share can be seen.
 
 **Rust defines the API, and TypeScript does not copy it.** `Cipher`,
 `Keyset` and `Ciphertext` are napi classes written in Rust. napi-rs
@@ -1033,7 +1035,8 @@ Decided on 2026-11-23:
 - Calls return a `Result` and never throw. `Result` is the core's own
   type, with Rust's methods.
 - Phase 1 ends with a pre-release on npm.
-- One Rust crate, until the wasm build needs a second.
+- Two Rust crates, the addon and the value bridge, until the wasm build
+  needs more.
 - Rust defines the classes and napi-rs generates their types. TypeScript
   keeps `Result`, the declaration types and the typed signatures.
 - A context follows ADR-0016: policies, labels and partitions, with the
