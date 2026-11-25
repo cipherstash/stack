@@ -30,7 +30,6 @@ export {
   type CipherOptions,
   Ciphertext,
   type CiphertextClass,
-  checkDeclarations,
   Keyset,
   type KeysetClass,
 } from './cipher'
@@ -42,6 +41,7 @@ export {
 } from './error'
 export { type Kind, kinds, type ValueOf } from './kinds'
 export {
+  checkDeclarations,
   encrypt,
   type Field,
   type Index,

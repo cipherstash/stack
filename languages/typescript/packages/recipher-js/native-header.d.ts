@@ -12,7 +12,7 @@ import type {
   RecordDeclaration,
   SealedFieldName,
   Stored,
-} from './src/record'
+} from './src/record-types'
 import type { Err, Ok, Result } from './src/result'
 import type {
   JsonMarker,

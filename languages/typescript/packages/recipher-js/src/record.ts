@@ -23,73 +23,37 @@
  *
  * TypeScript checks a row against the types below.
  *
- * This module never loads the native addon. The addon's generated
- * declarations (`native.d.ts`) name its types, so a module here that loaded
- * the addon would make the declarations import themselves.
+ * The types are in `record-types.ts`, which never loads the addon, because
+ * the addon's generated declarations (`native.d.ts`) import them.
  */
-import type { Kind, ValueOf } from './kinds'
+import { type Binding, binding } from './binding'
+import type { RecipherError } from './error'
+import type { Kind } from './kinds'
+import type {
+  Field,
+  Index,
+  NullMode,
+  PassthroughField,
+  RecordDeclaration,
+  SealedField,
+  SealedOptions,
+} from './record-types'
+import { err, type Result } from './result'
 
-/**
- * An index that an encrypted field stores beside its ciphertext. An index
- * stores index terms: bytes that a search can compare without decrypting the
- * field.
- */
-export type Index = 'equality' | 'match' | 'ore' | 'ope'
-
-/**
- * How a field stores a missing value.
- *
- * - `sealed`: the null is encrypted like a value, to the same length as a
- *   value. The stored row does not show which rows have no value. Only for
- *   a field of fixed width whose only index is `equality`. The fixed-width
- *   fields are a boolean, a number, a date, a timestamp, and a decimal.
- * - `sql`: the stored row has `null` for the field, as SQL `NULL` does.
- */
-export type NullMode = 'sealed' | 'sql'
-
-/**
- * A field that is encrypted, and indexed if it names indexes. The code calls
- * an encrypted field a sealed field.
- */
-export interface SealedField<
-  K extends Kind = Kind,
-  I extends readonly Index[] = readonly Index[],
-  N extends NullMode | undefined = NullMode | undefined,
-> {
-  readonly type: 'sealed'
-  readonly kind: K
-  readonly index: I
-  readonly null?: N
-}
-
-/**
- * A field stored as it is: **not encrypted and not authenticated.** Anyone
- * with the stored row can read the field, change it, or remove it. The
- * encrypted fields still decrypt after that. Use a passthrough field only
- * for values that are not secret. Treat the value read back as untrusted.
- */
-export interface PassthroughField<T = unknown> {
-  readonly type: 'passthrough'
-  /** Carries `T` for the type checker. The property never exists at run time. */
-  readonly __value?: T
-}
-
-/** A field of a record. */
-export type Field = SealedField | PassthroughField
-
-/** Options for an encrypted field. */
-export interface SealedOptions<
-  I extends readonly Index[],
-  N extends NullMode | undefined,
-> {
-  /** The indexes the field stores. */
-  index?: I
-  /**
-   * How the field stores a null. Without this option, every row needs a
-   * value for the field.
-   */
-  null?: N
-}
+export type {
+  CipherOptions,
+  Field,
+  Index,
+  NullMode,
+  PassthroughField,
+  Plaintext,
+  RecordDeclaration,
+  SealedField,
+  SealedFieldName,
+  SealedOptions,
+  Stored,
+  StoredField,
+} from './record-types'
 
 /** An encrypted field of the kind `kind`. */
 export function encrypt<
@@ -117,24 +81,6 @@ export function passthrough<T>(): PassthroughField<T> {
   return Object.freeze({ type: 'passthrough' })
 }
 
-/** A record's declaration: a plain, frozen object. */
-export interface RecordDeclaration<
-  Name extends string = string,
-  F extends { readonly [field: string]: Field } = {
-    readonly [field: string]: Field
-  },
-> {
-  /**
-   * Marks the object as a declaration. Every copy of the package reads this
-   * marker, including the ESM build and the CommonJS build.
-   */
-  readonly type: 'record'
-  /** The record's name: the first part of each field's context. */
-  readonly name: Name
-  /** The fields, each with its declaration. */
-  readonly fields: F
-}
-
 /**
  * A record named `name`, with `fields`. Each field's context is its field
  * path: the record's name, then the field's name. A context is data that a
@@ -152,63 +98,27 @@ export function record<
   })
 }
 
-/** The plaintext row of a record. A field that takes a null can be `null`. */
-export type Plaintext<R> =
-  R extends RecordDeclaration<string, infer F>
-    ? {
-        -readonly [P in keyof F]: F[P] extends SealedField<
-          infer K,
-          readonly Index[],
-          infer N
-        >
-          ? ValueOf<K> | (N extends NullMode ? null : never)
-          : F[P] extends PassthroughField<infer T>
-            ? T
-            : never
-      }
-    : never
-
-/** An encrypted field as it is stored: its ciphertext and its index terms. */
-export type StoredField<I extends readonly Index[] = readonly Index[]> = {
-  readonly ciphertext: Uint8Array
-} & { readonly [X in I[number]]: Uint8Array }
+/**
+ * Check declarations with the engine, with no credentials and no network
+ * request. Use it in a test or a continuous integration (CI) step.
+ *
+ * The `Err` is the first refusal. The error names the record and, where
+ * there is one, the field. When the native addon did not load, the `Err`
+ * says why.
+ */
+export const checkDeclarations: Binding['checkDeclarations'] =
+  checkDeclarationsOf(binding)
 
 /**
- * The stored row of a record. Each encrypted field has its ciphertext and
- * its index terms, each as opaque bytes. Each passthrough field has its
- * value. A field that stores a null as SQL `NULL` is `null` when its value
- * is missing.
+ * The addon's `checkDeclarations` when the addon loaded, or a stand-in that
+ * returns the load error when it did not.
  */
-export type Stored<R> =
-  R extends RecordDeclaration<string, infer F>
-    ? {
-        readonly [P in keyof F]: F[P] extends SealedField<
-          Kind,
-          infer I,
-          infer N
-        >
-          ? StoredField<I> | (N extends 'sql' ? null : never)
-          : F[P] extends PassthroughField<infer T>
-            ? T
-            : never
-      }
-    : never
-
-/** The names of a record's encrypted fields. */
-export type SealedFieldName<R> =
-  R extends RecordDeclaration<string, infer F>
-    ? {
-        [P in keyof F]: F[P] extends SealedField ? P : never
-      }[keyof F] &
-        string
-    : never
-
-/** Options for `Cipher.create`. */
-export interface CipherOptions {
-  /**
-   * Records to check when the cipher is created, before any credentials are
-   * looked for. A declaration that the engine refuses then gives an `Err`
-   * here, not at its first use.
-   */
-  records?: readonly RecordDeclaration[]
+export function checkDeclarationsOf(
+  loaded: Result<Binding, RecipherError>,
+): Binding['checkDeclarations'] {
+  if (loaded.isOk()) {
+    return loaded.value.checkDeclarations
+  }
+  const error = loaded.error
+  return () => err(error)
 }

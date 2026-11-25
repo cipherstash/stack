@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { BINDING_INTERFACE, type Binding, load } from '../../src/binding'
 import { classesOf } from '../../src/cipher'
 import { RecipherError } from '../../src/error'
+import { checkDeclarationsOf } from '../../src/record'
 import { Err, err, Ok } from '../../src/result'
 
 /** A fake native build that exports every name the loader checks. */
@@ -142,7 +143,7 @@ describe('the classes of a build that did not load', () => {
     expect((await classes.Cipher.create()).err()).toBe(error)
     expect(classes.Ciphertext.fromBytes(new Uint8Array(4)).err()).toBe(error)
     expect((await classes.createTesting(new Uint8Array(32))).err()).toBe(error)
-    expect(classes.checkDeclarations([]).err()).toBe(error)
+    expect(checkDeclarationsOf(err(error))([]).err()).toBe(error)
   })
 
   it('recognise no value as one of theirs', () => {
