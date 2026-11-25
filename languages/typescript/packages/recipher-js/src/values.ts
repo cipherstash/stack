@@ -42,8 +42,10 @@ export type {
   OpenedJson,
   OpenedScalar,
   Scalar,
-  Value,
 } from './value-types'
+
+/** A value that `encrypt` takes: one scalar, or a `Json` document. */
+export type Value = Native.Value
 
 /** A calendar date, such as `new VcDate('2026-11-23')`. The class comes from vitaminc. */
 export type VcDate = VcDateValue

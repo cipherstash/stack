@@ -19,7 +19,7 @@ import type {
   JsonValue,
   Opened,
   OpenedScalar,
-  Value,
+  Scalar,
 } from './src/value-types'
 
 // biome-ignore-end lint/correctness/noUnusedImports: the generated signatures after this header use these imports.
@@ -39,6 +39,13 @@ export interface Ciphertext<T = OpenedScalar> {
 
 /** The marker stops any other object type-checking as a `Json`. */
 export interface Json extends JsonMarker {}
+
+/**
+ * A value that `encrypt` takes: one scalar, or a `Json` document from
+ * `json(..)`. It is declared here, beside the `Json` class, so a type error
+ * names `Json` and `Value`.
+ */
+export type Value = Scalar | Json
 
 /**
  * A cipher: the engine, and the keysets it can use. A keyset is a group
