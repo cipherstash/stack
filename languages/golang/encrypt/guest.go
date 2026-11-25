@@ -154,7 +154,7 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.Lo
 	// wasm code, and those calls into Go were the guest's only safe points.
 	// A stop-the-world GC pause waits for the running guest step. So the
 	// engine keeps every step short: it yields to the host every 64 data
-	// keys while it derives keys or opens or seals a batch, and the host
+	// keys while it builds, seals or opens a batch, and the host
 	// resumes it at once (see step.go). A pause then waits for one chunk,
 	// not a whole batch.
 	config := wazero.NewRuntimeConfig().

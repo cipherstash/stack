@@ -2828,3 +2828,34 @@ mod json_index {
         watched("control (key)", || drop(copy));
     }
 }
+
+/// A batch of records sealed and opened through the dynamic path, so every
+/// row builds through the batch's row closure (`BatchRows::build`) rather
+/// than one record's.
+#[test]
+fn a_batch_of_records_leaves_no_plaintext_on_the_heap() {
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let plan = plan();
+    let source = frame(vec![row(), row(), row()]);
+    let sealed = watched("record::encrypt (a batch)", || {
+        let sealed = rt.block_on(async {
+            record::encrypt(&keyset, &source, &plan)
+                .unwrap()
+                .await
+                .unwrap()
+        });
+        drop(source);
+        sealed
+    });
+    watched("record::decrypt (a batch)", || {
+        let opened = rt.block_on(async {
+            record::decrypt(&cipher, sealed, &plan, None)
+                .unwrap()
+                .await
+                .unwrap()
+        });
+        drop(opened);
+    });
+}

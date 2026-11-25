@@ -158,6 +158,10 @@ enum Unbuilt<'a, T: 'a, K> {
     /// Once its keyset is loaded: [`Pending::after_load`].
     AfterLoad(BuildBox<'a, T, K>),
     /// In steps, with a yield between them: [`Pending::in_steps`].
+    ///
+    /// A merge ([`zip`](Pending::zip), [`all`](Pending::all)) of a pending
+    /// built in steps, where no side waits for its keyset to load, is one of
+    /// these too: one step that builds every side whole, with no yield.
     InSteps(StepBox<'a, T, K>),
 }
 
@@ -629,8 +633,8 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// A large batch is built this way in a wasm guest, so the host gets
     /// control back while its rows are built, as it does while they are
     /// fulfilled ([`Fulfilled::More`]). The build runs no I/O, so it runs
-    /// before any key is requested, as an eager build does, and a row it
-    /// fails fails the whole pending without I/O.
+    /// before any key is requested, as an eager build does. When a row
+    /// fails, the whole pending fails, without I/O.
     ///
     /// No request is known until the pending is built, so its
     /// [`context`](Self::context) shows none, and does not say that a row
@@ -657,7 +661,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// gives it ([`YIELD_EVERY`]). A pending that is not built yet asks
     /// for none.
     #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
-    pub(crate) fn keys(&self) -> usize {
+    pub(crate) fn key_count(&self) -> usize {
         self.requests.len()
     }
 

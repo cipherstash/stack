@@ -534,7 +534,7 @@ where
                 for (absent, _, _) in &groups {
                     let _ = compose::<K>(plan, absent).map_err(|_| Error::Internal)?;
                 }
-                let (groups, positions) = GroupRows::new(groups);
+                let (groups, positions) = BatchRows::new(groups);
                 let plan = plan.clone();
                 let row =
                     move |absent: &Absent, values: FieldValues| match compose::<K>(&plan, absent) {
@@ -660,7 +660,7 @@ where
                         })
                         .collect(),
                 );
-                let (groups, positions) = GroupRows::new(groups);
+                let (groups, positions) = BatchRows::new(groups);
                 let plan = plan.clone();
                 let row = move |absent: &Absent, values: FieldValues| {
                     cipher.run_decryption(opening::<K>(
@@ -672,11 +672,11 @@ where
                     ))
                 };
                 let eql = Pending::all(cipher, pendings);
-                let into = cipher_ref.clone();
+                let caller = cipher_ref.clone();
                 let finish = move |groups: Vec<Vec<Pending<'a, FieldValues, K>>>| {
                     let opens = groups
                         .into_iter()
-                        .map(|rows| confine(Pending::collect(cipher, rows), &into))
+                        .map(|rows| confine(Pending::collect(cipher, rows), &caller))
                         .collect();
                     Pending::all(cipher, opens)
                         .zip(eql)
@@ -711,21 +711,21 @@ fn confine<'a, T: 'a, K>(
     pending.confined_to(cipher_ref.keyset())
 }
 
-/// The rows of a batch, group by group, each row built into its own
+/// Every row of a batch, in its [`RowGroup`], each row built into its own
 /// pending a chunk at a time ([`build`](Self::build)).
-struct GroupRows<'a, R, T: 'a, K> {
-    groups: Vec<GroupOfRows<'a, R, T, K>>,
+struct BatchRows<'a, R, T: 'a, K> {
+    groups: Vec<RowGroup<'a, R, T, K>>,
 }
 
-/// One group of [`GroupRows`]: the rows still to build and the pendings
-/// built.
-struct GroupOfRows<'a, R, T: 'a, K> {
+/// The rows of a batch that leave out the same fields ([`by_absent`]): the
+/// rows still to build, and the pendings built for the rows before them.
+struct RowGroup<'a, R, T: 'a, K> {
     absent: Absent,
     rows: std::vec::IntoIter<R>,
     built: Vec<Pending<'a, T, K>>,
 }
 
-impl<'a, R, T: 'a, K> GroupRows<'a, R, T, K> {
+impl<'a, R, T: 'a, K> BatchRows<'a, R, T, K> {
     /// The groups [`by_absent`] makes, to build, and the positions of each
     /// group's rows in the batch.
     fn new(groups: Vec<(Absent, Vec<usize>, Vec<R>)>) -> (Self, Vec<Vec<usize>>) {
@@ -734,7 +734,7 @@ impl<'a, R, T: 'a, K> GroupRows<'a, R, T, K> {
             .into_iter()
             .map(|(absent, at, rows)| {
                 positions.push(at);
-                GroupOfRows {
+                RowGroup {
                     absent,
                     built: Vec::with_capacity(rows.len()),
                     rows: rows.into_iter(),
@@ -766,7 +766,7 @@ impl<'a, R, T: 'a, K> GroupRows<'a, R, T, K> {
             for next in group.rows.by_ref() {
                 let pending = row(&group.absent, next);
                 failed = pending.has_failed();
-                weight += pending.keys().max(1);
+                weight += pending.key_count().max(1);
                 group.built.push(pending);
                 if failed || weight >= budget {
                     break 'build;
@@ -781,6 +781,13 @@ impl<'a, R, T: 'a, K> GroupRows<'a, R, T, K> {
         self.groups.iter().any(|group| group.rows.len() > 0)
     }
 
+    /// Whether the batch has no row, built or to build.
+    fn is_empty(&self) -> bool {
+        self.groups
+            .iter()
+            .all(|group| group.rows.len() == 0 && group.built.is_empty())
+    }
+
     /// The pendings built for each group's rows.
     fn into_built(self) -> Vec<Vec<Pending<'a, T, K>>> {
         self.groups.into_iter().map(|group| group.built).collect()
@@ -790,7 +797,7 @@ impl<'a, R, T: 'a, K> GroupRows<'a, R, T, K> {
 /// The pendings `row` builds for `rows`, handed to `finish` to merge.
 ///
 /// In a wasm guest the rows are built when the pending settles
-/// ([`Pending::in_steps`]), [`YIELD_EVERY`] data keys' worth at a time with
+/// ([`in_chunks`]), [`YIELD_EVERY`] data keys' worth at a time with
 /// a yield between two chunks, so a host that cannot preempt the guest
 /// (the Go SDK, whose garbage collector waits for a running guest call)
 /// gets control back while a large batch is built. Natively they are all
@@ -802,13 +809,13 @@ impl<'a, R, T: 'a, K> GroupRows<'a, R, T, K> {
 /// way, and nothing is requested until every row is built.
 fn built_in_chunks<'a, R: 'a, T: 'a, U: 'a, K: 'a>(
     cipher_ref: impl Into<CipherRef<'a, K>>,
-    rows: GroupRows<'a, R, T, K>,
+    rows: BatchRows<'a, R, T, K>,
     row: impl FnMut(&Absent, R) -> Pending<'a, T, K> + 'a,
     finish: impl FnOnce(Vec<Vec<Pending<'a, T, K>>>) -> Pending<'a, U, K> + 'a,
 ) -> Pending<'a, U, K> {
     #[cfg(target_arch = "wasm32")]
     {
-        Pending::in_steps(cipher_ref, move |_| chunk(rows, row, finish))
+        in_chunks(cipher_ref, rows, row, finish)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -820,17 +827,42 @@ fn built_in_chunks<'a, R: 'a, T: 'a, U: 'a, K: 'a>(
     }
 }
 
-/// One chunk of [`built_in_chunks`] in a wasm guest, and the rest after it:
-/// the step of a [`Pending::in_steps`]. Natively only the tests build a
-/// batch through it, since a native step must be `Send`.
+/// [`built_in_chunks`] in a wasm guest: a pending whose rows are built
+/// [`chunk`] by chunk when it settles ([`Pending::in_steps`]).
+///
+/// A batch with no row has no chunk to build, so its pending is built now,
+/// as it is natively. Built in steps, it would be confined to the keyset of
+/// `cipher_ref`, and settling it would load that keyset, which a native
+/// decrypt of an empty batch does not do.
+///
+/// Natively only the tests build a batch through it, since a native step
+/// must be `Send`.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn in_chunks<'a, R: 'a, T: 'a, U: 'a, K: 'a>(
+    cipher_ref: impl Into<CipherRef<'a, K>>,
+    rows: BatchRows<'a, R, T, K>,
+    row: impl FnMut(&Absent, R) -> Pending<'a, T, K> + MaybeSend + 'a,
+    finish: impl FnOnce(Vec<Vec<Pending<'a, T, K>>>) -> Pending<'a, U, K> + MaybeSend + 'a,
+) -> Pending<'a, U, K>
+where
+    BatchRows<'a, R, T, K>: MaybeSend,
+{
+    if rows.is_empty() {
+        return finish(rows.into_built());
+    }
+    Pending::in_steps(cipher_ref, move |_| chunk(rows, row, finish))
+}
+
+/// One chunk of [`in_chunks`], and the rest after it: the step of a
+/// [`Pending::in_steps`].
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn chunk<'a, R: 'a, T: 'a, U: 'a, K: 'a>(
-    mut rows: GroupRows<'a, R, T, K>,
+    mut rows: BatchRows<'a, R, T, K>,
     mut row: impl FnMut(&Absent, R) -> Pending<'a, T, K> + MaybeSend + 'a,
     finish: impl FnOnce(Vec<Vec<Pending<'a, T, K>>>) -> Pending<'a, U, K> + MaybeSend + 'a,
 ) -> Step<'a, U, K>
 where
-    GroupRows<'a, R, T, K>: MaybeSend,
+    BatchRows<'a, R, T, K>: MaybeSend,
 {
     if rows.build(YIELD_EVERY, &mut row) {
         Step::More(Box::new(move |_| chunk(rows, row, finish)))
@@ -1548,6 +1580,22 @@ mod tests {
         ]);
         record::plan(frame_of(&value).as_protected_ref().as_deref()).expect("parses")
     }
+    /// Two sealed fields, so a row that leaves out neither asks for two
+    /// data keys.
+    fn two_sealed() -> Plan {
+        let value = obj(vec![
+            field("age", &["c", "eq"], "uint32"),
+            field("id", &["c"], "uint64"),
+        ]);
+        record::plan(frame_of(&value).as_protected_ref().as_deref()).expect("parses")
+    }
+    async fn cipher() -> StackCipher<FakeDataKeySource> {
+        StackCipher::builder()
+            .kms(FakeDataKeySource::new())
+            .init()
+            .await
+            .expect("build cipher")
+    }
     fn frame(value: Tree) -> ValueFrame {
         ValueFrame::from_bytes(frame_of(&value).as_protected_ref().as_deref()).expect("a frame")
     }
@@ -1572,7 +1620,7 @@ mod tests {
     /// many rows were built once each chunk was. A build that never says it
     /// is done fails here instead of hanging the test.
     fn chunks<'a, R, T: 'a, K>(
-        rows: &mut GroupRows<'a, R, T, K>,
+        rows: &mut BatchRows<'a, R, T, K>,
         row: &mut impl FnMut(&Absent, R) -> Pending<'a, T, K>,
     ) -> Vec<usize> {
         let mut built = Vec::new();
@@ -1596,11 +1644,7 @@ mod tests {
     /// back in order, each group's apart, and settle as one call.
     #[tokio::test]
     async fn a_batch_is_built_a_chunk_of_yield_every_keys_at_a_time() {
-        let cipher = StackCipher::builder()
-            .kms(FakeDataKeySource::new())
-            .init()
-            .await
-            .expect("build cipher");
+        let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let plan = the_plan();
         let extend = plan.declared_context();
@@ -1608,7 +1652,7 @@ mod tests {
         let mut no_id = Absent::new();
         let _ = no_id.insert("id".to_owned());
         // Two groups: 150 whole rows, then 50 that leave out `id`.
-        let (mut rows, positions) = GroupRows::new(vec![
+        let (mut rows, positions) = BatchRows::new(vec![
             (
                 Absent::new(),
                 (0..150).collect(),
@@ -1646,19 +1690,11 @@ mod tests {
     /// each are built 32 at a time.
     #[tokio::test]
     async fn a_chunk_ends_at_yield_every_keys_whatever_each_row_asks_for() {
-        let cipher = StackCipher::builder()
-            .kms(FakeDataKeySource::new())
-            .init()
-            .await
-            .expect("build cipher");
+        let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let value = obj(vec![
-            field("age", &["c", "eq"], "uint32"),
-            field("id", &["c"], "uint64"),
-        ]);
-        let plan = record::plan(frame_of(&value).as_protected_ref().as_deref()).expect("parses");
+        let plan = two_sealed();
         let extend = plan.declared_context();
-        let (mut rows, _) = GroupRows::new(vec![(
+        let (mut rows, _) = BatchRows::new(vec![(
             Absent::new(),
             (0..100).collect(),
             (0..100u32)
@@ -1668,7 +1704,11 @@ mod tests {
         let mut build = |absent: &Absent, values: FieldValues| {
             let description = compose::<FakeDataKeySource>(&plan, absent).expect("lowers");
             let pending = keyset.run(description, values, extend.clone());
-            assert_eq!(pending.keys(), 2, "a row asks for a key per sealed value");
+            assert_eq!(
+                pending.key_count(),
+                2,
+                "a row asks for a key per sealed value"
+            );
             pending
         };
         assert_eq!(chunks(&mut rows, &mut build), [32, 64, 96, 100]);
@@ -1678,14 +1718,10 @@ mod tests {
     /// empty chunk, so no yield, after it.
     #[tokio::test]
     async fn a_batch_that_fills_its_last_chunk_is_done_with_it() {
-        let cipher = StackCipher::builder()
-            .kms(FakeDataKeySource::new())
-            .init()
-            .await
-            .expect("build cipher");
+        let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let mut build = |_: &Absent, i: usize| Pending::ready(&keyset, Ok(i));
-        let (mut rows, _) = GroupRows::new(vec![
+        let (mut rows, _) = BatchRows::new(vec![
             (Absent::new(), (0..100).collect(), (0..100).collect()),
             (Absent::new(), (100..128).collect(), (100..128).collect()),
         ]);
@@ -1697,11 +1733,7 @@ mod tests {
     /// after it never built, as a column stops at it.
     #[tokio::test]
     async fn a_batch_build_weighs_a_row_with_no_key_and_stops_at_a_failed_row() {
-        let cipher = StackCipher::builder()
-            .kms(FakeDataKeySource::new())
-            .init()
-            .await
-            .expect("build cipher");
+        let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let built = std::cell::Cell::new(0);
         let mut build = |_: &Absent, i: usize| {
@@ -1712,7 +1744,7 @@ mod tests {
                 Pending::ready(&keyset, Ok(i))
             }
         };
-        let (mut rows, _) = GroupRows::new(vec![(
+        let (mut rows, _) = BatchRows::new(vec![(
             Absent::new(),
             (0..200).collect(),
             (0..200).collect(),
@@ -1731,7 +1763,7 @@ mod tests {
         assert!(matches!(column, Err(crate::Error::ResponseShape)));
     }
 
-    /// A batch built in steps through [`chunk`], as a wasm guest builds it:
+    /// A batch built in steps through [`in_chunks`], as a wasm guest builds it:
     /// no row is built before the pending settles, each step builds a chunk
     /// of [`YIELD_EVERY`] data keys' worth of rows and then yields, and the
     /// rows settle in order, each group apart. A row of the first group
@@ -1743,17 +1775,9 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
         use std::task::{Context, Poll, Waker};
 
-        let cipher = StackCipher::builder()
-            .kms(FakeDataKeySource::new())
-            .init()
-            .await
-            .expect("build cipher");
+        let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let value = obj(vec![
-            field("age", &["c", "eq"], "uint32"),
-            field("id", &["c"], "uint64"),
-        ]);
-        let plan = record::plan(frame_of(&value).as_protected_ref().as_deref()).expect("parses");
+        let plan = two_sealed();
         let extend = plan.declared_context();
         let mut no_id = Absent::new();
         let _ = no_id.insert("id".to_owned());
@@ -1768,7 +1792,7 @@ mod tests {
                 })
                 .collect()
         };
-        let (rows, positions) = GroupRows::new(vec![
+        let (rows, positions) = BatchRows::new(vec![
             (Absent::new(), whole.clone(), input(&whole, true)),
             (no_id.clone(), part.clone(), input(&part, false)),
         ]);
@@ -1795,7 +1819,7 @@ mod tests {
                 Pending::all(keyset, runs)
             }
         };
-        let pending = Pending::in_steps(&keyset, move |_| chunk(rows, row, finish));
+        let pending = in_chunks(&keyset, rows, row, finish);
         assert_eq!(built.load(SeqCst), 0, "no row is built before it settles");
 
         // Settled by hand: each time the future is not ready is a yield
@@ -1844,6 +1868,30 @@ mod tests {
         }
     }
 
+    /// An empty batch built in chunks, as a wasm guest builds a batch, asks
+    /// for nothing, as it does natively: through a keyset handle that is not
+    /// loaded yet, the keyset stays unloaded. A decrypt confines each group
+    /// of rows to the caller's keyset, and an empty batch has no group.
+    #[tokio::test]
+    async fn an_empty_batch_built_in_chunks_loads_no_keyset() {
+        let cipher = cipher().await;
+        let handle = cipher.keyset(stack_kms::IdentifiedBy::Name("acme".to_string().into()));
+        let (rows, positions) = BatchRows::new(Vec::new());
+        assert!(positions.is_empty());
+        let (cipher, handle) = (&cipher, &handle);
+        let finish = move |groups: Vec<Vec<_>>| {
+            let groups = groups
+                .into_iter()
+                .map(|rows| Pending::all(handle, rows))
+                .collect();
+            Pending::all(cipher, groups)
+        };
+        let row = move |_: &Absent, at: usize| Pending::ready(handle, Ok(at));
+        let batch = in_chunks(handle, rows, row, finish).await;
+        assert!(batch.expect("settles").is_empty());
+        assert!(handle.loaded_state().is_none(), "the keyset is not loaded");
+    }
+
     /// What `check_source` asks without a cipher refuses what the
     /// description refuses: a field the plan does not name, a field the
     /// plan names that the values leave out, and a field at another type.
@@ -1887,11 +1935,7 @@ mod tests {
     /// whole `Encrypted` with its terms, and either opens.
     #[tokio::test]
     async fn the_stored_values_are_checked_against_the_plan() {
-        let cipher = StackCipher::builder()
-            .kms(FakeDataKeySource::new())
-            .init()
-            .await
-            .expect("build cipher");
+        let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let plan = the_plan();
         let absent = Absent::new();

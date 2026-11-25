@@ -170,12 +170,19 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   the batch before it paused, and for an encrypt that derives every search
   term. The guest now builds a batch's rows 64 data keys' worth at a time,
   and yields to the host between two chunks, as it does while it seals or
-  opens them. So a batch yields about twice as often as before. The output
-  does not change. Fields with an EQL type (the types in `encrypt/eql`)
-  are not built in chunks yet: the first step still prepares every such
-  field of every row before it yields, and for an encrypt that derives all
-  of their search terms. Figures against a fake ZeroKMS that answers after
-  40 ms, for 3,334 rows of 3 sealed fields (10,002 values):
+  opens them. So a batch yields about twice as often as before. A call
+  that succeeds returns the same output. Fields with an EQL type (the
+  types in `encrypt/eql`) are not built in chunks yet: the first step
+  still prepares every such field of every row before it yields, and for
+  an encrypt that derives all of their search terms. A decrypt of a batch
+  with more than one row refused before any request to ZeroKMS now
+  reports the first of those rows in row order, with the rows that leave
+  out the same optional fields taken together, in the order the first of
+  them appears. Before, a row whose stored fields did not fit the type was
+  reported ahead of a row whose context was refused, wherever each row
+  was. The error now comes after the steps that build the rows before it,
+  still with no request to ZeroKMS. Figures against a fake ZeroKMS that
+  answers after 40 ms, for 3,334 rows of 3 sealed fields (10,002 values):
   - Encrypt: the first step takes about 27 ms, against about 450 ms
     before. Each chunk takes about 3 ms.
   - Decrypt: the first step takes about 20 ms, against about 49 ms.

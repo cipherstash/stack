@@ -1497,6 +1497,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **In a `wasm32` build, a data plan's batch of records is built a chunk
+  at a time when it settles** (#1768). `dynamic::record::encrypt_with` and
+  `decrypt_with`, given a batch, build its rows 64 data keys' worth at a
+  time, with a yield to the async runtime between two chunks, as a column
+  yields while it is fulfilled. So a host that cannot preempt a running
+  guest call gets control back while a large batch is built. A native
+  build still builds every row before it returns the pending. Fields with
+  an EQL type are not built in chunks: every row's EQL fields are still
+  run through the resolver before the first chunk. A call that succeeds
+  returns the same output. Two things a caller can see change:
+  - In a `wasm32` build, `Pending::context()` on such a batch lists no
+    contexts, and does not say that the batch will fail, until it settles.
+    A native build's batch lists its exact contexts, as before.
+  - A decrypt of a batch with more than one row refused before any key is
+    requested reports the first of those rows in the order they are
+    opened: row order, with the rows that leave out the same fields taken
+    together, in the order the first of them appears. Before, a row whose
+    stored values the plan refused (a value of the wrong kind, or a
+    context that is not the expected one) was reported ahead of a row
+    whose context was refused as it was opened, wherever each row was.
+    This is so in a native build too. In a `wasm32` build the error comes
+    after the yields of the chunks before that row, still with no key
+    requested.
 - **With `MatchOptions::short_words` on, a query asks for its short words
   only when its whole text is shorter than one n-gram** (#1398). Before
   this fix, "Mike Ng" did not find "Mike Nguyen". "san fr" did not find
