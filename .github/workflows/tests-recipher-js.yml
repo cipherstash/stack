@@ -29,6 +29,8 @@ on:
       - Cargo.toml
       - mise.toml
       - pnpm-lock.yaml
+      # The last step runs `turbo run test`, which reads turbo.json.
+      - turbo.json
       - .github/workflows/tests-recipher-js.yml
   push:
     branches: [main]
@@ -43,6 +45,8 @@ on:
       - Cargo.toml
       - mise.toml
       - pnpm-lock.yaml
+      # The last step runs `turbo run test`, which reads turbo.json.
+      - turbo.json
       - .github/workflows/tests-recipher-js.yml
   workflow_dispatch: {}
 

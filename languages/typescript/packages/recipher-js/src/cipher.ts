@@ -38,6 +38,9 @@ type Static<C extends abstract new () => object> = Omit<C, never> & {
   [Symbol.hasInstance](value: unknown): value is InstanceType<C>
 }
 
+/** A class type's static methods, without its prototype and `instanceof`. */
+type Statics<C> = Omit<C, 'prototype' | typeof Symbol.hasInstance>
+
 /** The `Cipher` class. Get a cipher from `Cipher.create()`. */
 export type CipherClass = Static<typeof Native.Cipher>
 /** The `Keyset` class. Get a keyset from `cipher.defaultKeyset()`. */
@@ -80,7 +83,9 @@ function native(loaded: Binding): Classes {
  * is false for every value.
  */
 function missing(error: RecipherError): Classes {
-  const stand = <T>(cls: object): T => typed<T>(Object.freeze(cls))
+  // A stand-in must have every static method of the class it stands in
+  // for, so a static method added in Rust does not compile without one.
+  const stand = <T>(cls: Statics<T>): T => typed<T>(Object.freeze(cls))
   return {
     Cipher: stand<CipherClass>(
       // biome-ignore lint/complexity/noStaticOnlyClass: a stand-in for a class, so `instanceof` still works.

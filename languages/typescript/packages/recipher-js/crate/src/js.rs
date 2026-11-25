@@ -61,7 +61,7 @@ pub fn build(env: &Env, value: ValueFrame) -> Result<Unknown<'_>, RecipherErrorF
 /// Returns the failure for a value that `JsBuilder` did not build.
 fn not_built(env: &Env, fault: &JsFault) -> RecipherErrorFields {
     if fault.status() == Status::PendingException {
-        let _ = take_exception(env);
+        clear_exception(env);
     }
     Error::BuildValue.into()
 }
@@ -73,7 +73,7 @@ fn not_built(env: &Env, fault: &JsFault) -> RecipherErrorFields {
 /// its message may contain the value.
 fn refused(env: &Env, fault: &JsFault) -> RecipherErrorFields {
     if fault.status() == Status::PendingException {
-        let _ = take_exception(env);
+        clear_exception(env);
     }
     match fault.refusal() {
         Some(refusal) => RecipherErrorFields::diagnostic(&refusal, None),
@@ -82,19 +82,15 @@ fn refused(env: &Env, fault: &JsFault) -> RecipherErrorFields {
     }
 }
 
-/// Clears and returns the exception pending in `env`, if there is one.
+/// Clears the exception pending in `env`, if there is one, and drops it
+/// without reading it.
 #[allow(unsafe_code)]
-fn take_exception(env: &Env) -> Option<Unknown<'_>> {
+fn clear_exception(env: &Env) {
     let mut raw = std::ptr::null_mut();
     // SAFETY: `env` is the environment of the call running on this
     // JavaScript thread, and `raw` is a valid out-pointer. Node-API sets it
     // to the pending exception, or to `undefined` when none is pending, and
-    // clears it. The status is checked before `raw` is read.
-    let status = unsafe { napi::sys::napi_get_and_clear_last_exception(env.raw(), &mut raw) };
-    if status != napi::sys::Status::napi_ok || raw.is_null() {
-        return None;
-    }
-    // SAFETY: `raw` is a live value in `env`, made by the call above, and
-    // the `Unknown` borrows `env` for no longer than this call.
-    Some(unsafe { Unknown::from_raw_unchecked(env.raw(), raw) })
+    // clears it. The value is never read; the status needs no handling,
+    // because a failure leaves nothing to clear.
+    let _ = unsafe { napi::sys::napi_get_and_clear_last_exception(env.raw(), &mut raw) };
 }

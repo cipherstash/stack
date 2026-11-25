@@ -6,7 +6,7 @@ use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::kms::DeterministicSource;
 use stack_encrypt::StackCipher;
 
-use crate::cipher::{seal, unseal};
+use crate::cipher::{open_in, seal, unseal, Confined, Engine};
 use crate::value::OneValue;
 
 const SEED: [u8; 32] = [7; 32];
@@ -75,4 +75,27 @@ async fn a_ciphertext_of_another_seed_does_not_open() {
         .unwrap();
     let sealed = sdk_seal(vec![one("elsewhere")]).await;
     assert!(unseal(&other, sealed).await.is_err());
+}
+
+/// `keyset.decrypt` is confined to its keyset and `cipher.decrypt` is not.
+/// The two differ only in the `Confined` they pass to `open_in`.
+#[tokio::test]
+async fn a_keyset_refuses_another_keysets_ciphertext_and_the_cipher_opens_it() {
+    let cipher = engine().await;
+    let other = cipher.keyset(stack_encrypt::kms::IdentifiedBy::Name(
+        "another-keyset".to_owned().into(),
+    ));
+    let sealed = seal(&other, vec![one("in another keyset")]).await.unwrap();
+    let engine = Engine::Testing(Box::new(cipher));
+
+    let refused = open_in(&engine, sealed.clone(), Confined::ToDefault)
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code, "stack_encrypt::foreign_keyset");
+
+    let opened = open_in(&engine, sealed, Confined::No)
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(opened, ValueFrame::of("in another keyset").unwrap());
 }

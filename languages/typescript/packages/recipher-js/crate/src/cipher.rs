@@ -30,7 +30,7 @@ use crate::value::OneValue;
 /// The engine's cipher, with the key source it was built with. A napi class
 /// cannot be generic, so each key source is one variant.
 #[derive(OpaqueDebug)]
-enum Engine {
+pub(crate) enum Engine {
     /// Keys from ZeroKMS, with the credentials the engine found.
     Detected(Box<StackCipher<StackKms<stack_auth::AutoStrategy>>>),
     /// Keys from the engine's deterministic test key source.
@@ -259,7 +259,7 @@ fn cipher_value(env: &Env, engine: Engine) -> Outcome<Unknown<'_>> {
 
 /// The keysets whose values a decrypt call accepts.
 #[derive(Clone, Copy)]
-enum Confined {
+pub(crate) enum Confined {
     /// Any of the cipher's keysets.
     No,
     /// Only the default keyset.
@@ -280,17 +280,25 @@ fn open<'e>(
     let engine = Arc::clone(engine);
     spawn(
         env,
-        async move {
-            with_engine!(&*engine, |cipher| match confined {
-                Confined::No => unseal(&**cipher, sealed).await,
-                Confined::ToDefault => unseal(&cipher.default_keyset(), sealed).await,
-            })
-        },
+        async move { open_in(&engine, sealed, confined).await },
         |env, mut opened| match opened.pop() {
             Some(value) => js::build(env, value),
             None => Err(Error::NoResult.into()),
         },
     )
+}
+
+/// Decrypts ciphertexts through `engine`: through the whole cipher, or
+/// through its default keyset only, as `confined` says.
+pub(crate) async fn open_in(
+    engine: &Engine,
+    sealed: Vec<stack_encrypt::Ciphertext>,
+    confined: Confined,
+) -> Outcome<Vec<ValueFrame>> {
+    with_engine!(engine, |cipher| match confined {
+        Confined::No => unseal(&**cipher, sealed).await,
+        Confined::ToDefault => unseal(&cipher.default_keyset(), sealed).await,
+    })
 }
 
 /// Encrypts values under `keyset`. Each value becomes one ciphertext with
