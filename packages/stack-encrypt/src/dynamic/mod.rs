@@ -30,7 +30,9 @@
 //! * [`context`](context()) — a frame read as an encryption context.
 //! * [`ValueFrame`] — the engine's plaintext for a value whose type is known
 //!   only at run time, and the value model it holds.
-//! * [`term`](term()) — one index term for a value, derived at the one
+//! * [`ScalarFrame`] — a [`ValueFrame`] checked to hold one scalar, which
+//!   `keyset.encrypt` seals as one opaque [`Ciphertext`](crate::Ciphertext).
+//! * [`term`](term())— one index term for a value, derived at the one
 //!   scalar it is walked to.
 //! * [`record`] — a record's declaration as data, *lowered* into the
 //!   combinators in [`target`](crate::target) and run by the engine: the
@@ -57,12 +59,49 @@
 //!
 //! # What is not here
 //!
-//! Encrypting a whole value is not: a [`ValueFrame`], like any source,
-//! implements `Encrypt` already, so `keyset.encrypt_tree(value, aad)` is the whole
-//! of it and needs nothing from this module. Nor is a second executor: nothing here calls
-//! the term functions or the seal path to produce a record. A capability a
-//! data plan needs and the combinators lack is added to the combinators,
-//! once.
+//! An operation that encrypts one value is not. A binding seals one value
+//! as one ciphertext through the call a Rust caller uses: it checks the
+//! value is one scalar with [`ScalarFrame::new`], and passes the
+//! [`ScalarFrame`] to `keyset.encrypt` or `keyset.encrypt_with_context`. The
+//! leaf is the one those calls seal for the same Rust value under the same
+//! context, apart from its random nonce, so a Rust caller opens it as that
+//! type. It opens into a frame of the kind it was sealed as with
+//! `keyset.decrypt::<ValueFrame>` or `keyset.decrypt_with_context`:
+//!
+//! ```
+//! use stack_encrypt::dynamic::{ScalarFrame, ValueFrame};
+//! use stack_encrypt::StackCipher;
+//!
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
+//! let cipher = StackCipher::builder()
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
+//! let keyset = cipher.default_keyset();
+//!
+//! // A binding's value, sealed as one ciphertext.
+//! let value = ScalarFrame::new(ValueFrame::of(42i64)?)?;
+//! let stored = keyset.encrypt_with_context(value, "users/age").await?;
+//!
+//! // A Rust caller opens it as the Rust value, and a binding as a frame.
+//! let age: i64 = keyset.decrypt_with_context(stored.clone(), "users/age").await?;
+//! assert_eq!(age, 42);
+//! let opened: ValueFrame = keyset.decrypt_with_context(stored, "users/age").await?;
+//! assert!(opened == ValueFrame::of(42i64)?);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! # }).unwrap();
+//! ```
+//!
+//! A [`ValueFrame`] of any shape, like any source, implements `Encrypt`, so
+//! `keyset.encrypt_tree(value, aad)` seals it as a tree of leaves. For one
+//! scalar the tree is one leaf, the one `keyset.encrypt_with_context(value,
+//! aad)` seals.
+//!
+//! Nor is a second executor here: nothing here calls the term functions or
+//! the seal path to produce a record. A capability a data plan needs and the
+//! combinators lack is added to the combinators, once.
 //!
 //! # Stability
 //!
@@ -95,6 +134,7 @@ mod kind;
 pub mod planned;
 mod query;
 pub mod record;
+mod scalar_frame;
 
 /// How to build a language integration on this module: the binding, what
 /// crosses it, the operations, the plan grammar, plaintext hygiene, keys and
@@ -126,6 +166,7 @@ pub use query::{
     Fidelity, Op, Operand, OperatorEntry, QueryTerm,
 };
 pub use record::{FieldPlan, NullMode, Output, Plan};
+pub use scalar_frame::{NonScalar, ScalarFrame, ScalarFrameError};
 pub use target::{NoTargets, TargetDescriptor, TargetError, TargetOptions, TargetResolver};
 pub use term::{term, TermBytes};
 pub use value_frame::{Children, FromFrameError, Modeled, Opening, ValueFrame};
