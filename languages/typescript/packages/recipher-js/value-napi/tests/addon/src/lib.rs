@@ -6,13 +6,13 @@
 use napi::bindgen_prelude::{AsyncTask, Buffer, JsObjectValue, Object, Unknown};
 use napi::{Env, Error, Result, Status, Task};
 use napi_derive::napi;
+use recipher_value_napi::{JsBuilder, JsCipherText, JsFault, JsRef, Wrappers};
 use vitaminc_aead::seal::Cipher;
 use vitaminc_aead::{
     decrypt, decrypt_into, encrypt, to_frame, CipherText, Context, DecryptError, Encrypt,
     EncryptError, Float, Frame, Int, Logical, MapSink, Node, PassthroughFrame, Physical, SeqSink,
     Sink, TimeUnit,
 };
-use recipher_value_napi::{JsBuilder, JsCipherText, JsFault, JsRef, Wrappers};
 use vitaminc_encrypt::{Aes256Cipher, Key, LocalCipherText};
 use vitaminc_protected::{Controlled, Protected};
 

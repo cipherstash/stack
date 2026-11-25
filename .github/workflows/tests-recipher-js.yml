@@ -76,10 +76,17 @@ jobs:
           node-version: 22
 
       # `cargo test --locked`, `cargo fmt --check` and clippy, with every
-      # feature.
+      # feature. The test addon is a workspace of its own, which `--all`
+      # does not reach, so it is checked by its manifest. Its clippy shares
+      # the directory `tests/node.rs` builds it in. It has no tests, and
+      # without them `--all-targets` would report its module entry point
+      # unused.
       - name: cargo checks
         working-directory: languages/typescript/packages/recipher-js
         run: |
           cargo test --locked --all-features
           cargo fmt --all --check
           cargo clippy --locked --all-targets --all-features -- -D warnings
+          cargo fmt --manifest-path value-napi/tests/addon/Cargo.toml --check
+          cargo clippy --locked --manifest-path value-napi/tests/addon/Cargo.toml \
+            --target-dir target/napi-test-addon -- -D warnings

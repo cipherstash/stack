@@ -53,6 +53,12 @@ const WORKSPACES = [
     expects: 'crates/protect-ffi',
   },
   {
+    // The Rust half of `@cipherstash/recipher`. Nothing in it is published.
+    root: 'languages/typescript/packages/recipher-js',
+    publishable: new Set(),
+    expects: 'value-napi',
+  },
+  {
     // The root workspace. The stack-* crates' release-plz step publishes
     // exactly these six: stack-auth and stack-profile, and stack-kms,
     // stack-encrypt, stack-encrypt-derive and stack-encrypt-jsonpath (which
@@ -77,6 +83,7 @@ const WORKSPACES = [
     'packages/stack-encrypt/fuzz',
     'languages/golang/encrypt/guest',
     'languages/golang/auth/guest',
+    'languages/typescript/packages/recipher-js/value-napi/tests/addon',
   ].map((root) => ({ root, publishable: new Set(), expects: '.' })),
 ]
 
