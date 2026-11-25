@@ -44,7 +44,9 @@ jobs:
   recipher-js:
     name: cargo checks (Linux)
     runs-on: blacksmith-16vcpu-ubuntu-2204
-    timeout-minutes: 45
+    # The slowest run so far took under three minutes. A run that is still
+    # going at ten is stuck, not slow: stop it rather than pay for 45.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
