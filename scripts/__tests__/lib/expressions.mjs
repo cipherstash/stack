@@ -135,14 +135,32 @@ function lookup(path, context) {
  * `cancelled()` is a fact about the run, not about any job, so it comes from
  * the caller's `run` argument and is false unless that says `cancelled: true`.
  *
- * Everything else still throws. `success()` and `failure()` depend on the
- * results of the whole `needs:` chain, which the contexts here do not carry,
- * and `contains()` / `startsWith` take arguments the parser below deliberately
- * cannot evaluate.
+ * `failure()` depends on the results of the job's `needs:` chain, which the
+ * contexts here do not carry, so it has no default: it comes from the caller's
+ * `run.failure`, and throws when the caller did not say. The unattended-failure
+ * report jobs are `failure() && <event gate>`; a guard asking whether such a
+ * job runs on an event passes `{ failure: true }`, holding the status open the
+ * way `PERMISSIVE_NEEDS` holds the job outputs open, so what it sees is the
+ * event gate.
+ *
+ * Everything else still throws. `success()` depends on the same `needs:`
+ * results, and `contains()` / `startsWith` take arguments the parser below
+ * deliberately cannot evaluate.
  */
 const SUPPORTED_FUNCTIONS = new Map([
   ['always', () => true],
   ['cancelled', (run) => run.cancelled === true],
+  [
+    'failure',
+    (run) => {
+      if (typeof run.failure !== 'boolean') {
+        throw new UnsupportedExpression(
+          'failure() depends on the needs: results; pass run.failure to say which',
+        )
+      }
+      return run.failure
+    },
+  ],
 ])
 
 /**
@@ -247,7 +265,7 @@ export function unwrap(condition) {
   return (match ? match[1] : trimmed).trim()
 }
 
-/** `context` is `{ github, needs, vars }`; `run` is `{ cancelled }`. */
+/** `context` is `{ github, needs, vars }`; `run` is `{ cancelled, failure }`. */
 export function runsWhen(condition, context, run = {}) {
   return evaluate(unwrap(condition), context, run)
 }

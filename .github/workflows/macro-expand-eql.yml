@@ -127,3 +127,26 @@ jobs:
             tests/sqlx/snapshots/text_expanded.rs \
             tests/sqlx/snapshots/boolean_expanded.rs \
             || { echo "Expansion snapshot stale — run 'mise run test:matrix:expand' (needs the pinned nightly) and commit."; exit 1; }
+
+  # Every run but a pull request, a manual dispatch or a merge queue run is
+  # one nobody is watching, with no PR to turn red, so record its failure on an issue. See
+  # _report-unattended-failure.yml; `needs` must name every other job.
+  report:
+    needs:
+      - macro-expand
+    if: >-
+      failure() && github.event_name != 'pull_request' &&
+      github.event_name != 'workflow_dispatch' &&
+      github.event_name != 'merge_group'
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_report-unattended-failure.yml
+    with:
+      guidance: >-
+        Open the run and find the step that failed first. If the toolchain
+        install or the expansion itself failed, fix that. If the snapshot
+        comparison failed, a `cargo expand` matrix snapshot no longer matches
+        its committed copy, most likely because a change to the matrix macro
+        bodies merged without regenerating them: run `mise run
+        test:matrix:expand` in `packages/eql`, then review and commit the
+        snapshot diff. Then close this issue.
