@@ -478,7 +478,7 @@ Run: `gh pr checks 1419 --watch`. Read each failed job's log with `gh run view <
 
 ### Task 6: Record the decision and this plan in #1416
 
-This task is done. Commit `1d4768b09` on #1416 made these changes.
+This task is done. #1416's commit `docs(ci): record the same-size swap from Blacksmith to RunsOn` made these changes.
 
 **Files:**
 - Modify: `docs/adr/0004-same-size-swap-from-blacksmith-to-runs-on.md`, to `status: accepted`
