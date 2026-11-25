@@ -137,17 +137,27 @@ const MATRIX_SOURCE = (() => {
   return null
 })()
 
-/** The relevance flag every gated job's `if:` reads. */
-const RELEVANCE_SOURCE = (() => {
+/**
+ * Every flag a job `if:` reads, de-duplicated. More than one: the heavy jobs
+ * read `relevant` and the cheap ones read `eql`, and a wrong default on either
+ * silently skips its jobs on push and schedule.
+ */
+const GATE_SOURCES = (() => {
+  const found = new Map()
   for (const job of Object.values(wf?.jobs ?? {})) {
-    const ref = needsOutputRef(job?.if)
-    if (ref) return ref
+    for (const match of String(job?.if ?? '').matchAll(
+      /needs\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+)/g,
+    )) {
+      found.set(`${match[1]}.${match[2]}`, { job: match[1], output: match[2] })
+    }
   }
-  return null
+  return [...found.values()]
 })()
 
+/** A minimum, not an equality: a third flag is checked the day it lands. */
+const EXPECTED_GATE_FLAGS = ['eql', 'relevant']
+
 const MATRIX_STEP = MATRIX_SOURCE ? stepProducing(MATRIX_SOURCE) : null
-const RELEVANCE_STEP = RELEVANCE_SOURCE ? stepProducing(RELEVANCE_SOURCE) : null
 
 /**
  * The step `env:` key wired to `${{ github.event_name }}`.
@@ -281,32 +291,41 @@ describe('the EQL matrix is reachable by a trigger that fires', () => {
   })
 })
 
-describe('the relevance flag opens on every non-PR event', () => {
-  it('follows the workflow to the step that computes it', () => {
+describe('every gate flag opens on every non-PR event', () => {
+  it('finds the flags the job conditions read', () => {
     expect(
-      RELEVANCE_SOURCE,
-      `No job \`if:\` in ${WORKFLOW} reads a \`needs.<job>.outputs.<name>\` relevance flag, so this suite has nothing to evaluate.`,
-    ).toBeTruthy()
-    expect(RELEVANCE_STEP).toBeTruthy()
-    expect(
-      eventEnvKey(RELEVANCE_STEP?.step),
-      `The "${RELEVANCE_SOURCE?.job}" job's \`${RELEVANCE_STEP?.stepId}\` step must read the event from its \`env:\` rather than inlining \`\${{ github.event_name }}\`, for the reason given on the matrix step.`,
-    ).toBeTruthy()
+      GATE_SOURCES.map((source) => source.output),
+      `The job \`if:\`s in ${WORKFLOW} no longer read every flag this file expects, so a default below goes unchecked. Found: ${GATE_SOURCES.map((s) => `needs.${s.job}.outputs.${s.output}`).join(', ') || '(none)'}`,
+    ).toEqual(expect.arrayContaining(EXPECTED_GATE_FLAGS))
   })
 
-  for (const event of CANDIDATE_EVENTS.filter((e) => e !== 'pull_request')) {
-    it(`defaults to relevant on ${event}`, () => {
-      // The path filter only runs on `pull_request` — it needs a base ref — so
-      // on every other event the flag is a hardcoded default. Get that default
-      // wrong and every gated job skips on the new trigger while the run still
-      // reports success, which is the same silent-skip class as the trigger bug
-      // this file exists for.
-      const outputs = runStep(RELEVANCE_STEP, event)
+  for (const source of GATE_SOURCES) {
+    const step = stepProducing(source)
+
+    it(`follows ${source.output} to the step that computes it`, () => {
       expect(
-        outputs[RELEVANCE_SOURCE.output],
-        `The relevance step wrote ${JSON.stringify(outputs)} on a ${event} event. Every heavy job is gated on this being 'true', and the filter that would compute it does not run outside \`pull_request\`.`,
-      ).toBe('true')
+        step,
+        `\`jobs.${source.job}.outputs.${source.output}\` does not resolve to a step \`id:\` in that job.`,
+      ).toBeTruthy()
+      expect(
+        eventEnvKey(step?.step),
+        `The "${source.job}" job's \`${step?.stepId}\` step must read the event from its \`env:\` rather than inlining \`\${{ github.event_name }}\`, for the reason given on the matrix step.`,
+      ).toBeTruthy()
     })
+
+    for (const event of CANDIDATE_EVENTS.filter((e) => e !== 'pull_request')) {
+      it(`defaults ${source.output} to true on ${event}`, () => {
+        // The path filter only runs on `pull_request` — it needs a base ref —
+        // so on every other event the flag is a hardcoded default. Get it wrong
+        // and every job gated on it skips on that trigger while the run still
+        // reports success: the silent-skip class this file exists for.
+        const outputs = runStep(step, event)
+        expect(
+          outputs[source.output],
+          `The step wrote ${JSON.stringify(outputs)} on a ${event} event. The jobs gated on \`${source.output}\` run only when it is 'true', and the filter that would compute it does not run outside \`pull_request\`.`,
+        ).toBe('true')
+      })
+    }
   }
 })
 
