@@ -626,7 +626,7 @@ Backfill requires a `public.eql_v3_*` target column, records version 3 and the `
 | Flag | Description |
 |---|---|
 | `--table` / `--column` | Required |
-| `--chunk-size <n>` | Default 1000. Lower for lock contention, raise for wide rows. |
+| `--chunk-size <n>` | Default 1000. Lower for lock contention, raise for wide rows. Must be a positive whole number; anything else (`abc`, `0`, `-5`, `1.5`) is rejected with exit code 1 before the database is touched. |
 | `--pk-column <name>` | Override primary-key detection. Required for composite PKs. |
 | `--encrypted-column <name>` | Override the `<col>_encrypted` target name |
 | `--schema-column-key <key>` | Override the schema lookup key |
