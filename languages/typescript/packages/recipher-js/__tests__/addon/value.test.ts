@@ -249,6 +249,15 @@ describe('every other call returns or resolves to a Result', () => {
     expect((await testCipher(null)).isOk()).toBe(true)
   })
 
+  it('options that are not an object are an Err, not the default seed', async () => {
+    for (const options of [42, true, 'seed', 0n, Symbol('s')]) {
+      const result = await testCipher(options as never)
+      expect(result.err()?.code, String(typeof options)).toBe(
+        'recipher_js::testing_seed',
+      )
+    }
+  })
+
   it('a getter that throws while the value is read is an Err without its message', async () => {
     const keyset = (await cipher()).defaultKeyset()
     const hostile = {
