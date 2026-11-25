@@ -1,7 +1,8 @@
-//! Oracle tests for [`Client::send_chunked`]: every spec gets the key derived
-//! from its own response, for any batch size, request size, concurrency and
-//! response order, for all three operations, and every failure fails the
-//! whole call cleanly.
+//! Oracle tests for `Client::send_chunked`, through the three public
+//! operations that call it: every spec gets the key derived from its own
+//! response, for any batch size, request size, concurrency and response
+//! order, for all three operations, and every failure fails the whole call
+//! cleanly.
 //!
 //! The fake connection answers each key with material computed from that
 //! key's IV, so the right key for every spec can be computed directly:
@@ -27,7 +28,10 @@
 
 use proptest::prelude::*;
 use sha2::{Digest, Sha256};
-use stack_kms::*;
+use stack_kms::{
+    Client, ClientKey, ClientOpts, DataKey, GenerateKeyError, GenerateKeyPayload, RetrieveKeyError,
+    RetrieveKeyPayload, ZeroKMSConnection, ZeroKMSConnectionInit,
+};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::future::Future;
