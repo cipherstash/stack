@@ -35,6 +35,14 @@ the outgoing value. This crate supplies both sides of that conversion:
   keyed by the environment and released by an environment cleanup hook; the
   addon's instance data is untouched.
 
+Two TypeScript declaration files describe the JavaScript side, for an
+addon's own declarations to import. They declare types only:
+
+- **`src/wrappers.d.ts`** — the wrapper classes, as `src/wrappers.js`
+  defines them.
+- **`src/values.d.ts`** — the values `JsRef` reads as a scalar, the type
+  `JsBuilder` builds for each, and the type each scalar kind decrypts to.
+
 ## Run a Node example
 
 This crate supplies Rust building blocks for a Node addon. The

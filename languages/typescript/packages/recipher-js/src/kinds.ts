@@ -7,7 +7,8 @@
  * type. The kind's TypeScript type records the type of the kind's values.
  * An integer kind's values are a `bigint` at every width.
  */
-import type { OpenedJson, VcDate, VcDecimal, VcTimestamp } from './value-types'
+import type { ScalarKinds } from '../value-napi/src/values'
+import type { OpenedJson } from './value-types'
 
 /** A kind: the type of a value, by the engine's name for it. */
 export interface Kind<Name extends string = string, T = unknown> {
@@ -17,7 +18,15 @@ export interface Kind<Name extends string = string, T = unknown> {
   readonly __value?: T
 }
 
-function kind<Name extends string, T>(name: Name): Kind<Name, T> {
+/**
+ * The type of each kind's values: the bridge's type for each scalar kind,
+ * and a JSON document for `json`.
+ */
+type KindValues = ScalarKinds & { json: OpenedJson }
+
+function kind<Name extends keyof KindValues>(
+  name: Name,
+): Kind<Name, KindValues[Name]> {
   return Object.freeze({ name })
 }
 
@@ -30,23 +39,23 @@ export type ValueOf<K> = K extends Kind<string, infer T> ? T : never
  * text.
  */
 export const kinds = Object.freeze({
-  string: kind<'string', string>('string'),
-  boolean: kind<'bool', boolean>('bool'),
-  int8: kind<'int8', bigint>('int8'),
-  int16: kind<'int16', bigint>('int16'),
-  int32: kind<'int32', bigint>('int32'),
-  int64: kind<'int64', bigint>('int64'),
-  int128: kind<'int128', bigint>('int128'),
-  uint8: kind<'uint8', bigint>('uint8'),
-  uint16: kind<'uint16', bigint>('uint16'),
-  uint32: kind<'uint32', bigint>('uint32'),
-  uint64: kind<'uint64', bigint>('uint64'),
-  uint128: kind<'uint128', bigint>('uint128'),
-  float32: kind<'float32', number>('float32'),
-  float64: kind<'float64', number>('float64'),
-  decimal: kind<'decimal', VcDecimal>('decimal'),
-  date: kind<'date', VcDate>('date'),
-  timestamp: kind<'timestamp', Date | VcTimestamp>('timestamp'),
-  bytes: kind<'bytes', Uint8Array>('bytes'),
-  json: kind<'json', OpenedJson>('json'),
+  string: kind('string'),
+  boolean: kind('bool'),
+  int8: kind('int8'),
+  int16: kind('int16'),
+  int32: kind('int32'),
+  int64: kind('int64'),
+  int128: kind('int128'),
+  uint8: kind('uint8'),
+  uint16: kind('uint16'),
+  uint32: kind('uint32'),
+  uint64: kind('uint64'),
+  uint128: kind('uint128'),
+  float32: kind('float32'),
+  float64: kind('float64'),
+  decimal: kind('decimal'),
+  date: kind('date'),
+  timestamp: kind('timestamp'),
+  bytes: kind('bytes'),
+  json: kind('json'),
 })

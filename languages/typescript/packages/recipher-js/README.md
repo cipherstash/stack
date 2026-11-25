@@ -213,8 +213,14 @@ The tool also writes the addon's TypeScript declarations to `native.d.ts`.
 Those declarations are the package's public types.
 Each method's signature is written in Rust, in the method's `ts_type`, `ts_args_type` or `ts_return_type` attribute.
 The documentation comments on the Rust code become the declarations' documentation.
-`native-header.d.ts` is the start of `native.d.ts`: it imports the TypeScript types the signatures name, gives `Ciphertext` its type parameter, and marks `Json` so that no other object type-checks as one.
+`native-header.d.ts` is the start of `native.d.ts`: it imports the TypeScript types the signatures name, declares the wrapper classes the addon exports, gives `Ciphertext` its type parameter, and marks `Json` so that no other object type-checks as one.
 The modules it imports types from never load the addon, so the declarations never import themselves.
+
+The value bridge has TypeScript declarations of its own, beside its source.
+`value-napi/src/wrappers.d.ts` declares the wrapper classes that `wrappers.js` defines.
+`value-napi/src/values.d.ts` declares which JavaScript values the bridge reads, and the type each one decrypts to.
+The package's TypeScript uses these declarations, and adds only what the SDK decides: which values `encrypt` takes, and JSON documents.
+A unit test checks `wrappers.d.ts` against `wrappers.js`, and a Rust test checks the kinds in `values.d.ts` against the engine's kinds.
 `native.d.ts` is committed.
 
 Each native method returns a `Result` itself.
