@@ -1008,7 +1008,16 @@ Each phase 2 step is published as a pre-release too.
 
 ## Decisions
 
-None is open.
+Open:
+
+- **A method called without its object (#1801).** When Rust returns each
+  `Result`, the hand-written TypeScript layer over the native classes can
+  go. But a method taken off its object, as in
+  `stored.map(cipher.decrypt)`, then throws `TypeError: Illegal
+  invocation`: the JavaScript engine checks `this` before any Rust runs.
+  Either "no call throws" excludes this case, or each instance method gets
+  a getter that returns it bound to its object, which costs a `bind` on
+  each read and a little per-method code.
 
 Decided on 2026-11-23:
 
@@ -1038,6 +1047,17 @@ Decided on 2026-11-23:
   keeps `Result`, the declaration types and the typed signatures.
 - A context follows ADR-0016: policies, labels and partitions, with the
   engine's wire names. Parts attach to the keyset with `with(..)`.
+
+Decided on 2026-11-25:
+
+- The value bridge is `recipher-value-napi`, an unpublished crate in this
+  repository, copied from vitaminc's `vitaminc-aead-napi`. Its refusals
+  are typed diagnostics.
+- An error is the engine's whole diagnostic: `code`, `message`, `help`,
+  `url`, `severity`, `fields` and `causes`, with `field` and `record`
+  added by the SDK. A refusal's reason is in `fields`.
+- An error has no `kind`. A caller switches on `code`, as in every
+  language SDK, so no grouping has to be kept in step across languages.
 
 ## What was checked
 
