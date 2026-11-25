@@ -1513,13 +1513,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A decrypt of a batch with more than one row refused before any key is
     requested reports the first of those rows in the order they are
     opened: row order, with the rows that leave out the same fields taken
-    together, in the order the first of them appears. Before, a row whose
-    stored values the plan refused (a value of the wrong kind, or a
-    context that is not the expected one) was reported ahead of a row
-    whose context was refused as it was opened, wherever each row was.
-    This is so in a native build too. In a `wasm32` build the error comes
-    after the yields of the chunks before that row, still with no key
-    requested.
+    together, in the order the first of them appears. Before, within one
+    such group of rows, a row whose stored values the plan refused (a
+    value of the wrong kind, or a context that is not the expected one)
+    was reported ahead of an earlier row whose context was refused as it
+    was opened. Across groups the order was already the order above, and
+    does not change. This is so in a native build too. In a `wasm32` build
+    the error comes after the yields of the chunks before that row, still
+    with no key requested.
 - **With `MatchOptions::short_words` on, a query asks for its short words
   only when its whole text is shorter than one n-gram** (#1398). Before
   this fix, "Mike Ng" did not find "Mike Nguyen". "san fr" did not find

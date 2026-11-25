@@ -745,8 +745,9 @@ impl<'a, R, T: 'a, K> BatchRows<'a, R, T, K> {
     }
 
     /// Build rows in order through `row`, until the rows this call built
-    /// ask for `budget` data keys or more, as a column weighs its items
-    /// between yields ([`YIELD_EVERY`]). A row that asks for none weighs
+    /// make `budget` requests or more ([`Pending::key_count`]: one per
+    /// data key, and one per keyset loaded), as a column weighs its items
+    /// between yields ([`YIELD_EVERY`]). A row that makes none weighs
     /// one, so a batch of rows with no data key is chunked too. Returns
     /// whether rows are left to build.
     ///

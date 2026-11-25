@@ -178,11 +178,15 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   with more than one row refused before any request to ZeroKMS now
   reports the first of those rows in row order, with the rows that leave
   out the same optional fields taken together, in the order the first of
-  them appears. Before, a row whose stored fields did not fit the type was
-  reported ahead of a row whose context was refused, wherever each row
-  was. The error now comes after the steps that build the rows before it,
-  still with no request to ZeroKMS. Figures against a fake ZeroKMS that
-  answers after 40 ms, for 3,334 rows of 3 sealed fields (10,002 values):
+  them appears. Before, within one such group of rows, a row whose stored
+  context field was refused (not a context, or not the context the cipher
+  names) was reported ahead of an earlier row whose context was refused as
+  it was opened. Across groups the order does not change. A row whose
+  stored fields do not fit the type is still refused first, before any row
+  is built. The error now comes after the steps that build the rows before
+  it, still with no request to ZeroKMS. Figures against a fake ZeroKMS
+  that answers after 40 ms, for 3,334 rows of 3 sealed fields (10,002
+  values):
   - Encrypt: the first step takes about 27 ms, against about 450 ms
     before. Each chunk takes about 3 ms.
   - Decrypt: the first step takes about 20 ms, against about 49 ms.

@@ -65,7 +65,9 @@ enum Fulfilled<'a, T> {
 
 /// How many data keys' worth of items a column fulfils between yields, in
 /// a wasm guest, and how many a batch of records builds between them
-/// ([`in_steps`](Pending::in_steps)). `stack-kms` has its own copy (`futures::YIELD_EVERY`, for
+/// ([`in_steps`](Pending::in_steps)). Both count an item's requests
+/// ([`key_count`](Pending::key_count)): one per data key, and one per
+/// keyset it loads. `stack-kms` has its own copy (`futures::YIELD_EVERY`, for
 /// deriving keys), and the two are meant to stay equal.
 #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
 pub(crate) const YIELD_EVERY: usize = 64;
@@ -657,9 +659,10 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         )
     }
 
-    /// The data keys this pending asks for so far: the weight a column
-    /// gives it ([`YIELD_EVERY`]). A pending that is not built yet asks
-    /// for none.
+    /// How many requests this pending makes so far: one for each data key
+    /// it seals or opens, and one for each keyset it loads. A column weighs
+    /// an item by this count ([`YIELD_EVERY`]). A pending that is not built
+    /// yet makes none.
     #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
     pub(crate) fn key_count(&self) -> usize {
         self.requests.len()

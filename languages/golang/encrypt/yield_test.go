@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
@@ -66,22 +67,26 @@ func TestABigBatchYieldsAndRoundTrips(t *testing.T) {
 
 // A batch whose rows fall in two groups, because every third row leaves
 // out its optional fields, is built in chunks that run across both groups,
-// and still comes back whole and in order.
+// and still comes back whole and in order. The rows of the two groups carry
+// a different number of EQL fields, so each row must take back its own EQL
+// values: a whole row has DOB, Born and Joined, and a row that leaves out
+// its optional fields has DOB and Born. Every date is different, so a value
+// given to the wrong row or field does not come back as it was.
 //
 // The count is exact. A Person's record takes a data key for Age, Score
 // and Nick, so a whole row takes three and a row that leaves out Score and
-// Nick takes one. Its EQL fields, DOB and Born (sealed nulls here), take a
-// key each, but are not built in chunks. A batch builds group by group:
+// Nick takes one. Its EQL fields take a key each, but are not built in
+// chunks. A batch builds group by group:
 //
 //   - the build: the 200 whole rows, 22 to a chunk (66 keys), fill nine
 //     chunks. The tenth takes the last 2 whole rows and 58 of the others
 //     (64 keys), and the eleventh the last 42. Ten yields.
 //   - the sealing or opening: the whole rows' column yields nine times
 //     (after every 22 rows), the other group's column once (after 64
-//     rows), and the column of the 600 EQL fields nine times (after every
-//     64). Nineteen yields.
+//     rows), and the column of the 800 EQL fields twelve times (after every
+//     64). Twenty-two yields.
 func TestABigBatchInTwoGroupsYieldsAndRoundTrips(t *testing.T) {
-	const wantYields = 10 + 19
+	const wantYields = 10 + 22
 	c := deterministicEQLClient(t)
 	ctx := context.Background()
 	cipher := c.DefaultKeyset()
@@ -89,10 +94,14 @@ func TestABigBatchInTwoGroupsYieldsAndRoundTrips(t *testing.T) {
 
 	rows := make([]testusers.Person, 300)
 	for i := range rows {
-		rows[i] = testusers.Person{ID: int64(i), Age: ptr(int32(i))}
+		day := func(year int) *encrypt.Date {
+			return &encrypt.Date{Year: year + i, Month: time.Month(1 + i%12), Day: 1 + i%28}
+		}
+		rows[i] = testusers.Person{ID: int64(i), Age: ptr(int32(i)), DOB: day(1600), Born: day(1300)}
 		if i%3 != 2 {
 			rows[i].Score = ptr(int64(i))
 			rows[i].Nick = ptr(fmt.Sprintf("nick-%03d", i))
+			rows[i].Joined = day(1000)
 		}
 	}
 	encrypted, err := testusers.EncryptPerson(ctx, cipher, rows)
@@ -102,8 +111,8 @@ func TestABigBatchInTwoGroupsYieldsAndRoundTrips(t *testing.T) {
 	if n := yields.Swap(0); n != wantYields {
 		t.Errorf("sealing 300 rows in two groups yielded %d times, want %d", n, wantYields)
 	}
-	if encrypted[1].Score == nil || encrypted[2].Score != nil || encrypted[2].Nick != nil {
-		t.Fatalf("every third row leaves out Score and Nick, and the others store them: %+v, %+v", encrypted[1], encrypted[2])
+	if encrypted[1].Score == nil || encrypted[1].Joined == nil || encrypted[2].Score != nil || encrypted[2].Nick != nil || encrypted[2].Joined != nil {
+		t.Fatalf("every third row leaves out Score, Nick and Joined, and the others store them: %+v, %+v", encrypted[1], encrypted[2])
 	}
 	back, err := testusers.DecryptPerson(ctx, cipher, encrypted)
 	if err != nil {
