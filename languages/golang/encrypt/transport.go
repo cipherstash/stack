@@ -98,28 +98,30 @@ func (t *transport) fetchToken(ctx context.Context) (string, error) {
 // or transportFailed with the error text as the body.
 func (t *transport) perform(ctx context.Context, method, url string, headers, body []byte) (int32, []byte, []byte) {
 	t.sends.Add(1)
-	// The request body may carry key-material contexts; it is copied
-	// because the caller wipes its own copy when the step ends, and the
-	// RoundTripper may read it after this function has. The copy is owned
-	// by the request body handed to the RoundTripper and is wiped when that
-	// body is closed — not here: RoundTrip may go on reading, and close,
-	// in another goroutine after it has returned, on the error path
-	// included, and a wipe racing that send would put a truncated or
-	// zeroed request on the wire.
-	reqBody := newRequestBody(body)
-	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
+	// The request body may carry key-material contexts. The RoundTripper
+	// reads copies of it (replaySource), never the caller's slice, because
+	// the caller wipes that when the step ends and the RoundTripper may go
+	// on reading after RoundTrip has returned. Each copy is wiped when it is
+	// closed. When this function returns, the copies the transport can no
+	// longer send are closed too (replaySource.end).
+	replay := &replaySource{body: body}
+	answered := false
+	defer func() { replay.end(answered) }()
+	req, err := http.NewRequestWithContext(ctx, method, url, replay.first())
 	if err != nil {
-		_ = reqBody.Close()
 		return transportFailed, nil, []byte(err.Error())
 	}
 	// NewRequest only infers a length from the readers it knows; without
 	// one the transport would send the body chunked.
 	req.ContentLength = int64(len(body))
+	req.GetBody = replay.open
 	req.Header = parseHeaders(headers)
 	resp, err := t.rt.RoundTrip(req)
+	replay.stop()
 	if err != nil {
 		return transportFailed, nil, []byte(err.Error())
 	}
+	answered = true
 	defer resp.Body.Close()
 	// A caller's RoundTripper can return any int; the guest gets an i32.
 	if resp.StatusCode < 100 || resp.StatusCode > 999 {
@@ -145,20 +147,12 @@ func (t *transport) perform(ctx context.Context, method, url string, headers, bo
 	return int32(resp.StatusCode), encodeHeaders(resp.Header), respBody //nolint:gosec // range-checked above
 }
 
-// requestBody is the io.ReadCloser a guest request goes out as. It owns
-// the host copy of the body and wipes it on Close, the one point at which
-// the RoundTripper contract says the transport is done with it: RoundTrip
-// must close the body, but may do so in another goroutine after it has
-// returned, so nothing this side can wipe any earlier without racing the
-// send. Read and Close are serialised for the same reason. A transport
-// that never closes the body leaves it to the collector, as any body it
-// was handed; a Close before the send is complete fails the read rather
-// than sending zeros in place of the request.
-//
-// A body of this type has no GetBody, so net/http cannot replay the
-// request on a reused connection that turns out to be dead. Replay would
-// need the plaintext to outlive Close, and the guest only ever POSTs,
-// which net/http does not replay in any case.
+// requestBody is the io.ReadCloser a guest request goes out as: one copy of
+// the body, which it wipes on Close. RoundTrip must close the body, but may
+// do so in another goroutine after it has returned, so Read and Close are
+// serialised, and a Close before the send is complete fails the read
+// rather than sending zeros in place of the request. A copy the transport
+// does not close is closed when the request ends (replaySource).
 type requestBody struct {
 	mu     sync.Mutex
 	buf    []byte
@@ -198,6 +192,85 @@ func (b *requestBody) Close() error {
 		b.closed = true
 	}
 	return nil
+}
+
+// replaySource hands out a request's bodies: the first, and one more for
+// each call of the request's GetBody, each a copy of its own wiped when it
+// is closed. net/http calls GetBody to send a request again on a new
+// connection. HTTP/2 does so for any method when the server closes the
+// connection with a GOAWAY that says the request was not processed, which
+// ZeroKMS does after a fixed number of requests on a connection. Without
+// GetBody those requests failed.
+//
+// A transport can also ask for a copy and drop it unsent: after a GOAWAY,
+// HTTP/2 rewinds the request through GetBody, and rewinds it again when the
+// connection pool it then asks refuses. So the source keeps every copy it
+// handed out, for end to close.
+//
+// It reads the caller's copy of the body, which stays whole until perform
+// returns. perform stops the source as soon as RoundTrip returns, so a
+// GetBody after that fails rather than make another copy. The standard
+// transports call GetBody only inside RoundTrip.
+type replaySource struct {
+	mu      sync.Mutex
+	body    []byte
+	stopped bool
+	copies  []*requestBody
+}
+
+var errRequestReplayEnded = errors.New("encrypt: request body asked for again after the request ended")
+
+// first is the body the request goes out with.
+func (s *replaySource) first() *requestBody {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.copy()
+}
+
+// open is the request's GetBody.
+func (s *replaySource) open() (io.ReadCloser, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopped {
+		return nil, errRequestReplayEnded
+	}
+	return s.copy(), nil
+}
+
+// copy makes a copy and keeps it to close at the end. s.mu is held.
+func (s *replaySource) copy() *requestBody {
+	b := newRequestBody(s.body)
+	s.copies = append(s.copies, b)
+	return b
+}
+
+// stop lets go of the caller's body: no GetBody reads it after this.
+func (s *replaySource) stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopped, s.body = true, nil
+}
+
+// end stops the source and closes, so wipes, the copies the transport can
+// no longer send. Once the server has answered, that is every copy, sent,
+// dropped or never closed. When RoundTrip failed it is every copy but the
+// last: a rewind replaces the request's body, so only the last copy can
+// still be read, and the transport may go on reading it after RoundTrip
+// has returned. That one is wiped when the transport closes it. Closing a
+// copy mid-send fails its next read rather than sending zeros, so the wire
+// never carries a wiped request.
+func (s *replaySource) end(answered bool) {
+	s.stop()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	done := s.copies
+	if !answered && len(done) > 0 {
+		done = done[:len(done)-1]
+	}
+	for _, b := range done {
+		_ = b.Close()
+	}
+	s.copies = nil
 }
 
 // tokenGet is token_get: hand the guest the token fetched for this step.

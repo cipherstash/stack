@@ -410,6 +410,165 @@ func TestRequestBodyOutlivesTheRoundTrip(t *testing.T) {
 	}
 }
 
+// A request net/http sends again, as HTTP/2 does after a GOAWAY that says
+// the server did not process it, reads the same bytes from GetBody, each
+// time from a copy of its own that is wiped when it is closed. GetBody
+// fails once the request has ended.
+func TestARequestSentAgainReadsTheSameBodyFromGetBody(t *testing.T) {
+	want := []byte(`{"keys":["a","b"]}`)
+	var getBody func() (io.ReadCloser, error)
+	var again []*requestBody
+	tr := &transport{rt: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		first, err := io.ReadAll(r.Body)
+		_ = r.Body.Close()
+		if err != nil || !bytes.Equal(first, want) {
+			return nil, fmt.Errorf("first send: %q, %v", first, err)
+		}
+		if r.GetBody == nil {
+			return nil, errors.New("no GetBody: the request cannot be sent again")
+		}
+		for range 2 {
+			b, err := r.GetBody()
+			if err != nil {
+				return nil, fmt.Errorf("GetBody: %w", err)
+			}
+			got, err := io.ReadAll(b)
+			_ = b.Close()
+			if err != nil || !bytes.Equal(got, want) {
+				return nil, fmt.Errorf("sent again: %q, %v", got, err)
+			}
+			rb, ok := b.(*requestBody)
+			if !ok {
+				return nil, fmt.Errorf("GetBody's body is %T, want *requestBody", b)
+			}
+			again = append(again, rb)
+		}
+		getBody = r.GetBody
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok")), Header: http.Header{}}, nil
+	})}
+	status, _, resp := tr.perform(context.Background(), http.MethodPost, "http://zerokms.invalid/retrieve-data-key", nil, bytes.Clone(want))
+	if status != http.StatusOK {
+		t.Fatalf("status %d: %s", status, resp)
+	}
+	for i, rb := range again {
+		if !bytes.Equal(rb.buf, make([]byte, len(rb.buf))) {
+			t.Errorf("copy %d was not wiped on Close", i)
+		}
+	}
+	if _, err := getBody(); !errors.Is(err, errRequestReplayEnded) {
+		t.Errorf("GetBody after the request ended: %v, want errRequestReplayEnded", err)
+	}
+}
+
+// A transport may ask for the body again and then drop the copy unsent:
+// HTTP/2's retry after a GOAWAY does, when the pool it asks for a
+// connection refuses (ErrSkipAltProtocol) and the request is rewound once
+// more. A copy nobody closes is still wiped when the request ends, as is a
+// first body the transport read and did not close.
+func TestEveryCopyOfARequestBodyIsWipedWhenTheRequestEnds(t *testing.T) {
+	want := []byte(`{"keys":["a","b"]}`)
+	var copies []*requestBody
+	tr := &transport{rt: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if _, err := io.ReadAll(r.Body); err != nil {
+			return nil, err
+		}
+		first, ok := r.Body.(*requestBody)
+		if !ok {
+			return nil, fmt.Errorf("the body is %T, want *requestBody", r.Body)
+		}
+		copies = append(copies, first)
+		for range 2 {
+			b, err := r.GetBody()
+			if err != nil {
+				return nil, fmt.Errorf("GetBody: %w", err)
+			}
+			copies = append(copies, b.(*requestBody))
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok")), Header: http.Header{}}, nil
+	})}
+	status, _, resp := tr.perform(context.Background(), http.MethodPost, "http://zerokms.invalid/retrieve-data-key", nil, bytes.Clone(want))
+	if status != http.StatusOK {
+		t.Fatalf("status %d: %s", status, resp)
+	}
+	if len(copies) != 3 {
+		t.Fatalf("%d copies, want 3", len(copies))
+	}
+	for i, rb := range copies {
+		if !bytes.Equal(rb.buf, make([]byte, len(rb.buf))) {
+			t.Errorf("copy %d still holds the request after it ended", i)
+		}
+		if _, err := rb.Read(make([]byte, 1)); !errors.Is(err, errRequestBodyClosed) {
+			t.Errorf("copy %d reads %v after the request ended, want errRequestBodyClosed", i, err)
+		}
+	}
+}
+
+// When RoundTrip fails, the copies a rewind replaced are wiped, and the last
+// one stays whole: the transport may still be sending it.
+func TestAFailedRequestWipesTheCopiesItReplacedAndKeepsTheLast(t *testing.T) {
+	want := []byte(`{"keys":["a"]}`)
+	var copies []*requestBody
+	tr := &transport{rt: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		copies = append(copies, r.Body.(*requestBody))
+		for range 2 {
+			b, err := r.GetBody()
+			if err != nil {
+				return nil, fmt.Errorf("GetBody: %w", err)
+			}
+			copies = append(copies, b.(*requestBody))
+		}
+		return nil, errors.New("connection reset")
+	})}
+	status, _, _ := tr.perform(context.Background(), http.MethodPost, "http://zerokms.invalid/retrieve-data-key", nil, bytes.Clone(want))
+	if status != transportFailed {
+		t.Fatalf("status %d, want transportFailed", status)
+	}
+	for i, rb := range copies[:2] {
+		if !bytes.Equal(rb.buf, make([]byte, len(rb.buf))) {
+			t.Errorf("replaced copy %d still holds the request", i)
+		}
+	}
+	last := copies[2]
+	got, err := io.ReadAll(last)
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("the last copy reads %q, %v; want the request", got, err)
+	}
+	_ = last.Close()
+	if !bytes.Equal(last.buf, make([]byte, len(last.buf))) {
+		t.Error("the last copy was not wiped on Close")
+	}
+}
+
+// GetBody is for the transport, inside RoundTrip. Once RoundTrip has
+// returned, while the response is still being read, it hands out no more
+// copies of the request.
+func TestGetBodyFailsOnceRoundTripHasReturned(t *testing.T) {
+	var getBody func() (io.ReadCloser, error)
+	var during error
+	tr := &transport{rt: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		_, _ = io.ReadAll(r.Body)
+		_ = r.Body.Close()
+		getBody = r.GetBody
+		body := readFunc(func(p []byte) (int, error) {
+			_, during = getBody()
+			return 0, io.EOF
+		})
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: http.Header{}}, nil
+	})}
+	status, _, resp := tr.perform(context.Background(), http.MethodPost, "http://zerokms.invalid/retrieve-data-key", nil, []byte("{}"))
+	if status != http.StatusOK {
+		t.Fatalf("status %d: %s", status, resp)
+	}
+	if !errors.Is(during, errRequestReplayEnded) {
+		t.Errorf("GetBody while the response was read: %v, want errRequestReplayEnded", during)
+	}
+}
+
+// readFunc is an io.Reader from a function.
+type readFunc func([]byte) (int, error)
+
+func (f readFunc) Read(p []byte) (int, error) { return f(p) }
+
 // failingReader fails every read.
 type failingReader struct{ err error }
 
