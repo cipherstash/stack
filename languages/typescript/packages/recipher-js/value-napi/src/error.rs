@@ -18,20 +18,20 @@ pub enum Refusal {
     #[error(
         "a Map, a Set, a class instance or another object that is not plain cannot be encrypted"
     )]
-    #[diagnostic(code(recipher::not_plain), help("Make it a plain object first."))]
+    #[diagnostic(code(recipher_js::not_plain), help("Make it a plain object first."))]
     NotPlain,
     /// A property named `__proto__`, `constructor` or `prototype`.
     #[error("an object has a property named `__proto__`, `constructor` or `prototype`, which is refused in both directions")]
-    #[diagnostic(code(recipher::reserved_key))]
+    #[diagnostic(code(recipher_js::reserved_key))]
     ReservedKey,
     /// A value nested past [`MAX_DEPTH`](crate::MAX_DEPTH).
     #[error("the value is nested deeper than 128 levels")]
-    #[diagnostic(code(recipher::too_deep))]
+    #[diagnostic(code(recipher_js::too_deep))]
     TooDeep,
     /// An array with a hole.
     #[error("an array has a hole")]
     #[diagnostic(
-        code(recipher::sparse_array),
+        code(recipher_js::sparse_array),
         help("Write `undefined` or `null` where a value is missing.")
     )]
     SparseArray,
@@ -39,21 +39,21 @@ pub enum Refusal {
     #[error(
         "only a Buffer or a Uint8Array is bytes; another typed array or a DataView is refused"
     )]
-    #[diagnostic(code(recipher::not_bytes))]
+    #[diagnostic(code(recipher_js::not_bytes))]
     NotBytes,
     /// A function, a symbol or another type with no value in the model.
     #[error("a function, a symbol or another type JavaScript has no value of cannot be encrypted")]
-    #[diagnostic(code(recipher::not_a_value))]
+    #[diagnostic(code(recipher_js::not_a_value))]
     NotAValue,
     /// A property removed while its object was being read.
     #[error("an object changed while it was read")]
-    #[diagnostic(code(recipher::changed_while_read))]
+    #[diagnostic(code(recipher_js::changed_while_read))]
     ChangedWhileRead,
     /// A string or a property name with an unpaired surrogate.
     #[error(
         "a string or a property name has an unpaired surrogate, so it has no exact UTF-8 form"
     )]
-    #[diagnostic(code(recipher::unpaired_surrogate))]
+    #[diagnostic(code(recipher_js::unpaired_surrogate))]
     UnpairedSurrogate,
     /// A scalar outside what its type holds. A `TypeError` with the same
     /// code is pending in JavaScript.
@@ -269,7 +269,7 @@ mod tests {
                 // with.
                 Refusal::Scalar(scalar) => assert_eq!(code, scalar.code()),
                 _ => {
-                    let name = code.strip_prefix("recipher::").expect("the namespace");
+                    let name = code.strip_prefix("recipher_js::").expect("the namespace");
                     assert!(
                         !name.is_empty()
                             && name.chars().all(|c| c.is_ascii_lowercase() || c == '_'),

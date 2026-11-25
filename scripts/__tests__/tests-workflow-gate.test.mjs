@@ -172,6 +172,29 @@ const READS_EXCLUDED = new Map([
 ])
 
 /**
+ * Excluded packages whose own suites run in a workflow of their own, which
+ * every change to the package starts. A file inside one of them reading a
+ * path inside the same package is not a hole: a pull request changing only
+ * that package skips the live jobs, and the package's workflow runs the
+ * suites instead. A read across packages still counts.
+ */
+const SELF_TESTED = new Map([
+  [
+    'languages/typescript/packages/recipher-js',
+    {
+      workflow: '.github/workflows/tests-recipher-js.yml',
+      runs: /turbo run test --filter @cipherstash\/recipher(\s|$)/,
+    },
+  ],
+])
+
+/** The SELF_TESTED package that holds both `file` and `target`, if any. */
+const selfRead = (file, target) =>
+  [...SELF_TESTED.keys()].some(
+    (root) => file.startsWith(`${root}/`) && target.startsWith(`${root}/`),
+  )
+
+/**
  * The directories a relative literal in `file` may be resolved from: its own,
  * and each one above it up to its package root (the nearest `package.json`).
  * Code joins from either; the protect-ffi suites join
@@ -244,7 +267,10 @@ function readsOfExcludedPaths() {
         }
         const hit = targets.find(
           (target) =>
-            !target.startsWith('..') && target !== '.' && skipsPath(target),
+            !target.startsWith('..') &&
+            target !== '.' &&
+            skipsPath(target) &&
+            !selfRead(file, target),
         )
         if (hit) found.push({ file, line: idx + 1, value, hit })
       }
@@ -286,6 +312,20 @@ describe('tests.yml — what the gate skips, no live job reads', () => {
       ]),
     )
   })
+
+  it.each([...SELF_TESTED])(
+    '%s is excluded, and its own workflow runs its suites',
+    (root, { workflow, runs }) => {
+      expect(skipsPath(`${root}/src/index.ts`)).toBe(true)
+      const steps = Object.values(readWorkflow(workflow).jobs)
+        .flatMap((job) => job.steps ?? [])
+        .map((candidate) => String(candidate.run ?? ''))
+        .join('\n')
+      expect(steps).toMatch(runs)
+      const paths = readWorkflow(workflow).on.pull_request.paths
+      expect(paths).toContain(`${root}/**`)
+    },
+  )
 
   it('the readers it excuses as ungated do run in repo-checks', () => {
     const runs = wf.jobs['repo-checks'].steps

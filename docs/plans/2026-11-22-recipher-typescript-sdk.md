@@ -243,14 +243,20 @@ they share can be seen.
 generates their TypeScript types, and the generated file is committed and
 checked for drift in CI, as `@cipherstash/auth`'s `native.d.ts` is. There
 is no hand-written description of the native interface, and no TypeScript
-class that wraps a native one. TypeScript holds only what Rust cannot
-express:
+class that wraps a native one. Each native method returns the `Result`
+itself: the package's TypeScript hands the addon its `Ok`, `Err` and
+`RecipherError` classes once, when it loads the addon, and Rust builds
+`new Ok(value)` or `new Err(error)`. Each method's public signature is
+written in Rust, in napi-rs's `ts_type` attribute, one overload per line,
+and the generated `native.d.ts` is the public type. A small header that
+napi-rs puts at the top of that file gives `Ciphertext` its type
+parameter. TypeScript holds only what Rust cannot express:
 
 - `Result` and its methods, because `isOk()` narrows a type;
 - the types of a declaration, such as `Plaintext<..>` and `Stored<..>`,
-  and the compile-time checks of a query;
-- the typed signatures over the Rust methods, such as one value in and
-  one out, an array in and an array out.
+  and the compile-time checks of a query, which the signatures in Rust
+  name;
+- the loader, and stand-in classes for when the addon did not load.
 
 **The crate uses the engine's and vitaminc's types.** It does not wrap
 `ValueFrame`, a ciphertext or an error in a type of its own. A type that
@@ -307,7 +313,8 @@ This is plain encryption, with no context. It is the engine's
 
 - **One value in, one ciphertext out.** The next section encrypts an
   array.
-- **No call throws.** Every call resolves to a `Result`. See
+- **No call throws, apart from a method called without its object.**
+  Every call resolves to a `Result`. See
   [Results and errors](#results-and-errors).
 - **The value's type picks how it is encrypted.** A `string` is encrypted
   as text, a `boolean` as a boolean, a `number` as a float, a `bigint` as
@@ -583,7 +590,7 @@ So no JSON text of a row crosses the boundary.
 | `VcTimestamp("2026-11-23T01:02:03.000000001Z")` | a timestamp, in nanoseconds | `Date` when it is whole milliseconds, else `VcTimestamp` |
 | `VcDate("2026-11-23")` | a calendar date | `VcDate` |
 | `VcDecimal("1.50")` | a decimal, with its scale | `VcDecimal` |
-| `VcUuid("..")` | refused for now, with `recipher::uuid` | |
+| `VcUuid("..")` | refused for now, with `recipher_js::uuid` | |
 | `null` | null | `null`. In a record, only where the field declares `null` |
 
 - **Integers are a `bigint`.** A `number` is a float, and `5` does not
@@ -606,8 +613,8 @@ So no JSON text of a row crosses the boundary.
   limited to 128 levels. A polluted prototype cannot add a key or see a
   decrypted value.
 - **A failed conversion is an `Err`.** The bridge reports which rule a
-  value broke as a typed refusal, a diagnostic with a `recipher::` code,
-  such as `recipher::not_plain` or `recipher::too_deep`. A scalar out of
+  value broke as a typed refusal, a diagnostic with a `recipher_js::` code,
+  such as `recipher_js::not_plain` or `recipher_js::too_deep`. A scalar out of
   range keeps its own code, such as `ERR_INTEGER_RANGE`. The SDK returns
   either as an `Err` with that code.
 
@@ -726,9 +733,11 @@ const byEmail = await keyset.query(users, { field: "email", op: "eq", value: "ad
 
 ## Results and errors
 
-No call throws, and no promise the SDK returns rejects. Every call
-resolves to a `Result<T, RecipherError>`, as a Rust call returns one.
-`Cipher.create` does too.
+No promise the SDK returns rejects. Every call returns, or resolves to, a
+`Result<T, RecipherError>`, as a Rust call returns one. `Cipher.create`
+does too. One case throws: a method called without its object, as in
+`stored.map(cipher.decrypt)`. The JavaScript engine throws a `TypeError`
+before any of the SDK's code runs (#1801).
 
 ```ts
 const sealed = await keyset.encrypt("a secret message");
@@ -768,13 +777,16 @@ const bytes = sealed.map((ciphertext) => ciphertext.toBytes()).unwrapOr(null);
   a grouping the SDK made up would have to be kept in step with every
   engine error, in every language. The SDK's own errors (a value that is
   not a record, a build that did not load) are diagnostics too, declared
-  the way the engine declares its own, with codes under `recipher::`. The
+  the way the engine declares its own, with codes under `recipher_js::`,
+  named after the crate as the engine's are, so that no SDK code can clash
+  with an engine code when the engine takes the name `recipher`. The
   value bridge says which rule a refused value broke as a typed value, so
   nothing reads the wording of a message.
-- **Nothing escapes as an exception.** A failure in the binding, such as a
-  build that does not load, is an `Err` too. A test passes each call a
-  wrong argument and a failing key service, and asserts that none throws
-  or rejects.
+- **Nothing else escapes as an exception.** A failure in the binding,
+  such as a build that does not load, is an `Err` too. A test passes each
+  call a wrong argument and a failing key service, and asserts that none
+  throws or rejects. Another asserts that a method called without its
+  object throws a `TypeError`, so the one exception stays documented.
 - **No error holds a secret.** No message, property or `toString()` holds
   a plaintext, a key, a token, a ciphertext or a context value. A
   decrypted row's `inspect` output names its fields and hides their
@@ -902,7 +914,9 @@ these rules are checked then.
   operator a field cannot answer, and an EQL type
   against a cipher without the extension do not compile.
 - **Nothing throws.** Every call is run with a wrong argument, a failing
-  key service and an aborted signal. Each must resolve to an `Err`.
+  key service and an aborted signal. Each must resolve to an `Err`. A
+  method called without its object is the exception: it throws a
+  `TypeError`, and a test says so.
 - **Extension versions.** A build with another binding interface number is
   refused by `Cipher.create`, and two EQL builds with the same number both
   load.
@@ -1025,17 +1039,6 @@ Each phase 2 step is published as a pre-release too.
 
 ## Decisions
 
-Open:
-
-- **A method called without its object (#1801).** When Rust returns each
-  `Result`, the hand-written TypeScript layer over the native classes can
-  go. But a method taken off its object, as in
-  `stored.map(cipher.decrypt)`, then throws `TypeError: Illegal
-  invocation`: the JavaScript engine checks `this` before any Rust runs.
-  Either "no call throws" excludes this case, or each instance method gets
-  a getter that returns it bound to its object, which costs a `bind` on
-  each read and a little per-method code.
-
 Decided on 2026-11-23:
 
 - The adapters' new majors wait for `recipher-compat`. No customer
@@ -1061,7 +1064,8 @@ Decided on 2026-11-23:
 - Two Rust crates, the addon and the value bridge, until the wasm build
   needs more.
 - Rust defines the classes and napi-rs generates their types. TypeScript
-  keeps `Result`, the declaration types and the typed signatures.
+  keeps `Result` and the declaration types. (The typed signatures moved
+  into Rust's `ts_type` attributes on 2026-11-25.)
 - A context follows ADR-0016: policies, labels and partitions, with the
   engine's wire names. Parts attach to the keyset with `with(..)`.
 
@@ -1075,6 +1079,13 @@ Decided on 2026-11-25:
   added by the SDK. A refusal's reason is in `fields`.
 - An error has no `kind`. A caller switches on `code`, as in every
   language SDK, so no grouping has to be kept in step across languages.
+- A method called without its object, as in `stored.map(cipher.decrypt)`,
+  throws a `TypeError` (#1801). The JavaScript engine checks the object
+  before any Rust runs, and no napi-rs setting turns the check off.
+  Everything else, a wrong argument included, is an `Err`. So Rust
+  returns each `Result` itself, and the TypeScript layer that wrapped
+  each native method, and the hand-written interfaces that typed it, are
+  gone.
 
 ## What was checked
 
