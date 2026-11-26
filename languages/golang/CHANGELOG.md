@@ -20,7 +20,7 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   for a missing keyset, and for a client with no access to one: both are
   `ErrNotFound`.
 - The `KeysetName` doc and the README give the keyset naming rules: 1 to 64
-  bytes of `A-Z a-z 0-9 _ - /`, case-sensitive. `KeysetName("default")`
+  characters of `A-Z a-z 0-9 _ - /`, case-sensitive. `KeysetName("default")`
   selects the workspace's default keyset.
 
 ## [0.1.0-rc.7] - 2026-11-25

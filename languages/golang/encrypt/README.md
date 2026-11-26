@@ -286,22 +286,29 @@ keyset on a client fails as follows:
 |---|---|---|
 | No keyset in the workspace has the name or id | `ErrNotFound` | `stack_kms::keyset_not_found` |
 | The keyset exists, but the client has no grant for it | `ErrNotFound` | `stack_kms::keyset_not_found` |
+| ZeroKMS does not know the client id in `CS_CLIENT_ID` | `ErrNotFound` | `stack_kms::keyset_not_found` |
 | The keyset is disabled | `ErrForbidden` | `stack_kms::load_keyset_forbidden` |
+| The credential's role does not allow it to retrieve keys | `ErrForbidden` | `stack_kms::load_keyset_forbidden` |
 | The name breaks the rules in [Keyset names](#keyset-names) | `ErrEncoding` | no ZeroKMS code: the SDK refuses the name before any request |
 
-A missing keyset and a missing grant give the same error, because ZeroKMS
-answers both with "not found". So when you see `ErrNotFound`, check that the
-keyset exists, and then check that the client has a grant for it. The
-error's `Help` says to check the name, and does not mention a grant: #1897
-proposes to change that.
+ZeroKMS answers "not found" for all three causes of `ErrNotFound`. So when
+you see `ErrNotFound`, check these in order:
+
+1. `CS_CLIENT_ID` names a client in the workspace.
+2. The keyset exists.
+3. The client has a grant for the keyset.
+
+The error's `Help` says to check the client id and the keyset's name. It
+does not mention a grant. #1897 proposes to change that.
 
 A later call that asks ZeroKMS for data keys can return `ErrForbidden`,
 with the code `stack_kms::retrieve_key_failed`. A client with no grant is
 one cause, as #1893 reports. Other causes give the same error and code.
 
-The `encrypttest` client accepts every keyset name and needs no grant. So
-these errors do not occur in a test that uses it. See
-[Testing your application](#testing-your-application).
+In the `encrypttest` client, every keyset exists and needs no grant. So a
+test that uses it never gets `ErrNotFound` or `ErrForbidden` for a keyset.
+A name that breaks the rules still fails with `ErrEncoding`, as it does in
+production. See [Testing your application](#testing-your-application).
 
 #### Keyset names
 
@@ -321,9 +328,9 @@ the name broke. #1905 proposes to change that.
 Names are case-sensitive: `KeysetName("Tenant42")` and
 `KeysetName("tenant42")` name different keysets.
 
-`KeysetName("default")` selects the workspace's default keyset.
-`Client.DefaultKeyset()` selects the client's default keyset. The two are
-the same keyset unless the client was created with another default keyset.
+`KeysetName("default")` selects the workspace's default keyset. That is the
+same keyset as [`Client.DefaultKeyset()`](#the-cipher) unless the client was
+created with another default keyset.
 
 Users report that the dashboard refuses a hyphen in a keyset name (#1865).
 So a keyset that you create in the dashboard has no hyphen in its name, even
@@ -1097,8 +1104,11 @@ ZeroKMS. An EQL v4 column accepts its values, and its query terms match them.
 It fails as a production client fails. A cipher refuses another keyset's
 value with `ErrForeignKeyset`. A wrong context fails with `ErrForbidden`.
 
-Every keyset exists, so a test selects any name or id with nothing to
-create. A test therefore never sees `ErrNotFound` for a missing keyset.
+Every keyset exists, so a test selects any valid name or id with nothing to
+create. A test therefore never gets `ErrNotFound` for a missing keyset. A
+name that breaks the [keyset naming rules](#keyset-names) still fails with
+`ErrEncoding`. In production, a client can use only a keyset that exists and
+that it has a grant for: see [Keysets](#keysets).
 
 Every client with the default seed opens what another sealed, in any test
 process. `encrypttest.WithSeed` chooses another seed. A seed changes the

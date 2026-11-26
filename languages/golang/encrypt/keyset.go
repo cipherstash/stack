@@ -26,7 +26,7 @@ type KeysetSelector interface {
 //
 // A keyset name follows the rules ZeroKMS sets:
 //
-//   - It is 1 to 64 bytes long.
+//   - It is 1 to 64 characters long.
 //   - It contains only the ASCII letters A to Z and a to z, the digits 0 to
 //     9, and the characters _, -, and /. A name with a space, a dot, or a
 //     letter outside ASCII is refused.
