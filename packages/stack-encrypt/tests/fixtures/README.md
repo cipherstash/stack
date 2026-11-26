@@ -24,7 +24,8 @@ that it runs through the same engine and is not a second executor. A Go
 test reads the same file later, once the Go SDK's generated code is the
 third author.
 Typed code over bare `u32` or `String` fields seals the same leaves too: every
-leaf is tagged with its type (vitaminc ADR 0001), whoever wrote it.
+leaf is tagged with its type ([`vitaminc-aead`'s ADR 0001](../../../vitaminc-aead/docs/adr/0001-describe-plaintext-once-and-consume-it-with-sinks.md)),
+whoever wrote it.
 
 Regenerate with `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p
 stack-encrypt --all-features --test record_lowering`, then run `pnpm run

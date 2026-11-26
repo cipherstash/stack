@@ -1141,7 +1141,8 @@ change seems to need one reversed, say so and link the ADR.
   `Error::OpenedType`, not tampering, `Error::Aead`. Stricter authentication
   will be opt-in, through named types. See
   `packages/stack-encrypt/docs/adr/0010-what-a-stored-value-authenticates.md`
-  and vitaminc's ADR 0002.
+  and `vitaminc-aead`'s ADR 0002,
+  `packages/vitaminc-aead/docs/adr/0002-leaves-are-authenticated-container-membership-and-order-are-not.md`.
 - **A passthrough field is not authenticated.** It is stored in the clear,
   by definition, and comes back as the store holds it. A plan's context
   field is the exception: every other field is sealed under it, so a change

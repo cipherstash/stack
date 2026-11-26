@@ -9,7 +9,9 @@
 //! refused by the ciphertext codec, and every leaf-type AAD vector has the
 //! context bytes it pins.
 //!
-//! ADR 0001 section 3 decides the cases the corpus carries beyond the
+//! `vitaminc-aead`'s ADR 0001 section 3
+//! (`packages/vitaminc-aead/docs/adr/0001-describe-plaintext-once-and-consume-it-with-sinks.md`)
+//! decides the cases the corpus carries beyond the
 //! original tag table: the `0xF3` envelope, no `CT_NONE`, a leap second
 //! refused, a decimal negative zero read as zero, and `LeafTypeAad` under
 //! its new label. Each such vector states its rule.
@@ -115,7 +117,7 @@ fn expected(row: &serde_json::Value) -> Vec<u8> {
         }
         "decimal" => {
             // A negative zero parses as zero, which is what the leaf codec
-            // writes (ADR 0001 section 3).
+            // writes (`vitaminc-aead`'s ADR 0001 section 3).
             let decimal = rust_decimal::Decimal::from_str_exact(text()).expect("valid decimal");
             scalar(
                 Some(Logical::Decimal {

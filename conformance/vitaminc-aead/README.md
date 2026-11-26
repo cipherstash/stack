@@ -2,7 +2,8 @@
 
 `value-conformance.json` holds the shared vectors that Rust, Node, the Go
 codec and the Go WASM encryption guest all check. Payload bytes are frozen by
-`vitaminc-aead`'s scalar tag table and leaf codec (ADR 0001 section 3):
+`vitaminc-aead`'s scalar tag table and leaf codec ([`vitaminc-aead`'s ADR 0001](../../packages/vitaminc-aead/docs/adr/0001-describe-plaintext-once-and-consume-it-with-sinks.md)
+section 3):
 fixed-width integers and float bits are little-endian, dates count days from
 CE, timestamps carry seconds plus nanoseconds, decimals retain their flags and
 96-bit coefficient, and a logical type with no tag of its own travels in the
@@ -32,7 +33,8 @@ table above is the record of who asserts what, so keep it current.
 ## Fields
 
 Every row has a `name`. A row that follows an ADR 0001 rule states it in a
-`rule` field, so a failing vector says which rule it pins.
+`rule` field, so a failing vector says which rule it pins. "ADR 0001" in a
+`rule` means `vitaminc-aead`'s ADR 0001, not Stack Encrypt's.
 
 `vectors`: `kind`, `value` and the hexadecimal `transport` bytes. Integer and
 decimal values are strings to avoid JSON number rounding. Bytes are

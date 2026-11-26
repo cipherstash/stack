@@ -15,7 +15,7 @@ relates-to: ADR-0001; stack-encrypt ADR-0003, ADR-0007
 > keeps the steps; this document is the decision.
 >
 > **Amended 2026-10-18.** vitaminc 0.6 removed the shared value type rather
-> than renaming `FfiValue` to `Value` (vitaminc ADR 0001: a value describes
+> than renaming `FfiValue` to `Value` ([`vitaminc-aead`'s ADR 0001](../../packages/vitaminc-aead/docs/adr/0001-describe-plaintext-once-and-consume-it-with-sinks.md): a value describes
 > itself once, and sinks consume it). Stack Encrypt follows:
 >
 > - A plaintext whose type is known only at run time is held as its
@@ -141,7 +141,7 @@ bundle (see Consequences). Chosen.
   and `u128` get `Encrypt` and `Decrypt` impls.
 - ~~`FfiValue` is renamed `Value`, with `#[deprecated] pub type FfiValue = Value`
   for one release.~~ *Amended 2026-10-18:* vitaminc 0.6 has no shared value
-  type to rename it to. Its ADR 0001 has a value describe itself once
+  type to rename it to. Its [ADR 0001](../../packages/vitaminc-aead/docs/adr/0001-describe-plaintext-once-and-consume-it-with-sinks.md) has a value describe itself once
   (`Encrypt`) and every consumer be a sink: the encrypting sink, a term
   deriver, a frame writer. A host binding walks its transport frame straight
   into those sinks. So Stack Encrypt holds a dynamic plaintext as its frame,
