@@ -13,6 +13,20 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Fixed
+
+- A query on an EQL column must cast its parameter to the column's query
+  type, such as `$1::eql_v4.query_text_eq`. The `encrypt` README, the
+  `encrypt` package doc and the `stashgen` README now say so. An uncast `$1`
+  fails with "violates check constraint". The `encrypt` README used to say
+  the single-bound operators accept an uncast `$1`. A new section of it,
+  "Cast each query parameter", lists the cast for each EQL type.
+- The samples name the keyset `tenant42`, not `tenant-42` or `tenant-a`,
+  and the `KeysetSelector` doc says why: the dashboard refuses a hyphen in
+  a keyset name.
+- The README's match query sample scans rows into `users.EncryptedUser`, the
+  type `stashgen` writes. `users.Encrypted` does not exist.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

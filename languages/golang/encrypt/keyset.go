@@ -14,7 +14,9 @@ import (
 // variant in Rust. Names follow ZeroKMS's rules
 // (non-empty, at most 64 bytes, of A-Z a-z 0-9 _ - /), checked by the
 // guest before any request is made; ZeroKMS itself never issues a
-// UUID-shaped name, so a name and an id cannot be confused.
+// UUID-shaped name, so a name and an id cannot be confused. The CipherStash
+// dashboard refuses a hyphen in a keyset name, so a keyset you create there
+// cannot have one.
 type KeysetSelector interface {
 	// selector renders the tagged object the guest parses.
 	selector() map[string]any
