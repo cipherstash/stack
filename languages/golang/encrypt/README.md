@@ -216,8 +216,8 @@ cannot use different ones.
 Each part of a scope is a string, a byte slice or an integer: `int32`,
 `int64`, `uint32`, `uint64` or `int`. An `int` is sent as `int64`. Several parts
 nest in order, so `Scope(a, b)` is the same as `Scope(a).Scope(b)`. A part of
-any other type makes the first call through the cipher fail with
-`ErrEncoding`.
+any other type makes the first write, query or read through the cipher fail
+with `ErrEncoding`.
 
 > **Take care**
 >
@@ -357,8 +357,9 @@ request.
 any key is retrieved. The `*Client` opens each row under the keyset that
 sealed it.
 
-The `*Client` opens only rows that a cipher with no scope sealed. A row
-written through `Scope` opens only through a cipher with the same scope.
+The `*Client` opens only rows that a cipher with no scope and no binding
+sealed. A row written through `Scope` or `Bind` opens only through a cipher
+with the same scopes and bindings.
 
 For a type with a `context_field`, the `*Cipher` from `cipher.Context(..)`
 also refuses a row whose stored context is another, with
