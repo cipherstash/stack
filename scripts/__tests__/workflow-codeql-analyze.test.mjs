@@ -17,10 +17,11 @@ const codeqlJobs = workflowFiles().flatMap((file) =>
   Object.entries(readWorkflow(file)?.jobs ?? {})
     .map(([id, job]) => ({
       ref: `${file}#${id}`,
-      actions: (job?.steps ?? [])
-        .map((step) => step?.uses)
-        .filter((uses) => typeof uses === 'string' && CODEQL_STEP.test(uses))
-        .map((uses) => uses.match(CODEQL_STEP)[1]),
+      actions: (job?.steps ?? []).flatMap((step) => {
+        const match =
+          typeof step?.uses === 'string' ? step.uses.match(CODEQL_STEP) : null
+        return match ? [match[1]] : []
+      }),
     }))
     .filter(({ actions }) => actions.length > 0),
 )
