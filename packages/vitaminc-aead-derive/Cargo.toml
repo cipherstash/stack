@@ -1,0 +1,28 @@
+[package]
+name = "vitaminc-aead-derive"
+description = "Derive macros for vitaminc-aead. Part of the VitaminC cryptographic suite."
+documentation = "https://docs.rs/vitaminc-aead-derive"
+version.workspace = true
+repository.workspace = true
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "3", features = ["full", "extra-traits"] }
+
+[dev-dependencies]
+# Compile and run the public attribute examples against their consumer APIs.
+# Path-only dependencies do not impose a publication order on the macro crate.
+vitaminc-aead = { path = "../aead" }
+vitaminc = { path = "../vitaminc", default-features = false, features = ["aead"] }
+zeroize = { workspace = true }

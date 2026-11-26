@@ -1,0 +1,5 @@
+error: variants take no `#[aead(...)]` attributes: a variant is stored as its discriminant, so give it an explicit `= n` to pin the value instead
+ --> tests/ui/derive/sink_variant_attribute.rs:8:5
+  |
+8 |     #[aead(rename = "on")]
+  |     ^^^^^^^^^^^^^^^^^^^^^^

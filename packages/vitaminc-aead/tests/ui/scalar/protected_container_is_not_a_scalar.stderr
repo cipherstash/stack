@@ -1,0 +1,131 @@
+error[E0277]: the trait bound `&Vec<i32>: vitaminc_aead::Scalar` is not satisfied
+  --> tests/ui/scalar/protected_container_is_not_a_scalar.rs:13:21
+   |
+13 |     seals_one_leaf(&owned);
+   |     --------------  ^^^^^ the trait `vitaminc_aead::Scalar` is not implemented for `&Vec<i32>`
+   |     |
+   |     required by a bound introduced by this call
+   |
+help: the following other types implement trait `vitaminc_aead::Scalar`
+  --> src/plaintext/sources.rs
+   |
+   |               impl Scalar for $ty {}
+   |               ^^^^^^^^^^^^^^^^^^^
+   |               |
+   |               `&Vec<u8>`
+   |               `Vec<u8>`
+...
+   | / scalar! {
+   | |     bool, &bool, f32, &f32, f64, &f64,
+   | |     i8, &i8, i16, &i16, i32, &i32, i64, &i64, i128, &i128,
+   | |     u16, &u16, u32, &u32, u64, &u64, u128, &u128,
+...  |
+   | |     Bytes<'_>, &Bytes<'_>, Raw<'_>, &Raw<'_>,
+   | | }
+   | |_- in this macro invocation
+   = note: required for `&Protected<Vec<i32>>` to implement `vitaminc_aead::Scalar`
+note: required by a bound in `seals_one_leaf`
+  --> tests/ui/scalar/protected_container_is_not_a_scalar.rs:9:22
+   |
+ 9 | fn seals_one_leaf<S: Scalar>(_: S) {}
+   |                      ^^^^^^ required by this bound in `seals_one_leaf`
+   = note: this error originates in the macro `scalar` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `&Vec<i32>: vitaminc_aead::Scalar` is not satisfied
+  --> tests/ui/scalar/protected_container_is_not_a_scalar.rs:14:20
+   |
+14 |     seals_one_leaf(owned.as_protected_ref());
+   |     -------------- ^^^^^^^^^^^^^^^^^^^^^^^^ the trait `vitaminc_aead::Scalar` is not implemented for `&Vec<i32>`
+   |     |
+   |     required by a bound introduced by this call
+   |
+help: the following other types implement trait `vitaminc_aead::Scalar`
+  --> src/plaintext/sources.rs
+   |
+   |               impl Scalar for $ty {}
+   |               ^^^^^^^^^^^^^^^^^^^
+   |               |
+   |               `&Vec<u8>`
+   |               `Vec<u8>`
+...
+   | / scalar! {
+   | |     bool, &bool, f32, &f32, f64, &f64,
+   | |     i8, &i8, i16, &i16, i32, &i32, i64, &i64, i128, &i128,
+   | |     u16, &u16, u32, &u32, u64, &u64, u128, &u128,
+...  |
+   | |     Bytes<'_>, &Bytes<'_>, Raw<'_>, &Raw<'_>,
+   | | }
+   | |_- in this macro invocation
+   = note: required for `ProtectedRef<'_, Vec<i32>>` to implement `vitaminc_aead::Scalar`
+note: required by a bound in `seals_one_leaf`
+  --> tests/ui/scalar/protected_container_is_not_a_scalar.rs:9:22
+   |
+ 9 | fn seals_one_leaf<S: Scalar>(_: S) {}
+   |                      ^^^^^^ required by this bound in `seals_one_leaf`
+   = note: this error originates in the macro `scalar` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `for<'a> &'a Vec<i32>: vitaminc_aead::Scalar` is not satisfied
+  --> tests/ui/scalar/protected_container_is_not_a_scalar.rs:15:20
+   |
+15 |     seals_one_leaf(owned);
+   |     -------------- ^^^^^ the trait `for<'a> vitaminc_aead::Scalar` is not implemented for `&'a Vec<i32>`
+   |     |
+   |     required by a bound introduced by this call
+   |
+help: the following other types implement trait `vitaminc_aead::Scalar`
+  --> src/plaintext/sources.rs
+   |
+   |               impl Scalar for $ty {}
+   |               ^^^^^^^^^^^^^^^^^^^
+   |               |
+   |               `&Vec<u8>`
+   |               `Vec<u8>`
+...
+   | / scalar! {
+   | |     bool, &bool, f32, &f32, f64, &f64,
+   | |     i8, &i8, i16, &i16, i32, &i32, i64, &i64, i128, &i128,
+   | |     u16, &u16, u32, &u32, u64, &u64, u128, &u128,
+...  |
+   | |     Bytes<'_>, &Bytes<'_>, Raw<'_>, &Raw<'_>,
+   | | }
+   | |_- in this macro invocation
+   = note: required for `Protected<Vec<i32>>` to implement `vitaminc_aead::Scalar`
+note: required by a bound in `seals_one_leaf`
+  --> tests/ui/scalar/protected_container_is_not_a_scalar.rs:9:22
+   |
+ 9 | fn seals_one_leaf<S: Scalar>(_: S) {}
+   |                      ^^^^^^ required by this bound in `seals_one_leaf`
+   = note: this error originates in the macro `scalar` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `&Vec<i32>: vitaminc_aead::Scalar` is not satisfied
+  --> tests/ui/scalar/protected_container_is_not_a_scalar.rs:16:21
+   |
+16 |     seals_one_leaf(&&vec![1i32, 2]);
+   |     --------------  ^^^^^^^^^^^^^^ the trait `vitaminc_aead::Scalar` is not implemented for `&Vec<i32>`
+   |     |
+   |     required by a bound introduced by this call
+   |
+help: the following other types implement trait `vitaminc_aead::Scalar`
+  --> src/plaintext/sources.rs
+   |
+   |               impl Scalar for $ty {}
+   |               ^^^^^^^^^^^^^^^^^^^
+   |               |
+   |               `&Vec<u8>`
+   |               `Vec<u8>`
+...
+   | / scalar! {
+   | |     bool, &bool, f32, &f32, f64, &f64,
+   | |     i8, &i8, i16, &i16, i32, &i32, i64, &i64, i128, &i128,
+   | |     u16, &u16, u32, &u32, u64, &u64, u128, &u128,
+...  |
+   | |     Bytes<'_>, &Bytes<'_>, Raw<'_>, &Raw<'_>,
+   | | }
+   | |_- in this macro invocation
+   = note: required for `&&Vec<i32>` to implement `vitaminc_aead::Scalar`
+note: required by a bound in `seals_one_leaf`
+  --> tests/ui/scalar/protected_container_is_not_a_scalar.rs:9:22
+   |
+ 9 | fn seals_one_leaf<S: Scalar>(_: S) {}
+   |                      ^^^^^^ required by this bound in `seals_one_leaf`
+   = note: this error originates in the macro `scalar` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -1,0 +1,5 @@
+error: an explicit discriminant must be an unsigned integer literal that fits in 32 bits, since that is the width the variant is sealed at
+ --> tests/ui/derive/sink_discriminant_too_wide.rs:8:14
+  |
+8 |     Active = -1,
+  |              ^^
