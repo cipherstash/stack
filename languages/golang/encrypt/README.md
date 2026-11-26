@@ -355,6 +355,74 @@ also refuses a row whose stored context is another, with
 `ErrContextMismatch`; the `*Client` opens each row under the context it
 stores.
 
+## Separating tenants
+
+A tenant is a customer, or another group of users, whose rows the others
+must not read. The SDK has three ways to keep tenants' rows apart. Each one
+gives a different error when the tenant does not match.
+
+| Way | How you set it | What it separates |
+|---|---|---|
+| A keyset for each tenant | `client.Keyset(encrypt.KeysetName("tenant42"))` | the keys: each tenant's rows are encrypted under keys of its own |
+| A scope for each tenant | `cipher.Scope("tenant42")` | the context: one keyset, with the tenant added to the context of every field |
+| A `context_field` | a field tagged `stash:"tenant,context_field"` | the context of each row: the row stores its tenant, and its other fields are sealed under it |
+
+For how to create a keyset and give a client access to it, see
+[Keysets](#keysets).
+
+### When to use each way
+
+Use a keyset for each tenant when tenants need keys of their own. A client
+opens a keyset's rows only when it has a grant for that keyset. So access
+is controlled in ZeroKMS, one tenant at a time. You create each keyset, and
+give each client a grant, before the client uses it.
+
+Use a scope when tenants share a keyset, and your program knows the tenant
+of each call, such as from the request. A scope needs nothing created in
+ZeroKMS. A scoped row opens only through a cipher with the same keyset and
+scope. The `*Client` does not open it.
+
+Use a `context_field` when each row must store its own tenant. A value
+copied to another tenant's row does not decrypt there. The `*Client`, and
+a cipher with no `Context`, open each row under the tenant it stores. So one
+reader can decrypt rows of many tenants without knowing each tenant first.
+
+The `context_field` is stored in the clear, like a `passthrough` field.
+Nothing authenticates it. See the `context_field` note in
+[The cipher](#the-cipher).
+
+A keyset combines with a scope, as in the example in
+[The cipher](#the-cipher): `client.Keyset(..).Scope(..)`.
+
+### Errors when the tenant does not match
+
+A decrypt or an encrypt with the wrong tenant fails as follows. `Code` is
+the code of the error's `*Diagnostic` (see [Errors](#errors)).
+
+| Wrong tenant | Error | `Code` |
+|---|---|---|
+| Keyset: a `*Cipher` for one keyset decrypts a row sealed under another | `ErrForeignKeyset`, before any key is retrieved | `stack_encrypt::foreign_keyset` |
+| Scope: a cipher with another scope, or with no scope, decrypts a scoped row | `ErrForbidden`, when ZeroKMS refuses the data key | `stack_kms::retrieve_key_failed` |
+| Scope: the `*Client` decrypts a scoped row | `ErrForbidden` | `stack_kms::retrieve_key_failed` |
+| `context_field`: a cipher from `cipher.Context(..)` decrypts a row that stores another tenant | `ErrContextMismatch`, before any key is retrieved | `stack_encrypt::context_mismatch` |
+| `context_field`: a cipher from `cipher.Context(..)` encrypts a value whose field names another tenant | `ErrContextMismatch`, before anything is sent | none: the SDK refuses the value itself |
+| `context_field`: a row's stored tenant was changed after it was written | `ErrForbidden` | `stack_kms::retrieve_key_failed` |
+
+The `ErrForbidden` for a scope does not say that the scope is wrong, and
+the `Help` of its `*Diagnostic` is empty. A client with no grant for a keyset gets the same error
+and code when it asks for data keys. Issue #1893 proposes a `Help` for
+each cause.
+
+A query with the wrong tenant returns no error, and matches none of the
+other tenant's rows. The query term derives under the cipher's keyset and
+scope, so it differs from the stored term. A query on a type with a `context_field`
+derives under the tenant that `cipher.Context(..)` names. Through a cipher
+with no `Context`, the query fails with `ErrEncoding`.
+
+The test client from `encrypttest` gives the same errors as ZeroKMS for a
+wrong keyset, scope, or `context_field`. See
+[Testing your application](#testing-your-application).
+
 ## What is stored
 
 A field with `encrypt` and `index=` is a struct with one field for each
