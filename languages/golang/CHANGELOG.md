@@ -13,6 +13,15 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Added
+
+- (Documentation only.) The `encrypt` README has a new "Deploying" section
+  (#1881). The section shows how `stash env` makes a server's credentials.
+  The section recommends `AccessKeyCredentials` on a server, because those
+  credentials never fall back to the developer profile. The section also
+  lists every environment variable the SDK reads, with its default, including
+  `CS_CTS_HOST`, `CS_ZEROKMS_HOST`, and `CS_CONFIG_PATH`.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

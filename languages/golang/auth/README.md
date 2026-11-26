@@ -77,8 +77,12 @@ the cross-process lock a device-session refresh holds with the `stash` CLI
 
 With no profile directory at all (CI, a container, a server authenticating
 by federation), `auth.OpenWithoutProfile(ctx)` runs the guest with
-nothing mounted: the access-key and OIDC strategies work, and every profile
-read is `ErrNoProfile`.
+nothing mounted. The access-key and OIDC strategies work there. Every
+profile read is `ErrNoProfile`.
+
+To deploy a server, see [Deploying](../encrypt/README.md#deploying) in the
+`encrypt` README. That section shows how `stash env` makes a server's credentials,
+and lists every environment variable the SDK reads.
 
 `profile.AccessKey(ctx, crn, key)`, `profile.OIDC(ctx, crn, provider)`, and
 `profile.Auto(ctx)` also return strategies that `encrypt.NewCredentials`
