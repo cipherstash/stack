@@ -5,10 +5,16 @@
 export const parseStringArray = (inner) =>
   [...inner.matchAll(/"([^"]+)"|'([^']+)'/g)].map((m) => m[1] ?? m[2])
 
+// A whole line that names a table. A line of a multi-line `run` string can
+// also start with `[`, such as `[ -n "$x" ] || exit 1`, and is not a header.
+const TABLE_HEADER = String.raw`\[(?:tasks\.)?(?:"[^"]+"|[\w:.-]+)\][ \t]*(?:#[^\n]*)?$`
+const BEFORE_HEADER = new RegExp(`^(?=${TABLE_HEADER})`, 'm')
+
 export function parseIncludes(miseText) {
-  const section = /^\[task_config\][^\n]*\n([\s\S]*?)(?=^\[|$(?![\s\S]))/m.exec(
-    miseText,
-  )
+  const section = new RegExp(
+    String.raw`^\[task_config\][^\n]*\n([\s\S]*?)(?=^${TABLE_HEADER}|$(?![\s\S]))`,
+    'm',
+  ).exec(miseText)
   const array = /^includes\s*=\s*\[([^\]]*)\]/m.exec(section?.[1] ?? '')
   return array ? parseStringArray(array[1]) : []
 }
@@ -24,7 +30,7 @@ export function parseTomlTasks(text, { bareTables }) {
     ? /^\[(?:"([^"]+)"|([\w:.-]+))\]/
     : /^\[tasks\.(?:"([^"]+)"|([\w:.-]+))\]/
   return text
-    .split(/^(?=\[)/m)
+    .split(BEFORE_HEADER)
     .map((block) => ({ match: header.exec(block), block }))
     .filter(({ match }) => match)
     .map(({ match, block }) => ({ name: match[1] ?? match[2], block }))
