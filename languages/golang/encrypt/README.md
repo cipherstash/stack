@@ -749,7 +749,12 @@ The scope and the binding come after the column in the field's context.
 The EQL value stores the table and the column alone, in `i`, so:
 
 - open the value through a cipher with the same scope and binding;
-- query it through a cipher with the same scope. A binding is in no query;
+- query it through a cipher with the same scope and no binding, such as
+  `cipher.Scope(tenant)`. A binding is in no query context, so a query
+  through a cipher with a binding is refused with `ErrEncoding`. The
+  refusal covers every query method, such as `Eq`, `Matches`, and
+  `Contains`. The query by the scope alone finds the row. Open the row
+  it finds through `cipher.Scope(tenant).Bind(rowID)`;
 - read part of a `JsonSearch` document (`Selector`, `Subtree`, `Children`)
   through a cipher with the same scope and binding. The selector or the
   tokens derive under the scope alone, as a query does, and the entries

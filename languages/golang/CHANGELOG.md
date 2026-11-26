@@ -22,6 +22,13 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one. `stashgen` does not yet map a Go type to it.
 
+### Fixed
+
+- The `encrypt` README now says that a query through a cipher with a
+  binding is refused with `ErrEncoding`. Query through a cipher with the
+  same scope and no binding, then open the row through the cipher with the
+  binding. The README said such a query was accepted.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6
