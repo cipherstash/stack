@@ -1,0 +1,256 @@
+
+# cargo-vet audits file
+
+[criteria.crypto-reviewed]
+description = """
+The cryptographic or secret-handling code in this crate, or in the delta
+between the two versions, has been read by someone on the vitaminc team with
+these questions in mind:
+
+- Secret-dependent branches, memory accesses or division: anything that would
+  make an operation's timing a function of key or plaintext bytes.
+- Zeroization: buffers that hold secrets are wiped on drop, and no change
+  leaves a copy behind (reallocation, Clone, Debug, serialisation).
+- Randomness: how the RNG is seeded, where entropy comes from, and that no
+  output is reused or made predictable.
+- Algorithm and parameter changes: nonce sizes, tag lengths, key schedules,
+  domain separation, anything that alters bytes on the wire or at rest.
+
+It is required, on top of safe-to-deploy, for the crates vitaminc builds its
+primitives on; see `dependency-criteria` in config.toml. It does not imply
+safe-to-deploy: record both.
+"""
+
+[criteria.does-not-implement-crypto]
+description = """
+The crate implements no cryptographic algorithm and handles no key or
+plaintext material of its own, so there is nothing for `crypto-reviewed` to
+check: a build script, a proc macro, a collection type, an FFI shim. It
+exists because criteria are transitive: requiring `crypto-reviewed` of
+`aws-lc-rs` requires it of `cc` and `cmake` too, and this is how those are
+answered without pretending anyone reviewed their cryptography. Google's
+registry publishes audits under the same name, and they are imported as-is.
+"""
+implies = "crypto-reviewed"
+
+[[audits.aws-lc-rs]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = ["safe-to-deploy", "crypto-reviewed"]
+delta = "1.17.3 -> 1.18.2"
+notes = "Full read of the delta: ML-DSA stabilised out of unstable, RSA KeyPair::from_components validated with RSA_check_key, out-of-place AEAD seal_out_of_place_scatter with every buffer length checked before EVP_AEAD_CTX_seal_scatter, and 1.18.1's fail-closed tightening of seal_in_place_append_tag (post-Extend length verified before the FFI capacity is passed), streaming-cipher IV-context validation, and RSA digest-algorithm matching enforced on the ParsedPublicKey path. Zeroization only improved (ECDH agree returns Zeroizing<Vec<u8>>, KeyEncryptionKey zeroizes on drop); no change to rand/SystemRandom, AES-GCM, HMAC, nonce or tag handling, and the new branches are on public lengths only. No feature or build.rs change; aws-lc-sys moves 0.43 to 0.46 (AWS-LC 5.2 to 5.11, including the EVP_DecryptUpdate padded-mode fix the new canary tests pin) and is audited separately. One semantic change: hkdf::Salt::from(Okm<Algorithm>) now takes the Salt algorithm from the Okm's requested Algorithm rather than the PRK's; vitaminc does not use that path."
+
+[[audits.aws-lc-rs]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = ["safe-to-deploy", "crypto-reviewed"]
+delta = "1.18.2 -> 1.19.0"
+notes = "Full read of the delta: new AES OFB, CFB8 and CFB1 modes (one-shot via AES_ofb128/cfb8/cfb1_encrypt in place on one slice with its own length and a 16-byte stack IV zeroized after use, CFB1 bit counts chunked like AWS-LC MAXBITCHUNK; streaming via the EVP_aes_*_ofb/cfb8/cfb1 ciphers behind the existing mode, context and key-length checks), try_fips_self_test wrapping BORINGSSL_self_test, Keccak-256 behind unstable and not(fips), configurable RSA-PSS salt length (Max computed with checked arithmetic from the public modulus size, default still RSA_PSS_SALTLEN_DIGEST), and Clone on the RSA, ECDSA, Ed25519 and ML-DSA key pairs through the existing EVP_PKEY_up_ref clone, so private keys are shared by reference count and never copied into Rust memory. DecryptingKey::decrypt now validates its context and the ECB helpers return Err instead of unreachable!(), removing a panic. No change to aead (AES-GCM, ChaCha20-Poly1305, nonce or tag handling), hmac, hkdf, rand/SystemRandom, agreement or constant_time beyond #[deprecated(since)] attributes, and every new branch is on public modes and lengths. build.rs unchanged and no new dependencies; unstable now forwards to aws-lc-sys/unstable. aws-lc-sys moves 0.46 to 0.47 (AWS-LC 5.11.0 to 5.12.0) and is audited separately. vitaminc-encrypt uses only LessSafeKey AES-256-GCM seal_in_place_append_tag/open_in_place, which is unchanged. Sources match tag v1.19.0 (5d496f88); published by the same maintainer as 1.18.x."
+
+[[audits.aws-lc-sys]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+delta = "0.43.0 -> 0.46.0"
+notes = "The vendored aws-lc/ tree is byte-identical to upstream AWS-LC v5.11.0 (fa9bc8d6; 0.43.0 was v5.2.0, 683ebde4), verified by diff -rq against shallow clones of both tags with the only differences being paths excluded by the crate's Cargo.toml include globs; the C and assembly delta was not read line by line. All Rust and build glue outside aws-lc/ was read in full: the build scripts gain size-opt defines (AWS_LC_SYS_SMALL, or opt-level s/z), DEP_AWS_LC_* metadata, Cranelift link-name normalisation and jitterentropy CFLAGS fixes, with no new network, download or filesystem access beyond OUT_DIR. src/*_crypto.rs are rust-bindgen 0.73.2 output whose non-declaration changes are identical across every target, with symbol additions matching the AWS-LC 5.4 to 5.10 APIs; generated-include changes are symbol-list only. The 26 prebuilt NASM objects match the aws-lc-rs repository blobs at tag aws-lc-sys/v0.46.0 and its documented CI generation workflow, but were not rebuilt from source here."
+
+[[audits.aws-lc-sys]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = ["safe-to-deploy", "crypto-reviewed"]
+delta = "0.46.0 -> 0.47.0"
+notes = "The vendored aws-lc/ tree is byte-identical to upstream AWS-LC v5.12.0 (cd481c20; 0.46.0 was v5.11.0, fa9bc8d6), verified by diff -rq against a shallow clone of the tag; the only differences are paths excluded by the Cargo.toml include globs, which predict the 2,009 vendored files exactly. Crypto scope: the GCM C and assembly, the EVP_AEAD layer, AES, HMAC, HKDF, SHA-2, jitterentropy and mem.c are byte-identical to 0.46.0; the RNG change (#3654) was read in full and only strengthens fork/VM-snapshot (UBE) protection, sampling the generation number before any seed entropy is drawn so a fresh state reseeds on a detected UBE; the AES-XTS one-data-unit-per-key/IV check (#3621) was read. The rest of the C and assembly delta (RSA-PSS salt length, HPKE key layout, TLS record AEAD, X.509/OCSP, s2n-bignum ML-DSA and XTS assembly, Keccak constants moved to .rodata) was not read line by line; vitaminc reaches none of it. All Rust and build glue outside aws-lc/ was read in full: an empty unstable feature, one cloned cc::Build template, and the floor for auto-detecting a system-installed AWS-LC drops from 5.7.0 to 4.2.0 (FIPS LTS) unless unstable is enabled, so a host exposing a 4.x install through OPENSSL_DIR or pkg-config now links it instead of the vendored source (AWS_LC_SYS_USE_SYSTEM=0 forces the source build). No new network, download, process or filesystem access beyond OUT_DIR. src/*_crypto.rs bindgen changes are declaration-only and consistent across targets; generated-include adds three internal RSA-PSS symbols. The 26 prebuilt NASM objects match the aws-lc-rs repository blobs at tag aws-lc-sys/v0.47.0 and differ from 0.46.0 only in the symbol prefix and COFF timestamp; not rebuilt here. Tarball sha256 matches the lockfile; published by the same maintainer as 0.42 to 0.46."
+
+[[audits.digest]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = ["safe-to-deploy", "crypto-reviewed"]
+delta = "0.11.2 -> 0.11.3"
+notes = "Additive only: a TryCustomizedInit trait with a blanket impl over CustomizedInit, and dev::initialized_mac_test split out of mac_test. No change to any hashing, MAC or buffer code; no unsafe, no new dependencies, no build script (build = false). Both hunks match RustCrypto/traits #2367 and #2395 in the changelog."
+
+[[audits.form_urlencoded]]
+who = "Toby Hede <toby@cipherstash.com>"
+criteria = "safe-to-deploy"
+delta = "1.2.2 -> 1.2.3"
+notes = "Serializer::for_suffix clamps a start_position past the end of the target to its length instead of panicking; percent-encoding requirement raised from 2.3.0 to 2.3.2 (already in our lockfile). No new unsafe, no build script, no new dependencies or features. Released with url 2.5.9. Not a cryptographic crate."
+
+[[audits.jiff]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+version = "1.0.0"
+notes = "Full review of the published crate, in three parts. Unsafe: every unsafe block, fn and impl read and sound: the uninitialised-buffer and Vec spare-capacity writer in fmt/buffer.rs (indexing bounds-checked before each unchecked access, only UTF-8 written before from_utf8_unchecked) and Write::as_mut_vec in fmt/mod.rs; the pointer-tagged TimeZone Repr in tz/timezone.rs (private tag set only by its constructors, 8-byte alignment asserted, Arc raw-pointer counts balanced, Send/Sync over plain-data payloads); and the Android dlopen/dlsym, emscripten and Windows GetDynamicTimeZoneInformation FFI under tz/system/, whose signatures match the platform headers. No unsafe relies on the value ranges of the datetime types. Time zones and system access: with default-features = false (with or without std) jiff reads no environment variables and no files; with tz-system, tzdb-zoneinfo or tzdb-concatenated it reads TZ, TZDIR, ANDROID_ROOT and ANDROID_DATA and TZif files, with no network, process spawning or writes; zone names are matched against enumerated files, never joined onto a path, and caches hold only zones that exist; a path in TZ or TZDIR is read unbounded and through symlinks, the libc trust model. Civil, Timestamp and fmt: checked arithmetic with explicit range types, fixed-size printer buffers, and 660M fuzz executions with overflow checks plus 1 MB pathological inputs found no unbounded allocation, recursion or superlinear time. One bug (jiff-core Offset::to_timestamp, below) can yield a Timestamp up to 1 s before Timestamp::MIN that jiff cannot rebuild; vitaminc refuses it before sealing. With alloc, parse errors echo the input, so vitaminc never forwards jiff error text. Panicking constructors and operators (constant, civil::date, Span setters, Add/Sub) are documented and avoided in favour of their checked forms. No build script, proc macro or links. Sources match crates/jiff at 3b1bdf9d, the trusted-publishing commit, apart from unpackaged test data. No advisories."
+
+[[audits.jiff-core]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+version = "1.0.0"
+notes = "Full review of the published crate. Its one unsafe block, ArrayStr::as_str (util/mod.rs), is sound: the private len and bytes fields are set only by new and push_str, which bound len by N <= 255 and copy only str bytes; Date::new_unchecked is commented out. Read: bounds.rs, civil date and epoch-day conversions, Timestamp, Offset conversions, and the TZif and POSIX TZ parsers. The parsers check every length with checked arithmetic before allocating, cap the footer scan and fattening, and were panic-free over about 3.4M mutation iterations; the date and timestamp code was fuzzed with the jiff crate (660M executions, overflow checks on). One bug: Offset::to_timestamp (tz/offset.rs:219-234) canonicalises a negative second with nonzero nanoseconds and checks only the seconds bound, so it can return a Timestamp up to 1 s before Timestamp::MIN, which trips a debug assertion and does not round-trip in release; vitaminc refuses such a value before sealing. Primitive::as_i8 and siblings truncate silently in release, but every use follows a bounds check. no_std, no build script, proc macro or links; dependencies only optional arbitrary, defmt and log. Sources match crates/jiff-core at 3b1bdf9d, the trusted-publishing commit. No advisories."
+
+[[audits.jiff-static]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+version = "1.0.0"
+notes = "Full review of the published proc macro (src/lib.rs, 498 lines); no build script. At expansion, include! reads exactly the one file named by a string literal in the macro call (no environment variables or default paths) and parses it with jiff-core TZif parser; get! (feature tzdb) reads jiff-tzdb embedded data. No network, process or environment access. The generated code builds statics from jiff-core types with checked const constructors and quote-escaped literals; its only unsafe, TZ.copy(), is on a static built by TimeZone::__internal_from_tzif, which meets the contract of jiff 1.0.0 TimeZone::copy (static TZif variant, no reference count). In our graph it is reachable only through jiff never-active cfg(any()) version pin or its optional static features. Sources match crates/jiff-static at 3b1bdf9d, the trusted-publishing commit. No advisories."
+
+[[audits.js-sys]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = ["safe-to-deploy", "crypto-reviewed"]
+delta = "0.3.106 -> 0.3.107"
+notes = "Hand-written JS bindings only; the delta adds Temporal, ECMAScript and WebAssembly bindings, a Promise<T, E> rejection type parameter and wasm64 pointer-width fixes, all matching the wasm-bindgen 0.2.130 release notes. No new unsafe, build script, dependencies or embedded code; js-sys implements no cryptography. The stable Reflect::get, global() and Uint8Array APIs that getrandom's wasm_js backend uses are untouched."
+
+[[audits.libc]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+delta = "0.2.189 -> 0.2.190"
+notes = "build.rs read in full (refactor to a Cfg enum with validate_cfg self-checks and new libc_unstable_time64, libc_elfv2 and uclibc32_time64 cfgs; only env reads and cargo: directives, with the pre-existing version probes now gated on target_os), as were Cargo.toml (exclude to include allow-list, no dependency or feature change), macros.rs (s2! and custom_struct! Default generators, f! absorbing safe_f!) and types.rs (transmute replaced by from_raw_parts, new const cstr). Every hunk with a function body, impl, unsafe, link or link_name change was read: FD_* gain explicit bounds panics, siginfo_t accessors move to proper union layouts, the unsound af_alg_iv trait impls are removed, the Hurd LFS dedup was verified against the shared unix/mod.rs declarations, and libutil is no longer linked on uclibc mips32; the remainder is bindings data across platforms including the new HelenOS target and Apple non-macOS removals. All changes map to the 0.2.190 changelog; no crypto-relevant symbol (getrandom, getentropy, mmap/mlock, explicit_bzero, arc4random, clock_gettime, sysconf) is removed or re-signed."
+
+[[audits.libc]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+delta = "0.2.190 -> 0.2.191"
+notes = "Full read of the 620-line diff. build.rs adds three Emscripten version-gated cfgs (fsblkcnt, sigset and nfds widths) in the same env-read and cargo:rustc-cfg shape as before; everything else is constants, struct definitions and extern declarations (Apple ifaliasreq/in6_aliasreq and the Mach API re-exposed on non-macOS, FreeBSD PT_* and the aarch64 gpregs/fpregs fix, Haiku, Hurd, NuttX, OpenBSD, QuRT and WASI additions, Android prop_info as an extern type). Every hunk maps to a 0.2.191 changelog entry; no dependency, feature or link change."
+
+[[audits.napi]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+delta = "3.14.2 -> 3.15.0"
+notes = "Hunks map to napi-rs #3584, #3592, #3603, #3607, #3610, #3612, #3623 and #3626: memory-safety and leak fixes in class wrapping, native-borrow rooting, typed-array conversion and env teardown, plus ReadableStream cancel support. The new unsafe Send/Sync impls and the one napi_run_script of a constant three-line JS source were read and look sound. No new dependencies, no build.rs or FFI signature changes; Buffer and Uint8Array ownership paths are unchanged apart from a fixed reference leak on the error path."
+
+[[audits.napi]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+delta = "3.15.0 -> 3.16.1"
+notes = "Hunks map to napi-rs #3656, #3661, #3662, #3665, #3666, #3667 and #3670: leak fixes for threadsafe-function call data and define_class accessor closures, which are now owned through Rc so a cloned Property can no longer double-free; all-or-nothing class registration at module load; class identity stored as a NonZeroU32 index into a capped, append-only registry; a Tokio runtime lock fix; and symbol_for and well-known-symbol class keys, looked up with node_api_symbol_for or property reads on globalThis.Symbol, with no script evaluation. The new repr(C) PropertyClosuresData keeps PropertyClosures as its first field, so the existing getter and setter trampolines stay sound, and register_class rejects closure properties so the existing Send/Sync impl on ModuleClassProperty still holds. No new dependencies, no napi-sys bump, no build.rs or FFI signature changes; Buffer, TypedArray and ArrayBuffer ownership paths are untouched, and the define_properties with_name/with_value path aead-napi uses builds the same descriptor. Published by GitHub trusted publishing from 417375ad, whose sources match the tarball."
+
+[[audits.napi-sys]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+delta = "3.4.0 -> 3.4.1"
+notes = "One doc-comment path fix in src/wasi_heap_sync.rs; no code change. build.rs unchanged."
+
+[[audits.portable-atomic]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+version = "1.15.0"
+notes = "Full review of the published crate, in two halves. Build: build.rs, version.rs and src/gen/build.rs read in full; the script runs `$RUSTC -vV` (through RUSTC_WRAPPER when set), reads cargo and rustc environment variables, and prints rustc-cfg, check-cfg and rerun-if directives, with no file or network I/O, no generated code and no build-dependencies; process spawning under src/ is test-only. Core: every unsafe site in src/lib.rs (from_ptr, get_mut, into_inner, layout casts and Sync impls of the public atomics, with layouts checked statically), utils.rs, core_atomic.rs, float/, the crossbeam-derived seqlock fallback (every access atomic or under the lock) and the interrupt and critical-section guards with their inline asm (Armv6-M, pre-v7 Arm, AVR, MSP430, RISC-V, Xtensa). Architecture: every inline-asm module under src/imp/ read line by line (atomic128 on x86_64, aarch64, powerpc64, riscv64 and s390x; atomic64 on Arm Linux; arm_linux, riscv, msp430, avr, x86, float/aarch64, outline_atomics), checking operand constraints, register pairs, clobbers, fences against the LLVM lowerings and alignment preconditions, and decoding the hand-encoded LSE128, RCPC3 and Zacas words (the LSFE words in float/aarch64.rs were not decoded); atomic64/riscv32.rs was reviewed by diff against riscv64.rs, and atomic128/intrinsics.rs (Miri and TSan only) skimmed. Runtime CPU detection (getauxval, elf_aux_info, sysctl, IsProcessorFeaturePresent, getisax, zx_system_get_features, getsystemcfg, riscv_hwprobe) has correct FFI signatures and buffer sizes, reads no files or environment outside tests, and is cached by CAS so native and lock-based paths never mix. The unsafe-assume-single-core and unsafe-assume-privileged features are unsound if misused, are compile errors on hosted targets, and are off in our graph. jiff takes it with default-features = false, only on targets without pointer-width atomics. Sources match tag v1.15.0 (e4595528), published by trusted publishing from taiki-e/portable-atomic; upstream CI at that commit (QEMU across 42 targets, Miri, sanitizers, Valgrind, asm snapshots) passed. No advisories."
+
+[[audits.portable-atomic-util]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+version = "0.2.8"
+notes = 'Full review of the published crate. build.rs runs `$RUSTC -vV` through RUSTC_WRAPPER, reads environment variables and prints only rustc-cfg and check-cfg lines, with no file or network I/O. arc.rs read in full and compared with rust-lang/rust 1.93.0 alloc/src/sync.rs: every atomic operation and ordering in Arc and Weak (clone, drop, downgrade, is_unique, make_mut, get_mut, try_unwrap, into_inner, upgrade) matches std, and the layout arithmetic, from_raw and into_raw, allocation and deallocation pairing, panic guards, str, slice, Box and Vec conversions, downcast and the RawWaker vtable in task.rs are sound. Deviations from std, none unsound today: fat-pointer address replacement assumes the data pointer is the first word (utils.rs with_metadata_of); without std, abort() is a double panic; Weak::drop frees through Box<ArcInner<ManuallyDrop<T>>>; Weak raw-pointer APIs are sized only. tests/ and doc examples were not reviewed. Sources match the "Release 0.2.8" commit 6fb276ae of taiki-e/portable-atomic-util, the child of the trusted-publishing commit f0b9e652. No advisories.'
+
+[[audits.proptest]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-run"
+version = "1.12.0"
+notes = "Reviewed the published crates.io package for use as a dev-dependency. No build script or network client. Reviewed manifest/features, proptest and assertion macro expansion, runner and shrink/rejection limits, RNG setup, config environment parsing, failure-persistence paths and append-only writes, fork replay and child handling, and the feature-gated unsafe panic-hook and hardware-RNG code. Environment access is for PROPTEST configuration; file writes are documented regression seeds and configured fork replay files; child execution is the test executable through rusty-fork. The password tests enable only std, leaving fork, timeout, hardware-rng, handle-panics and the optional proc macro disabled; their generated inputs contain only batch sizes, so persistence and diagnostic output contain no passwords. This is a safe-to-run review, not a cryptographic or randomness-quality certification. Agent-prepared review for approval in PR #592."
+
+[[audits.rand_xorshift]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-run"
+version = "0.5.0"
+notes = "Reviewed the complete published src/lib.rs and Cargo manifests. no_std with forbid(unsafe_code), no build script, and no filesystem, environment, process or network access. The only required dependency is rand_core 0.10; optional serde supplies serialization. State updates are fixed integer shifts and XORs; seed conversion uses fixed-size arrays and rand_core utilities. from_rng and try_from_rng retry only all-zero seeds. Used transitively by Proptest to generate test inputs, never to generate application passwords. Safe-to-run only: XorShift is explicitly not a cryptographic RNG. Agent-prepared review for approval in PR #592."
+
+[[audits.serde_json]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+delta = "1.0.151 -> 1.0.154"
+notes = "Maps to 1.0.152 (#1346 -0 keeps its sign in the buffered-number path; #1347 Number::as_f32 returns None for non-finite), 1.0.153 (#1345 invalid-UTF-8 errors report the first bad byte; the new line/column arithmetic is error-path only, bounds-sound and saturating) and 1.0.154 (#1333 preserve_order implies alloc instead of std, explicit std RandomState hasher under std, new optional dependency foldhash only under no_std). build.rs is unchanged; remaining hunks are max_value() to MAX cleanup in lexical/math.rs, a dropped authors field, CI and tests. This workspace does not enable preserve_order, so foldhash is not in the graph."
+
+[[audits.syn]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+delta = "3.0.3 -> 3.0.6"
+notes = "Three parser fixes matching upstream 3.0.4 to 3.0.6 (#2078 safe fn in extern blocks, #2080 lex-error span in LitStr::parse_with, #2082 interpolated lifetime at statement start); the rest is version bumps and nightly rustc_ast test-harness churn. No unsafe, no build script (build = false), no filesystem, env, network or process access added."
+
+[[audits.syn]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+delta = "3.0.6 -> 3.0.9"
+notes = "Parser fixes matching upstream 3.0.7 (#2085 absolute path after a break label) and 3.0.8 (#2086, #2087: reject `<-` and stop treating `->` as subtraction), plus an additive Punctuated::retain in 3.0.9 (#2088) in safe code. The remainder is version bumps and nightly rustc_ast test-harness churn. No unsafe, no build script, no filesystem, env, network or process access added."
+
+[[audits.syn]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = ["safe-to-deploy", "does-not-implement-crypto"]
+delta = "3.0.9 -> 3.0.10"
+notes = "Performance fix matching upstream 3.0.10 (#2090): rightmost_subexpression_precedence gains an internal scan flag so scan_right no longer rescans operands whose scan already failed, avoiding exponential work on long chains of prefix ranges and binary operators; the new Bailout/Fail-versus-Consume condition is equivalent to the old nested if. The rest is the version bump, two new fixup test cases and nightly rustc_ast test-harness churn. No unsafe, no build script, no filesystem, env, network or process access added."
+
+[[audits.thiserror]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+delta = "2.0.19 -> 2.0.21"
+notes = "Maps to upstream 2.0.20 (#454) and 2.0.21 (#459): no runtime code change, src/lib.rs only bumps html_root_url, build.rs is byte-identical. MSRV rises from 1.71 to 1.77 for slice::last_chunk used in thiserror-impl; the remainder is CI matrix, a turbofish regression test, io::Error::other in tests, and regenerated UI .stderr files (the __private18 to __private20 rename comes from the unchanged build.rs deriving the module name from CARGO_PKG_VERSION_PATCH)."
+
+[[audits.thiserror-impl]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+delta = "2.0.19 -> 2.0.21"
+notes = "attr.rs adds turbofish-depth tracking to parse_token_expr so a `>` closing `::<...>` is not treated as a binary operator (#459, fixes #332); expand.rs adds #[allow(clippy::redundant_field_names)] to generated From impls (#454). Both are pure token-stream manipulation with no filesystem, environment, network or process access at expansion time; the depth counter is guarded against underflow. MSRV 1.71 to 1.77 for <[T]>::last_chunk."
+
+[[audits.unicode-normalization]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+delta = "0.1.25 -> 0.1.26"
+notes = "Unicode 17.0.0 to 18.0.0 table regeneration (upstream #117: scripts/unicode.py version bump and regenerated src/tables.rs, all data literals and generated range patterns) plus licence metadata declaring Unicode-3.0 for the UCD data with LICENSE-UNICODE added (#116). The normalisation logic is untouched; no new unsafe, dependencies or build script. NFC/NFKC output changes only for code points newly assigned in Unicode 18."
+
+[[audits.url]]
+who = "Toby Hede <toby@cipherstash.com>"
+criteria = "safe-to-deploy"
+delta = "2.5.8 -> 2.5.9"
+notes = "Fix for RUSTSEC-2026-0592 (upstream servo/rust-url#1186): Url::origin() on a blob: URL now takes the inner URL's origin only for http, https and file and returns an opaque origin otherwise, so it no longer recurses without bound. Other changes: the path percent-encode set now also encodes ^ and ` per the URL Standard (QUERY/SPECIAL_QUERY constants moved, ^ dropped from USERINFO since PATH now has it); file URLs no longer drop the host when the path starts with a Windows drive letter; a backslash ends a port only for special schemes; last_slash_can_be_removed searches the path only, which also removes quadratic parsing of root double-dot segments; refactors with ? and Option::filter; doc and typo fixes; tests and WPT data updated. No new unsafe, no build script, no new dependencies or features (form_urlencoded 1.2.2 -> 1.2.3, audited separately). No file, environment, network or process access. Not a cryptographic crate."
+
+[[audits.uuid]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+delta = "1.21.0 -> 1.29.0"
+notes = "Eight minor releases, every hunk accounted for by the upstream release notes: branchless hex parse and format (#894), MaybeUninit encode helpers (#892; the new unsafe checks lengths before copying and fully initialises buffers before assume_init), parser diagnostics and the empty-input panic fix, case-insensitive urn prefix, v7 counter and ordering fixes, new serde adapters, NonNilUuid versioned constructors. No build script and no new runtime dependency (gungraun is a dev-dep for benches; the optional rand 0.9 to 0.10 bump sits behind fast-rng; rng.rs is unchanged). The byte-level API vitaminc uses (from_slice, as_bytes, into_bytes, field order) is unchanged; MSRV is now 1.89."
+
+[[audits.uuid]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-deploy"
+delta = "1.29.0 -> 1.29.2"
+notes = 'Two patch releases, every hunk accounted for by the upstream release notes: lint cleanup that drops the authors and html_root_url metadata, derives Default on the v7 context types and moves the optional zerocopy dependency behind cfg(uuid_unstable), where its derive was already gated (#921); deprecation of the borsh feature with no code change (#923); a rework of v7 timestamp and counter handling onto a single u128 nanosecond value with saturating conversions, which also removes a Duration::new overflow panic in From<Timestamp> for SystemTime (#926); and widening the WASM cfgs from target_arch = "wasm32" to target_family = "wasm" so the js rng path covers wasm64 (#928). No unsafe code changed (same unsafe sites, untouched files), no build script, and no new runtime dependency or fs, env, network or process access. The 1.29.2 tarball sha256 matches the lockfile and its sources match upstream merge commit 5205a6ea, published by the long-standing maintainer. The byte-level API vitaminc uses (from_bytes, from_slice, as_bytes, nil, max) is unchanged, and vitaminc enables no v7 or rng features; MSRV stays 1.89.'
+
+[[audits.wasm-bindgen]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = ["safe-to-deploy", "crypto-reviewed"]
+delta = "0.2.129 -> 0.2.130"
+notes = "Every hunk maps to the upstream 0.2.130 changelog: Nullable<T> and the Maybe*WasmAbi traits, encoded sequences and slice modes, fixed externref slots for statics, once_cell replaced by core::cell::LazyCell, the ErasableGeneric lifetime soundness fix (#5178), and leak-free argument rejection. The &[u8], &mut [u8], *mut u8 and Vec<u8> ABI paths that getrandom's wasm_js backend uses to fill a Uint8Array and copy it back keep their wire format (WasmSlice ptr+len, WasmWordRepr) with no new unsafe on them; build.rs is unchanged and the only dependency change is the removal of once_cell. The crate implements no cryptography."
+
+[[audits.wasm-bindgen-futures]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-run"
+delta = "0.4.79 -> 0.4.80"
+notes = "Version pins on js-sys and wasm-bindgen and a check-cfg entry; no source change."
+
+[[audits.wasm-bindgen-macro]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = ["safe-to-deploy", "crypto-reviewed"]
+delta = "0.2.129 -> 0.2.130"
+notes = "Version pin bump on wasm-bindgen-macro-support and a new check-cfg entry; no source change. A proc-macro shim with no cryptography in it."
+
+[[audits.wasm-bindgen-macro-support]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = ["safe-to-deploy", "crypto-reviewed"]
+delta = "0.2.129 -> 0.2.130"
+notes = "Proc-macro codegen only: the custom section is emitted as a repr(C) byte-array struct, try_from_abi plumbing releases arguments before a throw, Nullable and slice/vec mode attributes are parsed, descriptor symbols are qualified by module_path!(), shim-name hashing covers inline_js and call style, and PartialEq/Eq on imported types is emitted by hand. No new file, env, process or network access at expansion time, no new dependencies, no unsafe in the macro itself. Not a cryptographic crate; the slice and pointer glue it emits for imports is unchanged."
+
+[[audits.wasm-bindgen-shared]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = ["safe-to-deploy", "crypto-reviewed"]
+delta = "0.2.129 -> 0.2.130"
+notes = "SCHEMA_VERSION and approved schema hash bumped; module_path carried in the schema with a const-fn FNV-1a hash and module_mangled_symbol for symbol names; new SEQ_MODE/NULLABLE type tags. Compile-time metadata shared with the CLI, no runtime code and no cryptography; build.rs unchanged."
+
+[[audits.wasm-bindgen-test]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-run"
+delta = "0.3.79 -> 0.3.80"
+notes = "Drops the async-trait dependency in favour of native async fn in the private Routine trait; version pins. Test harness only."
+
+[[audits.wasm-bindgen-test-macro]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-run"
+delta = "0.3.79 -> 0.3.80"
+notes = "A check-cfg entry; no source change."
+
+[[audits.wasm-bindgen-test-shared]]
+who = "Dan Draper <dan@cipherstash.com>"
+criteria = "safe-to-run"
+delta = "0.2.129 -> 0.2.130"
+notes = "A check-cfg entry; no source change."
