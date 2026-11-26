@@ -183,9 +183,15 @@ whole set against the crates.io versions in use today.
    crates.
 2. Bring their tests, fuzz targets and benchmarks, and the checks under
    "Checks that must move with the code".
-3. Point every workspace at them: the root workspace, the TypeScript SDK's
-   workspace, the two Go guests, and EQL's workspace. Each resolves vitaminc
-   on its own today.
+3. Point every workspace at them. Each resolves vitaminc on its own today:
+   - the root workspace, where `stack-encrypt` and `stack-guest-abi` name
+     the crates, and where the `vitaminc` umbrella crate depends on
+     `vitaminc-aead`;
+   - the TypeScript SDK's workspace, and the bridge's test addon, which is a
+     workspace of its own;
+   - the two Go guests;
+   - EQL's workspace, for its encryption test crate;
+   - the detached fuzz crate `packages/stack-encrypt/fuzz`.
 4. Do not publish them yet. In each workspace, a `[patch.crates-io]` table
    makes the four crates from crates.io resolve the in-repository
    `vitaminc-aead`. That works while its version stays on the 0.10 line.
