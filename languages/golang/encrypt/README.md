@@ -978,10 +978,14 @@ CipherStash credentials. Use it in CI that has no route to ZeroKMS.
    go get github.com/cipherstash/stack/languages/golang/encrypt/encrypttest
    ```
 
-   With no version, `go get` adds the newest version of `encrypttest`.
-   That version requires the SDK at the same version. If your program
-   requires an older SDK, `go get` raises the SDK to match. To keep an older
-   SDK, add its version to the command, such as `encrypttest@v0.1.0-rc.6`.
+   With no version, `go get` adds the latest stable release of
+   `encrypttest`. While there is no stable release, it adds the newest
+   pre-release. That version requires the SDK at the same version. If your
+   program requires an older SDK, `go get` raises the SDK to match.
+
+   If your program uses a pre-release of the SDK, or an older SDK you want
+   to keep, add the SDK's version to the command. For example, use
+   `encrypttest@v0.1.0-rc.6` with SDK `v0.1.0-rc.6`.
    `NewClient` fails the test when the two versions differ, because its test
    builds match one version of the SDK.
 

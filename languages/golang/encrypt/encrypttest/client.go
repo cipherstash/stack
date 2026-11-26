@@ -116,10 +116,12 @@ func WithSeed(seed [32]byte) ClientOption {
 //
 //	go get github.com/cipherstash/stack/languages/golang/encrypt/encrypttest
 //
-// With no version, go get adds the newest version of this module, and raises
+// With no version, go get adds the latest stable release of this module, or
+// the newest pre-release while there is no stable release. It also raises
 // github.com/cipherstash/stack/languages/golang to the same version if the
-// program requires an older one. To keep an older SDK, add its version to the
-// command, such as encrypttest@v0.1.0-rc.6.
+// program requires an older one. Add the SDK's version to the command when
+// the program uses a pre-release of the SDK, or an older SDK it keeps, such
+// as encrypttest@v0.1.0-rc.6 with SDK v0.1.0-rc.6.
 //
 // Require it at the same version as
 // github.com/cipherstash/stack/languages/golang. Its test builds match the
