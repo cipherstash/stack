@@ -77,7 +77,7 @@ use crate::{ContextPiece, NonEmpty};
 /// use stack_encrypt::{nonempty, AsProtectedRef, IntoAad};
 ///
 /// // `[["users", "age"], 7u64]`, as a binding writes it.
-/// let frame = vitaminc_aead_frame::serde::to_vec(&(("users", "age"), 7u64))?;
+/// let frame = recipher_frame::serde::to_vec(&(("users", "age"), 7u64))?;
 /// let parsed = context(frame.as_protected_ref())?;
 /// let typed = nonempty!("users").with("age").with(7u64);
 /// assert_eq!(
@@ -96,7 +96,7 @@ use crate::{ContextPiece, NonEmpty};
 pub fn context(
     frame: vitaminc_protected::ProtectedRef<'_, [u8]>,
 ) -> Result<NonEmpty<ContextPiece<'static>>, Error> {
-    let Context(piece) = vitaminc_aead_frame::serde::from_slice(frame.risky_ref())
+    let Context(piece) = recipher_frame::serde::from_slice(frame.risky_ref())
         .map_err(|_| Error::bad_context(Reason::ContextKind))?;
     non_empty(piece)
 }
@@ -229,7 +229,7 @@ mod tests {
     use crate::dynamic::test_frame::frame_of;
     use crate::dynamic::test_frame::Tree;
     use crate::{nonempty, Descriptor, IntoAad, IntoPrfContext};
-    use vitaminc_aead_frame::serde::to_vec;
+    use recipher_frame::serde::to_vec;
     use vitaminc_protected::AsProtectedRef as _;
     use vitaminc_protected::Protected;
 

@@ -1,6 +1,6 @@
 name: Kani (storage reader)
 
-# Proves, rather than tests, the pieces vitaminc-aead-frame's storage reader
+# Proves, rather than tests, the pieces recipher-frame's storage reader
 # is built from. The reader parses bytes that may be corrupt or tampered with:
 #
 # - the header is refused exactly as its rules say;
@@ -12,7 +12,7 @@ name: Kani (storage reader)
 #   every pair of widths) or bytes (text and bytes) are equal, and keys of
 #   different kinds are never one key.
 #
-# The harnesses are in packages/vitaminc-aead-frame/src/storage/proofs.rs and
+# The harnesses are in packages/recipher-frame/src/storage/proofs.rs and
 # build only under `cfg(kani)`. They take about ten minutes, two at a time,
 # so they do not run on every pull request that touches the crates:
 #
@@ -36,9 +36,9 @@ name: Kani (storage reader)
 on:
   pull_request:
     paths:
-      - packages/vitaminc-aead-frame/src/storage.rs
-      - packages/vitaminc-aead-frame/src/storage/**
-      - packages/vitaminc-aead-frame/Cargo.toml
+      - packages/recipher-frame/src/storage.rs
+      - packages/recipher-frame/src/storage/**
+      - packages/recipher-frame/Cargo.toml
       - packages/vitaminc-aead/src/leaf.rs
       - packages/vitaminc-aead/src/tags.rs
       - packages/vitaminc-aead/src/frame.rs
@@ -111,8 +111,8 @@ jobs:
             exit 0
           fi
           changed=$(git diff --no-renames --name-only "$last" HEAD -- \
-            packages/vitaminc-aead-frame/src \
-            packages/vitaminc-aead-frame/Cargo.toml \
+            packages/recipher-frame/src \
+            packages/recipher-frame/Cargo.toml \
             packages/vitaminc-aead/src \
             packages/vitaminc-aead/Cargo.toml \
             Cargo.toml Cargo.lock .github/workflows/kani.yml)
@@ -177,4 +177,4 @@ jobs:
       # Two at a time: the map key proofs each solve over 128-bit values,
       # and a 16 GB runner is not sure to hold four of them at once.
       - name: Prove
-        run: cargo kani -p vitaminc-aead-frame --features serde -j 2 --output-format terse
+        run: cargo kani -p recipher-frame --features serde -j 2 --output-format terse

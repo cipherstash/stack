@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Check that the storage profile's golden corpora only grow.
 
-`packages/vitaminc-aead-frame/testdata/storage-v1.json` pins the bytes of version 1
-of the storage profile (packages/vitaminc-aead-frame/STORAGE.md), and each later
+`packages/recipher-frame/testdata/storage-v1.json` pins the bytes of version 1
+of the storage profile (packages/recipher-frame/STORAGE.md), and each later
 version gets a `storage-vN.json` of its own. Customers keep
 blobs in that format, so a row the corpus already had is a promise: its
 bytes read as its value, or are refused as its class, in every later
@@ -13,7 +13,7 @@ corpus the merge base had. Rows, sections and new corpora may be added.
 
 From the repository root, run
 
-    python3 packages/vitaminc-aead-frame/scripts/storage_corpus_append_only.py
+    python3 packages/recipher-frame/scripts/storage_corpus_append_only.py
 
 to check this branch against `origin/next`, the branch work merges into.
 Pass `--base <ref>` to check it against another branch. With no corpus at
@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-TESTDATA = "packages/vitaminc-aead-frame/testdata"
+TESTDATA = "packages/recipher-frame/testdata"
 CORPUS = f"{TESTDATA}/storage-v1.json"
 # A version's corpus: storage-v1.json, storage-v2.json, and so on.
 CORPUS_NAME = re.compile(r"storage-v[0-9]+\.json")

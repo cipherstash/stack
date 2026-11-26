@@ -260,7 +260,7 @@ async fn uuid_equality(cipher: &StackCipher<KeptKeys>) -> Json {
     let ctx = || {
         CallerContext::from(
             dynamic::context(
-                vitaminc_aead_frame::serde::to_vec(&CONTEXT)
+                recipher_frame::serde::to_vec(&CONTEXT)
                     .unwrap()
                     .as_protected_ref(),
             )
@@ -355,7 +355,7 @@ fn plan(spec: &Json) -> Result<record::Plan, dynamic::Error> {
     let mut spec = spec.clone();
     spec["context"] = json!(CONTEXT);
     record::plan(
-        vitaminc_aead_frame::serde::to_vec(&json!({ "value": spec }))
+        recipher_frame::serde::to_vec(&json!({ "value": spec }))
             .unwrap()
             .as_protected_ref(),
     )
@@ -893,7 +893,7 @@ async fn a_timestamp_in_any_unit_seals_to_the_nanosecond_leaf() {
 async fn a_passthrough_timestamp_keeps_the_hosts_bytes() {
     let (cipher, _) = cipher().await;
     let plan = record::plan(
-        vitaminc_aead_frame::serde::to_vec(&json!({
+        recipher_frame::serde::to_vec(&json!({
             "sealed": { "context": ["conformance", "sealed"], "outputs": ["c"], "type": "int32" },
             "value": { "context": ["conformance", "value"], "outputs": ["passthrough"], "type": "timestamp" },
         }))

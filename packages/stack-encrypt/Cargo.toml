@@ -72,7 +72,7 @@ futures = { version = "0.3.25", default-features = false, features = ["std"] }
 # the same versioned bytes the Go SDK writes through `vcffi.MarshalStorage`;
 # and, for `dynamic`, serde over the transport frame, which reads a binding's
 # control data (statistics, options, a plan) into typed messages.
-vitaminc-aead-frame = { workspace = true, features = ["serde"] }
+recipher-frame = { workspace = true, features = ["serde"] }
 serde = { workspace = true }
 # `deserialize_in_place`: `#[derive(Deserialize)]` also writes
 # `Deserialize::deserialize_in_place` for most structs, which reads each field

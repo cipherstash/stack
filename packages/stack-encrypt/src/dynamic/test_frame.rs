@@ -137,7 +137,7 @@ fn write(value: &Tree, out: &mut Vec<u8>) {
 /// What a binding reads back from an answer the engine writes: its frame,
 /// read back.
 pub(crate) fn value_of<T: serde::Serialize>(answer: &T) -> Tree {
-    let frame = vitaminc_aead_frame::serde::to_vec(answer).expect("frames");
+    let frame = recipher_frame::serde::to_vec(answer).expect("frames");
     Tree::from_frame(frame.risky_ref()).expect("a value")
 }
 

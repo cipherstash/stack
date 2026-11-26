@@ -115,7 +115,7 @@ fn stored(row: &StackCipherText) -> Option<(usize, BTreeMap<String, Vec<u8>>)> {
             ("c", CipherText::Single(leaf)) => length = Some(leaf.to_bytes().len()),
             ("c", _) => panic!("ciphertext is not one leaf"),
             (index, CipherText::Passthrough(term)) => {
-                let bytes: &[u8] = vitaminc_aead_frame::serde::from_slice(&term.0).unwrap();
+                let bytes: &[u8] = recipher_frame::serde::from_slice(&term.0).unwrap();
                 terms.insert(index.to_owned(), bytes.to_vec());
             }
             (key, _) => panic!("{key}: not a term"),
@@ -173,7 +173,7 @@ async fn shared_record_value_profile() {
             spec["null"] = json!(case.null);
         }
         let plan = record::plan(
-            vitaminc_aead_frame::serde::to_vec(&json!({"value": spec}))
+            recipher_frame::serde::to_vec(&json!({"value": spec}))
                 .unwrap()
                 .as_protected_ref(),
         )

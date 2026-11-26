@@ -22,7 +22,7 @@
 //! derivers; and a record opens straight into a frame (a value describes
 //! itself once, and sinks consume it). A binding's control
 //! data (a plan, a context, query statistics) is read from its frame by
-//! serde (`vitaminc_aead_frame::serde`) into a typed message, with no tree
+//! serde (`recipher_frame::serde`) into a typed message, with no tree
 //! built.
 //!
 //! # What is here
@@ -131,6 +131,11 @@ pub use value_frame::{Children, FromFrameError, Modeled, Opening, ValueFrame};
 /// [`read`] for what a kind means to this engine.
 pub use vitaminc_aead::plaintext::{ParseValueKindError, ValueKind};
 
+/// vitaminc's transport frame and ciphertext codec (`recipher-frame`,
+/// with its `serde` module): the bytes a binding hands this module, and the
+/// codec its ciphertexts cross in. Re-exported for the same reason as
+/// [`plaintext`].
+pub use recipher_frame as frame;
 /// vitaminc's value model, the sinks and scalar types a value describes
 /// itself through. A binding implements [`Encrypt`](crate::Encrypt) for its
 /// own values with it, as [`read`] takes them. Re-exported so a binding
@@ -138,11 +143,6 @@ pub use vitaminc_aead::plaintext::{ParseValueKindError, ValueKind};
 /// one build do not fail loudly: a [`ValueFrame`] stops meeting the other
 /// version's `Decrypt` bound.
 pub use vitaminc_aead::plaintext;
-/// vitaminc's transport frame and ciphertext codec (`vitaminc-aead-frame`,
-/// with its `serde` module): the bytes a binding hands this module, and the
-/// codec its ciphertexts cross in. Re-exported for the same reason as
-/// [`plaintext`].
-pub use vitaminc_aead_frame as frame;
 
 /// Bytes, written as a frame's bytes leaf rather than a list of integers.
 struct WireBytes<'a>(&'a [u8]);

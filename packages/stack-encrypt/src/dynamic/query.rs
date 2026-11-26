@@ -66,7 +66,7 @@
 //! [`QueryTerm`] serializes to, the statistics the frame object
 //! [`Stats::from_frame`] reads, and a limit [`Limit::rows`]: an unsigned
 //! 64-bit integer, or null for no finite fetch. Each answer is written to a
-//! frame by serde (`vitaminc_aead_frame::serde`) and documented on its
+//! frame by serde (`recipher_frame::serde`) and documented on its
 //! type.
 //!
 //! [`Probabilistic::verify`]: crate::op::Probabilistic::verify
@@ -521,7 +521,7 @@ fn answers(
 /// use stack_encrypt::target::IndexSpec;
 /// use stack_encrypt::AsProtectedRef;
 ///
-/// let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+/// let declaration = recipher_frame::serde::to_vec(&serde_json::json!({
 ///     "age": { "context": ["users", "age"], "outputs": ["c", "eq", "ore"], "type": "uint32" },
 /// }))?;
 /// let plan = record::plan(declaration.as_protected_ref())?;
@@ -1068,7 +1068,7 @@ where
 ///     .init()
 ///     .await?;
 /// let keyset = cipher.default_keyset();
-/// let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+/// let declaration = recipher_frame::serde::to_vec(&serde_json::json!({
 ///     "age": { "context": ["users", "age"], "outputs": ["c", "ore"], "type": "uint32" },
 /// }))?;
 /// let plan = record::plan(declaration.as_protected_ref())?;
@@ -1344,7 +1344,7 @@ impl Stats {
     /// frame, not an object, no `rows`, a key given twice or not one of the
     /// three, or a value of another type.
     pub fn from_frame(bytes: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Self, Error> {
-        let wire: StatsWire = vitaminc_aead_frame::serde::from_slice(bytes.risky_ref())
+        let wire: StatsWire = recipher_frame::serde::from_slice(bytes.risky_ref())
             .map_err(|_| Error::bad_source(Reason::NotStats))?;
         let stats = match wire.histogram {
             Some(histogram) => Stats::measured(wire.rows, histogram),
@@ -1998,7 +1998,7 @@ mod tests {
             ..MatchOptions::default()
         };
         let context = crate::dynamic::context(
-            vitaminc_aead_frame::serde::to_vec(&("users", "name"))
+            recipher_frame::serde::to_vec(&("users", "name"))
                 .expect("frames")
                 .as_protected_ref(),
         )
@@ -2295,7 +2295,7 @@ mod tests {
         let stored = |value: &ValueFrame, name: &'static str| {
             let keyset = &keyset;
             let ctx = super::super::context(
-                vitaminc_aead_frame::serde::to_vec(&("users", name))
+                recipher_frame::serde::to_vec(&("users", name))
                     .expect("frames")
                     .as_protected_ref(),
             )
@@ -3071,7 +3071,7 @@ mod tests {
 mod wire_bytes {
     use super::*;
     use crate::sem::{MatchOptions, Tokenizer};
-    use vitaminc_aead_frame::serde::to_vec;
+    use recipher_frame::serde::to_vec;
 
     fn hex<T: Serialize>(value: &T) -> String {
         crate::Controlled::risky_ref(&to_vec(value).expect("frames"))

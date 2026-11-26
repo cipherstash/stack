@@ -14,7 +14,7 @@
 //! they are dropped. That cost is part of what is measured. MessagePack,
 //! Borsh and JSON wipe nothing.
 //!
-//! Run with `cargo bench -p vitaminc-aead-frame --features serde`.
+//! Run with `cargo bench -p recipher-frame --features serde`.
 
 use std::collections::BTreeMap;
 use std::hint::black_box;
@@ -22,9 +22,9 @@ use std::hint::black_box;
 use borsh::{BorshDeserialize, BorshSerialize};
 use criterion::measurement::WallTime;
 use criterion::{criterion_group, criterion_main, BenchmarkGroup, Criterion, Throughput};
+use recipher_frame::{serde as transport, storage};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use vitaminc_aead_frame::{serde as transport, storage};
 use vitaminc_protected::Controlled;
 
 /// A row of the kind an application keeps: integers, text, a flag, a

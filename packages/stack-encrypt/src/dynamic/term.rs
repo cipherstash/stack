@@ -132,7 +132,7 @@ impl IndexSpec {
     /// frame (an option given twice is refused by the frame). It names no
     /// field: the plan parser names it.
     pub fn from_frame(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Self, Error> {
-        vitaminc_aead_frame::serde::from_slice::<IndexWire>(frame.risky_ref())
+        recipher_frame::serde::from_slice::<IndexWire>(frame.risky_ref())
             .map(IndexSpec::from)
             .map_err(|_| Error::bad_plan(Reason::UnknownOutput))
     }
@@ -447,7 +447,7 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 /// let keyset = cipher.default_keyset();
 ///
 /// // `["users", "age"]`, as a binding writes it.
-/// let ctx = context(vitaminc_aead_frame::serde::to_vec(&("users", "age"))?.as_protected_ref())?;
+/// let ctx = context(recipher_frame::serde::to_vec(&("users", "age"))?.as_protected_ref())?;
 /// let probe = term(&keyset, &34u32, &IndexSpec::Equality, ctx.clone()).await?;
 /// let typed: EqualityTerm = 34u32.encrypt_into_with_context(&keyset, ctx).await?;
 /// assert_eq!(probe, typed.into_bytes().to_vec());
@@ -1198,7 +1198,7 @@ mod tests {
     /// A one-part context, read from its frame as a binding sends it.
     fn ctx(label: &str) -> NonEmpty<crate::ContextPiece<'static>> {
         context(
-            vitaminc_aead_frame::serde::to_vec(&label)
+            recipher_frame::serde::to_vec(&label)
                 .expect("frames")
                 .as_protected_ref(),
         )

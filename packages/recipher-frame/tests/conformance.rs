@@ -18,12 +18,12 @@
 
 use std::collections::BTreeMap;
 
+use recipher_frame::{decode_ciphertext, to_frame, Frame};
 use vitaminc_aead::plaintext::kinds::jiff as conv;
 use vitaminc_aead::{
     Encrypt, Float, Int, IntoAad, Kind, KnownLogical, LeafTypeAad, Logical, Physical, Raw,
     TimeUnit, UnknownLogicalId,
 };
-use vitaminc_aead_frame::{decode_ciphertext, to_frame, Frame};
 use vitaminc_protected::Controlled;
 
 fn unhex(text: &str) -> Vec<u8> {

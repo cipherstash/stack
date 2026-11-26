@@ -9,11 +9,11 @@
 //! frame writer, and [`decode`](HostValue::decode) reads a frame back
 //! through a [`Sink`], for the tests that check what a host is given.
 
+use recipher_frame::{to_frame, Frame, FrameError, FrameWriteError};
 use vitaminc_aead::plaintext::{
     visit_map, visit_seq, Encrypt, FixedType, Float, Logical, MapSink, Physical, SeqSink, Sink,
     SourceError,
 };
-use vitaminc_aead_frame::{to_frame, Frame, FrameError, FrameWriteError};
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroizing;
 

@@ -1,7 +1,7 @@
 [package]
-name = "vitaminc-aead-frame"
+name = "recipher-frame"
 description = "Transport frame and ciphertext codec for carrying Vitamin-C AEAD values and ciphertexts across an FFI boundary, and a versioned storage profile for values that are kept. Part of the Vitamin-C cryptographic suite."
-documentation = "https://docs.rs/vitaminc-aead-frame"
+documentation = "https://docs.rs/recipher-frame"
 version = "0.10.0"
 repository = "https://github.com/cipherstash/stack"
 authors = ["Dan Draper <dan@cipherstash.com>"]
@@ -11,10 +11,11 @@ license = "MIT"
 keywords = ["cryptography", "security"]
 categories = ["cryptography"]
 rust-version = "1.89.0"
-# Not published from this repository yet: crates.io serves 0.10.0, which was
-# published from cipherstash/vitaminc. release-plz.toml lists it with
-# `release = false`. Every workspace that resolves it patches crates.io's
-# copy to this one.
+# Not published yet. The crate was vitaminc-aead-frame, and crates.io still
+# serves vitaminc-aead-frame 0.10.0, published from cipherstash/vitaminc. Only
+# crates in this repository depend on it, and they name it by path, so no
+# workspace patches crates.io for it. release-plz.toml lists it with
+# `release = false`.
 publish = false
 # scripts/ holds the storage corpus append-only check, which
 # .github/workflows/storage-corpus.yml runs on a pull request that changes
@@ -37,10 +38,10 @@ serde = { version = "1", features = ["derive"], optional = true }
 
 [features]
 default = []
-# serde over the transport frame (`vitaminc_aead_frame::serde`): read any
+# serde over the transport frame (`recipher_frame::serde`): read any
 # `Deserialize` type from frame bytes and write any `Serialize` type as
 # frame bytes, for data a host exchanges with Rust that is not plaintext.
-# Also the storage profile (`vitaminc_aead_frame::storage`): the same
+# Also the storage profile (`recipher_frame::storage`): the same
 # mapping as a versioned blob whose format is frozen, for bytes that are
 # kept (STORAGE.md).
 serde = ["dep:serde", "dep:vitaminc-protected"]

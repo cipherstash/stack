@@ -3108,13 +3108,13 @@ mod given_the_json_index_spec {
             "every option is written when any is not the default"
         );
         let frame =
-            vitaminc_aead_frame::serde::to_vec(&json!({"json": {"sealed_root": false}})).unwrap();
+            recipher_frame::serde::to_vec(&json!({"json": {"sealed_root": false}})).unwrap();
         assert_eq!(
             IndexSpec::from_frame(frame.as_protected_ref()).unwrap(),
             IndexSpec::Json(open_root()),
             "an option read from a frame"
         );
-        let frame = vitaminc_aead_frame::serde::to_vec(&json!({"json": {"nope": true}})).unwrap();
+        let frame = recipher_frame::serde::to_vec(&json!({"json": {"nope": true}})).unwrap();
         assert!(
             IndexSpec::from_frame(frame.as_protected_ref()).is_err(),
             "an unknown option refuses the index"
@@ -3128,7 +3128,7 @@ mod given_the_json_index_spec {
             json!({"json": {"sealed_root": true, "ordered": ["$.age", "$.orders[*].total"]}}),
             "ordered paths are written once, in canonical order"
         );
-        let frame = vitaminc_aead_frame::serde::to_vec(
+        let frame = recipher_frame::serde::to_vec(
             &json!({"json": {"ordered": ["$.age", "$.orders[*].total"]}}),
         )
         .unwrap();
@@ -3137,8 +3137,7 @@ mod given_the_json_index_spec {
             ordered,
             "ordered paths read back parsed"
         );
-        let frame =
-            vitaminc_aead_frame::serde::to_vec(&json!({"json": {"ordered": ["age"]}})).unwrap();
+        let frame = recipher_frame::serde::to_vec(&json!({"json": {"ordered": ["age"]}})).unwrap();
         assert!(
             IndexSpec::from_frame(frame.as_protected_ref()).is_err(),
             "a text that is not a path refuses the index"
@@ -3146,8 +3145,7 @@ mod given_the_json_index_spec {
         // A position in an ordered path refuses the index too: no ordering
         // can reach the leaf it names.
         let frame =
-            vitaminc_aead_frame::serde::to_vec(&json!({"json": {"ordered": ["$.scores[2]"]}}))
-                .unwrap();
+            recipher_frame::serde::to_vec(&json!({"json": {"ordered": ["$.scores[2]"]}})).unwrap();
         assert!(
             IndexSpec::from_frame(frame.as_protected_ref()).is_err(),
             "a position in an ordered path refuses the index"

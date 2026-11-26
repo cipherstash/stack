@@ -30,7 +30,7 @@ on:
       - packages/stack-kms/**
       - packages/stack-encrypt/**
       - packages/vitaminc-aead/**
-      - packages/vitaminc-aead-frame/**
+      - packages/recipher-frame/**
       - packages/vitaminc-aead-derive/**
       - Cargo.toml
       - Cargo.lock

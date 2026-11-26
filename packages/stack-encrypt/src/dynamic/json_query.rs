@@ -397,7 +397,7 @@ struct MatchInput {
 }
 
 fn read_frame<T: for<'de> Deserialize<'de>>(input: &ValueFrame) -> Result<T, Error> {
-    vitaminc_aead_frame::serde::from_slice(input.risky_ref()).map_err(|_| Error::Source {
+    recipher_frame::serde::from_slice(input.risky_ref()).map_err(|_| Error::Source {
         field: None,
         reason: Reason::JsonInput,
     })

@@ -1081,7 +1081,7 @@ impl Plan {
     /// use stack_encrypt::dynamic::{record, Planned, ValueFrame};
     /// use stack_encrypt::target::Scope;
     /// use stack_encrypt::{AsProtectedRef, EncryptInto, Pending, StackCipher, StackCipherText};
-    /// use vitaminc_aead_frame::serde::to_vec;
+    /// use recipher_frame::serde::to_vec;
     ///
     /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
     /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
@@ -1185,7 +1185,7 @@ pub fn plan(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Plan, E
 /// through `resolver`.
 ///
 /// The plan is a frame object, read by serde
-/// (`vitaminc_aead_frame::serde`):
+/// (`recipher_frame::serde`):
 ///
 /// ```text
 /// { <field>: { "context": <context>, "outputs": [ "c" | "passthrough" | <index>, ... ], "type": <type> }, ... }
@@ -1294,7 +1294,7 @@ pub fn plan(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Plan, E
 ///
 /// // As a binding sends it: seal `age` under the label users/age and index
 /// // it for equality.
-/// let frame = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+/// let frame = recipher_frame::serde::to_vec(&serde_json::json!({
 ///     "age": {
 ///         "context": ["users", "age"],
 ///         "outputs": ["c", "eq"],
@@ -1341,7 +1341,7 @@ pub fn plan_with(
 ) -> Result<Plan, Error> {
     let frame = frame.risky_ref();
     let wire: PlanWire =
-        vitaminc_aead_frame::serde::from_slice(frame).map_err(|e| plan_refusal(&e, frame))?;
+        recipher_frame::serde::from_slice(frame).map_err(|e| plan_refusal(&e, frame))?;
     let mut fields: Vec<FieldPlan> = Vec::with_capacity(wire.fields.len());
     for (name, spec) in wire.fields {
         let spec = FieldSpec::try_from(spec).map_err(|reason| Error::Plan {
@@ -1458,7 +1458,7 @@ fn entry_key(frame: &[u8], position: usize) -> Option<String> {
             d.deserialize_map(V)
         }
     }
-    vitaminc_aead_frame::serde::from_slice::<Keys>(frame)
+    recipher_frame::serde::from_slice::<Keys>(frame)
         .ok()?
         .0
         .into_iter()
@@ -1477,7 +1477,7 @@ fn spec_keys(frame: &[u8], field: &str) -> Option<Vec<String>> {
         Object(std::collections::BTreeMap<String, serde::de::IgnoredAny>),
         Other(serde::de::IgnoredAny),
     }
-    match vitaminc_aead_frame::serde::from_slice::<std::collections::BTreeMap<String, Spec>>(frame)
+    match recipher_frame::serde::from_slice::<std::collections::BTreeMap<String, Spec>>(frame)
         .ok()?
         .remove(field)?
     {
@@ -1643,8 +1643,8 @@ impl TryFrom<&str> for NullName {
 /// The parser's refusal of a plan the frame reader refused: the field from
 /// the error's path, and the reason from where in the field it happened,
 /// or from the reason a field's own rule gave.
-fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Error {
-    use vitaminc_aead_frame::serde::PathSegment::{Entry, Key};
+fn plan_refusal(error: &recipher_frame::serde::Error, frame: &[u8]) -> Error {
+    use recipher_frame::serde::PathSegment::{Entry, Key};
 
     let path = error.path();
     // A plan's keys are the host's, so the adapter places an error under one
@@ -1737,7 +1737,7 @@ fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Erro
 /// let keyset = cipher.default_keyset();
 ///
 /// // Seal `age` under users/age with an equality term beside it.
-/// let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+/// let declaration = recipher_frame::serde::to_vec(&serde_json::json!({
 ///     "age": { "context": ["users", "age"], "outputs": ["c", "eq"], "type": "uint32" },
 /// }))?;
 /// let plan = record::plan(declaration.as_protected_ref())?;

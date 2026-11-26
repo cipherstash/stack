@@ -41,5 +41,4 @@ unused_imports = "deny"
 # workspace does (see its [patch.crates-io]).
 [patch.crates-io]
 vitaminc-aead = { path = "../vitaminc-aead" }
-vitaminc-aead-frame = { path = "../vitaminc-aead-frame" }
 vitaminc-aead-derive = { path = "../vitaminc-aead-derive" }

@@ -110,7 +110,7 @@ async fn cipher() -> (StackCipher<Source>, Arc<Observations>) {
 
 fn plan() -> record::Plan {
     record::plan(
-        (vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+        (recipher_frame::serde::to_vec(&serde_json::json!({
             "value": {"context": ["lifecycle", "value"], "outputs": ["c"], "type": "string"}
         }))
         .unwrap())

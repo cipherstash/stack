@@ -217,7 +217,7 @@ impl Serialize for Declaration<'_> {
 
 fn plan_of(fields: &[(String, serde_json::Value)]) -> record::Plan {
     record::plan(
-        vitaminc_aead_frame::serde::to_vec(&Declaration(fields))
+        recipher_frame::serde::to_vec(&Declaration(fields))
             .unwrap()
             .as_protected_ref(),
     )
@@ -303,7 +303,7 @@ fn stored_of(tree: &StackCipherText, field: &str) -> Option<Stored> {
             ("c", _) => panic!("{field}: the ciphertext is not one leaf"),
             ("passthrough", _) => panic!("{field}: a passthrough is not a sealed field"),
             (index, CipherText::Passthrough(term)) => {
-                let bytes: &[u8] = vitaminc_aead_frame::serde::from_slice(&term.0).unwrap();
+                let bytes: &[u8] = recipher_frame::serde::from_slice(&term.0).unwrap();
                 stored.terms.insert(index.to_owned(), hex(bytes));
             }
             (key, _) => panic!("{field}: {key} is not a term"),

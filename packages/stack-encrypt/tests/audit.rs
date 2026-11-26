@@ -526,13 +526,13 @@ mod dynamic_path {
     #[tokio::test]
     async fn a_dynamic_record_sends_its_metadata() {
         let (cipher, source) = cipher().await;
-        let plan = vitaminc_aead_frame::serde::to_vec(&json!({
+        let plan = recipher_frame::serde::to_vec(&json!({
             "email": { "context": ["users", "email"], "outputs": ["c", "eq"], "type": "string" },
             "notes": { "context": ["users", "notes"], "outputs": ["c"], "type": "string" },
         }))
         .expect("the plan is a frame");
         let plan = record::plan(plan.as_protected_ref()).expect("the plan parses");
-        let user = vitaminc_aead_frame::serde::to_vec(&json!({
+        let user = recipher_frame::serde::to_vec(&json!({
             "email": "bob@example.com",
             "notes": "likes cats",
         }))

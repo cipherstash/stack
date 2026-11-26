@@ -38,12 +38,12 @@ additional_cargo_test_args = ["-E", "not binary(ui) & not test(stress_tests)"]
 # lib.rs run at compile time, and the expansion they delegate to is in
 # modules its unit tests call directly.
 #
-# vitaminc-aead-frame's Kani harnesses build only under `cfg(kani)`, so no
+# recipher-frame's Kani harnesses build only under `cfg(kani)`, so no
 # test binary contains them. kani.yml checks them.
 exclude_globs = [
   "packages/stack-encrypt-derive/**",
   "packages/vitaminc-aead-derive/src/lib.rs",
-  "packages/vitaminc-aead-frame/src/storage/proofs.rs",
+  "packages/recipher-frame/src/storage/proofs.rs",
 ]
 
 # Mutants no test binary can kill, by name. Every other survivor is a test to

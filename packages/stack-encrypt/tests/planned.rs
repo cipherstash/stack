@@ -35,7 +35,7 @@ struct Row {
 }
 
 fn row_of(frame: &ValueFrame) -> Row {
-    vitaminc_aead_frame::serde::from_slice(frame.risky_ref()).expect("an object of the two fields")
+    recipher_frame::serde::from_slice(frame.risky_ref()).expect("an object of the two fields")
 }
 
 fn ada_row() -> Row {
@@ -55,7 +55,7 @@ async fn cipher() -> StackCipher<FakeDataKeySource> {
 
 /// A data plan read from its JSON declaration, with no EQL types.
 fn plan_of(declaration: serde_json::Value) -> record::Plan {
-    let declaration = vitaminc_aead_frame::serde::to_vec(&declaration).unwrap();
+    let declaration = recipher_frame::serde::to_vec(&declaration).unwrap();
     record::plan(declaration.as_protected_ref()).unwrap()
 }
 
@@ -128,7 +128,7 @@ impl TargetResolver for OneType {
 
 /// The data plan of a record whose email names the EQL type `Some`.
 fn target_plan() -> record::Plan {
-    let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+    let declaration = recipher_frame::serde::to_vec(&serde_json::json!({
         "email": { "context": ["users", "email"], "target": "Some" },
     }))
     .unwrap();
@@ -319,7 +319,7 @@ mod a_record_under_a_plan {
             .await
             .unwrap();
         assert_eq!(
-            vitaminc_aead_frame::serde::from_slice::<serde_json::Value>(back.risky_ref()).unwrap(),
+            recipher_frame::serde::from_slice::<serde_json::Value>(back.risky_ref()).unwrap(),
             serde_json::json!({"email": "ada@example.com"})
         );
     }

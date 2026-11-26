@@ -1,4 +1,4 @@
-# vitaminc-aead-frame
+# recipher-frame
 
 The transport for carrying Vitamin-C AEAD values and ciphertexts across an
 FFI boundary in one linear-memory copy: the frame for values, and the
@@ -27,7 +27,7 @@ Go guest uses it in both directions.
 
 ```rust
 use vitaminc_aead::{CipherText, Node};
-use vitaminc_aead_frame::{decode_ciphertext, encode_ciphertext};
+use recipher_frame::{decode_ciphertext, encode_ciphertext};
 
 let tree: Node<Vec<u8>> = CipherText::Single(vec![0xAB; 16]);
 let mut bytes = Vec::new();
@@ -42,7 +42,7 @@ assert_eq!(again, bytes);
 ## Installation
 
 ```sh
-cargo add vitaminc-aead-frame
+cargo add recipher-frame
 ```
 
 ## Why the storage profile
@@ -80,7 +80,7 @@ never written and is rejected when read. `None` is encoded as a null leaf.
 
 ## serde (feature `serde`)
 
-`vitaminc_aead_frame::serde` is a serde data format over the frame:
+`recipher_frame::serde` is a serde data format over the frame:
 `from_slice` reads any `Deserialize` type from frame bytes and `to_vec` writes
 any `Serialize` type as frame bytes. It is for data a host exchanges with
 Rust that is not plaintext to seal, such as a call's options or a result.
@@ -116,7 +116,7 @@ comes back in a `Buffer`: read through `risky_ref`, wiped when dropped.
 ```rust
 # #[cfg(feature = "serde")]
 # {
-use vitaminc_aead_frame::storage;
+use recipher_frame::storage;
 use vitaminc_protected::Controlled;
 
 let blob = storage::to_vec(&Some(Option::<u8>::None)).expect("writes");
@@ -222,7 +222,7 @@ No optional features are enabled by default.
 
 ## Compatibility
 
-Requires Rust <!-- msrv:vitaminc-aead-frame -->**1.89.0**<!-- /msrv --> and the Rust standard library (`std`).
+Requires Rust <!-- msrv:recipher-frame -->**1.89.0**<!-- /msrv --> and the Rust standard library (`std`).
 MSRV increases require a minor release; patch releases retain the existing
 floor. See the [workspace compatibility policy](https://github.com/cipherstash/vitaminc#compatibility).
 
@@ -230,15 +230,15 @@ License: MIT.
 
 <!-- GitHub API links target the latest release; src/lib.rs resolves these for rustdoc. -->
 [`CipherText`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/enum.CipherText.html
-[`CodecError`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/transport/struct.CodecError.html
+[`CodecError`]: https://docs.rs/recipher-frame/latest/recipher_frame/transport/struct.CodecError.html
 [`Encrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Encrypt.html
-[`FrameError`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/struct.FrameError.html
-[`FrameWriter`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/struct.FrameWriter.html
-[`Frame`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/struct.Frame.html
-[`MAX_DEPTH`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/constant.MAX_DEPTH.html
-[`PassthroughFrame`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/struct.PassthroughFrame.html
+[`FrameError`]: https://docs.rs/recipher-frame/latest/recipher_frame/struct.FrameError.html
+[`FrameWriter`]: https://docs.rs/recipher-frame/latest/recipher_frame/struct.FrameWriter.html
+[`Frame`]: https://docs.rs/recipher-frame/latest/recipher_frame/struct.Frame.html
+[`MAX_DEPTH`]: https://docs.rs/recipher-frame/latest/recipher_frame/constant.MAX_DEPTH.html
+[`PassthroughFrame`]: https://docs.rs/recipher-frame/latest/recipher_frame/struct.PassthroughFrame.html
 [`Sink`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Sink.html
-[`decode_ciphertext`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/transport/fn.decode_ciphertext.html
-[`encode_ciphertext`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/transport/fn.encode_ciphertext.html
-[`tags`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/tags/index.html
-[`to_frame`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/fn.to_frame.html
+[`decode_ciphertext`]: https://docs.rs/recipher-frame/latest/recipher_frame/transport/fn.decode_ciphertext.html
+[`encode_ciphertext`]: https://docs.rs/recipher-frame/latest/recipher_frame/transport/fn.encode_ciphertext.html
+[`tags`]: https://docs.rs/recipher-frame/latest/recipher_frame/tags/index.html
+[`to_frame`]: https://docs.rs/recipher-frame/latest/recipher_frame/fn.to_frame.html

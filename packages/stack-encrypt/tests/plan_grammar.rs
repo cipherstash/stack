@@ -140,7 +140,7 @@ fn stored_eq_term(record: &StackCipherText, field: &str) -> Vec<u8> {
     else {
         panic!("a term is a passthrough")
     };
-    vitaminc_aead_frame::serde::from_slice::<&[u8]>(&term.0)
+    recipher_frame::serde::from_slice::<&[u8]>(&term.0)
         .expect("a term is bytes")
         .to_vec()
 }

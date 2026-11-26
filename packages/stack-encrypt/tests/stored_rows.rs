@@ -313,7 +313,7 @@ fn refreeze_order_terms(stored: &mut Json, resealed: &Json) {
 
 /// A plan written as JSON, as frame bytes: what a binding sends.
 fn frame_of_json(value: &Json) -> vitaminc_protected::Buffer {
-    vitaminc_aead_frame::serde::to_vec(value).expect("frames")
+    recipher_frame::serde::to_vec(value).expect("frames")
 }
 
 fn plan_of(json: &Json) -> DataPlan {

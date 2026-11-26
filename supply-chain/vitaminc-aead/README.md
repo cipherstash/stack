@@ -1,7 +1,7 @@
 # Supply-chain checks for the vitaminc-aead crates
 
 This directory holds the `cargo deny` config and the `cargo vet` store for
-`vitaminc-aead`, `vitaminc-aead-frame` and `vitaminc-aead-derive`, and their
+`vitaminc-aead`, `recipher-frame` and `vitaminc-aead-derive`, and their
 dependency graph **only**. Nothing here checks the rest of the root
 workspace; that is #1842.
 

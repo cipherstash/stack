@@ -15,6 +15,7 @@
 mod common;
 
 use common::frames::{frame, object, payload};
+use recipher_frame::serde::from_slice;
 use serde::Deserialize;
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
 use stack_encrypt::dynamic::ValueFrame;
@@ -27,7 +28,6 @@ use stack_encrypt::{
     nonempty, AsProtectedRef, CipherText, Ciphertext, DecryptFrom, EncryptInto, PassthroughFrame,
     SealedValue, StackCipher, StackCipherText,
 };
-use vitaminc_aead_frame::serde::from_slice;
 use zeroize::Zeroize;
 
 #[derive(Debug, Clone, PartialEq, Zeroize)]
@@ -127,7 +127,7 @@ fn data_plan() -> DataPlan {
         "name":  { "context": ["users", "name"],  "outputs": ["c"],           "type": "string" },
         "email": { "context": ["users", "email"], "outputs": ["c", "eq"],     "type": "string" },
     });
-    let declaration = vitaminc_aead_frame::serde::to_vec(&json).expect("frames");
+    let declaration = recipher_frame::serde::to_vec(&json).expect("frames");
     record::plan(declaration.as_protected_ref()).expect("a plan")
 }
 fn dynamic_source(user: &User) -> ValueFrame {

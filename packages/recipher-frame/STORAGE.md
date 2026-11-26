@@ -118,7 +118,7 @@ Stable, and covered by this specification:
 The Go module `bindings/go/vcffi` implements the same format
 (`MarshalStorage`, `UnmarshalStorage`).
 
-Not stable, and not covered: everything else in `vitaminc-aead-frame`.
+Not stable, and not covered: everything else in `recipher-frame`.
 The transport frame (`Frame`, `FrameWriter`, `to_frame`), the transport
 serde format (`serde::to_vec`, `serde::from_slice`, `serde::from_frame`)
 and the ciphertext codec are for a host and a guest that ship together,

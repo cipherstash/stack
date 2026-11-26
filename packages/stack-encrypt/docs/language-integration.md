@@ -355,12 +355,12 @@ too, in a buffer wiped on drop.
 statistics, an error, and for a guest the options object, a configuration
 and a step's requests and responses. They cross as frames as well, and the
 engine reads each straight into a typed message with serde
-(`vitaminc_aead_frame::serde`), with no intermediate tree. There is no type
+(`recipher_frame::serde`), with no intermediate tree. There is no type
 a binding can use to hold plaintext as a tree, by design. If you find
 yourself building one, you are building a second value model.
 
 The frame format itself is documented in the crate that owns it,
-[`vitaminc-aead-frame`](https://docs.rs/vitaminc-aead-frame/0.10.0): the
+[`recipher-frame`](https://docs.rs/recipher-frame/0.10.0): the
 byte layout, the tag table, and the depth and length limits. This guide
 does not restate it. This crate re-exports it as
 [`crate::dynamic::frame`], so a binding builds against the same version the
@@ -609,7 +609,7 @@ Three things have versions, and a binding ties them together.
   embeds the guest built from the same commit, so host and engine cannot
   drift: a tagged Go release carries the guest built at that tag
   (`languages/golang/encrypt/README.md`, "Building").
-- **The wire.** The frame format is `vitaminc-aead-frame`'s. A native
+- **The wire.** The frame format is `recipher-frame`'s. A native
   extension gets the version this crate depends on; a guest's host codec
   targets one version of it (section 5).
 - **The stored record.** A record's map keys (`c`, `eq`, `match`, `ore`,
@@ -673,7 +673,7 @@ f1 01000000  03000000 616765  04 2a000000
 
 `04 2a000000` on its own is the value `42` as an `int32`: the frame's tag
 for a 32-bit integer and the integer in little-endian order. What the other
-bytes mean is in `vitaminc-aead-frame`'s documentation; the point here is
+bytes mean is in `recipher-frame`'s documentation; the point here is
 that this is the whole of what crosses, and nothing is decoded into a tree.
 
 The bytes above are what this crate produces today, and this example runs
@@ -695,7 +695,7 @@ let row = ValueFrame::of(BTreeMap::from([("age", 42i32)]))?;
 assert_eq!(hex(row.risky_ref()), "f10100000003000000616765042a000000");
 
 // A control message is written by serde into a buffer wiped on drop.
-let plan = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+let plan = recipher_frame::serde::to_vec(&serde_json::json!({
     "age": { "context": ["profiles", "age"], "target": "IntegerEq" }
 }))?;
 assert_eq!(
@@ -771,7 +771,7 @@ let cipher = StackCipher::builder()
 let keyset = cipher.default_keyset();
 
 // Read once, when the SDK loads the declaration.
-let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+let declaration = recipher_frame::serde::to_vec(&serde_json::json!({
     "age": { "context": ["profiles", "age"], "outputs": ["c", "eq"], "type": "int32" },
 }))?;
 let plan = record::plan(declaration.as_protected_ref())?;
@@ -852,7 +852,7 @@ done:
 
 ## 12. Where the rest is
 
-- The frame format: [`vitaminc-aead-frame` on docs.rs](https://docs.rs/vitaminc-aead-frame/0.10.0).
+- The frame format: [`recipher-frame` on docs.rs](https://docs.rs/recipher-frame/0.10.0).
 - The `dynamic` API: [`crate::dynamic`], [`crate::dynamic::Planned`] for
   the operations, and `src/dynamic/record.rs` for the plan grammar in full.
 - The binding contract and its cases: `conformance/stack-encrypt`, starting

@@ -74,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `IntegerEq` through encrypt, query and decrypt, with the bytes from the
   committed fixtures, and ends with a checklist built on
   `conformance/stack-encrypt`. The frame format stays in
-  `vitaminc-aead-frame`'s documentation and is linked, not restated.
+  `recipher-frame`'s documentation and is linked, not restated.
 - **A credential with each call** (#1708). A server that decrypts as the end
   user who signed in had to build its cipher inside the first request,
   because `init` needs a token and a server starting up has no user. It also
@@ -1439,7 +1439,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `keyset.decrypt::<OpaqueBlob<T>>(ct)`, for any
   `DeserializeOwned + Default + Zeroize` type, then call `into_inner()`.
   - The value is encoded with version 1 of Vitamin C's storage profile
-    (`vitaminc_aead_frame::storage`). The encoded bytes start with a `VCS`
+    (`recipher_frame::storage`). The encoded bytes start with a `VCS`
     header and a version byte, inside the plaintext. The profile has a
     frozen specification and a golden corpus of test vectors.
   - The encoded bytes are sealed as one bytes leaf of the `SealedValue` v1
@@ -1663,7 +1663,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `KeysetCipher::decrypt_tree`, `StackCipher::decrypt`,
   `PendingStackCipherText::plan`, `seal`, and `into_pending`. A positional
   call does not change. The stored format does not change.
-- `vitaminc-aead-frame` is now always built, with its `serde` feature.
+- `recipher-frame` is now always built, with its `serde` feature.
   Before, it was built only with the `dynamic` feature. The `dynamic`
   feature now adds no dependency.
 - The rustdoc of `stack-encrypt` and `stack-encrypt-derive` states each

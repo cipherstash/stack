@@ -41,6 +41,7 @@ use std::path::PathBuf;
 
 use common::frames::{frame, object, payload};
 use common::{deterministic_cipher, DeterministicSource};
+use recipher_frame::serde::from_slice;
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
 use stack_encrypt::dynamic::{TermBytes, ValueFrame, ValueKind};
@@ -53,7 +54,6 @@ use stack_encrypt::target::{
 use stack_encrypt::{
     nonempty, CipherText, Error, Label, NonEmpty, SealedValue, StackCipher, StackCipherText,
 };
-use vitaminc_aead_frame::serde::from_slice;
 
 const SEED: [u8; 32] = *b"stack-encrypt record fixture v1 ";
 
@@ -127,7 +127,7 @@ fn plaintext_json() -> Json {
 
 /// A plan written as JSON, as frame bytes: what a binding sends.
 fn frame_of_json(value: &Json) -> vitaminc_protected::Buffer {
-    vitaminc_aead_frame::serde::to_vec(value).expect("frames")
+    recipher_frame::serde::to_vec(value).expect("frames")
 }
 
 /// The plaintext as the binding sends it: each field at the kind the plan

@@ -291,7 +291,7 @@ async fn shared_query_refusal_profile() {
         declaration.insert(name.clone(), field);
     }
     let plan = record::plan(
-        vitaminc_aead_frame::serde::to_vec(&declaration)
+        recipher_frame::serde::to_vec(&declaration)
             .unwrap()
             .as_protected_ref(),
     )

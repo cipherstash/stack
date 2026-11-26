@@ -5,7 +5,7 @@
 //! here knows about linear memory.
 //!
 //! Values cross the boundary as vitaminc transport frames, and ciphertext
-//! trees in vitaminc's ciphertext codec (`vitaminc_aead_frame`) — the same
+//! trees in vitaminc's ciphertext codec (`recipher_frame`) — the same
 //! encodings the vitaminc guest uses, so the Go side carries exactly one
 //! codec. A ciphertext tree's
 //! leaves are re-encoded through [`SealedValue::to_bytes`] /

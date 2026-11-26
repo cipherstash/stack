@@ -8,11 +8,11 @@ use std::collections::HashSet;
 use std::fmt;
 use std::sync::Mutex;
 
+use recipher_frame::storage::HEADER;
 use serde::de::{self, Visitor};
 use serde::ser::{SerializeMap, SerializeSeq, SerializeStruct};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
-use vitaminc_aead_frame::storage::HEADER;
 
 pub fn unhex(text: &str) -> Vec<u8> {
     (0..text.len())

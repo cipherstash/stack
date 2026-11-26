@@ -108,12 +108,8 @@ fn plan(decl: &Declaration, context_field: bool, context_name: &str) -> record::
     // Match Go Plan.Wire's declaration order explicitly, regardless of the
     // serde_json map backend or the context field's lexical position.
     let framed = |v: &Value| {
-        ValueFrame::from_bytes(
-            vitaminc_aead_frame::serde::to_vec(v)
-                .unwrap()
-                .as_protected_ref(),
-        )
-        .unwrap()
+        ValueFrame::from_bytes(recipher_frame::serde::to_vec(v).unwrap().as_protected_ref())
+            .unwrap()
     };
     let mut fields = Vec::new();
     if context_field {

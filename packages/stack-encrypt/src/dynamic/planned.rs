@@ -16,7 +16,7 @@
 //! use stack_encrypt::target::Scope;
 //! use stack_encrypt::{AsProtectedRef, DecryptFrom, EncryptInto, StackCipher, StackCipherText};
 //! use std::collections::BTreeMap;
-//! use vitaminc_aead_frame::serde::to_vec;
+//! use recipher_frame::serde::to_vec;
 //!
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 //! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from

@@ -43,7 +43,7 @@ on:
       - packages/stack-encrypt-jsonpath/**
       - packages/stack-guest-abi/**
       - packages/vitaminc-aead/**
-      - packages/vitaminc-aead-frame/**
+      - packages/recipher-frame/**
       - packages/vitaminc-aead-derive/**
       # The eql guest build links eql-bindings.
       - packages/eql/crates/eql-bindings/**
@@ -91,7 +91,7 @@ on:
       - packages/stack-encrypt-jsonpath/**
       - packages/stack-guest-abi/**
       - packages/vitaminc-aead/**
-      - packages/vitaminc-aead-frame/**
+      - packages/recipher-frame/**
       - packages/vitaminc-aead-derive/**
       # The eql guest build links eql-bindings.
       - packages/eql/crates/eql-bindings/**

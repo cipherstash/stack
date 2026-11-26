@@ -278,12 +278,12 @@ mod a_collection {
 #[cfg(feature = "dynamic")]
 mod a_data_plan {
     use super::*;
+    use recipher_frame::serde::to_vec;
     use stack_encrypt::dynamic::record::{self, FieldPlan, Output, Plan as DataPlan};
     use stack_encrypt::dynamic::{Planned, ValueFrame, ValueKind};
     use stack_encrypt::target::IndexSpec;
     use stack_encrypt::testing::{caller_scope, from_plaintext, Expect};
     use stack_encrypt::{AsProtectedRef as _, Describe as _, Label, Placeholder};
-    use vitaminc_aead_frame::serde::to_vec;
 
     /// A data plan read from its JSON declaration.
     fn plan_of(declaration: serde_json::Value) -> DataPlan {

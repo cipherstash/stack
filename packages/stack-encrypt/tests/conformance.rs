@@ -77,7 +77,7 @@ fn plan(corpus: &Corpus, case: &Case) -> record::Plan {
         "context": context, "outputs": ["c", "eq"], "type": case.kind,
     }});
     record::plan(
-        vitaminc_aead_frame::serde::to_vec(&declaration)
+        recipher_frame::serde::to_vec(&declaration)
             .unwrap()
             .as_protected_ref(),
     )

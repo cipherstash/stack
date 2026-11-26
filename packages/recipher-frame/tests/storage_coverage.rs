@@ -20,8 +20,8 @@ mod support;
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
+use recipher_frame::storage;
 use serde_json::Value as Json;
-use vitaminc_aead_frame::storage;
 use vitaminc_protected::Controlled;
 
 use support::reference::{decode, tag_of, Broken, Ends, Place, Prefix, Refusal, Text, KEY_TAGS};

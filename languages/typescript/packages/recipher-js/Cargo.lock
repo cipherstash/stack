@@ -2486,6 +2486,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "recipher-frame"
+version = "0.10.0"
+dependencies = [
+ "serde",
+ "vitaminc-aead 0.10.0",
+ "vitaminc-protected 0.10.0",
+]
+
+[[package]]
 name = "recipher-js"
 version = "0.0.0"
 dependencies = [
@@ -3106,6 +3115,7 @@ dependencies = [
  "miette",
  "ore-rs",
  "rand 0.10.4",
+ "recipher-frame",
  "serde",
  "serde_derive",
  "serde_json",
@@ -3119,7 +3129,6 @@ dependencies = [
  "uuid",
  "vitaminc 0.10.0",
  "vitaminc-aead 0.10.0",
- "vitaminc-aead-frame",
  "vitaminc-encrypt 0.10.0",
  "vitaminc-hmac",
  "vitaminc-normalize",
@@ -3803,15 +3812,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.10",
-]
-
-[[package]]
-name = "vitaminc-aead-frame"
-version = "0.10.0"
-dependencies = [
- "serde",
- "vitaminc-aead 0.10.0",
- "vitaminc-protected 0.10.0",
 ]
 
 [[package]]

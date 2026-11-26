@@ -637,7 +637,7 @@ mod a_binding_in_a_query {
     /// The data plan of the same column: `email` under `("users", "email")`,
     /// with its ciphertext and an equality term.
     fn plan() -> record::Plan {
-        let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+        let declaration = recipher_frame::serde::to_vec(&serde_json::json!({
             "email": { "context": ["users", "email"], "outputs": ["c", "eq"], "type": "string" },
         }))
         .unwrap();

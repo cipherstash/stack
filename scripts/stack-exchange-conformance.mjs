@@ -247,7 +247,7 @@ const EXCHANGE_VARIABLES = [
   'EQL_V4_JSON_ROWS',
 ]
 
-const ENGINE_CRATES = ['stack-encrypt', 'vitaminc-aead', 'vitaminc-aead-frame']
+const ENGINE_CRATES = ['stack-encrypt', 'vitaminc-aead', 'recipher-frame']
 
 /**
  * What each lane's consumer compares. Never ciphertext bytes. Both EQL

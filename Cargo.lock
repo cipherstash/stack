@@ -2934,6 +2934,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "recipher-frame"
+version = "0.10.0"
+dependencies = [
+ "borsh",
+ "criterion",
+ "jiff",
+ "quickcheck",
+ "quickcheck_macros",
+ "rmp-serde",
+ "rust_decimal",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "vitaminc-aead 0.10.0",
+ "vitaminc-protected 0.10.0",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3625,6 +3643,7 @@ dependencies = [
  "ore-rs",
  "proptest",
  "rand 0.10.1",
+ "recipher-frame",
  "rmp-serde",
  "rust_decimal",
  "serde",
@@ -3644,7 +3663,6 @@ dependencies = [
  "uuid",
  "vitaminc 0.10.0",
  "vitaminc-aead 0.10.0",
- "vitaminc-aead-frame",
  "vitaminc-encrypt 0.10.0",
  "vitaminc-hmac",
  "vitaminc-normalize",
@@ -3688,10 +3706,10 @@ dependencies = [
  "futures",
  "miette",
  "proptest",
+ "recipher-frame",
  "serde_json",
  "thiserror 1.0.69",
  "vitaminc-aead 0.10.0",
- "vitaminc-aead-frame",
  "vitaminc-protected 0.10.0",
  "zeroize",
 ]
@@ -4572,24 +4590,6 @@ dependencies = [
  "vitaminc 0.10.0",
  "vitaminc-aead 0.10.0",
  "zeroize",
-]
-
-[[package]]
-name = "vitaminc-aead-frame"
-version = "0.10.0"
-dependencies = [
- "borsh",
- "criterion",
- "jiff",
- "quickcheck",
- "quickcheck_macros",
- "rmp-serde",
- "rust_decimal",
- "serde",
- "serde_bytes",
- "serde_json",
- "vitaminc-aead 0.10.0",
- "vitaminc-protected 0.10.0",
 ]
 
 [[package]]

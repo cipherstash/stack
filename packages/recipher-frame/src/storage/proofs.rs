@@ -12,7 +12,7 @@
 //! scalar, an object's key, a map's key, the depth bound and a map key's
 //! identity. The property tests and the fuzzing cover whole bodies.
 //!
-//! Run with `cargo kani -p vitaminc-aead-frame --features serde`.
+//! Run with `cargo kani -p recipher-frame --features serde`.
 
 use vitaminc_aead::tags;
 

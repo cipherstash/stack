@@ -234,7 +234,7 @@ pub fn stored_outputs(
         panic!("expected equality bytes")
     };
     Some((
-        vitaminc_aead_frame::serde::from_slice::<&[u8]>(&term.0)
+        recipher_frame::serde::from_slice::<&[u8]>(&term.0)
             .unwrap()
             .to_vec(),
         leaf.to_bytes().len(),

@@ -104,7 +104,7 @@ async fn shared_record_runtime_profile() {
             spec["null"] = json!(case.null);
         }
         let plan = record::plan(
-            vitaminc_aead_frame::serde::to_vec(&json!({"value":spec}))
+            recipher_frame::serde::to_vec(&json!({"value":spec}))
                 .unwrap()
                 .as_protected_ref(),
         )

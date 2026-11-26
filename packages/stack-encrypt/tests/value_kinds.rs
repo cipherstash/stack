@@ -229,7 +229,7 @@ fn term_bytes(node: StackCipherText) -> Vec<u8> {
     let CipherText::Passthrough(payload) = node else {
         panic!("a term rides as a passthrough");
     };
-    vitaminc_aead_frame::serde::from_slice::<&[u8]>(&payload.0)
+    recipher_frame::serde::from_slice::<&[u8]>(&payload.0)
         .expect("a term is bytes")
         .to_vec()
 }
@@ -369,7 +369,7 @@ async fn every_new_kind_seals_opens_and_queries_as_the_typed_path() {
             kind.field
         );
         let ctx = context(
-            vitaminc_aead_frame::serde::to_vec(&("value_kinds", kind.field))
+            recipher_frame::serde::to_vec(&("value_kinds", kind.field))
                 .expect("frames")
                 .as_protected_ref(),
         )

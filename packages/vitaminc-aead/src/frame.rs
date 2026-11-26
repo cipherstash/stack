@@ -161,7 +161,7 @@ impl<'a> Cursor<'a> {
     }
 }
 
-/// What `vitaminc-aead-frame` shares with this crate by path. Not an API:
+/// What `recipher-frame` shares with this crate by path. Not an API:
 /// anything here may change in any release.
 #[doc(hidden)]
 pub mod __private {
@@ -178,7 +178,7 @@ pub mod __private {
     /// with thousands of keys is still checked in linear time. The keys are
     /// borrowed from the frame, so nothing is copied.
     ///
-    /// Not an API: it is reachable only so `vitaminc-aead-frame`'s storage
+    /// Not an API: it is reachable only so `recipher-frame`'s storage
     /// reader can share this one copy, and it may change in any release.
     #[derive(Default)]
     pub struct SeenKeys<'a> {

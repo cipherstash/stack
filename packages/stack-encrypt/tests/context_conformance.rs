@@ -199,7 +199,7 @@ fn equality_term(row: &StackCipherText) -> Vec<u8> {
     else {
         panic!("term")
     };
-    vitaminc_aead_frame::serde::from_slice::<&[u8]>(&term.0)
+    recipher_frame::serde::from_slice::<&[u8]>(&term.0)
         .unwrap()
         .to_vec()
 }
@@ -217,7 +217,7 @@ fn opening(row: &StackCipherText) -> Decryption<String, common::CountingSource> 
     else {
         panic!("passthrough")
     };
-    let tenant: String = vitaminc_aead_frame::serde::from_slice(&tenant.0).unwrap();
+    let tenant: String = recipher_frame::serde::from_slice(&tenant.0).unwrap();
     let (_, CipherText::Single(leaf)) = text_outputs(row).iter().find(|(k, _)| k == "c").unwrap()
     else {
         panic!("leaf")
