@@ -14,8 +14,11 @@
  * A regression here is silent for anyone with a binary installed — every
  * consumer who installs from npm, and every CI job that has run
  * `.github/actions/build-ffi-binding` — so the property is asserted against the
- * EMITTED JavaScript rather than behaviour. `lib/` exists by the time this
- * runs: `test:typecheck` emits it before `test:unit`.
+ * EMITTED JavaScript rather than behaviour. `lib/` comes from `build`, and
+ * turbo runs this package's `build` before its `test` (`turbo.json`,
+ * `@cipherstash/protect-ffi#test`). `test` itself never writes `lib/`:
+ * `test:typecheck` runs `tsc --noEmit`, because other packages' builds read
+ * `lib/` while this suite runs.
  *
  * The same blind spot is why the last block goes the other way and asserts
  * behaviour: what `assertNativeBindingAvailable` does with a MISSING binary
@@ -41,12 +44,13 @@ import { describe, expect, it } from 'vitest'
 const packageRoot = process.cwd()
 const entryPath = join(packageRoot, 'lib/index.cjs')
 
-// `lib/` is generated, so this file carries a prerequisite the package's `test`
-// chain satisfies and a bare `test:unit` does not. Without this guard the whole
+// `lib/` is generated, so this file carries a prerequisite that turbo's
+// `test` satisfies (it runs `build` first) and a bare `pnpm run test` or
+// `test:unit` does not. Without this guard the whole
 // suite fails as `ENOENT: no such file or directory, open '.../lib/index.cjs'`
 // pointed at the readFileSync below — which names the missing file but not the
-// command that produces it, and lands on whoever runs `test:unit` directly
-// (every CI job that splits the chain, and anyone iterating on one test).
+// command that produces it, and lands on whoever runs the package script
+// directly (every CI job that skips turbo, and anyone iterating on one test).
 // A zero-byte entry counts as missing. An interrupted `tsc` leaves one, and it
 // is the state where naming the build step — the entire point of this guard —
 // otherwise fails to happen: `existsSync` is satisfied, and what the developer
@@ -60,7 +64,7 @@ const entryPath = join(packageRoot, 'lib/index.cjs')
 // below go red on any degraded emit; they cannot go quietly green.
 if (!existsSync(entryPath) || statSync(entryPath).size === 0) {
   throw new Error(
-    `${entryPath} is missing or empty. These tests assert on the EMITTED entry, and lib/ is a build output: run \`pnpm --filter @cipherstash/protect-ffi run build\` first, or \`pnpm --filter @cipherstash/protect-ffi test\`, whose test:typecheck step emits lib/ before test:unit runs.`,
+    `${entryPath} is missing or empty. These tests assert on the EMITTED entry, and lib/ is a build output: run \`pnpm --filter @cipherstash/protect-ffi run build\` first, or \`pnpm turbo run test --filter @cipherstash/protect-ffi\`, which runs build before test. The package's own test script does not write lib/.`,
   )
 }
 

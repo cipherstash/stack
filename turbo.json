@@ -49,6 +49,19 @@
       "dependsOn": ["^build"],
       "outputs": ["lib/**"]
     },
+    // protect-ffi's unit tests read the emitted `lib/index.cjs`, and its
+    // `test:typecheck` runs `tsc --noEmit`, so `build` is the only thing that
+    // writes `lib/`. Hence `build` here: the generic `test` task waits only
+    // for dependencies' builds. `test` must never write `lib/` itself — other
+    // packages' builds read `lib/*.d.*` while it runs, and a file tsc is
+    // rewriting is briefly empty. The other settings copy the generic `test`
+    // task. `scripts/__tests__/protect-ffi-test-no-emit.test.mjs` checks this.
+    "@cipherstash/protect-ffi#test": {
+      "dependsOn": ["^build", "build"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "env": ["STASH_TEST_DATABASE_URL", "PG_TEST_URL"],
+      "cache": false
+    },
     // These two builds `cpSync('../../../../skills', 'dist/skills')` — they consume a
     // directory OUTSIDE their own package, which `$TURBO_DEFAULT$` does not
     // cover. Without naming it here a skills-only edit does not invalidate the

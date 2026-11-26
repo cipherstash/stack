@@ -256,6 +256,8 @@ Builds the `wasm32-unknown-unknown` output into `dist/wasm/` with `wasm-pack`, t
 
 Typechecks the TypeScript, runs the unit tests (tsc + vitest), and lints and format-checks the TypeScript. **No cargo**, by design — see above.
 
+The unit tests read `lib/`, and `pnpm test` does not write it: its typecheck runs `tsc --noEmit`, because other packages' builds read `lib/` while root `pnpm test` runs. Run `pnpm run build` first. Through turbo (root `pnpm test`), `build` runs before `test` on its own.
+
 Note: this does not run the integration tests either.
 For those, see [below](#integration-tests).
 
