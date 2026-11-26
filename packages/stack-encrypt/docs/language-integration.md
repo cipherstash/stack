@@ -159,6 +159,19 @@ says which cipher opens ([`crate::CipherRef`]):
 A record encrypted with a scope or a binding is decrypted with the same
 ones, through `decrypt_from_with_context`.
 
+### Encrypt one value
+
+A value that is not a record, such as one API key, is sealed as one
+ciphertext with no plan. Check that the value is one scalar with
+[`crate::dynamic::ScalarFrame::new`], which refuses an array, a map and a
+passthrough. Then pass the `ScalarFrame` to `keyset.encrypt` or
+`keyset.encrypt_with_context`. That call settles to a [`crate::Ciphertext`]:
+the same leaf a Rust caller seals for the same value, so Rust opens it as
+its own type. `keyset.decrypt_with_context::<ValueFrame>(stored, context)`
+opens it into a frame of the kind it was sealed as. A null seals unpadded,
+so a value whose absence must not show in its length goes through a record
+plan with `"null": "sealed"`.
+
 ### Scopes and bindings
 
 A field is sealed under its label, `["profiles", "age"]`. A caller adds to

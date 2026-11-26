@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Encrypt one runtime-typed value as one ciphertext** (#1825). A language
+  binding can now seal one value, such as an API key, with the same call a
+  Rust caller uses, and no wrapper type of its own.
+  - `dynamic::ScalarFrame::new(value_frame)` checks once that a
+    `ValueFrame` holds one scalar. It refuses an array, a map and a
+    passthrough with `dynamic::ScalarFrameError`: code
+    `stack_encrypt::dynamic_not_a_scalar`, payload `{"found": "array"}`
+    (or `"object"`, `"passthrough"`). The error never shows the value.
+  - A `ScalarFrame` goes to `keyset.encrypt` or
+    `keyset.encrypt_with_context`. The leaf is the one those calls seal for
+    the same Rust value under the same context, so Rust opens it as its own
+    type. `keyset.decrypt::<ValueFrame>` opens it into a frame of the kind
+    it was sealed as.
+  - A null seals as a plain null, unpadded, as a frame does not keep a
+    null's type.
+  - `keyset.encrypt_tree(value, context)` seals one scalar as the same leaf
+    as `keyset.encrypt_with_context(value, context)`.
+  - `Debug` hides the value, and wiping the frame wipes its buffer.
+  - The stored format is unchanged.
+
 - **Read one child of a JSON node, checked against its parent** (#1677).
   Your app can now read one level of a document without fetching the
   parent's whole subtree. The read takes three steps.

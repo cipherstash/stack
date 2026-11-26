@@ -271,7 +271,17 @@ mod tests {
             },
             TargetError::Other(_) => TargetError::Other(Box::new(std::io::Error::other("boom"))),
         ]));
+        errors.extend(boxed(vec![not_a_scalar()]));
         errors
+    }
+
+    /// A refused `ScalarFrame`: the error has no public constructor, so one
+    /// is provoked, with an array.
+    #[cfg(feature = "dynamic")]
+    fn not_a_scalar() -> crate::dynamic::ScalarFrameError {
+        use crate::dynamic::{ScalarFrame, ValueFrame};
+        ScalarFrame::new(ValueFrame::of(vec![1i32]).unwrap())
+            .expect_err("an array is not one scalar")
     }
 
     /// Every variant has a code in this crate's namespace and `snake_case`,
@@ -687,6 +697,7 @@ mod tests {
                 Box::new(TargetError::Other(Box::new(std::io::Error::other("boom")))),
                 json!({}),
             ),
+            (Box::new(not_a_scalar()), json!({ "found": "array" })),
         ]
     }
 
