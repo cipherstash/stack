@@ -100,8 +100,8 @@
 // wiped before the instance is freed.
 //
 // A [Cipher] is the client bound to one keyset ([Client.Keyset] and
-// [Client.DefaultKeyset]) and to any extension of the context
-// ([Cipher.Extend]): what changes from one caller to the next — a tenant, a
+// [Client.DefaultKeyset]) and to any scopes of the context
+// ([Cipher.Scope]): what changes from one caller to the next — a tenant, a
 // region — attaches here and not to each call, so the write, the query and
 // the read cannot use different ones. A Cipher opens only its own keyset's
 // records; the [Client] opens records from any of its keysets. Both are a

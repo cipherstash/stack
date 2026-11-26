@@ -199,23 +199,30 @@ key is consumed by `NewClient` and wiped, whatever the outcome.
 
 ## The cipher
 
-A `Cipher` is the client bound to one keyset, and to any extension of the
+A `Cipher` is the client bound to one keyset, and to any scopes of the
 context. Every generated function takes one.
 
 ```go
-cipher := client.Keyset(encrypt.KeysetName("tenant-42")).Extend("tenant-42")
+cipher := client.Keyset(encrypt.KeysetName("tenant-42")).Scope("tenant-42")
 ```
 
-`Extend` appends to the context that the tags declare, for every field, in
-every call through the cipher: the write, the query and the read. A row
-written through `Extend("tenant-42")` opens and matches only through a cipher
-with the same extension. No call takes a keyset or a context, so the three
+`Scope` returns a new cipher, and leaves the one it was called on unchanged.
+The new cipher adds the scope to the context the tags declare, for every
+field and every call: the write, the query and the read. A row
+written through `Scope("tenant-42")` opens and matches only through a cipher
+with the same scope. No call takes a keyset or a context, so the three
 cannot use different ones.
+
+Each part of a scope is a string, a byte slice or an integer: `int32`,
+`int64`, `uint32`, `uint64` or `int`. An `int` is sent as `int64`. Several parts
+nest in order, so `Scope(a, b)` is the same as `Scope(a).Scope(b)`. A part of
+any other type makes the first call through the cipher fail with
+`ErrEncoding`.
 
 > **Take care**
 >
 > The context binds each value to its table, its column and the cipher's
-> extension. It does not bind the value to its row, so a value copied to
+> scopes. It does not bind the value to its row, so a value copied to
 > another row of the same table decrypts there with no error. To bind each
 > row to a context of its own, such as its tenant, give the struct a
 > `context_field` instead of a `context=` tag:
@@ -345,14 +352,17 @@ request.
 
 ## Reading
 
-`users.Decrypt` takes a `Decrypter`: the `*Cipher`, which refuses a row
-another keyset sealed with `ErrForeignKeyset` before any key is retrieved, or
-the `*Client`, which opens each row under the keyset that sealed it. The
-`*Client` opens only rows that a cipher with no extension sealed; a row
-written through `Extend` opens only through a cipher with the same extension.
+`users.Decrypt` takes a `Decrypter`: the `*Cipher` or the `*Client`. The
+`*Cipher` refuses a row another keyset sealed with `ErrForeignKeyset`, before
+any key is retrieved. The `*Client` opens each row under the keyset that
+sealed it.
+
+The `*Client` opens only rows that a cipher with no scope sealed. A row
+written through `Scope` opens only through a cipher with the same scope.
+
 For a type with a `context_field`, the `*Cipher` from `cipher.Context(..)`
 also refuses a row whose stored context is another, with
-`ErrContextMismatch`; the `*Client` opens each row under the context it
+`ErrContextMismatch`. The `*Client` opens each row under the context it
 stores.
 
 ## What is stored
