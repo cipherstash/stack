@@ -13,6 +13,27 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Changed
+
+- **The code `stashgen` generates follows the Go conventions** (#1875).
+  Run `go generate ./...` again to pick up these changes. Code generated
+  by rc.7 still compiles and runs.
+  - Each exported name in the generated file has a doc comment, so
+    `go doc` describes your package's generated types, functions, and
+    methods.
+  - A generated method that fails returns the zero value with its error.
+    It returned the same values before, but the code did not show it.
+  - Without `-name`, the slice parameter of `Encrypt` was named after the
+    package, such as `users []User`, or `main []User` in package `main`.
+    It is now `values`, or `plaintexts` in a package named `values`. With
+    `-name` it was already `values`. A top-level function's parameter now
+    never has the package's name or an import's name.
+  - Each warning, such as "User prints its sealed fields in the clear",
+    is now in a doc comment. It was a comment attached to nothing. A
+    warning about the struct is on `Encrypt`, or `Encrypt<Name>` with
+    `-name`, so `go doc` shows it. A warning about a `JsonSearch` field's
+    arrays is on the field's entry type.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

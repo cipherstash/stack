@@ -13,31 +13,38 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// User prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedUser is the stored form of User, which Encrypt writes and Decrypt
+// reads: each passthrough field as it is, and each sealed field encrypted.
 type EncryptedUser struct {
 	ID    int64
 	Email EncryptedUserEmail
 	Age   EncryptedUserAge
 }
 
+// EncryptedUserEmail is the stored form of the Email field of User: one member
+// for each column the field is stored in.
 type EncryptedUserEmail struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 	Match      encrypt.MatchTerm
 }
 
+// EncryptedUserAge is the stored form of the Age field of User: one member for
+// each column the field is stored in.
 type EncryptedUserAge struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 	Ore        encrypt.OreTerm
 }
 
+// String formats EncryptedUser with the values of its passthrough fields, and
+// each sealed field as [sealed].
 func (e EncryptedUser) String() string {
 	return gensupport.Redacted("EncryptedUser", map[string]any{"ID": e.ID}, "Email", "Age")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedUser, and each sealed field as [sealed].
 func (e EncryptedUser) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Email", "Age")
 }
@@ -57,6 +64,7 @@ var declaration = gensupport.Declare("users").
 	EncryptIndex("email", gensupport.String, encrypt.Equality, encrypt.Match()).
 	EncryptIndex("age", gensupport.Uint32, encrypt.Equality, encrypt.Ore)
 
+// codec converts between User and EncryptedUser for Encrypt and Decrypt.
 var codec = gensupport.New(gensupport.Generated[User, EncryptedUser]{
 	TypeName:        "User",
 	Declaration:     declaration,
@@ -112,8 +120,11 @@ var codec = gensupport.New(gensupport.Generated[User, EncryptedUser]{
 // Encrypt seals each User, with one ZeroKMS request for each 500 sealed values,
 // plus one the first time a keyset is used. The result has one element for each
 // input, in the same order.
-func Encrypt(ctx context.Context, cipher *encrypt.Cipher, main []User) ([]EncryptedUser, error) {
-	return codec.Encrypt(ctx, cipher, main)
+//
+// User prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
+func Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []User) ([]EncryptedUser, error) {
+	return codec.Encrypt(ctx, cipher, values)
 }
 
 // Decrypt opens each EncryptedUser, with one ZeroKMS request for each 500
@@ -122,6 +133,8 @@ func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedUser
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
+// Fields provides operations for the sealed fields of User. Each entry binds
+// queries and encrypts updates using its field's declaration.
 var Fields = struct {
 	Email EmailField
 	Age   AgeField
@@ -130,10 +143,13 @@ var Fields = struct {
 	Age:   AgeField{gensupport.NewField[uint32](declaration, "age")},
 }
 
+// EmailField is the Fields entry for the Email field: it encrypts a value for
+// an update of the field's stored columns, and derives the field's queries.
 type EmailField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Email.
 func (f EmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedUserEmail, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -142,9 +158,13 @@ func (f EmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (E
 	return EncryptedUserEmail{Ciphertext: out.Ciphertext, Equality: out.Equality, Match: out.Match}, nil
 }
 
+// Eq derives the eq query for v.
 func (f EmailField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
 // Matches derives the matches query for v. Its answer can hold rows that do not
@@ -153,10 +173,13 @@ func (f EmailField) Matches(ctx context.Context, c *encrypt.Cipher, v string) (e
 	return gensupport.Matches(ctx, f.field, c, v)
 }
 
+// AgeField is the Fields entry for the Age field: it encrypts a value for an
+// update of the field's stored columns, and derives the field's queries.
 type AgeField struct {
 	field gensupport.Field[uint32]
 }
 
+// Encrypt seals v for an update of the stored columns of Age.
 func (f AgeField) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint32) (EncryptedUserAge, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -165,32 +188,56 @@ func (f AgeField) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint32) (Enc
 	return EncryptedUserAge{Ciphertext: out.Ciphertext, Equality: out.Equality, Ore: out.Ore}, nil
 }
 
+// Eq derives the eq query for v.
 func (f AgeField) Eq(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
+// Lt derives the lt query for v.
 func (f AgeField) Lt(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f AgeField) Lte(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f AgeField) Gt(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f AgeField) Gte(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f AgeField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi uint32) (encrypt.Range[encrypt.OreTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OreTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, nil
 }

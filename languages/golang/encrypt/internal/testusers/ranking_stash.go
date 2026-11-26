@@ -14,9 +14,9 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Ranking prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedRanking is the stored form of Ranking, which EncryptRanking writes
+// and DecryptRanking reads: each passthrough field as it is, and each sealed
+// field encrypted.
 type EncryptedRanking struct {
 	ID     int64
 	Level  eql.IntegerOrd
@@ -31,10 +31,14 @@ type EncryptedRanking struct {
 	Handle eql.TextOrdOpe
 }
 
+// String formats EncryptedRanking with the values of its passthrough fields,
+// and each sealed field as [sealed].
 func (e EncryptedRanking) String() string {
 	return gensupport.Redacted("EncryptedRanking", map[string]any{"ID": e.ID}, "Level", "Floor", "Points", "Total", "Speed", "Pace", "Score", "Mean", "Title", "Handle")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedRanking, and each sealed field as [sealed].
 func (e EncryptedRanking) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Level", "Floor", "Points", "Total", "Speed", "Pace", "Score", "Mean", "Title", "Handle")
 }
@@ -70,6 +74,8 @@ var rankingDeclaration = gensupport.Declare("rankings").
 	EncryptInto("title", gensupport.String, "TextOrd").
 	EncryptInto("handle", gensupport.String, "TextOrdOpe")
 
+// rankingCodec converts between Ranking and EncryptedRanking for EncryptRanking
+// and DecryptRanking.
 var rankingCodec = gensupport.New(gensupport.Generated[Ranking, EncryptedRanking]{
 	TypeName:        "Ranking",
 	Declaration:     rankingDeclaration,
@@ -165,6 +171,9 @@ var rankingCodec = gensupport.New(gensupport.Generated[Ranking, EncryptedRanking
 // EncryptRanking seals each Ranking, with one ZeroKMS request for each 500
 // sealed values, plus one the first time a keyset is used. The result has one
 // element for each input, in the same order.
+//
+// Ranking prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptRanking(ctx context.Context, cipher *encrypt.Cipher, values []Ranking) ([]EncryptedRanking, error) {
 	return rankingCodec.Encrypt(ctx, cipher, values)
 }
@@ -175,6 +184,8 @@ func DecryptRanking(ctx context.Context, d encrypt.Decrypter, encrypted []Encryp
 	return rankingCodec.Decrypt(ctx, d, encrypted)
 }
 
+// RankingFields provides operations for the sealed fields of Ranking. Each
+// entry binds queries and encrypts updates using its field's declaration.
 var RankingFields = struct {
 	Level  RankingLevelField
 	Floor  RankingFloorField
@@ -199,302 +210,540 @@ var RankingFields = struct {
 	Handle: RankingHandleField{gensupport.NewField[string](rankingDeclaration, "handle")},
 }
 
+// RankingLevelField is the RankingFields entry for the Level field: it encrypts
+// a value for an update of the field's stored columns, and derives the field's
+// queries.
 type RankingLevelField struct {
 	field gensupport.Field[int32]
 }
 
+// Encrypt seals v for an update of the stored columns of Level.
 func (f RankingLevelField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int32) (eql.IntegerOrd, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.IntegerOrd(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.IntegerOrd(out.EQL), nil
 }
 
+// Lt derives the lt query for v.
 func (f RankingLevelField) Lt(ctx context.Context, c *encrypt.Cipher, v int32) (eql.IntegerOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return eql.IntegerOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.IntegerOrdQuery(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f RankingLevelField) Lte(ctx context.Context, c *encrypt.Cipher, v int32) (eql.IntegerOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return eql.IntegerOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.IntegerOrdQuery(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f RankingLevelField) Gt(ctx context.Context, c *encrypt.Cipher, v int32) (eql.IntegerOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return eql.IntegerOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.IntegerOrdQuery(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f RankingLevelField) Gte(ctx context.Context, c *encrypt.Cipher, v int32) (eql.IntegerOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return eql.IntegerOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.IntegerOrdQuery(term), nil
 }
 
+// RankingFloorField is the RankingFields entry for the Floor field: it encrypts
+// a value for an update of the field's stored columns, and derives the field's
+// queries.
 type RankingFloorField struct {
 	field gensupport.Field[int32]
 }
 
+// Encrypt seals v for an update of the stored columns of Floor.
 func (f RankingFloorField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int32) (eql.IntegerOrdOpe, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.IntegerOrdOpe(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.IntegerOrdOpe(out.EQL), nil
 }
 
+// Lt derives the lt query for v.
 func (f RankingFloorField) Lt(ctx context.Context, c *encrypt.Cipher, v int32) (eql.IntegerOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return eql.IntegerOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.IntegerOrdOpeQuery(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f RankingFloorField) Lte(ctx context.Context, c *encrypt.Cipher, v int32) (eql.IntegerOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return eql.IntegerOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.IntegerOrdOpeQuery(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f RankingFloorField) Gt(ctx context.Context, c *encrypt.Cipher, v int32) (eql.IntegerOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return eql.IntegerOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.IntegerOrdOpeQuery(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f RankingFloorField) Gte(ctx context.Context, c *encrypt.Cipher, v int32) (eql.IntegerOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return eql.IntegerOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.IntegerOrdOpeQuery(term), nil
 }
 
+// RankingPointsField is the RankingFields entry for the Points field: it
+// encrypts a value for an update of the field's stored columns, and derives the
+// field's queries.
 type RankingPointsField struct {
 	field gensupport.Field[int64]
 }
 
+// Encrypt seals v for an update of the stored columns of Points.
 func (f RankingPointsField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int64) (eql.BigintOrd, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.BigintOrd(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.BigintOrd(out.EQL), nil
 }
 
+// Lt derives the lt query for v.
 func (f RankingPointsField) Lt(ctx context.Context, c *encrypt.Cipher, v int64) (eql.BigintOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return eql.BigintOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.BigintOrdQuery(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f RankingPointsField) Lte(ctx context.Context, c *encrypt.Cipher, v int64) (eql.BigintOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return eql.BigintOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.BigintOrdQuery(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f RankingPointsField) Gt(ctx context.Context, c *encrypt.Cipher, v int64) (eql.BigintOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return eql.BigintOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.BigintOrdQuery(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f RankingPointsField) Gte(ctx context.Context, c *encrypt.Cipher, v int64) (eql.BigintOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return eql.BigintOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.BigintOrdQuery(term), nil
 }
 
+// RankingTotalField is the RankingFields entry for the Total field: it encrypts
+// a value for an update of the field's stored columns, and derives the field's
+// queries.
 type RankingTotalField struct {
 	field gensupport.Field[int64]
 }
 
+// Encrypt seals v for an update of the stored columns of Total.
 func (f RankingTotalField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int64) (eql.BigintOrdOpe, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.BigintOrdOpe(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.BigintOrdOpe(out.EQL), nil
 }
 
+// Lt derives the lt query for v.
 func (f RankingTotalField) Lt(ctx context.Context, c *encrypt.Cipher, v int64) (eql.BigintOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return eql.BigintOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.BigintOrdOpeQuery(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f RankingTotalField) Lte(ctx context.Context, c *encrypt.Cipher, v int64) (eql.BigintOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return eql.BigintOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.BigintOrdOpeQuery(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f RankingTotalField) Gt(ctx context.Context, c *encrypt.Cipher, v int64) (eql.BigintOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return eql.BigintOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.BigintOrdOpeQuery(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f RankingTotalField) Gte(ctx context.Context, c *encrypt.Cipher, v int64) (eql.BigintOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return eql.BigintOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.BigintOrdOpeQuery(term), nil
 }
 
+// RankingSpeedField is the RankingFields entry for the Speed field: it encrypts
+// a value for an update of the field's stored columns, and derives the field's
+// queries.
 type RankingSpeedField struct {
 	field gensupport.Field[float32]
 }
 
+// Encrypt seals v for an update of the stored columns of Speed.
 func (f RankingSpeedField) Encrypt(ctx context.Context, c *encrypt.Cipher, v float32) (eql.RealOrd, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.RealOrd(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.RealOrd(out.EQL), nil
 }
 
+// Lt derives the lt query for v.
 func (f RankingSpeedField) Lt(ctx context.Context, c *encrypt.Cipher, v float32) (eql.RealOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return eql.RealOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.RealOrdQuery(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f RankingSpeedField) Lte(ctx context.Context, c *encrypt.Cipher, v float32) (eql.RealOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return eql.RealOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.RealOrdQuery(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f RankingSpeedField) Gt(ctx context.Context, c *encrypt.Cipher, v float32) (eql.RealOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return eql.RealOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.RealOrdQuery(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f RankingSpeedField) Gte(ctx context.Context, c *encrypt.Cipher, v float32) (eql.RealOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return eql.RealOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.RealOrdQuery(term), nil
 }
 
+// RankingPaceField is the RankingFields entry for the Pace field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type RankingPaceField struct {
 	field gensupport.Field[float32]
 }
 
+// Encrypt seals v for an update of the stored columns of Pace.
 func (f RankingPaceField) Encrypt(ctx context.Context, c *encrypt.Cipher, v float32) (eql.RealOrdOpe, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.RealOrdOpe(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.RealOrdOpe(out.EQL), nil
 }
 
+// Lt derives the lt query for v.
 func (f RankingPaceField) Lt(ctx context.Context, c *encrypt.Cipher, v float32) (eql.RealOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return eql.RealOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.RealOrdOpeQuery(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f RankingPaceField) Lte(ctx context.Context, c *encrypt.Cipher, v float32) (eql.RealOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return eql.RealOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.RealOrdOpeQuery(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f RankingPaceField) Gt(ctx context.Context, c *encrypt.Cipher, v float32) (eql.RealOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return eql.RealOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.RealOrdOpeQuery(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f RankingPaceField) Gte(ctx context.Context, c *encrypt.Cipher, v float32) (eql.RealOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return eql.RealOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.RealOrdOpeQuery(term), nil
 }
 
+// RankingScoreField is the RankingFields entry for the Score field: it encrypts
+// a value for an update of the field's stored columns, and derives the field's
+// queries.
 type RankingScoreField struct {
 	field gensupport.Field[float64]
 }
 
+// Encrypt seals v for an update of the stored columns of Score.
 func (f RankingScoreField) Encrypt(ctx context.Context, c *encrypt.Cipher, v float64) (eql.DoubleOrd, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.DoubleOrd(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DoubleOrd(out.EQL), nil
 }
 
+// Lt derives the lt query for v.
 func (f RankingScoreField) Lt(ctx context.Context, c *encrypt.Cipher, v float64) (eql.DoubleOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return eql.DoubleOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DoubleOrdQuery(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f RankingScoreField) Lte(ctx context.Context, c *encrypt.Cipher, v float64) (eql.DoubleOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return eql.DoubleOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DoubleOrdQuery(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f RankingScoreField) Gt(ctx context.Context, c *encrypt.Cipher, v float64) (eql.DoubleOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return eql.DoubleOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DoubleOrdQuery(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f RankingScoreField) Gte(ctx context.Context, c *encrypt.Cipher, v float64) (eql.DoubleOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return eql.DoubleOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DoubleOrdQuery(term), nil
 }
 
+// RankingMeanField is the RankingFields entry for the Mean field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type RankingMeanField struct {
 	field gensupport.Field[float64]
 }
 
+// Encrypt seals v for an update of the stored columns of Mean.
 func (f RankingMeanField) Encrypt(ctx context.Context, c *encrypt.Cipher, v float64) (eql.DoubleOrdOpe, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.DoubleOrdOpe(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DoubleOrdOpe(out.EQL), nil
 }
 
+// Lt derives the lt query for v.
 func (f RankingMeanField) Lt(ctx context.Context, c *encrypt.Cipher, v float64) (eql.DoubleOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return eql.DoubleOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DoubleOrdOpeQuery(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f RankingMeanField) Lte(ctx context.Context, c *encrypt.Cipher, v float64) (eql.DoubleOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return eql.DoubleOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DoubleOrdOpeQuery(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f RankingMeanField) Gt(ctx context.Context, c *encrypt.Cipher, v float64) (eql.DoubleOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return eql.DoubleOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DoubleOrdOpeQuery(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f RankingMeanField) Gte(ctx context.Context, c *encrypt.Cipher, v float64) (eql.DoubleOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return eql.DoubleOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DoubleOrdOpeQuery(term), nil
 }
 
+// RankingTitleField is the RankingFields entry for the Title field: it encrypts
+// a value for an update of the field's stored columns, and derives the field's
+// queries.
 type RankingTitleField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Title.
 func (f RankingTitleField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextOrd, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.TextOrd(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextOrd(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f RankingTitleField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.TextOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextOrdQuery(term), nil
 }
 
+// Lt derives the lt query for v.
 func (f RankingTitleField) Lt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return eql.TextOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextOrdQuery(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f RankingTitleField) Lte(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return eql.TextOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextOrdQuery(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f RankingTitleField) Gt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return eql.TextOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextOrdQuery(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f RankingTitleField) Gte(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextOrdQuery, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return eql.TextOrdQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextOrdQuery(term), nil
 }
 
+// RankingHandleField is the RankingFields entry for the Handle field: it
+// encrypts a value for an update of the field's stored columns, and derives the
+// field's queries.
 type RankingHandleField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Handle.
 func (f RankingHandleField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextOrdOpe, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.TextOrdOpe(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextOrdOpe(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f RankingHandleField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.TextOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextOrdOpeQuery(term), nil
 }
 
+// Lt derives the lt query for v.
 func (f RankingHandleField) Lt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return eql.TextOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextOrdOpeQuery(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f RankingHandleField) Lte(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return eql.TextOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextOrdOpeQuery(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f RankingHandleField) Gt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return eql.TextOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextOrdOpeQuery(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f RankingHandleField) Gte(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextOrdOpeQuery, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return eql.TextOrdOpeQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextOrdOpeQuery(term), nil
 }

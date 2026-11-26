@@ -14,18 +14,22 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Entity prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedEntity is the stored form of Entity, which EncryptEntity writes and
+// DecryptEntity reads: each passthrough field as it is, and each sealed field
+// encrypted.
 type EncryptedEntity struct {
 	ID                int64
 	CustomFieldValues eql.JSONSearch
 }
 
+// String formats EncryptedEntity with the values of its passthrough fields, and
+// each sealed field as [sealed].
 func (e EncryptedEntity) String() string {
 	return gensupport.Redacted("EncryptedEntity", map[string]any{"ID": e.ID}, "CustomFieldValues")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedEntity, and each sealed field as [sealed].
 func (e EncryptedEntity) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "CustomFieldValues")
 }
@@ -44,6 +48,8 @@ var entityDeclaration = gensupport.Declare("entities").
 	EncryptInto("custom_field_values", gensupport.JSON, "JsonSearch").
 	Options("custom_field_values", gensupport.TargetOptions{Ordered: []string{"$.weight", "$.extra.emergency_contacts[*].relationship", "$.extra.emergency_contacts[*].previous_call_count", "$.extra.emergency_contacts[*].age"}})
 
+// entityCodec converts between Entity and EncryptedEntity for EncryptEntity and
+// DecryptEntity.
 var entityCodec = gensupport.New(gensupport.Generated[Entity, EncryptedEntity]{
 	TypeName:        "Entity",
 	Declaration:     entityDeclaration,
@@ -85,6 +91,9 @@ var entityCodec = gensupport.New(gensupport.Generated[Entity, EncryptedEntity]{
 // EncryptEntity seals each Entity, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// Entity prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptEntity(ctx context.Context, cipher *encrypt.Cipher, values []Entity) ([]EncryptedEntity, error) {
 	return entityCodec.Encrypt(ctx, cipher, values)
 }
@@ -134,7 +143,10 @@ func newEntityCustomFieldValuesField(f gensupport.Field[CustomFieldValues]) Enti
 // column.
 func (f EntityCustomFieldValuesField) Encrypt(ctx context.Context, c *encrypt.Cipher, v CustomFieldValues) (eql.JSONSearch, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.JSONSearch(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.JSONSearch(out.EQL), nil
 }
 
 // Contains derives the query for documents that contain needle: col @> query.

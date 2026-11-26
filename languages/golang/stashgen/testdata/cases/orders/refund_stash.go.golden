@@ -14,18 +14,22 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Refund prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedRefund is the stored form of Refund, which Encrypt writes and
+// Decrypt reads: each passthrough field as it is, and each sealed field
+// encrypted.
 type EncryptedRefund struct {
 	ID     int64
 	Reason eql.TextEq
 }
 
+// String formats EncryptedRefund with the values of its passthrough fields, and
+// each sealed field as [sealed].
 func (e EncryptedRefund) String() string {
 	return gensupport.Redacted("EncryptedRefund", map[string]any{"ID": e.ID}, "Reason")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedRefund, and each sealed field as [sealed].
 func (e EncryptedRefund) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Reason")
 }
@@ -43,6 +47,7 @@ var declaration = gensupport.Declare("refunds").
 	Passthrough("id").
 	EncryptInto("reason", gensupport.String, "TextEq")
 
+// codec converts between Refund and EncryptedRefund for Encrypt and Decrypt.
 var codec = gensupport.New(gensupport.Generated[Refund, EncryptedRefund]{
 	TypeName:        "Refund",
 	Declaration:     declaration,
@@ -84,8 +89,11 @@ var codec = gensupport.New(gensupport.Generated[Refund, EncryptedRefund]{
 // Encrypt seals each Refund, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
-func Encrypt(ctx context.Context, cipher *encrypt.Cipher, orders []Refund) ([]EncryptedRefund, error) {
-	return codec.Encrypt(ctx, cipher, orders)
+//
+// Refund prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
+func Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []Refund) ([]EncryptedRefund, error) {
+	return codec.Encrypt(ctx, cipher, values)
 }
 
 // Decrypt opens each EncryptedRefund, with one ZeroKMS request for each 500
@@ -94,22 +102,34 @@ func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedRefu
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
+// Fields provides operations for the sealed fields of Refund. Each entry binds
+// queries and encrypts updates using its field's declaration.
 var Fields = struct {
 	Reason ReasonField
 }{
 	Reason: ReasonField{gensupport.NewField[string](declaration, "reason")},
 }
 
+// ReasonField is the Fields entry for the Reason field: it encrypts a value for
+// an update of the field's stored columns, and derives the field's queries.
 type ReasonField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Reason.
 func (f ReasonField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.TextEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f ReasonField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.TextEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextEqQuery(term), nil
 }

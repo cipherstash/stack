@@ -15,13 +15,9 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// pb.Individual prints its sealed fields in the clear, and stashgen cannot add
-// print methods to a type from another package.
-
-// pb.Individual has unexported fields, so Go cannot convert it to a copy of its
-// fields. This file reads each field by name: the compiler finds a removed or
-// retyped field, and CI finds an added one.
-
+// EncryptedIndividual is the stored form of pb.Individual, which Encrypt writes
+// and Decrypt reads: each passthrough field as it is, and each sealed field
+// encrypted.
 type EncryptedIndividual struct {
 	Id         int64
 	Name       EncryptedIndividualName
@@ -30,20 +26,28 @@ type EncryptedIndividual struct {
 	Nickname   string
 }
 
+// EncryptedIndividualName is the stored form of the Name field of
+// pb.Individual: one member for each column the field is stored in.
 type EncryptedIndividualName struct {
 	Ciphertext encrypt.Ciphertext
 }
 
+// EncryptedIndividualEmail is the stored form of the Email field of
+// pb.Individual: one member for each column the field is stored in.
 type EncryptedIndividualEmail struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 	Match      encrypt.MatchTerm
 }
 
+// String formats EncryptedIndividual with the values of its passthrough fields,
+// and each sealed field as [sealed].
 func (e EncryptedIndividual) String() string {
 	return gensupport.Redacted("EncryptedIndividual", map[string]any{"Id": e.Id, "Nickname": e.Nickname}, "Name", "Email", "MedicareNo")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedIndividual, and each sealed field as [sealed].
 func (e EncryptedIndividual) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"Id": e.Id, "Nickname": e.Nickname}, "Name", "Email", "MedicareNo")
 }
@@ -55,6 +59,8 @@ var declaration = gensupport.Declare("individuals").
 	EncryptInto("medicare_number", gensupport.String, "TextEq").
 	Passthrough("nickname")
 
+// codec converts between pb.Individual and EncryptedIndividual for Encrypt and
+// Decrypt.
 var codec = gensupport.New(gensupport.Generated[*pb.Individual, EncryptedIndividual]{
 	TypeName:        "pb.Individual",
 	Declaration:     declaration,
@@ -123,8 +129,15 @@ var codec = gensupport.New(gensupport.Generated[*pb.Individual, EncryptedIndivid
 // Encrypt seals each pb.Individual, with one ZeroKMS request for each 500
 // sealed values, plus one the first time a keyset is used. The result has one
 // element for each input, in the same order.
-func Encrypt(ctx context.Context, cipher *encrypt.Cipher, individuals []*pb.Individual) ([]EncryptedIndividual, error) {
-	return codec.Encrypt(ctx, cipher, individuals)
+//
+// pb.Individual prints its sealed fields in the clear, and stashgen cannot add
+// print methods to a type from another package.
+//
+// pb.Individual has unexported fields, so Go cannot convert it to a copy of its
+// fields. This file reads each field by name: the compiler finds a removed or
+// retyped field, and CI finds an added one.
+func Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []*pb.Individual) ([]EncryptedIndividual, error) {
+	return codec.Encrypt(ctx, cipher, values)
 }
 
 // Decrypt opens each EncryptedIndividual, with one ZeroKMS request for each 500
@@ -133,6 +146,8 @@ func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedIndi
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
+// Fields provides operations for the sealed fields of pb.Individual. Each entry
+// binds queries and encrypts updates using its field's declaration.
 var Fields = struct {
 	Name       NameField
 	Email      EmailField
@@ -143,19 +158,28 @@ var Fields = struct {
 	MedicareNo: MedicareNoField{gensupport.NewField[string](declaration, "medicare_number")},
 }
 
+// NameField is the Fields entry for the Name field: it encrypts a value for an
+// update of the field's stored columns.
 type NameField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Name.
 func (f NameField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedIndividualName, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return EncryptedIndividualName{Ciphertext: out.Ciphertext}, err
+	if err != nil {
+		return EncryptedIndividualName{}, err
+	}
+	return EncryptedIndividualName{Ciphertext: out.Ciphertext}, nil
 }
 
+// EmailField is the Fields entry for the Email field: it encrypts a value for
+// an update of the field's stored columns, and derives the field's queries.
 type EmailField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Email.
 func (f EmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedIndividualEmail, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -164,9 +188,13 @@ func (f EmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (E
 	return EncryptedIndividualEmail{Ciphertext: out.Ciphertext, Equality: out.Equality, Match: out.Match}, nil
 }
 
+// Eq derives the eq query for v.
 func (f EmailField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
 // Matches derives the matches query for v. Its answer can hold rows that do not
@@ -175,16 +203,27 @@ func (f EmailField) Matches(ctx context.Context, c *encrypt.Cipher, v string) (e
 	return gensupport.Matches(ctx, f.field, c, v)
 }
 
+// MedicareNoField is the Fields entry for the MedicareNo field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type MedicareNoField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of MedicareNo.
 func (f MedicareNoField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.TextEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f MedicareNoField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.TextEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextEqQuery(term), nil
 }

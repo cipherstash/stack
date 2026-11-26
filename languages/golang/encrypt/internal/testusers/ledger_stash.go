@@ -15,9 +15,9 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Ledger prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedLedger is the stored form of Ledger, which EncryptLedger writes and
+// DecryptLedger reads: each passthrough field as it is, and each sealed field
+// encrypted.
 type EncryptedLedger struct {
 	ID      int64
 	Opened  eql.Date
@@ -28,10 +28,14 @@ type EncryptedLedger struct {
 	Amount  eql.NumericEq
 }
 
+// String formats EncryptedLedger with the values of its passthrough fields, and
+// each sealed field as [sealed].
 func (e EncryptedLedger) String() string {
 	return gensupport.Redacted("EncryptedLedger", map[string]any{"ID": e.ID}, "Opened", "Due", "Created", "Posted", "Total", "Amount")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedLedger, and each sealed field as [sealed].
 func (e EncryptedLedger) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Opened", "Due", "Created", "Posted", "Total", "Amount")
 }
@@ -59,6 +63,8 @@ var ledgerDeclaration = gensupport.Declare("profiles").
 	EncryptInto("total", gensupport.Decimal, "Numeric").
 	EncryptInto("amount", gensupport.Decimal, "NumericEq")
 
+// ledgerCodec converts between Ledger and EncryptedLedger for EncryptLedger and
+// DecryptLedger.
 var ledgerCodec = gensupport.New(gensupport.Generated[Ledger, EncryptedLedger]{
 	TypeName:        "Ledger",
 	Declaration:     ledgerDeclaration,
@@ -130,6 +136,9 @@ var ledgerCodec = gensupport.New(gensupport.Generated[Ledger, EncryptedLedger]{
 // EncryptLedger seals each Ledger, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// Ledger prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptLedger(ctx context.Context, cipher *encrypt.Cipher, values []Ledger) ([]EncryptedLedger, error) {
 	return ledgerCodec.Encrypt(ctx, cipher, values)
 }
@@ -140,6 +149,8 @@ func DecryptLedger(ctx context.Context, d encrypt.Decrypter, encrypted []Encrypt
 	return ledgerCodec.Decrypt(ctx, d, encrypted)
 }
 
+// LedgerFields provides operations for the sealed fields of Ledger. Each entry
+// binds queries and encrypts updates using its field's declaration.
 var LedgerFields = struct {
 	Opened  LedgerOpenedField
 	Due     LedgerDueField
@@ -156,71 +167,122 @@ var LedgerFields = struct {
 	Amount:  LedgerAmountField{gensupport.NewField[encrypt.Decimal](ledgerDeclaration, "amount")},
 }
 
+// LedgerOpenedField is the LedgerFields entry for the Opened field: it encrypts
+// a value for an update of the field's stored columns.
 type LedgerOpenedField struct {
 	field gensupport.Field[encrypt.Date]
 }
 
+// Encrypt seals v for an update of the stored columns of Opened.
 func (f LedgerOpenedField) Encrypt(ctx context.Context, c *encrypt.Cipher, v encrypt.Date) (eql.Date, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.Date(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.Date(out.EQL), nil
 }
 
+// LedgerDueField is the LedgerFields entry for the Due field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type LedgerDueField struct {
 	field gensupport.Field[encrypt.Date]
 }
 
+// Encrypt seals v for an update of the stored columns of Due.
 func (f LedgerDueField) Encrypt(ctx context.Context, c *encrypt.Cipher, v encrypt.Date) (eql.DateEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.DateEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DateEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f LedgerDueField) Eq(ctx context.Context, c *encrypt.Cipher, v encrypt.Date) (eql.DateEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.DateEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DateEqQuery(term), nil
 }
 
+// LedgerCreatedField is the LedgerFields entry for the Created field: it
+// encrypts a value for an update of the field's stored columns.
 type LedgerCreatedField struct {
 	field gensupport.Field[time.Time]
 }
 
+// Encrypt seals v for an update of the stored columns of Created.
 func (f LedgerCreatedField) Encrypt(ctx context.Context, c *encrypt.Cipher, v time.Time) (eql.Timestamp, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.Timestamp(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.Timestamp(out.EQL), nil
 }
 
+// LedgerPostedField is the LedgerFields entry for the Posted field: it encrypts
+// a value for an update of the field's stored columns, and derives the field's
+// queries.
 type LedgerPostedField struct {
 	field gensupport.Field[time.Time]
 }
 
+// Encrypt seals v for an update of the stored columns of Posted.
 func (f LedgerPostedField) Encrypt(ctx context.Context, c *encrypt.Cipher, v time.Time) (eql.TimestampEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.TimestampEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TimestampEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f LedgerPostedField) Eq(ctx context.Context, c *encrypt.Cipher, v time.Time) (eql.TimestampEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.TimestampEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TimestampEqQuery(term), nil
 }
 
+// LedgerTotalField is the LedgerFields entry for the Total field: it encrypts a
+// value for an update of the field's stored columns.
 type LedgerTotalField struct {
 	field gensupport.Field[encrypt.Decimal]
 }
 
+// Encrypt seals v for an update of the stored columns of Total.
 func (f LedgerTotalField) Encrypt(ctx context.Context, c *encrypt.Cipher, v encrypt.Decimal) (eql.Numeric, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.Numeric(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.Numeric(out.EQL), nil
 }
 
+// LedgerAmountField is the LedgerFields entry for the Amount field: it encrypts
+// a value for an update of the field's stored columns, and derives the field's
+// queries.
 type LedgerAmountField struct {
 	field gensupport.Field[encrypt.Decimal]
 }
 
+// Encrypt seals v for an update of the stored columns of Amount.
 func (f LedgerAmountField) Encrypt(ctx context.Context, c *encrypt.Cipher, v encrypt.Decimal) (eql.NumericEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.NumericEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.NumericEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f LedgerAmountField) Eq(ctx context.Context, c *encrypt.Cipher, v encrypt.Decimal) (eql.NumericEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.NumericEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.NumericEqQuery(term), nil
 }

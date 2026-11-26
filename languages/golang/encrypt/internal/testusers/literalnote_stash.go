@@ -13,28 +13,41 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
+// EncryptedLiteralNote is the stored form of LiteralNote, which
+// EncryptLiteralNote writes and DecryptLiteralNote reads: each passthrough
+// field as it is, and each sealed field encrypted.
 type EncryptedLiteralNote struct {
 	Text EncryptedLiteralNoteText
 }
 
+// EncryptedLiteralNoteText is the stored form of the Text field of LiteralNote:
+// one member for each column the field is stored in.
 type EncryptedLiteralNoteText struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 }
 
+// String formats EncryptedLiteralNote with the values of its passthrough
+// fields, and each sealed field as [sealed].
 func (e EncryptedLiteralNote) String() string {
 	return gensupport.Redacted("EncryptedLiteralNote", nil, "Text")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedLiteralNote, and each sealed field as [sealed].
 func (e EncryptedLiteralNote) LogValue() slog.Value {
 	return gensupport.RedactedLog(nil, "Text")
 }
 
-// Written because of -redact: LiteralNote no longer prints its sealed fields.
+// String formats LiteralNote with the values of its passthrough fields, and
+// each sealed field as [sealed]. stashgen wrote it because of -redact, so that
+// LiteralNote no longer prints its sealed fields.
 func (l LiteralNote) String() string {
 	return gensupport.Redacted("LiteralNote", nil, "Text")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of LiteralNote, and each sealed field as [sealed].
 func (l LiteralNote) LogValue() slog.Value {
 	return gensupport.RedactedLog(nil, "Text")
 }
@@ -55,6 +68,8 @@ type literalNoteShape struct {
 var literalNoteDeclaration = gensupport.Declare("tenants/acme").
 	EncryptIndex("text", gensupport.String, encrypt.Equality)
 
+// literalNoteCodec converts between LiteralNote and EncryptedLiteralNote for
+// EncryptLiteralNote and DecryptLiteralNote.
 var literalNoteCodec = gensupport.New(gensupport.Generated[LiteralNote, EncryptedLiteralNote]{
 	TypeName:    "LiteralNote",
 	Declaration: literalNoteDeclaration,
@@ -95,16 +110,22 @@ func DecryptLiteralNote(ctx context.Context, d encrypt.Decrypter, encrypted []En
 	return literalNoteCodec.Decrypt(ctx, d, encrypted)
 }
 
+// LiteralNoteFields provides operations for the sealed fields of LiteralNote.
+// Each entry binds queries and encrypts updates using its field's declaration.
 var LiteralNoteFields = struct {
 	Text LiteralNoteTextField
 }{
 	Text: LiteralNoteTextField{gensupport.NewField[string](literalNoteDeclaration, "text")},
 }
 
+// LiteralNoteTextField is the LiteralNoteFields entry for the Text field: it
+// encrypts a value for an update of the field's stored columns, and derives the
+// field's queries.
 type LiteralNoteTextField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Text.
 func (f LiteralNoteTextField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedLiteralNoteText, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -113,7 +134,11 @@ func (f LiteralNoteTextField) Encrypt(ctx context.Context, c *encrypt.Cipher, v 
 	return EncryptedLiteralNoteText{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
+// Eq derives the eq query for v.
 func (f LiteralNoteTextField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }

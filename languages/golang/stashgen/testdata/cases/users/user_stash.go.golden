@@ -14,19 +14,22 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// User prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedUser is the stored form of User, which Encrypt writes and Decrypt
+// reads: each passthrough field as it is, and each sealed field encrypted.
 type EncryptedUser struct {
 	ID    int64         `db:"id" gorm:"primaryKey"`
 	Email eql.TextEq    `db:"email"`
 	Name  eql.TextMatch `db:"name"`
 }
 
+// String formats EncryptedUser with the values of its passthrough fields, and
+// each sealed field as [sealed].
 func (e EncryptedUser) String() string {
 	return gensupport.Redacted("EncryptedUser", map[string]any{"ID": e.ID}, "Email", "Name")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedUser, and each sealed field as [sealed].
 func (e EncryptedUser) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Email", "Name")
 }
@@ -48,6 +51,7 @@ var declaration = gensupport.Declare("users").
 	EncryptInto("name", gensupport.String, "TextMatch").
 	Omit("internal")
 
+// codec converts between User and EncryptedUser for Encrypt and Decrypt.
 var codec = gensupport.New(gensupport.Generated[User, EncryptedUser]{
 	TypeName:        "User",
 	Declaration:     declaration,
@@ -95,8 +99,11 @@ var codec = gensupport.New(gensupport.Generated[User, EncryptedUser]{
 // Encrypt seals each User, with one ZeroKMS request for each 500 sealed values,
 // plus one the first time a keyset is used. The result has one element for each
 // input, in the same order.
-func Encrypt(ctx context.Context, cipher *encrypt.Cipher, users []User) ([]EncryptedUser, error) {
-	return codec.Encrypt(ctx, cipher, users)
+//
+// User prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
+func Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []User) ([]EncryptedUser, error) {
+	return codec.Encrypt(ctx, cipher, values)
 }
 
 // Decrypt opens each EncryptedUser, with one ZeroKMS request for each 500
@@ -105,6 +112,8 @@ func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedUser
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
+// Fields provides operations for the sealed fields of User. Each entry binds
+// queries and encrypts updates using its field's declaration.
 var Fields = struct {
 	Email EmailField
 	Name  NameField
@@ -113,27 +122,43 @@ var Fields = struct {
 	Name:  NameField{gensupport.NewField[string](declaration, "name")},
 }
 
+// EmailField is the Fields entry for the Email field: it encrypts a value for
+// an update of the field's stored columns, and derives the field's queries.
 type EmailField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Email.
 func (f EmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.TextEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f EmailField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.TextEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextEqQuery(term), nil
 }
 
+// NameField is the Fields entry for the Name field: it encrypts a value for an
+// update of the field's stored columns, and derives the field's queries.
 type NameField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Name.
 func (f NameField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextMatch, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.TextMatch(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextMatch(out.EQL), nil
 }
 
 // Matches derives the matches query for v. Its answer can hold rows that do not

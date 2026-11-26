@@ -14,30 +14,38 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// crm.Contact prints its sealed fields in the clear, and stashgen cannot add
-// print methods to a type from another package.
-
+// EncryptedContact is the stored form of crm.Contact, which Encrypt writes and
+// Decrypt reads: each passthrough field as it is, and each sealed field
+// encrypted.
 type EncryptedContact struct {
 	ID          int64
 	Email       EncryptedContactEmail
 	PhoneNumber EncryptedContactPhoneNumber
 }
 
+// EncryptedContactEmail is the stored form of the Email field of crm.Contact:
+// one member for each column the field is stored in.
 type EncryptedContactEmail struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 	Match      encrypt.MatchTerm
 }
 
+// EncryptedContactPhoneNumber is the stored form of the PhoneNumber field of
+// crm.Contact: one member for each column the field is stored in.
 type EncryptedContactPhoneNumber struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 }
 
+// String formats EncryptedContact with the values of its passthrough fields,
+// and each sealed field as [sealed].
 func (e EncryptedContact) String() string {
 	return gensupport.Redacted("EncryptedContact", map[string]any{"ID": e.ID}, "Email", "PhoneNumber")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedContact, and each sealed field as [sealed].
 func (e EncryptedContact) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Email", "PhoneNumber")
 }
@@ -58,6 +66,8 @@ var declaration = gensupport.Declare("contacts").
 	EncryptIndex("phone_number", gensupport.String, encrypt.Equality).
 	Omit("internal")
 
+// codec converts between crm.Contact and EncryptedContact for Encrypt and
+// Decrypt.
 var codec = gensupport.New(gensupport.Generated[crm.Contact, EncryptedContact]{
 	TypeName:        "crm.Contact",
 	Declaration:     declaration,
@@ -112,8 +122,11 @@ var codec = gensupport.New(gensupport.Generated[crm.Contact, EncryptedContact]{
 // Encrypt seals each crm.Contact, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
-func Encrypt(ctx context.Context, cipher *encrypt.Cipher, contacts []crm.Contact) ([]EncryptedContact, error) {
-	return codec.Encrypt(ctx, cipher, contacts)
+//
+// crm.Contact prints its sealed fields in the clear, and stashgen cannot add
+// print methods to a type from another package.
+func Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []crm.Contact) ([]EncryptedContact, error) {
+	return codec.Encrypt(ctx, cipher, values)
 }
 
 // Decrypt opens each EncryptedContact, with one ZeroKMS request for each 500
@@ -122,6 +135,8 @@ func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedCont
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
+// Fields provides operations for the sealed fields of crm.Contact. Each entry
+// binds queries and encrypts updates using its field's declaration.
 var Fields = struct {
 	Email       EmailField
 	PhoneNumber PhoneNumberField
@@ -130,10 +145,13 @@ var Fields = struct {
 	PhoneNumber: PhoneNumberField{gensupport.NewField[string](declaration, "phone_number")},
 }
 
+// EmailField is the Fields entry for the Email field: it encrypts a value for
+// an update of the field's stored columns, and derives the field's queries.
 type EmailField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Email.
 func (f EmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedContactEmail, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -142,9 +160,13 @@ func (f EmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (E
 	return EncryptedContactEmail{Ciphertext: out.Ciphertext, Equality: out.Equality, Match: out.Match}, nil
 }
 
+// Eq derives the eq query for v.
 func (f EmailField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
 // Matches derives the matches query for v. Its answer can hold rows that do not
@@ -153,10 +175,14 @@ func (f EmailField) Matches(ctx context.Context, c *encrypt.Cipher, v string) (e
 	return gensupport.Matches(ctx, f.field, c, v)
 }
 
+// PhoneNumberField is the Fields entry for the PhoneNumber field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type PhoneNumberField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of PhoneNumber.
 func (f PhoneNumberField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedContactPhoneNumber, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -165,9 +191,13 @@ func (f PhoneNumberField) Encrypt(ctx context.Context, c *encrypt.Cipher, v stri
 	return EncryptedContactPhoneNumber{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
+// Eq derives the eq query for v.
 func (f PhoneNumberField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
 // The -model flag: ContactRow converts to and from its shape only while the
@@ -202,10 +232,13 @@ var rowsCodec = gensupport.Records(codec,
 	},
 )
 
-func EncryptRows(ctx context.Context, cipher *encrypt.Cipher, contacts []crm.Contact) ([]ContactRow, error) {
-	return rowsCodec.Encrypt(ctx, cipher, contacts)
+// EncryptRows seals each crm.Contact as Encrypt does, and returns each as a
+// ContactRow.
+func EncryptRows(ctx context.Context, cipher *encrypt.Cipher, values []crm.Contact) ([]ContactRow, error) {
+	return rowsCodec.Encrypt(ctx, cipher, values)
 }
 
+// DecryptRows opens each ContactRow as Decrypt opens an EncryptedContact.
 func DecryptRows(ctx context.Context, d encrypt.Decrypter, rows []ContactRow) ([]crm.Contact, error) {
 	return rowsCodec.Decrypt(ctx, d, rows)
 }

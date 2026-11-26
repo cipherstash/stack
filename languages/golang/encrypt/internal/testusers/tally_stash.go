@@ -14,9 +14,9 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Tally prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedTally is the stored form of Tally, which EncryptTally writes and
+// DecryptTally reads: each passthrough field as it is, and each sealed field
+// encrypted.
 type EncryptedTally struct {
 	ID    int64
 	Small eql.Smallint
@@ -24,10 +24,14 @@ type EncryptedTally struct {
 	Wide  eql.SmallintEq
 }
 
+// String formats EncryptedTally with the values of its passthrough fields, and
+// each sealed field as [sealed].
 func (e EncryptedTally) String() string {
 	return gensupport.Redacted("EncryptedTally", map[string]any{"ID": e.ID}, "Small", "Count", "Wide")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedTally, and each sealed field as [sealed].
 func (e EncryptedTally) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Small", "Count", "Wide")
 }
@@ -49,6 +53,8 @@ var tallyDeclaration = gensupport.Declare("profiles").
 	EncryptInto("tally", gensupport.Int16, "SmallintEq").
 	EncryptInto("wide", gensupport.Int16, "SmallintEq")
 
+// tallyCodec converts between Tally and EncryptedTally for EncryptTally and
+// DecryptTally.
 var tallyCodec = gensupport.New(gensupport.Generated[Tally, EncryptedTally]{
 	TypeName:        "Tally",
 	Declaration:     tallyDeclaration,
@@ -102,6 +108,9 @@ var tallyCodec = gensupport.New(gensupport.Generated[Tally, EncryptedTally]{
 // EncryptTally seals each Tally, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// Tally prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptTally(ctx context.Context, cipher *encrypt.Cipher, values []Tally) ([]EncryptedTally, error) {
 	return tallyCodec.Encrypt(ctx, cipher, values)
 }
@@ -112,6 +121,8 @@ func DecryptTally(ctx context.Context, d encrypt.Decrypter, encrypted []Encrypte
 	return tallyCodec.Decrypt(ctx, d, encrypted)
 }
 
+// TallyFields provides operations for the sealed fields of Tally. Each entry
+// binds queries and encrypts updates using its field's declaration.
 var TallyFields = struct {
 	Small TallySmallField
 	Count TallyCountField
@@ -122,39 +133,67 @@ var TallyFields = struct {
 	Wide:  TallyWideField{gensupport.NewField[int32](tallyDeclaration, "wide")},
 }
 
+// TallySmallField is the TallyFields entry for the Small field: it encrypts a
+// value for an update of the field's stored columns.
 type TallySmallField struct {
 	field gensupport.Field[int16]
 }
 
+// Encrypt seals v for an update of the stored columns of Small.
 func (f TallySmallField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int16) (eql.Smallint, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.Smallint(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.Smallint(out.EQL), nil
 }
 
+// TallyCountField is the TallyFields entry for the Count field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type TallyCountField struct {
 	field gensupport.Field[int16]
 }
 
+// Encrypt seals v for an update of the stored columns of Count.
 func (f TallyCountField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int16) (eql.SmallintEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.SmallintEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.SmallintEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f TallyCountField) Eq(ctx context.Context, c *encrypt.Cipher, v int16) (eql.SmallintEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.SmallintEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.SmallintEqQuery(term), nil
 }
 
+// TallyWideField is the TallyFields entry for the Wide field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type TallyWideField struct {
 	field gensupport.Field[int32]
 }
 
+// Encrypt seals v for an update of the stored columns of Wide.
 func (f TallyWideField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int32) (eql.SmallintEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.SmallintEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.SmallintEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f TallyWideField) Eq(ctx context.Context, c *encrypt.Cipher, v int32) (eql.SmallintEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.SmallintEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.SmallintEqQuery(term), nil
 }

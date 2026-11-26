@@ -13,9 +13,9 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// ProbeOpe prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedProbeOpe is the stored form of ProbeOpe, which EncryptProbeOpe
+// writes and DecryptProbeOpe reads: each passthrough field as it is, and each
+// sealed field encrypted.
 type EncryptedProbeOpe struct {
 	U32 EncryptedProbeOpeU32
 	U64 EncryptedProbeOpeU64
@@ -25,40 +25,56 @@ type EncryptedProbeOpe struct {
 	F32 EncryptedProbeOpeF32
 }
 
+// EncryptedProbeOpeU32 is the stored form of the U32 field of ProbeOpe: one
+// member for each column the field is stored in.
 type EncryptedProbeOpeU32 struct {
 	Ciphertext encrypt.Ciphertext
 	Ope        encrypt.OpeTerm
 }
 
+// EncryptedProbeOpeU64 is the stored form of the U64 field of ProbeOpe: one
+// member for each column the field is stored in.
 type EncryptedProbeOpeU64 struct {
 	Ciphertext encrypt.Ciphertext
 	Ope        encrypt.OpeTerm
 }
 
+// EncryptedProbeOpeI64 is the stored form of the I64 field of ProbeOpe: one
+// member for each column the field is stored in.
 type EncryptedProbeOpeI64 struct {
 	Ciphertext encrypt.Ciphertext
 	Ope        encrypt.OpeTerm
 }
 
+// EncryptedProbeOpeS is the stored form of the S field of ProbeOpe: one member
+// for each column the field is stored in.
 type EncryptedProbeOpeS struct {
 	Ciphertext encrypt.Ciphertext
 	Ope        encrypt.OpeTerm
 }
 
+// EncryptedProbeOpeF64 is the stored form of the F64 field of ProbeOpe: one
+// member for each column the field is stored in.
 type EncryptedProbeOpeF64 struct {
 	Ciphertext encrypt.Ciphertext
 	Ope        encrypt.OpeTerm
 }
 
+// EncryptedProbeOpeF32 is the stored form of the F32 field of ProbeOpe: one
+// member for each column the field is stored in.
 type EncryptedProbeOpeF32 struct {
 	Ciphertext encrypt.Ciphertext
 	Ope        encrypt.OpeTerm
 }
 
+// String formats EncryptedProbeOpe with the values of its passthrough fields,
+// and each sealed field as [sealed].
 func (e EncryptedProbeOpe) String() string {
 	return gensupport.Redacted("EncryptedProbeOpe", nil, "U32", "U64", "I64", "S", "F64", "F32")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedProbeOpe, and each sealed field as [sealed].
 func (e EncryptedProbeOpe) LogValue() slog.Value {
 	return gensupport.RedactedLog(nil, "U32", "U64", "I64", "S", "F64", "F32")
 }
@@ -84,6 +100,8 @@ var probeOpeDeclaration = gensupport.Declare("prop_ope").
 	EncryptIndex("f64", gensupport.Float64, encrypt.Ope).
 	EncryptIndex("f32", gensupport.Float32, encrypt.Ope)
 
+// probeOpeCodec converts between ProbeOpe and EncryptedProbeOpe for
+// EncryptProbeOpe and DecryptProbeOpe.
 var probeOpeCodec = gensupport.New(gensupport.Generated[ProbeOpe, EncryptedProbeOpe]{
 	TypeName:        "ProbeOpe",
 	Declaration:     probeOpeDeclaration,
@@ -164,6 +182,9 @@ var probeOpeCodec = gensupport.New(gensupport.Generated[ProbeOpe, EncryptedProbe
 // EncryptProbeOpe seals each ProbeOpe, with one ZeroKMS request for each 500
 // sealed values, plus one the first time a keyset is used. The result has one
 // element for each input, in the same order.
+//
+// ProbeOpe prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptProbeOpe(ctx context.Context, cipher *encrypt.Cipher, values []ProbeOpe) ([]EncryptedProbeOpe, error) {
 	return probeOpeCodec.Encrypt(ctx, cipher, values)
 }
@@ -174,6 +195,8 @@ func DecryptProbeOpe(ctx context.Context, d encrypt.Decrypter, encrypted []Encry
 	return probeOpeCodec.Decrypt(ctx, d, encrypted)
 }
 
+// ProbeOpeFields provides operations for the sealed fields of ProbeOpe. Each
+// entry binds queries and encrypts updates using its field's declaration.
 var ProbeOpeFields = struct {
 	U32 ProbeOpeU32Field
 	U64 ProbeOpeU64Field
@@ -190,10 +213,14 @@ var ProbeOpeFields = struct {
 	F32: ProbeOpeF32Field{gensupport.NewField[float32](probeOpeDeclaration, "f32")},
 }
 
+// ProbeOpeU32Field is the ProbeOpeFields entry for the U32 field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type ProbeOpeU32Field struct {
 	field gensupport.Field[uint32]
 }
 
+// Encrypt seals v for an update of the stored columns of U32.
 func (f ProbeOpeU32Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint32) (EncryptedProbeOpeU32, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -202,35 +229,59 @@ func (f ProbeOpeU32Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint
 	return EncryptedProbeOpeU32{Ciphertext: out.Ciphertext, Ope: out.Ope}, nil
 }
 
+// Lt derives the lt query for v.
 func (f ProbeOpeU32Field) Lt(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f ProbeOpeU32Field) Lte(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f ProbeOpeU32Field) Gt(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f ProbeOpeU32Field) Gte(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f ProbeOpeU32Field) Between(ctx context.Context, c *encrypt.Cipher, lo, hi uint32) (encrypt.Range[encrypt.OpeTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OpeTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, nil
 }
 
+// ProbeOpeU64Field is the ProbeOpeFields entry for the U64 field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type ProbeOpeU64Field struct {
 	field gensupport.Field[uint64]
 }
 
+// Encrypt seals v for an update of the stored columns of U64.
 func (f ProbeOpeU64Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint64) (EncryptedProbeOpeU64, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -239,35 +290,59 @@ func (f ProbeOpeU64Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint
 	return EncryptedProbeOpeU64{Ciphertext: out.Ciphertext, Ope: out.Ope}, nil
 }
 
+// Lt derives the lt query for v.
 func (f ProbeOpeU64Field) Lt(ctx context.Context, c *encrypt.Cipher, v uint64) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f ProbeOpeU64Field) Lte(ctx context.Context, c *encrypt.Cipher, v uint64) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f ProbeOpeU64Field) Gt(ctx context.Context, c *encrypt.Cipher, v uint64) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f ProbeOpeU64Field) Gte(ctx context.Context, c *encrypt.Cipher, v uint64) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f ProbeOpeU64Field) Between(ctx context.Context, c *encrypt.Cipher, lo, hi uint64) (encrypt.Range[encrypt.OpeTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OpeTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, nil
 }
 
+// ProbeOpeI64Field is the ProbeOpeFields entry for the I64 field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type ProbeOpeI64Field struct {
 	field gensupport.Field[int64]
 }
 
+// Encrypt seals v for an update of the stored columns of I64.
 func (f ProbeOpeI64Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v int64) (EncryptedProbeOpeI64, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -276,35 +351,59 @@ func (f ProbeOpeI64Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v int6
 	return EncryptedProbeOpeI64{Ciphertext: out.Ciphertext, Ope: out.Ope}, nil
 }
 
+// Lt derives the lt query for v.
 func (f ProbeOpeI64Field) Lt(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f ProbeOpeI64Field) Lte(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f ProbeOpeI64Field) Gt(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f ProbeOpeI64Field) Gte(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f ProbeOpeI64Field) Between(ctx context.Context, c *encrypt.Cipher, lo, hi int64) (encrypt.Range[encrypt.OpeTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OpeTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, nil
 }
 
+// ProbeOpeSField is the ProbeOpeFields entry for the S field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type ProbeOpeSField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of S.
 func (f ProbeOpeSField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedProbeOpeS, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -313,35 +412,59 @@ func (f ProbeOpeSField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string
 	return EncryptedProbeOpeS{Ciphertext: out.Ciphertext, Ope: out.Ope}, nil
 }
 
+// Lt derives the lt query for v.
 func (f ProbeOpeSField) Lt(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f ProbeOpeSField) Lte(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f ProbeOpeSField) Gt(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f ProbeOpeSField) Gte(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f ProbeOpeSField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi string) (encrypt.Range[encrypt.OpeTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OpeTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, nil
 }
 
+// ProbeOpeF64Field is the ProbeOpeFields entry for the F64 field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type ProbeOpeF64Field struct {
 	field gensupport.Field[float64]
 }
 
+// Encrypt seals v for an update of the stored columns of F64.
 func (f ProbeOpeF64Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v float64) (EncryptedProbeOpeF64, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -350,35 +473,59 @@ func (f ProbeOpeF64Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v floa
 	return EncryptedProbeOpeF64{Ciphertext: out.Ciphertext, Ope: out.Ope}, nil
 }
 
+// Lt derives the lt query for v.
 func (f ProbeOpeF64Field) Lt(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f ProbeOpeF64Field) Lte(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f ProbeOpeF64Field) Gt(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f ProbeOpeF64Field) Gte(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f ProbeOpeF64Field) Between(ctx context.Context, c *encrypt.Cipher, lo, hi float64) (encrypt.Range[encrypt.OpeTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OpeTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, nil
 }
 
+// ProbeOpeF32Field is the ProbeOpeFields entry for the F32 field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type ProbeOpeF32Field struct {
 	field gensupport.Field[float32]
 }
 
+// Encrypt seals v for an update of the stored columns of F32.
 func (f ProbeOpeF32Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v float32) (EncryptedProbeOpeF32, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -387,27 +534,47 @@ func (f ProbeOpeF32Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v floa
 	return EncryptedProbeOpeF32{Ciphertext: out.Ciphertext, Ope: out.Ope}, nil
 }
 
+// Lt derives the lt query for v.
 func (f ProbeOpeF32Field) Lt(ctx context.Context, c *encrypt.Cipher, v float32) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f ProbeOpeF32Field) Lte(ctx context.Context, c *encrypt.Cipher, v float32) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f ProbeOpeF32Field) Gt(ctx context.Context, c *encrypt.Cipher, v float32) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f ProbeOpeF32Field) Gte(ctx context.Context, c *encrypt.Cipher, v float32) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f ProbeOpeF32Field) Between(ctx context.Context, c *encrypt.Cipher, lo, hi float32) (encrypt.Range[encrypt.OpeTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OpeTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, nil
 }

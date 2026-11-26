@@ -13,24 +13,30 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Note prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedNote is the stored form of Note, which EncryptNote writes and
+// DecryptNote reads: each passthrough field as it is, and each sealed field
+// encrypted.
 type EncryptedNote struct {
 	Tenant string
 	Text   EncryptedNoteText
 	ID     uint32
 }
 
+// EncryptedNoteText is the stored form of the Text field of Note: one member
+// for each column the field is stored in.
 type EncryptedNoteText struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 }
 
+// String formats EncryptedNote with the values of its passthrough fields, and
+// each sealed field as [sealed].
 func (e EncryptedNote) String() string {
 	return gensupport.Redacted("EncryptedNote", map[string]any{"Tenant": e.Tenant, "ID": e.ID}, "Text")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedNote, and each sealed field as [sealed].
 func (e EncryptedNote) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"Tenant": e.Tenant, "ID": e.ID}, "Text")
 }
@@ -48,6 +54,8 @@ var noteDeclaration = gensupport.DeclareContextField("tenant").
 	EncryptIndex("text", gensupport.String, encrypt.Equality).
 	Passthrough("id")
 
+// noteCodec converts between Note and EncryptedNote for EncryptNote and
+// DecryptNote.
 var noteCodec = gensupport.New(gensupport.Generated[Note, EncryptedNote]{
 	TypeName:        "Note",
 	Declaration:     noteDeclaration,
@@ -100,6 +108,9 @@ var noteCodec = gensupport.New(gensupport.Generated[Note, EncryptedNote]{
 // EncryptNote seals each Note, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// Note prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptNote(ctx context.Context, cipher *encrypt.Cipher, values []Note) ([]EncryptedNote, error) {
 	return noteCodec.Encrypt(ctx, cipher, values)
 }
@@ -110,16 +121,21 @@ func DecryptNote(ctx context.Context, d encrypt.Decrypter, encrypted []Encrypted
 	return noteCodec.Decrypt(ctx, d, encrypted)
 }
 
+// NoteFields provides operations for the sealed fields of Note. Each entry
+// binds queries and encrypts updates using its field's declaration.
 var NoteFields = struct {
 	Text NoteTextField
 }{
 	Text: NoteTextField{gensupport.NewField[string](noteDeclaration, "text")},
 }
 
+// NoteTextField is the NoteFields entry for the Text field: it encrypts a value
+// for an update of the field's stored columns, and derives the field's queries.
 type NoteTextField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Text.
 func (f NoteTextField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedNoteText, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -128,7 +144,11 @@ func (f NoteTextField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string)
 	return EncryptedNoteText{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
+// Eq derives the eq query for v.
 func (f NoteTextField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }

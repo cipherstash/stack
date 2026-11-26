@@ -15,9 +15,9 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Setting prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedSetting is the stored form of Setting, which EncryptSetting writes
+// and DecryptSetting reads: each passthrough field as it is, and each sealed
+// field encrypted.
 type EncryptedSetting struct {
 	ID     int64
 	Raw    eql.JSON
@@ -25,10 +25,14 @@ type EncryptedSetting struct {
 	Labels eql.JSON
 }
 
+// String formats EncryptedSetting with the values of its passthrough fields,
+// and each sealed field as [sealed].
 func (e EncryptedSetting) String() string {
 	return gensupport.Redacted("EncryptedSetting", map[string]any{"ID": e.ID}, "Raw", "Prefs", "Labels")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedSetting, and each sealed field as [sealed].
 func (e EncryptedSetting) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Raw", "Prefs", "Labels")
 }
@@ -51,6 +55,8 @@ var settingDeclaration = gensupport.Declare("settings").
 	Null("prefs", gensupport.NullSQL).
 	EncryptInto("labels", gensupport.JSON, "Json")
 
+// settingCodec converts between Setting and EncryptedSetting for EncryptSetting
+// and DecryptSetting.
 var settingCodec = gensupport.New(gensupport.Generated[Setting, EncryptedSetting]{
 	TypeName:        "Setting",
 	Declaration:     settingDeclaration,
@@ -110,6 +116,9 @@ var settingCodec = gensupport.New(gensupport.Generated[Setting, EncryptedSetting
 // EncryptSetting seals each Setting, with one ZeroKMS request for each 500
 // sealed values, plus one the first time a keyset is used. The result has one
 // element for each input, in the same order.
+//
+// Setting prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptSetting(ctx context.Context, cipher *encrypt.Cipher, values []Setting) ([]EncryptedSetting, error) {
 	return settingCodec.Encrypt(ctx, cipher, values)
 }
@@ -120,6 +129,8 @@ func DecryptSetting(ctx context.Context, d encrypt.Decrypter, encrypted []Encryp
 	return settingCodec.Decrypt(ctx, d, encrypted)
 }
 
+// SettingFields provides operations for the sealed fields of Setting. Each
+// entry binds queries and encrypts updates using its field's declaration.
 var SettingFields = struct {
 	Raw    SettingRawField
 	Prefs  SettingPrefsField
@@ -130,29 +141,47 @@ var SettingFields = struct {
 	Labels: SettingLabelsField{gensupport.NewField[map[string]string](settingDeclaration, "labels")},
 }
 
+// SettingRawField is the SettingFields entry for the Raw field: it encrypts a
+// value for an update of the field's stored columns.
 type SettingRawField struct {
 	field gensupport.Field[json.RawMessage]
 }
 
+// Encrypt seals v for an update of the stored columns of Raw.
 func (f SettingRawField) Encrypt(ctx context.Context, c *encrypt.Cipher, v json.RawMessage) (eql.JSON, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.JSON(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.JSON(out.EQL), nil
 }
 
+// SettingPrefsField is the SettingFields entry for the Prefs field: it encrypts
+// a value for an update of the field's stored columns.
 type SettingPrefsField struct {
 	field gensupport.Field[SettingPrefs]
 }
 
+// Encrypt seals v for an update of the stored columns of Prefs.
 func (f SettingPrefsField) Encrypt(ctx context.Context, c *encrypt.Cipher, v SettingPrefs) (eql.JSON, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.JSON(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.JSON(out.EQL), nil
 }
 
+// SettingLabelsField is the SettingFields entry for the Labels field: it
+// encrypts a value for an update of the field's stored columns.
 type SettingLabelsField struct {
 	field gensupport.Field[map[string]string]
 }
 
+// Encrypt seals v for an update of the stored columns of Labels.
 func (f SettingLabelsField) Encrypt(ctx context.Context, c *encrypt.Cipher, v map[string]string) (eql.JSON, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.JSON(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.JSON(out.EQL), nil
 }

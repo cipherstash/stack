@@ -577,7 +577,8 @@ func TestRunGeneratesJSONSearchFields(t *testing.T) {
 	}
 	// Arrays whose keys give one accessor name, or none, get no accessor:
 	// the tag still generates, At is as it is without them, and a notice
-	// in the file and on stderr names the paths as the tag writes them.
+	// in the doc comment of the field's entry, and on stderr, names the
+	// paths as the tag writes them.
 	for _, c := range []struct{ name, ordered, at, notice string }{
 		{"two arrays, one name", "$.a_b[*].x;$.aB[*].y;$.c[*].z", "ABX ProfileFieldPath // $.a_b[*].x", "no Elements accessor for the elements of $.a_b[*] (ordered $.a_b[*].x): another array's keys give the same accessor name, Elements.AB"},
 		{"an array with no name", "$.__[*].x;$.c[*].z", "X ProfileFieldPath // $.__[*].x", "no Elements accessor for the elements of $.__[*] (ordered $.__[*].x): its keys give no Go accessor name"},
@@ -597,7 +598,7 @@ func TestRunGeneratesJSONSearchFields(t *testing.T) {
 		}
 		// A wrapped comment reads as one line.
 		words := strings.Join(strings.Fields(strings.ReplaceAll(written, "\n// ", " ")), " ")
-		for _, want := range []string{c.at, "C ProfileFieldArray[ProfileFieldElementsC] // $.c[*]: z", "Z encrypt.Path[ProfileFieldElementsC, any] // $.c[*].z", "Profile: " + c.notice} {
+		for _, want := range []string{c.at, "C ProfileFieldArray[ProfileFieldElementsC] // $.c[*]: z", "Z encrypt.Path[ProfileFieldElementsC, any] // $.c[*].z", "// This file has " + c.notice} {
 			if !strings.Contains(words, want) {
 				t.Errorf("%s: the generated file lacks %q", c.name, want)
 			}
