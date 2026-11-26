@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -327,28 +328,51 @@ func (c *Client) MemoryLockError() error {
 	return err
 }
 
-// memoryState is the memory's state for a log line: "locked", or the
-// refusal. Nothing secret is printed.
+// memoryState is the memory's state for a log line: "locked", or
+// "unlocked: " and the refusal. Nothing secret is printed.
 func (c *Client) memoryState() string {
 	if err := c.MemoryLockError(); err != nil {
-		return fmt.Sprintf("unlocked: %v", err)
+		return "unlocked: " + oneLine(err)
 	}
 	return "locked"
 }
 
+// oneLine is err's text on one line. MemoryLockError joins the refusals of
+// this guest and the credentials' guest with errors.Join, which puts each
+// on its own line. A log line must not break, so the refusals are joined
+// with " | " instead, in the same order. The separator is one no refusal
+// contains: a refusal can contain "; ". A carriage return, alone or before
+// a newline, is a line break too, and is replaced the same way.
+func oneLine(err error) string {
+	return lineBreaks.Replace(err.Error())
+}
+
+var lineBreaks = strings.NewReplacer("\r\n", " | ", "\r", " | ", "\n", " | ")
+
 // String implements fmt.Stringer so that a Client printed with %v or %s
-// shows its memory state: "locked", or the refusal. Nothing secret is
-// printed. The state is what an operator reading a startup log needs to
-// see, and [Client.LogValue] gives it structured form.
+// shows its memory state, on one line. Nothing secret is printed. With
+// every guest's memory locked it prints
+//
+//	encrypt.Client{memory: locked}
+//
+// Otherwise it prints "unlocked: " and each refusal, joined with " | ".
+// Each refusal starts with the text of [ErrMemoryLock] and names what was
+// refused:
+//
+//	encrypt.Client{memory: unlocked: cipherstash: guest memory is not locked: ...}
+//
+// The state is what an operator reading a startup log needs to see, and
+// [Client.LogValue] gives it structured form.
 func (c *Client) String() string {
 	return fmt.Sprintf("encrypt.Client{memory: %s}", c.memoryState())
 }
 
 // LogValue implements slog.LogValuer: a group with memory_locked and, when
-// false, memory_lock_error.
+// false, memory_lock_error, which holds the refusals on one line, as
+// String prints them.
 func (c *Client) LogValue() slog.Value {
 	if err := c.MemoryLockError(); err != nil {
-		return slog.GroupValue(slog.Bool("memory_locked", false), slog.String("memory_lock_error", err.Error()))
+		return slog.GroupValue(slog.Bool("memory_locked", false), slog.String("memory_lock_error", oneLine(err)))
 	}
 	return slog.GroupValue(slog.Bool("memory_locked", true))
 }

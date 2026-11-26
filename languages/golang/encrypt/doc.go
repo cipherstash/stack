@@ -412,7 +412,10 @@
 // limit to raise. [WithRequireLockedMemory] turns a refusal into a
 // [NewClient] failure with [ErrMemoryLock], and refuses any later growth of
 // the guest's memory that cannot be locked. A Client prints its memory state
-// ([Client.String]) and logs it ([Client.LogValue]).
+// on one line ([Client.String]): encrypt.Client{memory: locked}, or
+// encrypt.Client{memory: unlocked: ...} with each refusal in place of the
+// dots, joined with " | ".
+// It logs the same state ([Client.LogValue]).
 //
 // Between calls the guest holds the client key and its keyset cache. Data
 // keys are per-call values, wiped when the export returns, and every buffer

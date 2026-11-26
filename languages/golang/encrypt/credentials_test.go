@@ -582,6 +582,88 @@ func TestClientReportsTheCredentialsMemoryLock(t *testing.T) {
 	}
 }
 
+// A Client prints on one line in every memory state, so a log line that
+// includes it stays one line, and the line still names every refusal.
+// When this guest and the credentials' guest are both unlocked, the two
+// refusals are joined with " | ", in that order.
+func TestClientPrintsItsMemoryStateOnOneLine(t *testing.T) {
+	ctx := context.Background()
+	wasm := guestOrSkip(t)
+	const guestReason = "RLIMIT_MEMLOCK refused this guest"
+	const credentialsReason = "RLIMIT_MEMLOCK refused the credential guest"
+	cases := []struct {
+		name           string
+		guestUnlocked  bool
+		credentialsErr error
+		want           string
+	}{
+		{
+			name: "locked",
+			want: "encrypt.Client{memory: locked}",
+		},
+		{
+			name:          "this guest unlocked",
+			guestUnlocked: true,
+			want:          "encrypt.Client{memory: unlocked: " + ErrMemoryLock.Error() + ": " + guestReason + "}",
+		},
+		{
+			name:           "credentials unlocked",
+			credentialsErr: guest.MemoryLockError(errors.New(credentialsReason)),
+			want:           "encrypt.Client{memory: unlocked: " + ErrMemoryLock.Error() + ": " + credentialsReason + "}",
+		},
+		{
+			name:           "both unlocked",
+			guestUnlocked:  true,
+			credentialsErr: guest.MemoryLockError(errors.New(credentialsReason)),
+			want: "encrypt.Client{memory: unlocked: " + ErrMemoryLock.Error() + ": " + guestReason +
+				" | " + ErrMemoryLock.Error() + ": " + credentialsReason + "}",
+		},
+		{
+			// A carriage return, alone or before a newline, breaks a log
+			// line as a newline does.
+			name:           "credentials refusal with carriage returns",
+			credentialsErr: errors.New("first\r\nsecond\rthird"),
+			want:           "encrypt.Client{memory: unlocked: first | second | third}",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inst, err := newInstance(ctx, wasm, &transport{rt: http.DefaultTransport, token: staticToken("t")}, guest.BestEffort)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := newClient(inst, nil)
+			t.Cleanup(func() { _ = c.Close() })
+			if err := c.MemoryLockError(); err != nil {
+				t.Skipf("this guest's own memory is unlocked here (%v); the states cannot be set", err)
+			}
+			if tc.guestUnlocked {
+				// The growth goes through unlocked, as BestEffort under a
+				// refused lock: from then on LockError reports the reason.
+				guest.UnlockGrowth(c.inst.mem, errors.New(guestReason))
+				stage := func(ctx context.Context, inst *instance) ([]byte, error) { return nil, stageLarge(ctx, inst) }
+				if _, err := c.call(ctx, stage); err != nil {
+					t.Fatalf("growing the guest: %v", err)
+				}
+			}
+			if tc.credentialsErr != nil {
+				c.credentialsLockErr = func() error { return tc.credentialsErr }
+			}
+			for _, verb := range []string{"%v", "%s"} {
+				if got := fmt.Sprintf(verb, c); got != tc.want {
+					t.Errorf("Sprintf(%q, c) = %q, want %q", verb, got, tc.want)
+				}
+			}
+			if got := c.String(); strings.ContainsAny(got, "\r\n") {
+				t.Errorf("String() spans lines: %q", got)
+			}
+			if got := c.LogValue().String(); strings.ContainsAny(got, "\r\n") {
+				t.Errorf("LogValue() spans lines: %q", got)
+			}
+		})
+	}
+}
+
 // A second NewClient given the same NewCredentials is refused for the
 // reason that holds — the key was consumed by the first — not for values
 // the caller did supply.
