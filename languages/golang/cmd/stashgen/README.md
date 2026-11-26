@@ -348,6 +348,7 @@ So scan the result of `->` into a `*eql.JSONEntry`.
 `JSONSelection.Open` takes a `[]*eql.JSONEntry`, one entry for each row.
 A `nil` entry opens to no value.
 `JSONRead.Open` takes a `[][]eql.JSONEntry`, one group of entries for each row.
+`JSONRead.OpenOne` takes one row's `[]eql.JSONEntry`.
 `JSONChildren.Open` takes a `[]eql.JSONEntry`.
 
 Each value a selection or read opens is JSON text; `encrypt.DecodeJSON[T]` reads one into a Go type, with the same rules as a whole document.

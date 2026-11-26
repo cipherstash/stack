@@ -788,6 +788,10 @@ rows, err := db.QueryContext(ctx, `SELECT id FROM users WHERE profile @> $1::eql
 
 read, err := users.Fields.Profile.Subtree(ctx, cipher, "$.visits[*].at", encrypt.JSONReadOptions{})
 rows, err = db.QueryContext(ctx, `SELECT e FROM users, eql_v4.json_tree_subtree(profile, $1::text[], 64) AS e WHERE id = $2`, read.Tokens(), id)
+if err != nil {
+	return err
+}
+defer rows.Close()
 var entries []eql.JSONEntry // one user's entries
 for rows.Next() {
 	var e eql.JSONEntry // each row is one public.eql_v4_json_entry
@@ -796,11 +800,18 @@ for rows.Next() {
 	}
 	entries = append(entries, e)
 }
+if err := rows.Err(); err != nil {
+	return err
+}
 values, err := read.Open(ctx, [][]eql.JSONEntry{entries}) // one []eql.JSONEntry for each user
 at, err := encrypt.DecodeJSON[int64](values[0][0])
 
 sel, err := users.Fields.Profile.Selector(ctx, cipher, "$.plan")
 rows, err = db.QueryContext(ctx, `SELECT profile -> $1::text FROM users ORDER BY id`, sel.Selector())
+if err != nil {
+	return err
+}
+defer rows.Close()
 var picked []*eql.JSONEntry
 for rows.Next() {
 	var e *eql.JSONEntry // nil where the user's document has no $.plan
@@ -809,11 +820,17 @@ for rows.Next() {
 	}
 	picked = append(picked, e)
 }
+if err := rows.Err(); err != nil {
+	return err
+}
 plans, err := sel.Open(ctx, picked) // one encrypt.JSONValue for each user
-plan, err := encrypt.DecodeJSON[string](plans[0].JSON)
+var plan string
+if plans[0].Found { // false where the user's document has no $.plan
+	plan, err = encrypt.DecodeJSON[string](plans[0].JSON)
+}
 ```
 
-Each read returns encrypted entries of the SQL type
+Each selection or read returns encrypted entries of the SQL type
 `public.eql_v4_json_entry`. Scan each one into an `eql.JSONEntry`, from
 package `encrypt/eql`. `->` returns SQL `NULL` for a row whose document has
 no node at the path. So scan its result into a `*eql.JSONEntry`. `Open` then
@@ -872,6 +889,10 @@ children, err := users.Fields.Profile.Children(ctx, cipher, "$.address")
 
 // Step 2: run the query, and scan each entry into an eql.JSONEntry.
 rows, err := db.QueryContext(ctx, `SELECT e FROM users, eql_v4.json_tree_children(profile, $1::text) AS e WHERE id = $2`, children.Token(), id)
+if err != nil {
+	return err
+}
+defer rows.Close()
 var entries []eql.JSONEntry
 for rows.Next() {
 	var e eql.JSONEntry
@@ -879,6 +900,9 @@ for rows.Next() {
 		return err
 	}
 	entries = append(entries, e)
+}
+if err := rows.Err(); err != nil {
+	return err
 }
 
 // Step 3: decrypt the entries.

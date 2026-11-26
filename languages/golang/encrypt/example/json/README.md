@@ -83,6 +83,7 @@ The prepared subtree read returns one encrypted entry in each database row.
 one customer, so it passes one group:
 
 ```go
+defer rows.Close()
 var entries []eql.JSONEntry
 for rows.Next() {
 	var entry eql.JSONEntry
@@ -90,6 +91,9 @@ for rows.Next() {
 		return fmt.Errorf("scan visit entry: %w", err)
 	}
 	entries = append(entries, entry)
+}
+if err := rows.Err(); err != nil {
+	return fmt.Errorf("iterate visit entries: %w", err)
 }
 values, err := read.Open(ctx, [][]eql.JSONEntry{entries})
 ```
