@@ -15,6 +15,11 @@ Status: draft, rewritten 26 November 2026. Decisions by Dan Draper:
   into this repository, its UUID order target (behind its `uuid` feature) and
   its bytes order target are removed. Until then, the engine refuses both in
   stage 2.3.
+- `vitaminc-aead` describes the complete data model, `json` included.
+  `ValueKind` moves there with its name, and `stack-encrypt` re-exports it
+  from the same path. The engine adds no wrapper type. JSON stays a kind a
+  field declares, not a logical type: no frame or stored byte marks a value
+  as JSON.
 - Fixtures follow the rule in `packages/stack-encrypt/tests/fixtures/README.md`
   and `packages/eql/tests/encryption/fixtures/README.md`: every fixture is
   Biome-formatted, you run `pnpm run code:fix` after regenerating one, and
@@ -256,19 +261,21 @@ from the same instant written by Go or Rust, and from its own sealed null.
 
 ### 2.2 One description of a type, with its name
 
-Add one type to the AEAD crates that describes a value's type without a
-value, and that has a text name. It replaces `ValueKind`. The names are a
-wire format: plans, error payloads, the Go module, EQL's generated code and
-the conformance corpus all use them, so they do not change.
+Move `ValueKind` into the AEAD crates, keeping its name, and have
+`stack-encrypt` re-export it from the same path. It describes a value's type
+without a value, and has a text name. The names are a wire format: plans,
+error payloads, the Go module, EQL's generated code and the conformance
+corpus all use them, so they do not change.
 
 `scalar_kind`, `scalar_of` and `sealed_null` become methods of that type, or
 are deleted.
 
-The type covers every scalar, and an array and an object, which are shapes of
-the AEAD encoding. It does not cover `json`. A JSON field's value is text or
-bytes, and `json` only tells the engine to parse it for the JSON index. So a
-plan field's type is an AEAD type or `json`, and `json` belongs to the JSON
-index.
+The type covers every scalar, an array and an object, which are shapes of
+the AEAD encoding, and `json`. A JSON value is carried as UTF-8 JSON text in
+a text or bytes leaf, so a value read from a frame is `string` or `bytes`.
+`json` is a kind a field declares: it tells the engine to treat the text as
+a JSON document, and the JSON index parses it. Nothing on the wire marks a
+value as JSON.
 
 The type also gives the width a sealed null is padded to. A field's declared
 type is the only thing that decides that width. A host can send a null with
