@@ -13,6 +13,21 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Fixed
+
+- The EQL type table in the `encrypt` README now gives the sort expression
+  for each ordered type. Sort an `Ord`, `OrdOpe`, or `TextSearch` column with
+  `ORDER BY eql_v4.ord_term(col)`, and an `OrdOre` or `TextSearchOre` column
+  with `ORDER BY eql_v4.ord_term_ore(col)`. The table used to say
+  `ORDER BY`, but a plain `ORDER BY col` returns rows in the wrong order,
+  with no error. The package documentation now says the same.
+- The `encrypt` README now says that an `encrypt.Decimal`, an
+  `encrypt.Date`, and a `time.Time` field can take an `ore` or `ope` index.
+  The README used to say they take `equality` only.
+- The `encrypt` package documentation no longer says that ORE and OPE
+  indexes apply to bytes. `stashgen` refuses an order index on a `[]byte`
+  field.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6
