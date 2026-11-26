@@ -1,8 +1,10 @@
 name: Mutants
 
 # Gates pull requests on mutation testing of the lines they change in
-# stack-auth, stack-encrypt and stack-encrypt-jsonpath (the path grammar,
-# moved out of stack-encrypt). Ported from cipherstash-suite's `mutants.yml`.
+# stack-auth, stack-encrypt, stack-encrypt-jsonpath (the path grammar, moved
+# out of stack-encrypt), and vitaminc-aead, vitaminc-aead-frame and
+# vitaminc-aead-derive (imported from cipherstash/vitaminc, which gated them
+# the same way). Ported from cipherstash-suite's `mutants.yml`.
 #
 # cargo-mutants rewrites small pieces of logic (flip `<` to `<=`, replace a
 # body with `Default::default()`) and reruns the tests; a mutant that survives
@@ -29,6 +31,9 @@ on:
       - packages/stack-auth/**
       - packages/stack-encrypt/**
       - packages/stack-encrypt-jsonpath/**
+      - packages/vitaminc-aead/**
+      - packages/vitaminc-aead-frame/**
+      - packages/vitaminc-aead-derive/**
       - Cargo.toml
       - Cargo.lock
       - mise.toml
@@ -103,7 +108,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       # PR only: a manual dispatch has no base to diff against, so it sweeps
-      # both crates instead (see the next step).
+      # every crate below instead (see the next step).
       #
       # The base comes from the API at run time, not from the event payload.
       # For a pull request whose base branch is itself the head of another
@@ -142,7 +147,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set +e
-          crates=(-p stack-auth -p stack-encrypt -p stack-encrypt-jsonpath)
+          crates=(-p stack-auth -p stack-encrypt -p stack-encrypt-jsonpath -p vitaminc-aead -p vitaminc-aead-frame -p vitaminc-aead-derive)
           if [ "$EVENT_NAME" = "pull_request" ]; then
             cargo mutants --no-shuffle -vV "${crates[@]}" --in-diff pr.diff
           else
@@ -163,7 +168,7 @@ jobs:
           timeout=$(count timeout.txt)
           {
             echo '<!-- cargo-mutants-report -->'
-            echo "## Mutation testing (cargo-mutants, \`--in-diff\`, stack-auth + stack-encrypt + stack-encrypt-jsonpath)"
+            echo "## Mutation testing (cargo-mutants, \`--in-diff\`, stack-auth, stack-encrypt, stack-encrypt-jsonpath, vitaminc-aead, vitaminc-aead-frame, vitaminc-aead-derive)"
             echo
             if [ ! -d "$out" ]; then
               # No output dir: either nothing to mutate (exit 0) or the run

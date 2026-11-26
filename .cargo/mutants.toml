@@ -33,7 +33,18 @@ additional_cargo_test_args = ["-E", "not binary(ui) & not test(stress_tests)"]
 # points at compile time, not in the instrumented test binary, so every
 # mutant there survives spuriously. Its behaviour is pinned by stack-encrypt's
 # `tests/derive.rs` and the trybuild UI suite instead.
-exclude_globs = ["packages/stack-encrypt-derive/**"]
+#
+# vitaminc-aead-derive is mutated: only its `#[proc_macro_derive]` shims in
+# lib.rs run at compile time, and the expansion they delegate to is in
+# modules its unit tests call directly.
+#
+# vitaminc-aead-frame's Kani harnesses build only under `cfg(kani)`, so no
+# test binary contains them. kani.yml checks them.
+exclude_globs = [
+  "packages/stack-encrypt-derive/**",
+  "packages/vitaminc-aead-derive/src/lib.rs",
+  "packages/vitaminc-aead-frame/src/storage/proofs.rs",
+]
 
 # Mutants no test binary can kill, by name. Every other survivor is a test to
 # write, not a line to add here. Two kinds qualify:
@@ -176,6 +187,15 @@ exclude_re = [
   # A JSON operator's input: the `JsonText` visitor's `expecting` writes a
   # message `read_frame` discards for its fixed `Reason::JsonInput`.
   'stack-encrypt/src/dynamic/json_query\.rs:\d+:\d+: replace <impl Deserialize<\x27de> for JsonText>::deserialize::<impl Visitor<\x27_> for V>::expecting -> std::fmt::Result with Ok\(Default::default\(\)\)$',
+  # vitaminc-aead — unreachable. `Nothing` is an uninhabited enum, so no value
+  # exists to call `scalar`, `typed_null` or `passthrough` on, and replacing
+  # those bodies with `Ok(())` cannot be observed. Its `seq` and `map`
+  # mutants are unviable for the same reason.
+  'vitaminc-aead/src/typed\.rs:\d+:\d+: replace <impl Sink for Nothing>::(scalar|typed_null|passthrough) -> Result<\(\), DecodeError> with Ok\(\(\)\)$',
+  # vitaminc-aead — equivalent. `max` picks the larger of two depths, and
+  # when they are equal `a > b` and `a >= b` return the same number. Its
+  # other mutants stay gated.
+  'vitaminc-aead/src/plaintext/depth\.rs:\d+:\d+: replace > with >= in max$',
 ]
 
 # Headroom over the measured baseline before a slow-but-correct mutant is
