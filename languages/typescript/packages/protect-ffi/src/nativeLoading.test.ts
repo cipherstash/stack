@@ -61,7 +61,7 @@ const entryPath = join(packageRoot, 'lib/index.cjs')
 // suite fails as `ENOENT: no such file or directory, open '.../lib/index.cjs'`
 // pointed at the readFileSync below — which names the missing file but not the
 // command that produces it, and lands on whoever runs the package script
-// directly (every CI job that skips turbo, and anyone iterating on one test).
+// directly (anyone iterating on one test).
 // A zero-byte entry counts as missing. An interrupted `tsc` leaves one, and it
 // is the state where naming the build step — the entire point of this guard —
 // otherwise fails to happen: `existsSync` is satisfied, and what the developer
