@@ -373,6 +373,103 @@ engine does.
   Rust. The Go SDK's is in `languages/golang/internal/guest`. It targets one
   version of the frame format and says which.
 
+### The value model
+
+A frame can carry more types than the engine accepts. The engine accepts
+the *value model*:
+
+- null and `undefined`, booleans, and integers of every width from `i8`
+  to `u128`, each kept at its own width;
+- both floats, text and bytes;
+- three of vitaminc's logical types: a date, a decimal (its scale kept)
+  and a timestamp, read in nanoseconds whatever unit it arrives in;
+- arrays, maps and passthroughs of these.
+
+A UUID is refused, although vitaminc has a UUID type. So is a logical type
+the engine does not know, and a date, decimal or timestamp outside
+vitaminc's range. [`crate::dynamic::ValueFrame#the-value-model`] holds the
+rule, and [`crate::dynamic::ValueFrame::from_bytes`] refuses a frame that
+breaks it.
+
+Map your language's types onto this list, and refuse anything else before
+it reaches the engine, with an error that names the field and the type. A
+plan's field types ([`crate::dynamic::ValueKind`], section 4) are the same
+list.
+
+### Nulls
+
+Whether a null is padded is vitaminc's rule, and the engine follows it:
+
+- **A null of a fixed-width type** (a boolean, a number, a date, a
+  timestamp or a decimal) is a *typed null*. It is padded to the length of
+  a value of that type, so once sealed it cannot be told from a value by
+  its length.
+- **A null of a variable-width type** (text, bytes) is a plain null. There
+  is no length to pad it to.
+
+The padding needs the type, and a frame does not carry it: a typed null in
+a frame handed over by a host reads as a plain null
+([`crate::dynamic::ValueFrame::from_bytes`]). So the type comes from the
+plan. A field declared with a fixed-width type and `"null": "sealed"`
+seals its nulls padded. A field with `"null": "sql"` stores nothing, and
+the host's column holds SQL `NULL`, which shows that the value is absent.
+[`crate::dynamic::NullMode`] has the rules.
+
+Do not decide padding in your SDK. Pass the field's null mode in the plan,
+and let the engine apply vitaminc's rule.
+
+### A whole object as one value
+
+An *opaque* value is a whole object sealed as one ciphertext, with nothing
+inside it searchable. In Rust it is [`crate::OpaqueBlob`]. In the Go SDK it
+is an opaque struct.
+
+An opaque value is not a frame. It is a *storage blob*: vitaminc's storage
+profile, a separate format specified in
+[`vitaminc_aead_frame::storage`](https://docs.rs/vitaminc-aead-frame/0.10.0/vitaminc_aead_frame/storage/index.html)
+and the crate's `STORAGE.md`. The blob is sealed as an ordinary bytes
+value. A ciphertext of an `OpaqueBlob` decrypts as the bytes of its blob,
+and those bytes encrypted as bytes decrypt as the `OpaqueBlob`. So every
+language that writes the same blob writes the same ciphertext.
+
+Three formats are involved, and they are easy to confuse:
+
+| Format | What it holds | Stored? |
+|---|---|---|
+| Sealed leaf | One scalar or record field, inside the encryption | Yes, and frozen |
+| Frame | One value crossing between a host and the engine | No: it can change in any release |
+| Storage blob | One whole object, written before it is sealed as bytes | Yes, and frozen at version 1 |
+
+The storage profile shares the frame's scalar encodings and its array and
+object layout, and differs in four ways:
+
+- it starts with a header, `"VCS"` and a version byte;
+- it marks a present optional value, so `None` and `Some(None)` differ;
+- its map keys keep their type, where a frame's object keys are text;
+- version 1 holds plain scalars only. A date, a timestamp, a decimal, a
+  UUID, `undefined` and a passthrough have no storage form and are
+  refused.
+
+So a blob is written from your language's value, not converted from the
+frame the engine sees. Rust writes it with `storage::to_vec` from a type's
+serde `Serialize`. The Go SDK writes it with `vcffi.MarshalStorage` and
+seals it as the one field of a record
+(`languages/golang/encrypt/gensupport/codec.go`).
+
+A value with no storage form is either refused or written as a plain
+type, and each language must say which:
+
+- Go refuses its logical-type values, such as `encrypt.Date` and
+  `encrypt.Decimal`, and a passthrough, with `vcffi.ErrUnwritable`.
+- Go writes a type that formats itself as text, such as `time.Time`, as
+  text: RFC 3339. A timestamp in an opaque struct therefore opens as text,
+  not as a timestamp.
+- Rust writes whatever a type's `Serialize` writes in a compact format: a
+  `uuid::Uuid` is its 16 bytes.
+
+Whichever rule you choose, write it down, and make a refusal name the
+field.
+
 ## 6. Plaintext hygiene
 
 The engine's rule is that plaintext lives in one place, for as long as the
@@ -589,6 +686,26 @@ How the Go guest maps the engine's errors onto those numbers, and what
 for a native extension's exceptions: a refused credential, a wrong keyset
 and a tampered value are different failures, and a caller acts on each
 differently.
+
+**Codes.** A caller branches on an error's code, so codes are kept stable
+and apart:
+
+- **Pass the engine's codes on unchanged.** An engine error keeps its own
+  code (`stack_encrypt::aead`), help, fields and causes. Do not map engine
+  errors onto codes of your own, or group them into coarser kinds: a
+  grouping would have to be kept in step with every engine error.
+- **Name your own codes after your binding's crate.** An error that only
+  your SDK raises, such as a value your language cannot convert, gets a
+  code under its crate's name, never under the engine's: a crate
+  `example_binding` raises `example_binding::not_a_string`. Then no code
+  of yours can clash with one the engine adds later.
+- **Report a refused value as a typed error.** When your conversion
+  refuses a value, say which rule it broke as a value with a code. Never
+  make a caller, or your own SDK, read the wording of a message.
+
+How an error reaches a caller is your language's choice: an exception, a
+`Result`, or an `error` value as in Go. The codes are the same in every
+shape.
 
 **Never a value.** No error, warning or log line holds a plaintext value, a
 key, a token, a ciphertext or a context value. The guest's configuration
@@ -843,7 +960,13 @@ done:
 5. **A stored-rows fixture exists and is frozen** (section 9): rows your
    binding wrote with its first release, opened on every build and never
    regenerated.
-6. **The versions are tied.** The engine version, the frame-format version
+6. **Your type mapping is written down and tested.** Each of your
+   language's types maps onto the value model (section 5) or is refused
+   with a typed error. A null of a fixed-width field is sealed through the
+   plan's null mode, not padded by your SDK. An opaque value is written in
+   the storage profile, and a blob your SDK writes opens in Rust and Go, and
+   theirs in yours.
+7. **The versions are tied.** The engine version, the frame-format version
    and your binding's version move together, and a reader of your release
    notes can tell which engine a release carries.
 
