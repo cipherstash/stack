@@ -13,6 +13,15 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Fixed
+
+- (Documentation only.) The `encrypt` README said that a sealed field
+  cannot be a pointer. It has been able to since rc.2 (#1298). A field
+  declared over a pointer to one scalar, such as `*encrypt.Date`, stores an
+  optional value. A nil pointer decrypts back to nil. The
+  README now says so, says when the `null=` tag is needed, and links to
+  "Optional fields" in the `stashgen` README.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6
