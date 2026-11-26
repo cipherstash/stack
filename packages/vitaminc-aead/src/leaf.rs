@@ -277,7 +277,7 @@ fn sealed_scalar(
     v: Physical<'_>,
 ) -> Result<(Option<Logical>, Physical<'_>), ScalarError> {
     match (ty, v) {
-        (Some(Logical::Timestamp(unit)), Physical::Int(count)) if unit != TimeUnit::Nanos => {
+        (Some(Logical::Timestamp(unit)), Physical::Int(count)) => {
             let nanos = timestamp_nanos(unit, count).ok_or(ScalarError::Invalid)?;
             Ok((
                 Some(Logical::Timestamp(TimeUnit::Nanos)),
@@ -293,7 +293,7 @@ fn sealed_scalar(
 /// seals to ([`write_leaf`]); every other type as it is.
 pub fn sealed_null_type(ty: FixedType) -> FixedType {
     match ty.logical() {
-        Some(Logical::Timestamp(unit)) if unit != TimeUnit::Nanos => {
+        Some(Logical::Timestamp(_)) => {
             FixedType::new(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128).unwrap_or(ty)
         }
         _ => ty,
