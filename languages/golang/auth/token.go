@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"math"
 	"time"
 
@@ -13,6 +15,27 @@ import (
 // Token is the stored access token, as auth.json holds it and
 // [ProfileStore.Token] reads it through the Rust crate's own type. The
 // refresh token is not in it: the guest handles refresh through a Strategy.
+//
+// fmt and slog print the access token as [redacted]. They print the other
+// fields in full, because those help to debug a login. Read the
+// AccessToken field to get the token itself.
+//
+// These still print the access token in full:
+//   - fmt's %p and %w verbs. fmt prints a value under a verb it cannot
+//     use for that value without calling any of its methods. go vet
+//     reports %w with a Token, but not %p.
+//   - A Token in an unexported struct field. fmt calls no method on it.
+//   - A Token in a struct, slice or map that the slog JSON handler logs.
+//     That handler encodes such a value with encoding/json, which writes
+//     the access token. A Token logged as an attribute value on its own
+//     is redacted.
+//   - encoding/json and the other encoders. Token has no MarshalJSON or
+//     MarshalText method, so programs that save a Token as JSON keep
+//     working.
+//
+// A struct that embeds Token takes these methods, so fmt and slog print it
+// as the Token alone, without its own fields. Keep a Token in a named,
+// exported field of anything you print or log.
 type Token struct {
 	// AccessToken is the bearer credential.
 	AccessToken string
@@ -34,6 +57,34 @@ type Token struct {
 // expiry. The Rust crate's is_usable, not its is_expired, which subtracts a
 // refresh-ahead margin that belongs to refreshing.
 func (t Token) Usable(now time.Time) bool { return now.Before(t.ExpiresAt) }
+
+// redacted is what Token prints and logs in place of the access token.
+const redacted = "[redacted]"
+
+// String returns the token's fields, with [redacted] for the access token.
+func (t Token) String() string {
+	return fmt.Sprintf("auth.Token{AccessToken: %s, TokenType: %q, ExpiresAt: %s, Region: %q, ClientID: %q, DeviceInstanceID: %q}",
+		redacted, t.TokenType, t.ExpiresAt.Format(time.RFC3339), t.Region, t.ClientID, t.DeviceInstanceID)
+}
+
+// GoString is what %#v prints: [Token.String].
+func (t Token) GoString() string { return t.String() }
+
+// Format prints [Token.String] for every verb fmt hands it.
+func (t Token) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, t.String()) }
+
+// LogValue is what slog records: the token's fields, with [redacted] for
+// the access token.
+func (t Token) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("access_token", redacted),
+		slog.String("token_type", t.TokenType),
+		slog.Time("expires_at", t.ExpiresAt),
+		slog.String("region", t.Region),
+		slog.String("client_id", t.ClientID),
+		slog.String("device_instance_id", t.DeviceInstanceID),
+	)
+}
 
 // Token reads auth.json in this store (a workspace store; the root holds
 // none). The transport copy of the token is wiped once it is read out.
