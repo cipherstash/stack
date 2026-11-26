@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
@@ -556,13 +557,18 @@ func (c *Client) openEncoded(ctx context.Context, call callOptions, p *record.Pl
 // record call. The guest's error says what was wrong with the term but not
 // which value or field it came from, so the host asks the engine again, one
 // term at a time, which costs no key request: a term derives locally. A
-// stored value is never refused for its text (text with no token is stored
-// as the empty filter), so a term failure on a record is the scheme refusing
-// the value's kind under that index. derive asks the query path, which does
-// refuse text with no token, so that one refusal is skipped here: it cannot
-// be why the record failed. p is the plan without this cipher's extension,
-// which derive adds.
+// field's own match index never refuses a stored value for its text (text
+// with no token is stored as the empty filter), so a term failure on such a
+// field is the scheme refusing the value's kind under that index. derive
+// asks the query path, which does refuse text with no token, so that one
+// refusal is skipped here: it cannot be why the record failed. A record call
+// that refuses text with no token was refused by an EQL type, and
+// locateShortStoredText names that field. p is the plan without this
+// cipher's extension, which derive adds.
 func (cph *Cipher) locateTermFailure(ctx context.Context, p *record.Plan, rows []record.Source, err error) error {
+	if isEmptyTermText(err) {
+		return cph.locateShortStoredText(ctx, p, rows, err)
+	}
 	for i, row := range rows {
 		for _, f := range p.Fields {
 			for _, o := range f.Outputs {
@@ -582,9 +588,78 @@ func (cph *Cipher) locateTermFailure(ctx context.Context, p *record.Plan, rows [
 // path makes and the record path does not: match text that cuts no token,
 // which a record stores as the empty filter.
 func queryOnlyRefusal(o record.Output, derr error) bool {
-	var d *Diagnostic
-	return o == record.Match && errors.As(derr, &d) && d.Code == emptyTermTextCode
+	return o == record.Match && isEmptyTermText(derr)
 }
+
+// isEmptyTermText reports whether err is the engine's refusal of match text
+// that cuts no token.
+func isEmptyTermText(err error) bool {
+	var d *Diagnostic
+	return errors.As(err, &d) && d.Code == emptyTermTextCode
+}
+
+// locateShortStoredText names the row and field behind a record call's
+// refusal of match text that cuts no token. A field with its own match
+// index stores such text as the empty filter, and so does an EQL type with
+// other terms, such as TextSearch, which = and the orderings find through
+// those terms. An EQL type whose only term is its match filter, such as
+// TextMatch, refuses the text instead: no query could find the row. So the
+// refusal is one of those fields, and the host asks the query path about
+// each of its values in turn. The query path cuts no token from exactly the
+// text a stored value cuts none from, and asks for no key. A query takes no
+// binding, and a token does not depend on the context, so the probe takes
+// the cipher's scopes alone. An EQL type is never in a plan that takes its
+// context from a field. If no value is refused there, err is returned
+// unchanged.
+func (cph *Cipher) locateShortStoredText(ctx context.Context, p *record.Plan, rows []record.Source, err error) error {
+	targets, terr := (&Checker{c: cph.client}).Targets(ctx)
+	if terr != nil {
+		// Without the type list no field can be named. The engine's
+		// refusal is still the error to return, so terr is not.
+		return err
+	}
+	matchOnly := map[string]bool{}
+	for _, t := range targets {
+		matchOnly[t.Name] = slices.Equal(t.Indexes, []record.Output{record.Match})
+	}
+	probe := cph.copy()
+	probe.bindings = nil
+	for i, row := range rows {
+		for _, f := range p.Fields {
+			if !matchOnly[f.Target] {
+				continue
+			}
+			text, ok := row[f.Name].(string)
+			if !ok {
+				continue
+			}
+			if _, qerr := probe.QueryTerm(ctx, p, f.Name, "matches", text); isEmptyTermText(qerr) {
+				return &shortStoredTextError{value: i, field: f.Name, target: f.Target, err: err}
+			}
+		}
+	}
+	return err
+}
+
+// shortStoredTextError is the engine's refusal to store match text that
+// cuts no token, with the row and the field it came from. The engine's own
+// message describes a query, because the same refusal guards the query
+// path, so Error says what was wrong with the write. It unwraps to the
+// engine's [Diagnostic], so errors.Is matches [ErrTerm] and errors.As
+// finds the Diagnostic and its code.
+type shortStoredTextError struct {
+	value  int
+	field  string
+	target string
+	err    error
+}
+
+func (e *shortStoredTextError) Error() string {
+	return fmt.Sprintf("%v: value %d, field %q: the stored text is too short for %s: it has no match token (it is empty, only separators, or shorter than the n-gram length), and no query could find a %s value without one",
+		ErrTerm, e.value, e.field, e.target, e.target)
+}
+
+func (e *shortStoredTextError) Unwrap() error { return e.err }
 
 // emptyTermTextCode is the stable code of the engine's refusal of match text
 // that cuts no token.
