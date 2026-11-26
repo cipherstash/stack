@@ -12,7 +12,7 @@ services:
     # every backend — including unrelated tests merely installing EQL — fails
     # with `53200 out of shared memory`. nextest runs one test per core (16 in
     # CI), so size for the worst case: 16 * 8,600 ~= 138k slots. 1536 * 100 =
-    # 153,600 covers it, and costs ~63MB of shared memory (well inside the 2GB
+    # 153,600 covers it, and costs ~63MB of shared memory (well inside the 4GB
     # limit below). Keep tests/sqlx/tests/lock_capacity_tests.rs in sync.
     command: postgres -c track_functions=all -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all -c max_locks_per_transaction=1536
     ports:
@@ -29,7 +29,10 @@ services:
       resources:
         limits:
           cpus: "${CPU_LIMIT:-2}"
-          memory: 2048mb
+          # At 2048mb the kernel killed a Postgres process during a 16-way
+          # parallel run. Postgres then drops every connection at once, and each
+          # test fails with "expected to read 5 bytes, got 0 bytes at EOF".
+          memory: 4096mb
     restart: always
     healthcheck:
       test: ["CMD-SHELL", "pg_isready"]
