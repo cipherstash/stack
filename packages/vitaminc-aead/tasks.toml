@@ -13,11 +13,24 @@ run = "cargo doc -p vitaminc-aead --no-deps --all-features"
 # vitaminc-aead-frame with `serde`. A `cargo test -p` run builds only that
 # package's graph, so each feature is tested on its own here, with the
 # storage bench's smoke run.
+#
+# Two jiff tests build only in release mode: in a debug build a debug
+# assertion in jiff 1.0.0 fires before the instant they check reaches
+# vitaminc. `cargo test` passes when its filter matches no test, so the step
+# also checks that both ran.
 ["test:vitaminc-aead:features"]
-description = "Test vitaminc-aead with each optional feature alone (jiff, rust_decimal, uuid, hlist), and vitaminc-aead-frame with and without serde"
+description = "Test vitaminc-aead with each optional feature alone (jiff, rust_decimal, uuid, hlist), its release-only jiff tests, and vitaminc-aead-frame with and without serde"
 run = [
   "cargo test --locked -p vitaminc-aead",
   "cargo test --locked -p vitaminc-aead --features jiff",
+  '''
+  out=$(cargo test --locked --release -p vitaminc-aead --features jiff --lib an_instant_jiff_cannot_rebuild) &&
+  printf '%s\n' "$out" &&
+  case "$out" in
+    *'test result: ok. 2 passed'*) ;;
+    *) echo "expected both release-only jiff tests to run" >&2; exit 1 ;;
+  esac
+  ''',
   "cargo test --locked -p vitaminc-aead --features rust_decimal",
   "cargo test --locked -p vitaminc-aead --features uuid",
   "cargo test --locked -p vitaminc-aead --features hlist",

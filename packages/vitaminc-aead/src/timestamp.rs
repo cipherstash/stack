@@ -223,15 +223,18 @@ mod tests {
         assert!(Timestamp::from_scalar(None, Physical::Int(Int::I128(1))).is_none());
     }
 
-    /// jiff 1.0.0 parses this to an instant half a second before its own
-    /// minimum, outside the wire's range (a debug assertion in jiff stops
-    /// it in debug builds). A `Timestamp` refuses it, and so does the
-    /// `jiff::Timestamp` walk.
+    /// An instant below jiff's minimum is never sealed. jiff 1.0.0 parses
+    /// this to an instant half a second before its own minimum, outside the
+    /// wire's range (a debug assertion in jiff stops it in debug builds);
+    /// a `Timestamp` refuses it, and so does the `jiff::Timestamp` walk.
+    /// jiff 1.0.1 and later refuse to parse it.
     #[cfg(not(debug_assertions))]
     #[test]
     fn an_instant_jiff_cannot_rebuild_is_refused() {
         use crate::{plan, EncryptError};
-        let below: jiff::Timestamp = "-009999-01-02T01:59:58.5Z".parse().expect("jiff parses it");
+        let Ok(below) = "-009999-01-02T01:59:58.5Z".parse::<jiff::Timestamp>() else {
+            return;
+        };
         assert_eq!(Timestamp::new(below).err(), Some(OutOfRange));
         assert_eq!(Timestamp::try_from(below).err(), Some(OutOfRange));
         assert!(matches!(
