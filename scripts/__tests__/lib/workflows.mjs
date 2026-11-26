@@ -75,15 +75,21 @@ function stepLabel(step, index) {
  * a test of the traversal, it is a test of the repo. The repo's own resolver is
  * `resolveRepoComposite`.
  *
- * `visited` breaks the `A uses B uses A` cycle. Scoped per job, matching
- * `lint-no-workflow-caching.mjs`: a composite shared by two jobs is flattened
- * into each.
+ * `expanding` holds only the composites on the current call path, which is
+ * enough to break the `A uses B uses A` cycle. A composite leaves it once its
+ * expansion ends, so a second call to it is expanded again: GitHub runs it
+ * twice, and a guard that counts steps must see both runs.
+ *
+ * Each entry's `conditions` lists the `if:` of every composite call that
+ * encloses the step, outermost first. GitHub skips the whole composite when
+ * one of them is false, whatever the step's own `if:` says.
  */
 export function flattenSteps(
   steps,
   resolveComposite,
   trail = '',
-  visited = new Set(),
+  expanding = new Set(),
+  conditions = [],
 ) {
   const flat = []
   const unresolved = []
@@ -93,7 +99,7 @@ export function flattenSteps(
     const uses = usesOf(step)
 
     if (uses === null || !LOCAL_USES.test(uses)) {
-      flat.push({ step, label })
+      flat.push({ step, label, conditions })
       return
     }
 
@@ -103,20 +109,22 @@ export function flattenSteps(
       // GitHub anyway; passing it here would make "rename the action" a way to
       // leave a check with nothing to read.
       unresolved.push(`${label}: \`uses: ${uses}\` — no action manifest there`)
-      flat.push({ step, label })
+      flat.push({ step, label, conditions })
       return
     }
-    if (visited.has(composite.id)) return
-    visited.add(composite.id)
+    if (expanding.has(composite.id)) return
+    expanding.add(composite.id)
 
     const nested = flattenSteps(
       composite.steps,
       resolveComposite,
       `${label} -> ${composite.id} step "`,
-      visited,
+      expanding,
+      step?.if === undefined ? conditions : [...conditions, step.if],
     )
+    expanding.delete(composite.id)
     for (const entry of nested.flat) {
-      flat.push({ step: entry.step, label: `${entry.label}"` })
+      flat.push({ ...entry, label: `${entry.label}"` })
     }
     unresolved.push(...nested.unresolved)
   })
