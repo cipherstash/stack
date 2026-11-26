@@ -3,6 +3,7 @@ package encrypt_test
 import (
 	"bytes"
 	"context"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -215,6 +216,71 @@ func TestACustomersFieldsDeriveEachQuery(t *testing.T) {
 // child a read opened is plaintext, its key included, and prints and logs
 // redacted too. The three prepared reads print through one embedded type,
 // each with its own name and operand.
+// A selection and a subtree read bind as their operand. database/sql
+// converts a parameter through its driver.Valuer. Without one, pgx binds
+// the String form, which is redacted, and the query matches no row and
+// returns no error.
+func TestJSONSelectionAndReadBindAsTheirOperand(t *testing.T) {
+	c := deterministicEQLClient(t)
+	ctx := context.Background()
+	cipher := c.DefaultKeyset()
+	f := testusers.CustomerFields.Profile
+	sel, err := f.Selector(ctx, cipher, "$.name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := f.Subtree(ctx, cipher, "$.visits[*]", encrypt.JSONReadOptions{WildcardBound: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selector, err := sel.Selector().Value()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens, err := read.Tokens().Value()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name  string
+		param any
+		want  driver.Value
+	}{
+		{"selection", sel, selector},
+		{"pointer to a selection", &sel, selector},
+		{"subtree read", read, tokens},
+		{"pointer to a subtree read", &read, tokens},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			valuer, ok := tt.param.(driver.Valuer)
+			if !ok {
+				t.Fatalf("%T is not a driver.Valuer", tt.param)
+			}
+			got, err := valuer.Value()
+			if err != nil || got != tt.want {
+				t.Fatalf("Value() = %v, %v; want the operand", got, err)
+			}
+			// The conversion database/sql applies to a query argument.
+			converted, err := driver.DefaultParameterConverter.ConvertValue(tt.param)
+			if err != nil || converted != tt.want {
+				t.Fatalf("ConvertValue = %v, %v; want the operand", converted, err)
+			}
+			if s, _ := converted.(string); strings.Contains(s, "redacted") {
+				t.Fatalf("bound the redacted text: %s", s)
+			}
+		})
+	}
+	// A zero selection or read binds nothing, as a zero selector or zero
+	// tokens do.
+	if _, err := (encrypt.JSONSelection[eql.JSONEntry]{}).Value(); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("a zero selection binds: %v", err)
+	}
+	if _, err := (encrypt.JSONRead[eql.JSONEntry]{}).Value(); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("a zero read binds: %v", err)
+	}
+}
+
 func TestJSONReadTypesPrintAndLogRedacted(t *testing.T) {
 	c := deterministicEQLClient(t)
 	ctx := context.Background()

@@ -13,6 +13,17 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `JSONSelection` or a `JSONRead` passed as a query parameter now binds
+  as its selector or its tokens** (#1849). Before this fix, neither type had
+  a `Value` method. So pgx bound the redacted text that `String` returns. A
+  query given a `JSONSelection` matched no rows and returned no error. A
+  query given a `JSONRead` failed with a malformed array literal. Binding
+  `Selector()` or `Tokens()` worked before this fix, and still works. A zero
+  `JSONSelection` or `JSONRead` is refused, as a zero selector or empty
+  tokens are.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

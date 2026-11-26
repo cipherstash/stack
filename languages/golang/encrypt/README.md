@@ -809,7 +809,9 @@ for. It does not prove the database returned every row, or rows of the
 database row you meant. `encrypt.JSONTokens` binds as a `text[]` literal,
 and a selector or token as `text`; cast each parameter, as above, so
 PostgreSQL picks EQL's operator and not `jsonb`'s; a zero one is refused
-rather than bound. A token is a capability over its node's subtree in every
+rather than bound. A `JSONSelection` binds as its selector, a `JSONRead` as
+its tokens, and a `JSONChildren` as its token, so you can pass the value
+itself as the parameter. A token is a capability over its node's subtree in every
 row of the column, and a path's keys can be your customer's data, so
 `JSONToken`, `JSONTokens`, `JSONSelection`, `JSONRead`, and `JSONChildren`
 print and log with the tokens, the selector, and the path redacted. A
