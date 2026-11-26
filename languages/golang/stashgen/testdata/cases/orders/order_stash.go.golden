@@ -76,9 +76,6 @@ var orderDeclaration = gensupport.Declare("orders").
 
 // orderCodec converts between Order and EncryptedOrder for EncryptOrder and
 // DecryptOrder.
-//
-// Order prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var orderCodec = gensupport.New(gensupport.Generated[Order, EncryptedOrder]{
 	TypeName:        "Order",
 	Declaration:     orderDeclaration,
@@ -140,6 +137,9 @@ var orderCodec = gensupport.New(gensupport.Generated[Order, EncryptedOrder]{
 // EncryptOrder seals each Order, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// Order prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptOrder(ctx context.Context, cipher *encrypt.Cipher, values []Order) ([]EncryptedOrder, error) {
 	return orderCodec.Encrypt(ctx, cipher, values)
 }

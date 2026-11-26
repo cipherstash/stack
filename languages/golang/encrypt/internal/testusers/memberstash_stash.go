@@ -76,9 +76,6 @@ var memberDeclaration = gensupport.Declare("users").
 
 // memberCodec converts between testmember.Member and EncryptedMember for
 // EncryptMember and DecryptMember.
-//
-// testmember.Member prints its sealed fields in the clear, and stashgen cannot
-// add print methods to a type from another package.
 var memberCodec = gensupport.New(gensupport.Generated[testmember.Member, EncryptedMember]{
 	TypeName:        "testmember.Member",
 	Declaration:     memberDeclaration,
@@ -140,6 +137,9 @@ var memberCodec = gensupport.New(gensupport.Generated[testmember.Member, Encrypt
 // EncryptMember seals each testmember.Member, with one ZeroKMS request for each
 // 500 sealed values, plus one the first time a keyset is used. The result has
 // one element for each input, in the same order.
+//
+// testmember.Member prints its sealed fields in the clear, and stashgen cannot
+// add print methods to a type from another package.
 func EncryptMember(ctx context.Context, cipher *encrypt.Cipher, values []testmember.Member) ([]EncryptedMember, error) {
 	return memberCodec.Encrypt(ctx, cipher, values)
 }

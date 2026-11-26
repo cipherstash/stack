@@ -57,9 +57,6 @@ var subscriberDeclaration = gensupport.Declare("subscribers").
 
 // subscriberCodec converts between Subscriber and EncryptedSubscriber for
 // EncryptSubscriber and DecryptSubscriber.
-//
-// Subscriber prints its sealed fields in the clear: it has no String or
-// LogValue method. Write them, or run stashgen with -redact.
 var subscriberCodec = gensupport.New(gensupport.Generated[Subscriber, EncryptedSubscriber]{
 	TypeName:        "Subscriber",
 	Declaration:     subscriberDeclaration,
@@ -119,6 +116,9 @@ var subscriberCodec = gensupport.New(gensupport.Generated[Subscriber, EncryptedS
 // EncryptSubscriber seals each Subscriber, with one ZeroKMS request for each
 // 500 sealed values, plus one the first time a keyset is used. The result has
 // one element for each input, in the same order.
+//
+// Subscriber prints its sealed fields in the clear: it has no String or
+// LogValue method. Write them, or run stashgen with -redact.
 func EncryptSubscriber(ctx context.Context, cipher *encrypt.Cipher, values []Subscriber) ([]EncryptedSubscriber, error) {
 	return subscriberCodec.Encrypt(ctx, cipher, values)
 }

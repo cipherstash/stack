@@ -84,9 +84,6 @@ var declaration = gensupport.Declare("accounts").
 	Omit("token")
 
 // codec converts between Account and EncryptedAccount for Encrypt and Decrypt.
-//
-// Not encrypted and not stored: the unexported field "cache". Tag it
-// `stash:"-"` to confirm that.
 var codec = gensupport.New(gensupport.Generated[Account, EncryptedAccount]{
 	TypeName:    "Account",
 	Declaration: declaration,
@@ -152,6 +149,9 @@ var codec = gensupport.New(gensupport.Generated[Account, EncryptedAccount]{
 // Encrypt seals each Account, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// Not encrypted and not stored: the unexported field "cache". Tag it
+// `stash:"-"` to confirm that.
 func Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []Account) ([]EncryptedAccount, error) {
 	return codec.Encrypt(ctx, cipher, values)
 }

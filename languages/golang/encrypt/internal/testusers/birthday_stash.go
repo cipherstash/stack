@@ -46,9 +46,6 @@ var birthdayDeclaration = gensupport.Declare("people").
 
 // birthdayCodec converts between Birthday and EncryptedBirthday for
 // EncryptBirthday and DecryptBirthday.
-//
-// Birthday prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var birthdayCodec = gensupport.New(gensupport.Generated[Birthday, EncryptedBirthday]{
 	TypeName:        "Birthday",
 	Declaration:     birthdayDeclaration,
@@ -77,6 +74,9 @@ var birthdayCodec = gensupport.New(gensupport.Generated[Birthday, EncryptedBirth
 // EncryptBirthday seals each Birthday, with one ZeroKMS request for each 500
 // sealed values, plus one the first time a keyset is used. The result has one
 // element for each input, in the same order.
+//
+// Birthday prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptBirthday(ctx context.Context, cipher *encrypt.Cipher, values []Birthday) ([]EncryptedBirthday, error) {
 	return birthdayCodec.Encrypt(ctx, cipher, values)
 }

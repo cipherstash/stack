@@ -102,9 +102,6 @@ var probeOpeDeclaration = gensupport.Declare("prop_ope").
 
 // probeOpeCodec converts between ProbeOpe and EncryptedProbeOpe for
 // EncryptProbeOpe and DecryptProbeOpe.
-//
-// ProbeOpe prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var probeOpeCodec = gensupport.New(gensupport.Generated[ProbeOpe, EncryptedProbeOpe]{
 	TypeName:        "ProbeOpe",
 	Declaration:     probeOpeDeclaration,
@@ -185,6 +182,9 @@ var probeOpeCodec = gensupport.New(gensupport.Generated[ProbeOpe, EncryptedProbe
 // EncryptProbeOpe seals each ProbeOpe, with one ZeroKMS request for each 500
 // sealed values, plus one the first time a keyset is used. The result has one
 // element for each input, in the same order.
+//
+// ProbeOpe prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptProbeOpe(ctx context.Context, cipher *encrypt.Cipher, values []ProbeOpe) ([]EncryptedProbeOpe, error) {
 	return probeOpeCodec.Encrypt(ctx, cipher, values)
 }

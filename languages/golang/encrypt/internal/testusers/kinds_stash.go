@@ -266,9 +266,6 @@ var kindsDeclaration = gensupport.Declare("kinds").
 
 // kindsCodec converts between Kinds and EncryptedKinds for EncryptKinds and
 // DecryptKinds.
-//
-// Kinds prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var kindsCodec = gensupport.New(gensupport.Generated[Kinds, EncryptedKinds]{
 	TypeName:        "Kinds",
 	Declaration:     kindsDeclaration,
@@ -536,6 +533,9 @@ var kindsCodec = gensupport.New(gensupport.Generated[Kinds, EncryptedKinds]{
 // EncryptKinds seals each Kinds, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// Kinds prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptKinds(ctx context.Context, cipher *encrypt.Cipher, values []Kinds) ([]EncryptedKinds, error) {
 	return kindsCodec.Encrypt(ctx, cipher, values)
 }

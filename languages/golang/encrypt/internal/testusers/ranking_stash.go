@@ -76,9 +76,6 @@ var rankingDeclaration = gensupport.Declare("rankings").
 
 // rankingCodec converts between Ranking and EncryptedRanking for EncryptRanking
 // and DecryptRanking.
-//
-// Ranking prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var rankingCodec = gensupport.New(gensupport.Generated[Ranking, EncryptedRanking]{
 	TypeName:        "Ranking",
 	Declaration:     rankingDeclaration,
@@ -174,6 +171,9 @@ var rankingCodec = gensupport.New(gensupport.Generated[Ranking, EncryptedRanking
 // EncryptRanking seals each Ranking, with one ZeroKMS request for each 500
 // sealed values, plus one the first time a keyset is used. The result has one
 // element for each input, in the same order.
+//
+// Ranking prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptRanking(ctx context.Context, cipher *encrypt.Cipher, values []Ranking) ([]EncryptedRanking, error) {
 	return rankingCodec.Encrypt(ctx, cipher, values)
 }

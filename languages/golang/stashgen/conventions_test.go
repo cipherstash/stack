@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -87,10 +88,37 @@ func TestParametersAreNotNamedForThePackage(t *testing.T) {
 	}
 }
 
+// TestParametersDoNotHideAnImport generates a -model whose row type is in
+// a package named after each parameter the generated functions would
+// otherwise take. A parameter with the import's name would hide it in the
+// signature that names the row type.
+func TestParametersDoNotHideAnImport(t *testing.T) {
+	for _, pkg := range []string{"values", "encrypted", "models", "rows", "ctx", "cipher", "d"} {
+		t.Run(pkg, func(t *testing.T) {
+			dir := writeModule(t, map[string]string{
+				pkg + "/row.go": "package " + pkg + "\n\nimport \"github.com/cipherstash/stack/languages/golang/encrypt/eql\"\n\n" +
+					"type Row struct {\n\tID    int64\n\tEmail eql.TextEq\n}\n",
+				"model.go": "package users\n\nimport (\n\t\"example.com/app/" + pkg + "\"\n\t\"github.com/cipherstash/stack/languages/golang/encrypt/eql\"\n)\n\nvar _ " + pkg + ".Row\n\n" +
+					"type User struct {\n\t_     struct{} `stash:\"context=users\"`\n\tID    int64    `stash:\"id,passthrough\"`\n\tEmail string   `stash:\"email,encrypt_into=TextEq\"`\n}\n\n" +
+					"type row struct {\n\tID    int64      `stash:\"id\"`\n\tEmail eql.TextEq `stash:\"email\"`\n}\n",
+			})
+			file, err := stashgen.FromTags(context.Background(), enginetest.Static{}, stashgen.Request{Dir: dir, Type: "User", Models: []stashgen.ModelRequest{{Name: "Rows", Type: pkg + ".Row", Declares: "row"}}})
+			if err != nil {
+				t.Fatalf("FromTags: %v", err)
+			}
+			checkConventions(t, file.Content)
+			if err := file.Write(); err != nil {
+				t.Fatal(err)
+			}
+			build(t, dir)
+		})
+	}
+}
+
 // checkConventions parses a generated file and reports each exported name
 // without a doc comment that starts with the name, each return of a value
-// together with an error, each function parameter named for the package,
-// and each comment attached to no declaration.
+// together with an error, each function parameter named for the package or
+// for an import, and each comment attached to no declaration.
 func checkConventions(t *testing.T, src []byte) {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -100,6 +128,20 @@ func checkConventions(t *testing.T, src []byte) {
 	}
 	pkg := file.Name.Name
 	at := func(n ast.Node) string { return fset.Position(n.Pos()).String() }
+	// The name each import is used by: its alias, or its path's last element,
+	// which is the package's name for every import the generator writes.
+	imported := map[string]bool{}
+	for _, imp := range file.Imports {
+		path, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			t.Fatalf("%s: import path %s: %v", at(imp), imp.Path.Value, err)
+		}
+		name := path[strings.LastIndex(path, "/")+1:]
+		if imp.Name != nil {
+			name = imp.Name.Name
+		}
+		imported[name] = true
+	}
 
 	documented := map[*ast.CommentGroup]bool{}
 	checkDoc := func(n ast.Node, name string, doc *ast.CommentGroup) {
@@ -145,6 +187,9 @@ func checkConventions(t *testing.T, src []byte) {
 					for _, n := range field.Names {
 						if n.Name == pkg {
 							t.Errorf("%s: %s has a parameter named %s, the package's name", at(n), d.Name.Name, n.Name)
+						}
+						if imported[n.Name] {
+							t.Errorf("%s: %s has a parameter named %s, which hides the import", at(n), d.Name.Name, n.Name)
 						}
 					}
 				}

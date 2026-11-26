@@ -65,9 +65,6 @@ var ledgerDeclaration = gensupport.Declare("profiles").
 
 // ledgerCodec converts between Ledger and EncryptedLedger for EncryptLedger and
 // DecryptLedger.
-//
-// Ledger prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var ledgerCodec = gensupport.New(gensupport.Generated[Ledger, EncryptedLedger]{
 	TypeName:        "Ledger",
 	Declaration:     ledgerDeclaration,
@@ -139,6 +136,9 @@ var ledgerCodec = gensupport.New(gensupport.Generated[Ledger, EncryptedLedger]{
 // EncryptLedger seals each Ledger, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// Ledger prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptLedger(ctx context.Context, cipher *encrypt.Cipher, values []Ledger) ([]EncryptedLedger, error) {
 	return ledgerCodec.Encrypt(ctx, cipher, values)
 }

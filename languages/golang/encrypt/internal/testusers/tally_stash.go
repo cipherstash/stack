@@ -55,9 +55,6 @@ var tallyDeclaration = gensupport.Declare("profiles").
 
 // tallyCodec converts between Tally and EncryptedTally for EncryptTally and
 // DecryptTally.
-//
-// Tally prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var tallyCodec = gensupport.New(gensupport.Generated[Tally, EncryptedTally]{
 	TypeName:        "Tally",
 	Declaration:     tallyDeclaration,
@@ -111,6 +108,9 @@ var tallyCodec = gensupport.New(gensupport.Generated[Tally, EncryptedTally]{
 // EncryptTally seals each Tally, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// Tally prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptTally(ctx context.Context, cipher *encrypt.Cipher, values []Tally) ([]EncryptedTally, error) {
 	return tallyCodec.Encrypt(ctx, cipher, values)
 }

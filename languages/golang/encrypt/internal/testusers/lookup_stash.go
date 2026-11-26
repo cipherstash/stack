@@ -72,9 +72,6 @@ var lookupDeclaration = gensupport.Declare("lookups").
 
 // lookupCodec converts between Lookup and EncryptedLookup for EncryptLookup and
 // DecryptLookup.
-//
-// Lookup prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var lookupCodec = gensupport.New(gensupport.Generated[Lookup, EncryptedLookup]{
 	TypeName:        "Lookup",
 	Declaration:     lookupDeclaration,
@@ -122,6 +119,9 @@ var lookupCodec = gensupport.New(gensupport.Generated[Lookup, EncryptedLookup]{
 // EncryptLookup seals each Lookup, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// Lookup prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptLookup(ctx context.Context, cipher *encrypt.Cipher, values []Lookup) ([]EncryptedLookup, error) {
 	return lookupCodec.Encrypt(ctx, cipher, values)
 }

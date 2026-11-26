@@ -58,9 +58,6 @@ var contactDeclaration = gensupport.Declare("users").
 
 // contactCodec converts between Contact and EncryptedContact for EncryptContact
 // and DecryptContact.
-//
-// Contact prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var contactCodec = gensupport.New(gensupport.Generated[Contact, EncryptedContact]{
 	TypeName:        "Contact",
 	Declaration:     contactDeclaration,
@@ -108,6 +105,9 @@ var contactCodec = gensupport.New(gensupport.Generated[Contact, EncryptedContact
 // EncryptContact seals each Contact, with one ZeroKMS request for each 500
 // sealed values, plus one the first time a keyset is used. The result has one
 // element for each input, in the same order.
+//
+// Contact prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptContact(ctx context.Context, cipher *encrypt.Cipher, values []Contact) ([]EncryptedContact, error) {
 	return contactCodec.Encrypt(ctx, cipher, values)
 }

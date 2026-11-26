@@ -55,9 +55,6 @@ var customerDeclaration = gensupport.Declare("customers").
 
 // customerCodec converts between Customer and EncryptedCustomer for
 // EncryptCustomer and DecryptCustomer.
-//
-// Customer prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var customerCodec = gensupport.New(gensupport.Generated[Customer, EncryptedCustomer]{
 	TypeName:        "Customer",
 	Declaration:     customerDeclaration,
@@ -111,6 +108,9 @@ var customerCodec = gensupport.New(gensupport.Generated[Customer, EncryptedCusto
 // EncryptCustomer seals each Customer, with one ZeroKMS request for each 500
 // sealed values, plus one the first time a keyset is used. The result has one
 // element for each input, in the same order.
+//
+// Customer prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptCustomer(ctx context.Context, cipher *encrypt.Cipher, values []Customer) ([]EncryptedCustomer, error) {
 	return customerCodec.Encrypt(ctx, cipher, values)
 }

@@ -68,9 +68,6 @@ var declaration = gensupport.Declare("contacts").
 
 // codec converts between crm.Contact and EncryptedContact for Encrypt and
 // Decrypt.
-//
-// crm.Contact prints its sealed fields in the clear, and stashgen cannot add
-// print methods to a type from another package.
 var codec = gensupport.New(gensupport.Generated[crm.Contact, EncryptedContact]{
 	TypeName:        "crm.Contact",
 	Declaration:     declaration,
@@ -125,6 +122,9 @@ var codec = gensupport.New(gensupport.Generated[crm.Contact, EncryptedContact]{
 // Encrypt seals each crm.Contact, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// crm.Contact prints its sealed fields in the clear, and stashgen cannot add
+// print methods to a type from another package.
 func Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []crm.Contact) ([]EncryptedContact, error) {
 	return codec.Encrypt(ctx, cipher, values)
 }

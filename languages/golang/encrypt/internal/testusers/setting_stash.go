@@ -57,9 +57,6 @@ var settingDeclaration = gensupport.Declare("settings").
 
 // settingCodec converts between Setting and EncryptedSetting for EncryptSetting
 // and DecryptSetting.
-//
-// Setting prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var settingCodec = gensupport.New(gensupport.Generated[Setting, EncryptedSetting]{
 	TypeName:        "Setting",
 	Declaration:     settingDeclaration,
@@ -119,6 +116,9 @@ var settingCodec = gensupport.New(gensupport.Generated[Setting, EncryptedSetting
 // EncryptSetting seals each Setting, with one ZeroKMS request for each 500
 // sealed values, plus one the first time a keyset is used. The result has one
 // element for each input, in the same order.
+//
+// Setting prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptSetting(ctx context.Context, cipher *encrypt.Cipher, values []Setting) ([]EncryptedSetting, error) {
 	return settingCodec.Encrypt(ctx, cipher, values)
 }

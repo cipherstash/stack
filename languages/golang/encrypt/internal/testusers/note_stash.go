@@ -56,9 +56,6 @@ var noteDeclaration = gensupport.DeclareContextField("tenant").
 
 // noteCodec converts between Note and EncryptedNote for EncryptNote and
 // DecryptNote.
-//
-// Note prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var noteCodec = gensupport.New(gensupport.Generated[Note, EncryptedNote]{
 	TypeName:        "Note",
 	Declaration:     noteDeclaration,
@@ -111,6 +108,9 @@ var noteCodec = gensupport.New(gensupport.Generated[Note, EncryptedNote]{
 // EncryptNote seals each Note, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// Note prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptNote(ctx context.Context, cipher *encrypt.Cipher, values []Note) ([]EncryptedNote, error) {
 	return noteCodec.Encrypt(ctx, cipher, values)
 }

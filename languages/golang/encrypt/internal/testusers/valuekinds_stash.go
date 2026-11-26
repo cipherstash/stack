@@ -140,9 +140,6 @@ var valueKindsDeclaration = gensupport.Declare("value_kinds").
 
 // valueKindsCodec converts between ValueKinds and EncryptedValueKinds for
 // EncryptValueKinds and DecryptValueKinds.
-//
-// ValueKinds prints its sealed fields in the clear: it has no String or
-// LogValue method. Write them, or run stashgen with -redact.
 var valueKindsCodec = gensupport.New(gensupport.Generated[ValueKinds, EncryptedValueKinds]{
 	TypeName:        "ValueKinds",
 	Declaration:     valueKindsDeclaration,
@@ -257,6 +254,9 @@ var valueKindsCodec = gensupport.New(gensupport.Generated[ValueKinds, EncryptedV
 // EncryptValueKinds seals each ValueKinds, with one ZeroKMS request for each
 // 500 sealed values, plus one the first time a keyset is used. The result has
 // one element for each input, in the same order.
+//
+// ValueKinds prints its sealed fields in the clear: it has no String or
+// LogValue method. Write them, or run stashgen with -redact.
 func EncryptValueKinds(ctx context.Context, cipher *encrypt.Cipher, values []ValueKinds) ([]EncryptedValueKinds, error) {
 	return valueKindsCodec.Encrypt(ctx, cipher, values)
 }

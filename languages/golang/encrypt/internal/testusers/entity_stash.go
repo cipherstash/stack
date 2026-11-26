@@ -50,9 +50,6 @@ var entityDeclaration = gensupport.Declare("entities").
 
 // entityCodec converts between Entity and EncryptedEntity for EncryptEntity and
 // DecryptEntity.
-//
-// Entity prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var entityCodec = gensupport.New(gensupport.Generated[Entity, EncryptedEntity]{
 	TypeName:        "Entity",
 	Declaration:     entityDeclaration,
@@ -94,6 +91,9 @@ var entityCodec = gensupport.New(gensupport.Generated[Entity, EncryptedEntity]{
 // EncryptEntity seals each Entity, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// Entity prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptEntity(ctx context.Context, cipher *encrypt.Cipher, values []Entity) ([]EncryptedEntity, error) {
 	return entityCodec.Encrypt(ctx, cipher, values)
 }

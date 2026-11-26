@@ -56,9 +56,6 @@ var declaration = gensupport.DeclareOpaque("documents/v2/body")
 
 // codec converts between Document and EncryptedDocument for Encrypt and
 // Decrypt.
-//
-// Document prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var codec = gensupport.New(gensupport.Generated[Document, EncryptedDocument]{
 	TypeName:        "Document",
 	Declaration:     declaration,
@@ -92,6 +89,9 @@ var codec = gensupport.New(gensupport.Generated[Document, EncryptedDocument]{
 // Encrypt seals each Document, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// Document prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []Document) ([]EncryptedDocument, error) {
 	return codec.Encrypt(ctx, cipher, values)
 }

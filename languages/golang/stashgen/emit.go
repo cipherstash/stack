@@ -399,13 +399,7 @@ func (w *writer) literal(indent, open string, entries []string, close string) {
 
 func (w *writer) codec(f *genFile) {
 	w.nl()
-	// The notices are warnings about the struct, which PrintsPlaintext and
-	// Unexported repeat when the program runs: they document the codec.
 	w.b.WriteString(wrapComment(fmt.Sprintf("%s converts between %s and %s for %s and %s.", f.codecVar, f.typeName, f.encName, f.encryptFn, f.decryptFn), 80))
-	for _, n := range f.notices {
-		w.p("//")
-		w.b.WriteString(wrapComment(n, 80))
-	}
 	w.p("var %s = gensupport.New(gensupport.Generated[%s, %s]{", f.codecVar, f.typeExpr, f.encName)
 	w.p("\tTypeName: %q,", f.typeName)
 	w.p("\tDeclaration: %s,", f.declVar)
@@ -687,7 +681,7 @@ func params(f *genFile, candidates ...[]string) []string {
 }
 
 func (f *genFile) funcParams() funcParams {
-	n := params(f, []string{"ctx", "c"}, []string{"cipher", "ci"}, []string{"d", "decrypter"}, []string{"values", "plaintexts"}, []string{"encrypted", "sealed"})
+	n := params(f, []string{"ctx", "callCtx"}, []string{"cipher", "cipherHandle"}, []string{"d", "decrypter"}, []string{"values", "plaintexts"}, []string{"encrypted", "sealed"})
 	return funcParams{ctx: n[0], cipher: n[1], d: n[2], values: n[3], encrypted: n[4]}
 }
 
@@ -695,6 +689,13 @@ func (w *writer) functions(f *genFile) {
 	n := f.funcParams()
 	w.nl()
 	w.b.WriteString(wrapComment(fmt.Sprintf("%s seals each %s, with one ZeroKMS request for each 500 sealed values, plus one the first time a keyset is used. The result has one element for each input, in the same order.", f.encryptFn, f.typeName), 80))
+	// The notices are warnings about the struct. They go on the exported
+	// function a program calls, so go doc shows them; on the unexported
+	// codec it would not.
+	for _, notice := range f.notices {
+		w.p("//")
+		w.b.WriteString(wrapComment(notice, 80))
+	}
 	w.p("func %s(%s context.Context, %s *encrypt.Cipher, %s []%s) ([]%s, error) {", f.encryptFn, n.ctx, n.cipher, n.values, f.typeExpr, f.encName)
 	w.p("\treturn %s.Encrypt(%s, %s, %s)", f.codecVar, n.ctx, n.cipher, n.values)
 	w.p("}")

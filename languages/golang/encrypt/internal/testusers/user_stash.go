@@ -76,9 +76,6 @@ var declaration = gensupport.Declare("users").
 	Omit("internal")
 
 // codec converts between User and EncryptedUser for Encrypt and Decrypt.
-//
-// User prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var codec = gensupport.New(gensupport.Generated[User, EncryptedUser]{
 	TypeName:        "User",
 	Declaration:     declaration,
@@ -140,6 +137,9 @@ var codec = gensupport.New(gensupport.Generated[User, EncryptedUser]{
 // Encrypt seals each User, with one ZeroKMS request for each 500 sealed values,
 // plus one the first time a keyset is used. The result has one element for each
 // input, in the same order.
+//
+// User prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []User) ([]EncryptedUser, error) {
 	return codec.Encrypt(ctx, cipher, values)
 }

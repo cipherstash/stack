@@ -47,9 +47,6 @@ var declaration = gensupport.Declare("directory").
 	EncryptInto("name", gensupport.String, "TextSearch")
 
 // codec converts between Entry and EncryptedEntry for Encrypt and Decrypt.
-//
-// Entry prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var codec = gensupport.New(gensupport.Generated[Entry, EncryptedEntry]{
 	TypeName:        "Entry",
 	Declaration:     declaration,
@@ -91,6 +88,9 @@ var codec = gensupport.New(gensupport.Generated[Entry, EncryptedEntry]{
 // Encrypt seals each Entry, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// Entry prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []Entry) ([]EncryptedEntry, error) {
 	return codec.Encrypt(ctx, cipher, values)
 }

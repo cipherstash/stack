@@ -54,7 +54,7 @@ type genFile struct {
 	encryptFn string
 	decryptFn string
 
-	notices         []string // warnings about the struct, for the codec's doc comment
+	notices         []string // warnings about the struct, for the doc comment of Encrypt
 	printsPlaintext bool
 	unexported      []string
 	unqueried       []string // stderr notices about one field: an array with no Elements accessor

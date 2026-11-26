@@ -49,9 +49,6 @@ var entryDeclaration = gensupport.Declare("directory").
 
 // entryCodec converts between Entry and EncryptedEntry for EncryptEntry and
 // DecryptEntry.
-//
-// Entry prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var entryCodec = gensupport.New(gensupport.Generated[Entry, EncryptedEntry]{
 	TypeName:        "Entry",
 	Declaration:     entryDeclaration,
@@ -93,6 +90,9 @@ var entryCodec = gensupport.New(gensupport.Generated[Entry, EncryptedEntry]{
 // EncryptEntry seals each Entry, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// Entry prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptEntry(ctx context.Context, cipher *encrypt.Cipher, values []Entry) ([]EncryptedEntry, error) {
 	return entryCodec.Encrypt(ctx, cipher, values)
 }

@@ -82,9 +82,6 @@ var profileDeclaration = gensupport.Declare("profiles").
 
 // profileCodec converts between Profile and EncryptedProfile for EncryptProfile
 // and DecryptProfile.
-//
-// Profile prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var profileCodec = gensupport.New(gensupport.Generated[Profile, EncryptedProfile]{
 	TypeName:        "Profile",
 	Declaration:     profileDeclaration,
@@ -192,6 +189,9 @@ var profileCodec = gensupport.New(gensupport.Generated[Profile, EncryptedProfile
 // EncryptProfile seals each Profile, with one ZeroKMS request for each 500
 // sealed values, plus one the first time a keyset is used. The result has one
 // element for each input, in the same order.
+//
+// Profile prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptProfile(ctx context.Context, cipher *encrypt.Cipher, values []Profile) ([]EncryptedProfile, error) {
 	return profileCodec.Encrypt(ctx, cipher, values)
 }

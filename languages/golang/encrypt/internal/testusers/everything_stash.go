@@ -108,9 +108,6 @@ var everythingDeclaration = gensupport.DeclareOpaque("everything")
 
 // everythingCodec converts between Everything and EncryptedEverything for
 // EncryptEverything and DecryptEverything.
-//
-// Everything prints its sealed fields in the clear: it has no String or
-// LogValue method. Write them, or run stashgen with -redact.
 var everythingCodec = gensupport.New(gensupport.Generated[Everything, EncryptedEverything]{
 	TypeName:        "Everything",
 	Declaration:     everythingDeclaration,
@@ -194,6 +191,9 @@ var everythingCodec = gensupport.New(gensupport.Generated[Everything, EncryptedE
 // EncryptEverything seals each Everything, with one ZeroKMS request for each
 // 500 sealed values, plus one the first time a keyset is used. The result has
 // one element for each input, in the same order.
+//
+// Everything prints its sealed fields in the clear: it has no String or
+// LogValue method. Write them, or run stashgen with -redact.
 func EncryptEverything(ctx context.Context, cipher *encrypt.Cipher, values []Everything) ([]EncryptedEverything, error) {
 	return everythingCodec.Encrypt(ctx, cipher, values)
 }

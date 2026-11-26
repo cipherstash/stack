@@ -61,13 +61,6 @@ var declaration = gensupport.Declare("individuals").
 
 // codec converts between pb.Individual and EncryptedIndividual for Encrypt and
 // Decrypt.
-//
-// pb.Individual prints its sealed fields in the clear, and stashgen cannot add
-// print methods to a type from another package.
-//
-// pb.Individual has unexported fields, so Go cannot convert it to a copy of its
-// fields. This file reads each field by name: the compiler finds a removed or
-// retyped field, and CI finds an added one.
 var codec = gensupport.New(gensupport.Generated[*pb.Individual, EncryptedIndividual]{
 	TypeName:        "pb.Individual",
 	Declaration:     declaration,
@@ -136,6 +129,13 @@ var codec = gensupport.New(gensupport.Generated[*pb.Individual, EncryptedIndivid
 // Encrypt seals each pb.Individual, with one ZeroKMS request for each 500
 // sealed values, plus one the first time a keyset is used. The result has one
 // element for each input, in the same order.
+//
+// pb.Individual prints its sealed fields in the clear, and stashgen cannot add
+// print methods to a type from another package.
+//
+// pb.Individual has unexported fields, so Go cannot convert it to a copy of its
+// fields. This file reads each field by name: the compiler finds a removed or
+// retyped field, and CI finds an added one.
 func Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []*pb.Individual) ([]EncryptedIndividual, error) {
 	return codec.Encrypt(ctx, cipher, values)
 }

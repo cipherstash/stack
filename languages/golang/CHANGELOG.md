@@ -23,15 +23,16 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
     methods.
   - A generated method that fails returns the zero value with its error.
     It returned the same values before, but the code did not show it.
-  - The slice parameter of `Encrypt` is named `values`. It was named after
-    the package, such as `users []User`, or `main []User` in package
-    `main`. A top-level function's parameter now never has the package's
-    name or an import's name.
+  - Without `-name`, the slice parameter of `Encrypt` was named after the
+    package, such as `users []User`, or `main []User` in package `main`.
+    It is now `values`, or `plaintexts` in a package named `values`. With
+    `-name` it was already `values`. A top-level function's parameter now
+    never has the package's name or an import's name.
   - Each warning, such as "User prints its sealed fields in the clear",
-    is now in the doc comment of the declaration it describes.
-    It was a comment attached to nothing. A warning about the struct is on the `codec` variable. A
-    warning about a `JsonSearch` field's arrays is on the field's entry
-    type.
+    is now in a doc comment. It was a comment attached to nothing. A
+    warning about the struct is on `Encrypt`, or `Encrypt<Name>` with
+    `-name`, so `go doc` shows it. A warning about a `JsonSearch` field's
+    arrays is on the field's entry type.
 
 ## [0.1.0-rc.7] - 2026-11-25
 

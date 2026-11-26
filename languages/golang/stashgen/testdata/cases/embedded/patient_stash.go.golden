@@ -75,12 +75,6 @@ var declaration = gensupport.Declare("patients").
 	Encrypt("chart", gensupport.Bytes)
 
 // codec converts between Patient and EncryptedPatient for Encrypt and Decrypt.
-//
-// Patient prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-//
-// Not encrypted and not stored: the unexported field "notes". Tag it
-// `stash:"-"` to confirm that.
 var codec = gensupport.New(gensupport.Generated[Patient, EncryptedPatient]{
 	TypeName:        "Patient",
 	Declaration:     declaration,
@@ -138,6 +132,12 @@ var codec = gensupport.New(gensupport.Generated[Patient, EncryptedPatient]{
 // Encrypt seals each Patient, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// Patient prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
+//
+// Not encrypted and not stored: the unexported field "notes". Tag it
+// `stash:"-"` to confirm that.
 func Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []Patient) ([]EncryptedPatient, error) {
 	return codec.Encrypt(ctx, cipher, values)
 }

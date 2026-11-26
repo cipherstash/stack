@@ -83,9 +83,6 @@ var queryProfileDeclaration = gensupport.Declare("users").
 
 // queryProfileCodec converts between QueryProfile and EncryptedQueryProfile for
 // EncryptQueryProfile and DecryptQueryProfile.
-//
-// QueryProfile prints its sealed fields in the clear: it has no String or
-// LogValue method. Write them, or run stashgen with -redact.
 var queryProfileCodec = gensupport.New(gensupport.Generated[QueryProfile, EncryptedQueryProfile]{
 	TypeName:        "QueryProfile",
 	Declaration:     queryProfileDeclaration,
@@ -149,6 +146,9 @@ var queryProfileCodec = gensupport.New(gensupport.Generated[QueryProfile, Encryp
 // EncryptQueryProfile seals each QueryProfile, with one ZeroKMS request for
 // each 500 sealed values, plus one the first time a keyset is used. The result
 // has one element for each input, in the same order.
+//
+// QueryProfile prints its sealed fields in the clear: it has no String or
+// LogValue method. Write them, or run stashgen with -redact.
 func EncryptQueryProfile(ctx context.Context, cipher *encrypt.Cipher, values []QueryProfile) ([]EncryptedQueryProfile, error) {
 	return queryProfileCodec.Encrypt(ctx, cipher, values)
 }

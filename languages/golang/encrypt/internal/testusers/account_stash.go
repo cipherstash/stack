@@ -63,9 +63,6 @@ var accountDeclaration = gensupport.Declare("accounts").
 
 // accountCodec converts between Account and EncryptedAccount for EncryptAccount
 // and DecryptAccount.
-//
-// Account prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var accountCodec = gensupport.New(gensupport.Generated[Account, EncryptedAccount]{
 	TypeName:        "Account",
 	Declaration:     accountDeclaration,
@@ -126,6 +123,9 @@ var accountCodec = gensupport.New(gensupport.Generated[Account, EncryptedAccount
 // EncryptAccount seals each Account, with one ZeroKMS request for each 500
 // sealed values, plus one the first time a keyset is used. The result has one
 // element for each input, in the same order.
+//
+// Account prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptAccount(ctx context.Context, cipher *encrypt.Cipher, values []Account) ([]EncryptedAccount, error) {
 	return accountCodec.Encrypt(ctx, cipher, values)
 }

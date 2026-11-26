@@ -58,9 +58,6 @@ var widenedDeclaration = gensupport.Declare("profiles").
 
 // widenedCodec converts between Widened and EncryptedWidened for EncryptWidened
 // and DecryptWidened.
-//
-// Widened prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var widenedCodec = gensupport.New(gensupport.Generated[Widened, EncryptedWidened]{
 	TypeName:        "Widened",
 	Declaration:     widenedDeclaration,
@@ -117,6 +114,9 @@ var widenedCodec = gensupport.New(gensupport.Generated[Widened, EncryptedWidened
 // EncryptWidened seals each Widened, with one ZeroKMS request for each 500
 // sealed values, plus one the first time a keyset is used. The result has one
 // element for each input, in the same order.
+//
+// Widened prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func EncryptWidened(ctx context.Context, cipher *encrypt.Cipher, values []Widened) ([]EncryptedWidened, error) {
 	return widenedCodec.Encrypt(ctx, cipher, values)
 }

@@ -48,9 +48,6 @@ var declaration = gensupport.Declare("refunds").
 	EncryptInto("reason", gensupport.String, "TextEq")
 
 // codec converts between Refund and EncryptedRefund for Encrypt and Decrypt.
-//
-// Refund prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
 var codec = gensupport.New(gensupport.Generated[Refund, EncryptedRefund]{
 	TypeName:        "Refund",
 	Declaration:     declaration,
@@ -92,6 +89,9 @@ var codec = gensupport.New(gensupport.Generated[Refund, EncryptedRefund]{
 // Encrypt seals each Refund, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
+//
+// Refund prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 func Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []Refund) ([]EncryptedRefund, error) {
 	return codec.Encrypt(ctx, cipher, values)
 }
