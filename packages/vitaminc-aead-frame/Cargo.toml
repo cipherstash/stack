@@ -55,7 +55,7 @@ serde_json = "1"
 # vitaminc-encrypt here, for a fixture test that no longer exists; no code
 # uses it, so cargo-udeps refused it and it is gone.
 vitaminc-aead = { path = "../vitaminc-aead", features = ["jiff", "rust_decimal"] }
-jiff = { version = "1.0.0", default-features = false }
+jiff = { version = "1.0.1", default-features = false }
 vitaminc-protected = "0.10.0"
 rust_decimal = { version = "1.41", default-features = false, features = ["std"] }
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }

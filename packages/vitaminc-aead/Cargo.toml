@@ -39,8 +39,10 @@ futures-util = { version = "0.3.31", default-features = false, features = ["allo
 # a decimal, and a uuid. Each is a few lines over the core model.
 # jiff without its default features: no time-zone database, no system
 # time-zone lookup and no filesystem access, only the civil and instant types.
+# 1.0.1 at least: 1.0.0 can parse an instant below its own minimum
+# (BurntSushi/jiff#714), which has no encoding.
 [dependencies.jiff]
-version = "1.0.0"
+version = "1.0.1"
 default-features = false
 optional = true
 
@@ -86,4 +88,4 @@ quickcheck_macros = "1.2.0"
 trybuild = "1.0.118"
 futures-executor = "0.3.31"
 serde_json = "1"
-jiff = { version = "1.0.0", default-features = false }
+jiff = { version = "1.0.1", default-features = false }
