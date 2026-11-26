@@ -59,8 +59,8 @@ mod walk;
 #[doc(inline)]
 pub use plaintext::{
     Bytes, Encrypt, EncryptRef, FixedType, Float, Int, Kind, KnownLogical, Lent, Logical, MapSink,
-    Physical, Raw, Scalar, SeqSink, Sink, SourceError, Tee, TimeUnit, UnknownLogical,
-    UnknownLogicalId, Width,
+    ParseValueKindError, Physical, Raw, Scalar, SealedNull, SeqSink, Sink, SourceError, Tee,
+    TimeUnit, UnknownLogical, UnknownLogicalId, ValueKind, Width,
 };
 /// Derive [`Encrypt`] for a struct or a fieldless enum. A struct walks as
 /// a map keyed by field name; a fieldless enum as an int leaf holding the

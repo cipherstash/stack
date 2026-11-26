@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 use vitaminc_aead::frame::{Frame, FrameError, FrameMap, FrameSeq, FrameWriteError, FrameWriter};
 use vitaminc_aead::plaintext::{
-    Error as _, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
+    Error as _, FixedType, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
 };
 use vitaminc_aead::{DecodeError, Decrypt, Encrypt, EncryptRef};
 use vitaminc_protected::{
@@ -1070,7 +1070,7 @@ impl Sink for KindOf {
     type Map = Skip<Option<ValueKind>>;
 
     fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<Self::Ok, DecodeError> {
-        Ok(scalar_kind(ty, &value))
+        Ok(ValueKind::of(ty, &value))
     }
 
     /// A typed null is a null, which has no kind.
@@ -1089,35 +1089,6 @@ impl Sink for KindOf {
     fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<Self::Ok, DecodeError> {
         Ok(None)
     }
-}
-
-/// The kind of one scalar in the value model, or `None` for a null, an
-/// `undefined`, or a scalar outside the model.
-pub(super) fn scalar_kind(ty: Option<Logical>, value: &Physical<'_>) -> Option<ValueKind> {
-    let (ty, value) = model(ty, *value)?;
-    Some(match (ty, value) {
-        (Some(Logical::Date), _) => ValueKind::Date,
-        (Some(Logical::Timestamp(_)), _) => ValueKind::Timestamp,
-        (Some(Logical::Decimal { .. }), _) => ValueKind::Decimal,
-        (Some(_), _) | (None, Physical::Null) => return None,
-        (None, Physical::Bool(_)) => ValueKind::Bool,
-        (None, Physical::Int(int)) => match int {
-            Int::I8(_) => ValueKind::Int8,
-            Int::I16(_) => ValueKind::Int16,
-            Int::I32(_) => ValueKind::Int32,
-            Int::I64(_) => ValueKind::Int64,
-            Int::I128(_) => ValueKind::Int128,
-            Int::U8(_) => ValueKind::UInt8,
-            Int::U16(_) => ValueKind::UInt16,
-            Int::U32(_) => ValueKind::UInt32,
-            Int::U64(_) => ValueKind::UInt64,
-            Int::U128(_) => ValueKind::UInt128,
-        },
-        (None, Physical::Float(Float::F32(_))) => ValueKind::Float32,
-        (None, Physical::Float(Float::F64(_))) => ValueKind::Float64,
-        (None, Physical::Text(_)) => ValueKind::String,
-        (None, Physical::Bytes(_)) => ValueKind::Bytes,
-    })
 }
 
 // =============================================================================
@@ -1328,7 +1299,7 @@ impl<O: PutRow> MapSink for RowMap<O> {
 mod tests {
     use super::*;
     use crate::dynamic::test_frame::Tree;
-    use vitaminc_aead::plaintext::{TimeUnit, Width};
+    use vitaminc_aead::plaintext::{Int, TimeUnit, Width};
 
     mod equality {
         use super::*;

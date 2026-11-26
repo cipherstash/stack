@@ -16,6 +16,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `plaintext::ValueKind`: what a value is, without the value, with the text name a schema spells it with (`"int32"`, `"timestamp"`, `"object"`, `"json"`, …).
+  It covers every scalar, an array, an object and a JSON document.
+  It differs from `Kind`, which is the physical storage of one scalar leaf alone.
+  `ValueKind::of` gives the kind of a scalar (never `Json`: a document crosses as text or bytes), and `ValueKind::zero` a scalar of the kind.
+  `ValueKind::holds` says whether a value of one kind is a value of a declared kind.
+  `ValueKind::sealed_null` says how an absent value of the kind is sealed (`SealedNull`), so that it is as long as a present one.
+  `ParseValueKindError` is the error from parsing a name.
 - `leaf::sealed_null_type`, the type a typed null is sealed as.
 
 ## [0.10.0] - 2026-11-19

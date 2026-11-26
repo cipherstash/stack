@@ -6,7 +6,7 @@
 //! JavaScript number is a float, and match is defined over text alone. So a
 //! plan field may say what its values are, in its `"type"` key.
 //!
-//! The vocabulary is [`ValueKind`], whose
+//! The vocabulary is vitaminc's [`ValueKind`], whose
 //! [`name`](ValueKind::name)s (`"uint64"`, `"string"`, …, `"array"`,
 //! `"object"`) are frozen wire format; [`ValueFrame::kind`] says which kind
 //! a value is. Beside it, this module adds two rules:
@@ -35,10 +35,7 @@
 //! field has none is refused when it is built
 //! ([`Error::UntypedIndex`], naming the field). A field that only seals, or
 //! only carries its value through, may leave it out: no term derives from it.
-use std::fmt;
-use std::str::FromStr;
-
-use vitaminc_aead::plaintext::{FixedType, Float, Int, Logical, Physical, Raw, TimeUnit, Width};
+use vitaminc_aead::plaintext::{Float, Int, Logical, Physical, Raw, ValueKind};
 use vitaminc_aead::Encrypt;
 
 use super::term::OneScalar;
@@ -89,7 +86,8 @@ use crate::target::IndexSpec;
 /// assert!(!admits(ValueKind::Bytes, &IndexSpec::Ore));
 /// ```
 pub fn admits(kind: ValueKind, index: &IndexSpec) -> bool {
-    scalar_of(kind).is_some_and(|(ty, scalar)| index.takes(ty, &scalar))
+    kind.zero()
+        .is_some_and(|(ty, scalar)| index.takes(ty, &scalar))
 }
 
 /// Why `kind` does not admit `index`, or `None` when it does: the reason a
@@ -111,40 +109,6 @@ pub fn not_admitted(kind: ValueKind, index: &IndexSpec) -> Option<Reason> {
         Reason::JsonIndexPending
     } else {
         Reason::IndexNotAdmitted
-    })
-}
-
-/// A scalar of `kind`, with its logical type, for asking the table about
-/// the kind: any value of a kind is taken by an index exactly when every
-/// other is. `None` for a composite, which is no scalar.
-fn scalar_of(kind: ValueKind) -> Option<(Option<Logical>, Physical<'static>)> {
-    let int = |int| (None, Physical::Int(int));
-    Some(match kind {
-        ValueKind::Bool => (None, Physical::Bool(false)),
-        ValueKind::Int8 => int(Int::I8(0)),
-        ValueKind::Int16 => int(Int::I16(0)),
-        ValueKind::Int32 => int(Int::I32(0)),
-        ValueKind::Int64 => int(Int::I64(0)),
-        ValueKind::Int128 => int(Int::I128(0)),
-        ValueKind::UInt8 => int(Int::U8(0)),
-        ValueKind::UInt16 => int(Int::U16(0)),
-        ValueKind::UInt32 => int(Int::U32(0)),
-        ValueKind::UInt64 => int(Int::U64(0)),
-        ValueKind::UInt128 => int(Int::U128(0)),
-        ValueKind::Float32 => (None, Physical::Float(Float::F32(0.0))),
-        ValueKind::Float64 => (None, Physical::Float(Float::F64(0.0))),
-        ValueKind::Decimal => (
-            Some(Logical::Decimal { scale: 0 }),
-            Physical::Int(Int::I128(0)),
-        ),
-        ValueKind::Date => (Some(Logical::Date), Physical::Int(Int::I32(0))),
-        ValueKind::Timestamp => (
-            Some(Logical::Timestamp(TimeUnit::Nanos)),
-            Physical::Int(Int::I128(0)),
-        ),
-        ValueKind::String => (None, Physical::Text("")),
-        ValueKind::Bytes => (None, Physical::Bytes(&[])),
-        ValueKind::Array | ValueKind::Object | ValueKind::Json => return None,
     })
 }
 
@@ -349,213 +313,12 @@ impl Number {
     }
 }
 
-/// The kind of a value: the type vocabulary a plan field declares in its
-/// `"type"` key, and what [`ValueFrame::kind`] reports.
-///
-/// `Null`, `Undefined` and `Passthrough` have no kind: each null is a type
-/// with one value, so declaring a field as one says nothing, and a
-/// passthrough is a transport choice, not a type.
-///
-/// # Names are wire format
-///
-/// [`name`](Self::name) (also its [`Display`](fmt::Display) and [`FromStr`]
-/// form) is how a binding spells a kind. The names are frozen: matched
-/// exactly, case-sensitively, and never renamed.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum ValueKind {
-    /// `"bool"`.
-    Bool,
-    /// `"int8"`.
-    Int8,
-    /// `"int16"`.
-    Int16,
-    /// `"int32"`.
-    Int32,
-    /// `"int64"`.
-    Int64,
-    /// `"int128"`.
-    Int128,
-    /// `"uint8"`.
-    UInt8,
-    /// `"uint16"`.
-    UInt16,
-    /// `"uint32"`.
-    UInt32,
-    /// `"uint64"`.
-    UInt64,
-    /// `"uint128"`.
-    UInt128,
-    /// `"float32"`.
-    Float32,
-    /// `"float64"`.
-    Float64,
-    /// `"decimal"`: vitaminc's `Decimal` logical type, a mantissa and a
-    /// scale.
-    Decimal,
-    /// `"date"`: vitaminc's `Date` logical type, a calendar date with no
-    /// time or zone.
-    Date,
-    /// `"timestamp"`: vitaminc's `Timestamp` logical type, an instant in
-    /// UTC, to the nanosecond.
-    Timestamp,
-    /// `"string"`.
-    String,
-    /// `"bytes"`.
-    Bytes,
-    /// `"array"`. Says nothing about the elements' kinds.
-    Array,
-    /// `"object"`. Says nothing about the entries' kinds.
-    Object,
-    /// `"json"`: a JSON document, carried as UTF-8 JSON text in a text or
-    /// bytes leaf, which the engine parses by one set of rules
-    /// ([`crate::json::parse_text`]) and opens back to as bytes. A value
-    /// is never of this kind ([`ValueFrame::kind`] says `string` or
-    /// `bytes`); a field declares it, and takes a target that stores a
-    /// document (`JsonSearch`). A JSON document's `null` is the text
-    /// `null`, not the frame's null.
-    Json,
-}
-
-impl ValueKind {
-    /// Every kind, in declaration order.
-    pub const ALL: [ValueKind; 21] = [
-        ValueKind::Bool,
-        ValueKind::Int8,
-        ValueKind::Int16,
-        ValueKind::Int32,
-        ValueKind::Int64,
-        ValueKind::Int128,
-        ValueKind::UInt8,
-        ValueKind::UInt16,
-        ValueKind::UInt32,
-        ValueKind::UInt64,
-        ValueKind::UInt128,
-        ValueKind::Float32,
-        ValueKind::Float64,
-        ValueKind::Decimal,
-        ValueKind::Date,
-        ValueKind::Timestamp,
-        ValueKind::String,
-        ValueKind::Bytes,
-        ValueKind::Array,
-        ValueKind::Object,
-        ValueKind::Json,
-    ];
-
-    /// How a declaration spells this kind: `"bool"`, `"int8"`, `"int16"`,
-    /// `"int32"`, `"int64"`, `"int128"`, `"uint8"`, `"uint16"`, `"uint32"`,
-    /// `"uint64"`, `"uint128"`, `"float32"`, `"float64"`, `"decimal"`,
-    /// `"date"`, `"timestamp"`, `"string"`, `"bytes"`, `"array"`,
-    /// `"object"` or `"json"`. Frozen wire format.
-    pub const fn name(self) -> &'static str {
-        match self {
-            ValueKind::Bool => "bool",
-            ValueKind::Int8 => "int8",
-            ValueKind::Int16 => "int16",
-            ValueKind::Int32 => "int32",
-            ValueKind::Int64 => "int64",
-            ValueKind::Int128 => "int128",
-            ValueKind::UInt8 => "uint8",
-            ValueKind::UInt16 => "uint16",
-            ValueKind::UInt32 => "uint32",
-            ValueKind::UInt64 => "uint64",
-            ValueKind::UInt128 => "uint128",
-            ValueKind::Float32 => "float32",
-            ValueKind::Float64 => "float64",
-            ValueKind::Decimal => "decimal",
-            ValueKind::Date => "date",
-            ValueKind::Timestamp => "timestamp",
-            ValueKind::String => "string",
-            ValueKind::Bytes => "bytes",
-            ValueKind::Array => "array",
-            ValueKind::Object => "object",
-            ValueKind::Json => "json",
-        }
-    }
-
-    /// How an absent value of this kind is sealed so that it is as long as
-    /// a present one (a plan's `"null": "sealed"`, #1298): `Some(Some(ty))`
-    /// for a kind of fixed width, sealed as a typed null of `ty` (vitaminc
-    /// 0.8); `Some(None)` for a boolean, whose leaf is one byte, as the
-    /// plain null is; `None` for a kind of no fixed width (text, bytes, a
-    /// container), whose absence no padding can hide.
-    pub(crate) const fn sealed_null(self) -> Option<Option<FixedType>> {
-        let plain = FixedType::plain;
-        Some(match self {
-            ValueKind::Bool => None,
-            ValueKind::Int8 => plain(Width::I8),
-            ValueKind::Int16 => plain(Width::I16),
-            ValueKind::Int32 => plain(Width::I32),
-            ValueKind::Int64 => plain(Width::I64),
-            ValueKind::Int128 => plain(Width::I128),
-            ValueKind::UInt8 => plain(Width::U8),
-            ValueKind::UInt16 => plain(Width::U16),
-            ValueKind::UInt32 => plain(Width::U32),
-            ValueKind::UInt64 => plain(Width::U64),
-            ValueKind::UInt128 => plain(Width::U128),
-            ValueKind::Float32 => plain(Width::F32),
-            ValueKind::Float64 => plain(Width::F64),
-            // The widths the value model holds each logical type at.
-            ValueKind::Decimal => FixedType::new(Some(Logical::Decimal { scale: 0 }), Width::I128),
-            ValueKind::Date => FixedType::new(Some(Logical::Date), Width::I32),
-            ValueKind::Timestamp => {
-                FixedType::new(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128)
-            }
-            ValueKind::String
-            | ValueKind::Bytes
-            | ValueKind::Array
-            | ValueKind::Object
-            | ValueKind::Json => return None,
-        })
-    }
-}
-
-impl ValueKind {
-    /// Whether a value of kind `found` is a value of this declared kind:
-    /// the same kind, or for [`Json`](Self::Json), the text or bytes the
-    /// document crosses as. `None`, a value with no kind (a null, an
-    /// undefined, a passthrough), is a value of no kind.
-    pub const fn holds(self, found: Option<ValueKind>) -> bool {
-        match (self, found) {
-            (ValueKind::Json, Some(ValueKind::String | ValueKind::Bytes)) => true,
-            (declared, Some(found)) => declared as u8 == found as u8,
-            (_, None) => false,
-        }
-    }
-}
-
-impl fmt::Display for ValueKind {
-    /// Writes [`name`](Self::name).
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name())
-    }
-}
-
-impl FromStr for ValueKind {
-    type Err = ParseValueKindError;
-
-    /// Parses a [`name`](Self::name), exactly: `"uint64"`, not `"UInt64"`,
-    /// `"u64"` or `" uint64"`. `"null"` and `"undefined"` are not kinds.
-    fn from_str(name: &str) -> Result<Self, Self::Err> {
-        ValueKind::ALL
-            .into_iter()
-            .find(|kind| kind.name() == name)
-            .ok_or(ParseValueKindError)
-    }
-}
-
-/// The error from parsing a string that is not a [`ValueKind::name`].
-/// Carries no detail: the caller holds the string it tried to parse.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, thiserror::Error)]
-#[error("not a value kind")]
-pub struct ParseValueKindError;
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::dynamic::test_frame::Tree;
     use crate::sem::{MatchOptions, Tokenizer};
-    use vitaminc_aead::plaintext::Raw;
+    use vitaminc_aead::plaintext::{ParseValueKindError, Raw, TimeUnit};
 
     #[test]
     fn kind_names_parse_back_exactly() {

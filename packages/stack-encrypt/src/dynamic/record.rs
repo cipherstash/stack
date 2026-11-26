@@ -154,7 +154,7 @@ use serde::Deserialize;
 use super::term::{IndexWire, JsonWire, MatchWire};
 use super::{TargetOptions, ValueFrame, ValueKind};
 use vitaminc_aead::frame::{Frame, FrameWriter};
-use vitaminc_aead::plaintext::{Logical, MapSink, Physical, SeqSink, Sink};
+use vitaminc_aead::plaintext::{Logical, MapSink, Physical, SealedNull, SeqSink, Sink};
 use vitaminc_aead::{DecodeError, Encrypt};
 use vitaminc_protected::{Controlled, Protected};
 
@@ -2287,7 +2287,7 @@ fn source_row(mut row: Vec<(String, ValueFrame)>, plan: &Plan) -> Result<Row, Er
             // equality's, which a null has.
             Some(NullMode::Sealed) if value.is_null() => {
                 match field.field_type.and_then(ValueKind::sealed_null) {
-                    Some(Some(ty)) => ValueFrame::typed_null(ty),
+                    Some(SealedNull::Typed(ty)) => ValueFrame::typed_null(ty),
                     _ => value,
                 }
             }
