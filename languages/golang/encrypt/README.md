@@ -339,10 +339,6 @@ Printing an `AuditMetadata` shows its keys, quoted, and never a value.
 and `ExampleClient_Audit`. The example program in `encrypt/example` runs a
 decrypt with audit metadata.
 
-In the Rust crate this is `AuditMetadata::new().with(key, value)` and
-`.audit(..)`. In the ZeroKMS protocol it is the unverified context of a key
-request.
-
 ## Reading
 
 `users.Decrypt` takes a `Decrypter`: the `*Cipher`, which refuses a row
@@ -452,7 +448,7 @@ rules.
 A method takes the field's own Go type, so `Fields.Age.Lt` on a `uint32`
 field takes a `uint32`.
 
-Text orders by its folded form (ADR-0002): case and accents are folded and
+Text orders by its folded form: case and accents are folded and
 `ß` becomes `ss`, under Unicode 16. So `Café`, `cafe` and `CAFÉ` are one
 value and tie, `alice` orders before `Zoe`, and `é` orders with `e`, not
 after `z`. `Between` is inclusive at both ends and, as SQL's `BETWEEN`,
@@ -461,7 +457,7 @@ range matches nothing. So `Between("b", "A")` matches nothing, since `A`
 folds to `a`, below `b`. Text holding a code point Unicode 16 does not assign has no
 fold, and its query or write is refused with `encrypt.ErrTerm`.
 
-Floats order as PostgreSQL's `float8` does (ADR-0002): `-0.0` and `0.0` are
+Floats order as PostgreSQL's `float8` does: `-0.0` and `0.0` are
 one value, and every NaN is one value, above `+Inf`, so `Between(math.NaN(),
 math.Inf(1))` matches nothing. A `float32` orders as the `float64` it
 widens to.
@@ -654,7 +650,7 @@ The EQL types the engine produces, and the Go field types each takes:
 | `Json` (`eql.JSON`) | struct, map, slice, or `json.RawMessage` | none: the document is one ciphertext, stored and read back whole; see [Encrypted JSON documents](#encrypted-json-documents) |
 | `JsonSearch` (`eql.JSONSearch`) | struct, map, slice, or `json.RawMessage` | containment, equality at a path, ordering at declared paths, several members of one array element, selection, subtree reads; see [Encrypted JSON documents](#encrypted-json-documents) |
 
-Any built-in Go integer field takes an integer EQL type (ADR-0002): the field
+Any built-in Go integer field takes an integer EQL type: the field
 is sealed at the type's width, and opens back into the field's type. A type
 every value of which fits (an `int16` or a `uint16` field for `Integer`, an
 `int8` for `Smallint`)
@@ -704,7 +700,7 @@ decimal with more than 28 digits after the point are refused with
 microsecond, and decimals by value (`1.5` ties `1.50`).
 
 The `Ord` and `OrdOpe` types store an OPE term, which EQL compares as bytes,
-and order by ADR-0002's order key: integers by value, floats as PostgreSQL's
+and order by one key: integers by value, floats as PostgreSQL's
 `float8` sorts them (`-0.0` ties `0.0`, every NaN is one value after
 `+Infinity`), text by its fold (case and accents folded, under Unicode 16).
 A field gets `Lt`, `Lte`, `Gt` and `Gte`, and a text field `Eq` too; sort
@@ -722,7 +718,7 @@ generated `Between` method on these EQL fields yet, although EQL v4 has
 range query domains and `eql_v4.between` for them.
 
 The `OrdOre` types and `TextSearchOre` order by the same key, through a block
-ORE term (ore-rs's 6-bit schemes) in place of the OPE term. Each term
+ORE term in place of the OPE term. Each term
 carries a random nonce, so EQL v4's own comparator orders them, not their
 bytes: sort with `ORDER BY eql_v4.ord_term_ore(col)`, and index with
 `CREATE INDEX ON t USING btree (eql_v4.ord_term_ore(col))`. That index needs
@@ -740,8 +736,7 @@ stores what it returns. `Fields.Email.Eq` returns the `eql.TextEqQuery`
 the column's `eql_v4.query_text_eq` operand takes; `TextEq` answers `eq`
 alone, and a `TextMatch` field's `Matches` returns an
 `encrypt.EQLMatchQuery`: the `eql.TextMatchQuery` operand with `Verify` and
-`TargetLimit`. `mise run
-wasm:guest:build:eql` builds that guest beside the other.
+`TargetLimit`.
 
 A cipher with a scope or a binding (`cipher.Scope(tenant).Bind(rowID)`)
 seals a struct with an `encrypt_into` field as it seals any other struct.
@@ -1025,9 +1020,8 @@ binaries. `NewClient` fails the test outside a test binary.
 
 ## Building
 
-The package embeds `wasm/stack_encrypt_guest.wasm`, a build artefact of the
-Rust crate in [`guest/`](guest/), and package `encrypt/eql` embeds the EQL
-build beside it. A tagged version of the module (such as `v0.1.0-alpha.1`, as
+The package embeds a build of the engine, and package `encrypt/eql` embeds
+the EQL build beside it. A tagged version of the module (such as `v0.1.0-alpha.1`, as
 `go get` resolves it) carries both builds and the credential guest: the
 release workflow commits them to the commit the tag names, so a module that
 requires a tagged version needs no Rust toolchain and no build step. A
@@ -1035,23 +1029,8 @@ pseudo-version does not. `go get ...@main`, or any commit rather than a
 tag, fetches a tree without the builds; it compiles, and `NewClient` returns
 `ErrGuestNotBuilt`.
 
-In a checkout of this repository the builds are not committed: run
-`mise run wasm:guest:build` (and `mise run wasm:auth-guest:build` for the
-credential guest) before `go test`, and
-`mise run wasm:guest:build:deterministic` and
-`mise run wasm:guest:build:eql:deterministic` for the test builds that
-package `encrypttest` embeds. The hermetic round-trip and fixture tests use
-them too. Without the builds `NewClient` returns `ErrGuestNotBuilt` and the
-tests skip; `encrypttest.NewClient` fails its test. The `encrypttest`
-module's tag at the same version carries the test builds.
-
-`encrypt/encrypttest` and `encrypt/example` are modules of their own, so
-`go test ./...` from `languages/golang` does not reach them. `mise run
-go:test` tests all three modules.
-
-This package is the reference integration for the engine. How the binding
-works, what crosses it and how to build one for another language is the
-guide in `packages/stack-encrypt/docs/language-integration.md`.
+To build the engine from a checkout of this repository, see
+[CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Licence
 

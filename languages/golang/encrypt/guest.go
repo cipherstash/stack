@@ -33,14 +33,14 @@ const guestPath = "wasm/stack_encrypt_guest.wasm"
 
 // ErrGuestNotBuilt is returned by NewClient when no guest module is
 // embedded.
-var ErrGuestNotBuilt = errors.New("encrypt: guest module not built — run `mise run wasm:guest:build`")
+var ErrGuestNotBuilt = errors.New("encrypt: guest module not built — require a tagged version of github.com/cipherstash/stack/languages/golang, which includes it; a pseudo-version does not. In a checkout of the repository, run `mise run wasm:guest:build`")
 
 // ErrEQLGuestNotBuilt is returned by NewClient when the program links
 // package eql (its generated code names an EQL type) and the guest build
 // with the EQL types is not embedded. There is no fallback to the build
 // without them: every encrypt_into call would fail there, so the program
 // fails at startup instead.
-var ErrEQLGuestNotBuilt = errors.New("encrypt: guest module with the EQL types not built — run `mise run wasm:guest:build:eql`")
+var ErrEQLGuestNotBuilt = errors.New("encrypt: guest module with the EQL types not built — require a tagged version of github.com/cipherstash/stack/languages/golang, which includes it; a pseudo-version does not. In a checkout of the repository, run `mise run wasm:guest:build:eql`")
 
 // embeddedGuest is the guest a client runs: the build with the EQL types
 // when package eql is linked (it registers on import, which cannot fail),

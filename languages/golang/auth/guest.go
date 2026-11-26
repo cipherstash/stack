@@ -33,7 +33,7 @@ const guestRoot = "/profile"
 
 // ErrGuestNotBuilt is returned by Open when no guest module is embedded and
 // none was supplied with [WithGuest].
-var ErrGuestNotBuilt = errors.New("auth: guest module not built — run `mise run wasm:auth-guest:build`")
+var ErrGuestNotBuilt = errors.New("auth: guest module not built — require a tagged version of github.com/cipherstash/stack/languages/golang, which includes it; a pseudo-version does not. In a checkout of the repository, run `mise run wasm:auth-guest:build`")
 
 func embeddedGuest() ([]byte, error) {
 	wasm, err := guestFS.ReadFile(guestPath)

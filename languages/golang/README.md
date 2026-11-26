@@ -13,6 +13,8 @@ an EQL v4 table, queries and partial reads. The [credential guide](auth/README.m
 covers profile, access key and federation strategies. See the
 [Go changelog](CHANGELOG.md) for release and compatibility notes.
 
+To change the SDK itself, read [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Using a released module
 
 Use Go 1.26.10 or later (or 1.27.3 or later on the 1.27 line). Add the

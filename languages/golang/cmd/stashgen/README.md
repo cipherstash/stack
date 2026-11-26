@@ -108,7 +108,6 @@ A match query of such text is refused, because an empty filter as a query would 
 An EQL `TextMatch` field is stricter: see below.
 An index takes its options in parentheses after its name, separated by commas: `index=equality;match(k=3)`.
 This build refuses an index with options: a query term is derived with the default options only, so a stored term with other options would never match one.
-These words are the same as the Rust API's words for the same behaviour, with two that only Go has.
 `opaque` seals the whole struct as one `bytes` field holding a storage blob (see "What crosses the binding").
 `json` names the JSON index, which a field reaches only through `encrypt_into=JsonSearch`.
 
@@ -435,7 +434,7 @@ The engine produces these EQL types today, each from one Go field type:
 The `Eq` types answer `Eq`; the `Ord`, `OrdOpe` and `OrdOre` types answer `Lt`, `Lte`, `Gt` and `Gte`, and on text `Eq` too; `TextMatch` answers `Matches`, and `TextSearch` and `TextSearchOre` all of `Eq`, `Lt`, `Lte`, `Gt`, `Gte` and `Matches`, each query carrying only the term its operator reads; `Text`, `Smallint`, `Integer`, `Bigint`, `Boolean`, `Real`, `Double`, `Date`, `Timestamp`, `Numeric` and `Json` are stored and read only, with no query method.
 The ordered date, timestamp and numeric types answer the four comparisons, as do the other ordered EQL types. The generated EQL fields have no `Between` method yet: EQL v4 has range query domains, but `stashgen` does not construct their operands. A JSON document's declared ordered paths have their own `Between` method, which returns two leaf query values; see [Encrypted JSON documents](#encrypted-json-documents).
 
-Any built-in Go integer field takes an integer type (ADR-0002) and seals at the type's width: an `int16` field always fits an `Integer`, and an `int64` field is range checked value by value, `Encrypt` refusing a value that does not fit with `encrypt.ErrEncoding`. `encrypt.Int128` and `encrypt.Uint128` are not converted. A float's width must match: a `float64` field is not a `Real`.
+Any built-in Go integer field takes an integer type and seals at the type's width: an `int16` field always fits an `Integer`, and an `int64` field is range checked value by value, `Encrypt` refusing a value that does not fit with `encrypt.ErrEncoding`. `encrypt.Int128` and `encrypt.Uint128` are not converted. A float's width must match: a `float64` field is not a `Real`.
 A `TextMatch` field indexes the 3-grams of its text, and each two-letter word as a whole word. A 3-gram is a run of three characters, such as "mik" in "Mike". So a two-letter surname such as "Ng" is stored, and the query "ng" finds it. A query asks for its two-letter words only when the whole query is one two-letter word. So the query "Mike Ng" asks for its 3-grams alone, and finds "Mike Nguyen" too.
 A `TextMatch` field refuses text that cuts no token, such as an empty string or one letter; its query refuses such text too.
 A `TextSearch` field stores such text with an empty match filter, so its `Eq`, `Lt`, `Lte`, `Gt` and `Gte` queries find it and no `Matches` query does; those queries take such text too, and its `Matches` query refuses it.
@@ -465,7 +464,7 @@ The error names the type and the field, and never a value.
 - an embedded struct from another package with no tag;
 - a struct whose every field is left out;
 - a struct, slice or map field with `encrypt` or `index=` outside an opaque struct;
-- a field of an opaque struct whose type the storage profile or JSON cannot carry both ways.
+- a field of an opaque struct whose type the blob format or JSON cannot carry both ways.
 
 ## Declarations from a policy
 
@@ -510,10 +509,10 @@ No warning, error or log line holds a plaintext value.
 ## What crosses the binding
 
 Generated code sends the engine every sealed field with its value, under the declaration lowered to data: each field's label (`<context>/<name>`), its outputs and its wire type (`int64`, `string`, `bytes`, ...), which `stashgen` chose from the field's Go type.
-A passthrough field stays on the host: the engine does nothing to it a program could observe, and the FFI codec cannot carry every Go type a program stores beside a ciphertext (a `driver.Valuer`, a `sql.NullTime`).
+A passthrough field stays on the host: the engine does nothing to it a program could observe, and the binding cannot carry every Go type a program stores beside a ciphertext (a `driver.Valuer`, a `sql.NullTime`).
 An `opaque` struct crosses as one storage blob and is one column, read back into the exact Go types the struct declares.
-The blob is vitaminc's storage profile, version 1 (`vcffi.MarshalStorage`), the format vitaminc keeps readable across releases and languages.
-A field may be any type that both the storage profile and `encoding/json` carry both ways: a scalar or a type defined over one, `[]byte`, slices, maps with string or integer keys, pointers, structs whose fields are all exported, and types with both `MarshalText` and `UnmarshalText`, such as `time.Time`.
+The blob format stays readable across releases and languages.
+A field may be any type that both the blob format and `encoding/json` carry both ways: a scalar or a type defined over one, `[]byte`, slices, maps with string or integer keys, pointers, structs whose fields are all exported, and types with both `MarshalText` and `UnmarshalText`, such as `time.Time`.
 `encrypt.Decimal` and `encrypt.Date` have no storage form and are refused in an opaque struct: store them as text, or by their parts.
 A row an earlier release sealed with one of them in an opaque struct does not decrypt under this release, because no generated file can name the field: decrypt such rows with the earlier release, change the field's type, and encrypt them again before upgrading.
 The generated shape struct tags each field `vc:"name,default"`, so a field added to the opaque struct reads as its zero value from a row sealed before it; a field added to a nested struct type needs a pointer type for the same.

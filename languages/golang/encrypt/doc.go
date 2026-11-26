@@ -118,9 +118,8 @@
 // derived beside it, or whether it passes through as it is. stashgen reads
 // the tags and writes the encrypted type, Encrypt, Decrypt and Fields into
 // the struct's package; the generated code hands the declaration to the
-// engine as data through package gensupport, and the engine runs the same
-// plan the Rust chain and the derive run. A program never builds or names a
-// plan, and no call takes a context or an index choice of its own.
+// engine as data through package gensupport. A program never builds or names
+// a plan, and no call takes a context or an index choice of its own.
 //
 // A sealed field outside an opaque struct is one value: a string, []byte,
 // bool, an integer of any width (int8 to int64, uint8 to uint64, int, uint,
@@ -133,11 +132,11 @@
 // rows hold which value.
 //
 // Passthrough fields never cross the binding: the engine does nothing to a
-// passthrough value that a program could observe, and the FFI codec cannot
+// passthrough value that a program could observe, and the binding cannot
 // carry every Go type a program stores beside a ciphertext (a
 // driver.Valuer, a sql.NullTime). An opaque struct crosses as one storage
-// blob (vitaminc's storage profile, vcffi.MarshalStorage) and is one column;
-// a row an earlier release sealed as a JSON document still opens.
+// blob and is one column; a row an earlier release sealed as a JSON document
+// still opens.
 //
 // # Terms
 //
