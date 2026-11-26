@@ -24,8 +24,9 @@
  * small share of runs, so a green CI run is no evidence the race is gone.
  */
 
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { readJsonc } from './lib/read-jsonc.mjs'
@@ -43,7 +44,7 @@ const scripts = manifest.scripts
  * `pre` / `post` hooks pnpm runs without being asked. The same walk as
  * `reachableFrom` in protect-ffi's `src/lintWiring.test.ts`.
  */
-function reachableFrom(root) {
+function reachableFrom(root, scripts = manifest.scripts) {
   const seen = new Set()
   const queue = [root]
   while (queue.length > 0) {
@@ -80,7 +81,7 @@ function tscCommands(body) {
  * directory of the config that names it.
  */
 function effectiveNoEmit(configPath) {
-  const config = JSON.parse(readFileSync(configPath, 'utf8'))
+  const config = readJsonc(configPath)
   const own = config.compilerOptions?.noEmit
   if (own !== undefined) return own
   if (typeof config.extends !== 'string') return false
@@ -148,6 +149,24 @@ describe('protect-ffi test does not rewrite lib/ during turbo test', () => {
       expect(specific[key], `"${PACKAGE_NAME}#test".${key}`).toEqual(
         generic[key],
       )
+    }
+  })
+})
+
+// The checks above are only as good as the helpers they use, so the helpers
+// are tested on fixtures here.
+describe('the helpers this guard relies on', () => {
+  it('reads a tsconfig that has comments and trailing commas', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'protect-ffi-no-emit-'))
+    try {
+      const configPath = join(dir, 'tsconfig.json')
+      writeFileSync(
+        configPath,
+        '{\n  // tsc accepts comments\n  "compilerOptions": { "noEmit": true, },\n}\n',
+      )
+      expect(effectiveNoEmit(configPath)).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 })
