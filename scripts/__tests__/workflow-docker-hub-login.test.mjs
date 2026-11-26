@@ -1,5 +1,6 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { dirname, join, relative } from 'node:path'
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { basename, dirname, join, relative } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { expr } from './lib/expressions.mjs'
 import {
@@ -94,35 +95,36 @@ export function onDockerHub(image) {
 // mise tasks
 // ---------------------------------------------------------------------------
 
-const SKIP_DIRS = new Set(['node_modules', '.git', 'target', 'dist'])
-
-/** Every tracked-looking `mise.toml` / `mise.<env>.toml`, repo-relative. */
-function miseConfigs(dir = REPO_ROOT, found = []) {
-  for (const name of readdirSync(dir)) {
-    if (SKIP_DIRS.has(name)) continue
-    const path = join(dir, name)
-    if (statSync(path).isDirectory()) miseConfigs(path, found)
-    else if (/^\.?mise(\.[\w-]+)?\.toml$/.test(name))
-      found.push(relative(REPO_ROOT, path))
-  }
-  return found
+// Tracked files only. A walk of the working tree would read gitignored
+// configs such as mise.local.toml, descend into .claude/worktrees, and fail on
+// a broken symbolic link anywhere in an untracked folder.
+function trackedFiles(relDir = '.') {
+  return execFileSync('git', ['ls-files', '-z', '--', relDir], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+  })
+    .split('\0')
+    .filter(Boolean)
 }
 
+/** Every `mise.toml` / `mise.<env>.toml`, repo-relative. */
+const miseConfigs = () =>
+  trackedFiles().filter((rel) =>
+    /^\.?mise(\.[\w-]+)?\.toml$/.test(basename(rel)),
+  )
+
 /** File tasks: `tasks/test/splinter.sh` is the task `test:splinter`. */
-function fileTasks(dir, base = dir, found = []) {
-  for (const name of readdirSync(dir)) {
-    const path = join(dir, name)
-    if (statSync(path).isDirectory()) fileTasks(path, base, found)
-    else if (!name.endsWith('.toml'))
-      found.push({
-        name: relative(base, path)
-          .replace(/\.[^./]+$/, '')
-          .split('/')
-          .join(':'),
-        block: readFileSync(path, 'utf8'),
-      })
-  }
-  return found
+function fileTasks(dir) {
+  const relDir = relative(REPO_ROOT, dir)
+  return trackedFiles(relDir)
+    .filter((rel) => !rel.endsWith('.toml'))
+    .map((rel) => ({
+      name: relative(relDir, rel)
+        .replace(/\.[^./]+$/, '')
+        .split('/')
+        .join(':'),
+      block: readFileSync(join(REPO_ROOT, rel), 'utf8'),
+    }))
 }
 
 /**
