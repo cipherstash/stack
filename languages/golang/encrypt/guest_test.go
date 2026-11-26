@@ -446,7 +446,7 @@ func TestARequestSentAgainReadsTheSameBodyFromGetBody(t *testing.T) {
 		getBody = r.GetBody
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok")), Header: http.Header{}}, nil
 	})}
-	status, _, resp := tr.perform(context.Background(), http.MethodPost, "http://zerokms.invalid/retrieve-data-key", nil, bytes.Clone(want))
+	status, _, resp, _ := tr.perform(context.Background(), http.MethodPost, "http://zerokms.invalid/retrieve-data-key", nil, bytes.Clone(want))
 	if status != http.StatusOK {
 		t.Fatalf("status %d: %s", status, resp)
 	}
@@ -486,7 +486,7 @@ func TestEveryCopyOfARequestBodyIsWipedWhenTheRequestEnds(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok")), Header: http.Header{}}, nil
 	})}
-	status, _, resp := tr.perform(context.Background(), http.MethodPost, "http://zerokms.invalid/retrieve-data-key", nil, bytes.Clone(want))
+	status, _, resp, _ := tr.perform(context.Background(), http.MethodPost, "http://zerokms.invalid/retrieve-data-key", nil, bytes.Clone(want))
 	if status != http.StatusOK {
 		t.Fatalf("status %d: %s", status, resp)
 	}
@@ -519,7 +519,7 @@ func TestAFailedRequestWipesTheCopiesItReplacedAndKeepsTheLast(t *testing.T) {
 		}
 		return nil, errors.New("connection reset")
 	})}
-	status, _, _ := tr.perform(context.Background(), http.MethodPost, "http://zerokms.invalid/retrieve-data-key", nil, bytes.Clone(want))
+	status, _, _, _ := tr.perform(context.Background(), http.MethodPost, "http://zerokms.invalid/retrieve-data-key", nil, bytes.Clone(want))
 	if status != transportFailed {
 		t.Fatalf("status %d, want transportFailed", status)
 	}
@@ -555,7 +555,7 @@ func TestGetBodyFailsOnceRoundTripHasReturned(t *testing.T) {
 		})
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: http.Header{}}, nil
 	})}
-	status, _, resp := tr.perform(context.Background(), http.MethodPost, "http://zerokms.invalid/retrieve-data-key", nil, []byte("{}"))
+	status, _, resp, _ := tr.perform(context.Background(), http.MethodPost, "http://zerokms.invalid/retrieve-data-key", nil, []byte("{}"))
 	if status != http.StatusOK {
 		t.Fatalf("status %d: %s", status, resp)
 	}

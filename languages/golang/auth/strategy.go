@@ -57,8 +57,11 @@ type Strategy struct {
 	handle     string
 	providerID uint32
 	device     bool
-	mu         guest.Lock
-	closed     bool
+	// accessKey is set on an access-key strategy, whose HTTP 401 is a
+	// rejected key (see authExchange.wrap).
+	accessKey bool
+	mu        guest.Lock
+	closed    bool
 }
 
 func (s *ProfileStore) newStrategy(ctx context.Context, config any, device bool) (*Strategy, error) {
@@ -84,12 +87,17 @@ func (s *ProfileStore) AccessKey(ctx context.Context, crn, key string, opts ...S
 		return nil, ErrConfig
 	}
 	o := strategyConfig(opts)
-	return s.newStrategy(ctx, struct {
+	strategy, err := s.newStrategy(ctx, struct {
 		Kind    string `json:"kind"`
 		CRN     string `json:"crn"`
 		Key     string `json:"access_key"`
 		BaseURL string `json:"base_url,omitempty"`
 	}{"access_key", crn, key, o.baseURL}, false)
+	if err != nil {
+		return nil, err
+	}
+	strategy.accessKey = true
+	return strategy, nil
 }
 
 // OIDC constructs stack-auth's federation strategy. provider is called on
@@ -275,9 +283,9 @@ func (s *Strategy) Token(ctx context.Context) (string, error) {
 	ctx, panicked := withHostPanic(ctx)
 	token, err := callApplication(ctx, nil, func() (string, error) {
 		defer s.mu.Unlock()
-		ctx, status := withAuthHTTPStatus(ctx)
+		ctx, exchange := withAuthExchange(ctx)
 		token, err := s.token(ctx)
-		return token, status.wrap(err)
+		return token, exchange.wrap(err, s.accessKey)
 	}, nil)
 	panicked.raise(nil)
 	if errors.Is(err, errAbandoned) {

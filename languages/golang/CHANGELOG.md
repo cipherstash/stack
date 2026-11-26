@@ -13,6 +13,27 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A rejected access key is a credential error, not a transport failure**
+  (#1892). When the auth service rejects an access key with HTTP 401,
+  `Strategy.Token` now returns an error that matches `auth.ErrInvalidClient`
+  and not `auth.ErrTransport`. Its `Diagnostic` has the code
+  `stack_auth::invalid_client` and a Help that says to check the access key.
+  Before this fix, the error matched `auth.ErrTransport` and had no Help, so
+  a program that retries transport failures retried the same key forever.
+  An HTTP 403 is still `auth.ErrTransport`: the edge in front of the auth
+  service sends it before the key is read. An `encrypt` call whose token
+  fetch fails still matches `encrypt.ErrTransport` as well as the auth
+  error, as before. Check it with `auth.ErrInvalidClient`.
+- **A network failure keeps the `net` error** (#1896). When a request to
+  the auth service or to ZeroKMS fails on the network, the error now wraps
+  the `*net.OpError`, so `errors.As` finds it. The message ends with it,
+  such as `dial tcp 127.0.0.1:443: connect: connection refused`. It still
+  matches `auth.ErrTransport` or `encrypt.ErrTransport`. Only the
+  `*net.OpError` is kept, not the whole error from the `RoundTripper`,
+  because that error's text names the request's URL.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

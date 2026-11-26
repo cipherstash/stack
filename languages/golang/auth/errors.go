@@ -41,13 +41,19 @@ var (
 	ErrInternal = guest.ErrInternal
 	// ErrInvalidGrant is an OAuth refresh grant the auth server rejected.
 	ErrInvalidGrant = guest.ErrAuthInvalidGrant
-	// ErrInvalidClient is a client credential the auth server rejected.
+	// ErrInvalidClient is a client credential the auth server rejected. That
+	// includes an access key that the auth service answered with HTTP 401.
+	// Its [Diagnostic] then has the code "stack_auth::invalid_client" and a
+	// Help that says to check the access key. Sending the same key again
+	// fails the same way, so it does not match [ErrTransport].
 	ErrInvalidClient = guest.ErrAuthInvalidClient
 	// ErrUsageLimit is an account blocked by its usage allowance.
 	ErrUsageLimit = guest.ErrAuthUsageLimit
 	// ErrNotAuthenticated means no usable auth credential is available.
 	ErrNotAuthenticated = guest.ErrAuthNotAuthenticated
-	// ErrTransport is a failed auth HTTP exchange or response read.
+	// ErrTransport is a failed auth HTTP exchange or response read. When
+	// the exchange failed on the network, the error also wraps the
+	// *net.OpError, so errors.As finds it.
 	ErrTransport = guest.ErrAuthTransport
 	// ErrConfig is invalid auth configuration or token data.
 	ErrConfig = guest.ErrAuthConfig

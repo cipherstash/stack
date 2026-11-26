@@ -95,8 +95,11 @@ func (t *transport) fetchToken(ctx context.Context) (string, error) {
 
 // perform is one HTTP request on the guest's behalf. It returns the HTTP
 // status, the response headers in the guest's line format and the body,
-// or transportFailed with the error text as the body.
-func (t *transport) perform(ctx context.Context, method, url string, headers, body []byte) (int32, []byte, []byte) {
+// or transportFailed with the error text as the body. A request that failed
+// on the network also returns the net error (guest.NetError), for the
+// client to wrap in the error its caller gets: the guest sees only the
+// text.
+func (t *transport) perform(ctx context.Context, method, url string, headers, body []byte) (int32, []byte, []byte, error) {
 	t.sends.Add(1)
 	// The request body may carry key-material contexts. The RoundTripper
 	// reads copies of it (replaySource), never the caller's slice, because
@@ -109,7 +112,7 @@ func (t *transport) perform(ctx context.Context, method, url string, headers, bo
 	defer func() { replay.end(answered) }()
 	req, err := http.NewRequestWithContext(ctx, method, url, replay.first())
 	if err != nil {
-		return transportFailed, nil, []byte(err.Error())
+		return transportFailed, nil, []byte(err.Error()), nil
 	}
 	// NewRequest only infers a length from the readers it knows; without
 	// one the transport would send the body chunked.
@@ -119,16 +122,16 @@ func (t *transport) perform(ctx context.Context, method, url string, headers, bo
 	resp, err := t.rt.RoundTrip(req)
 	replay.stop()
 	if err != nil {
-		return transportFailed, nil, []byte(err.Error())
+		return transportFailed, nil, []byte(err.Error()), guest.NetError(err)
 	}
 	answered = true
 	defer resp.Body.Close()
 	// A caller's RoundTripper can return any int; the guest gets an i32.
 	if resp.StatusCode < 100 || resp.StatusCode > 999 {
-		return transportFailed, nil, fmt.Appendf(nil, "invalid HTTP status %d", resp.StatusCode)
+		return transportFailed, nil, fmt.Appendf(nil, "invalid HTTP status %d", resp.StatusCode), nil
 	}
 	if resp.ContentLength > maxResponseBytes {
-		return transportFailed, nil, fmt.Appendf(nil, "response of %d bytes exceeds the %d-byte limit", resp.ContentLength, maxResponseBytes)
+		return transportFailed, nil, fmt.Appendf(nil, "response of %d bytes exceeds the %d-byte limit", resp.ContentLength, maxResponseBytes), nil
 	}
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
@@ -138,13 +141,13 @@ func (t *transport) perform(ctx context.Context, method, url string, headers, bo
 		// for the collector — the same discipline as the over-limit branch
 		// below.
 		wipe(respBody)
-		return transportFailed, nil, []byte(err.Error())
+		return transportFailed, nil, []byte(err.Error()), guest.NetError(err)
 	}
 	if len(respBody) > maxResponseBytes {
 		wipe(respBody)
-		return transportFailed, nil, fmt.Appendf(nil, "response exceeds the %d-byte limit", maxResponseBytes)
+		return transportFailed, nil, fmt.Appendf(nil, "response exceeds the %d-byte limit", maxResponseBytes), nil
 	}
-	return int32(resp.StatusCode), encodeHeaders(resp.Header), respBody //nolint:gosec // range-checked above
+	return int32(resp.StatusCode), encodeHeaders(resp.Header), respBody, nil //nolint:gosec // range-checked above
 }
 
 // requestBody is the io.ReadCloser a guest request goes out as: one copy of

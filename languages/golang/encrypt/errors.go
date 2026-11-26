@@ -42,6 +42,8 @@ var (
 	ErrConflict = guest.ErrConflict
 	// ErrTransport is a failure to reach ZeroKMS or to read its response:
 	// the transport returned an error, or the endpoint could not be resolved.
+	// When the request failed on the network, the error also wraps the
+	// *net.OpError, so errors.As finds it.
 	ErrTransport = guest.ErrTransport
 	// ErrKMS is any other ZeroKMS failure: an unparseable response, invalid
 	// key material, or an unclassified server error.

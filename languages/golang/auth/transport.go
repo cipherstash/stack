@@ -41,33 +41,106 @@ func (f OIDCProviderFunc) Token(ctx context.Context) (string, error) { return f(
 
 const maxAuthResponseBytes = 16 << 20
 
-// authHTTPStatus records the status of the last HTTP response the transport
-// received during one guest call. The guest's error does not always name it
-// (a refused response whose body could not be read reaches the guest as a
-// transport failure, with no status), and a guest built before se_last_error
-// gives no error at all, so without it a refused exchange (the edge in front
-// of CTS answering 403) could reach the caller as a bare ErrTransport. It lives on the call's
-// context, which wazero hands to the host import, so concurrent calls on
-// different profiles never see each other's status.
-type authHTTPStatus struct{ code int }
-
-type authHTTPStatusKey struct{}
-
-func withAuthHTTPStatus(ctx context.Context) (context.Context, *authHTTPStatus) {
-	status := &authHTTPStatus{}
-	return context.WithValue(ctx, authHTTPStatusKey{}, status), status
+// authExchange records what the transport saw during one guest call: the
+// status of the last HTTP response it received, and the net error of an
+// exchange that failed on the network after it. The guest's error says
+// neither for certain. A refused response whose body could not be read
+// reaches the guest as a transport failure, with no status, and a guest
+// built before se_last_error gives no error at all. So without the status,
+// a refused exchange (the edge in front of CTS answering 403) could reach
+// the caller as a bare ErrTransport. The guest gets the RoundTripper's error
+// text, never the error itself, so without netErr a caller could not reach
+// the *net.OpError with errors.As. It lives on the call's context, which wazero hands to the host
+// import, so concurrent calls on different profiles never see each other's.
+type authExchange struct {
+	code   int
+	netErr error
 }
 
-// wrap names the HTTP status of a refused exchange on an ErrTransport
-// ("cipherstash: auth transport failed: Server error: 403: HTTP 403", the
-// guest's Diagnostic then the status). The body is never included: it may
-// be an HTML error page, or echo a credential.
-func (s *authHTTPStatus) wrap(err error) error {
-	if err == nil || !errors.Is(err, ErrTransport) || s.code == 0 || (s.code >= 200 && s.code < 300) {
+type authExchangeKey struct{}
+
+func withAuthExchange(ctx context.Context) (context.Context, *authExchange) {
+	exchange := &authExchange{}
+	return context.WithValue(ctx, authExchangeKey{}, exchange), exchange
+}
+
+// record notes one exchange: the status of its response, when one arrived,
+// and the net error behind err, when it failed on the network.
+func (e *authExchange) record(status int, err error) {
+	if status != 0 {
+		e.code, e.netErr = status, nil
+	}
+	if netErr := guest.NetError(err); netErr != nil {
+		e.netErr = netErr
+	}
+}
+
+// wrap adds what the transport saw to an ErrTransport. A status that is not
+// 2xx is named after the guest's error ("cipherstash: auth transport
+// failed: Server error: 403: HTTP 403"). A net error is wrapped after that,
+// so errors.As reaches it. The body is never included: it may be an HTML
+// error page, or echo a credential.
+//
+// For an access-key strategy, an HTTP 401 is not a transport failure. The
+// auth service answers a key it rejects with 401. So the error becomes a
+// rejectedAccessKeyError, which matches ErrInvalidClient and not
+// ErrTransport, because sending the same key again fails the same way.
+func (e *authExchange) wrap(err error, accessKey bool) error {
+	if err == nil || !errors.Is(err, ErrTransport) {
 		return err
 	}
-	return fmt.Errorf("%w: HTTP %d", err, s.code)
+	if accessKey && e.code == http.StatusUnauthorized {
+		return newRejectedAccessKeyError(err)
+	}
+	if e.code != 0 && (e.code < 200 || e.code >= 300) {
+		err = fmt.Errorf("%w: HTTP %d", err, e.code)
+	}
+	if e.netErr != nil {
+		err = fmt.Errorf("%w: %w", err, e.netErr)
+	}
+	return err
 }
+
+// codeInvalidClient is the Diagnostic code of a rejected access key. It is
+// the code stack-auth gives the client credential errors that
+// ErrInvalidClient stands for.
+const codeInvalidClient = "stack_auth::invalid_client"
+
+// accessKeyHelp is the Help of a rejected access key.
+const accessKeyHelp = "Check the access key: CS_CLIENT_ACCESS_KEY, or the key you passed. " +
+	"The auth service rejected it. It must be a key for the workspace that " +
+	"the workspace CRN names, exactly as it was issued. " +
+	"Trying again with the same key fails the same way."
+
+// rejectedAccessKeyError is an access key that the auth service rejected
+// with HTTP 401. It matches ErrInvalidClient and its Diagnostic, not
+// ErrTransport. The Diagnostic has the guest's message, fields and causes,
+// and accessKeyHelp. The text is ErrInvalidClient's, then the guest's
+// message, then the status. None of it includes the key.
+type rejectedAccessKeyError struct {
+	diag *Diagnostic
+}
+
+// newRejectedAccessKeyError makes a rejectedAccessKeyError from the guest's
+// error. It copies the guest's Diagnostic one field at a time, not as a
+// struct, so that the copy does not unwrap to ErrTransport.
+func newRejectedAccessKeyError(err error) error {
+	diag := &Diagnostic{Code: codeInvalidClient, Message: "Server error: 401", Help: accessKeyHelp, Severity: "error"}
+	var d *Diagnostic
+	if errors.As(err, &d) {
+		diag.Message, diag.URL, diag.Fields, diag.Causes = d.Message, d.URL, d.Fields, d.Causes
+		if d.Severity != "" {
+			diag.Severity = d.Severity
+		}
+	}
+	return &rejectedAccessKeyError{diag: diag}
+}
+
+func (e *rejectedAccessKeyError) Error() string {
+	return ErrInvalidClient.Error() + ": " + e.diag.Message + ": HTTP 401"
+}
+
+func (e *rejectedAccessKeyError) Unwrap() []error { return []error{ErrInvalidClient, e.diag} }
 
 type authTransport struct {
 	rt http.RoundTripper
@@ -191,8 +264,8 @@ func (t *authTransport) send(ctx context.Context, m api.Module,
 	if errors.Is(err, errApplicationPanicked) || errors.Is(err, errAbandoned) || errors.Is(err, errTooManyAbandoned) {
 		_ = requestBody.Close()
 	}
-	if status, ok := ctx.Value(authHTTPStatusKey{}).(*authHTTPStatus); ok && resp.status != 0 {
-		status.code = resp.status
+	if exchange, ok := ctx.Value(authExchangeKey{}).(*authExchange); ok {
+		exchange.record(resp.status, err)
 	}
 	if err != nil {
 		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, []byte(err.Error()))
@@ -210,7 +283,7 @@ type authResponse struct {
 
 // exchange sends req through the RoundTripper and reads the response. A
 // response it refuses (too large, or an unreadable body) still reports its
-// status, for authHTTPStatus.
+// status, for authExchange.
 func (t *authTransport) exchange(req *http.Request) (authResponse, error) {
 	resp, err := t.rt.RoundTrip(req)
 	if err != nil {
