@@ -35,8 +35,19 @@
  * unresolvable.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
 import Module, { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -59,12 +70,36 @@ const entryPath = join(packageRoot, 'lib/index.cjs')
 // source` below already fails loudly on an empty read, which is why it is
 // there. This is so the failure names its own cure.
 //
-// Deliberately only the empty case. A PARTIALLY written entry is not
+// Only the empty case for size. A PARTIALLY written entry is not
 // detectable by size and needs no separate handling — the content assertions
 // below go red on any degraded emit; they cannot go quietly green.
 if (!existsSync(entryPath) || statSync(entryPath).size === 0) {
   throw new Error(
     `${entryPath} is missing or empty. These tests assert on the EMITTED entry, and lib/ is a build output: run \`pnpm --filter @cipherstash/protect-ffi run build\` first, or \`pnpm turbo run test --filter @cipherstash/protect-ffi\`, which runs build before test. The package's own test script does not write lib/.`,
+  )
+}
+
+/**
+ * The sources under `srcDir` that tsc compiles into `lib/` and that changed
+ * after `entry` was written, as paths relative to `srcDir`. Test files are
+ * left out, because the build tsconfig excludes them.
+ */
+function sourcesNewerThan(entry: string, srcDir: string): string[] {
+  const builtAt = statSync(entry).mtimeMs
+  return readdirSync(srcDir, { recursive: true, encoding: 'utf8' })
+    .filter((file) => /\.[cm]?ts$/.test(file) && !file.endsWith('.test.ts'))
+    .filter((file) => statSync(join(srcDir, file)).mtimeMs > builtAt)
+    .sort()
+}
+
+// A stale entry fails the same way. The package's `test` no longer writes
+// lib/, so after a source edit a bare `test` would otherwise assert on the
+// JavaScript the previous build emitted, and pass. CI is not affected: every
+// job builds lib/ after checkout, so lib/ is newer than every source.
+const staleSources = sourcesNewerThan(entryPath, join(packageRoot, 'src'))
+if (staleSources.length > 0) {
+  throw new Error(
+    `${entryPath} is older than ${staleSources.join(', ')}. These tests assert on the EMITTED entry, so they would test the previous build: run \`pnpm --filter @cipherstash/protect-ffi run build\` first.`,
   )
 }
 
@@ -516,5 +551,32 @@ describe('assertNativeBindingAvailable with the platform binary missing', () => 
     // Identity does not preclude editing the error on the way past, and `code`
     // is the property a caller branches on.
     expect((caught as NodeJS.ErrnoException).code).toBe('MODULE_NOT_FOUND')
+  })
+})
+
+describe('sourcesNewerThan', () => {
+  // The guard at the top of this file uses it to reject a stale lib/. It runs
+  // on a temporary tree here, because the real tree's mtimes depend on when
+  // build last ran.
+  it('lists compiled sources newer than the entry, and nothing else', () => {
+    const root = mkdtempSync(join(tmpdir(), 'protect-ffi-stale-'))
+    try {
+      const src = join(root, 'src')
+      mkdirSync(join(src, 'nested'), { recursive: true })
+      const writeAt = (path: string, seconds: number) => {
+        writeFileSync(path, '')
+        utimesSync(path, seconds, seconds)
+      }
+      const entry = join(root, 'index.cjs')
+      writeAt(entry, 2000)
+      writeAt(join(src, 'old.cts'), 1000)
+      writeAt(join(src, 'nested', 'newer.ts'), 3000)
+      writeAt(join(src, 'newer.test.ts'), 3000)
+      writeAt(join(src, 'notes.md'), 3000)
+
+      expect(sourcesNewerThan(entry, src)).toEqual([join('nested', 'newer.ts')])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
