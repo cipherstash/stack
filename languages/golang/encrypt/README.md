@@ -1122,7 +1122,7 @@ types do not exist, so `CREATE TABLE` fails. To start PostgreSQL with EQL v4
 in Docker:
 
 ```sh
-docker run -d --name eql-test -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:17
+docker run -d --name eql-test -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:5432:5432 postgres:17
 until docker exec eql-test pg_isready -h localhost -U postgres; do sleep 1; done
 gh release download languages/golang/v0.1.0-rc.7 -R cipherstash/stack -p eql-v4-install.sql
 docker exec -i eql-test psql -h localhost -U postgres -v ON_ERROR_STOP=1 < eql-v4-install.sql
