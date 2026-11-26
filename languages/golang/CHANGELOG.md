@@ -21,6 +21,10 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `CS_WORKSPACE_CRN is not set`. So does the error from
   `encrypt.AutoCredentials`. The error is still `auth.ErrConfig`, so
   `errors.Is` matches it as before.
+- **`auth.ProfileStore.Auto` names the variable in two more errors**
+  (#1895). One is for a `CS_WORKSPACE_CRN` that is empty or not a CRN.
+  The other is for an empty `CS_CLIENT_ACCESS_KEY`. Both errors are still
+  `auth.ErrConfig`. The messages never include the access key.
 
 ## [0.1.0-rc.7] - 2026-11-25
 

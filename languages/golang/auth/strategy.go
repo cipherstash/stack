@@ -162,21 +162,26 @@ func (s *ProfileStore) OIDCWithDetectedWorkspace(ctx context.Context, provider O
 	return s.OIDC(ctx, crn, provider, opts...)
 }
 
+// The environment variables Auto and OIDCWithDetectedWorkspace read.
+const (
+	envAccessKey    = "CS_CLIENT_ACCESS_KEY"
+	envWorkspaceCRN = "CS_WORKSPACE_CRN"
+)
+
 // detectWorkspaceCRN is the workspace a strategy takes when its caller names
 // none, in stack-auth's order: CS_WORKSPACE_CRN, checked by the guest's CRN
 // parser, else the CRN of the current workspace's saved session. The
 // variable is read here because the guest has no environment. The session
 // is read in the guest, which decides what counts as not logged in.
 func (s *ProfileStore) detectWorkspaceCRN(ctx context.Context) (string, error) {
-	if crn, ok := os.LookupEnv("CS_WORKSPACE_CRN"); ok {
-		_, err := s.callArgs(ctx, func(i *instance) api.Function { return i.authValidateCRN }, guest.BufArg([]byte(crn)))
-		if err != nil {
-			return "", fmt.Errorf("auth: CS_WORKSPACE_CRN is not a workspace CRN: %w", err)
+	if crn, ok := os.LookupEnv(envWorkspaceCRN); ok {
+		if err := s.validateEnvCRN(ctx, crn); err != nil {
+			return "", err
 		}
 		return crn, nil
 	}
 	out, err := s.call(ctx, func(i *instance) api.Function { return i.sessionCRN })
-	const hint = "no workspace: set CS_WORKSPACE_CRN, or run `stash auth login`"
+	const hint = "no workspace: set " + envWorkspaceCRN + ", or run `stash auth login`"
 	switch {
 	case errors.Is(err, ErrNotAuthenticated):
 		return "", fmt.Errorf("auth: %s: %w", hint, err)
@@ -188,6 +193,16 @@ func (s *ProfileStore) detectWorkspaceCRN(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// validateEnvCRN checks crn, the value of CS_WORKSPACE_CRN, with the guest's
+// CRN parser. Its error names the variable.
+func (s *ProfileStore) validateEnvCRN(ctx context.Context, crn string) error {
+	_, err := s.callArgs(ctx, func(i *instance) api.Function { return i.authValidateCRN }, guest.BufArg([]byte(crn)))
+	if err != nil {
+		return fmt.Errorf("auth: %s is not a workspace CRN: %w", envWorkspaceCRN, err)
+	}
+	return nil
 }
 
 // DeviceSession uses this workspace store's auth.json. Fresh tokens are read
@@ -207,19 +222,23 @@ func (s *ProfileStore) DeviceSession(ctx context.Context, opts ...StrategyOption
 
 // Auto follows stack-auth's detection order against the Go host's
 // environment: access key first, then the current workspace's device token.
-// CS_CLIENT_ACCESS_KEY set without CS_WORKSPACE_CRN is [ErrConfig], and the
-// message names CS_WORKSPACE_CRN.
+// Each of these is [ErrConfig], with a message that names the variable at
+// fault: CS_WORKSPACE_CRN set to a value that is not a CRN, empty included;
+// CS_CLIENT_ACCESS_KEY set without CS_WORKSPACE_CRN; and CS_CLIENT_ACCESS_KEY
+// set but empty.
 func (s *ProfileStore) Auto(ctx context.Context, opts ...StrategyOption) (*Strategy, error) {
-	crn, crnSet := os.LookupEnv("CS_WORKSPACE_CRN")
+	crn, crnSet := os.LookupEnv(envWorkspaceCRN)
 	if crnSet {
-		_, err := s.callArgs(ctx, func(i *instance) api.Function { return i.authValidateCRN }, guest.BufArg([]byte(crn)))
-		if err != nil {
+		if err := s.validateEnvCRN(ctx, crn); err != nil {
 			return nil, err
 		}
 	}
-	if key, keySet := os.LookupEnv("CS_CLIENT_ACCESS_KEY"); keySet {
+	if key, keySet := os.LookupEnv(envAccessKey); keySet {
 		if !crnSet {
-			return nil, fmt.Errorf("auth: CS_CLIENT_ACCESS_KEY is set, but CS_WORKSPACE_CRN is not set: %w", ErrConfig)
+			return nil, fmt.Errorf("%w: %s is set, but %s is not set", ErrConfig, envAccessKey, envWorkspaceCRN)
+		}
+		if key == "" {
+			return nil, fmt.Errorf("%w: %s is set but empty", ErrConfig, envAccessKey)
 		}
 		return s.AccessKey(ctx, crn, key, opts...)
 	}

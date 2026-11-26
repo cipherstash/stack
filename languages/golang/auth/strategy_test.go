@@ -494,9 +494,9 @@ func TestAutoUsesEnvironmentPresenceAndProfileExistence(t *testing.T) {
 	}
 }
 
-// An access key with no workspace is ErrConfig, and the message names the
-// variable that is missing (#1895). It never includes the key.
-func TestAutoNamesTheMissingWorkspaceCRN(t *testing.T) {
+// A configuration fault in the environment is ErrConfig, and the message
+// names the variable at fault (#1895). It never includes the access key.
+func TestAutoNamesTheVariableAtFault(t *testing.T) {
 	guestOrSkip(t)
 	dir, _ := expiredDeviceProfile(t)
 	profile, err := Open(context.Background(), dir)
@@ -505,20 +505,35 @@ func TestAutoNamesTheMissingWorkspaceCRN(t *testing.T) {
 	}
 	defer profile.Close()
 	const keyMarker = "CSAKleakMarkerKeyId.leakMarkerKeySecret"
-	t.Setenv("CS_CLIENT_ACCESS_KEY", keyMarker)
-	t.Setenv("CS_WORKSPACE_CRN", "")
-	if err := os.Unsetenv("CS_WORKSPACE_CRN"); err != nil {
-		t.Fatal(err)
-	}
-	_, err = profile.Auto(context.Background())
-	if !errors.Is(err, ErrConfig) {
-		t.Fatalf("error = %v, want %v", err, ErrConfig)
-	}
-	if want := "CS_WORKSPACE_CRN is not set"; !strings.Contains(err.Error(), want) {
-		t.Errorf("error %q does not contain %q", err, want)
-	}
-	if strings.Contains(err.Error(), keyMarker) {
-		t.Errorf("the access key is in the error: %q", err)
+	unset := "unset"
+	for _, tc := range []struct {
+		name, key, crn, want string
+	}{
+		{"an access key with no workspace CRN", keyMarker, unset, "CS_WORKSPACE_CRN is not set"},
+		{"an empty workspace CRN", keyMarker, "", "CS_WORKSPACE_CRN is not a workspace CRN"},
+		{"a workspace CRN that is not a CRN", keyMarker, "invalid", "CS_WORKSPACE_CRN is not a workspace CRN"},
+		{"an empty CRN and no access key", unset, "", "CS_WORKSPACE_CRN is not a workspace CRN"},
+		{"an empty access key", "", testCRN, "CS_CLIENT_ACCESS_KEY is set but empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for name, value := range map[string]string{"CS_CLIENT_ACCESS_KEY": tc.key, "CS_WORKSPACE_CRN": tc.crn} {
+				if value == unset {
+					unsetEnv(t, name)
+				} else {
+					t.Setenv(name, value)
+				}
+			}
+			_, err := profile.Auto(context.Background())
+			if !errors.Is(err, ErrConfig) {
+				t.Fatalf("error = %v, want %v", err, ErrConfig)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not contain %q", err, tc.want)
+			}
+			if strings.Contains(err.Error(), keyMarker) {
+				t.Errorf("the access key is in the error: %q", err)
+			}
+		})
 	}
 }
 
