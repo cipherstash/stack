@@ -43,6 +43,7 @@ The package reference is on [pkg.go.dev]; the generator's reference is
 
    `encrypt_into=` names the EQL type the field is stored as. The Go field
    type must match it; see [EQL columns](#eql-columns).
+   To choose the type, see [Choose a column type](#choose-a-column-type).
 
 3. Run the generator. It writes `user_stash.go` beside the struct.
 
@@ -623,8 +624,10 @@ EQL types by need, and what each one shows to a reader of the column:
 | Find rows equal to a value | An `Eq` type, such as `TextEq` or `IntegerEq` | Which rows hold equal values |
 | Find text that contains part of a word | `TextMatch` | The rough length of each value, and which rows have 3-grams or two-letter words in common |
 | Compare and sort, on any PostgreSQL install | An `Ord` type, such as `IntegerOrd` or `TextOrd`. It uses order-preserving encryption (OPE) | The order of the values, which rows hold equal values, and how many leading bits two values share |
-| Compare and sort, with no order in the stored bytes | An `OrdOre` type, such as `IntegerOrdOre`. It uses order-revealing encryption (ORE), and needs a superuser install | The bytes show no order. A role that can run SQL can still find the order and which values are equal |
+| Compare and sort, with no order in the stored bytes | An `OrdOre` type, such as `IntegerOrdOre`. It uses order-revealing encryption (ORE), and needs a superuser install | The bytes do not sort in order. Anyone who has the stored values and an EQL install can still find the order and which values are equal |
 | Find equal text, compare, sort, and match on one column | `TextSearch` for OPE order, or `TextSearchOre` for ORE order | What its equality, order and match terms show |
+| Store a JSON document and read it back whole | `Json` | No search term is stored. The stored value shows the size of the document |
+| Query inside a JSON document, by containment, path or order | `JsonSearch` | The structure of the document: which paths each row has, and which rows hold the same value at a path. See [Encrypted JSON documents](#encrypted-json-documents) |
 
 A column shows what all of its terms show together. A text order type, such
 as `TextOrd` or `TextOrdOre`, also stores `TextEq`'s equality term. So the column
@@ -650,15 +653,27 @@ them correctly:
 
 An EQL column needs EQL v4 installed in the database first, as
 [EQL columns](#eql-columns) says. Separate byte columns need no EQL install.
-Separate byte columns also have a generated `Between` method. The EQL
-ordered types do not have one yet.
+A byte-column field with an `ore` or `ope` index has a generated `Between`
+method. A field of an EQL ordered type has generated `Lt`, `Lte`, `Gt`, and
+`Gte` methods, and no `Between` method.
 
 ### Choose between OPE and ORE order
 
-`IntegerOrd` and `IntegerOrdOpe` are the same type under two names. So is
-each other `Ord` and `OrdOpe` pair. Both names store an OPE term.
-`IntegerOrdOre` stores a block ORE term instead. The two schemes differ in what the
-stored bytes show, and in what the install needs.
+`IntegerOrd` and `IntegerOrdOpe` store the same OPE term, but they are two
+separate types. Each one has its own Go type, its own column type
+(`public.eql_v4_integer_ord` and `public.eql_v4_integer_ord_ope`), and its
+own query type. So the `encrypt_into=` tag, the column, and the query cast
+must all use the same name. Each other `Ord` and `OrdOpe` pair is the same.
+
+The two names say different things:
+
+- `IntegerOrd` means "ordered", whatever the scheme. The name does not tie
+  the column to one order scheme in a future migration.
+- `IntegerOrdOpe` means "ordered with OPE". Use it when the column must keep
+  the OPE term.
+
+`IntegerOrdOre` stores a block ORE term instead. The two schemes differ in
+what the stored bytes show, and in what the install needs.
 
 An OPE term's bytes sort in the order of the values:
 
@@ -684,9 +699,10 @@ An ORE term carries a random nonce:
   installer disables the `OrdOre` and `TextSearchOre` types, and a write to
   one of their columns fails.
 
-So ORE keeps the order from someone who has only the stored bytes, such as a
-backup. ORE does not keep the order from a role that can query the database.
-Where that difference does not matter to you, use an `Ord` type.
+So ORE stops the stored bytes from sorting in order. ORE does not keep the
+order secret from anyone who has the stored values and an EQL install. For
+example, someone with a backup can restore it into a database with EQL
+installed, and compare the values there.
 
 ### Check the database before you choose an `OrdOre` type
 
@@ -697,6 +713,12 @@ type. Run it as the role that will install EQL v4:
 npx stash eql preflight --database-url "$DATABASE_URL"
 ```
 
+If a `stash.config.ts` file in the current directory, or in a directory
+above it, sets `databaseUrl` to a fixed URL, the command probes that
+database instead of the one `--database-url` names. The command prints a
+warning when this happens. So run the command in a directory with no
+`stash.config.ts` above it, or check the warning.
+
 Read the `ORE operator class` row of its report:
 
 - `creatable`: the role can create the ORE operator class, so the `OrdOre`
@@ -705,12 +727,15 @@ Read the `ORE operator class` row of its report:
 - `unknown`: the command could not find out, for example on a read-only
   replica. Do not read it as either answer.
 
-The command changes nothing. The command tries to create an operator family in
-a transaction, and then rolls the transaction back. The rest of its report,
+The command changes nothing. It tries to create an operator family in a
+transaction, and then rolls the transaction back. The rest of its report,
 and its exit code, are about `stash eql install`. That command installs EQL
 v3, so those rows name the `eql_v3` schemas, not `eql_v4`.
 
 ## EQL columns
+
+To choose an EQL type for a field, see
+[Choose a column type](#choose-a-column-type).
 
 A field tagged `encrypt_into=TextEq` is stored as one EQL value, the JSON
 PostgreSQL holds in a `public.eql_v4_text_eq` column, as an `eql.TextEq`
