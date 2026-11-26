@@ -380,3 +380,81 @@ pub fn unhex(text: &str) -> Vec<u8> {
 }
 #[cfg(feature = "dynamic")]
 pub mod conformance;
+
+/// `value` as JSON text in the layout Biome's formatter gives a fixture
+/// (`pnpm run code:check`), so a regenerated fixture is committed as
+/// written. Two-space indent; a non-empty object puts each member on a line
+/// of its own; an array of scalars stays on one line while that line,
+/// its trailing comma included, fits in 80 columns, and otherwise puts each
+/// element on a line of its own. An array holding an object or an array is
+/// always broken.
+pub fn biome_json(value: &serde_json::Value) -> String {
+    fn scalar(value: &serde_json::Value) -> bool {
+        !matches!(
+            value,
+            serde_json::Value::Array(_) | serde_json::Value::Object(_)
+        )
+    }
+    fn text(value: &serde_json::Value) -> String {
+        serde_json::to_string(value).expect("JSON")
+    }
+    /// Write `value` starting at column `column`, inside `indent` spaces,
+    /// with `tail` characters after it on its line.
+    fn write(
+        value: &serde_json::Value,
+        indent: usize,
+        column: usize,
+        tail: usize,
+        out: &mut String,
+    ) {
+        let pad = |n: usize| " ".repeat(n);
+        match value {
+            serde_json::Value::Object(map) if !map.is_empty() => {
+                out.push_str("{\n");
+                let last = map.len() - 1;
+                for (i, (key, member)) in map.iter().enumerate() {
+                    let key = format!("{}{}: ", pad(indent + 2), text(&key.as_str().into()));
+                    out.push_str(&key);
+                    let comma = usize::from(i != last);
+                    write(member, indent + 2, key.chars().count(), comma, out);
+                    if comma == 1 {
+                        out.push(',');
+                    }
+                    out.push('\n');
+                }
+                out.push_str(&pad(indent));
+                out.push('}');
+            }
+            serde_json::Value::Array(items) if !items.is_empty() => {
+                if items.iter().all(scalar) {
+                    let inline = format!(
+                        "[{}]",
+                        items.iter().map(text).collect::<Vec<_>>().join(", ")
+                    );
+                    if column + inline.chars().count() + tail <= 80 {
+                        out.push_str(&inline);
+                        return;
+                    }
+                }
+                out.push_str("[\n");
+                let last = items.len() - 1;
+                for (i, item) in items.iter().enumerate() {
+                    out.push_str(&pad(indent + 2));
+                    let comma = usize::from(i != last);
+                    write(item, indent + 2, indent + 2, comma, out);
+                    if comma == 1 {
+                        out.push(',');
+                    }
+                    out.push('\n');
+                }
+                out.push_str(&pad(indent));
+                out.push(']');
+            }
+            other => out.push_str(&text(other)),
+        }
+    }
+    let mut out = String::new();
+    write(value, 0, 0, 0, &mut out);
+    out.push('\n');
+    out
+}

@@ -13,7 +13,6 @@
       "!packages/stack-encrypt/tests/fixtures/record_lowering.json",
       "!packages/stack-encrypt/tests/fixtures/query_operators.json",
       "!packages/stack-encrypt/tests/fixtures/value_kinds.json",
-      "!packages/stack-encrypt/tests/fixtures/value_bytes_v1.json",
       "!packages/stack-encrypt/tests/fixtures/stored_rows_v1.json",
       "!packages/stack-encrypt/tests/fixtures/json_tree_vectors.json",
       "!packages/eql/tests/encryption/fixtures/ste_vec_selectors.json",

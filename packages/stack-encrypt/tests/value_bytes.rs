@@ -781,11 +781,7 @@ async fn value_bytes_are_the_pinned_bytes() {
     }
     let path = fixture_path();
     if update {
-        std::fs::write(
-            &path,
-            serde_json::to_string_pretty(&document).unwrap() + "\n",
-        )
-        .expect("write the fixture");
+        std::fs::write(&path, common::biome_json(&document)).expect("write the fixture");
         return;
     }
     let committed: Json =
