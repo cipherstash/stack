@@ -211,15 +211,13 @@ func TestACustomersFieldsDeriveEachQuery(t *testing.T) {
 	}
 }
 
-// A token is a capability and a path's keys can be a customer's data: the
-// read types print and log neither, under any fmt verb, or through slog. A
-// child a read opened is plaintext, its key included, and prints and logs
-// redacted too. The three prepared reads print through one embedded type,
-// each with its own name and operand.
-// A selection and a subtree read bind as their operand. database/sql
-// converts a parameter through its driver.Valuer. Without one, pgx binds
-// the String form, which is redacted, and the query matches no row and
-// returns no error.
+// A selection and a subtree read bind as their operand. Without a
+// driver.Valuer, pgx binds the String form, and that form is redacted. A
+// selection bound that way matches no row and returns no error. A read
+// bound that way fails with a malformed array literal. pgx calls the
+// driver.Valuer itself, and the PostgreSQL test covers that path. This test
+// checks the Valuer, and the default converter that other database/sql
+// drivers use.
 func TestJSONSelectionAndReadBindAsTheirOperand(t *testing.T) {
 	c := deterministicEQLClient(t)
 	ctx := context.Background()
@@ -261,7 +259,8 @@ func TestJSONSelectionAndReadBindAsTheirOperand(t *testing.T) {
 			if err != nil || got != tt.want {
 				t.Fatalf("Value() = %v, %v; want the operand", got, err)
 			}
-			// The conversion database/sql applies to a query argument.
+			// The default converter, which database/sql applies to a query
+			// argument for a driver that does not check the value itself.
 			converted, err := driver.DefaultParameterConverter.ConvertValue(tt.param)
 			if err != nil || converted != tt.want {
 				t.Fatalf("ConvertValue = %v, %v; want the operand", converted, err)
@@ -281,6 +280,11 @@ func TestJSONSelectionAndReadBindAsTheirOperand(t *testing.T) {
 	}
 }
 
+// A token is a capability and a path's keys can be a customer's data: the
+// read types print and log neither, under any fmt verb, or through slog. A
+// child a read opened is plaintext, its key included, and prints and logs
+// redacted too. The three prepared reads print through one embedded type,
+// each with its own name and operand.
 func TestJSONReadTypesPrintAndLogRedacted(t *testing.T) {
 	c := deterministicEQLClient(t)
 	ctx := context.Background()
