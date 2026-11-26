@@ -54,13 +54,12 @@ lane before it. It needs the disposable database named by
 See `mise.toml` and [AGENTS.md](../../AGENTS.md) for the build and release
 details.
 
-To run `stashgen` from a checkout, build both production guests:
+To run `stashgen` from a checkout, build the guest that includes the EQL
+types. `stashgen` checks each declaration with it:
 
 ```sh
-mise run wasm:guest:build wasm:guest:build:eql
+mise run wasm:guest:build:eql
 ```
 
-`stashgen` checks each declaration with the guest that includes the EQL
-types. Without that build it stops with an error that names
-`mise run wasm:guest:build:eql`. A program whose generated code names no EQL
-type runs the other guest, so build both.
+Without that build, `stashgen` stops with an error that starts
+`encrypt: guest module with the EQL types not built`.
