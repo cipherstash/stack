@@ -564,6 +564,25 @@ or for stored data. Check an error two ways.
 - `context.Canceled`, `context.DeadlineExceeded`: the call's `ctx` ended.
   The client is still open.
 
+An error from the `auth` package can reach you in two ways. Check it with the
+`auth` name.
+
+- `NewClient` can return one while it reads the credentials, such as
+  `auth.ErrConfig` or `auth.ErrNotFound`.
+- Any call whose auth strategy fails to give a token returns an error that
+  matches `ErrTransport` and the strategy's own error. For example, a revoked
+  refresh token gives `auth.ErrInvalidGrant`. `ErrTransport` alone does not
+  say whether ZeroKMS or the token failed.
+
+Seven error names are in both packages:
+
+- `ErrEncoding`, `ErrState`, `ErrInternal`, `ErrMemoryLock`: the same value in
+  both packages. `errors.Is` matches either package's name.
+- `ErrNotFound`, `ErrTransport`, `ErrGuestNotBuilt`: a different value in each
+  package. `auth.ErrNotFound` is a missing profile file. `auth.ErrTransport`
+  is a failed exchange with the auth service. `errors.Is` does not match an
+  `auth` error with the `encrypt` name, or the other way round.
+
 `errors.As` with a `*Diagnostic` gives you the detail behind a failure the
 engine reports: a stable `Code` (`stack_encrypt::foreign_keyset`,
 `stack_kms::keyset_not_found`, ...), the one-line `Message` that `Error()`

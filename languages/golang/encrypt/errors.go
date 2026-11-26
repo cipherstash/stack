@@ -12,9 +12,26 @@ import (
 // behind it is a [Diagnostic].
 //
 // They are the sentinels every guest package shares (one status table for
-// every guest, decoded once), exposed here under this package's names: an
-// error from auth is the same value, so errors.Is holds across the
-// two.
+// every guest, decoded once), exposed here under this package's names.
+//
+// Six of these names are in the auth package too. Four are the same
+// value in both packages, so errors.Is matches either package's name:
+// ErrEncoding, ErrState, ErrInternal and ErrMemoryLock. ErrNotFound and
+// ErrTransport are different values. Here they are ZeroKMS failures. In
+// auth, ErrNotFound is a missing profile file and ErrTransport is a
+// failed auth HTTP exchange. So errors.Is(err, ErrNotFound) is false for
+// auth.ErrNotFound, and the other way round. [ErrGuestNotBuilt] is in both
+// packages too. It is a different value in each.
+//
+// Most of a [Client]'s failures are this package's errors. An auth error
+// can reach a caller in two ways. [NewClient] can return one, wrapped,
+// while it resolves the [Credentials]: for example auth.ErrConfig for a
+// CS_WORKSPACE_CRN that is not a CRN, or [ErrNoCredentials] wrapping
+// auth.ErrNotFound when the profile has no secretkey.json. And when an auth
+// strategy fails to give a token, any call's error matches [ErrTransport]
+// and the strategy's own error, such as auth.ErrInvalidGrant for a revoked
+// refresh token. Check for those with the auth names: ErrTransport alone
+// does not say whether ZeroKMS or the token failed.
 var (
 	// ErrAuthentication is an AEAD open failure: a tampered ciphertext, a
 	// wrong element derivation, or a wrong AAD that reached the AEAD. Against

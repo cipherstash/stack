@@ -13,6 +13,15 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The docs say which `auth` errors equal the `encrypt` errors.** They had said
+  that every `auth` error is the `encrypt` error of the same name.
+  `ErrEncoding`, `ErrState`, `ErrInternal`, and `ErrMemoryLock` are one value
+  in both packages. `ErrNotFound`, `ErrTransport`, and `ErrGuestNotBuilt` are
+  different values. The docs now say when a call returns an `auth` error
+  (#1858).
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6
