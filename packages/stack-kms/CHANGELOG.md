@@ -51,6 +51,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ClientKey::from_bytes`, `ClientKey::from_hex_v1`,
   `ClientKey::from_encoded_v1`, `V1KeySet::from_bytes`, and deserializing a
   `V1KeySet`. The error names no value from the key.
+- A keyset whose CBOR does not parse is refused with a fixed message
+  (#1850). Before this fix, the error was serde's own message. That
+  message can print entries read from the key.
+- `ClientKey::new_v1` does not check the keyset it is given. Its doc
+  comment now says so.
+- The TypeScript SDK reads keys through `cipherstash-client` and
+  `recipher` from crates.io. Those crates have the same loop. This fix
+  does not reach them. That is tracked in #1911.
 
 ## [0.2.0] - 2026-10-27
 
