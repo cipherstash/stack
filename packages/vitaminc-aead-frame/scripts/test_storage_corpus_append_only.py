@@ -1,4 +1,5 @@
-"""Tests for storage_corpus_append_only.py. Run with `mise run storage:corpus:check:test`."""
+"""Tests for storage_corpus_append_only.py. From the repository root, run
+`python3 -m unittest discover -s packages/vitaminc-aead-frame/scripts -p 'test_storage_corpus_append_only.py'`."""
 
 from __future__ import annotations
 

@@ -11,8 +11,13 @@ corpus to itself. Every row at the merge base must still be there, under
 the same name and unchanged, as must the header and version, in every
 corpus the merge base had. Rows, sections and new corpora may be added.
 
-Run `mise run storage:corpus:check -- --base origin/main` to check this
-branch against main.
+From the repository root, run
+
+    python3 packages/vitaminc-aead-frame/scripts/storage_corpus_append_only.py
+
+to check this branch against `origin/next`, the branch work merges into.
+Pass `--base <ref>` to check it against another branch. With no corpus at
+the merge base, the check has nothing to hold the branch to and passes.
 """
 
 from __future__ import annotations
@@ -103,7 +108,7 @@ def check(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--base", default="origin/main", help="the branch this one merges into")
+    parser.add_argument("--base", default="origin/next", help="the branch this one merges into")
     args = parser.parse_args(argv)
 
     merge_base = git("merge-base", args.base, "HEAD").strip()
