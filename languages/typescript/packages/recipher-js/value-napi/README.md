@@ -7,8 +7,13 @@ The `recipher-js` addon reads and builds every value through it.
 This crate is a copy of `vitaminc-aead-napi` 0.10.0, from
 [`cipherstash/vitaminc`](https://github.com/cipherstash/vitaminc) at commit
 `b3f69b12c1fde38faff2becec04f9e633dbd4f1c`, renamed. It is not published.
-`tests/testdata/value-conformance.json` is vitaminc's `testdata/value-conformance.json`
-at the same commit: the vectors the Rust, Node and Go bindings all check.
+`tests/testdata/value-conformance.json` is a copy of
+`conformance/vitaminc-aead/value-conformance.json`: the vectors the Rust,
+Node and Go bindings all check. The bridge's tests read the copy, so a run
+scoped to this package finds it.
+`scripts/__tests__/recipher-js-value-corpus-parity.test.mjs` fails when the
+two parse to different JSON, so change both together, then run
+`pnpm run code:fix`.
 
 An incoming JavaScript value implements [`Encrypt`]; a [`Sink`] builds
 the outgoing value. This crate supplies both sides of that conversion:
