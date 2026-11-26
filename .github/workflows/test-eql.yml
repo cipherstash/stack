@@ -105,7 +105,8 @@ on:
       # (`eql-bindings`' `stack-encrypt` feature): stack-encrypt, its derive
       # and stack-kms through `path =`, and stack-auth and stack-profile
       # through `workspace = true` entries the root `Cargo.toml` resolves to
-      # paths. The mise-task derivation in eql-workflow-filters.test.mjs
+      # paths, and the vitaminc-aead crates through the patch table in
+      # packages/eql/Cargo.toml. The mise-task derivation in eql-workflow-filters.test.mjs
       # cannot see them (a task body names a cargo package, not a path); the
       # manifest walk in eql-suite-ci.test.mjs does, and fails when one of them
       # is missing from this list.
@@ -113,6 +114,9 @@ on:
       - "packages/stack-encrypt/**"
       - "packages/stack-encrypt-derive/**"
       - "packages/stack-encrypt-jsonpath/**"
+      - "packages/vitaminc-aead/**"
+      - "packages/vitaminc-aead-frame/**"
+      - "packages/vitaminc-aead-derive/**"
       - "packages/stack-kms/**"
       - "packages/stack-auth/**"
       - "packages/stack-profile/**"
@@ -215,6 +219,9 @@ jobs:
               - "packages/stack-encrypt/**"
               - "packages/stack-encrypt-derive/**"
               - "packages/stack-encrypt-jsonpath/**"
+              - "packages/vitaminc-aead/**"
+              - "packages/vitaminc-aead-frame/**"
+              - "packages/vitaminc-aead-derive/**"
               - "packages/stack-kms/**"
               - "packages/stack-auth/**"
               - "packages/stack-profile/**"

@@ -14,6 +14,9 @@ includes = [
   "packages/stack-encrypt/tasks.toml",
   "packages/stack-encrypt-jsonpath/tasks.toml",
   "packages/stack-guest-abi/tasks.toml",
+  "packages/vitaminc-aead/tasks.toml",
+  "packages/vitaminc-aead-frame/tasks.toml",
+  "packages/vitaminc-aead-derive/tasks.toml",
 ]
 
 [tools]

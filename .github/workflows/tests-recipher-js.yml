@@ -26,6 +26,9 @@ on:
       - packages/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-encrypt-jsonpath/**
+      - packages/vitaminc-aead/**
+      - packages/vitaminc-aead-frame/**
+      - packages/vitaminc-aead-derive/**
       - Cargo.toml
       - mise.toml
       - pnpm-lock.yaml
@@ -42,6 +45,9 @@ on:
       - packages/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-encrypt-jsonpath/**
+      - packages/vitaminc-aead/**
+      - packages/vitaminc-aead-frame/**
+      - packages/vitaminc-aead-derive/**
       - Cargo.toml
       - mise.toml
       - pnpm-lock.yaml

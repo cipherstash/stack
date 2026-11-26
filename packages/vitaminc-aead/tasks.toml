@@ -1,0 +1,24 @@
+# Tasks for vitaminc-aead, imported from cipherstash/vitaminc. Included from
+# the root mise.toml.
+
+# Rustdoc with warnings as errors, which the root `doc` task fans out to.
+["doc:vitaminc-aead"]
+description = "Build docs for vitaminc-aead with all features (warnings are errors)"
+env = { RUSTDOCFLAGS = "-D warnings" }
+run = "cargo doc -p vitaminc-aead --no-deps --all-features"
+
+# The workspace test run turns every feature on at once. Only
+# dev-dependencies turn on vitaminc-aead's optional scalar features, and no
+# workspace member turns on vitaminc-aead-frame's `serde`, so each is tested
+# on its own here, with the storage bench's smoke run.
+["test:vitaminc-aead:features"]
+description = "Test vitaminc-aead with each optional feature alone, and vitaminc-aead-frame with and without serde"
+run = [
+  "cargo test --locked -p vitaminc-aead",
+  "cargo test --locked -p vitaminc-aead --features jiff",
+  "cargo test --locked -p vitaminc-aead --features rust_decimal",
+  "cargo test --locked -p vitaminc-aead --features uuid",
+  "cargo test --locked -p vitaminc-aead-frame",
+  "cargo test --locked -p vitaminc-aead-frame --features serde",
+  "cargo test --locked -p vitaminc-aead-frame --features serde --bench storage",
+]
