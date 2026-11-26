@@ -222,6 +222,12 @@ func TestV4TextMatchRefusalNamesTheStoredField(t *testing.T) {
 			_, err := cipher.Bind("user-7").Seal(ctx, mixed, []record.Source{{"nickname": "Al", "name": "C"}})
 			return err
 		}, 0, "name"},
+		{"under a plan with a binding", func() error {
+			bound := *mixed
+			bound.Bind = []any{"user-7"}
+			_, err := cipher.Seal(ctx, &bound, []record.Source{{"nickname": "Al", "name": "C"}})
+			return err
+		}, 0, "name"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.run()

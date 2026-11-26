@@ -608,7 +608,7 @@ func isEmptyTermText(err error) bool {
 // each of its values in turn. The query path cuts no token from exactly the
 // text a stored value cuts none from, and asks for no key. A query takes no
 // binding, and a token does not depend on the context, so the probe takes
-// the cipher's scopes alone. An EQL type is never in a plan that takes its
+// the scopes alone: neither the cipher's bindings nor the plan's. An EQL type is never in a plan that takes its
 // context from a field. If no value is refused there, err is returned
 // unchanged.
 func (cph *Cipher) locateShortStoredText(ctx context.Context, p *record.Plan, rows []record.Source, err error) error {
@@ -624,6 +624,8 @@ func (cph *Cipher) locateShortStoredText(ctx context.Context, p *record.Plan, ro
 	}
 	probe := cph.copy()
 	probe.bindings = nil
+	unbound := *p
+	unbound.Bind = nil
 	for i, row := range rows {
 		for _, f := range p.Fields {
 			if !matchOnly[f.Target] {
@@ -633,7 +635,7 @@ func (cph *Cipher) locateShortStoredText(ctx context.Context, p *record.Plan, ro
 			if !ok {
 				continue
 			}
-			if _, qerr := probe.QueryTerm(ctx, p, f.Name, "matches", text); isEmptyTermText(qerr) {
+			if _, qerr := probe.QueryTerm(ctx, &unbound, f.Name, "matches", text); isEmptyTermText(qerr) {
 				return &shortStoredTextError{value: i, field: f.Name, target: f.Target, err: err}
 			}
 		}
