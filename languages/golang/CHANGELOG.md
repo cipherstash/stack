@@ -13,6 +13,20 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`auth.Token` no longer prints its access token** (#1848). Before this
+  fix, `fmt.Println(tok)`, `log.Printf("%+v", tok)`, and
+  `slog.Info("auth", "token", tok)` printed the bearer token in full. Now
+  `fmt` and `slog` print `[redacted]` in its place, under every verb. The
+  other fields, such as `ExpiresAt` and `Region`, still print, because
+  they help to debug a login. Read the `AccessToken` field to get the
+  token itself.
+
+  `fmt` calls no method on a value in an unexported struct field. A
+  `Token` in an unexported field still prints in full, so keep it in an
+  exported field of anything you print or log.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"math"
 	"time"
 
@@ -13,6 +15,14 @@ import (
 // Token is the stored access token, as auth.json holds it and
 // [ProfileStore.Token] reads it through the Rust crate's own type. The
 // refresh token is not in it: the guest handles refresh through a Strategy.
+//
+// fmt and slog print the access token as [redacted], under every verb. They
+// print the other fields in full, because those help to debug a login.
+// Read the AccessToken field to get the token itself.
+//
+// fmt calls no method on a value in an unexported struct field. A Token in
+// an unexported field prints its access token in full. Keep a Token in an
+// exported field of anything you print or log.
 type Token struct {
 	// AccessToken is the bearer credential.
 	AccessToken string
@@ -34,6 +44,34 @@ type Token struct {
 // expiry. The Rust crate's is_usable, not its is_expired, which subtracts a
 // refresh-ahead margin that belongs to refreshing.
 func (t Token) Usable(now time.Time) bool { return now.Before(t.ExpiresAt) }
+
+// redacted is what Token prints and logs in place of the access token.
+const redacted = "[redacted]"
+
+// String returns the token's fields, with [redacted] for the access token.
+func (t Token) String() string {
+	return fmt.Sprintf("auth.Token{AccessToken: %s, TokenType: %q, ExpiresAt: %s, Region: %q, ClientID: %q, DeviceInstanceID: %q}",
+		redacted, t.TokenType, t.ExpiresAt.Format(time.RFC3339), t.Region, t.ClientID, t.DeviceInstanceID)
+}
+
+// GoString is what %#v prints: [Token.String].
+func (t Token) GoString() string { return t.String() }
+
+// Format prints [Token.String] for every verb fmt hands it.
+func (t Token) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, t.String()) }
+
+// LogValue is what slog records: the token's fields, with [redacted] for
+// the access token.
+func (t Token) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("access_token", redacted),
+		slog.String("token_type", t.TokenType),
+		slog.Time("expires_at", t.ExpiresAt),
+		slog.String("region", t.Region),
+		slog.String("client_id", t.ClientID),
+		slog.String("device_instance_id", t.DeviceInstanceID),
+	)
+}
 
 // Token reads auth.json in this store (a workspace store; the root holds
 // none). The transport copy of the token is wiped once it is read out.
