@@ -41,6 +41,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   derived, so requests overlap derivation as before. A batch holds the
   wrapped material of at most `max_concurrent_reqs` responses at a time.
 
+### Fixes
+
+- A client key whose keyset holds a permutation that is not a permutation
+  is now refused when it is read (#1850). Before this fix, `ClientKey` and
+  `V1KeySet` accepted such a key. Deriving the first key from it could then
+  loop forever, or panic. One changed character in a hex key is enough to
+  cause this. These now return an error for such a key:
+  `ClientKey::from_bytes`, `ClientKey::from_hex_v1`,
+  `ClientKey::from_encoded_v1`, `V1KeySet::from_bytes`, and deserializing a
+  `V1KeySet`. The error names no value from the key.
+
 ## [0.2.0] - 2026-10-27
 
 ### Breaking

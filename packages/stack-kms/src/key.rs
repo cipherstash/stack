@@ -40,7 +40,7 @@ impl ClientKey {
     pub fn from_bytes(key_id: Uuid, bytes: &[u8]) -> serde_cbor::Result<Self> {
         Ok(Self {
             key_id,
-            keyset: KeySet::from_bytes(bytes).map(V1KeySet)?,
+            keyset: V1KeySet::from_bytes(bytes)?,
         })
     }
 
@@ -273,7 +273,10 @@ impl From<Key> for IndexKey {
 pub struct V1KeySet(pub(crate) KeySet);
 
 impl V1KeySet {
+    /// Read a v1 keyset from its CBOR bytes. A keyset whose permutations are
+    /// not permutations is refused here: see [`check_permutations`].
     pub fn from_bytes(bytes: &[u8]) -> serde_cbor::Result<Self> {
+        check_permutations(bytes)?;
         KeySet::from_bytes(bytes).map(Self)
     }
 
@@ -326,10 +329,83 @@ impl<'de> Deserialize<'de> for V1KeySet {
         // Discards the returned `&[u8]`: it just borrows `buffer`, which we
         // read through the `Zeroizing` guard below so it still gets wiped.
         let _ = serdect::array::deserialize_hex_or_bin(&mut *buffer, deserializer)?;
-        let keyset = KeySet::from_bytes(&*buffer).map_err(serde::de::Error::custom)?;
-
-        Ok(Self(keyset))
+        Self::from_bytes(&*buffer).map_err(serde::de::Error::custom)
     }
+}
+
+/// The fields of a v1 keyset, read a second time only to check them. It
+/// mirrors `ProxyKeySet`, whose fields are private to zerokms-keyset, so
+/// it accepts the same CBOR.
+#[derive(Deserialize)]
+struct KeySetShape {
+    p1: PermutationShape,
+    p2_from: PermutationShape,
+    p2_to: PermutationShape,
+    p3: PermutationShape,
+}
+
+/// One permutation of [`KeySetShape`]. Its entries are key material, so
+/// they are wiped when it is dropped.
+#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+struct PermutationShape {
+    permutation: Vec<u8>,
+}
+
+/// The number of bytes in a block. p1, p2_from and p2_to each permute the
+/// bytes of one block.
+const BLOCK_LEN: usize = 16;
+
+/// Refuse a keyset whose permutations are not permutations.
+///
+/// zerokms-keyset re-encrypts by following each permutation's cycles. With
+/// a repeated entry, that loop can run forever, and an entry out of range
+/// panics. Both reach the cipher only when the first key is derived, which
+/// is after a ZeroKMS round trip. One changed character in a hex key can
+/// cause either, so the keyset is checked when it is read.
+///
+/// p1, p2_from and p2_to must each be a permutation of `0..16`. p3 permutes
+/// the blocks, and must be a permutation of `0..n` for some `n` from 1 to
+/// 64. The check does not branch on any one entry, because the entries are
+/// secret. The error is a fixed message and names no value.
+///
+/// This check protects only code that reads a keyset through this crate:
+/// the Go SDK's guest and stack-encrypt. The TypeScript SDK reads its key
+/// through protect-ffi, which uses cipherstash-client and recipher from
+/// crates.io. recipher has the same loop, so that SDK may hang on the same
+/// key. That needs its own fix, in that path or in zerokms-keyset and
+/// recipher themselves.
+fn check_permutations(bytes: &[u8]) -> serde_cbor::Result<()> {
+    let shape: KeySetShape = serde_cbor::from_slice(bytes)?;
+    let valid = is_permutation(&shape.p1.permutation, Some(BLOCK_LEN))
+        & is_permutation(&shape.p2_from.permutation, Some(BLOCK_LEN))
+        & is_permutation(&shape.p2_to.permutation, Some(BLOCK_LEN))
+        & is_permutation(&shape.p3.permutation, None);
+    if valid {
+        Ok(())
+    } else {
+        Err(<serde_cbor::Error as serde::de::Error>::custom(
+            "the keyset's permutations are not valid",
+        ))
+    }
+}
+
+/// Whether `p` is a permutation of `0..p.len()`, with `p.len()` from 1 to
+/// 64, and equal to `len` when `len` is given. Only the result depends on
+/// the entries; no branch does.
+fn is_permutation(p: &[u8], len: Option<usize>) -> bool {
+    let n = p.len();
+    if n == 0 || n > 64 || len.is_some_and(|len| len != n) {
+        return false;
+    }
+    let mut seen = 0u64;
+    let mut out_of_range = false;
+    for &x in p {
+        out_of_range |= usize::from(x) >= n;
+        seen |= 1 << (x & 0x3f);
+    }
+    let all = if n == 64 { u64::MAX } else { (1u64 << n) - 1 };
+    // Every entry is below n, and the n entries are distinct.
+    !out_of_range & (seen == all)
 }
 
 #[cfg(test)]
@@ -427,6 +503,106 @@ mod tests {
                 !err.to_string().contains("invalid encoding"),
                 "well-encoded bytes of the wrong shape must fail at keyset decoding, got: {err}"
             );
+        }
+    }
+
+    /// A keyset whose permutations are not permutations must be refused when
+    /// it is read. Re-encryption follows each permutation's cycles, and with
+    /// a repeated entry that loop can run forever (issue #1850: one changed
+    /// character in `CS_CLIENT_KEY` hung the Go SDK at full CPU).
+    mod keyset_permutations {
+        use super::*;
+        use serde_cbor::Value;
+
+        /// A generated keyset as CBOR, with `edit` applied to the entries of
+        /// the permutation `field`.
+        fn edited(field: &str, edit: impl FnOnce(&mut Vec<Value>)) -> Vec<u8> {
+            let bytes = random_keyset().to_bytes().unwrap();
+            let mut value: Value = serde_cbor::from_slice(&bytes).unwrap();
+            let Value::Map(fields) = &mut value else {
+                panic!("a keyset is a map")
+            };
+            let Some(Value::Map(perm)) = fields.get_mut(&Value::Text(field.into())) else {
+                panic!("no {field}")
+            };
+            let Some(Value::Array(entries)) = perm.get_mut(&Value::Text("permutation".into()))
+            else {
+                panic!("no {field}.permutation")
+            };
+            edit(entries);
+            serde_cbor::to_vec(&value).unwrap()
+        }
+
+        /// The first entry set to the value of the second: a repeated entry,
+        /// with another value missing.
+        fn repeat_an_entry(entries: &mut [Value]) {
+            entries[0] = entries[1].clone();
+        }
+
+        fn all_refused(bytes: &[u8], label: &str) {
+            let id = uuid::Uuid::nil();
+            let hex = base16ct::lower::encode_string(bytes);
+            assert!(
+                ClientKey::from_bytes(id, bytes).is_err(),
+                "{label}: from_bytes"
+            );
+            assert!(
+                ClientKey::from_hex_v1(id, &hex).is_err(),
+                "{label}: from_hex_v1"
+            );
+            assert!(
+                ClientKey::from_encoded_v1(id, &hex).is_err(),
+                "{label}: from_encoded_v1"
+            );
+            let json = serde_json::to_string(&hex).unwrap();
+            assert!(
+                serde_json::from_str::<super::super::V1KeySet>(&json).is_err(),
+                "{label}: deserialize"
+            );
+        }
+
+        #[test]
+        fn refuses_a_repeated_entry_in_any_permutation() {
+            for field in ["p1", "p2_from", "p2_to", "p3"] {
+                all_refused(&edited(field, |e| repeat_an_entry(e)), field);
+            }
+        }
+
+        #[test]
+        fn refuses_an_entry_out_of_range() {
+            all_refused(
+                &edited("p3", |e| {
+                    let n = e.len();
+                    e[0] = Value::Integer(n as i128);
+                }),
+                "p3",
+            );
+        }
+
+        #[test]
+        fn refuses_a_block_permutation_of_the_wrong_length() {
+            // p1 permutes the 16 bytes of a block, so it has 16 entries.
+            all_refused(&edited("p1", |e| e.truncate(8)), "p1");
+        }
+
+        #[test]
+        fn names_no_value_in_the_refusal() {
+            let err =
+                ClientKey::from_bytes(uuid::Uuid::nil(), &edited("p3", |e| repeat_an_entry(e)))
+                    .expect_err("refused");
+            assert_eq!(
+                err.to_string(),
+                "the keyset's permutations are not valid",
+                "the refusal is a fixed message"
+            );
+        }
+
+        #[test]
+        fn accepts_generated_keysets() {
+            for _ in 0..64 {
+                let bytes = random_keyset().to_bytes().unwrap();
+                ClientKey::from_bytes(uuid::Uuid::nil(), &bytes).expect("a generated keyset");
+            }
         }
     }
 
