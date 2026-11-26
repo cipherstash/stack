@@ -109,6 +109,7 @@ jobs:
       # vetted is the three crates and their dependencies. `--locked` reads
       # imports.lock as committed rather than fetching the registries.
       - name: cargo vet
+        id: vet
         run: |
           cargo vet --locked --store-path supply-chain/vitaminc-aead \
             --filter-graph "$(cat supply-chain/vitaminc-aead/filter-graph)"
@@ -117,8 +118,10 @@ jobs:
       # needs, so a bump to a version a trusted registry already audits
       # still fails `--locked`. Re-running without it fetches the registries:
       # if that passes, the fix is to commit the refreshed imports.lock.
+      # Only after the vet step itself failed: a failed setup step leaves no
+      # cargo-vet to re-run.
       - name: Say which kind of failure this is
-        if: failure()
+        if: failure() && steps.vet.outcome == 'failure'
         run: |
           store=supply-chain/vitaminc-aead
           if cargo vet --store-path "$store" --filter-graph "$(cat "$store/filter-graph")" >/dev/null 2>&1; then
