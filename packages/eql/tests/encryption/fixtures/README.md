@@ -14,13 +14,9 @@
 | `stored_v4_rows_v1.json` | copied from `v4_rows.json` at the next build | **never: frozen** |
 | `stored_v4_json_rows_v1.json` | copied from `v4_json_rows.json`: the v1 stored format of the `Json` type | **never: frozen** |
 
-Every file here is Biome-formatted, as `pnpm run code:check` requires.
-`v4_terms.json` and `ste_vec_selectors.json` are written in that layout by
-their Rust tests. The Go SDK writes its files with `json.MarshalIndent`, so
-after regenerating one, format it with
-`npx -y @biomejs/biome@2.6.4 format --write <file>` before committing. The
-Go and Rust readers of the row files compare parsed JSON, so the layout does
-not fail them.
+Every file here is Biome-formatted. After regenerating one, by a Rust test
+or by the Go SDK's tests, run `pnpm run code:fix` before committing. The
+readers compare the parsed JSON, so the layout does not fail them.
 
 `v4_ordered_queries.json` and `v4_ordered_rows.json` are not frozen: their
 `op` bytes are the order terms Stack Encrypt writes today, so a change that moves

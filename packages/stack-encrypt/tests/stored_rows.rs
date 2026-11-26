@@ -429,7 +429,8 @@ async fn every_frozen_row_opens_and_seals_as_it_did() {
         }
     }
     if refreeze {
-        let text = common::biome_json(&fixture);
+        let mut text = serde_json::to_string_pretty(&fixture).expect("serialise");
+        text.push('\n');
         std::fs::write(fixture_path(), text).expect("write the fixture");
     }
 }
@@ -720,6 +721,7 @@ async fn write_stored_rows_v1() {
         "keyset_id": cipher.default_keyset().keyset_id().await.unwrap().to_string(),
         "cases": written,
     });
-    let text = common::biome_json(&fixture);
+    let mut text = serde_json::to_string_pretty(&fixture).expect("serialise");
+    text.push('\n');
     std::fs::write(&path, text).expect("write the fixture");
 }

@@ -44,9 +44,6 @@
 //! routine `EQL_UPDATE_FIXTURES` switch, and read the failure messages below
 //! before doing so.
 
-#[path = "common/biome_json.rs"]
-mod biome_json;
-
 use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::path::PathBuf;
@@ -271,7 +268,7 @@ async fn ste_vec_selectors_are_pinned_under_the_fake_index_key() {
         "entries": entries,
     });
     if update_requested(std::env::var_os("EQL_UPDATE_STE_VEC_SELECTORS").as_deref()) {
-        let rendered = biome_json::biome_json(&serde_json::to_value(&fixture).unwrap());
+        let rendered = serde_json::to_string_pretty(&fixture).unwrap() + "\n";
         std::fs::write(fixture_path(), rendered).unwrap();
     }
     let committed: Value = serde_json::from_str(&std::fs::read_to_string(fixture_path()).expect(

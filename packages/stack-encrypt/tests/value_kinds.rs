@@ -498,7 +498,8 @@ async fn the_committed_fixture_opens_and_its_terms_are_todays() {
             "record": record,
             "queries": queries,
         });
-        let text = common::biome_json(&fixture);
+        let mut text = serde_json::to_string_pretty(&fixture).expect("serialise");
+        text.push('\n');
         std::fs::write(&path, text).expect("write the fixture");
     }
 

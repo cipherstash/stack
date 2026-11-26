@@ -1,3 +1,9 @@
+# Fixtures
+
+Every fixture here is Biome-formatted. After regenerating one, run `pnpm
+run code:fix` before committing. Each test compares its fixture as parsed
+JSON, so the layout does not fail it.
+
 # Record fixture: `record_lowering.json`
 
 One declaration, two authors, one engine. Typed Rust code (the engine's

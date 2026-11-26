@@ -601,7 +601,8 @@ fn committed_fixture(path: &PathBuf) -> Json {
 }
 
 fn write_fixture(path: &PathBuf, fixture: &Json) {
-    let text = common::biome_json(fixture);
+    let mut text = serde_json::to_string_pretty(fixture).expect("serialise");
+    text.push('\n');
     std::fs::write(path, text).expect("write the fixture");
 }
 
