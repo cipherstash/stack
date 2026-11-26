@@ -5,10 +5,11 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  * A job that starts CodeQL must also run the analysis.
  *
  * `codeql-action/init` only prepares the database. `codeql-action/analyze`
- * runs the queries and uploads the results. From 12 May to November 2026 the
- * analysis step in `codeql.yml` named `init` by mistake. The job still
- * passed, with only a warning about the unexpected `category` input, so
- * nothing showed that no code on `main` was analysed.
+ * runs the queries and uploads the results. Commit `ed08dce88`, on 12 May
+ * 2026, changed the analysis step in `codeql.yml` to name `init` by mistake.
+ * Until November 2026 the job still passed, with only a warning about the
+ * unexpected `category` input, so nothing showed that no code on `main` was
+ * analysed.
  */
 const CODEQL_STEP = /^github\/codeql-action\/(init|analyze)@/
 
