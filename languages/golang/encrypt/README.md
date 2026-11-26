@@ -243,6 +243,92 @@ cannot use different ones.
 client; `Client.Keyset(encrypt.KeysetName(..))` or `Client.Keyset(id)` any
 other, loaded on first use. `Cipher.KeysetID(ctx)` resolves it.
 
+### Keysets
+
+A keyset is the set of keys that ZeroKMS keeps for one group of data, such
+as one tenant's rows or one environment's rows. A value encrypted under one
+keyset does not decrypt under another. A query matches only the rows written
+under the keyset of its cipher. Keysets belong to a workspace. Every
+workspace has a default keyset named `default`.
+
+A client can use a keyset only when the client has access to it. A client
+is created with access to one keyset, its default keyset. To use any other
+keyset, create the keyset and give the client access to it:
+
+1. Open the [keysets page] of the CipherStash dashboard, and create the
+   keyset. Give it a name that follows the rules in
+   [Keyset names](#keyset-names).
+2. In the dashboard, give the client access to the keyset. The client is the
+   one whose id is in `CS_CLIENT_ID`. On a developer machine with no
+   `CS_CLIENT_*` variables, it is the client that `stash auth login` created
+   for the machine.
+3. Check the keyset when your program starts. `Cipher.KeysetID` loads the
+   keyset from ZeroKMS, and returns an error if the client cannot use it:
+
+   ```go
+   cipher := client.Keyset(encrypt.KeysetName("tenant42"))
+   if _, err := cipher.KeysetID(ctx); err != nil {
+   	return fmt.Errorf("keyset tenant42: %w", err)
+   }
+   ```
+
+Without this check, the first call through the cipher returns the error
+instead.
+
+[keysets page]: https://dashboard.cipherstash.com/workspaces/_/keysets
+
+#### Errors for a missing keyset or a missing grant
+
+A grant is the access that a client has to one keyset. The first use of a
+keyset on a client fails as follows:
+
+| Cause | Error | `Code` of the `*Diagnostic` |
+|---|---|---|
+| No keyset in the workspace has the name or id | `ErrNotFound` | `stack_kms::keyset_not_found` |
+| The keyset exists, but the client has no grant for it | `ErrNotFound` | `stack_kms::keyset_not_found` |
+| The keyset is disabled | `ErrForbidden` | `stack_kms::load_keyset_forbidden` |
+| The name breaks the rules in [Keyset names](#keyset-names) | `ErrEncoding` | no ZeroKMS code: the SDK refuses the name before any request |
+
+A missing keyset and a missing grant give the same error, because ZeroKMS
+answers both with "not found". So when you see `ErrNotFound`, check that the
+keyset exists, and then check that the client has a grant for it. The
+error's `Help` says to check the name, and does not mention a grant: #1897
+proposes to change that.
+
+A later call that asks ZeroKMS for data keys can return `ErrForbidden`,
+with the code `stack_kms::retrieve_key_failed`. A client with no grant is
+one cause, as #1893 reports. Other causes give the same error and code.
+
+The `encrypttest` client accepts every keyset name and needs no grant. So
+these errors do not occur in a test that uses it. See
+[Testing your application](#testing-your-application).
+
+#### Keyset names
+
+ZeroKMS accepts a keyset name that follows these rules:
+
+- It is 1 to 64 characters long.
+- It contains only the ASCII letters `A` to `Z` and `a` to `z`, the digits `0`
+  to `9`, and the characters `_`, `-`, and `/`. So a name with a space, a dot,
+  or a letter outside ASCII is refused.
+- It is not `default`, in any mix of upper and lower case, when you create a
+  keyset. That name belongs to the workspace's default keyset.
+
+The SDK checks the first two rules before it sends a request, and refuses a
+name that breaks one with `ErrEncoding`. The error does not say which rule
+the name broke. #1905 proposes to change that.
+
+Names are case-sensitive: `KeysetName("Tenant42")` and
+`KeysetName("tenant42")` name different keysets.
+
+`KeysetName("default")` selects the workspace's default keyset.
+`Client.DefaultKeyset()` selects the client's default keyset. The two are
+the same keyset unless the client was created with another default keyset.
+
+Users report that the dashboard refuses a hyphen in a keyset name (#1865).
+So a keyset that you create in the dashboard has no hyphen in its name, even
+though the SDK accepts one.
+
 ### Audit metadata
 
 ZeroKMS logs every data-key request with the identity that made it. To

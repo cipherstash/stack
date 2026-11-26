@@ -23,6 +23,27 @@ type KeysetSelector interface {
 // KeysetName selects a keyset by name. Its first use on a client is one
 // ZeroKMS round trip; the binding is cached by the guest for a bounded
 // window, after which the name is resolved again.
+//
+// A keyset name follows the rules ZeroKMS sets:
+//
+//   - It is 1 to 64 bytes long.
+//   - It contains only the ASCII letters A to Z and a to z, the digits 0 to
+//     9, and the characters _, -, and /. A name with a space, a dot, or a
+//     letter outside ASCII is refused.
+//   - It is case-sensitive: "Tenant42" and "tenant42" name different
+//     keysets.
+//
+// The guest checks the length and the characters before any request, and
+// refuses a name that breaks either rule with [ErrEncoding].
+//
+// KeysetName("default") selects the workspace's default keyset, the keyset
+// named default. ZeroKMS refuses to create another keyset with that name,
+// in any mix of upper and lower case. [Client.DefaultKeyset] selects the
+// client's default keyset instead, which is a different keyset if the client
+// was created with another default.
+//
+// Users report that the CipherStash dashboard refuses a hyphen in a keyset
+// name, although ZeroKMS and the SDK accept one.
 type KeysetName string
 
 func (n KeysetName) selector() map[string]any { return map[string]any{"name": string(n)} }
