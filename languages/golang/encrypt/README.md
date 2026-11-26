@@ -226,10 +226,12 @@ CS_CLIENT_ACCESS_KEY=CSAK...
 - `stash env` shows the access key once only. Put the four values in your
   deployment's secret store straight away.
 - Only the dotenv block goes to standard output. Progress goes to standard
-  error, so you can pipe the output to a secret store, or redirect it to a
-  file.
+  error, so you can pipe the output straight to a secret store.
 - `--write` writes the block to a file instead, `.env.production.local`
-  unless you name another path. The file has mode 0600.
+  unless you name another path. The file has mode 0600, so only you can
+  read it. Use `--write` rather than a shell redirect such as `>`. A file
+  that a redirect creates takes its mode from your umask, often 0644. With
+  mode 0644, every user on the machine can read the keys.
 - `--json` prints the result as JSON lines and asks no questions, for CI.
 - To make an access key, your user needs the admin role in the workspace.
   The access key itself has the member role.
@@ -273,8 +275,16 @@ separately, and each one falls back to the developer profile:
 
 So a server with some of the variables missing uses a profile for the rest,
 with no warning, if one exists. A profile can be left in a container image,
-or mounted from a home directory. `NewClient` fails only when neither the
-environment nor a profile has the credentials.
+or mounted from a home directory.
+
+These settings make `NewClient` fail without reading the profile:
+
+- `CS_CLIENT_ACCESS_KEY` is set without `CS_WORKSPACE_CRN`.
+- `CS_WORKSPACE_CRN` is set to a value that is not a CRN.
+- One of `CS_CLIENT_ID` and `CS_CLIENT_KEY` is empty while the other is set.
+
+Otherwise, `NewClient` fails when neither the environment nor a profile has
+the credentials.
 
 ### Environment variables the SDK reads
 
@@ -289,7 +299,8 @@ environment nor a profile has the credentials.
 | `CS_ZEROKMS_HOST` | The URL of ZeroKMS, under every kind of credentials. It must be an `http` or `https` URL with a host. Any other value makes `NewClient` fail with `ErrEncoding`. | The URL comes from the token. |
 | `CS_VITUR_HOST` | The old name for `CS_ZEROKMS_HOST`. It is read only when `CS_ZEROKMS_HOST` is not set. | As for `CS_ZEROKMS_HOST`. |
 
-A variable that is set to an empty value makes `NewClient` fail, with two
+An empty value matters only in a variable that the credentials you chose
+read. In such a variable, an empty value makes `NewClient` fail, with two
 exceptions. `CS_CTS_HOST` and `CS_CONFIG_PATH` treat an empty value as not
 set. An empty `CS_CLIENT_ID` or `CS_CLIENT_KEY` fails only if the other
 variable is also set.
