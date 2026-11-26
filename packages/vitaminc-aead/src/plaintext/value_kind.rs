@@ -13,7 +13,7 @@ use super::kinds::{FixedType, Float, Int, Logical, Physical, TimeUnit, Width};
 
 /// What a value is, without the value: a boolean, an integer of one width
 /// and sign, a float of one width, a decimal, a date, a timestamp, text,
-/// bytes, an array, an object or a JSON document. What a schema declares a
+/// bytes, an array, an object, a UUID or a JSON document. What a schema declares a
 /// column holds.
 ///
 /// [`Kind`](super::Kind) is a different thing: the physical storage of one
@@ -82,6 +82,8 @@ pub enum ValueKind {
     Array,
     /// `"object"`. Says nothing about the entries' kinds.
     Object,
+    /// `"uuid"`: [`Logical::Uuid`] over sixteen bytes.
+    Uuid,
     /// `"json"`: a JSON document, carried as UTF-8 JSON text in a text or
     /// bytes leaf. A column declares it; a scalar is never of this kind
     /// ([`of`](Self::of) says [`String`](Self::String) or
@@ -107,7 +109,7 @@ pub enum SealedNull {
 
 impl ValueKind {
     /// Every kind, in declaration order.
-    pub const ALL: [ValueKind; 21] = [
+    pub const ALL: [ValueKind; 22] = [
         ValueKind::Bool,
         ValueKind::Int8,
         ValueKind::Int16,
@@ -128,6 +130,7 @@ impl ValueKind {
         ValueKind::Bytes,
         ValueKind::Array,
         ValueKind::Object,
+        ValueKind::Uuid,
         ValueKind::Json,
     ];
 
@@ -135,7 +138,7 @@ impl ValueKind {
     /// `"int32"`, `"int64"`, `"int128"`, `"uint8"`, `"uint16"`, `"uint32"`,
     /// `"uint64"`, `"uint128"`, `"float32"`, `"float64"`, `"decimal"`,
     /// `"date"`, `"timestamp"`, `"string"`, `"bytes"`, `"array"`,
-    /// `"object"` or `"json"`. These names never change.
+    /// `"object"`, `"uuid"` or `"json"`. These names never change.
     pub const fn name(self) -> &'static str {
         match self {
             ValueKind::Bool => "bool",
@@ -158,6 +161,7 @@ impl ValueKind {
             ValueKind::Bytes => "bytes",
             ValueKind::Array => "array",
             ValueKind::Object => "object",
+            ValueKind::Uuid => "uuid",
             ValueKind::Json => "json",
         }
     }
@@ -165,7 +169,8 @@ impl ValueKind {
     /// The kind of the scalar `value` under `ty`, or `None` for a scalar of
     /// no kind: a null (plain, or JavaScript's `undefined`), a value its
     /// logical type does not admit ([`Logical::admits`]), and a logical
-    /// type no `ValueKind` names (a uuid, or one this build does not know).
+    /// type no `ValueKind` names (`undefined`, or one this build does not
+    /// know).
     ///
     /// An integer's width and sign, and a float's width, are part of its
     /// kind. A decimal of any scale and a timestamp of any unit are one
@@ -211,7 +216,8 @@ impl ValueKind {
             Logical::Date => Some(ValueKind::Date),
             Logical::Timestamp(_) => Some(ValueKind::Timestamp),
             Logical::Decimal { .. } => Some(ValueKind::Decimal),
-            Logical::Undefined | Logical::Uuid | Logical::Unknown(_) => None,
+            Logical::Uuid => Some(ValueKind::Uuid),
+            Logical::Undefined | Logical::Unknown(_) => None,
         }
     }
 
@@ -222,8 +228,9 @@ impl ValueKind {
     ///
     /// The scalar is zero, `false`, empty text or empty bytes. An integer
     /// or float has the kind's width. A decimal is at scale 0 and a
-    /// timestamp in nanoseconds, each as a 128-bit integer, and a date is a
-    /// 32-bit day count: the forms they are sealed in.
+    /// timestamp in nanoseconds, each as a 128-bit integer, a date is a
+    /// 32-bit day count, and a UUID is sixteen zero bytes: the forms they
+    /// are sealed in.
     pub const fn zero(self) -> Option<(Option<Logical>, Physical<'static>)> {
         Some(match self {
             ValueKind::Bool => (None, Physical::Bool(false)),
@@ -303,6 +310,7 @@ impl ValueKind {
             ValueKind::Timestamp => {
                 FixedType::new(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128)
             }
+            ValueKind::Uuid => FixedType::new(Some(Logical::Uuid), Width::Bytes16),
             ValueKind::Bool
             | ValueKind::String
             | ValueKind::Bytes
@@ -371,6 +379,7 @@ mod tests {
                 "bytes",
                 "array",
                 "object",
+                "uuid",
                 "json",
             ],
             "the names never change"
@@ -473,10 +482,6 @@ mod tests {
             ValueKind::of(Some(Logical::Undefined), &Physical::Null),
             None
         );
-        assert_eq!(
-            ValueKind::of(Some(Logical::Uuid), &Physical::Bytes(&[0; 16])),
-            None
-        );
         let unknown = Logical::from_wire(200, 0).expect("an unknown id");
         assert!(matches!(unknown, Logical::Unknown(UnknownLogical { .. })));
         assert_eq!(ValueKind::of(Some(unknown), &int(1)), None);
@@ -547,6 +552,10 @@ mod tests {
             (ValueKind::Bytes, None),
             (ValueKind::Array, None),
             (ValueKind::Object, None),
+            (
+                ValueKind::Uuid,
+                FixedType::new(Some(Logical::Uuid), Width::Bytes16).map(SealedNull::Typed),
+            ),
             (ValueKind::Json, None),
         ];
         for (kind, want) in cases {
@@ -571,5 +580,51 @@ mod tests {
                 "{kind}"
             );
         }
+    }
+
+    /// A UUID is its own kind: `Logical::Uuid` over sixteen bytes, and
+    /// nothing else. Its zero is sixteen zero bytes, its null is padded to
+    /// a UUID leaf's length, and it holds only itself.
+    #[test]
+    fn uuid_is_sixteen_bytes_under_its_logical_type() {
+        assert_eq!(ValueKind::Uuid.name(), "uuid");
+        assert_eq!("uuid".parse::<ValueKind>(), Ok(ValueKind::Uuid));
+        assert_eq!(
+            ValueKind::of(Some(Logical::Uuid), &Physical::Bytes(&[7; 16])),
+            Some(ValueKind::Uuid)
+        );
+        // Not sixteen bytes, or not bytes: not admitted, so of no kind.
+        assert_eq!(
+            ValueKind::of(Some(Logical::Uuid), &Physical::Bytes(&[7; 15])),
+            None
+        );
+        assert_eq!(
+            ValueKind::of(Some(Logical::Uuid), &Physical::Text("0123456789abcdef")),
+            None
+        );
+        // Sixteen bytes with no logical type are bytes.
+        assert_eq!(
+            ValueKind::of(None, &Physical::Bytes(&[7; 16])),
+            Some(ValueKind::Bytes)
+        );
+        assert_eq!(
+            ValueKind::Uuid.zero(),
+            Some((Some(Logical::Uuid), Physical::Bytes(&[0; 16])))
+        );
+        let Some(SealedNull::Typed(fixed)) = ValueKind::Uuid.sealed_null() else {
+            panic!("a UUID's null is typed");
+        };
+        assert_eq!(fixed.logical(), Some(Logical::Uuid));
+        assert_eq!(fixed.width(), Width::Bytes16);
+        assert!(ValueKind::Uuid.holds(Some(ValueKind::Uuid)));
+        for found in ValueKind::ALL {
+            assert_eq!(
+                ValueKind::Uuid.holds(Some(found)),
+                found == ValueKind::Uuid,
+                "{found}"
+            );
+        }
+        assert!(!ValueKind::Bytes.holds(Some(ValueKind::Uuid)));
+        assert!(!ValueKind::Uuid.holds(None));
     }
 }

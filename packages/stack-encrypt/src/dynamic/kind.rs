@@ -48,26 +48,28 @@ use crate::target::IndexSpec;
 ///
 /// The table [`IndexSpec::defines`] reads for a value, stated over kinds
 /// instead, so a plan can be refused when it is built rather than when its
-/// first value arrives. Equality is vitaminc's: every kind
-/// `vitaminc-normalize` gives an equality domain, which is every integer
-/// of every width, both floats, a decimal, a date, a timestamp, text and
-/// bytes, and not a boolean. The rest are this crate's: match over text
-/// alone, and ORE, OPE and block ORE over the integers of 16 bits and
-/// wider, both floats, text, a decimal, a date and a timestamp. A
+/// first value arrives. The kind is asked through a value of it
+/// ([`ValueKind::zero`]): every value of a kind is treated alike by these
+/// rules. Equality is vitaminc's: every kind `vitaminc-normalize` gives an
+/// equality domain, which is every integer of every width, both floats, a
+/// decimal, a date, a timestamp, text, bytes and a UUID, and not a boolean.
+/// The rest are this crate's: match over text alone, and ORE, OPE and block
+/// ORE over the integers of 16 bits and wider, both floats, text, a decimal,
+/// a date and a timestamp. A
 /// boolean and an 8-bit integer have no order term: over so small a domain
 /// it would reveal which rows are `true`, or each row's rank among 256
 /// values. A composite (`array`, `object`) has no term. Only the index's
 /// kind matters: a match index's options do not change what it applies to.
 ///
-/// Bytes have no order term: no ordering operator compares them, so no
-/// query could use a stored term, and anyone who reads the rows could
-/// still compare the terms. So a plan refuses an order index on bytes, as
-/// [`IndexSpec::defines`] gives bytes no order term.
+/// Bytes and a UUID have no order term: no ordering operator compares
+/// them, so no query could use a stored term, and anyone who reads the rows
+/// could still compare the terms. So a plan refuses an order index on
+/// either, as [`IndexSpec::defines`] gives neither an order term.
 ///
 /// A plan therefore accepts an index on a kind only if one of the
 /// index's operators accepts that kind. The typed interface has the same
 /// rule: an order index needs [`Orderable`](crate::Orderable), which does
-/// not cover bytes.
+/// not cover bytes or a UUID.
 ///
 /// ```
 /// use stack_encrypt::dynamic::{admits, ValueKind};
@@ -84,6 +86,8 @@ use crate::target::IndexSpec;
 /// assert!(!admits(ValueKind::Object, &IndexSpec::Ore));
 /// assert!(admits(ValueKind::Bytes, &IndexSpec::Equality));
 /// assert!(!admits(ValueKind::Bytes, &IndexSpec::Ore));
+/// assert!(admits(ValueKind::Uuid, &IndexSpec::Equality));
+/// assert!(!admits(ValueKind::Uuid, &IndexSpec::Ore));
 /// ```
 pub fn admits(kind: ValueKind, index: &IndexSpec) -> bool {
     kind.zero()
@@ -346,6 +350,7 @@ mod tests {
                 "bytes",
                 "array",
                 "object",
+                "uuid",
                 "json"
             ],
             "the frozen names"
@@ -403,6 +408,7 @@ mod tests {
             ValueKind::Bytes => tree(Tree::Bytes(b"ab".to_vec())),
             ValueKind::Array => tree(Tree::Array(vec![Tree::UInt32(1)])),
             ValueKind::Object => tree(Tree::Object(vec![("k".to_string(), Tree::UInt32(1))])),
+            ValueKind::Uuid => scalar(Some(Logical::Uuid), Physical::Bytes(&[7; 16])),
             // A document crosses as its text: a value of kind string.
             ValueKind::Json => tree(Tree::String(r#"{"k": 1}"#.into())),
         }
@@ -584,6 +590,35 @@ mod tests {
             assert!(admits(kind, &IndexSpec::OreBlock), "{kind} ore_block");
             assert!(!admits(kind, &matched), "{kind} match");
         }
+    }
+
+    /// A UUID admits equality, which `vitaminc-normalize` gives a domain of
+    /// its own, distinct from the same sixteen bytes as bytes. It admits no
+    /// order index, which no ordering operator would use, and no match.
+    #[test]
+    fn a_uuid_admits_equality_alone() {
+        assert!(admits(ValueKind::Uuid, &IndexSpec::Equality));
+        for index in [IndexSpec::Ore, IndexSpec::Ope, IndexSpec::OreBlock] {
+            assert!(!admits(ValueKind::Uuid, &index), "uuid and {index}");
+            assert_eq!(
+                not_admitted(ValueKind::Uuid, &index),
+                Some(Reason::IndexNotAdmitted),
+                "uuid and {index}"
+            );
+        }
+        assert!(!admits(
+            ValueKind::Uuid,
+            &IndexSpec::Match(MatchOptions::default())
+        ));
+        let uuid = sample(ValueKind::Uuid);
+        assert_eq!(uuid.kind(), Some(ValueKind::Uuid));
+        assert!(IndexSpec::Equality.defines(&uuid));
+        assert!(!IndexSpec::Ore.defines(&uuid));
+        assert!(!ValueKind::Bytes.holds(uuid.kind()));
+        // Sixteen bytes are bytes, not a UUID: read as a UUID they are
+        // refused, since nothing converts to one.
+        assert!(read_frame(ValueKind::Uuid, Tree::Bytes(vec![7; 16])).is_none());
+        assert!(reads_as(ValueKind::Uuid, &uuid, sample(ValueKind::Uuid)));
     }
 
     /// `not_admitted` is `admits` with a reason: none for an admitted pair,

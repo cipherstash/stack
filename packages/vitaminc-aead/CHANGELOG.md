@@ -18,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `plaintext::ValueKind`: what a value is, without the value, with the text name a schema spells it with (`"int32"`, `"timestamp"`, `"object"`, `"json"`, …).
   It covers every scalar, an array, an object and a JSON document.
+  `ValueKind::Uuid` (`"uuid"`) is a UUID: `Logical::Uuid` over sixteen bytes. Its zero is sixteen zero bytes, its null is a typed null as long as a UUID leaf, and it holds only a UUID.
+  It does not depend on the `uuid` feature, which gates only the conversions to and from `uuid::Uuid`.
   It differs from `Kind`, which is the physical storage of one scalar leaf alone.
   `ValueKind::of` gives the kind of a scalar (never `Json`: a document crosses as text or bytes), and `ValueKind::zero` a scalar of the kind.
   `ValueKind::holds` says whether a value of one kind is a value of a declared kind.
