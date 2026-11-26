@@ -367,8 +367,7 @@ gives a different error when the tenant does not match.
 | A scope for each tenant | `cipher.Scope("tenant42")` | the context: one keyset, with the tenant added to the context of every field |
 | A `context_field` | a field tagged `stash:"tenant,context_field"` | the context of each row: the row stores its tenant, and its other fields are sealed under it |
 
-For how to create a keyset and give a client access to it, see
-[Keysets](#keysets).
+For how to select a keyset, see [The cipher](#the-cipher).
 
 ### When to use each way
 
@@ -413,15 +412,33 @@ the `Help` of its `*Diagnostic` is empty. A client with no grant for a keyset ge
 and code when it asks for data keys. Issue #1893 proposes a `Help` for
 each cause.
 
-A query with the wrong tenant returns no error, and matches none of the
-other tenant's rows. The query term derives under the cipher's keyset and
-scope, so it differs from the stored term. A query on a type with a `context_field`
-derives under the tenant that `cipher.Context(..)` names. Through a cipher
-with no `Context`, the query fails with `ErrEncoding`.
-
 The test client from `encrypttest` gives the same errors as ZeroKMS for a
 wrong keyset, scope, or `context_field`. See
 [Testing your application](#testing-your-application).
+
+### Queries with the wrong tenant
+
+A query with the wrong keyset or the wrong scope returns no error. What it
+matches depends on the kind of query.
+
+An equality query (`Eq`) or a match query (`Matches`) matches none of the
+other tenant's rows. The query term derives under the cipher's keyset and
+scope, so it differs from every term the other tenant stored.
+
+A range query can return the other tenant's rows, with an ORE index or an
+OPE index. The range queries are `Lt`, `Lte`, `Gt`, `Gte`, and `Between`.
+The database still compares the query term with the other tenant's terms,
+and the result of that comparison has no relation to the values. In a test
+against EQL v4 columns, such a query returned all of the other tenant's
+rows or none of them.
+
+So a count or a list of the rows that such a query returns is wrong. A
+decrypt of those rows through the same cipher fails with the error in the
+table above.
+
+A query on a type with a `context_field` derives under the tenant that
+`cipher.Context(..)` names. Through a cipher with no `Context`, the query
+fails with `ErrEncoding`.
 
 ## What is stored
 

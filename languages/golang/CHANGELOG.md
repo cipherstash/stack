@@ -24,7 +24,8 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 - The `encrypt` README has a section on separating tenants (#1885). It
   compares a keyset for each tenant, a scope, and a `context_field`. It
   says when to use each one, and gives the error for a wrong tenant with
-  each one.
+  each one. It also says that a range query through the wrong keyset or
+  scope can return the other tenant's rows, with no error.
 
 ## [0.1.0-rc.7] - 2026-11-25
 
