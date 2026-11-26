@@ -1,5 +1,5 @@
 {
-  "_comment": "The v4 query operands eql-bindings derives for one plaintext of each OPE-ordered type under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit.",
+  "_comment": "The v4 query operands eql-bindings derives for one plaintext of each OPE-ordered type under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit. After regenerating, run pnpm run code:fix.",
   "floor": {
     "plaintext": -3,
     "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"floor\"},\"op\":\"00ef8ea3833a80e22d0add60fdbcf250c26a3ce5ca10d6bb890804e19e4458fb1b\"}"

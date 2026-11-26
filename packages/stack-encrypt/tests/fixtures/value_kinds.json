@@ -1,5 +1,5 @@
 {
-  "_comment": "One field of each value kind added in #1144, sealed by the data-plan lowering under a deterministic key source, with each value's transport frame and the equality queries vitaminc-normalize folds onto a stored term. Read by tests/value_kinds.rs and the Go SDK's encrypt tests; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand.",
+  "_comment": "One field of each value kind added in #1144, sealed by the data-plan lowering under a deterministic key source, with each value's transport frame and the equality queries vitaminc-normalize folds onto a stored term. Read by tests/value_kinds.rs and the Go SDK's encrypt tests; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand. After regenerating, run pnpm run code:fix.",
   "key_source": {
     "kind": "deterministic-sha256",
     "seed": "737461636b2d656e63727970742076616c7565206b696e647320763120202020"

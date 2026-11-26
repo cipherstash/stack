@@ -283,7 +283,7 @@ func TestV4JSONRowsMatchTheCommittedFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture := jsonFixtureOf("Setting rows sealed by the Go SDK's generated code over the deterministic EQL guest with the seed below, as the storage-only Json type; the Rust suite opens them. Regenerate with EQL_UPDATE_FIXTURES=1 go test ./encrypt -run TestV4JSONRows, do not edit.", settingRows, encrypted)
+	fixture := jsonFixtureOf("Setting rows sealed by the Go SDK's generated code over the deterministic EQL guest with the seed below, as the storage-only Json type; the Rust suite opens them. Regenerate with EQL_UPDATE_FIXTURES=1 go test ./encrypt -run TestV4JSONRows, do not edit. After regenerating, run pnpm run code:fix.", settingRows, encrypted)
 	rendered, err := json.MarshalIndent(fixture, "", "  ")
 	if err != nil {
 		t.Fatal(err)

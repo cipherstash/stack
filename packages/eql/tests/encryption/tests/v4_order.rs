@@ -500,7 +500,7 @@ async fn the_ordered_query_fixture_is_what_the_dispatch_derives() {
         }
     };
     let fixture = serde_json::json!({
-        "_comment": "The v4 query operands eql-bindings derives for one plaintext of each OPE-ordered type under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit.",
+        "_comment": "The v4 query operands eql-bindings derives for one plaintext of each OPE-ordered type under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit. After regenerating, run pnpm run code:fix.",
         "table": "rankings",
         "level": {"plaintext": 10, "query": query("IntegerOrd", "level", frame::<i32>(10)).await},
         "floor": {"plaintext": -3, "query": query("IntegerOrdOpe", "floor", frame::<i32>(-3)).await},
@@ -519,10 +519,14 @@ async fn the_ordered_query_fixture_is_what_the_dispatch_derives() {
     if std::env::var_os("EQL_UPDATE_FIXTURES").is_some() {
         std::fs::write(&path, &rendered).unwrap();
     }
-    let committed = std::fs::read_to_string(&path)
-        .expect("fixtures/v4_ordered_queries.json is committed; EQL_UPDATE_FIXTURES=1 writes it");
+    // Parsed, not as text: the file is committed as Biome formats it.
+    let committed: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect(
+            "fixtures/v4_ordered_queries.json is committed; EQL_UPDATE_FIXTURES=1 writes it",
+        ))
+        .expect("the fixture is JSON");
     assert_eq!(
-        committed, rendered,
+        committed, fixture,
         "the committed fixture is what the dispatch derives today"
     );
 }

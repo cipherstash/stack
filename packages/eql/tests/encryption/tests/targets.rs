@@ -769,7 +769,7 @@ mod the_cross_language_fixture {
             "a query mints nothing"
         );
         let fixture = serde_json::json!({
-            "_comment": "The TextEqQuery eql-bindings derives for the plaintext under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit.",
+            "_comment": "The TextEqQuery eql-bindings derives for the plaintext under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit. After regenerating, run pnpm run code:fix.",
             "table": "users",
             "column": "email",
             "plaintext": PLAINTEXT,
@@ -779,10 +779,14 @@ mod the_cross_language_fixture {
         if std::env::var_os("EQL_UPDATE_FIXTURES").is_some() {
             std::fs::write(fixture_path(), &rendered).unwrap();
         }
-        let committed = std::fs::read_to_string(fixture_path())
-            .expect("fixtures/text_eq_query.json is committed; EQL_UPDATE_FIXTURES=1 writes it");
+        // Parsed, not as text: the file is committed as Biome formats it.
+        let committed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(fixture_path()).expect(
+                "fixtures/text_eq_query.json is committed; EQL_UPDATE_FIXTURES=1 writes it",
+            ))
+            .expect("the fixture is JSON");
         assert_eq!(
-            committed, rendered,
+            committed, fixture,
             "the committed fixture is what the dispatch derives today"
         );
         let typed: TextEqQuery = PLAINTEXT

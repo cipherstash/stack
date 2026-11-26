@@ -344,7 +344,7 @@ async fn derived() -> Json {
     // as every other key is: it keeps the wording the fixture was written
     // with.
     json!({
-        "_comment": "Query terms derived by operator through the data path (stack_encrypt::dynamic::query_term), each equal to the typed query chain's, with a verified page and fetch limits. Read by tests/query_operators.rs and the Go SDK's tests; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand.",
+        "_comment": "Query terms derived by operator through the data path (stack_encrypt::dynamic::query_term), each equal to the typed query chain's, with a verified page and fetch limits. Read by tests/query_operators.rs and the Go SDK's tests; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand. After regenerating, run pnpm run code:fix.",
         "key_source": { "kind": "deterministic-sha256", "seed": hex(&SEED) },
         "keyset_id": keyset.keyset_id().await.unwrap().to_string(),
         "plan": plan_json(),

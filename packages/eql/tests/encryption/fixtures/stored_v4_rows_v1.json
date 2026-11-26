@@ -1,5 +1,5 @@
 {
-  "_comment": "FROZEN. Profile rows the Go SDK's generated code stored with the next build, over the deterministic EQL guest with the seed below. Every later build must open them (Rust: tests/v4_types.rs; Go: TestFrozenV4RowsStillOpen), and sealing their plaintexts must give the same envelopes and terms. Never regenerate or edit this file: a change to the stored format adds stored_v4_rows_v2.json beside it.",
+  "_comment": "FROZEN. Profile rows the Go SDK's generated code stored with the next build, over the deterministic EQL guest with the seed below. Every later build must open them (Rust: tests/v4_types.rs; Go: TestFrozenV4RowsStillOpen), and sealing their plaintexts must give the same envelopes and terms. Never regenerate or edit this file: a change to the stored format adds stored_v4_rows_v2.json beside it. Formatting with pnpm run code:fix may change this file's layout; its parsed content must never change, this note excepted.",
   "seed": "encrypt round-trip tests seed v1",
   "table": "profiles",
   "rows": [

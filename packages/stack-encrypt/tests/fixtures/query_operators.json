@@ -1,5 +1,5 @@
 {
-  "_comment": "Query terms derived by operator through the data path (stack_encrypt::dynamic::query_term), each equal to the typed query chain's, with a verified page and fetch limits. Read by tests/query_operators.rs and the Go SDK's tests; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand.",
+  "_comment": "Query terms derived by operator through the data path (stack_encrypt::dynamic::query_term), each equal to the typed query chain's, with a verified page and fetch limits. Read by tests/query_operators.rs and the Go SDK's tests; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand. After regenerating, run pnpm run code:fix.",
   "key_source": {
     "kind": "deterministic-sha256",
     "seed": "737461636b2d656e6372797074207265636f7264206669787475726520763120"
