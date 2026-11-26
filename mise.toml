@@ -62,10 +62,12 @@ run = "mise x --env test -- cargo test --doc --all-features --workspace"
 description = "Build docs for every crate that defines a doc:<crate> task (warnings are errors)"
 depends = ["doc:*"]
 
-# Mutation testing, the same shape as `doc`: each crate that opts in defines
-# `mutants:<crate>` in its tasks.toml (a full sweep of that crate, reading
-# .cargo/mutants.toml), and this fans out over them. Slow — see the per-crate
-# tasks for timings.
+# Mutation testing, the same shape as `doc`: stack-auth and stack-encrypt
+# define `mutants:<crate>` in their tasks.toml (a full sweep of that crate,
+# reading .cargo/mutants.toml), and this fans out over them. Slow — see the
+# per-crate tasks for timings. The other crates mutants.yml gates have no
+# local task; their full sweep is a manual dispatch of mutants.yml, which
+# sweeps every crate, one job each.
 [tasks.mutants]
 description = "Full mutation-testing sweep of every crate that defines a mutants:<crate> task (slow)"
 depends = ["mutants:*"]

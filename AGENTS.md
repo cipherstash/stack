@@ -904,12 +904,14 @@ The crates that opt in (stack-auth, stack-encrypt, stack-encrypt-jsonpath,
 vitaminc-aead, vitaminc-aead-frame, vitaminc-aead-derive) are mutation-tested
 with cargo-mutants; config in `.cargo/mutants.toml`. CI (`mutants.yml`)
 gates every PR touching them with `--in-diff`: only the lines the PR changes are mutated, and
-a surviving mutant fails the job. A full sweep is slow and is run locally:
+a surviving mutant fails the job. A full sweep of every one of them is a
+manual dispatch of `mutants.yml`, one job per crate. stack-auth and
+stack-encrypt can also be swept locally:
 
 ```bash
 mise run mutants:stack-auth         # ~15 min
 mise run mutants:stack-encrypt      # ~60 min
-mise run mutants                    # every crate with a mutants:<crate> task
+mise run mutants                    # both of the above
 ```
 
 A non-equivalent surviving mutant means the test suite does not distinguish

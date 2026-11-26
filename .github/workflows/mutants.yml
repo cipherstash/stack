@@ -10,7 +10,9 @@ name: Mutants
 # body with `Default::default()`) and reruns the tests; a mutant that survives
 # is a line the suite does not pin down. Scoped with `--in-diff` to the PR's
 # own changes: a full sweep is far too slow for a per-PR gate (stack-encrypt:
-# ~60 min). Run one locally with `mise run mutants:<crate>`. Features, the test
+# ~60 min). A full sweep of every opted-in crate is a manual dispatch of this
+# workflow, one job per crate; stack-auth and stack-encrypt also have a local
+# `mise run mutants:<crate>`. Features, the test
 # filter (which drops the trybuild `ui` binary), excludes and timeouts live in
 # .cargo/mutants.toml, so the gate and the local tasks agree.
 #
@@ -70,14 +72,23 @@ env:
 
 jobs:
   mutants:
-    name: Mutants gate
+    # One job on a pull request, mutating the diff across every crate; one
+    # job per crate on a manual dispatch, which sweeps each crate whole.
+    # The pull request's check keeps the name "Mutants gate".
+    name: ${{ matrix.crate == 'all' && 'Mutants gate' || format('Mutants sweep ({0})', matrix.crate) }}
     # Not on the release PR (next into main). Every line of its diff arrived
     # through a PR into next, which this gate already mutated; the release
     # diff yields thousands of mutants, hours of runner time, and cannot
     # finish inside the timeout, so it would only spend money and fail.
     if: github.event_name != 'pull_request' || !(github.head_ref == 'next' && github.base_ref == 'main')
     runs-on: blacksmith-16vcpu-ubuntu-2204
-    timeout-minutes: 120
+    # A crate's sweep runs four mutants at a time; vitaminc-aead (about a
+    # thousand mutants) and stack-encrypt are the slowest.
+    timeout-minutes: ${{ matrix.crate == 'all' && 120 || 240 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: ${{ fromJSON(github.event_name == 'pull_request' && '["all"]' || '["stack-auth","stack-encrypt","stack-encrypt-jsonpath","vitaminc-aead","vitaminc-aead-frame","vitaminc-aead-derive"]') }}
     permissions:
       contents: read
       # Posts and updates the report comment on the PR.
@@ -108,7 +119,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       # PR only: a manual dispatch has no base to diff against, so it sweeps
-      # every crate below instead (see the next step).
+      # each crate whole instead, one matrix job per crate.
       #
       # The base comes from the API at run time, not from the event payload.
       # For a pull request whose base branch is itself the head of another
@@ -144,14 +155,14 @@ jobs:
         id: mutants
         continue-on-error: true
         env:
-          EVENT_NAME: ${{ github.event_name }}
+          CRATE: ${{ matrix.crate }}
         run: |
           set +e
           crates=(-p stack-auth -p stack-encrypt -p stack-encrypt-jsonpath -p vitaminc-aead -p vitaminc-aead-frame -p vitaminc-aead-derive)
-          if [ "$EVENT_NAME" = "pull_request" ]; then
+          if [ "$CRATE" = "all" ]; then
             cargo mutants --no-shuffle -vV "${crates[@]}" --in-diff pr.diff
           else
-            cargo mutants --no-shuffle -vV "${crates[@]}"
+            cargo mutants --no-shuffle -vV -p "$CRATE" -j 4
           fi
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
