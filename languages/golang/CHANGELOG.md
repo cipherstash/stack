@@ -13,6 +13,15 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The docs name the types that implement `driver.Valuer`** (#1861). They
+  said every stored type does. The struct that stashgen writes for a field
+  with `encrypt` or `index=`, such as `EncryptedUserEmail`, does not. Bind
+  and scan each of its fields as its own column. The docs also said every
+  query type implements `driver.Valuer`. A `Range` does not: it binds as two
+  parameters.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

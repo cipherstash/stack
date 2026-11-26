@@ -361,8 +361,14 @@ A field with `encrypt` and `index=` is a struct with one field for each
 output: `Ciphertext` (`encrypt.Ciphertext`, the frozen stack-encrypt leaf),
 and `Equality`, `Match`, `Ore` or `Ope` (the term types). A field with
 `encrypt` alone has `Ciphertext` only. A passthrough field keeps its Go type.
-An `opaque` struct is one `Sealed` field. Every stored type implements
-`driver.Valuer` and `sql.Scanner`.
+An `opaque` struct is one `Sealed` field.
+
+Each stored value is one column. `encrypt.Ciphertext`, the term types and
+every type in `encrypt/eql` implement `driver.Valuer` and `sql.Scanner`, so a
+database library binds and scans each one. The struct that contains a
+field's outputs, such as `EncryptedUserEmail`, implements neither. Bind and scan each
+of its fields as its own column: `Email.Ciphertext`, `Email.Equality`. A
+passthrough field implements them only when its own Go type does.
 
 A sealed field outside an opaque struct is one value of one of these types,
 or a type defined over one (`type Email string`):
@@ -471,9 +477,11 @@ bytes, so the term would be stored, where anyone who reads the column can
 compare it, and no query could use it. A match index on an index-only field (`index=match` with no `encrypt`)
 is refused, because `Verify` checks a match query's rows by decrypting them.
 
-Every query type implements `driver.Valuer`, so it binds as a parameter in
-any library built on `database/sql` or pgx. A `Range` binds as two
-parameters, `Low` and `High`. On an EQL column a range is one value instead:
+`encrypt.EqualityTerm`, `encrypt.OreTerm`, `encrypt.OpeTerm`,
+`encrypt.MatchQuery`, `encrypt.EQLMatchQuery` and every query type in
+`encrypt/eql` implement `driver.Valuer`. Each binds as one parameter in any
+library built on `database/sql` or pgx. A `Range` does not: it binds as
+two parameters, `Low` and `High`. On an EQL column a range is one value instead:
 package `encrypt/eql` has a range query type per ordered family and order
 index (`eql.IntegerRangeOreQuery`, `eql.TextRangeOpeQuery`, ...), the one
 operand of `eql_v4.between(column, $1::eql_v4.query_integer_range_ore)`. Keep

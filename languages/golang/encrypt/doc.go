@@ -146,7 +146,15 @@
 // the Rust crate derives, so a term from a generated Fields entry compares
 // against a stored term from any language. The indexes are [Equality],
 // [Match], [Ore] and [Ope]; [JSON] is declared and refused until the engine
-// derives it. Every stored type implements driver.Valuer and sql.Scanner.
+// derives it.
+//
+// Each stored value is one column. [Ciphertext], the term types and every
+// type in package eql implement driver.Valuer and sql.Scanner, so a
+// database library binds and scans each one. The struct that generated code
+// writes for a field's outputs (EncryptedUserEmail, with Ciphertext and
+// Equality fields) implements neither. Bind and scan each of its fields as
+// its own column. A passthrough field implements them only when its own Go
+// type does.
 //
 // A match index stores text with no token (an empty string, separator-only
 // text, or text shorter than the n-gram length of 3 characters) as the empty
@@ -178,8 +186,10 @@
 // [MatchQuery.Verify] reports true, one call into the engine for the page.
 // On a field with encrypt_into=TextMatch, Matches returns an
 // [EQLMatchQuery], the type's query value with the same two methods.
-// Every query type implements driver.Valuer, so it binds as a parameter
-// through database/sql or pgx. With separate byte columns, as the example/
+// [EqualityTerm], [OreTerm], [OpeTerm], [MatchQuery], [EQLMatchQuery] and
+// every query type in package eql implement driver.Valuer. Each binds as
+// one parameter through database/sql or pgx. A [Range] does not: bind its
+// Low and High as two parameters. With separate byte columns, as the example/
 // program declares its fields (Email `stash:"email,encrypt,index=equality;match"`,
 // Age `stash:"age,encrypt,index=equality;ore"`), not the encrypt_into User
 // above:
