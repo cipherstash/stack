@@ -368,6 +368,13 @@ func NewJSONSelection[E ~[]byte](c *Cipher, declaration *record.Plan, field, pat
 // Selector is the selector to bind: `col -> $1::text`.
 func (s JSONSelection[E]) Selector() JSONSelector { return s.selector }
 
+// Value binds the selector as text, as [JSONSelection.Selector] does. So a
+// JSONSelection can be passed to the query where the selector goes. Without
+// this method, a driver such as pgx binds the String form, which is
+// redacted, and the query matches no row. A zero JSONSelection is refused,
+// as a zero [JSONSelector] is.
+func (s JSONSelection[E]) Value() (driver.Value, error) { return s.selector.Value() }
+
 // Open opens the entries `col -> selector` returned, one per database row,
 // nil for a row where it returned SQL NULL, with one ZeroKMS request. Each
 // opens to the scalar it holds (Found), or for the sealed root at "$" the
@@ -444,6 +451,12 @@ func NewJSONRead[E ~[]byte](c *Cipher, declaration *record.Plan, field string, i
 // Tokens are the tokens to bind:
 // `eql_v4.json_tree_subtree(col, $1::text[], 64)`.
 func (r JSONRead[E]) Tokens() JSONTokens { return r.tokens }
+
+// Value binds the tokens as a text[] literal, as [JSONRead.Tokens] does. So
+// a JSONRead can be passed to the query where the tokens go. Without this
+// method, a driver such as pgx binds the String form, which is redacted. A
+// zero JSONRead is refused, as empty [JSONTokens] are.
+func (r JSONRead[E]) Value() (driver.Value, error) { return r.tokens.Value() }
 
 // Open opens the rows the read returned, one group per database row, with
 // one ZeroKMS request: per row, the value at each concrete path the read

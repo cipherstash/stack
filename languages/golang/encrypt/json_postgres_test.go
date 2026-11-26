@@ -144,6 +144,9 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	want("age < 40", ids(`SELECT id FROM customers WHERE (profile -> $1::text) < $2::eql_v4.query_json_leaf ORDER BY id`, age.Selector(), lt), 1, 2)
+	// The selection itself binds as its selector, through its
+	// driver.Valuer, and finds the same rows.
+	want("age < 40, the selection bound", ids(`SELECT id FROM customers WHERE (profile -> $1::text) < $2::eql_v4.query_json_leaf ORDER BY id`, age, lt), 1, 2)
 	rng, err := f.At.Age.Between(ctx, cipher, json.RawMessage(`30`), json.RawMessage(`70`))
 	if err != nil {
 		t.Fatal(err)
@@ -216,6 +219,8 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The read itself binds as its tokens, through its driver.Valuer.
+	want("subtree, the read bound", ids(`SELECT DISTINCT id FROM customers, eql_v4.json_tree_subtree(profile, $1::text[]) AS e ORDER BY id`, read), 1, 2)
 	walk := func(budget int) [][]json.RawMessage {
 		t.Helper()
 		groups := make([][]eql.JSONEntry, len(jsonCustomers))
