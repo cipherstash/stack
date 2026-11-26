@@ -1,14 +1,11 @@
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { REPO_ROOT } from './lib/repo-root.mjs'
 import {
   isRunsOnJob,
   MATRIX_RUNNERS,
   RUNS_ON_LABELS,
   runsOnLabel,
 } from './lib/runs-on.mjs'
-import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
+import { readWorkflow, stepsOf, workflowFiles } from './lib/workflows.mjs'
 
 /**
  * Every self-hosted job runs on a RunsOn machine of the size its Blacksmith
@@ -63,23 +60,6 @@ export function aptFinding(run) {
       return `runs apt-get update without retrying it: "${line.trim()}". It does not wait for the package-list lock, so retry it in a loop with && break.`
   }
   return null
-}
-
-/** A step, or the steps of the local composite action it uses. */
-function stepsOf(step, seen = new Set()) {
-  const uses = typeof step?.uses === 'string' ? step.uses.trim() : ''
-  if (!uses.startsWith('./')) return [step]
-  const dir = uses.replace(/^\.\//, '').replace(/\/$/, '')
-  if (seen.has(dir)) return []
-  seen.add(dir)
-  for (const file of ['action.yml', 'action.yaml']) {
-    const rel = `${dir}/${file}`
-    if (existsSync(join(REPO_ROOT, rel)))
-      return (readWorkflow(rel)?.runs?.steps ?? []).flatMap((inner) =>
-        stepsOf(inner, seen),
-      )
-  }
-  return []
 }
 
 export function aptFindingsInRunsOnJobs() {

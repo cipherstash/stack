@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import yaml from 'js-yaml'
 import { REPO_ROOT } from './repo-root.mjs'
@@ -52,4 +52,25 @@ export function workflowFiles() {
  */
 export function readWorkflow(relPath) {
   return yaml.load(readFileSync(join(REPO_ROOT, relPath), 'utf8'))
+}
+
+/**
+ * A step, or the steps of the local composite action it uses, expanded through
+ * nested local actions. A cycle between actions, or a missing manifest, adds
+ * no steps.
+ */
+export function stepsOf(step, seen = new Set()) {
+  const uses = typeof step?.uses === 'string' ? step.uses.trim() : ''
+  if (!uses.startsWith('./')) return [step]
+  const dir = uses.replace(/^\.\//, '').replace(/\/$/, '')
+  if (seen.has(dir)) return []
+  seen.add(dir)
+  for (const file of ['action.yml', 'action.yaml']) {
+    const rel = `${dir}/${file}`
+    if (existsSync(join(REPO_ROOT, rel)))
+      return (readWorkflow(rel)?.runs?.steps ?? []).flatMap((inner) =>
+        stepsOf(inner, seen),
+      )
+  }
+  return []
 }

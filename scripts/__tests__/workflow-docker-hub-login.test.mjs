@@ -10,7 +10,7 @@ import {
 } from './lib/mise-tasks.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { isRunsOnJob } from './lib/runs-on.mjs'
-import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
+import { readWorkflow, stepsOf, workflowFiles } from './lib/workflows.mjs'
 
 /**
  * Every RunsOn job logs in to Docker Hub before it pulls an image.
@@ -208,26 +208,17 @@ export const HIDDEN_PULLS = {
 // Steps and jobs
 // ---------------------------------------------------------------------------
 
-/** Whether one step may pull an image. `seen` guards composite-action cycles. */
-export function stepPulls(step, seen = new Set()) {
-  const uses = typeof step?.uses === 'string' ? step.uses.trim() : ''
-  if (PULLING_ACTION.test(uses)) return true
-  if (uses.startsWith('./')) {
-    const dir = uses.replace(/^\.\//, '').replace(/\/$/, '')
-    if (seen.has(dir)) return false
-    seen.add(dir)
-    for (const file of ['action.yml', 'action.yaml']) {
-      const rel = `${dir}/${file}`
-      if (!existsSync(join(REPO_ROOT, rel))) continue
-      const steps = readWorkflow(rel)?.runs?.steps ?? []
-      return steps.some((inner) => stepPulls(inner, seen))
-    }
-    return false
-  }
-  const run = typeof step?.run === 'string' ? stripCommentLines(step.run) : ''
-  return (
-    PULLS.test(run) || [...PULLING_TASKS].some((task) => invokes(run, task))
-  )
+/** Whether one step, or the local composite action it uses, may pull an image. */
+export function stepPulls(step) {
+  return stepsOf(step).some((inner) => {
+    const uses = typeof inner?.uses === 'string' ? inner.uses.trim() : ''
+    if (PULLING_ACTION.test(uses)) return true
+    const run =
+      typeof inner?.run === 'string' ? stripCommentLines(inner.run) : ''
+    return (
+      PULLS.test(run) || [...PULLING_TASKS].some((task) => invokes(run, task))
+    )
+  })
 }
 
 const USERNAME = expr('secrets.DOCKER_HUB_USERNAME')
