@@ -9,6 +9,8 @@ Status: draft, rewritten 26 November 2026. Decisions by Dan Draper:
 - Keep the move as small as possible. `vitaminc-protected` and
   `vitaminc-random` never move.
 - No more work on the TypeScript SDK until this is done.
+- vitaminc's Go packages `vcffi` and `vcvalue` move too, as a third stage,
+  before the Go SDK's final release. vitaminc's `vcencrypt` is deleted.
 
 The first draft of this plan (14 November) moved nine crates, with `ore.rs`,
 into `stack-encrypt` as modules. This draft replaces it.
@@ -22,7 +24,10 @@ Three crates move from `cipherstash/vitaminc` into this repository:
 `vitaminc-aead`, `vitaminc-aead-frame` and `vitaminc-aead-derive`. They keep
 their names and are published from here.
 
-Then the value handling is consolidated. Today the list of value types is
+vitaminc's two Go packages, `vcffi` and `vcvalue`, move into the Go module in
+a third stage.
+
+The value handling is consolidated in stage 2. Today the list of value types is
 written down in vitaminc, written again in the engine (`stack-encrypt`), and
 reconciled a third time in each language SDK. After this plan:
 
@@ -277,6 +282,45 @@ crate.
 
 A UUID then works in every SDK, which closes #1821.
 
+## Stage 3: move the Go packages
+
+vitaminc has two Go packages that the Go module imports in about 60 places:
+
+| Package | What it is |
+|---|---|
+| `vcvalue` | The Go value types: `Date`, `Decimal`, `Int128`, `Uint128`, `Timestamp`, `UUID`, `TypedNull`, `Plain`, `Object`. No dependencies. |
+| `vcffi` | The frame codec in Go: frames, ciphertext trees and the storage profile (`MarshalStorage`). |
+
+They do not link the Rust crates. The Go host encodes a frame and the guest
+decodes it, so the two share a byte format and no code. That is why this
+stage does not have to run with stage 1. It starts after stage 1 and can run
+beside stage 2.
+
+It must finish before the Go SDK's final release:
+
+- **The types are in the SDK's public API.** `encrypt.Date`,
+  `encrypt.Decimal`, `encrypt.Int128` and `encrypt.Uint128` are aliases of
+  `vcvalue` types. Moving a type changes its package path, which breaks a
+  user's code after a release.
+- **The release is blocked on them.** The packages have no tags, so `go.mod`
+  pins an unreleased commit, and `scripts/go-release-version.mjs` refuses a
+  final version while that pin is there.
+- **The codec's test data moves in stage 1.** `vcffi`'s tests read the
+  storage corpus that sits beside `vitaminc-aead-frame`.
+
+The work:
+
+1. Move both packages into `languages/golang`, with their tests and fuzz
+   targets. Decide where each type is declared: the value types are public,
+   and the codec need not be.
+2. Update the imports. Remove the pin from `languages/golang/go.mod` and
+   from the two nested modules that carry it.
+3. Remove the matching refusal from `scripts/go-release-version.mjs`.
+4. Apply stage 2 to them. `vcvalue.FixedType` is one more copy of the type
+   list.
+5. Delete `vcencrypt` and its guest from vitaminc. It was a demonstration of
+   the approach, and the Go module replaces it.
+
 ## What waits on this plan
 
 - The TypeScript SDK: #1775, #1776 and the prototype #1829.
@@ -285,6 +329,7 @@ A UUID then works in every SDK, which closes #1821.
 - The language integration guide's new sections on the value model (#1828).
   They describe the model this plan removes.
 - The UUID fix (#1821).
+- The Go SDK's final release, on stage 3.
 
 ## Checks that must move with the code
 
@@ -318,15 +363,11 @@ repository's CI before its code moves:
    it no type, and does not treat it as a null. No test covers it against a
    nullable field.
 5. **Does the order index take bytes and a UUID?** See 2.3.
-6. **Do Go's `vcffi` and `vcvalue` move?** They are vitaminc's Go packages,
-   with their own encoder, pinned at an unreleased commit. The Go release
-   script refuses a final version while that pin is there. They are a bridge,
-   so the consolidation applies to them, but they are not Rust crates.
-7. **Which licence applies to the moved code?** vitaminc uses the MIT
+6. **Which licence applies to the moved code?** vitaminc uses the MIT
    licence. Ask the person responsible for licensing.
-8. **Does anyone outside CipherStash use the moved crates?** They are on
+7. **Does anyone outside CipherStash use the moved crates?** They are on
    crates.io. Nobody has checked.
-9. **What is a frame called?** "Frame" does not say whether it is a transport
+8. **What is a frame called?** "Frame" does not say whether it is a transport
    or a storage format. Rename it during stage 2, where the type is already
    being replaced.
 
