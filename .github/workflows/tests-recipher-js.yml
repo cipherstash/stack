@@ -65,6 +65,10 @@ env:
   RUST_BACKTRACE: full
   CARGO_TERM_COLOR: always
   CARGO_NET_GIT_FETCH_WITH_CLI: true
+  # The bridge's frame suite (value-napi/tests/frames.cjs) refuses to
+  # regenerate its pinned frames when this is set, so a stray
+  # RECIPHER_UPDATE_FIXTURES cannot re-pin a regression here.
+  STACK_CONFORMANCE_REQUIRED: "1"
 
 jobs:
   recipher-js:

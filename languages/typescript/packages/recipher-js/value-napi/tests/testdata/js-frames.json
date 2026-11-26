@@ -28,12 +28,12 @@
       "corpus_case": "record-values-v1/f64-negative-zero",
       "same_as_corpus": true
     },
-    "number 1.5": {
+    "number 1.5, vs corpus float32-given-float64": {
       "frame": "09000000000000f83f",
       "corpus_case": "record-values-v1/float32-given-float64",
       "same_as_corpus": true
     },
-    "number float32 max": {
+    "number 3.4028234663852886e38, vs corpus f32-max": {
       "frame": "09000000e0ffffef47",
       "corpus_case": "record-values-v1/f32-max",
       "same_as_corpus": false
@@ -64,27 +64,27 @@
     "number 2^53 + 2": {
       "frame": "090100000000004043"
     },
-    "bigint 0 as uint8": {
+    "bigint 0, vs corpus u8-zero": {
       "frame": "0c00",
       "corpus_case": "record-values-v1/u8-zero",
       "same_as_corpus": false
     },
-    "bigint 0 as uint16": {
+    "bigint 0, vs corpus u16-zero": {
       "frame": "0c00",
       "corpus_case": "record-values-v1/u16-zero",
       "same_as_corpus": false
     },
-    "bigint 0 as uint32": {
+    "bigint 0, vs corpus u32-zero": {
       "frame": "0c00",
       "corpus_case": "record-values-v1/u32-zero",
       "same_as_corpus": false
     },
-    "bigint 0 as uint128": {
+    "bigint 0, vs corpus u128-zero": {
       "frame": "0c00",
       "corpus_case": "record-values-v1/u128-zero",
       "same_as_corpus": false
     },
-    "bigint 1 as int64": {
+    "bigint 1, vs corpus int128-given-int64": {
       "frame": "0c01",
       "corpus_case": "record-values-v1/int128-given-int64",
       "same_as_corpus": false

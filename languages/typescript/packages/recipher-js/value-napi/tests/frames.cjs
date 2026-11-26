@@ -7,7 +7,14 @@
 // written differently from the corpus's typed hosts, and that difference is
 // pinned here, not hidden. Run by tests/node.rs with the test addon's path.
 //
-// Regenerate with RECIPHER_UPDATE_FIXTURES=1; never edit the file by hand.
+// The suite reads nothing outside this package: the corpus frames it
+// compares against are copied into testdata/corpus-frames.json, and
+// scripts/__tests__/recipher-js-frame-parity.test.mjs holds that copy to the
+// corpus on every pull request.
+//
+// Regenerate both files with RECIPHER_UPDATE_FIXTURES=1, which reads the
+// corpus. A run under CI or STACK_CONFORMANCE_REQUIRED=1 refuses to
+// regenerate. Never edit either file by hand.
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
@@ -15,19 +22,34 @@ const addon = require(path.resolve(process.argv[2]))
 const { VcDate, VcTimestamp, VcDecimal, VcUuid } = addon
 
 const golden = path.join(__dirname, 'testdata/js-frames.json')
-const corpusDir = path.join(__dirname, '../../../../../../conformance/stack-encrypt/v1')
+const vendored = path.join(__dirname, 'testdata/corpus-frames.json')
+
+const update = Boolean(process.env.RECIPHER_UPDATE_FIXTURES)
+if (update && (process.env.CI || process.env.STACK_CONFORMANCE_REQUIRED === '1')) {
+  throw new Error('conformance checks must not update frozen fixtures')
+}
 
 // Every frame the corpus froze, by case id: the value-kinds profile's
-// `frame`, and the scalar profile's frames from its Rust artifacts.
-const corpus = new Map()
-const values = JSON.parse(fs.readFileSync(path.join(corpusDir, 'record-values-v1.cases.json')))
-for (const c of values.cases) if (c.frame) corpus.set(`record-values-v1/${c.id}`, c.frame)
-const scalars = JSON.parse(
-  fs.readFileSync(path.join(corpusDir, 'record-scalars-v1.expected.rust-native.json')),
-)
-for (const [id, artifact] of Object.entries(scalars.cases)) corpus.set(`record-scalars-v1/${id}`, artifact.frame)
+// `frame`, and the scalar profile's frames from its Rust artifacts. Read
+// from the corpus only to regenerate; a check reads the copy.
+function corpusFrames() {
+  const corpusDir = path.join(__dirname, '../../../../../../conformance/stack-encrypt/v1')
+  const frames = new Map()
+  const values = JSON.parse(fs.readFileSync(path.join(corpusDir, 'record-values-v1.cases.json')))
+  for (const c of values.cases) if (c.frame) frames.set(`record-values-v1/${c.id}`, c.frame)
+  const scalars = JSON.parse(
+    fs.readFileSync(path.join(corpusDir, 'record-scalars-v1.expected.rust-native.json')),
+  )
+  for (const [id, artifact] of Object.entries(scalars.cases)) frames.set(`record-scalars-v1/${id}`, artifact.frame)
+  return frames
+}
+const corpus = update
+  ? corpusFrames()
+  : new Map(Object.entries(JSON.parse(fs.readFileSync(vendored)).frames))
 
 // [name, the value, the corpus case that spells the same value, if any].
+// The bridge picks a bigint's width itself and cannot be asked for one, so
+// a name that compares one bigint with several corpus cases says which.
 const inputs = [
   ['null', () => null],
   ['undefined', () => undefined],
@@ -36,19 +58,19 @@ const inputs = [
   ['number 0', () => 0],
   ['number 34', () => 34],
   ['number -0', () => -0, 'record-values-v1/f64-negative-zero'],
-  ['number 1.5', () => 1.5, 'record-values-v1/float32-given-float64'],
-  ['number float32 max', () => 3.4028234663852886e38, 'record-values-v1/f32-max'],
+  ['number 1.5, vs corpus float32-given-float64', () => 1.5, 'record-values-v1/float32-given-float64'],
+  ['number 3.4028234663852886e38, vs corpus f32-max', () => 3.4028234663852886e38, 'record-values-v1/f32-max'],
   ['number MAX_VALUE', () => Number.MAX_VALUE, 'record-values-v1/f64-max'],
   ['number 5e-324', () => 5e-324, 'record-values-v1/f64-min-positive'],
   ['number Infinity', () => Infinity, 'record-values-v1/f64-inf'],
   ['number -Infinity', () => -Infinity, 'record-values-v1/f64-neg-inf'],
   ['number NaN', () => NaN],
   ['number 2^53 + 2', () => 2 ** 53 + 2],
-  ['bigint 0 as uint8', () => 0n, 'record-values-v1/u8-zero'],
-  ['bigint 0 as uint16', () => 0n, 'record-values-v1/u16-zero'],
-  ['bigint 0 as uint32', () => 0n, 'record-values-v1/u32-zero'],
-  ['bigint 0 as uint128', () => 0n, 'record-values-v1/u128-zero'],
-  ['bigint 1 as int64', () => 1n, 'record-values-v1/int128-given-int64'],
+  ['bigint 0, vs corpus u8-zero', () => 0n, 'record-values-v1/u8-zero'],
+  ['bigint 0, vs corpus u16-zero', () => 0n, 'record-values-v1/u16-zero'],
+  ['bigint 0, vs corpus u32-zero', () => 0n, 'record-values-v1/u32-zero'],
+  ['bigint 0, vs corpus u128-zero', () => 0n, 'record-values-v1/u128-zero'],
+  ['bigint 1, vs corpus int128-given-int64', () => 1n, 'record-values-v1/int128-given-int64'],
   ['bigint 34', () => 34n],
   ['bigint -128', () => -128n, 'record-values-v1/i8-min'],
   ['bigint 127', () => 127n, 'record-values-v1/i8-max'],
@@ -147,13 +169,20 @@ for (const [name, make, corpusCase] of inputs) {
   actual[name] = entry
 }
 
-if (process.env.RECIPHER_UPDATE_FIXTURES) {
+if (update) {
   const document = {
     _comment:
       'The transport frame recipher-value-napi writes for each JavaScript value, read by tests/frames.cjs. Where a corpus case spells the same value, same_as_corpus records whether the frames are equal. Regenerate with RECIPHER_UPDATE_FIXTURES=1; never edit by hand.',
     frames: actual,
   }
   fs.writeFileSync(golden, `${JSON.stringify(document, null, 2)}\n`)
+  const used = [...new Set(Object.values(actual).flatMap((e) => (e.corpus_case ? [e.corpus_case] : [])))].sort()
+  const copy = {
+    _comment:
+      'A copy of the conformance corpus frames tests/frames.cjs compares against, so the suite reads nothing outside this package. scripts/__tests__/recipher-js-frame-parity.test.mjs holds it to conformance/stack-encrypt/v1. Regenerate with RECIPHER_UPDATE_FIXTURES=1; never edit by hand.',
+    frames: Object.fromEntries(used.map((id) => [id, corpus.get(id)])),
+  }
+  fs.writeFileSync(vendored, `${JSON.stringify(copy, null, 2)}\n`)
 } else {
   const pinned = JSON.parse(fs.readFileSync(golden)).frames
   assert.deepStrictEqual(Object.keys(actual).sort(), Object.keys(pinned).sort(), 'the same inputs')
