@@ -42,6 +42,18 @@ func (r Request) OutputPath() string {
 	return strings.ToLower(r.Type) + "_stash.go"
 }
 
+// outputPath is the file that output names, for the package directory dir. A
+// path relative to the current directory is joined to dir. Any other path is
+// kept as it is: an absolute path, and on Windows also a path with a drive
+// and no root (C:out.go) or a root and no drive (\out.go). Joining one of
+// those to dir would drop its drive or its root.
+func outputPath(dir, output string) string {
+	if filepath.IsAbs(output) || filepath.VolumeName(output) != "" || (output != "" && os.IsPathSeparator(output[0])) {
+		return output
+	}
+	return filepath.Join(dir, output)
+}
+
 // File is a generated file, ready to write.
 type File struct {
 	// Path is where the file goes.
@@ -80,10 +92,7 @@ func FromTags(ctx context.Context, engine Engine, req Request) (*File, error) {
 	if dir == "" {
 		dir = "."
 	}
-	outPath := req.OutputPath()
-	if !filepath.IsAbs(outPath) {
-		outPath = filepath.Join(dir, outPath)
-	}
+	outPath := outputPath(dir, req.OutputPath())
 
 	eqlTypes, err := engine.EQLTypes(ctx)
 	if err != nil {

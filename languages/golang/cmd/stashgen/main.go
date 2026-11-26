@@ -64,7 +64,7 @@ func run(args []string, dir string, stdout, stderr io.Writer, newEngine func(con
 	fs.StringVar(&req.For, "for", "", "P.F: -type declares the tags for F, a type in package P")
 	fs.Var(&models, "model", "Name=R or Name=R:D: a model R for separate columns; writes EncryptName and DecryptName (repeatable)")
 	fs.BoolVar(&req.Redact, "redact", false, "write String, GoString and LogValue methods on the -type struct")
-	fs.StringVar(&req.Output, "output", "", "the file to write (default: the type's name in lower case, with _stash.go)")
+	fs.StringVar(&req.Output, "output", "", "the file to write: an absolute path, or a path relative to the package directory (default: the type's name in lower case, with _stash.go)")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: stashgen -type T [-name N] [-for P.F] [-model Name=R[:D]]... [-redact] [-output file]")
 		fs.PrintDefaults()

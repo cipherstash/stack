@@ -27,8 +27,9 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 - **`stashgen -output` writes an absolute path where it says** (#1901).
   Before this fix, it joined an absolute path to the package directory.
   So `-output /abs/path/file.go` wrote to `abs/path/file.go` in the
-  package, or failed when that directory did not exist. A relative path is
-  still relative to the package directory.
+  package, or failed when that directory did not exist. On Windows, a path
+  with a drive or a root, such as `\out\user_stash.go`, is also kept as
+  given. A relative path is still relative to the package directory.
 
 ## [0.1.0-rc.7] - 2026-11-25
 
