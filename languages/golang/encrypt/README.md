@@ -395,21 +395,27 @@ sealed with, but a zero has no sign: `-0.00` opens as `0.00`. The zero
 `ErrEncoding`, naming the field; so is a decimal or a `time.Time` outside
 vitaminc's range.
 
-A sealed field declared over a pointer, such as `*encrypt.Date` or `*int32`,
-stores an optional value. `Encrypt` accepts a nil pointer, and `Decrypt` gives
-it back as nil. The field's `null=` tag says how the nil is stored; see
+A sealed field declared over a pointer to one scalar, or to a type defined
+over one, stores an optional value. Examples are `*encrypt.Date` and
+`*int32`. `Encrypt` accepts a nil pointer, and `Decrypt` gives it back as nil.
+
+The `null=` tag says how the nil is stored, as a sealed null or as SQL
+`NULL`. You can leave it out for a fixed-width type whose only index, if it
+has one, is equality: the nil is then a sealed null. A field of text or
+bytes, or with an order or match index, must write `null=sql`, or `stashgen`
+refuses it. See
 [Optional fields](../cmd/stashgen/README.md#optional-fields).
 
-Each integer type seals at its own
-width, and each width is passed to the order scheme as itself, so an `int16`
-field's terms are an `int16`'s. An `int8` or `uint8` field has no order
-index: with 256 values, an order term would rank every row among 256, which
-a few known rows resolve to the values, as a `bool`'s would say which rows
-are true. Equality follows vitaminc's normalisation: an
-integer equals itself at every width, decimals compare at any scale
-(`1.50 = 1.5`), and a timestamp compares to the microsecond, truncated, never rounded. An order index on
-a decimal, date or timestamp is refused for now: the engine derives no
-order term for those kinds yet.
+Each integer type seals at its own width, and each width is passed to the
+order scheme as itself, so an `int16` field's terms are an `int16`'s. An
+`int8` or `uint8` field has no order index: with 256 values, an order term
+would rank every row among 256, which a few known rows resolve to the
+values, as a `bool`'s would say which rows are true. Equality follows
+vitaminc's normalisation: an integer equals itself at every width, decimals
+compare at any scale (`1.50 = 1.5`), and a timestamp compares to the
+microsecond, truncated, never rounded. An order index on a decimal, date or
+timestamp is refused for now: the engine derives no order term for those
+kinds yet.
 
 A `match` index stores text with no token (an empty string, separator-only
 text, or text shorter than the n-gram length of 3 characters) as the empty
