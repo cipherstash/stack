@@ -234,9 +234,9 @@ jobs:
 
       # Docker Hub refuses pulls without a login after too many from one
       # address, and RunsOn machines reach that limit. With either secret empty,
-      # as on a fork's pull request, this step does nothing and pulls stay
-      # anonymous. scripts/__tests__/workflow-docker-hub-login.test.mjs
-      # requires it. Only the RunsOn legs log in. The macOS leg has no Docker,
+      # this step does nothing and pulls stay anonymous.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs requires it. Only
+      # the RunsOn legs log in. The macOS leg has no Docker,
       # so `docker login` would fail there once the secrets exist.
       - name: Log in to Docker Hub
         if: ${{ startsWith(matrix.cfg.os, 'runs-on=') }}

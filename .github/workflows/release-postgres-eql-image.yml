@@ -137,9 +137,8 @@ jobs:
 
       # Docker Hub refuses pulls without a login after too many from one
       # address, and RunsOn machines reach that limit. With either secret empty,
-      # as on a fork's pull request, this step does nothing and pulls stay
-      # anonymous. scripts/__tests__/workflow-docker-hub-login.test.mjs
-      # requires it.
+      # this step does nothing and pulls stay anonymous.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs requires it.
       - name: Log in to Docker Hub
         env:
           DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
@@ -219,9 +218,8 @@ jobs:
     steps:
       # Docker Hub refuses pulls without a login after too many from one
       # address, and RunsOn machines reach that limit. With either secret empty,
-      # as on a fork's pull request, this step does nothing and pulls stay
-      # anonymous. scripts/__tests__/workflow-docker-hub-login.test.mjs
-      # requires it.
+      # this step does nothing and pulls stay anonymous.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs requires it.
       - name: Log in to Docker Hub
         env:
           DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
