@@ -45,7 +45,7 @@ mise run wasm:auth-guest:build
 mise run go:test
 ```
 
-The `.wasm` files are build outputs and are not committed on development
+The `.wasm` files are build outputs. They are not committed on development
 branches. `mise run go:test:postgres` also runs the PostgreSQL suite against
 the EQL v4 bundle built from this tree, and the shared EQL/JSON conformance
 lane before it. It needs the disposable database named by
@@ -53,3 +53,14 @@ lane before it. It needs the disposable database named by
 (`mise install --env test`), because the conformance lane runs Rust tests too.
 See `mise.toml` and [AGENTS.md](../../AGENTS.md) for the build and release
 details.
+
+To run `stashgen` from a checkout, build both production guests:
+
+```sh
+mise run wasm:guest:build wasm:guest:build:eql
+```
+
+`stashgen` checks each declaration with the guest that includes the EQL
+types. Without that build it stops with an error that names
+`mise run wasm:guest:build:eql`. A program whose generated code names no EQL
+type runs the other guest, so build both.
