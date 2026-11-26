@@ -36,7 +36,6 @@ Package `encrypt` is the reference integration for the engine.
 The guide in `packages/stack-encrypt/docs/language-integration.md` explains how the binding works, what crosses it, and how to build one for another language.
 
 - Generated code hands the declaration to the engine as data, through package `gensupport`. The engine runs the same plan that the Rust API and the derive macro run.
-- The index words in `stash` tags are the Rust API's words for the same behaviour. Go also has two words that the Rust API does not have.
 - An `opaque` struct crosses as one storage blob. The blob is vitaminc's storage profile, version 1, written by `vcffi.MarshalStorage` in `encrypt/gensupport/codec.go`.
 - The `OrdOre` types and `TextSearchOre` use block ORE (order-revealing encryption) terms, from ore-rs's 6-bit schemes.
 - `encrypt.AuditMetadata` is `AuditMetadata::new().with(key, value)` and `.audit(..)` in the Rust crate. In the ZeroKMS protocol, it is the unverified context of a key request.
@@ -45,8 +44,14 @@ The guide in `packages/stack-encrypt/docs/language-integration.md` explains how 
 
 ## Design records
 
-The architecture decision records for the engine are in `packages/stack-encrypt/docs/adr`.
-These two architecture decision records (ADRs) explain how the Go module is divided:
+The architecture decision records (ADRs) are in two series.
+A bare ADR number in a Go code comment can belong to either series, so check both.
+
+The repository-level series is in `docs/adr`.
+Its [ADR-0002](../../docs/adr/0002-one-value-model-three-encodings-and-eql-v4-by-producer.md) explains the value model, including integer widths, the text fold, and float order.
+Go code comments that cite ADR-0002 mean this record.
+
+The engine's series is in `packages/stack-encrypt/docs/adr`. Two of its records explain how the Go module is divided:
 
 - [ADR-0005](../../packages/stack-encrypt/docs/adr/0005-a-separate-credential-guest-for-the-profile-and-auth.md) explains why package `auth` runs its own guest, apart from the crypto guest, and the options that were rejected.
 - [ADR-0007](../../packages/stack-encrypt/docs/adr/0007-bindings-enter-through-a-plan-never-a-second-executor.md) explains why a binding reaches the engine only through a plan. The amendment to ADR-0007 dated 2026-10-06 covers the engine build with the EQL types. Package `encrypt/eql` embeds that build and registers it on import.

@@ -27,7 +27,7 @@ go generate ./...
 ```
 
 Use a tagged Go module version. Release tags include the embedded WASI guests;
-a checkout or an untagged commit does not. The [SDK guide](encrypt/README.md#building)
+a checkout or an untagged commit does not. [CONTRIBUTING.md](CONTRIBUTING.md#build-the-engine-in-a-checkout)
 explains how to build them locally. Searchable `encrypt_into` fields require
 EQL v4 in PostgreSQL; the EQL v4 SQL bundle is attached to the matching Go
 release. Go and TypeScript currently use different EQL versions, so follow

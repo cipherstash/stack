@@ -1,6 +1,6 @@
 // Package auth is the Go binding of the developer profile: the
 // directory `stash auth login` writes (~/.cipherstash, or CS_CONFIG_PATH),
-// read through the stack-profile crate running unmodified inside a WASI
+// read through Rust profile code running unmodified inside a WASI
 // guest under wazero (CGO_ENABLED=0), so the on-disk layout is never
 // re-derived by hand in Go.
 //

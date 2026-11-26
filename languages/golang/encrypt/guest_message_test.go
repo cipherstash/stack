@@ -9,8 +9,8 @@ import (
 
 // A user who sees a missing-guest error needs a tagged version of the
 // module, not a build task, so the message says that before it names the
-// task a contributor runs in a checkout. The prefix stays as it was: the
-// stashgen README quotes it.
+// task a contributor runs in a checkout. The prefix stays as it was, because
+// a caller may match it (#1923 quotes the EQL one in the stashgen README).
 func TestGuestNotBuiltMessagesLeadWithATaggedVersion(t *testing.T) {
 	for _, tt := range []struct {
 		name   string

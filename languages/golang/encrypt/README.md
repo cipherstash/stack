@@ -1027,7 +1027,8 @@ release workflow commits them to the commit the tag names, so a module that
 requires a tagged version needs no Rust toolchain and no build step. A
 pseudo-version does not. `go get ...@main`, or any commit rather than a
 tag, fetches a tree without the builds; it compiles, and `NewClient` returns
-`ErrGuestNotBuilt`.
+`ErrGuestNotBuilt`, or `ErrEQLGuestNotBuilt` when the program links package
+`encrypt/eql`.
 
 To build the engine from a checkout of this repository, see
 [CONTRIBUTING.md](../CONTRIBUTING.md).

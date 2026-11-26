@@ -1,6 +1,6 @@
 // Package encrypt is the Stack Encrypt Go SDK: searchable, field-level
-// encryption under per-value ZeroKMS data keys, running the stack-encrypt
-// Rust engine unmodified inside a WASI guest under wazero (CGO_ENABLED=0).
+// encryption under per-value ZeroKMS data keys, running the Rust encryption
+// engine unmodified inside a WASI guest under wazero (CGO_ENABLED=0).
 //
 // # Use the SDK
 //

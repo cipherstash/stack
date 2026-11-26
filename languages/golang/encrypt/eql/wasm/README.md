@@ -5,7 +5,7 @@ built with its `eql` feature by `mise run wasm:guest:build:eql`: the build
 that links `eql-bindings` and so can run a plan field that names an EQL type
 (`TextEq`). It is not committed. Package `eql` embeds this directory and
 registers the module on import, so a program whose generated code names an
-EQL type runs this build; `NewClient` reports `ErrGuestNotBuilt` when it is
+EQL type runs this build; `NewClient` reports `ErrEQLGuestNotBuilt` when it is
 absent, and the package's tests skip.
 
 The same build with the `deterministic-kms` feature too — a TEST build whose
