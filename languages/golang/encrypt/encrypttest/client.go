@@ -114,7 +114,12 @@ func WithSeed(seed [32]byte) ClientOption {
 // This package is its own module, so a program that never imports it never
 // downloads the test builds:
 //
-//	go get github.com/cipherstash/stack/languages/golang/encrypt/encrypttest@v0.1.0
+//	go get github.com/cipherstash/stack/languages/golang/encrypt/encrypttest
+//
+// With no version, go get adds the newest version of this module, and raises
+// github.com/cipherstash/stack/languages/golang to the same version if the
+// program requires an older one. To keep an older SDK, add its version to the
+// command, such as encrypttest@v0.1.0-rc.6.
 //
 // Require it at the same version as
 // github.com/cipherstash/stack/languages/golang. Its test builds match the
