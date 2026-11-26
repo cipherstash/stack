@@ -334,3 +334,91 @@ fn a_wipeable_uuid_hides_absence_as_a_uuid() {
     );
     assert_eq!(sealed(Some(vitaminc_aead::Uuid::new(id))), sealed(Some(id)));
 }
+
+/// A target that declares a millisecond timestamp's typed null and refuses
+/// zero, so it reads a null only by its declared type.
+#[derive(Debug, PartialEq)]
+struct Millis(i64);
+
+impl vitaminc_aead::FromScalar for Millis {
+    const EXPECTED: &'static str = "a nonzero millisecond timestamp";
+    const FIXED: Option<FixedType> = FixedType::new(
+        Some(vitaminc_aead::plaintext::Logical::Timestamp(
+            vitaminc_aead::plaintext::TimeUnit::Millis,
+        )),
+        Width::I64,
+    );
+
+    fn from_scalar(
+        ty: Option<vitaminc_aead::plaintext::Logical>,
+        value: vitaminc_aead::plaintext::Physical<'_>,
+    ) -> Option<Self> {
+        use vitaminc_aead::plaintext::{kinds::timestamp_nanos, Logical, Physical};
+        let (Some(Logical::Timestamp(unit)), Physical::Int(count)) = (ty, value) else {
+            return None;
+        };
+        let ms = i64::try_from(timestamp_nanos(unit, count)? / 1_000_000).ok()?;
+        (ms != 0).then_some(Millis(ms))
+    }
+}
+
+/// A source that seals the absent value of `Millis`'s declared type.
+struct AbsentMillis;
+
+impl Encrypt for AbsentMillis {
+    fn visit<S: vitaminc_aead::plaintext::Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.typed_null(<Millis as vitaminc_aead::FromScalar>::FIXED.expect("fixed"))
+    }
+}
+
+/// A target that declares a millisecond timestamp's null reads its `None`
+/// back from the nanosecond null it is sealed as, and from a millisecond
+/// null sealed before timestamps were sealed in nanoseconds.
+#[test]
+fn a_millisecond_target_reads_its_none_in_either_unit() {
+    let canonical = sealed(AbsentMillis);
+    let mut nanos = Vec::new();
+    vitaminc_aead::leaf::write_typed_null(
+        FixedType::new(
+            Some(vitaminc_aead::plaintext::Logical::Timestamp(
+                vitaminc_aead::plaintext::TimeUnit::Nanos,
+            )),
+            Width::I128,
+        )
+        .expect("fixed"),
+        &mut nanos,
+    );
+    assert_eq!(canonical, nanos, "sealed at the nanosecond width");
+    let mut legacy = Vec::new();
+    vitaminc_aead::leaf::write_typed_null(
+        <Millis as vitaminc_aead::FromScalar>::FIXED.expect("fixed"),
+        &mut legacy,
+    );
+    assert_ne!(legacy, canonical);
+    for plaintext in [canonical, legacy] {
+        let stored = CipherText::Single(Leaf {
+            aad: "ctx".into_aad().as_bytes().to_vec(),
+            plaintext: plaintext.clone(),
+        });
+        let read: Option<Millis> = decrypt(&Mock, stored, "ctx").expect("decrypts");
+        assert_eq!(read, None, "{plaintext:02x?}");
+    }
+    // A value still reads.
+    let read: Option<Millis> = decrypt(
+        &Mock,
+        encrypt(
+            vitaminc_aead::plaintext::Raw(
+                Some(vitaminc_aead::plaintext::Logical::Timestamp(
+                    vitaminc_aead::plaintext::TimeUnit::Millis,
+                )),
+                vitaminc_aead::plaintext::Physical::Int(vitaminc_aead::plaintext::Int::I64(5)),
+            ),
+            &Mock,
+            "ctx",
+        )
+        .expect("encrypts"),
+        "ctx",
+    )
+    .expect("decrypts");
+    assert_eq!(read, Some(Millis(5)));
+}

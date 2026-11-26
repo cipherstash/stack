@@ -255,8 +255,13 @@ impl<T: FromScalar> Decrypt for T {
         ScalarSink(PhantomData)
     }
 
+    /// A typed null of `T::FIXED`, as written or as sealed (a timestamp's
+    /// in nanoseconds, see [`sealed_null_type`](crate::leaf::sealed_null_type)),
+    /// or of any type whose zero `T` reads.
     fn reads_null(ty: FixedType) -> bool {
-        T::FIXED == Some(ty) || T::from_scalar(ty.logical(), ty.width().zero()).is_some()
+        T::FIXED == Some(ty)
+            || T::FIXED.map(crate::leaf::sealed_null_type) == Some(ty)
+            || T::from_scalar(ty.logical(), ty.width().zero()).is_some()
     }
 }
 
