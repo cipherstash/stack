@@ -217,7 +217,7 @@ impl ValueKind {
             ValueKind::Bool => (None, Physical::Bool(false)),
             ValueKind::String => (None, Physical::Text("")),
             ValueKind::Bytes => (None, Physical::Bytes(&[])),
-            ValueKind::Array | ValueKind::Object => return None,
+            // An array and an object have no fixed type either.
             _ => match self.fixed_type() {
                 Some(fixed) => (fixed.logical(), fixed.width().zero()),
                 None => return None,
