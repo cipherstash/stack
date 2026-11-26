@@ -10,11 +10,11 @@ error[E0277]: the trait bound `(i32, i32): vitaminc_aead::Scalar` is not satisfi
             &&'b T
             &'a vitaminc_protected::protected::Protected<T>
             &Raw<'_>
-            &String
             &Vec<u8>
             &[u8; N]
             &[u8]
             &bool
+            &f32
           and $N others
 note: required by a bound in `seals_one_leaf`
  --> tests/ui/scalar/tuple_is_not_a_source.rs:6:22

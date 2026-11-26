@@ -139,14 +139,15 @@ fn source_of(plaintext: &Json, plan: &DataPlan) -> ValueFrame {
             .iter()
             .map(|field| {
                 let value = &fields[field.name()];
-                let value = match field.field_type().expect("every fixture field is typed") {
-                    stack_encrypt::dynamic::ValueKind::UInt32 => frame(
+                let declared = field.field_type().expect("every fixture field is typed");
+                let value = match declared.value_kind() {
+                    Some(stack_encrypt::dynamic::ValueKind::UInt32) => frame(
                         u32::try_from(value.as_u64().expect("an integer")).expect("fits a u32"),
                     ),
-                    stack_encrypt::dynamic::ValueKind::String => {
+                    Some(stack_encrypt::dynamic::ValueKind::String) => {
                         frame(value.as_str().expect("text"))
                     }
-                    other => panic!("the fixture does not use {other}"),
+                    _ => panic!("the fixture does not use {declared}"),
                 };
                 (field.name(), value)
             })

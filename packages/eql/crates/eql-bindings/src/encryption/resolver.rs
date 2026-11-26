@@ -210,7 +210,7 @@ impl From<TargetError> for dynamic::TargetError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stack_encrypt::dynamic::{record, Op, ValueKind};
+    use stack_encrypt::dynamic::{record, DeclaredType, Op, ValueKind};
     use stack_encrypt::AsProtectedRef as _;
 
     /// The resolver lists one type for each row of the target table, in
@@ -247,13 +247,13 @@ mod tests {
     #[test]
     fn the_resolver_resolves_a_producible_type_and_refuses_the_rest() {
         let text_eq = EqlTargets.resolve("TextEq").unwrap();
-        assert_eq!(text_eq.plaintext, Some(ValueKind::String));
+        assert_eq!(text_eq.plaintext, Some(ValueKind::String.into()));
         assert_eq!(text_eq.indexes, ["eq"]);
         assert_eq!(text_eq.query.as_deref(), Some("TextEqQuery"));
         // The storage-only document: a `json` field, with no index and no
         // query.
         let json = EqlTargets.resolve("Json").unwrap();
-        assert_eq!(json.plaintext, Some(ValueKind::Json));
+        assert_eq!(json.plaintext, Some(DeclaredType::Json));
         assert!(json.indexes.is_empty());
         assert_eq!(json.query, None);
         assert!(matches!(
@@ -320,12 +320,12 @@ mod tests {
         assert!(matches!(
             dynamic::TargetError::from(TargetError::Plaintext {
                 target: "TextEq",
-                expected: ValueKind::String,
+                expected: ValueKind::String.into(),
                 found: Some(ValueKind::UInt64),
             }),
             dynamic::TargetError::Plaintext {
                 target,
-                expected: Some(ValueKind::String),
+                expected: Some(DeclaredType::Value(ValueKind::String)),
                 found: Some(ValueKind::UInt64),
                 ..
             } if target == "TextEq"

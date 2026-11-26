@@ -440,6 +440,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **A target's plaintext is a Stack Encrypt `DeclaredType`** (#1907).
+  Stack Encrypt's `ValueKind` no longer has a `Json` variant.
+  `Target::plaintext_kind`, `Plaintext::KIND` and `TargetError::Plaintext`'s
+  `expected` are a `DeclaredType`, which is a `ValueKind` or `json`.
+  `TargetError::Plaintext`'s `found` is still an `Option<ValueKind>`. The
+  names in the target table do not change.
+
 - **A plaintext no longer needs `Clone`** (#1734). The `Ciphertext` and
   `Hmac256` targets and the query targets bound their plaintext on
   `Encrypt + EncryptRef`, where it was `Encrypt + Clone`. `EncryptRef`

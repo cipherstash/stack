@@ -504,6 +504,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`dynamic::ValueKind` is `vitaminc-aead`'s, and has no `Json`
+  variant** (#1907). `dynamic::ValueKind` is now a re-export of
+  `vitaminc_aead::plaintext::ValueKind`, with the same variants and names
+  for every scalar, an array and an object. `json` is not a kind of value
+  (a JSON document crosses as text or bytes), so a plan field's `"type"` is
+  now a `dynamic::DeclaredType`: `DeclaredType::Value(ValueKind)`, or
+  `DeclaredType::Json` in place of `ValueKind::Json`. To upgrade:
+  - Write `DeclaredType::Json` for `ValueKind::Json`.
+  - `FieldPlan::field_type`, `TargetDescriptor::plaintext`,
+    `TargetDescriptor::new` and `TargetError::Kind` take a `DeclaredType`.
+    `ValueKind::String.into()` makes one.
+  - `admits`, `not_admitted`, `read`, `Op::answered_by` and
+    `FieldPlan::with_type` take a `ValueKind` or a `DeclaredType`.
+  - `ValueFrame::kind` and `TargetError::Plaintext`'s `found` are still a
+    `ValueKind`.
+  - `ValueKind::ALL` has 20 kinds, without `json`.
+  - `ParseValueKindError` is `vitaminc-aead`'s, and its message is
+    unchanged.
+
+  The names a plan spells (`"int64"`, `"json"`, …) do not change, and no
+  stored or frame byte changes.
+
 - **A timestamp keeps the unit the host wrote it in** (#1846). A
   `ValueFrame` no longer rewrites a timestamp in seconds, milliseconds or
   microseconds to nanoseconds. A passthrough field now stores exactly the

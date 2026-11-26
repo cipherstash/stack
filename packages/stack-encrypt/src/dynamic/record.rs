@@ -152,8 +152,9 @@ use serde::de::{Deserializer, MapAccess, Visitor};
 use serde::Deserialize;
 
 use super::term::{IndexWire, JsonWire, MatchWire};
-use super::{TargetOptions, ValueFrame, ValueKind};
+use super::{DeclaredType, TargetOptions, ValueFrame, ValueKind};
 use vitaminc_aead::frame::{Frame, FrameWriter};
+use vitaminc_aead::plaintext::SealedNull;
 use vitaminc_aead::plaintext::{Logical, MapSink, Physical, SeqSink, Sink};
 use vitaminc_aead::{DecodeError, Encrypt};
 use vitaminc_protected::{Controlled, Protected};
@@ -261,7 +262,7 @@ impl NullMode {
 /// One field of a record plan: what to call it, what label to seal it
 /// under, what to produce for it, and, optionally, what type its values are.
 ///
-/// A field may declare the type of its values (a [`ValueKind`]), and must
+/// A field may declare the type of its values (a [`DeclaredType`]), and must
 /// when it has a term output: [`Plan::new_with`] refuses the plan otherwise
 /// ([`Error::UntypedIndex`]). A typed field admits only the indexes that
 /// kind is defined for ([`admits`](super::admits), checked when the plan is built), seals
@@ -279,7 +280,7 @@ pub struct FieldPlan {
     outputs: Vec<Output>,
     target: Option<String>,
     target_options: Option<TargetOptions>,
-    field_type: Option<ValueKind>,
+    field_type: Option<DeclaredType>,
     null: Option<NullMode>,
 }
 
@@ -420,7 +421,8 @@ impl FieldPlan {
     /// [`Reason::IndexNotAdmitted`] for match on an integer, equality or an
     /// order index on a boolean, an order index on an 8-bit integer or on
     /// bytes, any index on a composite.
-    pub fn with_type(mut self, field_type: ValueKind) -> Result<Self, Error> {
+    pub fn with_type(mut self, field_type: impl Into<DeclaredType>) -> Result<Self, Error> {
+        let field_type = field_type.into();
         for output in &self.outputs {
             if let Output::Term(index) = output {
                 if let Some(reason) = not_admitted(field_type, index) {
@@ -488,7 +490,7 @@ impl FieldPlan {
     /// The declared type of the field's values, if the plan declares one.
     /// A host with no types of its own reads this to know what a decrypted
     /// value is.
-    pub fn field_type(&self) -> Option<ValueKind> {
+    pub fn field_type(&self) -> Option<DeclaredType> {
         self.field_type
     }
 
@@ -574,7 +576,11 @@ impl FieldPlan {
         {
             return Some(Reason::SealedNullIndex);
         }
-        match self.field_type.and_then(ValueKind::sealed_null) {
+        match self
+            .field_type
+            .and_then(DeclaredType::value_kind)
+            .and_then(ValueKind::sealed_null)
+        {
             Some(_) => None,
             None => Some(Reason::SealedNullType),
         }
@@ -863,7 +869,7 @@ impl Plan {
         if field.outputs != [Output::Passthrough]
             || field
                 .field_type
-                .is_some_and(|kind| kind != ValueKind::String)
+                .is_some_and(|kind| kind != ValueKind::String.into())
         {
             return Err(refuse(Reason::ContextField));
         }
@@ -894,7 +900,7 @@ impl Plan {
                     // A string whether or not the declaration says so: the
                     // value is read as a label, and the opener checks the
                     // stored one is text before any key is requested.
-                    field.field_type = Some(ValueKind::String);
+                    field.field_type = Some(ValueKind::String.into());
                 }
                 field
             })
@@ -926,7 +932,7 @@ impl Plan {
             }
             // A JSON document is stored through a target that stores one;
             // a target's options belong to a target.
-            if !field.is_target() && field.field_type == Some(ValueKind::Json) {
+            if !field.is_target() && field.field_type == Some(DeclaredType::Json) {
                 return Err(refuse(Reason::JsonNeedsTarget));
             }
             if !field.is_target() && field.target_options.is_some() {
@@ -1254,8 +1260,8 @@ pub fn plan(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Plan, E
 ///
 /// [`MatchOptions::default`]: crate::sem::MatchOptions::default
 ///
-/// `"type"` names a [`ValueKind`] (`"int64"`, `"string"`, …; see
-/// [`ValueKind::name`]): vitaminc's vocabulary, not one of this crate's. It
+/// `"type"` names a [`DeclaredType`] (`"int64"`, `"string"`, …, `"json"`;
+/// see [`DeclaredType::name`]): vitaminc's [`ValueKind`], or `json`. It
 /// is **required on every field with a term output** (`"eq"`, `"match"`,
 /// `"ore"`, `"ope"`): the field's terms derive from that one kind, and every
 /// value is checked against it on the way in and on the way out, so a
@@ -1325,7 +1331,7 @@ pub fn plan(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Plan, E
 /// both, an output list that is not a list of outputs (above), is empty,
 /// names an output key twice or names `"passthrough"` beside another
 /// output, a `"target"` that is not a non-empty string, a `"type"` that is
-/// not a string naming a [`ValueKind`], a type that does not admit one of
+/// not a string naming a [`DeclaredType`], a type that does not admit one of
 /// the field's index outputs, a context that is not a label of at least two
 /// segments (optionally extended), fields under different contexts or
 /// extensions, or a plan [`Plan::new`] refuses; with
@@ -1610,10 +1616,10 @@ impl From<OutputWire> for Output {
     }
 }
 
-/// A `"type"`: the name of a [`ValueKind`].
+/// A `"type"`: the name of a [`DeclaredType`].
 #[derive(Deserialize)]
 #[serde(try_from = "&str")]
-struct KindName(ValueKind);
+struct KindName(DeclaredType);
 
 impl TryFrom<&str> for KindName {
     type Error = Reason;
@@ -2286,8 +2292,12 @@ fn source_row(mut row: Vec<(String, ValueFrame)>, plan: &Plan) -> Result<Row, Er
             // null on any other type, and on a field with a term other than
             // equality's, which a null has.
             Some(NullMode::Sealed) if value.is_null() => {
-                match field.field_type.and_then(ValueKind::sealed_null) {
-                    Some(Some(ty)) => ValueFrame::typed_null(ty),
+                match field
+                    .field_type
+                    .and_then(DeclaredType::value_kind)
+                    .and_then(ValueKind::sealed_null)
+                {
+                    Some(SealedNull::Typed(ty)) => ValueFrame::typed_null(ty),
                     _ => value,
                 }
             }
@@ -2337,7 +2347,7 @@ fn check_field(value: &ValueFrame, field: &FieldPlan) -> Result<(), Error> {
     // any key or keyset load and needs no resolver, and a resolver takes
     // the field's value as a frame, as it does for every target, so it
     // reads the text it is handed.
-    if field.field_type == Some(ValueKind::Json) {
+    if field.field_type == Some(DeclaredType::Json) {
         if let Err(error) = super::read_json(value) {
             return Err(Error::Target(TargetError::Json {
                 name: field.name.clone(),
@@ -2375,7 +2385,7 @@ pub(super) struct FieldShape {
     name: String,
     verb: Verb,
     keys: Vec<&'static str>,
-    kind: Option<ValueKind>,
+    kind: Option<DeclaredType>,
     null: Option<NullMode>,
 }
 
@@ -4832,7 +4842,7 @@ mod tests {
             );
             let tenant = &plan.fields()[0];
             assert_eq!(tenant.outputs(), [Output::Passthrough]);
-            assert_eq!(tenant.field_type(), Some(ValueKind::String));
+            assert_eq!(tenant.field_type(), Some(ValueKind::String.into()));
             assert_eq!(
                 tenant.label().to_string(),
                 "tenant",
@@ -4850,7 +4860,10 @@ mod tests {
                 ("age", spec(identity("age"), &["c"])),
             ]))
             .expect("parses");
-            assert_eq!(plan.fields()[0].field_type(), Some(ValueKind::String));
+            assert_eq!(
+                plan.fields()[0].field_type(),
+                Some(ValueKind::String.into())
+            );
         }
 
         #[test]
@@ -5915,7 +5928,11 @@ mod tests {
             let types: Vec<_> = parsed.fields().iter().map(FieldPlan::field_type).collect();
             assert_eq!(
                 types,
-                [Some(ValueKind::UInt64), Some(ValueKind::String), None]
+                [
+                    Some(ValueKind::UInt64.into()),
+                    Some(ValueKind::String.into()),
+                    None
+                ]
             );
         }
 
@@ -5933,7 +5950,10 @@ mod tests {
                 ])
             };
             let parsed = plan(obj(vec![("age", early("uint64"))])).expect("parses");
-            assert_eq!(parsed.fields()[0].field_type(), Some(ValueKind::UInt64));
+            assert_eq!(
+                parsed.fields()[0].field_type(),
+                Some(ValueKind::UInt64.into())
+            );
             assert_eq!(
                 parsed.fields()[0].outputs(),
                 [Output::Ciphertext, Output::Term(IndexSpec::Equality)]
@@ -6004,7 +6024,7 @@ mod tests {
                 .clone()
                 .with_type(ValueKind::UInt32)
                 .expect("equality admits a u32");
-            assert_eq!(typed.field_type(), Some(ValueKind::UInt32));
+            assert_eq!(typed.field_type(), Some(ValueKind::UInt32.into()));
             assert!(matches!(
                 field.with_type(ValueKind::Bool),
                 Err(Error::Plan { .. })
@@ -6017,7 +6037,7 @@ mod tests {
             .expect("field")
             .with_type(ValueKind::Object)
             .expect("a composite with no index is a plain sealed field");
-            assert_eq!(sealed_only.field_type(), Some(ValueKind::Object));
+            assert_eq!(sealed_only.field_type(), Some(ValueKind::Object.into()));
         }
 
         /// The engine verifies the tag rather than trusting the binding: a
@@ -6434,7 +6454,7 @@ mod tests {
                 _ => Err(TargetError::Plaintext {
                     name: String::new(),
                     target: name.to_owned(),
-                    expected: Some(ValueKind::String),
+                    expected: Some(ValueKind::String.into()),
                     found: value.kind(),
                 }),
             }
@@ -6458,7 +6478,7 @@ mod tests {
                         TEXT_EQ,
                         "text",
                         "Eq",
-                        Some(ValueKind::String),
+                        Some(ValueKind::String.into()),
                         "public.eql_v4_text_eq",
                         vec!["eq".to_string()],
                         Some("TextEqQuery".to_string()),
@@ -6470,7 +6490,7 @@ mod tests {
                         "IntegerEq",
                         "integer",
                         "Eq",
-                        Some(ValueKind::Int32),
+                        Some(ValueKind::Int32.into()),
                         "public.eql_v4_integer_eq",
                         vec!["eq".to_string()],
                         Some("IntegerEqQuery".to_string()),
@@ -6482,7 +6502,7 @@ mod tests {
                         "IntegerOrd",
                         "integer",
                         "Ord",
-                        Some(ValueKind::Int32),
+                        Some(ValueKind::Int32.into()),
                         "public.eql_v4_integer_ord",
                         vec!["eq".to_string(), "ope".to_string()],
                         Some("IntegerOrdQuery".to_string()),
@@ -6494,7 +6514,7 @@ mod tests {
                         "JsonSearch",
                         "json_tree",
                         "",
-                        Some(ValueKind::Json),
+                        Some(DeclaredType::Json),
                         "public.eql_v4_json_search",
                         vec!["json".to_string()],
                         Some("JsonSearchQuery".to_string()),
@@ -6506,7 +6526,7 @@ mod tests {
                         "TextOrdOre",
                         "text",
                         "OrdOre",
-                        Some(ValueKind::String),
+                        Some(ValueKind::String.into()),
                         "public.eql_v4_text_ord_ore",
                         vec!["eq".to_string(), "ore".to_string()],
                         Some("TextOrdOreQuery".to_string()),
@@ -6803,7 +6823,7 @@ mod tests {
             let field = &bare.fields()[0];
             assert_eq!(
                 field.field_type(),
-                Some(ValueKind::Json),
+                Some(DeclaredType::Json),
                 "the target's kind"
             );
             assert_eq!(
@@ -6982,7 +7002,7 @@ mod tests {
             );
             assert_eq!(
                 plan.fields()[1].field_type(),
-                Some(ValueKind::String),
+                Some(ValueKind::String.into()),
                 "an undeclared type is the target's plaintext kind"
             );
 
@@ -7461,7 +7481,10 @@ mod tests {
                 ("type", s("string")),
             ]);
             let plan = plan_with(obj(vec![("email", declared)]), &FakeEql).expect("agrees");
-            assert_eq!(plan.fields()[0].field_type(), Some(ValueKind::String));
+            assert_eq!(
+                plan.fields()[0].field_type(),
+                Some(ValueKind::String.into())
+            );
             // Declared and disagreeing: refused when the plan is built.
             let other = obj(vec![
                 ("context", label("email")),
@@ -7470,7 +7493,7 @@ mod tests {
             ]);
             let error = target_error(plan_with(obj(vec![("email", other)]), &FakeEql).unwrap_err());
             assert!(
-                matches!(&error, TargetError::Kind { name, target, expected: Some(ValueKind::String), declared: ValueKind::UInt64 } if name == "email" && target == TEXT_EQ),
+                matches!(&error, TargetError::Kind { name, target, expected: Some(DeclaredType::Value(ValueKind::String)), declared: DeclaredType::Value(ValueKind::UInt64) } if name == "email" && target == TEXT_EQ),
                 "{error}"
             );
             // A value of another kind is refused before the resolver runs.

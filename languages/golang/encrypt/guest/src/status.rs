@@ -501,8 +501,8 @@ mod tests {
             TargetError::Kind {
                 name: "email".into(),
                 target: "TextEq".into(),
-                expected: Some(ValueKind::String),
-                declared: ValueKind::UInt64,
+                expected: Some(ValueKind::String.into()),
+                declared: ValueKind::UInt64.into(),
             },
             TargetError::Column {
                 name: "email".into(),
@@ -512,7 +512,7 @@ mod tests {
             TargetError::Plaintext {
                 name: "email".into(),
                 target: "TextEq".into(),
-                expected: Some(ValueKind::String),
+                expected: Some(ValueKind::String.into()),
                 found: None,
             },
             TargetError::Stored {

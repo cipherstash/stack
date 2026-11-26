@@ -731,10 +731,10 @@ pub const V3_ENCRYPTION_GAP: &str =
     "Stack Encrypt produces EQL v4 only: its output is not byte-for-byte compatible with \
      cipherstash-client's, which writes the eql_v3 domains";
 
-/// The plaintext a family's v4 domains are produced from: the vitaminc
-/// `ValueKind` name a plan field's `"type"` key spells, and the Rust type the
-/// derive and the by-name dispatch name. `None` for a family eql-bindings
-/// names no Rust plaintext type for yet. A date, a timestamp and a decimal
+/// The plaintext a family's v4 domains are produced from: the declared type
+/// name a plan field's `"type"` key spells (vitaminc's `ValueKind` name, or
+/// `json`), and the Rust type the derive and the by-name dispatch name.
+/// `None` for a family eql-bindings names no Rust plaintext type for yet. A date, a timestamp and a decimal
 /// are Stack Encrypt's own types (`stack_encrypt::value`, re-exported as
 /// `v4::plaintext`), which can be wiped where jiff's and rust_decimal's
 /// cannot.

@@ -1612,8 +1612,8 @@ mod a_nullable_field {
 mod as_the_data_plan_derives {
     use super::*;
     use stack_encrypt::dynamic::{
-        self, record, Op, Operand, TargetDescriptor, TargetError, TargetOptions, TargetResolver,
-        ValueFrame, ValueKind,
+        self, record, DeclaredType, Op, Operand, TargetDescriptor, TargetError, TargetOptions,
+        TargetResolver, ValueFrame,
     };
     use stack_encrypt::target::{DeclaredContext, IndexSpec};
     use stack_encrypt::{AsProtectedRef as _, Label, Pending};
@@ -1628,7 +1628,7 @@ mod as_the_data_plan_derives {
                 "JsonSearch",
                 "json",
                 "",
-                Some(ValueKind::Json),
+                Some(DeclaredType::Json),
                 "public.eql_v4_json_search",
                 vec!["json".to_string()],
                 Some("JsonSearchQuery".to_string()),

@@ -10,7 +10,7 @@ use eql_bindings::encryption::targets::{self as targets, Opener, Target, TargetE
 use eql_bindings::v4::text::{TextEq, TextEqQuery};
 use eql_bindings::{v4, Identifier};
 use eql_domains::{Term, CATALOG};
-use stack_encrypt::dynamic::{ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{DeclaredType, ValueFrame, ValueKind};
 use stack_encrypt::{Decrypt, DecryptFrom, Encrypt, EncryptInto, Label};
 
 /// A Rust value as the engine's runtime plaintext: its frame.
@@ -256,7 +256,7 @@ mod given_text_eq {
                 error,
                 TargetError::Plaintext {
                     target: "TextEq",
-                    expected: ValueKind::String,
+                    expected: DeclaredType::Value(ValueKind::String),
                     found: Some(ValueKind::UInt64)
                 }
             ),
@@ -544,24 +544,24 @@ mod the_table {
                 .collect();
             assert_eq!(row.suffix, suffix, "{name}: suffix");
             let kind = match family.name {
-                "text" => Some(ValueKind::String),
-                "smallint" => Some(ValueKind::Int16),
-                "integer" => Some(ValueKind::Int32),
-                "bigint" => Some(ValueKind::Int64),
-                "boolean" => Some(ValueKind::Bool),
-                "real" => Some(ValueKind::Float32),
-                "double" => Some(ValueKind::Float64),
-                "date" => Some(ValueKind::Date),
-                "timestamp" => Some(ValueKind::Timestamp),
-                "numeric" => Some(ValueKind::Decimal),
-                "json" => Some(ValueKind::Json),
+                "text" => Some(DeclaredType::Value(ValueKind::String)),
+                "smallint" => Some(DeclaredType::Value(ValueKind::Int16)),
+                "integer" => Some(DeclaredType::Value(ValueKind::Int32)),
+                "bigint" => Some(DeclaredType::Value(ValueKind::Int64)),
+                "boolean" => Some(DeclaredType::Value(ValueKind::Bool)),
+                "real" => Some(DeclaredType::Value(ValueKind::Float32)),
+                "double" => Some(DeclaredType::Value(ValueKind::Float64)),
+                "date" => Some(DeclaredType::Value(ValueKind::Date)),
+                "timestamp" => Some(DeclaredType::Value(ValueKind::Timestamp)),
+                "numeric" => Some(DeclaredType::Value(ValueKind::Decimal)),
+                "json" => Some(DeclaredType::Json),
                 // A family added later has no Rust plaintext type in
                 // eql-bindings until it is given one.
                 _ => None,
             };
             assert_eq!(
                 row.plaintext,
-                kind.map(ValueKind::name),
+                kind.map(DeclaredType::name),
                 "{name}: the family's plaintext kind"
             );
             assert_eq!(

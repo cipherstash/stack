@@ -307,10 +307,11 @@ with the cases every binding runs. The shape:
   field's label must be exactly a table and a column. A type that stores a
   document takes its options in an object form:
   `{"name": "JsonSearch", "options": {"sealed_root": <bool>, "ordered": [<path>, ...]}}`.
-- **`type`** is a [`crate::dynamic::ValueKind`] name: `bool`, `int8` to
-  `int128`, `uint8` to `uint128`, `float32`, `float64`, `decimal`, `date`,
-  `timestamp`, `string`, `bytes`, `array`, `object` or `json`. A field with
-  any index term must declare one: its terms derive from that kind, never
+- **`type`** is a [`crate::dynamic::DeclaredType`] name: a vitaminc
+  [`crate::dynamic::ValueKind`] name (`bool`, `int8` to `int128`, `uint8` to
+  `uint128`, `float32`, `float64`, `decimal`, `date`, `timestamp`, `string`,
+  `bytes`, `array` or `object`), or `json`. A field with
+  any index term must declare one: its terms derive from that type, never
   from whatever tag each value arrives with. The type decides which indexes
   a field may have ([`crate::dynamic::admits`]) and which values it accepts,
   and nothing about the bytes.

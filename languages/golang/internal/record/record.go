@@ -41,7 +41,8 @@ import (
 // u32 or String writes a different leaf, which neither side can open.
 type Kind string
 
-// The kinds. The names are vitaminc's ValueKind names, frozen.
+// The kinds. The names are vitaminc's ValueKind names, and the engine's
+// "json", frozen.
 const (
 	Untyped   Kind = ""
 	Bool      Kind = "bool"
@@ -619,7 +620,7 @@ type Sealed = map[string]Outputs
 
 // Target is one EQL type as se_targets lists it. The entry's keys are wire
 // format, written by eql-bindings' serialiser and read by [ParseTargets]:
-// name, family, suffix, plaintext (a ValueKind name, or null), sql_domain,
+// name, family, suffix, plaintext (a declared type name, or null), sql_domain,
 // indexes (eq | match | ore | ope | ore_block | json), query (or null), query_sql_domain
 // (or null), producible, reason (or null), and operators, which the engine
 // adds: the operators it answers for the type, each an object of operator,

@@ -80,7 +80,7 @@ impl TargetResolver for OneType {
             "Some",
             "some",
             "",
-            Some(ValueKind::String),
+            Some(ValueKind::String.into()),
             "public.some",
             vec!["eq".to_owned()],
             Some("SomeQuery".to_owned()),

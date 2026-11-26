@@ -365,8 +365,8 @@ fn scalar_in_array(stored: &Value, needle: &Value) -> bool {
 #[cfg(feature = "dynamic")]
 mod query {
     use stack_encrypt::dynamic::{
-        self, record, Operand, QueryTerm, TargetDescriptor, TargetError, TargetOptions,
-        TargetResolver, ValueFrame, ValueKind,
+        self, record, DeclaredType, Operand, QueryTerm, TargetDescriptor, TargetError,
+        TargetOptions, TargetResolver, ValueFrame,
     };
     use stack_encrypt::json::JsonLeafQuery;
     use stack_encrypt::target::DeclaredContext;
@@ -399,7 +399,7 @@ mod query {
                 "JsonSearch",
                 "json",
                 "",
-                Some(ValueKind::Json),
+                Some(DeclaredType::Json),
                 "public.eql_v4_json_search",
                 vec!["json".to_string()],
                 Some("JsonSearchQuery".to_string()),

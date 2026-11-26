@@ -988,7 +988,7 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
             "JsonSearch",
             "json",
             "",
-            Some(stack_encrypt::dynamic::ValueKind::Json),
+            Some(stack_encrypt::dynamic::DeclaredType::Json),
             "public.eql_v4_json_search",
             vec!["json".to_string()],
             Some("JsonSearchQuery".to_string()),

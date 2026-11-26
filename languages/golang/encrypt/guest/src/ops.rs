@@ -479,7 +479,7 @@ pub fn plan_check(plan: &Bytes) -> Result<(), u32> {
 /// | `name`             | string            | the Go type name and the `encrypt_into` value: `TextEq` |
 /// | `family`           | string            | `Text`, `Integer`, … |
 /// | `suffix`           | string            | `Eq`, `Ord`, `Match`, … or `""` |
-/// | `plaintext`        | string or null    | the vitaminc `ValueKind` name the type seals: `"string"` |
+/// | `plaintext`        | string or null    | the declared type name the type seals (vitaminc's `ValueKind` name, or `json`): `"string"` |
 /// | `sql_domain`       | string            | the Postgres domain of the stored value |
 /// | `indexes`          | list of string    | `eq`, `match`, `ore`, `ope`, `json` |
 /// | `query`            | string or null    | the Go type name of the query value: `TextEqQuery` |

@@ -17,7 +17,7 @@ use eql_bindings::v4::plaintext::JsonPlaintext;
 use eql_bindings::v4::{bigint, boolean, double, integer, json, real, smallint, text};
 use eql_bindings::Identifier;
 use serde::{de::DeserializeOwned, Serialize};
-use stack_encrypt::dynamic::{ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{DeclaredType, ValueFrame, ValueKind};
 use stack_encrypt::target::transcode::{Reader, Visitor};
 use stack_encrypt::{CipherText, DecryptFrom, Encrypt, EncryptInto, Label, NonEmpty};
 
@@ -756,6 +756,7 @@ async fn every_producible_type_dispatches_by_name() {
         let name = target.name;
         let kind = target
             .plaintext_kind()
+            .and_then(DeclaredType::value_kind)
             .expect("a producible type names its kind");
         let stored = targets::encrypt(name, &keyset, &label(), sample(kind))
             .unwrap()
@@ -1132,7 +1133,7 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
     ] {
         let error = refused(targets::encrypt(name, &keyset, &label(), value));
         assert!(
-            matches!(error, TargetError::Plaintext { target, expected: e, .. } if target == name && e == expected),
+            matches!(error, TargetError::Plaintext { target, expected: e, .. } if target == name && e == expected.into()),
             "{name}: {error}"
         );
     }

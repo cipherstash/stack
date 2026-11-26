@@ -18,8 +18,8 @@ use std::collections::BTreeMap;
 use base64ct::{Base64, Encoding};
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::{
-    self, record, Op, Operand, QueryTerm, Reason, TargetDescriptor, TargetError, TargetOptions,
-    TargetResolver, ValueFrame, ValueKind,
+    self, record, DeclaredType, Op, Operand, QueryTerm, Reason, TargetDescriptor, TargetError,
+    TargetOptions, TargetResolver, ValueFrame,
 };
 use stack_encrypt::eql_simulator;
 use stack_encrypt::json::{JsonDocument, Tag};
@@ -44,7 +44,7 @@ impl TargetResolver for Documents {
             "JsonSearch",
             "json",
             "",
-            Some(ValueKind::Json),
+            Some(DeclaredType::Json),
             "public.eql_v4_json_search",
             vec!["json".to_string()],
             Some("JsonSearchQuery".to_string()),

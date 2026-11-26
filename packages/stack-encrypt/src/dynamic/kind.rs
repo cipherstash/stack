@@ -6,10 +6,11 @@
 //! JavaScript number is a float, and match is defined over text alone. So a
 //! plan field may say what its values are, in its `"type"` key.
 //!
-//! The vocabulary is [`ValueKind`], whose
-//! [`name`](ValueKind::name)s (`"uint64"`, `"string"`, …, `"array"`,
-//! `"object"`) are frozen wire format; [`ValueFrame::kind`] says which kind
-//! a value is. Beside it, this module adds two rules:
+//! The vocabulary is [`DeclaredType`]: vitaminc's [`ValueKind`], or `json`.
+//! Their [`name`](DeclaredType::name)s (`"uint64"`, `"string"`, …,
+//! `"array"`, `"object"`, `"json"`) are frozen wire format;
+//! [`ValueFrame::kind`] says which [`ValueKind`] a value is. Beside it, this
+//! module adds two rules:
 //!
 //! - [`admits`]: which indexes a kind is defined for, so a plan asking for
 //!   match on an integer or equality on a boolean is refused when it is
@@ -38,7 +39,9 @@
 use std::fmt;
 use std::str::FromStr;
 
-use vitaminc_aead::plaintext::{FixedType, Float, Int, Logical, Physical, Raw, TimeUnit, Width};
+use vitaminc_aead::plaintext::{
+    Float, Int, Logical, ParseValueKindError, Physical, Raw, ValueKind,
+};
 use vitaminc_aead::Encrypt;
 
 use super::term::OneScalar;
@@ -72,6 +75,9 @@ use crate::target::IndexSpec;
 /// rule: an order index needs [`Orderable`](crate::Orderable), which does
 /// not cover bytes.
 ///
+/// `json` admits no index here: a document is indexed by the target that
+/// stores it.
+///
 /// ```
 /// use stack_encrypt::dynamic::{admits, ValueKind};
 /// use stack_encrypt::target::IndexSpec;
@@ -88,8 +94,11 @@ use crate::target::IndexSpec;
 /// assert!(admits(ValueKind::Bytes, &IndexSpec::Equality));
 /// assert!(!admits(ValueKind::Bytes, &IndexSpec::Ore));
 /// ```
-pub fn admits(kind: ValueKind, index: &IndexSpec) -> bool {
-    scalar_of(kind).is_some_and(|(ty, scalar)| index.takes(ty, &scalar))
+pub fn admits(kind: impl Into<DeclaredType>, index: &IndexSpec) -> bool {
+    kind.into()
+        .value_kind()
+        .and_then(ValueKind::zero)
+        .is_some_and(|(ty, scalar)| index.takes(ty, &scalar))
 }
 
 /// Why `kind` does not admit `index`, or `None` when it does: the reason a
@@ -103,7 +112,7 @@ pub fn admits(kind: ValueKind, index: &IndexSpec) -> bool {
 /// assert_eq!(not_admitted(ValueKind::Bool, &IndexSpec::Ore), Some(Reason::IndexNotAdmitted));
 /// assert_eq!(not_admitted(ValueKind::Timestamp, &IndexSpec::Ope), None);
 /// ```
-pub fn not_admitted(kind: ValueKind, index: &IndexSpec) -> Option<Reason> {
+pub fn not_admitted(kind: impl Into<DeclaredType>, index: &IndexSpec) -> Option<Reason> {
     if admits(kind, index) {
         return None;
     }
@@ -111,40 +120,6 @@ pub fn not_admitted(kind: ValueKind, index: &IndexSpec) -> Option<Reason> {
         Reason::JsonIndexPending
     } else {
         Reason::IndexNotAdmitted
-    })
-}
-
-/// A scalar of `kind`, with its logical type, for asking the table about
-/// the kind: any value of a kind is taken by an index exactly when every
-/// other is. `None` for a composite, which is no scalar.
-fn scalar_of(kind: ValueKind) -> Option<(Option<Logical>, Physical<'static>)> {
-    let int = |int| (None, Physical::Int(int));
-    Some(match kind {
-        ValueKind::Bool => (None, Physical::Bool(false)),
-        ValueKind::Int8 => int(Int::I8(0)),
-        ValueKind::Int16 => int(Int::I16(0)),
-        ValueKind::Int32 => int(Int::I32(0)),
-        ValueKind::Int64 => int(Int::I64(0)),
-        ValueKind::Int128 => int(Int::I128(0)),
-        ValueKind::UInt8 => int(Int::U8(0)),
-        ValueKind::UInt16 => int(Int::U16(0)),
-        ValueKind::UInt32 => int(Int::U32(0)),
-        ValueKind::UInt64 => int(Int::U64(0)),
-        ValueKind::UInt128 => int(Int::U128(0)),
-        ValueKind::Float32 => (None, Physical::Float(Float::F32(0.0))),
-        ValueKind::Float64 => (None, Physical::Float(Float::F64(0.0))),
-        ValueKind::Decimal => (
-            Some(Logical::Decimal { scale: 0 }),
-            Physical::Int(Int::I128(0)),
-        ),
-        ValueKind::Date => (Some(Logical::Date), Physical::Int(Int::I32(0))),
-        ValueKind::Timestamp => (
-            Some(Logical::Timestamp(TimeUnit::Nanos)),
-            Physical::Int(Int::I128(0)),
-        ),
-        ValueKind::String => (None, Physical::Text("")),
-        ValueKind::Bytes => (None, Physical::Bytes(&[])),
-        ValueKind::Array | ValueKind::Object | ValueKind::Json => return None,
     })
 }
 
@@ -200,12 +175,16 @@ fn scalar_of(kind: ValueKind) -> Option<(Option<Logical>, Physical<'static>)> {
 /// [`Error::Source`] ([`Reason::FieldType`]) if the value cannot be read as
 /// `kind` exactly, or is not in the engine's value model. It names no
 /// field: the caller that knows the field names it ([`Error::in_field`]).
-pub fn read(kind: ValueKind, value: impl Encrypt) -> Result<ValueFrame, Error> {
+pub fn read(kind: impl Into<DeclaredType>, value: impl Encrypt) -> Result<ValueFrame, Error> {
+    let kind = kind.into();
     let refused = || Error::bad_source(Reason::FieldType);
     let value = ValueFrame::of(value).map_err(|_| refused())?;
     if kind.holds(value.kind()) {
         return Ok(value);
     }
+    let Some(kind) = kind.value_kind() else {
+        return Err(refused());
+    };
     let number = (&value)
         .visit(OneScalar::new(
             |ty: Option<Logical>, value: Physical<'_>| Number::of(ty, value).ok_or(None),
@@ -349,250 +328,123 @@ impl Number {
     }
 }
 
-/// The kind of a value: the type vocabulary a plan field declares in its
-/// `"type"` key, and what [`ValueFrame::kind`] reports.
+/// The type a plan field declares in its `"type"` key: a [`ValueKind`], or
+/// `json`.
 ///
-/// `Null`, `Undefined` and `Passthrough` have no kind: each null is a type
-/// with one value, so declaring a field as one says nothing, and a
-/// passthrough is a transport choice, not a type.
+/// A [`ValueKind`] is vitaminc's: a scalar of one type, an array or an
+/// object, as it is sealed. `json` is the engine's own. A JSON document
+/// crosses as UTF-8 JSON text in a text or bytes value, so no value is of
+/// type `json` ([`ValueFrame::kind`] says `string` or `bytes`). A field
+/// declares it to have its text parsed by one set of rules
+/// ([`crate::json::parse_text`]) and stored by a target that stores a
+/// document (`JsonSearch`), and it opens back as bytes. A JSON document's
+/// `null` is the text `null`, not the frame's null.
 ///
 /// # Names are wire format
 ///
 /// [`name`](Self::name) (also its [`Display`](fmt::Display) and [`FromStr`]
-/// form) is how a binding spells a kind. The names are frozen: matched
-/// exactly, case-sensitively, and never renamed.
+/// form) is how a binding spells a type: [`ValueKind::name`], or `"json"`.
+/// The names are frozen: matched exactly, case-sensitively, and never
+/// renamed.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum ValueKind {
-    /// `"bool"`.
-    Bool,
-    /// `"int8"`.
-    Int8,
-    /// `"int16"`.
-    Int16,
-    /// `"int32"`.
-    Int32,
-    /// `"int64"`.
-    Int64,
-    /// `"int128"`.
-    Int128,
-    /// `"uint8"`.
-    UInt8,
-    /// `"uint16"`.
-    UInt16,
-    /// `"uint32"`.
-    UInt32,
-    /// `"uint64"`.
-    UInt64,
-    /// `"uint128"`.
-    UInt128,
-    /// `"float32"`.
-    Float32,
-    /// `"float64"`.
-    Float64,
-    /// `"decimal"`: vitaminc's `Decimal` logical type, a mantissa and a
-    /// scale.
-    Decimal,
-    /// `"date"`: vitaminc's `Date` logical type, a calendar date with no
-    /// time or zone.
-    Date,
-    /// `"timestamp"`: vitaminc's `Timestamp` logical type, an instant in
-    /// UTC, to the nanosecond.
-    Timestamp,
-    /// `"string"`.
-    String,
-    /// `"bytes"`.
-    Bytes,
-    /// `"array"`. Says nothing about the elements' kinds.
-    Array,
-    /// `"object"`. Says nothing about the entries' kinds.
-    Object,
-    /// `"json"`: a JSON document, carried as UTF-8 JSON text in a text or
-    /// bytes leaf, which the engine parses by one set of rules
-    /// ([`crate::json::parse_text`]) and opens back to as bytes. A value
-    /// is never of this kind ([`ValueFrame::kind`] says `string` or
-    /// `bytes`); a field declares it, and takes a target that stores a
-    /// document (`JsonSearch`). A JSON document's `null` is the text
-    /// `null`, not the frame's null.
+pub enum DeclaredType {
+    /// A value of this type.
+    Value(ValueKind),
+    /// `"json"`: a JSON document, as UTF-8 JSON text in a text or bytes
+    /// value.
     Json,
 }
 
-impl ValueKind {
-    /// Every kind, in declaration order.
-    pub const ALL: [ValueKind; 21] = [
-        ValueKind::Bool,
-        ValueKind::Int8,
-        ValueKind::Int16,
-        ValueKind::Int32,
-        ValueKind::Int64,
-        ValueKind::Int128,
-        ValueKind::UInt8,
-        ValueKind::UInt16,
-        ValueKind::UInt32,
-        ValueKind::UInt64,
-        ValueKind::UInt128,
-        ValueKind::Float32,
-        ValueKind::Float64,
-        ValueKind::Decimal,
-        ValueKind::Date,
-        ValueKind::Timestamp,
-        ValueKind::String,
-        ValueKind::Bytes,
-        ValueKind::Array,
-        ValueKind::Object,
-        ValueKind::Json,
-    ];
-
-    /// How a declaration spells this kind: `"bool"`, `"int8"`, `"int16"`,
-    /// `"int32"`, `"int64"`, `"int128"`, `"uint8"`, `"uint16"`, `"uint32"`,
-    /// `"uint64"`, `"uint128"`, `"float32"`, `"float64"`, `"decimal"`,
-    /// `"date"`, `"timestamp"`, `"string"`, `"bytes"`, `"array"`,
-    /// `"object"` or `"json"`. Frozen wire format.
+impl DeclaredType {
+    /// How a declaration spells this type: [`ValueKind::name`], or
+    /// `"json"`. Frozen wire format.
     pub const fn name(self) -> &'static str {
         match self {
-            ValueKind::Bool => "bool",
-            ValueKind::Int8 => "int8",
-            ValueKind::Int16 => "int16",
-            ValueKind::Int32 => "int32",
-            ValueKind::Int64 => "int64",
-            ValueKind::Int128 => "int128",
-            ValueKind::UInt8 => "uint8",
-            ValueKind::UInt16 => "uint16",
-            ValueKind::UInt32 => "uint32",
-            ValueKind::UInt64 => "uint64",
-            ValueKind::UInt128 => "uint128",
-            ValueKind::Float32 => "float32",
-            ValueKind::Float64 => "float64",
-            ValueKind::Decimal => "decimal",
-            ValueKind::Date => "date",
-            ValueKind::Timestamp => "timestamp",
-            ValueKind::String => "string",
-            ValueKind::Bytes => "bytes",
-            ValueKind::Array => "array",
-            ValueKind::Object => "object",
-            ValueKind::Json => "json",
+            DeclaredType::Value(ty) => ty.name(),
+            DeclaredType::Json => "json",
         }
     }
 
-    /// How an absent value of this kind is sealed so that it is as long as
-    /// a present one (a plan's `"null": "sealed"`, #1298): `Some(Some(ty))`
-    /// for a kind of fixed width, sealed as a typed null of `ty` (vitaminc
-    /// 0.8); `Some(None)` for a boolean, whose leaf is one byte, as the
-    /// plain null is; `None` for a kind of no fixed width (text, bytes, a
-    /// container), whose absence no padding can hide.
-    pub(crate) const fn sealed_null(self) -> Option<Option<FixedType>> {
-        let plain = FixedType::plain;
-        Some(match self {
-            ValueKind::Bool => None,
-            ValueKind::Int8 => plain(Width::I8),
-            ValueKind::Int16 => plain(Width::I16),
-            ValueKind::Int32 => plain(Width::I32),
-            ValueKind::Int64 => plain(Width::I64),
-            ValueKind::Int128 => plain(Width::I128),
-            ValueKind::UInt8 => plain(Width::U8),
-            ValueKind::UInt16 => plain(Width::U16),
-            ValueKind::UInt32 => plain(Width::U32),
-            ValueKind::UInt64 => plain(Width::U64),
-            ValueKind::UInt128 => plain(Width::U128),
-            ValueKind::Float32 => plain(Width::F32),
-            ValueKind::Float64 => plain(Width::F64),
-            // The widths the value model holds each logical type at.
-            ValueKind::Decimal => FixedType::new(Some(Logical::Decimal { scale: 0 }), Width::I128),
-            ValueKind::Date => FixedType::new(Some(Logical::Date), Width::I32),
-            ValueKind::Timestamp => {
-                FixedType::new(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128)
-            }
-            ValueKind::String
-            | ValueKind::Bytes
-            | ValueKind::Array
-            | ValueKind::Object
-            | ValueKind::Json => return None,
-        })
+    /// The type of the values a field of this type holds, or `None` for
+    /// `json`, whose values are text or bytes.
+    pub const fn value_kind(self) -> Option<ValueKind> {
+        match self {
+            DeclaredType::Value(ty) => Some(ty),
+            DeclaredType::Json => None,
+        }
     }
-}
 
-impl ValueKind {
-    /// Whether a value of kind `found` is a value of this declared kind:
-    /// the same kind, or for [`Json`](Self::Json), the text or bytes the
-    /// document crosses as. `None`, a value with no kind (a null, an
-    /// undefined, a passthrough), is a value of no kind.
-    pub const fn holds(self, found: Option<ValueKind>) -> bool {
+    /// Whether a value of type `found` is a value of this declared type:
+    /// the same type, or for [`Json`](Self::Json), the text or bytes the
+    /// document crosses as. `None`, a value with no type (a null, an
+    /// undefined, a passthrough), is a value of no declared type.
+    pub fn holds(self, found: Option<ValueKind>) -> bool {
         match (self, found) {
-            (ValueKind::Json, Some(ValueKind::String | ValueKind::Bytes)) => true,
-            (declared, Some(found)) => declared as u8 == found as u8,
-            (_, None) => false,
+            (DeclaredType::Json, Some(ValueKind::String | ValueKind::Bytes)) => true,
+            (DeclaredType::Value(declared), Some(found)) => declared == found,
+            (_, _) => false,
         }
     }
 }
 
-impl fmt::Display for ValueKind {
+impl From<ValueKind> for DeclaredType {
+    fn from(ty: ValueKind) -> Self {
+        DeclaredType::Value(ty)
+    }
+}
+
+impl fmt::Display for DeclaredType {
     /// Writes [`name`](Self::name).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())
     }
 }
 
-impl FromStr for ValueKind {
+impl FromStr for DeclaredType {
     type Err = ParseValueKindError;
 
     /// Parses a [`name`](Self::name), exactly: `"uint64"`, not `"UInt64"`,
-    /// `"u64"` or `" uint64"`. `"null"` and `"undefined"` are not kinds.
+    /// `"u64"` or `" uint64"`. `"null"` and `"undefined"` are not types.
     fn from_str(name: &str) -> Result<Self, Self::Err> {
-        ValueKind::ALL
-            .into_iter()
-            .find(|kind| kind.name() == name)
-            .ok_or(ParseValueKindError)
+        if name == DeclaredType::Json.name() {
+            return Ok(DeclaredType::Json);
+        }
+        name.parse().map(DeclaredType::Value)
     }
 }
-
-/// The error from parsing a string that is not a [`ValueKind::name`].
-/// Carries no detail: the caller holds the string it tried to parse.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, thiserror::Error)]
-#[error("not a value kind")]
-pub struct ParseValueKindError;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::dynamic::test_frame::Tree;
     use crate::sem::{MatchOptions, Tokenizer};
-    use vitaminc_aead::plaintext::Raw;
+    use vitaminc_aead::plaintext::{Raw, TimeUnit};
 
+    /// A declared type's names are its value type's, and `"json"`, each
+    /// parsing back exactly.
     #[test]
-    fn kind_names_parse_back_exactly() {
-        let names: Vec<&str> = ValueKind::ALL.iter().map(|kind| kind.name()).collect();
-        assert_eq!(
-            names,
-            [
-                "bool",
-                "int8",
-                "int16",
-                "int32",
-                "int64",
-                "int128",
-                "uint8",
-                "uint16",
-                "uint32",
-                "uint64",
-                "uint128",
-                "float32",
-                "float64",
-                "decimal",
-                "date",
-                "timestamp",
-                "string",
-                "bytes",
-                "array",
-                "object",
-                "json"
-            ],
-            "the frozen names"
-        );
-        for kind in ValueKind::ALL {
-            assert_eq!(kind.name().parse::<ValueKind>(), Ok(kind));
-            assert_eq!(kind.to_string(), kind.name());
+    fn declared_type_names_parse_back_exactly() {
+        let all = ValueKind::ALL
+            .into_iter()
+            .map(DeclaredType::Value)
+            .chain([DeclaredType::Json]);
+        for ty in all {
+            assert_eq!(ty.name().parse::<DeclaredType>(), Ok(ty));
+            assert_eq!(ty.to_string(), ty.name());
         }
-        assert_eq!("UInt64".parse::<ValueKind>(), Err(ParseValueKindError));
-        assert_eq!("null".parse::<ValueKind>(), Err(ParseValueKindError));
+        assert_eq!(DeclaredType::Json.name(), "json");
+        for ty in ValueKind::ALL {
+            assert_eq!(DeclaredType::from(ty).name(), ty.name());
+            assert_eq!(DeclaredType::from(ty).value_kind(), Some(ty));
+        }
+        assert_eq!(DeclaredType::Json.value_kind(), None);
+        for refused in ["UInt64", "Json", "null", "undefined", ""] {
+            assert_eq!(
+                refused.parse::<DeclaredType>(),
+                Err(ParseValueKindError),
+                "{refused:?}"
+            );
+        }
     }
 
     // Beside the frozen names (above), these test the two rules this crate
@@ -640,17 +492,12 @@ mod tests {
             ValueKind::Bytes => tree(Tree::Bytes(b"ab".to_vec())),
             ValueKind::Array => tree(Tree::Array(vec![Tree::UInt32(1)])),
             ValueKind::Object => tree(Tree::Object(vec![("k".to_string(), Tree::UInt32(1))])),
-            // A document crosses as its text: a value of kind string.
-            ValueKind::Json => tree(Tree::String(r#"{"k": 1}"#.into())),
         }
     }
 
-    /// Every kind whose values are of that kind: all but `json`, which a
-    /// field declares and a value never is (it crosses as text or bytes).
+    /// Every value type.
     fn value_kinds() -> impl Iterator<Item = ValueKind> {
-        ValueKind::ALL
-            .into_iter()
-            .filter(|kind| *kind != ValueKind::Json)
+        ValueKind::ALL.into_iter()
     }
 
     /// `json` admits no index (a document is indexed by the target that
@@ -659,32 +506,29 @@ mod tests {
     #[test]
     fn json_holds_its_text_and_admits_no_index() {
         for index in indexes() {
-            assert!(!admits(ValueKind::Json, &index), "{index}");
+            assert!(!admits(DeclaredType::Json, &index), "{index}");
         }
-        assert!(ValueKind::Json.holds(Some(ValueKind::String)));
-        assert!(ValueKind::Json.holds(Some(ValueKind::Bytes)));
+        assert!(DeclaredType::Json.holds(Some(ValueKind::String)));
+        assert!(DeclaredType::Json.holds(Some(ValueKind::Bytes)));
         for kind in value_kinds().filter(|k| !matches!(k, ValueKind::String | ValueKind::Bytes)) {
-            assert!(!ValueKind::Json.holds(Some(kind)), "{kind}");
+            assert!(!DeclaredType::Json.holds(Some(kind)), "{kind}");
         }
         assert!(
-            !ValueKind::Json.holds(None),
+            !DeclaredType::Json.holds(None),
             "a frame null is not a document"
         );
-        assert!(!ValueKind::String.holds(Some(ValueKind::Bytes)));
+        assert!(!DeclaredType::from(ValueKind::String).holds(Some(ValueKind::Bytes)));
         for kind in value_kinds() {
-            assert!(kind.holds(Some(kind)), "{kind}");
-            assert!(!kind.holds(None), "{kind}");
+            assert!(DeclaredType::from(kind).holds(Some(kind)), "{kind}");
+            assert!(!DeclaredType::from(kind).holds(None), "{kind}");
         }
-        let text = read_frame(ValueKind::Json, sample(ValueKind::Json)).expect("text");
+        // A document crosses as its text: a value of type string.
+        let text =
+            read_frame(DeclaredType::Json, Tree::String(r#"{"k": 1}"#.into())).expect("text");
         assert_eq!(text.kind(), Some(ValueKind::String));
-        let bytes = read_frame(ValueKind::Json, Tree::Bytes(b"[1]".to_vec())).expect("bytes");
+        let bytes = read_frame(DeclaredType::Json, Tree::Bytes(b"[1]".to_vec())).expect("bytes");
         assert_eq!(bytes.kind(), Some(ValueKind::Bytes));
-        assert!(read_frame(ValueKind::Json, Tree::UInt32(1)).is_none());
-        assert_eq!(
-            ValueKind::Json.sealed_null(),
-            None,
-            "a document has no fixed width"
-        );
+        assert!(read_frame(DeclaredType::Json, Tree::UInt32(1)).is_none());
     }
 
     fn indexes() -> [IndexSpec; 5] {
@@ -772,6 +616,7 @@ mod tests {
             k: 6,
             m: 1024,
         });
+        assert!(!admits(DeclaredType::Json, &wide));
         for kind in ValueKind::ALL {
             assert_eq!(
                 admits(kind, &wide),
@@ -827,7 +672,11 @@ mod tests {
     /// and one reason for every refusal.
     #[test]
     fn not_admitted_is_admits_with_a_reason() {
-        for kind in ValueKind::ALL {
+        let all = ValueKind::ALL
+            .into_iter()
+            .map(DeclaredType::Value)
+            .chain([DeclaredType::Json]);
+        for kind in all {
             for index in indexes() {
                 let reason = not_admitted(kind, &index);
                 assert_eq!(reason.is_none(), admits(kind, &index), "{kind} and {index}");
@@ -998,7 +847,7 @@ mod tests {
 
     /// `read` from any source, as the frame it writes, for the kinds a
     /// control-data tree cannot hold.
-    fn read_frame(kind: ValueKind, value: impl Encrypt) -> Option<ValueFrame> {
+    fn read_frame(kind: impl Into<DeclaredType>, value: impl Encrypt) -> Option<ValueFrame> {
         read(kind, value).ok()
     }
 

@@ -245,8 +245,8 @@ mod tests {
             TargetError::Kind { .. } => TargetError::Kind {
                 name: name(),
                 target: target(),
-                expected: Some(ValueKind::String),
-                declared: ValueKind::UInt64,
+                expected: Some(ValueKind::String.into()),
+                declared: ValueKind::UInt64.into(),
             },
             TargetError::Column { .. } => TargetError::Column {
                 name: name(),
@@ -256,7 +256,7 @@ mod tests {
             TargetError::Plaintext { .. } => TargetError::Plaintext {
                 name: name(),
                 target: target(),
-                expected: Some(ValueKind::String),
+                expected: Some(ValueKind::String.into()),
                 found: None,
             },
             TargetError::Stored { .. } => TargetError::Stored {
@@ -639,8 +639,8 @@ mod tests {
                 Box::new(TargetError::Kind {
                     name: name(),
                     target: target(),
-                    expected: Some(ValueKind::String),
-                    declared: ValueKind::UInt64,
+                    expected: Some(ValueKind::String.into()),
+                    declared: ValueKind::UInt64.into(),
                 }),
                 json!({
                     "field": "email",
@@ -665,7 +665,7 @@ mod tests {
                 Box::new(TargetError::Plaintext {
                     name: name(),
                     target: target(),
-                    expected: Some(ValueKind::String),
+                    expected: Some(ValueKind::String.into()),
                     found: None,
                 }),
                 json!({
