@@ -129,7 +129,7 @@ jobs:
       # `index.node`, which nothing else in this job produces.
       #
       # NOT for protect-ffi's own suite, though vendoring it did add
-      # `@cipherstash/protect-ffi#test` to `turbo test --filter './languages/typescript/packages/*'`.
+      # `@cipherstash/protect-ffi#test` to `turbo test --filter './languages/typescript/packages/**' --filter './packages/**'`.
       # That suite must pass with no binding at all (its `build` is `tsc` and
       # its `test` is deliberately cargo-free), and `src/lintWiring.test.ts`
       # re-runs it here with the artifact hidden to keep that true — this job

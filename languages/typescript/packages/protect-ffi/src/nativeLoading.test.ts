@@ -27,7 +27,7 @@
  *
  * Nothing in this file may REQUIRE a binary, though, and that is a separate
  * rule from the ones above. `languages/typescript/packages/protect-ffi`'s `test` is the default task
- * root `pnpm test` reaches through `turbo test --filter './languages/typescript/packages/*'`, and it
+ * root `pnpm test` reaches through `turbo test --filter './languages/typescript/packages/**' --filter './packages/**'`, and it
  * is deliberately Rust-free: `index.node` stopped being tarball content when
  * this package was absorbed, so on a fresh checkout there is no binary
  * anywhere and the six `platforms/*` links are empty. `lintWiring.test.ts`
@@ -235,7 +235,7 @@ describe('assertNativeBindingAvailable', () => {
     // empty until someone builds one, and `languages/typescript/packages/protect-ffi`'s `test` is
     // deliberately Rust-free. So on every fresh checkout the assertion failed
     // — and it failed under root `pnpm test`, which reaches this package via
-    // `turbo test --filter './languages/typescript/packages/*'`.
+    // `turbo test --filter './languages/typescript/packages/**' --filter './packages/**'`.
     //
     // Both branches assert. A `skipIf` here would be the trade this repo keeps
     // refusing: it goes quiet on every contributor machine, and quiet is
