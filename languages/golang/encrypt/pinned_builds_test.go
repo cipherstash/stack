@@ -3,14 +3,12 @@ package encrypt
 import (
 	"context"
 	"errors"
-	goruntime "runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/tetratelabs/wazero"
-	"github.com/tetratelabs/wazero/experimental"
 )
 
 // countingBuilds is a pinnedBuilds whose compile counts its calls, waits
@@ -114,7 +112,12 @@ func TestPinnedBuildsKeepTheGuestCompiled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := experimental.WithCompilationWorkers(context.Background(), goruntime.GOMAXPROCS(0))
+	// The compiles below run on one worker, so a compile that misses the
+	// cache takes about 20 times as long as one that reads it, on any
+	// number of cores. With a worker for each core, a machine with many
+	// cores compiles the guest only about 3 times slower than it reads it
+	// from the cache, which is too close to tell apart.
+	ctx := context.Background()
 	// compile compiles wasm on a new runtime, closes the compiled module
 	// and the runtime, and returns how long the compile took. Closing the
 	// compiled module is what closing a client does: newInstance
