@@ -74,8 +74,12 @@ zerokms-protocol = "=0.12.31"
 # versions would fail only at the `ValueFrame: Decrypt` bound.
 
 futures = { version = "0.3", default-features = false, features = ["executor"] }
+# The guest's own diagnostic for a refused keyset name (options.rs), at the
+# versions stack-guest-abi records diagnostics with.
+miette = { version = "7.5.0", default-features = false }
 serde = "1"
 serde_json = "1"
+thiserror = "1.0.56"
 uuid = "1"
 zeroize = "1"
 

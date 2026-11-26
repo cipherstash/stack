@@ -3,6 +3,7 @@ package encrypt_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
@@ -93,5 +94,51 @@ func TestAForeignKeysetNamesBothKeysets(t *testing.T) {
 	}
 	if d.Help == "" {
 		t.Error("a foreign keyset gives no help")
+	}
+}
+
+// A keyset name that breaks a naming rule is ErrEncoding, with the guest's
+// malformed-input code. Its message names the rule the name broke, and its
+// Help states the rules. The name is checked where a cipher first uses it,
+// on a KeysetID and on an encrypt alike.
+func TestAnInvalidKeysetNameNamesTheRule(t *testing.T) {
+	c := deterministicClient(t)
+	ctx := context.Background()
+	cases := []struct {
+		name    string
+		keyset  encrypt.KeysetName
+		message []string
+	}{
+		{"a space", "tenant 42", []string{`"tenant 42"`, `' '`}},
+		{"a dot", "tenant.42", []string{`"tenant.42"`, `'.'`}},
+		{"a letter outside ASCII", "ténant", []string{`"ténant"`, `'é'`}},
+		{"no characters", "", []string{"empty"}},
+		{"65 characters", encrypt.KeysetName(strings.Repeat("a", 65)), []string{"65 characters", "64"}},
+	}
+	for _, tc := range cases {
+		cipher := c.Keyset(tc.keyset)
+		calls := map[string]func() error{
+			"KeysetID": func() error { _, err := cipher.KeysetID(ctx); return err },
+			"Encrypt":  func() error { _, err := testusers.Encrypt(ctx, cipher, people[:1]); return err },
+		}
+		for call, run := range calls {
+			t.Run(tc.name+"/"+call, func(t *testing.T) {
+				err := run()
+				if !errors.Is(err, encrypt.ErrEncoding) {
+					t.Fatalf("err = %v, want ErrEncoding", err)
+				}
+				d := encrypt.WantDiagnostic(t, err, "stack_guest_abi::malformed_input")
+				for _, want := range tc.message {
+					if !strings.Contains(d.Message, want) {
+						t.Errorf("Message = %q, want it to contain %q", d.Message, want)
+					}
+				}
+				for _, want := range []string{"1 to 64 characters", "A to Z and a to z", "0 to 9", "_, -, and /"} {
+					if !strings.Contains(d.Help, want) {
+						t.Errorf("Help = %q, want it to contain %q", d.Help, want)
+					}
+				}
+			})
+		}
 	}
 }
