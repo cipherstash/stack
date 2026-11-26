@@ -8,9 +8,17 @@ import (
 
 // Failure kinds the profile reports. The guest reports a status code from
 // the one table every guest shares, so these are the sentinels of the
-// shared decoder exposed under this package's names; an error from
-// encrypt of the same kind is the same value. Check one with errors.Is;
-// the detail behind it is a [Diagnostic].
+// shared decoder exposed under this package's names. Check one with
+// errors.Is; the detail behind it is a [Diagnostic]. Check an error
+// from this package's calls against these names, not encrypt's.
+//
+// Six of these names are in the encrypt package too. Four are the same
+// value in both packages, so errors.Is matches either package's name:
+// ErrEncoding, ErrState, ErrInternal and ErrMemoryLock. ErrNotFound
+// and ErrTransport are different values. Here they are a missing profile
+// file and a failed auth HTTP exchange. In encrypt they are ZeroKMS
+// failures. So errors.Is(err, encrypt.ErrNotFound) is false for an
+// ErrNotFound from this package, and the other way round.
 var (
 	// ErrNotFound is a profile file that does not exist in the store asked:
 	// no secretkey.json, auth.json or device.json there. For the workspace's
