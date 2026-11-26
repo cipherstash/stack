@@ -384,16 +384,26 @@ pub mod conformance;
 /// `value` as JSON text in the layout Biome's formatter gives a fixture
 /// (`pnpm run code:check`), so a regenerated fixture is committed as
 /// written. Two-space indent; a non-empty object puts each member on a line
-/// of its own; an array of scalars stays on one line while that line,
-/// its trailing comma included, fits in 80 columns, and otherwise puts each
-/// element on a line of its own. An array holding an object or an array is
-/// always broken.
+/// of its own. An array with no object in it, at any depth, stays on one
+/// line while that line, its trailing comma included, fits in 80 columns;
+/// otherwise an array of numbers fills each line with as many numbers as
+/// fit, and any other array, and always one holding an object, puts each
+/// element on a line of its own, laid out by the same rule.
 pub fn biome_json(value: &serde_json::Value) -> String {
-    fn scalar(value: &serde_json::Value) -> bool {
-        !matches!(
-            value,
-            serde_json::Value::Array(_) | serde_json::Value::Object(_)
-        )
+    /// The value on one line, if it holds no object.
+    fn inline(value: &serde_json::Value) -> Option<String> {
+        match value {
+            serde_json::Value::Object(map) if !map.is_empty() => None,
+            serde_json::Value::Array(items) => Some(format!(
+                "[{}]",
+                items
+                    .iter()
+                    .map(inline)
+                    .collect::<Option<Vec<_>>>()?
+                    .join(", ")
+            )),
+            other => Some(text(other)),
+        }
     }
     fn text(value: &serde_json::Value) -> String {
         serde_json::to_string(value).expect("JSON")
@@ -426,15 +436,38 @@ pub fn biome_json(value: &serde_json::Value) -> String {
                 out.push('}');
             }
             serde_json::Value::Array(items) if !items.is_empty() => {
-                if items.iter().all(scalar) {
-                    let inline = format!(
-                        "[{}]",
-                        items.iter().map(text).collect::<Vec<_>>().join(", ")
-                    );
+                if let Some(inline) = inline(value) {
                     if column + inline.chars().count() + tail <= 80 {
                         out.push_str(&inline);
                         return;
                     }
+                }
+                if items.iter().all(serde_json::Value::is_number) {
+                    out.push_str("[\n");
+                    let mut line = String::new();
+                    for (i, item) in items.iter().enumerate() {
+                        let item = text(item);
+                        let comma = usize::from(i != items.len() - 1);
+                        if !line.is_empty()
+                            && indent + 2 + line.chars().count() + 1 + item.chars().count() + comma
+                                > 80
+                        {
+                            out.push_str(&pad(indent + 2));
+                            out.push_str(line.trim_end());
+                            out.push('\n');
+                            line.clear();
+                        }
+                        line.push_str(&item);
+                        if comma == 1 {
+                            line.push_str(", ");
+                        }
+                    }
+                    out.push_str(&pad(indent + 2));
+                    out.push_str(&line);
+                    out.push('\n');
+                    out.push_str(&pad(indent));
+                    out.push(']');
+                    return;
                 }
                 out.push_str("[\n");
                 let last = items.len() - 1;
