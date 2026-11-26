@@ -2,7 +2,9 @@
 
 `storage-v1.json` is the golden corpus for version 1 of the storage profile
 (`STORAGE.md`). Its rows are never edited or removed; new rows may be added.
-`scripts/storage_corpus_append_only.py` checks that.
+`scripts/storage_corpus_append_only.py` checks that, against the pull
+request's base branch, in `.github/workflows/storage-corpus.yml` on every pull
+request that changes this directory or the script.
 
 The file is Biome-formatted. The formatter may change its layout, never its
 parsed content. The Rust tests and the append-only check parse it as JSON,

@@ -16,8 +16,10 @@ rust-version = "1.89.0"
 # `release = false`. Every workspace that resolves it patches crates.io's
 # copy to this one.
 publish = false
-# The corpus check runs in CI against git history; it is no part of the
-# crate a dependent builds.
+# scripts/ holds the storage corpus append-only check, which
+# .github/workflows/storage-corpus.yml runs on a pull request that changes
+# testdata/ or scripts/, against the pull request's base branch. It reads git
+# history and is no part of the crate a dependent builds.
 exclude = ["scripts/"]
 
 [lints.rust]

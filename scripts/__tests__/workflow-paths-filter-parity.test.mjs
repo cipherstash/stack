@@ -194,6 +194,10 @@ const EXPECTED_ASYMMETRIES = new Map([
     '.github/workflows/miri.yml',
     'pull_request is the only filtered trigger; Miri is deterministic, so a post-merge run would repeat the PR result',
   ],
+  [
+    '.github/workflows/storage-corpus.yml',
+    'pull_request is the only trigger; the check compares the corpus with the pull request base branch, which a push has none of',
+  ],
 ])
 
 describe('paths filters are written twice, identically', () => {
