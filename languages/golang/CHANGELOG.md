@@ -13,6 +13,18 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Fixed
+
+- Every exported name now has a doc comment: `auth.OIDCProviderFunc.Token`,
+  `stashgen.FieldError.Error`, and the `stashgen.Kind` constants.
+- The doc comments of `encrypt.Diagnostic` and `auth.Diagnostic` now list
+  the type's methods. `go doc` and pkg.go.dev cannot show them, because the
+  type is defined in an internal package.
+- Doc comments no longer name source files, unexported names, guest
+  exports, or internal packages.
+- Two typos in doc comments are fixed, and a curly quote that stood for an
+  empty string is now `""`.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

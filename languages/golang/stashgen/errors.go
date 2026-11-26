@@ -13,6 +13,8 @@ type FieldError struct {
 	Reason string
 }
 
+// Error returns "stashgen: Type.Field: Reason", or "stashgen: Type: Reason"
+// when the mistake is about the type and Field is "".
 func (e *FieldError) Error() string {
 	if e.Field == "" {
 		return fmt.Sprintf("stashgen: %s: %s", e.Type, e.Reason)

@@ -2,7 +2,7 @@
 // type, each holding the EQL value as the JSON bytes PostgreSQL stores in
 // the type's domain, and the query types that match them.
 //
-// A field with `stash:"email,encrypt_into=TextEq"` is an [TextEq] in the
+// A field with `stash:"email,encrypt_into=TextEq"` is a [TextEq] in the
 // generated encrypted type, and its Fields entry's Eq returns a
 // [TextEqQuery]. The guest builds every value: generated code stores what
 // the guest returns and never assembles an EQL value itself (ADR-0007,

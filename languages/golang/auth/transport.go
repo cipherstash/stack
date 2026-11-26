@@ -37,6 +37,7 @@ type OIDCProvider interface {
 // OIDCProviderFunc adapts a function to OIDCProvider.
 type OIDCProviderFunc func(context.Context) (string, error)
 
+// Token calls f with ctx and returns what f returns.
 func (f OIDCProviderFunc) Token(ctx context.Context) (string, error) { return f(ctx) }
 
 const maxAuthResponseBytes = 16 << 20

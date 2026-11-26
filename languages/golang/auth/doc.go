@@ -34,7 +34,7 @@
 // A raw token — [ProfileStore.Token]'s included — cannot be refreshed when
 // it expires, and would bypass the cross-process lock a device-session
 // refresh holds with the CLI, so encrypt does not accept one. A
-// strategy lives in its store's guest, and closing the store closes it. A
+// strategy lives in its store's guest, and closing the store closes it. An
 // encrypt client given one never closes the strategy or the store:
 // both are the caller's, and stay open until the client is closed.
 // [OAuth2TokenSource] adapts an existing golang.org/x/oauth2.TokenSource
@@ -81,8 +81,8 @@
 // the lock and saves a rotated token before Go releases it. Creating a device
 // identity is native-only in the crate and
 // CLI territory; this package only reads one. Files the guest creates are
-// mode 0600, which is wazero's create mode rather than the crate's own
-// (skipped on wasm32), so a test pins it.
+// mode 0600. That is wazero's create mode, not the crate's: the crate does
+// not set a file's mode on wasm32.
 //
 // # Memory
 //

@@ -17,7 +17,7 @@ import (
 )
 
 // JSONOpen opens the rows that a read of a JSON document field returned.
-// It calls the guest's se_json_open, and checks the rows against the
+// The engine opens them and checks them against the
 // request that prepared the read. The request is
 // `{"operation": "selector" | "subtree", "path", "wildcard_bound"}`. The
 // rows argument has one group per database row:
@@ -144,7 +144,7 @@ func (cph *Cipher) jsonOpen(ctx context.Context, plan *record.Plan, field string
 type JSONSelector string
 
 // Value binds the selector as text. A zero JSONSelector (one never
-// prepared) is refused rather than bound as ”, which matches no row.
+// prepared) is refused rather than bound as "", which matches no row.
 func (s JSONSelector) Value() (driver.Value, error) {
 	if s == "" {
 		return nil, fmt.Errorf("%w: an empty JSONSelector: prepare one with the field's Selector", ErrEncoding)
