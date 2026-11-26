@@ -49,10 +49,15 @@ const APT_COMMAND =
 // DPkg::Lock::Timeout covers only the dpkg locks. apt-get update takes the
 // package-list lock without waiting, whatever the option says, so it must
 // be retried in a loop that ends with `&& break`.
-const APT_UPDATE = /\bapt(?:-get)?\s.*\bupdate\b/
+//
+// `update` must be the subcommand: options, each with an optional value, may
+// come before it, but a package name such as update-notifier-common is not it.
+const APT_UPDATE =
+  /\bapt(?:-get)?\s+(?:-\S+\s+(?:(?!-)\S+\s+)?)*update(?![\w-])/
 
 export function aptFinding(run) {
-  for (const line of String(run).split('\n')) {
+  const joined = String(run).replace(/\\\r?\n[ \t]*/g, ' ')
+  for (const line of joined.split('\n')) {
     if (/^\s*#/.test(line)) continue
     if (APT_COMMAND.test(line) && !line.includes('DPkg::Lock::Timeout='))
       return `runs apt without waiting for the lock: "${line.trim()}". Add -o DPkg::Lock::Timeout=300.`
@@ -154,6 +159,31 @@ describe('apt on a new RunsOn machine', () => {
     expect(
       aptFinding('sudo apt-get -o DPkg::Lock::Timeout=300 upgrade -y'),
     ).toBeNull()
+    expect(
+      aptFinding('sudo apt-get -q -o DPkg::Lock::Timeout=300 update'),
+    ).toMatch(/&& break/)
+    // A package whose name starts with "update" is not an update.
+    expect(
+      aptFinding(
+        'sudo apt-get -o DPkg::Lock::Timeout=300 install -y update-notifier-common',
+      ),
+    ).toBeNull()
+  })
+
+  it('reads a command continued with a backslash as one line', () => {
+    expect(
+      aptFinding(
+        'sudo apt-get install -y \\\n  -o DPkg::Lock::Timeout=300 doxygen',
+      ),
+    ).toBeNull()
+    expect(
+      aptFinding(
+        'sudo apt-get -o DPkg::Lock::Timeout=300 update \\\n  && break',
+      ),
+    ).toBeNull()
+    expect(aptFinding('sudo apt-get install -y \\\n  doxygen')).toMatch(
+      /DPkg::Lock::Timeout/,
+    )
   })
 
   it('waits for the apt lock in every RunsOn job', () => {
