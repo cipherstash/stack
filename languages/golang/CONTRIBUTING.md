@@ -42,6 +42,13 @@ The guide in `packages/stack-encrypt/docs/language-integration.md` explains how 
 - Package `auth` has a method for each thing the napi binding of the `stack-profile` crate exposes, named as in Rust.
 - The credential guest creates files with mode 0600. That is wazero's create mode, not the crate's own, because the crate skips setting the mode on wasm32. A test checks the mode.
 
+## Known gaps
+
+After `Decrypt`, one unwiped copy of each opened string can remain in the guest's memory.
+`TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt` in `encrypt/roundtrip_test.go` records this gap.
+The test is skipped until vitaminc wipes that copy (cipherstash/vitaminc#370).
+When that fix ships, remove the skip so the test runs again.
+
 ## Design records
 
 The architecture decision records (ADRs) are in two series.
