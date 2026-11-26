@@ -40,9 +40,10 @@ const manifest = JSON.parse(
 const scripts = manifest.scripts
 
 /**
- * Script names reachable from `root`, following `pnpm run` / `npm run` and the
- * `pre` / `post` hooks pnpm runs without being asked. The same walk as
- * `reachableFrom` in protect-ffi's `src/lintWiring.test.ts`.
+ * Script names reachable from `root`, following script calls by pnpm or npm
+ * and the `pre` / `post` hooks pnpm runs without being asked. Based on
+ * `reachableFrom` in protect-ffi's `src/lintWiring.test.ts`, which follows
+ * only `pnpm run` and `npm run`.
  */
 function reachableFrom(root, scripts = manifest.scripts) {
   const seen = new Set()
@@ -54,8 +55,15 @@ function reachableFrom(root, scripts = manifest.scripts) {
     const body = scripts[name]
     if (body === undefined) continue
     queue.push(`pre${name}`, `post${name}`)
-    for (const match of body.matchAll(/(?:pnpm|npm) run ([\w:-]+)/g)) {
-      queue.push(match[1])
+    // pnpm runs a script with or without `run`, after any flags (`pnpm build`,
+    // `pnpm -s run build`). npm needs `run`. A name that is not a script, such
+    // as `exec` in `pnpm exec`, is not followed.
+    const calls = [
+      ...body.matchAll(/\bpnpm(?:\s+-\S+)*\s+(?:run\s+)?([\w:-]+)/g),
+      ...body.matchAll(/\bnpm(?:\s+-\S+)*\s+run\s+([\w:-]+)/g),
+    ]
+    for (const [, called] of calls) {
+      if (Object.hasOwn(scripts, called)) queue.push(called)
     }
   }
   return seen
@@ -165,6 +173,21 @@ describe('protect-ffi test does not rewrite lib/ during turbo test', () => {
 // The checks above are only as good as the helpers they use, so the helpers
 // are tested on fixtures here.
 describe('the helpers this guard relies on', () => {
+  it('follows every way pnpm can run a script', () => {
+    const fixture = {
+      test: 'pnpm build && pnpm -s run a && pnpm --silent run b && npm run c && pnpm exec d',
+      build: 'tsc',
+      a: 'true',
+      b: 'true',
+      c: 'true',
+      d: 'true',
+    }
+    const reached = [...reachableFrom('test', fixture)].filter(
+      (name) => name in fixture,
+    )
+    expect(reached.sort()).toEqual(['a', 'b', 'build', 'c', 'test'])
+  })
+
   it('finds tsc however the command names it', () => {
     expect(tscCommands('tsc --noEmit && ./node_modules/.bin/tsc')).toEqual([
       ['--noEmit'],
