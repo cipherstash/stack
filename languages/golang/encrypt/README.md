@@ -585,24 +585,30 @@ if errors.As(err, &d) {
 
 `Field` and `Reason` name the field and the problem (`field_missing`,
 `unknown_key`, ...) on a refused plan, record, or value. An error the client
-raises itself has no `Diagnostic`: a closed client, a guest that did not
-return, `ErrMemoryLock`, or a refused argument.
+raises itself has no `Diagnostic`. These are a closed client, a guest that
+did not return, `ErrMemoryLock`, and an argument refused before it reached
+the engine.
 
 ZeroKMS refuses a data key (`ErrForbidden`, code
-`stack_kms::retrieve_key_failed`) for one of two causes. The value is opened
-under another context, or the client has no grant for the value's keyset.
-ZeroKMS gives the same answer for both, so the `Help` says which cause it is
-where the call knows:
+`stack_kms::retrieve_key_failed`) for one of three causes:
 
-- Through a `*Cipher`, the cause is the context, because the cipher loaded
-  its keyset first. The `Help` names the keyset, and says how many scope and
-  binding parts the cipher adds.
-- Through the `*Client`, the `Help` names both causes.
+- the value is opened under another context;
+- the keyset is disabled;
+- the access token lacks the scope to retrieve keys.
+
+ZeroKMS gives the same answer for all three, so the `Help` says which cause
+is likely where the call knows:
+
+- Through a `*Cipher`, the likely cause is the context, because the cipher
+  loaded its keyset first. The `Help` names the keyset, and says how many
+  scope and binding parts the cipher adds.
+- Through the `*Client`, the `Help` names every cause.
 
 A keyset that ZeroKMS does not find (`ErrNotFound`, code
 `stack_kms::keyset_not_found`) is named in the `Message`, and in `Fields` as
 `keyset_name` or `keyset_id`. ZeroKMS gives the same answer for a keyset
-that exists but is not granted to this client.
+that exists but is not granted to this client, and for a client it does
+not know.
 
 What an error may contain is fixed. It may carry keyset ids and names, field
 names, counts, index kinds, ZeroKMS request kinds and HTTP statuses. It never

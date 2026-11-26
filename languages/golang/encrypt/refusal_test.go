@@ -12,9 +12,9 @@ import (
 
 // A data key ZeroKMS refuses is ErrForbidden with the code
 // stack_kms::retrieve_key_failed, whatever the cause. The Help says which
-// cause it is where the call knows: a cipher loaded its keyset first, so for
-// a cipher the context is what differs; the Client did not, so its Help names
-// both causes. Neither names a scope's value.
+// cause is likely where the call knows: a cipher loaded its keyset first, so
+// for a cipher the context is the likely cause; the Client did not, so its
+// Help names every cause. Neither names a scope's value.
 func TestARefusedDataKeySaysWhichCause(t *testing.T) {
 	c := deterministicClient(t)
 	ctx := context.Background()
@@ -37,7 +37,7 @@ func TestARefusedDataKeySaysWhichCause(t *testing.T) {
 		{
 			name: "a cipher with another scope",
 			with: cipher.Scope("scope-value-8"),
-			want: []string{`keyset "tenant-a"`, "1 scope part and no binding parts", "Cipher.Scope", "Cipher.Bind", "context field"},
+			want: []string{`keyset "tenant-a"`, "1 scope part and no binding parts", "Cipher.Scope", "Cipher.Bind", "context field", "disabled since it was loaded"},
 		},
 		{
 			name: "a cipher with no scope",
@@ -58,7 +58,7 @@ func TestARefusedDataKeySaysWhichCause(t *testing.T) {
 		{
 			name: "the Client",
 			with: c,
-			want: []string{"no grant for the keyset", "Cipher.Scope", "Cipher.Bind", "context field"},
+			want: []string{"keyset the value was sealed under is disabled", "scope to retrieve keys", "Cipher.Scope", "Cipher.Bind", "context field", "ErrNotFound"},
 		},
 	}
 	for _, tc := range cases {

@@ -1192,7 +1192,7 @@ mod tests {
         }
 
         /// A data key ZeroKMS refuses (HTTP 403) carries a help that names
-        /// both causes, keeping its code.
+        /// its causes, keeping its code.
         #[tokio::test]
         async fn retrieve_keys_gives_a_refused_data_key_its_help() {
             use miette::Diagnostic;
@@ -1220,7 +1220,7 @@ mod tests {
             );
             let help = err.help().map(|help| help.to_string()).unwrap_or_default();
             assert!(help.contains("another context"), "{help}");
-            assert!(help.contains("no grant for the keyset"), "{help}");
+            assert!(help.contains("keyset is disabled"), "{help}");
         }
 
         /// A keyset load ZeroKMS answers with 404 or 403 names the keyset it

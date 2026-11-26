@@ -9,11 +9,12 @@ import (
 // failed. With ErrForbidden, ZeroKMS refused the data key.
 const codeRetrieveKeyFailed = "stack_kms::retrieve_key_failed"
 
-// ZeroKMS refuses a data key with HTTP 403 for two causes, and its answer
+// ZeroKMS refuses a data key with HTTP 403 for three causes, and its answer
 // does not say which: the value is opened under another context than it was
-// sealed under, or the client has no grant for the value's keyset. The guest
-// gives a Help that names both. The call knows more, so these say which one
-// it was where they can.
+// sealed under, the keyset is disabled, or the access token lacks the scope
+// to retrieve keys. A client with no grant for the keyset is answered 404,
+// which is ErrNotFound. The guest gives a Help that names all three. The
+// call knows more, so these say which cause is likely where they can.
 //
 // A Help never names a scope's or a binding's value, or a context label:
 // those are context values, which a Diagnostic never carries. It names how
@@ -21,15 +22,17 @@ const codeRetrieveKeyFailed = "stack_kms::retrieve_key_failed"
 
 // explainRefusal gives err the Help for a data key ZeroKMS refused on a
 // call through this cipher. The cipher loaded its keyset before it asked for
-// a key, so the client has access to the keyset, and the context is what
-// differs. Any other error is returned as it is.
+// a key, and ZeroKMS refuses that load for a disabled keyset or a token
+// without the scope. So the context is the likely cause. The keyset may
+// still have been disabled since the load, because the guest caches it.
+// Any other error is returned as it is.
 func (cph *Cipher) explainRefusal(err error) error {
 	return withRefusalHelp(err, fmt.Sprintf(
-		"ZeroKMS refused the data key, because the value was sealed under another context than this cipher opens it under. "+
-			"The client loaded this cipher's keyset (%s), so it has access to that keyset. "+
+		"ZeroKMS refused the data key. This cipher loaded its keyset (%s), so the keyset was enabled when it was loaded. "+
+			"The likely cause is that the value was sealed under another context than this cipher opens it under. "+
 			"This cipher adds %s and %s to the context. "+
 			"Open the value through a cipher with the same Cipher.Scope and Cipher.Bind parts as the cipher that encrypted it. "+
-			"A row whose context field was changed after it was written fails the same way.",
+			"A row whose context field was changed after it was written fails the same way, and so does a keyset disabled since it was loaded.",
 		describeKeyset(cph.keyset), countParts(len(cph.extension), "scope"), countParts(len(cph.bindings), "binding")))
 }
 
@@ -38,9 +41,11 @@ func (cph *Cipher) explainRefusal(err error) error {
 // it without loading that keyset first.
 const clientRefusalHelp = "ZeroKMS refused the data key. The Client opens a value only under the context stored with it, so one of these is the cause: " +
 	"the value was encrypted through a cipher with Cipher.Scope or Cipher.Bind parts, which only a cipher with the same parts opens; " +
-	"this client has no grant for the keyset the value was sealed under; " +
-	"or the row's context field was changed after it was written. " +
-	"Open a scoped or bound value through a cipher like the one that encrypted it, and check the keyset's grants in ZeroKMS."
+	"the row's context field was changed after it was written; " +
+	"the keyset the value was sealed under is disabled; " +
+	"or the access token lacks the scope to retrieve keys. " +
+	"Open a scoped or bound value through a cipher like the one that encrypted it. " +
+	"A keyset that is not granted to this client gives ErrNotFound, not this error."
 
 // explainClientRefusal gives err the Help for a data key ZeroKMS refused on
 // a call through the Client. Any other error is returned as it is.

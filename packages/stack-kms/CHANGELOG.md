@@ -49,15 +49,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `RetrieveKeyError::RequestFailed` has a help for each request kind (#1893).
-  Before, it had none. A refused data key (HTTP 403) has two causes: the
-  value is opened under another context, or the client has no grant for its
-  keyset. ZeroKMS gives the same answer for both, so the help names
-  both.
-  The code is the same: `stack_kms::retrieve_key_failed`.
-- The help of `LoadKeysetError::KeysetNotFound` says that ZeroKMS also
-  answers 404 for a keyset that exists but is not granted to this client
-  (#1897). The payload of a refused or missing keyset includes the keyset
-  that the load asked for, as `keyset_name` or `keyset_id`.
+  Before, it had none. ZeroKMS refuses a data key (HTTP 403) for three
+  causes: another context, a disabled keyset, or a token without the scope
+  to retrieve keys. Its answer does not say which, so the help names
+  all three. A missing grant is answered 404, and its help says so. The
+  code is the same: `stack_kms::retrieve_key_failed`.
+- The message and help of `LoadKeysetError::KeysetNotFound` say that ZeroKMS
+  also answers 404 for a keyset not granted to this client, or an unknown
+  client (#1897). The help of `LoadKeysetError::Forbidden` names its
+  causes: a disabled keyset, or a token without the scope to use keys.
+  Before, it named a missing grant. ZeroKMS answers a missing grant with 404. The
+  payload of a refused or missing keyset includes the keyset that the load
+  asked for, as `keyset_name` or `keyset_id`.
 - A batch now yields to the async runtime every 64 keys while it derives
   data keys. On tokio, the yield reschedules the task. In a wasm guest, it
   hands control back to the host. The host cannot preempt the guest.

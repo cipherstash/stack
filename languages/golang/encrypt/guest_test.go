@@ -275,7 +275,7 @@ func TestAFailedKeysetLoadNamesTheKeyset(t *testing.T) {
 		message, help string
 	}{
 		{"404", http.StatusNotFound, ErrNotFound, "stack_kms::keyset_not_found", "Keyset not found: the client is unknown, or has no default keyset", "exists but is not granted to this client"},
-		{"403", http.StatusForbidden, ErrForbidden, "stack_kms::load_keyset_forbidden", "the client's default keyset", "Grant the keyset to this client"},
+		{"403", http.StatusForbidden, ErrForbidden, "stack_kms::load_keyset_forbidden", "the client's default keyset", "The keyset is disabled, or the access token lacks the scope"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

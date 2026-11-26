@@ -58,13 +58,15 @@ fn requested_keyset(keyset: Option<&IdentifiedBy>) -> String {
     }
 }
 
-/// What a keyset-not-found message says after "Keyset not found: ". A keyset
-/// asked for by id or name may exist and not be granted to this client. The
-/// default keyset is missing when the client is unknown or has none.
+/// What a keyset-not-found message says after "Keyset not found: ". ZeroKMS
+/// looks a keyset up through the client's grant of it, so a keyset asked
+/// for by id or name is also not found when it is not granted to this
+/// client, and when the client is unknown. The default keyset is missing
+/// when the client is unknown or has none.
 fn not_found(keyset: Option<&IdentifiedBy>) -> String {
     match keyset {
         Some(_) => format!(
-            "{}, or it is not granted to this client",
+            "{} does not exist, is not granted to this client, or the client is unknown",
             requested_keyset(keyset)
         ),
         None => "the client is unknown, or has no default keyset".into(),
@@ -72,20 +74,24 @@ fn not_found(keyset: Option<&IdentifiedBy>) -> String {
 }
 
 /// The help for a data-key request ZeroKMS failed, by the request kind.
-/// ZeroKMS answers a refused data key with HTTP 403 whatever the reason,
-/// and nothing in its answer says which reason it was. So the help for a
-/// 403 names both causes. A binding that knows more about the call, such as
-/// whether it loaded the keyset first, may replace it with the one cause.
+///
+/// ZeroKMS answers a data-key request with HTTP 403 for three causes, and
+/// its answer does not say which: the value is opened under another context
+/// than the one it was sealed under, the keyset is disabled, or the access
+/// token lacks the scope to retrieve keys. So the help for a 403 names all
+/// three. A client with no grant for the keyset is answered 404, not 403.
+/// A binding that knows more about the call, such as whether it loaded the
+/// keyset first, may replace the help with the likely cause.
 fn retrieve_help(kind: &ViturRequestErrorKind) -> &'static str {
     match kind {
         ViturRequestErrorKind::Forbidden => {
-            "ZeroKMS refused the data key. Either the value is opened under another context than the one it was sealed under, or this client has no grant for the keyset the value was sealed under. Open the value under the context it was sealed with, and check the keyset's grants in ZeroKMS."
+            "ZeroKMS refused the data key. The value is opened under another context than the one it was sealed under, the keyset is disabled, or the access token lacks the scope to retrieve keys. Open the value under the context it was sealed with."
         }
         ViturRequestErrorKind::Unauthorized => {
             "ZeroKMS refused the access token. Refresh the credential and retry."
         }
         ViturRequestErrorKind::NotFound => {
-            "ZeroKMS found no keyset or data key for the value. Check that the keyset the value was sealed under exists in this workspace, and is granted to this client."
+            "ZeroKMS found no grant of the value's keyset to this client, or does not know the client. Check the keyset's grants in ZeroKMS, and the client ID."
         }
         ViturRequestErrorKind::PrepareRequest | ViturRequestErrorKind::SendRequest => {
             "The request did not reach ZeroKMS. Check the network and the ZeroKMS endpoint, and retry."
@@ -233,13 +239,16 @@ pub enum LoadKeysetError {
         help("ZeroKMS refused the access token. Refresh the credential and retry.")
     )]
     Unauthorized(#[source] ViturRequestError),
-    /// ZeroKMS refused to load the keyset. The message and help name the
-    /// keyset the load asked for: a keyset id or name is a detail the
+    /// ZeroKMS refused to load the keyset: it answers 403 for a disabled
+    /// keyset, and for an access token without the scope to use keys. A
+    /// keyset not granted to this client is answered 404, as
+    /// [`KeysetNotFound`](Self::KeysetNotFound). The message and help name
+    /// the keyset the load asked for: a keyset id or name is a detail the
     /// [`ErrorPayload`] policy allows.
     #[error("Request forbidden due to insufficient permissions: {}", requested_keyset(.keyset.as_ref()))]
     #[diagnostic(
         code(stack_kms::load_keyset_forbidden),
-        help("The client is not granted {}, or the keyset is disabled. Grant the keyset to this client in ZeroKMS, or enable it.", requested_keyset(.keyset.as_ref()))
+        help("ZeroKMS refused to load {}. The keyset is disabled, or the access token lacks the scope to use keys. Enable the keyset in ZeroKMS, or use a credential with that scope.", requested_keyset(.keyset.as_ref()))
     )]
     Forbidden {
         /// The keyset the load asked for. `None` is the client's default.
@@ -581,12 +590,12 @@ mod codes {
         let cases = [
             (
                 name("tenant-42"),
-                r#"Keyset not found: keyset name "tenant-42", or it is not granted to this client"#,
+                r#"Keyset not found: keyset name "tenant-42" does not exist, is not granted to this client, or the client is unknown"#,
                 Some(("keyset_name", "tenant-42")),
             ),
             (
                 Some(IdentifiedBy::Uuid(ID)),
-                "Keyset not found: keyset id 6a70bd18-99ac-4650-b104-37eec3a15b09, or it is not granted to this client",
+                "Keyset not found: keyset id 6a70bd18-99ac-4650-b104-37eec3a15b09 does not exist, is not granted to this client, or the client is unknown",
                 Some(("keyset_id", "6a70bd18-99ac-4650-b104-37eec3a15b09")),
             ),
             (
@@ -632,20 +641,20 @@ mod codes {
         );
         assert_eq!(
             help_of(&error),
-            r#"The client is not granted keyset name "tenant-42", or the keyset is disabled. Grant the keyset to this client in ZeroKMS, or enable it."#
+            r#"ZeroKMS refused to load keyset name "tenant-42". The keyset is disabled, or the access token lacks the scope to use keys. Enable the keyset in ZeroKMS, or use a credential with that scope."#
         );
         assert_eq!(error.payload()["keyset_name"], "tenant-42");
         let default = LoadKeysetError::from_request(None, vitur(ViturRequestErrorKind::Forbidden));
         assert!(
-            help_of(&default).starts_with("The client is not granted the client's default keyset"),
+            help_of(&default).starts_with("ZeroKMS refused to load the client's default keyset."),
             "{}",
             help_of(&default)
         );
     }
 
-    /// Every request kind a data-key request can fail with has a help, and
-    /// a refusal (HTTP 403) names both of its causes: another context, and
-    /// a keyset with no grant for this client.
+    /// Every request kind a data-key request can fail with has a help. A
+    /// refusal (HTTP 403) names its three causes, and does not name a
+    /// missing grant, which ZeroKMS answers with 404. A 404 names the grant.
     #[test]
     fn every_data_key_request_failure_has_a_help() {
         use ViturRequestErrorKind as K;
@@ -667,7 +676,11 @@ mod codes {
         }
         let help = help_of(&RetrieveKeyError::RequestFailed(vitur(K::Forbidden)));
         assert!(help.contains("another context"), "{help}");
-        assert!(help.contains("no grant for the keyset"), "{help}");
+        assert!(help.contains("keyset is disabled"), "{help}");
+        assert!(help.contains("scope to retrieve keys"), "{help}");
+        assert!(!help.contains("grant"), "{help}");
+        let help = help_of(&RetrieveKeyError::RequestFailed(vitur(K::NotFound)));
+        assert!(help.contains("no grant"), "{help}");
     }
 
     /// Every structured field this crate adds. A binding passes these on as
