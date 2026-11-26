@@ -4,16 +4,16 @@ status: accepted
 
 # A versioned storage profile for values that are kept
 
-> **Accepted**, and implemented in #520, which closes
+> **Accepted**, and implemented in cipherstash/vitaminc#520, which closes
 > [cipherstash/vitaminc#519](https://github.com/cipherstash/vitaminc/issues/519).
 > First released in 0.8.1. Version 1 is frozen: CI refuses any change to a
-> corpus row. The format is specified in `packages/aead-frame/STORAGE.md`.
+> corpus row. The format is specified in [`packages/vitaminc-aead-frame/STORAGE.md`](../../../vitaminc-aead-frame/STORAGE.md).
 
 Stack Encrypt will seal an `OpaqueBlob<T>` as one ciphertext whose plaintext
 is `T` serialized with Vitamin C's frame machinery. That plaintext is kept,
 for as long as the customer keeps the row. The frame and its serde format
 were built for a host and a guest that ship together, and say so: nothing
-in them is a compatibility commitment, and #332 dropped a version byte from
+in them is a compatibility commitment, and cipherstash/vitaminc#332 dropped a version byte from
 the transport for exactly that reason. Stored bytes need the opposite
 promise. This decision adds a storage profile that makes it, and leaves the
 transport as it is.
@@ -44,7 +44,7 @@ properties that are fine in flight and wrong at rest:
    deserializer, and has its own validator, writer and error type. `to_vec`
    returns the blob `Protected`, since it is the value's plaintext.
 
-   *Amended 2026-10-28 (#559):* `to_vec` now returns the blob in a
+   *Amended 2026-10-28 (cipherstash/vitaminc#559):* `to_vec` now returns the blob in a
    `vitaminc_protected::Buffer` rather than a `Protected<Vec<u8>>`. It is
    still the value's plaintext and still read through `risky_ref` and
    wiped when dropped; a `Buffer` also grows without leaving copies of its
@@ -84,7 +84,7 @@ properties that are fine in flight and wrong at rest:
    never drop a version.
 
 7. **A golden corpus that only grows.**
-   `packages/aead-frame/testdata/storage-v1.json` describes each value in
+   [`packages/vitaminc-aead-frame/testdata/storage-v1.json`](../../../vitaminc-aead-frame/testdata/storage-v1.json) describes each value in
    a language-neutral model and pins its bytes, pins each refusal with its
    class, and pins what a type reads a blob as, for the reading rules that
    go beyond the bytes (a bare value read as `Some`, integer widening, a

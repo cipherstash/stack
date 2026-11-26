@@ -4,9 +4,9 @@ status: accepted
 
 # Describe plaintext once and consume it with sinks
 
-> **Implemented** in #416–#448. This document describes what landed. The
+> **Implemented** in cipherstash/vitaminc#416–#448. This document describes what landed. The
 > source trait is called `Plaintext` here, as it was in the code at the time
-> of writing; it shipped as `Encrypt` (#456), and `Plaintext` is its interim
+> of writing; it shipped as `Encrypt` (cipherstash/vitaminc#456), and `Plaintext` is its interim
 > name. See [Names](#9-names).
 
 When this was decided, Stack Encrypt was unreleased, so vitaminc's
@@ -605,7 +605,7 @@ as malformed. A reader that does not know the id still reads the
 physical value and keeps the annotation. A host builder that has no value
 of its own to keep it in must refuse the leaf rather than hand back the
 physical value with the annotation dropped; the Go binding carries it in
-`Tagged`, and the Node binding refuses it until #446 gives it a carrier.
+`Tagged`, and the Node binding refuses it until cipherstash/vitaminc#446 gives it a carrier.
 There is exactly one encoding per value: an envelope is refused where a
 shorthand tag exists, so two ciphertexts of the same value are never
 byte-different for a reason the AEAD cannot see.
@@ -1019,7 +1019,7 @@ admits chrono's range (years -262143 to 262142), which is narrower than a
 decoder is chrono-bound: a wider timestamp could be sealed but not read
 back there. The binding refuses a `Date` outside it.
 
-> **Amended by #627** (vitaminc#626): chrono is replaced by jiff, and the
+> **Amended by cipherstash/vitaminc#627** (cipherstash/vitaminc#626): chrono is replaced by jiff, and the
 > range of `Date` and `Timestamp` narrows to jiff's in every binding:
 > dates -009999-01-01 to 9999-12-31, instants -009999-01-02T01:59:59Z to
 > 9999-12-30T22:00:00.999999999Z. A value one binding seals, every binding
@@ -1032,11 +1032,11 @@ back there. The binding refuses a `Date` outside it.
 JavaScript has no type of its own for a calendar date, a timestamp finer
 than a millisecond, a decimal or a uuid. The binding represents each as an
 instance of a wrapper class, `VcDate`, `VcTimestamp`, `VcDecimal` or
-`VcUuid`, recognised with `instanceof` (#382). These classes replace the
+`VcUuid`, recognised with `instanceof` (cipherstash/vitaminc#382). These classes replace the
 reserved `{ date }` and `{ decimal }` objects of 0.5, so an object like
 `{ date: "…" }` is now ordinary data. `JsBuilder` builds a timestamp as a
 `Date` when it is whole milliseconds inside `Date`'s range, and as a
-`VcTimestamp` otherwise. It refuses a `Logical::Unknown` leaf until #446
+`VcTimestamp` otherwise. It refuses a `Logical::Unknown` leaf until cipherstash/vitaminc#446
 gives it a carrier.
 
 **Passthrough** is a subtree that travels in the clear. On the way in it is
@@ -1133,7 +1133,7 @@ Around them:
 - The Go guest replaces `decode_value` and `encode_value` with `Frame` and
   `decrypt_to_frame`.
 - `vitaminc-aead-derive` generates `Plaintext` and `Decrypt` instead of
-  `Encrypt` and `Decrypt`, including for fieldless enums. #456 renamed it
+  `Encrypt` and `Decrypt`, including for fieldless enums. cipherstash/vitaminc#456 renamed it
   `#[derive(Encrypt)]`.
 
 ### 9. Names
@@ -1147,8 +1147,8 @@ async one is an `AsyncCipher`, a typed decryption target is still
 removed from `vitaminc-aead`. (`vitaminc-prf` has its own, unrelated
 `SeqAccess`, `MapAccess` and `PrfVisitor`.)
 
-As implemented in #416–#448, the source trait was `Plaintext`, named so
-because the trait no longer encrypts anything. #456 renamed it `Encrypt`
+As implemented in cipherstash/vitaminc#416–#448, the source trait was `Plaintext`, named so
+because the trait no longer encrypts anything. cipherstash/vitaminc#456 renamed it `Encrypt`
 before release, with `#[derive(Plaintext)]` becoming `#[derive(Encrypt)]`,
 so the trait pair a user implements, almost always by derive, is `Encrypt`
 and `Decrypt`. `Plaintext` elsewhere in this document is the interim name.
@@ -1182,7 +1182,7 @@ assertion over the type's `DEPTH` in a named `const` item, because trybuild
 does not check a panic in an inline `const {}` block. A type whose depth is
 not fixed, such as a recursive type, a frame or a hand-written source,
 keeps the runtime check. Each refusal has a trybuild compile-fail test in
-`packages/aead/tests/ui/derive`.
+[`packages/vitaminc-aead/tests/ui/derive`](../../tests/ui/derive).
 
 **`Timestamp` for values chrono can hold but not encrypt.** A
 `DateTime<Utc>` can hold a leap second, which has no encoding and is refused
@@ -1219,7 +1219,7 @@ on both sides adds `LeafTypeAad` on top (section 3).
   frame, the codec and `Tee` need no change. The terms sink refuses the new
   type with `NoDomain`, which stops the walk, until normalize's opt-in table
   gives it a domain. Node's `JsBuilder` refuses it until the binding has a
-  carrier for it (#446). Adding a physical kind is deliberately a compile
+  carrier for it (cipherstash/vitaminc#446). Adding a physical kind is deliberately a compile
   error in every sink.
 - Index sinks never index a logical value as its physical value. A logical
   type with no domain gets a `TermError` (`NoDomain`) at its path, which
@@ -1239,7 +1239,7 @@ on both sides adds `LeafTypeAad` on top (section 3).
 - A timestamp at a leap second is refused and a decimal negative zero reads
   back as zero. Both were in the conformance corpus, so this is a small
   format change; the corpus now pins the refusal and the normalization
-  (#444).
+  (cipherstash/vitaminc#444).
 - `Option::None` and a host null are the same leaf. `CipherText::None`,
   `CT_NONE` and `Context::for_none` (in `vitaminc-context`) go away, and a
   JavaScript `null` decrypts into a Rust `Option` as `None`.
@@ -1276,4 +1276,4 @@ on both sides adds `LeafTypeAad` on top (section 3).
   `Decipher`, `DecipherVisitor`, `SeqAccess`, `MapAccess`, `Value` and
   `ValueKind`, which shipped in the 0.3 to 0.5 crates, are removed in a
   breaking release. No CipherStash product that depends on them has
-  shipped. The `Encrypt` name is reused for the new source trait (#449).
+  shipped. The `Encrypt` name is reused for the new source trait (cipherstash/vitaminc#449).

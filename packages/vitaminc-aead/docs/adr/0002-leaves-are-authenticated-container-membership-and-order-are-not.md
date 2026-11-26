@@ -13,7 +13,7 @@ reviewer can check a finding against it.
 
 ## Context
 
-vitaminc seals a structured value leaf by leaf (ADR 0001). Each scalar is
+vitaminc seals a structured value leaf by leaf ([ADR 0001](0001-describe-plaintext-once-and-consume-it-with-sinks.md)). Each scalar is
 sealed on its own, under an AAD derived from the caller's context and the
 leaf's place in the value (`vitaminc-context`):
 
