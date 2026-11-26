@@ -340,10 +340,14 @@ func (c *Client) memoryState() string {
 // oneLine is err's text on one line. MemoryLockError joins the refusals of
 // this guest and the credentials' guest with errors.Join, which puts each
 // on its own line. A log line must not break, so the refusals are joined
-// with "; " instead, in the same order.
+// with " | " instead, in the same order. The separator is one no refusal
+// contains: a refusal can contain "; ". A carriage return, alone or before
+// a newline, is a line break too, and is replaced the same way.
 func oneLine(err error) string {
-	return strings.ReplaceAll(err.Error(), "\n", "; ")
+	return lineBreaks.Replace(err.Error())
 }
+
+var lineBreaks = strings.NewReplacer("\r\n", " | ", "\r", " | ", "\n", " | ")
 
 // String implements fmt.Stringer so that a Client printed with %v or %s
 // shows its memory state, on one line. Nothing secret is printed. With
@@ -351,11 +355,11 @@ func oneLine(err error) string {
 //
 //	encrypt.Client{memory: locked}
 //
-// Otherwise it prints "unlocked: " and each refusal, joined with "; ".
-// Each refusal starts with the text of [ErrMemoryLock]. On a Linux host
-// whose RLIMIT_MEMLOCK is 64 KiB it prints, for example,
+// Otherwise it prints "unlocked: " and each refusal, joined with " | ".
+// Each refusal starts with the text of [ErrMemoryLock] and names what was
+// refused:
 //
-//	encrypt.Client{memory: unlocked: cipherstash: guest memory is not locked: locking 1.6 MiB of guest memory: cannot allocate memory (RLIMIT_MEMLOCK is 64 KiB; raise it with ulimit -l, a systemd LimitMEMLOCK=, or a pod securityContext); the guest needs at least 1.6 MiB locked}
+//	encrypt.Client{memory: unlocked: cipherstash: guest memory is not locked: ...}
 //
 // The state is what an operator reading a startup log needs to see, and
 // [Client.LogValue] gives it structured form.

@@ -414,7 +414,7 @@
 // the guest's memory that cannot be locked. A Client prints its memory state
 // on one line ([Client.String]): encrypt.Client{memory: locked}, or
 // encrypt.Client{memory: unlocked: ...} with each refusal in place of the
-// dots, joined with "; ".
+// dots, joined with " | ".
 // It logs the same state ([Client.LogValue]).
 //
 // Between calls the guest holds the client key and its keyset cache. Data

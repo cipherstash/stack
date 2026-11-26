@@ -18,7 +18,7 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 - `Client.String` prints one line in every memory state. When neither the
   client's guest nor the credentials' guest had locked memory, it printed
   the two refusals on two lines. That broke a log line in two. It now joins
-  them with `"; "`. The `memory_lock_error` attribute from `Client.LogValue`
+  them with `" | "`. The `memory_lock_error` attribute from `Client.LogValue`
   contains the same one-line text. Its doc comment and the
   package documentation now show the real output, such as
   `encrypt.Client{memory: locked}`.
