@@ -2,15 +2,20 @@
 name = "vitaminc-aead-frame"
 description = "Transport frame and ciphertext codec for carrying Vitamin-C AEAD values and ciphertexts across an FFI boundary, and a versioned storage profile for values that are kept. Part of the Vitamin-C cryptographic suite."
 documentation = "https://docs.rs/vitaminc-aead-frame"
-version.workspace = true
-repository.workspace = true
-authors.workspace = true
-edition.workspace = true
-homepage.workspace = true
-license.workspace = true
-keywords.workspace = true
-categories.workspace = true
-rust-version.workspace = true
+version = "0.10.0"
+repository = "https://github.com/cipherstash/stack"
+authors = ["Dan Draper <dan@cipherstash.com>"]
+edition = "2021"
+homepage = "https://cipherstash.com"
+license = "MIT"
+keywords = ["cryptography", "security"]
+categories = ["cryptography"]
+rust-version = "1.89.0"
+# Not published from this repository yet: crates.io serves 0.10.0, which was
+# published from cipherstash/vitaminc. release-plz.toml lists it with
+# `release = false`. Every workspace that resolves it patches crates.io's
+# copy to this one.
+publish = false
 # The corpus check runs in CI against git history; it is no part of the
 # crate a dependent builds.
 exclude = ["scripts/"]
@@ -24,9 +29,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 all-features = true
 
 [dependencies]
-vitaminc-aead = { version = "0.10.0", path = "../aead" }
-vitaminc-protected = { version = "0.10.0", path = "../protected", optional = true }
-serde = { workspace = true, optional = true }
+vitaminc-aead = { version = "0.10.0", path = "../vitaminc-aead" }
+vitaminc-protected = { version = "0.10.0", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
 
 [features]
 default = []
@@ -39,18 +44,19 @@ default = []
 serde = ["dep:serde", "dep:vitaminc-protected"]
 
 [dev-dependencies]
-serde_bytes = { workspace = true }
+serde_bytes = "0.11"
 quickcheck = "1.1.0"
 quickcheck_macros = "1.2.0"
-serde_json = { workspace = true }
-# Path-only, so publish order does not matter: the conformance test builds
-# each vector's scalar independently through the jiff and rust_decimal
-# conversions, and the fixture test opens a pre-ADR-0001 ciphertext with
-# real AES-256-GCM.
-vitaminc-aead = { path = "../aead", features = ["jiff", "rust_decimal"] }
+serde_json = "1"
+# The conformance test builds each vector's scalar independently through
+# the jiff and rust_decimal conversions, and the fixture test opens a
+# pre-ADR-0001 ciphertext with real AES-256-GCM. vitaminc-encrypt and
+# vitaminc-protected come from crates.io; vitaminc-encrypt resolves
+# vitaminc-aead through the workspace's `[patch.crates-io]`.
+vitaminc-aead = { path = "../vitaminc-aead", features = ["jiff", "rust_decimal"] }
 jiff = { version = "1.0.0", default-features = false }
-vitaminc-encrypt = { path = "../encrypt" }
-vitaminc-protected = { path = "../protected" }
+vitaminc-encrypt = "0.10.0"
+vitaminc-protected = "0.10.0"
 rust_decimal = { version = "1.41", default-features = false, features = ["std"] }
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 # Formats the bench compares the storage profile with.

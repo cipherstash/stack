@@ -2,15 +2,20 @@
 name = "vitaminc-aead-derive"
 description = "Derive macros for vitaminc-aead. Part of the VitaminC cryptographic suite."
 documentation = "https://docs.rs/vitaminc-aead-derive"
-version.workspace = true
-repository.workspace = true
-authors.workspace = true
-edition.workspace = true
-homepage.workspace = true
-license.workspace = true
-keywords.workspace = true
-categories.workspace = true
-rust-version.workspace = true
+version = "0.10.0"
+repository = "https://github.com/cipherstash/stack"
+authors = ["Dan Draper <dan@cipherstash.com>"]
+edition = "2021"
+homepage = "https://cipherstash.com"
+license = "MIT"
+keywords = ["cryptography", "security"]
+categories = ["cryptography"]
+rust-version = "1.89.0"
+# Not published from this repository yet: crates.io serves 0.10.0, which was
+# published from cipherstash/vitaminc. release-plz.toml lists it with
+# `release = false`. Every workspace that resolves it patches crates.io's
+# copy to this one.
+publish = false
 
 [lib]
 proc-macro = true
@@ -22,7 +27,8 @@ syn = { version = "3", features = ["full", "extra-traits"] }
 
 [dev-dependencies]
 # Compile and run the public attribute examples against their consumer APIs.
-# Path-only dependencies do not impose a publication order on the macro crate.
-vitaminc-aead = { path = "../aead" }
-vitaminc = { path = "../vitaminc", default-features = false, features = ["aead"] }
-zeroize = { workspace = true }
+# The `vitaminc` umbrella comes from crates.io, and resolves vitaminc-aead
+# and this crate through the workspace's `[patch.crates-io]`.
+vitaminc-aead = { path = "../vitaminc-aead" }
+vitaminc = { version = "0.10.0", default-features = false, features = ["aead"] }
+zeroize = { version = "1", features = ["derive"] }

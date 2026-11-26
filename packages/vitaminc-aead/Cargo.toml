@@ -2,30 +2,35 @@
 name = "vitaminc-aead"
 description = "Authenticated Encryption with Associated Data (AEAD) primitives. Part of the Vitamin-C cryptographic suite."
 documentation = "https://docs.rs/vitaminc-aead"
-version.workspace = true
-repository.workspace = true
-authors.workspace = true
-edition.workspace = true
-homepage.workspace = true
-license.workspace = true
-keywords.workspace = true
-categories.workspace = true
-rust-version.workspace = true
+version = "0.10.0"
+repository = "https://github.com/cipherstash/stack"
+authors = ["Dan Draper <dan@cipherstash.com>"]
+edition = "2021"
+homepage = "https://cipherstash.com"
+license = "MIT"
+keywords = ["cryptography", "security"]
+categories = ["cryptography"]
+rust-version = "1.89.0"
+# Not published from this repository yet: crates.io serves 0.10.0, which was
+# published from cipherstash/vitaminc. release-plz.toml lists it with
+# `release = false`. Every workspace that resolves it patches crates.io's
+# copy to this one.
+publish = false
 
 [package.metadata.docs.rs]
 features = ["jiff", "rust_decimal", "uuid", "hlist"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-vitaminc-aead-derive = { version = "0.10.0", path = "../aead-derive" }
-vitaminc-context = { version = "0.10.0", path = "../context" }
-vitaminc-protected = { version = "0.10.0", path = "../protected" }
-vitaminc-random = { version = "0.10.0", path = "../random" }
+vitaminc-aead-derive = { version = "0.10.0", path = "../vitaminc-aead-derive" }
+vitaminc-context = "0.10.0"
+vitaminc-protected = "0.10.0"
+vitaminc-random = "0.10.0"
 
 bytes = { version = "^1", features = ["serde"] }
-serde = { workspace = true }
-thiserror = { workspace = true }
-zeroize = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2.0.18"
+zeroize = { version = "1", features = ["derive"] }
 # `stream::iter(..).buffered(..)` for the bounded per-leaf defaults of
 # `AsyncCipher`'s `seal_many` and `open_many`. No runtime.
 futures-util = { version = "0.3.31", default-features = false, features = ["alloc"] }
@@ -70,14 +75,15 @@ test-support = []
 
 
 [dev-dependencies]
-# Path-only, so publish order does not matter: only the test that pins
-# `into_aad` and `into_prf_context` to the same bytes needs the PRF crate.
-vitaminc-prf = { path = "../prf" }
-vitaminc-context = { path = "../context", features = ["arbitrary"] }
+# Only the test that pins `into_aad` and `into_prf_context` to the same
+# bytes needs the PRF crate. It comes from crates.io, and resolves this
+# crate through the workspace's `[patch.crates-io]`.
+vitaminc-prf = "0.10.0"
+vitaminc-context = { version = "0.10.0", features = ["arbitrary"] }
 quickcheck = "1.1.0"
 quickcheck_macros = "1.2.0"
 # Compile-fail tests for the derive macros' guards — see tests/derive_ui.rs.
 trybuild = "1.0.118"
 futures-executor = "0.3.31"
-serde_json = { workspace = true }
+serde_json = "1"
 jiff = { version = "1.0.0", default-features = false }
