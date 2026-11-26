@@ -16,8 +16,11 @@ The `main` and `next` branches each get a merge queue.
 We made the change because of cost.
 From 1 to 20 October 2026, 89% of this repository's CI spending came from runs for pull requests.
 Each push to a pull request ran the expensive checks again.
-ADR 0002 moves jobs to cheaper machines.
 This decision runs the expensive checks less often.
+
+ADR 0002 moved jobs to cheaper machines.
+ADR 0004 has since superseded ADR 0002.
+ADR 0004 moves every Blacksmith job to a cheaper RunsOn machine of the same size.
 
 The glossary in `.github/CONTEXT.md` defines the terms used here.
 The diagram shows each step for one pull request, from a push to the merge.
@@ -66,7 +69,9 @@ The queue commit of an entry contains the entry ahead, plus that entry's pull re
   When we made this decision, `next` had no protection.
   Pushes to `next` ran no workflows.
 - Each queue builds at most 3 entries at once.
-  The weekly cost report will show whether to change that limit.
+  A weekly CI cost report is planned.
+  Nobody has built the report yet.
+  Once the report exists, it will show whether to change that limit.
 - The queues merge with merge commits, as `main` did when we made this decision.
   The selector job compares each queue commit with the entry ahead.
   The comparison needs merge commits or squash merges.

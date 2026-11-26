@@ -4,6 +4,10 @@ This context covers the checks that verify a change, and the machines that run t
 The context covers the GitHub Actions workflows of `cipherstash/stack`.
 The context also covers the CI spending of the other repositories that share the CI budget with `cipherstash/stack`.
 
+The entries below name two services that run CI jobs.
+Blacksmith provides hosted machines that GitHub Actions jobs run on.
+RunsOn starts a new machine in our AWS account for each job.
+
 ## Language
 
 **CI budget**:

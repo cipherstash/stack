@@ -71,9 +71,13 @@ Two changes go in with the swap, because RunsOn needs them:
   On RunsOn, a stuck job costs money until its time limit ends it.
   In the trial, one job without a limit ran for more than 2 hours.
 
-## The RunsOn setup
+## The RunsOn setup on 19 November 2026
 
-These settings are in place in the AWS account, or have been requested:
+This section records the RunsOn setup on 19 November 2026.
+Two of these items were requests that AWS had not answered on that date.
+The AWS Service Quotas console shows the current vCPU quotas.
+
+These settings were in place in the AWS account, or had been requested:
 
 - We upgraded RunsOn to v3.6.2 on 19 November 2026.
   Before v3.6.0, RunsOn failed a job when the on-demand vCPU quota was full.
@@ -120,7 +124,7 @@ We rejected each of these options:
   AWS would never interrupt a job.
   The cost would be about 2.3 times the spot price.
 - **Keep warm machines ready.**
-  Jobs would start faster.
+  Jobs would start faster, because they would not wait for a new machine to boot.
   Warm machines cost money while idle.
 - **Pay for a Docker Team or Pro plan.**
   Either plan removes the pull limit.
