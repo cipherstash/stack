@@ -391,8 +391,7 @@ The work:
 
 ## Checks that must move with the code
 
-vitaminc runs checks on these crates that this repository did not. Where
-each runs here:
+Every check vitaminc ran on these crates runs here, or does not apply:
 
 | vitaminc check | Here |
 |---|---|
@@ -402,18 +401,13 @@ each runs here:
 | `cargo deny` | `supply-chain-vitaminc-aead.yml`, per pull request and nightly, over the three crates' graph only (`supply-chain/vitaminc-aead/deny.toml`). |
 | `cargo vet` | The same workflow, per pull request, with a store started from vitaminc's (`supply-chain/vitaminc-aead/`), over the three crates' graph only. |
 | Mutation testing | `mutants.yml`, `--in-diff`, as for `stack-encrypt`. |
-| Per-feature tests | `test:vitaminc-aead:features`, in `tests-crates.yml`. |
-| Miri, sanitizers | Not here. vitaminc ran them on `vitaminc-protected` only; the three crates `#![deny(unsafe_code)]`. |
+| Per-feature tests, and the release-only jiff tests | `test:vitaminc-aead:features`, in `tests-crates.yml`. |
+| Miri, sanitizers | Not needed. vitaminc ran them on `vitaminc-protected` only, and the three crates `#![deny(unsafe_code)]`. A change that adds `unsafe` adds both. |
 | Fuzzing | vitaminc's targets are Go, over `vcffi`, and move with it in stage 3. stack-encrypt's targets reach parts of the crates and replay when they change. |
-| Release-mode jiff guard | Not here. Its two tests assume jiff 1.0.0, and this repository's lockfile has jiff 1.0.1, where they fail. Fixing them changes the crate. |
 
 `cargo deny` and `cargo vet` over the rest of the root workspace are #1842.
 
-No pull request changes the three imported crates until #1837 has merged.
-Once it has, what remains open from that list is Miri and the sanitizers
-(not applicable while the crates have no `unsafe`), the Go fuzz targets
-(stage 3), and the release-mode jiff guard, whose fix is the first change to
-the crates.
+Pull requests may change the three crates.
 
 ## Open questions
 
