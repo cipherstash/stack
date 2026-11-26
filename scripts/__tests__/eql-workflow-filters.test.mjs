@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
+import { pathsGlobToRegExp } from './lib/paths-filter.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow } from './lib/workflows.mjs'
 
@@ -12,9 +13,10 @@ import { readWorkflow } from './lib/workflows.mjs'
  *
  * `test-eql.yml` writes its list TWICE and in two different mechanisms: an
  * `on: push: paths:` filter (which decides whether the workflow starts at all
- * after a merge) and a `dorny/paths-filter` `relevant:` filter (which decides
- * whether the heavy jobs run inside a pull-request run). GitHub gives no way to
- * share them. `bench-eql.yml` writes a third copy, for the same tree, on its own
+ * after a merge) and the selector job's `dorny/paths-filter` filters (which
+ * decide which heavy jobs run inside a pull-request run). GitHub gives no way
+ * to share them. The selector splits its list by job, so the copy compared
+ * here is the union of its filters. `bench-eql.yml` writes a third copy, for the same tree, on its own
  * `push` trigger.
  *
  * Three properties, and each of them was violated by the imported files:
@@ -73,21 +75,26 @@ function pushPaths(relPath) {
 
 /**
  * Every path listed by a `dorny/paths-filter` step, across every filter it
- * declares. `filters:` is a YAML document embedded in a YAML string, so it is
- * parsed rather than pattern-matched — a regex over the raw block would also
- * match the commentary around it.
+ * declares, once each. `filters:` is a YAML document embedded in a YAML string,
+ * so it is parsed rather than pattern-matched — a regex over the raw block
+ * would also match the commentary around it.
  */
 function dornyFilterPaths(relPath) {
   const wf = readWorkflow(relPath)
-  return Object.values(wf?.jobs ?? {})
-    .flatMap((job) => job?.steps ?? [])
-    .filter((step) =>
-      String(step?.uses ?? '').startsWith('dorny/paths-filter@'),
-    )
-    .flatMap((step) =>
-      Object.values(yaml.load(step?.with?.filters ?? '') ?? {}),
-    )
-    .flat()
+  return [
+    ...new Set(
+      Object.values(wf?.jobs ?? {})
+        .flatMap((job) => job?.steps ?? [])
+        .filter((step) =>
+          String(step?.uses ?? '').startsWith('dorny/paths-filter@'),
+        )
+        .flatMap((step) =>
+          Object.values(yaml.load(step?.with?.filters ?? '') ?? {}),
+        )
+        // An entry that is an anchored list parses to a nested list.
+        .flat(Infinity),
+    ),
+  ]
 }
 
 /** The local composite actions a workflow reaches through `uses: ./…`. */
@@ -114,37 +121,7 @@ function trackedUnder(pathspec) {
     .filter(Boolean)
 }
 
-/**
- * Approximates picomatch, which is what `dorny/paths-filter` and GitHub's own
- * `paths:` matcher are built on: `*` stops at a separator, `**` does not.
- *
- * No implicit-descendants tail here, unlike the `@actions/glob` approximation
- * in `ffi-binding-action.test.mjs` — a bare directory name is NOT a prefix
- * match in a `paths:` filter, which is the difference that makes a
- * `.../require-cs-secrets` entry without its `/**` cover nothing.
- */
-function globToRegExp(pattern) {
-  let source = '^'
-  for (let i = 0; i < pattern.length; i += 1) {
-    const ch = pattern[i]
-    if (ch === '*') {
-      if (pattern[i + 1] === '*') {
-        source += '.*'
-        i += 1
-        if (pattern[i + 1] === '/') i += 1
-      } else {
-        source += '[^/]*'
-      }
-    } else if (ch === '?') {
-      source += '[^/]'
-    } else {
-      source += ch.replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    }
-  }
-  return new RegExp(`${source}$`)
-}
-
-const matches = (pattern, path) => globToRegExp(pattern).test(path)
+const matches = (pattern, path) => pathsGlobToRegExp(pattern).test(path)
 
 /** Everything in the index a filter entry could plausibly select. */
 const TRACKED = trackedUnder('.')
@@ -152,7 +129,7 @@ const TRACKED = trackedUnder('.')
 /** The list each mechanism carries, keyed for the messages below. */
 const LISTS = [
   { id: `${TEST_EQL} (on.push.paths)`, entries: pushPaths(TEST_EQL) },
-  { id: `${TEST_EQL} (dorny relevant:)`, entries: dornyFilterPaths(TEST_EQL) },
+  { id: `${TEST_EQL} (selector filters)`, entries: dornyFilterPaths(TEST_EQL) },
   { id: `${BENCH_EQL} (on.push.paths)`, entries: pushPaths(BENCH_EQL) },
 ]
 
