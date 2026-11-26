@@ -1,18 +1,25 @@
 {
-  "_comment": "Pinned bytes of every way a plaintext value is written: its transport frame, the plaintext its sealed leaf holds, and a sealed null's leaf, for the typed Rust path and the dynamic record path. Read by tests/value_bytes.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1, then format with Biome; never edit by hand.",
-  "context": ["conformance", "value"],
+  "_comment": "Pinned bytes of every way a plaintext value is written: its transport frame, the plaintext its sealed leaf holds, and a sealed null's leaf, for the typed Rust path and the dynamic record path. Read by tests/value_bytes.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; never edit by hand.",
+  "context": [
+    "conformance",
+    "value"
+  ],
   "dynamic": {
     "bool": {
       "frame": "03",
       "null_sealed": {
-        "leaves": ["00"]
+        "leaves": [
+          "00"
+        ]
       },
       "null_sql": {
         "stored": "sql_null"
       },
       "text": "true",
       "value": {
-        "leaves": ["03"]
+        "leaves": [
+          "03"
+        ]
       }
     },
     "bytes": {
@@ -25,124 +32,162 @@
       },
       "text": "00ff10",
       "value": {
-        "leaves": ["0b00ff10"]
+        "leaves": [
+          "0b00ff10"
+        ]
       }
     },
     "date": {
       "frame": "1281460b00",
       "null_sealed": {
-        "leaves": ["1512000000"]
+        "leaves": [
+          "1512000000"
+        ]
       },
       "null_sql": {
         "stored": "sql_null"
       },
       "text": "2024-02-29",
       "value": {
-        "leaves": ["1281460b00"]
+        "leaves": [
+          "1281460b00"
+        ]
       }
     },
     "decimal": {
       "frame": "14000004800061bc000000000000000000",
       "null_sealed": {
-        "leaves": ["1514000000000000000000000000000000"]
+        "leaves": [
+          "1514000000000000000000000000000000"
+        ]
       },
       "null_sql": {
         "stored": "sql_null"
       },
       "text": "-1234.5600",
       "value": {
-        "leaves": ["14000004800061bc000000000000000000"]
+        "leaves": [
+          "14000004800061bc000000000000000000"
+        ]
       }
     },
     "float32": {
       "frame": "080000c03f",
       "null_sealed": {
-        "leaves": ["1508000000"]
+        "leaves": [
+          "1508000000"
+        ]
       },
       "null_sql": {
         "stored": "sql_null"
       },
       "text": "1.5",
       "value": {
-        "leaves": ["080000c03f"]
+        "leaves": [
+          "080000c03f"
+        ]
       }
     },
     "float64": {
       "frame": "090000000000000080",
       "null_sealed": {
-        "leaves": ["150900000000000000"]
+        "leaves": [
+          "150900000000000000"
+        ]
       },
       "null_sql": {
         "stored": "sql_null"
       },
       "text": "-0",
       "value": {
-        "leaves": ["090000000000000080"]
+        "leaves": [
+          "090000000000000080"
+        ]
       }
     },
     "int128": {
       "frame": "1000000000000000000000000000000080",
       "null_sealed": {
-        "leaves": ["1510000000000000000000000000000000"]
+        "leaves": [
+          "1510000000000000000000000000000000"
+        ]
       },
       "null_sql": {
         "stored": "sql_null"
       },
       "text": "-170141183460469231731687303715884105728",
       "value": {
-        "leaves": ["1000000000000000000000000000000080"]
+        "leaves": [
+          "1000000000000000000000000000000080"
+        ]
       }
     },
     "int16": {
       "frame": "0ed4fe",
       "null_sealed": {
-        "leaves": ["150e00"]
+        "leaves": [
+          "150e00"
+        ]
       },
       "null_sql": {
         "stored": "sql_null"
       },
       "text": "-300",
       "value": {
-        "leaves": ["0ed4fe"]
+        "leaves": [
+          "0ed4fe"
+        ]
       }
     },
     "int32": {
       "frame": "04feffffff",
       "null_sealed": {
-        "leaves": ["1504000000"]
+        "leaves": [
+          "1504000000"
+        ]
       },
       "null_sql": {
         "stored": "sql_null"
       },
       "text": "-2",
       "value": {
-        "leaves": ["04feffffff"]
+        "leaves": [
+          "04feffffff"
+        ]
       }
     },
     "int64": {
       "frame": "05ffffffffffffdfff",
       "null_sealed": {
-        "leaves": ["150500000000000000"]
+        "leaves": [
+          "150500000000000000"
+        ]
       },
       "null_sql": {
         "stored": "sql_null"
       },
       "text": "-9007199254740993",
       "value": {
-        "leaves": ["05ffffffffffffdfff"]
+        "leaves": [
+          "05ffffffffffffdfff"
+        ]
       }
     },
     "int8": {
       "frame": "0cf8",
       "null_sealed": {
-        "leaves": ["150c"]
+        "leaves": [
+          "150c"
+        ]
       },
       "null_sql": {
         "stored": "sql_null"
       },
       "text": "-8",
       "value": {
-        "leaves": ["0cf8"]
+        "leaves": [
+          "0cf8"
+        ]
       }
     },
     "string": {
@@ -155,106 +200,141 @@
       },
       "text": "café",
       "value": {
-        "leaves": ["0a636166c3a9"]
+        "leaves": [
+          "0a636166c3a9"
+        ]
       }
     },
     "timestamp": {
       "frame": "130bc9d26a0000000015cd5b07",
       "null_sealed": {
-        "leaves": ["15130000000000000000000000"]
+        "leaves": [
+          "15130000000000000000000000"
+        ]
       },
       "null_sql": {
         "stored": "sql_null"
       },
       "text": "2026-10-17T01:02:03.123456789Z",
       "value": {
-        "leaves": ["130bc9d26a0000000015cd5b07"]
+        "leaves": [
+          "130bc9d26a0000000015cd5b07"
+        ]
       }
     },
     "uint128": {
       "frame": "11ffffffffffffffffffffffffffffffff",
       "null_sealed": {
-        "leaves": ["1511000000000000000000000000000000"]
+        "leaves": [
+          "1511000000000000000000000000000000"
+        ]
       },
       "null_sql": {
         "stored": "sql_null"
       },
       "text": "340282366920938463463374607431768211455",
       "value": {
-        "leaves": ["11ffffffffffffffffffffffffffffffff"]
+        "leaves": [
+          "11ffffffffffffffffffffffffffffffff"
+        ]
       }
     },
     "uint16": {
       "frame": "0f60ea",
       "null_sealed": {
-        "leaves": ["150f00"]
+        "leaves": [
+          "150f00"
+        ]
       },
       "null_sql": {
         "stored": "sql_null"
       },
       "text": "60000",
       "value": {
-        "leaves": ["0f60ea"]
+        "leaves": [
+          "0f60ea"
+        ]
       }
     },
     "uint32": {
       "frame": "0600286bee",
       "null_sealed": {
-        "leaves": ["1506000000"]
+        "leaves": [
+          "1506000000"
+        ]
       },
       "null_sql": {
         "stored": "sql_null"
       },
       "text": "4000000000",
       "value": {
-        "leaves": ["0600286bee"]
+        "leaves": [
+          "0600286bee"
+        ]
       }
     },
     "uint64": {
       "frame": "07ffffffffffffffff",
       "null_sealed": {
-        "leaves": ["150700000000000000"]
+        "leaves": [
+          "150700000000000000"
+        ]
       },
       "null_sql": {
         "stored": "sql_null"
       },
       "text": "18446744073709551615",
       "value": {
-        "leaves": ["07ffffffffffffffff"]
+        "leaves": [
+          "07ffffffffffffffff"
+        ]
       }
     },
     "uint8": {
       "frame": "0dc8",
       "null_sealed": {
-        "leaves": ["150d"]
+        "leaves": [
+          "150d"
+        ]
       },
       "null_sql": {
         "stored": "sql_null"
       },
       "text": "200",
       "value": {
-        "leaves": ["0dc8"]
+        "leaves": [
+          "0dc8"
+        ]
       }
     },
     "untyped_null": {
       "value": {
-        "leaves": ["00"]
+        "leaves": [
+          "00"
+        ]
       }
     },
     "untyped_object": {
       "frame": "f103000000040000006c697374f00200000004010000000a01000000780a000000656d7074795f6c697374f00000000009000000656d7074795f6d6170f100000000",
       "value": {
-        "leaves": ["0401000000", "0a78", "", ""]
+        "leaves": [
+          "0401000000",
+          "0a78",
+          "",
+          ""
+        ]
       }
     }
   },
   "host": {
     "date_over_i64": {
-      "frame": "12bc3f1600",
-      "host_frame": "12bc3f1600",
+      "frame": {
+        "refused": true
+      },
+      "host_frame": "f3020005464d000000000000",
       "type": "date",
       "value": {
-        "leaves": ["12bc3f1600"]
+        "frame_refused": true
       }
     },
     "float64_for_float32": {
@@ -270,7 +350,9 @@
       "host_frame": "f30302050100000000000000",
       "type": "timestamp",
       "value": {
-        "leaves": ["130000000000000000e8030000"]
+        "leaves": [
+          "130000000000000000e8030000"
+        ]
       }
     },
     "timestamp_millis": {
@@ -278,7 +360,9 @@
       "host_frame": "f30301057b00000000000000",
       "type": "timestamp",
       "value": {
-        "leaves": ["130000000000000000c0d45407"]
+        "leaves": [
+          "130000000000000000c0d45407"
+        ]
       }
     },
     "timestamp_millis_negative": {
@@ -286,15 +370,19 @@
       "host_frame": "f3030105ffffffffffffffff",
       "type": "timestamp",
       "value": {
-        "leaves": ["13ffffffffffffffffc0878b3b"]
+        "leaves": [
+          "13ffffffffffffffffc0878b3b"
+        ]
       }
     },
     "timestamp_nanos_i64": {
-      "frame": "13000000000000000001000000",
-      "host_frame": "13000000000000000001000000",
+      "frame": {
+        "refused": true
+      },
+      "host_frame": "f30303050100000000000000",
       "type": "timestamp",
       "value": {
-        "leaves": ["13000000000000000001000000"]
+        "frame_refused": true
       }
     },
     "timestamp_seconds": {
@@ -302,7 +390,9 @@
       "host_frame": "f30300050100000000000000",
       "type": "timestamp",
       "value": {
-        "leaves": ["13010000000000000000000000"]
+        "leaves": [
+          "13010000000000000000000000"
+        ]
       }
     },
     "undefined": {
@@ -310,7 +400,9 @@
       "host_frame": "01",
       "type": "",
       "value": {
-        "leaves": ["01"]
+        "leaves": [
+          "01"
+        ]
       }
     },
     "undefined_for_string": {
@@ -347,23 +439,31 @@
       "refused": "stack_encrypt::dynamic_source/field_type"
     },
     "int32_field_int32_null_sealed": {
-      "leaves": ["1504000000"]
+      "leaves": [
+        "1504000000"
+      ]
     },
     "int32_field_int32_null_sql": {
       "stored": "sql_null"
     },
     "int32_field_int64_null_sealed": {
-      "leaves": ["1504000000"]
+      "leaves": [
+        "1504000000"
+      ]
     },
     "untyped_field_array_of_int32_null": {
       "frame": "f00100000000",
       "host_frame": "f0010000001504000000",
       "value": {
-        "leaves": ["00"]
+        "leaves": [
+          "00"
+        ]
       }
     },
     "untyped_field_int32_null": {
-      "leaves": ["00"]
+      "leaves": [
+        "00"
+      ]
     }
   },
   "json": {
@@ -376,7 +476,9 @@
       "leaf": "0a7b2261223a5b312c2278225d2c2262223a6e756c6c7d"
     },
     "untyped_text": {
-      "leaves": ["0a7b2261223a5b312c2278225d2c2262223a6e756c6c7d"]
+      "leaves": [
+        "0a7b2261223a5b312c2278225d2c2262223a6e756c6c7d"
+      ]
     }
   },
   "key_source": {

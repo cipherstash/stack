@@ -18,8 +18,8 @@
 //! pinned value, and shows in the fixture's diff.
 //!
 //! Regenerate with `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p
-//! stack-encrypt --all-features --test value_bytes`, then format the file
-//! with Biome. Nothing in it depends on a nonce, so a run that changes it
+//! stack-encrypt --all-features --test value_bytes`. Nothing in it depends
+//! on a nonce, so a run that changes it
 //! changed what is written. The schema is in the README beside the fixture.
 #![cfg(feature = "dynamic")]
 
@@ -188,7 +188,12 @@ fn reveal<'c>(
         context.into_context(),
         FrameWriter::new(&mut out),
     )
-    .unwrap_or_else(|_| panic!("the leaves open under their kept keys"));
+    .unwrap_or_else(|_| {
+        panic!(
+            "the leaves open under their kept keys: if every case fails here, \
+             the AAD `Reveal` builds no longer mirrors `leaf_aad` in src/cipher.rs"
+        )
+    });
     reveal.opened.into_inner()
 }
 
@@ -271,7 +276,9 @@ async fn typed_section(
     pin!("Decimal", decimal("-1234.5600"));
     pin!("JsonPlaintext", document());
     // `None` of a fixed-width type seals as a typed null of that type, as
-    // long as a value of it; of any other type, as the plain null.
+    // long as a value of it. A `bool` is the exception: its leaf is one byte,
+    // as long as the plain null, so its `None` seals as the plain null `00`.
+    // A `None` of a type with no fixed width seals as the plain null too.
     pin!("Option<bool>::None", None::<bool>);
     pin!("Option<i8>::None", None::<i8>);
     pin!("Option<i16>::None", None::<i16>);
@@ -514,6 +521,16 @@ fn engine_frame(host: &[u8]) -> Json {
     }
 }
 
+/// A logical value in the envelope a host may write for any logical type:
+/// `0xF3`, the logical type's id, its parameter, then an `i64` (tag `0x05`).
+/// vitaminc's own frame writer uses the shorter tag a date or a nanosecond
+/// timestamp has, so a Rust value cannot produce these bytes.
+fn envelope(logical: u8, parameter: u8, int64: &[u8; 8]) -> Vec<u8> {
+    let mut out = vec![0xF3, logical, parameter, vitaminc_aead::tags::INT64];
+    out.extend_from_slice(int64);
+    out
+}
+
 async fn host_section(
     cipher: &StackCipher<KeptKeys>,
     keys: &Mutex<HashMap<Vec<u8>, [u8; 32]>>,
@@ -560,7 +577,7 @@ async fn host_section(
         (
             "timestamp_nanos_i64",
             "timestamp",
-            ts(TimeUnit::Nanos, Int::I64(1)),
+            envelope(3, 3, &1i64.to_le_bytes()),
         ),
         ("uuid", "", uuid),
         ("undefined", "", undefined.clone()),
@@ -568,7 +585,8 @@ async fn host_section(
         (
             "date_over_i64",
             "date",
-            to(Raw(Some(Logical::Date), Physical::Int(Int::I64(738_945)))),
+            // 2024-02-29: 19,782 days after 1970-01-01.
+            envelope(2, 0, &19_782i64.to_le_bytes()),
         ),
         (
             "float64_for_float32",
@@ -576,8 +594,21 @@ async fn host_section(
             to(Raw(None, Physical::Float(Float::F64(1.5)))),
         ),
     ];
+    // These reach the engine as the 0xF3 envelope a host writes, not the
+    // shorthand a Rust frame writer would turn them into.
+    let envelopes = [
+        "timestamp_seconds",
+        "timestamp_millis",
+        "timestamp_millis_negative",
+        "timestamp_micros",
+        "timestamp_nanos_i64",
+        "date_over_i64",
+    ];
     let mut out = Map::new();
     for (name, kind, host) in hosts {
+        if envelopes.contains(&name) {
+            assert_eq!(host[0], 0xF3, "{name}: the host's envelope");
+        }
         let spec = if kind.is_empty() {
             json!({"outputs": ["c"]})
         } else {
@@ -740,16 +771,16 @@ async fn value_bytes_are_the_pinned_bytes() {
         "host_typed_null": typed_null_section(&cipher, &keys).await,
         "json": json_section(&cipher, &keys).await,
     });
+    let mut document = json!({
+        "_comment": "Pinned bytes of every way a plaintext value is written: its transport frame, the plaintext its sealed leaf holds, and a sealed null's leaf, for the typed Rust path and the dynamic record path. Read by tests/value_bytes.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; never edit by hand.",
+        "key_source": { "kind": "deterministic-sha256", "seed": hex(&SEED) },
+        "context": CONTEXT,
+    });
+    for (key, section) in actual.as_object().unwrap() {
+        document[key] = section.clone();
+    }
     let path = fixture_path();
     if update {
-        let mut document = json!({
-            "_comment": "Pinned bytes of every way a plaintext value is written: its transport frame, the plaintext its sealed leaf holds, and a sealed null's leaf, for the typed Rust path and the dynamic record path. Read by tests/value_bytes.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1, then format with Biome; never edit by hand.",
-            "key_source": { "kind": "deterministic-sha256", "seed": hex(&SEED) },
-            "context": CONTEXT,
-        });
-        for (key, section) in actual.as_object().unwrap() {
-            document[key] = section.clone();
-        }
         std::fs::write(
             &path,
             serde_json::to_string_pretty(&document).unwrap() + "\n",
@@ -759,11 +790,9 @@ async fn value_bytes_are_the_pinned_bytes() {
     }
     let committed: Json =
         serde_json::from_slice(&std::fs::read(&path).expect("the fixture")).expect("JSON");
-    assert_eq!(committed["key_source"]["seed"], json!(hex(&SEED)));
+    // The whole document: a key the test no longer writes is a failure too.
     let mut failures = Vec::new();
-    for (key, section) in actual.as_object().unwrap() {
-        differences(key, section, &committed[key], &mut failures);
-    }
+    differences("", &document, &committed, &mut failures);
     assert!(
         failures.is_empty(),
         "written bytes moved:\n{}",

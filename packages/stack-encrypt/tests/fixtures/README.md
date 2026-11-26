@@ -325,8 +325,9 @@ file.
 It pins today's behaviour, including rules that may change on purpose. A
 change to one of them is a reviewed change to this file. Regenerate with
 `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p stack-encrypt --all-features
---test value_bytes`, then format the file with Biome. Nothing in it
-depends on a nonce. Do not edit it by hand.
+--test value_bytes`. The test compares the whole file, so a key it no
+longer writes fails it. Nothing in it depends on a nonce. Do not edit it
+by hand.
 
 ```json
 {
@@ -355,16 +356,28 @@ is read.
 - **`typed`.** Each Rust type sealed alone by `encrypt_tree`: its frame as
   `vitaminc_aead::to_frame` writes it, and its leaf. A `None` of a
   fixed-width type seals as a typed null of that type (`0x15`, the type's
-  tag, zeros), as long as a value; of any other type, as the plain null.
+  tag, zeros), as long as a value. A `bool`'s `None` is the exception: a
+  bool leaf is one byte, so its null is the plain null `00`, which is as
+  long. A `None` of any other type is the plain null.
   A text or bytes frame carries a four-byte length that its leaf does not.
 - **`dynamic`.** One value per kind a data plan declares, as a binding
   sends it, through `record::encrypt`: the frame, the stored leaf, and a
-  null under `"null": "sealed"` and `"null": "sql"`.
+  null under `"null": "sealed"` and `"null": "sql"` (a sealed `bool` null
+  is `00`, as on the typed path). `untyped_object` is an untyped field
+  holding an object with an array and two empty containers: each scalar is
+  a leaf and each empty container a marker. `untyped_null` is a null in an
+  untyped field.
 - **`host`.** Frames a host writes that no Rust value here writes: a
   timestamp in seconds, milliseconds (a JavaScript `Date`) or
-  microseconds, which the engine rewrites to nanoseconds; a UUID, which it
-  refuses; `undefined`, which an untyped field seals as written and a typed
-  field refuses.
+  microseconds, which the engine rewrites to nanoseconds; a nanosecond
+  timestamp and a date (2024-02-29) over an `i64` in the `0xF3` envelope,
+  which the engine refuses because each has a shorter tag of its own; a
+  UUID, which it refuses; `undefined`, which an untyped field seals as
+  written and a typed field refuses; and an `f64` for a `float32` field,
+  which it refuses. The two millisecond frames are the frames the
+  JavaScript bridge writes for `new Date(123)` and `new Date(-1)`;
+  `scripts/__tests__/recipher-js-frame-parity.test.mjs` holds them to
+  the bridge's pinned frames.
 - **`host_typed_null`.** A typed null a host sends. The frame keeps no
   type, so an untyped field, and an array inside one, seal the plain null.
   A typed field refuses it with no `"null"`, stores nothing under
