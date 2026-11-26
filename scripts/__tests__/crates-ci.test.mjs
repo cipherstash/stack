@@ -2,6 +2,12 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import {
+  parseIncludes,
+  parseStringArray,
+  parseTomlTasks,
+  stripCommentLines,
+} from './lib/mise-tasks.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow, WORKFLOW_DIR, workflowFiles } from './lib/workflows.mjs'
 
@@ -38,41 +44,10 @@ const IMPORTED_WORKFLOW_DIR = '.github/imported-workflows'
 // The task graph
 // ---------------------------------------------------------------------------
 
-/** The `["a", 'b']` inside a TOML array, without a TOML parser. */
-const parseStringArray = (inner) =>
-  [...inner.matchAll(/"([^"]+)"|'([^']+)'/g)].map((m) => m[1] ?? m[2])
-
-/** `[task_config].includes` from the root mise.toml. */
-function parseIncludes(miseText) {
-  const section = /^\[task_config\][^\n]*\n([\s\S]*?)(?=^\[|$(?![\s\S]))/m.exec(
-    miseText,
-  )
-  const array = /^includes\s*=\s*\[([^\]]*)\]/m.exec(section?.[1] ?? '')
-  return array ? parseStringArray(array[1]) : []
-}
-
-/**
- * mise task blocks. In mise.toml a task is `[tasks."name"]`; in an included
- * file every top-level table is a task, `["name"]` (see
- * `eql-suite-ci.test.mjs` for why the dialects must not be merged).
- */
-function parseTomlTasks(text, { bareTables }) {
-  const header = bareTables
-    ? /^\[(?:"([^"]+)"|([\w:.-]+))\]/
-    : /^\[tasks\.(?:"([^"]+)"|([\w:.-]+))\]/
-  return text
-    .split(/^(?=\[)/m)
-    .map((block) => ({ match: header.exec(block), block }))
-    .filter(({ match }) => match)
-    .map(({ match, block }) => ({ name: match[1] ?? match[2], block }))
-}
-
 const parseDepends = (block) => {
   const m = /^[ \t]*depends\s*=\s*\[([^\]]*)\]/m.exec(block)
   return m ? parseStringArray(m[1]) : []
 }
-
-const stripCommentLines = (text) => text.replace(/^[ \t]*#.*$/gm, '')
 
 function taskGraph() {
   const tasks = new Map()

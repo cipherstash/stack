@@ -396,7 +396,7 @@ describe('lint and format wiring', () => {
 
   it('keeps cargo off the default test path', () => {
     // The load-bearing half of the split. Root `pnpm test` runs
-    // `turbo test --filter './languages/typescript/packages/*'`, which reaches this package's
+    // `turbo test --filter './languages/typescript/packages/**' --filter './packages/**'`, which reaches this package's
     // `test` — so anything cargo on that path is cargo on every PR, in a repo
     // where one package out of eighteen is Rust.
     //
@@ -424,7 +424,7 @@ describe('lint and format wiring', () => {
       // test then requires what cargo produces: `src/nativeLoading.test.ts`
       // asserted `assertNativeBindingAvailable()` does not throw, which needs
       // an `index.node` that only `build:native` writes. Root `pnpm test`
-      // reaches this package through `turbo test --filter './languages/typescript/packages/*'`, so
+      // reaches this package through `turbo test --filter './languages/typescript/packages/**' --filter './packages/**'`, so
       // that made a Rust build a prerequisite of the whole repo's default test
       // — the exact thing the entry-point split exists to prevent, arriving
       // through the tests instead of through the scripts.

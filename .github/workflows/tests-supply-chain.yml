@@ -13,7 +13,7 @@ name: Test supply chain security
 # See the "CI/CD Supply-Chain Hardening" section of SECURITY.md.
 #
 # Deliberately minimal:
-# - GitHub-hosted runner (no Blacksmith transparent cache)
+# - GitHub-hosted runner (no RunsOn transparent S3 cache)
 # - contents:read only
 # - no secrets
 # - no caching

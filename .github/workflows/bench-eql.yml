@@ -93,7 +93,7 @@ defaults:
 jobs:
   bench:
     name: "Bench EQL (Postgres 17)"
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 60
 
     env:
@@ -146,9 +146,33 @@ jobs:
           # slow. Asserted by scripts/__tests__/eql-suite-ci.test.mjs.
           save-if: false
 
+      # Docker Hub refuses pulls without a login after too many from one
+      # address, and RunsOn machines reach that limit. With either secret empty,
+      # this step does nothing and pulls stay anonymous.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs requires it.
+      - name: Log in to Docker Hub
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DOCKER_HUB_USERNAME" ] || [ -z "$DOCKER_HUB_PASSWORD" ]; then
+            echo "No Docker Hub credentials, so image pulls stay anonymous."
+            exit 0
+          fi
+          printf '%s' "$DOCKER_HUB_PASSWORD" |
+            docker login --username "$DOCKER_HUB_USERNAME" --password-stdin
+
       - name: Setup database
         run: |
           mise run postgres:up "postgres-${POSTGRES_VERSION}" --extra-args "--detach --wait"
+
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
 
       - name: Run bench tests
         # CS_* scoped to THIS step only (least privilege): test:bench -> test:sqlx:prep

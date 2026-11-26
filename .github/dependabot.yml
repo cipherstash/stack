@@ -78,7 +78,7 @@ updates:
     versioning-strategy: lockfile-only
     # Monthly, where npm and actions are weekly. The deviation is about
     # validation cost, not risk appetite: a Cargo.lock bump is checked by
-    # tests-rust.yml — one Blacksmith job, 45-minute timeout, cargo test +
+    # tests-rust.yml — one RunsOn job, 45-minute timeout, cargo test +
     # clippy on host AND wasm32 — and the release additionally cross-builds
     # six platform binaries. Security fixes are not delayed by this: Dependabot
     # security updates are driven by alerts, not by `schedule`.

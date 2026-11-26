@@ -153,7 +153,7 @@ jobs:
   # would either skip the merge-queue matrix or deadlock `ci-required`.
   changes:
     name: "Detect relevant changes"
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 10
     outputs:
       relevant: ${{ steps.r.outputs.relevant }}
@@ -243,7 +243,7 @@ jobs:
   # everything else -> PG 14-17 x 2 shards (coverage lane).
   setup:
     name: "Compute matrix"
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 10
     # Opts out of the workflow-level `working-directory: packages/eql`. This job
     # deliberately does not check out — it is pure bash deriving a matrix — so
@@ -315,7 +315,7 @@ jobs:
        || needs.changes.outputs.relevant == 'true')
       && (github.event_name != 'pull_request'
           || github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 45
     env:
       # test:sqlx:archive depends on test:sqlx:prep, which copies the built EQL
@@ -363,9 +363,34 @@ jobs:
           # `save-if: false` so a fast-finishing light job can't win the save race
           # and overwrite the key with a deps-less target/.
 
+      # Docker Hub refuses pulls without a login after too many from one
+      # address, and RunsOn machines reach that limit. With either secret empty,
+      # as on a fork's pull request, this step does nothing and pulls stay
+      # anonymous. scripts/__tests__/workflow-docker-hub-login.test.mjs
+      # requires it.
+      - name: Log in to Docker Hub
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DOCKER_HUB_USERNAME" ] || [ -z "$DOCKER_HUB_PASSWORD" ]; then
+            echo "No Docker Hub credentials, so image pulls stay anonymous."
+            exit 0
+          fi
+          printf '%s' "$DOCKER_HUB_PASSWORD" |
+            docker login --username "$DOCKER_HUB_USERNAME" --password-stdin
+
       - name: Setup database (Postgres 17)
         run: |
           mise run postgres:up "postgres-${POSTGRES_VERSION}" --extra-args "--detach --wait"
+
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
 
       - name: Build EQL + archive test binaries
         run: |
@@ -400,7 +425,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 75
     strategy:
       fail-fast: false
@@ -445,9 +470,34 @@ jobs:
           name: nextest-archive
           path: packages/eql
 
+      # Docker Hub refuses pulls without a login after too many from one
+      # address, and RunsOn machines reach that limit. With either secret empty,
+      # as on a fork's pull request, this step does nothing and pulls stay
+      # anonymous. scripts/__tests__/workflow-docker-hub-login.test.mjs
+      # requires it.
+      - name: Log in to Docker Hub
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DOCKER_HUB_USERNAME" ] || [ -z "$DOCKER_HUB_PASSWORD" ]; then
+            echo "No Docker Hub credentials, so image pulls stay anonymous."
+            exit 0
+          fi
+          printf '%s' "$DOCKER_HUB_PASSWORD" |
+            docker login --username "$DOCKER_HUB_USERNAME" --password-stdin
+
       - name: Setup database (Postgres ${{ matrix.postgres-version }})
         run: |
           mise run postgres:up "postgres-${POSTGRES_VERSION}" --extra-args "--detach --wait"
+
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
 
       - name: Run shard ${{ matrix.shard }}/${{ needs.setup.outputs.shard-total }}
         run: |
@@ -463,7 +513,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -491,9 +541,34 @@ jobs:
           shared-key: sqlx-tests
           save-if: false
 
+      # Docker Hub refuses pulls without a login after too many from one
+      # address, and RunsOn machines reach that limit. With either secret empty,
+      # as on a fork's pull request, this step does nothing and pulls stay
+      # anonymous. scripts/__tests__/workflow-docker-hub-login.test.mjs
+      # requires it.
+      - name: Log in to Docker Hub
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DOCKER_HUB_USERNAME" ] || [ -z "$DOCKER_HUB_PASSWORD" ]; then
+            echo "No Docker Hub credentials, so image pulls stay anonymous."
+            exit 0
+          fi
+          printf '%s' "$DOCKER_HUB_PASSWORD" |
+            docker login --username "$DOCKER_HUB_USERNAME" --password-stdin
+
       - name: Setup database (Postgres ${{ matrix.postgres-version }})
         run: |
           mise run postgres:up "postgres-${POSTGRES_VERSION}" --extra-args "--detach --wait"
+
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
 
       # Source-only doc checks (coverage + required-tags) moved to the dedicated
       # `docs-static` job so they run exactly once, not per-Postgres. This step
@@ -523,7 +598,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -553,11 +628,22 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 15
     services:
       encryption-postgres:
         image: postgres:17
+        # Docker Hub refuses pulls without a login after too many from one
+        # address, and RunsOn machines reach that limit. One expression, not
+        # `username:` and `password:` keys: GitHub rejects an empty value for
+        # either key ("Unexpected value ''"), which fails the job on a fork's
+        # pull request. With either secret empty this gives `{}`, and the
+        # runner then pulls without a login.
+        credentials: >-
+          ${{ secrets.DOCKER_HUB_USERNAME != '' && secrets.DOCKER_HUB_PASSWORD != ''
+          && fromJSON(format('{{"username":{0},"password":{1}}}',
+          toJSON(secrets.DOCKER_HUB_USERNAME), toJSON(secrets.DOCKER_HUB_PASSWORD)))
+          || fromJSON('{}') }}
         env:
           POSTGRES_PASSWORD: postgres
         # Container port only: Docker picks the host port, and the test step
@@ -682,7 +768,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -715,7 +801,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -752,7 +838,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -795,7 +881,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 10
     env:
       POSTGRES_VERSION: "17"
@@ -828,9 +914,35 @@ jobs:
           workspaces: packages/eql
           shared-key: sqlx-tests
           save-if: false
+      # Docker Hub refuses pulls without a login after too many from one
+      # address, and RunsOn machines reach that limit. With either secret empty,
+      # as on a fork's pull request, this step does nothing and pulls stay
+      # anonymous. scripts/__tests__/workflow-docker-hub-login.test.mjs
+      # requires it.
+      - name: Log in to Docker Hub
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DOCKER_HUB_USERNAME" ] || [ -z "$DOCKER_HUB_PASSWORD" ]; then
+            echo "No Docker Hub credentials, so image pulls stay anonymous."
+            exit 0
+          fi
+          printf '%s' "$DOCKER_HUB_PASSWORD" |
+            docker login --username "$DOCKER_HUB_USERNAME" --password-stdin
+
       - name: Setup database
         run: |
           mise run postgres:up "postgres-${POSTGRES_VERSION}" --extra-args "--detach --wait"
+
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
+
       - name: Build and install EQL
         run: |
           set -euo pipefail
@@ -856,7 +968,7 @@ jobs:
   # per-version `validate` job).
   docs-static:
     name: "SQL doc validation"
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -896,7 +1008,7 @@ jobs:
   # issue state, so it runs on every PR rather than hiding behind the e2e job.
   known-failures:
     name: "known-failure markers"
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 10
     permissions:
       contents: read
@@ -935,7 +1047,7 @@ jobs:
   # PRs it exists to check.
   doc-anchors:
     name: "doc anchor links"
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -969,7 +1081,7 @@ jobs:
        || needs.changes.outputs.relevant == 'true')
       && (github.event_name != 'pull_request'
           || github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 40
     env:
       POSTGRES_VERSION: "17"
@@ -1002,9 +1114,35 @@ jobs:
           workspaces: packages/eql
           shared-key: sqlx-tests
           save-if: false
+      # Docker Hub refuses pulls without a login after too many from one
+      # address, and RunsOn machines reach that limit. With either secret empty,
+      # as on a fork's pull request, this step does nothing and pulls stay
+      # anonymous. scripts/__tests__/workflow-docker-hub-login.test.mjs
+      # requires it.
+      - name: Log in to Docker Hub
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DOCKER_HUB_USERNAME" ] || [ -z "$DOCKER_HUB_PASSWORD" ]; then
+            echo "No Docker Hub credentials, so image pulls stay anonymous."
+            exit 0
+          fi
+          printf '%s' "$DOCKER_HUB_PASSWORD" |
+            docker login --username "$DOCKER_HUB_USERNAME" --password-stdin
+
       - name: Setup database (Postgres 17)
         run: |
           mise run postgres:up "postgres-${POSTGRES_VERSION}" --extra-args "--detach --wait"
+
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
+
       - name: Run e2e property suite
         run: |
           mise run test:sqlx:e2e
@@ -1021,7 +1159,7 @@ jobs:
             codegen, self-contained-v3, matrix-coverage, splinter, docs-static,
             known-failures, doc-anchors, e2e]
     if: always()
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 10
     # Same opt-out as `setup`, and this is the worse of the two to get wrong:
     # this job is the required check. It reads `needs.*.result` and checks out

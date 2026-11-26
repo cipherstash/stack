@@ -43,6 +43,7 @@ Each Blacksmith label becomes a RunsOn label with the same vCPU count and Ubuntu
   The c8a machines have 2 GB per vCPU.
   Blacksmith's x64 machines have 4 GB per vCPU.
   A job that fails for lack of memory moves to `family=m8a`.
+  The log of such a job shows exit code 137, "Killed", or "signal: 9, SIGKILL".
   The m8a machines have 4 GB per vCPU.
 - **Disk.**
   Every job gets an 80 GB disk.
@@ -71,9 +72,13 @@ Two changes go in with the swap, because RunsOn needs them:
   On RunsOn, a stuck job costs money until its time limit ends it.
   In the trial, one job without a limit ran for more than 2 hours.
 
-## The RunsOn setup
+## The RunsOn setup on 19 November 2026
 
-These settings are in place in the AWS account, or have been requested:
+This section records the RunsOn setup on 19 November 2026.
+Two of these items were requests that AWS had not answered on that date.
+The AWS Service Quotas console shows the current vCPU quotas.
+
+These settings were in place in the AWS account, or had been requested:
 
 - We upgraded RunsOn to v3.6.2 on 19 November 2026.
   Before v3.6.0, RunsOn failed a job when the on-demand vCPU quota was full.
@@ -89,6 +94,8 @@ These settings are in place in the AWS account, or have been requested:
   Jobs above the quotas wait.
   The swap does not wait for the approval.
 - When AWS raises the `RunInstances` request rate from 2 to 4 a second, the RunsOn `AppSize` setting moves from `small` to `medium`.
+  The Service Quotas code for that rate is `L-A2D70E6C`.
+  Once Service Quotas shows 4 for that code, a second CloudFormation change set moves `AppSize`.
   We asked AWS for the higher rate on 19 November 2026.
   Both sizes cost the same.
 
@@ -120,7 +127,7 @@ We rejected each of these options:
   AWS would never interrupt a job.
   The cost would be about 2.3 times the spot price.
 - **Keep warm machines ready.**
-  Jobs would start faster.
+  Jobs would start faster, because they would not wait for a new machine to boot.
   Warm machines cost money while idle.
 - **Pay for a Docker Team or Pro plan.**
   Either plan removes the pull limit.

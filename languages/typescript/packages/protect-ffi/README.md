@@ -254,7 +254,9 @@ Builds the `wasm32-unknown-unknown` output into `dist/wasm/` with `wasm-pack`, t
 
 #### `pnpm test`
 
-Typechecks the TypeScript, runs the unit tests (tsc + vitest), and lints and format-checks the TypeScript. **No cargo**, by design — see above.
+Typechecks the TypeScript, runs the unit tests (vitest, against `lib/` from `build`), and lints and format-checks the TypeScript. **No cargo**, by design — see above.
+
+The unit tests read `lib/`, and `pnpm test` does not write it: its typecheck runs `tsc --noEmit`, because other packages' builds read `lib/` while root `pnpm test` runs. Run `pnpm run build` first. Through turbo (root `pnpm test`), `build` runs before `test` on its own.
 
 Note: this does not run the integration tests either.
 For those, see [below](#integration-tests).
@@ -265,7 +267,7 @@ The Rust half of the test suite: `cargo test --locked` plus `cargo fmt --check`.
 
 #### `pnpm run test:typecheck:wasm`
 
-Typechecks `type-tests/` against the wasm-bindgen-generated declarations in `dist/wasm/`. Needs `build:wasm` and `build` to have run first, which is why it is not part of `pnpm test` — that has to pass in a fresh clone with no `dist/`.
+Typechecks `type-tests/` against the wasm-bindgen-generated declarations in `dist/wasm/`. Needs `build:wasm` and `build` to have run first. Root `pnpm test` has to pass in a fresh clone with no `dist/`, so `pnpm test` leaves this out.
 
 #### `mise run lint:rust`
 

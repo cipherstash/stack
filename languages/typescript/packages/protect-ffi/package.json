@@ -15,7 +15,7 @@
   "scripts": {
     "test": "pnpm run test:typecheck && pnpm run test:unit && pnpm run test:lint && pnpm run test:format:ts",
     "test:cargo": "pnpm run test:rust && pnpm run test:format:rust",
-    "test:typecheck": "tsc && tsc -p tsconfig.test.json",
+    "test:typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "test:typecheck:wasm": "tsc -p type-tests/tsconfig.json",
     "test:unit": "vitest run",
     "test:rust": "cargo test --locked",

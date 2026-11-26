@@ -21,7 +21,7 @@ jobs:
   # Tightening to fail on warnings is tracked in #625.
   lint:
     name: Lint (Biome)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 10
     steps:
       - name: Checkout Repo
@@ -54,7 +54,7 @@ jobs:
 
   run-tests:
     name: Run Tests (Node ${{ matrix.node-version }})
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 25
     strategy:
       matrix:
@@ -129,7 +129,7 @@ jobs:
       # `index.node`, which nothing else in this job produces.
       #
       # NOT for protect-ffi's own suite, though vendoring it did add
-      # `@cipherstash/protect-ffi#test` to `turbo test --filter './languages/typescript/packages/*'`.
+      # `@cipherstash/protect-ffi#test` to `turbo test --filter './languages/typescript/packages/**' --filter './packages/**'`.
       # That suite must pass with no binding at all (its `build` is `tsc` and
       # its `test` is deliberately cargo-free), and `src/lintWiring.test.ts`
       # re-runs it here with the artifact hidden to keep that true — this job
@@ -399,7 +399,7 @@ jobs:
 
   e2e-tests:
     name: Run E2E Tests
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     # The migration harness's live Runs take most of this job's time; the
     # limit covers them plus the job's other suites, with headroom.
     timeout-minutes: 30
@@ -469,6 +469,24 @@ jobs:
       - name: Build the @cipherstash/auth binding
         id: auth-binding
         uses: ./.github/actions/build-auth-binding
+
+      # Docker Hub refuses pulls without a login after too many from one
+      # address, and RunsOn machines reach that limit. With either secret empty,
+      # as on a fork's pull request, this step does nothing and pulls stay
+      # anonymous. scripts/__tests__/workflow-docker-hub-login.test.mjs
+      # requires it.
+      - name: Log in to Docker Hub
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DOCKER_HUB_USERNAME" ] || [ -z "$DOCKER_HUB_PASSWORD" ]; then
+            echo "No Docker Hub credentials, so image pulls stay anonymous."
+            exit 0
+          fi
+          printf '%s' "$DOCKER_HUB_PASSWORD" |
+            docker login --username "$DOCKER_HUB_USERNAME" --password-stdin
 
       # Run the standalone `e2e/` workspace via turbo so the `^build`
       # dep on the `test:e2e` task builds cli + wizard first. CLI's own
@@ -547,6 +565,13 @@ jobs:
           port="$(docker port pg18-upgrade 5432/tcp | head -n1 | sed 's/.*://')"
           echo "database-url=postgres://postgres:password@127.0.0.1:${port}/postgres" >> "$GITHUB_OUTPUT"
 
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
+
       - name: Run the Postgres upgrade example on PostgreSQL 18
         if: ${{ !cancelled() && steps.db18.outcome == 'success' }}
         run: pnpm exec turbo run test:protect-crossover --filter @cipherstash/e2e --env-mode=loose -- tests/protect-postgres-upgrade.e2e.test.ts
@@ -564,7 +589,7 @@ jobs:
   # a silent fallback to the NAPI module is impossible.
   wasm-e2e-tests:
     name: Run WASM E2E Tests (Deno)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 35
 
     permissions:
@@ -708,7 +733,7 @@ jobs:
 
   run-tests-bun:
     name: Run Tests (Bun)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 15
     continue-on-error: true
 

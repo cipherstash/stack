@@ -209,15 +209,18 @@ npm ≥ 11.5.1, no Actions cache.
   `optionalDependencies` are exact versions, so publishing it first exposes a
   version whose binaries do not exist yet.
 - `ffi-preflight.yml` is the dry run — `changeset publish` has no `--dry-run`.
-  Dispatch it against a Version Packages branch and it builds the real tarballs,
-  checks each binary's architecture and libc, installs the host pair and loads
-  it. It cannot publish, and "no `id-token`" is only half of why: that closes
-  the OIDC path, while a plain `NPM_TOKEN` would still authenticate one. Both
-  are absent — the workflow grants `contents: read`, passes no secrets (no
-  `secrets: inherit` on its call into the build workflow), sets no
-  `registry-url` (which is what writes an `_authToken` line into `.npmrc`), and
-  names no `NPM_TOKEN` or `NODE_AUTH_TOKEN`. Keep it that way; adding any one of
-  them turns a dry run into a publisher.
+  Dispatched against a Version Packages branch, it builds the real tarballs,
+  checks each binary's architecture and libc, then installs and loads the host
+  pair. It cannot publish. "No `id-token`" is only half of why. It closes the
+  OIDC path, but a plain `NPM_TOKEN` would still authenticate a publish. Both
+  paths are absent. The workflow grants only `contents: read`, and names no
+  `NPM_TOKEN` or `NODE_AUTH_TOKEN`. It sets no `registry-url`. That setting is
+  what writes an `_authToken` line into `.npmrc`. Its call into the build workflow passes
+  exactly two secrets, by name: `DOCKER_HUB_USERNAME` and
+  `DOCKER_HUB_PASSWORD`. The musl build logs in to Docker Hub with them before
+  it pulls Alpine. They cannot authenticate an npm publish. Keep it that way:
+  an `id-token` permission, `secrets: inherit`, a `registry-url`, or an npm
+  token would each turn the dry run into a publisher.
 
 Trusted publishing is configured **per package** on npmjs.com (package settings →
 Trusted publisher → GitHub Actions): owner/repo `cipherstash/stack`, workflow

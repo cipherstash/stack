@@ -71,7 +71,7 @@ concurrency:
 jobs:
   build:
     name: Build and test the release
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 90
     env:
       VERSION: ${{ inputs.version }}
@@ -242,7 +242,7 @@ jobs:
   publish:
     name: Tag and release
     needs: build
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 15
     # Required reviewers set on this environment in the repository settings
     # gate every release; with none set, it gates nothing.
@@ -370,7 +370,7 @@ jobs:
   verify:
     name: Check that Go resolves the version
     needs: publish
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 15
     env:
       VERSION: ${{ inputs.version }}

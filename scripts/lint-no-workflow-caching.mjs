@@ -80,10 +80,10 @@ const PARENT_USES = /^\.\.\//
 // `actions/cache*`, and an action that takes a `cache:` input. A third-party
 // cache action has neither, so it was invisible to the whole file. Reproduced
 // against a composite reached from a targeted workflow holding
-// `useblacksmith/cache@v5` and `Swatinem/rust-cache@v2`: `OK`, exit 0. Both are
-// live-relevant here — eleven jobs in this repo run on `blacksmith-*` runners,
-// where `useblacksmith/cache` is the documented drop-in for `actions/cache`,
-// and the absorbed Cargo workspace at `languages/typescript/packages/protect-ffi` is exactly where
+// `useblacksmith/cache@v5` and `Swatinem/rust-cache@v2`: `OK`, exit 0. Both
+// kinds are live-relevant here. The self-hosted jobs in this repo run on
+// RunsOn, whose `runs-on/cache` is a drop-in for `actions/cache`, as
+// `useblacksmith/cache` is on Blacksmith. And the absorbed Cargo workspace at `languages/typescript/packages/protect-ffi` is exactly where
 // someone reaches for `Swatinem/rust-cache`.
 //
 // The obvious repair is to enumerate the cache actions — by name

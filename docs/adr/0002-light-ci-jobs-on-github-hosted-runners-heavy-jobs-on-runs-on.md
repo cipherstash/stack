@@ -18,7 +18,7 @@ Mutants, the mutation testing workflow, uses a c8a machine with 16 vCPUs.
 The other repositories that share the CI budget move their Blacksmith jobs to RunsOn too.
 
 Heavy jobs stay on x64 machines.
-In the trial, arm64 machines were slower than x64 machines, and not cheaper.
+In the runner trial in pull request #1297, arm64 machines were slower than x64 machines, and not cheaper.
 Jobs that must run on arm64, such as native arm64 container image builds, are the exception.
 Those jobs run on RunsOn's arm64 machines.
 
@@ -47,8 +47,8 @@ We rejected each of these options:
   Light jobs would then cost money.
   GitHub-hosted runners run them for nothing.
 - **Run every job on GitHub-hosted runners.**
-  In the runner trial in pull request #1297, jobs took 2.46 times as long overall.
-  The integration suites took up to 4.8 times as long.
+  In the same trial, jobs took 2.46 times as long overall as on Blacksmith.
+  The integration suites took up to 4.8 times as long as on Blacksmith.
 - **Build arm64 images on x64 machines.**
   Cross-compiling Rust for another architecture is slow.
 - **Run arm64 jobs on GitHub-hosted arm64 runners.**
@@ -73,7 +73,7 @@ We rejected each of these options:
   The full price is more than twice the spot price.
   The `family=c8a+m8a` label lets RunsOn try a second machine type before the job runs at the full price.
 - Every job sets `timeout-minutes`.
-  In the trial, one job without a limit ran for more than 2 hours.
+  In the runner trial in pull request #1297, one job without a limit ran for more than 2 hours.
 - We maintain the RunsOn resources in AWS.
   Those resources cost $40 to $60 a month.
 - Each RunsOn machine has its own public address.
