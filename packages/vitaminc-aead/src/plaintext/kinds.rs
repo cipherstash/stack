@@ -395,7 +395,9 @@ impl Width {
 /// and a nanosecond timestamp and a decimal as 128-bit words, whatever
 /// width the value came with. A decimal's scale travels inside its payload
 /// rather than in its tag, so every decimal has the one typed null, of
-/// scale 0.
+/// scale 0. A timestamp in another unit keeps its unit and width here, as a
+/// frame carries it; it is sealed as a nanosecond timestamp's typed null
+/// ([`sealed_null_type`](crate::leaf::sealed_null_type)).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FixedType {
     ty: Option<Logical>,

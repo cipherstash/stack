@@ -302,9 +302,12 @@ impl<E, O: Slot> EncryptSink<E, O> {
     }
 
     /// Plan an absent value of a fixed-width type as one leaf: a typed
-    /// null, as long as a leaf holding a value of the type.
+    /// null, as long as a leaf holding a value of the type. A timestamp's
+    /// null is a nanosecond timestamp's, as its value is sealed in
+    /// nanoseconds ([`leaf::sealed_null_type`]).
     fn typed_null_leaf(self, ty: FixedType) -> Result<O::Ok, EncryptError<E>> {
         shape::scalar(self.depth, None, &Physical::Null, &self.out)?;
+        let ty = leaf::sealed_null_type(ty);
         let mut plaintext = Protected::new(Vec::with_capacity(leaf::typed_null_len(ty)));
         leaf::write_typed_null(ty, plaintext.risky_inner_mut());
         Ok(self.out.put(CipherText::Single(Pending {
@@ -543,6 +546,34 @@ mod tests {
         assert_eq!(leaves[0].1, "ctx".into_aad());
         let some = leaves_with_aad(planned(Some(34u32)).expect("plans"), &"ctx".into_aad());
         assert_eq!(some[0].0.plaintext.risky_ref().len(), 5);
+    }
+
+    /// A timestamp and its typed null are sealed in nanoseconds, whatever
+    /// unit the source gives, so both are as long as a nanosecond leaf.
+    #[test]
+    fn a_timestamp_and_its_null_are_sealed_in_nanoseconds() {
+        use crate::plaintext::{FixedType, Int, Logical, TimeUnit, Width};
+        struct Millis(Option<i64>);
+        impl Encrypt for Millis {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                let ty = Logical::Timestamp(TimeUnit::Millis);
+                match self.0 {
+                    Some(ms) => sink.scalar(Some(ty), Physical::Int(Int::I64(ms))),
+                    None => sink.typed_null(FixedType::new(Some(ty), Width::I64).expect("fixed")),
+                }
+            }
+        }
+        let leaf = |p: Millis| {
+            let leaves = leaves_with_aad(planned(p).expect("plans"), &"ctx".into_aad());
+            leaves[0].0.plaintext.risky_ref().to_vec()
+        };
+        let mut some = vec![0x13];
+        some.extend_from_slice(&0i64.to_le_bytes());
+        some.extend_from_slice(&123_000_000u32.to_le_bytes());
+        assert_eq!(leaf(Millis(Some(123))), some);
+        let mut none = vec![0x15, 0x13];
+        none.extend_from_slice(&[0; 11]);
+        assert_eq!(leaf(Millis(None)), none);
     }
 
     #[test]
