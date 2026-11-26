@@ -41,7 +41,6 @@
       "!languages/typescript/packages/profile/index.d.ts",
       "!languages/typescript/packages/profile/native.d.ts",
       "!languages/typescript/packages/recipher-js/native.d.ts",
-      "!languages/typescript/packages/recipher-js/value-napi",
       "!languages/golang",
       "!**/*.grit",
       "!**/*.yml",
