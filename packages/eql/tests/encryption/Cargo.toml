@@ -51,6 +51,11 @@ stack-encrypt = { path = "../../../stack-encrypt", default-features = false, fea
 # jiff's and rust_decimal's own sources, which seal the leaf a date,
 # timestamp or decimal from any other producer seals.
 vitaminc-aead = { version = "0.10.0", features = ["jiff", "rust_decimal"] }
+# The AES cipher and protected buffer of the leaves stack-encrypt seals:
+# tests/opaque_json_bytes.rs opens a stored leaf with a kept test key to pin
+# the plaintext that was sealed.
+vitaminc-encrypt = "0.10.0"
+vitaminc-protected = "0.10.0"
 jiff = "1.0.0"
 rust_decimal = { version = "1", default-features = false, features = ["std"] }
 stack-kms = { path = "../../../stack-kms", default-features = false, features = ["test-support"] }
