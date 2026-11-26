@@ -179,8 +179,8 @@ whole set against the crates.io versions in use today.
 ## Stage 1: move the three crates, unchanged
 
 1. Copy the three crates in at the version the root `Cargo.lock` resolves.
-   Keep their names. Bring their history if possible, as was done for the
-   stack-* crates.
+   Keep their names. Bring their git history, as was done for the stack-*
+   crates.
 2. Bring their tests, fuzz targets and benchmarks, and the checks under
    "Checks that must move with the code".
 3. Point every workspace at them: the root workspace, the TypeScript SDK's
@@ -206,8 +206,10 @@ While the crates are unpublished:
   published. Stage 1 changes no API, so that still compiles. Step 2.4 changes
   the API that `eql-bindings` uses, and from then an EQL release waits for a
   `stack-encrypt` release.
-- **vitaminc must stop changing these three crates**, or the two copies
-  diverge.
+- **vitaminc stops changing these three crates as soon as the copy is
+  taken**, or the two copies diverge. The crates stay in vitaminc, unchanged,
+  until everything in this plan is settled, so that the move can be backed
+  out. They are deleted from vitaminc only then.
 
 ### Before the next `stack-encrypt` release
 
