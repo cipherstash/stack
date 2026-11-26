@@ -34,9 +34,24 @@ var (
 	// ErrForbidden is ZeroKMS refusing the request (HTTP 403): the token is
 	// valid but not permitted, or a data key's bound context did not match
 	// the one presented — the production form of a wrong-AAD open.
+	//
+	// ZeroKMS refuses a data key (code "stack_kms::retrieve_key_failed")
+	// with one answer for two causes: the value is opened under another
+	// context, or the client has no grant for the value's keyset. The
+	// [Diagnostic]'s Help says which one it is where the call knows. On a
+	// read through a [Cipher], which loaded its keyset first, the cause is
+	// the context: the Help names the keyset and how many scope and binding
+	// parts the cipher adds, never their values. On a read through the
+	// [Client], the Help names both causes. A keyset ZeroKMS refuses to
+	// load, such as a disabled one, is "stack_kms::load_keyset_forbidden",
+	// and its message names the keyset.
 	ErrForbidden = guest.ErrForbidden
 	// ErrNotFound is ZeroKMS reporting a missing resource (HTTP 404): an
-	// unknown keyset name or id, or a data key that does not exist.
+	// unknown keyset name or id, or a data key that does not exist. ZeroKMS
+	// also answers 404 for a keyset that exists but is not granted to this
+	// client. The message of "stack_kms::keyset_not_found" names the
+	// keyset, and its Diagnostic's Fields hold it as "keyset_name" or
+	// "keyset_id" (neither for the default keyset).
 	ErrNotFound = guest.ErrNotFound
 	// ErrConflict is ZeroKMS reporting a resource conflict (HTTP 409).
 	ErrConflict = guest.ErrConflict

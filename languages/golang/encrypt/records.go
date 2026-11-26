@@ -123,7 +123,11 @@ func (cph *Cipher) Open(ctx context.Context, plan *record.Plan, records []record
 	}
 	opts := cph.dataKeyCall()
 	opts.context = cph.context
-	return cph.client.open(ctx, opts, p, records)
+	opened, err := cph.client.open(ctx, opts, p, records)
+	if err != nil {
+		return nil, cph.explainRefusal(err)
+	}
+	return opened, nil
 }
 
 // derive derives one index term for one value of a field, under the plan's
@@ -262,7 +266,11 @@ func (c *Client) openAny(ctx context.Context, audit auditFacts, plan *record.Pla
 	if err := plan.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	return c.open(ctx, callOptions{keyset: anyKeyset{}, audit: audit}, plan, records)
+	opened, err := c.open(ctx, callOptions{keyset: anyKeyset{}, audit: audit}, plan, records)
+	if err != nil {
+		return nil, explainClientRefusal(err)
+	}
+	return opened, nil
 }
 
 // plan is the declaration's plan with this cipher's extension, checked. A

@@ -499,8 +499,14 @@ func TestACustomersDocumentReadsThroughACipherWithABinding(t *testing.T) {
 				"no binding":  scoped.cipher,
 				"another row": scoped.cipher.Bind(uint64(10)),
 			} {
-				if _, err := selectorRead(other, document); !errors.Is(err, encrypt.ErrForbidden) {
+				_, err := selectorRead(other, document)
+				if !errors.Is(err, encrypt.ErrForbidden) {
 					t.Errorf("%s: Selector opened the entry, or not as ErrForbidden: %v", whose, err)
+				}
+				// The read went through a cipher, so the Help says how
+				// many parts it adds, as a record's open does.
+				if d := (*encrypt.Diagnostic)(nil); errors.As(err, &d) && !strings.Contains(d.Help, "binding part") {
+					t.Errorf("%s: Selector's Help = %q, want the cipher's parts", whose, d.Help)
 				}
 				if _, err := subtreeRead(other, document); !errors.Is(err, encrypt.ErrForbidden) {
 					t.Errorf("%s: Subtree opened the row, or not as ErrForbidden: %v", whose, err)

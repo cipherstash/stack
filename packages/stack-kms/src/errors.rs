@@ -2,7 +2,7 @@ use miette::Diagnostic;
 use stack_auth::diagnostic::{payload, ErrorPayload};
 use thiserror::Error;
 use vitaminc::random::RandomError;
-use zerokms_protocol::{ViturRequestError, ViturRequestErrorKind};
+use zerokms_protocol::{IdentifiedBy, ViturRequestError, ViturRequestErrorKind};
 
 /// The fields a failed ZeroKMS request contributes: the request kind
 /// (`NotFound`, `SendRequest`, ...), and nothing from the response body.
@@ -28,6 +28,77 @@ fn request_kind(kind: &ViturRequestErrorKind) -> &'static str {
     }
 }
 
+/// The fields a failed keyset load contributes: its request kind, and the
+/// keyset it asked for, as `keyset_id` or `keyset_name`, or neither for the
+/// client's default keyset. Keyset ids and names are details the
+/// [`ErrorPayload`] policy allows.
+fn keyset_request_payload(
+    keyset: Option<&IdentifiedBy>,
+    error: &ViturRequestError,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut fields = request_payload(error);
+    let named = match keyset {
+        Some(IdentifiedBy::Uuid(id)) => Some(("keyset_id", id.to_string())),
+        Some(IdentifiedBy::Name(name)) => Some(("keyset_name", name.to_string())),
+        None => None,
+    };
+    fields.extend(named.map(|(key, value)| (key.to_owned(), value.into())));
+    fields
+}
+
+/// The keyset a load asked for, as a message names it: `name "tenant-42"`,
+/// `id 6a70bd18-...`, or the client's default keyset. A name is quoted with
+/// Rust's escapes, so a name that ZeroKMS would not issue still prints on
+/// one line.
+fn requested_keyset(keyset: Option<&IdentifiedBy>) -> String {
+    match keyset {
+        Some(IdentifiedBy::Uuid(id)) => format!("keyset id {id}"),
+        Some(IdentifiedBy::Name(name)) => format!("keyset name {:?}", &**name),
+        None => "the client's default keyset".into(),
+    }
+}
+
+/// What a keyset-not-found message says after "Keyset not found: ". A keyset
+/// asked for by id or name may exist and not be granted to this client. The
+/// default keyset is missing when the client is unknown or has none.
+fn not_found(keyset: Option<&IdentifiedBy>) -> String {
+    match keyset {
+        Some(_) => format!(
+            "{}, or it is not granted to this client",
+            requested_keyset(keyset)
+        ),
+        None => "the client is unknown, or has no default keyset".into(),
+    }
+}
+
+/// The help for a data-key request ZeroKMS failed, by the request kind.
+/// ZeroKMS answers a refused data key with HTTP 403 whatever the reason,
+/// and nothing in its answer says which reason it was. So the help for a
+/// 403 names both causes. A binding that knows more about the call, such as
+/// whether it loaded the keyset first, may replace it with the one cause.
+fn retrieve_help(kind: &ViturRequestErrorKind) -> &'static str {
+    match kind {
+        ViturRequestErrorKind::Forbidden => {
+            "ZeroKMS refused the data key. Either the value is opened under another context than the one it was sealed under, or this client has no grant for the keyset the value was sealed under. Open the value under the context it was sealed with, and check the keyset's grants in ZeroKMS."
+        }
+        ViturRequestErrorKind::Unauthorized => {
+            "ZeroKMS refused the access token. Refresh the credential and retry."
+        }
+        ViturRequestErrorKind::NotFound => {
+            "ZeroKMS found no keyset or data key for the value. Check that the keyset the value was sealed under exists in this workspace, and is granted to this client."
+        }
+        ViturRequestErrorKind::PrepareRequest | ViturRequestErrorKind::SendRequest => {
+            "The request did not reach ZeroKMS. Check the network and the ZeroKMS endpoint, and retry."
+        }
+        ViturRequestErrorKind::Conflict
+        | ViturRequestErrorKind::FailureResponse
+        | ViturRequestErrorKind::ParseResponse
+        | ViturRequestErrorKind::Other => {
+            "ZeroKMS failed the request, or sent a response the client could not read. Retry, and report the error if it persists."
+        }
+    }
+}
+
 /// The fields of a key-count mismatch.
 fn count_payload(expected: usize, received: usize) -> serde_json::Map<String, serde_json::Value> {
     payload([("expected", expected.into()), ("received", received.into())])
@@ -47,9 +118,13 @@ impl ErrorPayload for InvalidKeyMaterialError {}
 #[derive(Diagnostic, Error, Debug)]
 pub enum RetrieveKeyError {
     // `ViturRequestError`'s Display is its kind and a static message; the
-    // response it carries stays behind `source()`.
+    // response it carries stays behind `source()`. The help is the request
+    // kind's (see `retrieve_help`).
     #[error("Failed to send request: {0}")]
-    #[diagnostic(code(stack_kms::retrieve_key_failed))]
+    #[diagnostic(
+        code(stack_kms::retrieve_key_failed),
+        help("{}", retrieve_help(&.0.kind))
+    )]
     RequestFailed(#[from] ViturRequestError),
     #[error("Received an invalid number of keys from request. Expected {expected} but received {received}")]
     #[diagnostic(code(stack_kms::retrieved_key_count))]
@@ -158,24 +233,42 @@ pub enum LoadKeysetError {
         help("ZeroKMS refused the access token. Refresh the credential and retry.")
     )]
     Unauthorized(#[source] ViturRequestError),
-    #[error("Request forbidden due to insufficient permissions")]
+    /// ZeroKMS refused to load the keyset. The message and help name the
+    /// keyset the load asked for: a keyset id or name is a detail the
+    /// [`ErrorPayload`] policy allows.
+    #[error("Request forbidden due to insufficient permissions: {}", requested_keyset(.keyset.as_ref()))]
     #[diagnostic(
         code(stack_kms::load_keyset_forbidden),
-        help("The client is not granted this keyset, or the keyset is disabled.")
+        help("The client is not granted {}, or the keyset is disabled. Grant the keyset to this client in ZeroKMS, or enable it.", requested_keyset(.keyset.as_ref()))
     )]
-    Forbidden(#[source] ViturRequestError),
+    Forbidden {
+        /// The keyset the load asked for. `None` is the client's default.
+        keyset: Option<IdentifiedBy>,
+        /// ZeroKMS's answer.
+        #[source]
+        source: ViturRequestError,
+    },
     // `load-keyset` uniquely takes a caller-supplied keyset id or name, so a
     // server 404 is an expected, user-actionable outcome — e.g. a typo'd
     // name — not an "unexpected error". Note the server also responds 404
-    // when the *client* is unknown or has no default keyset, so a 404 does
-    // not prove the named keyset is missing: inspect `source()` for the
-    // server's response body before treating this as "create the keyset".
-    #[error("Keyset not found (or the client is unknown or has no default keyset)")]
+    // when the keyset exists but is not granted to this client, and when the
+    // *client* is unknown or has no default keyset, so a 404 does not prove
+    // the named keyset is missing: inspect `source()` for the server's
+    // response body before treating this as "create the keyset".
+    /// ZeroKMS has no keyset this client may load under the id or name the
+    /// load asked for. The message names the keyset.
+    #[error("Keyset not found: {}", not_found(.keyset.as_ref()))]
     #[diagnostic(
         code(stack_kms::keyset_not_found),
-        help("ZeroKMS answers 404 when no keyset has this id or name, and also when the client is unknown or has no default keyset. Check the client ID and the keyset's name before creating a keyset.")
+        help("ZeroKMS answers 404 when no keyset has this id or name, when the keyset exists but is not granted to this client, and when the client is unknown or has no default keyset. Check the keyset's name, the client ID, and the keyset's grants in ZeroKMS before creating a keyset.")
     )]
-    KeysetNotFound(#[source] ViturRequestError),
+    KeysetNotFound {
+        /// The keyset the load asked for. `None` is the client's default.
+        keyset: Option<IdentifiedBy>,
+        /// ZeroKMS's answer.
+        #[source]
+        source: ViturRequestError,
+    },
     #[error(transparent)]
     #[diagnostic(transparent)]
     InvalidKeyMaterial(#[from] InvalidKeyMaterialError),
@@ -189,22 +282,31 @@ pub enum LoadKeysetError {
 impl ErrorPayload for LoadKeysetError {
     fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
         match self {
-            Self::Unauthorized(error)
-            | Self::Forbidden(error)
-            | Self::KeysetNotFound(error)
-            | Self::RequestFailed(error) => request_payload(error),
+            Self::Unauthorized(error) | Self::RequestFailed(error) => request_payload(error),
+            Self::Forbidden { keyset, source } | Self::KeysetNotFound { keyset, source } => {
+                keyset_request_payload(keyset.as_ref(), source)
+            }
             Self::InvalidKeyMaterial(error) => error.payload(),
         }
     }
 }
 
-impl From<ViturRequestError> for LoadKeysetError {
-    fn from(err: ViturRequestError) -> Self {
-        match err.kind {
-            ViturRequestErrorKind::Forbidden => Self::Forbidden(err),
-            ViturRequestErrorKind::Unauthorized => Self::Unauthorized(err),
-            ViturRequestErrorKind::NotFound => Self::KeysetNotFound(err),
-            _ => Self::RequestFailed(err),
+impl LoadKeysetError {
+    /// The error for a failed request to load `keyset` (`None` is the
+    /// client's default keyset), by the request's kind. A refusal and a
+    /// missing keyset name the keyset they are about.
+    pub fn from_request(keyset: Option<IdentifiedBy>, error: ViturRequestError) -> Self {
+        match error.kind {
+            ViturRequestErrorKind::Forbidden => Self::Forbidden {
+                keyset,
+                source: error,
+            },
+            ViturRequestErrorKind::Unauthorized => Self::Unauthorized(error),
+            ViturRequestErrorKind::NotFound => Self::KeysetNotFound {
+                keyset,
+                source: error,
+            },
+            _ => Self::RequestFailed(error),
         }
     }
 }
@@ -309,11 +411,13 @@ mod codes {
             LoadKeysetError::Unauthorized(_) => {
                 LoadKeysetError::Unauthorized(vitur(ViturRequestErrorKind::Unauthorized))
             },
-            LoadKeysetError::Forbidden(_) => {
-                LoadKeysetError::Forbidden(vitur(ViturRequestErrorKind::Forbidden))
+            LoadKeysetError::Forbidden { .. } => LoadKeysetError::Forbidden {
+                keyset: None,
+                source: vitur(ViturRequestErrorKind::Forbidden),
             },
-            LoadKeysetError::KeysetNotFound(_) => {
-                LoadKeysetError::KeysetNotFound(vitur(ViturRequestErrorKind::NotFound))
+            LoadKeysetError::KeysetNotFound { .. } => LoadKeysetError::KeysetNotFound {
+                keyset: None,
+                source: vitur(ViturRequestErrorKind::NotFound),
             },
             LoadKeysetError::InvalidKeyMaterial(_) => {
                 LoadKeysetError::InvalidKeyMaterial(material())
@@ -329,9 +433,10 @@ mod codes {
             Error::RetrieveKey(_) => {
                 Error::RetrieveKey(RetrieveKeyError::FailedRetrieval("no key".into()))
             },
-            Error::LoadKeyset(_) => Error::LoadKeyset(LoadKeysetError::KeysetNotFound(vitur(
-                ViturRequestErrorKind::NotFound,
-            ))),
+            Error::LoadKeyset(_) => Error::LoadKeyset(LoadKeysetError::from_request(
+                None,
+                vitur(ViturRequestErrorKind::NotFound),
+            )),
             Error::Auth(_) => {
                 Error::Auth(stack_auth::AuthError::TokenExpired(stack_auth::TokenExpired))
             },
@@ -441,15 +546,128 @@ mod codes {
     /// carried: the detail behind `source()` stays out of the payload too.
     #[test]
     fn a_request_failure_gives_the_kind_and_not_the_response() {
-        let error = Error::LoadKeyset(LoadKeysetError::KeysetNotFound(vitur(
-            ViturRequestErrorKind::NotFound,
-        )));
+        let error = Error::LoadKeyset(LoadKeysetError::from_request(
+            None,
+            vitur(ViturRequestErrorKind::NotFound),
+        ));
         let fields = error.payload();
         assert_eq!(fields["request_kind"], "NotFound");
         assert!(!format!("{fields:?}").contains("detail"), "{fields:?}");
         assert!(error
             .help()
             .is_some_and(|help| help.to_string().contains("client is unknown")));
+    }
+
+    fn name(name: &str) -> Option<IdentifiedBy> {
+        Some(IdentifiedBy::Name(zerokms_protocol::Name::new_untrusted(
+            name,
+        )))
+    }
+
+    const ID: uuid::Uuid = uuid::uuid!("6a70bd18-99ac-4650-b104-37eec3a15b09");
+
+    fn help_of(error: &dyn Diagnostic) -> String {
+        error
+            .help()
+            .map(|help| help.to_string())
+            .unwrap_or_default()
+    }
+
+    /// A keyset ZeroKMS did not find is named in the message and the
+    /// payload, by name or by id, and the help says that a keyset which
+    /// exists but is not granted to this client is answered the same way.
+    #[test]
+    fn a_keyset_not_found_names_the_keyset_and_says_it_may_not_be_granted() {
+        let cases = [
+            (
+                name("tenant-42"),
+                r#"Keyset not found: keyset name "tenant-42", or it is not granted to this client"#,
+                Some(("keyset_name", "tenant-42")),
+            ),
+            (
+                Some(IdentifiedBy::Uuid(ID)),
+                "Keyset not found: keyset id 6a70bd18-99ac-4650-b104-37eec3a15b09, or it is not granted to this client",
+                Some(("keyset_id", "6a70bd18-99ac-4650-b104-37eec3a15b09")),
+            ),
+            (
+                None,
+                "Keyset not found: the client is unknown, or has no default keyset",
+                None,
+            ),
+        ];
+        for (keyset, message, field) in cases {
+            let error =
+                LoadKeysetError::from_request(keyset, vitur(ViturRequestErrorKind::NotFound));
+            assert!(matches!(error, LoadKeysetError::KeysetNotFound { .. }));
+            assert_eq!(error.to_string(), message);
+            assert_eq!(
+                error.code().map(|code| code.to_string()).as_deref(),
+                Some("stack_kms::keyset_not_found")
+            );
+            let help = help_of(&error);
+            assert!(help.contains("not granted to this client"), "{help}");
+            let fields = error.payload();
+            assert_eq!(fields["request_kind"], "NotFound");
+            match field {
+                Some((key, value)) => assert_eq!(fields[key], value, "{fields:?}"),
+                None => assert!(
+                    !fields.contains_key("keyset_id") && !fields.contains_key("keyset_name"),
+                    "{fields:?}"
+                ),
+            }
+        }
+    }
+
+    /// A refused keyset load names the keyset in its message and help.
+    #[test]
+    fn a_refused_keyset_load_names_the_keyset() {
+        let error = LoadKeysetError::from_request(
+            name("tenant-42"),
+            vitur(ViturRequestErrorKind::Forbidden),
+        );
+        assert!(matches!(error, LoadKeysetError::Forbidden { .. }));
+        assert_eq!(
+            error.to_string(),
+            r#"Request forbidden due to insufficient permissions: keyset name "tenant-42""#
+        );
+        assert_eq!(
+            help_of(&error),
+            r#"The client is not granted keyset name "tenant-42", or the keyset is disabled. Grant the keyset to this client in ZeroKMS, or enable it."#
+        );
+        assert_eq!(error.payload()["keyset_name"], "tenant-42");
+        let default = LoadKeysetError::from_request(None, vitur(ViturRequestErrorKind::Forbidden));
+        assert!(
+            help_of(&default).starts_with("The client is not granted the client's default keyset"),
+            "{}",
+            help_of(&default)
+        );
+    }
+
+    /// Every request kind a data-key request can fail with has a help, and
+    /// a refusal (HTTP 403) names both of its causes: another context, and
+    /// a keyset with no grant for this client.
+    #[test]
+    fn every_data_key_request_failure_has_a_help() {
+        use ViturRequestErrorKind as K;
+        for kind in [
+            K::PrepareRequest,
+            K::SendRequest,
+            K::NotFound,
+            K::Conflict,
+            K::FailureResponse,
+            K::ParseResponse,
+            K::Unauthorized,
+            K::Forbidden,
+            K::Other,
+        ] {
+            let shown = format!("{kind:?}");
+            let help = help_of(&RetrieveKeyError::RequestFailed(vitur(kind)));
+            assert!(!help.is_empty(), "{shown} has no help");
+            assert!(!help.contains("detail"), "{shown}: {help}");
+        }
+        let help = help_of(&RetrieveKeyError::RequestFailed(vitur(K::Forbidden)));
+        assert!(help.contains("another context"), "{help}");
+        assert!(help.contains("no grant for the keyset"), "{help}");
     }
 
     /// Every structured field this crate adds. A binding passes these on as
@@ -645,10 +863,20 @@ mod load_keyset_error_from_vitur_request_error {
     use super::vitur_error_mapping_support::*;
     use super::*;
 
+    /// A failed load of the keyset named "tenant-42".
+    fn load(error: ViturRequestError) -> LoadKeysetError {
+        LoadKeysetError::from_request(
+            Some(IdentifiedBy::Name(zerokms_protocol::Name::new_untrusted(
+                "tenant-42",
+            ))),
+            error,
+        )
+    }
+
     #[test]
     fn forbidden_maps_to_forbidden_keeping_the_source() {
-        let mapped = LoadKeysetError::from(err(ViturRequestErrorKind::Forbidden));
-        assert!(matches!(mapped, LoadKeysetError::Forbidden(_)));
+        let mapped = load(err(ViturRequestErrorKind::Forbidden));
+        assert!(matches!(mapped, LoadKeysetError::Forbidden { .. }));
         assert!(
             std::error::Error::source(&mapped).is_some(),
             "the server response (e.g. 'Keyset disabled') must stay reachable"
@@ -657,15 +885,15 @@ mod load_keyset_error_from_vitur_request_error {
 
     #[test]
     fn unauthorized_maps_to_unauthorized_keeping_the_source() {
-        let mapped = LoadKeysetError::from(err(ViturRequestErrorKind::Unauthorized));
+        let mapped = load(err(ViturRequestErrorKind::Unauthorized));
         assert!(matches!(mapped, LoadKeysetError::Unauthorized(_)));
         assert!(std::error::Error::source(&mapped).is_some());
     }
 
     #[test]
     fn not_found_maps_to_keyset_not_found() {
-        let mapped = LoadKeysetError::from(err(ViturRequestErrorKind::NotFound));
-        assert!(matches!(mapped, LoadKeysetError::KeysetNotFound(_)));
+        let mapped = load(err(ViturRequestErrorKind::NotFound));
+        assert!(matches!(mapped, LoadKeysetError::KeysetNotFound { .. }));
         assert!(std::error::Error::source(&mapped).is_some());
     }
 
@@ -680,7 +908,7 @@ mod load_keyset_error_from_vitur_request_error {
                 ViturRequestErrorKind::ParseResponse,
                 ViturRequestErrorKind::Other,
             ],
-            LoadKeysetError::from,
+            load,
             |mapped, name| matches!(mapped, LoadKeysetError::RequestFailed(e) if format!("{:?}", e.kind) == name),
         );
     }
@@ -693,7 +921,7 @@ mod load_keyset_error_from_vitur_request_error {
             ViturRequestErrorKind::NotFound,
             ViturRequestErrorKind::SendRequest,
         ] {
-            let mapped = LoadKeysetError::from(err(kind));
+            let mapped = load(err(kind));
             let shown = mapped.to_string();
             assert!(
                 !shown.contains(SOURCE_DETAIL),
@@ -704,9 +932,7 @@ mod load_keyset_error_from_vitur_request_error {
 
     #[test]
     fn request_failed_display_names_the_kind_and_message() {
-        assert_request_failed_display(&LoadKeysetError::from(err(
-            ViturRequestErrorKind::SendRequest,
-        )));
+        assert_request_failed_display(&load(err(ViturRequestErrorKind::SendRequest)));
     }
 }
 

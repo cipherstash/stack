@@ -994,7 +994,7 @@ fn is_keyset_not_found(error: &Error) -> bool {
     matches!(
         error,
         Error::Kms(stack_kms::Error::LoadKeyset(
-            stack_kms::LoadKeysetError::KeysetNotFound(_)
+            stack_kms::LoadKeysetError::KeysetNotFound { .. }
         ))
     )
 }
