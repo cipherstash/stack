@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Wire format
+
+- A timestamp is always sealed in nanoseconds.
+  `leaf::write_leaf` and the encrypting sink convert a timestamp in seconds, milliseconds or microseconds to the same instant in nanoseconds, under the `TIMESTAMP` tag.
+  A typed null of a timestamp in any unit is sealed as a nanosecond timestamp's null, so it is as long as a value.
+  A leaf sealed in another unit by an earlier version still decrypts.
+- Transport frames are unchanged: a frame keeps the unit it was given.
+
+### Added
+
+- `leaf::sealed_null_type`, the type a typed null is sealed as.
+
 ## [0.10.0] - 2026-11-19
 
 ### Wire format

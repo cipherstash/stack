@@ -268,7 +268,7 @@
       }
     },
     "timestamp_micros": {
-      "frame": "130000000000000000e8030000",
+      "frame": "f30302050100000000000000",
       "host_frame": "f30302050100000000000000",
       "type": "timestamp",
       "value": {
@@ -276,7 +276,7 @@
       }
     },
     "timestamp_millis": {
-      "frame": "130000000000000000c0d45407",
+      "frame": "f30301057b00000000000000",
       "host_frame": "f30301057b00000000000000",
       "type": "timestamp",
       "value": {
@@ -284,7 +284,7 @@
       }
     },
     "timestamp_millis_negative": {
-      "frame": "13ffffffffffffffffc0878b3b",
+      "frame": "f3030105ffffffffffffffff",
       "host_frame": "f3030105ffffffffffffffff",
       "type": "timestamp",
       "value": {
@@ -302,7 +302,7 @@
       }
     },
     "timestamp_seconds": {
-      "frame": "13010000000000000000000000",
+      "frame": "f30300050100000000000000",
       "host_frame": "f30300050100000000000000",
       "type": "timestamp",
       "value": {

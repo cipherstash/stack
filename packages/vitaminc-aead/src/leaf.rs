@@ -39,7 +39,7 @@
 //! does not know about typed nulls fails closed.
 
 use crate::plaintext::kinds::{
-    FixedType, Float, Int, Logical, Physical, TimeUnit, Width, MAX_DECIMAL_SCALE,
+    timestamp_nanos, FixedType, Float, Int, Logical, Physical, TimeUnit, Width, MAX_DECIMAL_SCALE,
 };
 use crate::tags;
 use vitaminc_protected::Buffer;
@@ -224,6 +224,14 @@ pub fn write<O: ByteSink>(
 
 /// Write one sealed leaf's plaintext.
 ///
+/// A timestamp is sealed in nanoseconds. A timestamp in any other unit is
+/// converted to the same instant in nanoseconds and written under the
+/// `TIMESTAMP` tag, so an instant has one leaf whatever unit it arrives in.
+/// One outside the range of [`timestamp_nanos`] is refused with
+/// [`ScalarError::Invalid`]. A leaf sealed in another unit still reads.
+///
+/// [`timestamp_nanos`]: crate::plaintext::kinds::timestamp_nanos
+///
 /// # Examples
 ///
 /// A date, 11,017 days after 1970-01-01, under today's `DATE` tag. The
@@ -258,7 +266,38 @@ pub fn write_leaf(
     v: Physical<'_>,
     out: &mut Vec<u8>,
 ) -> Result<(), ScalarError> {
+    let (ty, v) = sealed_scalar(ty, v)?;
     write(ty, v, Form::Leaf, out)
+}
+
+/// A scalar as it is sealed: a timestamp in any unit as the same instant in
+/// nanoseconds, every other scalar as it is.
+fn sealed_scalar(
+    ty: Option<Logical>,
+    v: Physical<'_>,
+) -> Result<(Option<Logical>, Physical<'_>), ScalarError> {
+    match (ty, v) {
+        (Some(Logical::Timestamp(unit)), Physical::Int(count)) => {
+            let nanos = timestamp_nanos(unit, count).ok_or(ScalarError::Invalid)?;
+            Ok((
+                Some(Logical::Timestamp(TimeUnit::Nanos)),
+                Physical::Int(Int::I128(nanos)),
+            ))
+        }
+        other => Ok(other),
+    }
+}
+
+/// The type a typed null of `ty` is sealed as: a timestamp in any unit as a
+/// nanosecond timestamp, so its null is as long as the leaf a value of it
+/// seals to ([`write_leaf`]); every other type as it is.
+pub fn sealed_null_type(ty: FixedType) -> FixedType {
+    match ty.logical() {
+        Some(Logical::Timestamp(_)) => {
+            FixedType::new(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128).unwrap_or(ty)
+        }
+        _ => ty,
+    }
 }
 
 /// Write a typed null of `ty`: [`tags::TYPED_NULL`], the header a value of
@@ -764,6 +803,14 @@ mod tests {
         out
     }
 
+    /// A leaf in the codec's form, before [`write_leaf`] converts a
+    /// timestamp to nanoseconds: what a leaf sealed in another unit holds.
+    fn coded_leaf(ty: Option<Logical>, v: Physical<'_>) -> Vec<u8> {
+        let mut out = Vec::with_capacity(max_len(&v));
+        write(ty, v, Form::Leaf, &mut out).expect("writes");
+        out
+    }
+
     fn frame(ty: Option<Logical>, v: Physical<'_>) -> Vec<u8> {
         let mut out = Vec::with_capacity(max_len(&v));
         write(ty, v, Form::Frame, &mut out).expect("writes");
@@ -882,7 +929,8 @@ mod tests {
             (Some(Logical::Uuid), Physical::Bytes(&id))
         );
 
-        let ms = leaf(
+        // A leaf sealed in milliseconds holds the envelope, and still reads.
+        let ms = coded_leaf(
             Some(Logical::Timestamp(TimeUnit::Millis)),
             Physical::Int(Int::I64(1_700_000_000_000)),
         );
@@ -1495,9 +1543,16 @@ mod tests {
                 (Item::TypedNull(ty), expected.len()),
                 "{ty:?}"
             );
-            // As long as a value of the type: the point of it.
-            let present = leaf(ty.logical(), value);
+            // As long as a value of the type in the codec's form.
+            let present = coded_leaf(ty.logical(), value);
             assert_eq!(present.len(), expected.len(), "{ty:?}");
+            // And sealed, as long as the leaf a value of the type seals to:
+            // the point of it.
+            assert_eq!(
+                typed_null(sealed_null_type(ty)).len(),
+                leaf(ty.logical(), value).len(),
+                "{ty:?}"
+            );
             assert_eq!(FixedType::of(ty.logical(), &value), Some(ty), "{ty:?}");
         }
     }
@@ -1541,10 +1596,20 @@ mod tests {
                 };
                 let mut out = Vec::with_capacity(max_len(&width.zero()));
                 assert!(
-                    write_leaf(fixed.logical(), width.zero(), &mut out).is_ok(),
+                    write(fixed.logical(), width.zero(), Form::Leaf, &mut out).is_ok(),
                     "{fixed:?}"
                 );
                 assert_eq!(typed_null(fixed).len(), out.len(), "{fixed:?}");
+                let mut sealed = Vec::with_capacity(max_len(&width.zero()));
+                assert!(
+                    write_leaf(fixed.logical(), width.zero(), &mut sealed).is_ok(),
+                    "{fixed:?}"
+                );
+                assert_eq!(
+                    typed_null(sealed_null_type(fixed)).len(),
+                    sealed.len(),
+                    "{fixed:?}"
+                );
                 assert_eq!(
                     read_leaf_item(&typed_null(fixed)),
                     Ok(Item::TypedNull(fixed))
@@ -1553,6 +1618,86 @@ mod tests {
             }
         }
         assert!(checked > 40, "only {checked}");
+    }
+
+    /// A timestamp is sealed in nanoseconds: an instant in seconds,
+    /// milliseconds or microseconds seals to the leaf of the same instant
+    /// in nanoseconds, over any int width.
+    #[test]
+    fn a_timestamp_in_any_unit_seals_as_nanoseconds() {
+        let nanos = |n: i128| {
+            leaf(
+                Some(Logical::Timestamp(TimeUnit::Nanos)),
+                Physical::Int(Int::I128(n)),
+            )
+        };
+        let cases = [
+            (TimeUnit::Seconds, Int::I64(1), 1_000_000_000),
+            (TimeUnit::Seconds, Int::I32(-7), -7_000_000_000),
+            (TimeUnit::Millis, Int::I64(123), 123_000_000),
+            (TimeUnit::Millis, Int::I64(-1), -1_000_000),
+            (TimeUnit::Micros, Int::I64(1), 1_000),
+            (TimeUnit::Micros, Int::U32(5), 5_000),
+            (TimeUnit::Nanos, Int::I64(42), 42),
+        ];
+        for (unit, count, expected) in cases {
+            let sealed = leaf(Some(Logical::Timestamp(unit)), Physical::Int(count));
+            assert_eq!(sealed, nanos(expected), "{unit:?} {count:?}");
+            assert_eq!(sealed[0], tags::TIMESTAMP, "{unit:?}");
+            assert_eq!(
+                read_leaf(&sealed).expect("reads"),
+                (
+                    Some(Logical::Timestamp(TimeUnit::Nanos)),
+                    Physical::Int(Int::I128(expected))
+                ),
+            );
+        }
+        // An instant out of range in nanoseconds is still refused.
+        let mut out = Vec::with_capacity(max_len(&Physical::Int(Int::I64(i64::MAX))));
+        assert_eq!(
+            write_leaf(
+                Some(Logical::Timestamp(TimeUnit::Seconds)),
+                Physical::Int(Int::I64(i64::MAX)),
+                &mut out
+            ),
+            Err(ScalarError::Invalid)
+        );
+        assert!(out.is_empty());
+        // A frame keeps the unit it was given.
+        assert_eq!(
+            &frame(
+                Some(Logical::Timestamp(TimeUnit::Millis)),
+                Physical::Int(Int::I64(123))
+            )[..4],
+            [0xF3, 3, 1, 0x05]
+        );
+    }
+
+    /// A timestamp's typed null is sealed as a nanosecond timestamp's,
+    /// whatever its unit, and every other type's as it is.
+    #[test]
+    fn a_timestamp_typed_null_is_sealed_at_the_nanosecond_width() {
+        let ns = fixed(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128);
+        for unit in [TimeUnit::Seconds, TimeUnit::Millis, TimeUnit::Micros] {
+            for width in [Width::I32, Width::I64, Width::U64] {
+                let ty = fixed(Some(Logical::Timestamp(unit)), width);
+                assert_eq!(sealed_null_type(ty), ns, "{ty:?}");
+            }
+        }
+        assert_eq!(sealed_null_type(ns), ns);
+        assert_eq!(typed_null(ns).len(), 13);
+        for ty in [
+            fixed(None, Width::I64),
+            fixed(Some(Logical::Date), Width::I32),
+            fixed(Some(Logical::Uuid), Width::Bytes16),
+        ] {
+            assert_eq!(sealed_null_type(ty), ty, "{ty:?}");
+        }
+        // A typed null sealed in milliseconds still reads.
+        let ms = fixed(Some(Logical::Timestamp(TimeUnit::Millis)), Width::I64);
+        let old = typed_null(ms);
+        assert_eq!(old.len(), 12);
+        assert_eq!(read_leaf_item(&old), Ok(Item::TypedNull(ms)));
     }
 
     #[test]
