@@ -59,8 +59,10 @@ func TestNoticesPrintOnceForEachType(t *testing.T) {
 	if !strings.Contains(lines[1], `fields "a" and "b". Tag each`) {
 		t.Fatalf("line 1 = %q", lines[1])
 	}
-	if !strings.Contains(lines[2], "User prints its sealed fields in the clear") {
-		t.Fatalf("line 2 = %q", lines[2])
+	// The user's program prints this notice, not stashgen, so it names the
+	// SDK (#1898).
+	if want := "encrypt: User prints its sealed fields in the clear: it has no String or LogValue method. Write them, or run stashgen with -redact."; lines[2] != want {
+		t.Fatalf("line 2 = %q\nwant     %q", lines[2], want)
 	}
 }
 

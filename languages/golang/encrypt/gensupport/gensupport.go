@@ -110,10 +110,11 @@ func NoticeUntagged(typeName string, fields []string) {
 
 // NoticePrintsPlaintext prints, once for each type, that the type prints its
 // sealed fields in the clear because it has no String and LogValue methods.
-// stashgen printed the same notice when it wrote the file.
+// stashgen printed the same notice when it wrote the file. Here the user's
+// program prints it, so it starts with "encrypt:", the SDK's name.
 func NoticePrintsPlaintext(typeName string) {
 	notice("prints:"+typeName, fmt.Sprintf(
-		"stashgen: %s prints its sealed fields in the clear: it has no String or LogValue method. Write them, or run stashgen with -redact.",
+		"encrypt: %s prints its sealed fields in the clear: it has no String or LogValue method. Write them, or run stashgen with -redact.",
 		typeName))
 }
 

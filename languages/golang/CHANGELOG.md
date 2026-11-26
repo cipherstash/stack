@@ -22,6 +22,14 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one. `stashgen` does not yet map a Go type to it.
 
+### Changed
+
+- **The warning your program prints for a type that prints its sealed
+  fields now starts with `encrypt:`** (#1898). It started with
+  `stashgen:`, although your program prints it, not stashgen. The rest of
+  the text is the same. So is when it is printed. The warning that
+  stashgen prints when it writes the file still starts with `stashgen:`.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6
