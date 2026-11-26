@@ -152,8 +152,10 @@ fn expected(row: &serde_json::Value) -> Vec<u8> {
 }
 
 fn corpus() -> serde_json::Value {
-    serde_json::from_str(include_str!("../../../testdata/value-conformance.json"))
-        .expect("corpus JSON")
+    serde_json::from_str(include_str!(
+        "../../../conformance/vitaminc-aead/value-conformance.json"
+    ))
+    .expect("corpus JSON")
 }
 
 #[test]

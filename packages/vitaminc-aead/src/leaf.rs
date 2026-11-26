@@ -1059,9 +1059,10 @@ mod tests {
     /// belong to the frame, not the codec.
     #[test]
     fn the_conformance_corpus_round_trips_through_the_codec() {
-        let corpus: serde_json::Value =
-            serde_json::from_str(include_str!("../../../testdata/value-conformance.json"))
-                .expect("corpus");
+        let corpus: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../conformance/vitaminc-aead/value-conformance.json"
+        ))
+        .expect("corpus");
         let hex = |s: &str| -> Vec<u8> {
             (0..s.len())
                 .step_by(2)

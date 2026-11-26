@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Check that the storage profile's golden corpora only grow.
 
-`packages/aead-frame/testdata/storage-v1.json` pins the bytes of version 1
-of the storage profile (packages/aead-frame/STORAGE.md), and each later
+`packages/vitaminc-aead-frame/testdata/storage-v1.json` pins the bytes of version 1
+of the storage profile (packages/vitaminc-aead-frame/STORAGE.md), and each later
 version gets a `storage-vN.json` of its own. Customers keep
 blobs in that format, so a row the corpus already had is a promise: its
 bytes read as its value, or are refused as its class, in every later
@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-TESTDATA = "packages/aead-frame/testdata"
+TESTDATA = "packages/vitaminc-aead-frame/testdata"
 CORPUS = f"{TESTDATA}/storage-v1.json"
 # A version's corpus: storage-v1.json, storage-v2.json, and so on.
 CORPUS_NAME = re.compile(r"storage-v[0-9]+\.json")
