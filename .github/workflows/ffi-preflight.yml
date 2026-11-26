@@ -9,10 +9,14 @@ name: FFI release pre-flight
 # It never publishes, and cannot — both authentication paths are absent, which
 # takes more than the one line it looks like. No `id-token` permission closes
 # OIDC; a plain `NPM_TOKEN` would authenticate a publish regardless, so there is
-# also no secret passed (no `secrets: inherit` on the call below), no
-# `registry-url` on setup-node (that is what writes an `_authToken` line into
-# .npmrc), and no NPM_TOKEN or NODE_AUTH_TOKEN anywhere. Adding any one of them
-# turns this dry run into a publisher.
+# also no `secrets: inherit` on the call below, no `registry-url` on setup-node
+# (that is what writes an `_authToken` line into .npmrc), and no NPM_TOKEN or
+# NODE_AUTH_TOKEN anywhere. Adding any one of them turns this dry run into a
+# publisher.
+#
+# The call below passes exactly two secrets, by name: DOCKER_HUB_USERNAME and
+# DOCKER_HUB_PASSWORD. The musl build logs in to Docker Hub with them before it
+# pulls Alpine. They cannot authenticate an npm publish.
 
 on:
   workflow_dispatch:
