@@ -28,12 +28,13 @@ type Request struct {
 	Models []ModelRequest
 	// Redact writes String and LogValue methods on Type.
 	Redact bool
-	// Output is the file to write, relative to Dir. "" is the type's name in
-	// lower case with _stash.go.
+	// Output is the file to write: an absolute path as it is, or a path
+	// relative to Dir. "" is the type's name in lower case with _stash.go.
 	Output string
 }
 
-// OutputPath is the file the request writes, relative to Dir.
+// OutputPath is the file the request writes: an absolute path, or a path
+// relative to Dir.
 func (r Request) OutputPath() string {
 	if r.Output != "" {
 		return r.Output
@@ -79,7 +80,10 @@ func FromTags(ctx context.Context, engine Engine, req Request) (*File, error) {
 	if dir == "" {
 		dir = "."
 	}
-	outPath := filepath.Join(dir, req.OutputPath())
+	outPath := req.OutputPath()
+	if !filepath.IsAbs(outPath) {
+		outPath = filepath.Join(dir, outPath)
+	}
 
 	eqlTypes, err := engine.EQLTypes(ctx)
 	if err != nil {

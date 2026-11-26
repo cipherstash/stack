@@ -22,6 +22,14 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one. `stashgen` does not yet map a Go type to it.
 
+### Fixed
+
+- **`stashgen -output` writes an absolute path where it says** (#1901).
+  Before this fix, it joined an absolute path to the package directory.
+  So `-output /abs/path/file.go` wrote to `abs/path/file.go` in the
+  package, or failed when that directory did not exist. A relative path is
+  still relative to the package directory.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

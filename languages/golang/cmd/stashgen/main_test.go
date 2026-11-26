@@ -125,6 +125,60 @@ func TestRunFlags(t *testing.T) {
 	}
 }
 
+// -output takes an absolute path as given, and a relative path relative to
+// the package directory (#1901).
+func TestRunOutputPath(t *testing.T) {
+	elsewhere := t.TempDir()
+	cases := []struct {
+		name string
+		// output gives the -output value for the package directory dir.
+		output func(dir string) string
+		// want gives the file the run writes.
+		want func(dir string) string
+	}{
+		{
+			name:   "relative",
+			output: func(string) string { return "custom_stash.go" },
+			want:   func(dir string) string { return filepath.Join(dir, "custom_stash.go") },
+		},
+		{
+			name:   "relative in a subdirectory",
+			output: func(string) string { return filepath.Join("gen", "custom_stash.go") },
+			want:   func(dir string) string { return filepath.Join(dir, "gen", "custom_stash.go") },
+		},
+		{
+			name:   "absolute, in the package",
+			output: func(dir string) string { return filepath.Join(dir, "custom_stash.go") },
+			want:   func(dir string) string { return filepath.Join(dir, "custom_stash.go") },
+		},
+		{
+			name:   "absolute, outside the package",
+			output: func(string) string { return filepath.Join(elsewhere, "custom_stash.go") },
+			want:   func(string) string { return filepath.Join(elsewhere, "custom_stash.go") },
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := writeModule(t, map[string]string{"model.go": userSource})
+			if err := os.Mkdir(filepath.Join(dir, "gen"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			output, want := c.output(dir), c.want(dir)
+			// A second run reads the package with the first run's file in
+			// it, which the generator ignores only when it names that file.
+			for i := range 2 {
+				var stdout, stderr bytes.Buffer
+				if code := run([]string{"-type", "User", "-output", output}, dir, &stdout, &stderr, fake); code != 0 {
+					t.Fatalf("run %d: exit %d\n%s", i+1, code, stderr.String())
+				}
+			}
+			if _, err := os.Stat(want); err != nil {
+				t.Errorf("-output %s: %v", output, err)
+			}
+		})
+	}
+}
+
 // A storage-only EQL type over a pointer (#1293): the generator takes
 // *encrypt.Date as it takes encrypt.Date, and stores nil as a sealed null,
 // as long as a date, since Date carries no index. From the reproduction in
