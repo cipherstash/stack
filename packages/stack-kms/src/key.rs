@@ -273,8 +273,12 @@ impl From<Key> for IndexKey {
 pub struct V1KeySet(pub(crate) KeySet);
 
 impl V1KeySet {
-    /// Read a v1 keyset from its CBOR bytes. A keyset whose permutations are
-    /// not permutations is refused here: see [`check_permutations`].
+    /// Read a v1 keyset from its CBOR bytes.
+    ///
+    /// A keyset whose permutations are not permutations is refused here,
+    /// because re-encrypting with it can loop forever or panic. p1, p2_from
+    /// and p2_to must each permute `0..16`, and p3 must permute `0..n` for
+    /// some `n` from 1 to 64.
     pub fn from_bytes(bytes: &[u8]) -> serde_cbor::Result<Self> {
         check_permutations(bytes)?;
         KeySet::from_bytes(bytes).map(Self)
