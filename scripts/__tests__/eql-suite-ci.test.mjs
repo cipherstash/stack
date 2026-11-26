@@ -3,6 +3,12 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
+import {
+  parseIncludes,
+  parseStringArray,
+  parseTomlTasks,
+  stripCommentLines,
+} from './lib/mise-tasks.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow, WORKFLOW_DIR, workflowFiles } from './lib/workflows.mjs'
 
@@ -599,54 +605,6 @@ const MISE_TOML = `${EQL_PACKAGE}/mise.toml`
 
 const readRepo = (relPath) => readFileSync(join(REPO_ROOT, relPath), 'utf8')
 
-/** The `["a", 'b']` inside a TOML array, without a TOML parser. */
-const parseStringArray = (inner) =>
-  [...inner.matchAll(/"([^"]+)"|'([^']+)'/g)].map((m) => m[1] ?? m[2])
-
-/**
- * `[task_config].includes`, read rather than hard-coded.
- *
- * The list used to be a `MISE_CONFIGS` const here, which is a copy of a
- * declaration that lives in mise.toml — and the failure mode of a stale copy is
- * the one this file is about: a fourth config lands, this scan never opens it,
- * and every task in it becomes unguarded silently. Reading the real list means
- * a new entry is covered the day it is added; `TASK_SOURCES` below then insists
- * each entry actually yielded a task, so an entry that resolves to nothing
- * fails rather than contributing nothing.
- */
-function parseIncludes(miseText) {
-  const section = /^\[task_config\][^\n]*\n([\s\S]*?)(?=^\[|$)/m.exec(miseText)
-  const array = /^includes\s*=\s*\[([^\]]*)\]/m.exec(section?.[1] ?? '')
-  return array ? parseStringArray(array[1]) : []
-}
-
-/**
- * mise's task blocks, without a TOML parser.
- *
- * Adding one is an audit decision in this repo, and the shape needed here is
- * small: a table header, an optional `depends = [...]`, and the body text.
- *
- * The two dialects are NOT interchangeable, and merging them would be wrong in
- * both directions. In `mise.toml` a task is `[tasks."name"]` and a bare
- * `[settings]` / `[tools]` / `[env]` table is configuration. In a file named by
- * `includes` the whole document is tasks, so EVERY top-level table is a task
- * name and `[tasks."name"]` is not a task at all — mise rejects the file with
- * "unknown field `name`, expected one of `description`, `alias`, …". That is
- * why `tasks/postgres.toml` writes `["postgres:up"]` and `tasks/fixtures.toml`
- * writes `["fixture:generate:all"]`, and why the old single regex parsed 0 of
- * their 6 tasks.
- */
-function parseTomlTasks(text, { bareTables }) {
-  const header = bareTables
-    ? /^\[(?:"([^"]+)"|([\w:.-]+))\]/
-    : /^\[tasks\.(?:"([^"]+)"|([\w:.-]+))\]/
-  return text
-    .split(/^(?=\[)/m) // split on top-level table headers; keep header + body
-    .map((block) => ({ match: header.exec(block), block }))
-    .filter(({ match }) => match)
-    .map(({ match, block }) => ({ name: match[1] ?? match[2], block }))
-}
-
 /**
  * A task's `depends`, from either dialect.
  *
@@ -658,25 +616,6 @@ function parseTomlTasks(text, { bareTables }) {
 function parseDepends(text) {
   const m = /^[ \t]*(?:#MISE[ \t]+)?depends\s*=\s*\[([^\]]*)\]/m.exec(text)
   return m ? parseStringArray(m[1]) : []
-}
-
-/**
- * Comment lines, in both TOML and shell. Prose is not a step — see `invokes`
- * and `scriptBodies`, which both read a body only after this has run.
- *
- * Memoised on the exact input string. The mutation test below re-runs the whole
- * reachability walk once per workflow, so this is called tens of thousands of
- * times over the same ~100 bodies; without the cache that test spends most of a
- * second re-stripping text and starts flaking against vitest's 5s timeout.
- */
-const strippedBodies = new Map()
-function stripCommentLines(text) {
-  let stripped = strippedBodies.get(text)
-  if (stripped === undefined) {
-    stripped = text.replace(/^[ \t]*#.*$/gm, '')
-    strippedBodies.set(text, stripped)
-  }
-  return stripped
 }
 
 /**

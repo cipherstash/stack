@@ -2,6 +2,12 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { expr } from './lib/expressions.mjs'
+import {
+  parseIncludes,
+  parseStringArray,
+  parseTomlTasks,
+  stripCommentLines,
+} from './lib/mise-tasks.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { isRunsOnJob } from './lib/runs-on.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
@@ -91,32 +97,6 @@ function miseConfigs(dir = REPO_ROOT, found = []) {
   return found
 }
 
-const parseStringArray = (inner) =>
-  [...inner.matchAll(/"([^"]+)"|'([^']+)'/g)].map((m) => m[1] ?? m[2])
-
-function parseIncludes(text) {
-  const section = /^\[task_config\][^\n]*\n([\s\S]*?)(?=^\[|$(?![\s\S]))/m.exec(
-    text,
-  )
-  const array = /^includes\s*=\s*\[([^\]]*)\]/m.exec(section?.[1] ?? '')
-  return array ? parseStringArray(array[1]) : []
-}
-
-/**
- * Task blocks. A mise config writes `[tasks."name"]`; an included file makes
- * every top-level table a task, `["name"]`.
- */
-function parseTomlTasks(text, { bareTables }) {
-  const header = bareTables
-    ? /^\[(?:"([^"]+)"|([\w:.-]+))\]/
-    : /^\[tasks\.(?:"([^"]+)"|([\w:.-]+))\]/
-  return text
-    .split(/^(?=\[)/m)
-    .map((block) => ({ match: header.exec(block), block }))
-    .filter(({ match }) => match)
-    .map(({ match, block }) => ({ name: match[1] ?? match[2], body: block }))
-}
-
 /** File tasks: `tasks/test/splinter.sh` is the task `test:splinter`. */
 function fileTasks(dir, base = dir, found = []) {
   for (const name of readdirSync(dir)) {
@@ -128,7 +108,7 @@ function fileTasks(dir, base = dir, found = []) {
           .replace(/\.[^./]+$/, '')
           .split('/')
           .join(':'),
-        body: readFileSync(path, 'utf8'),
+        block: readFileSync(path, 'utf8'),
       })
   }
   return found
@@ -141,9 +121,9 @@ function fileTasks(dir, base = dir, found = []) {
  */
 function taskIndex() {
   const index = new Map()
-  const add = ({ name, body }) => {
+  const add = ({ name, block }) => {
     if (!index.has(name)) index.set(name, [])
-    index.get(name).push(body)
+    index.get(name).push(block)
   }
   for (const config of miseConfigs()) {
     const text = readFileSync(join(REPO_ROOT, config), 'utf8')
@@ -160,8 +140,6 @@ function taskIndex() {
   }
   return index
 }
-
-const stripCommentLines = (text) => text.replace(/^[ \t]*#(?!MISE).*$/gm, '')
 
 // A quote starts a command only at the start of a line, as in a TOML
 // `run = [ "mise run …" ]` entry. Mid-line it is a message to the reader.
