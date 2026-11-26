@@ -971,7 +971,9 @@ A filter with more than one condition reads each array to
 Create an index for each query a large table runs on an EQL column. With
 no index, PostgreSQL reads every row for each query. Each index is on an
 EQL function that returns the term the query compares. A query written as
-this README shows it uses the index with no change.
+this README shows it uses the index with no change. The one exception is a
+JSON path query under a generic plan: see
+[Get the selector for a JSON path index](#get-the-selector-for-a-json-path-index).
 
 The index for each query:
 
@@ -979,8 +981,8 @@ The index for each query:
 |---|---|---|
 | `col = $1::eql_v4.query_<name>` | `TextEq` and the other `Eq` types. Also the text order types: `TextOrd`, `TextOrdOpe`, `TextOrdOre`, `TextSearch` and `TextSearchOre` | `USING btree (eql_v4.eq_term(col))` |
 | `col @@ $1::eql_v4.query_<name>` | `TextMatch`, `TextSearch`, `TextSearchOre` | `USING gin (eql_v4.match_term(col))` |
-| `<`, `<=`, `>`, `>=`, and `ORDER BY eql_v4.ord_term(col)` | The `Ord` and `OrdOpe` types, and `TextSearch` | `USING btree (eql_v4.ord_term(col))` |
-| `<`, `<=`, `>`, `>=`, and `ORDER BY eql_v4.ord_term_ore(col)` | The `OrdOre` types, and `TextSearchOre` | `USING btree (eql_v4.ord_term_ore(col))` |
+| `<`, `<=`, `>`, `>=`, and `ORDER BY eql_v4.ord_term(col)`. Also `=` on a type that is not text, such as `IntegerOrd` | The `Ord` and `OrdOpe` types, and `TextSearch` | `USING btree (eql_v4.ord_term(col))` |
+| `<`, `<=`, `>`, `>=`, and `ORDER BY eql_v4.ord_term_ore(col)`. Also `=` on a type that is not text, such as `IntegerOrdOre` | The `OrdOre` types, and `TextSearchOre` | `USING btree (eql_v4.ord_term_ore(col))` |
 | `col @> $1::eql_v4.query_json`, from `Contains` or `EqAt` | `JsonSearch` | `USING gin ((eql_v4.json_tree_query(col)) jsonb_path_ops)` |
 | `(col -> $1::text) < $2::eql_v4.query_json_leaf`, the other `At` comparisons, and `ORDER BY eql_v4.ord_term(col -> $1::text)` | `JsonSearch`, at one path in `ordered=` | `USING btree (eql_v4.ord_term(col -> '<selector>'::text))` |
 
@@ -991,7 +993,8 @@ CREATE INDEX users_email_eq ON users USING btree (eql_v4.eq_term(email));
 CREATE INDEX users_name_match ON users USING gin (eql_v4.match_term(name));
 CREATE INDEX users_age_ord ON users USING btree (eql_v4.ord_term(age));
 CREATE INDEX users_profile_contains ON users USING gin ((eql_v4.json_tree_query(profile)) jsonb_path_ops);
-CREATE INDEX users_profile_age ON users USING btree (eql_v4.ord_term(profile -> 'the selector'::text));
+-- Replace <selector> with the value from "Get the selector for a JSON path index", below.
+CREATE INDEX users_profile_age ON users USING btree (eql_v4.ord_term(profile -> '<selector>'::text));
 ANALYZE users;
 ```
 
@@ -1046,8 +1049,10 @@ text.
 
 ### Plan for the cost of each index
 
-These figures come from a test on one table of 1,000,000 rows in
-PostgreSQL 17. PostgreSQL chose each index with its default settings, and
+These figures come from one test of `v0.1.0-rc.7`, on one table of
+1,000,000 rows in PostgreSQL 17. No script in this repository runs the
+test. [Issue #1880](https://github.com/cipherstash/stack/issues/1880)
+reports it. PostgreSQL chose each index with its default settings, and
 each query returned the expected rows. Each time is the median of 5 or 7
 runs. The ordered queries are `ORDER BY ... LIMIT 20`.
 
@@ -1066,8 +1071,10 @@ The same test measured these sizes and build times:
 
 - The whole table took 4,595 MB. An encrypted `JsonSearch` document
   averaged 2,355 bytes.
-- The `ord_term_ore` index took 82 seconds to build, and 263 MB.
-- The `ord_term` index took 0.5 seconds to build, and 7 MB.
+- The `IntegerOrdOre` index on `eql_v4.ord_term_ore(col)` took 82 seconds
+  to build, and 263 MB.
+- The `IntegerOrd` index on `eql_v4.ord_term(col)` took 0.5 seconds to
+  build, and 7 MB.
 
 The test reported no build time or size for the other indexes.
 
@@ -1080,8 +1087,11 @@ To build an index on a large table faster:
   build cannot run in parallel.
 
 EQL's [index guide](https://github.com/cipherstash/stack/blob/main/packages/eql/docs/reference/database-indexes.md)
-explains build time in more detail. The guide is written for `eql_v3`. Its
-statements are the same in `eql_v4`, except for the JSON containment index.
+explains build time in more detail. The guide is written for `eql_v3`.
+Replace `eql_v3` with `eql_v4` in each of its statements. Its JSON
+containment index is different: use the one above. The guide's first
+equality example uses `hash`. On a large table, use `btree`, as this
+section says.
 
 ## Testing your application
 
