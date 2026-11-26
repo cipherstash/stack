@@ -401,9 +401,10 @@ index: with 256 values, an order term would rank every row among 256, which
 a few known rows resolve to the values, as a `bool`'s would say which rows
 are true. Equality follows vitaminc's normalisation: an
 integer equals itself at every width, decimals compare at any scale
-(`1.50 = 1.5`), and a timestamp compares to the microsecond, truncated, never rounded. An order index
-follows the same rules: a decimal orders by value, a date by the day, and a
-timestamp by the microsecond.
+(`1.50 = 1.5`), and a timestamp compares to the microsecond, truncated,
+never rounded. An order index on a decimal, date or timestamp follows the
+same rules. A decimal orders by value, a date by the day, and a timestamp
+by the microsecond. An integer's order term depends on its width.
 
 A `match` index stores text with no token (an empty string, separator-only
 text, or text shorter than the n-gram length of 3 characters) as the empty
@@ -660,16 +661,16 @@ The EQL types the engine produces, and the Go field types each takes:
 | `DoubleOrdOre` | `float64` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term_ore(col)` |
 | `Date` | `encrypt.Date` | none |
 | `DateEq` | `encrypt.Date` | `=`, `<>` |
-| `DateOrd`, `DateOrdOpe` | `encrypt.Date` | `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term(col)` |
-| `DateOrdOre` | `encrypt.Date` | `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term_ore(col)` |
+| `DateOrd`, `DateOrdOpe` | `encrypt.Date` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term(col)` |
+| `DateOrdOre` | `encrypt.Date` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term_ore(col)` |
 | `Timestamp` | `time.Time` | none |
 | `TimestampEq` | `time.Time` | `=`, `<>` (to the microsecond, truncated) |
-| `TimestampOrd`, `TimestampOrdOpe` | `time.Time` | `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term(col)` |
-| `TimestampOrdOre` | `time.Time` | `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term_ore(col)` |
+| `TimestampOrd`, `TimestampOrdOpe` | `time.Time` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term(col)` |
+| `TimestampOrdOre` | `time.Time` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term_ore(col)` |
 | `Numeric` | `encrypt.Decimal` | none |
 | `NumericEq` | `encrypt.Decimal` | `=`, `<>` (`1.5 = 1.50`) |
-| `NumericOrd`, `NumericOrdOpe` | `encrypt.Decimal` | `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term(col)` |
-| `NumericOrdOre` | `encrypt.Decimal` | `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term_ore(col)` |
+| `NumericOrd`, `NumericOrdOpe` | `encrypt.Decimal` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term(col)` |
+| `NumericOrdOre` | `encrypt.Decimal` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term_ore(col)` |
 | `Json` (`eql.JSON`) | struct, map, slice, or `json.RawMessage` | none: the document is one ciphertext, stored and read back whole; see [Encrypted JSON documents](#encrypted-json-documents) |
 | `JsonSearch` (`eql.JSONSearch`) | struct, map, slice, or `json.RawMessage` | containment, equality at a path, ordering at declared paths, several members of one array element, selection, subtree reads; see [Encrypted JSON documents](#encrypted-json-documents) |
 
