@@ -385,6 +385,13 @@ jobs:
         run: |
           mise run postgres:up "postgres-${POSTGRES_VERSION}" --extra-args "--detach --wait"
 
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
+
       - name: Build EQL + archive test binaries
         run: |
           mise run test:sqlx:archive
@@ -485,6 +492,13 @@ jobs:
         run: |
           mise run postgres:up "postgres-${POSTGRES_VERSION}" --extra-args "--detach --wait"
 
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
+
       - name: Run shard ${{ matrix.shard }}/${{ needs.setup.outputs.shard-total }}
         run: |
           mise run test:sqlx:partition
@@ -548,6 +562,13 @@ jobs:
       - name: Setup database (Postgres ${{ matrix.postgres-version }})
         run: |
           mise run postgres:up "postgres-${POSTGRES_VERSION}" --extra-args "--detach --wait"
+
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
 
       # Source-only doc checks (coverage + required-tags) moved to the dedicated
       # `docs-static` job so they run exactly once, not per-Postgres. This step
@@ -914,6 +935,14 @@ jobs:
       - name: Setup database
         run: |
           mise run postgres:up "postgres-${POSTGRES_VERSION}" --extra-args "--detach --wait"
+
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
+
       - name: Build and install EQL
         run: |
           set -euo pipefail
@@ -1106,6 +1135,14 @@ jobs:
       - name: Setup database (Postgres 17)
         run: |
           mise run postgres:up "postgres-${POSTGRES_VERSION}" --extra-args "--detach --wait"
+
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
+
       - name: Run e2e property suite
         run: |
           mise run test:sqlx:e2e

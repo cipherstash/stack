@@ -179,6 +179,13 @@ jobs:
       - name: Run README walkthrough e2e
         run: pnpm exec turbo run test:e2e --filter @cipherstash/e2e -- --run tests/prisma-example-readme.e2e.test.ts
 
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
+
       - name: Tear down bundled Postgres (best-effort)
         if: always()
         working-directory: languages/typescript/examples/prisma

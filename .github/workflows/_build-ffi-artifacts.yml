@@ -302,6 +302,13 @@ jobs:
               node -e "require(process.argv[1])" "$PWD/platforms/$PLATFORM/index.node"
             '
 
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: ${{ always() && startsWith(matrix.cfg.os, 'runs-on=') }}
+        run: docker logout
+
       - name: Place the binding in its platform package
         if: ${{ matrix.cfg.platform != 'linux-x64-musl' }}
         working-directory: languages/typescript/packages/protect-ffi

@@ -204,16 +204,28 @@ const PULLING_TASKS = pullingTasks(taskIndex())
 // Pulls this file cannot find, because test code or a README the test runs
 // starts the container. Each named step counts as a pull.
 export const HIDDEN_PULLS = {
-  '.github/workflows/prisma-example-readme-e2e.yml#walkthrough': {
-    step: 'Run README walkthrough e2e',
-    reason:
-      "e2e/tests/prisma-example-readme.e2e.test.ts runs the Prisma example's README, whose `docker compose up -d` pulls postgres:16.",
-  },
-  '.github/workflows/tests.yml#e2e-tests': {
-    step: 'Run E2E tests',
-    reason: 'e2e/vitest.config.ts includes the same README walkthrough test.',
-  },
+  '.github/workflows/prisma-example-readme-e2e.yml#walkthrough': [
+    {
+      step: 'Run README walkthrough e2e',
+      reason:
+        "e2e/tests/prisma-example-readme.e2e.test.ts runs the Prisma example's README, whose `docker compose up -d` pulls postgres:16.",
+    },
+  ],
+  '.github/workflows/tests.yml#e2e-tests': [
+    {
+      step: 'Run E2E tests',
+      reason: 'e2e/vitest.config.ts includes the same README walkthrough test.',
+    },
+    {
+      step: 'Run the credentialed Migration Harness self-test',
+      reason:
+        'With HARNESS_LIVE=1, e2e/migration-harness runs postgres:17-alpine and node:22-bookworm-slim, and builds an image from node:22-bookworm-slim.',
+    },
+  ],
 }
+
+const isHiddenPull = (ref, step) =>
+  (HIDDEN_PULLS[ref] ?? []).some((hidden) => hidden.step === step?.name)
 
 // ---------------------------------------------------------------------------
 // Steps and jobs
@@ -250,6 +262,19 @@ export function loginFinding(step) {
     !/-z\s+"\$DOCKER_HUB_PASSWORD"/.test(run)
   )
     return 'does not skip the login when a secret is empty, so a fork pull request would fail'
+  return null
+}
+
+/**
+ * Whether a step logs out of Docker Hub even when an earlier step failed. The
+ * login stores the password in the Docker config file, where every later
+ * step's code can read it.
+ */
+export function logoutFinding(step) {
+  const run = typeof step?.run === 'string' ? step.run : ''
+  if (!/\bdocker\s+logout\b/.test(run)) return 'not a logout'
+  if (!/\balways\(\)/.test(String(step.if ?? '')))
+    return 'logs out of Docker Hub only when every earlier step passed; add always() to its if'
   return null
 }
 
@@ -290,20 +315,34 @@ export function jobFindings(where, job, ref) {
       )
   }
   const steps = job.steps ?? []
-  const hidden = HIDDEN_PULLS[ref]?.step
-  const firstPull = steps.findIndex(
-    (step) => stepPulls(step) || (hidden && step?.name === hidden),
-  )
+  const pulls = (step) => stepPulls(step) || isHiddenPull(ref, step)
+  const firstPull = steps.findIndex(pulls)
   if (firstPull === -1) return findings
   const logins = steps
     .map((step, i) => ({ i, finding: loginFinding(step) }))
     .filter(({ finding }) => finding !== 'not a login')
   for (const { i, finding } of logins)
     if (finding) findings.push(`${where}: step ${i + 1} ${finding}`)
-  const pullName = steps[firstPull].name ?? steps[firstPull].uses ?? 'run'
+  const nameOf = (i) => steps[i].name ?? steps[i].uses ?? 'run'
   if (!logins.some(({ i }) => i < firstPull))
     findings.push(
-      `${where}: step ${firstPull + 1} (${pullName}) may pull an image, and no Docker Hub login comes before it`,
+      `${where}: step ${firstPull + 1} (${nameOf(firstPull)}) may pull an image, and no Docker Hub login comes before it`,
+    )
+  if (logins.length === 0) return findings
+  const lastPull = steps.findLastIndex(pulls)
+  const logouts = steps
+    .map((step, i) => ({ i, finding: logoutFinding(step) }))
+    .filter(({ finding }) => finding !== 'not a logout')
+  for (const { i, finding } of logouts) {
+    if (finding) findings.push(`${where}: step ${i + 1} ${finding}`)
+    if (i < lastPull)
+      findings.push(
+        `${where}: step ${i + 1} logs out of Docker Hub before step ${lastPull + 1} (${nameOf(lastPull)}), which may pull an image`,
+      )
+  }
+  if (!logouts.some(({ i, finding }) => i > lastPull && finding === null))
+    findings.push(
+      `${where}: no Docker Hub logout with if: always() comes after step ${lastPull + 1} (${nameOf(lastPull)}), the last step that may pull an image`,
     )
   return findings
 }
@@ -383,12 +422,14 @@ describe('Docker Hub login on RunsOn', () => {
 
   it('names a RunsOn job and a real step for every hidden pull', () => {
     // A stale entry would stop guarding the pull it was written for.
-    const stale = Object.entries(HIDDEN_PULLS)
-      .filter(([ref, { step }]) => {
-        const entry = jobs.find((j) => j.ref === ref)
-        return !(entry?.job.steps ?? []).some((s) => s?.name === step)
-      })
-      .map(([ref]) => ref)
+    const stale = Object.entries(HIDDEN_PULLS).flatMap(([ref, hidden]) => {
+      const entry = jobs.find((j) => j.ref === ref)
+      return hidden
+        .filter(
+          ({ step }) => !(entry?.job.steps ?? []).some((s) => s?.name === step),
+        )
+        .map(({ step }) => `${ref} ${step}`)
+    })
     expect(stale).toEqual([])
   })
 
@@ -407,16 +448,21 @@ describe('Docker Hub login on RunsOn', () => {
     ].join('\n'),
   }
   const up = { name: 'Start Postgres', run: 'mise run postgres:up' }
+  const logout = {
+    name: 'Log out of Docker Hub',
+    if: 'always()',
+    run: 'docker logout',
+  }
 
   it('reports a pull with no login before it', () => {
     expect(jobFindings('w j', { 'runs-on': runsOn, steps: [up] })).toEqual([
       expect.stringMatching(/no Docker Hub login comes before it/),
     ])
     expect(
-      jobFindings('w j', { 'runs-on': runsOn, steps: [up, login] }),
+      jobFindings('w j', { 'runs-on': runsOn, steps: [up, login, logout] }),
     ).toEqual([expect.stringMatching(/no Docker Hub login comes before it/)])
     expect(
-      jobFindings('w j', { 'runs-on': runsOn, steps: [login, up] }),
+      jobFindings('w j', { 'runs-on': runsOn, steps: [login, up, logout] }),
     ).toEqual([])
     // Not RunsOn: out of scope.
     expect(
@@ -431,6 +477,33 @@ describe('Docker Hub login on RunsOn', () => {
         '.github/workflows/_build-ffi-artifacts.yml#binaries',
       ),
     ).toEqual([expect.stringMatching(/no Docker Hub login comes before it/)])
+  })
+
+  it('reports a login with no logout after the last pull', () => {
+    const job = (...steps) => ({ 'runs-on': runsOn, steps })
+    expect(jobFindings('w j', job(login, up))).toEqual([
+      expect.stringMatching(
+        /no Docker Hub logout with if: always\(\) comes after step 2 \(Start Postgres\)/,
+      ),
+    ])
+    expect(
+      jobFindings('w j', job(login, up, { ...logout, if: undefined })),
+    ).toEqual([
+      expect.stringMatching(/step 3 logs out .* add always\(\) to its if/),
+      expect.stringMatching(/no Docker Hub logout with if: always\(\)/),
+    ])
+    expect(jobFindings('w j', job(login, up, logout, up))).toEqual([
+      expect.stringMatching(/step 3 logs out of Docker Hub before step 4/),
+      expect.stringMatching(/no Docker Hub logout .* after step 4/),
+    ])
+    // A matrix leg's own condition may sit beside always().
+    expect(
+      logoutFinding({
+        ...logout,
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression under test.
+        if: "${{ always() && startsWith(matrix.cfg.os, 'runs-on=') }}",
+      }),
+    ).toBeNull()
   })
 
   it('reports a call that does not pass both secrets', () => {

@@ -565,6 +565,13 @@ jobs:
           port="$(docker port pg18-upgrade 5432/tcp | head -n1 | sed 's/.*://')"
           echo "database-url=postgres://postgres:password@127.0.0.1:${port}/postgres" >> "$GITHUB_OUTPUT"
 
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
+
       - name: Run the Postgres upgrade example on PostgreSQL 18
         if: ${{ !cancelled() && steps.db18.outcome == 'success' }}
         run: pnpm exec turbo run test:protect-crossover --filter @cipherstash/e2e --env-mode=loose -- tests/protect-postgres-upgrade.e2e.test.ts

@@ -201,6 +201,13 @@ jobs:
             EQL_VERSION=${{ env.EQL_VERSION }}
           tags: ${{ steps.tags.outputs.tags }}
 
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
+
   promote-latest:
     name: Promote PG17 image to :latest and :<eql_version>
     # No eql-armed condition: both its `needs` carry one, and a skipped `needs`
@@ -237,6 +244,13 @@ jobs:
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
           cache-binary: false
+
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
 
       - name: Login to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3

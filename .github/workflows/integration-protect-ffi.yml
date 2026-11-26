@@ -383,6 +383,13 @@ jobs:
         working-directory: languages/typescript/packages/protect-ffi
         run: mise run setup
 
+      # The login stored the Docker Hub password in the Docker config file,
+      # where any later step could read it. No later step pulls an image.
+      # scripts/__tests__/workflow-docker-hub-login.test.mjs checks the order.
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
+
       # vitest directly rather than `mise run test:integration:all`, because
       # that task's first two steps are the debug cargo build and a wasm-pack
       # rebuild that `build-ffi-binding` has already done (above). What it runs
