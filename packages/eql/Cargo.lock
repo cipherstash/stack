@@ -1160,7 +1160,7 @@ dependencies = [
 
 [[package]]
 name = "eql-bindings"
-version = "3.0.6"
+version = "3.1.0"
 dependencies = [
  "base64 0.22.1",
  "eql-domains",
@@ -4102,6 +4102,7 @@ dependencies = [
  "aquamarine",
  "base64 0.22.1",
  "cts-common 0.43.0",
+ "form_urlencoded",
  "jsonwebtoken",
  "miette",
  "open",
