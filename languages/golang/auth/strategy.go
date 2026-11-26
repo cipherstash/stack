@@ -207,6 +207,8 @@ func (s *ProfileStore) DeviceSession(ctx context.Context, opts ...StrategyOption
 
 // Auto follows stack-auth's detection order against the Go host's
 // environment: access key first, then the current workspace's device token.
+// CS_CLIENT_ACCESS_KEY set without CS_WORKSPACE_CRN is [ErrConfig], and the
+// message names CS_WORKSPACE_CRN.
 func (s *ProfileStore) Auto(ctx context.Context, opts ...StrategyOption) (*Strategy, error) {
 	crn, crnSet := os.LookupEnv("CS_WORKSPACE_CRN")
 	if crnSet {
@@ -217,7 +219,7 @@ func (s *ProfileStore) Auto(ctx context.Context, opts ...StrategyOption) (*Strat
 	}
 	if key, keySet := os.LookupEnv("CS_CLIENT_ACCESS_KEY"); keySet {
 		if !crnSet {
-			return nil, ErrConfig
+			return nil, fmt.Errorf("auth: CS_CLIENT_ACCESS_KEY is set, but CS_WORKSPACE_CRN is not set: %w", ErrConfig)
 		}
 		return s.AccessKey(ctx, crn, key, opts...)
 	}

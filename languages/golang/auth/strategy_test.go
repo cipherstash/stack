@@ -494,6 +494,34 @@ func TestAutoUsesEnvironmentPresenceAndProfileExistence(t *testing.T) {
 	}
 }
 
+// An access key with no workspace is ErrConfig, and the message names the
+// variable that is missing (#1895). It never includes the key.
+func TestAutoNamesTheMissingWorkspaceCRN(t *testing.T) {
+	guestOrSkip(t)
+	dir, _ := expiredDeviceProfile(t)
+	profile, err := Open(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profile.Close()
+	const keyMarker = "CSAKleakMarkerKeyId.leakMarkerKeySecret"
+	t.Setenv("CS_CLIENT_ACCESS_KEY", keyMarker)
+	t.Setenv("CS_WORKSPACE_CRN", "")
+	if err := os.Unsetenv("CS_WORKSPACE_CRN"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = profile.Auto(context.Background())
+	if !errors.Is(err, ErrConfig) {
+		t.Fatalf("error = %v, want %v", err, ErrConfig)
+	}
+	if want := "CS_WORKSPACE_CRN is not set"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q does not contain %q", err, want)
+	}
+	if strings.Contains(err.Error(), keyMarker) {
+		t.Errorf("the access key is in the error: %q", err)
+	}
+}
+
 func TestDeviceRefreshLockPreventsReplay(t *testing.T) {
 	guestOrSkip(t)
 	dir, _ := expiredDeviceProfile(t)

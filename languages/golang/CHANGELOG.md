@@ -13,6 +13,15 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The error for a missing `CS_WORKSPACE_CRN` names the variable**
+  (#1895). `CS_CLIENT_ACCESS_KEY` needs `CS_WORKSPACE_CRN`. Without it,
+  the error from `auth.ProfileStore.Auto` now says
+  `CS_WORKSPACE_CRN is not set`. So does the error from
+  `encrypt.AutoCredentials`. The error is still `auth.ErrConfig`, so
+  `errors.Is` matches it as before.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6
