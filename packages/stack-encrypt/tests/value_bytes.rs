@@ -12,8 +12,8 @@
 //!
 //! What the file holds is today's behaviour, including rules a reader may
 //! expect to change: a host's typed null reads as a plain null, a timestamp
-//! in another unit is rewritten to nanoseconds, a UUID is refused by the
-//! dynamic path, and opaque JSON is a text leaf on the typed path and a
+//! in another unit keeps its unit in the frame and is sealed in
+//! nanoseconds, a UUID is refused by the dynamic path, and opaque JSON is a text leaf on the typed path and a
 //! bytes frame when it opens. A change to any of these is a change to a
 //! pinned value, and shows in the fixture's diff.
 //!
@@ -845,4 +845,119 @@ async fn value_bytes_are_the_pinned_bytes() {
         "written bytes moved:\n{}",
         failures.join("\n")
     );
+}
+
+// =============================================================================
+// Timestamps: sealed in nanoseconds, passed through as written
+// =============================================================================
+
+/// A timestamp in seconds, milliseconds or microseconds, as a host writes
+/// it, seals through the record path to the leaf of the same instant in
+/// nanoseconds.
+#[tokio::test]
+async fn a_timestamp_in_any_unit_seals_to_the_nanosecond_leaf() {
+    let (cipher, keys) = cipher().await;
+    let spec = || json!({"outputs": ["c"], "type": "timestamp"});
+    let leaves = |field: ValueFrame| {
+        let row = object(vec![("value", field)]);
+        seal_row(&cipher, &keys, spec(), row)
+    };
+    for (unit, count, nanos) in [
+        (TimeUnit::Seconds, -2i64, -2_000_000_000i128),
+        (TimeUnit::Millis, 123, 123_000_000),
+        (TimeUnit::Millis, -1, -1_000_000),
+        (TimeUnit::Micros, 1, 1_000),
+    ] {
+        let host = frame(Raw(
+            Some(Logical::Timestamp(unit)),
+            Physical::Int(Int::I64(count)),
+        ));
+        assert_eq!(
+            host.risky_ref()[0],
+            vitaminc_aead::tags::LOGICAL,
+            "{unit:?}: the host's unit is kept in the frame"
+        );
+        let expected = frame(Raw(
+            Some(Logical::Timestamp(TimeUnit::Nanos)),
+            Physical::Int(Int::I128(nanos)),
+        ));
+        let sealed = leaves(host).await;
+        assert_eq!(sealed, json!({ "leaves": [hex(expected.risky_ref())] }));
+        assert_eq!(sealed, leaves(expected).await, "{unit:?}");
+    }
+}
+
+/// A passthrough timestamp field in a unit other than nanoseconds stores
+/// the bytes the host sent, and opens to them.
+#[tokio::test]
+async fn a_passthrough_timestamp_keeps_the_hosts_bytes() {
+    let (cipher, _) = cipher().await;
+    let plan = record::plan(
+        vitaminc_aead_frame::serde::to_vec(&json!({
+            "sealed": { "context": ["conformance", "sealed"], "outputs": ["c"], "type": "int32" },
+            "value": { "context": ["conformance", "value"], "outputs": ["passthrough"], "type": "timestamp" },
+        }))
+        .unwrap()
+        .as_protected_ref(),
+    )
+    .expect("a plan");
+    for (unit, count) in [
+        (TimeUnit::Seconds, 1i64),
+        (TimeUnit::Millis, 123),
+        (TimeUnit::Millis, -1),
+        (TimeUnit::Micros, 1),
+    ] {
+        let host = vitaminc_aead::to_frame(Raw(
+            Some(Logical::Timestamp(unit)),
+            Physical::Int(Int::I64(count)),
+        ))
+        .expect("a host frame")
+        .risky_ref()
+        .to_vec();
+        assert_eq!(host[0], vitaminc_aead::tags::LOGICAL, "{unit:?}");
+        let row = object(vec![
+            ("sealed", frame(7i32)),
+            (
+                "value",
+                ValueFrame::from_bytes(protected(&host).as_protected_ref()).expect("in the model"),
+            ),
+        ]);
+        let sent = row.risky_ref().to_vec();
+        assert!(
+            sent.ends_with(&host),
+            "{unit:?}: the row carries the host's bytes"
+        );
+        let keyset = cipher.default_keyset();
+        let stored = record::encrypt(&keyset, row, &plan)
+            .expect("plans")
+            .await
+            .expect("seals");
+        let CipherText::Map(fields) = &stored else {
+            panic!("a record")
+        };
+        let (_, outputs) = fields
+            .iter()
+            .find(|(name, _)| name == "value")
+            .expect("the passthrough field");
+        let CipherText::Map(outputs) = outputs else {
+            panic!("the field's outputs")
+        };
+        let (_, passthrough) = outputs
+            .iter()
+            .find(|(key, _)| key == "passthrough")
+            .expect("a passthrough");
+        let CipherText::Passthrough(payload) = passthrough else {
+            panic!("a passthrough node")
+        };
+        assert_eq!(payload.0, host, "{unit:?}: stored as the host sent it");
+        let opened = record::decrypt(&keyset, stored, &plan, None)
+            .expect("plans")
+            .await
+            .expect("opens");
+        assert_eq!(
+            opened.risky_ref(),
+            sent,
+            "{unit:?}: opens to the host's bytes"
+        );
+    }
 }

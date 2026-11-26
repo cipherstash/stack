@@ -504,6 +504,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **A timestamp keeps the unit the host wrote it in** (#1846). A
+  `ValueFrame` no longer rewrites a timestamp in seconds, milliseconds or
+  microseconds to nanoseconds. A passthrough field now stores exactly the
+  bytes the host sent, and opens to them. A sealed timestamp is unchanged:
+  `vitaminc-aead` seals every unit as the same instant in nanoseconds,
+  so the leaves and terms are the bytes they were. Rows stored before
+  this change still open.
+
 - **`KeysetCipher::equality_term`, `match_terms`, `ore_term`,
   `ope_term`, and `ore_block_term` are no longer public** (#1760). Each
   method built one term on its own, outside the target path and the

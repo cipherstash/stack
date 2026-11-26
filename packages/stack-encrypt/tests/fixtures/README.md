@@ -388,7 +388,8 @@ is read.
   untyped field.
 - **`host`.** Frames a host writes that no Rust value here writes: a
   timestamp in seconds, milliseconds (a JavaScript `Date`) or
-  microseconds, which the engine rewrites to nanoseconds; a nanosecond
+  microseconds, which the engine's frame keeps in the host's unit and
+  `vitaminc-aead` seals as the same instant in nanoseconds; a nanosecond
   timestamp and a date (2024-02-29) over an `i64` in the `0xF3` envelope,
   which the engine refuses because each has a shorter tag of its own; a
   UUID, which it refuses; `undefined`, which an untyped field seals as

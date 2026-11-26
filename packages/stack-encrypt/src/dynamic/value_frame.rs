@@ -32,10 +32,8 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use vitaminc_aead::frame::{Frame, FrameError, FrameMap, FrameSeq, FrameWriteError, FrameWriter};
-use vitaminc_aead::plaintext::kinds::timestamp_nanos;
 use vitaminc_aead::plaintext::{
     Error as _, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
-    TimeUnit, Width,
 };
 use vitaminc_aead::{DecodeError, Decrypt, Encrypt, EncryptRef};
 use vitaminc_protected::{
@@ -71,9 +69,9 @@ use crate::{Label, LabelError};
 /// the *value model*: null, `undefined`, booleans, integers of every width
 /// (`i8` to `u128`, each kept at its own width), both floats, text, bytes,
 /// and three logical types: a date, a decimal (its scale kept), and a
-/// timestamp, read in nanoseconds whatever unit it arrives in, which is the
-/// unit vitaminc's `TIMESTAMP` leaf carries; and sequences, maps and
-/// passthroughs of them. A uuid, and a logical type this build does not
+/// timestamp in any unit (its unit kept; a timestamp is sealed in
+/// nanoseconds, the unit vitaminc's `TIMESTAMP` leaf carries); and
+/// sequences, maps and passthroughs of them. A uuid, and a logical type this build does not
 /// know, are refused, as is a date, decimal or timestamp outside vitaminc's
 /// range. Every [`ValueFrame`] is in the model: it is written through the
 /// sink adapter that holds these rules, so a frame from a host and a frame
@@ -426,35 +424,29 @@ impl IntoLabel for ValueFrame {
 const EXPECTED: &str =
     "a null, bool, integer, float, string, bytes, date, timestamp or decimal in range";
 
-/// A scalar in the value model: a timestamp as the same instant in
-/// nanoseconds, every other scalar of the model as it is, or `None` for one
-/// outside the model.
+/// A scalar in the value model, as it is, or `None` for one outside the
+/// model. A timestamp is in the model in every unit and keeps its unit: it
+/// is sealed in nanoseconds when it is sealed, and a passthrough stores it
+/// as the host wrote it.
 fn model(ty: Option<Logical>, value: Physical<'_>) -> Option<(Option<Logical>, Physical<'_>)> {
-    Some(match (ty, value) {
-        (None, value) => (None, value),
-        (Some(Logical::Timestamp(unit)), Physical::Int(count)) => (
-            Some(Logical::Timestamp(TimeUnit::Nanos)),
-            Physical::Int(Int::I128(timestamp_nanos(unit, count)?)),
-        ),
-        (Some(logical @ (Logical::Undefined | Logical::Date | Logical::Decimal { .. })), value)
-            if logical.admits(&value) =>
-        {
-            (ty, value)
-        }
-        _ => return None,
-    })
+    match ty {
+        None => Some((None, value)),
+        Some(
+            logical @ (Logical::Undefined
+            | Logical::Date
+            | Logical::Timestamp(_)
+            | Logical::Decimal { .. }),
+        ) if logical.admits(&value) => Some((ty, value)),
+        _ => None,
+    }
 }
 
-/// A typed null in the value model: a timestamp's as a nanosecond
-/// timestamp's, as [`model`] reads the timestamp it stands in for, every
-/// other type of the model as it is, or `None` for a type outside the model
-/// (a uuid, or a logical type this crate does not know).
+/// A typed null in the value model, as it is, or `None` for a type outside
+/// the model (a uuid, or a logical type this crate does not know). A
+/// timestamp's keeps its unit, as [`model`] keeps the timestamp's.
 fn model_null(ty: FixedType) -> Option<FixedType> {
     match ty.logical() {
-        None | Some(Logical::Date | Logical::Decimal { .. }) => Some(ty),
-        Some(Logical::Timestamp(_)) => {
-            FixedType::new(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128)
-        }
+        None | Some(Logical::Date | Logical::Timestamp(_) | Logical::Decimal { .. }) => Some(ty),
         _ => None,
     }
 }
@@ -1336,6 +1328,7 @@ impl<O: PutRow> MapSink for RowMap<O> {
 mod tests {
     use super::*;
     use crate::dynamic::test_frame::Tree;
+    use vitaminc_aead::plaintext::{TimeUnit, Width};
 
     mod equality {
         use super::*;
@@ -1626,8 +1619,8 @@ mod tests {
     }
 
     /// A date, a decimal and a timestamp are in the model; a timestamp in
-    /// any unit is the same instant in nanoseconds, under the `TIMESTAMP`
-    /// tag; a decimal keeps its scale.
+    /// any unit keeps its unit, as the host wrote it; a decimal keeps its
+    /// scale.
     #[test]
     fn the_logical_types_of_the_model_are_kept() {
         use vitaminc_aead::plaintext::Raw;
@@ -1662,12 +1655,17 @@ mod tests {
             (TimeUnit::Millis, -2_000),
             (TimeUnit::Micros, -2_000_000),
         ] {
-            let other = ValueFrame::of(Raw(
+            let raw = Raw(
                 Some(Logical::Timestamp(unit)),
                 Physical::Int(Int::I64(count)),
-            ))
-            .expect("an instant");
-            assert_eq!(other.risky_ref(), nanos.risky_ref(), "{unit:?}");
+            );
+            let host = vitaminc_aead::to_frame(raw).expect("frames");
+            let other = ValueFrame::of(raw).expect("an instant");
+            assert_eq!(other.kind(), Some(ValueKind::Timestamp), "{unit:?}");
+            assert_eq!(other.risky_ref(), host.risky_ref(), "{unit:?}");
+            assert_eq!(other.risky_ref()[0], vitaminc_aead::tags::LOGICAL);
+            let back = ValueFrame::from_bytes(host.as_protected_ref()).expect("in the model");
+            assert_eq!(back.risky_ref(), host.risky_ref(), "{unit:?}");
         }
     }
 
