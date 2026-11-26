@@ -739,7 +739,13 @@ monorepo, which is where the silent failures are.
 The stack-* crates came from `cipherstash/cipherstash-suite`, which still owns
 `cipherstash-client`, `cts-common`, `zerokms-protocol` and `zerokms-keyset`
 (published as `recipher` up to 0.3.3). Here those come from crates.io, and
-`Cargo.lock` holds their exact versions.
+`Cargo.lock` holds their exact versions. In the root `Cargo.toml`,
+`zerokms-keyset` is pinned with `=`, and so are the order
+schemes `clww-ore` (formerly `cllw-ore`) and `ore-rs`, which live in
+`cipherstash/ore.rs`: a new release of either can change every stored order
+term. `cts-common` and `zerokms-protocol` take caret
+requirements, because the published `stack-auth` inherits them, and an
+exact pin would stop the suite sharing one `cts-common` with it.
 
 vitaminc's AEAD crates (`vitaminc-aead`, `vitaminc-aead-frame`,
 `vitaminc-aead-derive`) live here, in `packages/`, and are not published from
@@ -754,13 +760,13 @@ exactly one `vitaminc-aead` 0.10, and it must be the path crate: check with
 same table. The patch covers the 0.10 line only, so the `vitaminc-aead` 0.5.1
 that `cts-common` reaches through `vitaminc` 0.5.1 still comes from crates.io,
 and a change to these crates must keep their version on 0.10 until they are
-published from here. In the root `Cargo.toml`,
-`zerokms-keyset` is pinned with `=`, and so are the order
-schemes `clww-ore` (formerly `cllw-ore`) and `ore-rs`, which live in
-`cipherstash/ore.rs`: a new release of either can change every stored order
-term. `cts-common` and `zerokms-protocol` take caret
-requirements, because the published `stack-auth` inherits them, and an
-exact pin would stop the suite sharing one `cts-common` with it.
+published from here.
+
+`cargo publish` drops `[patch]` tables, so a crate published from here
+(`stack-encrypt`, `stack-kms`, `stack-auth`) depends on crates.io's
+`vitaminc-aead` 0.10.x, not on the copies. A change made in the copies
+reaches a published crate only once the copies are published from here,
+which the plan schedules before the next `stack-encrypt` release.
 
 - **Three Cargo workspaces, not one.** The root workspace (the seven stack-*
   crates, the three AEAD crates and the three node binding crates),

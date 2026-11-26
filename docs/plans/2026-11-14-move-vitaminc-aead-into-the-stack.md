@@ -210,8 +210,12 @@ published crates file by file.
 
 While the crates are unpublished:
 
-- **`stack-encrypt` cannot be published.** A published crate cannot depend
-  on a path, and a consumer has no `[patch]` table.
+- **A release from this repository builds against crates.io's copy.**
+  `cargo publish` drops `[patch]` tables, so a published `stack-encrypt`,
+  `stack-kms` or `stack-auth` depends on crates.io's `vitaminc-aead` 0.10.x,
+  not on the copy here. A release that needs a change made in the copies
+  waits until the copies are published (see "Before the next
+  `stack-encrypt` release").
 - **The Go and TypeScript SDKs are not affected.** Both build the engine by
   path from the tree.
 - **`eql-bindings` can be published until step 2.4.** Its `stack-encrypt`
@@ -387,16 +391,17 @@ The work:
 
 ## Checks that must move with the code
 
-vitaminc runs checks that this repository does not. Each needs a home in this
-repository's CI before its code moves:
+vitaminc runs checks on these crates that this repository did not.
 
-- Kani proofs, including `kani-storage`;
-- sanitizers;
-- the storage corpus append-only check;
-- `cargo vet` and `cargo deny`;
-- the fuzz targets of the moved crates;
-- Miri for the moved crates;
-- mutation testing. `stack-encrypt` already has it, with `--in-diff`.
+- The storage corpus append-only check moves with the code, in stage 1. It
+  runs in `storage-corpus.yml` on a pull request that changes the corpus or
+  the script.
+- The rest land in #1837: Kani proofs, including `kani-storage`;
+  sanitizers; `cargo vet` and `cargo deny`; the fuzz targets of the moved
+  crates; and Miri for the moved crates.
+- Mutation testing: `stack-encrypt` already has it, with `--in-diff`.
+
+No pull request changes the three imported crates until #1837 has merged.
 
 ## Open questions
 
