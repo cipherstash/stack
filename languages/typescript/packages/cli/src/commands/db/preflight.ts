@@ -92,14 +92,34 @@ export async function preflightCommand(
     )
   }
   // Said here so the ordering trade is known before a schema is written. The
-  // same sentence is printed by `eql install` and `eql status` against the
+  // same remedy is printed by `eql install` and `eql status` against the
   // installed state, so the answer survives past this command's output (#891).
-  if (result.canCreateOperatorClass === false) {
-    p.log.info(
-      `This role cannot create an operator class, so \`eql install\` will skip the ORE one and install its loud-failure fallback instead. That is a complete install. ${ORE_FALLBACK_REMEDY}`,
-    )
-  }
+  const oreNote = renderOreOperatorClassNote(result)
+  if (oreNote) p.log.info(oreNote)
   p.outro('This role can install EQL.')
+}
+
+/**
+ * The note printed after the report when this role cannot create the ORE
+ * operator class, or `null` when there is nothing to say. Exported for unit
+ * tests.
+ *
+ * Only a fresh install takes the fallback. Where EQL is already installed,
+ * `stash eql install` without `--force` stops at "already installed" and
+ * leaves the existing ORE state alone, which may include an operator class
+ * a more privileged role created. So the note predicts the fallback only
+ * for a fresh install, and otherwise points at `stash eql status`.
+ */
+export function renderOreOperatorClassNote(
+  result: PreflightResult,
+): string | null {
+  if (result.canCreateOperatorClass !== false) return null
+  const installed =
+    result.eqlV3SchemaPresent && result.eqlV3InternalSchemaPresent
+  if (installed) {
+    return 'This role cannot create the operator class that ORE ordering needs. EQL is already installed here, so `stash eql install` keeps the existing ORE state. Run `stash eql status` to see it. A reinstall by this role (`stash eql install --force`) would skip the operator class and install a fallback in its place.'
+  }
+  return `This role cannot create the operator class that ORE ordering needs. \`stash eql install\` will skip it and install a fallback in its place. That is a complete install. ${ORE_FALLBACK_REMEDY}`
 }
 
 /** The human-readable rows, aligned. Exported for unit tests. */
