@@ -714,6 +714,9 @@ where
 mod test_connection;
 
 #[cfg(test)]
+mod oracle_tests;
+
+#[cfg(test)]
 mod tests {
     use super::test_connection::*;
     use super::*;
