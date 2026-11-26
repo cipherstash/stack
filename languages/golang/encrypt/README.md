@@ -376,6 +376,10 @@ opens a keyset's rows only when it has a grant for that keyset. So access
 is controlled in ZeroKMS, one tenant at a time. You create each keyset, and
 give each client a grant, before the client uses it.
 
+The `*Client` opens the rows of every keyset it has a grant for, with no
+error. To refuse another tenant's rows, decrypt through the tenant's
+`*Cipher`.
+
 Use a scope when tenants share a keyset, and your program knows the tenant
 of each call, such as from the request. A scope needs nothing created in
 ZeroKMS. A scoped row opens only through a cipher with the same keyset and
@@ -390,8 +394,8 @@ The `context_field` is stored in the clear, like a `passthrough` field.
 Nothing authenticates it. See the `context_field` note in
 [The cipher](#the-cipher).
 
-A keyset combines with a scope, as in the example in
-[The cipher](#the-cipher): `client.Keyset(..).Scope(..)`.
+A keyset combines with a scope:
+`client.Keyset(encrypt.KeysetName(..)).Scope(..)`.
 
 ### Errors when the tenant does not match
 
@@ -401,6 +405,7 @@ the code of the error's `*Diagnostic` (see [Errors](#errors)).
 | Wrong tenant | Error | `Code` |
 |---|---|---|
 | Keyset: a `*Cipher` for one keyset decrypts a row sealed under another | `ErrForeignKeyset`, before any key is retrieved | `stack_encrypt::foreign_keyset` |
+| Keyset: the `*Client` decrypts a row of another keyset that it has a grant for | no error: the row opens | none |
 | Scope: a cipher with another scope, or with no scope, decrypts a scoped row | `ErrForbidden`, when ZeroKMS refuses the data key | `stack_kms::retrieve_key_failed` |
 | Scope: the `*Client` decrypts a scoped row | `ErrForbidden` | `stack_kms::retrieve_key_failed` |
 | `context_field`: a cipher from `cipher.Context(..)` decrypts a row that stores another tenant | `ErrContextMismatch`, before any key is retrieved | `stack_encrypt::context_mismatch` |
@@ -408,9 +413,8 @@ the code of the error's `*Diagnostic` (see [Errors](#errors)).
 | `context_field`: a row's stored tenant was changed after it was written | `ErrForbidden` | `stack_kms::retrieve_key_failed` |
 
 The `ErrForbidden` for a scope does not say that the scope is wrong, and
-the `Help` of its `*Diagnostic` is empty. A client with no grant for a keyset gets the same error
-and code when it asks for data keys. Issue #1893 proposes a `Help` for
-each cause.
+the `Help` of its `*Diagnostic` is empty. The `*Client` gets the same error
+and code when it decrypts rows of a keyset it has no grant for.
 
 The test client from `encrypttest` gives the same errors as ZeroKMS for a
 wrong keyset, scope, or `context_field`. See
