@@ -30,4 +30,33 @@ describe('Go EQL capability reference', () => {
     expect(new Set(documented).size).toBe(documented.length)
     expect(new Set(documented)).toEqual(producible)
   })
+
+  it('lists the column type and the cast the generated catalog gives each queryable EQL type', () => {
+    const expected = new Map(
+      [
+        ...catalog.matchAll(
+          /\{Name: "([^"]+)"[^\n]*?\bSQLDomain: "([^"]*)"[^\n]*\bQuerySQLDomain: "([^"]+)", Producible: true\b/g,
+        ),
+      ].map(([, name, column, cast]) => [name, { column, cast }]),
+    )
+    expect(expected.size).toBeGreaterThan(0)
+
+    const readme = readFileSync('languages/golang/encrypt/README.md', 'utf8')
+    const tableStart = readme.indexOf(
+      '| EQL type (`encrypt_into=`) | Column type | Cast |',
+    )
+    expect(tableStart).toBeGreaterThan(-1)
+    const documented = new Map()
+    for (const row of readme.slice(tableStart).split('\n').slice(2)) {
+      if (!row.startsWith('|')) break
+      const [, name, column, cast] = row.split('|')
+      documented.set(name.trim().replaceAll('`', ''), {
+        column: column.trim().replaceAll('`', ''),
+        // The first cast in the cell: the only one, save JsonSearch's list.
+        cast: cast.match(/`\$1::([^`]+)`/)?.[1],
+      })
+    }
+
+    expect(documented).toEqual(expected)
+  })
 })

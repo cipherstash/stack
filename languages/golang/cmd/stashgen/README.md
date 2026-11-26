@@ -441,7 +441,7 @@ A `TextMatch` field refuses text that cuts no token, such as an empty string or 
 A `TextSearch` field stores such text with an empty match filter, so its `Eq`, `Lt`, `Lte`, `Gt` and `Gte` queries find it and no `Matches` query does; those queries take such text too, and its `Matches` query refuses it.
 Put the column on the left of `@@` (`WHERE name @@ $1::eql_v4.query_text_match`): the other operand order finds nothing until #1171 is fixed.
 Cast each query parameter to the column's query type: a `public.eql_v4_<name>` column takes `$1::eql_v4.query_<name>`, such as `WHERE email = $1::eql_v4.query_text_eq`.
-Without the cast, PostgreSQL reads `$1` as the column's own type.
+Without the cast, PostgreSQL gives `$1` the column's type, so it picks the operator with the column's type on both sides.
 A query value contains no ciphertext, so it fails that type's check, and the query fails with "violates check constraint".
 The [`encrypt` README](../../encrypt/README.md#cast-each-query-parameter) lists the cast for each EQL type.
 `encrypt_into` with any other type is refused with the type's name and the reason it is not produced yet.

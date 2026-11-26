@@ -777,10 +777,12 @@ SELECT id FROM users WHERE email = $1::eql_v4.query_text_eq
 SELECT id FROM accounts WHERE balance > $1::eql_v4.query_bigint_ord
 ```
 
-The cast is needed because EQL defines each operator with the column's own
-type on both sides. So PostgreSQL reads an uncast `$1` as the column's type.
-A value of that type must contain a ciphertext. A query value contains only
-a term, so the query fails with an error such as `value for domain
+EQL defines each operator twice: for the column's type on both sides, and
+for the column's type and its query type.
+PostgreSQL gives an uncast `$1` the type of the other operand, so it picks
+the operator with the column's type on both sides. A value of the column's
+type must contain a ciphertext. A query value contains only a term, so the
+query fails with an error such as `value for domain
 eql_v4_text_eq violates check constraint "eql_v4_text_eq_check"`.
 
 The cast for each EQL type that has queries:
@@ -826,11 +828,12 @@ The cast for each EQL type that has queries:
 | `NumericOrd` | `public.eql_v4_numeric_ord` | `$1::eql_v4.query_numeric_ord` |
 | `NumericOrdOpe` | `public.eql_v4_numeric_ord_ope` | `$1::eql_v4.query_numeric_ord_ope` |
 | `NumericOrdOre` | `public.eql_v4_numeric_ord_ore` | `$1::eql_v4.query_numeric_ord_ore` |
-| `JsonSearch` | `public.eql_v4_json_search` | one for each query, such as `$1::eql_v4.query_json` for `Contains`; see [Encrypted JSON documents](#encrypted-json-documents) |
+| `JsonSearch` | `public.eql_v4_json_search` | one for each query: `$1::eql_v4.query_json` for `Contains`, `ContainedBy` and `EqAt`; `$1::eql_v4.query_json_leaf` for the `At` comparisons; `$1::eql_v4.query_json_elements` for `Elements.<Array>.Match`; `$1::eql_v4.query_json_predicate` for `Match`. See [Encrypted JSON documents](#encrypted-json-documents) |
 
 The other EQL types, such as `Text` and `Integer`, are stored and read only,
-so they take no query parameter. In Go, `eql.Types` lists the same casts: a
-type's `QuerySQLDomain` is the type to cast to. A range on an ordered type
+so they take no query parameter. In Go, `eql.Types` lists the same casts,
+except for `JsonSearch`: a type's `QuerySQLDomain` is the type to cast to.
+For `JsonSearch`, `QuerySQLDomain` names only `eql_v4.query_json`. A range on an ordered type
 has a cast of its own, described in [Queries](#queries).
 
 ### Encrypted JSON documents

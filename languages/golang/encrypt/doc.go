@@ -72,11 +72,12 @@
 //	SELECT id, email, name, age FROM users WHERE email = $1::eql_v4.query_text_eq
 //
 // Without the cast, the query fails with "violates check constraint".
-// PostgreSQL reads an uncast $1 as the column's own type. A value of that type
-// must contain a ciphertext, and a query value contains only a term. A column of
-// type public.eql_v4_<name> takes $1::eql_v4.query_<name>. The package README
-// lists the cast for each EQL type, and the QuerySQLDomain of each entry in
-// eql.Types names it.
+// PostgreSQL gives an uncast $1 the column's type, so it picks the operator
+// with the column's type on both sides. A value of that type must contain a
+// ciphertext, and a query value contains only a term. A column of type
+// public.eql_v4_<name> takes $1::eql_v4.query_<name>. The package README lists
+// the cast for each EQL type. The QuerySQLDomain of each entry in eql.Types
+// names it, except for JsonSearch, whose queries each take their own cast.
 //
 // A field tagged encrypt or index= stores its ciphertext ([Ciphertext]) and
 // each term as separate byte columns instead; see Terms below.
