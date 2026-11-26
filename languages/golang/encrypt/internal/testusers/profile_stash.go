@@ -14,9 +14,9 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Profile prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedProfile is the stored form of Profile, which EncryptProfile writes
+// and DecryptProfile reads: each passthrough field as it is, and each sealed
+// field encrypted.
 type EncryptedProfile struct {
 	ID      int64
 	Visits  eql.Integer
@@ -33,10 +33,14 @@ type EncryptedProfile struct {
 	Email   eql.TextEq
 }
 
+// String formats EncryptedProfile with the values of its passthrough fields,
+// and each sealed field as [sealed].
 func (e EncryptedProfile) String() string {
 	return gensupport.Redacted("EncryptedProfile", map[string]any{"ID": e.ID}, "Visits", "Balance", "Active", "Ratio", "Score", "Note", "Name", "Age", "Rank", "Weight", "Price", "Email")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedProfile, and each sealed field as [sealed].
 func (e EncryptedProfile) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Visits", "Balance", "Active", "Ratio", "Score", "Note", "Name", "Age", "Rank", "Weight", "Price", "Email")
 }
@@ -76,6 +80,11 @@ var profileDeclaration = gensupport.Declare("profiles").
 	EncryptInto("price", gensupport.Float64, "DoubleEq").
 	EncryptInto("email", gensupport.String, "TextEq")
 
+// profileCodec converts between Profile and EncryptedProfile for EncryptProfile
+// and DecryptProfile.
+//
+// Profile prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 var profileCodec = gensupport.New(gensupport.Generated[Profile, EncryptedProfile]{
 	TypeName:        "Profile",
 	Declaration:     profileDeclaration,
@@ -193,6 +202,8 @@ func DecryptProfile(ctx context.Context, d encrypt.Decrypter, encrypted []Encryp
 	return profileCodec.Decrypt(ctx, d, encrypted)
 }
 
+// ProfileFields provides operations for the sealed fields of Profile. Each
+// entry binds queries and encrypts updates using its field's declaration.
 var ProfileFields = struct {
 	Visits  ProfileVisitsField
 	Balance ProfileBalanceField
@@ -221,67 +232,110 @@ var ProfileFields = struct {
 	Email:   ProfileEmailField{gensupport.NewField[string](profileDeclaration, "email")},
 }
 
+// ProfileVisitsField is the ProfileFields entry for the Visits field: it
+// encrypts a value for an update of the field's stored columns.
 type ProfileVisitsField struct {
 	field gensupport.Field[int32]
 }
 
+// Encrypt seals v for an update of the stored columns of Visits.
 func (f ProfileVisitsField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int32) (eql.Integer, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.Integer(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.Integer(out.EQL), nil
 }
 
+// ProfileBalanceField is the ProfileFields entry for the Balance field: it
+// encrypts a value for an update of the field's stored columns.
 type ProfileBalanceField struct {
 	field gensupport.Field[int64]
 }
 
+// Encrypt seals v for an update of the stored columns of Balance.
 func (f ProfileBalanceField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int64) (eql.Bigint, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.Bigint(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.Bigint(out.EQL), nil
 }
 
+// ProfileActiveField is the ProfileFields entry for the Active field: it
+// encrypts a value for an update of the field's stored columns.
 type ProfileActiveField struct {
 	field gensupport.Field[bool]
 }
 
+// Encrypt seals v for an update of the stored columns of Active.
 func (f ProfileActiveField) Encrypt(ctx context.Context, c *encrypt.Cipher, v bool) (eql.Boolean, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.Boolean(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.Boolean(out.EQL), nil
 }
 
+// ProfileRatioField is the ProfileFields entry for the Ratio field: it encrypts
+// a value for an update of the field's stored columns.
 type ProfileRatioField struct {
 	field gensupport.Field[float32]
 }
 
+// Encrypt seals v for an update of the stored columns of Ratio.
 func (f ProfileRatioField) Encrypt(ctx context.Context, c *encrypt.Cipher, v float32) (eql.Real, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.Real(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.Real(out.EQL), nil
 }
 
+// ProfileScoreField is the ProfileFields entry for the Score field: it encrypts
+// a value for an update of the field's stored columns.
 type ProfileScoreField struct {
 	field gensupport.Field[float64]
 }
 
+// Encrypt seals v for an update of the stored columns of Score.
 func (f ProfileScoreField) Encrypt(ctx context.Context, c *encrypt.Cipher, v float64) (eql.Double, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.Double(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.Double(out.EQL), nil
 }
 
+// ProfileNoteField is the ProfileFields entry for the Note field: it encrypts a
+// value for an update of the field's stored columns.
 type ProfileNoteField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Note.
 func (f ProfileNoteField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.Text, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.Text(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.Text(out.EQL), nil
 }
 
+// ProfileNameField is the ProfileFields entry for the Name field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type ProfileNameField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Name.
 func (f ProfileNameField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextMatch, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.TextMatch(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextMatch(out.EQL), nil
 }
 
 // Matches derives the matches query for v. Its answer can hold rows that do not
@@ -290,72 +344,127 @@ func (f ProfileNameField) Matches(ctx context.Context, c *encrypt.Cipher, v stri
 	return gensupport.EQLMatches[eql.TextMatchQuery](ctx, f.field, c, v)
 }
 
+// ProfileAgeField is the ProfileFields entry for the Age field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type ProfileAgeField struct {
 	field gensupport.Field[int32]
 }
 
+// Encrypt seals v for an update of the stored columns of Age.
 func (f ProfileAgeField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int32) (eql.IntegerEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.IntegerEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.IntegerEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f ProfileAgeField) Eq(ctx context.Context, c *encrypt.Cipher, v int32) (eql.IntegerEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.IntegerEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.IntegerEqQuery(term), nil
 }
 
+// ProfileRankField is the ProfileFields entry for the Rank field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type ProfileRankField struct {
 	field gensupport.Field[int64]
 }
 
+// Encrypt seals v for an update of the stored columns of Rank.
 func (f ProfileRankField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int64) (eql.BigintEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.BigintEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.BigintEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f ProfileRankField) Eq(ctx context.Context, c *encrypt.Cipher, v int64) (eql.BigintEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.BigintEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.BigintEqQuery(term), nil
 }
 
+// ProfileWeightField is the ProfileFields entry for the Weight field: it
+// encrypts a value for an update of the field's stored columns, and derives the
+// field's queries.
 type ProfileWeightField struct {
 	field gensupport.Field[float32]
 }
 
+// Encrypt seals v for an update of the stored columns of Weight.
 func (f ProfileWeightField) Encrypt(ctx context.Context, c *encrypt.Cipher, v float32) (eql.RealEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.RealEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.RealEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f ProfileWeightField) Eq(ctx context.Context, c *encrypt.Cipher, v float32) (eql.RealEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.RealEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.RealEqQuery(term), nil
 }
 
+// ProfilePriceField is the ProfileFields entry for the Price field: it encrypts
+// a value for an update of the field's stored columns, and derives the field's
+// queries.
 type ProfilePriceField struct {
 	field gensupport.Field[float64]
 }
 
+// Encrypt seals v for an update of the stored columns of Price.
 func (f ProfilePriceField) Encrypt(ctx context.Context, c *encrypt.Cipher, v float64) (eql.DoubleEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.DoubleEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DoubleEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f ProfilePriceField) Eq(ctx context.Context, c *encrypt.Cipher, v float64) (eql.DoubleEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.DoubleEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DoubleEqQuery(term), nil
 }
 
+// ProfileEmailField is the ProfileFields entry for the Email field: it encrypts
+// a value for an update of the field's stored columns, and derives the field's
+// queries.
 type ProfileEmailField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Email.
 func (f ProfileEmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.TextEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f ProfileEmailField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.TextEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextEqQuery(term), nil
 }

@@ -15,9 +15,9 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Account prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedAccount is the stored form of Account, which EncryptAccount writes
+// and DecryptAccount reads: each passthrough field as it is, and each sealed
+// field encrypted.
 type EncryptedAccount struct {
 	ID        uint
 	CreatedAt time.Time
@@ -25,15 +25,21 @@ type EncryptedAccount struct {
 	Email     EncryptedAccountEmail
 }
 
+// EncryptedAccountEmail is the stored form of the Email field of Account: one
+// member for each column the field is stored in.
 type EncryptedAccountEmail struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 }
 
+// String formats EncryptedAccount with the values of its passthrough fields,
+// and each sealed field as [sealed].
 func (e EncryptedAccount) String() string {
 	return gensupport.Redacted("EncryptedAccount", map[string]any{"ID": e.ID, "CreatedAt": e.CreatedAt, "DeletedAt": e.DeletedAt}, "Email")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedAccount, and each sealed field as [sealed].
 func (e EncryptedAccount) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID, "CreatedAt": e.CreatedAt, "DeletedAt": e.DeletedAt}, "Email")
 }
@@ -55,6 +61,11 @@ var accountDeclaration = gensupport.Declare("accounts").
 	Passthrough("deleted_at").
 	EncryptIndex("email", gensupport.String, encrypt.Equality)
 
+// accountCodec converts between Account and EncryptedAccount for EncryptAccount
+// and DecryptAccount.
+//
+// Account prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 var accountCodec = gensupport.New(gensupport.Generated[Account, EncryptedAccount]{
 	TypeName:        "Account",
 	Declaration:     accountDeclaration,
@@ -125,16 +136,22 @@ func DecryptAccount(ctx context.Context, d encrypt.Decrypter, encrypted []Encryp
 	return accountCodec.Decrypt(ctx, d, encrypted)
 }
 
+// AccountFields provides operations for the sealed fields of Account. Each
+// entry binds queries and encrypts updates using its field's declaration.
 var AccountFields = struct {
 	Email AccountEmailField
 }{
 	Email: AccountEmailField{gensupport.NewField[string](accountDeclaration, "email")},
 }
 
+// AccountEmailField is the AccountFields entry for the Email field: it encrypts
+// a value for an update of the field's stored columns, and derives the field's
+// queries.
 type AccountEmailField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Email.
 func (f AccountEmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedAccountEmail, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -143,7 +160,11 @@ func (f AccountEmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v str
 	return EncryptedAccountEmail{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
+// Eq derives the eq query for v.
 func (f AccountEmailField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }

@@ -14,9 +14,9 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Subscriber prints its sealed fields in the clear: it has no String or
-// LogValue method. Write them, or run stashgen with -redact.
-
+// EncryptedSubscriber is the stored form of Subscriber, which EncryptSubscriber
+// writes and DecryptSubscriber reads: each passthrough field as it is, and each
+// sealed field encrypted.
 type EncryptedSubscriber struct {
 	ID      int64
 	Profile eql.JSONSearch
@@ -24,10 +24,14 @@ type EncryptedSubscriber struct {
 	Labels  eql.JSONSearch
 }
 
+// String formats EncryptedSubscriber with the values of its passthrough fields,
+// and each sealed field as [sealed].
 func (e EncryptedSubscriber) String() string {
 	return gensupport.Redacted("EncryptedSubscriber", map[string]any{"ID": e.ID}, "Profile", "Prefs", "Labels")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedSubscriber, and each sealed field as [sealed].
 func (e EncryptedSubscriber) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Profile", "Prefs", "Labels")
 }
@@ -51,6 +55,11 @@ var subscriberDeclaration = gensupport.Declare("subscribers").
 	Null("prefs", gensupport.NullSQL).
 	EncryptInto("labels", gensupport.JSON, "JsonSearch")
 
+// subscriberCodec converts between Subscriber and EncryptedSubscriber for
+// EncryptSubscriber and DecryptSubscriber.
+//
+// Subscriber prints its sealed fields in the clear: it has no String or
+// LogValue method. Write them, or run stashgen with -redact.
 var subscriberCodec = gensupport.New(gensupport.Generated[Subscriber, EncryptedSubscriber]{
 	TypeName:        "Subscriber",
 	Declaration:     subscriberDeclaration,
@@ -160,7 +169,10 @@ func newSubscriberProfileField(f gensupport.Field[SubscriberProfile]) Subscriber
 // Encrypt seals one Profile document for an update of its stored column.
 func (f SubscriberProfileField) Encrypt(ctx context.Context, c *encrypt.Cipher, v SubscriberProfile) (eql.JSONSearch, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.JSONSearch(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.JSONSearch(out.EQL), nil
 }
 
 // Contains derives the query for documents that contain needle: col @> query.
@@ -410,7 +422,10 @@ func newSubscriberPrefsField(f gensupport.Field[SubscriberPrefs]) SubscriberPref
 // Encrypt seals one Prefs document for an update of its stored column.
 func (f SubscriberPrefsField) Encrypt(ctx context.Context, c *encrypt.Cipher, v SubscriberPrefs) (eql.JSONSearch, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.JSONSearch(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.JSONSearch(out.EQL), nil
 }
 
 // Contains derives the query for documents that contain needle: col @> query.
@@ -537,7 +552,10 @@ func newSubscriberLabelsField(f gensupport.Field[map[string]string]) SubscriberL
 // Encrypt seals one Labels document for an update of its stored column.
 func (f SubscriberLabelsField) Encrypt(ctx context.Context, c *encrypt.Cipher, v map[string]string) (eql.JSONSearch, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.JSONSearch(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.JSONSearch(out.EQL), nil
 }
 
 // Contains derives the query for documents that contain needle: col @> query.

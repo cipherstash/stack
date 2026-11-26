@@ -14,24 +14,35 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
+// EncryptedCustomer is the stored form of Customer, which Encrypt writes and
+// Decrypt reads: each passthrough field as it is, and each sealed field
+// encrypted.
 type EncryptedCustomer struct {
 	ID      int64
 	Profile eql.JSONSearch
 }
 
+// String formats EncryptedCustomer with the values of its passthrough fields,
+// and each sealed field as [sealed].
 func (e EncryptedCustomer) String() string {
 	return gensupport.Redacted("EncryptedCustomer", map[string]any{"ID": e.ID}, "Profile")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedCustomer, and each sealed field as [sealed].
 func (e EncryptedCustomer) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Profile")
 }
 
-// Written because of -redact: Customer no longer prints its sealed fields.
+// String formats Customer with the values of its passthrough fields, and each
+// sealed field as [sealed]. stashgen wrote it because of -redact, so that
+// Customer no longer prints its sealed fields.
 func (c Customer) String() string {
 	return gensupport.Redacted("Customer", map[string]any{"ID": c.ID}, "Profile")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of Customer, and each sealed field as [sealed].
 func (c Customer) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": c.ID}, "Profile")
 }
@@ -55,6 +66,8 @@ var declaration = gensupport.Declare("customers").
 	EncryptInto("profile", gensupport.JSON, "JsonSearch").
 	Options("profile", gensupport.TargetOptions{Ordered: []string{"$.age", "$.visits[*].at", "$.visits[*].place"}})
 
+// codec converts between Customer and EncryptedCustomer for Encrypt and
+// Decrypt.
 var codec = gensupport.New(gensupport.Generated[Customer, EncryptedCustomer]{
 	TypeName:    "Customer",
 	Declaration: declaration,
@@ -95,8 +108,8 @@ var codec = gensupport.New(gensupport.Generated[Customer, EncryptedCustomer]{
 // Encrypt seals each Customer, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
-func Encrypt(ctx context.Context, cipher *encrypt.Cipher, main []Customer) ([]EncryptedCustomer, error) {
-	return codec.Encrypt(ctx, cipher, main)
+func Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []Customer) ([]EncryptedCustomer, error) {
+	return codec.Encrypt(ctx, cipher, values)
 }
 
 // Decrypt opens each EncryptedCustomer, with one ZeroKMS request for each 500
@@ -141,7 +154,10 @@ func newProfileField(f gensupport.Field[Profile]) ProfileField {
 // Encrypt seals one Profile document for an update of its stored column.
 func (f ProfileField) Encrypt(ctx context.Context, c *encrypt.Cipher, v Profile) (eql.JSONSearch, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.JSONSearch(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.JSONSearch(out.EQL), nil
 }
 
 // Contains derives the query for documents that contain needle: col @> query.

@@ -13,17 +13,21 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Document prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedDocument is the stored form of Document, which EncryptDocument
+// writes and DecryptDocument reads: each passthrough field as it is, and each
+// sealed field encrypted.
 type EncryptedDocument struct {
 	Sealed encrypt.Ciphertext
 }
 
+// String formats EncryptedDocument with the values of its passthrough fields,
+// and each sealed field as [sealed].
 func (e EncryptedDocument) String() string {
 	return gensupport.Redacted("EncryptedDocument", nil, "Sealed")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedDocument, and each sealed field as [sealed].
 func (e EncryptedDocument) LogValue() slog.Value {
 	return gensupport.RedactedLog(nil, "Sealed")
 }
@@ -50,6 +54,11 @@ type documentOpaque struct {
 
 var documentDeclaration = gensupport.DeclareOpaque("documents/v2/body")
 
+// documentCodec converts between Document and EncryptedDocument for
+// EncryptDocument and DecryptDocument.
+//
+// Document prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 var documentCodec = gensupport.New(gensupport.Generated[Document, EncryptedDocument]{
 	TypeName:        "Document",
 	Declaration:     documentDeclaration,

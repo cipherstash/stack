@@ -53,9 +53,8 @@ type genFile struct {
 	intoKinds map[string]record.Kind
 	encryptFn string
 	decryptFn string
-	paramName string // the slice parameter of Encrypt
 
-	notices         []string
+	notices         []string // warnings about the struct, for the codec's doc comment
 	printsPlaintext bool
 	unexported      []string
 	unqueried       []string // stderr notices about one field: an array with no Elements accessor
@@ -110,6 +109,7 @@ type genField struct {
 	pathType   string        // the type with its package path, for model checks
 	jsonPaths  []jsonPath    // a document field's ordered paths, each with its accessor
 	jsonArrays []jsonArray   // a document field's arrays with ordered members, each with its accessor
+	notices    []string      // what the generator could not write for a document field, for its entry's doc comment
 	// orderedType is the Go type, as the generated file writes it, of the
 	// value at an ordered path of a document field whose Go type the
 	// generator reads: "int64" at $.visits[*].at of a struct with an int64
@@ -151,7 +151,7 @@ type genModel struct {
 	codecVar  string // "rowsCodec"
 	encryptFn string
 	decryptFn string
-	paramName string
+	paramName string // the slice parameter of the model's Decrypt function, before params picks it
 	fields    []modelField
 }
 
@@ -284,14 +284,9 @@ func (r *reader) build(collected *collected, typeName string, valueNamed *types.
 		f.encryptFn, f.decryptFn, f.fieldsVar, f.pathsVar = "Encrypt"+req.Name, "Decrypt"+req.Name, req.Name+"Fields", req.Name+"Paths"
 		f.declVar, f.codecVar = lowerFirst(req.Name)+"Declaration", lowerFirst(req.Name)+"Codec"
 		f.fieldTypePrefix = req.Name
-		f.paramName = "values"
 	} else {
 		f.encryptFn, f.decryptFn, f.fieldsVar, f.pathsVar = "Encrypt", "Decrypt", "Fields", "Paths"
 		f.declVar, f.codecVar = "declaration", "codec"
-		f.paramName = f.pkgName
-	}
-	if f.paramName == "encrypt" || f.paramName == "eql" || f.paramName == "gensupport" || f.paramName == "context" || f.paramName == "slog" || f.paramName == "ctx" || f.paramName == "cipher" {
-		f.paramName = "values"
 	}
 	if req.Redact {
 		if foreign || tagged == nil {

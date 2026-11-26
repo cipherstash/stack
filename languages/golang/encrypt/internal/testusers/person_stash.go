@@ -14,9 +14,9 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Person prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedPerson is the stored form of Person, which EncryptPerson writes and
+// DecryptPerson reads: each passthrough field as it is, and each sealed field
+// encrypted.
 type EncryptedPerson struct {
 	ID     int64
 	DOB    eql.Date
@@ -27,24 +27,34 @@ type EncryptedPerson struct {
 	Nick   *EncryptedPersonNick
 }
 
+// EncryptedPersonAge is the stored form of the Age field of Person: one member
+// for each column the field is stored in.
 type EncryptedPersonAge struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 }
 
+// EncryptedPersonScore is the stored form of the Score field of Person: one
+// member for each column the field is stored in.
 type EncryptedPersonScore struct {
 	Ciphertext encrypt.Ciphertext
 	Ore        encrypt.OreTerm
 }
 
+// EncryptedPersonNick is the stored form of the Nick field of Person: one
+// member for each column the field is stored in.
 type EncryptedPersonNick struct {
 	Ciphertext encrypt.Ciphertext
 }
 
+// String formats EncryptedPerson with the values of its passthrough fields, and
+// each sealed field as [sealed].
 func (e EncryptedPerson) String() string {
 	return gensupport.Redacted("EncryptedPerson", map[string]any{"ID": e.ID}, "DOB", "Born", "Joined", "Age", "Score", "Nick")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedPerson, and each sealed field as [sealed].
 func (e EncryptedPerson) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "DOB", "Born", "Joined", "Age", "Score", "Nick")
 }
@@ -78,6 +88,11 @@ var personDeclaration = gensupport.Declare("people").
 	Encrypt("nick", gensupport.String).
 	Null("nick", gensupport.NullSQL)
 
+// personCodec converts between Person and EncryptedPerson for EncryptPerson and
+// DecryptPerson.
+//
+// Person prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 var personCodec = gensupport.New(gensupport.Generated[Person, EncryptedPerson]{
 	TypeName:        "Person",
 	Declaration:     personDeclaration,
@@ -181,6 +196,8 @@ func DecryptPerson(ctx context.Context, d encrypt.Decrypter, encrypted []Encrypt
 	return personCodec.Decrypt(ctx, d, encrypted)
 }
 
+// PersonFields provides operations for the sealed fields of Person. Each entry
+// binds queries and encrypts updates using its field's declaration.
 var PersonFields = struct {
 	DOB    PersonDOBField
 	Born   PersonBornField
@@ -197,13 +214,19 @@ var PersonFields = struct {
 	Nick:   PersonNickField{gensupport.NewField[string](personDeclaration, "nick")},
 }
 
+// PersonDOBField is the PersonFields entry for the DOB field: it encrypts a
+// value for an update of the field's stored columns.
 type PersonDOBField struct {
 	field gensupport.Field[encrypt.Date]
 }
 
+// Encrypt seals v for an update of the stored columns of DOB.
 func (f PersonDOBField) Encrypt(ctx context.Context, c *encrypt.Cipher, v encrypt.Date) (eql.Date, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.Date(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.Date(out.EQL), nil
 }
 
 // EncryptNull seals nil for DOB, as long as a value, for an update that sets
@@ -211,16 +234,26 @@ func (f PersonDOBField) Encrypt(ctx context.Context, c *encrypt.Cipher, v encryp
 // as a sealed null.
 func (f PersonDOBField) EncryptNull(ctx context.Context, c *encrypt.Cipher) (eql.Date, error) {
 	out, err := f.field.EncryptNull(ctx, c)
-	return eql.Date(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.Date(out.EQL), nil
 }
 
+// PersonBornField is the PersonFields entry for the Born field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type PersonBornField struct {
 	field gensupport.Field[encrypt.Date]
 }
 
+// Encrypt seals v for an update of the stored columns of Born.
 func (f PersonBornField) Encrypt(ctx context.Context, c *encrypt.Cipher, v encrypt.Date) (eql.DateEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.DateEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DateEq(out.EQL), nil
 }
 
 // EncryptNull seals nil for Born, as long as a value, for an update that sets
@@ -228,39 +261,64 @@ func (f PersonBornField) Encrypt(ctx context.Context, c *encrypt.Cipher, v encry
 // as a sealed null.
 func (f PersonBornField) EncryptNull(ctx context.Context, c *encrypt.Cipher) (eql.DateEq, error) {
 	out, err := f.field.EncryptNull(ctx, c)
-	return eql.DateEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DateEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f PersonBornField) Eq(ctx context.Context, c *encrypt.Cipher, v encrypt.Date) (eql.DateEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.DateEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DateEqQuery(term), nil
 }
 
 // EqNull derives the eq query for nil: the term every stored nil of the field
 // shares, so it finds the rows whose value is absent.
 func (f PersonBornField) EqNull(ctx context.Context, c *encrypt.Cipher) (eql.DateEqQuery, error) {
 	term, err := f.field.NullTerm(ctx, c, "eq")
-	return eql.DateEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DateEqQuery(term), nil
 }
 
+// PersonJoinedField is the PersonFields entry for the Joined field: it encrypts
+// a value for an update of the field's stored columns, and derives the field's
+// queries.
 type PersonJoinedField struct {
 	field gensupport.Field[encrypt.Date]
 }
 
+// Encrypt seals v for an update of the stored columns of Joined.
 func (f PersonJoinedField) Encrypt(ctx context.Context, c *encrypt.Cipher, v encrypt.Date) (eql.DateEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.DateEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DateEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f PersonJoinedField) Eq(ctx context.Context, c *encrypt.Cipher, v encrypt.Date) (eql.DateEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.DateEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.DateEqQuery(term), nil
 }
 
+// PersonAgeField is the PersonFields entry for the Age field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type PersonAgeField struct {
 	field gensupport.Field[int32]
 }
 
+// Encrypt seals v for an update of the stored columns of Age.
 func (f PersonAgeField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int32) (EncryptedPersonAge, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -280,22 +338,33 @@ func (f PersonAgeField) EncryptNull(ctx context.Context, c *encrypt.Cipher) (Enc
 	return EncryptedPersonAge{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
+// Eq derives the eq query for v.
 func (f PersonAgeField) Eq(ctx context.Context, c *encrypt.Cipher, v int32) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
 // EqNull derives the eq query for nil: the term every stored nil of the field
 // shares, so it finds the rows whose value is absent.
 func (f PersonAgeField) EqNull(ctx context.Context, c *encrypt.Cipher) (encrypt.EqualityTerm, error) {
 	term, err := f.field.NullTerm(ctx, c, "eq")
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
+// PersonScoreField is the PersonFields entry for the Score field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type PersonScoreField struct {
 	field gensupport.Field[int64]
 }
 
+// Encrypt seals v for an update of the stored columns of Score.
 func (f PersonScoreField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int64) (EncryptedPersonScore, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -304,36 +373,62 @@ func (f PersonScoreField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int6
 	return EncryptedPersonScore{Ciphertext: out.Ciphertext, Ore: out.Ore}, nil
 }
 
+// Lt derives the lt query for v.
 func (f PersonScoreField) Lt(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f PersonScoreField) Lte(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f PersonScoreField) Gt(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f PersonScoreField) Gte(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f PersonScoreField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi int64) (encrypt.Range[encrypt.OreTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OreTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, nil
 }
 
+// PersonNickField is the PersonFields entry for the Nick field: it encrypts a
+// value for an update of the field's stored columns.
 type PersonNickField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Nick.
 func (f PersonNickField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedPersonNick, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return EncryptedPersonNick{Ciphertext: out.Ciphertext}, err
+	if err != nil {
+		return EncryptedPersonNick{}, err
+	}
+	return EncryptedPersonNick{Ciphertext: out.Ciphertext}, nil
 }

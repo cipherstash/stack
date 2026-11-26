@@ -14,23 +14,29 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Contact prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedContact is the stored form of Contact, which EncryptContact writes
+// and DecryptContact reads: each passthrough field as it is, and each sealed
+// field encrypted.
 type EncryptedContact struct {
 	ID    int64
 	Email eql.TextEq
 	Notes EncryptedContactNotes
 }
 
+// EncryptedContactNotes is the stored form of the Notes field of Contact: one
+// member for each column the field is stored in.
 type EncryptedContactNotes struct {
 	Ciphertext encrypt.Ciphertext
 }
 
+// String formats EncryptedContact with the values of its passthrough fields,
+// and each sealed field as [sealed].
 func (e EncryptedContact) String() string {
 	return gensupport.Redacted("EncryptedContact", map[string]any{"ID": e.ID}, "Email", "Notes")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedContact, and each sealed field as [sealed].
 func (e EncryptedContact) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Email", "Notes")
 }
@@ -50,6 +56,11 @@ var contactDeclaration = gensupport.Declare("users").
 	EncryptInto("email", gensupport.String, "TextEq").
 	Encrypt("notes", gensupport.String)
 
+// contactCodec converts between Contact and EncryptedContact for EncryptContact
+// and DecryptContact.
+//
+// Contact prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 var contactCodec = gensupport.New(gensupport.Generated[Contact, EncryptedContact]{
 	TypeName:        "Contact",
 	Declaration:     contactDeclaration,
@@ -107,6 +118,8 @@ func DecryptContact(ctx context.Context, d encrypt.Decrypter, encrypted []Encryp
 	return contactCodec.Decrypt(ctx, d, encrypted)
 }
 
+// ContactFields provides operations for the sealed fields of Contact. Each
+// entry binds queries and encrypts updates using its field's declaration.
 var ContactFields = struct {
 	Email ContactEmailField
 	Notes ContactNotesField
@@ -115,25 +128,42 @@ var ContactFields = struct {
 	Notes: ContactNotesField{gensupport.NewField[string](contactDeclaration, "notes")},
 }
 
+// ContactEmailField is the ContactFields entry for the Email field: it encrypts
+// a value for an update of the field's stored columns, and derives the field's
+// queries.
 type ContactEmailField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Email.
 func (f ContactEmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.TextEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f ContactEmailField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.TextEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextEqQuery(term), nil
 }
 
+// ContactNotesField is the ContactFields entry for the Notes field: it encrypts
+// a value for an update of the field's stored columns.
 type ContactNotesField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Notes.
 func (f ContactNotesField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedContactNotes, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return EncryptedContactNotes{Ciphertext: out.Ciphertext}, err
+	if err != nil {
+		return EncryptedContactNotes{}, err
+	}
+	return EncryptedContactNotes{Ciphertext: out.Ciphertext}, nil
 }

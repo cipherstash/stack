@@ -15,19 +15,23 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Customer prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedCustomer is the stored form of Customer, which EncryptCustomer
+// writes and DecryptCustomer reads: each passthrough field as it is, and each
+// sealed field encrypted.
 type EncryptedCustomer struct {
 	ID      int64
 	Profile eql.JSONSearch
 	Prefs   *eql.JSONSearch
 }
 
+// String formats EncryptedCustomer with the values of its passthrough fields,
+// and each sealed field as [sealed].
 func (e EncryptedCustomer) String() string {
 	return gensupport.Redacted("EncryptedCustomer", map[string]any{"ID": e.ID}, "Profile", "Prefs")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedCustomer, and each sealed field as [sealed].
 func (e EncryptedCustomer) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Profile", "Prefs")
 }
@@ -49,6 +53,11 @@ var customerDeclaration = gensupport.Declare("customers").
 	EncryptInto("prefs", gensupport.JSON, "JsonSearch").
 	Null("prefs", gensupport.NullSQL)
 
+// customerCodec converts between Customer and EncryptedCustomer for
+// EncryptCustomer and DecryptCustomer.
+//
+// Customer prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 var customerCodec = gensupport.New(gensupport.Generated[Customer, EncryptedCustomer]{
 	TypeName:        "Customer",
 	Declaration:     customerDeclaration,
@@ -150,7 +159,10 @@ func newCustomerProfileField(f gensupport.Field[json.RawMessage]) CustomerProfil
 // Encrypt seals one Profile document for an update of its stored column.
 func (f CustomerProfileField) Encrypt(ctx context.Context, c *encrypt.Cipher, v json.RawMessage) (eql.JSONSearch, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.JSONSearch(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.JSONSearch(out.EQL), nil
 }
 
 // Contains derives the query for documents that contain needle: col @> query.
@@ -396,7 +408,10 @@ func newCustomerPrefsField(f gensupport.Field[json.RawMessage]) CustomerPrefsFie
 // Encrypt seals one Prefs document for an update of its stored column.
 func (f CustomerPrefsField) Encrypt(ctx context.Context, c *encrypt.Cipher, v json.RawMessage) (eql.JSONSearch, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.JSONSearch(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.JSONSearch(out.EQL), nil
 }
 
 // Contains derives the query for documents that contain needle: col @> query.

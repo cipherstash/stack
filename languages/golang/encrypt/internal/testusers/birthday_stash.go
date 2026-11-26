@@ -14,17 +14,21 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Birthday prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedBirthday is the stored form of Birthday, which EncryptBirthday
+// writes and DecryptBirthday reads: each passthrough field as it is, and each
+// sealed field encrypted.
 type EncryptedBirthday struct {
 	DOB eql.Date
 }
 
+// String formats EncryptedBirthday with the values of its passthrough fields,
+// and each sealed field as [sealed].
 func (e EncryptedBirthday) String() string {
 	return gensupport.Redacted("EncryptedBirthday", nil, "DOB")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedBirthday, and each sealed field as [sealed].
 func (e EncryptedBirthday) LogValue() slog.Value {
 	return gensupport.RedactedLog(nil, "DOB")
 }
@@ -40,6 +44,11 @@ type birthdayShape struct {
 var birthdayDeclaration = gensupport.Declare("people").
 	EncryptInto("dob", gensupport.Date, "Date")
 
+// birthdayCodec converts between Birthday and EncryptedBirthday for
+// EncryptBirthday and DecryptBirthday.
+//
+// Birthday prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 var birthdayCodec = gensupport.New(gensupport.Generated[Birthday, EncryptedBirthday]{
 	TypeName:        "Birthday",
 	Declaration:     birthdayDeclaration,
@@ -78,17 +87,25 @@ func DecryptBirthday(ctx context.Context, d encrypt.Decrypter, encrypted []Encry
 	return birthdayCodec.Decrypt(ctx, d, encrypted)
 }
 
+// BirthdayFields provides operations for the sealed fields of Birthday. Each
+// entry binds queries and encrypts updates using its field's declaration.
 var BirthdayFields = struct {
 	DOB BirthdayDOBField
 }{
 	DOB: BirthdayDOBField{gensupport.NewField[encrypt.Date](birthdayDeclaration, "dob")},
 }
 
+// BirthdayDOBField is the BirthdayFields entry for the DOB field: it encrypts a
+// value for an update of the field's stored columns.
 type BirthdayDOBField struct {
 	field gensupport.Field[encrypt.Date]
 }
 
+// Encrypt seals v for an update of the stored columns of DOB.
 func (f BirthdayDOBField) Encrypt(ctx context.Context, c *encrypt.Cipher, v encrypt.Date) (eql.Date, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.Date(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.Date(out.EQL), nil
 }

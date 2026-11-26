@@ -16,27 +16,35 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Not encrypted and not stored: the unexported field "cache". Tag it
-// `stash:"-"` to confirm that.
-
+// EncryptedAccount is the stored form of Account, which Encrypt writes and
+// Decrypt reads: each passthrough field as it is, and each sealed field
+// encrypted.
 type EncryptedAccount struct {
 	gorm.Model
 	Email eql.TextEq `gorm:"uniqueIndex" json:"email"`
 }
 
+// String formats EncryptedAccount with the values of its passthrough fields,
+// and each sealed field as [sealed].
 func (e EncryptedAccount) String() string {
 	return gensupport.Redacted("EncryptedAccount", map[string]any{"Model": e.Model}, "Email")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedAccount, and each sealed field as [sealed].
 func (e EncryptedAccount) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"Model": e.Model}, "Email")
 }
 
-// Written because of -redact: Account no longer prints its sealed fields.
+// String formats Account with the values of its passthrough fields, and each
+// sealed field as [sealed]. stashgen wrote it because of -redact, so that
+// Account no longer prints its sealed fields.
 func (a Account) String() string {
 	return gensupport.Redacted("Account", map[string]any{"Model": a.Model}, "Email")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of Account, and each sealed field as [sealed].
 func (a Account) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"Model": a.Model}, "Email")
 }
@@ -75,6 +83,10 @@ var declaration = gensupport.Declare("accounts").
 	EncryptInto("email", gensupport.String, "TextEq").
 	Omit("token")
 
+// codec converts between Account and EncryptedAccount for Encrypt and Decrypt.
+//
+// Not encrypted and not stored: the unexported field "cache". Tag it
+// `stash:"-"` to confirm that.
 var codec = gensupport.New(gensupport.Generated[Account, EncryptedAccount]{
 	TypeName:    "Account",
 	Declaration: declaration,
@@ -140,8 +152,8 @@ var codec = gensupport.New(gensupport.Generated[Account, EncryptedAccount]{
 // Encrypt seals each Account, with one ZeroKMS request for each 500 sealed
 // values, plus one the first time a keyset is used. The result has one element
 // for each input, in the same order.
-func Encrypt(ctx context.Context, cipher *encrypt.Cipher, accounts []Account) ([]EncryptedAccount, error) {
-	return codec.Encrypt(ctx, cipher, accounts)
+func Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []Account) ([]EncryptedAccount, error) {
+	return codec.Encrypt(ctx, cipher, values)
 }
 
 // Decrypt opens each EncryptedAccount, with one ZeroKMS request for each 500
@@ -150,22 +162,34 @@ func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedAcco
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
+// Fields provides operations for the sealed fields of Account. Each entry binds
+// queries and encrypts updates using its field's declaration.
 var Fields = struct {
 	Email EmailField
 }{
 	Email: EmailField{gensupport.NewField[string](declaration, "email")},
 }
 
+// EmailField is the Fields entry for the Email field: it encrypts a value for
+// an update of the field's stored columns, and derives the field's queries.
 type EmailField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Email.
 func (f EmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.TextEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f EmailField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.TextEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextEqQuery(term), nil
 }

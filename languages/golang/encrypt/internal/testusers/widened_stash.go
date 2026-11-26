@@ -14,9 +14,9 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Widened prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedWidened is the stored form of Widened, which EncryptWidened writes
+// and DecryptWidened reads: each passthrough field as it is, and each sealed
+// field encrypted.
 type EncryptedWidened struct {
 	Visits  eql.Integer
 	Balance eql.Bigint
@@ -25,10 +25,14 @@ type EncryptedWidened struct {
 	Count   eql.IntegerEq
 }
 
+// String formats EncryptedWidened with the values of its passthrough fields,
+// and each sealed field as [sealed].
 func (e EncryptedWidened) String() string {
 	return gensupport.Redacted("EncryptedWidened", nil, "Visits", "Balance", "Age", "Rank", "Count")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedWidened, and each sealed field as [sealed].
 func (e EncryptedWidened) LogValue() slog.Value {
 	return gensupport.RedactedLog(nil, "Visits", "Balance", "Age", "Rank", "Count")
 }
@@ -52,6 +56,11 @@ var widenedDeclaration = gensupport.Declare("profiles").
 	EncryptInto("rank", gensupport.Int64, "BigintEq").
 	EncryptInto("count", gensupport.Int32, "IntegerEq")
 
+// widenedCodec converts between Widened and EncryptedWidened for EncryptWidened
+// and DecryptWidened.
+//
+// Widened prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 var widenedCodec = gensupport.New(gensupport.Generated[Widened, EncryptedWidened]{
 	TypeName:        "Widened",
 	Declaration:     widenedDeclaration,
@@ -118,6 +127,8 @@ func DecryptWidened(ctx context.Context, d encrypt.Decrypter, encrypted []Encryp
 	return widenedCodec.Decrypt(ctx, d, encrypted)
 }
 
+// WidenedFields provides operations for the sealed fields of Widened. Each
+// entry binds queries and encrypts updates using its field's declaration.
 var WidenedFields = struct {
 	Visits  WidenedVisitsField
 	Balance WidenedBalanceField
@@ -132,62 +143,107 @@ var WidenedFields = struct {
 	Count:   WidenedCountField{gensupport.NewField[int64](widenedDeclaration, "count")},
 }
 
+// WidenedVisitsField is the WidenedFields entry for the Visits field: it
+// encrypts a value for an update of the field's stored columns.
 type WidenedVisitsField struct {
 	field gensupport.Field[uint8]
 }
 
+// Encrypt seals v for an update of the stored columns of Visits.
 func (f WidenedVisitsField) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint8) (eql.Integer, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.Integer(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.Integer(out.EQL), nil
 }
 
+// WidenedBalanceField is the WidenedFields entry for the Balance field: it
+// encrypts a value for an update of the field's stored columns.
 type WidenedBalanceField struct {
 	field gensupport.Field[int]
 }
 
+// Encrypt seals v for an update of the stored columns of Balance.
 func (f WidenedBalanceField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int) (eql.Bigint, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.Bigint(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.Bigint(out.EQL), nil
 }
 
+// WidenedAgeField is the WidenedFields entry for the Age field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type WidenedAgeField struct {
 	field gensupport.Field[int16]
 }
 
+// Encrypt seals v for an update of the stored columns of Age.
 func (f WidenedAgeField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int16) (eql.IntegerEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.IntegerEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.IntegerEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f WidenedAgeField) Eq(ctx context.Context, c *encrypt.Cipher, v int16) (eql.IntegerEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.IntegerEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.IntegerEqQuery(term), nil
 }
 
+// WidenedRankField is the WidenedFields entry for the Rank field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type WidenedRankField struct {
 	field gensupport.Field[uint32]
 }
 
+// Encrypt seals v for an update of the stored columns of Rank.
 func (f WidenedRankField) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint32) (eql.BigintEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.BigintEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.BigintEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f WidenedRankField) Eq(ctx context.Context, c *encrypt.Cipher, v uint32) (eql.BigintEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.BigintEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.BigintEqQuery(term), nil
 }
 
+// WidenedCountField is the WidenedFields entry for the Count field: it encrypts
+// a value for an update of the field's stored columns, and derives the field's
+// queries.
 type WidenedCountField struct {
 	field gensupport.Field[int64]
 }
 
+// Encrypt seals v for an update of the stored columns of Count.
 func (f WidenedCountField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int64) (eql.IntegerEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.IntegerEq(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.IntegerEq(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f WidenedCountField) Eq(ctx context.Context, c *encrypt.Cipher, v int64) (eql.IntegerEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.IntegerEqQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.IntegerEqQuery(term), nil
 }

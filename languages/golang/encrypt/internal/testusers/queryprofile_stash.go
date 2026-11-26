@@ -13,9 +13,9 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// QueryProfile prints its sealed fields in the clear: it has no String or
-// LogValue method. Write them, or run stashgen with -redact.
-
+// EncryptedQueryProfile is the stored form of QueryProfile, which
+// EncryptQueryProfile writes and DecryptQueryProfile reads: each passthrough
+// field as it is, and each sealed field encrypted.
 type EncryptedQueryProfile struct {
 	Email EncryptedQueryProfileEmail
 	Age   EncryptedQueryProfileAge
@@ -23,31 +23,43 @@ type EncryptedQueryProfile struct {
 	Score EncryptedQueryProfileScore
 }
 
+// EncryptedQueryProfileEmail is the stored form of the Email field of
+// QueryProfile: one member for each column the field is stored in.
 type EncryptedQueryProfileEmail struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 }
 
+// EncryptedQueryProfileAge is the stored form of the Age field of QueryProfile:
+// one member for each column the field is stored in.
 type EncryptedQueryProfileAge struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 	Ore        encrypt.OreTerm
 }
 
+// EncryptedQueryProfileName is the stored form of the Name field of
+// QueryProfile: one member for each column the field is stored in.
 type EncryptedQueryProfileName struct {
 	Ciphertext encrypt.Ciphertext
 	Match      encrypt.MatchTerm
 }
 
+// EncryptedQueryProfileScore is the stored form of the Score field of
+// QueryProfile: one member for each column the field is stored in.
 type EncryptedQueryProfileScore struct {
 	Ciphertext encrypt.Ciphertext
 	Ore        encrypt.OreTerm
 }
 
+// String formats EncryptedQueryProfile with the values of its passthrough
+// fields, and each sealed field as [sealed].
 func (e EncryptedQueryProfile) String() string {
 	return gensupport.Redacted("EncryptedQueryProfile", nil, "Email", "Age", "Name", "Score")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedQueryProfile, and each sealed field as [sealed].
 func (e EncryptedQueryProfile) LogValue() slog.Value {
 	return gensupport.RedactedLog(nil, "Email", "Age", "Name", "Score")
 }
@@ -69,6 +81,11 @@ var queryProfileDeclaration = gensupport.Declare("users").
 	EncryptIndex("name", gensupport.String, encrypt.Match()).
 	EncryptIndex("score", gensupport.Float64, encrypt.Ore)
 
+// queryProfileCodec converts between QueryProfile and EncryptedQueryProfile for
+// EncryptQueryProfile and DecryptQueryProfile.
+//
+// QueryProfile prints its sealed fields in the clear: it has no String or
+// LogValue method. Write them, or run stashgen with -redact.
 var queryProfileCodec = gensupport.New(gensupport.Generated[QueryProfile, EncryptedQueryProfile]{
 	TypeName:        "QueryProfile",
 	Declaration:     queryProfileDeclaration,
@@ -142,6 +159,8 @@ func DecryptQueryProfile(ctx context.Context, d encrypt.Decrypter, encrypted []E
 	return queryProfileCodec.Decrypt(ctx, d, encrypted)
 }
 
+// QueryProfileFields provides operations for the sealed fields of QueryProfile.
+// Each entry binds queries and encrypts updates using its field's declaration.
 var QueryProfileFields = struct {
 	Email QueryProfileEmailField
 	Age   QueryProfileAgeField
@@ -154,10 +173,14 @@ var QueryProfileFields = struct {
 	Score: QueryProfileScoreField{gensupport.NewField[float64](queryProfileDeclaration, "score")},
 }
 
+// QueryProfileEmailField is the QueryProfileFields entry for the Email field:
+// it encrypts a value for an update of the field's stored columns, and derives
+// the field's queries.
 type QueryProfileEmailField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Email.
 func (f QueryProfileEmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedQueryProfileEmail, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -166,15 +189,23 @@ func (f QueryProfileEmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, 
 	return EncryptedQueryProfileEmail{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
+// Eq derives the eq query for v.
 func (f QueryProfileEmailField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
+// QueryProfileAgeField is the QueryProfileFields entry for the Age field: it
+// encrypts a value for an update of the field's stored columns, and derives the
+// field's queries.
 type QueryProfileAgeField struct {
 	field gensupport.Field[uint32]
 }
 
+// Encrypt seals v for an update of the stored columns of Age.
 func (f QueryProfileAgeField) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint32) (EncryptedQueryProfileAge, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -183,40 +214,68 @@ func (f QueryProfileAgeField) Encrypt(ctx context.Context, c *encrypt.Cipher, v 
 	return EncryptedQueryProfileAge{Ciphertext: out.Ciphertext, Equality: out.Equality, Ore: out.Ore}, nil
 }
 
+// Eq derives the eq query for v.
 func (f QueryProfileAgeField) Eq(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
+// Lt derives the lt query for v.
 func (f QueryProfileAgeField) Lt(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f QueryProfileAgeField) Lte(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f QueryProfileAgeField) Gt(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f QueryProfileAgeField) Gte(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f QueryProfileAgeField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi uint32) (encrypt.Range[encrypt.OreTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OreTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, nil
 }
 
+// QueryProfileNameField is the QueryProfileFields entry for the Name field: it
+// encrypts a value for an update of the field's stored columns, and derives the
+// field's queries.
 type QueryProfileNameField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Name.
 func (f QueryProfileNameField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedQueryProfileName, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -231,10 +290,14 @@ func (f QueryProfileNameField) Matches(ctx context.Context, c *encrypt.Cipher, v
 	return gensupport.Matches(ctx, f.field, c, v)
 }
 
+// QueryProfileScoreField is the QueryProfileFields entry for the Score field:
+// it encrypts a value for an update of the field's stored columns, and derives
+// the field's queries.
 type QueryProfileScoreField struct {
 	field gensupport.Field[float64]
 }
 
+// Encrypt seals v for an update of the stored columns of Score.
 func (f QueryProfileScoreField) Encrypt(ctx context.Context, c *encrypt.Cipher, v float64) (EncryptedQueryProfileScore, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -243,27 +306,47 @@ func (f QueryProfileScoreField) Encrypt(ctx context.Context, c *encrypt.Cipher, 
 	return EncryptedQueryProfileScore{Ciphertext: out.Ciphertext, Ore: out.Ore}, nil
 }
 
+// Lt derives the lt query for v.
 func (f QueryProfileScoreField) Lt(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f QueryProfileScoreField) Lte(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f QueryProfileScoreField) Gt(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f QueryProfileScoreField) Gte(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f QueryProfileScoreField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi float64) (encrypt.Range[encrypt.OreTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OreTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, nil
 }

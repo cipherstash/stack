@@ -13,9 +13,9 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Lookup prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedLookup is the stored form of Lookup, which EncryptLookup writes and
+// DecryptLookup reads: each passthrough field as it is, and each sealed field
+// encrypted.
 type EncryptedLookup struct {
 	ID    int64
 	Email EncryptedLookupEmail
@@ -23,22 +23,32 @@ type EncryptedLookup struct {
 	Code  EncryptedLookupCode
 }
 
+// EncryptedLookupEmail is the stored form of the Email field of Lookup: one
+// member for each column the field is stored in.
 type EncryptedLookupEmail struct {
 	Ciphertext encrypt.Ciphertext
 }
 
+// EncryptedLookupScore is the stored form of the Score field of Lookup: one
+// member for each column the field is stored in.
 type EncryptedLookupScore struct {
 	Ore encrypt.OreTerm
 }
 
+// EncryptedLookupCode is the stored form of the Code field of Lookup: one
+// member for each column the field is stored in.
 type EncryptedLookupCode struct {
 	Equality encrypt.EqualityTerm
 }
 
+// String formats EncryptedLookup with the values of its passthrough fields, and
+// each sealed field as [sealed].
 func (e EncryptedLookup) String() string {
 	return gensupport.Redacted("EncryptedLookup", map[string]any{"ID": e.ID}, "Email", "Score", "Code")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedLookup, and each sealed field as [sealed].
 func (e EncryptedLookup) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Email", "Score", "Code")
 }
@@ -60,6 +70,11 @@ var lookupDeclaration = gensupport.Declare("lookups").
 	Index("score", gensupport.Int32, encrypt.Ore).
 	Index("code", gensupport.String, encrypt.Equality)
 
+// lookupCodec converts between Lookup and EncryptedLookup for EncryptLookup and
+// DecryptLookup.
+//
+// Lookup prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 var lookupCodec = gensupport.New(gensupport.Generated[Lookup, EncryptedLookup]{
 	TypeName:        "Lookup",
 	Declaration:     lookupDeclaration,
@@ -123,6 +138,8 @@ func DecryptLookup(ctx context.Context, d encrypt.Decrypter, encrypted []Encrypt
 	return lookupCodec.Decrypt(ctx, d, encrypted)
 }
 
+// LookupFields provides operations for the sealed fields of Lookup. Each entry
+// binds queries and encrypts updates using its field's declaration.
 var LookupFields = struct {
 	Email LookupEmailField
 	Score LookupScoreField
@@ -133,59 +150,103 @@ var LookupFields = struct {
 	Code:  LookupCodeField{gensupport.NewField[Status](lookupDeclaration, "code")},
 }
 
+// LookupEmailField is the LookupFields entry for the Email field: it encrypts a
+// value for an update of the field's stored columns.
 type LookupEmailField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Email.
 func (f LookupEmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedLookupEmail, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return EncryptedLookupEmail{Ciphertext: out.Ciphertext}, err
+	if err != nil {
+		return EncryptedLookupEmail{}, err
+	}
+	return EncryptedLookupEmail{Ciphertext: out.Ciphertext}, nil
 }
 
+// LookupScoreField is the LookupFields entry for the Score field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type LookupScoreField struct {
 	field gensupport.Field[int32]
 }
 
+// Encrypt seals v for an update of the stored columns of Score.
 func (f LookupScoreField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int32) (EncryptedLookupScore, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return EncryptedLookupScore{Ore: out.Ore}, err
+	if err != nil {
+		return EncryptedLookupScore{}, err
+	}
+	return EncryptedLookupScore{Ore: out.Ore}, nil
 }
 
+// Lt derives the lt query for v.
 func (f LookupScoreField) Lt(ctx context.Context, c *encrypt.Cipher, v int32) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f LookupScoreField) Lte(ctx context.Context, c *encrypt.Cipher, v int32) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f LookupScoreField) Gt(ctx context.Context, c *encrypt.Cipher, v int32) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f LookupScoreField) Gte(ctx context.Context, c *encrypt.Cipher, v int32) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f LookupScoreField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi int32) (encrypt.Range[encrypt.OreTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OreTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, nil
 }
 
+// LookupCodeField is the LookupFields entry for the Code field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type LookupCodeField struct {
 	field gensupport.Field[Status]
 }
 
+// Encrypt seals v for an update of the stored columns of Code.
 func (f LookupCodeField) Encrypt(ctx context.Context, c *encrypt.Cipher, v Status) (EncryptedLookupCode, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return EncryptedLookupCode{Equality: out.Equality}, err
+	if err != nil {
+		return EncryptedLookupCode{}, err
+	}
+	return EncryptedLookupCode{Equality: out.Equality}, nil
 }
 
+// Eq derives the eq query for v.
 func (f LookupCodeField) Eq(ctx context.Context, c *encrypt.Cipher, v Status) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }

@@ -14,18 +14,22 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Entry prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedEntry is the stored form of Entry, which EncryptEntry writes and
+// DecryptEntry reads: each passthrough field as it is, and each sealed field
+// encrypted.
 type EncryptedEntry struct {
 	ID   int64
 	Name eql.TextSearch
 }
 
+// String formats EncryptedEntry with the values of its passthrough fields, and
+// each sealed field as [sealed].
 func (e EncryptedEntry) String() string {
 	return gensupport.Redacted("EncryptedEntry", map[string]any{"ID": e.ID}, "Name")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedEntry, and each sealed field as [sealed].
 func (e EncryptedEntry) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Name")
 }
@@ -43,6 +47,11 @@ var entryDeclaration = gensupport.Declare("directory").
 	Passthrough("id").
 	EncryptInto("name", gensupport.String, "TextSearch")
 
+// entryCodec converts between Entry and EncryptedEntry for EncryptEntry and
+// DecryptEntry.
+//
+// Entry prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 var entryCodec = gensupport.New(gensupport.Generated[Entry, EncryptedEntry]{
 	TypeName:        "Entry",
 	Declaration:     entryDeclaration,
@@ -94,44 +103,73 @@ func DecryptEntry(ctx context.Context, d encrypt.Decrypter, encrypted []Encrypte
 	return entryCodec.Decrypt(ctx, d, encrypted)
 }
 
+// EntryFields provides operations for the sealed fields of Entry. Each entry
+// binds queries and encrypts updates using its field's declaration.
 var EntryFields = struct {
 	Name EntryNameField
 }{
 	Name: EntryNameField{gensupport.NewField[string](entryDeclaration, "name")},
 }
 
+// EntryNameField is the EntryFields entry for the Name field: it encrypts a
+// value for an update of the field's stored columns, and derives the field's
+// queries.
 type EntryNameField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Name.
 func (f EntryNameField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextSearch, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.TextSearch(out.EQL), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextSearch(out.EQL), nil
 }
 
+// Eq derives the eq query for v.
 func (f EntryNameField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextSearchQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return eql.TextSearchQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextSearchQuery(term), nil
 }
 
+// Lt derives the lt query for v.
 func (f EntryNameField) Lt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextSearchQuery, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return eql.TextSearchQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextSearchQuery(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f EntryNameField) Lte(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextSearchQuery, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return eql.TextSearchQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextSearchQuery(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f EntryNameField) Gt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextSearchQuery, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return eql.TextSearchQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextSearchQuery(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f EntryNameField) Gte(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextSearchQuery, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return eql.TextSearchQuery(term), err
+	if err != nil {
+		return nil, err
+	}
+	return eql.TextSearchQuery(term), nil
 }
 
 // Matches derives the matches query for v. Its answer can hold rows that do not

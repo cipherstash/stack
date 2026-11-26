@@ -15,17 +15,21 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Everything prints its sealed fields in the clear: it has no String or
-// LogValue method. Write them, or run stashgen with -redact.
-
+// EncryptedEverything is the stored form of Everything, which EncryptEverything
+// writes and DecryptEverything reads: each passthrough field as it is, and each
+// sealed field encrypted.
 type EncryptedEverything struct {
 	Sealed encrypt.Ciphertext
 }
 
+// String formats EncryptedEverything with the values of its passthrough fields,
+// and each sealed field as [sealed].
 func (e EncryptedEverything) String() string {
 	return gensupport.Redacted("EncryptedEverything", nil, "Sealed")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedEverything, and each sealed field as [sealed].
 func (e EncryptedEverything) LogValue() slog.Value {
 	return gensupport.RedactedLog(nil, "Sealed")
 }
@@ -102,6 +106,11 @@ type everythingOpaque struct {
 
 var everythingDeclaration = gensupport.DeclareOpaque("everything")
 
+// everythingCodec converts between Everything and EncryptedEverything for
+// EncryptEverything and DecryptEverything.
+//
+// Everything prints its sealed fields in the clear: it has no String or
+// LogValue method. Write them, or run stashgen with -redact.
 var everythingCodec = gensupport.New(gensupport.Generated[Everything, EncryptedEverything]{
 	TypeName:        "Everything",
 	Declaration:     everythingDeclaration,

@@ -15,9 +15,9 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Kinds prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedKinds is the stored form of Kinds, which EncryptKinds writes and
+// DecryptKinds reads: each passthrough field as it is, and each sealed field
+// encrypted.
 type EncryptedKinds struct {
 	S   EncryptedKindsS
 	E   EncryptedKindsE
@@ -49,12 +49,16 @@ type EncryptedKinds struct {
 	Er  error
 }
 
+// EncryptedKindsS is the stored form of the S field of Kinds: one member for
+// each column the field is stored in.
 type EncryptedKindsS struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 	Match      encrypt.MatchTerm
 }
 
+// EncryptedKindsE is the stored form of the E field of Kinds: one member for
+// each column the field is stored in.
 type EncryptedKindsE struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
@@ -62,95 +66,135 @@ type EncryptedKindsE struct {
 	Ore        encrypt.OreTerm
 }
 
+// EncryptedKindsBo is the stored form of the Bo field of Kinds: one member for
+// each column the field is stored in.
 type EncryptedKindsBo struct {
 	Ciphertext encrypt.Ciphertext
 }
 
+// EncryptedKindsI8 is the stored form of the I8 field of Kinds: one member for
+// each column the field is stored in.
 type EncryptedKindsI8 struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 }
 
+// EncryptedKindsI16 is the stored form of the I16 field of Kinds: one member
+// for each column the field is stored in.
 type EncryptedKindsI16 struct {
 	Ciphertext encrypt.Ciphertext
 	Ope        encrypt.OpeTerm
 }
 
+// EncryptedKindsI32 is the stored form of the I32 field of Kinds: one member
+// for each column the field is stored in.
 type EncryptedKindsI32 struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 }
 
+// EncryptedKindsI is the stored form of the I field of Kinds: one member for
+// each column the field is stored in.
 type EncryptedKindsI struct {
 	Ciphertext encrypt.Ciphertext
 	Ore        encrypt.OreTerm
 }
 
+// EncryptedKindsI64 is the stored form of the I64 field of Kinds: one member
+// for each column the field is stored in.
 type EncryptedKindsI64 struct {
 	Ciphertext encrypt.Ciphertext
 }
 
+// EncryptedKindsU8 is the stored form of the U8 field of Kinds: one member for
+// each column the field is stored in.
 type EncryptedKindsU8 struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 }
 
+// EncryptedKindsU16 is the stored form of the U16 field of Kinds: one member
+// for each column the field is stored in.
 type EncryptedKindsU16 struct {
 	Ciphertext encrypt.Ciphertext
 }
 
+// EncryptedKindsU32 is the stored form of the U32 field of Kinds: one member
+// for each column the field is stored in.
 type EncryptedKindsU32 struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 	Ore        encrypt.OreTerm
 }
 
+// EncryptedKindsU is the stored form of the U field of Kinds: one member for
+// each column the field is stored in.
 type EncryptedKindsU struct {
 	Ciphertext encrypt.Ciphertext
 }
 
+// EncryptedKindsU64 is the stored form of the U64 field of Kinds: one member
+// for each column the field is stored in.
 type EncryptedKindsU64 struct {
 	Ciphertext encrypt.Ciphertext
 	Ope        encrypt.OpeTerm
 }
 
+// EncryptedKindsF32 is the stored form of the F32 field of Kinds: one member
+// for each column the field is stored in.
 type EncryptedKindsF32 struct {
 	Ciphertext encrypt.Ciphertext
 }
 
+// EncryptedKindsF64 is the stored form of the F64 field of Kinds: one member
+// for each column the field is stored in.
 type EncryptedKindsF64 struct {
 	Ciphertext encrypt.Ciphertext
 	Ore        encrypt.OreTerm
 }
 
+// EncryptedKindsBy is the stored form of the By field of Kinds: one member for
+// each column the field is stored in.
 type EncryptedKindsBy struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 }
 
+// EncryptedKindsBl is the stored form of the Bl field of Kinds: one member for
+// each column the field is stored in.
 type EncryptedKindsBl struct {
 	Ciphertext encrypt.Ciphertext
 }
 
+// EncryptedKindsSc is the stored form of the Sc field of Kinds: one member for
+// each column the field is stored in.
 type EncryptedKindsSc struct {
 	Ciphertext encrypt.Ciphertext
 	Ore        encrypt.OreTerm
 }
 
+// EncryptedKindsSt is the stored form of the St field of Kinds: one member for
+// each column the field is stored in.
 type EncryptedKindsSt struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 }
 
+// EncryptedKindsD is the stored form of the D field of Kinds: one member for
+// each column the field is stored in.
 type EncryptedKindsD struct {
 	Ciphertext encrypt.Ciphertext
 	Ore        encrypt.OreTerm
 }
 
+// String formats EncryptedKinds with the values of its passthrough fields, and
+// each sealed field as [sealed].
 func (e EncryptedKinds) String() string {
 	return gensupport.Redacted("EncryptedKinds", map[string]any{"P": e.P, "M": e.M, "T": e.T, "N": e.N, "In": e.In, "Sk": e.Sk, "A": e.A, "Er": e.Er}, "S", "E", "Bo", "I8", "I16", "I32", "I", "I64", "U8", "U16", "U32", "U", "U64", "F32", "F64", "By", "Bl", "Sc", "St", "D")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedKinds, and each sealed field as [sealed].
 func (e EncryptedKinds) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"P": e.P, "M": e.M, "T": e.T, "N": e.N, "In": e.In, "Sk": e.Sk, "A": e.A, "Er": e.Er}, "S", "E", "Bo", "I8", "I16", "I32", "I", "I64", "U8", "U16", "U32", "U", "U64", "F32", "F64", "By", "Bl", "Sc", "St", "D")
 }
@@ -220,6 +264,11 @@ var kindsDeclaration = gensupport.Declare("kinds").
 	Passthrough("a").
 	Passthrough("er")
 
+// kindsCodec converts between Kinds and EncryptedKinds for EncryptKinds and
+// DecryptKinds.
+//
+// Kinds prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 var kindsCodec = gensupport.New(gensupport.Generated[Kinds, EncryptedKinds]{
 	TypeName:        "Kinds",
 	Declaration:     kindsDeclaration,
@@ -497,6 +546,8 @@ func DecryptKinds(ctx context.Context, d encrypt.Decrypter, encrypted []Encrypte
 	return kindsCodec.Decrypt(ctx, d, encrypted)
 }
 
+// KindsFields provides operations for the sealed fields of Kinds. Each entry
+// binds queries and encrypts updates using its field's declaration.
 var KindsFields = struct {
 	S   KindsSField
 	E   KindsEField
@@ -541,10 +592,13 @@ var KindsFields = struct {
 	D:   KindsDField{gensupport.NewField[time.Duration](kindsDeclaration, "d")},
 }
 
+// KindsSField is the KindsFields entry for the S field: it encrypts a value for
+// an update of the field's stored columns, and derives the field's queries.
 type KindsSField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of S.
 func (f KindsSField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedKindsS, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -553,9 +607,13 @@ func (f KindsSField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (
 	return EncryptedKindsS{Ciphertext: out.Ciphertext, Equality: out.Equality, Match: out.Match}, nil
 }
 
+// Eq derives the eq query for v.
 func (f KindsSField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
 // Matches derives the matches query for v. Its answer can hold rows that do not
@@ -564,10 +622,13 @@ func (f KindsSField) Matches(ctx context.Context, c *encrypt.Cipher, v string) (
 	return gensupport.Matches(ctx, f.field, c, v)
 }
 
+// KindsEField is the KindsFields entry for the E field: it encrypts a value for
+// an update of the field's stored columns, and derives the field's queries.
 type KindsEField struct {
 	field gensupport.Field[Email]
 }
 
+// Encrypt seals v for an update of the stored columns of E.
 func (f KindsEField) Encrypt(ctx context.Context, c *encrypt.Cipher, v Email) (EncryptedKindsE, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -576,34 +637,58 @@ func (f KindsEField) Encrypt(ctx context.Context, c *encrypt.Cipher, v Email) (E
 	return EncryptedKindsE{Ciphertext: out.Ciphertext, Equality: out.Equality, Match: out.Match, Ore: out.Ore}, nil
 }
 
+// Eq derives the eq query for v.
 func (f KindsEField) Eq(ctx context.Context, c *encrypt.Cipher, v Email) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
+// Lt derives the lt query for v.
 func (f KindsEField) Lt(ctx context.Context, c *encrypt.Cipher, v Email) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f KindsEField) Lte(ctx context.Context, c *encrypt.Cipher, v Email) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f KindsEField) Gt(ctx context.Context, c *encrypt.Cipher, v Email) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f KindsEField) Gte(ctx context.Context, c *encrypt.Cipher, v Email) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f KindsEField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi Email) (encrypt.Range[encrypt.OreTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OreTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, nil
 }
 
 // Matches derives the matches query for v. Its answer can hold rows that do not
@@ -612,19 +697,28 @@ func (f KindsEField) Matches(ctx context.Context, c *encrypt.Cipher, v Email) (e
 	return gensupport.Matches(ctx, f.field, c, v)
 }
 
+// KindsBoField is the KindsFields entry for the Bo field: it encrypts a value
+// for an update of the field's stored columns.
 type KindsBoField struct {
 	field gensupport.Field[bool]
 }
 
+// Encrypt seals v for an update of the stored columns of Bo.
 func (f KindsBoField) Encrypt(ctx context.Context, c *encrypt.Cipher, v bool) (EncryptedKindsBo, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return EncryptedKindsBo{Ciphertext: out.Ciphertext}, err
+	if err != nil {
+		return EncryptedKindsBo{}, err
+	}
+	return EncryptedKindsBo{Ciphertext: out.Ciphertext}, nil
 }
 
+// KindsI8Field is the KindsFields entry for the I8 field: it encrypts a value
+// for an update of the field's stored columns, and derives the field's queries.
 type KindsI8Field struct {
 	field gensupport.Field[int8]
 }
 
+// Encrypt seals v for an update of the stored columns of I8.
 func (f KindsI8Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v int8) (EncryptedKindsI8, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -633,15 +727,22 @@ func (f KindsI8Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v int8) (E
 	return EncryptedKindsI8{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
+// Eq derives the eq query for v.
 func (f KindsI8Field) Eq(ctx context.Context, c *encrypt.Cipher, v int8) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
+// KindsI16Field is the KindsFields entry for the I16 field: it encrypts a value
+// for an update of the field's stored columns, and derives the field's queries.
 type KindsI16Field struct {
 	field gensupport.Field[int16]
 }
 
+// Encrypt seals v for an update of the stored columns of I16.
 func (f KindsI16Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v int16) (EncryptedKindsI16, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -650,35 +751,58 @@ func (f KindsI16Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v int16) 
 	return EncryptedKindsI16{Ciphertext: out.Ciphertext, Ope: out.Ope}, nil
 }
 
+// Lt derives the lt query for v.
 func (f KindsI16Field) Lt(ctx context.Context, c *encrypt.Cipher, v int16) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f KindsI16Field) Lte(ctx context.Context, c *encrypt.Cipher, v int16) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f KindsI16Field) Gt(ctx context.Context, c *encrypt.Cipher, v int16) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f KindsI16Field) Gte(ctx context.Context, c *encrypt.Cipher, v int16) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f KindsI16Field) Between(ctx context.Context, c *encrypt.Cipher, lo, hi int16) (encrypt.Range[encrypt.OpeTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OpeTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, nil
 }
 
+// KindsI32Field is the KindsFields entry for the I32 field: it encrypts a value
+// for an update of the field's stored columns, and derives the field's queries.
 type KindsI32Field struct {
 	field gensupport.Field[int32]
 }
 
+// Encrypt seals v for an update of the stored columns of I32.
 func (f KindsI32Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v int32) (EncryptedKindsI32, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -687,15 +811,22 @@ func (f KindsI32Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v int32) 
 	return EncryptedKindsI32{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
+// Eq derives the eq query for v.
 func (f KindsI32Field) Eq(ctx context.Context, c *encrypt.Cipher, v int32) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
+// KindsIField is the KindsFields entry for the I field: it encrypts a value for
+// an update of the field's stored columns, and derives the field's queries.
 type KindsIField struct {
 	field gensupport.Field[int]
 }
 
+// Encrypt seals v for an update of the stored columns of I.
 func (f KindsIField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int) (EncryptedKindsI, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -704,44 +835,73 @@ func (f KindsIField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int) (Enc
 	return EncryptedKindsI{Ciphertext: out.Ciphertext, Ore: out.Ore}, nil
 }
 
+// Lt derives the lt query for v.
 func (f KindsIField) Lt(ctx context.Context, c *encrypt.Cipher, v int) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f KindsIField) Lte(ctx context.Context, c *encrypt.Cipher, v int) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f KindsIField) Gt(ctx context.Context, c *encrypt.Cipher, v int) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f KindsIField) Gte(ctx context.Context, c *encrypt.Cipher, v int) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f KindsIField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi int) (encrypt.Range[encrypt.OreTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OreTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, nil
 }
 
+// KindsI64Field is the KindsFields entry for the I64 field: it encrypts a value
+// for an update of the field's stored columns.
 type KindsI64Field struct {
 	field gensupport.Field[int64]
 }
 
+// Encrypt seals v for an update of the stored columns of I64.
 func (f KindsI64Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v int64) (EncryptedKindsI64, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return EncryptedKindsI64{Ciphertext: out.Ciphertext}, err
+	if err != nil {
+		return EncryptedKindsI64{}, err
+	}
+	return EncryptedKindsI64{Ciphertext: out.Ciphertext}, nil
 }
 
+// KindsU8Field is the KindsFields entry for the U8 field: it encrypts a value
+// for an update of the field's stored columns, and derives the field's queries.
 type KindsU8Field struct {
 	field gensupport.Field[uint8]
 }
 
+// Encrypt seals v for an update of the stored columns of U8.
 func (f KindsU8Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint8) (EncryptedKindsU8, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -750,24 +910,37 @@ func (f KindsU8Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint8) (
 	return EncryptedKindsU8{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
+// Eq derives the eq query for v.
 func (f KindsU8Field) Eq(ctx context.Context, c *encrypt.Cipher, v uint8) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
+// KindsU16Field is the KindsFields entry for the U16 field: it encrypts a value
+// for an update of the field's stored columns.
 type KindsU16Field struct {
 	field gensupport.Field[uint16]
 }
 
+// Encrypt seals v for an update of the stored columns of U16.
 func (f KindsU16Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint16) (EncryptedKindsU16, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return EncryptedKindsU16{Ciphertext: out.Ciphertext}, err
+	if err != nil {
+		return EncryptedKindsU16{}, err
+	}
+	return EncryptedKindsU16{Ciphertext: out.Ciphertext}, nil
 }
 
+// KindsU32Field is the KindsFields entry for the U32 field: it encrypts a value
+// for an update of the field's stored columns, and derives the field's queries.
 type KindsU32Field struct {
 	field gensupport.Field[uint32]
 }
 
+// Encrypt seals v for an update of the stored columns of U32.
 func (f KindsU32Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint32) (EncryptedKindsU32, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -776,49 +949,82 @@ func (f KindsU32Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint32)
 	return EncryptedKindsU32{Ciphertext: out.Ciphertext, Equality: out.Equality, Ore: out.Ore}, nil
 }
 
+// Eq derives the eq query for v.
 func (f KindsU32Field) Eq(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
+// Lt derives the lt query for v.
 func (f KindsU32Field) Lt(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f KindsU32Field) Lte(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f KindsU32Field) Gt(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f KindsU32Field) Gte(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f KindsU32Field) Between(ctx context.Context, c *encrypt.Cipher, lo, hi uint32) (encrypt.Range[encrypt.OreTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OreTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, nil
 }
 
+// KindsUField is the KindsFields entry for the U field: it encrypts a value for
+// an update of the field's stored columns.
 type KindsUField struct {
 	field gensupport.Field[uint]
 }
 
+// Encrypt seals v for an update of the stored columns of U.
 func (f KindsUField) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint) (EncryptedKindsU, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return EncryptedKindsU{Ciphertext: out.Ciphertext}, err
+	if err != nil {
+		return EncryptedKindsU{}, err
+	}
+	return EncryptedKindsU{Ciphertext: out.Ciphertext}, nil
 }
 
+// KindsU64Field is the KindsFields entry for the U64 field: it encrypts a value
+// for an update of the field's stored columns, and derives the field's queries.
 type KindsU64Field struct {
 	field gensupport.Field[uint64]
 }
 
+// Encrypt seals v for an update of the stored columns of U64.
 func (f KindsU64Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint64) (EncryptedKindsU64, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -827,44 +1033,73 @@ func (f KindsU64Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint64)
 	return EncryptedKindsU64{Ciphertext: out.Ciphertext, Ope: out.Ope}, nil
 }
 
+// Lt derives the lt query for v.
 func (f KindsU64Field) Lt(ctx context.Context, c *encrypt.Cipher, v uint64) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f KindsU64Field) Lte(ctx context.Context, c *encrypt.Cipher, v uint64) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f KindsU64Field) Gt(ctx context.Context, c *encrypt.Cipher, v uint64) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f KindsU64Field) Gte(ctx context.Context, c *encrypt.Cipher, v uint64) (encrypt.OpeTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OpeTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OpeTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f KindsU64Field) Between(ctx context.Context, c *encrypt.Cipher, lo, hi uint64) (encrypt.Range[encrypt.OpeTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OpeTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, nil
 }
 
+// KindsF32Field is the KindsFields entry for the F32 field: it encrypts a value
+// for an update of the field's stored columns.
 type KindsF32Field struct {
 	field gensupport.Field[float32]
 }
 
+// Encrypt seals v for an update of the stored columns of F32.
 func (f KindsF32Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v float32) (EncryptedKindsF32, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return EncryptedKindsF32{Ciphertext: out.Ciphertext}, err
+	if err != nil {
+		return EncryptedKindsF32{}, err
+	}
+	return EncryptedKindsF32{Ciphertext: out.Ciphertext}, nil
 }
 
+// KindsF64Field is the KindsFields entry for the F64 field: it encrypts a value
+// for an update of the field's stored columns, and derives the field's queries.
 type KindsF64Field struct {
 	field gensupport.Field[float64]
 }
 
+// Encrypt seals v for an update of the stored columns of F64.
 func (f KindsF64Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v float64) (EncryptedKindsF64, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -873,35 +1108,58 @@ func (f KindsF64Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v float64
 	return EncryptedKindsF64{Ciphertext: out.Ciphertext, Ore: out.Ore}, nil
 }
 
+// Lt derives the lt query for v.
 func (f KindsF64Field) Lt(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f KindsF64Field) Lte(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f KindsF64Field) Gt(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f KindsF64Field) Gte(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f KindsF64Field) Between(ctx context.Context, c *encrypt.Cipher, lo, hi float64) (encrypt.Range[encrypt.OreTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OreTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, nil
 }
 
+// KindsByField is the KindsFields entry for the By field: it encrypts a value
+// for an update of the field's stored columns, and derives the field's queries.
 type KindsByField struct {
 	field gensupport.Field[[]byte]
 }
 
+// Encrypt seals v for an update of the stored columns of By.
 func (f KindsByField) Encrypt(ctx context.Context, c *encrypt.Cipher, v []byte) (EncryptedKindsBy, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -910,24 +1168,37 @@ func (f KindsByField) Encrypt(ctx context.Context, c *encrypt.Cipher, v []byte) 
 	return EncryptedKindsBy{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
+// Eq derives the eq query for v.
 func (f KindsByField) Eq(ctx context.Context, c *encrypt.Cipher, v []byte) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
+// KindsBlField is the KindsFields entry for the Bl field: it encrypts a value
+// for an update of the field's stored columns.
 type KindsBlField struct {
 	field gensupport.Field[Blob]
 }
 
+// Encrypt seals v for an update of the stored columns of Bl.
 func (f KindsBlField) Encrypt(ctx context.Context, c *encrypt.Cipher, v Blob) (EncryptedKindsBl, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return EncryptedKindsBl{Ciphertext: out.Ciphertext}, err
+	if err != nil {
+		return EncryptedKindsBl{}, err
+	}
+	return EncryptedKindsBl{Ciphertext: out.Ciphertext}, nil
 }
 
+// KindsScField is the KindsFields entry for the Sc field: it encrypts a value
+// for an update of the field's stored columns, and derives the field's queries.
 type KindsScField struct {
 	field gensupport.Field[Score]
 }
 
+// Encrypt seals v for an update of the stored columns of Sc.
 func (f KindsScField) Encrypt(ctx context.Context, c *encrypt.Cipher, v Score) (EncryptedKindsSc, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -936,35 +1207,58 @@ func (f KindsScField) Encrypt(ctx context.Context, c *encrypt.Cipher, v Score) (
 	return EncryptedKindsSc{Ciphertext: out.Ciphertext, Ore: out.Ore}, nil
 }
 
+// Lt derives the lt query for v.
 func (f KindsScField) Lt(ctx context.Context, c *encrypt.Cipher, v Score) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f KindsScField) Lte(ctx context.Context, c *encrypt.Cipher, v Score) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f KindsScField) Gt(ctx context.Context, c *encrypt.Cipher, v Score) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f KindsScField) Gte(ctx context.Context, c *encrypt.Cipher, v Score) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f KindsScField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi Score) (encrypt.Range[encrypt.OreTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OreTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, nil
 }
 
+// KindsStField is the KindsFields entry for the St field: it encrypts a value
+// for an update of the field's stored columns, and derives the field's queries.
 type KindsStField struct {
 	field gensupport.Field[Status]
 }
 
+// Encrypt seals v for an update of the stored columns of St.
 func (f KindsStField) Encrypt(ctx context.Context, c *encrypt.Cipher, v Status) (EncryptedKindsSt, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -973,15 +1267,22 @@ func (f KindsStField) Encrypt(ctx context.Context, c *encrypt.Cipher, v Status) 
 	return EncryptedKindsSt{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
+// Eq derives the eq query for v.
 func (f KindsStField) Eq(ctx context.Context, c *encrypt.Cipher, v Status) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
+// KindsDField is the KindsFields entry for the D field: it encrypts a value for
+// an update of the field's stored columns, and derives the field's queries.
 type KindsDField struct {
 	field gensupport.Field[time.Duration]
 }
 
+// Encrypt seals v for an update of the stored columns of D.
 func (f KindsDField) Encrypt(ctx context.Context, c *encrypt.Cipher, v time.Duration) (EncryptedKindsD, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -990,27 +1291,47 @@ func (f KindsDField) Encrypt(ctx context.Context, c *encrypt.Cipher, v time.Dura
 	return EncryptedKindsD{Ciphertext: out.Ciphertext, Ore: out.Ore}, nil
 }
 
+// Lt derives the lt query for v.
 func (f KindsDField) Lt(ctx context.Context, c *encrypt.Cipher, v time.Duration) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Lte derives the lte query for v.
 func (f KindsDField) Lte(ctx context.Context, c *encrypt.Cipher, v time.Duration) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gt derives the gt query for v.
 func (f KindsDField) Gt(ctx context.Context, c *encrypt.Cipher, v time.Duration) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Gte derives the gte query for v.
 func (f KindsDField) Gte(ctx context.Context, c *encrypt.Cipher, v time.Duration) (encrypt.OreTerm, error) {
 	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OreTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.OreTerm(term), nil
 }
 
+// Between derives the between query for the range from lo to hi.
 func (f KindsDField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi time.Duration) (encrypt.Range[encrypt.OreTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
+	if err != nil {
+		return encrypt.Range[encrypt.OreTerm]{}, err
+	}
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, nil
 }

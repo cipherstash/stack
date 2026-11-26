@@ -73,10 +73,6 @@ func (w *writer) header(f *genFile) {
 	w.nl()
 	w.p("// Stops compiling when the library does not accept this version of generated file.")
 	w.p("const _ = gensupport.GeneratedVersion2")
-	for _, n := range f.notices {
-		w.nl()
-		w.b.WriteString(wrapComment(n, 80))
-	}
 }
 
 func tagSuffix(tags string) string {
@@ -88,6 +84,7 @@ func tagSuffix(tags string) string {
 
 func (w *writer) encryptedType(f *genFile) {
 	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("%s is the stored form of %s, which %s writes and %s reads: each passthrough field as it is, and each sealed field encrypted.", f.encName, f.typeName, f.encryptFn, f.decryptFn), 80))
 	w.p("type %s struct {", f.encName)
 	for _, m := range f.members {
 		if m.embedded {
@@ -102,6 +99,7 @@ func (w *writer) encryptedType(f *genFile) {
 			continue
 		}
 		w.nl()
+		w.b.WriteString(wrapComment(fmt.Sprintf("%s is the stored form of the %s field of %s: one member for each column the field is stored in.", g.outputType, g.GoName, f.typeName), 80))
 		w.p("type %s struct {", g.outputType)
 		for _, o := range g.outputs {
 			w.p("\t%s %s", o.name, o.typeExpr)
@@ -142,10 +140,12 @@ func shownAndHidden(f *genFile, recv string) (shown string, hidden string) {
 func (w *writer) printMethods(f *genFile) {
 	shown, hidden := shownAndHidden(f, "e")
 	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("String formats %s with the values of its passthrough fields, and each sealed field as [sealed].", f.encName), 80))
 	w.p("func (e %s) String() string {", f.encName)
 	w.p("\treturn gensupport.Redacted(%q, %s%s)", f.encName, shown, hidden)
 	w.p("}")
 	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("LogValue is String for log/slog: a group with the values of the passthrough fields of %s, and each sealed field as [sealed].", f.encName), 80))
 	w.p("func (e %s) LogValue() slog.Value {", f.encName)
 	w.p("\treturn gensupport.RedactedLog(%s%s)", shown, hidden)
 	w.p("}")
@@ -157,11 +157,12 @@ func (w *writer) printMethods(f *genFile) {
 	// sealed fields are read from the struct itself.
 	shown, hidden = shownAndHidden(f, r)
 	w.nl()
-	w.p("// Written because of -redact: %s no longer prints its sealed fields.", f.typeName)
+	w.b.WriteString(wrapComment(fmt.Sprintf("String formats %s with the values of its passthrough fields, and each sealed field as [sealed]. stashgen wrote it because of -redact, so that %s no longer prints its sealed fields.", f.typeName, f.typeName), 80))
 	w.p("func (%s %s) String() string {", r, f.typeName)
 	w.p("\treturn gensupport.Redacted(%q, %s%s)", f.typeName, shown, hidden)
 	w.p("}")
 	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("LogValue is String for log/slog: a group with the values of the passthrough fields of %s, and each sealed field as [sealed].", f.typeName), 80))
 	w.p("func (%s %s) LogValue() slog.Value {", r, f.typeName)
 	w.p("\treturn gensupport.RedactedLog(%s%s)", shown, hidden)
 	w.p("}")
@@ -398,6 +399,13 @@ func (w *writer) literal(indent, open string, entries []string, close string) {
 
 func (w *writer) codec(f *genFile) {
 	w.nl()
+	// The notices are warnings about the struct, which PrintsPlaintext and
+	// Unexported repeat when the program runs: they document the codec.
+	w.b.WriteString(wrapComment(fmt.Sprintf("%s converts between %s and %s for %s and %s.", f.codecVar, f.typeName, f.encName, f.encryptFn, f.decryptFn), 80))
+	for _, n := range f.notices {
+		w.p("//")
+		w.b.WriteString(wrapComment(n, 80))
+	}
 	w.p("var %s = gensupport.New(gensupport.Generated[%s, %s]{", f.codecVar, f.typeExpr, f.encName)
 	w.p("\tTypeName: %q,", f.typeName)
 	w.p("\tDeclaration: %s,", f.declVar)
@@ -641,11 +649,54 @@ func (w *writer) value(f *genFile) {
 	w.p("\t},")
 }
 
+// funcParams are the parameter names of the file's top-level functions.
+type funcParams struct {
+	ctx, cipher, d, values, encrypted string
+}
+
+// params picks parameter names for the file's top-level functions, which the
+// package's documentation shows. Each is the first of its candidates that is
+// not the package's name, an import's name, or a name picked before it: a
+// parameter named for the package reads as the package, and one named for an
+// import hides the import from the signature. When every candidate is taken,
+// the last takes underscores until it is free.
+func params(f *genFile, candidates ...[]string) []string {
+	taken := map[string]bool{f.pkgName: true}
+	for name := range f.imports.paths {
+		taken[name] = true
+	}
+	out := make([]string, len(candidates))
+	for i, names := range candidates {
+		pick := ""
+		for _, n := range names {
+			if !taken[n] {
+				pick = n
+				break
+			}
+		}
+		if pick == "" {
+			pick = names[len(names)-1]
+			for taken[pick] {
+				pick += "_"
+			}
+		}
+		taken[pick] = true
+		out[i] = pick
+	}
+	return out
+}
+
+func (f *genFile) funcParams() funcParams {
+	n := params(f, []string{"ctx", "c"}, []string{"cipher", "ci"}, []string{"d", "decrypter"}, []string{"values", "plaintexts"}, []string{"encrypted", "sealed"})
+	return funcParams{ctx: n[0], cipher: n[1], d: n[2], values: n[3], encrypted: n[4]}
+}
+
 func (w *writer) functions(f *genFile) {
+	n := f.funcParams()
 	w.nl()
 	w.b.WriteString(wrapComment(fmt.Sprintf("%s seals each %s, with one ZeroKMS request for each 500 sealed values, plus one the first time a keyset is used. The result has one element for each input, in the same order.", f.encryptFn, f.typeName), 80))
-	w.p("func %s(ctx context.Context, cipher *encrypt.Cipher, %s []%s) ([]%s, error) {", f.encryptFn, f.paramName, f.typeExpr, f.encName)
-	w.p("\treturn %s.Encrypt(ctx, cipher, %s)", f.codecVar, f.paramName)
+	w.p("func %s(%s context.Context, %s *encrypt.Cipher, %s []%s) ([]%s, error) {", f.encryptFn, n.ctx, n.cipher, n.values, f.typeExpr, f.encName)
+	w.p("\treturn %s.Encrypt(%s, %s, %s)", f.codecVar, n.ctx, n.cipher, n.values)
 	w.p("}")
 	w.nl()
 	w.b.WriteString(wrapComment(fmt.Sprintf("%s opens each %s, with one ZeroKMS request for each 500 sealed values, plus one the first time a keyset is used.", f.decryptFn, f.encName), 80))
@@ -662,8 +713,8 @@ func (w *writer) functions(f *genFile) {
 		w.b.WriteString(wrapComment(fmt.Sprintf("%s leaves %s at the zero value: an index-only field stores no ciphertext, so nothing opens for it. Do not pass a decrypted value back to %s to update its row, because %s would then store the term for zero. Derive the index-only terms again from the real values through %s.",
 			f.decryptFn, joinNames(indexOnly), f.encryptFn, f.encryptFn, f.fieldsVar), 80))
 	}
-	w.p("func %s(ctx context.Context, d encrypt.Decrypter, encrypted []%s) ([]%s, error) {", f.decryptFn, f.encName, f.typeExpr)
-	w.p("\treturn %s.Decrypt(ctx, d, encrypted)", f.codecVar)
+	w.p("func %s(%s context.Context, %s encrypt.Decrypter, %s []%s) ([]%s, error) {", f.decryptFn, n.ctx, n.d, n.encrypted, f.encName, f.typeExpr)
+	w.p("\treturn %s.Decrypt(%s, %s, %s)", f.codecVar, n.ctx, n.d, n.encrypted)
 	w.p("}")
 }
 
@@ -678,12 +729,7 @@ func (w *writer) fieldEntries(f *genFile) {
 		return
 	}
 	w.nl()
-	for _, g := range sealed {
-		if g.isSearchableJSON() {
-			w.b.WriteString(wrapComment(fmt.Sprintf("%s provides operations for the sealed fields of %s. Each entry binds queries and encrypts updates using its field's declaration.", f.fieldsVar, f.typeName), 80))
-			break
-		}
-	}
+	w.b.WriteString(wrapComment(fmt.Sprintf("%s provides operations for the sealed fields of %s. Each entry binds queries and encrypts updates using its field's declaration.", f.fieldsVar, f.typeName), 80))
 	w.p("var %s = struct {", f.fieldsVar)
 	for _, g := range sealed {
 		w.p("\t%s %s", g.GoName, g.fieldType)
@@ -707,10 +753,16 @@ func (w *writer) fieldEntries(f *genFile) {
 			w.jsonEntry(g, f.pathsVar)
 			continue
 		}
+		doc := fmt.Sprintf("%s is the %s entry for the %s field: it encrypts a value for an update of the field's stored columns", g.fieldType, f.fieldsVar, g.GoName)
+		if len(g.queries) > 0 {
+			doc += ", and derives the field's queries"
+		}
+		w.b.WriteString(wrapComment(doc+".", 80))
 		w.p("type %s struct {", g.fieldType)
 		w.p("\tfield gensupport.Field[%s]", g.valueExpr)
 		w.p("}")
 		w.nl()
+		w.b.WriteString(wrapComment(fmt.Sprintf("Encrypt seals v for an update of the stored columns of %s.", g.GoName), 80))
 		w.p("func (f %s) Encrypt(ctx context.Context, c *encrypt.Cipher, v %s) (%s, error) {", g.fieldType, g.valueExpr, g.outputType)
 		w.sealedOutput(g, "f.field.Encrypt(ctx, c, v)")
 		w.p("}")
@@ -733,7 +785,10 @@ func (w *writer) fieldEntries(f *genFile) {
 				w.b.WriteString(wrapComment(fmt.Sprintf("%sNull derives the %s query for nil: the term every stored nil of the field shares, so it finds the rows whose value is absent.", q.method, q.operator.Name), 80))
 				w.p("func (f %s) %sNull(ctx context.Context, c *encrypt.Cipher) (%s, error) {", g.fieldType, q.method, q.resultType)
 				w.p("\tterm, err := f.field.NullTerm(ctx, c, %q)", q.operator.Name)
-				w.p("\treturn %s(term), err", q.resultType)
+				w.p("\tif err != nil {")
+				w.p("\t\treturn nil, err")
+				w.p("\t}")
+				w.p("\treturn %s(term), nil", q.resultType)
 				w.p("}")
 			}
 		}
@@ -742,24 +797,25 @@ func (w *writer) fieldEntries(f *genFile) {
 
 // sealedOutput writes the body of a method that seals through call, a
 // gensupport.Field method returning an Output, and converts the Output to
-// the field's output type.
+// the field's output type. On an error it returns the zero value: nil for an
+// EQL type, which is a byte slice, and an empty struct for separate columns.
 func (w *writer) sealedOutput(g genField, call string) {
 	w.p("\tout, err := %s", call)
-	switch {
-	case g.Verb == VerbEncryptInto:
-		w.p("\treturn %s(out.EQL), err", g.outputType)
-	case len(g.outputs) == 1:
-		w.p("\treturn %s{%s: out.%s}, err", g.outputType, g.outputs[0].name, g.outputs[0].name)
-	default:
+	if g.Verb == VerbEncryptInto {
 		w.p("\tif err != nil {")
-		w.p("\t\treturn %s{}, err", g.outputType)
+		w.p("\t\treturn nil, err")
 		w.p("\t}")
-		parts := make([]string, len(g.outputs))
-		for i, o := range g.outputs {
-			parts[i] = fmt.Sprintf("%s: out.%s", o.name, o.name)
-		}
-		w.p("\treturn %s{%s}, nil", g.outputType, strings.Join(parts, ", "))
+		w.p("\treturn %s(out.EQL), nil", g.outputType)
+		return
 	}
+	w.p("\tif err != nil {")
+	w.p("\t\treturn %s{}, err", g.outputType)
+	w.p("\t}")
+	parts := make([]string, len(g.outputs))
+	for i, o := range g.outputs {
+		parts[i] = fmt.Sprintf("%s: out.%s", o.name, o.name)
+	}
+	w.p("\treturn %s{%s}, nil", g.outputType, strings.Join(parts, ", "))
 }
 
 // queryMethod is one generated method for an operator the engine answers on
@@ -887,13 +943,22 @@ func (w *writer) query(g genField, q queryMethod) {
 			w.p("	return gensupport.Matches(ctx, f.field, c, v)")
 		}
 	case q.operator.Pair:
+		w.b.WriteString(wrapComment(fmt.Sprintf("%s derives the %s query for the range from lo to hi.", q.method, q.operator.Name), 80))
 		w.p("%slo, hi %s) (%s, error) {", recv, g.valueExpr, q.resultType)
 		w.p("	low, high, err := f.field.Range(ctx, c, %q, lo, hi)", q.operator.Name)
-		w.p("	return %s{Low: low, High: high}, err", q.resultType)
+		w.p("	if err != nil {")
+		w.p("		return %s{}, err", q.resultType)
+		w.p("	}")
+		w.p("	return %s{Low: low, High: high}, nil", q.resultType)
 	default:
+		// Every term and EQL query type is a byte slice, so nil is its zero.
+		w.b.WriteString(wrapComment(fmt.Sprintf("%s derives the %s query for v.", q.method, q.operator.Name), 80))
 		w.p("%sv %s) (%s, error) {", recv, g.valueExpr, q.resultType)
 		w.p("	term, err := f.field.Term(ctx, c, %q, v)", q.operator.Name)
-		w.p("	return %s(term), err", q.resultType)
+		w.p("	if err != nil {")
+		w.p("		return nil, err")
+		w.p("	}")
+		w.p("	return %s(term), nil", q.resultType)
 	}
 	w.p("}")
 }
@@ -936,13 +1001,17 @@ func (w *writer) model(f *genFile, m *genModel) {
 	w.literal("\t\t", fmt.Sprintf("return %s{", f.encName), entries, "}")
 	w.p("\t},")
 	w.p(")")
+	n := f.funcParams()
+	models := params(f, []string{n.ctx}, []string{n.d}, []string{m.paramName, "models", "records"})[2]
 	w.nl()
-	w.p("func %s(ctx context.Context, cipher *encrypt.Cipher, %s []%s) ([]%s, error) {", m.encryptFn, f.paramName, f.typeExpr, m.typeExpr)
-	w.p("\treturn %s.Encrypt(ctx, cipher, %s)", m.codecVar, f.paramName)
+	w.b.WriteString(wrapComment(fmt.Sprintf("%s seals each %s as %s does, and returns each as a %s.", m.encryptFn, f.typeName, f.encryptFn, m.typeExpr), 80))
+	w.p("func %s(%s context.Context, %s *encrypt.Cipher, %s []%s) ([]%s, error) {", m.encryptFn, n.ctx, n.cipher, n.values, f.typeExpr, m.typeExpr)
+	w.p("\treturn %s.Encrypt(%s, %s, %s)", m.codecVar, n.ctx, n.cipher, n.values)
 	w.p("}")
 	w.nl()
-	w.p("func %s(ctx context.Context, d encrypt.Decrypter, %s []%s) ([]%s, error) {", m.decryptFn, m.paramName, m.typeExpr, f.typeExpr)
-	w.p("\treturn %s.Decrypt(ctx, d, %s)", m.codecVar, m.paramName)
+	w.b.WriteString(wrapComment(fmt.Sprintf("%s opens each %s as %s opens an %s.", m.decryptFn, m.typeExpr, f.decryptFn, f.encName), 80))
+	w.p("func %s(%s context.Context, %s encrypt.Decrypter, %s []%s) ([]%s, error) {", m.decryptFn, n.ctx, n.d, models, m.typeExpr, f.typeExpr)
+	w.p("\treturn %s.Decrypt(%s, %s, %s)", m.codecVar, n.ctx, n.d, models)
 	w.p("}")
 }
 
@@ -1098,7 +1167,7 @@ func planJSON(f *genFile, g *genField) error {
 			paths[j] = a.Path + "." + m
 		}
 		n := fmt.Sprintf("no Elements accessor for the elements of %s (ordered %s): %s. Their orderings under At are written, and Match on them is not.", a.Path, strings.Join(paths, ", "), why[i])
-		f.notices = append(f.notices, g.GoName+": "+n)
+		g.notices = append(g.notices, n)
 		f.unqueried = append(f.unqueried, fmt.Sprintf("stashgen: %s.%s: %s", f.typeName, g.GoName, n))
 	}
 	if len(g.jsonArrays) > 0 && !answers(g, "element_match") {
@@ -1316,6 +1385,10 @@ func (w *writer) jsonEntry(g genField, pathsVar string) {
 	field := "gensupport.Field[" + g.valueExpr + "]"
 
 	w.b.WriteString(wrapComment(fmt.Sprintf("%s provides document queries and reads for the %s field.", g.fieldType, g.GoName), 80))
+	for _, n := range g.notices {
+		w.p("//")
+		w.b.WriteString(wrapComment("This file has "+n, 80))
+	}
 	w.p("type %s struct {", g.fieldType)
 	w.p("\tfield %s", field)
 	if ordered {

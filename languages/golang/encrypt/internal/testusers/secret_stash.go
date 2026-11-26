@@ -13,28 +13,41 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
+// EncryptedSecret is the stored form of Secret, which EncryptSecret writes and
+// DecryptSecret reads: each passthrough field as it is, and each sealed field
+// encrypted.
 type EncryptedSecret struct {
 	ID    int64
 	Value EncryptedSecretValue
 }
 
+// EncryptedSecretValue is the stored form of the Value field of Secret: one
+// member for each column the field is stored in.
 type EncryptedSecretValue struct {
 	Ciphertext encrypt.Ciphertext
 }
 
+// String formats EncryptedSecret with the values of its passthrough fields, and
+// each sealed field as [sealed].
 func (e EncryptedSecret) String() string {
 	return gensupport.Redacted("EncryptedSecret", map[string]any{"ID": e.ID}, "Value")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedSecret, and each sealed field as [sealed].
 func (e EncryptedSecret) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Value")
 }
 
-// Written because of -redact: Secret no longer prints its sealed fields.
+// String formats Secret with the values of its passthrough fields, and each
+// sealed field as [sealed]. stashgen wrote it because of -redact, so that
+// Secret no longer prints its sealed fields.
 func (s Secret) String() string {
 	return gensupport.Redacted("Secret", map[string]any{"ID": s.ID}, "Value")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of Secret, and each sealed field as [sealed].
 func (s Secret) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"ID": s.ID}, "Value")
 }
@@ -57,6 +70,8 @@ var secretDeclaration = gensupport.Declare("secrets").
 	Passthrough("id").
 	Encrypt("value", gensupport.String)
 
+// secretCodec converts between Secret and EncryptedSecret for EncryptSecret and
+// DecryptSecret.
 var secretCodec = gensupport.New(gensupport.Generated[Secret, EncryptedSecret]{
 	TypeName:    "Secret",
 	Declaration: secretDeclaration,
@@ -107,17 +122,25 @@ func DecryptSecret(ctx context.Context, d encrypt.Decrypter, encrypted []Encrypt
 	return secretCodec.Decrypt(ctx, d, encrypted)
 }
 
+// SecretFields provides operations for the sealed fields of Secret. Each entry
+// binds queries and encrypts updates using its field's declaration.
 var SecretFields = struct {
 	Value SecretValueField
 }{
 	Value: SecretValueField{gensupport.NewField[string](secretDeclaration, "value")},
 }
 
+// SecretValueField is the SecretFields entry for the Value field: it encrypts a
+// value for an update of the field's stored columns.
 type SecretValueField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Value.
 func (f SecretValueField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedSecretValue, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return EncryptedSecretValue{Ciphertext: out.Ciphertext}, err
+	if err != nil {
+		return EncryptedSecretValue{}, err
+	}
+	return EncryptedSecretValue{Ciphertext: out.Ciphertext}, nil
 }

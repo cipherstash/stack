@@ -238,7 +238,7 @@ func TestForTypeInAnotherPackage(t *testing.T) {
 	src := string(file.Content)
 	for _, want := range []string{
 		"Generated[*crm.Contact, EncryptedContact]",
-		"contacts []*crm.Contact",
+		"values []*crm.Contact",
 		"v := &crm.Contact{}",
 		"crm.Contact has unexported fields, so Go cannot convert it",
 	} {

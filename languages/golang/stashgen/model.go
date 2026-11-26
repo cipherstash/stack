@@ -79,7 +79,7 @@ func (r *reader) readModel(m ModelRequest) error {
 		gm.shapeName = lowerFirst(f.fieldTypePrefix) + m.Name + "Shape"
 		gm.codecVar = lowerFirst(f.fieldTypePrefix) + m.Name + "Codec"
 	}
-	if gm.paramName == f.paramName || gm.paramName == "ctx" || gm.paramName == "d" || goKeywords[gm.paramName] {
+	if goKeywords[gm.paramName] {
 		gm.paramName = "models"
 	}
 

@@ -13,25 +13,30 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion2
 
-// Note prints its sealed fields in the clear: it has no String or LogValue
-// method. Write them, or run stashgen with -redact.
-
+// EncryptedNote is the stored form of Note, which Encrypt writes and Decrypt
+// reads: each passthrough field as it is, and each sealed field encrypted.
 type EncryptedNote struct {
 	Tenant string            `db:"tenant"`
 	Text   EncryptedNoteText `db:"text"`
 	ID     int64             `db:"id"`
 }
 
+// EncryptedNoteText is the stored form of the Text field of Note: one member
+// for each column the field is stored in.
 type EncryptedNoteText struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
 	Match      encrypt.MatchTerm
 }
 
+// String formats EncryptedNote with the values of its passthrough fields, and
+// each sealed field as [sealed].
 func (e EncryptedNote) String() string {
 	return gensupport.Redacted("EncryptedNote", map[string]any{"Tenant": e.Tenant, "ID": e.ID}, "Text")
 }
 
+// LogValue is String for log/slog: a group with the values of the passthrough
+// fields of EncryptedNote, and each sealed field as [sealed].
 func (e EncryptedNote) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"Tenant": e.Tenant, "ID": e.ID}, "Text")
 }
@@ -49,6 +54,10 @@ var declaration = gensupport.DeclareContextField("tenant").
 	EncryptIndex("text", gensupport.String, encrypt.Equality, encrypt.Match()).
 	Passthrough("id")
 
+// codec converts between Note and EncryptedNote for Encrypt and Decrypt.
+//
+// Note prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
 var codec = gensupport.New(gensupport.Generated[Note, EncryptedNote]{
 	TypeName:        "Note",
 	Declaration:     declaration,
@@ -102,8 +111,8 @@ var codec = gensupport.New(gensupport.Generated[Note, EncryptedNote]{
 // Encrypt seals each Note, with one ZeroKMS request for each 500 sealed values,
 // plus one the first time a keyset is used. The result has one element for each
 // input, in the same order.
-func Encrypt(ctx context.Context, cipher *encrypt.Cipher, tenants []Note) ([]EncryptedNote, error) {
-	return codec.Encrypt(ctx, cipher, tenants)
+func Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []Note) ([]EncryptedNote, error) {
+	return codec.Encrypt(ctx, cipher, values)
 }
 
 // Decrypt opens each EncryptedNote, with one ZeroKMS request for each 500
@@ -112,16 +121,21 @@ func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedNote
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
+// Fields provides operations for the sealed fields of Note. Each entry binds
+// queries and encrypts updates using its field's declaration.
 var Fields = struct {
 	Text TextField
 }{
 	Text: TextField{gensupport.NewField[string](declaration, "text")},
 }
 
+// TextField is the Fields entry for the Text field: it encrypts a value for an
+// update of the field's stored columns, and derives the field's queries.
 type TextField struct {
 	field gensupport.Field[string]
 }
 
+// Encrypt seals v for an update of the stored columns of Text.
 func (f TextField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedNoteText, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
@@ -130,9 +144,13 @@ func (f TextField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (En
 	return EncryptedNoteText{Ciphertext: out.Ciphertext, Equality: out.Equality, Match: out.Match}, nil
 }
 
+// Eq derives the eq query for v.
 func (f TextField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
-	return encrypt.EqualityTerm(term), err
+	if err != nil {
+		return nil, err
+	}
+	return encrypt.EqualityTerm(term), nil
 }
 
 // Matches derives the matches query for v. Its answer can hold rows that do not
@@ -171,10 +189,12 @@ var rowsCodec = gensupport.Records(codec,
 	},
 )
 
-func EncryptRows(ctx context.Context, cipher *encrypt.Cipher, tenants []Note) ([]NoteRow, error) {
-	return rowsCodec.Encrypt(ctx, cipher, tenants)
+// EncryptRows seals each Note as Encrypt does, and returns each as a NoteRow.
+func EncryptRows(ctx context.Context, cipher *encrypt.Cipher, values []Note) ([]NoteRow, error) {
+	return rowsCodec.Encrypt(ctx, cipher, values)
 }
 
+// DecryptRows opens each NoteRow as Decrypt opens an EncryptedNote.
 func DecryptRows(ctx context.Context, d encrypt.Decrypter, rows []NoteRow) ([]Note, error) {
 	return rowsCodec.Decrypt(ctx, d, rows)
 }
