@@ -100,14 +100,20 @@ const CBOR_KEY_WITH_BAD_P1 = 'a1627031' + '40'
 // key provider entirely, which is what makes the positive control below
 // possible. Derived from the core's own error messages, not from any real
 // credential: the struct is `{ p1, p2_from, p2_to, p3 }`, each a
-// `Permutation { permutation: [...] }`. Here every permutation is empty, so
-// this is well-formed but cryptographically worthless — it exists only to get
-// past key loading and observe what happens next.
+// `Permutation { permutation: [...] }`. Here every permutation is the
+// identity: p1, p2_from and p2_to list 0..16 in order, and p3 lists 0..33.
+// The core refuses a permutation that is empty or lists a position twice
+// (#1911), so the lists must be real permutations. Identity ones are
+// well-formed but cryptographically worthless — this exists only to get past
+// key loading and observe what happens next.
+const IDENTITY_16 = '90000102030405060708090a0b0c0d0e0f' // [0, 1, …, 15]
+const IDENTITY_33 =
+  '9821000102030405060708090a0b0c0d0e0f101112131415161718181819181a181b181c181d181e181f1820' // [0, 1, …, 32]
 const WELL_FORMED_KEY_MATERIAL =
-  'a4627031a16b7065726d75746174696f6e80' + // p1:      { permutation: [] }
-  '6770325f66726f6da16b7065726d75746174696f6e80' + // p2_from: { permutation: [] }
-  '6570325f746fa16b7065726d75746174696f6e80' + // p2_to:   { permutation: [] }
-  '627033a16b7065726d75746174696f6e80' // p3:      { permutation: [] }
+  `a4627031a16b7065726d75746174696f6e${IDENTITY_16}` + // p1:      { permutation: [0..16] }
+  `6770325f66726f6da16b7065726d75746174696f6e${IDENTITY_16}` + // p2_from: { permutation: [0..16] }
+  `6570325f746fa16b7065726d75746174696f6e${IDENTITY_16}` + // p2_to:   { permutation: [0..16] }
+  `627033a16b7065726d75746174696f6e${IDENTITY_33}` // p3:      { permutation: [0..33] }
 
 /**
  * An `OidcFederationStrategy`-shaped stand-in. The core duck-types the
