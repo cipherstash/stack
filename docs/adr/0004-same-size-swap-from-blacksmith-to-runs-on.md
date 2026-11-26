@@ -43,6 +43,7 @@ Each Blacksmith label becomes a RunsOn label with the same vCPU count and Ubuntu
   The c8a machines have 2 GB per vCPU.
   Blacksmith's x64 machines have 4 GB per vCPU.
   A job that fails for lack of memory moves to `family=m8a`.
+  The log of such a job shows exit code 137, "Killed", or "signal: 9, SIGKILL".
   The m8a machines have 4 GB per vCPU.
 - **Disk.**
   Every job gets an 80 GB disk.
@@ -93,6 +94,8 @@ These settings were in place in the AWS account, or had been requested:
   Jobs above the quotas wait.
   The swap does not wait for the approval.
 - When AWS raises the `RunInstances` request rate from 2 to 4 a second, the RunsOn `AppSize` setting moves from `small` to `medium`.
+  The Service Quotas code for that rate is `L-A2D70E6C`.
+  Once Service Quotas shows 4 for that code, a second CloudFormation change set moves `AppSize`.
   We asked AWS for the higher rate on 19 November 2026.
   Both sizes cost the same.
 
