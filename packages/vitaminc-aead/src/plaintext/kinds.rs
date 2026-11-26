@@ -948,14 +948,14 @@ pub mod jiff {
             assert_eq!(timestamp_nanos(ms), Some(-1_500_000_000));
         }
 
-        /// jiff 1.0.0 parses this to a `Timestamp` half a second before its
-        /// own minimum (a debug assertion in jiff stops it in debug builds).
-        #[cfg(not(debug_assertions))]
+        /// Every `Timestamp` has a count, because none lies below jiff's
+        /// minimum. jiff 1.0.0 parsed this text to one half a second below
+        /// it, in a build without debug assertions (BurntSushi/jiff#714).
+        /// From jiff 1.0.1, which this crate requires, the parse is refused.
         #[test]
         fn an_instant_jiff_cannot_rebuild_has_no_count() {
-            let below: Timestamp = "-009999-01-02T01:59:58.5Z".parse().expect("jiff parses it");
-            assert!(below < Timestamp::MIN);
-            assert_eq!(timestamp_nanos(below), None);
+            assert!("-009999-01-02T01:59:58.5Z".parse::<Timestamp>().is_err());
+            assert!(timestamp_nanos(Timestamp::MIN).is_some());
         }
 
         #[test]

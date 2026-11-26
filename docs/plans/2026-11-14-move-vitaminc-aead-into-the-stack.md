@@ -391,17 +391,23 @@ The work:
 
 ## Checks that must move with the code
 
-vitaminc runs checks on these crates that this repository did not.
+Every check vitaminc ran on these crates runs here, or does not apply:
 
-- The storage corpus append-only check moves with the code, in stage 1. It
-  runs in `storage-corpus.yml` on a pull request that changes the corpus or
-  the script.
-- The rest land in #1837: Kani proofs, including `kani-storage`;
-  sanitizers; `cargo vet` and `cargo deny`; the fuzz targets of the moved
-  crates; and Miri for the moved crates.
-- Mutation testing: `stack-encrypt` already has it, with `--in-diff`.
+| vitaminc check | Here |
+|---|---|
+| Storage corpus append-only | `storage-corpus.yml`, on a pull request that changes the corpus or the script. |
+| `kani-storage` (the storage reader's proofs) | `kani.yml`: on a pull request that changes the reader or its proofs, and nightly when anything it compiles from changed in the last day. About ten minutes. |
+| `kani` | Not here: it proves `vitaminc-protected`, which stays in vitaminc. |
+| `cargo deny` | `supply-chain-vitaminc-aead.yml`, per pull request and nightly, over the three crates' graph only (`supply-chain/vitaminc-aead/deny.toml`). |
+| `cargo vet` | The same workflow, per pull request, with a store started from vitaminc's (`supply-chain/vitaminc-aead/`), over the three crates' graph only. |
+| Mutation testing | `mutants.yml`, `--in-diff`, as for `stack-encrypt`. |
+| Per-feature tests, and the release-only jiff tests | `test:vitaminc-aead:features`, in `tests-crates.yml`. |
+| Miri, sanitizers | Not needed. vitaminc ran them on `vitaminc-protected` only, and the three crates `#![deny(unsafe_code)]`. A change that adds `unsafe` adds both. |
+| Fuzzing | vitaminc's targets are Go, over `vcffi`, and move with it in stage 3. stack-encrypt's targets reach parts of the crates and replay when they change. |
 
-No pull request changes the three imported crates until #1837 has merged.
+`cargo deny` and `cargo vet` over the rest of the root workspace are #1842.
+
+Pull requests may change the three crates.
 
 ## Open questions
 

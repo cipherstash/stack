@@ -198,6 +198,14 @@ const EXPECTED_ASYMMETRIES = new Map([
     '.github/workflows/storage-corpus.yml',
     'pull_request is the only trigger; the check compares the corpus with the pull request base branch, which a push has none of',
   ],
+  [
+    '.github/workflows/kani.yml',
+    'pull_request (the storage reader and its proofs) is the only filtered trigger; the nightly schedule takes no paths and checks the wider inputs itself',
+  ],
+  [
+    '.github/workflows/supply-chain-vitaminc-aead.yml',
+    'pull_request is the only filtered trigger; the nightly cargo deny run takes no paths, since a new advisory changes no file',
+  ],
 ])
 
 describe('paths filters are written twice, identically', () => {
