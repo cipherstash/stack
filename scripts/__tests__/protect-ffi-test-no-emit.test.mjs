@@ -63,13 +63,22 @@ function reachableFrom(root, scripts = manifest.scripts) {
 
 /**
  * Every `tsc` command in a script body, as its argument list. A command ends
- * at a shell operator or a redirect.
+ * at a shell operator or a redirect. Quotes and parentheses are stripped from
+ * each word, and a word counts as tsc when its last path part, without an
+ * `@version`, is `tsc`. So `./node_modules/.bin/tsc`, `npx tsc@5.9.3`,
+ * `sh -c 'tsc'` and `(tsc)` are all found.
  */
 function tscCommands(body) {
   const commands = []
   for (const segment of body.split(/&&|\|\||;|\||>/)) {
-    const words = segment.trim().split(/\s+/)
-    const at = words.indexOf('tsc')
+    const words = segment
+      .trim()
+      .split(/\s+/)
+      .map((word) => word.replace(/["'()]/g, ''))
+      .filter((word) => word !== '')
+    const at = words.findIndex(
+      (word) => word.split('/').pop().replace(/@.*$/, '') === 'tsc',
+    )
     if (at !== -1) commands.push(words.slice(at + 1))
   }
   return commands
@@ -156,6 +165,19 @@ describe('protect-ffi test does not rewrite lib/ during turbo test', () => {
 // The checks above are only as good as the helpers they use, so the helpers
 // are tested on fixtures here.
 describe('the helpers this guard relies on', () => {
+  it('finds tsc however the command names it', () => {
+    expect(tscCommands('tsc --noEmit && ./node_modules/.bin/tsc')).toEqual([
+      ['--noEmit'],
+      [],
+    ])
+    expect(tscCommands('npx tsc@5.9.3 -p tsconfig.json')).toEqual([
+      ['-p', 'tsconfig.json'],
+    ])
+    expect(tscCommands("sh -c 'tsc --noEmit'")).toEqual([['--noEmit']])
+    expect(tscCommands('(tsc)')).toEqual([[]])
+    expect(tscCommands('biome lint')).toEqual([])
+  })
+
   it('reads a tsconfig that has comments and trailing commas', () => {
     const dir = mkdtempSync(join(tmpdir(), 'protect-ffi-no-emit-'))
     try {
