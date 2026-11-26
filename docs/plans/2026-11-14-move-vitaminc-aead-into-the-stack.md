@@ -11,7 +11,14 @@ Status: draft, rewritten 26 November 2026. Decisions by Dan Draper:
 - No more work on the TypeScript SDK until this is done.
 - vitaminc's Go packages `vcffi` and `vcvalue` move too, as a third stage,
   before the Go SDK's final release. vitaminc's `vcencrypt` is deleted.
-- An order index takes no bytes and no UUID.
+- An order index takes no bytes and no UUID. If `vitaminc-ore` ever moves
+  into this repository, its UUID order target (behind its `uuid` feature) and
+  its bytes order target are removed. Until then, the engine refuses both in
+  stage 2.3.
+- Fixtures follow the rule in `packages/stack-encrypt/tests/fixtures/README.md`
+  and `packages/eql/tests/encryption/fixtures/README.md`: every fixture is
+  Biome-formatted, you run `pnpm run code:fix` after regenerating one, and
+  each test compares its fixture as parsed JSON.
 - The moved code keeps the MIT licence, which is this repository's licence.
 - Nobody outside CipherStash uses the moved crates.
 
@@ -275,8 +282,10 @@ Delete the allow-list. An index refuses a type it cannot handle:
 
 - **Equality:** already asks `vitaminc-normalize`.
 - **Order:** no boolean, no 8-bit integer, no bytes and no UUID.
-  `vitaminc-ore` already refuses the first two. It allows bytes and a UUID,
-  so the engine's order index refuses those, in one place.
+  `vitaminc-ore` already refuses the first two. It allows bytes, and a UUID
+  behind its `uuid` feature, so the engine's order index refuses those, in
+  one place. Nothing in this repository turns on `vitaminc-ore`'s `uuid`
+  feature, and `stack-encrypt` names no bytes order target.
 - **Match:** text only.
 
 A plan is refused when it is built, before a value arrives. The index answers
