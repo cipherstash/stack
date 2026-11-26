@@ -377,9 +377,9 @@ or a type defined over one (`type Email string`):
 | `int8`, `uint8` (`byte`) | an 8-bit integer | `equality` | `Eq` |
 | `encrypt.Int128`, `encrypt.Uint128` | a 128-bit integer | `equality`, `ore`, `ope` | the same |
 | `float32`, `float64` | a float of its width | `equality`, `ore`, `ope` | `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
-| `encrypt.Decimal` | a decimal: a 96-bit coefficient and a scale up to 28 | `equality` | `Eq` |
-| `encrypt.Date` | a calendar date | `equality` | `Eq` |
-| `time.Time` | a timestamp, to the nanosecond, in UTC | `equality` | `Eq` |
+| `encrypt.Decimal` | a decimal: a 96-bit coefficient and a scale up to 28 | `equality`, `ore`, `ope` | `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
+| `encrypt.Date` | a calendar date | `equality`, `ore`, `ope` | the same |
+| `time.Time` | a timestamp, to the nanosecond, in UTC | `equality`, `ore`, `ope` | the same |
 
 Each query method needs its index declared. A field of bytes takes no `ore`
 or `ope` index: the engine answers no ordering over bytes, so the term
@@ -401,9 +401,10 @@ index: with 256 values, an order term would rank every row among 256, which
 a few known rows resolve to the values, as a `bool`'s would say which rows
 are true. Equality follows vitaminc's normalisation: an
 integer equals itself at every width, decimals compare at any scale
-(`1.50 = 1.5`), and a timestamp compares to the microsecond, truncated, never rounded. An order index on
-a decimal, date or timestamp is refused for now: the engine derives no
-order term for those kinds yet.
+(`1.50 = 1.5`), and a timestamp compares to the microsecond, truncated,
+never rounded. An order index on a decimal, date or timestamp follows the
+same rules. A decimal orders by value, a date by the day, and a timestamp
+by the microsecond. An integer's order term depends on its width.
 
 A `match` index stores text with no token (an empty string, separator-only
 text, or text shorter than the n-gram length of 3 characters) as the empty
@@ -443,7 +444,7 @@ rules.
 | The field declares | Methods | Each returns |
 |---|---|---|
 | `index=equality` | `Eq` | `encrypt.EqualityTerm` |
-| `index=ore` or `index=ope`, on an integer of 16 bits or wider or a string | `Lt`, `Lte`, `Gt`, `Gte` | `encrypt.OreTerm`, or `encrypt.OpeTerm` when the field declares no `ore` |
+| `index=ore` or `index=ope`, on an integer of 16 bits or wider, a float, a string, an `encrypt.Decimal`, an `encrypt.Date` or a `time.Time` | `Lt`, `Lte`, `Gt`, `Gte` | `encrypt.OreTerm`, or `encrypt.OpeTerm` when the field declares no `ore` |
 | the same | `Between(ctx, cipher, lo, hi)` | `encrypt.Range[encrypt.OreTerm]` or `encrypt.Range[encrypt.OpeTerm]`, the two bounds' terms |
 | `index=match`, on a string | `Matches` | `encrypt.MatchQuery[T]` |
 | `encrypt_into=TextEq` | `Eq` | `eql.TextEqQuery` |
@@ -619,38 +620,57 @@ an `eql_v4_*` column needs the v4 domains.
 
 The EQL types the engine produces, and the Go field types each takes:
 
+> **Take care**
+>
+> Sort an ordered column by its order term, with the expression in the
+> table. A plain `ORDER BY col` returns rows in the wrong order, with no
+> error. Each EQL type is a domain over `jsonb`, so PostgreSQL sorts the
+> stored JSON, not the values. On an `OrdOre` or `TextSearchOre` column,
+> `eql_v4.ord_term(col)` fails with "function is not unique". Use
+> `eql_v4.ord_term_ore(col)` there.
+
 | EQL type | Go field | Queries |
 |---|---|---|
 | `TextEq` | `string` | `=`, `<>` |
 | `TextMatch` | `string` | `@@` (3-grams and whole two-letter words, case-insensitive; see below) |
-| `TextOrd`, `TextOrdOpe`, `TextOrdOre` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
-| `TextSearch`, `TextSearchOre` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY`, `@@` |
+| `TextOrd`, `TextOrdOpe` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term(col)` |
+| `TextOrdOre` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term_ore(col)` |
+| `TextSearch` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `@@`; sort with `ORDER BY eql_v4.ord_term(col)` |
+| `TextSearchOre` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `@@`; sort with `ORDER BY eql_v4.ord_term_ore(col)` |
 | `Text` | `string` | none: stored and read only |
 | `Smallint` | `int16`, or any Go integer type (see below) | none |
 | `SmallintEq` | the same | `=`, `<>` |
-| `SmallintOrd`, `SmallintOrdOpe`, `SmallintOrdOre` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `SmallintOrd`, `SmallintOrdOpe` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term(col)` |
+| `SmallintOrdOre` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term_ore(col)` |
 | `Integer` | `int32`, or any Go integer type (see below) | none |
 | `IntegerEq` | the same | `=`, `<>` |
-| `IntegerOrd`, `IntegerOrdOpe`, `IntegerOrdOre` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `IntegerOrd`, `IntegerOrdOpe` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term(col)` |
+| `IntegerOrdOre` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term_ore(col)` |
 | `Bigint` | `int64`, or any Go integer type | none |
 | `BigintEq` | the same | `=`, `<>` |
-| `BigintOrd`, `BigintOrdOpe`, `BigintOrdOre` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `BigintOrd`, `BigintOrdOpe` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term(col)` |
+| `BigintOrdOre` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term_ore(col)` |
 | `Boolean` | `bool` | none |
 | `Real` | `float32` | none |
 | `RealEq` | `float32` | `=`, `<>` |
-| `RealOrd`, `RealOrdOpe`, `RealOrdOre` | `float32` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `RealOrd`, `RealOrdOpe` | `float32` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term(col)` |
+| `RealOrdOre` | `float32` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term_ore(col)` |
 | `Double` | `float64` | none |
 | `DoubleEq` | `float64` | `=`, `<>` |
-| `DoubleOrd`, `DoubleOrdOpe`, `DoubleOrdOre` | `float64` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `DoubleOrd`, `DoubleOrdOpe` | `float64` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term(col)` |
+| `DoubleOrdOre` | `float64` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term_ore(col)` |
 | `Date` | `encrypt.Date` | none |
 | `DateEq` | `encrypt.Date` | `=`, `<>` |
-| `DateOrd`, `DateOrdOpe`, `DateOrdOre` | `encrypt.Date` | `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `DateOrd`, `DateOrdOpe` | `encrypt.Date` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term(col)` |
+| `DateOrdOre` | `encrypt.Date` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term_ore(col)` |
 | `Timestamp` | `time.Time` | none |
 | `TimestampEq` | `time.Time` | `=`, `<>` (to the microsecond, truncated) |
-| `TimestampOrd`, `TimestampOrdOpe`, `TimestampOrdOre` | `time.Time` | `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `TimestampOrd`, `TimestampOrdOpe` | `time.Time` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term(col)` |
+| `TimestampOrdOre` | `time.Time` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term_ore(col)` |
 | `Numeric` | `encrypt.Decimal` | none |
 | `NumericEq` | `encrypt.Decimal` | `=`, `<>` (`1.5 = 1.50`) |
-| `NumericOrd`, `NumericOrdOpe`, `NumericOrdOre` | `encrypt.Decimal` | `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `NumericOrd`, `NumericOrdOpe` | `encrypt.Decimal` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term(col)` |
+| `NumericOrdOre` | `encrypt.Decimal` | `=`, `<>`, `<`, `<=`, `>`, `>=`; sort with `ORDER BY eql_v4.ord_term_ore(col)` |
 | `Json` (`eql.JSON`) | struct, map, slice, or `json.RawMessage` | none: the document is one ciphertext, stored and read back whole; see [Encrypted JSON documents](#encrypted-json-documents) |
 | `JsonSearch` (`eql.JSONSearch`) | struct, map, slice, or `json.RawMessage` | containment, equality at a path, ordering at declared paths, several members of one array element, selection, subtree reads; see [Encrypted JSON documents](#encrypted-json-documents) |
 

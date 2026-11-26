@@ -23,21 +23,39 @@
 //	}
 //
 // encrypt_into names the EQL type the field is stored as. The Go field type
-// must match it: TextEq, TextMatch and Text take a string, Smallint and
-// SmallintEq an int16, Integer and IntegerEq an int32, Bigint and BigintEq
-// an int64, Boolean a bool, Real and RealEq a float32, Double and DoubleEq a
-// float64, Date and DateEq a [Date], Timestamp and TimestampEq a time.Time,
-// and Numeric and NumericEq a [Decimal]. An integer EQL type
-// also takes any other built-in Go integer type, sealed at the type's width:
-// one every value of which fits it (an int16 into Integer) always seals, and
-// a wider one (an int64 into Integer) is range checked, a value that does not
-// fit refused with [ErrEncoding]. The *Eq types answer Eq; the *Ord and
-// *OrdOpe types (IntegerOrd, SmallintOrd, BigintOrd, RealOrd, DoubleOrd,
-// TextOrd and their OrdOpe twins) answer Lt, Lte, Gt and Gte, and Eq too on
-// text; Smallint, Integer, Bigint, Boolean, Real, Double, Text, Date,
-// Timestamp and Numeric are stored and read only. NumericEq compares
-// decimals with their scale normalised (1.5 = 1.50), and TimestampEq
-// compares instants to the microsecond, truncated, never rounded.
+// must match the EQL type's family:
+//
+//   - Text, TextMatch, TextSearch and TextSearchOre: a string
+//   - Smallint: an int16
+//   - Integer: an int32
+//   - Bigint: an int64
+//   - Real: a float32
+//   - Double: a float64
+//   - Date: a [Date]
+//   - Timestamp: a time.Time
+//   - Numeric: a [Decimal]
+//   - Boolean: a bool
+//
+// A family is the plain type and its Eq, Ord, OrdOpe and OrdOre types, such
+// as Integer, IntegerEq, IntegerOrd, IntegerOrdOpe and IntegerOrdOre. An
+// integer EQL type also takes any other built-in Go integer type, sealed at
+// the type's width: one every value of which fits it (an int16 into Integer)
+// always seals, and a wider one (an int64 into Integer) is range checked, a
+// value that does not fit refused with [ErrEncoding].
+//
+// The *Eq types answer Eq. The *Ord, *OrdOpe and *OrdOre types answer Lt,
+// Lte, Gt and Gte, and Eq too on text. TextSearch and TextSearchOre answer
+// Eq, Lt, Lte, Gt, Gte and Matches. Smallint, Integer, Bigint, Boolean,
+// Real, Double, Text, Date, Timestamp and Numeric are stored and read only.
+// NumericEq compares decimals with their scale normalised (1.5 = 1.50), and
+// TimestampEq compares instants to the microsecond, truncated, never
+// rounded.
+//
+// Sort an *Ord, *OrdOpe or TextSearch column with ORDER BY
+// eql_v4.ord_term(col), and an *OrdOre or TextSearchOre column with ORDER BY
+// eql_v4.ord_term_ore(col). A plain ORDER BY col returns rows in the wrong
+// order, with no error, because PostgreSQL sorts the stored JSON, not the
+// values.
 //
 // 3. Run the generator. It writes user_stash.go beside the struct:
 //
@@ -128,9 +146,10 @@
 // time.Time (a timestamp), or a type defined over one of the built-in types.
 // Each integer seals at its own width. Equality applies to every one but a
 // bool. ORE and OPE apply to integers of 16 bits or more, floats, text,
-// bytes, decimals, dates and timestamps. A bool or an 8-bit integer takes no
-// order index, since over so few values its ordering terms would show which
-// rows hold which value.
+// decimals, dates and timestamps. A bool or an 8-bit integer takes no order
+// index, since over so few values its ordering terms would show which rows
+// hold which value. stashgen refuses an order index on bytes, because the
+// engine answers no ordering over bytes.
 //
 // Passthrough fields never cross the binding: the engine does nothing to a
 // passthrough value that a program could observe, and the FFI codec cannot
