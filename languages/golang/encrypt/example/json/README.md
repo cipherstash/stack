@@ -75,8 +75,26 @@ compares case- and accent-folded. A row with more visits than
 `JSONReadOptions.WildcardBound` (64 by default) fails the query with SQLSTATE
 22023. A containment needle made from a
 struct includes every field without `omitempty`, including zero values;
-`main.go` uses a map to name only the member being queried. The prepared
-subtree read returns JSON text, which `encrypt.DecodeJSON[int64]` decodes.
+`main.go` uses a map to name only the member being queried.
+
+The prepared subtree read returns one encrypted entry in each database row.
+`main.go` scans each entry into an `eql.JSONEntry`. `Open` takes a
+`[][]eql.JSONEntry`, one group of entries for each customer. `main.go` reads
+one customer, so it passes one group:
+
+```go
+var entries []eql.JSONEntry
+for rows.Next() {
+	var entry eql.JSONEntry
+	if err := rows.Scan(&entry); err != nil {
+		return fmt.Errorf("scan visit entry: %w", err)
+	}
+	entries = append(entries, entry)
+}
+values, err := read.Open(ctx, [][]eql.JSONEntry{entries})
+```
+
+`Open` returns JSON text. `encrypt.DecodeJSON[int64]` decodes each value.
 
 The example's `SELECT` statements cast parameters to EQL's operand types.
 The age comparison uses the selector derived from the same ordered path as
