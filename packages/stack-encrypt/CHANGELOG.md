@@ -528,8 +528,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     date out of range, a UUID that is not sixteen bytes). Which values a
     field takes is its declared kind's and its indexes' rule, checked
     when the record is split.
-  - `admits` answers for a kind with no value. The order indexes refuse
-    bytes and a UUID in one place.
+  - **`FromFrameError::Value` is removed.** The frame parse refuses a
+    scalar its logical type does not admit, so `from_bytes` refuses it as
+    `FromFrameError::Frame`, as `check` already did. A `match` on
+    `FromFrameError` loses its `Value` arm.
+  - `admits` takes a kind, not a value. The order indexes refuse bytes and
+    a UUID in one place.
 
   No stored byte or frame byte of a value accepted before changes.
 

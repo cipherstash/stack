@@ -5702,6 +5702,7 @@ mod tests {
                     "timestamp",
                     typed(Logical::Timestamp(TimeUnit::Nanos), Tree::Int128(1)),
                 ),
+                ("id", "uuid", typed(Logical::Uuid, Tree::Bytes(vec![7; 16]))),
             ];
             let plan = plan(obj(fields
                 .iter()

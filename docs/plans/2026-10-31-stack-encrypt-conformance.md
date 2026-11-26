@@ -90,7 +90,7 @@ SQL requirements and Python/TypeScript runners remain open.
 
 The [declaration grammar](../../conformance/stack-encrypt/declaration-grammar.md)
 records the implemented syntax and semantic rules, including accepted enum
-aliases, defaults, context composition, all 21 kinds against five scalar indexes,
+aliases, defaults, context composition, all 22 kinds against five scalar indexes,
 null policies and target-capability refusal. Its cases run in native Rust
 and Go WASI without a cipher. Native Rust checks selected normalized plan
 observations; Go's existing checker exposes acceptance and diagnostics only.

@@ -87,6 +87,18 @@
         }
       ]
     },
+    "sealed-null-uuid": {
+      "Context": ["users"],
+      "Fields": [
+        {
+          "Name": "value",
+          "Identity": "value",
+          "Kind": "uuid",
+          "Outputs": ["c", "eq"],
+          "Null": "sealed"
+        }
+      ]
+    },
     "sql-null-untyped": {
       "Context": ["users"],
       "Fields": [

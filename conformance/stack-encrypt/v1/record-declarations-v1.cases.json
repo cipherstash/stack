@@ -608,6 +608,34 @@
       }
     },
     {
+      "id": "sealed-null-uuid",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "uuid",
+            "null": "sealed"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "uuid",
+            "null": "sealed",
+            "outputs": ["c", "eq"]
+          }
+        ]
+      }
+    },
+    {
       "id": "sql-null-untyped",
       "input": {
         "json": {

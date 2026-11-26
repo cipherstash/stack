@@ -88,12 +88,11 @@ pub struct ValueFrame(Equatable<Protected<Vec<u8>>>);
 /// Why [`ValueFrame::from_bytes`] or [`ValueFrame::check`] refused its bytes.
 #[derive(Debug, thiserror::Error)]
 pub enum FromFrameError {
-    /// The bytes are not exactly one well-formed frame.
+    /// The bytes are not exactly one well-formed frame: a malformed
+    /// encoding, trailing bytes, nesting too deep, a repeated map key, or a
+    /// scalar its logical type does not admit, inside a passthrough too.
     #[error(transparent)]
     Frame(FrameError),
-    /// The frame holds a scalar its logical type does not admit.
-    #[error(transparent)]
-    Value(DecodeError),
 }
 
 impl ValueFrame {
@@ -133,10 +132,10 @@ impl ValueFrame {
     ///
     /// # Errors
     ///
-    /// [`FromFrameError::Frame`] when the
-    /// bytes are not exactly one frame, and
-    /// [`FromFrameError::Value`] as
-    /// [`of`](Self::of) refuses a value.
+    /// [`FromFrameError::Frame`] when the bytes are not exactly one
+    /// well-formed frame. The frame parse refuses everything the value model
+    /// refuses, a scalar its logical type does not admit and a repeated key
+    /// among them, so a frame that parses is always in the model.
     pub fn from_bytes(
         bytes: vitaminc_protected::ProtectedRef<'_, [u8]>,
     ) -> Result<Self, FromFrameError> {
@@ -147,7 +146,11 @@ impl ValueFrame {
     /// a passthrough field's frame, which is not secret by contract.
     pub(super) fn from_clear(bytes: &[u8]) -> Result<Self, FromFrameError> {
         let frame = Frame::parse(bytes).map_err(FromFrameError::Frame)?;
-        Self::of(frame).map_err(FromFrameError::Value)
+        // The parse refused every value the writer refuses: an inadmissible
+        // scalar, a repeated key, nesting past the depth bound. A refusal
+        // here would be a frame the parse and the writer disagree on, so it
+        // is the parse's error.
+        Self::of(frame).map_err(|_| FromFrameError::Frame(FrameError))
     }
 
     /// Check frame bytes a host handed over as [`from_bytes`](Self::from_bytes)
