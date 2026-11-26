@@ -309,7 +309,7 @@ with the cases every binding runs. The shape:
   `{"name": "JsonSearch", "options": {"sealed_root": <bool>, "ordered": [<path>, ...]}}`.
 - **`type`** is a [`crate::dynamic::ValueKind`] name: `bool`, `int8` to
   `int128`, `uint8` to `uint128`, `float32`, `float64`, `decimal`, `date`,
-  `timestamp`, `string`, `bytes`, `array`, `object` or `json`. A field with
+  `timestamp`, `string`, `bytes`, `array`, `object`, `uuid` or `json`. A field with
   any index term must declare one: its terms derive from that kind, never
   from whatever tag each value arrives with. The type decides which indexes
   a field may have ([`crate::dynamic::admits`]) and which values it accepts,
@@ -344,8 +344,11 @@ self-describing transport encoding, the same bytes a native Rust value
 describes itself as. The engine never decodes a frame into a tree. It reads
 it in place, walks it into the encrypting sink and the term derivers, and
 drops it. [`crate::dynamic::ValueFrame::from_bytes`] accepts a frame that
-holds one value of the value model, and [`crate::dynamic::ValueFrame::check`]
-checks a record source in place. A decrypted record comes back as a frame
+holds one value, and [`crate::dynamic::ValueFrame::check`] checks a record
+source in place. Both refuse a scalar its logical type does not admit, such
+as a date out of range. A logical type this build does not know is carried
+as it is: an untyped or passthrough field stores it, and no typed field or
+index takes it. A decrypted record comes back as a frame
 too, in a buffer wiped on drop.
 
 **Control messages** are everything else: the plan, a context, query

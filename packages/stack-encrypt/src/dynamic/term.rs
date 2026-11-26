@@ -192,24 +192,28 @@ impl IndexSpec {
 
 /// Whether the order indexes (CLLW ORE and OPE, and block ORE) order this
 /// scalar: an integer of 16 bits or wider, a float, text, or a date,
-/// timestamp or decimal in range. Not bytes, which no ordering operator
-/// compares. Not a boolean, and not an 8-bit integer:
-/// an order term over so small a domain reveals too much, which rows hold
-/// `true`, or each row's rank among 256 values, which a few known rows
-/// resolve to the values. Not a null, and not a uuid or any other logical
-/// type.
+/// timestamp or decimal in range.
+///
+/// Not a boolean, and not an 8-bit integer: an order term over so small a
+/// domain reveals too much, which rows hold `true`, or each row's rank
+/// among 256 values, which a few known rows resolve to the values. Not
+/// bytes and not a UUID, which no ordering operator compares: an order term
+/// of either answers no query and reveals the order of the rows. Not a
+/// null, `undefined`, or a logical type this build does not know.
+///
+/// This is the one place the order indexes refuse bytes and a UUID.
 fn ordered(ty: Option<Logical>, value: &Physical<'_>) -> bool {
     match ty {
         None => match value {
             Physical::Int(Int::I8(_) | Int::U8(_)) | Physical::Null | Physical::Bool(_) => false,
             Physical::Int(_) | Physical::Float(_) | Physical::Text(_) => true,
-            // No ordering operator compares bytes, so an order term of
-            // them answers no query and reveals the order of the rows.
             Physical::Bytes(_) => false,
         },
         Some(Logical::Date) => Date::from_scalar(ty, *value).is_some(),
         Some(Logical::Timestamp(_)) => Timestamp::from_scalar(ty, *value).is_some(),
         Some(Logical::Decimal { .. }) => Decimal::from_scalar(ty, *value).is_some(),
+        // A UUID, `undefined`, and every logical type this build does not
+        // order.
         Some(_) => false,
     }
 }

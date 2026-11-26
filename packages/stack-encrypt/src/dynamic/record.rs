@@ -2230,8 +2230,8 @@ pub(super) fn source_rows(source: impl Encrypt, plan: &Plan) -> Result<Rows<Row>
 }
 
 /// A value refused while the source was split, as the source error that
-/// names its field: a repeated key as [`Reason::RepeatedKey`], a scalar
-/// outside the value model as [`Reason::FieldType`], and anything else (too
+/// names its field: a repeated key as [`Reason::RepeatedKey`], a scalar its
+/// logical type does not admit as [`Reason::FieldType`], and anything else (too
 /// deep or too long for a frame) as [`Reason::Unframeable`]. A refusal that
 /// names no field is the source's shape, [`Reason::NotAnObject`].
 fn split_refusal(error: DecodeError) -> Error {
@@ -8119,6 +8119,170 @@ mod tests {
         }
     }
 
+    /// A UUID is a kind a field declares, and a logical type this build does
+    /// not know is carried only where no type is declared and nothing is
+    /// indexed.
+    mod uuids_and_unknown_logical_types {
+        use super::*;
+        use vitaminc_aead::plaintext::{Int, Logical, Physical, Raw};
+
+        fn uuid() -> Raw<'static> {
+            Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 16]))
+        }
+
+        fn unknown() -> Raw<'static> {
+            Raw(
+                Some(Logical::from_wire(200, 0).expect("an unknown logical type")),
+                Physical::Int(Int::I32(1)),
+            )
+        }
+
+        /// The record `{ "f": value }`, as a host frames it.
+        fn record_of(value: Raw<'_>) -> vitaminc_protected::Buffer {
+            let mut frame = vitaminc_protected::Buffer::new();
+            {
+                let mut map = vitaminc_aead::FrameWriter::new(&mut frame)
+                    .map(Some(1))
+                    .expect("a map");
+                value
+                    .visit(map.entry("f").expect("an entry"))
+                    .expect("written");
+                map.end().expect("ended");
+            }
+            frame
+        }
+
+        /// Seal `{ "f": value }` under a plan whose one field is `field`,
+        /// open it, and give back what it opened to.
+        async fn round_trip(
+            cipher: &StackCipher<Counting>,
+            field: Tree,
+            value: Raw<'_>,
+        ) -> (vitaminc_protected::Buffer, ValueFrame) {
+            let plan = plan(obj(vec![("f", field)])).expect("the plan parses");
+            let sealed = seal_one(cipher, &plan, value).await;
+            let opened = decrypt(cipher, sealed, &plan, None)
+                .expect("the record fits the plan")
+                .await
+                .expect("decrypt");
+            (record_of(value), opened)
+        }
+
+        async fn seal_one(
+            cipher: &StackCipher<Counting>,
+            plan: &Plan,
+            value: Raw<'_>,
+        ) -> StackCipherText {
+            let keyset = cipher.default_keyset();
+            let source = record_of(value);
+            let frame = Frame::parse(crate::Controlled::risky_ref(&source)).expect("a frame");
+            encrypt(&keyset, frame, plan)
+                .expect("the source fits the plan")
+                .await
+                .expect("encrypt")
+        }
+
+        /// A `uuid` field is sealed, opens to the UUID it was given, and
+        /// stores the equality term a probe of the same UUID derives.
+        #[tokio::test]
+        async fn a_uuid_field_is_sealed_and_indexed_for_equality() {
+            let cipher = cipher().await;
+            let field = || typed(label("f"), &["c", "eq"], "uuid");
+            let (source, opened) = round_trip(&cipher, field(), uuid()).await;
+            assert_eq!(opened.risky_ref(), crate::Controlled::risky_ref(&source));
+            let sealed = seal_one(
+                &cipher,
+                &plan(obj(vec![("f", field())])).expect("plan"),
+                uuid(),
+            )
+            .await;
+            let keyset = cipher.default_keyset();
+            let probe = term(
+                &keyset,
+                uuid(),
+                &IndexSpec::Equality,
+                context(label("f")).expect("a context"),
+            )
+            .await
+            .expect("a uuid has an equality term");
+            let mut fields = map(sealed);
+            let mut f = map(node(&mut fields, "f"));
+            assert_eq!(term_bytes(&node(&mut f, "eq")), probe);
+            // Sixteen bytes are bytes, not a UUID: their term differs.
+            let bytes = term(
+                &keyset,
+                Raw(None, Physical::Bytes(&[7; 16])),
+                &IndexSpec::Equality,
+                context(label("f")).expect("a context"),
+            )
+            .await
+            .expect("bytes have an equality term");
+            assert_ne!(bytes, probe);
+        }
+
+        /// A `uuid` field takes no order and no match index, and holds
+        /// nothing but a UUID.
+        #[test]
+        fn a_uuid_field_takes_equality_alone_and_holds_only_uuids() {
+            for index in ["ore", "ope", "ore_block", "match"] {
+                let error = plan(obj(vec![("f", typed(label("f"), &["c", index], "uuid"))]))
+                    .expect_err(index);
+                assert_eq!(error.reason(), Some(Reason::IndexNotAdmitted), "{index}");
+            }
+            let plan = plan(obj(vec![("f", typed(label("f"), &["c"], "uuid"))])).expect("plan");
+            let bytes = record_of(Raw(None, Physical::Bytes(&[7; 16])));
+            let frame = Frame::parse(crate::Controlled::risky_ref(&bytes)).expect("a frame");
+            let error = check_source(frame, &plan).expect_err("bytes are not a uuid");
+            assert_eq!(error.reason(), Some(Reason::FieldType));
+            // And a `bytes` field does not hold a UUID.
+            let plan =
+                super::plan(obj(vec![("f", typed(label("f"), &["c"], "bytes"))])).expect("plan");
+            let source = record_of(uuid());
+            let frame = Frame::parse(crate::Controlled::risky_ref(&source)).expect("a frame");
+            let error = check_source(frame, &plan).expect_err("a uuid is not bytes");
+            assert_eq!(error.reason(), Some(Reason::FieldType));
+        }
+
+        /// A logical type this build does not know is sealed and opened as
+        /// it was written in an untyped field, and carried as it is in a
+        /// passthrough.
+        #[tokio::test]
+        async fn an_unknown_logical_type_is_carried_where_nothing_is_declared() {
+            let cipher = cipher().await;
+            for field in [spec(label("f"), &["c"]), spec(label("f"), &["passthrough"])] {
+                let (source, opened) = round_trip(&cipher, field, unknown()).await;
+                assert_eq!(opened.risky_ref(), crate::Controlled::risky_ref(&source));
+            }
+        }
+
+        /// No declared type holds a value of a logical type this build does
+        /// not know, and no index takes one.
+        #[test]
+        fn an_unknown_logical_type_is_held_by_no_type_and_taken_by_no_index() {
+            for kind in ValueKind::ALL {
+                if kind == ValueKind::Json {
+                    // A document is stored through a target, not here.
+                    continue;
+                }
+                let plan =
+                    plan(obj(vec![("f", typed(label("f"), &["c"], kind.name()))])).expect("plan");
+                let source = record_of(unknown());
+                let frame = Frame::parse(crate::Controlled::risky_ref(&source)).expect("a frame");
+                let error = check_source(frame, &plan).expect_err(kind.name());
+                assert_eq!(error.reason(), Some(Reason::FieldType), "{kind}");
+            }
+            for index in [
+                IndexSpec::Equality,
+                IndexSpec::Match(crate::sem::MatchOptions::default()),
+                IndexSpec::Ore,
+                IndexSpec::Ope,
+                IndexSpec::OreBlock,
+            ] {
+                assert!(!index.defines(unknown()), "{index}");
+            }
+        }
+    }
+
     /// Every refusal names the field it is about, where there is one, and
     /// says why with a [`Reason`]: the message, the accessors and the
     /// payload all carry the same two facts.
@@ -8220,42 +8384,48 @@ mod tests {
             let error = check_source(Tree::Passthrough(Box::new(row(34))), &plan)
                 .expect_err("a passthrough at the top");
             expect(&error, "Source", None, NotAnObject);
-            // A uuid is outside the value model: a frame can carry it, the
-            // engine cannot hold it, and the field is named.
-            let wide = vitaminc_aead::plaintext::Raw(
+            // A value that is not of its field's declared type is refused
+            // naming the field: a UUID or a logical type this build does
+            // not know, in a `uint32` field.
+            let uuid = vitaminc_aead::plaintext::Raw(
                 Some(vitaminc_aead::plaintext::Logical::Uuid),
                 vitaminc_aead::plaintext::Physical::Bytes(&[7; 16]),
             );
-            let mut frame = vitaminc_protected::Buffer::new();
-            {
-                let mut map = vitaminc_aead::FrameWriter::new(&mut frame)
-                    .map(Some(1))
-                    .expect("a map");
-                wide.visit(map.entry("email").expect("an entry"))
-                    .expect("written");
-                map.end().expect("ended");
+            let unknown = vitaminc_aead::plaintext::Raw(
+                Some(vitaminc_aead::plaintext::Logical::from_wire(200, 0).expect("unknown")),
+                vitaminc_aead::plaintext::Physical::Int(vitaminc_aead::plaintext::Int::U32(1)),
+            );
+            let one_field =
+                |field: &str, value: vitaminc_aead::plaintext::Raw<'_>, hidden: bool| {
+                    let mut frame = vitaminc_protected::Buffer::new();
+                    {
+                        let mut map = vitaminc_aead::FrameWriter::new(&mut frame)
+                            .map(Some(1))
+                            .expect("a map");
+                        let entry = map.entry(field).expect("an entry");
+                        if hidden {
+                            entry.passthrough(&value).expect("written");
+                        } else {
+                            value.visit(entry).expect("written");
+                        }
+                        map.end().expect("ended");
+                    }
+                    frame
+                };
+            for value in [uuid, unknown] {
+                let frame = one_field("age", value, false);
+                let source = vitaminc_aead::Frame::parse(crate::Controlled::risky_ref(&frame))
+                    .expect("a frame");
+                let error = check_source(source, &plan).expect_err("not a uint32");
+                expect(&error, "Source", Some("age"), FieldType);
+                // An untyped passthrough carries either as it is.
+                let frame = one_field("id", value, true);
+                let source = vitaminc_aead::Frame::parse(crate::Controlled::risky_ref(&frame))
+                    .expect("a frame");
+                let carried = super::plan(obj(vec![("id", spec(label("id"), &["passthrough"]))]))
+                    .expect("plan");
+                check_source(source, &carried).expect("carried in a passthrough");
             }
-            let source =
-                vitaminc_aead::Frame::parse(crate::Controlled::risky_ref(&frame)).expect("a frame");
-            let error = check_source(source, &plan).expect_err("a uuid field");
-            expect(&error, "Source", Some("email"), FieldType);
-            // The same inside a passthrough subtree: the field is named, and
-            // the cause is the value's type, not an unframeable source.
-            let mut frame = vitaminc_protected::Buffer::new();
-            {
-                let mut map = vitaminc_aead::FrameWriter::new(&mut frame)
-                    .map(Some(1))
-                    .expect("a map");
-                map.entry("id")
-                    .expect("an entry")
-                    .passthrough(&wide)
-                    .expect("written");
-                map.end().expect("ended");
-            }
-            let source =
-                vitaminc_aead::Frame::parse(crate::Controlled::risky_ref(&frame)).expect("a frame");
-            let error = check_source(source, &plan).expect_err("a uuid in a passthrough");
-            expect(&error, "Source", Some("id"), FieldType);
             // Each row of a batch is split the same way, and the first fault
             // in source order names its field.
             let mut repeated = object(row(34));

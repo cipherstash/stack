@@ -10,7 +10,7 @@
 // "ore_block" and "passthrough", and the type names "bool", "int8", "int16", "int32",
 // "int64", "int128", "uint8", "uint16", "uint32", "uint64", "uint128",
 // "float32", "float64", "decimal", "date", "timestamp", "string",
-// "bytes" and "json". A field's context is
+// "bytes", "uuid" and "json". A field's context is
 // its label — the plan's context segments and the field's identity — nested
 // to the left under each part the caller extends it by.
 //
@@ -62,6 +62,9 @@ const (
 	Timestamp Kind = "timestamp"
 	String    Kind = "string"
 	Bytes     Kind = "bytes"
+	// Uuid is a UUID: sixteen bytes under vitaminc's uuid logical type. It
+	// takes an equality index, and no order or match index.
+	Uuid Kind = "uuid"
 	// JSON is a JSON document, which crosses the binding as its UTF-8 JSON
 	// text in a bytes value and opens back to its text. The engine parses
 	// the text by one set of rules (numbers, repeated members, Unicode);
@@ -478,7 +481,7 @@ func (p *Plan) Validate() error {
 func (k Kind) Known() bool {
 	switch k {
 	case Untyped, Bool, Int8, Int16, Int32, Int64, Int128, Uint8, Uint16, Uint32, Uint64, Uint128,
-		Float32, Float64, Decimal, Date, Timestamp, String, Bytes, JSON:
+		Float32, Float64, Decimal, Date, Timestamp, String, Bytes, Uuid, JSON:
 		return true
 	}
 	return false

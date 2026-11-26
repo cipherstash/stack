@@ -13,6 +13,13 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Added
+
+- `gensupport.Uuid`, the kind `"uuid"`: a field the engine seals and
+  opens as a UUID, sixteen bytes under vitaminc's UUID logical type. It
+  takes an equality index and no order or match index. `stashgen` does
+  not yet map a Go type to it.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

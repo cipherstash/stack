@@ -1957,6 +1957,87 @@
       }
     },
     {
+      "id": "type-uuid-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "uuid"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uuid-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "uuid"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-uuid-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "uuid"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-uuid-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "uuid"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-uuid-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "uuid"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
       "id": "type-array-eq",
       "input": {
         "json": {
@@ -2453,7 +2534,7 @@
           "value": {
             "context": ["users", "value"],
             "outputs": ["c"],
-            "type": "uuid"
+            "type": "guid"
           }
         }
       },

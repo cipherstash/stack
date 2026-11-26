@@ -49,6 +49,8 @@ const (
 	Timestamp Kind = "timestamp"
 	String    Kind = "string"
 	Bytes     Kind = "bytes"
+	// Uuid is a UUID: sixteen bytes under vitaminc's uuid logical type.
+	Uuid Kind = "uuid"
 	// JSON is a field stored as a JSON document (the EQL types JSONSearch
 	// and JSON): it crosses as its JSON text, which the engine parses. A json.RawMessage is that
 	// text; a field of another Go type is marshalled with encoding/json

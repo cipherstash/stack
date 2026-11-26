@@ -91,7 +91,7 @@ ValueKind = "bool"
           | "int8" | "int16" | "int32" | "int64" | "int128"
           | "uint8" | "uint16" | "uint32" | "uint64" | "uint128"
           | "float32" | "float64" | "decimal" | "date" | "timestamp"
-          | "string" | "bytes" | "array" | "object" | "json"
+          | "string" | "bytes" | "array" | "object" | "uuid" | "json"
 ```
 
 `outputs` and `target` are exclusive and one must be present. Present optional
@@ -177,14 +177,15 @@ select a different leaf encoding.
 | float32, float64, decimal, date, timestamp | Admitted | Refused | Admitted |
 | string | Admitted | Admitted | Admitted |
 | bytes | Admitted | Refused | Refused |
+| uuid | Admitted | Refused | Refused |
 | array, object, json | Refused | Refused | Refused |
 
 An index is admitted only over a kind one of its operators answers. Bytes
-have no order term: no ordering operator compares them, so a term would be
-stored and never queried. The order indexes are refused on bytes as
-`index_not_admitted`.
+and UUIDs have no order term: no ordering operator compares them, so a term
+would be stored and never queried. The order indexes are refused on bytes
+and UUIDs as `index_not_admitted`.
 
-The corpus explicitly tests all 21 kinds against all five scalar indexes.
+The corpus explicitly tests all 22 kinds against all five scalar indexes.
 `array` and `object` may still be sealed without indexes. A `json` field requires
 a document target. A raw `json` output has a recognized syntax but is refused as
 `json_index_pending`; it is not an alternative to a document target.
@@ -209,7 +210,7 @@ an untyped value's ability to represent null is not an implicit nullable column.
 | Policy | Declaration requirements | Runtime meaning |
 |---|---|---|
 | `sql` | Any non-passthrough field | Missing/null source leaves no encrypted field output; the host stores SQL NULL |
-| `sealed` | A fixed-width bool, number, decimal, date or timestamp; only equality indexes, if any | Missing/null source is sealed with type-appropriate padding; equality uses the field's null term |
+| `sealed` | A fixed-width bool, number, decimal, date, timestamp or UUID; only equality indexes, if any | Missing/null source is sealed with type-appropriate padding; equality uses the field's null term |
 
 Text, bytes and composite kinds cannot request sealed null. Passthrough cannot
 request either policy. These cases check declaration admissibility only; runtime

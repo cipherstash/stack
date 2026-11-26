@@ -226,6 +226,12 @@ func TestWireGivesATargetItsOptions(t *testing.T) {
 	if !JSON.Known() {
 		t.Fatal("json is a kind")
 	}
+	if !Uuid.Known() || Uuid != "uuid" {
+		t.Fatal("uuid is a kind, named uuid")
+	}
+	if Kind("guid").Known() {
+		t.Fatal("guid is not a kind")
+	}
 }
 
 // Ordered paths group by the array their last wildcard names, each one a

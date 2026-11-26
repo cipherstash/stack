@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as a value. It takes an equality index, whose term never matches the same
   sixteen bytes stored as a byte string. It takes no order index: one does
   not compile. The type is behind the new `uuid` feature, on by default
-  beside `jiff` and `rust_decimal`. The dynamic path still refuses a UUID
-  (#1821).
+  beside `jiff` and `rust_decimal`. A data plan declares a UUID field as
+  `"uuid"` (#1918).
 
 - **Read one child of a JSON node, checked against its parent** (#1677).
   Your app can now read one level of a document without fetching the
@@ -503,6 +503,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   apply when the pending is awaited, not when the term is described.
 
 ### Breaking
+
+- **The engine no longer keeps its own list of the value types it
+  accepts; each index says which kinds it takes** (#1918). What changes:
+  - **A field can be declared `"uuid"`.** `dynamic::ValueKind::Uuid` is a
+    new kind, named `"uuid"`: sixteen bytes under vitaminc's UUID logical
+    type. A `uuid` field is sealed, opened and refused like any other
+    typed field: it holds a UUID and nothing else, and a `bytes` field
+    does not hold a UUID. Its null can be sealed (`"null": "sealed"`) as
+    long as a value. It takes an equality index, whose term is the one
+    `vitaminc-normalize` gives a UUID and never matches the same sixteen
+    bytes as a byte string. It takes no order index and no match index:
+    a plan that asks for one is refused with `index_not_admitted`. A
+    `match` on `ValueKind` that lists every variant needs a `Uuid` arm.
+  - **A UUID in an untyped or passthrough field is stored.** It was
+    refused when the source was read. It is sealed, or carried, in the
+    `0xF3` envelope it arrived in, and opens to the same bytes.
+  - **A logical type this build does not know is carried as it is.** An
+    untyped field seals it and a passthrough carries it, and each opens to
+    the bytes it was written as. It has no `ValueKind`, so no typed field
+    holds it and no index takes it, as before.
+  - `ValueFrame::check` and `ValueFrame::from_bytes` refuse only a frame
+    that is not one value, or a scalar its logical type does not admit (a
+    date out of range, a UUID that is not sixteen bytes). Which values a
+    field takes is its declared kind's and its indexes' rule, checked
+    when the record is split.
+  - `admits` answers for a kind with no value. The order indexes refuse
+    bytes and a UUID in one place.
+
+  No stored byte or frame byte of a value accepted before changes.
 
 - **A timestamp keeps the unit the host wrote it in** (#1846). A
   `ValueFrame` no longer rewrites a timestamp in seconds, milliseconds or
