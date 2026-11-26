@@ -18,8 +18,9 @@
 //! pinned value, and shows in the fixture's diff.
 //!
 //! Regenerate with `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p
-//! stack-encrypt --all-features --test value_bytes`. Nothing in it depends
-//! on a nonce, so a run that changes it
+//! stack-encrypt --all-features --test value_bytes`, then run `pnpm run
+//! code:fix` to format it. Nothing in it depends on a nonce, so a run that
+//! changes it
 //! changed what is written. The schema is in the README beside the fixture.
 #![cfg(feature = "dynamic")]
 
@@ -772,7 +773,7 @@ async fn value_bytes_are_the_pinned_bytes() {
         "json": json_section(&cipher, &keys).await,
     });
     let mut document = json!({
-        "_comment": "Pinned bytes of every way a plaintext value is written: its transport frame, the plaintext its sealed leaf holds, and a sealed null's leaf, for the typed Rust path and the dynamic record path. Read by tests/value_bytes.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; never edit by hand.",
+        "_comment": "Pinned bytes of every way a plaintext value is written: its transport frame, the plaintext its sealed leaf holds, and a sealed null's leaf, for the typed Rust path and the dynamic record path. Read by tests/value_bytes.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1, then run pnpm run code:fix; never edit by hand.",
         "key_source": { "kind": "deterministic-sha256", "seed": hex(&SEED) },
         "context": CONTEXT,
     });
@@ -781,7 +782,11 @@ async fn value_bytes_are_the_pinned_bytes() {
     }
     let path = fixture_path();
     if update {
-        std::fs::write(&path, common::biome_json(&document)).expect("write the fixture");
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&document).unwrap() + "\n",
+        )
+        .expect("write the fixture");
         return;
     }
     let committed: Json =

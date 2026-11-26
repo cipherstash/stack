@@ -325,9 +325,9 @@ file.
 It pins today's behaviour, including rules that may change on purpose. A
 change to one of them is a reviewed change to this file. Regenerate with
 `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p stack-encrypt --all-features
---test value_bytes`, which writes the file in Biome's layout, so it passes
-`pnpm run code:check` as written. The test compares the parsed file, not
-its text, and compares all of it, so a key it no longer writes fails it. Nothing in it depends on a nonce. Do not edit it
+--test value_bytes`, then run `pnpm run code:fix` to format it. The test
+compares the parsed file, not its text, and compares all of it, so a key
+it no longer writes fails it. Nothing in it depends on a nonce. Do not edit it
 by hand.
 
 ```json
