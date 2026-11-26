@@ -60,7 +60,7 @@ The package reference is on [pkg.go.dev]; the generator's reference is
    	return err
    }
    defer client.Close()
-   cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
+   cipher := client.Keyset(encrypt.KeysetName("tenant42"))
 
    encrypted, err := users.Encrypt(ctx, cipher, people)
    opened, err := users.Decrypt(ctx, cipher, encrypted)
@@ -83,6 +83,10 @@ The package reference is on [pkg.go.dev]; the generator's reference is
    ```sql
    SELECT id, email, name, age FROM users WHERE email = $1::eql_v4.query_text_eq
    ```
+
+   Without the cast, the query fails with "violates check constraint".
+   [Cast each query parameter](#cast-each-query-parameter) says why, and
+   lists the cast for each EQL type.
 
    A field tagged `encrypt` or `index=` stores its ciphertext and each term
    as separate byte columns instead; see [What is stored](#what-is-stored).
@@ -203,7 +207,7 @@ A `Cipher` is the client bound to one keyset, and to any extension of the
 context. Every generated function takes one.
 
 ```go
-cipher := client.Keyset(encrypt.KeysetName("tenant-42")).Extend("tenant-42")
+cipher := client.Keyset(encrypt.KeysetName("tenant42")).Extend("tenant-42")
 ```
 
 `Extend` appends to the context that the tags declare, for every field, in
@@ -473,16 +477,22 @@ is refused, because `Verify` checks a match query's rows by decrypting them.
 
 Every query type implements `driver.Valuer`, so it binds as a parameter in
 any library built on `database/sql` or pgx. A `Range` binds as two
-parameters, `Low` and `High`. On an EQL column a range is one value instead:
-package `encrypt/eql` has a range query type per ordered family and order
-index (`eql.IntegerRangeOreQuery`, `eql.TextRangeOpeQuery`, ...), the one
-operand of `eql_v4.between(column, $1::eql_v4.query_integer_range_ore)`. Keep
-the cast to the exact range domain: an uncast `$1`, a `jsonb` parameter, or a
-range of another term or family fails with SQLSTATE 42725 ("function ... is
-not unique"), unlike the single-bound operators, which resolve an untyped
-`$1`. The ordered EQL types are producible, but `stashgen` does not yet
-generate a `Between` method or construct these range query values. Their
-generated fields expose the four single-bound comparisons.
+parameters: `Low`, then `High`.
+
+On an EQL column a range is one value instead. Package `encrypt/eql` has a
+range query type for each ordered family and order index, such as
+`eql.IntegerRangeOreQuery` and `eql.TextRangeOpeQuery`. The range query value
+is the one operand of
+`eql_v4.between(column, $1::eql_v4.query_integer_range_ore)`.
+
+Cast the range parameter to the exact range domain. An uncast `$1`, a `jsonb`
+parameter, or a range of another term or family fails with SQLSTATE 42725
+("function ... is not unique"). A single-bound operator needs its cast too:
+see [Cast each query parameter](#cast-each-query-parameter).
+
+The ordered EQL types are producible. `stashgen` does not yet generate a
+`Between` method or construct these range query values. The generated fields
+of these types have the four single-bound comparisons.
 
 `Eq`, the orderings and `Between` are exact: the server's answer is the
 answer. `Matches` is probabilistic: the server answers with every row whose
@@ -521,7 +531,7 @@ rows, err := db.QueryContext(ctx, `
 	SELECT id, email, email_eq, email_match, age, age_eq, age_ore FROM users
 	WHERE match_positions(email_match) @> match_positions($1)
 	ORDER BY id LIMIT $2`, q, limit.FetchOr(50))
-// scan each row into a users.Encrypted, then
+// scan each row into a users.EncryptedUser, then
 people, err := users.Decrypt(ctx, cipher, encrypted)
 emails := make([]string, len(people))
 for i, p := range people {
@@ -757,6 +767,72 @@ The EQL value stores the table and the column alone, in `i`, so:
   under that binding, so a read through a cipher with a binding reads that
   binding's row.
 
+### Cast each query parameter
+
+Cast every query parameter on an EQL column to the column's query type. A
+column of type `public.eql_v4_<name>` takes `$1::eql_v4.query_<name>`:
+
+```sql
+SELECT id FROM users WHERE email = $1::eql_v4.query_text_eq
+SELECT id FROM accounts WHERE balance > $1::eql_v4.query_bigint_ord
+```
+
+The cast is needed because EQL defines each operator with the column's own
+type on both sides. So PostgreSQL reads an uncast `$1` as the column's type.
+A value of that type must contain a ciphertext. A query value contains only
+a term, so the query fails with an error such as `value for domain
+eql_v4_text_eq violates check constraint "eql_v4_text_eq_check"`.
+
+The cast for each EQL type that has queries:
+
+| EQL type (`encrypt_into=`) | Column type | Cast |
+|---|---|---|
+| `TextEq` | `public.eql_v4_text_eq` | `$1::eql_v4.query_text_eq` |
+| `TextMatch` | `public.eql_v4_text_match` | `$1::eql_v4.query_text_match` |
+| `TextOrd` | `public.eql_v4_text_ord` | `$1::eql_v4.query_text_ord` |
+| `TextOrdOpe` | `public.eql_v4_text_ord_ope` | `$1::eql_v4.query_text_ord_ope` |
+| `TextOrdOre` | `public.eql_v4_text_ord_ore` | `$1::eql_v4.query_text_ord_ore` |
+| `TextSearch` | `public.eql_v4_text_search` | `$1::eql_v4.query_text_search` |
+| `TextSearchOre` | `public.eql_v4_text_search_ore` | `$1::eql_v4.query_text_search_ore` |
+| `SmallintEq` | `public.eql_v4_smallint_eq` | `$1::eql_v4.query_smallint_eq` |
+| `SmallintOrd` | `public.eql_v4_smallint_ord` | `$1::eql_v4.query_smallint_ord` |
+| `SmallintOrdOpe` | `public.eql_v4_smallint_ord_ope` | `$1::eql_v4.query_smallint_ord_ope` |
+| `SmallintOrdOre` | `public.eql_v4_smallint_ord_ore` | `$1::eql_v4.query_smallint_ord_ore` |
+| `IntegerEq` | `public.eql_v4_integer_eq` | `$1::eql_v4.query_integer_eq` |
+| `IntegerOrd` | `public.eql_v4_integer_ord` | `$1::eql_v4.query_integer_ord` |
+| `IntegerOrdOpe` | `public.eql_v4_integer_ord_ope` | `$1::eql_v4.query_integer_ord_ope` |
+| `IntegerOrdOre` | `public.eql_v4_integer_ord_ore` | `$1::eql_v4.query_integer_ord_ore` |
+| `BigintEq` | `public.eql_v4_bigint_eq` | `$1::eql_v4.query_bigint_eq` |
+| `BigintOrd` | `public.eql_v4_bigint_ord` | `$1::eql_v4.query_bigint_ord` |
+| `BigintOrdOpe` | `public.eql_v4_bigint_ord_ope` | `$1::eql_v4.query_bigint_ord_ope` |
+| `BigintOrdOre` | `public.eql_v4_bigint_ord_ore` | `$1::eql_v4.query_bigint_ord_ore` |
+| `RealEq` | `public.eql_v4_real_eq` | `$1::eql_v4.query_real_eq` |
+| `RealOrd` | `public.eql_v4_real_ord` | `$1::eql_v4.query_real_ord` |
+| `RealOrdOpe` | `public.eql_v4_real_ord_ope` | `$1::eql_v4.query_real_ord_ope` |
+| `RealOrdOre` | `public.eql_v4_real_ord_ore` | `$1::eql_v4.query_real_ord_ore` |
+| `DoubleEq` | `public.eql_v4_double_eq` | `$1::eql_v4.query_double_eq` |
+| `DoubleOrd` | `public.eql_v4_double_ord` | `$1::eql_v4.query_double_ord` |
+| `DoubleOrdOpe` | `public.eql_v4_double_ord_ope` | `$1::eql_v4.query_double_ord_ope` |
+| `DoubleOrdOre` | `public.eql_v4_double_ord_ore` | `$1::eql_v4.query_double_ord_ore` |
+| `DateEq` | `public.eql_v4_date_eq` | `$1::eql_v4.query_date_eq` |
+| `DateOrd` | `public.eql_v4_date_ord` | `$1::eql_v4.query_date_ord` |
+| `DateOrdOpe` | `public.eql_v4_date_ord_ope` | `$1::eql_v4.query_date_ord_ope` |
+| `DateOrdOre` | `public.eql_v4_date_ord_ore` | `$1::eql_v4.query_date_ord_ore` |
+| `TimestampEq` | `public.eql_v4_timestamp_eq` | `$1::eql_v4.query_timestamp_eq` |
+| `TimestampOrd` | `public.eql_v4_timestamp_ord` | `$1::eql_v4.query_timestamp_ord` |
+| `TimestampOrdOpe` | `public.eql_v4_timestamp_ord_ope` | `$1::eql_v4.query_timestamp_ord_ope` |
+| `TimestampOrdOre` | `public.eql_v4_timestamp_ord_ore` | `$1::eql_v4.query_timestamp_ord_ore` |
+| `NumericEq` | `public.eql_v4_numeric_eq` | `$1::eql_v4.query_numeric_eq` |
+| `NumericOrd` | `public.eql_v4_numeric_ord` | `$1::eql_v4.query_numeric_ord` |
+| `NumericOrdOpe` | `public.eql_v4_numeric_ord_ope` | `$1::eql_v4.query_numeric_ord_ope` |
+| `NumericOrdOre` | `public.eql_v4_numeric_ord_ore` | `$1::eql_v4.query_numeric_ord_ore` |
+| `JsonSearch` | `public.eql_v4_json_search` | one for each query, such as `$1::eql_v4.query_json` for `Contains`; see [Encrypted JSON documents](#encrypted-json-documents) |
+
+The other EQL types, such as `Text` and `Integer`, are stored and read only,
+so they take no query parameter. In Go, `eql.Types` lists the same casts: a
+type's `QuerySQLDomain` is the type to cast to. A range on an ordered type
+has a cast of its own, described in [Queries](#queries).
+
 ### Encrypted JSON documents
 
 There are two EQL types for a JSON document. `Json` stores it as one
@@ -990,7 +1066,7 @@ CipherStash credentials. Use it in CI that has no route to ZeroKMS.
 
    func TestSaveUser(t *testing.T) {
    	client := encrypttest.NewClient(t)
-   	cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
+   	cipher := client.Keyset(encrypt.KeysetName("tenant42"))
    ```
 
 3. Call your code with it, as you would call it with a production client.

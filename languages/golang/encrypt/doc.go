@@ -52,7 +52,7 @@
 //		return err
 //	}
 //	defer client.Close()
-//	cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
+//	cipher := client.Keyset(encrypt.KeysetName("tenant42"))
 //	encrypted, err := users.Encrypt(ctx, cipher, people) // []users.EncryptedUser
 //	opened, err := users.Decrypt(ctx, cipher, encrypted) // []users.User
 //	term, err := users.Fields.Email.Eq(ctx, cipher, "bob@example.com")
@@ -70,6 +70,13 @@
 // the column's query type:
 //
 //	SELECT id, email, name, age FROM users WHERE email = $1::eql_v4.query_text_eq
+//
+// Without the cast, the query fails with "violates check constraint".
+// PostgreSQL reads an uncast $1 as the column's own type. A value of that type
+// must contain a ciphertext, and a query value contains only a term. A column of
+// type public.eql_v4_<name> takes $1::eql_v4.query_<name>. The package README
+// lists the cast for each EQL type, and the QuerySQLDomain of each entry in
+// eql.Types names it.
 //
 // A field tagged encrypt or index= stores its ciphertext ([Ciphertext]) and
 // each term as separate byte columns instead; see Terms below.

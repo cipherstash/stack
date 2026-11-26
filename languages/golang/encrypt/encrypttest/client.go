@@ -57,7 +57,7 @@ func WithSeed(seed [32]byte) ClientOption {
 //
 //	func TestSaveUser(t *testing.T) {
 //		client := encrypttest.NewClient(t)
-//		cipher := client.Keyset(encrypt.KeysetName("tenant-a"))
+//		cipher := client.Keyset(encrypt.KeysetName("tenant42"))
 //
 //		rows, err := users.Encrypt(t.Context(), cipher, []users.User{{Email: "ada@example.com"}})
 //		if err != nil {
