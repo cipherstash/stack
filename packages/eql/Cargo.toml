@@ -35,3 +35,11 @@ default-members = ["tests/sqlx"]
 [workspace.lints.rust]
 dead_code = "deny"
 unused_imports = "deny"
+
+# vitaminc-aead 0.10 and its sibling crates live in this repository and are
+# not published from here yet. Build against the copies, as the root
+# workspace does (see its [patch.crates-io]).
+[patch.crates-io]
+vitaminc-aead = { path = "../vitaminc-aead" }
+vitaminc-aead-frame = { path = "../vitaminc-aead-frame" }
+vitaminc-aead-derive = { path = "../vitaminc-aead-derive" }

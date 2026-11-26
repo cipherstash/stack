@@ -22,9 +22,13 @@ on:
       - packages/stack-kms/**
       - packages/stack-encrypt/**
       - conformance/stack-encrypt/**
+      - conformance/vitaminc-aead/**
       - packages/stack-encrypt-derive/**
       - packages/stack-encrypt-jsonpath/**
       - packages/stack-guest-abi/**
+      - packages/vitaminc-aead/**
+      - packages/vitaminc-aead-frame/**
+      - packages/vitaminc-aead-derive/**
       - languages/typescript/packages/auth/**
       - languages/typescript/packages/profile/**
       - languages/typescript/packages/stack-auth-wasm/**
@@ -47,9 +51,13 @@ on:
       - packages/stack-kms/**
       - packages/stack-encrypt/**
       - conformance/stack-encrypt/**
+      - conformance/vitaminc-aead/**
       - packages/stack-encrypt-derive/**
       - packages/stack-encrypt-jsonpath/**
       - packages/stack-guest-abi/**
+      - packages/vitaminc-aead/**
+      - packages/vitaminc-aead-frame/**
+      - packages/vitaminc-aead-derive/**
       - languages/typescript/packages/auth/**
       - languages/typescript/packages/profile/**
       - languages/typescript/packages/stack-auth-wasm/**
@@ -131,6 +139,11 @@ jobs:
       # Every test binary in the workspace, the trybuild `ui` binary included.
       - name: nextest
         run: mise x --env test -- cargo nextest run --locked --workspace --all-features
+
+      # The run above turns every feature on at once; this tests the AEAD
+      # crates' optional features one at a time.
+      - name: vitaminc-aead feature combinations
+        run: mise run test:vitaminc-aead:features
 
       - name: doctests
         run: mise run test:doc

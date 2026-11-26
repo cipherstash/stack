@@ -1,0 +1,5 @@
+error: `#[aead(skip)]` is meaningless on a newtype struct: a newtype is transparent, so skipping its only field would leave nothing to encrypt. Give the struct a named field instead.
+ --> tests/ui/derive/sink_skip_on_newtype.rs:6:8
+  |
+6 | struct Wrapper(#[aead(skip)] String);
+  |        ^^^^^^^

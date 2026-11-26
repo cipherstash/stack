@@ -11,7 +11,14 @@ Status: draft, rewritten 26 November 2026. Decisions by Dan Draper:
 - No more work on the TypeScript SDK until this is done.
 - vitaminc's Go packages `vcffi` and `vcvalue` move too, as a third stage,
   before the Go SDK's final release. vitaminc's `vcencrypt` is deleted.
-- An order index takes no bytes and no UUID.
+- An order index takes no bytes and no UUID. If `vitaminc-ore` ever moves
+  into this repository, its UUID order target (behind its `uuid` feature) and
+  its bytes order target are removed. Until then, the engine refuses both in
+  stage 2.3.
+- Fixtures follow the rule in `packages/stack-encrypt/tests/fixtures/README.md`
+  and `packages/eql/tests/encryption/fixtures/README.md`: every fixture is
+  Biome-formatted, you run `pnpm run code:fix` after regenerating one, and
+  each test compares its fixture as parsed JSON.
 - The moved code keeps the MIT licence, which is this repository's licence.
 - Nobody outside CipherStash uses the moved crates.
 
@@ -203,8 +210,12 @@ published crates file by file.
 
 While the crates are unpublished:
 
-- **`stack-encrypt` cannot be published.** A published crate cannot depend
-  on a path, and a consumer has no `[patch]` table.
+- **A release from this repository builds against crates.io's copy.**
+  `cargo publish` drops `[patch]` tables, so a published `stack-encrypt`,
+  `stack-kms` or `stack-auth` depends on crates.io's `vitaminc-aead` 0.10.x,
+  not on the copy here. A release that needs a change made in the copies
+  waits until the copies are published (see "Before the next
+  `stack-encrypt` release").
 - **The Go and TypeScript SDKs are not affected.** Both build the engine by
   path from the tree.
 - **`eql-bindings` can be published until step 2.4.** Its `stack-encrypt`
@@ -275,8 +286,10 @@ Delete the allow-list. An index refuses a type it cannot handle:
 
 - **Equality:** already asks `vitaminc-normalize`.
 - **Order:** no boolean, no 8-bit integer, no bytes and no UUID.
-  `vitaminc-ore` already refuses the first two. It allows bytes and a UUID,
-  so the engine's order index refuses those, in one place.
+  `vitaminc-ore` already refuses the first two. It allows bytes, and a UUID
+  behind its `uuid` feature, so the engine's order index refuses those, in
+  one place. Nothing in this repository turns on `vitaminc-ore`'s `uuid`
+  feature, and `stack-encrypt` names no bytes order target.
 - **Match:** text only.
 
 A plan is refused when it is built, before a value arrives. The index answers
@@ -378,16 +391,17 @@ The work:
 
 ## Checks that must move with the code
 
-vitaminc runs checks that this repository does not. Each needs a home in this
-repository's CI before its code moves:
+vitaminc runs checks on these crates that this repository did not.
 
-- Kani proofs, including `kani-storage`;
-- sanitizers;
-- the storage corpus append-only check;
-- `cargo vet` and `cargo deny`;
-- the fuzz targets of the moved crates;
-- Miri for the moved crates;
-- mutation testing. `stack-encrypt` already has it, with `--in-diff`.
+- The storage corpus append-only check moves with the code, in stage 1. It
+  runs in `storage-corpus.yml` on a pull request that changes the corpus or
+  the script.
+- The rest land in #1837: Kani proofs, including `kani-storage`;
+  sanitizers; `cargo vet` and `cargo deny`; the fuzz targets of the moved
+  crates; and Miri for the moved crates.
+- Mutation testing: `stack-encrypt` already has it, with `--in-diff`.
+
+No pull request changes the three imported crates until #1837 has merged.
 
 ## Open questions
 

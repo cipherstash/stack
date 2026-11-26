@@ -1,10 +1,12 @@
 [workspace]
 resolver = "2"
 
-# The stack-* crates imported from cipherstash-suite, and the three node
-# bindings that wrap them. The root is one of three Cargo workspaces in this
-# repository: EQL and protect-ffi keep their own, and pin their own vitaminc
-# (see `exclude`).
+# The stack-* crates imported from cipherstash-suite, the three node bindings
+# that wrap them, and the three AEAD crates moved from cipherstash/vitaminc.
+# The root is one of three Cargo workspaces in this repository: EQL and
+# protect-ffi keep their own (see `exclude`). EQL patches vitaminc-aead to the
+# copies here, as this workspace does; protect-ffi resolves no vitaminc-aead
+# 0.10.
 members = [
   "packages/stack-auth",
   "packages/stack-profile",
@@ -13,6 +15,11 @@ members = [
   "packages/stack-encrypt-derive",
   "packages/stack-encrypt-jsonpath",
   "packages/stack-guest-abi",
+  # The AEAD crates moved from cipherstash/vitaminc, under their crates.io
+  # names. Not published from here yet; see the patch table at the end.
+  "packages/vitaminc-aead",
+  "packages/vitaminc-aead-frame",
+  "packages/vitaminc-aead-derive",
   "languages/typescript/packages/auth",
   "languages/typescript/packages/profile",
   "languages/typescript/packages/stack-auth-wasm",
@@ -146,10 +153,11 @@ zeroize = { version = "1.8.1", features = ["derive"] }
 # This is needed because lock_api 0.4.6 was breaking things and the branch forces the use of 0.4.12
 temp-env = { git = "https://github.com/cipherstash/temp-env", branch = "main" }
 vitaminc = { version = "0.10.0", features = ["random", "protected", "encrypt"] }
-vitaminc-aead = "0.10.0"
+# The AEAD crates live in this repository (packages/vitaminc-aead*).
+vitaminc-aead = { path = "./packages/vitaminc-aead", version = "0.10.0" }
 # The transport frame and ciphertext codec every language binding carries
 # across its FFI boundary. Optional in stack-encrypt (the `dynamic` feature).
-vitaminc-aead-frame = "0.10.0"
+vitaminc-aead-frame = { path = "./packages/vitaminc-aead-frame", version = "0.10.0" }
 vitaminc-encrypt = "0.10.0"
 vitaminc-hmac = "0.10.0"
 # Normalized equality terms (Unicode 16 NFC text, one integer encoding for
@@ -160,3 +168,17 @@ vitaminc-normalize = "0.10.0"
 vitaminc-ore = { version = "0.10.0", features = ["prf"] }
 vitaminc-prf = { version = "0.10.0", features = ["normalize"] }
 vitaminc-protected = "0.10.0"
+
+# The AEAD crates moved here from cipherstash/vitaminc and are not published
+# from here yet. The vitaminc crates that stay on crates.io (the `vitaminc`
+# umbrella, vitaminc-normalize, -prf, -ore and -encrypt) and the order
+# schemes clww-ore and ore-rs depend on vitaminc-aead 0.10. This table makes
+# them build against the copy here, so the build has one vitaminc-aead 0.10,
+# and its types are the ones stack-encrypt passes into them. It applies only
+# to the 0.10 line: the vitaminc-aead 0.5.1 that cts-common reaches through
+# vitaminc 0.5.1 still comes from crates.io. Every other workspace that
+# resolves these crates carries the same table.
+[patch.crates-io]
+vitaminc-aead = { path = "./packages/vitaminc-aead" }
+vitaminc-aead-frame = { path = "./packages/vitaminc-aead-frame" }
+vitaminc-aead-derive = { path = "./packages/vitaminc-aead-derive" }

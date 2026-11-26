@@ -1121,8 +1121,6 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vitaminc-aead"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fcccedca9d80812af295cba43dc2ac388f4fbb0415faa3ebec783d072d014d8"
 dependencies = [
  "bytes",
  "futures-util",
@@ -1140,8 +1138,6 @@ dependencies = [
 [[package]]
 name = "vitaminc-aead-derive"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3de85a0ff50572db91a5528b72775f63d57a2b24b8263fb8e728baf6a7731502"
 dependencies = [
  "proc-macro2",
  "quote",
