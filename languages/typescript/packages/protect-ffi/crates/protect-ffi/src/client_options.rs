@@ -41,6 +41,9 @@ use serde::{Deserialize, Deserializer};
 use uuid::Uuid;
 
 use crate::encrypt_config::EncryptConfigInput;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::keyset_check::CheckedKeyProvider;
+use crate::keyset_check::{check_keyset, KeysetCheck};
 use crate::DenyUnknown;
 use crate::Error;
 
@@ -81,6 +84,13 @@ where
 /// {c:?} at position {index}`, which would put a character of the caller's
 /// actual key, and its offset, into a message bound for logs and error
 /// trackers.
+///
+/// **A key whose permutations are not valid is refused here** (#1911), before
+/// cipherstash-client sees it. recipher loops forever, or panics, on such a key
+/// when it derives the first key, and one changed character in `CS_CLIENT_KEY`
+/// is enough. See [`crate::keyset_check`]. Bytes that are not a keyset at all
+/// are left to `ClientKey::from_bytes`, which refuses them without deriving a
+/// key.
 fn deserialize_hex_key<'de, D>(deserializer: D) -> Result<Option<ViturKeyMaterial>, D::Error>
 where
     D: Deserializer<'de>,
@@ -88,9 +98,17 @@ where
     let Some(raw) = Option::<String>::deserialize(deserializer)? else {
         return Ok(None);
     };
-    hex::decode(raw.as_bytes())
-        .map(|bytes| Some(ViturKeyMaterial::from(bytes)))
-        .map_err(|_| serde::de::Error::custom("invalid clientKey: expected a hex-encoded key"))
+    let key = hex::decode(raw.as_bytes())
+        .map(ViturKeyMaterial::from)
+        .map_err(|_| serde::de::Error::custom("invalid clientKey: expected a hex-encoded key"))?;
+    // On refusal `key` is dropped here, and `ViturKeyMaterial` wipes it.
+    if check_keyset(&key) == KeysetCheck::InvalidPermutations {
+        return Err(serde::de::Error::custom(
+            "invalid clientKey (CS_CLIENT_KEY): the key's permutations are not valid. The key \
+             may have been changed or cut short. Set it to the client key you were given",
+        ));
+    }
+    Ok(Some(key))
 }
 
 /// Credential fields shared by [`ClientOpts`] and [`EnsureKeysetOpts`].
@@ -166,13 +184,23 @@ impl CredentialOpts {
     ///
     /// Note: env vars (`CS_CLIENT_ID`/`CS_CLIENT_KEY`) are read on the JS side
     /// and passed through as explicit fields to support Bun.
+    ///
+    /// The explicit key's permutations were checked when the options were
+    /// read. The profile store's key is checked by [`CheckedKeyProvider`] as it
+    /// is loaded (#1911).
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn build_key_provider(
         &self,
-    ) -> Result<FallbackKeyProvider<Option<SecretKey>, stack_profile::ProfileStore>, Error> {
+    ) -> Result<
+        FallbackKeyProvider<Option<SecretKey>, CheckedKeyProvider<stack_profile::ProfileStore>>,
+        Error,
+    > {
         Ok(FallbackKeyProvider::new(
             self.secret_key(),
-            stack_profile::ProfileStore::default(),
+            CheckedKeyProvider::new(
+                stack_profile::ProfileStore::default(),
+                "the profile store (secretkey.json)",
+            ),
         ))
     }
 
@@ -426,6 +454,37 @@ mod tests {
         // needs to know it stopped working rather than find out at runtime.
         let err = client_opts_err(json!({"clientId": ID, "clientKey": "3q2+7wA="}));
         assert!(err.contains("clientKey"), "got: {err}");
+    }
+
+    #[test]
+    fn a_client_key_with_invalid_permutations_is_refused_by_name() {
+        // #1911: recipher loops forever on a permutation that lists a position
+        // twice, when it derives the first key. Refused before that.
+        use crate::keyset_check::fixtures::{identity, keyset};
+        let mut repeated = identity(16);
+        repeated[1] = 0;
+        let hex = hex::encode(keyset(
+            &identity(16),
+            &repeated,
+            &identity(16),
+            &identity(33),
+        ));
+        let err = client_opts_err(json!({"clientId": ID, "clientKey": hex}));
+        assert!(
+            err.contains("CS_CLIENT_KEY"),
+            "should name the variable: {err}"
+        );
+        assert!(err.contains("clientKey"), "should name the field: {err}");
+        assert!(err.contains("permutations"), "should say why: {err}");
+        assert!(!err.contains(&hex[..16]), "leaked key material: {err}");
+    }
+
+    #[test]
+    fn a_client_key_with_valid_permutations_is_accepted() {
+        let hex = hex::encode(crate::keyset_check::fixtures::valid_keyset());
+        let opts =
+            client_opts(json!({"clientId": ID, "clientKey": hex})).expect("should deserialize");
+        assert!(opts.creds.secret_key().is_some());
     }
 
     #[test]

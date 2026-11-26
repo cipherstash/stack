@@ -2,6 +2,7 @@ mod client_options;
 mod encrypt_config;
 mod eql_v3;
 mod js_plaintext;
+mod keyset_check;
 mod query_op;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
