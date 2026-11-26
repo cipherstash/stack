@@ -124,6 +124,6 @@
     "@napi-rs/cli": "^2",
     "typescript": "^5",
     "vitest": "catalog:repo",
-    "@tanstack/react-start": "^1.168.60"
+    "@tanstack/react-start": "^1.169.7"
   }
 }
