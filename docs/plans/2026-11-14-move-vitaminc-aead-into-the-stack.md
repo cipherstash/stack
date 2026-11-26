@@ -178,18 +178,35 @@ whole set against the crates.io versions in use today.
 3. Point every workspace at them: the root workspace, the TypeScript SDK's
    workspace, the two Go guests, and EQL's workspace. Each resolves vitaminc
    on its own today.
-4. Publish them from this repository under the same names and version line,
-   so that the four crates on crates.io and a published `stack-encrypt` all
-   resolve the same crate.
+4. Do not publish them yet. In each workspace, a `[patch.crates-io]` table
+   makes the four crates from crates.io resolve the in-repository
+   `vitaminc-aead`. That works while its version stays on the 0.10 line.
 5. Move the open vitaminc issues about this code with it: vitaminc #643,
    #473 and #632.
 
 This stage changes no behaviour. The copied source can be compared with the
 published crates file by file.
 
-To settle before the stage starts: how a workspace build makes the four
-registry crates resolve the in-repository `vitaminc-aead` (a `[patch]` table
-is the candidate), and who owns the crates on crates.io.
+While the crates are unpublished:
+
+- **`stack-encrypt` cannot be published.** A published crate cannot depend
+  on a path, and a consumer has no `[patch]` table.
+- **The Go and TypeScript SDKs are not affected.** Both build the engine by
+  path from the tree.
+- **`eql-bindings` can be published until step 2.4.** Its `stack-encrypt`
+  feature is compiled against the `stack-encrypt` on crates.io when it is
+  published. Stage 1 changes no API, so that still compiles. Step 2.4 changes
+  the API that `eql-bindings` uses, and from then an EQL release waits for a
+  `stack-encrypt` release.
+- **vitaminc must stop changing these three crates**, or the two copies
+  diverge.
+
+### Before the next `stack-encrypt` release
+
+Publish the three crates from this repository, under the same names. That
+needs the crates.io owners and trusted publishing moved here. If stage 2 has
+made a breaking change by then, the four crates that depend on
+`vitaminc-aead` need a release against it first, or must have moved.
 
 ## Stage 2: consolidate
 
