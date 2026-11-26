@@ -114,7 +114,14 @@ func WithSeed(seed [32]byte) ClientOption {
 // This package is its own module, so a program that never imports it never
 // downloads the test builds:
 //
-//	go get github.com/cipherstash/stack/languages/golang/encrypt/encrypttest@v0.1.0
+//	go get github.com/cipherstash/stack/languages/golang/encrypt/encrypttest
+//
+// With no version, go get adds the latest stable release of this module, or
+// the newest pre-release while there is no stable release. It also raises
+// github.com/cipherstash/stack/languages/golang to the same version if the
+// program requires an older one. Add the SDK's version to the command when
+// the program uses a pre-release of the SDK, or an older SDK it keeps, such
+// as encrypttest@v0.1.0-rc.6 with SDK v0.1.0-rc.6.
 //
 // Require it at the same version as
 // github.com/cipherstash/stack/languages/golang. Its test builds match the
@@ -127,7 +134,9 @@ func WithSeed(seed [32]byte) ClientOption {
 // Only a tagged version of this module can be fetched. Between releases its
 // go.mod requires the SDK at a placeholder version, replaced by the
 // directory in a checkout of the repository; the release commit names the
-// version it tags.
+// version it tags. So require a tagged version of the SDK too: an SDK at a
+// pseudo-version, such as one from go get ...@main, has no version of this
+// module to match it.
 //
 // # Engine builds
 //

@@ -971,17 +971,27 @@ A filter with more than one condition reads each array to
 Package `encrypttest` gives a test a client that needs no network and no
 CipherStash credentials. Use it in CI that has no route to ZeroKMS.
 
-1. Add the module at the same version as the SDK. It is a module of its own,
-   so a program that never imports it never downloads the test builds of the
-   engine it embeds.
+1. Add the module. It is a module of its own, so a program that never
+   imports it never downloads the test builds of the engine it embeds.
 
    ```sh
-   go get github.com/cipherstash/stack/languages/golang/encrypt/encrypttest@v0.1.0
+   go get github.com/cipherstash/stack/languages/golang/encrypt/encrypttest
    ```
 
-   Use the SDK's version in place of `v0.1.0`. `NewClient` fails the test
-   when the two versions differ, because its test builds match one version
-   of the SDK.
+   With no version, `go get` adds the latest stable release of
+   `encrypttest`. While there is no stable release, it adds the newest
+   pre-release. That version requires the SDK at the same version. If your
+   program requires an older SDK, `go get` raises the SDK to match.
+
+   If your program uses a pre-release of the SDK, or an older SDK you want
+   to keep, add the SDK's version to the command. For example, use
+   `encrypttest@v0.1.0-rc.6` with SDK `v0.1.0-rc.6`.
+
+   Require a tagged version of the SDK. Only a tagged version of
+   `encrypttest` can be fetched. An SDK at a pseudo-version, such as one
+   from `go get ...@main`, has no `encrypttest` to match it.
+   `NewClient` fails the test when the two versions differ, because its test
+   builds match one version of the SDK.
 
 2. Create the client in the test. It closes when the test ends.
 

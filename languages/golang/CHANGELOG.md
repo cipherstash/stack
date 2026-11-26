@@ -13,6 +13,13 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Fixed
+
+- The `encrypttest` docs in the `encrypt` README and the package doc
+  comment gave `go get .../encrypttest@v0.1.0`. That version is not
+  published, so the command failed. The docs now give the module path with
+  no version, and say when to add the SDK's version to it.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6
