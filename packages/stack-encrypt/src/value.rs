@@ -1,5 +1,5 @@
-//! Plaintexts with no Rust standard type: a calendar date, a UTC instant
-//! and a decimal number.
+//! Plaintexts with no Rust standard type: a calendar date, a UTC instant,
+//! a decimal number and a UUID.
 //!
 //! These are vitaminc-aead's types, re-exported so a caller needs no
 //! dependency on vitaminc of their own. Each one is built from the type the
@@ -10,8 +10,9 @@
 //! | `Date` | jiff's `civil::Date` | `jiff` | `-009999-01-01` to `9999-12-31` |
 //! | `Timestamp` | jiff's `Timestamp` | `jiff` | `-009999-01-02T01:59:59Z` to `9999-12-30T22:00:00.999999999Z` |
 //! | `Decimal` | rust_decimal's `Decimal` | `rust_decimal` | scale at most 28, mantissa below 2^96 in magnitude |
+//! | `Uuid` | the uuid crate's `Uuid` | `uuid` | any sixteen bytes |
 //!
-//! Both features are on by default. The ranges are jiff's and
+//! All three features are on by default. The ranges are jiff's and
 //! rust_decimal's. Every language's SDK uses the same ranges, so a value
 //! one SDK encrypts, every SDK can decrypt.
 //!
@@ -47,6 +48,9 @@
 //!   moves an instant before 1970 earlier too. It does not depend on any one
 //!   store's rounding;
 //! - a date is its day.
+//!
+//! A `Uuid` has an equality term and no order term: an order index over a
+//! `Uuid` does not compile.
 
 /// A calendar date with no time of day and no time zone.
 ///
@@ -88,3 +92,31 @@ pub use vitaminc_aead::OutOfRange;
 /// ```
 #[cfg(feature = "rust_decimal")]
 pub use vitaminc_aead::Decimal;
+
+/// A UUID, held as its sixteen bytes.
+///
+/// ```
+/// use stack_encrypt::value::Uuid;
+///
+/// let id = uuid::Uuid::from_u128(7);
+/// let held = Uuid::new(id);
+/// assert_eq!(held.to_uuid(), id);
+/// ```
+///
+/// It seals as one leaf: the UUID type's tag and the sixteen bytes. A
+/// `None` of an `Option<Uuid>` seals as a null padded to the same length,
+/// so a stored null is not told apart from a value by its length.
+///
+/// It takes an equality index, whose term is derived under its own domain:
+/// a `Uuid` never matches the same sixteen bytes stored as a byte string.
+/// It takes no order index. A UUID has no order a query could use, and a
+/// declaration with one does not compile.
+///
+/// A `uuid::Uuid` seals as the same leaf, but it is `Copy`, so its bytes
+/// cannot be wiped. Hold a UUID you encrypt as this type.
+///
+/// The dynamic path a language binding uses (`stack_encrypt::dynamic`)
+/// does not take a UUID yet: it refuses one as a value outside its value
+/// model.
+#[cfg(feature = "uuid")]
+pub use vitaminc_aead::Uuid;

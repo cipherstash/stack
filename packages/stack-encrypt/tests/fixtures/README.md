@@ -342,7 +342,8 @@ by hand.
                               "frame": "<hex>" | { "refused": true }, "value": <outcome> }, ... },
   "host_typed_null": { "frames": { ... }, "<case>": <outcome>, ... },
   "json":       { "typed_leaf": { ... }, "opened_frame": "<hex>",
-                  "record_without_target": <outcome>, "untyped_text": <outcome> }
+                  "record_without_target": <outcome>, "untyped_text": <outcome> },
+  "uuid_equality": { "Uuid": "<hex>", "Vec<u8>": "<hex>" }
 }
 ```
 
@@ -359,7 +360,9 @@ is read.
   fixed-width type seals as a typed null of that type (`0x15`, the type's
   tag, zeros), as long as a value. A `bool`'s `None` is the exception: a
   bool leaf is one byte, so its null is the plain null `00`, which is as
-  long. A `None` of any other type is the plain null.
+  long. A `None` of any other type is the plain null. A `value::Uuid` is
+  the `0xF3` envelope of the UUID type over its sixteen bytes, and its
+  `None` the typed null of the same length.
   A text or bytes frame carries a four-byte length that its leaf does not.
 - **`dynamic`.** One value per kind a data plan declares, as a binding
   sends it, through `record::encrypt`: the frame, the stored leaf, and a
@@ -393,3 +396,6 @@ is read.
   untyped field holding the same text seals it as a text leaf. The JSON
   tree (EQL's `JsonSearch`) is another scheme, sealed by the JSON index,
   and is not in this file.
+- **`uuid_equality`.** The equality term of a `value::Uuid` on the typed
+  path, beside the term of the same sixteen bytes as a byte string. They
+  differ: a UUID's term is derived under its own domain.

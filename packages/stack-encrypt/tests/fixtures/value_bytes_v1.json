@@ -420,6 +420,10 @@
       "frame": "00",
       "leaf": "15130000000000000000000000"
     },
+    "Option<Uuid>::None": {
+      "frame": "00",
+      "leaf": "15f305000b000000000000000000000000000000"
+    },
     "Option<Vec<u8>>::None": {
       "frame": "00",
       "leaf": "00"
@@ -480,6 +484,10 @@
       "frame": "130bc9d26a0000000015cd5b07",
       "leaf": "130bc9d26a0000000015cd5b07"
     },
+    "Uuid": {
+      "frame": "f305000b10000000123e4567e89b12d3a456426614174000",
+      "leaf": "f305000b123e4567e89b12d3a456426614174000"
+    },
     "Vec<u8>": {
       "frame": "0b0300000000ff10",
       "leaf": "0b00ff10"
@@ -532,5 +540,9 @@
       "frame": "07ffffffffffffffff",
       "leaf": "07ffffffffffffffff"
     }
+  },
+  "uuid_equality": {
+    "Uuid": "7634298ccb1ad44050b51acacd0771a8239d1b62733f2e304a22d0fbc171b4c8",
+    "Vec<u8>": "28517d8a00a2a4713bd8ad9c859ef56678f163014b9506399b705b27db8ed7c7"
   }
 }
