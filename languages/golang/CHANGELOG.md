@@ -13,6 +13,17 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Added
+
+- **An index statement for each EQL query.** The `encrypt` README has a
+  new section, "Indexes". It gives the index statement for each EQL
+  query: exact match, free text, ordering, JSON containment, and ordering
+  at a JSON path. It says how to
+  get the selector a JSON path index needs. It says to create the indexes
+  again after EQL v4 is reinstalled. It also gives query times, build
+  times, and sizes measured on 1,000,000 rows. This change is to the
+  documentation only.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

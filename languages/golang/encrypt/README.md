@@ -966,6 +966,133 @@ gives an example and a workaround for each:
 A filter with more than one condition reads each array to
 `JSONReadOptions.WildcardBound` elements, as the element match does.
 
+## Indexes
+
+Create an index for each query a large table runs on an EQL column. With
+no index, PostgreSQL reads every row for each query. Each index is on an
+EQL function that returns the term the query compares. A query written as
+this README shows it uses the index with no change. The one exception is a
+JSON path query under a generic plan: see
+[Get the selector for a JSON path index](#get-the-selector-for-a-json-path-index).
+
+The index for each query:
+
+| Query | EQL types | Index on |
+|---|---|---|
+| `col = $1::eql_v4.query_<name>` | `TextEq` and the other `Eq` types. Also the text order types: `TextOrd`, `TextOrdOpe`, `TextOrdOre`, `TextSearch` and `TextSearchOre` | `USING btree (eql_v4.eq_term(col))` |
+| `col @@ $1::eql_v4.query_<name>` | `TextMatch`, `TextSearch`, `TextSearchOre` | `USING gin (eql_v4.match_term(col))` |
+| `<`, `<=`, `>`, `>=`, and `ORDER BY eql_v4.ord_term(col)`. Also `=` on a type that is not text, such as `IntegerOrd` | The `Ord` and `OrdOpe` types, and `TextSearch` | `USING btree (eql_v4.ord_term(col))` |
+| `<`, `<=`, `>`, `>=`, and `ORDER BY eql_v4.ord_term_ore(col)`. Also `=` on a type that is not text, such as `IntegerOrdOre` | The `OrdOre` types, and `TextSearchOre` | `USING btree (eql_v4.ord_term_ore(col))` |
+| `col @> $1::eql_v4.query_json`, from `Contains` or `EqAt` | `JsonSearch` | `USING gin ((eql_v4.json_tree_query(col)) jsonb_path_ops)` |
+| `(col -> $1::text) < $2::eql_v4.query_json_leaf`, the other `At` comparisons, and `ORDER BY eql_v4.ord_term(col -> $1::text)` | `JsonSearch`, at one path in `ordered=` | `USING btree (eql_v4.ord_term(col -> '<selector>'::text))` |
+
+For example, for a `users` table:
+
+```sql
+CREATE INDEX users_email_eq ON users USING btree (eql_v4.eq_term(email));
+CREATE INDEX users_name_match ON users USING gin (eql_v4.match_term(name));
+CREATE INDEX users_age_ord ON users USING btree (eql_v4.ord_term(age));
+CREATE INDEX users_profile_contains ON users USING gin ((eql_v4.json_tree_query(profile)) jsonb_path_ops);
+-- Replace <selector> with the value from "Get the selector for a JSON path index", below.
+CREATE INDEX users_profile_age ON users USING btree (eql_v4.ord_term(profile -> '<selector>'::text));
+ANALYZE users;
+```
+
+Follow these rules for every index:
+
+- Run `ANALYZE users` after you create an index on `users`. PostgreSQL keeps
+  no statistics on an index's expression until `ANALYZE` runs, so it can
+  choose not to use the index.
+- Give a text order column, such as `TextOrd`, two indexes if it needs
+  both `=` and ordering. The column's `=` compares its equality term, not
+  its order term. The `eq_term` index contains the equality term.
+- Create the `ord_term_ore` index only on an install that created the ORE
+  operator class. Only a superuser install creates it. Elsewhere the
+  installer disables the `OrdOre` and `TextSearchOre` types: see
+  [EQL columns](#eql-columns).
+- The JSON containment index serves `@>` only. A `ContainedBy` query,
+  `col <@ $1::eql_v4.query_json`, reads every row.
+- Create the indexes again after you reinstall or upgrade EQL v4. The
+  install SQL starts with `DROP SCHEMA IF EXISTS eql_v4 CASCADE`. That
+  statement drops every index on an `eql_v4` function. Your columns and
+  data stay.
+
+### Get the selector for a JSON path index
+
+A JSON path index needs the path's selector written into the statement as
+text. The selector is a value derived from the path under the keyset's
+index key. Get it from the generated `Selector` method of the path's `At`
+accessor, and print it once, for your migration:
+
+```go
+sel, err := users.Fields.Profile.At.Age.Selector(ctx, cipher)
+if err != nil {
+	return err
+}
+fmt.Println(string(sel.Selector())) // write this into CREATE INDEX
+```
+
+The selector is the same in every row of the column. It is different for
+each keyset and for each scope. So a column written through several
+keysets or scopes needs one index for each keyset and scope that it
+queries.
+
+Index only a path with no `[*]`. At a path with a wildcard, `->` returns
+one element of each row, and which element is not specified.
+
+A query can pass the selector as a parameter, `$1::text`, and use the
+index. PostgreSQL uses the index when it plans the statement with the
+parameter's value. A generic plan of a prepared statement is planned
+without the value, so it reads every row. If your database sets
+`plan_cache_mode = force_generic_plan`, write the selector into the query
+text.
+
+### Plan for the cost of each index
+
+These figures come from one test of `v0.1.0-rc.7`, on one table of
+1,000,000 rows in PostgreSQL 17. No script in this repository runs the
+test. [Issue #1880](https://github.com/cipherstash/stack/issues/1880)
+reports it. PostgreSQL chose each index with its default settings, and
+each query returned the expected rows. Each time is the median of 5 or 7
+runs. The ordered queries are `ORDER BY ... LIMIT 20`.
+
+Query times with and without an index, on 1,000,000 rows:
+
+| EQL type | Index on | With the index | Without |
+|---|---|---:|---:|
+| `TextEq` | `eql_v4.eq_term(col)` | 0.014 ms | 124 ms |
+| `TextMatch` | `eql_v4.match_term(col)` | 46 ms | 5,880 ms |
+| `IntegerOrd` | `eql_v4.ord_term(col)` | 0.024 ms | 173 ms |
+| `IntegerOrdOre` | `eql_v4.ord_term_ore(col)` | 0.043 ms | 3,115 ms |
+| `JsonSearch`, containment | `eql_v4.json_tree_query(col)` | 43 ms | 1,368 ms |
+| `JsonSearch`, ordering at a path | `eql_v4.ord_term(col -> '<selector>'::text)` | 1.5 ms | 25,531 ms |
+
+The same test measured these sizes and build times:
+
+- The whole table took 4,595 MB. An encrypted `JsonSearch` document
+  averaged 2,355 bytes.
+- The `IntegerOrdOre` index on `eql_v4.ord_term_ore(col)` took 82 seconds
+  to build, and 263 MB.
+- The `IntegerOrd` index on `eql_v4.ord_term(col)` took 0.5 seconds to
+  build, and 7 MB.
+
+The test reported no build time or size for the other indexes.
+
+To build an index on a large table faster:
+
+- Raise `maintenance_work_mem` for the session before `CREATE INDEX`, for
+  example with `SET maintenance_work_mem = '2GB';`. Its default is 64 MB.
+- Use `btree`, not `hash`, for an `eq_term` index on a large table. A
+  `btree` build sorts the rows first and can run in parallel. A `hash`
+  build cannot run in parallel.
+
+EQL's [index guide](https://github.com/cipherstash/stack/blob/main/packages/eql/docs/reference/database-indexes.md)
+explains build time in more detail. The guide is written for `eql_v3`.
+Replace `eql_v3` with `eql_v4` in each of its statements. Its JSON
+containment index is different: use the one above. The guide's first
+equality example uses `hash`. On a large table, use `btree`, as this
+section says.
+
 ## Testing your application
 
 Package `encrypttest` gives a test a client that needs no network and no
