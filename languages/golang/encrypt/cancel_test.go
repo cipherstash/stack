@@ -639,14 +639,21 @@ func TestManyCallersCancellingAtRandomShareOneClient(t *testing.T) {
 func TestACallCancelledDuringATokenExchangeLeavesTheProfileOpen(t *testing.T) {
 	var hold atomic.Bool
 	done := make(chan struct{})
+	// The server sees a cancelled request only once it notices the client
+	// closed the connection, which it does in the background. The test
+	// waits for that below rather than assuming it has happened.
+	cancelled := make(chan struct{}, 1)
 	var jwt string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		if hold.Load() {
 			select {
 			case <-r.Context().Done():
+				select {
+				case cancelled <- struct{}{}:
+				default:
+				}
 			case <-done:
-				t.Error("a held token request was never cancelled")
 			}
 			return
 		}
@@ -681,6 +688,11 @@ func TestACallCancelledDuringATokenExchangeLeavesTheProfileOpen(t *testing.T) {
 	defer cancel()
 	if err := cipherInit(ctx, c); !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrState) {
 		t.Fatalf("call cancelled during the exchange: %v, want the deadline", err)
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a held token request was never cancelled")
 	}
 	hold.Store(false)
 	wantOpen(t, c, rt)
