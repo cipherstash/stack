@@ -571,6 +571,9 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 	step, resumed := f, false
 	var handle uint64
 	var responses []byte
+	// netErr is the net error of the last step's requests, if one of them
+	// failed on the network. The guest saw only its text.
+	var netErr error
 	for {
 		out, io, err := c.step(ctx, token, tokenErr, step)
 		if resumed {
@@ -588,7 +591,7 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 			return nil, ctx.Err()
 		}
 		if io == nil {
-			return settle(ctx, out, err)
+			return settle(ctx, out, withNetError(err, netErr))
 		}
 		yield := len(io.requests) == 0
 		// A caller that gave up while the guest ran sends no request.
@@ -607,6 +610,7 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 			responses, err = vcffi.Marshal([]any{})
 		} else {
 			responses, err = c.performStep(ctx, io)
+			netErr = io.netErr
 		}
 		if err != nil {
 			c.abort(io.handle)
@@ -658,6 +662,16 @@ func abandoned(ctxErr error, yield bool) error {
 		return ctxErr
 	}
 	return fmt.Errorf("%w: %w", ctxErr, ErrTransport)
+}
+
+// withNetError wraps netErr, the net error of the last requests the client
+// performed, in err when err is a transport failure, so that errors.As
+// reaches the *net.OpError. The guest is handed only the net error's text.
+func withNetError(err, netErr error) error {
+	if err == nil || netErr == nil || !errors.Is(err, ErrTransport) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", err, netErr)
 }
 
 // settle is how an operation ends for its caller. A call that failed after

@@ -1,6 +1,9 @@
 package guest
 
-import "errors"
+import (
+	"errors"
+	"net"
+)
 
 // Failure kinds a guest surfaces across the boundary. A guest reports a
 // status code (see StatusError), and these are what the codes decode to:
@@ -101,3 +104,17 @@ var (
 	// LimitMEMLOCK=, or a pod's securityContext).
 	ErrMemoryLock = errors.New("cipherstash: guest memory is not locked")
 )
+
+// NetError is the *net.OpError in err's chain, or nil. A host transport
+// keeps it, rather than err, to wrap in the error a caller gets, so that
+// errors.As reaches it. A RoundTripper's error is usually a *url.Error,
+// whose text names the request's URL, and an application's RoundTripper
+// can put anything in its text. An OpError's text names only the
+// operation, the network, the address and the cause.
+func NetError(err error) error {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return opErr
+	}
+	return nil
+}
