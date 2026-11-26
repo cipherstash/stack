@@ -9,10 +9,7 @@
       "deep": "value"
     },
     "ratio": 1.5,
-    "roles": [
-      "admin",
-      "user"
-    ]
+    "roles": ["admin", "user"]
   },
   "entries": [
     {

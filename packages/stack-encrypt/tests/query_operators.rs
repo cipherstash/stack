@@ -373,8 +373,7 @@ async fn the_committed_query_fixture_is_what_the_engine_derives() {
     let now = derived().await;
     let path = fixture_path();
     if update {
-        let mut text = serde_json::to_string_pretty(&now).expect("serialise");
-        text.push('\n');
+        let text = common::biome_json(&now);
         std::fs::write(&path, text).expect("write the fixture");
     }
     let committed: Json =

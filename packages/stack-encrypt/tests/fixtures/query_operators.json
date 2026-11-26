@@ -7,48 +7,23 @@
   "keyset_id": "00000000-0000-0000-0000-000000000000",
   "plan": {
     "age": {
-      "context": [
-        "users",
-        "age"
-      ],
-      "outputs": [
-        "c",
-        "eq",
-        "ore"
-      ],
+      "context": ["users", "age"],
+      "outputs": ["c", "eq", "ore"],
       "type": "uint32"
     },
     "email": {
-      "context": [
-        "users",
-        "email"
-      ],
-      "outputs": [
-        "c",
-        "eq"
-      ],
+      "context": ["users", "email"],
+      "outputs": ["c", "eq"],
       "type": "string"
     },
     "name": {
-      "context": [
-        "users",
-        "name"
-      ],
-      "outputs": [
-        "c",
-        "match"
-      ],
+      "context": ["users", "name"],
+      "outputs": ["c", "match"],
       "type": "string"
     },
     "score": {
-      "context": [
-        "users",
-        "score"
-      ],
-      "outputs": [
-        "c",
-        "ore"
-      ],
+      "context": ["users", "score"],
+      "outputs": ["c", "ore"],
       "type": "float64"
     }
   },
@@ -127,10 +102,7 @@
     },
     {
       "field": "age",
-      "input": [
-        18,
-        65
-      ],
+      "input": [18, 65],
       "operator": "between",
       "term": {
         "domain": null,
@@ -181,10 +153,7 @@
     },
     {
       "field": "score",
-      "input": [
-        -0.5,
-        2.5
-      ],
+      "input": [-0.5, 2.5],
       "operator": "between",
       "term": {
         "domain": null,
@@ -205,16 +174,7 @@
       "limit": 53954,
       "operator": "matches",
       "stats": {
-        "histogram": [
-          [
-            40,
-            500000
-          ],
-          [
-            120,
-            500000
-          ]
-        ],
+        "histogram": [[40, 500000], [120, 500000]],
         "rows": 1000000
       },
       "term": "30009d00c100",
@@ -227,12 +187,7 @@
       "operator": "matches",
       "stats": {
         "confidence": 0.5,
-        "histogram": [
-          [
-            40,
-            1000000
-          ]
-        ],
+        "histogram": [[40, 1000000]],
         "rows": 1000000
       },
       "term": "30009d00c100",
@@ -255,16 +210,7 @@
       "limit": 611,
       "operator": "matches",
       "stats": {
-        "histogram": [
-          [
-            40,
-            500000
-          ],
-          [
-            120,
-            500000
-          ]
-        ],
+        "histogram": [[40, 500000], [120, 500000]],
         "rows": 1000000
       },
       "term": "2800300053006d00890095009d00c100fe00",
@@ -277,12 +223,7 @@
       "operator": "matches",
       "stats": {
         "confidence": 0.5,
-        "histogram": [
-          [
-            40,
-            1000000
-          ]
-        ],
+        "histogram": [[40, 1000000]],
         "rows": 1000000
       },
       "term": "2800300053006d00890095009d00c100fe00",
@@ -304,21 +245,7 @@
     "field": "name",
     "input": "alice",
     "operator": "matches",
-    "values": [
-      "Alice Smith",
-      "alicia",
-      "Bob",
-      "malice",
-      "ALICE",
-      null
-    ],
-    "verified": [
-      true,
-      false,
-      false,
-      true,
-      true,
-      false
-    ]
+    "values": ["Alice Smith", "alicia", "Bob", "malice", "ALICE", null],
+    "verified": [true, false, false, true, true, false]
   }
 }

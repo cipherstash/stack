@@ -9,10 +9,7 @@
         "raw": {
           "name": "Alice",
           "age": 34,
-          "tags": [
-            "a",
-            "b"
-          ],
+          "tags": ["a", "b"],
           "score": 1.5,
           "big": 18446744073709551615
         },
@@ -55,12 +52,7 @@
     {
       "id": 2,
       "plaintext": {
-        "raw": [
-          1,
-          2.5,
-          null,
-          "é"
-        ],
+        "raw": [1, 2.5, null, "é"],
         "labels": {}
       },
       "stored": {

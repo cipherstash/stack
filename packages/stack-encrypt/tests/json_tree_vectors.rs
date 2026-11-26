@@ -177,11 +177,7 @@ async fn the_derivations_are_pinned_under_the_deterministic_source() {
         "required conformance must not regenerate JSON tree vectors"
     );
     if update_requested(std::env::var_os("STACK_ENCRYPT_UPDATE_JSON_TREE_VECTORS").as_deref()) {
-        std::fs::write(
-            fixture_path(),
-            serde_json::to_string_pretty(&actual).unwrap() + "\n",
-        )
-        .unwrap();
+        std::fs::write(fixture_path(), common::biome_json(&actual)).unwrap();
     }
     let pinned: Value =
         serde_json::from_str(&std::fs::read_to_string(fixture_path()).expect("the fixture exists"))

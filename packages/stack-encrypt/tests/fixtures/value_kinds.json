@@ -7,109 +7,48 @@
   "keyset_id": "00000000-0000-0000-0000-000000000000",
   "plan": {
     "amount": {
-      "context": [
-        "value_kinds",
-        "amount"
-      ],
-      "outputs": [
-        "c",
-        "eq",
-        "ore"
-      ],
+      "context": ["value_kinds", "amount"],
+      "outputs": ["c", "eq", "ore"],
       "type": "decimal"
     },
     "at": {
-      "context": [
-        "value_kinds",
-        "at"
-      ],
-      "outputs": [
-        "c",
-        "eq",
-        "ope"
-      ],
+      "context": ["value_kinds", "at"],
+      "outputs": ["c", "eq", "ope"],
       "type": "timestamp"
     },
     "date": {
-      "context": [
-        "value_kinds",
-        "date"
-      ],
-      "outputs": [
-        "c",
-        "eq",
-        "ore"
-      ],
+      "context": ["value_kinds", "date"],
+      "outputs": ["c", "eq", "ore"],
       "type": "date"
     },
     "i128": {
-      "context": [
-        "value_kinds",
-        "i128"
-      ],
-      "outputs": [
-        "c",
-        "eq",
-        "ore"
-      ],
+      "context": ["value_kinds", "i128"],
+      "outputs": ["c", "eq", "ore"],
       "type": "int128"
     },
     "i16": {
-      "context": [
-        "value_kinds",
-        "i16"
-      ],
-      "outputs": [
-        "c",
-        "eq",
-        "ore"
-      ],
+      "context": ["value_kinds", "i16"],
+      "outputs": ["c", "eq", "ore"],
       "type": "int16"
     },
     "i8": {
-      "context": [
-        "value_kinds",
-        "i8"
-      ],
-      "outputs": [
-        "c",
-        "eq"
-      ],
+      "context": ["value_kinds", "i8"],
+      "outputs": ["c", "eq"],
       "type": "int8"
     },
     "u128": {
-      "context": [
-        "value_kinds",
-        "u128"
-      ],
-      "outputs": [
-        "c",
-        "eq",
-        "ope"
-      ],
+      "context": ["value_kinds", "u128"],
+      "outputs": ["c", "eq", "ope"],
       "type": "uint128"
     },
     "u16": {
-      "context": [
-        "value_kinds",
-        "u16"
-      ],
-      "outputs": [
-        "c",
-        "eq",
-        "ope"
-      ],
+      "context": ["value_kinds", "u16"],
+      "outputs": ["c", "eq", "ope"],
       "type": "uint16"
     },
     "u8": {
-      "context": [
-        "value_kinds",
-        "u8"
-      ],
-      "outputs": [
-        "c",
-        "eq"
-      ],
+      "context": ["value_kinds", "u8"],
+      "outputs": ["c", "eq"],
       "type": "uint8"
     }
   },

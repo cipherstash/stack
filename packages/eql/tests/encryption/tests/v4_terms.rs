@@ -23,6 +23,8 @@
 //! Set `EQL_UPDATE_V4_TERMS=1`, exactly `1`, and add a changeset on
 //! `@cipherstash/eql` that says what breaks. Do not edit the fixture by hand.
 
+#[path = "common/biome_json.rs"]
+mod biome_json;
 mod common;
 
 use std::collections::BTreeMap;
@@ -384,9 +386,11 @@ fn only_exactly_one_requests_an_update() {
 async fn every_type_writes_its_pinned_terms() {
     let actual = every_payload().await;
     if update_requested(std::env::var_os("EQL_UPDATE_V4_TERMS").as_deref()) {
-        let mut text = serde_json::to_string_pretty(&actual).unwrap();
-        text.push('\n');
-        std::fs::write(fixture_path(), text).unwrap();
+        std::fs::write(
+            fixture_path(),
+            biome_json::biome_json(&serde_json::to_value(&actual).unwrap()),
+        )
+        .unwrap();
         return;
     }
     let pinned: BTreeMap<String, Value> =
