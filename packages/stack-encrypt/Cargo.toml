@@ -122,7 +122,7 @@ uuid = { workspace = true }
 zeroize = { workspace = true }
 
 [features]
-default = ["http", "jiff", "rust_decimal"]
+default = ["http", "jiff", "rust_decimal", "uuid"]
 # A cipher over ZeroKMS: `StackCipher::with_detected_credentials()`, or
 # `StackCipher::builder().auth_strategy(..)`. It brings the default HTTP
 # transport in stack-kms and the auth strategies in stack-auth. Off, a cipher
@@ -147,6 +147,11 @@ jiff = ["vitaminc-aead/jiff", "vitaminc-ore/jiff"]
 # `value::Decimal`: vitaminc's wipeable decimal, built from rust_decimal's
 # `Decimal`, and its order terms. On by default.
 rust_decimal = ["vitaminc-aead/rust_decimal", "vitaminc-ore/rust_decimal"]
+# `value::Uuid`: vitaminc's wipeable uuid, built from the uuid crate's
+# `Uuid`, sealed as one leaf with an equality term. On by default. It turns
+# on no order term: an order index takes no uuid, so `vitaminc-ore/uuid`
+# stays off. `dynamic` does not need it: the dynamic path refuses a uuid.
+uuid = ["vitaminc-aead/uuid"]
 # `stack_encrypt::kms::FakeDataKeySource`: the in-memory key source for tests
 # with no ZeroKMS, so a caller's dev-dependency on stack-encrypt is enough and
 # no direct stack-kms dependency has to agree with this crate's.

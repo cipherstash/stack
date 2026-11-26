@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Encrypt a UUID as a UUID** (#1833). `value::Uuid` is vitaminc's
+  wipeable UUID, built from the uuid crate's `Uuid` with `Uuid::new`. It
+  seals as one leaf, and an `Option<Uuid>`'s `None` seals as a null as long
+  as a value. It takes an equality index, whose term never matches the same
+  sixteen bytes stored as a byte string. It takes no order index: one does
+  not compile. The type is behind the new `uuid` feature, on by default
+  beside `jiff` and `rust_decimal`. The dynamic path still refuses a UUID
+  (#1821).
+
 - **Read one child of a JSON node, checked against its parent** (#1677).
   Your app can now read one level of a document without fetching the
   parent's whole subtree. The read takes three steps.

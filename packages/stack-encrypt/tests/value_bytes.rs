@@ -22,7 +22,9 @@
 //! code:fix` to format it. Nothing in it depends on a nonce, so a run that
 //! changes it
 //! changed what is written. The schema is in the README beside the fixture.
-#![cfg(feature = "dynamic")]
+// The typed `Uuid` cases need the `uuid` feature, which `dynamic` does not
+// turn on.
+#![cfg(all(feature = "dynamic", feature = "uuid"))]
 
 mod common;
 
@@ -38,7 +40,9 @@ use common::{hex, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::{self, record, ValueFrame};
 use stack_encrypt::json::JsonPlaintext;
-use stack_encrypt::value::{Date, Decimal, Timestamp};
+use stack_encrypt::sem::EqualityTerm;
+use stack_encrypt::target::{equality, Borrowed, CallerContext};
+use stack_encrypt::value::{Date, Decimal, Timestamp, Uuid as UuidValue};
 use stack_encrypt::{AsProtectedRef as _, CipherText, SealedValue, StackCipher, StackCipherText};
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, GenerateKeyPayload, IdentifiedBy, IndexKey,
@@ -241,6 +245,45 @@ fn decimal(text: &str) -> Decimal {
     Decimal::new(text.parse::<rust_decimal::Decimal>().expect("a decimal"))
 }
 
+/// The UUID the typed path seals.
+const UUID: u128 = 0x123e_4567_e89b_12d3_a456_4266_1417_4000;
+
+fn uuid_value() -> UuidValue {
+    UuidValue::new(Uuid::from_u128(UUID))
+}
+
+/// A UUID's equality term on the typed path, beside the term of the same
+/// sixteen bytes as a byte string: the UUID's is derived under its own
+/// domain, so the two differ.
+async fn uuid_equality(cipher: &StackCipher<KeptKeys>) -> Json {
+    let keyset = cipher.default_keyset();
+    let ctx = || {
+        CallerContext::from(
+            dynamic::context(
+                vitaminc_aead_frame::serde::to_vec(&CONTEXT)
+                    .unwrap()
+                    .as_protected_ref(),
+            )
+            .expect("a context"),
+        )
+    };
+    let uuid: EqualityTerm = keyset
+        .run(equality::<_, _, Borrowed>(), &uuid_value(), ctx())
+        .await
+        .expect("a uuid has an equality term");
+    let bytes: EqualityTerm = keyset
+        .run(
+            equality::<_, _, Borrowed>(),
+            &Uuid::from_u128(UUID).as_bytes().to_vec(),
+            ctx(),
+        )
+        .await
+        .expect("bytes have an equality term");
+    let (uuid, bytes) = (hex(&uuid.into_bytes()[..]), hex(&bytes.into_bytes()[..]));
+    assert_ne!(uuid, bytes, "a uuid is not its bytes");
+    json!({ "Uuid": uuid, "Vec<u8>": bytes })
+}
+
 fn document() -> JsonPlaintext {
     JsonPlaintext::from(json!({"a": [1, "x"], "b": null}))
 }
@@ -276,6 +319,7 @@ async fn typed_section(
     pin!("Timestamp", timestamp("2026-10-17T01:02:03.123456789Z"));
     pin!("Decimal", decimal("-1234.5600"));
     pin!("JsonPlaintext", document());
+    pin!("Uuid", uuid_value());
     // `None` of a fixed-width type seals as a typed null of that type, as
     // long as a value of it. A `bool` is the exception: its leaf is one byte,
     // as long as the plain null, so its `None` seals as the plain null `00`.
@@ -298,6 +342,7 @@ async fn typed_section(
     pin!("Option<String>::None", None::<String>);
     pin!("Option<Vec<u8>>::None", None::<Vec<u8>>);
     pin!("Option<JsonPlaintext>::None", None::<JsonPlaintext>);
+    pin!("Option<Uuid>::None", None::<UuidValue>);
     Json::Object(out)
 }
 
@@ -771,6 +816,7 @@ async fn value_bytes_are_the_pinned_bytes() {
         "host": host_section(&cipher, &keys).await,
         "host_typed_null": typed_null_section(&cipher, &keys).await,
         "json": json_section(&cipher, &keys).await,
+        "uuid_equality": uuid_equality(&cipher).await,
     });
     let mut document = json!({
         "_comment": "Pinned bytes of every way a plaintext value is written: its transport frame, the plaintext its sealed leaf holds, and a sealed null's leaf, for the typed Rust path and the dynamic record path. Read by tests/value_bytes.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1, then run pnpm run code:fix; never edit by hand.",
