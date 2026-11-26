@@ -34,8 +34,9 @@ type stepFunc func(ctx context.Context, inst *instance) ([]byte, error)
 
 // ioStep is a paused operation's step, as the guest hands it over: the
 // operation's handle and the requests it waits on, none for a yield.
-// performStep sets netErr to the net error of the first request that failed
-// on the network, if any did.
+// performStep sets netErr to the net error of the first request that could
+// not be performed, if that request failed on the network. A later request's
+// net error is not taken: the first failure may have had another cause.
 type ioStep struct {
 	handle   uint64
 	requests []ioRequest
@@ -219,8 +220,10 @@ func (t *transport) performStep(ctx context.Context, step *ioStep) ([]byte, erro
 		panic(panicked)
 	}
 	responses := make([]any, 0, len(results))
+	failed := false
 	for _, r := range results {
-		if step.netErr == nil {
+		if !failed && r.status == transportFailed {
+			failed = true
 			step.netErr = r.netErr
 		}
 		status, headers, body := r.status, r.headers, r.body

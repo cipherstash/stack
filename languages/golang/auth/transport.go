@@ -48,9 +48,9 @@ const maxAuthResponseBytes = 16 << 20
 // reaches the guest as a transport failure, with no status, and a guest
 // built before se_last_error gives no error at all. So without the status,
 // a refused exchange (the edge in front of CTS answering 403) could reach
-// the caller as a bare ErrTransport. The guest gets only a net error's
-// text, so without netErr a caller could not reach the *net.OpError with
-// errors.As. It lives on the call's context, which wazero hands to the host
+// the caller as a bare ErrTransport. The guest gets the RoundTripper's error
+// text, never the error itself, so without netErr a caller could not reach
+// the *net.OpError with errors.As. It lives on the call's context, which wazero hands to the host
 // import, so concurrent calls on different profiles never see each other's.
 type authExchange struct {
 	code   int

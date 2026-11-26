@@ -666,7 +666,8 @@ func abandoned(ctxErr error, yield bool) error {
 
 // withNetError wraps netErr, the net error of the last requests the client
 // performed, in err when err is a transport failure, so that errors.As
-// reaches the *net.OpError. The guest is handed only the net error's text.
+// reaches the *net.OpError. The guest is handed the RoundTripper's whole
+// error text as the transport body, never the error itself.
 func withNetError(err, netErr error) error {
 	if err == nil || netErr == nil || !errors.Is(err, ErrTransport) {
 		return err
