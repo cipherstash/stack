@@ -5,7 +5,7 @@ status: accepted
 # Merge queues on `main` and `next` run expensive CI checks
 
 > We paused work on this decision in November 2026, until the same-size swap in architecture decision record (ADR) 0004 is in place.
-> That swap moves every Blacksmith job in this repository to a RunsOn machine of the same size.
+> That swap moves every Blacksmith job in this repository to a cheaper RunsOn machine of the same size.
 > None of this decision has been built yet.
 
 In October 2026, we decided to split this repository's CI checks into push checks and gate checks.
@@ -18,9 +18,8 @@ From 1 to 20 October 2026, 89% of this repository's CI spending came from runs f
 Each push to a pull request ran the expensive checks again.
 This decision runs the expensive checks less often.
 
-ADR 0002 moved jobs to cheaper machines.
+ADR 0002 planned to move jobs to cheaper machines.
 ADR 0004 has since superseded ADR 0002.
-ADR 0004 moves every Blacksmith job to a cheaper RunsOn machine of the same size.
 
 The glossary in `.github/CONTEXT.md` defines the terms used here.
 The diagram shows each step for one pull request, from a push to the merge.
