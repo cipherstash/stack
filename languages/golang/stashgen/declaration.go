@@ -238,7 +238,8 @@ type GoType struct {
 	// encrypt.Date, encrypt.Int128, encrypt.Uint128, encrypt.Decimal), whose
 	// kind says all there is.
 	Basic string
-	// Elem is the element type of a slice, map or pointer, and nil otherwise.
+	// Elem is the element type of an array, slice, map or pointer, and nil
+	// otherwise.
 	Elem *GoType
 	// Fields are the fields of a struct kind, in declared order.
 	Fields []GoType
