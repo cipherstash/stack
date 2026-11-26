@@ -22,12 +22,36 @@ const CODEQL_STEP = /^github\/codeql-action\/(init|analyze)@/
 // could be inside it.
 function codeqlSteps(steps, resolveComposite) {
   const { flat, unresolved } = flattenSteps(steps, resolveComposite)
-  const actions = flat.flatMap(({ step }) => {
+  const found = flat.flatMap(({ step, label }) => {
     const match =
       typeof step?.uses === 'string' ? step.uses.match(CODEQL_STEP) : null
-    return match ? [match[1]] : []
+    return match ? [{ action: match[1], step, label }] : []
   })
-  return { actions, unresolved }
+  return {
+    actions: found.map(({ action }) => action),
+    analyses: found.filter(({ action }) => action === 'analyze'),
+    unresolved,
+  }
+}
+
+// `if: false`, `if: 'false'` and `if: ${{ false }}` all skip the step.
+const ALWAYS_FALSE = /^\s*(?:\$\{\{\s*false\s*\}\}|false)\s*$/
+
+// The analyze action uploads to code scanning only when `upload` is
+// `always`, which is its default.
+function analysisProblem(step) {
+  const condition = step?.if
+  if (
+    condition === false ||
+    (typeof condition === 'string' && ALWAYS_FALSE.test(condition))
+  ) {
+    return '`if:` is always false, so the analysis never runs'
+  }
+  const upload = step?.with?.upload
+  if (upload !== undefined && upload !== 'always') {
+    return `\`upload: ${upload}\` keeps the results out of code scanning. Remove \`upload\`, or set it to \`always\`.`
+  }
+  return null
 }
 
 const scanned = workflowFiles().flatMap((file) =>
@@ -57,6 +81,16 @@ describe('CodeQL jobs run the analysis', () => {
     const wrong = codeqlJobs
       .filter(({ actions }) => actions.join(', ') !== 'init, analyze')
       .map(({ ref, actions }) => `${ref}: ${actions.join(', ')}`)
+    expect(wrong).toEqual([])
+  })
+
+  it('runs every CodeQL analysis and uploads its results', () => {
+    const wrong = codeqlJobs.flatMap(({ ref, analyses }) =>
+      analyses.flatMap(({ step, label }) => {
+        const problem = analysisProblem(step)
+        return problem ? [`${ref}: ${label}: ${problem}`] : []
+      }),
+    )
     expect(wrong).toEqual([])
   })
 })
@@ -92,5 +126,44 @@ describe('the checker this guard depends on', () => {
     expect(codeqlSteps([callComposite], noComposites).unresolved).toHaveLength(
       1,
     )
+  })
+
+  it('finds an analysis inside a composite action, to check its settings', () => {
+    const skipped = { ...analyze, if: false }
+    const { analyses } = codeqlSteps(
+      [init, callComposite],
+      composite([skipped]),
+    )
+    expect(analyses.map(({ step }) => step)).toEqual([skipped])
+  })
+
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: a literal Actions expression, as written in a workflow.
+  it.each([false, 'false', '${{ false }}'])(
+    'refuses an analysis with `if: %j`',
+    (condition) => {
+      expect(analysisProblem({ ...analyze, if: condition })).toMatch(/`if:`/)
+    },
+  )
+
+  it('accepts an analysis whose `if:` can be true', () => {
+    expect(
+      analysisProblem({ ...analyze, if: "github.event_name == 'push'" }),
+    ).toBeNull()
+  })
+
+  it.each(['never', 'failure-only', false])(
+    'refuses an analysis with `upload: %j`',
+    (upload) => {
+      expect(analysisProblem({ ...analyze, with: { upload } })).toMatch(
+        /`upload: /,
+      )
+    },
+  )
+
+  it('accepts an analysis that leaves `upload` unset, or sets it to always', () => {
+    expect(analysisProblem(analyze)).toBeNull()
+    expect(
+      analysisProblem({ ...analyze, with: { upload: 'always' } }),
+    ).toBeNull()
   })
 })
