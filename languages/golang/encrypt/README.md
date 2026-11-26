@@ -557,6 +557,9 @@ or for stored data. Check an error two ways.
 - `ErrForbidden`, `ErrAuthentication`: a ciphertext that does not open under
   its field's context (ZeroKMS refuses the key, or the AEAD fails).
 - `ErrEncoding`: a stored value or a call that does not fit the declaration.
+- `ErrConfig`: `NewClient` got a client key that is wrong, for example one
+  wrong character in `CS_CLIENT_KEY`. It is not `auth.ErrConfig`. That
+  error is about the token's configuration.
 - `ErrUnauthorized`, `ErrNotFound`, `ErrTransport`, `ErrKMS`: ZeroKMS.
 - `ErrState`: a call on a closed client: you closed it, or the guest
   trapped or ran on long after a call's context ended (see Connect).

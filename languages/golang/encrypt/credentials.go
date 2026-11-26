@@ -344,7 +344,8 @@ func (c detectedOIDCCredentials) resolve(ctx context.Context, opts resolveOption
 //
 // NewClient does not read the environment or the developer profile for
 // these credentials. If a field is empty or blank, NewClient returns
-// [ErrEncoding] and names the field.
+// [ErrEncoding] and names the field. If ClientKey is not a client key in hex
+// or padded base64, NewClient returns [ErrConfig] and names the field.
 //
 // Each field has an env tag that names the variable [AutoCredentials] reads.
 // github.com/sethvargo/go-envconfig and github.com/caarlos0/env both read
@@ -444,6 +445,9 @@ func (c AccessKeyCredentials) validate() error {
 	if len(redactedKeys) > 0 {
 		return fmt.Errorf("%w: AccessKeyCredentials: %s contains %s: the credentials were encoded and decoded again, and encoding redacts each key",
 			ErrEncoding, strings.Join(redactedKeys, ", "), redacted)
+	}
+	if !validKeyEncoding(c.ClientKey) {
+		return newClientKeyError("AccessKeyCredentials: ClientKey ("+envClientKey+") "+errKeyEncoding, nil)
 	}
 	return nil
 }
@@ -599,6 +603,9 @@ func clientKeyFromEnv() (string, *ClientKey, error) {
 	}
 	if id == "" || material == "" {
 		return "", nil, fmt.Errorf("%w: %s and %s are set, but one of them is empty", ErrEncoding, envClientID, envClientKey)
+	}
+	if !validKeyEncoding(material) {
+		return "", nil, newClientKeyError(envClientKey+" "+errKeyEncoding, nil)
 	}
 	// The environment's string is Go's and cannot be wiped; this copy can,
 	// and the ClientKey owns it.

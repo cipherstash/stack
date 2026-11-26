@@ -13,6 +13,26 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Added
+
+- **`encrypt.ErrConfig`** (#1850). `NewClient` returns it for a wrong client
+  key: one that is not hex or padded base64, or that does not decode to a
+  valid key. The error's `Diagnostic` has a `Help` that names
+  `CS_CLIENT_KEY`, and the error never includes the key. It also matches
+  `encrypt.ErrEncoding`. `NewClient` returned `ErrEncoding` for these keys
+  before. It is a different value from `auth.ErrConfig`, so check both if
+  you want to catch either.
+
+### Fixed
+
+- **One wrong character in `CS_CLIENT_KEY` no longer makes `NewClient`
+  hang** (#1850). Some changed characters still gave a key that decoded.
+  `NewClient` then sent its first request to ZeroKMS, and the guest looped
+  forever when it used the key. The loop used a full CPU core and ignored
+  the context's deadline. Now `NewClient` checks the key before it loads the
+  guest, and the guest checks the key before it sends anything to ZeroKMS.
+  A wrong key fails at once with `encrypt.ErrConfig`.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

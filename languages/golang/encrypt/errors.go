@@ -1,6 +1,8 @@
 package encrypt
 
 import (
+	"errors"
+
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
@@ -68,6 +70,53 @@ var (
 	// (ulimit -l, a systemd LimitMEMLOCK=, or a pod's securityContext).
 	ErrMemoryLock = guest.ErrMemoryLock
 )
+
+// ErrConfig is a client configuration that NewClient refuses before it
+// asks ZeroKMS for anything. Today that is a malformed client key: one
+// that is not hex or padded base64, or one whose bytes are not a valid
+// keyset. A single wrong character in CS_CLIENT_KEY is enough. The error's
+// [Diagnostic] has the code "stack_encrypt::client_key" and a Help that
+// names CS_CLIENT_KEY. It never includes the key.
+//
+// The error also matches [ErrEncoding]. NewClient returned ErrEncoding for
+// a malformed key before ErrConfig existed.
+//
+// ErrConfig is not the same value as auth.ErrConfig. auth.ErrConfig is
+// auth's credential guest refusing auth configuration or token data, such
+// as a malformed access key or workspace CRN. NewClient can return either.
+// errors.Is with one does not match the other, so a caller that wants to
+// catch both checks both.
+var ErrConfig = errors.New("encrypt: invalid configuration")
+
+// codeClientKey is the Diagnostic code of a malformed client key.
+const codeClientKey = "stack_encrypt::client_key"
+
+// clientKeyHelp is the Help of a malformed client key.
+const clientKeyHelp = "Check CS_CLIENT_KEY, or the client key you passed: " +
+	"it must be the key exactly as it was issued, with no character changed, added or removed."
+
+// clientKeyError is a malformed client key: it matches ErrConfig, its
+// Diagnostic, and cause, which is ErrEncoding or the guest's refusal. Its
+// text is ErrConfig's and the Diagnostic's message. None of it includes
+// the key.
+type clientKeyError struct {
+	diag  *Diagnostic
+	cause error
+}
+
+func newClientKeyError(message string, cause error) error {
+	if cause == nil {
+		cause = ErrEncoding
+	}
+	return &clientKeyError{
+		diag:  &Diagnostic{Code: codeClientKey, Message: message, Help: clientKeyHelp, Severity: "error"},
+		cause: cause,
+	}
+}
+
+func (e *clientKeyError) Error() string { return ErrConfig.Error() + ": " + e.diag.Message }
+
+func (e *clientKeyError) Unwrap() []error { return []error{ErrConfig, e.diag, e.cause} }
 
 // ErrStorageVersion is an opaque struct sealed as a storage blob of a
 // version this release does not read: a later release wrote it. Its error
