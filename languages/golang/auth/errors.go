@@ -18,7 +18,8 @@ import (
 // and ErrTransport are different values. Here they are a missing profile
 // file and a failed auth HTTP exchange. In encrypt they are ZeroKMS
 // failures. So errors.Is(err, encrypt.ErrNotFound) is false for an
-// ErrNotFound from this package, and the other way round.
+// ErrNotFound from this package, and the other way round. [ErrGuestNotBuilt]
+// is in both packages too. It is a different value in each.
 var (
 	// ErrNotFound is a profile file that does not exist in the store asked:
 	// no secretkey.json, auth.json or device.json there. For the workspace's

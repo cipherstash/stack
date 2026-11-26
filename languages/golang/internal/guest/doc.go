@@ -6,9 +6,12 @@
 //
 // It sits under internal so that encrypt and auth expose what they need of
 // it — the error sentinels, the Diagnostic and ClientKey types — as their
-// own identifiers (aliases, not copies: an error from either package is the
-// same value, and a key read by one is the type the other takes) without
-// either package importing the other. A binary that wants only the profile
+// own identifiers (aliases, not copies: a key read by one is the type the
+// other takes) without either package importing the other. Where both
+// packages give a name to the same sentinel, as ErrEncoding, ErrState,
+// ErrInternal and ErrMemoryLock, it is one value. ErrNotFound and
+// ErrTransport name different sentinels in each package: ErrNotFound and
+// ErrTransport in encrypt, ErrProfileNotFound and ErrAuthTransport in auth. A binary that wants only the profile
 // must not carry the crypto guest, and this is the seam that makes that
 // true. See ADR-0005 in packages/stack-encrypt/docs/adr.
 package guest

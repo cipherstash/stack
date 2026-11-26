@@ -19,16 +19,19 @@ import (
 // ErrEncoding, ErrState, ErrInternal and ErrMemoryLock. ErrNotFound and
 // ErrTransport are different values. Here they are ZeroKMS failures. In
 // auth, ErrNotFound is a missing profile file and ErrTransport is a
-// failed auth HTTP exchange. So errors.Is(err,
-// ErrNotFound) is false for auth.ErrNotFound, and the other way round.
+// failed auth HTTP exchange. So errors.Is(err, ErrNotFound) is false for
+// auth.ErrNotFound, and the other way round. [ErrGuestNotBuilt] is in both
+// packages too. It is a different value in each.
 //
-// A [Client]'s calls return this package's errors. [NewClient] can also
-// return an auth error, wrapped, while it resolves the [Credentials]: for
-// example auth.ErrConfig for a CS_WORKSPACE_CRN that is not a CRN, or
-// [ErrNoCredentials] wrapping auth.ErrNotFound when the profile has no
-// secretkey.json. Check those with the auth names. When an auth strategy
-// fails to give a token, the call's error matches [ErrTransport] and the
-// strategy's own error, such as auth.ErrTransport.
+// Most of a [Client]'s failures are this package's errors. An auth error
+// can reach a caller in two ways. [NewClient] can return one, wrapped,
+// while it resolves the [Credentials]: for example auth.ErrConfig for a
+// CS_WORKSPACE_CRN that is not a CRN, or [ErrNoCredentials] wrapping
+// auth.ErrNotFound when the profile has no secretkey.json. And when an auth
+// strategy fails to give a token, any call's error matches [ErrTransport]
+// and the strategy's own error, such as auth.ErrInvalidGrant for a revoked
+// refresh token. Check for those with the auth names: ErrTransport alone
+// does not say whether ZeroKMS or the token failed.
 var (
 	// ErrAuthentication is an AEAD open failure: a tampered ciphertext, a
 	// wrong element derivation, or a wrong AAD that reached the AEAD. Against
