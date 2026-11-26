@@ -1,8 +1,11 @@
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { REPO_ROOT } from './lib/repo-root.mjs'
-import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
+import {
+  flattenSteps,
+  readWorkflow,
+  resolveRepoComposite,
+  usesOf,
+  workflowFiles,
+} from './lib/workflows.mjs'
 
 /**
  * Every job that runs `pnpm install` on a Linux runner must install `node-gyp`
@@ -137,10 +140,6 @@ const IGNORE_SCRIPTS = /--ignore-scripts\b/
  */
 const PREBUILT_RUNNER = /(?:^|[\s-])(?:macos|windows|win32|darwin)(?:[\s-]|$)/i
 
-function usesOf(step) {
-  return typeof step?.uses === 'string' ? step.uses.trim() || null : null
-}
-
 function runOf(step) {
   return typeof step?.run === 'string' ? step.run : null
 }
@@ -176,71 +175,6 @@ export function needsNodeGyp(runsOn) {
 // Traversal
 // ---------------------------------------------------------------------------
 
-const LOCAL_USES = /^\.{1,2}\//
-
-function stepLabel(step, index) {
-  return step?.name || usesOf(step) || `step #${index + 1}`
-}
-
-/**
- * Flattens a step list, splicing a local composite action's own steps in at the
- * position of the `uses:` that reaches it. The result is the sequence GitHub
- * actually executes, which is the only sequence in which "before" means
- * anything.
- *
- * `resolveComposite` is injected so the checker can be exercised against
- * synthetic composites below without writing fixture files — an in-repo scan is
- * not a test of the traversal, it is a test of the repo.
- *
- * `visited` breaks the `A uses B uses A` cycle. Scoped per job, matching
- * `lint-no-workflow-caching.mjs`: a composite shared by two jobs is flattened
- * into each.
- */
-export function flattenSteps(
-  steps,
-  resolveComposite,
-  trail = '',
-  visited = new Set(),
-) {
-  const flat = []
-  const unresolved = []
-
-  ;(Array.isArray(steps) ? steps : []).forEach((step, index) => {
-    const label = `${trail}${stepLabel(step, index)}`
-    const uses = usesOf(step)
-
-    if (uses === null || !LOCAL_USES.test(uses)) {
-      flat.push({ step, label })
-      return
-    }
-
-    const composite = resolveComposite(uses)
-    if (composite === null) {
-      // Fail closed. A local `uses:` pointing at nothing fails the job on
-      // GitHub anyway; passing it here would make "rename the action" a way to
-      // leave this check with nothing to read.
-      unresolved.push(`${label}: \`uses: ${uses}\` — no action manifest there`)
-      flat.push({ step, label })
-      return
-    }
-    if (visited.has(composite.id)) return
-    visited.add(composite.id)
-
-    const nested = flattenSteps(
-      composite.steps,
-      resolveComposite,
-      `${label} -> ${composite.id} step "`,
-      visited,
-    )
-    for (const entry of nested.flat) {
-      flat.push({ step: entry.step, label: `${entry.label}"` })
-    }
-    unresolved.push(...nested.unresolved)
-  })
-
-  return { flat, unresolved }
-}
-
 /**
  * The rule itself, over an already-flattened sequence: for each install step,
  * some EARLIER step must have put node-gyp on PATH.
@@ -269,23 +203,6 @@ export function auditFlattened(flat) {
 // ---------------------------------------------------------------------------
 // The repo scan
 // ---------------------------------------------------------------------------
-
-/**
- * GitHub resolves `uses: ./x` against the checkout root, not the calling file.
- * Both manifest spellings are valid, so probing only `action.yml` would stop
- * the traversal dead at a composite that used the other one.
- */
-function resolveRepoComposite(usesPath) {
-  const dir = usesPath.replace(LOCAL_USES, '')
-  for (const name of ['action.yml', 'action.yaml']) {
-    const rel = `${dir}/${name}`
-    if (existsSync(join(REPO_ROOT, rel))) {
-      const doc = readWorkflow(rel)
-      return { id: rel, steps: doc?.runs?.steps ?? [] }
-    }
-  }
-  return null
-}
 
 function scan() {
   const jobs = []
