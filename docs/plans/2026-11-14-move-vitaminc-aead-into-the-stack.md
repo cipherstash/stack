@@ -245,6 +245,18 @@ the conformance corpus all use them, so they do not change.
 `scalar_kind`, `scalar_of` and `sealed_null` become methods of that type, or
 are deleted.
 
+The type covers every scalar, and an array and an object, which are shapes of
+the AEAD encoding. It does not cover `json`. A JSON field's value is text or
+bytes, and `json` only tells the engine to parse it for the JSON index. So a
+plan field's type is an AEAD type or `json`, and `json` belongs to the JSON
+index.
+
+The type also gives the width a sealed null is padded to. A field's declared
+type is the only thing that decides that width. A host can send a null with
+a type of its own, and the frame writer drops that type, as it does today.
+If the host's type counted, it could disagree with the declaration, and a
+null padded to the wrong length would show that it is a null.
+
 vitaminc has no such type today. `Kind`, `Width`, `KnownLogical` and
 `FixedType` each cover part of it, and its only text names include a
 parameter (`timestamp(ms)`, `decimal(2)`).
@@ -273,7 +285,29 @@ This is the widest step. `ValueFrame` is named in about 50 files of
 `eql-bindings`, which is published, so this is a breaking release of that
 crate.
 
-### 2.5 The bridges and the SDKs
+### 2.5 One place converts a value to its declared type
+
+Today Go converts a value to the field's type on the host, the engine
+refuses a write whose width differs from the declared type, and the engine
+converts a query's value when the conversion is exact. A JavaScript `bigint`
+has no width, so the bridge writes the narrowest one that fits, and a
+JavaScript user cannot write `34n` to an `int64` field.
+
+The exact conversion the engine uses for a query also runs on a write, in
+one place. A bridge is never told the declared type. The conversion is never
+lossy, never between a number and a value that is not a number, and never
+from a float to a decimal. The value is sealed at the declared width, so no
+stored bytes change. The conformance cases that pin today's refusal change
+from refused to accepted.
+
+A typed field takes a value of its type or a null, and nothing else.
+JavaScript's `undefined` is refused with an error of its own, and a
+conformance case pins that. Today it is refused only because it has no type,
+with a general error, and no test covers it. Storing it as a null would hide
+a misspelt property name. Inside an untyped value, `undefined` is kept as it
+is today.
+
+### 2.6 The bridges and the SDKs
 
 - **TypeScript:** the addon hands the bridge's frame to the engine with no
   second copy. `OneValue`, `is_uuid`, and the `recipher_js::uuid` code are
@@ -349,25 +383,12 @@ repository's CI before its code moves:
 
 ## Open questions
 
-1. **Who converts a value to its declared type on a write?** Today Go
-   converts on the host, the engine refuses a mismatch, and the JavaScript
-   bridge cannot know the width of a `bigint`. Either the AEAD crates convert
-   a value to a declared type when the conversion is exact, as the engine
-   already does for a query, or every bridge is told the declared type. The
-   first keeps a bridge free of types. It also changes a rule the conformance
-   corpus pins: a value of another width is refused on a write.
-2. **Is a host's typed null kept?** The frame writer drops the type, and a
-   plan's `"null": "sealed"` adds the padding back from the declared type.
-   Once the declared type is an AEAD type, the two overlap.
-3. **Where do `json`, `array` and `object` live?** They are `ValueKind`
-   variants and not scalar types. No index takes an array or an object, and
-   Go has no constant for either.
-4. **Is `undefined` a null to a typed field?** The engine accepts it, gives
-   it no type, and does not treat it as a null. No test covers it against a
-   nullable field.
-5. **What is a frame called?** "Frame" does not say whether it is a transport
-   or a storage format. Rename it during stage 2, where the type is already
-   being replaced.
+1. **What is a frame called?** "Frame" does not say whether it is a transport
+   or a storage format. Rename it in step 2.4, where the type is already
+   being replaced. Stages 0 and 1 do not need the answer. "Transport" is the
+   candidate: the Go codec's documentation and the language integration
+   guide already use it. "Wire" is taken: the sealed leaf's version constant
+   is `WIRE_VERSION`.
 
 ## Rules this changes
 
