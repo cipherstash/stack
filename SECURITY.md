@@ -41,6 +41,17 @@ by `.github/workflows/release-golang.yml` as `languages/golang/vX.Y.Z` and
 `languages/golang/encrypt/encrypttest/vX.Y.Z` tags. All of these are in scope
 for security reports on the same terms as the npm packages above.
 
+It also carries the source of three Rust crates moved from
+`cipherstash/vitaminc`: **`vitaminc-aead`**, **`vitaminc-aead-frame`** and
+**`vitaminc-aead-derive`** (`packages/vitaminc-aead`,
+`packages/vitaminc-aead-frame`, `packages/vitaminc-aead-derive`). They define
+the value types Stack Encrypt seals, how each is encoded, and how a value is
+sealed. Their crates.io releases up to 0.10.0 were published from
+`cipherstash/vitaminc`, and they are not published from this repository yet.
+Every build in this repository uses the copies here. They are licensed under
+MIT, and are in scope for security reports on the same terms as the npm
+packages above.
+
 The `encrypttest` module ships test builds of the
 engine whose keys derive from a published seed. Those keys are not secret by
 design: the package is for tests only. A way for a production client to load
