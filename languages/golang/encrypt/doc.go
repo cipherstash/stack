@@ -149,8 +149,9 @@
 // derives it.
 //
 // Each stored value is one column. [Ciphertext], the term types and every
-// type in package eql implement driver.Valuer and sql.Scanner, so a
-// database library binds and scans each one. The struct that generated code
+// value and query type in package eql implement driver.Valuer, and a
+// pointer to each implements sql.Scanner. So a database library binds each
+// one, and scans into its address. The struct that generated code
 // writes for a field's outputs (EncryptedUserEmail, with Ciphertext and
 // Equality fields) implements neither. Bind and scan each of its fields as
 // its own column. A passthrough field implements them only when its own Go
