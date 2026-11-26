@@ -24,10 +24,11 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ### Fixed
 
-- The `encrypt` README now says that a query through a cipher with a
-  binding is refused with `ErrEncoding`. Query through a cipher with the
-  same scope and no binding, then open the row through the cipher with the
-  binding. The README said such a query was accepted.
+- **The `encrypt` and `stashgen` READMEs say a query through a cipher with
+  a binding is refused** (#1862). The refusal is `ErrEncoding`. Query
+  through a cipher with the same scope and no binding, then open the row
+  through the cipher with the binding. The READMEs did not say that such a
+  query is refused.
 
 ## [0.1.0-rc.7] - 2026-11-25
 
