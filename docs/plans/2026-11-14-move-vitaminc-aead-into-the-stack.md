@@ -11,6 +11,9 @@ Status: draft, rewritten 26 November 2026. Decisions by Dan Draper:
 - No more work on the TypeScript SDK until this is done.
 - vitaminc's Go packages `vcffi` and `vcvalue` move too, as a third stage,
   before the Go SDK's final release. vitaminc's `vcencrypt` is deleted.
+- An order index takes no bytes and no UUID.
+- The moved code keeps the MIT licence, which is this repository's licence.
+- Nobody outside CipherStash uses the moved crates.
 
 The first draft of this plan (14 November) moved nine crates, with `ore.rs`,
 into `stack-encrypt` as modules. This draft replaces it.
@@ -251,9 +254,9 @@ parameter (`timestamp(ms)`, `decimal(2)`).
 Delete the allow-list. An index refuses a type it cannot handle:
 
 - **Equality:** already asks `vitaminc-normalize`.
-- **Order:** `vitaminc-ore` already refuses a boolean and an 8-bit integer.
-  The engine also refuses bytes and a UUID, which `vitaminc-ore` allows.
-  Decide whether that stays, and put it in one place.
+- **Order:** no boolean, no 8-bit integer, no bytes and no UUID.
+  `vitaminc-ore` already refuses the first two. It allows bytes and a UUID,
+  so the engine's order index refuses those, in one place.
 - **Match:** text only.
 
 A plan is refused when it is built, before a value arrives. The index answers
@@ -362,12 +365,7 @@ repository's CI before its code moves:
 4. **Is `undefined` a null to a typed field?** The engine accepts it, gives
    it no type, and does not treat it as a null. No test covers it against a
    nullable field.
-5. **Does the order index take bytes and a UUID?** See 2.3.
-6. **Which licence applies to the moved code?** vitaminc uses the MIT
-   licence. Ask the person responsible for licensing.
-7. **Does anyone outside CipherStash use the moved crates?** They are on
-   crates.io. Nobody has checked.
-8. **What is a frame called?** "Frame" does not say whether it is a transport
+5. **What is a frame called?** "Frame" does not say whether it is a transport
    or a storage format. Rename it during stage 2, where the type is already
    being replaced.
 
