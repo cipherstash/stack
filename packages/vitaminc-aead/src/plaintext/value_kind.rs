@@ -2,7 +2,7 @@
 //!
 //! [`Physical`] and [`Logical`] describe one value as it is sealed. A
 //! schema needs the kind alone: "this column holds `int32`s". [`ValueKind`]
-//! is that kind. It names every scalar a plan can declare, the two
+//! is that kind. It names every scalar a schema can declare, the two
 //! container shapes and a JSON document, and it has the text name a schema
 //! spells it with.
 
@@ -216,9 +216,9 @@ impl ValueKind {
     }
 
     /// A scalar of this kind, with its logical type, or `None` for an
-    /// array, an object or a JSON document. For asking a rule stated over values about the kind:
-    /// every value of a kind is treated alike by a rule that looks only at
-    /// its kind.
+    /// array, an object or a JSON document. For asking a rule stated over
+    /// values about the kind: every value of a kind is treated alike by a
+    /// rule that looks only at its kind.
     ///
     /// The scalar is zero, `false`, empty text or empty bytes. An integer
     /// or float has the kind's width. A decimal is at scale 0 and a
@@ -239,7 +239,8 @@ impl ValueKind {
 
     /// How an absent value of this kind is sealed so that it is as long as
     /// a present one, or `None` for a kind of no fixed length (text, bytes,
-    /// an array, an object, a JSON document), whose absence no padding can hide.
+    /// an array, an object, a JSON document), whose absence no padding can
+    /// hide.
     ///
     /// AES-GCM keeps the plaintext's length, so a null sealed as the plain
     /// null leaf (one byte) beside dates (five bytes) shows which rows have
@@ -327,7 +328,7 @@ impl FromStr for ValueKind {
     fn from_str(name: &str) -> Result<Self, Self::Err> {
         ValueKind::ALL
             .into_iter()
-            .find(|ty| ty.name() == name)
+            .find(|kind| kind.name() == name)
             .ok_or(ParseValueKindError)
     }
 }
@@ -346,7 +347,7 @@ mod tests {
 
     #[test]
     fn names_parse_back_exactly() {
-        let names: Vec<&str> = ValueKind::ALL.iter().map(|ty| ty.name()).collect();
+        let names: Vec<&str> = ValueKind::ALL.iter().map(|kind| kind.name()).collect();
         assert_eq!(
             names,
             [
@@ -374,9 +375,9 @@ mod tests {
             ],
             "the names never change"
         );
-        for ty in ValueKind::ALL {
-            assert_eq!(ty.name().parse::<ValueKind>(), Ok(ty));
-            assert_eq!(ty.to_string(), ty.name());
+        for kind in ValueKind::ALL {
+            assert_eq!(kind.name().parse::<ValueKind>(), Ok(kind));
+            assert_eq!(kind.to_string(), kind.name());
         }
         for refused in ["UInt64", "u64", " uint64", "null", "undefined", "Json", ""] {
             assert_eq!(
@@ -388,16 +389,16 @@ mod tests {
         assert_eq!(ParseValueKindError.to_string(), "not a value kind");
     }
 
-    /// Every scalar type is the type of its own zero, and a container has
+    /// Every scalar kind is the kind of its own zero, and a container has
     /// none.
     #[test]
-    fn every_scalar_type_is_the_type_of_its_zero() {
-        for ty in ValueKind::ALL {
-            match ty.zero() {
-                Some((logical, value)) => assert_eq!(ValueKind::of(logical, &value), Some(ty)),
+    fn every_scalar_kind_is_the_kind_of_its_zero() {
+        for kind in ValueKind::ALL {
+            match kind.zero() {
+                Some((logical, value)) => assert_eq!(ValueKind::of(logical, &value), Some(kind)),
                 None => assert!(
-                    matches!(ty, ValueKind::Array | ValueKind::Object | ValueKind::Json),
-                    "{ty}"
+                    matches!(kind, ValueKind::Array | ValueKind::Object | ValueKind::Json),
+                    "{kind}"
                 ),
             }
         }
@@ -422,8 +423,8 @@ mod tests {
             (Physical::Text("a"), ValueKind::String),
             (Physical::Bytes(b"a"), ValueKind::Bytes),
         ];
-        for (value, ty) in cases {
-            assert_eq!(ValueKind::of(None, &value), Some(ty), "{ty}");
+        for (value, kind) in cases {
+            assert_eq!(ValueKind::of(None, &value), Some(kind), "{kind}");
         }
         assert_eq!(ValueKind::of(None, &Physical::Null), None);
     }
@@ -548,8 +549,8 @@ mod tests {
             (ValueKind::Object, None),
             (ValueKind::Json, None),
         ];
-        for (ty, want) in cases {
-            assert_eq!(ty.sealed_null(), want, "{ty}");
+        for (kind, want) in cases {
+            assert_eq!(kind.sealed_null(), want, "{kind}");
         }
     }
 
@@ -557,14 +558,18 @@ mod tests {
     /// sealed null and a sealed value cannot be told apart by length.
     #[test]
     fn a_typed_null_is_as_long_as_its_zero() {
-        for ty in ValueKind::ALL {
-            let Some(SealedNull::Typed(fixed)) = ty.sealed_null() else {
+        for kind in ValueKind::ALL {
+            let Some(SealedNull::Typed(fixed)) = kind.sealed_null() else {
                 continue;
             };
-            let (logical, value) = ty.zero().expect("a fixed type has a zero");
+            let (logical, value) = kind.zero().expect("a fixed type has a zero");
             let mut leaf = Vec::with_capacity(max_len(&value));
             write_leaf(logical, value, &mut leaf).expect("a zero writes");
-            assert_eq!(typed_null_len(sealed_null_type(fixed)), leaf.len(), "{ty}");
+            assert_eq!(
+                typed_null_len(sealed_null_type(fixed)),
+                leaf.len(),
+                "{kind}"
+            );
         }
     }
 }

@@ -154,8 +154,7 @@ use serde::Deserialize;
 use super::term::{IndexWire, JsonWire, MatchWire};
 use super::{TargetOptions, ValueFrame, ValueKind};
 use vitaminc_aead::frame::{Frame, FrameWriter};
-use vitaminc_aead::plaintext::SealedNull;
-use vitaminc_aead::plaintext::{Logical, MapSink, Physical, SeqSink, Sink};
+use vitaminc_aead::plaintext::{Logical, MapSink, Physical, SealedNull, SeqSink, Sink};
 use vitaminc_aead::{DecodeError, Encrypt};
 use vitaminc_protected::{Controlled, Protected};
 

@@ -504,20 +504,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
-- **`dynamic::ValueKind` is defined in `vitaminc-aead`** (#1907). It is
-  re-exported at the same path, with the same 21 variants and names, so
-  code that names a kind does not change. What moved with it:
-  - `ValueKind::holds` and `name` are unchanged.
-  - `ValueKind::of(ty, &value)` gives the kind of a scalar, and
-    `ValueKind::zero()` a scalar of a kind.
-  - `ValueKind::sealed_null()` is now public, and returns
-    `Option<SealedNull>` (`Plain` or `Typed(FixedType)`) in place of
-    `Option<Option<FixedType>>`.
-  - `ParseValueKindError` is `vitaminc-aead`'s, re-exported at the same
-    path, with the same message.
-
-  No name, stored byte or frame byte changes.
-
 - **A timestamp keeps the unit the host wrote it in** (#1846). A
   `ValueFrame` no longer rewrites a timestamp in seconds, milliseconds or
   microseconds to nanoseconds. A passthrough field now stores exactly the
@@ -1527,6 +1513,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was built.
 
 ### Changed
+
+- **`dynamic::ValueKind` is defined in `vitaminc-aead`** (#1907). It is
+  re-exported at the same path, with the same 21 variants and names, so
+  code that names a kind does not change. What moved with it:
+  - `ValueKind::holds` and `name` are unchanged.
+  - `ValueKind::of(ty, &value)` gives the kind of a scalar, and
+    `ValueKind::zero()` a scalar of a kind.
+  - `ValueKind::sealed_null()` is now public, and returns
+    `Option<SealedNull>` (`Plain` or `Typed(FixedType)`) in place of
+    `Option<Option<FixedType>>`.
+  - `ParseValueKindError` is `vitaminc-aead`'s, re-exported at the same
+    path, with the same message.
+
+  No name, stored byte or frame byte changes.
 
 - **In a `wasm32` build, a data plan's batch of records is built a chunk
   at a time when it settles** (#1768). `dynamic::record::encrypt_with` and
