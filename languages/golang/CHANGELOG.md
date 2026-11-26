@@ -13,6 +13,17 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Storing text too short for `TextMatch` names the field** (#1894).
+  `TextMatch` refuses to store text that has no match token: text that is
+  empty, only separators, or one letter. No query could find such a row.
+  Before this fix, `Encrypt` reported that "the query's text" had no
+  tokens, although no query ran. The error did not name the field. The
+  error now says that the stored text is too short, and names
+  the value and the field, for example `value 1, field "name"`. It is still
+  `ErrTerm`, with the code `stack_encrypt::empty_term_text`.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

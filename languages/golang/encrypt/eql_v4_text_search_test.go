@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
 // EQL v4's TextSearch, sealed and queried through generated code over the
@@ -174,4 +176,75 @@ func TestV4TextSearchStoresEveryTermAndQueriesCarryOne(t *testing.T) {
 func sortedWith(keys ...string) []string {
 	sort.Strings(keys)
 	return keys
+}
+
+// TextMatch has no term but its filter, so it refuses to store text that
+// cuts no match token: no query could find the row. The refusal comes from
+// a write, so it says that the stored text is too short and names the row
+// and the field. A TextSearch field in the same row stores such text as the
+// empty filter, so it is never the field named.
+func TestV4TextMatchRefusalNamesTheStoredField(t *testing.T) {
+	c := deterministicEQLClient(t)
+	ctx := context.Background()
+	cipher := c.DefaultKeyset()
+
+	mixed := &record.Plan{Context: []string{"people"}, Fields: []record.Field{
+		{Name: "nickname", Kind: record.String, Target: "TextSearch"},
+		{Name: "name", Kind: record.String, Target: "TextMatch"},
+	}}
+	for _, tc := range []struct {
+		name  string
+		run   func() error
+		value int
+		field string
+	}{
+		{"one letter", func() error {
+			_, err := testusers.ProfileFields.Name.Encrypt(ctx, cipher, "A")
+			return err
+		}, 0, "name"},
+		{"an empty value", func() error {
+			_, err := testusers.ProfileFields.Name.Encrypt(ctx, cipher, "")
+			return err
+		}, 0, "name"},
+		{"the second row", func() error {
+			_, err := testusers.EncryptProfile(ctx, cipher, []testusers.Profile{{ID: 1, Name: "Alice"}, {ID: 2, Name: "A"}})
+			return err
+		}, 1, "name"},
+		{"beside short TextSearch values", func() error {
+			_, err := cipher.Seal(ctx, mixed, []record.Source{
+				{"nickname": "A", "name": "Alice"},
+				{"nickname": "B", "name": "Bo"},
+				{"nickname": "C", "name": "C"},
+			})
+			return err
+		}, 2, "name"},
+		{"through a cipher with a binding", func() error {
+			_, err := cipher.Bind("user-7").Seal(ctx, mixed, []record.Source{{"nickname": "Al", "name": "C"}})
+			return err
+		}, 0, "name"},
+		{"under a plan with a binding", func() error {
+			bound := *mixed
+			bound.Bind = []any{"user-7"}
+			_, err := cipher.Seal(ctx, &bound, []record.Source{{"nickname": "Al", "name": "C"}})
+			return err
+		}, 0, "name"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.run()
+			if !errors.Is(err, encrypt.ErrTerm) {
+				t.Fatalf("%v, want ErrTerm", err)
+			}
+			encrypt.WantCode(t, err, "stack_encrypt::empty_term_text")
+			msg := err.Error()
+			if want := fmt.Sprintf("value %d, field %q", tc.value, tc.field); !strings.Contains(msg, want) {
+				t.Errorf("%q does not name %s", msg, want)
+			}
+			if !strings.Contains(msg, "the stored text") || !strings.Contains(msg, "TextMatch") {
+				t.Errorf("%q does not say that the stored TextMatch text is too short", msg)
+			}
+			if strings.Contains(msg, "query's text") {
+				t.Errorf("%q calls a write a query", msg)
+			}
+		})
+	}
 }
