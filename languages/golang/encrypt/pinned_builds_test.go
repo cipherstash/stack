@@ -3,6 +3,7 @@ package encrypt
 import (
 	"context"
 	"errors"
+	goruntime "runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -112,11 +113,21 @@ func TestPinnedBuildsKeepTheGuestCompiled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var p pinnedBuilds
+	if err := p.pin(context.Background(), []byte("not wasm")); err == nil {
+		t.Fatal("pinned bytes that are not a WebAssembly module")
+	}
+	// wazero compiles to machine code on amd64 and arm64 only. Elsewhere,
+	// such as the 386 run in CI, it runs an interpreter, whose compile is
+	// cheap. There a compile that reads the cache is only about 3 times
+	// faster than one that misses it, which is too close to tell apart.
+	if goruntime.GOARCH != "amd64" && goruntime.GOARCH != "arm64" {
+		t.Skipf("wazero has no compiler on %s, so a cache hit cannot be told from a miss by time", goruntime.GOARCH)
+	}
 	// The compiles below run on one worker, so a compile that misses the
 	// cache takes about 20 times as long as one that reads it, on any
-	// number of cores. With a worker for each core, a machine with many
-	// cores compiles the guest only about 3 times slower than it reads it
-	// from the cache, which is too close to tell apart.
+	// number of cores. With a worker for each core, on 20 cores, it takes
+	// only about 5 times as long.
 	ctx := context.Background()
 	// compile compiles wasm on a new runtime, closes the compiled module
 	// and the runtime, and returns how long the compile took. Closing the
@@ -138,7 +149,6 @@ func TestPinnedBuildsKeepTheGuestCompiled(t *testing.T) {
 	}
 	cold := compile(wazero.NewRuntimeConfig().WithCompilationCache(wazero.NewCompilationCache()))
 
-	var p pinnedBuilds
 	if err := p.pin(context.Background(), wasm); err != nil {
 		t.Fatal(err)
 	}
@@ -146,9 +156,5 @@ func TestPinnedBuildsKeepTheGuestCompiled(t *testing.T) {
 	compile(shared)
 	if again := compile(shared); again > cold/4 {
 		t.Fatalf("a compile after the pin took %v and a cold compile %v: the pinned build left the cache", again, cold)
-	}
-
-	if err := p.pin(context.Background(), []byte("not wasm")); err == nil {
-		t.Fatal("pinned bytes that are not a WebAssembly module")
 	}
 }
