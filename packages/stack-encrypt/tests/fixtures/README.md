@@ -1,3 +1,9 @@
+# Fixtures
+
+Every fixture here is Biome-formatted. After regenerating one, run `pnpm
+run code:fix` before committing. Each test compares its fixture as parsed
+JSON, so the layout does not fail it.
+
 # Record fixture: `record_lowering.json`
 
 One declaration, two authors, one engine. Typed Rust code (the engine's
@@ -21,7 +27,8 @@ Typed code over bare `u32` or `String` fields seals the same leaves too: every
 leaf is tagged with its type (vitaminc ADR 0001), whoever wrote it.
 
 Regenerate with `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p
-stack-encrypt --all-features --test record_lowering`. Only the sealed bytes
+stack-encrypt --all-features --test record_lowering`, then run `pnpm run
+code:fix`. Only the sealed bytes
 change between runs (every leaf carries a fresh nonce); the plan, the
 plaintext and the terms must not, and the test fails if they do. Each test
 rewrites only the entries it owns, so a filter on one test's name
@@ -104,7 +111,8 @@ the same queries through the guest's `se_query_term`, `se_verify` and
 `se_target_limit` exports and compare. No entry depends on a nonce, so the
 file changes only when a derivation does: regenerate it with
 `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p stack-encrypt --all-features
---test query_operators`, and do not edit it by hand.
+--test query_operators`, then run `pnpm run code:fix`, and do not edit it
+by hand.
 
 ```json
 {
@@ -162,7 +170,8 @@ identities, parses each `text` into its Go type, writes it as the same
 deterministic guest.
 
 Regenerate with `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p stack-encrypt
---all-features --test value_kinds`. Only the sealed leaves change between
+--all-features --test value_kinds`, then run `pnpm run code:fix`. Only the
+sealed leaves change between
 runs; the frames and the terms must not. Do not edit the file by hand.
 
 ```json
@@ -234,6 +243,11 @@ file exists. The check rewrites it only under
 depend on `stack_kms::DeterministicSource` and the seed below; both are part
 of the frozen contract.
 
+**Formatting is the other exception.** `pnpm run code:fix` may change this
+file's layout, as Biome formats every JSON file in the repository. Its parsed
+JSON must never change that way. The test reads the parsed file, so a layout
+change cannot fail it.
+
 **If this test fails, the change broke stored data.** Do not regenerate the
 file. Either fix the change, or, for a deliberate change to the stored
 format, add `stored_rows_v2.json` (and a `write_stored_rows_v2`) beside this
@@ -252,7 +266,7 @@ STACK_ENCRYPT_REFREEZE_ORDER_TERMS=1 mise x --env test -- \
 It checks that every row opens as it did and that the resealed tree matches
 the stored one in everything but its order terms' bytes, and only then
 copies the new order terms over the old. Any other difference fails it and
-nothing is written.
+nothing is written. Then run `pnpm run code:fix`.
 
 The change must also say in the CHANGELOG's `Breaking` section that its
 order terms changed bytes, which released versions wrote the old ones, and

@@ -716,7 +716,7 @@ async fn write_stored_rows_v1() {
         }));
     }
     let fixture = json!({
-        "_comment": "FROZEN. Records the next build stored, under a deterministic key source. Every later build must open each one to `opened` and seal its `source` to the same shape, terms and passthroughs. Read by tests/stored_rows.rs; the schema is in README.md beside this file. Never regenerate this file, and edit it only as README.md allows for order terms: a change to the stored format adds stored_rows_v2.json beside it.",
+        "_comment": "FROZEN. Records the next build stored, under a deterministic key source. Every later build must open each one to `opened` and seal its `source` to the same shape, terms and passthroughs. Read by tests/stored_rows.rs; the schema is in README.md beside this file. Never regenerate this file, and edit it only as README.md allows for order terms: a change to the stored format adds stored_rows_v2.json beside it. Formatting with pnpm run code:fix may change this file's layout; its parsed content must never change, this note excepted.",
         "key_source": { "kind": "deterministic-sha256", "seed": hex(&SEED) },
         "keyset_id": cipher.default_keyset().keyset_id().await.unwrap().to_string(),
         "cases": written,
