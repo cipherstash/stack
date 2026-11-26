@@ -20,6 +20,11 @@ publish = false
 [lib]
 proc-macro = true
 
+# The dev-dependencies are used only by the doc tests over
+# docs/attributes.md, which cargo-udeps cannot see.
+[package.metadata.cargo-udeps.ignore]
+development = ["vitaminc", "vitaminc-aead", "zeroize"]
+
 [dependencies]
 proc-macro2 = "1"
 quote = "1"

@@ -49,13 +49,11 @@ quickcheck = "1.1.0"
 quickcheck_macros = "1.2.0"
 serde_json = "1"
 # The conformance test builds each vector's scalar independently through
-# the jiff and rust_decimal conversions, and the fixture test opens a
-# pre-ADR-0001 ciphertext with real AES-256-GCM. vitaminc-encrypt and
-# vitaminc-protected come from crates.io; vitaminc-encrypt resolves
-# vitaminc-aead through the workspace's `[patch.crates-io]`.
+# the jiff and rust_decimal conversions. vitaminc 0.10.0 also listed
+# vitaminc-encrypt here, for a fixture test that no longer exists; no code
+# uses it, so cargo-udeps refused it and it is gone.
 vitaminc-aead = { path = "../vitaminc-aead", features = ["jiff", "rust_decimal"] }
 jiff = { version = "1.0.0", default-features = false }
-vitaminc-encrypt = "0.10.0"
 vitaminc-protected = "0.10.0"
 rust_decimal = { version = "1.41", default-features = false, features = ["std"] }
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }

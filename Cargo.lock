@@ -4589,7 +4589,6 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "vitaminc-aead 0.10.0",
- "vitaminc-encrypt 0.10.0",
  "vitaminc-protected 0.10.0",
 ]
 
