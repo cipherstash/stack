@@ -572,7 +572,8 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 	var handle uint64
 	var responses []byte
 	// netErr is the net error of the last step's requests, if one of them
-	// failed on the network. The guest saw only its text.
+	// failed on the network. The guest saw the RoundTripper's error text,
+	// never the error itself.
 	var netErr error
 	for {
 		out, io, err := c.step(ctx, token, tokenErr, step)
