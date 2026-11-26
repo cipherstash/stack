@@ -13,7 +13,7 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
-### Changed
+### Fixed
 
 - The error for a keyset name that breaks a naming rule now says which rule
   it broke. The name is empty, longer than 64 characters, or has a

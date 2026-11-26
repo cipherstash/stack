@@ -12,7 +12,7 @@ import (
 // empty-string or nil sentinel; the default keyset is not a selector but
 // [Client.DefaultKeyset], exactly as it is a method and not an IdentifiedBy
 // variant in Rust. Names follow ZeroKMS's rules
-// (non-empty, at most 64 bytes, of A-Z a-z 0-9 _ - /), checked by the
+// (1 to 64 characters of A-Z a-z 0-9 _ - /), checked by the
 // guest before any request is made; ZeroKMS itself never issues a
 // UUID-shaped name, so a name and an id cannot be confused.
 type KeysetSelector interface {

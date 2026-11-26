@@ -231,27 +231,32 @@ const KEYSET_NAME_MAX_LEN: usize = 64;
 
 /// A keyset name that breaks ZeroKMS's naming rules. Its message names the
 /// rule the name broke, and its help states the rules. Its code is the one
-/// every other malformed input has, `stack_guest_abi::malformed_input`, so a
-/// host that matched the code before still matches it.
+/// every other malformed input has, taken from [`GuestError::Malformed`]
+/// (`stack_guest_abi::malformed_input`), so a host that matched the code
+/// before still matches it.
 ///
 /// A keyset name is a program setting, not data, so the message may name
 /// it. It names it only when the name is within the length limit, so the
 /// message stays short.
+///
+/// [`GuestError::Malformed`]: stack_guest_abi::last_error::GuestError::Malformed
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum KeysetNameError {
     /// The name has no characters.
     #[error("malformed input: the keyset name is empty")]
     Empty,
+    /// The name has a character that a keyset name cannot contain. The
+    /// name is `None` when it is too long to repeat.
+    #[error(
+        "malformed input: the keyset name {}contains {found:?}, which a keyset name cannot contain",
+        name.as_ref().map(|name| format!("{name:?} ")).unwrap_or_default()
+    )]
+    Character { name: Option<String>, found: char },
     /// The name is longer than 64 characters.
     #[error(
         "malformed input: the keyset name is {0} characters long, and the limit is {KEYSET_NAME_MAX_LEN}"
     )]
     TooLong(usize),
-    /// The name has a character that a keyset name cannot contain.
-    #[error(
-        "malformed input: the keyset name {name:?} contains {found:?}, which a keyset name cannot contain"
-    )]
-    Character { name: String, found: char },
     /// ZeroKMS refused a name that follows the rules above. Reached only if
     /// a later `zerokms-protocol` adds a rule.
     #[error("malformed input: the keyset name {0:?} breaks ZeroKMS's naming rules")]
@@ -260,7 +265,9 @@ pub enum KeysetNameError {
 
 impl miette::Diagnostic for KeysetNameError {
     fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
-        Some(Box::new("stack_guest_abi::malformed_input"))
+        let malformed = stack_guest_abi::last_error::GuestError::Malformed("".into());
+        let code = miette::Diagnostic::code(&malformed)?.to_string();
+        Some(Box::new(code))
     }
 
     fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
@@ -276,22 +283,24 @@ impl KeysetNameError {
 }
 
 /// Check a keyset name against ZeroKMS's naming rules, and say which rule
-/// it breaks. `zerokms_protocol::Name` has the last word, so a rule it adds
-/// later still refuses the name.
+/// it breaks. A character that is not allowed is reported before the length,
+/// so a name that breaks both is not refused twice in turn.
+/// `zerokms_protocol::Name` has the last word, so a rule it adds later still
+/// refuses the name.
 fn keyset_name(name: &str) -> Result<Name, KeysetNameError> {
     if name.is_empty() {
         return Err(KeysetNameError::Empty);
     }
     let len = name.chars().count();
-    if len > KEYSET_NAME_MAX_LEN {
-        return Err(KeysetNameError::TooLong(len));
-    }
     let allowed = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '/');
     if let Some(found) = name.chars().find(|&c| !allowed(c)) {
         return Err(KeysetNameError::Character {
-            name: name.to_owned(),
+            name: (len <= KEYSET_NAME_MAX_LEN).then(|| name.to_owned()),
             found,
         });
+    }
+    if len > KEYSET_NAME_MAX_LEN {
+        return Err(KeysetNameError::TooLong(len));
     }
     Name::try_from(name).map_err(|_| KeysetNameError::Refused(name.to_owned()))
 }
@@ -575,6 +584,10 @@ mod tests {
             ("ténant", &[r#""ténant""#, "'é'"][..]),
             ("", &["empty"][..]),
             (&"a".repeat(65), &["65 characters", "64"][..]),
+            // A name past the limit with a character that is not allowed
+            // names the character first, so fixing the length alone does
+            // not meet a second refusal.
+            (&format!("{} b", "a".repeat(68)), &["' '"][..]),
         ] {
             let sel = || obj(vec![("name", V::Str(name.into()))]);
             let parses: [&dyn Fn() -> Result<(), u32>; 2] =
@@ -588,9 +601,24 @@ mod tests {
                 for want in wants {
                     assert!(message.contains(want), "{message:?} names {want:?}");
                 }
+                if name.chars().count() > KEYSET_NAME_MAX_LEN {
+                    assert!(!message.contains(name), "{message:?} repeats a long name");
+                }
                 assert_eq!(help, KEYSET_NAME_RULES);
             }
         }
+    }
+
+    /// A refused name has the code every other malformed input has, taken
+    /// from `GuestError::Malformed`, so a rename there moves both.
+    #[test]
+    fn a_refused_name_has_the_malformed_input_code() {
+        use miette::Diagnostic;
+        let malformed = stack_guest_abi::last_error::GuestError::Malformed("".into());
+        let want = malformed.code().map(|code| code.to_string());
+        assert!(want.is_some(), "GuestError::Malformed has a code");
+        let got = KeysetNameError::Empty.code().map(|code| code.to_string());
+        assert_eq!(got, want);
     }
 
     /// The help states every rule ZeroKMS checks: a name at each limit is

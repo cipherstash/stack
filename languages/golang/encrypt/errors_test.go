@@ -114,6 +114,7 @@ func TestAnInvalidKeysetNameNamesTheRule(t *testing.T) {
 		{"a letter outside ASCII", "ténant", []string{`"ténant"`, `'é'`}},
 		{"no characters", "", []string{"empty"}},
 		{"65 characters", encrypt.KeysetName(strings.Repeat("a", 65)), []string{"65 characters", "64"}},
+		{"70 characters with a space", encrypt.KeysetName(strings.Repeat("a", 68) + " b"), []string{`' '`}},
 	}
 	for _, tc := range cases {
 		cipher := c.Keyset(tc.keyset)
