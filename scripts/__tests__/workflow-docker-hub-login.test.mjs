@@ -55,8 +55,19 @@ import { readWorkflow, stepsOf, workflowFiles } from './lib/workflows.mjs'
 // ---------------------------------------------------------------------------
 
 /** A command that starts or builds a container, so may pull an image. */
-const PULLS =
-  /\bdocker(?:-compose\s+up\b|\s+(?:compose\b[^\n]*\bup\b|run\b|pull\b|create\b|build\b|buildx\s+build\b))/
+const PULLS = new RegExp(
+  [
+    String.raw`\bdocker(?:-compose|\s+compose)\b[^\n]*\b(?:up|pull|run|create)\b`,
+    String.raw`\bdocker\s+(?:run|pull|create|build)\b`,
+    String.raw`\bdocker\s+buildx\s+(?:build|bake)\b`,
+    String.raw`\bdocker\s+container\s+(?:run|create)\b`,
+    String.raw`\bdocker\s+image\s+(?:pull|build)\b`,
+  ].join('|'),
+)
+
+/** Comment lines gone, and each `\`-continued command on one line. */
+const commands = (script) =>
+  stripCommentLines(script).replace(/\\\r?\n[ \t]*/g, ' ')
 
 /**
  * `docker/` actions that pull: QEMU's binfmt image, the BuildKit image, and
@@ -150,7 +161,7 @@ function invokes(text, taskName) {
   return new RegExp(
     `${COMMAND_START}mise\\s+run\\s+[^\\n'"]*?(?<![\\w:.-])${escaped}(?![\\w:.-])`,
     'm',
-  ).test(stripCommentLines(text))
+  ).test(commands(text))
 }
 
 const dependsOf = (body) =>
@@ -162,9 +173,7 @@ const dependsOf = (body) =>
 function pullingTasks(index) {
   const pulling = new Set(
     [...index]
-      .filter(([, bodies]) =>
-        bodies.some((body) => PULLS.test(stripCommentLines(body))),
-      )
+      .filter(([, bodies]) => bodies.some((body) => PULLS.test(commands(body))))
       .map(([name]) => name),
   )
   // Grow the set until nothing new reaches a member: a fixpoint, so a cycle
@@ -213,8 +222,7 @@ export function stepPulls(step) {
   return stepsOf(step).some((inner) => {
     const uses = typeof inner?.uses === 'string' ? inner.uses.trim() : ''
     if (PULLING_ACTION.test(uses)) return true
-    const run =
-      typeof inner?.run === 'string' ? stripCommentLines(inner.run) : ''
+    const run = typeof inner?.run === 'string' ? commands(inner.run) : ''
     return (
       PULLS.test(run) || [...PULLING_TASKS].some((task) => invokes(run, task))
     )
@@ -493,7 +501,22 @@ describe('Docker Hub login on RunsOn', () => {
     expect(stepPulls({ uses: './.github/actions/integration-db' })).toBe(true)
     expect(stepPulls({ uses: 'docker/setup-qemu-action@abc' })).toBe(true)
     expect(stepPulls({ uses: 'docker/login-action@abc' })).toBe(false)
+    for (const run of [
+      'docker compose \\\n  -f x.yml \\\n  up -d',
+      'docker compose -f x.yml pull',
+      'docker compose run --rm app true',
+      'docker compose create',
+      'docker-compose run app true',
+      'docker-compose pull',
+      'docker buildx bake',
+      'docker container run --rm alpine true',
+      'docker container create alpine',
+      'docker image pull alpine',
+      'mise run \\\n  postgres:up',
+    ])
+      expect({ run, pulls: stepPulls({ run }) }).toEqual({ run, pulls: true })
     expect(stepPulls({ run: 'docker exec -i pg psql -f-' })).toBe(false)
+    expect(stepPulls({ run: 'docker compose logs pg' })).toBe(false)
     expect(stepPulls({ run: 'docker compose down' })).toBe(false)
     expect(stepPulls({ run: '# docker run in a comment' })).toBe(false)
   })
