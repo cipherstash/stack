@@ -401,12 +401,7 @@
     {
       "name": "object_empty_key",
       "value": {
-        "object": [
-          [
-            "",
-            null
-          ]
-        ]
+        "object": [["", null]]
       },
       "blob": "56435301f1010000000000000000"
     },
@@ -746,12 +741,7 @@
     {
       "name": "variant_newtype_none",
       "value": {
-        "object": [
-          [
-            "Match",
-            null
-          ]
-        ]
+        "object": [["Match", null]]
       },
       "blob": "56435301f101000000050000004d6174636800"
     },
@@ -1471,10 +1461,7 @@
       "name": "option_reads_a_bare_map_as_some",
       "type": {
         "option": {
-          "map": [
-            "u8",
-            "u8"
-          ]
+          "map": ["u8", "u8"]
         }
       },
       "blob": "56435301f600000000",
@@ -1488,12 +1475,7 @@
       "name": "option_reads_a_bare_object_as_some",
       "type": {
         "option": {
-          "struct": [
-            [
-              "x",
-              "i32"
-            ]
-          ]
+          "struct": [["x", "i32"]]
         }
       },
       "blob": "56435301f10100000001000000780401000000",
@@ -1639,10 +1621,7 @@
       "rule": "a struct reads an object, or a map whose keys are all text, and nothing else; its fields may come in any order, and unknown keys are ignored",
       "type": {
         "struct": [
-          [
-            "x",
-            "i32"
-          ],
+          ["x", "i32"],
           [
             "y",
             {
@@ -1675,10 +1654,7 @@
       "name": "struct_reads_fields_in_any_order",
       "type": {
         "struct": [
-          [
-            "x",
-            "i32"
-          ],
+          ["x", "i32"],
           [
             "y",
             {
@@ -1696,10 +1672,7 @@
               "i32": "1"
             }
           ],
-          [
-            "y",
-            null
-          ]
+          ["y", null]
         ]
       }
     },
@@ -1707,10 +1680,7 @@
       "name": "struct_ignores_an_unknown_key",
       "type": {
         "struct": [
-          [
-            "x",
-            "i32"
-          ],
+          ["x", "i32"],
           [
             "y",
             {
@@ -1728,10 +1698,7 @@
               "i32": "1"
             }
           ],
-          [
-            "y",
-            null
-          ]
+          ["y", null]
         ]
       }
     },
@@ -1739,10 +1706,7 @@
       "name": "struct_reads_a_text_keyed_map",
       "type": {
         "struct": [
-          [
-            "x",
-            "i32"
-          ],
+          ["x", "i32"],
           [
             "y",
             {
@@ -1760,10 +1724,7 @@
               "i32": "1"
             }
           ],
-          [
-            "y",
-            null
-          ]
+          ["y", null]
         ]
       }
     },
@@ -1771,10 +1732,7 @@
       "name": "struct_refuses_a_map_with_an_integer_key",
       "type": {
         "struct": [
-          [
-            "x",
-            "i32"
-          ],
+          ["x", "i32"],
           [
             "y",
             {
@@ -1790,10 +1748,7 @@
       "name": "struct_refuses_a_missing_field",
       "type": {
         "struct": [
-          [
-            "x",
-            "i32"
-          ],
+          ["x", "i32"],
           [
             "y",
             {
@@ -1809,10 +1764,7 @@
       "name": "struct_refuses_an_array",
       "type": {
         "struct": [
-          [
-            "x",
-            "i32"
-          ],
+          ["x", "i32"],
           [
             "y",
             {
@@ -1829,10 +1781,7 @@
       "rule": "a missing Option field reads as None, as serde's derive reads it; any other missing field is refused",
       "type": {
         "struct": [
-          [
-            "x",
-            "i32"
-          ],
+          ["x", "i32"],
           [
             "y",
             {
@@ -1850,10 +1799,7 @@
               "i32": "1"
             }
           ],
-          [
-            "y",
-            null
-          ]
+          ["y", null]
         ]
       }
     },
@@ -1861,10 +1807,7 @@
       "name": "struct_ignores_an_unknown_key_holding_a_map",
       "type": {
         "struct": [
-          [
-            "x",
-            "i32"
-          ],
+          ["x", "i32"],
           [
             "y",
             {
@@ -1882,10 +1825,7 @@
               "i32": "1"
             }
           ],
-          [
-            "y",
-            null
-          ]
+          ["y", null]
         ]
       }
     },
@@ -1893,10 +1833,7 @@
       "name": "map_reads_a_map",
       "rule": "a map reads a map or an object; each key reads as the key type, as a value does",
       "type": {
-        "map": [
-          "u32",
-          "text"
-        ]
+        "map": ["u32", "text"]
       },
       "blob": "56435301f60100000006070000000a0100000078",
       "reads_as": {
@@ -1915,10 +1852,7 @@
     {
       "name": "map_widens_its_keys",
       "type": {
-        "map": [
-          "u64",
-          "u8"
-        ]
+        "map": ["u64", "u8"]
       },
       "blob": "56435301f6010000000d010d02",
       "reads_as": {
@@ -1937,10 +1871,7 @@
     {
       "name": "map_reads_an_object",
       "type": {
-        "map": [
-          "text",
-          "u8"
-        ]
+        "map": ["text", "u8"]
       },
       "blob": "56435301f10100000001000000610d01",
       "reads_as": {
@@ -1959,10 +1890,7 @@
     {
       "name": "map_reads_bytes_keys",
       "type": {
-        "map": [
-          "bytes",
-          "u8"
-        ]
+        "map": ["bytes", "u8"]
       },
       "blob": "56435301f6010000000b01000000010d01",
       "reads_as": {
@@ -1984,15 +1912,8 @@
         "map": [
           {
             "enum": [
-              [
-                "Red",
-                "unit"
-              ],
-              [
-                "Name",
-                "newtype",
-                "text"
-              ],
+              ["Red", "unit"],
+              ["Name", "newtype", "text"],
               [
                 "Match",
                 "newtype",
@@ -2000,28 +1921,8 @@
                   "option": "u8"
                 }
               ],
-              [
-                "Pair",
-                "tuple",
-                [
-                  "u8",
-                  "u8"
-                ]
-              ],
-              [
-                "Point",
-                "struct",
-                [
-                  [
-                    "x",
-                    "i32"
-                  ],
-                  [
-                    "y",
-                    "i32"
-                  ]
-                ]
-              ]
+              ["Pair", "tuple", ["u8", "u8"]],
+              ["Point", "struct", [["x", "i32"], ["y", "i32"]]]
             ]
           },
           "u8"
@@ -2044,10 +1945,7 @@
     {
       "name": "map_does_not_read_text_as_an_integer_key",
       "type": {
-        "map": [
-          "u32",
-          "u8"
-        ]
+        "map": ["u32", "u8"]
       },
       "blob": "56435301f10100000001000000310d01",
       "refusal": "mismatch"
@@ -2055,10 +1953,7 @@
     {
       "name": "map_does_not_read_an_integer_as_a_text_key",
       "type": {
-        "map": [
-          "text",
-          "u8"
-        ]
+        "map": ["text", "u8"]
       },
       "blob": "56435301f6010000000d010d01",
       "refusal": "mismatch"
@@ -2066,10 +1961,7 @@
     {
       "name": "map_does_not_read_an_array",
       "type": {
-        "map": [
-          "u8",
-          "u8"
-        ]
+        "map": ["u8", "u8"]
       },
       "blob": "56435301f000000000",
       "refusal": "mismatch"
@@ -2079,15 +1971,8 @@
       "rule": "an enum reads a variant name as a unit variant, or as a newtype variant whose value is read from null; and an object of one entry whose value is null as a unit variant",
       "type": {
         "enum": [
-          [
-            "Red",
-            "unit"
-          ],
-          [
-            "Name",
-            "newtype",
-            "text"
-          ],
+          ["Red", "unit"],
+          ["Name", "newtype", "text"],
           [
             "Match",
             "newtype",
@@ -2095,28 +1980,8 @@
               "option": "u8"
             }
           ],
-          [
-            "Pair",
-            "tuple",
-            [
-              "u8",
-              "u8"
-            ]
-          ],
-          [
-            "Point",
-            "struct",
-            [
-              [
-                "x",
-                "i32"
-              ],
-              [
-                "y",
-                "i32"
-              ]
-            ]
-          ]
+          ["Pair", "tuple", ["u8", "u8"]],
+          ["Point", "struct", [["x", "i32"], ["y", "i32"]]]
         ]
       },
       "blob": "564353010a03000000526564",
@@ -2128,15 +1993,8 @@
       "name": "enum_reads_a_unit_variant_with_a_null_payload",
       "type": {
         "enum": [
-          [
-            "Red",
-            "unit"
-          ],
-          [
-            "Name",
-            "newtype",
-            "text"
-          ],
+          ["Red", "unit"],
+          ["Name", "newtype", "text"],
           [
             "Match",
             "newtype",
@@ -2144,28 +2002,8 @@
               "option": "u8"
             }
           ],
-          [
-            "Pair",
-            "tuple",
-            [
-              "u8",
-              "u8"
-            ]
-          ],
-          [
-            "Point",
-            "struct",
-            [
-              [
-                "x",
-                "i32"
-              ],
-              [
-                "y",
-                "i32"
-              ]
-            ]
-          ]
+          ["Pair", "tuple", ["u8", "u8"]],
+          ["Point", "struct", [["x", "i32"], ["y", "i32"]]]
         ]
       },
       "blob": "56435301f1010000000300000052656400",
@@ -2177,15 +2015,8 @@
       "name": "enum_reads_a_bare_name_as_a_newtype_of_null",
       "type": {
         "enum": [
-          [
-            "Red",
-            "unit"
-          ],
-          [
-            "Name",
-            "newtype",
-            "text"
-          ],
+          ["Red", "unit"],
+          ["Name", "newtype", "text"],
           [
             "Match",
             "newtype",
@@ -2193,53 +2024,21 @@
               "option": "u8"
             }
           ],
-          [
-            "Pair",
-            "tuple",
-            [
-              "u8",
-              "u8"
-            ]
-          ],
-          [
-            "Point",
-            "struct",
-            [
-              [
-                "x",
-                "i32"
-              ],
-              [
-                "y",
-                "i32"
-              ]
-            ]
-          ]
+          ["Pair", "tuple", ["u8", "u8"]],
+          ["Point", "struct", [["x", "i32"], ["y", "i32"]]]
         ]
       },
       "blob": "564353010a050000004d61746368",
       "reads_as": {
-        "object": [
-          [
-            "Match",
-            null
-          ]
-        ]
+        "object": [["Match", null]]
       }
     },
     {
       "name": "enum_reads_a_newtype_variant",
       "type": {
         "enum": [
-          [
-            "Red",
-            "unit"
-          ],
-          [
-            "Name",
-            "newtype",
-            "text"
-          ],
+          ["Red", "unit"],
+          ["Name", "newtype", "text"],
           [
             "Match",
             "newtype",
@@ -2247,28 +2046,8 @@
               "option": "u8"
             }
           ],
-          [
-            "Pair",
-            "tuple",
-            [
-              "u8",
-              "u8"
-            ]
-          ],
-          [
-            "Point",
-            "struct",
-            [
-              [
-                "x",
-                "i32"
-              ],
-              [
-                "y",
-                "i32"
-              ]
-            ]
-          ]
+          ["Pair", "tuple", ["u8", "u8"]],
+          ["Point", "struct", [["x", "i32"], ["y", "i32"]]]
         ]
       },
       "blob": "56435301f101000000050000004d61746368f50d03",
@@ -2289,15 +2068,8 @@
       "name": "enum_reads_a_newtype_variant_bare_payload",
       "type": {
         "enum": [
-          [
-            "Red",
-            "unit"
-          ],
-          [
-            "Name",
-            "newtype",
-            "text"
-          ],
+          ["Red", "unit"],
+          ["Name", "newtype", "text"],
           [
             "Match",
             "newtype",
@@ -2305,28 +2077,8 @@
               "option": "u8"
             }
           ],
-          [
-            "Pair",
-            "tuple",
-            [
-              "u8",
-              "u8"
-            ]
-          ],
-          [
-            "Point",
-            "struct",
-            [
-              [
-                "x",
-                "i32"
-              ],
-              [
-                "y",
-                "i32"
-              ]
-            ]
-          ]
+          ["Pair", "tuple", ["u8", "u8"]],
+          ["Point", "struct", [["x", "i32"], ["y", "i32"]]]
         ]
       },
       "blob": "56435301f101000000050000004d617463680d03",
@@ -2347,15 +2099,8 @@
       "name": "enum_reads_a_tuple_variant",
       "type": {
         "enum": [
-          [
-            "Red",
-            "unit"
-          ],
-          [
-            "Name",
-            "newtype",
-            "text"
-          ],
+          ["Red", "unit"],
+          ["Name", "newtype", "text"],
           [
             "Match",
             "newtype",
@@ -2363,28 +2108,8 @@
               "option": "u8"
             }
           ],
-          [
-            "Pair",
-            "tuple",
-            [
-              "u8",
-              "u8"
-            ]
-          ],
-          [
-            "Point",
-            "struct",
-            [
-              [
-                "x",
-                "i32"
-              ],
-              [
-                "y",
-                "i32"
-              ]
-            ]
-          ]
+          ["Pair", "tuple", ["u8", "u8"]],
+          ["Point", "struct", [["x", "i32"], ["y", "i32"]]]
         ]
       },
       "blob": "56435301f1010000000400000050616972f0020000000d010d02",
@@ -2410,15 +2135,8 @@
       "name": "enum_reads_a_struct_variant",
       "type": {
         "enum": [
-          [
-            "Red",
-            "unit"
-          ],
-          [
-            "Name",
-            "newtype",
-            "text"
-          ],
+          ["Red", "unit"],
+          ["Name", "newtype", "text"],
           [
             "Match",
             "newtype",
@@ -2426,28 +2144,8 @@
               "option": "u8"
             }
           ],
-          [
-            "Pair",
-            "tuple",
-            [
-              "u8",
-              "u8"
-            ]
-          ],
-          [
-            "Point",
-            "struct",
-            [
-              [
-                "x",
-                "i32"
-              ],
-              [
-                "y",
-                "i32"
-              ]
-            ]
-          ]
+          ["Pair", "tuple", ["u8", "u8"]],
+          ["Point", "struct", [["x", "i32"], ["y", "i32"]]]
         ]
       },
       "blob": "56435301f10100000005000000506f696e74f1020000000100000079040200000001000000780401000000",
@@ -2479,15 +2177,8 @@
       "name": "enum_refuses_a_bare_name_for_a_newtype_of_text",
       "type": {
         "enum": [
-          [
-            "Red",
-            "unit"
-          ],
-          [
-            "Name",
-            "newtype",
-            "text"
-          ],
+          ["Red", "unit"],
+          ["Name", "newtype", "text"],
           [
             "Match",
             "newtype",
@@ -2495,28 +2186,8 @@
               "option": "u8"
             }
           ],
-          [
-            "Pair",
-            "tuple",
-            [
-              "u8",
-              "u8"
-            ]
-          ],
-          [
-            "Point",
-            "struct",
-            [
-              [
-                "x",
-                "i32"
-              ],
-              [
-                "y",
-                "i32"
-              ]
-            ]
-          ]
+          ["Pair", "tuple", ["u8", "u8"]],
+          ["Point", "struct", [["x", "i32"], ["y", "i32"]]]
         ]
       },
       "blob": "564353010a040000004e616d65",
@@ -2526,15 +2197,8 @@
       "name": "enum_refuses_a_bare_name_for_a_tuple_variant",
       "type": {
         "enum": [
-          [
-            "Red",
-            "unit"
-          ],
-          [
-            "Name",
-            "newtype",
-            "text"
-          ],
+          ["Red", "unit"],
+          ["Name", "newtype", "text"],
           [
             "Match",
             "newtype",
@@ -2542,28 +2206,8 @@
               "option": "u8"
             }
           ],
-          [
-            "Pair",
-            "tuple",
-            [
-              "u8",
-              "u8"
-            ]
-          ],
-          [
-            "Point",
-            "struct",
-            [
-              [
-                "x",
-                "i32"
-              ],
-              [
-                "y",
-                "i32"
-              ]
-            ]
-          ]
+          ["Pair", "tuple", ["u8", "u8"]],
+          ["Point", "struct", [["x", "i32"], ["y", "i32"]]]
         ]
       },
       "blob": "564353010a0400000050616972",
@@ -2573,15 +2217,8 @@
       "name": "enum_refuses_an_unknown_variant",
       "type": {
         "enum": [
-          [
-            "Red",
-            "unit"
-          ],
-          [
-            "Name",
-            "newtype",
-            "text"
-          ],
+          ["Red", "unit"],
+          ["Name", "newtype", "text"],
           [
             "Match",
             "newtype",
@@ -2589,28 +2226,8 @@
               "option": "u8"
             }
           ],
-          [
-            "Pair",
-            "tuple",
-            [
-              "u8",
-              "u8"
-            ]
-          ],
-          [
-            "Point",
-            "struct",
-            [
-              [
-                "x",
-                "i32"
-              ],
-              [
-                "y",
-                "i32"
-              ]
-            ]
-          ]
+          ["Pair", "tuple", ["u8", "u8"]],
+          ["Point", "struct", [["x", "i32"], ["y", "i32"]]]
         ]
       },
       "blob": "564353010a04000000426c7565",
@@ -2620,15 +2237,8 @@
       "name": "enum_refuses_an_object_of_two_entries",
       "type": {
         "enum": [
-          [
-            "Red",
-            "unit"
-          ],
-          [
-            "Name",
-            "newtype",
-            "text"
-          ],
+          ["Red", "unit"],
+          ["Name", "newtype", "text"],
           [
             "Match",
             "newtype",
@@ -2636,28 +2246,8 @@
               "option": "u8"
             }
           ],
-          [
-            "Pair",
-            "tuple",
-            [
-              "u8",
-              "u8"
-            ]
-          ],
-          [
-            "Point",
-            "struct",
-            [
-              [
-                "x",
-                "i32"
-              ],
-              [
-                "y",
-                "i32"
-              ]
-            ]
-          ]
+          ["Pair", "tuple", ["u8", "u8"]],
+          ["Point", "struct", [["x", "i32"], ["y", "i32"]]]
         ]
       },
       "blob": "56435301f1020000000300000052656400040000004e616d650a0100000078",
@@ -2667,15 +2257,8 @@
       "name": "enum_refuses_a_map_of_one_entry",
       "type": {
         "enum": [
-          [
-            "Red",
-            "unit"
-          ],
-          [
-            "Name",
-            "newtype",
-            "text"
-          ],
+          ["Red", "unit"],
+          ["Name", "newtype", "text"],
           [
             "Match",
             "newtype",
@@ -2683,28 +2266,8 @@
               "option": "u8"
             }
           ],
-          [
-            "Pair",
-            "tuple",
-            [
-              "u8",
-              "u8"
-            ]
-          ],
-          [
-            "Point",
-            "struct",
-            [
-              [
-                "x",
-                "i32"
-              ],
-              [
-                "y",
-                "i32"
-              ]
-            ]
-          ]
+          ["Pair", "tuple", ["u8", "u8"]],
+          ["Point", "struct", [["x", "i32"], ["y", "i32"]]]
         ]
       },
       "blob": "56435301f6010000000a0300000052656400",
@@ -2714,15 +2277,8 @@
       "name": "enum_refuses_an_array",
       "type": {
         "enum": [
-          [
-            "Red",
-            "unit"
-          ],
-          [
-            "Name",
-            "newtype",
-            "text"
-          ],
+          ["Red", "unit"],
+          ["Name", "newtype", "text"],
           [
             "Match",
             "newtype",
@@ -2730,28 +2286,8 @@
               "option": "u8"
             }
           ],
-          [
-            "Pair",
-            "tuple",
-            [
-              "u8",
-              "u8"
-            ]
-          ],
-          [
-            "Point",
-            "struct",
-            [
-              [
-                "x",
-                "i32"
-              ],
-              [
-                "y",
-                "i32"
-              ]
-            ]
-          ]
+          ["Pair", "tuple", ["u8", "u8"]],
+          ["Point", "struct", [["x", "i32"], ["y", "i32"]]]
         ]
       },
       "blob": "56435301f0010000000a03000000526564",
@@ -2761,15 +2297,8 @@
       "name": "enum_refuses_a_some",
       "type": {
         "enum": [
-          [
-            "Red",
-            "unit"
-          ],
-          [
-            "Name",
-            "newtype",
-            "text"
-          ],
+          ["Red", "unit"],
+          ["Name", "newtype", "text"],
           [
             "Match",
             "newtype",
@@ -2777,28 +2306,8 @@
               "option": "u8"
             }
           ],
-          [
-            "Pair",
-            "tuple",
-            [
-              "u8",
-              "u8"
-            ]
-          ],
-          [
-            "Point",
-            "struct",
-            [
-              [
-                "x",
-                "i32"
-              ],
-              [
-                "y",
-                "i32"
-              ]
-            ]
-          ]
+          ["Pair", "tuple", ["u8", "u8"]],
+          ["Point", "struct", [["x", "i32"], ["y", "i32"]]]
         ]
       },
       "blob": "56435301f50a03000000526564",
@@ -2808,15 +2317,8 @@
       "name": "enum_refuses_bytes",
       "type": {
         "enum": [
-          [
-            "Red",
-            "unit"
-          ],
-          [
-            "Name",
-            "newtype",
-            "text"
-          ],
+          ["Red", "unit"],
+          ["Name", "newtype", "text"],
           [
             "Match",
             "newtype",
@@ -2824,28 +2326,8 @@
               "option": "u8"
             }
           ],
-          [
-            "Pair",
-            "tuple",
-            [
-              "u8",
-              "u8"
-            ]
-          ],
-          [
-            "Point",
-            "struct",
-            [
-              [
-                "x",
-                "i32"
-              ],
-              [
-                "y",
-                "i32"
-              ]
-            ]
-          ]
+          ["Pair", "tuple", ["u8", "u8"]],
+          ["Point", "struct", [["x", "i32"], ["y", "i32"]]]
         ]
       },
       "blob": "564353010b03000000526564",
@@ -2855,12 +2337,7 @@
       "name": "struct_denying_unknown_keys_reads_its_own",
       "rule": "a struct ignores unknown keys unless it denies them",
       "type": {
-        "struct_deny_unknown": [
-          [
-            "x",
-            "i32"
-          ]
-        ]
+        "struct_deny_unknown": [["x", "i32"]]
       },
       "blob": "56435301f10100000001000000780401000000",
       "reads_as": {
@@ -2877,12 +2354,7 @@
     {
       "name": "struct_denying_unknown_keys_refuses_one",
       "type": {
-        "struct_deny_unknown": [
-          [
-            "x",
-            "i32"
-          ]
-        ]
+        "struct_deny_unknown": [["x", "i32"]]
       },
       "blob": "56435301f10200000001000000780401000000010000007a00",
       "refusal": "mismatch"
@@ -2891,10 +2363,7 @@
       "name": "struct_refuses_an_integer_key_beside_its_fields",
       "type": {
         "struct": [
-          [
-            "x",
-            "i32"
-          ],
+          ["x", "i32"],
           [
             "y",
             {

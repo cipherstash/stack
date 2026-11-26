@@ -8,6 +8,12 @@ CE, timestamps carry seconds plus nanoseconds, decimals retain their flags and
 96-bit coefficient, and a logical type with no tag of its own travels in the
 `0xF3` envelope (id, one-byte parameter, physical scalar).
 
+## Formatting
+
+The file is Biome-formatted. The formatter may change its layout, never its
+parsed content. Every reader parses it as JSON, so the layout fails no test.
+After editing it, run `pnpm run code:fix` before committing.
+
 ## Sections
 
 | Section                | Rust | Node | Go  | What it pins                                                        |
