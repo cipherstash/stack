@@ -13,6 +13,17 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Fixed
+
+- The "Testing your application" section of the `encrypt` README tested
+  the generated functions, not your code, and its sample did not compile.
+  It now shows a function that takes a small `Store` interface. Its test
+  uses named subtests, a hand-written fake store, and an `encrypttest`
+  client.
+- The same section now says what a test needs. A test with `encrypttest`
+  and a fake needs no database. A test that runs SQL needs PostgreSQL with
+  EQL v4 installed, and the section shows how to start one in Docker.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

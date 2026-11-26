@@ -983,7 +983,45 @@ CipherStash credentials. Use it in CI that has no route to ZeroKMS.
    when the two versions differ, because its test builds match one version
    of the SDK.
 
-2. Create the client in the test. It closes when the test ends.
+2. Write your code to take a small interface for the database, so a test
+   can pass a fake in its place. Here `SaveUser` encrypts a user and saves
+   it through a `Store`:
+
+   ```go
+   package accounts
+
+   import (
+   	"context"
+   	"fmt"
+
+   	"github.com/cipherstash/stack/languages/golang/encrypt"
+
+   	"example.com/app/users"
+   )
+
+   // A Store saves encrypted users.
+   type Store interface {
+   	InsertUser(ctx context.Context, u users.EncryptedUser) error
+   }
+
+   // SaveUser encrypts u under cipher and saves it in store.
+   func SaveUser(ctx context.Context, cipher *encrypt.Cipher, store Store, u users.User) error {
+   	encrypted, err := users.Encrypt(ctx, cipher, []users.User{u})
+   	if err != nil {
+   		return fmt.Errorf("encrypt user %d: %w", u.ID, err)
+   	}
+   	if err := store.InsertUser(ctx, encrypted[0]); err != nil {
+   		return fmt.Errorf("save user %d: %w", u.ID, err)
+   	}
+   	return nil
+   }
+   ```
+
+   Package `users` contains the `User` struct from
+   [Use the SDK](#use-the-sdk) and the code `stashgen` wrote for it. In
+   production, the `Store` runs the SQL.
+
+3. Create the client in the test. It closes when the test ends.
 
    ```go
    import "github.com/cipherstash/stack/languages/golang/encrypt/encrypttest"
@@ -993,16 +1031,110 @@ CipherStash credentials. Use it in CI that has no route to ZeroKMS.
    	cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
    ```
 
-3. Call your code with it, as you would call it with a production client.
+4. Call your code with it, as you would call it with a production client.
+   Pass a hand-written fake for the `Store`, and give each case a named
+   subtest. The whole test file:
 
    ```go
-   	encrypted, err := users.Encrypt(t.Context(), cipher, people)
-   	if err != nil {
-   		t.Fatal(err)
+   package accounts_test
+
+   import (
+   	"context"
+   	"errors"
+   	"testing"
+
+   	"github.com/cipherstash/stack/languages/golang/encrypt"
+   	"github.com/cipherstash/stack/languages/golang/encrypt/encrypttest"
+
+   	"example.com/app/accounts"
+   	"example.com/app/users"
+   )
+
+   // fakeStore records the users it is asked to insert, and fails when err is set.
+   type fakeStore struct {
+   	err      error
+   	inserted []users.EncryptedUser
+   }
+
+   func (f *fakeStore) InsertUser(_ context.Context, u users.EncryptedUser) error {
+   	if f.err != nil {
+   		return f.err
    	}
-   	// Insert, query with users.Fields.Email.Eq, then read back:
-   	opened, err := users.Decrypt(t.Context(), client, encrypted)
+   	f.inserted = append(f.inserted, u)
+   	return nil
+   }
+
+   func TestSaveUser(t *testing.T) {
+   	client := encrypttest.NewClient(t)
+   	cipher := client.Keyset(encrypt.KeysetName("tenant42"))
+
+   	ada := users.User{ID: 1, Email: "ada@example.com", Name: "Ada Lovelace", Age: 36}
+   	errDown := errors.New("database down")
+
+   	tests := []struct {
+   		name     string
+   		user     users.User
+   		storeErr error
+   		wantErr  error
+   	}{
+   		{name: "saves the encrypted user", user: ada},
+   		{name: "returns the store's error", user: ada, storeErr: errDown, wantErr: errDown},
+   		{name: "refuses a name too short to search", user: users.User{ID: 2, Email: "x@example.com", Name: "X"}, wantErr: encrypt.ErrTerm},
+   	}
+   	for _, tt := range tests {
+   		t.Run(tt.name, func(t *testing.T) {
+   			store := &fakeStore{err: tt.storeErr}
+
+   			err := accounts.SaveUser(t.Context(), cipher, store, tt.user)
+   			if !errors.Is(err, tt.wantErr) {
+   				t.Fatalf("SaveUser() error = %v, want %v", err, tt.wantErr)
+   			}
+   			if tt.wantErr != nil {
+   				return
+   			}
+   			if len(store.inserted) != 1 {
+   				t.Fatalf("inserted %d users, want 1", len(store.inserted))
+   			}
+   			opened, err := users.Decrypt(t.Context(), cipher, store.inserted)
+   			if err != nil {
+   				t.Fatalf("Decrypt() error = %v", err)
+   			}
+   			if opened[0] != tt.user {
+   				t.Errorf("the stored user opens as %+v, want %+v", opened[0], tt.user)
+   			}
+   		})
+   	}
+   }
    ```
+
+   The first case decrypts what the fake stored. That shows `SaveUser`
+   saved the user it was given. The last case fails in `users.Encrypt`: a
+   `TextMatch` field refuses text of one letter, because that text has no
+   token to search for.
+
+This test needs no database, no network, and no CipherStash credentials.
+The client from `encrypttest.NewClient` and the fake store both run in the
+test process.
+
+A test that runs SQL needs PostgreSQL with EQL v4 installed. A test of the
+`Store` that production uses is one. Without EQL v4, the `eql_v4_*` column
+types do not exist, so `CREATE TABLE` fails. To start PostgreSQL with EQL v4
+in Docker:
+
+```sh
+docker run -d --name eql-test -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:5432:5432 postgres:17
+until docker exec eql-test pg_isready -h localhost -U postgres; do sleep 1; done
+gh release download languages/golang/v0.1.0-rc.7 -R cipherstash/stack -p eql-v4-install.sql
+docker exec -i eql-test psql -h localhost -U postgres -v ON_ERROR_STOP=1 < eql-v4-install.sql
+```
+
+Use the release tag of the SDK version you require in place of
+`languages/golang/v0.1.0-rc.7`. Without the GitHub CLI, download
+`eql-v4-install.sql` from that release's page. The test then connects to
+`postgres://postgres:postgres@localhost:5432/postgres`. Read the connection
+string from an environment variable, such as `DATABASE_URL`, and call
+`t.Skip` when it is not set. Then `go test` still passes on a machine with
+no database, and skips only the tests that run SQL.
 
 The client runs the same engine and generated code as a production client.
 Only the key source differs: each data key derives from a seed, not from
