@@ -1486,8 +1486,10 @@ describe('the guard fails when a workflow stops calling a cargo check', () => {
  *                                     site. Versioned docs artifacts are still
  *                                     built by _build-eql-docs.yml
  *   lint-release.yml               -> merged into the root file of that name
- *   .github/actionlint.yaml        -> DROPPED: the root copy already carries the
- *                                     `blacksmith-16vcpu-ubuntu-2204` label
+ *   .github/actionlint.yaml        -> DROPPED: the root copy is the one
+ *                                     actionlint reads, and it lists every
+ *                                     self-hosted runner label (none, since
+ *                                     RunsOn labels are expressions)
  *   ISSUE_TEMPLATE/docs-feedback.yml -> DROPPED: the root copy is the same file
  *                                     with the Code of Conduct link already
  *                                     repointed at cipherstash/stack

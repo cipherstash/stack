@@ -498,7 +498,7 @@ jobs:
         needs.gate.outputs.auth != 'true' ||
         needs.publish-auth.result == 'success'
       )
-    # GitHub-hosted (not Blacksmith): npm provenance attestations, which are
+    # GitHub-hosted (not RunsOn): npm provenance attestations, which are
     # generated automatically by OIDC trusted publishing, are only accepted
     # from github-hosted runners — self-hosted runners are rejected with E422.
     runs-on: ubuntu-latest

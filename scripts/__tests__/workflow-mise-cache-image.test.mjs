@@ -8,9 +8,9 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  * Every cached `jdx/mise-action` step keys its cache by runner image.
  *
  * mise-action's default key is `mise-v1-<os>-<arch>-<mise version>-<env>-<hash
- * of the mise config>`. It names Linux, not the distro, so a job on
- * `blacksmith-*-ubuntu-2404` (glibc 2.39) and one on `…-ubuntu-2204` (glibc
- * 2.35) read and write the same entry. The `cargo:` tools in `mise.test.toml`
+ * of the mise config>`. It names Linux, not the distro, so a job on a RunsOn
+ * `image=ubuntu24-full-x64` machine (glibc 2.39) and one on
+ * `image=ubuntu22-full-x64` (glibc 2.35) read and write the same entry. The `cargo:` tools in `mise.test.toml`
  * are built where they are installed, so whichever job saves the key first
  * decides what glibc every other job's `cargo-nextest` and `cargo-llvm-cov`
  * need. When a 2404 job (fuzz, udeps) wins, every 2204 job dies with

@@ -2,9 +2,9 @@
 # `^actions/cache(/(restore|save))?@`, and neither carries a `cache:` input for
 # the `with.cache` rule to read. Both restore the GitHub Actions cache anyway.
 #
-# Not hypothetical. This repo runs eleven jobs on `blacksmith-*` runners, where
-# `useblacksmith/cache` is the documented drop-in for `actions/cache`, and it
-# has just absorbed a Cargo workspace at `packages/protect-ffi`, where
+# Not hypothetical. Each runner vendor publishes a drop-in for `actions/cache`:
+# `useblacksmith/cache` for Blacksmith, and `runs-on/cache` for RunsOn, where
+# this repo's self-hosted jobs run. The repo has also absorbed a Cargo workspace at `packages/protect-ffi`, where
 # `Swatinem/rust-cache` is the conventional choice. Either could be added by
 # someone who reasonably believed this gate would catch the mistake.
 name: Third Party Cache
