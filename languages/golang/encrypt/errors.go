@@ -89,11 +89,40 @@ var ErrStorageVersion = vcffi.ErrUnsupportedVersion
 // "stack_kms::keyset_not_found", ...; stable), Message (what Error
 // returns after the sentinel's text), Help, URL, Severity, Fields (the
 // structured fields, by name) and Causes (the errors behind it, outermost
-// first). Accessors read the fields a caller branches on: ExpectedKeyset
-// and FoundKeyset on an [ErrForeignKeyset] (each a [KeysetID]'s bytes);
-// Field and Reason on a refused plan, record or value; and Construct and At
-// on a refused Match predicate, the construct in the grammar's words and
-// the byte offset in the predicate where it starts.
+// first).
+//
+// go doc cannot list a Diagnostic's methods, because the type is defined
+// in an internal package. They are:
+//
+//	func (d *Diagnostic) Error() string
+//	func (d *Diagnostic) Unwrap() error
+//	func (d *Diagnostic) ExpectedKeyset() (id [16]byte, ok bool)
+//	func (d *Diagnostic) FoundKeyset() (id [16]byte, ok bool)
+//	func (d *Diagnostic) Field() string
+//	func (d *Diagnostic) Reason() string
+//	func (d *Diagnostic) Construct() string
+//	func (d *Diagnostic) At() (offset int, ok bool)
+//
+// Error returns the sentinel's text, then Message. Unwrap returns the
+// sentinel, so errors.Is matches the kind.
+//
+// The other methods read the fields a caller branches on:
+//
+//   - ExpectedKeyset and FoundKeyset are, on an [ErrForeignKeyset], the
+//     keyset the cipher is bound to and the keyset the ciphertext was
+//     sealed under. Each id is a [KeysetID]'s bytes. ok is false for any
+//     other error.
+//   - Field is the field of a plan, record or value the error is about,
+//     or "" when it names none.
+//   - Reason is what was wrong with a plan, context, value or stored
+//     record, such as "field_missing", "unknown_key" or "field_type", or ""
+//     when the error gives none. New reasons may appear, so keep a
+//     fallback.
+//   - Construct is what a refused Match predicate names as refused, in the
+//     grammar's own words, such as "`like_regex`" or "a variable", or ""
+//     when the error names none. It is never text from the predicate.
+//   - At is the byte offset in the predicate where the refused construct
+//     starts. ok is false when the error gives no offset.
 //
 // What one may carry is fixed: keyset ids and names, field names, counts,
 // index kinds, ZeroKMS request kinds and HTTP statuses, and a refused

@@ -162,8 +162,8 @@ func DeclareContextField(name string) Declaration {
 	return d.add(field{name: name, kind: String, verb: verbContextField})
 }
 
-// Passthrough stores the field as it is. It stays on the host: see the
-// record package.
+// Passthrough stores the field as it is. It stays on the host and never
+// reaches the engine.
 func (d Declaration) Passthrough(name string) Declaration {
 	return d.add(field{name: name, verb: verbPassthrough})
 }

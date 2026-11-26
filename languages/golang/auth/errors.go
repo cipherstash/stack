@@ -80,6 +80,16 @@ var (
 // "path", a JSON error's "line" and "column") and Causes (the errors behind
 // it, outermost first).
 //
+// go doc cannot list a Diagnostic's methods, because the type is defined
+// in an internal package. Error returns the sentinel's text, then Message.
+// Unwrap returns the sentinel, so errors.Is matches the kind:
+//
+//	func (d *Diagnostic) Error() string
+//	func (d *Diagnostic) Unwrap() error
+//
+// Its other methods read the fields of an encrypt failure, and are
+// described on encrypt.Diagnostic.
+//
 // What one may carry is fixed: workspace ids, CRNs and regions, profile
 // file paths, HTTP statuses and the auth server's error descriptions.
 // Never a token, an access key, a client key or a response body.

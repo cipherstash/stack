@@ -22,7 +22,7 @@ import (
 // concurrent use; the guest runs one call's step at a time, because a wasm
 // instance is single-threaded, but never waits on the network inside one:
 // a ZeroKMS request is performed between steps, with the client free for
-// other callers (see step.go). Close it when done, as with any resource.
+// other callers. Close it when done, as with any resource.
 //
 // A call whose context ends fails with the context's error, and only that
 // call: one request's cancellation or deadline never closes the client for

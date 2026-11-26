@@ -59,7 +59,7 @@ func RequireLockedMemory() Option {
 // closes the profile, or the strategies and encrypt clients that read
 // tokens from it. A device session's refresh already sent finishes in the
 // background, for up to 10 seconds, so a rotated refresh token is never
-// lost (see refreshGrace). The profile closes itself, and every later call is
+// lost. The profile closes itself, and every later call is
 // [ErrState], only when the guest's state is unknown: it trapped, or it
 // went on running long after its caller gave up, which is a bug.
 type ProfileStore struct {

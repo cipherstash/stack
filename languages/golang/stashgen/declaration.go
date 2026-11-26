@@ -238,7 +238,8 @@ type GoType struct {
 	// encrypt.Date, encrypt.Int128, encrypt.Uint128, encrypt.Decimal), whose
 	// kind says all there is.
 	Basic string
-	// Elem is the element type of a slice, map or pointer, and nil otherwise.
+	// Elem is the element type of an array, slice, map or pointer, and nil
+	// otherwise.
 	Elem *GoType
 	// Fields are the fields of a struct kind, in declared order.
 	Fields []GoType
@@ -254,20 +255,34 @@ const (
 	// KindOther is a kind the engine cannot seal: a channel, a function, an
 	// interface, a complex number, or a struct with an unexported field.
 	KindOther Kind = iota
+	// KindString is a type whose underlying type is string.
 	KindString
+	// KindBool is a type whose underlying type is bool.
 	KindBool
+	// KindInt is a type whose underlying type is a signed integer: int,
+	// int8, int16, int32 (rune) or int64. Basic names which one.
 	KindInt
+	// KindUint is a type whose underlying type is an unsigned integer:
+	// uint, uint8 (byte), uint16, uint32, uint64 or uintptr. Basic names
+	// which one.
 	KindUint
+	// KindFloat is a type whose underlying type is float32 or float64.
+	// Basic names which one.
 	KindFloat
 	// KindBytes is []byte.
 	KindBytes
+	// KindSlice is an array, or a slice of any element type but byte. Elem
+	// is the element type.
 	KindSlice
+	// KindMap is a map. Elem is the value type.
 	KindMap
+	// KindPointer is a pointer. Elem is the type it points to.
 	KindPointer
 	// KindStruct is a struct whose fields are all exported.
 	KindStruct
-	// KindInt128 and KindUint128 are encrypt.Int128 and encrypt.Uint128.
+	// KindInt128 is encrypt.Int128.
 	KindInt128
+	// KindUint128 is encrypt.Uint128.
 	KindUint128
 	// KindDate is encrypt.Date, a calendar date.
 	KindDate
