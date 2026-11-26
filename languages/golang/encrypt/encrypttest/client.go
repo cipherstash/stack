@@ -85,7 +85,9 @@ func WithSeed(seed [32]byte) ClientOption {
 // Every keyset exists. A keyset selected by a name or an id needs nothing
 // created first, and [encrypt.KeysetName]("default") selects the default
 // keyset. So a test cannot see [encrypt.ErrNotFound] for a missing keyset,
-// or [encrypt.ErrForbidden] for a keyset the client has no grant for. The
+// or for a keyset the client has no grant for. A name that breaks the
+// naming rules in [encrypt.KeysetName] still fails with
+// [encrypt.ErrEncoding], as it does in production. The
 // client has no token, so it never returns [encrypt.ErrUnauthorized].
 //
 // # Seeds

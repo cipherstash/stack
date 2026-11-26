@@ -13,6 +13,16 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Added
+
+- The `encrypt` README has a section on keysets. It says how to create a
+  keyset in the dashboard and give a client access to it. It gives the error
+  for a missing keyset, and for a client with no access to one: both are
+  `ErrNotFound`.
+- The `KeysetName` doc and the README give the keyset naming rules: 1 to 64
+  characters of `A-Z a-z 0-9 _ - /`, case-sensitive. `KeysetName("default")`
+  selects the workspace's default keyset.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6
