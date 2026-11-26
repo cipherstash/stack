@@ -339,6 +339,18 @@ Give a needle struct pointer fields with `omitempty`, as `ProfileNeedle` above, 
 `Contains` refuses a needle of the field's own type when that type holds a struct, since that is the likeliest way to make the mistake; a type defined over it (`type wholeProfile Profile`) states that you mean every field.
 That includes a slice or map of structs: a `[]Visit` document refuses a `[]Visit` needle, since each `Visit` writes its zero fields; pass a `[]VisitNeedle`, a slice of a needle type with pointer fields and `omitempty`.
 `ContainedBy` takes the field's own type: there a zero field widens the query.
+
+The database returns each entry of a selection or read as the SQL type `public.eql_v4_json_entry`.
+Scan each entry into an `eql.JSONEntry`.
+`->` returns SQL `NULL` for a row with no node at the path.
+So scan the result of `->` into a `*eql.JSONEntry`.
+
+`JSONSelection.Open` takes a `[]*eql.JSONEntry`, one entry for each row.
+A `nil` entry opens to no value.
+`JSONRead.Open` takes a `[][]eql.JSONEntry`, one group of entries for each row.
+`JSONRead.OpenOne` takes one row's `[]eql.JSONEntry`.
+`JSONChildren.Open` takes a `[]eql.JSONEntry`.
+
 Each value a selection or read opens is JSON text; `encrypt.DecodeJSON[T]` reads one into a Go type, with the same rules as a whole document.
 A position in a path is refused for `EqAt` and `Selector`, whose selector reads every position as the wildcard; read a position with `Subtree`.
 

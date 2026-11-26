@@ -13,6 +13,14 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The JSON read samples show the Go type to scan each entry into**
+  (#1888). This change is to the documentation only. The `encrypt` README's
+  subtree and children samples now run their queries and scan the rows. A
+  new `Selector` sample is added there too. The `stashgen` README lists what each
+  `Open` takes. The JSON example's README shows its scan loop.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

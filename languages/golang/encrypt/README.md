@@ -787,11 +787,54 @@ q, err := users.Fields.Profile.Contains(ctx, cipher, map[string]any{"plan": "pro
 rows, err := db.QueryContext(ctx, `SELECT id FROM users WHERE profile @> $1::eql_v4.query_json`, q)
 
 read, err := users.Fields.Profile.Subtree(ctx, cipher, "$.visits[*].at", encrypt.JSONReadOptions{})
-// SELECT e FROM users, eql_v4.json_tree_subtree(profile, $1::text[], 64) AS e WHERE id = $2
-// with read.Tokens() as $1; collect each row's entries, then:
-values, err := read.Open(ctx, entriesPerRow)
+rows, err = db.QueryContext(ctx, `SELECT e FROM users, eql_v4.json_tree_subtree(profile, $1::text[], 64) AS e WHERE id = $2`, read.Tokens(), id)
+if err != nil {
+	return err
+}
+defer rows.Close()
+var entries []eql.JSONEntry // one user's entries
+for rows.Next() {
+	var e eql.JSONEntry // each row is one public.eql_v4_json_entry
+	if err := rows.Scan(&e); err != nil {
+		return err
+	}
+	entries = append(entries, e)
+}
+if err := rows.Err(); err != nil {
+	return err
+}
+values, err := read.Open(ctx, [][]eql.JSONEntry{entries}) // one []eql.JSONEntry for each user
 at, err := encrypt.DecodeJSON[int64](values[0][0])
+
+sel, err := users.Fields.Profile.Selector(ctx, cipher, "$.plan")
+rows, err = db.QueryContext(ctx, `SELECT profile -> $1::text FROM users ORDER BY id`, sel.Selector())
+if err != nil {
+	return err
+}
+defer rows.Close()
+var picked []*eql.JSONEntry
+for rows.Next() {
+	var e *eql.JSONEntry // nil where the user's document has no $.plan
+	if err := rows.Scan(&e); err != nil {
+		return err
+	}
+	picked = append(picked, e)
+}
+if err := rows.Err(); err != nil {
+	return err
+}
+plans, err := sel.Open(ctx, picked) // one encrypt.JSONValue for each user
+var plan string
+if plans[0].Found { // false where the user's document has no $.plan
+	plan, err = encrypt.DecodeJSON[string](plans[0].JSON)
+}
 ```
+
+Each selection or read returns encrypted entries of the SQL type
+`public.eql_v4_json_entry`. Scan each one into an `eql.JSONEntry`, from
+package `encrypt/eql`. `->` returns SQL `NULL` for a row whose document has
+no node at the path. So scan its result into a `*eql.JSONEntry`. `Open` then
+reports that row as a `JSONValue` whose `Found` is false.
 
 A needle or a value is a `json.RawMessage` of JSON text, or any Go value
 `encoding/json` writes. A document contains a needle when it holds every
@@ -844,14 +887,34 @@ whole subtree. It takes three steps.
 // Step 1: derive the parent's token.
 children, err := users.Fields.Profile.Children(ctx, cipher, "$.address")
 
-// Step 2: run this query with children.Token() as $1, and collect every entry.
-// SELECT e FROM users, eql_v4.json_tree_children(profile, $1::text) AS e WHERE id = $2
+// Step 2: run the query, and scan each entry into an eql.JSONEntry.
+rows, err := db.QueryContext(ctx, `SELECT e FROM users, eql_v4.json_tree_children(profile, $1::text) AS e WHERE id = $2`, children.Token(), id)
+if err != nil {
+	return err
+}
+defer rows.Close()
+var entries []eql.JSONEntry
+for rows.Next() {
+	var e eql.JSONEntry
+	if err := rows.Scan(&e); err != nil {
+		return err
+	}
+	entries = append(entries, e)
+}
+if err := rows.Err(); err != nil {
+	return err
+}
 
 // Step 3: decrypt the entries.
 members, err := children.Open(ctx, entries)
+address := make(map[string]string)
 for _, member := range members {
 	key, _ := member.Key() // "city", "street", ...
 	value, err := encrypt.DecodeJSON[string](member.JSON)
+	if err != nil {
+		return err
+	}
+	address[key] = value
 }
 ```
 
