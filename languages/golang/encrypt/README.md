@@ -986,6 +986,10 @@ CipherStash credentials. Use it in CI that has no route to ZeroKMS.
    If your program uses a pre-release of the SDK, or an older SDK you want
    to keep, add the SDK's version to the command. For example, use
    `encrypttest@v0.1.0-rc.6` with SDK `v0.1.0-rc.6`.
+
+   Require a tagged version of the SDK. Only a tagged version of
+   `encrypttest` can be fetched. An SDK at a pseudo-version, such as one
+   from `go get ...@main`, has no `encrypttest` to match it.
    `NewClient` fails the test when the two versions differ, because its test
    builds match one version of the SDK.
 

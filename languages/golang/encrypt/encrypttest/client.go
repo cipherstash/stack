@@ -134,7 +134,9 @@ func WithSeed(seed [32]byte) ClientOption {
 // Only a tagged version of this module can be fetched. Between releases its
 // go.mod requires the SDK at a placeholder version, replaced by the
 // directory in a checkout of the repository; the release commit names the
-// version it tags.
+// version it tags. So require a tagged version of the SDK too: an SDK at a
+// pseudo-version, such as one from go get ...@main, has no version of this
+// module to match it.
 //
 // # Engine builds
 //
