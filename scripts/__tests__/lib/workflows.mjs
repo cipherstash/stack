@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import yaml from 'js-yaml'
 import { REPO_ROOT } from './repo-root.mjs'
@@ -44,12 +44,107 @@ export function workflowFiles() {
 /**
  * Parse one repo-relative YAML file from the workflow graph — a workflow, or a
  * composite action manifest that a workflow reaches through `uses: ./...`.
- * `workflow-node-gyp.test.mjs` follows those `uses:` edges and needs to parse
- * both kinds with the same reader.
+ * `flattenSteps` below follows those `uses:` edges and needs to parse both
+ * kinds with the same reader.
  *
  * Note for callers: `on:` parses as the boolean `true` under YAML 1.1 (the
  * "Norway problem"), so read triggers as `wf.on ?? wf[true]`.
  */
 export function readWorkflow(relPath) {
   return yaml.load(readFileSync(join(REPO_ROOT, relPath), 'utf8'))
+}
+
+export function usesOf(step) {
+  return typeof step?.uses === 'string' ? step.uses.trim() || null : null
+}
+
+const LOCAL_USES = /^\.{1,2}\//
+
+function stepLabel(step, index) {
+  return step?.name || usesOf(step) || `step #${index + 1}`
+}
+
+/**
+ * Flattens a step list, splicing a local composite action's own steps in at the
+ * position of the `uses:` that reaches it. The result is the sequence GitHub
+ * actually executes, which is the only sequence in which "before" means
+ * anything.
+ *
+ * `resolveComposite` is injected so a guard can exercise its checker against
+ * synthetic composites without writing fixture files — an in-repo scan is not
+ * a test of the traversal, it is a test of the repo. The repo's own resolver is
+ * `resolveRepoComposite`.
+ *
+ * `expanding` holds only the composites on the current call path, which is
+ * enough to break the `A uses B uses A` cycle. A composite leaves it once its
+ * expansion ends, so a second call to it is expanded again: GitHub runs it
+ * twice, and a guard that counts steps must see both runs.
+ *
+ * Each entry's `conditions` lists the `if:` of every composite call that
+ * encloses the step, outermost first. GitHub skips the whole composite when
+ * one of them is false, whatever the step's own `if:` says.
+ */
+export function flattenSteps(
+  steps,
+  resolveComposite,
+  trail = '',
+  expanding = new Set(),
+  conditions = [],
+) {
+  const flat = []
+  const unresolved = []
+
+  ;(Array.isArray(steps) ? steps : []).forEach((step, index) => {
+    const label = `${trail}${stepLabel(step, index)}`
+    const uses = usesOf(step)
+
+    if (uses === null || !LOCAL_USES.test(uses)) {
+      flat.push({ step, label, conditions })
+      return
+    }
+
+    const composite = resolveComposite(uses)
+    if (composite === null) {
+      // Fail closed. A local `uses:` pointing at nothing fails the job on
+      // GitHub anyway; passing it here would make "rename the action" a way to
+      // leave a check with nothing to read.
+      unresolved.push(`${label}: \`uses: ${uses}\` — no action manifest there`)
+      flat.push({ step, label, conditions })
+      return
+    }
+    if (expanding.has(composite.id)) return
+    expanding.add(composite.id)
+
+    const nested = flattenSteps(
+      composite.steps,
+      resolveComposite,
+      `${label} -> ${composite.id} step "`,
+      expanding,
+      step?.if === undefined ? conditions : [...conditions, step.if],
+    )
+    expanding.delete(composite.id)
+    for (const entry of nested.flat) {
+      flat.push({ ...entry, label: `${entry.label}"` })
+    }
+    unresolved.push(...nested.unresolved)
+  })
+
+  return { flat, unresolved }
+}
+
+/**
+ * GitHub resolves `uses: ./x` against the checkout root, not the calling file.
+ * Both manifest spellings are valid, so probing only `action.yml` would stop
+ * the traversal dead at a composite that used the other one.
+ */
+export function resolveRepoComposite(usesPath) {
+  const dir = usesPath.replace(LOCAL_USES, '')
+  for (const name of ['action.yml', 'action.yaml']) {
+    const rel = `${dir}/${name}`
+    if (existsSync(join(REPO_ROOT, rel))) {
+      const doc = readWorkflow(rel)
+      return { id: rel, steps: doc?.runs?.steps ?? [] }
+    }
+  }
+  return null
 }
