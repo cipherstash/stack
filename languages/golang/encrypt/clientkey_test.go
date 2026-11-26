@@ -62,7 +62,7 @@ func (k *keysetKMS) RoundTrip(r *http.Request) (*http.Response, error) {
 // that never returns can still stop the whole process at the next garbage
 // collection, because the collector waits for it. go test's -timeout bounds
 // the run in that case.
-func newClientWithin(t *testing.T, limit time.Duration, ctx context.Context, opts ...ClientOption) (*Client, error) {
+func newClientWithin(t *testing.T, ctx context.Context, limit time.Duration, opts ...ClientOption) (*Client, error) {
 	t.Helper()
 	type result struct {
 		c   *Client
@@ -100,7 +100,12 @@ func wantClientKeyError(t *testing.T, err error, key string) {
 	if !errors.As(err, &d) || d.Code != codeClientKey || !strings.Contains(d.Help, envClientKey) {
 		t.Errorf("Diagnostic = %+v, want code %s and a Help that names %s", d, codeClientKey, envClientKey)
 	}
-	for _, leak := range []string{key[:16], key[len(key)-16:]} {
+	// The first and last 16 characters of a long key, or a short key whole.
+	leaks := []string{key}
+	if len(key) > 16 {
+		leaks = []string{key[:16], key[len(key)-16:]}
+	}
+	for _, leak := range leaks {
 		if strings.Contains(err.Error(), leak) || (d != nil && (strings.Contains(d.Message, leak) || strings.Contains(d.Help, leak))) {
 			t.Errorf("the error carries key material: %q", err)
 		}
@@ -122,7 +127,7 @@ func TestNewClientRefusesAKeyWithABadPermutation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	start := time.Now()
-	_, err := newClientWithin(t, 120*time.Second, ctx,
+	_, err := newClientWithin(t, ctx, 120*time.Second,
 		WithCredentials(newTestCredentials(testClientID, NewClientKey([]byte(testKeyWithBadPermutation)), staticToken("t"))),
 		withZeroKMSURL("http://zerokms.invalid"), WithTransport(kms))
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -140,7 +145,7 @@ func TestNewClientAcceptsTheKeyTheBadOneWasMadeFrom(t *testing.T) {
 	guestOrSkip(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	_, err := newClientWithin(t, 120*time.Second, ctx,
+	_, err := newClientWithin(t, ctx, 120*time.Second,
 		WithCredentials(newTestCredentials(testClientID, NewClientKey([]byte(testClientKey)), staticToken("t"))),
 		withZeroKMSURL("http://zerokms.invalid"), WithTransport(&keysetKMS{}))
 	if err != nil {
@@ -170,7 +175,7 @@ func TestNewClientRefusesAKeyThatIsNotHexOrBase64(t *testing.T) {
 				},
 			} {
 				_, err := NewClient(context.Background(), WithCredentials(creds), withGuest([]byte("not wasm")), withZeroKMSURL("http://zerokms.invalid"))
-				wantClientKeyError(t, err, testClientKey)
+				wantClientKeyError(t, err, bad)
 				if !strings.Contains(err.Error(), "hex or padded base64") {
 					t.Errorf("%s: the error does not say what a key must be: %q", source, err)
 				}

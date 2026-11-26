@@ -29,9 +29,10 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   hang** (#1850). Some changed characters still gave a key that decoded.
   `NewClient` then sent its first request to ZeroKMS, and the guest looped
   forever when it used the key. The loop used a full CPU core and ignored
-  the context's deadline. Now `NewClient` checks the key before it loads the
-  guest, and the guest checks the key before it sends anything to ZeroKMS.
-  A wrong key fails at once with `encrypt.ErrConfig`.
+  the context's deadline. Now `NewClient` checks the key's encoding before
+  it loads the guest. The guest checks the key's permutations before it
+  sends anything to ZeroKMS. A key with one wrong character fails at once
+  with `encrypt.ErrConfig`.
 
 ## [0.1.0-rc.7] - 2026-11-25
 

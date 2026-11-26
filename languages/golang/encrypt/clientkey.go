@@ -24,9 +24,16 @@ type ClientKey = guest.ClientKey
 // key.
 func NewClientKey(b []byte) *ClientKey { return guest.NewClientKey(b) }
 
-// errKeyEncoding ends the message for a client key that is not hex or
-// padded base64. It never includes the key.
-const errKeyEncoding = "is not a client key: a client key is hex or padded base64"
+// checkKeyEncoding returns a malformed-client-key error when key is not hex
+// or padded base64, and nil otherwise. source names where the key came
+// from, such as "CS_CLIENT_KEY", and starts the message. The message never
+// includes the key.
+func checkKeyEncoding[T ~string | ~[]byte](source string, key T) error {
+	if validKeyEncoding(key) {
+		return nil
+	}
+	return newClientKeyError(source+" is not hex or padded base64", nil)
+}
 
 // guestKeyRefusal is the start of the message the guest's config parser
 // gives for a client key it cannot read (encrypt/guest/src/config.rs). It

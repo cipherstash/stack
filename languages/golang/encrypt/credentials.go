@@ -446,8 +446,8 @@ func (c AccessKeyCredentials) validate() error {
 		return fmt.Errorf("%w: AccessKeyCredentials: %s contains %s: the credentials were encoded and decoded again, and encoding redacts each key",
 			ErrEncoding, strings.Join(redactedKeys, ", "), redacted)
 	}
-	if !validKeyEncoding(c.ClientKey) {
-		return newClientKeyError("AccessKeyCredentials: ClientKey ("+envClientKey+") "+errKeyEncoding, nil)
+	if err := checkKeyEncoding("AccessKeyCredentials: ClientKey ("+envClientKey+")", c.ClientKey); err != nil {
+		return err
 	}
 	return nil
 }
@@ -604,8 +604,8 @@ func clientKeyFromEnv() (string, *ClientKey, error) {
 	if id == "" || material == "" {
 		return "", nil, fmt.Errorf("%w: %s and %s are set, but one of them is empty", ErrEncoding, envClientID, envClientKey)
 	}
-	if !validKeyEncoding(material) {
-		return "", nil, newClientKeyError(envClientKey+" "+errKeyEncoding, nil)
+	if err := checkKeyEncoding(envClientKey, material); err != nil {
+		return "", nil, err
 	}
 	// The environment's string is Go's and cannot be wiped; this copy can,
 	// and the ClientKey owns it.

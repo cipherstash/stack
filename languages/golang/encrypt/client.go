@@ -195,8 +195,10 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	// here, before the crypto guest is loaded. A missing key is refused by
 	// encodeConfig. A key from CS_CLIENT_KEY, or from AccessKeyCredentials,
 	// was checked when it was read, so that its error names the variable.
-	if !resolved.ClientKey.IsZero() && !validKeyEncoding(guest.KeyBytes(resolved.ClientKey)) {
-		return nil, newClientKeyError("the client key "+errKeyEncoding, nil)
+	if !resolved.ClientKey.IsZero() {
+		if err := checkKeyEncoding("the client key", guest.KeyBytes(resolved.ClientKey)); err != nil {
+			return nil, err
+		}
 	}
 	encoded, err := encodeConfig(initConfig{
 		clientID:        resolved.ClientID,
