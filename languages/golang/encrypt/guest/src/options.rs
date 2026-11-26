@@ -85,9 +85,7 @@ use zerokms_protocol::Name;
 use stack_encrypt::dynamic::frame::serde::from_slice;
 use stack_guest_abi::last_error::malformed;
 
-use crate::status::fail_error;
-#[cfg(any(doc, test))]
-use crate::status::STATUS_ENCODING;
+use crate::status::{fail_error, STATUS_ENCODING};
 
 /// Which keyset a call binds to. See the [module docs](self).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,7 +187,7 @@ pub struct Options {
 pub fn parse_options(bytes: &[u8], export: Export) -> Result<Options, u32> {
     let wire: wire::Options =
         from_slice(bytes).map_err(|e| malformed(format!("the options: {e}")))?;
-    let keyset = KeysetSelector::from(wire.keyset);
+    let keyset = KeysetSelector::try_from(wire.keyset).map_err(|e| e.fail())?;
     let accepts = export.accepts();
     if wire.context.is_some() && !accepts.context {
         return Err(malformed(
@@ -216,9 +214,95 @@ pub fn parse_options(bytes: &[u8], export: Export) -> Result<Options, u32> {
 /// Parse a bare keyset selector frame, as `se_keyset` takes it. One
 /// definition, `wire::Selector`, serves this and [`parse_options`].
 pub fn parse_selector(bytes: &[u8]) -> Result<KeysetSelector, u32> {
-    from_slice::<wire::Selector>(bytes)
-        .map(KeysetSelector::from)
-        .map_err(|e| malformed(format!("a keyset selector: {e}")))
+    let wire = from_slice::<wire::Selector>(bytes)
+        .map_err(|e| malformed(format!("a keyset selector: {e}")))?;
+    KeysetSelector::try_from(wire).map_err(|e| e.fail())
+}
+
+/// The keyset naming rules, as the help of a refused name states them.
+/// They are the rules ZeroKMS checks (`zerokms_protocol::Name`).
+pub const KEYSET_NAME_RULES: &str = "A keyset name is 1 to 64 characters long. \
+    It contains only the ASCII letters A to Z and a to z, the digits 0 to 9, \
+    and the characters _, -, and /.";
+
+/// The longest keyset name ZeroKMS accepts, in characters. Every character
+/// it accepts is ASCII, so this is its limit in bytes too.
+const KEYSET_NAME_MAX_LEN: usize = 64;
+
+/// A keyset name that breaks ZeroKMS's naming rules. Its message names the
+/// rule the name broke, and its help states the rules. Its code is the one
+/// every other malformed input has, taken from [`GuestError::Malformed`]
+/// (`stack_guest_abi::malformed_input`), so a host that matched the code
+/// before still matches it.
+///
+/// A keyset name is a program setting, not data, so the message may name
+/// it. It names it only when the name is within the length limit, so the
+/// message stays short.
+///
+/// [`GuestError::Malformed`]: stack_guest_abi::last_error::GuestError::Malformed
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum KeysetNameError {
+    /// The name has no characters.
+    #[error("malformed input: the keyset name is empty")]
+    Empty,
+    /// The name has a character that a keyset name cannot contain. The
+    /// name is `None` when it is too long to repeat.
+    #[error(
+        "malformed input: the keyset name {}contains {found:?}, which a keyset name cannot contain",
+        name.as_ref().map(|name| format!("{name:?} ")).unwrap_or_default()
+    )]
+    Character { name: Option<String>, found: char },
+    /// The name is longer than 64 characters.
+    #[error(
+        "malformed input: the keyset name is {0} characters long, and the limit is {KEYSET_NAME_MAX_LEN}"
+    )]
+    TooLong(usize),
+    /// ZeroKMS refused a name that follows the rules above. Reached only if
+    /// a later `zerokms-protocol` adds a rule.
+    #[error("malformed input: the keyset name {0:?} breaks ZeroKMS's naming rules")]
+    Refused(String),
+}
+
+impl miette::Diagnostic for KeysetNameError {
+    fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        let malformed = stack_guest_abi::last_error::GuestError::Malformed("".into());
+        let code = miette::Diagnostic::code(&malformed)?.to_string();
+        Some(Box::new(code))
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        Some(Box::new(KEYSET_NAME_RULES))
+    }
+}
+
+impl KeysetNameError {
+    /// Record this error as the last one and return [`STATUS_ENCODING`].
+    fn fail(self) -> u32 {
+        stack_guest_abi::last_error::record(&self, serde_json::Map::new(), STATUS_ENCODING)
+    }
+}
+
+/// Check a keyset name against ZeroKMS's naming rules, and say which rule
+/// it breaks. A character that is not allowed is reported before the length,
+/// so a name that breaks both is not refused twice in turn.
+/// `zerokms_protocol::Name` has the last word, so a rule it adds later still
+/// refuses the name.
+fn keyset_name(name: &str) -> Result<Name, KeysetNameError> {
+    if name.is_empty() {
+        return Err(KeysetNameError::Empty);
+    }
+    let len = name.chars().count();
+    let allowed = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '/');
+    if let Some(found) = name.chars().find(|&c| !allowed(c)) {
+        return Err(KeysetNameError::Character {
+            name: (len <= KEYSET_NAME_MAX_LEN).then(|| name.to_owned()),
+            found,
+        });
+    }
+    if len > KEYSET_NAME_MAX_LEN {
+        return Err(KeysetNameError::TooLong(len));
+    }
+    Name::try_from(name).map_err(|_| KeysetNameError::Refused(name.to_owned()))
 }
 
 /// The options and the selector as a host writes them, read straight from
@@ -231,7 +315,6 @@ mod wire {
     use serde::{Deserialize, Deserializer};
     use stack_encrypt::{AuditMetadata, Label};
     use uuid::Uuid;
-    use zerokms_protocol::Name;
 
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -265,30 +348,32 @@ mod wire {
         Id(KeysetId),
     }
 
-    impl From<Selector> for super::KeysetSelector {
-        fn from(selector: Selector) -> Self {
-            match selector {
+    impl TryFrom<Selector> for super::KeysetSelector {
+        type Error = super::KeysetNameError;
+
+        fn try_from(selector: Selector) -> Result<Self, Self::Error> {
+            Ok(match selector {
                 Selector::Default {} => Self::Default,
                 Selector::Any {} => Self::Any,
-                Selector::Name(KeysetName(name)) => Self::Name(name),
+                Selector::Name(KeysetName(name)) => Self::Name(super::keyset_name(&name)?),
                 Selector::Id(KeysetId(id)) => Self::Id(id),
-            }
+            })
         }
     }
 
-    /// A keyset name, checked against ZeroKMS's naming rules here at the
-    /// boundary, not at resolution.
+    /// A keyset name as the host sent it: a string, read as the other
+    /// strings here are, so bytes are refused. It is checked against
+    /// ZeroKMS's naming rules after the frame is read, still at the
+    /// boundary and not at resolution, because the frame's serde never
+    /// repeats a `TryFrom` error's text, and a refused name says which rule
+    /// it broke ([`KeysetNameError`](super::KeysetNameError)).
     #[derive(Deserialize)]
-    #[serde(try_from = "&str")]
-    pub(super) struct KeysetName(Name);
+    #[serde(from = "&str")]
+    pub(super) struct KeysetName(String);
 
-    impl TryFrom<&str> for KeysetName {
-        type Error = &'static str;
-
-        fn try_from(name: &str) -> Result<Self, Self::Error> {
-            Name::try_from(name)
-                .map(KeysetName)
-                .map_err(|_| "a keyset name that breaks ZeroKMS's naming rules")
+    impl From<&str> for KeysetName {
+        fn from(name: &str) -> Self {
+            KeysetName(name.to_owned())
         }
     }
 
@@ -471,6 +556,81 @@ mod tests {
                 Some(STATUS_ENCODING),
                 "{label} is not a selector and must be refused"
             );
+        }
+    }
+
+    /// The last error recorded, as its code, message and help.
+    fn last_error() -> (String, String, String) {
+        let bytes = stack_guest_abi::last_error::take().expect("an error is recorded");
+        let error = stack_guest_abi::value::HostValue::decode(&bytes).expect("it decodes");
+        let text = |key| {
+            error
+                .get(key)
+                .and_then(|v| v.as_text())
+                .unwrap_or_default()
+                .to_owned()
+        };
+        (text("code"), text("message"), text("help"))
+    }
+
+    /// A name that breaks a naming rule is refused with the malformed-input
+    /// code, a message naming the rule, and help stating the rules: from a
+    /// bare selector and from an options object alike.
+    #[test]
+    fn an_invalid_name_names_the_rule_it_broke() {
+        for (name, wants) in [
+            ("tenant 42", &[r#""tenant 42""#, "' '"][..]),
+            ("tenant.42", &[r#""tenant.42""#, "'.'"][..]),
+            ("ténant", &[r#""ténant""#, "'é'"][..]),
+            ("", &["empty"][..]),
+            (&"a".repeat(65), &["65 characters", "64"][..]),
+            // A name past the limit with a character that is not allowed
+            // names the character first, so fixing the length alone does
+            // not meet a second refusal.
+            (&format!("{} b", "a".repeat(68)), &["' '"][..]),
+        ] {
+            let sel = || obj(vec![("name", V::Str(name.into()))]);
+            let parses: [&dyn Fn() -> Result<(), u32>; 2] =
+                [&|| selector(sel()).map(|_| ()), &|| {
+                    opts(options(sel()), Export::EncryptRecord).map(|_| ())
+                }];
+            for parse in parses {
+                assert_eq!(parse(), Err(STATUS_ENCODING), "{name:?} is refused");
+                let (code, message, help) = last_error();
+                assert_eq!(code, "stack_guest_abi::malformed_input");
+                for want in wants {
+                    assert!(message.contains(want), "{message:?} names {want:?}");
+                }
+                if name.chars().count() > KEYSET_NAME_MAX_LEN {
+                    assert!(!message.contains(name), "{message:?} repeats a long name");
+                }
+                assert_eq!(help, KEYSET_NAME_RULES);
+            }
+        }
+    }
+
+    /// A refused name has the code every other malformed input has, taken
+    /// from `GuestError::Malformed`, so a rename there moves both.
+    #[test]
+    fn a_refused_name_has_the_malformed_input_code() {
+        use miette::Diagnostic;
+        let malformed = stack_guest_abi::last_error::GuestError::Malformed("".into());
+        let want = malformed.code().map(|code| code.to_string());
+        assert!(want.is_some(), "GuestError::Malformed has a code");
+        let got = KeysetNameError::Empty.code().map(|code| code.to_string());
+        assert_eq!(got, want);
+    }
+
+    /// The help states every rule ZeroKMS checks: a name at each limit is
+    /// accepted, and one past it is refused.
+    #[test]
+    fn the_rules_in_the_help_are_the_rules_zerokms_checks() {
+        for good in ["a", &"a".repeat(64), "azAZ09_-/"] {
+            assert!(keyset_name(good).is_ok(), "{good:?} is a name");
+        }
+        for bad in ["", &"a".repeat(65), "a b", "a.b", "é", "a%"] {
+            assert!(keyset_name(bad).is_err(), "{bad:?} is not a name");
+            assert!(Name::try_from(bad).is_err(), "ZeroKMS refuses {bad:?}");
         }
     }
 

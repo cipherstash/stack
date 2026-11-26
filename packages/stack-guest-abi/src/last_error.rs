@@ -33,7 +33,10 @@
 //!
 //! Everything the encoder writes obeys the rule on `stack-profile`'s
 //! `ErrorPayload` trait: the guests only record errors from the four crates
-//! that implement it, and [`GuestError`]s, whose text is fixed. A cause
+//! that implement it, and [`GuestError`]s, whose text is fixed. A guest may
+//! also record a diagnostic of its own for input its boundary refused. Its
+//! text may name what the caller set for the program, such as a keyset name,
+//! and never data the program encrypts. A cause
 //! from another library contributes a description a guest vouches for
 //! ([`describe_std`], or the guest's own describer), and otherwise only that
 //! it was one; its message is never copied.

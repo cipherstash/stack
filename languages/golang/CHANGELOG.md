@@ -13,6 +13,15 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Fixed
+
+- The error for a keyset name that breaks a naming rule now says which rule
+  it broke. The name is empty, longer than 64 characters, or has a
+  character that is not allowed. The message names that character. The
+  error's `Help` gives the rules: 1 to 64 characters of `A-Z a-z 0-9 _ - /`.
+  The error is still `ErrEncoding`. Its `Code` is still
+  `stack_guest_abi::malformed_input` (#1905).
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6
