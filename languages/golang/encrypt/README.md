@@ -197,6 +197,122 @@ CLI's current workspace, which needs `stash auth login`. No credentials take a
 raw token. The client
 key is consumed by `NewClient` and wiped, whatever the outcome.
 
+## Deploying
+
+A deployed server needs its own credentials: a ZeroKMS client and an
+access key made for that server. Do not copy your own client key from
+`~/.cipherstash/secretkey.json` into production.
+
+### Make the credentials with `stash env`
+
+`stash env` makes a new ZeroKMS client and a new access key, and prints
+the four variables the server needs. `stash` is the CipherStash CLI, an npm
+package. Log in first, then run it once for each environment:
+
+```sh
+npx stash auth login
+npx stash env --name my-app-prod
+```
+
+The command prints a dotenv block:
+
+```dotenv
+CS_WORKSPACE_CRN=crn:<region>:<workspace-id>
+CS_CLIENT_ID=<uuid>
+CS_CLIENT_KEY=<hex>
+CS_CLIENT_ACCESS_KEY=CSAK...
+```
+
+- `stash env` shows the access key once only. Put the four values in your
+  deployment's secret store straight away.
+- Only the dotenv block goes to standard output. Progress goes to standard
+  error, so you can pipe the output straight to a secret store.
+- `--write` writes the block to a file instead, `.env.production.local`
+  unless you name another path. The file has mode 0600, so only you can
+  read it. Use `--write` rather than a shell redirect such as `>`. A file
+  that a redirect creates takes its mode from your umask, often 0644. With
+  mode 0644, every user on the machine can read the keys.
+- `--json` prints the result as JSON lines and asks no questions, for CI.
+- To make an access key, your user needs the admin role in the workspace.
+  The access key itself has the member role.
+
+`CS_CLIENT_KEY` and `CS_CLIENT_ACCESS_KEY` are secrets. Do not commit them.
+
+### Use `AccessKeyCredentials` on a server
+
+`AccessKeyCredentials` uses the four values and nothing else. If a value is
+missing, `NewClient` fails with `ErrEncoding` and names the field. The
+credentials never fall back to the developer profile, and the profile
+directory is not opened.
+
+```go
+creds := encrypt.AccessKeyCredentials{
+    ClientID:        os.Getenv("CS_CLIENT_ID"),
+    ClientKey:       encrypt.Secret(os.Getenv("CS_CLIENT_KEY")),
+    ClientAccessKey: encrypt.Secret(os.Getenv("CS_CLIENT_ACCESS_KEY")),
+    WorkspaceCRN:    os.Getenv("CS_WORKSPACE_CRN"),
+}
+client, err := encrypt.NewClient(ctx, encrypt.WithCredentials(creds))
+if err != nil {
+    return err // encrypt.ErrEncoding names each empty field
+}
+defer client.Close()
+```
+
+A configuration loader can fill the struct instead, as
+[Credentials](#credentials) shows.
+
+`AutoCredentials`, the default, suits development, where the profile is the
+one you logged in with. On a server its fallback can use the wrong
+credentials. `AutoCredentials` resolves the token and the client key
+separately, and each one falls back to the developer profile:
+
+- The token comes from `CS_CLIENT_ACCESS_KEY` and `CS_WORKSPACE_CRN`. If
+  `CS_CLIENT_ACCESS_KEY` is not set, the token comes from the profile's
+  `stash auth login` session.
+- The client key comes from `CS_CLIENT_ID` and `CS_CLIENT_KEY`. If either of
+  the two is not set, the key comes from the profile's `secretkey.json`.
+
+So a server with some of the variables missing uses a profile for the rest,
+with no warning, if one exists. A profile can be left in a container image,
+or mounted from a home directory.
+
+These settings make `NewClient` fail without reading the profile:
+
+- `CS_CLIENT_ACCESS_KEY` is set without `CS_WORKSPACE_CRN`.
+- `CS_WORKSPACE_CRN` is set to a value that is not a CRN.
+- One of `CS_CLIENT_ID` and `CS_CLIENT_KEY` is empty while the other is set.
+
+Otherwise, `NewClient` fails when neither the environment nor a profile has
+the credentials.
+
+### Environment variables the SDK reads
+
+| Variable | What it does | When it is not set |
+|---|---|---|
+| `CS_WORKSPACE_CRN` | The workspace that the access key belongs to. A CRN (Cloud Resource Name) also names the region. `AutoCredentials` and `OIDCFederationWithDetectedWorkspace` read it. A value that is not a CRN makes `NewClient` fail. | `AutoCredentials` uses the profile's session. `OIDCFederationWithDetectedWorkspace` uses the CLI's current workspace. |
+| `CS_CLIENT_ACCESS_KEY` | The access key that `AutoCredentials` exchanges for a token. `CS_WORKSPACE_CRN` must be set with it. | `AutoCredentials` uses the profile's session. |
+| `CS_CLIENT_ID` | The ZeroKMS client id, a UUID (universally unique identifier). `AutoCredentials` and both `OIDCFederation` functions read it. | The client key comes from the profile. |
+| `CS_CLIENT_KEY` | The client key, in hex. The base64 text of `secretkey.json` also works. Read with `CS_CLIENT_ID`. | The client key comes from the profile. |
+| `CS_CONFIG_PATH` | The developer profile directory. | `~/.cipherstash`. A blank value counts as not set. |
+| `CS_CTS_HOST` | The URL of the CipherStash Token Service (CTS). Every token strategy reads it, under every kind of credentials, unless `auth.WithBaseURL` names a URL. | The SDK finds CTS for the workspace's region. An empty value counts as not set. |
+| `CS_ZEROKMS_HOST` | The URL of ZeroKMS, under every kind of credentials. It must be an `http` or `https` URL with a host. Any other value makes `NewClient` fail with `ErrEncoding`. | The URL comes from the token. |
+| `CS_VITUR_HOST` | The old name for `CS_ZEROKMS_HOST`. It is read only when `CS_ZEROKMS_HOST` is not set. | As for `CS_ZEROKMS_HOST`. |
+
+An empty value matters only in a variable that the credentials you chose
+read. In such a variable, an empty value makes `NewClient` fail, with two
+exceptions. `CS_CTS_HOST` and `CS_CONFIG_PATH` treat an empty value as not
+set. An empty `CS_CLIENT_ID` or `CS_CLIENT_KEY` fails only if the other
+variable is also set.
+
+`AccessKeyCredentials` does not read the first four variables. Load them
+yourself, as the example above does. `CS_CTS_HOST` and `CS_ZEROKMS_HOST`
+still apply to it.
+
+The default HTTP transport is Go's `http.DefaultTransport`, so the standard
+proxy variables `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY` apply to the
+requests to CTS and ZeroKMS. `WithTransport` replaces that transport.
+
 ## The cipher
 
 A `Cipher` is the client bound to one keyset, and to any extension of the
