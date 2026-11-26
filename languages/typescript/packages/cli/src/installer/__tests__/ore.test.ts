@@ -71,8 +71,8 @@ describe('describeOreState', () => {
     const { message } = describeOreState('fallback')
     // The consequence: not a failed install.
     expect(message).toContain('not a failed install')
-    // The remedy, in the words a schema author types.
-    expect(message).toContain('types.*Ord')
+    // The remedy, named by type suffix so it reads for every SDK.
+    expect(message).toContain('OPE-ordered types (`*Ord`)')
     expect(message).toContain(ORE_FALLBACK_REMEDY)
   })
 
@@ -99,6 +99,19 @@ describe('describeOreState', () => {
     expect(describeOreState('indexable').value).toBe('present')
     expect(describeOreState('fallback').value).toContain('skipped')
     expect(describeOreState('incoherent-poisoned').value).toBe('INCOHERENT')
+  })
+})
+
+describe('ORE_FALLBACK_REMEDY', () => {
+  /**
+   * The remedy is printed to users of every SDK and every EQL version, so it
+   * names types by suffix, not by a TypeScript API or an EQL version (#1904).
+   */
+  it('names no TypeScript API and no EQL version', () => {
+    expect(ORE_FALLBACK_REMEDY).toContain('OPE-ordered types (`*Ord`)')
+    expect(ORE_FALLBACK_REMEDY).toContain('ORE-ordered types (`*OrdOre`)')
+    expect(ORE_FALLBACK_REMEDY).not.toContain('types.')
+    expect(ORE_FALLBACK_REMEDY).not.toMatch(/eql_v\d/)
   })
 })
 

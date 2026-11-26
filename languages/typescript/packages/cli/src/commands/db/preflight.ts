@@ -96,7 +96,7 @@ export async function preflightCommand(
   // installed state, so the answer survives past this command's output (#891).
   if (result.canCreateOperatorClass === false) {
     p.log.info(
-      `This role cannot create an operator class, so \`eql install\` will skip the ORE one and install its loud-failure fallback instead. That is a complete install. ${ORE_FALLBACK_REMEDY}`,
+      `This role cannot create the operator class that ORE ordering needs. \`stash eql install\` will skip it and install a fallback that makes every write to an ORE-ordered column fail with a clear error. That is a complete install. ${ORE_FALLBACK_REMEDY}`,
     )
   }
   p.outro('This role can install EQL.')

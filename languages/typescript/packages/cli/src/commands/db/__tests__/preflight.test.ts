@@ -90,15 +90,25 @@ describe('renderPreflightReport', () => {
       canCreateOperatorClass: false,
     })
     expect(report).toMatch(/ORE operator class\s+not creatable/)
-    expect(report).toContain('<- skips: ORE opclass')
-    expect(report).toContain('`types.*Ord`, not `types.*OrdOre`')
+    expect(report).toContain('<- skips: ORE operator class')
+    expect(report).toContain(
+      'use OPE-ordered types (`*Ord`), not ORE-ordered types (`*OrdOre`)',
+    )
+    // The row is read by users of every SDK and every EQL version, so it
+    // names no TypeScript API and no EQL version (#1904).
+    const oreRow = report
+      .split('\n')
+      .find((line) => line.startsWith('ORE operator class'))
+    expect(oreRow).toBeDefined()
+    expect(oreRow).not.toContain('types.')
+    expect(oreRow).not.toMatch(/eql_v\d/)
     expect(report).not.toContain('<- blocks')
   })
 
   it('leaves the ORE row unannotated for a role that can create one', () => {
     const report = renderPreflightReport(CAPABLE)
     expect(report).toMatch(/ORE operator class\s+creatable/)
-    expect(report).not.toContain('<- skips: ORE opclass')
+    expect(report).not.toContain('<- skips: ORE operator class')
   })
 
   // A probe that could not ask the question must not be rendered as either

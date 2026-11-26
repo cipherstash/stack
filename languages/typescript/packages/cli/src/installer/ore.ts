@@ -69,14 +69,19 @@ export function classifyOreState(observed: {
 /**
  * The remedy, named once.
  *
- * It deliberately names `types.*Ord` and not the `_ord_ope` domains: the
- * bundle creates `public.eql_v3_<t>_ord_ope`, but `@cipherstash/stack` ships
- * no `types.*OrdOpe` factory, so pointing a schema author there names a column
- * type they cannot declare. `types.*Ord` (`public.eql_v3_<t>_ord`) is the same
- * CLLW-OPE ordering and is the one with an SDK factory behind it.
+ * It names the types by their suffix (`*Ord`, `*OrdOre`), not by an SDK API
+ * or an EQL version, because the same sentence is read by users of every SDK
+ * and of every EQL version. The Go SDK, for example, has `eql.IntegerOrd` and
+ * `eql.IntegerOrdOre`, and EQL v4 has `public.eql_v4_<t>_ord` and
+ * `public.eql_v4_<t>_ord_ore`, just as EQL v3 has `public.eql_v3_<t>_ord`.
+ *
+ * It deliberately names `*Ord` and not `*OrdOpe`: `@cipherstash/stack` ships
+ * no `types.*OrdOpe` factory, so pointing a TypeScript schema author there
+ * names a column type they cannot declare. `*Ord` is the same CLLW-OPE
+ * ordering and has a type behind it in every SDK.
  */
 export const ORE_FALLBACK_REMEDY =
-  'Ordered columns must use OPE ordering: declare them `types.*Ord` (`public.eql_v3_*_ord`), which orders and indexes on any role. `types.*OrdOre` is unusable here — every write to one fails its `eql_ore_unavailable` CHECK.'
+  'Use OPE-ordered types (`*Ord`) for ordered columns: they order and index on any role. Do not use ORE-ordered types (`*OrdOre`) on this database, because every write to one fails its `eql_ore_unavailable` CHECK.'
 
 /**
  * One line naming what an ORE state means for the operator. `severity` is what
@@ -139,6 +144,7 @@ export function describeOreCreatable(creatable: boolean | null): {
   if (creatable) return { value: 'creatable' }
   return {
     value: 'not creatable',
-    annotation: '<- skips: ORE opclass; use `types.*Ord`, not `types.*OrdOre`',
+    annotation:
+      '<- skips: ORE operator class; use OPE-ordered types (`*Ord`), not ORE-ordered types (`*OrdOre`)',
   }
 }
