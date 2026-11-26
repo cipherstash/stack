@@ -315,9 +315,10 @@ func TestAutoCredentialsMissing(t *testing.T) {
 			names:   envClientKey,
 		},
 		{
-			name: "an access key with no workspace CRN",
-			env:  map[string]string{envAccessKey: testAccessKey, envClientID: testClientID, envClientKey: testClientKey},
-			want: []error{auth.ErrConfig},
+			name:  "an access key with no workspace CRN",
+			env:   map[string]string{envAccessKey: testAccessKey, envClientID: testClientID, envClientKey: testClientKey},
+			want:  []error{auth.ErrConfig},
+			names: envWorkspaceCRN + " is not set",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
