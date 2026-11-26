@@ -240,5 +240,5 @@ func readTestBuild(path, task string) ([]byte, error) {
 type notBuiltError struct{ task string }
 
 func (e notBuiltError) Error() string {
-	return "the test build of the engine is not in this module: require a tagged version of github.com/cipherstash/stack/languages/golang/encrypt/encrypttest, which includes it; a pseudo-version does not. In a checkout of the repository, run `mise run " + e.task + "`"
+	return "the test build of the engine is not in this module: require github.com/cipherstash/stack/languages/golang and github.com/cipherstash/stack/languages/golang/encrypt/encrypttest at the same tagged version, which includes it; a pseudo-version does not. In a checkout of the repository, run `mise run " + e.task + "`"
 }

@@ -32,4 +32,14 @@ func TestAMissingTestBuildNamesItsTask(t *testing.T) {
 	if tagged := strings.Index(msg, "tagged version"); tagged < 0 || tagged > task {
 		t.Fatalf("the error does not name a tagged version before the task: %v", err)
 	}
+	// NewClient refuses an SDK and an encrypttest at different versions, so
+	// the advice names both modules.
+	for _, module := range []string{
+		"github.com/cipherstash/stack/languages/golang and",
+		"github.com/cipherstash/stack/languages/golang/encrypt/encrypttest at the same tagged version",
+	} {
+		if !strings.Contains(msg, module) {
+			t.Fatalf("the error does not name %q: %v", module, err)
+		}
+	}
 }
