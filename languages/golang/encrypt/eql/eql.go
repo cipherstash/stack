@@ -6,9 +6,10 @@
 // generated encrypted type, and its Fields entry's Eq returns a
 // [TextEqQuery]. The guest builds every value: generated code stores what
 // the guest returns and never assembles an EQL value itself (ADR-0007,
-// amended 2026-10-06). Each type implements driver.Valuer and sql.Scanner
-// for one column, and json.Marshaler, which writes the value as the JSON
-// it is. It prints (fmt.Stringer, fmt.Formatter, for every verb) and logs
+// amended 2026-10-06). Each value and query type implements driver.Valuer
+// for one column, and a pointer to it implements sql.Scanner. Each also
+// implements json.Marshaler, which writes the value as the JSON it is. It
+// prints (fmt.Stringer, fmt.Formatter, for every verb) and logs
 // (slog.LogValuer) as its type's name and never its bytes, so fmt.Sprint
 // and %s do not give its JSON: a stored value holds ciphertext and terms,
 // and a query value terms. To print or log the JSON on purpose, call

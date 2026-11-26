@@ -377,6 +377,7 @@ For `-type User`, the file `user_stash.go` holds:
   A passthrough field keeps its Go type.
   A field with `encrypt_into` holds one EQL value.
   A field with `encrypt` or `index=` holds a struct with one field for each output, such as `Email.Ciphertext` and `Email.Equality`.
+  That struct is not a `driver.Valuer` or an `sql.Scanner`. Bind and scan each of its fields as its own column. The types of its fields, `encrypt.Ciphertext` and the term types, implement `driver.Valuer`, and a pointer to each implements `sql.Scanner`.
 - `Encrypt` and `Decrypt`, which take a slice and return a slice, and send one ZeroKMS request for each 500 sealed values in it, plus one the first time a keyset is used.
 - `Fields`, with one entry for each sealed field.
   An opaque struct, or a struct with no sealed field outside an opaque one, gets no `Fields`: nothing in it is sealed on its own, so nothing can be queried.
