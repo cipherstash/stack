@@ -606,6 +606,110 @@ reports it, `Client.MemoryLockError` says why not, and
 `WithRequireLockedMemory` makes `NewClient` refuse to start unlocked. See the
 package documentation for the full account.
 
+## Choose a column type
+
+Store each encrypted field in an EQL (Encrypt Query Language) column, with
+`encrypt_into=`, unless you have a reason to use separate byte columns.
+Choose the EQL type by the queries the field needs. Each type stores search
+terms beside the ciphertext. The terms show some facts about the values to
+anyone who can read the column, such as a database administrator or
+someone with a backup. The table says which facts.
+
+EQL types by need, and what each one shows to a reader of the column:
+
+| You need to | Use | What the column shows |
+|---|---|---|
+| Store a value and read it back, with no query | The type with no suffix, such as `Text` or `Integer` | No search term is stored |
+| Find rows equal to a value | An `Eq` type, such as `TextEq` or `IntegerEq` | Which rows hold equal values |
+| Find text that contains part of a word | `TextMatch` | The rough length of each value, and which rows have 3-grams or two-letter words in common |
+| Compare and sort, on any PostgreSQL install | An `Ord` type, such as `IntegerOrd` or `TextOrd`. It uses order-preserving encryption (OPE) | The order of the values, which rows hold equal values, and how many leading bits two values share |
+| Compare and sort, with no order in the stored bytes | An `OrdOre` type, such as `IntegerOrdOre`. It uses order-revealing encryption (ORE), and needs a superuser install | The bytes show no order. A role that can run SQL can still find the order and which values are equal |
+| Find equal text, compare, sort, and match on one column | `TextSearch` for OPE order, or `TextSearchOre` for ORE order | What its equality, order and match terms show |
+
+A column shows what all of its terms show together. A text order type, such
+as `TextOrd` or `TextOrdOre`, also stores `TextEq`'s equality term. So the column
+shows which rows contain equal text, whichever order scheme it uses. The text
+order term compares text after case and accents are folded, so `Café` and
+`cafe` get the same order term.
+
+### Why EQL columns are the default
+
+EQL columns are the default because the database compares every term in
+them correctly:
+
+- A query uses PostgreSQL's own operators: `=`, `<`, `>`, `@@`, and
+  `ORDER BY`, with the query parameter cast to the column's query type.
+- An ORE term in a byte column cannot be compared in SQL, because its byte
+  order is sometimes wrong, with no error. In an EQL column, EQL compares it
+  correctly.
+- A match query on a byte column needs a SQL function you write yourself, as
+  the example in [Queries](#queries) shows. An EQL `TextMatch` column needs
+  none.
+- Each field is one column, not one column for the ciphertext and one for
+  each term.
+
+An EQL column needs EQL v4 installed in the database first, as
+[EQL columns](#eql-columns) says. Separate byte columns need no EQL install.
+Separate byte columns also have a generated `Between` method. The EQL
+ordered types do not have one yet.
+
+### Choose between OPE and ORE order
+
+`IntegerOrd` and `IntegerOrdOpe` are the same type under two names. So is
+each other `Ord` and `OrdOpe` pair. Both names store an OPE term.
+`IntegerOrdOre` stores a block ORE term instead. The two schemes differ in what the
+stored bytes show, and in what the install needs.
+
+An OPE term's bytes sort in the order of the values:
+
+- Anyone who reads the column, or a copy of it, sees the order of the
+  values and which values are equal.
+- Two values whose encodings start with the same bits get terms that start
+  with the same bytes, one byte for each bit. For a number, the shared bits
+  are its sign and then its exponent. For text, they are its first
+  characters.
+- A plain btree index on `eql_v4.ord_term(col)` serves `<`, `>`, and
+  `ORDER BY`. So the `Ord` types work on any install, including one by a
+  role that is not a superuser.
+
+An ORE term carries a random nonce:
+
+- Equal values have different bytes.
+- The bytes do not sort in the order of the values.
+- EQL's comparison functions, such as `eql_v4.lt` and `eql_v4.eq`, take two
+  stored values and need no key. So a role that can run SQL on the column
+  can find the order of the values, and which values are equal.
+- The index on `eql_v4.ord_term_ore(col)` needs the ORE operator class.
+  Only a superuser install creates that class. On any other install, the
+  installer disables the `OrdOre` and `TextSearchOre` types, and a write to
+  one of their columns fails.
+
+So ORE keeps the order from someone who has only the stored bytes, such as a
+backup. ORE does not keep the order from a role that can query the database.
+Where that difference does not matter to you, use an `Ord` type.
+
+### Check the database before you choose an `OrdOre` type
+
+Run `stash eql preflight` before you choose an `OrdOre` or `TextSearchOre`
+type. Run it as the role that will install EQL v4:
+
+```sh
+npx stash eql preflight --database-url "$DATABASE_URL"
+```
+
+Read the `ORE operator class` row of its report:
+
+- `creatable`: the role can create the ORE operator class, so the `OrdOre`
+  types will work.
+- `not creatable`: the install will skip the class. Use an `Ord` type.
+- `unknown`: the command could not find out, for example on a read-only
+  replica. Do not read it as either answer.
+
+The command changes nothing. The command tries to create an operator family in
+a transaction, and then rolls the transaction back. The rest of its report,
+and its exit code, are about `stash eql install`. That command installs EQL
+v3, so those rows name the `eql_v3` schemas, not `eql_v4`.
+
 ## EQL columns
 
 A field tagged `encrypt_into=TextEq` is stored as one EQL value, the JSON
