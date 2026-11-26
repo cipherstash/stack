@@ -109,7 +109,8 @@ describe('ORE_FALLBACK_REMEDY', () => {
    */
   it('names no TypeScript API and no EQL version', () => {
     expect(ORE_FALLBACK_REMEDY).toContain('OPE-ordered types (`*Ord`)')
-    expect(ORE_FALLBACK_REMEDY).toContain('ORE-ordered types (`*OrdOre`)')
+    // The fallback also poisons the `_text_search_ore` domain (#1944 review).
+    expect(ORE_FALLBACK_REMEDY).toContain('ORE types (`*OrdOre`, `*SearchOre`)')
     expect(ORE_FALLBACK_REMEDY).not.toContain('types.')
     expect(ORE_FALLBACK_REMEDY).not.toMatch(/eql_v\d/)
   })
@@ -122,6 +123,7 @@ describe('describeOreCreatable', () => {
     expect(no.value).toBe('not creatable')
     expect(no.annotation).toContain('<- skips:')
     expect(no.annotation).not.toContain('<- blocks')
+    expect(no.annotation).toContain('`*SearchOre`')
   })
 
   it('renders an unanswerable probe as its own third state', () => {

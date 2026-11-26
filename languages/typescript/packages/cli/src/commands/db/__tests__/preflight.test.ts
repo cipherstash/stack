@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { PreflightResult } from '@/installer/index.js'
-import { renderPreflightReport } from '../preflight.js'
+import { ORE_FALLBACK_REMEDY } from '@/installer/ore.js'
+import {
+  renderOreOperatorClassNote,
+  renderPreflightReport,
+} from '../preflight.js'
 
 const CAPABLE: PreflightResult = {
   currentUser: 'postgres',
@@ -92,7 +96,7 @@ describe('renderPreflightReport', () => {
     expect(report).toMatch(/ORE operator class\s+not creatable/)
     expect(report).toContain('<- skips: ORE operator class')
     expect(report).toContain(
-      'use OPE-ordered types (`*Ord`), not ORE-ordered types (`*OrdOre`)',
+      'use OPE-ordered types (`*Ord`), not ORE types (`*OrdOre`, `*SearchOre`)',
     )
     // The row is read by users of every SDK and every EQL version, so it
     // names no TypeScript API and no EQL version (#1904).
@@ -155,5 +159,41 @@ describe('renderPreflightReport', () => {
       pgcryptoInstalled: false,
     })
     expect(report).not.toContain('<- blocks: CREATE')
+  })
+})
+
+describe('renderOreOperatorClassNote', () => {
+  const NO_OPCLASS: PreflightResult = {
+    ...CAPABLE,
+    isSuperuser: false,
+    canCreateOperatorClass: false,
+  }
+
+  it('says nothing when the role can create the class or the probe could not ask', () => {
+    expect(renderOreOperatorClassNote(CAPABLE)).toBeNull()
+    expect(
+      renderOreOperatorClassNote({ ...CAPABLE, canCreateOperatorClass: null }),
+    ).toBeNull()
+  })
+
+  it('predicts the fallback on a fresh install, and states its consequence once', () => {
+    const note = renderOreOperatorClassNote(NO_OPCLASS)
+    expect(note).toContain('install a fallback in its place')
+    expect(note).toContain(ORE_FALLBACK_REMEDY)
+    expect(note?.match(/every write/g)).toHaveLength(1)
+  })
+
+  // On an installed database, `eql install` without `--force` keeps the
+  // existing ORE state, so the note must not predict a fallback there.
+  it('does not predict the fallback where EQL is already installed', () => {
+    const note = renderOreOperatorClassNote({
+      ...NO_OPCLASS,
+      eqlV3SchemaPresent: true,
+      eqlV3InternalSchemaPresent: true,
+    })
+    expect(note).toContain('already installed')
+    expect(note).toContain('stash eql status')
+    expect(note).not.toContain(ORE_FALLBACK_REMEDY)
+    expect(note).not.toContain('will skip')
   })
 })
