@@ -671,7 +671,7 @@ that plan names its EQL type as a string (`"TextEq"`). The
 `eql_bindings::encryption::targets` module is where the string meets the type.
 `targets()` is the catalog-generated table of every EQL type a plan may name —
 its name across languages, family and suffix, the plaintext kind it takes (a
-Stack Encrypt `DeclaredType` name, the same names a plan field's `"type"` key uses), the
+vitaminc `ValueKind` name, the same names a plan field's `"type"` key uses), the
 indexes it carries (`eq` / `match` / `ore` / `ope` / `json`), its query twin,
 and whether the engine can produce it today, with the reason when not. A guest
 serializes it for its `se_targets` export; the module docs are the wire format.

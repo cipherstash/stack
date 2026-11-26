@@ -28,7 +28,7 @@
 use std::fmt;
 
 use super::query::target_operators;
-use super::{DeclaredType, Op, ValueFrame, ValueKind};
+use super::{Op, ValueFrame, ValueKind};
 
 use crate::json::JsonOptions;
 use crate::sem::MatchOptions;
@@ -49,7 +49,7 @@ use crate::{KeysetCipher, Label, Pending, StackCipher};
 /// | `name` | string: the type's name across languages, `TextEq`; what a plan's `"target"` names |
 /// | `family` | string: the catalog family, `text` |
 /// | `suffix` | string: the query-capability suffix, `Eq`; empty for a storage-only type |
-/// | `plaintext` | string or null: the [`DeclaredType`] name the type is produced from — the same names a field's `"type"` key uses — or null while unspecified |
+/// | `plaintext` | string or null: the [`ValueKind`] name the type is produced from — the same names a field's `"type"` key uses — or null while unspecified |
 /// | `sql_domain` | string: the stored value's PostgreSQL domain |
 /// | `indexes` | list of strings: the indexes the type carries, by `IndexSpec::key()`: `eq`, `match`, `ore`, `ope`, and `json` for a document family's stored type (`JsonSearch`) |
 /// | `query` | string or null: the query twin's type name |
@@ -81,7 +81,7 @@ pub struct TargetDescriptor {
     /// The query-capability suffix: `Eq`; empty for a storage-only type.
     pub suffix: String,
     /// The kind the type is produced from, or `None` while unspecified.
-    pub plaintext: Option<DeclaredType>,
+    pub plaintext: Option<ValueKind>,
     /// The stored value's PostgreSQL domain.
     pub sql_domain: String,
     /// The indexes the type carries, by `IndexSpec::key()` name.
@@ -157,7 +157,7 @@ impl serde::Serialize for TargetDescriptor {
                 name: &self.name,
                 family: &self.family,
                 suffix: &self.suffix,
-                plaintext: self.plaintext.map(DeclaredType::name),
+                plaintext: self.plaintext.map(ValueKind::name),
                 sql_domain: &self.sql_domain,
                 indexes: &self.indexes,
                 query: self.query.as_deref(),
@@ -179,7 +179,7 @@ impl TargetDescriptor {
         name: impl Into<String>,
         family: impl Into<String>,
         suffix: impl Into<String>,
-        plaintext: Option<DeclaredType>,
+        plaintext: Option<ValueKind>,
         sql_domain: impl Into<String>,
         indexes: Vec<String>,
         query: Option<String>,
@@ -376,7 +376,7 @@ pub enum TargetError {
     /// produced from.
     #[error(
         "{name}: {target} is produced from a {} plaintext, and the field declares {declared}",
-        expected.map_or("unspecified", DeclaredType::name)
+        expected.map_or("unspecified", ValueKind::name)
     )]
     #[diagnostic(
         code(stack_encrypt::target_kind),
@@ -388,9 +388,9 @@ pub enum TargetError {
         /// The EQL type.
         target: String,
         /// The kind the type takes.
-        expected: Option<DeclaredType>,
+        expected: Option<ValueKind>,
         /// The kind the field declared.
-        declared: DeclaredType,
+        declared: ValueKind,
     },
     /// The field's label is not a column the EQL type can be stored under.
     #[error("{name}: the label {label} is not an EQL column: {reason}")]
@@ -406,7 +406,7 @@ pub enum TargetError {
     /// The value is not of the type's plaintext kind.
     #[error(
         "{name}: {target} is produced from a {} plaintext, not {}",
-        expected.map_or("unspecified", DeclaredType::name),
+        expected.map_or("unspecified", ValueKind::name),
         found.map_or("a value with no kind", ValueKind::name)
     )]
     #[diagnostic(code(stack_encrypt::target_plaintext))]
@@ -416,9 +416,9 @@ pub enum TargetError {
         /// The EQL type.
         target: String,
         /// The kind the type takes.
-        expected: Option<DeclaredType>,
-        /// The type of the value it was given, or `None` for a null,
-        /// undefined or passthrough value.
+        expected: Option<ValueKind>,
+        /// The kind it was given, or `None` for a null, undefined or
+        /// passthrough value.
         found: Option<ValueKind>,
     },
     /// The value is not a JSON document by the engine's rules
@@ -464,7 +464,7 @@ pub enum TargetError {
 impl crate::ErrorPayload for TargetError {
     fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
         use crate::diagnostic::payload;
-        let kind = |kind: &Option<DeclaredType>| -> serde_json::Value {
+        let kind = |kind: &Option<ValueKind>| -> serde_json::Value {
             kind.map_or(serde_json::Value::Null, |kind| kind.name().into())
         };
         let mut fields = match self {
@@ -498,7 +498,7 @@ impl crate::ErrorPayload for TargetError {
             } => payload([
                 ("target", target.as_str().into()),
                 ("expected", kind(expected)),
-                ("found", kind(&found.map(DeclaredType::from))),
+                ("found", kind(found)),
             ]),
             Self::Stored { target, reason, .. } => payload([
                 ("target", target.as_str().into()),
@@ -744,7 +744,7 @@ mod tests {
             "TextEq",
             "text",
             "Eq",
-            Some(ValueKind::String.into()),
+            Some(ValueKind::String),
             "public.eql_v4_text_eq",
             vec!["eq".to_string()],
             Some("TextEqQuery".to_string()),
@@ -759,7 +759,7 @@ mod tests {
             "TextOrdOre",
             "text",
             "OrdOre",
-            Some(ValueKind::String.into()),
+            Some(ValueKind::String),
             "public.eql_v4_text_ord_ore",
             vec!["eq".to_string(), "ore".to_string()],
             Some("TextOrdOreQuery".to_string()),
@@ -903,8 +903,8 @@ mod tests {
         let error = TargetError::Kind {
             name: "email".into(),
             target: "TextEq".into(),
-            expected: Some(ValueKind::String.into()),
-            declared: ValueKind::UInt64.into(),
+            expected: Some(ValueKind::String),
+            declared: ValueKind::UInt64,
         };
         assert_eq!(
             error.to_string(),
@@ -913,7 +913,7 @@ mod tests {
         let error = TargetError::Plaintext {
             name: "email".into(),
             target: "TextEq".into(),
-            expected: Some(ValueKind::String.into()),
+            expected: Some(ValueKind::String),
             found: None,
         };
         assert_eq!(

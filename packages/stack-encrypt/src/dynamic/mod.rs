@@ -76,17 +76,15 @@
 //!
 //! A plan field's `"type"` names (`"int64"`, `"string"`, …) are wire format
 //! in the same way: a binding spells them, and a stored row opens only under
-//! the type it was sealed as. A declared type is a [`DeclaredType`]:
-//! vitaminc's [`ValueKind`], or `json`. Their names are frozen. What a type
-//! means to an index ([`admits`]) and to a query value ([`read`]) is stated
-//! over it; the bytes are vitaminc's, from the tagged leaf a value of the
-//! type seals as ([`record`]). Every field with a term output declares one;
+//! the type it was sealed as. A declared type is a [`ValueKind`], whose
+//! names are frozen. What a kind means to an index ([`admits`]) and to a
+//! query value ([`read`]) is stated over it; the bytes are vitaminc's, from
+//! the tagged leaf a value of the kind seals as ([`record`]). Every field with a term output declares one;
 //! a plan whose indexed field has none is refused when it is built
 //! ([`Error::UntypedIndex`], naming the field).
 //!
 //! For the same reason the enums that spell them — [`Output`],
-//! [`IndexSpec`](crate::target::IndexSpec), [`DeclaredType`] and
-//! [`ValueKind`] — are *not* `#[non_exhaustive]`, against this workspace's
+//! [`IndexSpec`](crate::target::IndexSpec) and [`ValueKind`] — are *not* `#[non_exhaustive]`, against this workspace's
 //! usual rule for public enums: a new output is a wire-format addition every
 //! binding has to be taught, and an exhaustive match is how the compiler
 //! tells a binding author that.
@@ -118,10 +116,7 @@ mod value_frame;
 pub use crate::json::JsonPlaintext;
 pub use context::{borrowed, context};
 pub use json::{json_frame, read_json, JsonValueError};
-/// The type a plan field declares in its `"type"` key: a [`ValueKind`], or
-/// `json`. The names are frozen wire format; see [`admits`] and [`read`] for
-/// what a declared type means to this engine.
-pub use kind::{admits, not_admitted, read, DeclaredType};
+pub use kind::{admits, not_admitted, read};
 pub use planned::{DynamicQuery, FieldHandle, Planned, QueryPlan};
 pub use query::{
     check_json_open, check_query, field_operators, json_open, query_term, target_limit, verify,
@@ -131,9 +126,9 @@ pub use record::{FieldPlan, NullMode, Output, Plan};
 pub use target::{NoTargets, TargetDescriptor, TargetError, TargetOptions, TargetResolver};
 pub use term::{term, TermBytes};
 pub use value_frame::{Children, FromFrameError, Modeled, Opening, ValueFrame};
-/// vitaminc's description of a value's type, named here for a binding that
-/// reaches the engine through this module: what [`ValueFrame::kind`]
-/// reports, and what a [`DeclaredType`] other than `json` names.
+/// The value kinds, the type a plan field declares in its `"type"` key:
+/// vitaminc's. A kind's names are frozen wire format; see [`admits`] and
+/// [`read`] for what a kind means to this engine.
 pub use vitaminc_aead::plaintext::{ParseValueKindError, ValueKind};
 
 /// vitaminc's value model, the sinks and scalar types a value describes

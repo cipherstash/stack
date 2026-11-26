@@ -604,7 +604,7 @@ pub struct DocumentFamily {
     /// table's `family`.
     pub name: &'static str,
     /// The plaintext kind the stored type is produced from, by the
-    /// engine's `DeclaredType` name: `json`, UTF-8 JSON text.
+    /// engine's `ValueKind` name: `json`, UTF-8 JSON text.
     pub plaintext: &'static str,
     /// The engine index the stored type carries, by its
     /// `IndexSpec::key()`: `json`.

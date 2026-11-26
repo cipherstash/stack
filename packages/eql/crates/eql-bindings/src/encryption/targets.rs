@@ -49,7 +49,7 @@
 //! | `name` | The type's name, one across Rust, TypeScript and Go: the catalog struct identifier. The data plan's target form names this. (Go spells the `Json` family's types `JSON`; that rename is the Go generator's.) |
 //! | `family` | The catalog family, lower case: `text`, `integer`, `json`, … |
 //! | `suffix` | What a query can do, as the plan's table of suffixes spells it: `""` (stored and read only), `Eq`, `Ord`, `OrdOpe`, `OrdOre`, `Match`, `Search`, `SearchOre`; `""` too for a document family's stored type, whose queries are the JSON index's operators. |
-//! | `plaintext` | The [`DeclaredType`] name the type is produced from — the same names a plan field's `"type"` key uses — or `null` while the family's plaintext encoding for the stack-encrypt producer profile is unspecified. |
+//! | `plaintext` | The vitaminc [`ValueKind`] name the type is produced from — the same names a plan field's `"type"` key uses — or `null` while the family's plaintext encoding for the stack-encrypt producer profile is unspecified. |
 //! | `sql_domain` | The schema-qualified PostgreSQL domain the stored value inhabits. |
 //! | `indexes` | The indexes the type carries, by the engine's `IndexSpec::key()` names: `eq`, `match`, `ore`, `ope`, and `json` for a document family's stored type. A query may ask a field typed with this target for exactly these. |
 //! | `query` | The query twin's type name (`TextEqQuery`, `JsonSearchQuery`), or `null` for a storage-only type, which answers no query. |
@@ -96,7 +96,7 @@
 use std::fmt;
 
 use serde::{de::DeserializeOwned, Serialize};
-use stack_encrypt::dynamic::{DeclaredType, TargetOptions, ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{TargetOptions, ValueFrame, ValueKind};
 use stack_encrypt::json::JsonOptions;
 use stack_encrypt::kms::MaybeSend;
 use stack_encrypt::target::{
@@ -123,7 +123,7 @@ pub struct Target {
     pub family: &'static str,
     /// The query-capability suffix: `Eq`; empty for a storage-only type.
     pub suffix: &'static str,
-    /// The [`DeclaredType`] name of the plaintext this type is produced from,
+    /// The [`ValueKind`] name of the plaintext this type is produced from,
     /// or `None` while the family's encoding is unspecified. See
     /// [`plaintext_kind`](Self::plaintext_kind) for the parsed kind.
     pub plaintext: Option<&'static str>,
@@ -146,7 +146,7 @@ impl Target {
     /// table is generated from names vitaminc freezes, so a recorded name
     /// always parses, and a `None` here means the same as a `None` in
     /// [`plaintext`](Self::plaintext).
-    pub fn plaintext_kind(&self) -> Option<DeclaredType> {
+    pub fn plaintext_kind(&self) -> Option<ValueKind> {
         self.plaintext.and_then(|name| name.parse().ok())
     }
 
@@ -293,7 +293,7 @@ pub enum TargetError {
         /// The type the value was handed to.
         target: &'static str,
         /// The kind it takes.
-        expected: DeclaredType,
+        expected: ValueKind,
         /// The kind it was given, or `None` for a null, undefined or
         /// passthrough value, which no kind holds.
         found: Option<ValueKind>,
@@ -729,7 +729,7 @@ pub trait Plaintext:
     sealed::Sealed + Decrypt + Sized + MaybeSend + zeroize::Zeroize + 'static
 {
     /// The kind of value this plaintext is.
-    const KIND: DeclaredType;
+    const KIND: ValueKind;
 
     /// Read the value as this plaintext, refusing any other kind: the frame
     /// is walked into this type's own decrypt sink once its kind is checked,
@@ -740,7 +740,7 @@ pub trait Plaintext:
             expected: Self::KIND,
             found: value.kind(),
         };
-        if value.kind().map(DeclaredType::from) != Some(Self::KIND) {
+        if value.kind() != Some(Self::KIND) {
             return Err(refused());
         }
         value.visit(Self::sink()).map_err(|_| refused())
@@ -761,7 +761,7 @@ fn frame_of(value: impl Encrypt) -> Result<ValueFrame, Error> {
 }
 
 impl Plaintext for String {
-    const KIND: DeclaredType = DeclaredType::Value(ValueKind::String);
+    const KIND: ValueKind = ValueKind::String;
 
     /// The frame is written from the opened text, which is wiped when this
     /// returns: the frame writer copies the text into its own `Protected`
@@ -779,7 +779,7 @@ impl Plaintext for String {
 macro_rules! scalar_plaintext {
     ($($ty:ident => $variant:ident),+ $(,)?) => {$(
         impl Plaintext for $ty {
-            const KIND: DeclaredType = DeclaredType::Value(ValueKind::$variant);
+            const KIND: ValueKind = ValueKind::$variant;
 
             fn into_frame(self) -> Result<ValueFrame, Error> {
                 frame_of(self)
@@ -816,7 +816,7 @@ mod logical {
 /// ([`stack_encrypt::json::parse_text`]) before any key is requested, and
 /// the parsed document is wiped when it is dropped.
 impl Plaintext for crate::v4::plaintext::JsonPlaintext {
-    const KIND: DeclaredType = DeclaredType::Json;
+    const KIND: ValueKind = ValueKind::Json;
 
     /// # Errors
     ///
@@ -844,7 +844,7 @@ impl Plaintext for crate::v4::plaintext::JsonPlaintext {
 /// too. Whether a field may hold a null is the plan's to decide (its
 /// `"null"`), not the type's.
 impl<S: Plaintext> Plaintext for Option<S> {
-    const KIND: DeclaredType = S::KIND;
+    const KIND: ValueKind = S::KIND;
 
     fn from_frame(target: &'static str, value: &ValueFrame) -> Result<Self, TargetError> {
         if value.kind().is_some() {
@@ -1164,7 +1164,7 @@ mod tests {
             String::from_frame("TextEq", &frame(34u64)),
             Err(TargetError::Plaintext {
                 target: "TextEq",
-                expected: DeclaredType::Value(ValueKind::String),
+                expected: ValueKind::String,
                 found: Some(ValueKind::UInt64)
             })
         ));

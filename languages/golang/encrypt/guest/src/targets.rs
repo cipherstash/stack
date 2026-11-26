@@ -62,7 +62,7 @@ mod tests {
         assert!(text_eq.producible);
         assert_eq!(
             text_eq.plaintext,
-            Some(stack_encrypt::dynamic::ValueKind::String.into())
+            Some(stack_encrypt::dynamic::ValueKind::String)
         );
         assert_eq!(text_eq.indexes, ["eq"]);
         assert_eq!(text_eq.query.as_deref(), Some("TextEqQuery"));

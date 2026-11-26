@@ -55,7 +55,7 @@ FieldName = Text except "context_field" and "bind"
 FieldSpec = Object{
   "context": FieldContext,
   ("outputs": NonEmptyList<Output> | "target": Target),
-  "type"?: DeclaredType,
+  "type"?: ValueKind,
   "null"?: "sealed" | "sql"
 }
 
@@ -87,12 +87,11 @@ JsonOptions = Object{
   "ordered"?: List<JsonPathText>
 }
 
-DeclaredType = ValueKind | "json"
 ValueKind = "bool"
           | "int8" | "int16" | "int32" | "int64" | "int128"
           | "uint8" | "uint16" | "uint32" | "uint64" | "uint128"
           | "float32" | "float64" | "decimal" | "date" | "timestamp"
-          | "string" | "bytes" | "array" | "object"
+          | "string" | "bytes" | "array" | "object" | "json"
 ```
 
 `outputs` and `target` are exclusive and one must be present. Present optional

@@ -377,8 +377,8 @@ mod as_the_data_plan_derives {
     use super::*;
     use serde_json::json;
     use stack_encrypt::dynamic::{
-        self, record, DeclaredType, Op, Operand, TargetDescriptor, TargetError, TargetOptions,
-        TargetResolver, ValueFrame,
+        self, record, Op, Operand, TargetDescriptor, TargetError, TargetOptions, TargetResolver,
+        ValueFrame, ValueKind,
     };
     use stack_encrypt::target::{DeclaredContext, IndexSpec};
     use stack_encrypt::{AsProtectedRef as _, KeysetCipher, Label, Pending, StackCipher};
@@ -393,7 +393,7 @@ mod as_the_data_plan_derives {
                 "JsonSearch",
                 "json",
                 "",
-                Some(DeclaredType::Json),
+                Some(ValueKind::Json),
                 "public.eql_v4_json_search",
                 vec!["json".to_string()],
                 Some("JsonSearchQuery".to_string()),

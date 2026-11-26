@@ -1,6 +1,6 @@
 //! A JSON document as a binding hands one over and gets one back.
 //!
-//! A field of kind [`json`](DeclaredType::Json) carries its document as UTF-8
+//! A field of kind [`json`](ValueKind::Json) carries its document as UTF-8
 //! JSON text, in a text leaf or a bytes leaf of the transport frame. The
 //! engine parses it once, by [`parse_text`](crate::json::parse_text)'s
 //! rules, where it is sealed, queried or compared, so every language seals
@@ -18,7 +18,7 @@ use vitaminc_protected::Protected;
 use zeroize::Zeroizing;
 
 use super::term::OneScalar;
-use super::{DeclaredType, ValueFrame};
+use super::{ValueFrame, ValueKind};
 use crate::json::{to_text, JsonPlaintext, JsonTextError};
 
 /// Why a `json` field's value is not a document.
@@ -54,7 +54,7 @@ impl JsonValueError {
 /// leaf, and [`JsonValueError::Text`] for text that is not a document by
 /// [`parse_text`](crate::json::parse_text)'s rules.
 pub fn read_json(value: &ValueFrame) -> Result<JsonPlaintext, JsonValueError> {
-    if !DeclaredType::Json.holds(value.kind()) {
+    if !ValueKind::Json.holds(value.kind()) {
         return Err(JsonValueError::NotText);
     }
     value
@@ -87,7 +87,6 @@ pub fn json_frame(value: &Value) -> Result<ValueFrame, crate::Error> {
 mod tests {
     use super::*;
     use crate::dynamic::test_frame::Tree;
-    use crate::dynamic::ValueKind;
     use serde_json::json;
 
     fn frame(tree: Tree) -> ValueFrame {

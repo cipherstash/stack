@@ -329,7 +329,7 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
     ] {
         let error = refused(targets::encrypt(name, &keyset, &label(), value));
         assert!(
-            matches!(error, TargetError::Plaintext { target, expected: e, .. } if target == name && e == expected.into()),
+            matches!(error, TargetError::Plaintext { target, expected: e, .. } if target == name && e == expected),
             "{name}: {error}"
         );
     }

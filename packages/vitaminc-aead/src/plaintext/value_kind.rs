@@ -2,8 +2,9 @@
 //!
 //! [`Physical`] and [`Logical`] describe one value as it is sealed. A
 //! schema needs the kind alone: "this column holds `int32`s". [`ValueKind`]
-//! is that kind. It names every scalar a plan can declare, and the two
-//! container shapes, and it has the text name a schema spells it with.
+//! is that kind. It names every scalar a plan can declare, the two
+//! container shapes and a JSON document, and it has the text name a schema
+//! spells it with.
 
 use core::fmt;
 use core::str::FromStr;
@@ -12,7 +13,8 @@ use super::kinds::{FixedType, Float, Int, Logical, Physical, TimeUnit, Width};
 
 /// What a value is, without the value: a boolean, an integer of one width
 /// and sign, a float of one width, a decimal, a date, a timestamp, text,
-/// bytes, an array or an object. What a schema declares a column holds.
+/// bytes, an array, an object or a JSON document. What a schema declares a
+/// column holds.
 ///
 /// [`Kind`](super::Kind) is a different thing: the physical storage of one
 /// scalar leaf (null, bool, int, float, text or bytes), with no width and
@@ -80,6 +82,14 @@ pub enum ValueKind {
     Array,
     /// `"object"`. Says nothing about the entries' kinds.
     Object,
+    /// `"json"`: a JSON document, carried as UTF-8 JSON text in a text or
+    /// bytes leaf. A column declares it; a scalar is never of this kind
+    /// ([`of`](Self::of) says [`String`](Self::String) or
+    /// [`Bytes`](Self::Bytes)), and [`holds`](Self::holds) takes either.
+    /// The kind only names the document: the rules it is parsed by belong
+    /// to whoever reads it. A document's `null` is the text `null`, not a
+    /// null leaf.
+    Json,
 }
 
 /// How an absent value of a [`ValueKind`] is sealed so that it is as long
@@ -97,7 +107,7 @@ pub enum SealedNull {
 
 impl ValueKind {
     /// Every kind, in declaration order.
-    pub const ALL: [ValueKind; 20] = [
+    pub const ALL: [ValueKind; 21] = [
         ValueKind::Bool,
         ValueKind::Int8,
         ValueKind::Int16,
@@ -118,13 +128,14 @@ impl ValueKind {
         ValueKind::Bytes,
         ValueKind::Array,
         ValueKind::Object,
+        ValueKind::Json,
     ];
 
     /// How a schema spells this kind: `"bool"`, `"int8"`, `"int16"`,
     /// `"int32"`, `"int64"`, `"int128"`, `"uint8"`, `"uint16"`, `"uint32"`,
     /// `"uint64"`, `"uint128"`, `"float32"`, `"float64"`, `"decimal"`,
-    /// `"date"`, `"timestamp"`, `"string"`, `"bytes"`, `"array"` or
-    /// `"object"`. These names never change.
+    /// `"date"`, `"timestamp"`, `"string"`, `"bytes"`, `"array"`,
+    /// `"object"` or `"json"`. These names never change.
     pub const fn name(self) -> &'static str {
         match self {
             ValueKind::Bool => "bool",
@@ -147,6 +158,7 @@ impl ValueKind {
             ValueKind::Bytes => "bytes",
             ValueKind::Array => "array",
             ValueKind::Object => "object",
+            ValueKind::Json => "json",
         }
     }
 
@@ -203,8 +215,8 @@ impl ValueKind {
         }
     }
 
-    /// A scalar of this kind, with its logical type, or `None` for an array
-    /// or an object. For asking a rule stated over values about the kind:
+    /// A scalar of this kind, with its logical type, or `None` for an
+    /// array, an object or a JSON document. For asking a rule stated over values about the kind:
     /// every value of a kind is treated alike by a rule that looks only at
     /// its kind.
     ///
@@ -217,7 +229,7 @@ impl ValueKind {
             ValueKind::Bool => (None, Physical::Bool(false)),
             ValueKind::String => (None, Physical::Text("")),
             ValueKind::Bytes => (None, Physical::Bytes(&[])),
-            // An array and an object have no fixed type either.
+            // An array, an object and a document have no fixed type either.
             _ => match self.fixed_type() {
                 Some(fixed) => (fixed.logical(), fixed.width().zero()),
                 None => return None,
@@ -227,7 +239,7 @@ impl ValueKind {
 
     /// How an absent value of this kind is sealed so that it is as long as
     /// a present one, or `None` for a kind of no fixed length (text, bytes,
-    /// an array, an object), whose absence no padding can hide.
+    /// an array, an object, a JSON document), whose absence no padding can hide.
     ///
     /// AES-GCM keeps the plaintext's length, so a null sealed as the plain
     /// null leaf (one byte) beside dates (five bytes) shows which rows have
@@ -252,6 +264,18 @@ impl ValueKind {
                 Some(fixed) => Some(SealedNull::Typed(fixed)),
                 None => None,
             },
+        }
+    }
+
+    /// Whether a value of kind `found` is a value of this declared kind:
+    /// the same kind, or for [`Json`](Self::Json), the text or bytes a
+    /// document crosses as. `None`, a value with no kind (a null, an
+    /// undefined, a passthrough), is a value of no kind.
+    pub const fn holds(self, found: Option<ValueKind>) -> bool {
+        match (self, found) {
+            (ValueKind::Json, Some(ValueKind::String | ValueKind::Bytes)) => true,
+            (declared, Some(found)) => declared as u8 == found as u8,
+            (_, None) => false,
         }
     }
 
@@ -282,7 +306,8 @@ impl ValueKind {
             | ValueKind::String
             | ValueKind::Bytes
             | ValueKind::Array
-            | ValueKind::Object => None,
+            | ValueKind::Object
+            | ValueKind::Json => None,
         }
     }
 }
@@ -345,6 +370,7 @@ mod tests {
                 "bytes",
                 "array",
                 "object",
+                "json",
             ],
             "the names never change"
         );
@@ -352,7 +378,7 @@ mod tests {
             assert_eq!(ty.name().parse::<ValueKind>(), Ok(ty));
             assert_eq!(ty.to_string(), ty.name());
         }
-        for refused in ["UInt64", "u64", " uint64", "null", "undefined", "json", ""] {
+        for refused in ["UInt64", "u64", " uint64", "null", "undefined", "Json", ""] {
             assert_eq!(
                 refused.parse::<ValueKind>(),
                 Err(ParseValueKindError),
@@ -369,7 +395,10 @@ mod tests {
         for ty in ValueKind::ALL {
             match ty.zero() {
                 Some((logical, value)) => assert_eq!(ValueKind::of(logical, &value), Some(ty)),
-                None => assert!(matches!(ty, ValueKind::Array | ValueKind::Object), "{ty}"),
+                None => assert!(
+                    matches!(ty, ValueKind::Array | ValueKind::Object | ValueKind::Json),
+                    "{ty}"
+                ),
             }
         }
     }
@@ -452,6 +481,34 @@ mod tests {
         assert_eq!(ValueKind::of(Some(unknown), &int(1)), None);
     }
 
+    /// `json` holds text and bytes besides itself, and has no zero and no
+    /// sealed null: a document has no fixed length. Every other kind holds
+    /// itself alone, and no kind holds a value with none. (No value is of
+    /// kind `json`, since `of` never gives it, so `json` holding itself
+    /// is never reached by a value.)
+    #[test]
+    fn json_holds_text_and_bytes_and_has_no_fixed_length() {
+        assert_eq!(ValueKind::Json.name(), "json");
+        assert_eq!(ValueKind::Json.zero(), None);
+        assert_eq!(ValueKind::Json.sealed_null(), None);
+        assert!(ValueKind::Json.holds(Some(ValueKind::String)));
+        assert!(ValueKind::Json.holds(Some(ValueKind::Bytes)));
+        assert!(!ValueKind::Json.holds(Some(ValueKind::Object)));
+        assert!(!ValueKind::String.holds(Some(ValueKind::Bytes)));
+        for declared in ValueKind::ALL {
+            assert!(!declared.holds(None), "{declared}");
+            for found in ValueKind::ALL {
+                let text = matches!(found, ValueKind::String | ValueKind::Bytes);
+                let held = declared == found || (declared == ValueKind::Json && text);
+                assert_eq!(
+                    declared.holds(Some(found)),
+                    held,
+                    "{declared} holds {found}"
+                );
+            }
+        }
+    }
+
     /// The widths, spelled out: these are the lengths stored nulls already
     /// have, so a change here changes stored bytes.
     #[test]
@@ -489,6 +546,7 @@ mod tests {
             (ValueKind::Bytes, None),
             (ValueKind::Array, None),
             (ValueKind::Object, None),
+            (ValueKind::Json, None),
         ];
         for (ty, want) in cases {
             assert_eq!(ty.sealed_null(), want, "{ty}");

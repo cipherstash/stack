@@ -19,8 +19,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::{
-    self, record, DeclaredType, Op, Operand, TargetDescriptor, TargetError, TargetOptions,
-    TargetResolver, ValueFrame,
+    self, record, Op, Operand, TargetDescriptor, TargetError, TargetOptions, TargetResolver,
+    ValueFrame, ValueKind,
 };
 use stack_encrypt::json::{JsonDocument, JsonLeafQuery, JsonOptions, JsonPath, JsonQuery};
 use stack_encrypt::target::{json_document, Borrowed, CallerContext, DeclaredContext, IndexSpec};
@@ -50,7 +50,7 @@ impl TargetResolver for Documents {
             "JsonSearch",
             "json",
             "",
-            Some(DeclaredType::Json),
+            Some(ValueKind::Json),
             "public.eql_v4_json_search",
             vec!["json".to_string()],
             Some("JsonSearchQuery".to_string()),

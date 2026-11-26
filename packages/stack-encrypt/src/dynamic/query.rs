@@ -81,11 +81,11 @@ use super::record::{FieldPlan, Plan};
 use super::term::derive;
 use super::term::OneScalar;
 use super::value_frame::Parts;
+use super::ValueKind;
 use super::{
     admits, read, Error, Reason, TargetDescriptor, TargetError, TargetOptions, TargetResolver,
     ValueFrame,
 };
-use super::{DeclaredType, ValueKind};
 use crate::op::{Limit, Stats};
 use crate::sem::{match_limit, MatchOptions, QueryTokens, Side, TermError};
 use crate::target::IndexSpec;
@@ -176,12 +176,7 @@ impl Op {
     /// assert_eq!(Op::Eq.answered_by(ValueKind::UInt32, &declared), Some(&IndexSpec::Equality));
     /// assert_eq!(Op::Matches.answered_by(ValueKind::UInt32, &declared), None);
     /// ```
-    pub fn answered_by(
-        self,
-        kind: impl Into<DeclaredType>,
-        indexes: &[IndexSpec],
-    ) -> Option<&IndexSpec> {
-        let kind = kind.into();
+    pub fn answered_by(self, kind: ValueKind, indexes: &[IndexSpec]) -> Option<&IndexSpec> {
         // One declaration per index (`IndexSpec::operators`), and a plan
         // declares at most one index per operator, so the first index that
         // answers is the one. A document field's JSON index answers the
@@ -192,7 +187,7 @@ impl Op {
         indexes.iter().find(|index| {
             index.answers(self)
                 && match index {
-                    IndexSpec::Json(_) => kind == DeclaredType::Json,
+                    IndexSpec::Json(_) => kind == ValueKind::Json,
                     _ => admits(kind, index),
                 }
         })
@@ -404,7 +399,7 @@ impl QueryTerm {
 /// The field a query is about, and the index that answers its operator.
 struct Answer<'p> {
     field: &'p FieldPlan,
-    kind: DeclaredType,
+    kind: ValueKind,
     index: IndexSpec,
     target: Option<TargetDescriptor>,
 }
@@ -780,7 +775,7 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
 /// use serde_json::json;
 /// use stack_encrypt::dynamic::{check_query, frame, record, Op, Reason, ValueFrame};
 /// use stack_encrypt::AsProtectedRef;
-/// # use stack_encrypt::dynamic::{TargetDescriptor, TargetError, TargetOptions, TargetResolver, DeclaredType};
+/// # use stack_encrypt::dynamic::{TargetDescriptor, TargetError, TargetOptions, TargetResolver, ValueKind};
 /// # use stack_encrypt::target::{DeclaredContext, IndexSpec};
 /// # use stack_encrypt::{KeysetCipher, Label, Pending, StackCipher};
 /// # /// A host whose `JsonSearch` names the compiled predicate's domain.
@@ -788,7 +783,7 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
 /// # impl TargetResolver for Documents {
 /// #     fn targets(&self) -> Vec<TargetDescriptor> {
 /// #         vec![TargetDescriptor::new(
-/// #             "JsonSearch", "json", "", Some(DeclaredType::Json), "public.eql_v4_json_search",
+/// #             "JsonSearch", "json", "", Some(ValueKind::Json), "public.eql_v4_json_search",
 /// #             vec!["json".to_owned()], Some("JsonSearchQuery".to_owned()),
 /// #             Some("eql_v4.query_json".to_owned()), true, None,
 /// #         )
@@ -2454,7 +2449,7 @@ mod tests {
     }
 
     fn descriptor(
-        kind: Option<DeclaredType>,
+        kind: Option<ValueKind>,
         indexes: &[&str],
         query: bool,
         producible: bool,
@@ -2477,8 +2472,8 @@ mod tests {
     /// and only once the engine produces it and it has a query twin.
     #[test]
     fn a_target_answers_the_exact_single_value_operators_of_its_indexes() {
-        let string = Some(ValueKind::String.into());
-        let int = Some(ValueKind::Int64.into());
+        let string = Some(ValueKind::String);
+        let int = Some(ValueKind::Int64);
         assert_eq!(
             descriptor(string, &["eq"], true, true).operators(),
             [Op::Eq]
@@ -2510,21 +2505,16 @@ mod tests {
             .operators()
             .is_empty());
         assert!(descriptor(None, &["eq"], true, true).operators().is_empty());
-        assert!(
-            descriptor(Some(ValueKind::Object.into()), &["json"], true, true)
-                .operators()
-                .is_empty()
-        );
+        assert!(descriptor(Some(ValueKind::Object), &["json"], true, true)
+            .operators()
+            .is_empty());
     }
 
     #[test]
     fn a_targets_operators_are_listed_in_its_wire_form() {
-        let Tree::Object(entries) = value_of(&descriptor(
-            Some(ValueKind::Int64.into()),
-            &["ore"],
-            true,
-            true,
-        )) else {
+        let Tree::Object(entries) =
+            value_of(&descriptor(Some(ValueKind::Int64), &["ore"], true, true))
+        else {
             panic!("an object");
         };
         let (key, Tree::Array(operators)) = &entries[10] else {
@@ -2679,10 +2669,8 @@ mod tests {
 
     impl TargetResolver for MatchType {
         fn targets(&self) -> Vec<TargetDescriptor> {
-            vec![
-                descriptor(Some(ValueKind::String.into()), &["match"], true, true)
-                    .with_match_options(eql_match()),
-            ]
+            vec![descriptor(Some(ValueKind::String), &["match"], true, true)
+                .with_match_options(eql_match())]
         }
         fn encrypt<'a, K: 'static>(
             &self,
@@ -2843,12 +2831,7 @@ mod tests {
 
     impl TargetResolver for OneType {
         fn targets(&self) -> Vec<TargetDescriptor> {
-            vec![descriptor(
-                Some(ValueKind::String.into()),
-                &["eq"],
-                true,
-                true,
-            )]
+            vec![descriptor(Some(ValueKind::String), &["eq"], true, true)]
         }
         fn encrypt<'a, K: 'static>(
             &self,
@@ -2950,12 +2933,7 @@ mod tests {
 
     impl TargetResolver for OrderedText {
         fn targets(&self) -> Vec<TargetDescriptor> {
-            let descriptor = descriptor(
-                Some(ValueKind::String.into()),
-                &["eq", "ore_block"],
-                true,
-                true,
-            );
+            let descriptor = descriptor(Some(ValueKind::String), &["eq", "ore_block"], true, true);
             vec![if self.every_term {
                 descriptor.with_query_carrying_every_term()
             } else {
@@ -3124,7 +3102,7 @@ mod wire_bytes {
     }
 
     fn descriptor(
-        kind: Option<DeclaredType>,
+        kind: Option<ValueKind>,
         indexes: &[&str],
         query: bool,
         producible: bool,
@@ -3205,10 +3183,10 @@ mod wire_bytes {
             written.push(hex(&page));
         }
         for target in [
-            descriptor(Some(ValueKind::String.into()), &["eq", "match"], true, true),
-            descriptor(Some(ValueKind::String.into()), &["eq", "match"], true, true)
+            descriptor(Some(ValueKind::String), &["eq", "match"], true, true),
+            descriptor(Some(ValueKind::String), &["eq", "match"], true, true)
                 .with_match_options(MatchOptions::default()),
-            descriptor(Some(ValueKind::Int64.into()), &["ore"], true, true),
+            descriptor(Some(ValueKind::Int64), &["ore"], true, true),
             descriptor(None, &[], false, false),
         ] {
             written.push(hex(&target));
