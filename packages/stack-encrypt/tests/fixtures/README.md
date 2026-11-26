@@ -370,9 +370,12 @@ is read.
   A typed field refuses it with no `"null"`, stores nothing under
   `"sql"`, and under `"sealed"` seals the typed null of its own declared
   type, whatever type the host sent.
-- **`json`.** A `JsonPlaintext` on the typed path is a text leaf. A
+- **`json`.** Opaque JSON, a document sealed as one value. A
+  `JsonPlaintext` on the typed path is a text leaf of its compact JSON. A
   document a `json` field opens to is a bytes frame (`json_frame`). A data
-  plan's `json` field needs a target, and is refused without one; through
-  the EQL `JsonSearch` target the document is sealed by the JSON index as
-  its sealed root, not as a leaf of this kind. An untyped field holding the
-  same text seals it as a text leaf.
+  plan's `json` field needs a target and is refused without one; through
+  EQL's opaque `Json` target it seals the same text leaf, which
+  `packages/eql/tests/encryption/tests/opaque_json_bytes.rs` pins. An
+  untyped field holding the same text seals it as a text leaf. The JSON
+  tree (EQL's `JsonSearch`) is another scheme, sealed by the JSON index,
+  and is not in this file.
