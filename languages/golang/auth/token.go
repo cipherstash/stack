@@ -16,12 +16,25 @@ import (
 // [ProfileStore.Token] reads it through the Rust crate's own type. The
 // refresh token is not in it: the guest handles refresh through a Strategy.
 //
-// fmt and slog print the access token as [redacted], under every verb. They
-// print the other fields in full, because those help to debug a login.
-// Read the AccessToken field to get the token itself.
+// fmt and slog print the access token as [redacted]. They print the other
+// fields in full, because those help to debug a login. Read the
+// AccessToken field to get the token itself.
 //
-// fmt calls no method on a value in an unexported struct field. A Token in
-// an unexported field prints its access token in full. Keep a Token in an
+// These still print the access token in full:
+//   - fmt's %p and %w verbs. fmt prints a value under a verb it cannot
+//     use for that value without calling any of its methods. go vet
+//     reports %w with a Token, but not %p.
+//   - A Token in an unexported struct field. fmt calls no method on it.
+//   - A Token in a struct, slice or map that the slog JSON handler logs.
+//     That handler encodes such a value with encoding/json, which writes
+//     the access token. A Token logged as an attribute value on its own
+//     is redacted.
+//   - encoding/json and the other encoders. Token has no MarshalJSON or
+//     MarshalText method, so programs that save a Token as JSON keep
+//     working.
+//
+// A struct that embeds Token takes these methods, so fmt and slog print it
+// as the Token alone, without its own fields. Keep a Token in a named,
 // exported field of anything you print or log.
 type Token struct {
 	// AccessToken is the bearer credential.

@@ -12,9 +12,10 @@ import (
 )
 
 // A Token printed or logged hides its access token, under every fmt verb
-// and through both slog handlers. The other fields stay visible, because
-// they help a developer debug a login. A Token inside another value is
-// redacted too, as long as fmt or slog can reach its methods.
+// except %p and %w, and through both slog handlers. The other fields stay
+// visible, because they help a developer debug a login. fmt also redacts a
+// Token in an exported field, a slice or a pointer, and so does the slog
+// text handler. TestTokenPrintLimits covers the cases that are not redacted.
 func TestTokenPrintsAndLogsRedacted(t *testing.T) {
 	const secret = "tok-swordfish-0123456789"
 	tok := auth.Token{
@@ -41,11 +42,6 @@ func TestTokenPrintsAndLogsRedacted(t *testing.T) {
 			t.Run(name+" "+verb, func(t *testing.T) {
 				out := fmt.Sprintf(verb, v)
 				checkRedacted(t, out, secret, verb)
-				// %x, %X and %q change the text of a value that fmt prints
-				// as itself, so only the plain verbs keep the fields readable.
-				if verb == "%x" || verb == "%X" || verb == "%q" || verb == "%10.3v" || verb == "%d" {
-					return
-				}
 				for _, want := range visible {
 					if !strings.Contains(out, want) {
 						t.Errorf("printed %s, which does not contain %q", out, want)
@@ -77,7 +73,14 @@ func TestTokenPrintsAndLogsRedacted(t *testing.T) {
 		"json": func(b *bytes.Buffer) slog.Handler { return slog.NewJSONHandler(b, nil) },
 	}
 	for name, newHandler := range handlers {
-		for valueName, v := range map[string]any{"value": tok, "pointer": &tok} {
+		logged := map[string]any{"value": tok, "pointer": &tok}
+		if name == "text" {
+			// The text handler prints a struct through fmt, so a Token in
+			// an exported field is redacted. The JSON handler does not:
+			// see TestTokenPrintLimits.
+			logged["field"] = holder{Token: tok}
+		}
+		for valueName, v := range logged {
 			t.Run("slog "+name+" "+valueName, func(t *testing.T) {
 				var b bytes.Buffer
 				slog.New(newHandler(&b)).Info("auth", "token", v)
@@ -102,8 +105,52 @@ func TestTokenZeroValuePrints(t *testing.T) {
 	}
 }
 
-// checkRedacted fails when out holds the secret, or any form of it that fmt
-// could write: hex in either case, or quoted.
+// TestTokenPrintLimits pins the cases that the Token doc comment says are
+// not redacted. No method on Token can change them. If one of these checks
+// fails, Go has changed, and the doc comment and CHANGELOG need updating.
+func TestTokenPrintLimits(t *testing.T) {
+	const secret = "tok-swordfish-0123456789"
+	tok := auth.Token{AccessToken: secret, TokenType: "Bearer"}
+	type holder struct{ Token auth.Token }
+	type session struct {
+		auth.Token
+		User string
+	}
+	// go vet rejects %w with an argument that is not an error, so the
+	// format is held in a variable to reach the run-time behaviour.
+	wrap := "%w"
+
+	var jsonLog bytes.Buffer
+	slog.New(slog.NewJSONHandler(&jsonLog, nil)).Info("auth", "session", holder{Token: tok})
+
+	// fmt prints a bad verb by reflection, without calling any method, and
+	// the JSON handler encodes a nested struct with encoding/json.
+	for name, out := range map[string]string{
+		"%p":                   fmt.Sprintf("%p", tok),
+		"%w with Sprintf":      fmt.Sprintf(wrap, tok),
+		"%w with Errorf":       fmt.Errorf("auth: "+wrap, tok).Error(),
+		"slog JSON, in struct": jsonLog.String(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !strings.Contains(out, secret) {
+				t.Errorf("the access token is now redacted here: update the Token doc comment and the CHANGELOG")
+			}
+		})
+	}
+
+	// A struct that embeds Token takes its methods, so it prints as the
+	// Token alone, and its own fields do not print.
+	t.Run("embedded", func(t *testing.T) {
+		out := fmt.Sprintf("%+v", session{Token: tok, User: "alice"})
+		checkRedacted(t, out, secret, "an embedded Token")
+		if strings.Contains(out, "alice") {
+			t.Errorf("a struct that embeds Token now prints its own fields: update the Token doc comment and the CHANGELOG")
+		}
+	})
+}
+
+// checkRedacted fails when out contains the secret, its hex in either
+// case, or its first 8 characters.
 func checkRedacted(t *testing.T, out, secret, how string) {
 	t.Helper()
 	for _, form := range []string{secret, fmt.Sprintf("%x", secret), fmt.Sprintf("%X", secret), secret[:8]} {

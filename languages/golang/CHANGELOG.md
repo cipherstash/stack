@@ -18,14 +18,22 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 - **`auth.Token` no longer prints its access token** (#1848). Before this
   fix, `fmt.Println(tok)`, `log.Printf("%+v", tok)`, and
   `slog.Info("auth", "token", tok)` printed the bearer token in full. Now
-  `fmt` and `slog` print `[redacted]` in its place, under every verb. The
-  other fields, such as `ExpiresAt` and `Region`, still print, because
-  they help to debug a login. Read the `AccessToken` field to get the
-  token itself.
+  `fmt` and `slog` print `[redacted]` in its place. The other fields, such
+  as `ExpiresAt` and `Region`, still print, because they help to debug a
+  login. Read the `AccessToken` field to get the token itself.
 
-  `fmt` calls no method on a value in an unexported struct field. A
-  `Token` in an unexported field still prints in full, so keep it in an
-  exported field of anything you print or log.
+  These still print the access token in full:
+  - `fmt`'s `%p` and `%w` verbs. `go vet` reports `%w` with a `Token`,
+    but not `%p`.
+  - A `Token` in an unexported struct field.
+  - A `Token` in a struct, slice, or map that the `slog` JSON handler
+    logs. A `Token` logged on its own is redacted.
+  - `json.Marshal` and the other encoders. This is deliberate, so that
+    programs that save a `Token` as JSON keep working.
+
+  A struct that embeds `auth.Token` now prints as the `Token` alone,
+  without its own fields. Keep a `Token` in a named, exported field of
+  anything you print or log.
 
 ## [0.1.0-rc.7] - 2026-11-25
 
