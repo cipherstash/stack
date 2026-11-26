@@ -44,7 +44,7 @@ const (
 	Timestamp Kind = "timestamp"
 	String    Kind = "string"
 	Bytes     Kind = "bytes"
-	Uuid      Kind = "uuid"
+	UUID      Kind = "uuid"
 	JSON      Kind = "json"
 )
 

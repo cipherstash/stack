@@ -270,8 +270,8 @@ func kindConst(k record.Kind) string {
 		return "String"
 	case record.Bytes:
 		return "Bytes"
-	case record.Uuid:
-		return "Uuid"
+	case record.UUID:
+		return "UUID"
 	case record.JSON:
 		return "JSON"
 	}

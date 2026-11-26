@@ -62,9 +62,9 @@ const (
 	Timestamp Kind = "timestamp"
 	String    Kind = "string"
 	Bytes     Kind = "bytes"
-	// Uuid is a UUID: sixteen bytes under vitaminc's uuid logical type. It
+	// UUID is a UUID: sixteen bytes under vitaminc's uuid logical type. It
 	// takes an equality index, and no order or match index.
-	Uuid Kind = "uuid"
+	UUID Kind = "uuid"
 	// JSON is a JSON document, which crosses the binding as its UTF-8 JSON
 	// text in a bytes value and opens back to its text. The engine parses
 	// the text by one set of rules (numbers, repeated members, Unicode);
@@ -481,7 +481,7 @@ func (p *Plan) Validate() error {
 func (k Kind) Known() bool {
 	switch k {
 	case Untyped, Bool, Int8, Int16, Int32, Int64, Int128, Uint8, Uint16, Uint32, Uint64, Uint128,
-		Float32, Float64, Decimal, Date, Timestamp, String, Bytes, Uuid, JSON:
+		Float32, Float64, Decimal, Date, Timestamp, String, Bytes, UUID, JSON:
 		return true
 	}
 	return false

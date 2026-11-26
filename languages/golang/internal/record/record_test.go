@@ -226,7 +226,7 @@ func TestWireGivesATargetItsOptions(t *testing.T) {
 	if !JSON.Known() {
 		t.Fatal("json is a kind")
 	}
-	if !Uuid.Known() || Uuid != "uuid" {
+	if !UUID.Known() || UUID != "uuid" {
 		t.Fatal("uuid is a kind, named uuid")
 	}
 	if Kind("guid").Known() {
