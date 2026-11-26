@@ -1,10 +1,12 @@
 [workspace]
 resolver = "2"
 
-# The stack-* crates imported from cipherstash-suite, and the three node
-# bindings that wrap them. The root is one of three Cargo workspaces in this
-# repository: EQL and protect-ffi keep their own, and pin their own vitaminc
-# (see `exclude`).
+# The stack-* crates imported from cipherstash-suite, the three node bindings
+# that wrap them, and the three AEAD crates moved from cipherstash/vitaminc.
+# The root is one of three Cargo workspaces in this repository: EQL and
+# protect-ffi keep their own (see `exclude`). EQL patches vitaminc-aead to the
+# copies here, as this workspace does; protect-ffi resolves no vitaminc-aead
+# 0.10.
 members = [
   "packages/stack-auth",
   "packages/stack-profile",
