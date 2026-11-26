@@ -309,3 +309,87 @@ The cases:
 | `two_extension_parts` | every label extended by an integer part, then a text part |
 | `context_field` | a plan whose context is the record's tenant field, opened expecting it |
 | `batch` | a batch of two records under one plan |
+
+# Value-bytes fixture: `value_bytes_v1.json`
+
+The bytes of every way a plaintext value is written, for each scalar kind
+the engine takes: its transport frame, and the plaintext its sealed leaf
+holds, on the typed Rust path and on the dynamic record path. The other
+fixtures pin frames and terms, and open stored leaves. A leaf carries a
+random AES-GCM nonce, so none of them compares the plaintext a leaf was
+sealed with. `tests/value_bytes.rs` seals each value under the
+deterministic key source, keeps the data keys it generated, opens each leaf
+with them and the engine's leaf AAD, and compares the plaintext with this
+file.
+
+It pins today's behaviour, including rules that may change on purpose. A
+change to one of them is a reviewed change to this file. Regenerate with
+`STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p stack-encrypt --all-features
+--test value_bytes`, then run `pnpm run code:fix` to format it. The test
+compares the parsed file, not its text, and compares all of it, so a key
+it no longer writes fails it. Nothing in it depends on a nonce. Do not edit it
+by hand.
+
+```json
+{
+  "_comment":   "what this file is",
+  "key_source": { "kind": "deterministic-sha256", "seed": "<32 bytes, hex>" },
+  "context":    ["conformance", "value"],
+  "typed":      { "<Rust type>": { "frame": "<hex>", "leaf": "<hex>" }, ... },
+  "dynamic":    { "<kind>": { "text": "...", "frame": "<hex>", "value": <outcome>,
+                              "null_sealed": <outcome>, "null_sql": <outcome> }, ... },
+  "host":       { "<case>": { "type": "<kind or empty>", "host_frame": "<hex>",
+                              "frame": "<hex>" | { "refused": true }, "value": <outcome> }, ... },
+  "host_typed_null": { "frames": { ... }, "<case>": <outcome>, ... },
+  "json":       { "typed_leaf": { ... }, "opened_frame": "<hex>",
+                  "record_without_target": <outcome>, "untyped_text": <outcome> }
+}
+```
+
+An `<outcome>` is what the record path did with one row whose field
+`value` has that plan: `{"leaves": [hex, ...]}`, the plaintext of each leaf
+of the field's ciphertext in walk order (an empty container's marker is
+`""`); `{"stored": "sql_null"}`, no ciphertext stored; `{"refused":
+"<code>/<reason>"}` or `{"plan_refused": "<code>/<reason>"}`; or
+`{"frame_refused": true}`, refused by `ValueFrame::check` before the plan
+is read.
+
+- **`typed`.** Each Rust type sealed alone by `encrypt_tree`: its frame as
+  `vitaminc_aead::to_frame` writes it, and its leaf. A `None` of a
+  fixed-width type seals as a typed null of that type (`0x15`, the type's
+  tag, zeros), as long as a value. A `bool`'s `None` is the exception: a
+  bool leaf is one byte, so its null is the plain null `00`, which is as
+  long. A `None` of any other type is the plain null.
+  A text or bytes frame carries a four-byte length that its leaf does not.
+- **`dynamic`.** One value per kind a data plan declares, as a binding
+  sends it, through `record::encrypt`: the frame, the stored leaf, and a
+  null under `"null": "sealed"` and `"null": "sql"` (a sealed `bool` null
+  is `00`, as on the typed path). `untyped_object` is an untyped field
+  holding an object with an array and two empty containers: each scalar is
+  a leaf and each empty container a marker. `untyped_null` is a null in an
+  untyped field.
+- **`host`.** Frames a host writes that no Rust value here writes: a
+  timestamp in seconds, milliseconds (a JavaScript `Date`) or
+  microseconds, which the engine rewrites to nanoseconds; a nanosecond
+  timestamp and a date (2024-02-29) over an `i64` in the `0xF3` envelope,
+  which the engine refuses because each has a shorter tag of its own; a
+  UUID, which it refuses; `undefined`, which an untyped field seals as
+  written and a typed field refuses; and an `f64` for a `float32` field,
+  which it refuses. The two millisecond frames are the frames the
+  JavaScript bridge writes for `new Date(123)` and `new Date(-1)`;
+  `scripts/__tests__/recipher-js-frame-parity.test.mjs` holds them to
+  the bridge's pinned frames.
+- **`host_typed_null`.** A typed null a host sends. The frame keeps no
+  type, so an untyped field, and an array inside one, seal the plain null.
+  A typed field refuses it with no `"null"`, stores nothing under
+  `"sql"`, and under `"sealed"` seals the typed null of its own declared
+  type, whatever type the host sent.
+- **`json`.** Opaque JSON, a document sealed as one value. A
+  `JsonPlaintext` on the typed path is a text leaf of its compact JSON. A
+  document a `json` field opens to is a bytes frame (`json_frame`). A data
+  plan's `json` field needs a target and is refused without one; through
+  EQL's opaque `Json` target it seals the same text leaf, which
+  `packages/eql/tests/encryption/tests/opaque_json_bytes.rs` pins. An
+  untyped field holding the same text seals it as a text leaf. The JSON
+  tree (EQL's `JsonSearch`) is another scheme, sealed by the JSON index,
+  and is not in this file.

@@ -65,6 +65,7 @@ fn node_value_conformance() {
         "tests/object-safety.cjs",
         "tests/kind_inventory.cjs",
         "tests/encrypt.cjs",
+        "tests/frames.cjs",
     ]
     .map(|suite| package.join(suite))
     .into_iter()
