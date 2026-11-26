@@ -74,6 +74,29 @@ describe('newClient rejects unknown option keys', () => {
   })
 })
 
+describe('newClient refuses a client key whose permutations are not valid', () => {
+  test('a well-formed keyset with empty permutations', async () => {
+    // #1911. recipher can loop forever or panic on such a key when it derives
+    // the first key, after the ZeroKMS request. The key is refused while the
+    // options are read, before any network call. This keyset is made up:
+    // `{ p1, p2_from, p2_to, p3 }`, each `{ permutation: [] }`.
+    const keyWithEmptyPermutations =
+      'a4627031a16b7065726d75746174696f6e80' +
+      '6770325f66726f6da16b7065726d75746174696f6e80' +
+      '6570325f746fa16b7065726d75746174696f6e80' +
+      '627033a16b7065726d75746174696f6e80'
+    await expect(
+      newClient({
+        encryptConfig,
+        clientOpts: {
+          clientId: '8f7ae6de-6b6a-4f9e-9dd4-2b2e39bc3b52',
+          clientKey: keyWithEmptyPermutations,
+        },
+      }),
+    ).rejects.toThrow(/invalid clientKey \(CS_CLIENT_KEY\).*permutations/)
+  })
+})
+
 describe('encrypt rejects unknown option keys', () => {
   let client: Client
 

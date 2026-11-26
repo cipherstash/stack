@@ -11,10 +11,11 @@
 //! CPU and never settle.
 //!
 //! This module checks the lists before cipherstash-client sees the key. It
-//! is the same check as `check_permutations` in the `stack-kms` crate
-//! (#1850), which the Go SDK uses. It is repeated here because that function
-//! is private to `stack-kms`, and `stack-kms` is built against a different
-//! cipherstash-client, zerokms and recipher from the ones this crate pins.
+//! mirrors the `check_permutations` function that PR #1914 adds to the
+//! `stack-kms` crate for the Go SDK (#1850). Keep the two in step. It is
+//! repeated here because that function is private to `stack-kms`. Also,
+//! `stack-kms` is built against other versions of cipherstash-client,
+//! zerokms and recipher than the ones this crate pins.
 //!
 //! Every error is a fixed message. None includes a value read from the key.
 
@@ -49,6 +50,14 @@ struct PermutationShape {
 /// bytes of one block.
 const BLOCK_LEN: usize = 16;
 
+/// The number of blocks p3 permutes. recipher generates every p3 with 33
+/// entries (`EncryptionKeySet::generate`), and the key material ZeroKMS
+/// returns has 33 blocks. recipher asserts that the two lengths match, so a
+/// p3 of any other length panics on the first key derivation. A keyset with
+/// these lengths is the 168 bytes of CBOR that cipherstash-client's
+/// `V1KeySet` deserializer expects.
+const BLOCK_COUNT: usize = 33;
+
 /// What [`check_keyset`] found.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum KeysetCheck {
@@ -64,19 +73,18 @@ pub(crate) enum KeysetCheck {
 /// Check the permutations of a keyset's CBOR bytes.
 ///
 /// p1, p2_from and p2_to must each be a permutation of `0..16`. p3 permutes
-/// the blocks, and must be a permutation of `0..n` for some `n` from 1 to
-/// 64. The check does not branch on any one entry, because the entries are
-/// secret.
+/// the blocks, and must be a permutation of `0..33`. The check does not
+/// branch on any one entry, because the entries are secret.
 pub(crate) fn check_keyset(bytes: &[u8]) -> KeysetCheck {
     // serde's own error message can print a value read from the key, so it
     // is dropped here.
     let Ok(shape) = serde_cbor::from_slice::<KeySetShape>(bytes) else {
         return KeysetCheck::NotAKeyset;
     };
-    let valid = is_permutation(&shape.p1.permutation, Some(BLOCK_LEN))
-        & is_permutation(&shape.p2_from.permutation, Some(BLOCK_LEN))
-        & is_permutation(&shape.p2_to.permutation, Some(BLOCK_LEN))
-        & is_permutation(&shape.p3.permutation, None);
+    let valid = is_permutation(&shape.p1.permutation, BLOCK_LEN)
+        & is_permutation(&shape.p2_from.permutation, BLOCK_LEN)
+        & is_permutation(&shape.p2_to.permutation, BLOCK_LEN)
+        & is_permutation(&shape.p3.permutation, BLOCK_COUNT);
     if valid {
         KeysetCheck::Valid
     } else {
@@ -84,12 +92,13 @@ pub(crate) fn check_keyset(bytes: &[u8]) -> KeysetCheck {
     }
 }
 
-/// Whether `p` is a permutation of `0..p.len()`, with `p.len()` from 1 to
-/// 64, and equal to `len` when `len` is given. Only the result depends on
-/// the entries; no branch does.
-fn is_permutation(p: &[u8], len: Option<usize>) -> bool {
+/// Whether `p` is a permutation of `0..len`. `len` is at most 64, the
+/// width of the bit set below. Only the result depends on the entries; no
+/// branch does.
+fn is_permutation(p: &[u8], len: usize) -> bool {
+    debug_assert!((1..=64).contains(&len), "len is a constant from 1 to 64");
     let n = p.len();
-    if n == 0 || n > 64 || len.is_some_and(|len| len != n) {
+    if n != len {
         return false;
     }
     let mut seen = 0u64;
@@ -142,13 +151,15 @@ impl<P: KeyProvider + Sync> KeyProvider for CheckedKeyProvider<P> {
 
 /// Check the keyset of a [`ClientKey`] that cipherstash-client has already
 /// parsed. cipherstash-client keeps the keyset private, so this reads it
-/// back through `to_hex_v1`, and wipes each copy.
+/// back through `to_hex_v1`, and wipes each copy. The hex is decoded with
+/// `base16ct`, whose decoder takes the same time whatever the key's bytes are.
+/// `to_hex_v1` writes lower-case hex.
 #[cfg(not(target_arch = "wasm32"))]
 fn check_client_key(key: &ClientKey) -> KeysetCheck {
     let Ok(hex) = key.to_hex_v1().map(Zeroizing::new) else {
         return KeysetCheck::NotAKeyset;
     };
-    let Ok(bytes) = hex::decode(hex.as_bytes()).map(Zeroizing::new) else {
+    let Ok(bytes) = base16ct::lower::decode_vec(hex.as_bytes()).map(Zeroizing::new) else {
         return KeysetCheck::NotAKeyset;
     };
     check_keyset(&bytes)
@@ -270,17 +281,29 @@ mod tests {
     }
 
     #[test]
-    fn refuses_an_empty_or_too_long_block_permutation_list() {
-        for p3 in [Vec::new(), identity(65)] {
-            let bytes = keyset(&identity(16), &identity(16), &identity(16), &p3);
-            assert_eq!(check_keyset(&bytes), KeysetCheck::InvalidPermutations);
+    fn refuses_a_p3_that_does_not_have_33_entries() {
+        // recipher applies p3 to the 33 blocks of the key material, and
+        // asserts the lengths match. A valid permutation of another length
+        // would still panic there.
+        for n in [0, 1, 32, 34, 64, 65] {
+            let bytes = keyset(&identity(16), &identity(16), &identity(16), &identity(n));
+            assert_eq!(
+                check_keyset(&bytes),
+                KeysetCheck::InvalidPermutations,
+                "p3 of length {n}"
+            );
         }
     }
 
     #[test]
-    fn accepts_a_block_permutation_of_64() {
-        let bytes = keyset(&identity(16), &identity(16), &identity(16), &identity(64));
-        assert_eq!(check_keyset(&bytes), KeysetCheck::Valid);
+    fn a_valid_keyset_derives_a_key() {
+        // The keysets this check accepts must be ones recipher can derive a
+        // key from without hanging or panicking. 33 blocks of key material,
+        // as ZeroKMS returns.
+        use cipherstash_client::zerokms::{ClientKey, DataKey, ViturKeyMaterial};
+        let key = ClientKey::from_bytes(uuid::Uuid::nil(), &valid_keyset()).expect("parses");
+        let material = ViturKeyMaterial::from(vec![7u8; 16 * BLOCK_COUNT]);
+        let _ = DataKey::from_key_material(&key, [0u8; 16], &material);
     }
 
     #[test]

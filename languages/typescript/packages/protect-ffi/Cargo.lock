@@ -2419,6 +2419,7 @@ dependencies = [
 name = "protect-ffi"
 version = "0.1.0"
 dependencies = [
+ "base16ct",
  "base85",
  "chrono",
  "cipherstash-client",

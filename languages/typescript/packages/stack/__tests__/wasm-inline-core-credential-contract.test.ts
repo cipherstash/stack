@@ -115,6 +115,16 @@ const WELL_FORMED_KEY_MATERIAL =
   `6570325f746fa16b7065726d75746174696f6e${IDENTITY_16}` + // p2_to:   { permutation: [0..16] }
   `627033a16b7065726d75746174696f6e${IDENTITY_33}` // p3:      { permutation: [0..33] }
 
+// The same struct, with every permutation empty. It is well-formed CBOR, but
+// its permutations are not permutations. recipher can loop forever or panic
+// on such a key when it derives the first key, so the core refuses it while
+// reading the options (#1911).
+const KEY_WITH_INVALID_PERMUTATIONS =
+  'a4627031a16b7065726d75746174696f6e80' + // p1:      { permutation: [] }
+  '6770325f66726f6da16b7065726d75746174696f6e80' + // p2_from: { permutation: [] }
+  '6570325f746fa16b7065726d75746174696f6e80' + // p2_to:   { permutation: [] }
+  '627033a16b7065726d75746174696f6e80' // p3:      { permutation: [] }
+
 /**
  * An `OidcFederationStrategy`-shaped stand-in. The core duck-types the
  * strategy — it checks `getToken` is a function and calls it — so a plain
@@ -264,6 +274,24 @@ for (const { key, role } of STRATEGY_KEYS) {
           eqlVersion: 3,
         }),
       ).rejects.toThrow(/expected struct Permutation/)
+
+      expect(calls.getToken).toBe(0)
+    })
+
+    it('refuses a `clientKey` whose permutations are not valid, naming `CS_CLIENT_KEY`', async () => {
+      const { calls, strategy } = federationStrategy()
+
+      await expect(
+        newClient({
+          clientOpts: {
+            clientId: CLIENT_ID,
+            clientKey: KEY_WITH_INVALID_PERMUTATIONS,
+          },
+          [key]: strategy,
+          encryptConfig,
+          eqlVersion: 3,
+        }),
+      ).rejects.toThrow(/invalid clientKey \(CS_CLIENT_KEY\).*permutations/)
 
       expect(calls.getToken).toBe(0)
     })

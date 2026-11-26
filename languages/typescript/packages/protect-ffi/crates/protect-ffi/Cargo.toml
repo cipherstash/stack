@@ -19,6 +19,9 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 base85 = "2.0.0"
+# Decodes a client key's hex in constant time, to check its permutations
+# (#1911). Already in the lockfile through cipherstash-client.
+base16ct = { version = "0.2.0", features = ["alloc"] }
 chrono = { version = "0.4.42", default-features = false, features = ["serde"] }
 cipherstash-client = { version = "=0.42.3", features = ["tokio"] }
 cts-common = { version = "=0.42.3", default-features = false }
