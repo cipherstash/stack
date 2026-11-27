@@ -33,7 +33,18 @@ additional_cargo_test_args = ["-E", "not binary(ui) & not test(stress_tests)"]
 # points at compile time, not in the instrumented test binary, so every
 # mutant there survives spuriously. Its behaviour is pinned by stack-encrypt's
 # `tests/derive.rs` and the trybuild UI suite instead.
-exclude_globs = ["packages/stack-encrypt-derive/**"]
+#
+# vitaminc-aead-derive is mutated: only its `#[proc_macro_derive]` shims in
+# lib.rs run at compile time, and the expansion they delegate to is in
+# modules its unit tests call directly.
+#
+# recipher-frame's Kani harnesses build only under `cfg(kani)`, so no
+# test binary contains them. kani.yml checks them.
+exclude_globs = [
+  "packages/stack-encrypt-derive/**",
+  "packages/vitaminc-aead-derive/src/lib.rs",
+  "packages/recipher-frame/src/storage/proofs.rs",
+]
 
 # Mutants no test binary can kill, by name. Every other survivor is a test to
 # write, not a line to add here. Two kinds qualify:
@@ -142,18 +153,6 @@ exclude_re = [
   # the empty list (`dynamic::target::NoTargets`), which a test asserts on
   # and `resolve` turns into `TargetError::NoTargets`; `vec![]` is the body.
   'stack-encrypt/src/dynamic/target\.rs:\d+:\d+: replace <impl TargetResolver for NoTargets>::targets -> Vec<TargetDescriptor> with vec!\[\]$',
-  # A passthrough, and a typed null as any null, has no kind:
-  # `KindOf::passthrough` and `KindOf::typed_null` return `Ok(None)`, which
-  # is `Ok(Default::default())`. `a_frame_names_its_kind` asserts the first.
-  'stack-encrypt/src/dynamic/value_frame\.rs:\d+:\d+: replace <impl Sink for KindOf>::(passthrough|typed_null) -> Result<Self::Ok, DecodeError> with Ok\(Default::default\(\)\)$',
-  # `model`'s `admits` guard on a date, decimal or undefined value is checked
-  # again by vitaminc on every path that reaches it: the frame writer behind
-  # `Modeled` and `ModelOnly` refuses an inadmissible logical value
-  # (`FrameWriteError::Invalid`, mapped to the same `Expected`), and
-  # `ValueFrame::check` only walks frames `Frame::parse` has validated. So
-  # `true` there refuses the same values with the same error. The guard stays
-  # so the model says what it holds without leaning on the writer behind it.
-  'stack-encrypt/src/dynamic/value_frame\.rs:\d+:\d+: replace match guard logical\.admits\(&value\) with true in model$',
   # A serde visitor's `expecting` writes only the "expected ..." half of a
   # serde error's message, and no caller of these three reads that message:
   # a context, statistics and a plan's root are each refused with one fixed
@@ -176,6 +175,15 @@ exclude_re = [
   # A JSON operator's input: the `JsonText` visitor's `expecting` writes a
   # message `read_frame` discards for its fixed `Reason::JsonInput`.
   'stack-encrypt/src/dynamic/json_query\.rs:\d+:\d+: replace <impl Deserialize<\x27de> for JsonText>::deserialize::<impl Visitor<\x27_> for V>::expecting -> std::fmt::Result with Ok\(Default::default\(\)\)$',
+  # vitaminc-aead — unreachable. `Nothing` is an uninhabited enum, so no value
+  # exists to call `scalar`, `typed_null` or `passthrough` on, and replacing
+  # those bodies with `Ok(())` cannot be observed. Its `seq` and `map`
+  # mutants are unviable for the same reason.
+  'vitaminc-aead/src/typed\.rs:\d+:\d+: replace <impl Sink for Nothing>::(scalar|typed_null|passthrough) -> Result<\(\), DecodeError> with Ok\(\(\)\)$',
+  # vitaminc-aead — equivalent. `max` picks the larger of two depths, and
+  # when they are equal `a > b` and `a >= b` return the same number. Its
+  # other mutants stay gated.
+  'vitaminc-aead/src/plaintext/depth\.rs:\d+:\d+: replace > with >= in max$',
 ]
 
 # Headroom over the measured baseline before a slow-but-correct mutant is

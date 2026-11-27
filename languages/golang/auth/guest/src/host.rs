@@ -1,14 +1,17 @@
-//! The credential guest's only network route: the host's HTTP transport.
-//! A provider callback supplies the caller's current OIDC token on every
-//! token fetch; the Rust federation strategy exchanges each distinct token
-//! once and caches the result per token.
+//! The credential guest's only network route: the host performs each HTTP
+//! request as a step of the operation that made it
+//! ([`stack_guest_abi::step::request`], [`crate::io`] for the wire form), so
+//! the guest is never running while a request is in flight. A provider
+//! callback supplies the caller's current OIDC token on every token fetch;
+//! the Rust federation strategy exchanges each distinct token once and
+//! caches the result per token.
 
 use std::io;
 
 use stack_auth::{
     AuthError, HttpRequest, HttpResponse, HttpTransport, OidcProvider, RequestError, SecretToken,
 };
-use stack_guest_abi::{buffers, transport};
+use stack_guest_abi::{buffers, step};
 use zeroize::Zeroizing;
 
 use crate::headers::request_headers;
@@ -26,15 +29,23 @@ pub struct WasiAuthTransport;
 
 impl HttpTransport for WasiAuthTransport {
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, RequestError> {
+        // The step's method is a static string; stack-auth sends these two.
+        let method = match request.method() {
+            "POST" => "POST",
+            "GET" => "GET",
+            _ => return Err(request_error("unsupported HTTP method")),
+        };
         // stack-auth's headers, naming this host in the `user-agent`: the
         // edge in front of CTS refuses Go's default one (see `headers`).
-        let wire_headers = Zeroizing::new(request_headers(request.headers()));
-        let response = transport::send(
-            request.method(),
-            request.url().as_str(),
-            &wire_headers,
-            request.body(),
-        )
+        let headers = Zeroizing::new(request_headers(request.headers()));
+        let body = Zeroizing::new(request.body().to_vec());
+        let response = step::request(step::Request::new(
+            method,
+            request.url().as_str().to_owned(),
+            headers,
+            body,
+        ))
+        .await
         .map_err(|e| request_error(e.to_string()))?;
         if !(100..=599).contains(&response.status) {
             return Err(request_error(if response.status < 0 {

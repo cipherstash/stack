@@ -42,7 +42,8 @@ of every type. Values use the fixture's `type` and `text` with a frozen `frame`;
 | `values.normalized-queries` | Decimal queries differing only in trailing zeros and timestamp queries truncated to microseconds derive the stored equality and order terms, while the opened values retain their original precision. | Every `queries` entry and its field's order output |
 
 Rust additionally compares dynamic execution with typed term derivation and
-retains its wrong-width write refusal test. Go runs the real generated
+retains its test of a write of another width: an exact one seals as the
+field's width, and one out of range is refused. Go runs the real generated
 `testusers.ValueKinds` encrypt/decrypt and field-query methods, including its
 field-context substitution refusal. These assertions stay in their owning
 tests. The separate Go invalid-date/decimal/timestamp tests remain in the full
@@ -94,8 +95,10 @@ the guard with absent, empty and nonempty update flags without writing fixtures.
 Deliberate fixture maintenance remains available outside
 required mode through the existing documented regeneration commands.
 
-Keep requirement IDs stable. Add a new profile version for incompatible
-expectations, and review fixture regeneration explicitly. The enrollment
+Review fixture regeneration explicitly. A requirement ID follows the
+[evolution rule for case IDs](README.md#artifacts-and-evolution). It may
+change in place only while every reader is in this repository. The pull
+request that changes it updates every reader and lists the change. The enrollment
 index's `version` is its metadata format, not a production storage version.
 
 This slice consolidates the coverage inventory and execution selection, not

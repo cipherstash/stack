@@ -31,6 +31,11 @@
 # Runs on nightly-2026-07-10: `cargo +nightly-2026-07-10 udeps`. 0.1.60, not
 # 0.1.61: see above.
 "cargo:cargo-udeps" = "0.1.60"
+# Supply-chain checks over the vitaminc-aead crates' dependency graph;
+# config in supply-chain/vitaminc-aead/. cargo-binstall fetches both
+# prebuilt.
+"cargo:cargo-deny" = "0.20.2"
+"cargo:cargo-vet" = "0.10.3"
 
 [env]
 # Annoyingly if you pass --env test to mise it doesn't set this automatically

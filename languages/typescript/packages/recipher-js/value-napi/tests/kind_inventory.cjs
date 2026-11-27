@@ -2,10 +2,10 @@
 // converts to its expected JavaScript value, and containers and passthrough
 // build through the whole walk. Run by tests/node.rs with the test addon's
 // path.
-const assert = require('node:assert/strict');
-const path = require('node:path');
-const addon = require(path.resolve(process.argv[2]));
-const { VcDate, VcTimestamp, VcDecimal, VcUuid } = addon;
+const assert = require('node:assert/strict')
+const path = require('node:path')
+const addon = require(path.resolve(process.argv[2]))
+const { VcDate, VcTimestamp, VcDecimal, VcUuid } = addon
 assert.deepStrictEqual(addon.kindInventory(), {
   null: null,
   undefined: undefined,
@@ -34,12 +34,25 @@ assert.deepStrictEqual(addon.kindInventory(), {
   array: [true],
   object: { k: true },
   passthrough: true,
-});
+})
 // A logical type this binding does not know has no JavaScript value and is
 // refused, rather than shown as its physical value with the type dropped.
-assert.throws(() => addon.decode(addon.unknownLogicalFrame()), /not known to this binding/);
+assert.throws(
+  () => addon.decode(addon.unknownLogicalFrame()),
+  /not known to this binding/,
+)
 // A known logical type over a value it does not admit is refused too.
-for (const c of ['date-over-text', 'date-out-of-range', 'timestamp-out-of-range', 'uuid-short', 'decimal-scale']) {
-  assert.throws(() => addon.buildMismatched(c), /not a value this binding can build/, c);
+for (const c of [
+  'date-over-text',
+  'date-out-of-range',
+  'timestamp-out-of-range',
+  'uuid-short',
+  'decimal-scale',
+]) {
+  assert.throws(
+    () => addon.buildMismatched(c),
+    /not a value this binding can build/,
+    c,
+  )
 }
-console.log('Every scalar kind converts to its expected JavaScript value');
+console.log('Every scalar kind converts to its expected JavaScript value')

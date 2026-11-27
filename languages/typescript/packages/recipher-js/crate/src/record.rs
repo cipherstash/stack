@@ -54,7 +54,7 @@ use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use stack_encrypt::dynamic::{
-    context, read, FieldPlan, NullMode, Output, Plan, Planned, ValueFrame, ValueKind,
+    context, frame::OwnedFrame, read, FieldPlan, NullMode, Output, Plan, Planned, ValueKind,
 };
 use stack_encrypt::kms::{DataKeySource, IndexKeySource};
 use stack_encrypt::target::IndexSpec;
@@ -182,8 +182,8 @@ impl RecordPlan {
     ///
     /// Returns `recipher_js::not_a_record`, or a refusal of the declaration.
     /// A refusal names the record and, where there is one, the field.
-    pub(crate) fn of(frame: &ValueFrame) -> Outcome<Arc<RecordPlan>> {
-        let key = frame.risky_ref().to_vec();
+    pub(crate) fn of(frame: &OwnedFrame) -> Outcome<Arc<RecordPlan>> {
+        let key = frame.frame().as_bytes().to_vec();
         if let Some(plan) = PLANS
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -192,7 +192,7 @@ impl RecordPlan {
             return Ok(Arc::clone(plan));
         }
         let declaration: Declaration =
-            stack_encrypt::dynamic::frame::serde::from_slice(frame.risky_ref())
+            stack_encrypt::dynamic::frame::serde::from_slice(frame.frame().as_bytes())
                 .map_err(|_| Error::NotARecord)?;
         if declaration.tag != "record" {
             return Err(Error::NotARecord.into());
@@ -379,10 +379,10 @@ fn plain_segment(record: &str) -> bool {
 /// Returns `recipher_js::not_a_row` for a row that is not an object. Returns
 /// `recipher_js::field_type`, naming the field, for a value that is not of its
 /// field's kind or does not fit it.
-pub(crate) fn conform_row(plan: &RecordPlan, row: &ValueFrame) -> Outcome<ValueFrame> {
+pub(crate) fn conform_row(plan: &RecordPlan, row: &OwnedFrame) -> Outcome<OwnedFrame> {
     let not_a_row = || RecipherErrorFields::from(Error::NotARow).in_record(&plan.name);
     let values = entries(row).ok_or_else(not_a_row)?;
-    let mut conformed: Vec<(String, ValueFrame)> = Vec::with_capacity(values.len());
+    let mut conformed: Vec<(String, OwnedFrame)> = Vec::with_capacity(values.len());
     for (name, value) in values {
         let kind = plan
             .fields
@@ -391,7 +391,7 @@ pub(crate) fn conform_row(plan: &RecordPlan, row: &ValueFrame) -> Outcome<ValueF
             .and_then(|field| field.kind);
         let value = match kind {
             // The engine checks a null against the field's null mode.
-            Some(kind) if value.kind().is_some() => read(kind, &value).map_err(|_| {
+            Some(kind) if value.frame().kind().is_some() => read(kind, &value).map_err(|_| {
                 RecipherErrorFields::from(Error::FieldType { kind })
                     .in_record(&plan.name)
                     .at_field(Some(&name))
@@ -404,7 +404,7 @@ pub(crate) fn conform_row(plan: &RecordPlan, row: &ValueFrame) -> Outcome<ValueF
         .iter()
         .map(|(name, value)| (name.as_str(), Entry::Value(value)))
         .collect());
-    ValueFrame::of(&map).map_err(|_| not_a_row())
+    OwnedFrame::of(&map).map_err(|_| not_a_row())
 }
 
 /// Encrypts rows under a record's plan, in one key request for any number
@@ -418,8 +418,8 @@ pub(crate) fn conform_row(plan: &RecordPlan, row: &ValueFrame) -> Outcome<ValueF
 pub(crate) async fn seal_rows<K>(
     keyset: &KeysetCipher<'_, K>,
     plan: Arc<RecordPlan>,
-    rows: Vec<ValueFrame>,
-) -> Outcome<Vec<ValueFrame>>
+    rows: Vec<OwnedFrame>,
+) -> Outcome<Vec<OwnedFrame>>
 where
     K: DataKeySource + IndexKeySource + Sync + 'static,
 {
@@ -452,8 +452,8 @@ where
 pub(crate) async fn open_rows<'c, K>(
     cipher: impl Into<CipherRef<'c, K>>,
     plan: Arc<RecordPlan>,
-    rows: Vec<ValueFrame>,
-) -> Outcome<Vec<ValueFrame>>
+    rows: Vec<OwnedFrame>,
+) -> Outcome<Vec<OwnedFrame>>
 where
     K: DataKeySource + IndexKeySource + Sync + 'static,
 {
@@ -465,14 +465,14 @@ where
         .into_iter()
         .map(|tree| Planned::new(&plan.plan, tree))
         .collect();
-    Vec::<ValueFrame>::decrypt_from(planned, cipher)
+    Vec::<OwnedFrame>::decrypt_from(planned, cipher)
         .await
         .map_err(|error| RecipherErrorFields::engine(&error).in_record(&plan.name))
 }
 
 /// Converts the stored row that the engine returned into the frame that the
 /// SDK returns to JavaScript.
-fn stored_row(plan: &RecordPlan, tree: StackCipherText) -> Outcome<ValueFrame> {
+fn stored_row(plan: &RecordPlan, tree: StackCipherText) -> Outcome<OwnedFrame> {
     let CipherText::Map(entries) = tree else {
         return Err(Error::EngineResult {
             what: "a row is not a map of fields",
@@ -528,7 +528,7 @@ fn stored_row(plan: &RecordPlan, tree: StackCipherText) -> Outcome<ValueFrame> {
         }
         fields.push((field.name.as_str(), Entry::Map(Map(stored))));
     }
-    ValueFrame::of(&Map(fields)).map_err(|_| {
+    OwnedFrame::of(&Map(fields)).map_err(|_| {
         Error::EngineResult {
             what: "the stored row could not be written as a frame",
         }
@@ -538,7 +538,7 @@ fn stored_row(plan: &RecordPlan, tree: StackCipherText) -> Outcome<ValueFrame> {
 
 /// Converts a stored row that the SDK returned earlier into the engine's
 /// stored record.
-fn stored_tree(plan: &RecordPlan, row: &ValueFrame) -> Outcome<StackCipherText> {
+fn stored_tree(plan: &RecordPlan, row: &OwnedFrame) -> Outcome<StackCipherText> {
     let misfit = |field: Option<&str>, what: &'static str| {
         RecipherErrorFields::from(Error::NotAStoredRow { what })
             .in_record(&plan.name)
@@ -554,14 +554,14 @@ fn stored_tree(plan: &RecordPlan, row: &ValueFrame) -> Outcome<StackCipherText> 
             .find(|field| field.name == name)
             .ok_or_else(|| misfit(Some(&name), "a field the record does not declare"))?;
         if field.passthrough {
-            let node = CipherText::Passthrough(PassthroughFrame(value.risky_ref().to_vec()));
+            let node = CipherText::Passthrough(PassthroughFrame(value.frame().as_bytes().to_vec()));
             tree.push((
                 name,
                 CipherText::Map(vec![(Output::Passthrough.key().to_owned(), node)]),
             ));
             continue;
         }
-        if value.kind().is_none() {
+        if value.frame().kind().is_none() {
             // A null means the field is absent, as SQL `NULL` stores it.
             continue;
         }
@@ -610,13 +610,13 @@ fn stored_tree(plan: &RecordPlan, row: &ValueFrame) -> Outcome<StackCipherText> 
 /// Returns the value of the field `name` in a one-field row. Returns a null
 /// when the row has no such field. A null stored as SQL `NULL` gives a row
 /// with no such field.
-pub(crate) fn field_value(row: &ValueFrame, name: &str) -> Outcome<ValueFrame> {
+pub(crate) fn field_value(row: &OwnedFrame, name: &str) -> Outcome<OwnedFrame> {
     let entries = entries(row).ok_or(Error::EngineResult {
         what: "a one-field row is not a map of fields",
     })?;
     match entries.into_iter().find(|(key, _)| key == name) {
         Some((_, value)) => Ok(value),
-        None => ValueFrame::of(&Null).map_err(|_| {
+        None => OwnedFrame::of(&Null).map_err(|_| {
             Error::EngineResult {
                 what: "a null could not be written",
             }
@@ -635,8 +635,8 @@ impl stack_encrypt::Encrypt for &Null {
 }
 
 /// Returns a one-field row: `{ name: value }`.
-pub(crate) fn one_field_row(name: &str, value: &ValueFrame) -> Outcome<ValueFrame> {
-    ValueFrame::of(&Map(vec![(name, Entry::Value(value))])).map_err(|_| {
+pub(crate) fn one_field_row(name: &str, value: &OwnedFrame) -> Outcome<OwnedFrame> {
+    OwnedFrame::of(&Map(vec![(name, Entry::Value(value))])).map_err(|_| {
         Error::EngineResult {
             what: "a one-field row could not be written",
         }

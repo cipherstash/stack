@@ -15,9 +15,10 @@
 mod common;
 
 use common::frames::{frame, object, payload};
+use recipher_frame::serde::from_slice;
 use serde::Deserialize;
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
-use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{
     passthrough, Borrowed, DeclaredContext, DeclaredScopes, DecryptSource, Decryption,
@@ -27,7 +28,6 @@ use stack_encrypt::{
     nonempty, AsProtectedRef, CipherText, Ciphertext, DecryptFrom, EncryptInto, PassthroughFrame,
     SealedValue, StackCipher, StackCipherText,
 };
-use vitaminc_aead_frame::serde::from_slice;
 use zeroize::Zeroize;
 
 #[derive(Debug, Clone, PartialEq, Zeroize)]
@@ -127,10 +127,10 @@ fn data_plan() -> DataPlan {
         "name":  { "context": ["users", "name"],  "outputs": ["c"],           "type": "string" },
         "email": { "context": ["users", "email"], "outputs": ["c", "eq"],     "type": "string" },
     });
-    let declaration = vitaminc_aead_frame::serde::to_vec(&json).expect("frames");
+    let declaration = recipher_frame::serde::to_vec(&json).expect("frames");
     record::plan(declaration.as_protected_ref()).expect("a plan")
 }
-fn dynamic_source(user: &User) -> ValueFrame {
+fn dynamic_source(user: &User) -> OwnedFrame {
     object(vec![
         ("id", frame(user.id)),
         ("name", frame(user.name.as_str())),
@@ -259,7 +259,8 @@ async fn open_dynamic(cipher: &StackCipher<common::RecordingSource>, stored: &St
         .expect("the record fits the plan")
         .await
         .expect("the lowering opens it");
-    let opened: Opened = from_slice(opened.risky_ref()).expect("an object of the three fields");
+    let opened: Opened =
+        from_slice(opened.frame().as_bytes()).expect("an object of the three fields");
     User {
         id: opened.id,
         name: opened.name,

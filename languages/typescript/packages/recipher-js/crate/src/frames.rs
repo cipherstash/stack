@@ -1,7 +1,7 @@
 //! Helpers that read a map frame one entry at a time, and write a map frame
 //! in a given order.
 //!
-//! A frame is a [`ValueFrame`]: a byte buffer that contains one value, in
+//! A frame is an [`OwnedFrame`]: a byte buffer that contains one value, in
 //! the encoding of vitaminc, CipherStash's cryptography library. A map frame
 //! contains a map. A sink receives a value from a frame one part at a time:
 //! one scalar, array or map.
@@ -12,22 +12,22 @@
 //! helpers split such a frame into one frame for each entry. They also
 //! write entries back as one map, in the order given.
 
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::dynamic::plaintext::{
     Error as SinkError, FixedType, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
 };
-use stack_encrypt::dynamic::ValueFrame;
-use stack_encrypt::{AsProtectedRef, Buffer, Encrypt, EncryptRef};
+use stack_encrypt::{Buffer, Encrypt, EncryptRef};
 use vitaminc_aead::frame::{FrameError, FrameWriteError};
 use vitaminc_aead::{Frame, FrameWriter};
 
 /// Returns the entries of a map frame, each as its own frame, in the map's
 /// order. Returns `None` when the frame is not a map.
-pub(crate) fn entries(frame: &ValueFrame) -> Option<Vec<(String, ValueFrame)>> {
+pub(crate) fn entries(frame: &OwnedFrame) -> Option<Vec<(String, OwnedFrame)>> {
     let buffers = frame.visit(Split).ok()?;
     buffers
         .into_iter()
         .map(|(key, buffer)| {
-            ValueFrame::from_bytes(buffer.as_protected_ref())
+            OwnedFrame::from_buffer(buffer)
                 .map(|frame| (key, frame))
                 .ok()
         })
@@ -36,14 +36,14 @@ pub(crate) fn entries(frame: &ValueFrame) -> Option<Vec<(String, ValueFrame)>> {
 
 /// Returns the bytes of a frame that contains only a bytes value, or `None`
 /// for any other frame.
-pub(crate) fn bytes_of(frame: &ValueFrame) -> Option<Vec<u8>> {
+pub(crate) fn bytes_of(frame: &OwnedFrame) -> Option<Vec<u8>> {
     frame.visit(BytesOf).ok()
 }
 
 /// One entry of a map that [`Map`] writes.
 pub(crate) enum Entry<'a> {
     /// A value, written as it is.
-    Value(&'a ValueFrame),
+    Value(&'a OwnedFrame),
     /// Bytes, written as a bytes value.
     Bytes(Vec<u8>),
     /// A frame given as its encoded bytes, such as a passthrough output's.
@@ -233,12 +233,12 @@ impl MapSink for NoBytes {
 #[cfg(test)]
 mod tests {
     use super::{bytes_of, entries, Entry, Map};
-    use stack_encrypt::dynamic::ValueFrame;
+    use stack_encrypt::dynamic::frame::OwnedFrame;
 
     #[test]
     fn a_map_splits_into_its_entries_and_writes_back_in_order() {
-        let a = ValueFrame::of("x").unwrap();
-        let written = ValueFrame::of(&Map(vec![
+        let a = OwnedFrame::of("x").unwrap();
+        let written = OwnedFrame::of(&Map(vec![
             ("b", Entry::Value(&a)),
             ("a", Entry::Bytes(vec![1, 2])),
             ("c", Entry::Null),
@@ -247,14 +247,14 @@ mod tests {
         let split = entries(&written).unwrap();
         let keys: Vec<_> = split.iter().map(|(key, _)| key.as_str()).collect();
         assert_eq!(keys, ["b", "a", "c"]);
-        assert_eq!(split[0].1, a);
+        assert_eq!(split[0].1.frame(), a.frame());
         assert_eq!(bytes_of(&split[1].1), Some(vec![1, 2]));
         assert_eq!(bytes_of(&split[2].1), None);
     }
 
     #[test]
     fn anything_but_a_map_is_refused() {
-        let text = ValueFrame::of("x").unwrap();
+        let text = OwnedFrame::of("x").unwrap();
         assert!(entries(&text).is_none());
     }
 }

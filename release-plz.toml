@@ -82,3 +82,24 @@ publish = false
 name = "stack-auth-wasm"
 release = false
 publish = false
+
+# The AEAD crates moved here from cipherstash/vitaminc. crates.io's 0.10.0
+# was published from vitaminc. They publish from here before the next
+# stack-encrypt release: vitaminc-aead and vitaminc-aead-derive under the same
+# names, and the frame crate as recipher-frame (it was vitaminc-aead-frame).
+# Until then they are listed here so that release-plz neither bumps nor
+# publishes them.
+[[package]]
+name = "vitaminc-aead"
+release = false
+publish = false
+
+[[package]]
+name = "recipher-frame"
+release = false
+publish = false
+
+[[package]]
+name = "vitaminc-aead-derive"
+release = false
+publish = false

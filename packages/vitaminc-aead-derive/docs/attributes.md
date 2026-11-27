@@ -1,0 +1,305 @@
+# Attributes
+
+All options live under `#[aead(...)]`. Anything else — a misspelling included —
+is a compile error rather than a silently dropped setting, because a dropped
+option is one the author believes is in effect.
+
+| Attribute | Applies to | Effect |
+|---|---|---|
+| `crate = "path"` | container | Name the path to `vitaminc_aead` in the generated code |
+| `recursive` | container | Mark a mutually recursive type, whose depth the derive cannot work out |
+| `rename = "name"` | field | Store the field under `name` instead of its own name |
+| `passthrough` | field | Store the field **in the clear**, unencrypted and unauthenticated |
+| `skip` | field | Leave the field out of the ciphertext; rebuild it with `Default` on decrypt |
+| `take` | field | Take the value with `mem::take` instead of moving it, for a type that implements `Drop` |
+
+Enum variants take no attributes.
+
+## `#[aead(crate = "...")]`
+
+Points the generated code at a re-export of `vitaminc_aead`, for callers who
+depend on it through an umbrella crate rather than directly:
+
+```rust
+use vitaminc::aead::{Decrypt, Encrypt};
+
+#[derive(Encrypt, Decrypt)]
+#[aead(crate = "::vitaminc::aead")]
+struct User {
+    name: String,
+}
+# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
+#     use vitaminc::protected::Controlled;
+#     use vitaminc_aead::Encrypt;
+#     let bytes = vitaminc_aead::to_frame(value).unwrap();
+#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
+#     frame.visit(T::sink()).unwrap()
+# }
+# let user = round_trip(User { name: "Ada".into() });
+# assert_eq!(user.name, "Ada");
+```
+
+Every path the expansion emits is redirected, so the deriving crate needs no
+direct dependency on `vitaminc_aead` at all.
+
+## `#[aead(recursive)]`
+
+`#[derive(Encrypt)]` works out how deeply a type nests, from its fields, and
+fails to compile a type deeper than `MAX_DEPTH`, whose fully populated values
+the encrypting sink would always refuse:
+
+```text
+error[E0080]: evaluation panicked: `TooDeep` nests deeper than `MAX_DEPTH` levels, so
+              the encrypting sink would refuse its fully populated values
+```
+
+A recursive type has no fixed depth: a tree can be as deep as its data. For a
+type that names itself in a field, directly or as `Self`, the derive sees this
+and leaves the check to the walk, which refuses a value that is too deep when
+it is encrypted:
+
+```rust
+use vitaminc_aead::{Decrypt, Encrypt};
+
+#[derive(Encrypt, Decrypt)]
+struct Tree {
+    label: String,
+    children: Vec<Tree>, // detected: no attribute needed
+}
+# assert_eq!(Tree::DEPTH, None);
+# let tree = Tree { label: "root".into(), children: vec![Tree { label: "child".into(), children: vec![] }] };
+# let bytes = vitaminc_aead::to_frame(tree).unwrap();
+# use vitaminc::protected::Controlled;
+# assert!(vitaminc_aead::Frame::parse(bytes.risky_ref()).is_ok());
+```
+
+This example checks recursive encoding. Decoding this `Tree` with
+`Frame::visit(Tree::sink())` currently hits a compiler recursion limit.
+
+The derive looks for the type's bare name. A field that names the type
+through a path, such as `crate::models::Tree`, is read as another type with the
+same name (`db::User` inside a `User` is common), so it is not detected.
+
+Recursion through another type, or through a path, cannot be seen from one
+derive, and fails to compile with `error[E0391]: cycle detected when simplifying constant`, naming
+each type's `DEPTH`. Mark every type in the cycle `recursive`:
+
+```rust
+use vitaminc_aead::{Decrypt, Encrypt};
+
+#[derive(Encrypt, Decrypt)]
+#[aead(recursive)]
+struct Even {
+    next: Vec<Odd>,
+}
+
+#[derive(Encrypt, Decrypt)]
+#[aead(recursive)]
+struct Odd {
+    next: Vec<Even>,
+}
+# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
+#     use vitaminc::protected::Controlled;
+#     use vitaminc_aead::Encrypt;
+#     let bytes = vitaminc_aead::to_frame(value).unwrap();
+#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
+#     frame.visit(T::sink()).unwrap()
+# }
+# let even = round_trip(Even { next: vec![Odd { next: vec![] }] });
+# assert_eq!(even.next.len(), 1);
+# assert!(even.next[0].next.is_empty());
+```
+
+A type that contains a recursive type is not checked either, since its depth
+depends on the recursive part. A generic type is checked once it is used at a
+concrete type, under `cargo build` rather than `cargo check`.
+
+## `#[aead(rename = "...")]`
+
+Changes the map key a field is stored under:
+
+```rust
+use vitaminc_aead::{Decrypt, Encrypt};
+
+#[derive(Encrypt, Decrypt)]
+struct User {
+    #[aead(rename = "n")]
+    name: String,
+}
+// ciphertext: Map { "n": … }
+# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
+#     use vitaminc::protected::Controlled;
+#     use vitaminc_aead::Encrypt;
+#     let bytes = vitaminc_aead::to_frame(value).unwrap();
+#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
+#     frame.visit(T::sink()).unwrap()
+# }
+# let user = round_trip(User { name: "Ada".into() });
+# assert_eq!(user.name, "Ada");
+# let plan = vitaminc_aead::plan::<_, std::convert::Infallible, _>(user, ()).unwrap();
+# let vitaminc_aead::CipherText::Map(entries) = plan else { panic!("expected a map") };
+# assert_eq!(entries[0].0, "n");
+```
+
+Field names are part of the ciphertext contract — each key is bound into the
+AAD its value is sealed against — so renaming a field in Rust breaks
+compatibility with data already stored under the old name. `rename` is how you
+keep the old wire key while changing the Rust one.
+
+Two fields cannot share a key; the collision is a compile error rather than a
+value silently overwriting another. `rename` on a newtype is a compile error
+too: a newtype is transparent, so its value is not stored under a key at all
+and there is nothing to rename.
+
+## `#[aead(passthrough)]`
+
+Stores a field as a cleartext map entry, so it can be an ordinary database
+column that other queries select, filter, and update without holding the key:
+
+```rust
+use vitaminc_aead::{Decrypt, Encrypt};
+
+#[derive(Encrypt, Decrypt)]
+struct Row {
+    #[aead(passthrough)]
+    tenant: String,   // a plain column
+    ssn: String,      // encrypted
+}
+# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
+#     use vitaminc::protected::Controlled;
+#     use vitaminc_aead::Encrypt;
+#     let bytes = vitaminc_aead::to_frame(value).unwrap();
+#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
+#     frame.visit(T::sink()).unwrap()
+# }
+# let row = round_trip(Row { tenant: "acme".into(), ssn: "example-only".into() });
+# assert_eq!(row.tenant, "acme");
+# assert_eq!(row.ssn, "example-only");
+```
+
+### ⚠️ The field gives up all protection
+
+That independence is bought by giving up everything, and the trade is total:
+
+- The value is **not encrypted** — anyone who can read the stored ciphertext
+  can read it.
+- The value is **not authenticated**. No tag covers it, and unlike an encrypted
+  entry's key, nothing binds its key either. It can be edited, retargeted at
+  another key, added, or removed, and every encrypted field beside it still
+  decrypts. Treat what comes back as untrusted input — it is exactly as
+  trustworthy as the column it was read from.
+- Deleting the entry is caught only by the ordinary missing-field rule, and is
+  not distinguished from a value that was never written.
+
+So: non-sensitive, non-security-deciding data only. Never a field the program
+then trusts to make an authorization choice.
+
+A cleartext field that must be tamper-evident needs to be bound into the AAD
+instead of passed through — and note that binding couples the two, so any
+independent write to that column would break decryption of every encrypted
+field beside it. That coupling is precisely what `passthrough` exists to avoid.
+
+### Requirements
+
+A passthrough field's type is lent on the way in, never copied or moved,
+even when the struct itself is walked by value: it implements `Encrypt` for
+a reference to it (`EncryptRef`), as every built-in source and derived
+struct does, and need be neither `Clone` nor a source by value. A type
+parameter that only passthrough fields name is bounded on `EncryptRef`
+alone. A sink that is really several sinks lends each the same subtree. On
+the way out it implements `Decrypt`. Because the field is only lent, it
+needs no `#[aead(take)]` on a type that implements `Drop`.
+
+These are rejected at compile time:
+
+- **Nothing sealed.** If every field is `passthrough` or `skip`, nothing would
+  be encrypted, so the ciphertext would carry no tag at all — neither the
+  associated data nor the entry keys would be authenticated. The encrypting
+  sink refuses to seal such a container, so the derive refuses to emit one.
+- **`passthrough` on a newtype.** A newtype is transparent and opens no map, so
+  there is no entry to store in the clear; honouring the attribute would mean
+  the whole value travelled unencrypted.
+- **`passthrough` with `take`.** The field is lent, never taken out of
+  `self`, so `take` would have no effect.
+
+## `#[aead(skip)]`
+
+Leaves a field out of the ciphertext altogether, for data that lives
+somewhere else, such as an ordinary column alongside the ciphertext, or a
+value derived from the others:
+
+```rust
+use vitaminc_aead::{Decrypt, Encrypt};
+
+#[derive(Encrypt, Decrypt)]
+struct User {
+    #[aead(skip)]
+    id: u64,          // not in the ciphertext at all
+    password: String, // encrypted
+}
+# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
+#     use vitaminc::protected::Controlled;
+#     use vitaminc_aead::Encrypt;
+#     let bytes = vitaminc_aead::to_frame(value).unwrap();
+#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
+#     frame.visit(T::sink()).unwrap()
+# }
+# let user = round_trip(User { id: 42, password: "example-only".into() });
+# assert_eq!(user.id, 0);
+# assert_eq!(user.password, "example-only");
+```
+
+On encrypt the field contributes nothing: no entry, no key binding, and it
+is not counted in the map's length. On decrypt it is rebuilt with
+`Default::default()`, so its type must implement `Default`. The strict decode
+rules treat a skipped field as never present: an entry that does turn up
+under its key is refused as an unknown key.
+
+Adding `skip` to a new field is not a wire-breaking change, since the field
+is simply absent from the map. Changing a field that was sealed to `skip` is.
+
+`skip` cannot be combined with `passthrough` or `take`, and is a compile error
+on a newtype, whose only field is the whole value.
+
+## `#[aead(take)]`
+
+A struct that implements `Drop`, such as one that derives `ZeroizeOnDrop`,
+cannot be destructured, so its fields cannot be moved out to be walked. `take`
+swaps the field for its default with `core::mem::take` instead, and the empty
+value left behind is dropped, and wiped, with `self`:
+
+```rust
+use vitaminc_aead::{Decrypt, Encrypt};
+use zeroize::ZeroizeOnDrop;
+
+#[derive(Encrypt, Decrypt, ZeroizeOnDrop)]
+struct SecretToken(#[aead(take)] String);
+# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
+#     use vitaminc::protected::Controlled;
+#     use vitaminc_aead::Encrypt;
+#     let bytes = vitaminc_aead::to_frame(value).unwrap();
+#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
+#     frame.visit(T::sink()).unwrap()
+# }
+# let token = round_trip(SecretToken("example-only".into()));
+# assert_eq!(token.0, "example-only");
+```
+
+The field's type must implement `Default`. Every encrypted field of a `Drop`
+type that is not `Copy` needs it. A passthrough field does not: it is lent
+to the sink in place, never moved out of `self`, so `take` on it is a
+compile error. A
+`Protected<T>` field has no `Default` and needs no `take`: it wipes itself,
+so a struct whose secrets are all `Protected` does not need `ZeroizeOnDrop`
+in the first place. `take` only affects how the value leaves `self`; the
+ciphertext is the same with or without it.
+
+## Field types and visibility
+
+The sink-based `Decrypt` derive generates a sink type beside the struct, with
+the struct's visibility, whose public associated types name each field's
+type. A field's type therefore has to be at least as visible as the struct,
+or the derive fails with E0446 ("private type in public interface"). A type
+that should stay unreachable from outside can be declared `pub` inside a
+private module; it is then visible enough for the derive and still not
+nameable by other crates.

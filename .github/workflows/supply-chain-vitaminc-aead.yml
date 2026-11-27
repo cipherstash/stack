@@ -1,0 +1,132 @@
+name: Supply chain (vitaminc-aead)
+
+# cargo deny and cargo vet over vitaminc-aead, recipher-frame and
+# vitaminc-aead-derive and their dependency graph ONLY. Their config is
+# supply-chain/vitaminc-aead/ (see its README.md). The rest of the root
+# workspace is not checked by either tool; that is #1842.
+#
+# Neither tool compiles anything: both read `cargo metadata` and Cargo.lock,
+# so each job takes about a minute, most of it setup.
+#
+# Pull requests that change the three crates, the lockfile or the config
+# run both jobs. The nightly schedule runs cargo deny only, on the default
+# branch: a RustSec advisory published against a version already in
+# Cargo.lock has no pull request to fail. cargo vet reads only the tree, so
+# a scheduled run of it would find nothing a pull request did not. Pull
+# requests are the only filtered event, so `push` has no filter to mirror;
+# recorded in scripts/__tests__/workflow-paths-filter-parity.test.mjs.
+
+on:
+  pull_request:
+    paths:
+      - packages/vitaminc-aead/**
+      - packages/recipher-frame/**
+      - packages/vitaminc-aead-derive/**
+      - supply-chain/vitaminc-aead/**
+      - Cargo.toml
+      - Cargo.lock
+      - mise.test.toml
+      - .github/workflows/supply-chain-vitaminc-aead.yml
+  schedule:
+    # Nightly at 05:13 UTC. Scheduled runs fire from the default branch only.
+    - cron: "13 5 * * *"
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # cargo-deny and cargo-vet are pinned in mise.test.toml, which mise loads
+  # only in the test environment. Both jobs call them directly, never
+  # through `mise run` or `mise x`, so mise-action installs only what each
+  # job names in install_args.
+  MISE_ENV: test
+  CARGO_TERM_COLOR: always
+
+jobs:
+  deny:
+    name: cargo deny (vitaminc-aead crates)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          install_args: rust cargo-binstall cargo:cargo-deny
+          cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2404
+
+      # `--manifest-path` on a workspace member checks that package's graph,
+      # not the workspace's. `--locked` refuses to touch Cargo.lock, so the
+      # graph checked is the one the pull request ships.
+      - name: cargo deny check, one crate at a time
+        run: |
+          status=0
+          for crate in vitaminc-aead recipher-frame vitaminc-aead-derive; do
+            echo "::group::$crate"
+            cargo deny --locked --config supply-chain/vitaminc-aead/deny.toml \
+              --manifest-path "packages/$crate/Cargo.toml" check || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+  vet:
+    name: cargo vet (vitaminc-aead crates)
+    if: github.event_name != 'schedule'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          install_args: rust cargo-binstall cargo:cargo-vet
+          cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2404
+
+      # The filter drops every other root workspace member, so the graph
+      # vetted is the three crates and their dependencies. `--locked` reads
+      # imports.lock as committed rather than fetching the registries.
+      - name: cargo vet
+        id: vet
+        run: |
+          cargo vet --locked --store-path supply-chain/vitaminc-aead \
+            --filter-graph "$(cat supply-chain/vitaminc-aead/filter-graph)"
+
+      # imports.lock keeps only the imported audits the committed graph
+      # needs, so a bump to a version a trusted registry already audits
+      # still fails `--locked`. Re-running without it fetches the registries:
+      # if that passes, the fix is to commit the refreshed imports.lock.
+      # Only after the vet step itself failed: a failed setup step leaves no
+      # cargo-vet to re-run.
+      - name: Say which kind of failure this is
+        if: failure() && steps.vet.outcome == 'failure'
+        run: |
+          store=supply-chain/vitaminc-aead
+          if cargo vet --store-path "$store" --filter-graph "$(cat "$store/filter-graph")" >/dev/null 2>&1; then
+            echo "::error title=stale imports.lock::A trusted registry already audits every version here. Run the command in $store/README.md without --locked and commit $store/imports.lock."
+          else
+            echo "::error title=unaudited dependency::A version here has neither an audit nor an exemption. See $store/README.md."
+          fi
+          exit 1

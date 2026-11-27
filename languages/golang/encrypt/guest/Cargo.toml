@@ -71,7 +71,7 @@ zerokms-protocol = "=0.12.31"
 # codec (`stack_encrypt::dynamic::frame`, vitaminc's own, shared with its
 # guest), the value model and `Protected` all come through stack-encrypt's
 # re-exports, so the guest cannot build against another vitaminc. Two
-# versions would fail only at the `ValueFrame: Decrypt` bound.
+# versions would fail only at the `OwnedFrame: Decrypt` bound.
 
 futures = { version = "0.3", default-features = false, features = ["executor"] }
 serde = "1"
@@ -97,3 +97,10 @@ base64ct = { version = "1.7", features = ["alloc"] }
 opt-level = 3
 lto = true
 strip = true
+
+# vitaminc-aead 0.10 and its sibling crates live in this repository and are
+# not published from here yet. Build against the copies, as the root
+# workspace does (see its [patch.crates-io]).
+[patch.crates-io]
+vitaminc-aead = { path = "../../../../packages/vitaminc-aead" }
+vitaminc-aead-derive = { path = "../../../../packages/vitaminc-aead-derive" }

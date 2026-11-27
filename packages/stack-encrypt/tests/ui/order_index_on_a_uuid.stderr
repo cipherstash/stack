@@ -1,0 +1,129 @@
+error[E0277]: `stack_encrypt::value::Uuid` is not `Orderable`: it has no order target of its own
+  --> tests/ui/order_index_on_a_uuid.rs:11:13
+   |
+11 |     let _ = indexed::<Uuid, (), Borrowed, _>(Ore);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ has no order target of its own
+   |
+   = help: the trait `Orderable` is not implemented for `stack_encrypt::value::Uuid`
+   = note: name the target: `scheme.target(I64).encrypt_checked(value)`
+   = note: there is no 8-bit target: an order term over 256 values reveals them, so an `i8` goes into `I16` or wider by name (`scheme.target(I16).encrypt(value)`), or into an equality index
+   = note: bytes order only into a target named for them, `scheme.target(Bytes)`: no ordering operator compares bytes
+   = help: the following other types implement trait `Orderable`:
+             &f32
+             &f64
+             &i128
+             &i16
+             &i32
+             &i64
+             &jiff::civil::date::Date
+             &jiff::timestamp::Timestamp
+           and $N others
+   = note: there are multiple different versions of crate `vitaminc_aead` in the dependency graph
+   = help: you can use `cargo tree` to explore your dependency tree
+   = note: required for `stack_encrypt::Ore` to implement `stack_encrypt::Index<stack_encrypt::value::Uuid>`
+
+error[E0277]: `stack_encrypt::value::Uuid` is not `Orderable`: it has no order target of its own
+  --> tests/ui/order_index_on_a_uuid.rs:12:13
+   |
+12 |     let _ = indexed::<Uuid, (), Borrowed, _>(Ope);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ has no order target of its own
+   |
+   = help: the trait `Orderable` is not implemented for `stack_encrypt::value::Uuid`
+   = note: name the target: `scheme.target(I64).encrypt_checked(value)`
+   = note: there is no 8-bit target: an order term over 256 values reveals them, so an `i8` goes into `I16` or wider by name (`scheme.target(I16).encrypt(value)`), or into an equality index
+   = note: bytes order only into a target named for them, `scheme.target(Bytes)`: no ordering operator compares bytes
+   = help: the following other types implement trait `Orderable`:
+             &f32
+             &f64
+             &i128
+             &i16
+             &i32
+             &i64
+             &jiff::civil::date::Date
+             &jiff::timestamp::Timestamp
+           and $N others
+   = note: there are multiple different versions of crate `vitaminc_aead` in the dependency graph
+   = help: you can use `cargo tree` to explore your dependency tree
+   = note: required for `stack_encrypt::Ope` to implement `stack_encrypt::Index<stack_encrypt::value::Uuid>`
+
+error[E0277]: `stack_encrypt::value::Uuid` is not `Orderable`: it has no order target of its own
+  --> tests/ui/order_index_on_a_uuid.rs:13:13
+   |
+13 |     let _ = indexed::<Uuid, (), Borrowed, _>(OreBlock);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ has no order target of its own
+   |
+   = help: the trait `Orderable` is not implemented for `stack_encrypt::value::Uuid`
+   = note: name the target: `scheme.target(I64).encrypt_checked(value)`
+   = note: there is no 8-bit target: an order term over 256 values reveals them, so an `i8` goes into `I16` or wider by name (`scheme.target(I16).encrypt(value)`), or into an equality index
+   = note: bytes order only into a target named for them, `scheme.target(Bytes)`: no ordering operator compares bytes
+   = help: the following other types implement trait `Orderable`:
+             &f32
+             &f64
+             &i128
+             &i16
+             &i32
+             &i64
+             &jiff::civil::date::Date
+             &jiff::timestamp::Timestamp
+           and $N others
+   = note: there are multiple different versions of crate `vitaminc_aead` in the dependency graph
+   = help: you can use `cargo tree` to explore your dependency tree
+   = note: required for `stack_encrypt::OreBlock` to implement `stack_encrypt::Index<stack_encrypt::value::Uuid>`
+
+error[E0277]: `stack_encrypt::value::Uuid` is not `Orderable`: it has no order target of its own
+  --> tests/ui/order_index_on_a_uuid.rs:14:27
+   |
+14 |     let _ = target::ore::<Uuid, (), Borrowed>();
+   |                           ^^^^ has no order target of its own
+   |
+   = help: the trait `Orderable` is not implemented for `stack_encrypt::value::Uuid`
+   = note: name the target: `scheme.target(I64).encrypt_checked(value)`
+   = note: there is no 8-bit target: an order term over 256 values reveals them, so an `i8` goes into `I16` or wider by name (`scheme.target(I16).encrypt(value)`), or into an equality index
+   = note: bytes order only into a target named for them, `scheme.target(Bytes)`: no ordering operator compares bytes
+   = help: the following other types implement trait `Orderable`:
+             &f32
+             &f64
+             &i128
+             &i16
+             &i32
+             &i64
+             &jiff::civil::date::Date
+             &jiff::timestamp::Timestamp
+           and $N others
+   = note: there are multiple different versions of crate `vitaminc_aead` in the dependency graph
+   = help: you can use `cargo tree` to explore your dependency tree
+note: required by a bound in `stack_encrypt::target::ore`
+  --> src/target/operations.rs
+   |
+   |     ore, crate::sem::OreTerm<S>, wipe(std::convert::identity), [],
+   |     --- required by a bound in this function
+   |     [S: crate::Orderable + EncryptRef + 'static]
+   |         ^^^^^^^^^^^^^^^^ required by this bound in `ore`
+
+error[E0277]: `stack_encrypt::value::Uuid` is not `Orderable`: it has no order target of its own
+  --> tests/ui/order_index_on_a_uuid.rs:14:13
+   |
+14 |     let _ = target::ore::<Uuid, (), Borrowed>();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ has no order target of its own
+   |
+   = help: the trait `Orderable` is not implemented for `stack_encrypt::value::Uuid`
+   = note: name the target: `scheme.target(I64).encrypt_checked(value)`
+   = note: there is no 8-bit target: an order term over 256 values reveals them, so an `i8` goes into `I16` or wider by name (`scheme.target(I16).encrypt(value)`), or into an equality index
+   = note: bytes order only into a target named for them, `scheme.target(Bytes)`: no ordering operator compares bytes
+   = help: the following other types implement trait `Orderable`:
+             &f32
+             &f64
+             &i128
+             &i16
+             &i32
+             &i64
+             &jiff::civil::date::Date
+             &jiff::timestamp::Timestamp
+           and $N others
+   = note: there are multiple different versions of crate `vitaminc_aead` in the dependency graph
+   = help: you can use `cargo tree` to explore your dependency tree
+note: required by a bound in `OreTerm`
+  --> src/sem/mod.rs
+   |
+   | pub struct OreTerm<T: Orderable>(OreClww8VariableV1, PhantomData<fn() -> T>);
+   |                       ^^^^^^^^^ required by this bound in `OreTerm`

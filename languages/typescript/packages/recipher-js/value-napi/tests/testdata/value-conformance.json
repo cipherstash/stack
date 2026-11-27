@@ -483,8 +483,7 @@
       "name": "envelope-truncated",
       "transport": "f3c8",
       "rule": "ADR 0001 section 3: the envelope is id, parameter and a physical scalar; a parameter and payload cut off are refused"
-    }
-,
+    },
     {
       "name": "typed-null-truncated",
       "transport": "15",
@@ -620,8 +619,7 @@
       "reencode": "1400000200000000000000000000000000",
       "reencode_value": "0.00",
       "rule": "ADR 0001 section 3: a decimal negative zero reads back as zero with its scale kept, and zero is always written without the sign"
-    }
-,
+    },
     {
       "name": "typed-null-uint32",
       "kind": "null",

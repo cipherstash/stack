@@ -2,22 +2,26 @@
 
 | File | Written by | Regenerated? |
 | --- | --- | --- |
-| `v4_rows.json` | the Go SDK's `TestV4RowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1` |
-| `v4_queries.json` | the by-name dispatch in `tests/v4_types.rs` | yes, with `EQL_UPDATE_FIXTURES=1` |
-| `v4_ordered_queries.json` | the by-name dispatch in `tests/v4_order.rs` | yes, with `EQL_UPDATE_FIXTURES=1` |
-| `v4_ordered_rows.json` | the Go SDK's `TestV4OrderedRowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1` |
-| `v4_ledger_queries.json` | the by-name dispatch in `tests/v4_date_time_numeric.rs` | yes, with `EQL_UPDATE_FIXTURES=1` |
-| `v4_ledger_rows.json` | the Go SDK's `TestV4LedgerRowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1` |
-| `text_eq_query.json`, `ste_vec_selectors.json` | `tests/text_eq.rs`, `tests/ste_vec_selectors.rs` | yes, see each test |
-| `v4_smallint_rows.json` | the Go SDK's `TestV4SmallintRowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1` |
-| `v4_json_rows.json` | the Go SDK's `TestV4JSONRowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1` |
+| `v4_rows.json` | the Go SDK's `TestV4RowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1`, then `pnpm run code:fix` |
+| `v4_queries.json` | the by-name dispatch in `tests/v4_types.rs` | yes, with `EQL_UPDATE_FIXTURES=1`, then `pnpm run code:fix` |
+| `v4_ordered_queries.json` | the by-name dispatch in `tests/v4_order.rs` | yes, with `EQL_UPDATE_FIXTURES=1`, then `pnpm run code:fix` |
+| `v4_ordered_rows.json` | the Go SDK's `TestV4OrderedRowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1`, then `pnpm run code:fix` |
+| `v4_ledger_queries.json` | the by-name dispatch in `tests/v4_date_time_numeric.rs` | yes, with `EQL_UPDATE_FIXTURES=1`, then `pnpm run code:fix` |
+| `v4_ledger_rows.json` | the Go SDK's `TestV4LedgerRowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1`, then `pnpm run code:fix` |
+| `text_eq_query.json`, `ste_vec_selectors.json` | `tests/text_eq.rs`, `tests/ste_vec_selectors.rs` | yes, see each test, then `pnpm run code:fix` |
+| `v4_smallint_rows.json` | the Go SDK's `TestV4SmallintRowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1`, then `pnpm run code:fix` |
+| `v4_json_rows.json` | the Go SDK's `TestV4JSONRowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1`, then `pnpm run code:fix` |
 | `stored_v4_rows_v1.json` | copied from `v4_rows.json` at the next build | **never: frozen** |
 | `stored_v4_json_rows_v1.json` | copied from `v4_json_rows.json`: the v1 stored format of the `Json` type | **never: frozen** |
+
+Every file here is Biome-formatted. After regenerating one, by a Rust test
+or by the Go SDK's tests, run `pnpm run code:fix` before committing. The
+readers compare the parsed JSON, so the layout does not fail them.
 
 `v4_ordered_queries.json` and `v4_ordered_rows.json` are not frozen: their
 `op` bytes are the order terms Stack Encrypt writes today, so a change that moves
 those bytes regenerates both together (Go writes the rows, Rust writes the
-queries, each with `EQL_UPDATE_FIXTURES=1`). No frozen
+queries, each with `EQL_UPDATE_FIXTURES=1`, then `pnpm run code:fix`). No frozen
 `stored_v4_ordered_rows_*` file exists yet; one is cut once the order-term
 bytes are final.
 
@@ -45,13 +49,19 @@ not regenerate the file. Fix the change, or, for a deliberate change to the
 stored format, add `stored_v4_rows_v2.json` beside this one, keep v1, and
 say in the CHANGELOG how v1 rows migrate.
 
+**Formatting is the one exception, for both frozen files.** `pnpm run
+code:fix` may change a frozen file's layout, as Biome formats every JSON
+file in the repository. Its parsed JSON must never change that way. Every
+reader parses the file, so a layout change cannot fail a test.
+
 ## `stored_v4_json_rows_v1.json` (FROZEN)
 
 `Setting` rows the Go SDK's generated code stored as the storage-only `Json`
 type (`public.eql_v4_json`), in its v1 stored format: a raw document, a
 document of a Go type, and a map. Each stored value is `{v, i, c}`, and `c`
 holds the document's JSON text in one text leaf. The file follows the same
-rule as `stored_v4_rows_v1.json`: it is never regenerated or edited.
+rule as `stored_v4_rows_v1.json`: it is never regenerated or edited, and
+only its layout may change, by `pnpm run code:fix`.
 
 - `tests/v4_types.rs` (`frozen_json_rows_the_go_sdk_stored_still_open`)
   parses every stored value as `Json` and opens it to the row's document.

@@ -13,6 +13,52 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Added
+
+- `gensupport.UUID`, the kind `"uuid"`: a field the engine seals and
+  opens as a UUID, sixteen bytes under vitaminc's UUID logical type. It
+  takes an equality index and no order or match index. Its value is a
+  `vcvalue.UUID`, or a value of any type whose underlying type is
+  `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
+  one. `stashgen` does not yet map a Go type to it.
+
+### Changed
+
+- **A record field converts a number of another width or kind, as a
+  query does.** A value sealed through `Cipher.Seal` for a field that
+  declares a type is read as that type when the conversion is exact: an
+  `int16` 1 for an `int8` field, an `int64` for an `int128`, a `float64`
+  34 for an `int32`, an `int32` for a `float64` or a `decimal`, a
+  `float64` 1.5 for a `float32`. It is stored as the same number sent at
+  the declared width, so the stored bytes and terms do not change. A
+  conversion that would lose something is still refused with
+  `ErrEncoding`, reason `field_type`: a fraction or an out-of-range number
+  for an integer, a number a float type would round, a float for a
+  `decimal`. Text, a date, a timestamp or a UUID never converts to or
+  from a number. Generated code already sends each value at its field's
+  width, so it does not change.
+
+### Fixed
+
+- **Other calls no longer wait behind a token refresh** (#1958). An
+  `auth.Strategy` is shared by every encrypt and decrypt in a process, and
+  about once every 15 minutes its token is refreshed with the token
+  service. That request held the strategy until the service answered, so
+  every other call that needed a token waited for it too, for as long as
+  the request took: a new connection each time, and about a second when the
+  service was slow. Now a refresh holds up only the call that started it,
+  for every strategy: an access key, OIDC and a device session. Other calls
+  get the current token at once while it still works. A call that finds no
+  usable token, at startup or after the token has expired, waits for the
+  exchange already in flight rather than starting a second one.
+  - `ProfileStore.Close` waits for a token request already sent, so a
+    device session's refresh in flight saves the rotated refresh token
+    before the profile closes. Token calls waiting behind it fail with
+    `ErrState`.
+  - A device session's refresh still held up at the 30-second backstop now
+    fails as a transport failure, and the profile stays open. Before, the
+    backstop closed the profile.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6
@@ -183,8 +229,26 @@ installed rc.6's bundle, you do not need to run it again.
 
 ### Changed
 
-- **Decrypt uses about a tenth of the CPU it did in rc.6.** The guest's
-  runtime was built with wazero's `WithCloseOnContextDone`. That option
+- **Against rc.6, a decrypt uses 13 times less CPU and 5 times less wall
+  time.** The benches in cipherstash/benches#31 ran both releases as
+  tagged, in alternating rounds. They ran on one Apple silicon laptop
+  against ZeroKMS, with the CPU clock held steady. Each figure is the
+  median of all 54 calls (6 rounds of 9) for 100 rows of 14 columns
+  (1,400 values). "Native Rust" is the same engine, stack-encrypt, called
+  from Rust with no WebAssembly.
+  - Decrypt: 29 ms of CPU, against 390 ms in rc.6. Wall time: 114 ms,
+    against 624 ms. Native Rust: 10 ms of CPU, 97 ms of wall time.
+  - Decrypt a page of 100 rows from a 1M-row table: 29 ms of CPU, against
+    400 ms. Wall time: 116 ms, against 641 ms.
+  - Encrypt: 33 ms of CPU, against 444 ms. Wall time: 99 ms, against
+    618 ms. Native Rust takes 97 ms, about the same wall time as rc.7.
+
+  The items below each measure one change against the guest just before
+  it, in a run of their own. Their figures are not comparable with these,
+  or with each other.
+- **Dropping a wazero option and building the guest for speed cut decrypt
+  CPU to about a tenth.** The guest's runtime was built with wazero's
+  `WithCloseOnContextDone`. That option
   puts a call back into Go at the top of every loop the guest runs, and the
   guest's cryptography is almost all loops. The runtime no longer sets the
   option, and the guest is now built at `opt-level = 3` rather than for
@@ -243,6 +307,18 @@ installed rc.6's bundle, you do not need to run it again.
   guest, and the CPU clock was held steady. CPU time does not change, and the guest still yields
   every 64 keys. The guest holds at most 1,500 keys' wrapped material from
   ZeroKMS at a time.
+- **Deriving a data key uses wasm SIMD** (#1779). The guest now depends on
+  `zerokms-keyset` 0.3.4, in place of `recipher` 0.3.1. It builds that
+  crate with SIMD: instructions that work on several values at once.
+  Re-encrypting key material is the costly part of deriving a data key.
+  Under wazero, 20,000 derivations take 65 ms with SIMD, against 315 ms
+  without, and give the same keys. Decrypting 100 rows of 14 columns
+  against ZeroKMS took about 38 ms of CPU without SIMD, in an earlier run
+  of the same benches, and takes about 29 ms in rc.7
+  (cipherstash/benches#31). That drop of 24% is close to the 23% that SIMD
+  saved in a test of key derivation alone, but SIMD was not measured on
+  its own in rc.7. wazero runs SIMD by default, so your app needs
+  no change.
 - **A stuck call is no longer interrupted.** A call that runs on 30 seconds
   after its context ended is a bug. The option that interrupted it is gone,
   so it now runs on.

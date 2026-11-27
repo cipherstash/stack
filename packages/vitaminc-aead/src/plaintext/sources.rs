@@ -1,0 +1,1379 @@
+//! Rust types as [`Encrypt`] sources.
+//!
+//! Byte strings (`Vec<u8>`, `[u8; N]`, `&[u8]`, `String`, `&str`) are byte
+//! and text leaves, as they were for 0.5's `Encrypt` trait. For the same reason
+//! as then, `u8` on its own is not a source: if it were, the generic `Vec<T>`
+//! sequence impl would overlap the `Vec<u8>` byte leaf. An 8-bit value from
+//! a host still arrives as [`Int::U8`](super::Int::U8); a Rust caller that needs one uses
+//! [`Raw`].
+
+use std::collections::{BTreeMap, HashMap};
+
+use vitaminc_protected::{Controlled, OpaqueDebug, Protected, ProtectedRef};
+use zeroize::Zeroize;
+
+use super::kinds::{FixedType, Float, Logical, Physical, Width};
+use super::{depth, visit_seq, Encrypt, EncryptRef, MapSink, Scalar, SeqSink, Sink};
+
+macro_rules! int {
+    ($($ty:ty => $width:ident),* $(,)?) => {
+        $(
+            impl Encrypt for $ty {
+                const DEPTH: Option<usize> = depth::SCALAR;
+                const FIXED: Option<FixedType> = FixedType::plain(Width::$width);
+                fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                    sink.scalar(None, Physical::Int(self.into()))
+                }
+            }
+
+            impl Encrypt for &$ty {
+                const DEPTH: Option<usize> = depth::SCALAR;
+                const FIXED: Option<FixedType> = <$ty as Encrypt>::FIXED;
+                fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                    (*self).visit(sink)
+                }
+            }
+        )*
+    };
+}
+
+int! {
+    i8 => I8, i16 => I16, i32 => I32, i64 => I64, i128 => I128,
+    u16 => U16, u32 => U32, u64 => U64, u128 => U128,
+}
+
+impl Encrypt for bool {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Bool(self))
+    }
+}
+
+impl Encrypt for f32 {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    const FIXED: Option<FixedType> = FixedType::plain(Width::F32);
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Float(Float::F32(self)))
+    }
+}
+
+impl Encrypt for f64 {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    const FIXED: Option<FixedType> = FixedType::plain(Width::F64);
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Float(Float::F64(self)))
+    }
+}
+
+/// A borrowed copy scalar is the same scalar, so a borrowed container of
+/// them (`&Vec<u32>`, `&[bool]`, `&Option<f64>`) is a source too.
+macro_rules! by_ref {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl Encrypt for &$ty {
+                const DEPTH: Option<usize> = depth::SCALAR;
+                const FIXED: Option<FixedType> = <$ty as Encrypt>::FIXED;
+                fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                    (*self).visit(sink)
+                }
+            }
+        )*
+    };
+}
+
+by_ref!(bool, f32, f64);
+
+impl Encrypt for &str {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Text(self))
+    }
+}
+
+/// An owned byte or text leaf wraps itself before the sink sees it, as 0.5's
+/// `Encrypt` impl did, and walks as a borrow of the wrapped value.
+/// So a bare leaf that a container moved out, or that a caller handed over
+/// bare, still has its buffer wiped when the walk is done with it.
+impl Encrypt for String {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        Protected::new(self).visit(sink)
+    }
+}
+
+impl Encrypt for &String {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Text(self))
+    }
+}
+
+impl Encrypt for &[u8] {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Bytes(self))
+    }
+}
+
+/// `Vec<u8>` is a byte leaf, not a sequence of `u8` elements: the same
+/// shape `String` describes, and the shape `Vec<u8>` will read back.
+impl Encrypt for Vec<u8> {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        Protected::new(self).visit(sink)
+    }
+}
+
+impl<const N: usize> Encrypt for [u8; N] {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        Protected::new(self).visit(sink)
+    }
+}
+
+/// Borrowed byte leaves: the caller owns the buffer and its wiping.
+impl Encrypt for &Vec<u8> {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Bytes(self))
+    }
+}
+
+impl<const N: usize> Encrypt for &[u8; N] {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Bytes(self))
+    }
+}
+
+/// A byte string borrowed from anywhere, for callers holding a slice whose
+/// element type would otherwise read as a sequence.
+/// `Debug` is redacted, as for every plaintext scalar.
+#[derive(Clone, Copy, OpaqueDebug)]
+pub struct Bytes<'a>(pub &'a [u8]);
+
+impl Encrypt for Bytes<'_> {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Bytes(self.0))
+    }
+}
+
+impl Encrypt for &Bytes<'_> {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (*self).visit(sink)
+    }
+}
+
+/// Any scalar, as given: a logical type and a physical value.
+///
+/// `Debug` is redacted, as for every plaintext scalar.
+#[derive(Clone, Copy, OpaqueDebug)]
+pub struct Raw<'a>(pub Option<Logical>, pub Physical<'a>);
+
+impl Encrypt for Raw<'_> {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(self.0, self.1)
+    }
+}
+
+impl Encrypt for &Raw<'_> {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (*self).visit(sink)
+    }
+}
+
+/// Mark each type as a [`Scalar`], and check that its `DEPTH` agrees, so
+/// the marker can never sit on a container. The check is a named `const`,
+/// so `cargo check` reports a disagreement where the impl is.
+macro_rules! scalar {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl Scalar for $ty {}
+            const _: () = assert!(
+                depth::is_scalar(<$ty as Encrypt>::DEPTH),
+                "a `Scalar` type's walk must be exactly one leaf",
+            );
+        )*
+    };
+}
+
+// Every leaf source above, owned and borrowed. `u8` is not a source, so
+// it is not here either; see the module docs.
+scalar! {
+    bool, &bool, f32, &f32, f64, &f64,
+    i8, &i8, i16, &i16, i32, &i32, i64, &i64, i128, &i128,
+    u16, &u16, u32, &u32, u64, &u64, u128, &u128,
+    &str, String, &String,
+    &[u8], Vec<u8>, &Vec<u8>,
+    Bytes<'_>, &Bytes<'_>, Raw<'_>, &Raw<'_>,
+}
+
+/// A byte array of any length is one byte leaf. Its `DEPTH` is
+/// [`depth::SCALAR`] for every `N`; the agreement check for a generic impl
+/// is in the tests, at a concrete length.
+impl<const N: usize> Scalar for [u8; N] {}
+impl<const N: usize> Scalar for &[u8; N] {}
+
+/// A borrow of a borrowed source is the same source. This is what a
+/// derived struct with a borrowed field (`&'a str`, `&'a [u8]`,
+/// `Option<&'a str>`) needs when it is walked by reference, as it is from
+/// inside a `Protected`: each field is then visited as `&&'a str`.
+impl<T: ?Sized + EncryptRef> Encrypt for &&T {
+    const DEPTH: Option<usize> = T::REF_DEPTH;
+    const FIXED: Option<FixedType> = T::REF_FIXED;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (**self).visit_ref(sink)
+    }
+}
+
+impl<'b, T: ?Sized + EncryptRef> Scalar for &&'b T where &'b T: Scalar {}
+
+/// `None` is a null. There is no separate "absent" in the data model: a
+/// Rust `None` and a host null mean the same thing.
+///
+/// A `Some` walks exactly as its value would: `Some(42i32)` is the same as
+/// `42i32`, `Some(vec![1u8, 2])` is one bytes leaf, and
+/// `Some(vec![1i32, 2])` is a sequence of two int leaves.
+///
+/// A `None` is always one leaf, whatever `T` is. When `T` has a
+/// [`FIXED`](Encrypt::FIXED) type (an int, a float, a date, a timestamp,
+/// a decimal, a uuid), that leaf is a typed null, which the encrypting
+/// sink pads to the length of a `Some`, to prevent differentiating between
+/// an absent value and a present value.
+///
+/// Otherwise (text, bytes, a bool, a container) it is the plain
+/// null, the same leaf as a host null. An `Option<Option<T>>` has `T`'s
+/// type too, so its two `None`s seal alike, as they always have.
+///
+/// An `Option<T>` is not a [`Scalar`], even when `T` is: its walk is one
+/// leaf, but a caller that bounds on `Scalar` asks for a value that is
+/// present. That caller decides for itself how to seal an absent value.
+///
+/// # Examples
+///
+/// Each leaf below is reported as its tag and its length in bytes, through
+/// an [`Equatable`](vitaminc_protected::Equatable) that can be compared but
+/// not read, so no example ever looks at a plaintext.
+///
+/// ```
+/// use std::convert::Infallible;
+/// use vitaminc_aead::{plan, tags, CipherText, Encrypt, EncryptError};
+/// use vitaminc_protected::{Controlled, Equatable, Protected};
+///
+/// /// A leaf's tag and its length in bytes.
+/// type Shape = Equatable<Protected<[u8; 2]>>;
+///
+/// fn shape(tag: u8, len: u8) -> Shape {
+///     Equatable::new([tag, len])
+/// }
+///
+/// /// The shape of the one leaf `value` plans.
+/// fn leaf<P: Encrypt>(value: P) -> Result<Shape, EncryptError<Infallible>> {
+///     match plan::<_, Infallible, _>(value, "aad")? {
+///         CipherText::Single(leaf) => Ok(leaf
+///             .plaintext
+///             .map(|bytes| [bytes[0], u8::try_from(bytes.len()).expect("short")])
+///             .into()),
+///         _ => panic!("not one leaf"),
+///     }
+/// }
+///
+/// // `Option<i32>`: an `i32` is an int leaf, the tag and four bytes. A
+/// // `Some` is the same leaf, and a `None` is a typed null padded to the
+/// // same five bytes.
+/// assert!(leaf(42i32)? == shape(tags::INT32, 5));
+/// assert!(leaf(Some(42i32))? == shape(tags::INT32, 5));
+/// assert!(leaf(None::<i32>)? == shape(tags::TYPED_NULL, 5));
+///
+/// // `Option<String>` and `Option<Vec<u8>>`: a `String` or a `Vec<u8>` is
+/// // a text or bytes leaf, the tag and the bytes, and so is a `Some`. A
+/// // `None` is the one-byte plain null; there is no width to hide.
+/// assert!(leaf(String::from("hi"))? == shape(tags::STRING, 3));
+/// assert!(leaf(Some(String::from("hi")))? == shape(tags::STRING, 3));
+/// assert!(leaf(vec![1u8, 2])? == shape(tags::BYTES, 3));
+/// assert!(leaf(Some(vec![1u8, 2]))? == shape(tags::BYTES, 3));
+/// assert!(leaf(None::<String>)? == shape(tags::NULL, 1));
+/// assert!(leaf(None::<Vec<u8>>)? == shape(tags::NULL, 1));
+///
+/// // `Option<Vec<i32>>`: a `Some` is a sequence with one int leaf per
+/// // element, two here, and a `None` is still the one plain null leaf.
+/// let some = plan::<_, Infallible, _>(Some(vec![1i32, 2]), "aad")?;
+/// let CipherText::Sequence(elements) = some else { panic!("not a sequence") };
+/// assert_eq!(elements.len(), 2);
+/// assert!(elements.iter().all(|element| matches!(element, CipherText::Single(_))));
+/// assert!(leaf(None::<Vec<i32>>)? == shape(tags::NULL, 1));
+///
+/// // `Option<Option<i32>>`: both `None`s are the `i32` typed null.
+/// assert!(leaf(None::<Option<i32>>)? == shape(tags::TYPED_NULL, 5));
+/// assert!(leaf(Some(None::<i32>))? == shape(tags::TYPED_NULL, 5));
+/// # Ok::<(), EncryptError<Infallible>>(())
+/// ```
+impl<T: Encrypt> Encrypt for Option<T> {
+    const DEPTH: Option<usize> = T::DEPTH;
+    const FIXED: Option<FixedType> = T::FIXED;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Some(v) => v.visit(sink),
+            None => null::<T, S>(sink),
+        }
+    }
+}
+
+impl<T: EncryptRef> Encrypt for &Option<T> {
+    const DEPTH: Option<usize> = T::REF_DEPTH;
+    const FIXED: Option<FixedType> = T::REF_FIXED;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Some(v) => v.visit_ref(sink),
+            None => null_of(T::REF_FIXED, sink),
+        }
+    }
+}
+
+/// The null an absent `T` walks as: typed if `T` is fixed width.
+fn null<T: Encrypt, S: Sink>(sink: S) -> Result<S::Ok, S::Error> {
+    null_of(T::FIXED, sink)
+}
+
+/// The null of a value whose fixed type is `fixed`.
+fn null_of<S: Sink>(fixed: Option<FixedType>, sink: S) -> Result<S::Ok, S::Error> {
+    match fixed {
+        Some(ty) => sink.typed_null(ty),
+        None => sink.scalar(None, Physical::Null),
+    }
+}
+
+/// A protected value walks as a borrow of what it wraps, so nothing leaves
+/// the wrapper during the walk, and everything in it, visited or not, is
+/// zeroized when the wrapper drops at the end of it.
+impl<T: Zeroize + EncryptRef> Encrypt for Protected<T> {
+    const DEPTH: Option<usize> = T::REF_DEPTH;
+    const FIXED: Option<FixedType> = T::REF_FIXED;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.risky_ref().visit_ref(sink)
+        // `self` drops here and zeroizes the whole value.
+    }
+}
+
+/// A protected scalar is the scalar it wraps, walked as a borrow.
+impl<T: Zeroize + EncryptRef> Scalar for Protected<T> where for<'a> &'a T: Scalar {}
+
+/// A borrowed protected value is the same borrow; the caller's wrapper
+/// does the wiping.
+impl<T: Zeroize + EncryptRef> Encrypt for &Protected<T> {
+    const DEPTH: Option<usize> = T::REF_DEPTH;
+    const FIXED: Option<FixedType> = T::REF_FIXED;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.risky_ref().visit_ref(sink)
+    }
+}
+
+impl<'a, T: Zeroize + EncryptRef> Scalar for &'a Protected<T> where &'a T: Scalar {}
+
+/// A protected borrow ([`AsProtectedRef`](vitaminc_protected::AsProtectedRef))
+/// walks as the borrow it wraps, exactly as `&Protected<T>` does: the
+/// same depth, fixed type and visit, so a fixed-width `None` behind it is
+/// still a typed null. Nothing is cloned or copied out, and the walk wipes
+/// nothing, whether it finishes or not. Wiping is up to whatever owns the
+/// borrowed value: a `Protected`, `Equatable`, `Exportable` or `Locked`
+/// owner wipes it when it drops, and so does a `Buffer`.
+///
+/// Which owners lend one is up to `vitaminc-protected`. A `Usage` does not,
+/// so a scoped value is never encrypted without a `risky_ref` call. A
+/// `Locked` does: sealing then copies its plaintext into the leaf's
+/// `Protected<Vec<u8>>`, which is wiped but is not locked memory, as any
+/// consumer of the borrow does with the value it reads.
+///
+/// `T` may be unsized. `ProtectedRef<'_, str>` is a text leaf and
+/// `ProtectedRef<'_, [u8]>` a byte leaf. A `Protected<String>` lends a
+/// `ProtectedRef<String>`, which seals as text, as does the
+/// `ProtectedRef<str>` that [`as_deref`](ProtectedRef::as_deref) narrows
+/// it to. To seal its bytes instead, narrow it with
+/// [`as_ref_of`](ProtectedRef::as_ref_of) to `[u8]`; a string sealed as
+/// bytes reads back only as bytes, never as a `String`. A bare `str` lends
+/// nothing, because nothing wipes it.
+impl<T: ?Sized + EncryptRef> Encrypt for ProtectedRef<'_, T> {
+    const DEPTH: Option<usize> = T::REF_DEPTH;
+    const FIXED: Option<FixedType> = T::REF_FIXED;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.risky_ref().visit_ref(sink)
+    }
+}
+
+/// A protected borrow of a scalar is that scalar.
+impl<'a, T: ?Sized + EncryptRef> Scalar for ProtectedRef<'a, T> where &'a T: Scalar {}
+
+/// A borrowed protected borrow is the same borrow. A derived struct with a
+/// `ProtectedRef` field, or an `&Option<ProtectedRef<_>>`, walks it this way.
+impl<T: ?Sized + EncryptRef> Encrypt for &ProtectedRef<'_, T> {
+    const DEPTH: Option<usize> = T::REF_DEPTH;
+    const FIXED: Option<FixedType> = T::REF_FIXED;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        // `ProtectedRef` is not `Copy`, so walk the borrow it wraps, which
+        // is what the owned impl does.
+        self.risky_ref().visit_ref(sink)
+    }
+}
+
+impl<'a, T: ?Sized + EncryptRef> Scalar for &ProtectedRef<'a, T> where &'a T: Scalar {}
+
+/// An owned sequence takes its elements out one at a time, so a walk that
+/// stops part way never drops an unvisited element bare: the elements the
+/// walk did not reach are walked into a sink that discards them before they
+/// drop, which wipes every owned leaf among them the way a completed walk
+/// would. (Inside a `Protected`, a sequence is walked as a borrow instead,
+/// and is zeroized whole with its wrapper.)
+impl<T: Encrypt> Encrypt for Vec<T> {
+    const DEPTH: Option<usize> = depth::container(T::DEPTH);
+    fn visit<S: Sink>(mut self, sink: S) -> Result<S::Ok, S::Error> {
+        let result = visit_popping(sink, &mut self);
+        discard(self);
+        result
+    }
+}
+
+/// Walk `items` in order, popping each element only once its sink exists,
+/// so on an error every element not yet visited is still in `items`.
+fn visit_popping<S: Sink, T: Encrypt>(sink: S, items: &mut Vec<T>) -> Result<S::Ok, S::Error> {
+    items.reverse();
+    let mut seq = sink.seq(Some(items.len()))?;
+    for _ in 0..items.len() {
+        let element = seq.element()?;
+        if let Some(item) = items.pop() {
+            item.visit(element)?;
+        }
+    }
+    seq.end()
+}
+
+/// Visit each of `items` into [`Discard`], so the owned leaves among them
+/// wrap themselves and are wiped as they drop.
+fn discard<T: Encrypt>(items: Vec<T>) {
+    for item in items {
+        discard_one(item);
+    }
+}
+
+/// Walk `value` into a sink that keeps nothing, so every owned leaf in it
+/// wraps itself and is wiped as it drops, the way a completed walk would
+/// have wiped it. For a source that has to give up part way: a derived
+/// struct walks the fields it has not reached through here when an entry
+/// fails, as a bare `Vec<T>` does its leftover elements.
+#[doc(hidden)]
+pub fn discard_one<P: Encrypt>(value: P) {
+    // `Discard` never fails, and a source error is no longer anyone's
+    // concern once the walk has already failed.
+    let _ = value.visit(Discard);
+}
+
+/// A sink that keeps nothing. Walking a value into it runs the value's own
+/// wiping without sending its contents anywhere.
+struct Discard;
+
+/// [`Discard`] never fails on its own; this only carries a source's error.
+struct Discarded;
+
+impl super::Error for Discarded {
+    fn source(_: super::SourceError) -> Self {
+        Discarded
+    }
+}
+
+impl Sink for Discard {
+    type Ok = ();
+    type Error = Discarded;
+    type Seq = Discard;
+    type Map = Discard;
+
+    fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), Discarded> {
+        Ok(())
+    }
+
+    fn typed_null(self, _: FixedType) -> Result<(), Discarded> {
+        Ok(())
+    }
+
+    fn seq(self, _: Option<usize>) -> Result<Discard, Discarded> {
+        Ok(Discard)
+    }
+
+    fn map(self, _: Option<usize>) -> Result<Discard, Discarded> {
+        Ok(Discard)
+    }
+
+    /// Passthrough is cleartext by contract, so it is not walked.
+    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<(), Discarded> {
+        Ok(())
+    }
+}
+
+impl SeqSink for Discard {
+    type Ok = ();
+    type Error = Discarded;
+    type Element<'s> = Discard;
+
+    fn element(&mut self) -> Result<Discard, Discarded> {
+        Ok(Discard)
+    }
+
+    fn end(self) -> Result<(), Discarded> {
+        Ok(())
+    }
+}
+
+impl MapSink for Discard {
+    type Ok = ();
+    type Error = Discarded;
+    type Entry<'s> = Discard;
+
+    fn entry(&mut self, _: &str) -> Result<Discard, Discarded> {
+        Ok(Discard)
+    }
+
+    fn end(self) -> Result<(), Discarded> {
+        Ok(())
+    }
+}
+
+impl<T: EncryptRef> Encrypt for &Vec<T> {
+    const DEPTH: Option<usize> = depth::container(T::REF_DEPTH);
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        visit_seq(sink, Some(self.len()), self.iter().map(EncryptRef::lend))
+    }
+}
+
+impl<T: EncryptRef> Encrypt for &[T] {
+    const DEPTH: Option<usize> = depth::container(T::REF_DEPTH);
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        visit_seq(sink, Some(self.len()), self.iter().map(EncryptRef::lend))
+    }
+}
+
+/// One impl covers compile-time keys (`&'static str`) and runtime keys
+/// (`String`), as 0.5's `Encrypt` impl did.
+impl<K: AsRef<str>, V: Encrypt> Encrypt for HashMap<K, V> {
+    const DEPTH: Option<usize> = depth::container(V::DEPTH);
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        let mut map = sink.map(Some(self.len()))?;
+        for (key, value) in self {
+            value.visit(map.entry(key.as_ref())?)?;
+        }
+        map.end()
+    }
+}
+
+impl<K: AsRef<str>, V: Encrypt> Encrypt for BTreeMap<K, V> {
+    const DEPTH: Option<usize> = depth::container(V::DEPTH);
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        let mut map = sink.map(Some(self.len()))?;
+        for (key, value) in self {
+            value.visit(map.entry(key.as_ref())?)?;
+        }
+        map.end()
+    }
+}
+
+impl<K: AsRef<str>, V: EncryptRef> Encrypt for &HashMap<K, V> {
+    const DEPTH: Option<usize> = depth::container(V::REF_DEPTH);
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        let mut map = sink.map(Some(self.len()))?;
+        for (key, value) in self {
+            value.visit_ref(map.entry(key.as_ref())?)?;
+        }
+        map.end()
+    }
+}
+
+impl<K: AsRef<str>, V: EncryptRef> Encrypt for &BTreeMap<K, V> {
+    const DEPTH: Option<usize> = depth::container(V::REF_DEPTH);
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        let mut map = sink.map(Some(self.len()))?;
+        for (key, value) in self {
+            value.visit_ref(map.entry(key.as_ref())?)?;
+        }
+        map.end()
+    }
+}
+
+// The jiff and rust_decimal types are logical types over an int. Each
+// source says which, and the int it stands for.
+
+#[cfg(feature = "jiff")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
+mod jiff_sources {
+    use super::*;
+    use crate::plaintext::kinds::{jiff as conv, Int, TimeUnit};
+    use crate::plaintext::{Error, SourceError};
+    use ::jiff::{civil::Date, Timestamp};
+
+    impl Encrypt for Date {
+        const DEPTH: Option<usize> = depth::SCALAR;
+        const FIXED: Option<FixedType> = FixedType::new(Some(Logical::Date), Width::I32);
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            sink.scalar(
+                Some(Logical::Date),
+                Physical::Int(Int::I32(conv::date_days(self))),
+            )
+        }
+    }
+
+    /// Stored as nanoseconds, the unit of the `TIMESTAMP` tag. An instant
+    /// outside the wire's range, which jiff 1.0.0 can make (see
+    /// [`timestamp_nanos`](conv::timestamp_nanos)), stops the walk; a
+    /// [`Timestamp`](crate::Timestamp) field refuses it when the value is
+    /// built instead.
+    impl Encrypt for Timestamp {
+        const DEPTH: Option<usize> = depth::SCALAR;
+        const FIXED: Option<FixedType> =
+            FixedType::new(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128);
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            let nanos = conv::timestamp_nanos(self).ok_or_else(|| {
+                S::Error::source(SourceError::msg("a timestamp outside jiff's range"))
+            })?;
+            sink.scalar(
+                Some(Logical::Timestamp(TimeUnit::Nanos)),
+                Physical::Int(Int::I128(nanos)),
+            )
+        }
+    }
+
+    impl Encrypt for &Date {
+        const DEPTH: Option<usize> = depth::SCALAR;
+        const FIXED: Option<FixedType> = Date::FIXED;
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            (*self).visit(sink)
+        }
+    }
+
+    impl Encrypt for &Timestamp {
+        const DEPTH: Option<usize> = depth::SCALAR;
+        const FIXED: Option<FixedType> = <Timestamp as Encrypt>::FIXED;
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            (*self).visit(sink)
+        }
+    }
+
+    scalar!(Date, &Date, Timestamp, &Timestamp);
+}
+
+#[cfg(feature = "rust_decimal")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rust_decimal")))]
+impl Encrypt for rust_decimal::Decimal {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    /// Every scale shares the one typed null: the scale is in the payload.
+    const FIXED: Option<FixedType> =
+        FixedType::new(Some(Logical::Decimal { scale: 0 }), Width::I128);
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        let (scale, mantissa) = super::kinds::decimal::parts(self);
+        sink.scalar(
+            Some(Logical::Decimal { scale }),
+            Physical::Int(super::kinds::Int::I128(mantissa)),
+        )
+    }
+}
+
+#[cfg(feature = "rust_decimal")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rust_decimal")))]
+impl Encrypt for &rust_decimal::Decimal {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    const FIXED: Option<FixedType> = <rust_decimal::Decimal as Encrypt>::FIXED;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (*self).visit(sink)
+    }
+}
+
+#[cfg(feature = "rust_decimal")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rust_decimal")))]
+impl Scalar for rust_decimal::Decimal {}
+#[cfg(feature = "rust_decimal")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rust_decimal")))]
+impl Scalar for &rust_decimal::Decimal {}
+#[cfg(feature = "rust_decimal")]
+const _: () = assert!(depth::is_scalar(<rust_decimal::Decimal as Encrypt>::DEPTH));
+
+#[cfg(feature = "uuid")]
+#[cfg_attr(docsrs, doc(cfg(feature = "uuid")))]
+impl Encrypt for uuid::Uuid {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    /// Sixteen bytes under the uuid type: the one bytes leaf whose width is
+    /// fixed.
+    const FIXED: Option<FixedType> = FixedType::new(Some(Logical::Uuid), Width::Bytes16);
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(Some(Logical::Uuid), Physical::Bytes(self.as_bytes()))
+    }
+}
+
+#[cfg(feature = "uuid")]
+#[cfg_attr(docsrs, doc(cfg(feature = "uuid")))]
+impl Encrypt for &uuid::Uuid {
+    const DEPTH: Option<usize> = depth::SCALAR;
+    const FIXED: Option<FixedType> = <uuid::Uuid as Encrypt>::FIXED;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (*self).visit(sink)
+    }
+}
+
+#[cfg(feature = "uuid")]
+#[cfg_attr(docsrs, doc(cfg(feature = "uuid")))]
+impl Scalar for uuid::Uuid {}
+#[cfg(feature = "uuid")]
+#[cfg_attr(docsrs, doc(cfg(feature = "uuid")))]
+impl Scalar for &uuid::Uuid {}
+#[cfg(feature = "uuid")]
+const _: () = assert!(depth::is_scalar(<uuid::Uuid as Encrypt>::DEPTH));
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plaintext::kinds::Int;
+    use crate::plaintext::record::{record, Event, Owned, RecordError};
+    use crate::plaintext::{Error, SeqSink, SourceError};
+
+    fn scalar(v: Owned) -> Event {
+        Event::Scalar(None, v)
+    }
+
+    #[test]
+    fn primitives_are_scalars() {
+        assert_eq!(
+            record(34u32).expect("ok"),
+            [scalar(Owned::Int(Int::U32(34)))]
+        );
+        assert_eq!(record(-1i8).expect("ok"), [scalar(Owned::Int(Int::I8(-1)))]);
+        assert_eq!(record(true).expect("ok"), [scalar(Owned::Bool(true))]);
+        assert_eq!(
+            record(1.5f64).expect("ok"),
+            [scalar(Owned::Float(Float::F64(1.5)))]
+        );
+        assert_eq!(
+            record("hi").expect("ok"),
+            [scalar(Owned::Text("hi".into()))]
+        );
+        assert_eq!(
+            record(String::from("hi")).expect("ok"),
+            [scalar(Owned::Text("hi".into()))]
+        );
+    }
+
+    // The borrows are the point: each one picks the reference impl.
+    #[allow(clippy::needless_borrows_for_generic_args, clippy::op_ref)]
+    #[test]
+    fn floats_and_borrowed_scalars_are_scalars() {
+        assert_eq!(
+            record(1.5f32).expect("ok"),
+            [scalar(Owned::Float(Float::F32(1.5)))]
+        );
+        assert_eq!(record(&1.5f32).expect("ok"), record(1.5f32).expect("ok"));
+        assert_eq!(record(&1.5f64).expect("ok"), record(1.5f64).expect("ok"));
+        assert_eq!(record(&true).expect("ok"), record(true).expect("ok"));
+        assert_eq!(record(&7u64).expect("ok"), record(7u64).expect("ok"));
+        let owned = String::from("hi");
+        assert_eq!(
+            record(&owned).expect("ok"),
+            [scalar(Owned::Text("hi".into()))]
+        );
+    }
+
+    #[test]
+    fn a_source_error_keeps_its_cause() {
+        use core::error::Error as _;
+
+        #[derive(Debug)]
+        struct Getter(std::io::Error);
+        impl core::fmt::Display for Getter {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str("getter threw")
+            }
+        }
+        impl core::error::Error for Getter {
+            fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        let err = SourceError::new(Getter(std::io::Error::other("disk gone")));
+        assert_eq!(err.to_string(), "getter threw");
+        assert!(err.inner().is::<Getter>());
+        assert_eq!(
+            err.source().map(|cause| cause.to_string()),
+            Some("disk gone".into())
+        );
+        assert!(SourceError::msg("plain").source().is_none());
+    }
+
+    #[test]
+    fn byte_strings_are_byte_leaves_not_sequences() {
+        assert_eq!(
+            record(vec![1u8, 2]).expect("ok"),
+            [scalar(Owned::Bytes(vec![1, 2]))]
+        );
+        assert_eq!(
+            record([1u8, 2]).expect("ok"),
+            [scalar(Owned::Bytes(vec![1, 2]))]
+        );
+        assert_eq!(
+            record(&[1u8, 2][..]).expect("ok"),
+            [scalar(Owned::Bytes(vec![1, 2]))]
+        );
+        assert_eq!(
+            record(Bytes(&[9])).expect("ok"),
+            [scalar(Owned::Bytes(vec![9]))]
+        );
+    }
+
+    #[test]
+    fn protected_leaves_reach_the_sink_still_wrapped() {
+        // The sink sees the bytes; the only copy is inside `Protected`.
+        assert_eq!(
+            record(Protected::new(vec![1u8, 2])).expect("ok"),
+            [scalar(Owned::Bytes(vec![1, 2]))]
+        );
+        assert_eq!(
+            record(Protected::new(String::from("pw"))).expect("ok"),
+            [scalar(Owned::Text("pw".into()))]
+        );
+        assert_eq!(
+            record(Protected::new([7u8; 4])).expect("ok"),
+            [scalar(Owned::Bytes(vec![7; 4]))]
+        );
+        // A composite takes the default path: unwrap, then walk.
+        assert_eq!(
+            record(Protected::new(vec![1u16, 2])).expect("ok"),
+            [
+                Event::Seq(Some(2)),
+                Event::Element,
+                scalar(Owned::Int(Int::U16(1))),
+                Event::Element,
+                scalar(Owned::Int(Int::U16(2))),
+                Event::EndSeq,
+            ]
+        );
+    }
+
+    /// A leaf that wraps itself the way the byte leaves do, and counts
+    /// its wipes, so a test can see whether a container's protected path
+    /// reaches it.
+    #[derive(Clone, Default)]
+    struct Counted(std::rc::Rc<std::cell::Cell<usize>>);
+
+    impl Zeroize for Counted {
+        fn zeroize(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    impl Encrypt for Counted {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            Protected::new(self).visit(sink)
+        }
+    }
+
+    impl Encrypt for &Counted {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            sink.scalar(None, Physical::Null)
+        }
+    }
+
+    #[test]
+    fn a_protected_container_wipes_each_leaf() {
+        let wipes = Counted::default();
+        record(Protected::new(vec![wipes.clone(), wipes.clone()])).expect("ok");
+        assert_eq!(wipes.0.get(), 2);
+
+        let wipes = Counted::default();
+        record(Protected::new(Some(wipes.clone()))).expect("ok");
+        assert_eq!(wipes.0.get(), 1);
+    }
+
+    /// A borrowed protected value is walked as a borrow of what it wraps,
+    /// so nothing leaves the wrapper.
+    #[test]
+    fn a_borrowed_protected_value_walks_as_its_borrow() {
+        let secret = Protected::new(String::from("pw"));
+        assert_eq!(
+            record(&secret).expect("records"),
+            [scalar(Owned::Text("pw".into()))]
+        );
+        let key = Protected::new([7u8; 4]);
+        assert_eq!(
+            record(&key).expect("records"),
+            [scalar(Owned::Bytes(vec![7; 4]))]
+        );
+        assert_eq!(secret.risky_ref(), "pw");
+    }
+
+    /// A protected borrow walks exactly as `&Protected<T>` does, for
+    /// scalars, text, bytes, containers and fixed-width nulls.
+    #[test]
+    fn a_protected_ref_walks_as_the_borrowed_protected_value() {
+        use vitaminc_protected::AsProtectedRef;
+
+        // A generic helper, bounded on `EncryptRef`: the bound generic code
+        // can write over a borrowed plaintext.
+        fn same<T: Zeroize + EncryptRef>(value: T) {
+            let owner = Protected::new(value);
+            let by_ref = record(&owner).expect("records");
+            assert_eq!(record(owner.as_protected_ref()).expect("records"), by_ref);
+            // The borrow is the point: this walks `&ProtectedRef`, a separate impl.
+            #[allow(clippy::needless_borrows_for_generic_args)]
+            let borrowed = record(&owner.as_protected_ref()).expect("records");
+            assert_eq!(borrowed, by_ref);
+            assert_eq!(
+                record(Some(owner.as_protected_ref())).expect("records"),
+                by_ref
+            );
+        }
+        macro_rules! same {
+            ($value:expr) => {
+                same($value)
+            };
+        }
+
+        same!(42i32);
+        same!(1.5f64);
+        same!(true);
+        same!(String::from("pw"));
+        same!(vec![1u8, 2]);
+        same!([7u8; 4]);
+        same!(vec![1u32, 2]);
+        same!(vec![String::from("a"), String::from("b")]);
+        same!(Some(3u64));
+        same!(None::<u64>);
+        same!(None::<String>);
+        same!(vec![vec![1i64], vec![]]);
+        same!(vec![Some(1u16), None]);
+
+        // Unsized borrows: a protected `String` narrows to text or to
+        // bytes, and the caller has to say which.
+        let owner = Protected::new(String::from("pw"));
+        let text: ProtectedRef<'_, str> = owner.as_protected_ref().as_deref();
+        assert_eq!(record(text).expect("records"), record("pw").expect("ok"));
+        let text: ProtectedRef<'_, str> = owner.as_protected_ref().as_ref_of();
+        assert_eq!(record(text).expect("records"), record("pw").expect("ok"));
+        let bytes: ProtectedRef<'_, [u8]> = owner.as_protected_ref().as_ref_of();
+        assert_eq!(
+            record(bytes).expect("records"),
+            [scalar(Owned::Bytes(b"pw".to_vec()))]
+        );
+
+        // A `None` behind the borrow is typed, as it is behind `&Protected`.
+        let none = Protected::new(None::<u32>);
+        assert_eq!(
+            record(none.as_protected_ref()).expect("records"),
+            [Event::TypedNull(
+                FixedType::plain(Width::U32).expect("fixed")
+            )]
+        );
+        assert_eq!(
+            record(None::<ProtectedRef<'_, u32>>).expect("records"),
+            [Event::TypedNull(
+                FixedType::plain(Width::U32).expect("fixed")
+            )]
+        );
+    }
+
+    /// The borrow carries the borrowed type's depth and fixed type.
+    #[test]
+    fn a_protected_ref_keeps_the_borrowed_metadata() {
+        fn meta<P: Encrypt>() -> (Option<usize>, Option<FixedType>) {
+            (P::DEPTH, P::FIXED)
+        }
+        type R<'a, T> = ProtectedRef<'a, T>;
+        assert_eq!(meta::<R<'_, u32>>(), meta::<&Protected<u32>>());
+        assert_eq!(meta::<&R<'_, u32>>(), meta::<&Protected<u32>>());
+        assert_eq!(
+            meta::<R<'_, Option<i16>>>(),
+            meta::<&Protected<Option<i16>>>()
+        );
+        assert_eq!(
+            meta::<R<'_, Vec<Vec<u8>>>>(),
+            meta::<&Protected<Vec<Vec<u8>>>>()
+        );
+        assert_eq!(meta::<R<'_, String>>(), meta::<&Protected<String>>());
+        assert_eq!(meta::<R<'_, [u8]>>(), meta::<&[u8]>());
+        assert_eq!(
+            meta::<R<'_, u32>>().1,
+            FixedType::plain(Width::U32),
+            "fixed width survives the borrow"
+        );
+        assert_eq!(meta::<R<'_, Vec<Vec<u8>>>>().0, Some(1));
+    }
+
+    /// Walking a protected borrow wipes nothing; the owner wipes everything
+    /// when it drops, whether the walk finished or failed part way.
+    #[test]
+    fn a_protected_ref_leaves_the_wiping_to_its_owner() {
+        use vitaminc_protected::AsProtectedRef;
+
+        let wipes = Tracked::default();
+        let owner = Protected::new(vec![wipes.clone(), wipes.clone()]);
+        record(owner.as_protected_ref()).expect("records");
+        assert_eq!(wipes.0.get(), 0, "the walk does not wipe the owner");
+        drop(owner);
+        assert_eq!(wipes.0.get(), 2);
+
+        let wipes = Tracked::default();
+        let owner = Protected::new(vec![wipes.clone(), wipes.clone(), wipes.clone()]);
+        owner
+            .as_protected_ref()
+            .visit(StopAfter::new(1))
+            .expect_err("should stop");
+        assert_eq!(wipes.0.get(), 0, "a failed walk does not wipe the owner");
+        drop(owner);
+        assert_eq!(wipes.0.get(), 3);
+    }
+
+    /// A leaf that counts its wipes but does not wrap itself when visited,
+    /// so only zeroizing the container it sits in can wipe it.
+    #[derive(Clone, Default)]
+    struct Tracked(std::rc::Rc<std::cell::Cell<usize>>);
+
+    impl Zeroize for Tracked {
+        fn zeroize(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    impl Encrypt for Tracked {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            sink.scalar(None, Physical::Null)
+        }
+    }
+
+    impl Encrypt for &Tracked {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            sink.scalar(None, Physical::Null)
+        }
+    }
+
+    /// A sink that hands out `elements` element sinks in all, across every
+    /// sequence in the walk, and fails on the next one.
+    struct StopAfter(std::rc::Rc<std::cell::Cell<usize>>);
+
+    impl StopAfter {
+        fn new(elements: usize) -> Self {
+            Self(std::rc::Rc::new(std::cell::Cell::new(elements)))
+        }
+    }
+
+    impl Sink for StopAfter {
+        type Ok = ();
+        type Error = RecordError;
+        type Seq = Self;
+        type Map = Self;
+
+        fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), RecordError> {
+            Ok(())
+        }
+
+        fn typed_null(self, _: FixedType) -> Result<(), RecordError> {
+            Ok(())
+        }
+
+        fn seq(self, _: Option<usize>) -> Result<Self, RecordError> {
+            Ok(self)
+        }
+
+        fn map(self, _: Option<usize>) -> Result<Self, RecordError> {
+            Ok(self)
+        }
+
+        fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<(), RecordError> {
+            Ok(())
+        }
+    }
+
+    impl SeqSink for StopAfter {
+        type Ok = ();
+        type Error = RecordError;
+        type Element<'s> = Self;
+
+        fn element(&mut self) -> Result<Self, RecordError> {
+            match self.0.get() {
+                0 => Err(RecordError("stopped".into())),
+                left => {
+                    self.0.set(left - 1);
+                    Ok(Self(self.0.clone()))
+                }
+            }
+        }
+
+        fn end(self) -> Result<(), RecordError> {
+            Ok(())
+        }
+    }
+
+    impl MapSink for StopAfter {
+        type Ok = ();
+        type Error = RecordError;
+        type Entry<'s> = Self;
+
+        fn entry(&mut self, _: &str) -> Result<Self, RecordError> {
+            Ok(Self(self.0.clone()))
+        }
+
+        fn end(self) -> Result<(), RecordError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_protected_vec_zeroizes_what_a_failed_walk_did_not_reach() {
+        // One element is visited, then the sink fails. The walk borrowed,
+        // so all three are still inside the `Protected` and are zeroized
+        // with it.
+        let wipes = Tracked::default();
+        let items = Protected::new(vec![wipes.clone(), wipes.clone(), wipes.clone()]);
+        items.visit(StopAfter::new(1)).expect_err("should stop");
+        assert_eq!(wipes.0.get(), 3);
+
+        // A failure before the first element leaves everything protected.
+        let wipes = Tracked::default();
+        let items = Protected::new(vec![wipes.clone(), wipes.clone()]);
+        items.visit(StopAfter::new(0)).expect_err("should stop");
+        assert_eq!(wipes.0.get(), 2);
+    }
+
+    #[test]
+    fn a_protected_vec_wipes_every_leaf_when_the_walk_fails() {
+        // Nothing leaves the vector during the walk, so all three are
+        // zeroized with it, visited or not.
+        let wipes = Counted::default();
+        let items = Protected::new(vec![wipes.clone(), wipes.clone(), wipes.clone()]);
+        items.visit(StopAfter::new(1)).expect_err("should stop");
+        assert_eq!(wipes.0.get(), 3);
+    }
+
+    #[test]
+    fn a_failed_walk_still_wipes_the_owned_leaves_it_did_not_reach() {
+        // Bare, the leaves the walk did not reach are walked into a
+        // discarding sink, which wipes them as a finished walk would.
+        let wipes = Counted::default();
+        let items = vec![wipes.clone(), wipes.clone(), wipes.clone()];
+        items.visit(StopAfter::new(1)).expect_err("should stop");
+        assert_eq!(wipes.0.get(), 3);
+
+        // Nested in a protected vector, the inner vector is walked bare
+        // once taken out, and fails after its first element.
+        let wipes = Counted::default();
+        let items = Protected::new(vec![vec![wipes.clone(), wipes.clone(), wipes.clone()]]);
+        items.visit(StopAfter::new(2)).expect_err("should stop");
+        assert_eq!(wipes.0.get(), 3);
+    }
+
+    #[test]
+    fn discarding_walks_every_kind_of_node() {
+        // Containers, scalars and passthrough all go to the discarding
+        // sink without failing.
+        let mut map = BTreeMap::new();
+        map.insert("k", vec![String::from("v")]);
+        assert!(map.visit(Discard).is_ok());
+        assert!(Failing.visit(Discard).is_err());
+        assert!(Discard.passthrough(&1u32).is_ok());
+        assert!(Discard.map(None).and_then(MapSink::end).is_ok());
+    }
+
+    // The borrows are the point: each one picks the reference impl.
+    #[allow(clippy::needless_borrows_for_generic_args)]
+    #[test]
+    fn borrowed_containers_are_sources() {
+        let ints = vec![1u32, 2];
+        assert_eq!(
+            record(&ints).expect("ok"),
+            record(ints.clone()).expect("ok")
+        );
+        assert_eq!(record(&ints[..]).expect("ok"), record(ints).expect("ok"));
+        assert_eq!(
+            record(&vec![true]).expect("ok"),
+            record(vec![true]).expect("ok")
+        );
+        assert_eq!(
+            record(&Some(1.5f64)).expect("ok"),
+            record(Some(1.5f64)).expect("ok")
+        );
+        assert_eq!(
+            record(&None::<i8>).expect("ok"),
+            [Event::TypedNull(
+                FixedType::plain(Width::I8).expect("fixed")
+            )]
+        );
+        assert_eq!(record(&None::<&str>).expect("ok"), [scalar(Owned::Null)]);
+        // A borrowed `Vec<u8>` is still a byte leaf, not a sequence.
+        assert_eq!(
+            record(&vec![1u8, 2]).expect("ok"),
+            [scalar(Owned::Bytes(vec![1, 2]))]
+        );
+        assert_eq!(
+            record(&[1u8, 2]).expect("ok"),
+            [scalar(Owned::Bytes(vec![1, 2]))]
+        );
+        let mut hash = HashMap::new();
+        hash.insert(String::from("k"), vec![String::from("v")]);
+        let borrowed = record(&hash).expect("ok");
+        assert_eq!(borrowed, record(hash).expect("ok"));
+        let mut tree = BTreeMap::new();
+        tree.insert("a", 1i64);
+        tree.insert("b", 2i64);
+        let borrowed = record(&tree).expect("ok");
+        assert_eq!(borrowed, record(tree).expect("ok"));
+    }
+
+    #[test]
+    fn option_none_is_null() {
+        assert_eq!(record(None::<String>).expect("ok"), [scalar(Owned::Null)]);
+        assert_eq!(record(None::<bool>).expect("ok"), [scalar(Owned::Null)]);
+        assert_eq!(record(None::<Vec<u32>>).expect("ok"), [scalar(Owned::Null)]);
+        assert_eq!(
+            record(Some(1u32)).expect("ok"),
+            [scalar(Owned::Int(Int::U32(1)))]
+        );
+    }
+
+    /// A fixed-width `None` names its type, at every layer that wraps it.
+    // The borrows are the point: each one picks the reference impl.
+    #[allow(clippy::needless_borrows_for_generic_args)]
+    #[test]
+    fn a_fixed_width_none_is_a_typed_null() {
+        let typed = |w| [Event::TypedNull(FixedType::plain(w).expect("fixed"))];
+        assert_eq!(record(None::<u32>).expect("ok"), typed(Width::U32));
+        assert_eq!(record(None::<i128>).expect("ok"), typed(Width::I128));
+        assert_eq!(record(None::<f32>).expect("ok"), typed(Width::F32));
+        assert_eq!(record(&None::<f64>).expect("ok"), typed(Width::F64));
+        assert_eq!(record(None::<Option<i16>>).expect("ok"), typed(Width::I16));
+        assert_eq!(record(Some(None::<i16>)).expect("ok"), typed(Width::I16));
+        assert_eq!(
+            record(Protected::new(None::<u64>)).expect("ok"),
+            typed(Width::U64)
+        );
+        assert_eq!(record(&&None::<i64>).expect("ok"), typed(Width::I64));
+    }
+
+    #[test]
+    fn containers_push_each_child_into_its_own_sink() {
+        let mut map = BTreeMap::new();
+        map.insert("a", vec![1i32]);
+        map.insert("b", vec![]);
+        assert_eq!(
+            record(map).expect("ok"),
+            [
+                Event::Map(Some(2)),
+                Event::Entry("a".into()),
+                Event::Seq(Some(1)),
+                Event::Element,
+                scalar(Owned::Int(Int::I32(1))),
+                Event::EndSeq,
+                Event::Entry("b".into()),
+                Event::Seq(Some(0)),
+                Event::EndSeq,
+                Event::EndMap,
+            ]
+        );
+        let mut hash = HashMap::new();
+        hash.insert(String::from("k"), 2u64);
+        assert_eq!(
+            record(hash).expect("ok"),
+            [
+                Event::Map(Some(1)),
+                Event::Entry("k".into()),
+                scalar(Owned::Int(Int::U64(2))),
+                Event::EndMap,
+            ]
+        );
+    }
+
+    #[test]
+    fn raw_passes_the_logical_type_through() {
+        assert_eq!(
+            record(Raw(Some(Logical::Uuid), Physical::Bytes(&[0; 16]))).expect("ok"),
+            [Event::Scalar(
+                Some(Logical::Uuid),
+                Owned::Bytes(vec![0; 16])
+            )]
+        );
+    }
+
+    /// A source that fails part way through, as a host getter might.
+    struct Failing;
+
+    impl Encrypt for Failing {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            let mut seq = sink.seq(None)?;
+            1u32.visit(seq.element()?)?;
+            Err(S::Error::source(SourceError::msg("getter threw")))
+        }
+    }
+
+    #[test]
+    fn a_source_can_stop_the_walk_with_its_own_error() {
+        let err = record(Failing).expect_err("should fail");
+        assert_eq!(err.0, "getter threw");
+    }
+
+    #[cfg(feature = "jiff")]
+    #[test]
+    fn jiff_types_are_logical_types_over_an_int() {
+        use crate::plaintext::kinds::TimeUnit;
+        use ::jiff::{civil::Date, Timestamp};
+        let date = Date::constant(2000, 3, 1);
+        assert_eq!(
+            record(date).expect("ok"),
+            [Event::Scalar(
+                Some(Logical::Date),
+                Owned::Int(Int::I32(11_017))
+            )]
+        );
+        let ts = Timestamp::new(1, 5).expect("ok");
+        assert_eq!(
+            record(ts).expect("ok"),
+            [Event::Scalar(
+                Some(Logical::Timestamp(TimeUnit::Nanos)),
+                Owned::Int(Int::I128(1_000_000_005))
+            )]
+        );
+    }
+
+    // The borrows are the point: each one picks the reference impl.
+    #[allow(clippy::needless_borrows_for_generic_args)]
+    #[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
+    #[test]
+    fn borrowed_logical_sources_walk_as_the_owned_ones() {
+        let date = ::jiff::civil::Date::constant(2000, 3, 1);
+        assert_eq!(record(&date).expect("ok"), record(date).expect("ok"));
+        let ts = ::jiff::Timestamp::new(1, 5).expect("ok");
+        assert_eq!(record(&ts).expect("ok"), record(ts).expect("ok"));
+        let d: rust_decimal::Decimal = "-1.50".parse().expect("ok");
+        assert_eq!(record(&d).expect("ok"), record(d).expect("ok"));
+        let id = uuid::Uuid::from_bytes([3; 16]);
+        assert_eq!(record(&id).expect("ok"), record(id).expect("ok"));
+    }
+
+    #[cfg(feature = "rust_decimal")]
+    #[test]
+    fn decimal_is_a_scale_and_a_mantissa() {
+        let d: rust_decimal::Decimal = "1.50".parse().expect("ok");
+        assert_eq!(
+            record(d).expect("ok"),
+            [Event::Scalar(
+                Some(Logical::Decimal { scale: 2 }),
+                Owned::Int(Int::I128(150))
+            )]
+        );
+    }
+
+    #[cfg(feature = "uuid")]
+    #[test]
+    fn uuid_is_sixteen_bytes() {
+        let id = uuid::Uuid::from_bytes([3; 16]);
+        assert_eq!(
+            record(id).expect("ok"),
+            [Event::Scalar(
+                Some(Logical::Uuid),
+                Owned::Bytes(vec![3; 16])
+            )]
+        );
+    }
+}

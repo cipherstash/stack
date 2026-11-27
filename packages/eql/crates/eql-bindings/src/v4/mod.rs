@@ -58,9 +58,10 @@ pub mod inventory;
 /// Generated bindings for the `json` family's bare scalar storage domain
 /// (`public.eql_v4_json`, the `Json` struct).
 pub mod json;
-/// The hand-written `json_tree` family: the JSON tree document Stack
-/// Encrypt's JSON index writes, its entry, and its two query operands.
-/// EQL v4 only, and not in the catalog yet, so not in [`all`].
+// The hand-written `json_tree` family: the JSON tree document Stack
+// Encrypt's JSON index writes, its entry, and its two query operands. A
+// plain comment: an outer doc comment here would resolve the module's own
+// links from this scope.
 pub mod json_tree;
 pub mod numeric;
 // The Rust plaintexts of the `date`, `timestamp` and `numeric` families. A

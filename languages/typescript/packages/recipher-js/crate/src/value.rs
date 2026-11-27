@@ -4,7 +4,7 @@
 //! leaf is one value that the engine encrypts as a single ciphertext.
 
 use stack_encrypt::dynamic::plaintext::{depth, Error as _, Scalar, Sink, SourceError};
-use stack_encrypt::dynamic::{ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{frame::OwnedFrame, ValueKind};
 use stack_encrypt::json::JsonPlaintext;
 use stack_encrypt::Encrypt;
 use vitaminc_protected::OpaqueDebug;
@@ -25,8 +25,8 @@ use crate::error::{Error, RecipherErrorFields};
 ///
 /// The engine encrypts a value as one opaque leaf only when its type
 /// implements `Scalar`, a trait of vitaminc, CipherStash's cryptography
-/// library. A [`ValueFrame`] can contain any value of the model, including
-/// an array or a map. So a [`ValueFrame`] is not a `Scalar`. This type
+/// library. An [`OwnedFrame`] can contain any value of the model, including
+/// an array or a map. So an [`OwnedFrame`] is not a `Scalar`. This type
 /// checks that the frame contains one scalar. The check runs once, before
 /// the engine reads the value.
 ///
@@ -39,7 +39,7 @@ pub(crate) struct OneValue(Option<Leaf>);
 /// The value inside a [`OneValue`]: a scalar, or a JSON document.
 #[derive(OpaqueDebug)]
 enum Leaf {
-    Scalar(ValueFrame),
+    Scalar(OwnedFrame),
     Json(JsonPlaintext),
 }
 
@@ -50,8 +50,8 @@ impl OneValue {
     ///
     /// Returns `recipher_js::not_a_scalar` for an array, and
     /// `recipher_js::plain_object` for an object.
-    pub(crate) fn scalar(value: ValueFrame) -> Result<Self, RecipherErrorFields> {
-        match value.kind() {
+    pub(crate) fn scalar(value: OwnedFrame) -> Result<Self, RecipherErrorFields> {
+        match value.frame().kind() {
             Some(ValueKind::Array) => Err(Error::NotAScalar.into()),
             Some(ValueKind::Object) => Err(Error::PlainObject.into()),
             _ => Ok(Self(Some(Leaf::Scalar(value)))),
@@ -88,19 +88,19 @@ impl Scalar for &OneValue {}
 #[cfg(test)]
 mod tests {
     use super::OneValue;
-    use stack_encrypt::dynamic::ValueFrame;
+    use stack_encrypt::dynamic::frame::OwnedFrame;
 
     #[test]
     fn a_scalar_is_one_value_and_a_container_is_not() {
-        assert!(OneValue::scalar(ValueFrame::of("text").unwrap()).is_ok());
-        assert!(OneValue::scalar(ValueFrame::of(vec![1u8, 2]).unwrap()).is_ok());
-        let refused = OneValue::scalar(ValueFrame::of(vec!["a", "b"]).unwrap()).unwrap_err();
+        assert!(OneValue::scalar(OwnedFrame::of("text").unwrap()).is_ok());
+        assert!(OneValue::scalar(OwnedFrame::of(vec![1u8, 2]).unwrap()).is_ok());
+        let refused = OneValue::scalar(OwnedFrame::of(vec!["a", "b"]).unwrap()).unwrap_err();
         assert_eq!(refused.code, "recipher_js::not_a_scalar");
     }
 
     #[test]
     fn debug_hides_the_value() {
-        let value = OneValue::scalar(ValueFrame::of("secret").unwrap()).unwrap();
+        let value = OneValue::scalar(OwnedFrame::of("secret").unwrap()).unwrap();
         assert!(!format!("{value:?}").contains("secret"));
     }
 }

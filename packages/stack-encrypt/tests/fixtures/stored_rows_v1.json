@@ -1,5 +1,5 @@
 {
-  "_comment": "FROZEN. Records the next build stored, under a deterministic key source. Every later build must open each one to `opened` and seal its `source` to the same shape, terms and passthroughs. Read by tests/stored_rows.rs; the schema is in README.md beside this file. Never regenerate this file, and edit it only as README.md allows for order terms: a change to the stored format adds stored_rows_v2.json beside it.",
+  "_comment": "FROZEN. Records the next build stored, under a deterministic key source. Every later build must open each one to `opened` and seal its `source` to the same shape, terms and passthroughs. Read by tests/stored_rows.rs; the schema is in README.md beside this file. Never regenerate this file, and edit it only as README.md allows for order terms: a change to the stored format adds stored_rows_v2.json beside it. Formatting with pnpm run code:fix may change this file's layout; its parsed content must never change, this note excepted.",
   "cases": [
     {
       "about": "one field per value kind with every index it admits, composites, an untyped field, a renamed field and a passthrough",
@@ -8,32 +8,17 @@
       "opened": "f11800000006000000616d6f756e7414000004800061bc000000000000000000020000006174130bc9d26a0000000015cd5b070300000062696f0a21000000456e6372797074656420736561726368206f7665722073686f7274206e6f74657304000000626c6f620b040000000001feff030000006461791281460b0005000000656d61696c0a17000000416c6963652e536d697468406578616d706c652e636f6d0300000066333208000000800300000066363409000000000000024004000000666c61670304000000693132381000000000000000000000000000000080030000006931360ed4fe030000006933320490eefeff0300000069363405000efad5feffffff0200000069380cf8020000006964062a000000050000006c6f6f73650a1400000061206669656c642077697468206e6f2074797065040000006d61696c0a0f000000626f62406578616d706c652e636f6d050000007072656673f103000000040000006461726b03040000006e6f6e650005000000656d707479f1000000000400000074616773f0030000000a01000000610401000000f000000000040000007531323811ffffffffffffffffffffffffffffffff030000007531360f60ea030000007533320600286bee0300000075363407ffffffffffffffff0200000075380dc8",
       "plan": {
         "amount": {
-          "context": [
-            "kinds",
-            "amount"
-          ],
-          "outputs": [
-            "c",
-            "eq"
-          ],
+          "context": ["kinds", "amount"],
+          "outputs": ["c", "eq"],
           "type": "decimal"
         },
         "at": {
-          "context": [
-            "kinds",
-            "at"
-          ],
-          "outputs": [
-            "c",
-            "eq"
-          ],
+          "context": ["kinds", "at"],
+          "outputs": ["c", "eq"],
           "type": "timestamp"
         },
         "bio": {
-          "context": [
-            "kinds",
-            "bio"
-          ],
+          "context": ["kinds", "bio"],
           "outputs": [
             "c",
             {
@@ -48,361 +33,167 @@
           "type": "string"
         },
         "blob": {
-          "context": [
-            "kinds",
-            "blob"
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "ore"
-          ],
+          "context": ["kinds", "blob"],
+          "outputs": ["c", "eq", "ore"],
           "type": "bytes"
         },
         "blob_ope": {
-          "context": [
-            "kinds",
-            "blob_ope"
-          ],
-          "outputs": [
-            "ope"
-          ],
+          "context": ["kinds", "blob_ope"],
+          "outputs": ["ope"],
           "type": "bytes"
         },
         "day": {
-          "context": [
-            "kinds",
-            "day"
-          ],
-          "outputs": [
-            "c",
-            "eq"
-          ],
+          "context": ["kinds", "day"],
+          "outputs": ["c", "eq"],
           "type": "date"
         },
         "email": {
-          "context": [
-            "kinds",
-            "email"
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "match",
-            "ore"
-          ],
+          "context": ["kinds", "email"],
+          "outputs": ["c", "eq", "match", "ore"],
           "type": "string"
         },
         "email_ope": {
-          "context": [
-            "kinds",
-            "email_ope"
-          ],
-          "outputs": [
-            "ope"
-          ],
+          "context": ["kinds", "email_ope"],
+          "outputs": ["ope"],
           "type": "string"
         },
         "f32": {
-          "context": [
-            "kinds",
-            "f32"
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "ore"
-          ],
+          "context": ["kinds", "f32"],
+          "outputs": ["c", "eq", "ore"],
           "type": "float32"
         },
         "f32_ope": {
-          "context": [
-            "kinds",
-            "f32_ope"
-          ],
-          "outputs": [
-            "ope"
-          ],
+          "context": ["kinds", "f32_ope"],
+          "outputs": ["ope"],
           "type": "float32"
         },
         "f64": {
-          "context": [
-            "kinds",
-            "f64"
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "ore"
-          ],
+          "context": ["kinds", "f64"],
+          "outputs": ["c", "eq", "ore"],
           "type": "float64"
         },
         "f64_ope": {
-          "context": [
-            "kinds",
-            "f64_ope"
-          ],
-          "outputs": [
-            "ope"
-          ],
+          "context": ["kinds", "f64_ope"],
+          "outputs": ["ope"],
           "type": "float64"
         },
         "flag": {
-          "context": [
-            "kinds",
-            "flag"
-          ],
-          "outputs": [
-            "c"
-          ],
+          "context": ["kinds", "flag"],
+          "outputs": ["c"],
           "type": "bool"
         },
         "i128": {
-          "context": [
-            "kinds",
-            "i128"
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "ore"
-          ],
+          "context": ["kinds", "i128"],
+          "outputs": ["c", "eq", "ore"],
           "type": "int128"
         },
         "i128_ope": {
-          "context": [
-            "kinds",
-            "i128_ope"
-          ],
-          "outputs": [
-            "ope"
-          ],
+          "context": ["kinds", "i128_ope"],
+          "outputs": ["ope"],
           "type": "int128"
         },
         "i16": {
-          "context": [
-            "kinds",
-            "i16"
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "ore"
-          ],
+          "context": ["kinds", "i16"],
+          "outputs": ["c", "eq", "ore"],
           "type": "int16"
         },
         "i16_ope": {
-          "context": [
-            "kinds",
-            "i16_ope"
-          ],
-          "outputs": [
-            "ope"
-          ],
+          "context": ["kinds", "i16_ope"],
+          "outputs": ["ope"],
           "type": "int16"
         },
         "i32": {
-          "context": [
-            "kinds",
-            "i32"
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "ore"
-          ],
+          "context": ["kinds", "i32"],
+          "outputs": ["c", "eq", "ore"],
           "type": "int32"
         },
         "i32_ope": {
-          "context": [
-            "kinds",
-            "i32_ope"
-          ],
-          "outputs": [
-            "ope"
-          ],
+          "context": ["kinds", "i32_ope"],
+          "outputs": ["ope"],
           "type": "int32"
         },
         "i64": {
-          "context": [
-            "kinds",
-            "i64"
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "ore"
-          ],
+          "context": ["kinds", "i64"],
+          "outputs": ["c", "eq", "ore"],
           "type": "int64"
         },
         "i64_ope": {
-          "context": [
-            "kinds",
-            "i64_ope"
-          ],
-          "outputs": [
-            "ope"
-          ],
+          "context": ["kinds", "i64_ope"],
+          "outputs": ["ope"],
           "type": "int64"
         },
         "i8": {
-          "context": [
-            "kinds",
-            "i8"
-          ],
-          "outputs": [
-            "c",
-            "eq"
-          ],
+          "context": ["kinds", "i8"],
+          "outputs": ["c", "eq"],
           "type": "int8"
         },
         "id": {
-          "context": [
-            "kinds",
-            "id"
-          ],
-          "outputs": [
-            "passthrough"
-          ],
+          "context": ["kinds", "id"],
+          "outputs": ["passthrough"],
           "type": "uint32"
         },
         "loose": {
-          "context": [
-            "kinds",
-            "loose"
-          ],
-          "outputs": [
-            "c"
-          ]
+          "context": ["kinds", "loose"],
+          "outputs": ["c"]
         },
         "mail": {
-          "context": [
-            "kinds",
-            "email_address"
-          ],
-          "outputs": [
-            "c",
-            "eq"
-          ],
+          "context": ["kinds", "email_address"],
+          "outputs": ["c", "eq"],
           "type": "string"
         },
         "prefs": {
-          "context": [
-            "kinds",
-            "prefs"
-          ],
-          "outputs": [
-            "c"
-          ],
+          "context": ["kinds", "prefs"],
+          "outputs": ["c"],
           "type": "object"
         },
         "tags": {
-          "context": [
-            "kinds",
-            "tags"
-          ],
-          "outputs": [
-            "c"
-          ],
+          "context": ["kinds", "tags"],
+          "outputs": ["c"],
           "type": "array"
         },
         "u128": {
-          "context": [
-            "kinds",
-            "u128"
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "ore"
-          ],
+          "context": ["kinds", "u128"],
+          "outputs": ["c", "eq", "ore"],
           "type": "uint128"
         },
         "u128_ope": {
-          "context": [
-            "kinds",
-            "u128_ope"
-          ],
-          "outputs": [
-            "ope"
-          ],
+          "context": ["kinds", "u128_ope"],
+          "outputs": ["ope"],
           "type": "uint128"
         },
         "u16": {
-          "context": [
-            "kinds",
-            "u16"
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "ore"
-          ],
+          "context": ["kinds", "u16"],
+          "outputs": ["c", "eq", "ore"],
           "type": "uint16"
         },
         "u16_ope": {
-          "context": [
-            "kinds",
-            "u16_ope"
-          ],
-          "outputs": [
-            "ope"
-          ],
+          "context": ["kinds", "u16_ope"],
+          "outputs": ["ope"],
           "type": "uint16"
         },
         "u32": {
-          "context": [
-            "kinds",
-            "u32"
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "ore"
-          ],
+          "context": ["kinds", "u32"],
+          "outputs": ["c", "eq", "ore"],
           "type": "uint32"
         },
         "u32_ope": {
-          "context": [
-            "kinds",
-            "u32_ope"
-          ],
-          "outputs": [
-            "ope"
-          ],
+          "context": ["kinds", "u32_ope"],
+          "outputs": ["ope"],
           "type": "uint32"
         },
         "u64": {
-          "context": [
-            "kinds",
-            "u64"
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "ore"
-          ],
+          "context": ["kinds", "u64"],
+          "outputs": ["c", "eq", "ore"],
           "type": "uint64"
         },
         "u64_ope": {
-          "context": [
-            "kinds",
-            "u64_ope"
-          ],
-          "outputs": [
-            "ope"
-          ],
+          "context": ["kinds", "u64_ope"],
+          "outputs": ["ope"],
           "type": "uint64"
         },
         "u8": {
-          "context": [
-            "kinds",
-            "u8"
-          ],
-          "outputs": [
-            "c",
-            "eq"
-          ],
+          "context": ["kinds", "u8"],
+          "outputs": ["c", "eq"],
           "type": "uint8"
         }
       },
@@ -1108,27 +899,13 @@
       "opened": "f10200000004000000626f64790a1c000000526576656e7565206772657720696e20657665727920726567696f6e050000007469746c650a10000000517561727465726c79207265706f7274",
       "plan": {
         "body": {
-          "context": [
-            "documents",
-            "v2",
-            "body"
-          ],
-          "outputs": [
-            "c",
-            "match"
-          ],
+          "context": ["documents", "v2", "body"],
+          "outputs": ["c", "match"],
           "type": "string"
         },
         "title": {
-          "context": [
-            "documents",
-            "v2",
-            "title"
-          ],
-          "outputs": [
-            "c",
-            "eq"
-          ],
+          "context": ["documents", "v2", "title"],
+          "outputs": ["c", "eq"],
           "type": "string"
         }
       },
@@ -1183,33 +960,13 @@
       "opened": "f10200000003000000616765062200000005000000656d61696c0a110000006361726f6c406578616d706c652e636f6d",
       "plan": {
         "age": {
-          "context": [
-            [
-              "users",
-              "age"
-            ],
-            7
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "ore"
-          ],
+          "context": [["users", "age"], 7],
+          "outputs": ["c", "eq", "ore"],
           "type": "uint32"
         },
         "email": {
-          "context": [
-            [
-              "users",
-              "email"
-            ],
-            7
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "match"
-          ],
+          "context": [["users", "email"], 7],
+          "outputs": ["c", "eq", "match"],
           "type": "string"
         }
       },
@@ -1276,39 +1033,13 @@
       "opened": "f10200000003000000616765062300000005000000656d61696c0a1000000064617665406578616d706c652e636f6d",
       "plan": {
         "age": {
-          "context": [
-            [
-              [
-                "users",
-                "age"
-              ],
-              7
-            ],
-            "eu"
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "ore"
-          ],
+          "context": [[["users", "age"], 7], "eu"],
+          "outputs": ["c", "eq", "ore"],
           "type": "uint32"
         },
         "email": {
-          "context": [
-            [
-              [
-                "users",
-                "email"
-              ],
-              7
-            ],
-            "eu"
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "match"
-          ],
+          "context": [[["users", "email"], 7], "eu"],
+          "outputs": ["c", "eq", "match"],
           "type": "string"
         }
       },
@@ -1375,33 +1106,19 @@
       "opened": "f10300000003000000616765062900000005000000656d61696c0a110000006572696e4061636d652e6578616d706c650600000074656e616e740a0c00000074656e616e74732f61636d65",
       "plan": {
         "age": {
-          "context": [
-            "age"
-          ],
-          "outputs": [
-            "c",
-            "ore"
-          ],
+          "context": ["age"],
+          "outputs": ["c", "ore"],
           "type": "uint32"
         },
         "context_field": "tenant",
         "email": {
-          "context": [
-            "email"
-          ],
-          "outputs": [
-            "c",
-            "eq"
-          ],
+          "context": ["email"],
+          "outputs": ["c", "eq"],
           "type": "string"
         },
         "tenant": {
-          "context": [
-            "tenant"
-          ],
-          "outputs": [
-            "passthrough"
-          ],
+          "context": ["tenant"],
+          "outputs": ["passthrough"],
           "type": "string"
         }
       },
@@ -1469,27 +1186,13 @@
       "opened": "f002000000f10200000003000000616765061d00000005000000656d61696c0a110000006672616e6b406578616d706c652e636f6df10200000003000000616765063400000005000000656d61696c0a110000006772616365406578616d706c652e636f6d",
       "plan": {
         "age": {
-          "context": [
-            "users",
-            "age"
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "ore"
-          ],
+          "context": ["users", "age"],
+          "outputs": ["c", "eq", "ore"],
           "type": "uint32"
         },
         "email": {
-          "context": [
-            "users",
-            "email"
-          ],
-          "outputs": [
-            "c",
-            "eq",
-            "match"
-          ],
+          "context": ["users", "email"],
+          "outputs": ["c", "eq", "match"],
           "type": "string"
         }
       },

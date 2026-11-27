@@ -17,20 +17,20 @@ use eql_bindings::v4::plaintext::JsonPlaintext;
 use eql_bindings::v4::{bigint, boolean, double, integer, json, real, smallint, text};
 use eql_bindings::Identifier;
 use serde::{de::DeserializeOwned, Serialize};
-use stack_encrypt::dynamic::{ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{frame::OwnedFrame, ValueKind};
 use stack_encrypt::target::transcode::{Reader, Visitor};
 use stack_encrypt::{CipherText, DecryptFrom, Encrypt, EncryptInto, Label, NonEmpty};
 
 /// A Rust value as the engine's runtime plaintext: its frame.
-fn frame<T: Encrypt>(value: T) -> ValueFrame {
-    ValueFrame::of(value).unwrap()
+fn frame<T: Encrypt>(value: T) -> OwnedFrame {
+    OwnedFrame::of(value).unwrap()
 }
 
 /// Whether two frames hold the same value of the same kind: the frame
 /// carries both, and a float's bit pattern, so `-0.0` and a NaN's payload
 /// count.
-fn same(a: &ValueFrame, b: &ValueFrame) -> bool {
-    a.risky_ref() == b.risky_ref()
+fn same(a: &OwnedFrame, b: &OwnedFrame) -> bool {
+    a.frame().as_bytes() == b.frame().as_bytes()
 }
 
 fn column() -> NonEmpty<Identifier> {
@@ -73,7 +73,7 @@ fn assert_v4_envelope<T: Serialize>(stored: &T, keys: &[&str]) {
 async fn as_frame(
     cipher: &stack_encrypt::StackCipher<common::RecordingKeySource>,
     c: Ciphertext,
-) -> ValueFrame {
+) -> OwnedFrame {
     let native = c.read(NativeLeaf).unwrap();
     cipher.decrypt(native, column()).await.unwrap()
 }
@@ -82,7 +82,7 @@ async fn as_frame(
 /// its frame is sealed, as a Go SDK field without an EQL type is.
 async fn sealed_from_frame(
     keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
-    value: ValueFrame,
+    value: OwnedFrame,
 ) -> Ciphertext {
     match keyset.encrypt_tree(value, column()).await.unwrap() {
         CipherText::Single(leaf) => CiphertextVisitor.sealed(leaf).unwrap(),
@@ -104,9 +104,9 @@ fn stored_as<T: DeserializeOwned>(c: Ciphertext) -> T {
 async fn by_name<T: DeserializeOwned>(
     keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
-    value: ValueFrame,
+    value: OwnedFrame,
 ) -> T {
-    let bytes = targets::encrypt(name, keyset, &label(), value)
+    let bytes = targets::encrypt(name, keyset, &label(), value.frame())
         .unwrap()
         .await
         .unwrap();
@@ -114,7 +114,7 @@ async fn by_name<T: DeserializeOwned>(
 }
 
 /// A sample plaintext of each kind a producible type takes.
-fn sample(kind: ValueKind) -> ValueFrame {
+fn sample(kind: ValueKind) -> OwnedFrame {
     match kind {
         ValueKind::Int16 => frame::<i16>(i16::MIN),
         ValueKind::Int32 => frame::<i32>(-42),
@@ -213,13 +213,19 @@ async fn integers_round_trip_and_seal_the_leaf_their_frame_seals() {
 async fn eq_terms(
     keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
-    value: ValueFrame,
+    value: OwnedFrame,
 ) -> (serde_json::Value, serde_json::Value) {
     let stored: serde_json::Value = by_name(keyset, name, again(&value)).await;
-    let query = targets::query(name, &common::index_of(name), keyset, &label(), value)
-        .unwrap()
-        .await
-        .unwrap();
+    let query = targets::query(
+        name,
+        &common::index_of(name),
+        keyset,
+        &label(),
+        value.frame(),
+    )
+    .unwrap()
+    .await
+    .unwrap();
     let query: serde_json::Value = serde_json::from_slice(&query).unwrap();
     (stored["hm"].clone(), query["hm"].clone())
 }
@@ -231,7 +237,7 @@ async fn eq_terms(
 async fn number_equality_terms_follow_the_semantic_baseline() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let hm = |name: &'static str, value: ValueFrame| {
+    let hm = |name: &'static str, value: OwnedFrame| {
         let keyset = &keyset;
         async move {
             let (stored, query) = eq_terms(keyset, name, value).await;
@@ -416,13 +422,13 @@ fn profile_text() -> String {
 }
 
 /// The document a `json` field opened to: its text, in a bytes value.
-fn document_of(opened: &ValueFrame) -> serde_json::Value {
+fn document_of(opened: &OwnedFrame) -> serde_json::Value {
     assert_eq!(
-        opened.kind(),
+        opened.frame().kind(),
         Some(ValueKind::Bytes),
         "a document opens to its text, in bytes"
     );
-    stack_encrypt::dynamic::read_json(opened)
+    stack_encrypt::dynamic::read_json(opened.frame())
         .expect("a document")
         .value()
         .clone()
@@ -592,7 +598,7 @@ async fn a_json_document_dispatches_by_name() {
         &common::index_of("Json"),
         &keyset,
         &label(),
-        frame("{}"),
+        frame("{}").frame(),
     ));
     assert!(
         matches!(error, TargetError::NoQuery { name: "Json" }),
@@ -604,7 +610,7 @@ async fn a_json_document_dispatches_by_name() {
         Some(&options),
         &keyset,
         &label(),
-        frame("{}"),
+        frame("{}").frame(),
     ));
     assert!(
         matches!(error, TargetError::Options { name: "Json" }),
@@ -634,7 +640,7 @@ async fn a_value_that_is_not_a_json_document_is_refused_before_minting() {
         (frame(36i64), "json_not_text"),
         (frame(vec!["{}".to_owned()]), "json_not_text"),
     ] {
-        let error = refused(targets::encrypt("Json", &keyset, &label(), value));
+        let error = refused(targets::encrypt("Json", &keyset, &label(), value.frame()));
         assert!(
             matches!(&error, TargetError::Json { target: "Json", source } if source.code() == code),
             "{code}: {error}"
@@ -686,7 +692,7 @@ async fn a_stored_value_that_is_not_a_json_document_is_refused() {
         );
     }
     // A searchable document is another type, with another shape.
-    let searchable = targets::encrypt("JsonSearch", &keyset, &label(), frame("{}"))
+    let searchable = targets::encrypt("JsonSearch", &keyset, &label(), frame("{}").frame())
         .unwrap()
         .await
         .unwrap();
@@ -757,7 +763,7 @@ async fn every_producible_type_dispatches_by_name() {
         let kind = target
             .plaintext_kind()
             .expect("a producible type names its kind");
-        let stored = targets::encrypt(name, &keyset, &label(), sample(kind))
+        let stored = targets::encrypt(name, &keyset, &label(), sample(kind).frame())
             .unwrap()
             .await
             .unwrap();
@@ -776,7 +782,7 @@ async fn every_producible_type_dispatches_by_name() {
                     &common::index_of(name),
                     &keyset,
                     &label(),
-                    sample(kind),
+                    sample(kind).frame(),
                 ));
                 assert!(
                     matches!(error, TargetError::NoQuery { .. }),
@@ -800,10 +806,11 @@ async fn every_producible_type_dispatches_by_name() {
                 };
                 for key in target.indexes {
                     let index = stack_encrypt::target::IndexSpec::parse(key).unwrap();
-                    let query = targets::query(name, &index, &keyset, &label(), sample(kind))
-                        .unwrap()
-                        .await
-                        .unwrap();
+                    let query =
+                        targets::query(name, &index, &keyset, &label(), sample(kind).frame())
+                            .unwrap()
+                            .await
+                            .unwrap();
                     let query: serde_json::Value = serde_json::from_slice(&query).unwrap();
                     assert!(
                         query.get("c").is_none(),
@@ -870,7 +877,7 @@ async fn storage_only_text_round_trips_through_both_entry_points() {
         &common::index_of("Text"),
         &keyset,
         &label(),
-        frame("note"),
+        frame("note").frame(),
     ));
     assert!(
         matches!(error, TargetError::NoQuery { name: "Text" }),
@@ -1055,7 +1062,7 @@ async fn a_query_keeps_its_two_letter_words_only_when_it_cuts_no_trigram() {
             &stack_encrypt::target::IndexSpec::parse("match").unwrap(),
             &keyset,
             &label(),
-            frame(needle),
+            frame(needle).frame(),
         )
         .unwrap()
         .await
@@ -1130,7 +1137,7 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
         ("Real", frame::<f64>(1.0), ValueKind::Float32),
         ("Text", frame::<i32>(1), ValueKind::String),
     ] {
-        let error = refused(targets::encrypt(name, &keyset, &label(), value));
+        let error = refused(targets::encrypt(name, &keyset, &label(), value.frame()));
         assert!(
             matches!(error, TargetError::Plaintext { target, expected: e, .. } if target == name && e == expected),
             "{name}: {error}"
@@ -1522,7 +1529,7 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
     // The storage-only JSON domain holds the flat `{v, i, c}` payload and
     // nothing else: a searchable document is refused by the column.
     let searchable = runtime.block_on(async {
-        targets::encrypt("JsonSearch", &keyset, &label(), frame("{}"))
+        targets::encrypt("JsonSearch", &keyset, &label(), frame("{}").frame())
             .unwrap()
             .await
             .unwrap()
@@ -2090,19 +2097,20 @@ mod erased {
 async fn the_v4_query_fixture_is_what_the_dispatch_derives() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let query = |name: &'static str, column: &'static str, value: ValueFrame| {
+    let query = |name: &'static str, column: &'static str, value: OwnedFrame| {
         let keyset = &keyset;
         async move {
             let label = Label::new(["profiles", column]).unwrap();
-            let bytes = targets::query(name, &common::index_of(name), keyset, &label, value)
-                .unwrap()
-                .await
-                .unwrap();
+            let bytes =
+                targets::query(name, &common::index_of(name), keyset, &label, value.frame())
+                    .unwrap()
+                    .await
+                    .unwrap();
             String::from_utf8(bytes).unwrap()
         }
     };
     let fixture = serde_json::json!({
-        "_comment": "The v4 query operands eql-bindings derives for each plaintext under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit.",
+        "_comment": "The v4 query operands eql-bindings derives for each plaintext under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit. After regenerating, run pnpm run code:fix.",
         "table": "profiles",
         "name": {
             "plaintext": "alice",
@@ -2139,10 +2147,14 @@ async fn the_v4_query_fixture_is_what_the_dispatch_derives() {
     if std::env::var_os("EQL_UPDATE_FIXTURES").is_some() {
         std::fs::write(&path, &rendered).unwrap();
     }
-    let committed = std::fs::read_to_string(&path)
-        .expect("fixtures/v4_queries.json is committed; EQL_UPDATE_FIXTURES=1 writes it");
+    // Parsed, not as text: the file is committed as Biome formats it.
+    let committed: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&path)
+            .expect("fixtures/v4_queries.json is committed; EQL_UPDATE_FIXTURES=1 writes it"),
+    )
+    .expect("the fixture is JSON");
     assert_eq!(
-        committed, rendered,
+        committed, fixture,
         "the committed fixture is what the dispatch derives today"
     );
 }
@@ -2726,7 +2738,8 @@ fn postgres_stores_and_queries_rows_the_go_sdk_sealed() {
 }
 
 /// A second frame of the same bytes. A frame is not `Clone`.
-fn again(frame: &ValueFrame) -> ValueFrame {
-    use stack_encrypt::AsProtectedRef as _;
-    ValueFrame::from_bytes(frame.as_protected_ref()).unwrap()
+fn again(frame: &OwnedFrame) -> OwnedFrame {
+    let mut buffer = stack_encrypt::Buffer::new();
+    buffer.extend_from_slice(frame.frame().as_bytes());
+    OwnedFrame::from_buffer(buffer).unwrap()
 }

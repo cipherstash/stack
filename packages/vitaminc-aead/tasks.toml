@@ -1,0 +1,49 @@
+# Tasks for vitaminc-aead, imported from cipherstash/vitaminc. Included from
+# the root mise.toml.
+
+# Rustdoc with warnings as errors, which the root `doc` task fans out to.
+# It builds the public docs, then the docs of private items too: only the
+# public build warns when a public doc links to a private item, and only
+# the private build checks the links in private docs.
+["doc:vitaminc-aead"]
+description = "Build docs for vitaminc-aead with all features, public then private items (warnings are errors)"
+env = { RUSTDOCFLAGS = "-D warnings" }
+run = [
+  "cargo doc -p vitaminc-aead --no-deps --all-features",
+  "cargo doc -p vitaminc-aead --no-deps --all-features --document-private-items",
+]
+
+# The workspace test run unifies features across every member, so no
+# optional feature is tested alone there: stack-encrypt's default features
+# turn on vitaminc-aead's `jiff`, `rust_decimal` and `uuid`, and it uses
+# recipher-frame with `serde`. A `cargo test -p` run builds only that
+# package's graph, so each feature is tested on its own here, with the
+# storage bench's smoke run.
+#
+# Two jiff tests check that jiff refuses to parse an instant below its own
+# minimum. jiff 1.0.0 built one only with debug assertions off, so they also
+# run in a release build. `cargo test` passes when its filter matches no
+# test, so the step also checks that both ran. On a failure it prints the
+# test output before it exits.
+["test:vitaminc-aead:features"]
+description = "Test vitaminc-aead with each optional feature alone (jiff, rust_decimal, uuid, hlist), its release-only jiff tests, and recipher-frame with and without serde"
+run = [
+  "cargo test --locked -p vitaminc-aead",
+  "cargo test --locked -p vitaminc-aead --features jiff",
+  '''
+  out=$(cargo test --locked --release -p vitaminc-aead --features jiff --lib an_instant_jiff_cannot_rebuild)
+  rc=$?
+  printf '%s\n' "$out"
+  [ "$rc" -eq 0 ] || exit "$rc"
+  case "$out" in
+    *'test result: ok. 2 passed'*) ;;
+    *) echo "expected both release-only jiff tests to run" >&2; exit 1 ;;
+  esac
+  ''',
+  "cargo test --locked -p vitaminc-aead --features rust_decimal",
+  "cargo test --locked -p vitaminc-aead --features uuid",
+  "cargo test --locked -p vitaminc-aead --features hlist",
+  "cargo test --locked -p recipher-frame",
+  "cargo test --locked -p recipher-frame --features serde",
+  "cargo test --locked -p recipher-frame --features serde --bench storage",
+]

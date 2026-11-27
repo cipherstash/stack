@@ -93,7 +93,10 @@ impl Tree {
     /// from the tree's frame: `None` for a null, an `undefined`, a
     /// passthrough, or a tree no frame holds.
     pub(crate) fn kind(&self) -> Option<stack_encrypt::dynamic::ValueKind> {
-        stack_encrypt::dynamic::ValueFrame::of(self).ok()?.kind()
+        stack_encrypt::dynamic::frame::OwnedFrame::of(self)
+            .ok()?
+            .frame()
+            .kind()
     }
 
     /// A frame read back as a tree.

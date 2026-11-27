@@ -101,10 +101,13 @@ context argument.
   (see "EQL types" below). Both take the frame as a
   [`vitaminc_protected::ProtectedRef`]; call
   [`crate::AsProtectedRef::as_protected_ref`] on the bytes.
-- A **value**: the record, as one frame in a
-  [`crate::dynamic::ValueFrame`]. A binding never builds a tree of values; it
-  writes the host value straight into a frame, which holds the bytes in a
-  buffer wiped when it drops, and the engine walks them in place.
+- A **value**: the record, as one frame. A binding never builds a tree of
+  values; it writes the host value straight into a frame, in a buffer wiped
+  when it drops, and the engine walks the bytes in place. A call that reads
+  the value only while it runs borrows it as a
+  [`crate::dynamic::frame::Frame`]; a value kept past the call, such as one
+  an async call holds, is a [`crate::dynamic::frame::OwnedFrame`], which owns
+  its buffer.
 - A **keyset cipher**: which ZeroKMS keyset mints and opens the keys.
   [`crate::StackCipher::default_keyset`] gives the default one;
   [`crate::StackCipher::keyset`] names another.
@@ -123,6 +126,14 @@ one frame, and is still one ZeroKMS call. With a scope or a binding, the
 call is `encrypt_into_with_context(&keyset, Scope::new(7u64).bind(9u64))`
 (see "Scopes and bindings" below). The row is moved in, and wiped when the
 call is done with it.
+
+Each field that declares a type reads its value as that type, by the same
+rules a query reads its input by ([`crate::dynamic::read`]). A number of
+another width or kind converts when the conversion is exact, so a binding
+can pass a language's own number, or the narrowest integer that holds it,
+and never needs the field's type. Anything else of another type is refused
+with the reason `field_type`, and JavaScript's `undefined` with the reason
+`undefined`. A field that declares no type takes its value as it is.
 
 ### Derive a query term
 
@@ -147,7 +158,7 @@ the stored term was derived.
 
 ### Decrypt a record
 
-`ValueFrame::decrypt_from(Planned::new(&plan, stored), cipher)` settles to
+`OwnedFrame::decrypt_from(Planned::new(&plan, stored), cipher)` settles to
 the record's frame, in a buffer wiped when it drops. The `cipher` argument
 says which cipher opens ([`crate::CipherRef`]):
 
@@ -309,7 +320,7 @@ with the cases every binding runs. The shape:
   `{"name": "JsonSearch", "options": {"sealed_root": <bool>, "ordered": [<path>, ...]}}`.
 - **`type`** is a [`crate::dynamic::ValueKind`] name: `bool`, `int8` to
   `int128`, `uint8` to `uint128`, `float32`, `float64`, `decimal`, `date`,
-  `timestamp`, `string`, `bytes`, `array`, `object` or `json`. A field with
+  `timestamp`, `string`, `bytes`, `array`, `object`, `uuid` or `json`. A field with
   any index term must declare one: its terms derive from that kind, never
   from whatever tag each value arrives with. The type decides which indexes
   a field may have ([`crate::dynamic::admits`]) and which values it accepts,
@@ -343,23 +354,26 @@ Two kinds of data cross a binding, and the engine treats them differently.
 self-describing transport encoding, the same bytes a native Rust value
 describes itself as. The engine never decodes a frame into a tree. It reads
 it in place, walks it into the encrypting sink and the term derivers, and
-drops it. [`crate::dynamic::ValueFrame::from_bytes`] accepts a frame that
-holds one value of the value model, and [`crate::dynamic::ValueFrame::check`]
-checks a record source in place. A decrypted record comes back as a frame
+drops it. [`crate::dynamic::frame::Frame::parse`] accepts bytes that hold
+exactly one frame and lends them in place, and
+[`crate::dynamic::frame::OwnedFrame::from_buffer`] keeps a buffer that holds
+one, without a copy. Both refuse a scalar its logical type does not admit,
+such as a date out of range. A logical type this build does not know is carried
+as it is: an untyped or passthrough field stores it, and no typed field or
+index takes it. A decrypted record comes back as a frame
 too, in a buffer wiped on drop.
 
 **Control messages** are everything else: the plan, a context, query
 statistics, an error, and for a guest the options object, a configuration
 and a step's requests and responses. They cross as frames as well, and the
 engine reads each straight into a typed message with serde
-(`vitaminc_aead_frame::serde`), with no intermediate tree. There is no type
+(`recipher_frame::serde`), with no intermediate tree. There is no type
 a binding can use to hold plaintext as a tree, by design. If you find
 yourself building one, you are building a second value model.
 
 The frame format itself is documented in the crate that owns it,
-[`vitaminc-aead-frame`](https://docs.rs/vitaminc-aead-frame/0.10.0): the
-byte layout, the tag table, and the depth and length limits. This guide
-does not restate it. This crate re-exports it as
+`recipher-frame`: the byte layout, the tag table, and the depth and
+length limits. This guide does not restate it. This crate re-exports it as
 [`crate::dynamic::frame`], so a binding builds against the same version the
 engine does.
 
@@ -381,9 +395,11 @@ binding inherits the rule for every copy it makes.
 
 What the engine does for every binding:
 
-- The engine holds a value as a [`crate::dynamic::ValueFrame`] in a
-  `Protected` buffer, and an opened value as the same, so the one copy is
-  wiped by the type, not by a line someone has to remember. A `Planned`
+- The engine reads a value in place, from the buffer the binding wrote it
+  into, and holds what it must keep, an opened value or a field split out of
+  a record, as a [`crate::dynamic::frame::OwnedFrame`], whose buffer wipes
+  itself. So each copy is wiped by its type, not by a line someone has to
+  remember. A `Planned`
   value is moved in and wiped when the call is done with it.
 - **Keys never leave the engine.** Key material derived from a ZeroKMS
   response stays in it.
@@ -606,7 +622,7 @@ Three things have versions, and a binding ties them together.
   embeds the guest built from the same commit, so host and engine cannot
   drift: a tagged Go release carries the guest built at that tag
   (`languages/golang/encrypt/README.md`, "Building").
-- **The wire.** The frame format is `vitaminc-aead-frame`'s. A native
+- **The wire.** The frame format is `recipher-frame`'s. A native
   extension gets the version this crate depends on; a guest's host codec
   targets one version of it (section 5).
 - **The stored record.** A record's map keys (`c`, `eq`, `match`, `ore`,
@@ -670,7 +686,7 @@ f1 01000000  03000000 616765  04 2a000000
 
 `04 2a000000` on its own is the value `42` as an `int32`: the frame's tag
 for a 32-bit integer and the integer in little-endian order. What the other
-bytes mean is in `vitaminc-aead-frame`'s documentation; the point here is
+bytes mean is in `recipher-frame`'s documentation; the point here is
 that this is the whole of what crosses, and nothing is decoded into a tree.
 
 The bytes above are what this crate produces today, and this example runs
@@ -678,21 +694,21 @@ as a test of that:
 
 ```
 use std::collections::BTreeMap;
-use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::Controlled as _;
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-let value = ValueFrame::of(42i32)?;
-assert_eq!(hex(value.risky_ref()), "042a000000");
+let value = OwnedFrame::of(42i32)?;
+assert_eq!(hex(value.frame().as_bytes()), "042a000000");
 
-let row = ValueFrame::of(BTreeMap::from([("age", 42i32)]))?;
-assert_eq!(hex(row.risky_ref()), "f10100000003000000616765042a000000");
+let row = OwnedFrame::of(BTreeMap::from([("age", 42i32)]))?;
+assert_eq!(hex(row.frame().as_bytes()), "f10100000003000000616765042a000000");
 
 // A control message is written by serde into a buffer wiped on drop.
-let plan = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+let plan = recipher_frame::serde::to_vec(&serde_json::json!({
     "age": { "context": ["profiles", "age"], "target": "IntegerEq" }
 }))?;
 assert_eq!(
@@ -755,7 +771,8 @@ frame that went in:
 
 ```
 use std::collections::BTreeMap;
-use stack_encrypt::dynamic::{record, Op, Operand, Planned, QueryTerm, ValueFrame};
+use stack_encrypt::dynamic::frame::OwnedFrame;
+use stack_encrypt::dynamic::{record, Op, Operand, Planned, QueryTerm};
 use stack_encrypt::{AsProtectedRef, DecryptFrom, EncryptInto, StackCipher, StackCipherText};
 
 # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
@@ -768,7 +785,7 @@ let cipher = StackCipher::builder()
 let keyset = cipher.default_keyset();
 
 // Read once, when the SDK loads the declaration.
-let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+let declaration = recipher_frame::serde::to_vec(&serde_json::json!({
     "age": { "context": ["profiles", "age"], "outputs": ["c", "eq"], "type": "int32" },
 }))?;
 let plan = record::plan(declaration.as_protected_ref())?;
@@ -776,21 +793,21 @@ let by_age = plan.query("age", Op::Eq)?;
 
 // A frame is moved into each call and wiped by it, so the row is written
 // once for each call that takes it.
-let row = || ValueFrame::of(BTreeMap::from([("age", 42i32)]));
+let row = || OwnedFrame::of(BTreeMap::from([("age", 42i32)]));
 
 // Encrypt: one ZeroKMS request, the stored record.
 let stored: StackCipherText = Planned::new(&plan, row()?).encrypt_into(&keyset).await?;
 
 // Query: the equality term for 42, the bytes the stored `eq` term holds.
-let term: QueryTerm = Planned::new(&by_age, ValueFrame::of(42i32)?)
+let term: QueryTerm = Planned::new(&by_age, OwnedFrame::of(42i32)?)
     .encrypt_into(&keyset)
     .await?;
 assert!(matches!(term.operand(), Operand::One(bytes) if bytes.len() == 32));
 
 // Decrypt through the keyset: the record's frame, equal to what went in,
 // in a buffer wiped when it drops.
-let opened = ValueFrame::decrypt_from(Planned::new(&plan, stored), &keyset).await?;
-assert_eq!(opened, row()?);
+let opened = OwnedFrame::decrypt_from(Planned::new(&plan, stored), &keyset).await?;
+assert_eq!(opened.frame(), row()?.frame());
 # Ok::<(), Box<dyn std::error::Error>>(())
 # }).unwrap();
 ```
@@ -828,7 +845,7 @@ done:
    the frame is the crate's, and what you test is the conversion from a
    value of your language to a frame and back: run the value profile
    against it, and fuzz the conversion of a host value to a frame and back
-   against [`crate::dynamic::ValueFrame::of`] for the same value. For a
+   against [`crate::dynamic::frame::OwnedFrame::of`] for the same value. For a
    guest, the host's codec writes and reads every frame of the raw-frame
    profile and refuses every frame it says to refuse; add a fuzz target
    that feeds the codec's output to the engine's reader and the engine's
@@ -849,7 +866,7 @@ done:
 
 ## 12. Where the rest is
 
-- The frame format: [`vitaminc-aead-frame` on docs.rs](https://docs.rs/vitaminc-aead-frame/0.10.0).
+- The frame format: [`crate::dynamic::frame`], the `recipher-frame` crate.
 - The `dynamic` API: [`crate::dynamic`], [`crate::dynamic::Planned`] for
   the operations, and `src/dynamic/record.rs` for the plan grammar in full.
 - The binding contract and its cases: `conformance/stack-encrypt`, starting

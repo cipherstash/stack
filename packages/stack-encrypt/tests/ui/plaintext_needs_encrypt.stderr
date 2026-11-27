@@ -10,7 +10,7 @@ help: the trait `Encrypt` is not implemented for `SerdeOnly`
  8 | struct SerdeOnly {
    | ^^^^^^^^^^^^^^^^
 note: there are multiple different versions of crate `vitaminc_aead` in the dependency graph
-  --> $CARGO/vitaminc-aead-$VERSION/src/plaintext/mod.rs
+  --> $WORKSPACE/packages/vitaminc-aead/src/plaintext/mod.rs
    |
    | pub trait Encrypt {
    | ^^^^^^^^^^^^^^^^^ this is the expected trait
@@ -23,12 +23,12 @@ note: there are multiple different versions of crate `vitaminc_aead` in the depe
    = help: the following other types implement trait `Encrypt`:
              &&T
              &BTreeMap<K, V>
+             &Frame<'_>
              &HashMap<K, V>
              &JsonPlaintext
              &Lent<'_, T>
+             &OwnedFrame
              &PassthroughFrame
-             &Protected<T>
-             &ProtectedRef<'_, T>
            and $N others
    = note: required for `CipherText<SealedValue, PassthroughFrame>` to implement `EncryptTarget<SerdeOnly>`
    = note: 1 redundant requirement hidden
@@ -41,7 +41,7 @@ error[E0277]: the trait bound `for<'a> &'a SerdeOnly: Encrypt` is not satisfied
    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `for<'a> Encrypt` is not implemented for `&'a SerdeOnly`
    |
 note: there are multiple different versions of crate `vitaminc_aead` in the dependency graph
-  --> $CARGO/vitaminc-aead-$VERSION/src/plaintext/mod.rs
+  --> $WORKSPACE/packages/vitaminc-aead/src/plaintext/mod.rs
    |
    | pub trait Encrypt {
    | ^^^^^^^^^^^^^^^^^ this is the expected trait
@@ -54,12 +54,12 @@ note: there are multiple different versions of crate `vitaminc_aead` in the depe
    = help: the following other types implement trait `Encrypt`:
              &&T
              &BTreeMap<K, V>
+             &Frame<'_>
              &HashMap<K, V>
              &JsonPlaintext
              &Lent<'_, T>
+             &OwnedFrame
              &PassthroughFrame
-             &Protected<T>
-             &ProtectedRef<'_, T>
            and $N others
    = note: required for `SerdeOnly` to implement `EncryptRef`
    = note: required for `CipherText<SealedValue, PassthroughFrame>` to implement `EncryptTarget<SerdeOnly>`

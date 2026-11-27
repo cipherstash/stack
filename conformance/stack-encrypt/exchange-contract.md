@@ -110,7 +110,7 @@ step remain.
 The task prints and, under `STACK_CONFORMANCE_REPORT_DIR`, writes
 `exchange.json`: the corpus, value-corpus and EQL fixture hashes; the
 commit; the Go and Rust toolchains; the engine versions each path resolves
-(`stack-encrypt`, `vitaminc-aead` and `vitaminc-aead-frame` from the root,
+(`stack-encrypt`, `vitaminc-aead` and `recipher-frame` from the root,
 guest and EQL lockfiles, and `eql-bindings`); the storage versions the EQL
 rows were derived under (the `eql_v4` schema, the `@cipherstash/eql`
 package and `eql-bindings` crate versions); the lockfile and guest hashes;

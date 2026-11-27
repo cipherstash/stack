@@ -5,7 +5,7 @@
 //! here knows about linear memory.
 //!
 //! Values cross the boundary as vitaminc transport frames, and ciphertext
-//! trees in vitaminc's ciphertext codec (`vitaminc_aead_frame`) — the same
+//! trees in vitaminc's ciphertext codec (`recipher_frame`) — the same
 //! encodings the vitaminc guest uses, so the Go side carries exactly one
 //! codec. A ciphertext tree's
 //! leaves are re-encoded through [`SealedValue::to_bytes`] /
@@ -39,14 +39,14 @@
 //! Plaintext is never decoded into a value tree. A term's value is parsed and
 //! walked in place to the scalar it holds, the way vitaminc's own guest walks
 //! a frame into encryption. A record's source, a query's input and a page of
-//! values to verify are read as [`ValueFrame`]s: the frame is checked against
-//! the engine's value model, and the engine walks it, splitting a source into
-//! one frame per field as it goes. A record opens into one frame, which is
-//! the output. Control data (a plan, a context, an options object, query
+//! values to verify are read as [`Frame`]s borrowed from the export's
+//! buffer: the frame is checked against the engine's value model, and the
+//! engine walks it, splitting a source into one frame per field as it goes.
+//! A record opens into one [`OwnedFrame`], which is the output. Control data (a plan, a context, an options object, query
 //! statistics) carries no secret and is read from its frame with serde.
 
 use stack_encrypt::dynamic::frame::{decode_ciphertext, encode_ciphertext, Frame};
-use stack_encrypt::dynamic::{self, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::CipherRef;
@@ -361,11 +361,9 @@ pub fn verify(
     operator: &[u8],
 ) -> Result<Vec<u8>, u32> {
     let (plan, field, operator) = parse_query(plan, field, operator)?;
-    // Each value becomes a frame of its own (wiped on drop): vitaminc's
-    // `Frame` walks a sequence but does not hand out its elements' frames,
-    // and reading them out of the frame layout here would duplicate
-    // vitaminc's parser.
-    let values = decode_plaintext(values)?
+    // Each value is a frame borrowed from the list's, walked in place: the
+    // bytes stay in the export's buffer, which wipes them when it drops.
+    let values = checked_plaintext(values)?
         .elements()
         .ok_or_else(|| last_error::malformed("the values to verify are not a list"))?;
     let verified = dynamic::verify(
@@ -633,28 +631,22 @@ pub mod validate {
 // =============================================================================
 
 /// Plaintext from a frame: checked against the engine's value model and
-/// held as the frame, in a buffer wiped when it drops. The same frames are
-/// refused as control data's, so a malformed input fails the same way on
-/// every path.
-fn decode_plaintext(bytes: &Bytes) -> Result<ValueFrame, u32> {
-    ValueFrame::from_bytes(lend(bytes)).map_err(|_| not_a_frame())
-}
-
-/// Plaintext checked as [`decode_plaintext`] checks it, and walked in place
-/// from the buffer the export took it into: for a source or an input that
-/// is walked once, where a frame of its own would be one more copy of the
-/// plaintext. The record split copies each field into its own wiped frame,
-/// and a query's input is read straight into its term.
+/// walked in place from the buffer the export took it into, which wipes it
+/// when it drops. The same frames are refused as control data's, so a
+/// malformed input fails the same way on every path. Nothing is copied
+/// here: the record split copies each field into its own wiped frame, and
+/// a query's input is read straight into its term.
 fn checked_plaintext(bytes: &Bytes) -> Result<Frame<'_>, u32> {
-    ValueFrame::check(lend(bytes)).map_err(|_| not_a_frame())
+    Frame::parse(lend(bytes).risky_ref()).map_err(|_| not_a_frame())
 }
 
 /// An opened value as the output buffer: its frame, copied into a buffer
 /// whose capacity is exactly its length (see [`encode_tree`]); the frame
 /// is wiped when it drops.
-fn encode_frame(frame: ValueFrame) -> Result<Vec<u8>, u32> {
-    let mut out = exact_buffer(Some(frame.risky_ref().len()))?;
-    out.extend_from_slice(frame.risky_ref());
+fn encode_frame(frame: OwnedFrame) -> Result<Vec<u8>, u32> {
+    let bytes = frame.frame().as_bytes();
+    let mut out = exact_buffer(Some(bytes.len()))?;
+    out.extend_from_slice(bytes);
     Ok(out)
 }
 

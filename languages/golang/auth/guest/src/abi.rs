@@ -22,13 +22,40 @@
 //!
 //! Wasm modules are single-threaded; the host must serialize calls into one
 //! instance.
+//!
+//! # Token exports step
+//!
+//! [`sa_auth_token`] and [`sa_auth_refresh`] never wait on the network.
+//! Each runs its work as a step operation ([`crate::auth`]): done, it
+//! returns the token as always. Waiting on a request to CTS, or parked
+//! behind another caller's exchange, it returns `STATUS_NEEDS_IO` instead.
+//! The host takes the step with [`sa_auth_io`] before it calls any other
+//! export, and then:
+//!
+//! - for requests, performs them outside the guest and hands the responses
+//!   to [`sa_auth_resume`], which returns the same three ways;
+//! - for a parked operation, waits until [`sa_auth_runnable`] lists its
+//!   handle, then resumes it with no responses. The host asks
+//!   [`sa_auth_runnable`] after every step, resume and abort: one waiter
+//!   running can be what makes the next one runnable;
+//! - or gives up with [`sa_auth_abort`]. A host aborts a parked operation
+//!   freely. It does not abort one whose request is in flight: it resumes
+//!   it with the response, or with the transport failure, so a rotated
+//!   refresh token is never dropped.
+//!
+//! [`crate::io`] has the wire form. Several operations may be paused at
+//! once, each under its own handle, up to `stack_guest_abi::step::MAX_OPEN`.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use stack_guest_abi::abi::{export, input};
+use stack_guest_abi::abi::{export, input, take_plaintext};
+use stack_guest_abi::call;
+use stack_guest_abi::status::STATUS_NEEDS_IO;
+use stack_guest_abi::step::{self, Operation, Step};
 use stack_guest_abi::{buffers, last_error};
+use vitaminc_protected::Controlled as _;
 
-use crate::{auth, ops};
+use crate::{auth, io, ops};
 
 /// Where the host mounts the profile root. The Go side mounts exactly one
 /// directory here and constructs every store directory under it; nothing
@@ -60,6 +87,34 @@ fn export2(a_ptr: *const u8, a_len: u32, b_ptr: *const u8, b_len: u32, op: Op2) 
 fn export1(a_ptr: *const u8, a_len: u32, op: Op1) -> u64 {
     // SAFETY: as in `export2`.
     export(|| op(unsafe { input(a_ptr, a_len)? }))
+}
+
+/// Turn what came of an operation's step into an export's result: the
+/// output when done, `STATUS_NEEDS_IO` with the step registered for
+/// [`sa_auth_io`] when paused or parked, the status when failed.
+fn deliver(step: Result<Step, u32>) -> Result<Vec<u8>, u32> {
+    let (handle, parked, requests) = match step? {
+        Step::Done(out) => return Ok(out),
+        Step::NeedsIo { handle, requests } => (handle, false, requests),
+        Step::Parked { handle } => (handle, true, Vec::new()),
+    };
+    let encoded = io::encode_step(handle, parked, &requests);
+    drop(requests);
+    let encoded = encoded.inspect_err(|_| {
+        let _ = step::abort(handle);
+    })?;
+    step::set_pending(encoded);
+    Err(STATUS_NEEDS_IO)
+}
+
+/// Start a token operation built from one validated input, as an export.
+fn start1(a_ptr: *const u8, a_len: u32, build: fn(&[u8]) -> Result<Operation, u32>) -> u64 {
+    // SAFETY: as in `export2`.
+    export(|| {
+        deliver(step::start_parkable(build(unsafe {
+            input(a_ptr, a_len)?
+        })?))
+    })
 }
 
 /// The current workspace id of the store at `dir`. See
@@ -216,23 +271,94 @@ pub unsafe extern "C" fn sa_auth_validate_crn(ptr: *const u8, len: u32) -> u64 {
     export1(ptr, len, auth::validate_crn)
 }
 
-/// Get a service token from a strategy. A device session returns
-/// `STATUS_AUTH_REFRESH_REQUIRED` when it enters the refresh window;
-/// this export never refreshes a device session or needs its file lock.
+/// Get a service token from a strategy, as a step operation (see
+/// [Token exports step](self#token-exports-step)). For an access key or
+/// OIDC strategy the output is the token's text.
+///
+/// For a device session this export only reads auth.json: it never
+/// refreshes, never pauses, and needs no file lock. Its output is a frame:
+///
+/// ```text
+/// { "access_token": <text>, "refresh_required": <bool> }
+/// ```
+///
+/// `refresh_required` is true once the token is inside stack-auth's
+/// refresh window, while it still works: the host refreshes it with
+/// [`sa_auth_refresh`] under its lock, and may hand the token to other
+/// callers until that refresh is done. A token past its expiry, which
+/// nothing can use, is `STATUS_AUTH_REFRESH_REQUIRED` instead. The frame
+/// carries the token: the host releases it with `se_dealloc`, which wipes
+/// it.
 /// # Safety
 /// The input pair is validated against guest linear memory.
 #[no_mangle]
 pub unsafe extern "C" fn sa_auth_token(ptr: *const u8, len: u32) -> u64 {
-    export1(ptr, len, auth::token)
+    start1(ptr, len, auth::token)
 }
 
-/// Refresh a device session. The Go host must hold the workspace's
-/// auth.json lock across this whole call, including the disk re-read and save.
+/// Refresh a device session, as a step operation. The Go host must hold
+/// the workspace's auth.json lock across every step of it, from this call
+/// to the step that finishes it, including the disk re-read and save.
 /// # Safety
 /// The input pair is validated against guest linear memory.
 #[no_mangle]
 pub unsafe extern "C" fn sa_auth_refresh(ptr: *const u8, len: u32) -> u64 {
-    export1(ptr, len, auth::refresh)
+    start1(ptr, len, auth::refresh)
+}
+
+/// The step a paused token export left: its handle, whether it is parked,
+/// and the requests it waits on, as a packed buffer ([`crate::io`]), handed
+/// over once: a second call returns zero, as does a call with no step
+/// waiting. The host calls it after `STATUS_NEEDS_IO`, before any other
+/// export, and releases the buffer with `se_dealloc`, which wipes it: a
+/// request carries a credential.
+#[no_mangle]
+pub extern "C" fn sa_auth_io() -> u64 {
+    match step::take_pending() {
+        Some((ptr, len)) => call::pack_buffer(ptr as usize as u32, len as u32),
+        None => 0,
+    }
+}
+
+/// Hand a paused token operation the responses to the requests its last
+/// step asked for ([`crate::io`] has the frame), or none for a parked one,
+/// and run its next step. Returns as the export that started it does. The
+/// responses buffer carries tokens and is wiped in place. A handle that
+/// names no paused operation is `STATUS_STATE`; responses that do not
+/// decode, or are not one per request, are `STATUS_ENCODING`, and the
+/// operation is dropped.
+///
+/// # Safety
+///
+/// The responses pair is validated against guest linear memory.
+#[no_mangle]
+pub unsafe extern "C" fn sa_auth_resume(handle: u64, resp_ptr: *mut u8, resp_len: u32) -> u64 {
+    export(|| {
+        // SAFETY: a host-owned range the export was handed; it is copied
+        // out and wiped in place before this returns.
+        let bytes = unsafe { take_plaintext(resp_ptr, resp_len) };
+        let responses = bytes.and_then(|bytes| io::decode_responses(bytes.risky_ref()));
+        let responses = responses.inspect_err(|_| {
+            let _ = step::abort(handle);
+        })?;
+        deliver(step::resume(handle, responses))
+    })
+}
+
+/// Give up on a paused or parked token operation: drop it, wiping what it
+/// held. An empty output; `STATUS_STATE` for a handle that names no paused
+/// operation. Dropping an operation that held a strategy's lock can make
+/// another runnable: the host asks [`sa_auth_runnable`] after it.
+#[no_mangle]
+pub extern "C" fn sa_auth_abort(handle: u64) -> u64 {
+    export(|| step::abort(handle).map(|()| Vec::new()))
+}
+
+/// The parked token operations the host may resume now, with no
+/// responses: a frame holding a list of handles ([`crate::io`]).
+#[no_mangle]
+pub extern "C" fn sa_auth_runnable() -> u64 {
+    export(|| io::encode_runnable(&step::runnable()))
 }
 
 /// Drop one strategy and its cached credential.
@@ -243,11 +369,14 @@ pub unsafe extern "C" fn sa_auth_free(ptr: *const u8, len: u32) -> u64 {
     export1(ptr, len, auth::free)
 }
 
-/// Tear the instance down: wipe every buffer the registry still holds.
-/// This guest keeps no other state. Idempotent; `se_alloc` and
+/// Tear the instance down: drop every paused token operation and every
+/// strategy, and wipe every buffer the registry still holds. Idempotent; `se_alloc` and
 /// `se_dealloc` keep working so the host can still free what it holds.
 #[no_mangle]
 pub extern "C" fn sa_shutdown() {
+    // The paused operations first: each holds its strategy, which then
+    // drops with the registry.
+    let _ = catch_unwind(AssertUnwindSafe(step::drop_all));
     let _ = catch_unwind(AssertUnwindSafe(auth::clear));
     let _ = catch_unwind(AssertUnwindSafe(last_error::clear));
     let _ = catch_unwind(AssertUnwindSafe(buffers::wipe_all));

@@ -1,0 +1,546 @@
+{
+  "_comment": "Pinned bytes of every way a plaintext value is written: its transport frame, the plaintext its sealed leaf holds, and a sealed null's leaf, for the typed Rust path and the dynamic record path. Read by tests/value_bytes.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1, then run pnpm run code:fix; never edit by hand.",
+  "context": ["conformance", "value"],
+  "dynamic": {
+    "bool": {
+      "frame": "03",
+      "null_sealed": {
+        "leaves": ["00"]
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "true",
+      "value": {
+        "leaves": ["03"]
+      }
+    },
+    "bytes": {
+      "frame": "0b0300000000ff10",
+      "null_sealed": {
+        "plan_refused": "stack_encrypt::dynamic_plan/sealed_null_type"
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "00ff10",
+      "value": {
+        "leaves": ["0b00ff10"]
+      }
+    },
+    "date": {
+      "frame": "1281460b00",
+      "null_sealed": {
+        "leaves": ["1512000000"]
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "2024-02-29",
+      "value": {
+        "leaves": ["1281460b00"]
+      }
+    },
+    "decimal": {
+      "frame": "14000004800061bc000000000000000000",
+      "null_sealed": {
+        "leaves": ["1514000000000000000000000000000000"]
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "-1234.5600",
+      "value": {
+        "leaves": ["14000004800061bc000000000000000000"]
+      }
+    },
+    "float32": {
+      "frame": "080000c03f",
+      "null_sealed": {
+        "leaves": ["1508000000"]
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "1.5",
+      "value": {
+        "leaves": ["080000c03f"]
+      }
+    },
+    "float64": {
+      "frame": "090000000000000080",
+      "null_sealed": {
+        "leaves": ["150900000000000000"]
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "-0",
+      "value": {
+        "leaves": ["090000000000000080"]
+      }
+    },
+    "int128": {
+      "frame": "1000000000000000000000000000000080",
+      "null_sealed": {
+        "leaves": ["1510000000000000000000000000000000"]
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "-170141183460469231731687303715884105728",
+      "value": {
+        "leaves": ["1000000000000000000000000000000080"]
+      }
+    },
+    "int16": {
+      "frame": "0ed4fe",
+      "null_sealed": {
+        "leaves": ["150e00"]
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "-300",
+      "value": {
+        "leaves": ["0ed4fe"]
+      }
+    },
+    "int32": {
+      "frame": "04feffffff",
+      "null_sealed": {
+        "leaves": ["1504000000"]
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "-2",
+      "value": {
+        "leaves": ["04feffffff"]
+      }
+    },
+    "int64": {
+      "frame": "05ffffffffffffdfff",
+      "null_sealed": {
+        "leaves": ["150500000000000000"]
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "-9007199254740993",
+      "value": {
+        "leaves": ["05ffffffffffffdfff"]
+      }
+    },
+    "int8": {
+      "frame": "0cf8",
+      "null_sealed": {
+        "leaves": ["150c"]
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "-8",
+      "value": {
+        "leaves": ["0cf8"]
+      }
+    },
+    "string": {
+      "frame": "0a05000000636166c3a9",
+      "null_sealed": {
+        "plan_refused": "stack_encrypt::dynamic_plan/sealed_null_type"
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "café",
+      "value": {
+        "leaves": ["0a636166c3a9"]
+      }
+    },
+    "timestamp": {
+      "frame": "130bc9d26a0000000015cd5b07",
+      "null_sealed": {
+        "leaves": ["15130000000000000000000000"]
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "2026-10-17T01:02:03.123456789Z",
+      "value": {
+        "leaves": ["130bc9d26a0000000015cd5b07"]
+      }
+    },
+    "uint128": {
+      "frame": "11ffffffffffffffffffffffffffffffff",
+      "null_sealed": {
+        "leaves": ["1511000000000000000000000000000000"]
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "340282366920938463463374607431768211455",
+      "value": {
+        "leaves": ["11ffffffffffffffffffffffffffffffff"]
+      }
+    },
+    "uint16": {
+      "frame": "0f60ea",
+      "null_sealed": {
+        "leaves": ["150f00"]
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "60000",
+      "value": {
+        "leaves": ["0f60ea"]
+      }
+    },
+    "uint32": {
+      "frame": "0600286bee",
+      "null_sealed": {
+        "leaves": ["1506000000"]
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "4000000000",
+      "value": {
+        "leaves": ["0600286bee"]
+      }
+    },
+    "uint64": {
+      "frame": "07ffffffffffffffff",
+      "null_sealed": {
+        "leaves": ["150700000000000000"]
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "18446744073709551615",
+      "value": {
+        "leaves": ["07ffffffffffffffff"]
+      }
+    },
+    "uint8": {
+      "frame": "0dc8",
+      "null_sealed": {
+        "leaves": ["150d"]
+      },
+      "null_sql": {
+        "stored": "sql_null"
+      },
+      "text": "200",
+      "value": {
+        "leaves": ["0dc8"]
+      }
+    },
+    "untyped_null": {
+      "value": {
+        "leaves": ["00"]
+      }
+    },
+    "untyped_object": {
+      "frame": "f103000000040000006c697374f00200000004010000000a01000000780a000000656d7074795f6c697374f00000000009000000656d7074795f6d6170f100000000",
+      "value": {
+        "leaves": ["0401000000", "0a78", "", ""]
+      }
+    }
+  },
+  "host": {
+    "date_over_i64": {
+      "frame": {
+        "refused": true
+      },
+      "host_frame": "f3020005464d000000000000",
+      "type": "date",
+      "value": {
+        "frame_refused": true
+      }
+    },
+    "float64_for_float32": {
+      "frame": "09000000000000f83f",
+      "host_frame": "09000000000000f83f",
+      "type": "float32",
+      "value": {
+        "leaves": ["080000c03f"]
+      }
+    },
+    "timestamp_micros": {
+      "frame": "f30302050100000000000000",
+      "host_frame": "f30302050100000000000000",
+      "type": "timestamp",
+      "value": {
+        "leaves": ["130000000000000000e8030000"]
+      }
+    },
+    "timestamp_millis": {
+      "frame": "f30301057b00000000000000",
+      "host_frame": "f30301057b00000000000000",
+      "type": "timestamp",
+      "value": {
+        "leaves": ["130000000000000000c0d45407"]
+      }
+    },
+    "timestamp_millis_negative": {
+      "frame": "f3030105ffffffffffffffff",
+      "host_frame": "f3030105ffffffffffffffff",
+      "type": "timestamp",
+      "value": {
+        "leaves": ["13ffffffffffffffffc0878b3b"]
+      }
+    },
+    "timestamp_nanos_i64": {
+      "frame": {
+        "refused": true
+      },
+      "host_frame": "f30303050100000000000000",
+      "type": "timestamp",
+      "value": {
+        "frame_refused": true
+      }
+    },
+    "timestamp_seconds": {
+      "frame": "f30300050100000000000000",
+      "host_frame": "f30300050100000000000000",
+      "type": "timestamp",
+      "value": {
+        "leaves": ["13010000000000000000000000"]
+      }
+    },
+    "undefined": {
+      "frame": "01",
+      "host_frame": "01",
+      "type": "",
+      "value": {
+        "leaves": ["01"]
+      }
+    },
+    "undefined_for_string": {
+      "frame": "01",
+      "host_frame": "01",
+      "type": "string",
+      "value": {
+        "refused": "stack_encrypt::dynamic_source/undefined"
+      }
+    },
+    "uuid": {
+      "frame": "f305000b10000000123e4567e89b12d3a456426614174000",
+      "host_frame": "f305000b10000000123e4567e89b12d3a456426614174000",
+      "type": "",
+      "value": {
+        "leaves": ["f305000b123e4567e89b12d3a456426614174000"]
+      }
+    }
+  },
+  "host_typed_null": {
+    "frames": {
+      "int32": {
+        "frame": "00",
+        "host_frame": "1504000000"
+      },
+      "int64": {
+        "frame": "00",
+        "host_frame": "150500000000000000"
+      }
+    },
+    "int32_field_int32_null": {
+      "refused": "stack_encrypt::dynamic_source/field_type"
+    },
+    "int32_field_int32_null_sealed": {
+      "leaves": ["1504000000"]
+    },
+    "int32_field_int32_null_sql": {
+      "stored": "sql_null"
+    },
+    "int32_field_int64_null_sealed": {
+      "leaves": ["1504000000"]
+    },
+    "untyped_field_array_of_int32_null": {
+      "frame": "f00100000000",
+      "host_frame": "f0010000001504000000",
+      "value": {
+        "leaves": ["00"]
+      }
+    },
+    "untyped_field_int32_null": {
+      "leaves": ["00"]
+    }
+  },
+  "json": {
+    "opened_frame": "0b160000007b2261223a5b312c2278225d2c2262223a6e756c6c7d",
+    "record_without_target": {
+      "plan_refused": "stack_encrypt::dynamic_plan/json_needs_target"
+    },
+    "typed_leaf": {
+      "frame": "0a160000007b2261223a5b312c2278225d2c2262223a6e756c6c7d",
+      "leaf": "0a7b2261223a5b312c2278225d2c2262223a6e756c6c7d"
+    },
+    "untyped_text": {
+      "leaves": ["0a7b2261223a5b312c2278225d2c2262223a6e756c6c7d"]
+    }
+  },
+  "key_source": {
+    "kind": "deterministic-sha256",
+    "seed": "737461636b2d656e63727970742076616c756520627974657320763120202020"
+  },
+  "typed": {
+    "Date": {
+      "frame": "1281460b00",
+      "leaf": "1281460b00"
+    },
+    "Decimal": {
+      "frame": "14000004800061bc000000000000000000",
+      "leaf": "14000004800061bc000000000000000000"
+    },
+    "JsonPlaintext": {
+      "frame": "0a160000007b2261223a5b312c2278225d2c2262223a6e756c6c7d",
+      "leaf": "0a7b2261223a5b312c2278225d2c2262223a6e756c6c7d"
+    },
+    "Option<Date>::None": {
+      "frame": "00",
+      "leaf": "1512000000"
+    },
+    "Option<Decimal>::None": {
+      "frame": "00",
+      "leaf": "1514000000000000000000000000000000"
+    },
+    "Option<JsonPlaintext>::None": {
+      "frame": "00",
+      "leaf": "00"
+    },
+    "Option<String>::None": {
+      "frame": "00",
+      "leaf": "00"
+    },
+    "Option<Timestamp>::None": {
+      "frame": "00",
+      "leaf": "15130000000000000000000000"
+    },
+    "Option<Uuid>::None": {
+      "frame": "00",
+      "leaf": "15f305000b000000000000000000000000000000"
+    },
+    "Option<Vec<u8>>::None": {
+      "frame": "00",
+      "leaf": "00"
+    },
+    "Option<bool>::None": {
+      "frame": "00",
+      "leaf": "00"
+    },
+    "Option<f32>::None": {
+      "frame": "00",
+      "leaf": "1508000000"
+    },
+    "Option<f64>::None": {
+      "frame": "00",
+      "leaf": "150900000000000000"
+    },
+    "Option<i128>::None": {
+      "frame": "00",
+      "leaf": "1510000000000000000000000000000000"
+    },
+    "Option<i16>::None": {
+      "frame": "00",
+      "leaf": "150e00"
+    },
+    "Option<i32>::None": {
+      "frame": "00",
+      "leaf": "1504000000"
+    },
+    "Option<i64>::None": {
+      "frame": "00",
+      "leaf": "150500000000000000"
+    },
+    "Option<i8>::None": {
+      "frame": "00",
+      "leaf": "150c"
+    },
+    "Option<u128>::None": {
+      "frame": "00",
+      "leaf": "1511000000000000000000000000000000"
+    },
+    "Option<u16>::None": {
+      "frame": "00",
+      "leaf": "150f00"
+    },
+    "Option<u32>::None": {
+      "frame": "00",
+      "leaf": "1506000000"
+    },
+    "Option<u64>::None": {
+      "frame": "00",
+      "leaf": "150700000000000000"
+    },
+    "String": {
+      "frame": "0a05000000636166c3a9",
+      "leaf": "0a636166c3a9"
+    },
+    "Timestamp": {
+      "frame": "130bc9d26a0000000015cd5b07",
+      "leaf": "130bc9d26a0000000015cd5b07"
+    },
+    "Uuid": {
+      "frame": "f305000b10000000123e4567e89b12d3a456426614174000",
+      "leaf": "f305000b123e4567e89b12d3a456426614174000"
+    },
+    "Vec<u8>": {
+      "frame": "0b0300000000ff10",
+      "leaf": "0b00ff10"
+    },
+    "bool": {
+      "frame": "03",
+      "leaf": "03"
+    },
+    "f32": {
+      "frame": "080000c03f",
+      "leaf": "080000c03f"
+    },
+    "f64": {
+      "frame": "090000000000000080",
+      "leaf": "090000000000000080"
+    },
+    "i128": {
+      "frame": "1000000000000000000000000000000080",
+      "leaf": "1000000000000000000000000000000080"
+    },
+    "i16": {
+      "frame": "0ed4fe",
+      "leaf": "0ed4fe"
+    },
+    "i32": {
+      "frame": "04feffffff",
+      "leaf": "04feffffff"
+    },
+    "i64": {
+      "frame": "05ffffffffffffdfff",
+      "leaf": "05ffffffffffffdfff"
+    },
+    "i8": {
+      "frame": "0cf8",
+      "leaf": "0cf8"
+    },
+    "u128": {
+      "frame": "11ffffffffffffffffffffffffffffffff",
+      "leaf": "11ffffffffffffffffffffffffffffffff"
+    },
+    "u16": {
+      "frame": "0f60ea",
+      "leaf": "0f60ea"
+    },
+    "u32": {
+      "frame": "0600286bee",
+      "leaf": "0600286bee"
+    },
+    "u64": {
+      "frame": "07ffffffffffffffff",
+      "leaf": "07ffffffffffffffff"
+    }
+  },
+  "uuid_equality": {
+    "Uuid": "7634298ccb1ad44050b51acacd0771a8239d1b62733f2e304a22d0fbc171b4c8",
+    "Vec<u8>": "28517d8a00a2a4713bd8ad9c859ef56678f163014b9506399b705b27db8ed7c7"
+  }
+}

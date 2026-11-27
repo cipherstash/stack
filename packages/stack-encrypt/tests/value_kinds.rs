@@ -27,7 +27,7 @@ use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
 use stack_encrypt::dynamic::{
-    context, query_term, NoTargets, Op, Operand, Reason, ValueFrame, ValueKind,
+    context, frame::OwnedFrame, query_term, NoTargets, Op, Operand, Reason, ValueKind,
 };
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{equality, Borrowed, CallerContext, IndexSpec};
@@ -73,8 +73,8 @@ fn decimal(mantissa: i128, scale: u8) -> Raw<'static> {
 }
 
 /// A value as the engine holds it: its frame.
-fn value(raw: Raw<'_>) -> ValueFrame {
-    ValueFrame::of(raw).expect("in the value model")
+fn value(raw: Raw<'_>) -> OwnedFrame {
+    OwnedFrame::of(raw).expect("in the value model")
 }
 
 /// 2026-10-17T01:02:03.123456789Z, in nanoseconds since the epoch.
@@ -188,12 +188,12 @@ fn data_plan() -> DataPlan {
             )
         })
         .collect();
-    record::plan(object(fields).as_protected_ref()).expect("the data plan parses")
+    record::plan(object(fields).into_buffer().as_protected_ref()).expect("the data plan parses")
 }
 
 /// The source as a binding hands it over: one frame, a map of the fields in
 /// plan order.
-fn source() -> ValueFrame {
+fn source() -> OwnedFrame {
     let mut bytes = vitaminc_protected::Buffer::new();
     {
         let kinds = kinds();
@@ -207,7 +207,7 @@ fn source() -> ValueFrame {
         }
         map.end().expect("ended");
     }
-    ValueFrame::from_bytes(bytes.as_protected_ref()).expect("in the value model")
+    OwnedFrame::from_buffer(bytes).expect("in the value model")
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -222,14 +222,14 @@ fn unhex(text: &str) -> Vec<u8> {
 }
 
 fn frame(raw: Raw<'_>) -> String {
-    hex(value(raw).risky_ref())
+    hex(value(raw).frame().as_bytes())
 }
 
 fn term_bytes(node: StackCipherText) -> Vec<u8> {
     let CipherText::Passthrough(payload) = node else {
         panic!("a term rides as a passthrough");
     };
-    vitaminc_aead_frame::serde::from_slice::<&[u8]>(&payload.0)
+    recipher_frame::serde::from_slice::<&[u8]>(&payload.0)
         .expect("a term is bytes")
         .to_vec()
 }
@@ -318,11 +318,12 @@ async fn open(
         .expect("the record fits")
         .await
         .expect("the lowering opens it")
-        .risky_ref())
+        .frame()
+        .as_bytes())
 }
 
 fn expected_frames() -> String {
-    hex(source().risky_ref())
+    hex(source().frame().as_bytes())
 }
 
 async fn query(
@@ -369,7 +370,7 @@ async fn every_new_kind_seals_opens_and_queries_as_the_typed_path() {
             kind.field
         );
         let ctx = context(
-            vitaminc_aead_frame::serde::to_vec(&("value_kinds", kind.field))
+            recipher_frame::serde::to_vec(&("value_kinds", kind.field))
                 .expect("frames")
                 .as_protected_ref(),
         )
@@ -418,13 +419,8 @@ async fn every_new_kind_seals_opens_and_queries_as_the_typed_path() {
     }
 }
 
-/// A value of another width is not of the field's kind: sealing refuses
-/// it, naming the field, where a query reads it as the field's kind.
-#[tokio::test]
-async fn a_value_of_another_width_is_refused_when_sealed() {
-    let cipher = deterministic_cipher(SEED).await;
-    let plan = data_plan();
-    // The source with the `int8` field's value sent at 32 bits.
+/// The source with the `int8` field's value sent as `i8_as` instead.
+fn source_with_i8_as(i8_as: Raw<'_>) -> vitaminc_protected::Buffer {
     let mut bytes = vitaminc_protected::Buffer::new();
     {
         let kinds = kinds();
@@ -434,19 +430,51 @@ async fn a_value_of_another_width_is_refused_when_sealed() {
         for kind in kinds {
             let entry = map.entry(kind.field).expect("an entry");
             match kind.field {
-                "i8" => int(Int::I32(-8)).visit(entry),
+                "i8" => i8_as.visit(entry),
                 _ => kind.value.visit(entry),
             }
             .expect("written");
         }
         map.end().expect("ended");
     }
+    bytes
+}
+
+/// A value of another width is read as the field's kind when the
+/// conversion is exact: the record seals the terms, and opens to the
+/// value, of the same number at the field's width. One that does not fit
+/// is refused, naming the field.
+#[tokio::test]
+async fn a_value_of_another_width_seals_at_the_declared_width() {
+    let cipher = deterministic_cipher(SEED).await;
+    let plan = data_plan();
     let keyset = cipher.default_keyset();
+    let at_width = json_of_record(seal(&cipher, &plan).await);
+    let bytes = source_with_i8_as(int(Int::I32(-8)));
+    let source = vitaminc_aead::Frame::parse(bytes.risky_ref()).expect("a frame");
+    let converted = json_of_record(
+        record::encrypt(&keyset, source, &plan)
+            .expect("an int32 -8 converts to the int8 -8")
+            .await
+            .expect("seals"),
+    );
+    assert_eq!(
+        terms_of(&converted),
+        terms_of(&at_width),
+        "the terms of the int8 -8"
+    );
+    assert_eq!(
+        open(&cipher, record_of_json(&converted), &plan).await,
+        expected_frames(),
+        "it opens as the int8 -8"
+    );
+
+    let bytes = source_with_i8_as(int(Int::I32(300)));
     let source = vitaminc_aead::Frame::parse(bytes.risky_ref()).expect("a frame");
     let refused = record::encrypt(&keyset, source, &plan);
     assert!(
         matches!(&refused, Err(error) if error.field() == Some("i8") && error.reason() == Some(Reason::FieldType)),
-        "an int32 is not an int8: {:?}",
+        "300 is not an int8: {:?}",
         refused.err()
     );
 }
@@ -490,7 +518,7 @@ async fn the_committed_fixture_opens_and_its_terms_are_todays() {
             }));
         }
         let fixture = json!({
-            "_comment": "One field of each value kind added in #1144, sealed by the data-plan lowering under a deterministic key source, with each value's transport frame and the equality queries vitaminc-normalize folds onto a stored term. Read by tests/value_kinds.rs and the Go SDK's encrypt tests; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand.",
+            "_comment": "One field of each value kind added in #1144, sealed by the data-plan lowering under a deterministic key source, with each value's transport frame and the equality queries vitaminc-normalize folds onto a stored term. Read by tests/value_kinds.rs and the Go SDK's encrypt tests; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand. After regenerating, run pnpm run code:fix.",
             "key_source": { "kind": "deterministic-sha256", "seed": hex(&SEED) },
             "keyset_id": keyset.keyset_id().await.unwrap().to_string(),
             "plan": data_plan_json(),

@@ -1,0 +1,91 @@
+[package]
+name = "vitaminc-aead"
+description = "Authenticated Encryption with Associated Data (AEAD) primitives. Part of the Vitamin-C cryptographic suite."
+documentation = "https://docs.rs/vitaminc-aead"
+version = "0.10.0"
+repository = "https://github.com/cipherstash/stack"
+authors = ["Dan Draper <dan@cipherstash.com>"]
+edition = "2021"
+homepage = "https://cipherstash.com"
+license = "MIT"
+keywords = ["cryptography", "security"]
+categories = ["cryptography"]
+rust-version = "1.89.0"
+# Not published from this repository yet: crates.io serves 0.10.0, which was
+# published from cipherstash/vitaminc. release-plz.toml lists it with
+# `release = false`. Every workspace that resolves it patches crates.io's
+# copy to this one.
+publish = false
+
+[package.metadata.docs.rs]
+features = ["jiff", "rust_decimal", "uuid", "hlist"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+vitaminc-aead-derive = { version = "0.10.0", path = "../vitaminc-aead-derive" }
+vitaminc-context = "0.10.0"
+vitaminc-protected = "0.10.0"
+vitaminc-random = "0.10.0"
+
+bytes = { version = "^1", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2.0.18"
+zeroize = { version = "1", features = ["derive"] }
+# `stream::iter(..).buffered(..)` for the bounded per-leaf defaults of
+# `AsyncCipher`'s `seal_many` and `open_many`. No runtime.
+futures-util = { version = "0.3.31", default-features = false, features = ["alloc"] }
+
+# Optional `Encrypt` sources for logical types: a date and a timestamp,
+# a decimal, and a uuid. Each is a few lines over the core model.
+# jiff without its default features: no time-zone database, no system
+# time-zone lookup and no filesystem access, only the civil and instant types.
+# 1.0.1 at least: 1.0.0 can parse an instant below its own minimum
+# (BurntSushi/jiff#714), which has no encoding.
+[dependencies.jiff]
+version = "1.0.1"
+default-features = false
+optional = true
+
+[dependencies.rust_decimal]
+version = "1.41"
+default-features = false
+features = ["std"]
+optional = true
+
+[dependencies.uuid]
+version = "1"
+default-features = false
+optional = true
+
+[features]
+jiff = ["dep:jiff"]
+rust_decimal = ["dep:rust_decimal"]
+uuid = ["dep:uuid"]
+# Opt-in HList-based ciphertext shape. Trades the dynamic `Cipher::Ok` enum
+# (heap-allocated `Vec`s, `Box<dyn Any>` passthrough) for a per-call typed
+# builder where the full structural shape is encoded in the type system —
+# no heap nodes, no type erasure, statically-typed passthrough access.
+#
+# Best suited to native Rust performance-sensitive paths; the dynamic
+# default remains preferable for wasm32 / JS bindings where bundle size
+# and runtime-determined shapes matter more.
+hlist = []
+# Not an API. Makes `plaintext::render`, the path notation tests assert
+# against, reachable from sibling crates' tests. Only path-only
+# dev-dependencies turn it on, so no published build has it.
+test-support = []
+
+
+[dev-dependencies]
+# Only the test that pins `into_aad` and `into_prf_context` to the same
+# bytes needs the PRF crate. It comes from crates.io, and resolves this
+# crate through the workspace's `[patch.crates-io]`.
+vitaminc-prf = "0.10.0"
+vitaminc-context = { version = "0.10.0", features = ["arbitrary"] }
+quickcheck = "1.1.0"
+quickcheck_macros = "1.2.0"
+# Compile-fail tests for the derive macros' guards — see tests/derive_ui.rs.
+trybuild = "1.0.118"
+futures-executor = "0.3.31"
+serde_json = "1"
+jiff = { version = "1.0.1", default-features = false }

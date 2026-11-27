@@ -29,6 +29,9 @@ on:
       - packages/stack-auth/**
       - packages/stack-kms/**
       - packages/stack-encrypt/**
+      - packages/vitaminc-aead/**
+      - packages/recipher-frame/**
+      - packages/vitaminc-aead-derive/**
       - Cargo.toml
       - Cargo.lock
       - mise.toml

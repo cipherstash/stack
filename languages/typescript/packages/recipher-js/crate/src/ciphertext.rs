@@ -10,8 +10,8 @@ use napi::bindgen_prelude::{
 use napi::{Env, ValueType};
 use napi_derive::napi;
 use serde::Deserialize;
-use stack_encrypt::dynamic::{read, ValueFrame, ValueKind};
-use stack_encrypt::AsProtectedRef;
+use stack_encrypt::dynamic::frame::OwnedFrame;
+use stack_encrypt::dynamic::{read, ValueKind};
 use vitaminc_protected::OpaqueDebug;
 
 use crate::error::{Error, RecipherErrorFields};
@@ -66,7 +66,7 @@ impl Ciphertext {
     /// Returns `recipher_js::opened_type` for a value encrypted as another
     /// type. Returns `recipher_js::not_a_document` when the kind is JSON but
     /// the value is not a JSON document.
-    pub(crate) fn opened(&self, value: ValueFrame) -> Outcome<ValueFrame> {
+    pub(crate) fn opened(&self, value: OwnedFrame) -> Outcome<OwnedFrame> {
         match self.opens_as {
             None => Ok(value),
             Some(ValueKind::Json) => crate::json::opened(&value),
@@ -147,7 +147,7 @@ fn kind_of(env: &Env, value: Option<Unknown<'_>>) -> Outcome<Option<ValueKind>> 
     };
     let frame = js::read(env, value).map_err(|_| Error::NotAKind)?;
     let argument: KindArgument =
-        stack_encrypt::dynamic::frame::serde::from_slice(frame.as_protected_ref().risky_ref())
+        stack_encrypt::dynamic::frame::serde::from_slice(frame.frame().as_bytes())
             .map_err(|_| Error::NotAKind)?;
     let kind = argument
         .name
@@ -180,9 +180,9 @@ fn integer(kind: ValueKind) -> bool {
 /// A value of that kind is returned unchanged. The engine's `read` converts
 /// an integer to another integer width, or a float to another float width,
 /// when the conversion is exact. Any other value is refused.
-fn as_kind(kind: ValueKind, value: ValueFrame) -> Outcome<ValueFrame> {
+fn as_kind(kind: ValueKind, value: OwnedFrame) -> Outcome<OwnedFrame> {
     let refused = || RecipherErrorFields::from(Error::OpenedType { kind });
-    let opened = value.kind();
+    let opened = value.frame().kind();
     if opened == Some(kind) {
         return Ok(value);
     }
@@ -214,20 +214,21 @@ pub(crate) fn bytes_of(value: Unknown<'_>) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::as_kind;
-    use stack_encrypt::dynamic::{ValueFrame, ValueKind};
+    use stack_encrypt::dynamic::frame::OwnedFrame;
+    use stack_encrypt::dynamic::ValueKind;
 
     #[test]
     fn an_integer_opens_at_any_width_that_holds_it() {
-        let opened = as_kind(ValueKind::Int64, ValueFrame::of(5i8).unwrap()).unwrap();
-        assert_eq!(opened, ValueFrame::of(5i64).unwrap());
-        assert!(as_kind(ValueKind::UInt8, ValueFrame::of(300i16).unwrap()).is_err());
+        let opened = as_kind(ValueKind::Int64, OwnedFrame::of(5i8).unwrap()).unwrap();
+        assert_eq!(opened.frame(), OwnedFrame::of(5i64).unwrap().frame());
+        assert!(as_kind(ValueKind::UInt8, OwnedFrame::of(300i16).unwrap()).is_err());
     }
 
     #[test]
     fn a_value_of_another_type_is_refused_as_not_opened() {
-        let refused = as_kind(ValueKind::Int64, ValueFrame::of(5.0f64).unwrap()).unwrap_err();
+        let refused = as_kind(ValueKind::Int64, OwnedFrame::of(5.0f64).unwrap()).unwrap_err();
         assert_eq!(refused.code, "recipher_js::opened_type");
-        assert!(as_kind(ValueKind::String, ValueFrame::of(true).unwrap()).is_err());
-        assert!(as_kind(ValueKind::String, ValueFrame::of("x").unwrap()).is_ok());
+        assert!(as_kind(ValueKind::String, OwnedFrame::of(true).unwrap()).is_err());
+        assert!(as_kind(ValueKind::String, OwnedFrame::of("x").unwrap()).is_ok());
     }
 }

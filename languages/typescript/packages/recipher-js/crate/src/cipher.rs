@@ -18,7 +18,7 @@ use napi::bindgen_prelude::{
 };
 use napi::Env;
 use napi_derive::napi;
-use stack_encrypt::dynamic::{ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{frame::OwnedFrame, ValueKind};
 use stack_encrypt::kms::{DataKeySource, IndexKeySource, StackKms};
 use stack_encrypt::{CipherRef, DecryptFrom, EncryptInto, KeysetCipher, StackCipher};
 use vitaminc_protected::OpaqueDebug;
@@ -506,7 +506,7 @@ pub(crate) async fn open_in(
     engine: &Engine,
     sealed: Vec<stack_encrypt::Ciphertext>,
     confined: Confined,
-) -> Outcome<Vec<ValueFrame>> {
+) -> Outcome<Vec<OwnedFrame>> {
     confined!(engine, confined, |cipher| unseal(cipher, sealed).await)
 }
 
@@ -516,9 +516,9 @@ pub(crate) async fn open_in(
 pub(crate) async fn open_rows_in(
     engine: &Engine,
     plan: Arc<RecordPlan>,
-    rows: Vec<ValueFrame>,
+    rows: Vec<OwnedFrame>,
     confined: Confined,
-) -> Outcome<Vec<ValueFrame>> {
+) -> Outcome<Vec<OwnedFrame>> {
     confined!(engine, confined, |cipher| open_rows(cipher, plan, rows)
         .await)
 }
@@ -604,7 +604,7 @@ fn one_or_array<'e>(
 /// Reads a row of `plan`'s record, with each value read as its field's
 /// kind. When vitaminc refuses a value, the failure names the field the
 /// value was read from.
-fn read_row(env: &Env, plan: &RecordPlan, row: Unknown<'_>) -> Outcome<ValueFrame> {
+fn read_row(env: &Env, plan: &RecordPlan, row: Unknown<'_>) -> Outcome<OwnedFrame> {
     let not_a_row = || RecipherErrorFields::from(Error::NotARow).in_record(plan.name());
     if row.get_type().ok() != Some(napi::ValueType::Object) || row.is_array().unwrap_or(false) {
         return Err(not_a_row());
@@ -627,7 +627,7 @@ fn seal_rows_of<'e>(
     record: Unknown<'_>,
     rows: Option<Unknown<'_>>,
 ) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
-    let read = || -> Outcome<(Arc<RecordPlan>, bool, Vec<ValueFrame>)> {
+    let read = || -> Outcome<(Arc<RecordPlan>, bool, Vec<OwnedFrame>)> {
         let plan = plan_of(env, record)?;
         let rows = rows.unwrap_or(().into_unknown(env).map_err(not_made)?);
         let (many, rows) = one_or_many(env, rows)?;
@@ -667,7 +667,7 @@ fn open_rows_of<'e>(
     stored: Option<Unknown<'_>>,
     confined: Confined,
 ) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
-    let read = || -> Outcome<(Arc<RecordPlan>, bool, Vec<ValueFrame>)> {
+    let read = || -> Outcome<(Arc<RecordPlan>, bool, Vec<OwnedFrame>)> {
         let plan = plan_of(env, record)?;
         let stored = stored.unwrap_or(().into_unknown(env).map_err(not_made)?);
         let (many, rows) = one_or_many(env, stored)?;
@@ -718,7 +718,7 @@ fn seal_field<'e>(
     field: Unknown<'_>,
     value: Unknown<'_>,
 ) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
-    let read = || -> Outcome<(Arc<RecordPlan>, String, bool, Vec<ValueFrame>)> {
+    let read = || -> Outcome<(Arc<RecordPlan>, String, bool, Vec<OwnedFrame>)> {
         let (plan, name) = field_plan_of(env, record, field)?;
         let (many, values) = one_or_many(env, value)?;
         let rows = values
@@ -763,7 +763,7 @@ fn open_field<'e>(
     stored: Unknown<'_>,
     confined: Confined,
 ) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
-    let read = || -> Outcome<(Arc<RecordPlan>, String, bool, Vec<ValueFrame>)> {
+    let read = || -> Outcome<(Arc<RecordPlan>, String, bool, Vec<OwnedFrame>)> {
         let (plan, name) = field_plan_of(env, record, field)?;
         let (many, values) = one_or_many(env, stored)?;
         let rows = values
@@ -827,11 +827,11 @@ where
 pub(crate) async fn unseal<'c, K>(
     cipher: impl Into<CipherRef<'c, K>>,
     sealed: Vec<stack_encrypt::Ciphertext>,
-) -> Outcome<Vec<ValueFrame>>
+) -> Outcome<Vec<OwnedFrame>>
 where
     K: DataKeySource + IndexKeySource + Sync + 'static,
 {
-    Vec::<ValueFrame>::decrypt_from(sealed, cipher)
+    Vec::<OwnedFrame>::decrypt_from(sealed, cipher)
         .await
         .map_err(|error| RecipherErrorFields::engine(&error))
 }

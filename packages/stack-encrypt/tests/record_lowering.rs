@@ -2,7 +2,7 @@
 //! 2026-10-06): the combinators of `stack_encrypt::target`, composed by
 //! hand, and the data-plan lowering each open the records the other sealed,
 //! and both derive the same bytes for each term. The combinators run over
-//! `dynamic::ValueFrame` fields, the plaintext type a binding's values have,
+//! `dynamic::OwnedFrame` fields, the plaintext type a binding's values have,
 //! so the two authors write one declaration over one type; combinators over
 //! bare `u32`/`String` fields seal the same tagged leaves (see
 //! `dynamic::record`). `tests/fixtures/record_lowering.json` holds one
@@ -35,15 +35,16 @@
 
 mod common;
 
-use stack_encrypt::{AsProtectedRef as _, Protected};
+use stack_encrypt::AsProtectedRef as _;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use common::frames::{frame, object, payload};
 use common::{deterministic_cipher, DeterministicSource};
+use recipher_frame::serde::from_slice;
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
-use stack_encrypt::dynamic::{TermBytes, ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{frame::OwnedFrame, TermBytes, ValueKind};
 use stack_encrypt::plan::IntoLabel;
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::{
@@ -53,14 +54,13 @@ use stack_encrypt::target::{
 use stack_encrypt::{
     nonempty, CipherText, Error, Label, NonEmpty, SealedValue, StackCipher, StackCipherText,
 };
-use vitaminc_aead_frame::serde::from_slice;
 
 const SEED: [u8; 32] = *b"stack-encrypt record fixture v1 ";
 
 struct User {
-    age: ValueFrame,
-    email: ValueFrame,
-    notes: ValueFrame,
+    age: OwnedFrame,
+    email: OwnedFrame,
+    notes: OwnedFrame,
     id: u32,
 }
 
@@ -86,15 +86,15 @@ type TypedUser = (
     u32,
 );
 
-/// The one declaration, as the combinators write it over `ValueFrame`
+/// The one declaration, as the combinators write it over `OwnedFrame`
 /// fields: each sealed field under `users/<field>`.
 fn typed_declaration<'s>() -> Encryption<'s, User, TypedUser, DeterministicSource, DeclaredContext>
 {
-    indexed::<ValueFrame, _, Borrowed, _>((IndexSpec::Equality, IndexSpec::Ore))
+    indexed::<OwnedFrame, _, Borrowed, _>((IndexSpec::Equality, IndexSpec::Ore))
         .under(nonempty!("users").with("age"))
         .project(|u: &User| &u.age)
         .zip(
-            indexed::<ValueFrame, _, Borrowed, _>((
+            indexed::<OwnedFrame, _, Borrowed, _>((
                 IndexSpec::Equality,
                 IndexSpec::Match(MatchOptions::default()),
             ))
@@ -102,7 +102,7 @@ fn typed_declaration<'s>() -> Encryption<'s, User, TypedUser, DeterministicSourc
             .project(|u: &User| &u.email),
         )
         .zip(
-            ciphertext::<ValueFrame, _, Borrowed>()
+            ciphertext::<OwnedFrame, _, Borrowed>()
                 .under(nonempty!("users").with("notes"))
                 .project(|u: &User| &u.notes),
         )
@@ -127,12 +127,12 @@ fn plaintext_json() -> Json {
 
 /// A plan written as JSON, as frame bytes: what a binding sends.
 fn frame_of_json(value: &Json) -> vitaminc_protected::Buffer {
-    vitaminc_aead_frame::serde::to_vec(value).expect("frames")
+    recipher_frame::serde::to_vec(value).expect("frames")
 }
 
 /// The plaintext as the binding sends it: each field at the kind the plan
 /// declares for it.
-fn source_of(plaintext: &Json, plan: &DataPlan) -> ValueFrame {
+fn source_of(plaintext: &Json, plan: &DataPlan) -> OwnedFrame {
     let fields = plaintext.as_object().expect("an object");
     object(
         plan.fields()
@@ -155,8 +155,8 @@ fn source_of(plaintext: &Json, plan: &DataPlan) -> ValueFrame {
 }
 
 /// An opened value, read back from its frame as JSON.
-fn json_of_opened(value: ValueFrame) -> Json {
-    exact(value.risky_ref())
+fn json_of_opened(value: OwnedFrame) -> Json {
+    exact(value.frame().as_bytes())
 }
 
 /// A frame read as JSON, holding the fixture's kinds and nothing else: an
@@ -368,11 +368,14 @@ impl StoredFields {
     }
 
     /// The passthrough field `name`, which must be text in its frame.
-    fn text(&mut self, name: &str) -> ValueFrame {
+    fn text(&mut self, name: &str) -> OwnedFrame {
         let payload = self.carried.remove(name).expect(name);
-        let text = ValueFrame::from_bytes(Protected::new(payload).as_protected_ref().as_deref())
-            .expect("a value");
-        assert_eq!(text.kind(), Some(ValueKind::String), "{name} is text");
+        let text = common::frames::owned(&payload);
+        assert_eq!(
+            text.frame().kind(),
+            Some(ValueKind::String),
+            "{name} is text"
+        );
         text
     }
 }
@@ -425,12 +428,12 @@ async fn seal_lowered(
 /// label the declaration seals it under, all in one request.
 async fn open_typed(cipher: &StackCipher<DeterministicSource>, tree: StackCipherText) -> Json {
     let mut stored = StoredFields::of(tree);
-    let opening = open::<ValueFrame, _>(stored.sealed("age"), nonempty!("users").with("age"))
-        .zip(open::<ValueFrame, _>(
+    let opening = open::<OwnedFrame, _>(stored.sealed("age"), nonempty!("users").with("age"))
+        .zip(open::<OwnedFrame, _>(
             stored.sealed("email"),
             nonempty!("users").with("email"),
         ))
-        .zip(open::<ValueFrame, _>(
+        .zip(open::<OwnedFrame, _>(
             stored.sealed("notes"),
             nonempty!("users").with("notes"),
         ));
@@ -509,7 +512,7 @@ async fn the_committed_fixture_opens_both_ways() {
         // The comment and the `typed_chain` key are written as they are
         // committed, so that an update changes the sealed bytes and nothing
         // else in the file the Go module reads.
-        let _ = entries.insert("_comment".into(), json!("Records sealed by typed Rust code and by the data-plan lowering under one declaration (ADR-0007). The typed_chain record was written by the plan chain until that chain was removed; since then, an update writes it with the engine's target combinators (seal_typed in tests/record_lowering.rs), and the key keeps its name for the Go reader. Read by tests/record_lowering.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand."));
+        let _ = entries.insert("_comment".into(), json!("Records sealed by typed Rust code and by the data-plan lowering under one declaration (ADR-0007). The typed_chain record was written by the plan chain until that chain was removed; since then, an update writes it with the engine's target combinators (seal_typed in tests/record_lowering.rs), and the key keeps its name for the Go reader. Read by tests/record_lowering.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand. After regenerating, run pnpm run code:fix."));
         let _ = entries.insert(
             "key_source".into(),
             json!({ "kind": "deterministic-sha256", "seed": hex(&SEED) }),
@@ -612,8 +615,8 @@ fn write_fixture(path: &PathBuf, fixture: &Json) {
 /// context, `text` is sealed and indexed under `<tenant>/text`, `id` is
 /// carried through.
 struct Note {
-    tenant: ValueFrame,
-    text: ValueFrame,
+    tenant: OwnedFrame,
+    text: OwnedFrame,
     id: u32,
 }
 
@@ -627,11 +630,11 @@ fn note() -> Note {
 
 /// What the combinators write for a note: the tenant as it is, `text`
 /// sealed with its equality term beside it, and `id` as it is.
-type TypedNote = ((ValueFrame, Encrypted<TermBytes>), u32);
+type TypedNote = ((OwnedFrame, Encrypted<TermBytes>), u32);
 
 /// The label a note's `text` is sealed under: the context the note names,
 /// then the field.
-fn text_label(tenant: &ValueFrame) -> Label {
+fn text_label(tenant: &OwnedFrame) -> Label {
     let context = tenant.into_label().expect("the tenant is a label");
     Label::new(context.segments().chain(["text"])).expect("a label")
 }
@@ -645,13 +648,13 @@ fn text_label(tenant: &ValueFrame) -> Label {
 fn note_declaration<'s>(
     note: &Note,
 ) -> Encryption<'s, Note, TypedNote, DeterministicSource, DeclaredContext, Owned> {
-    carried::<ValueFrame, _, Owned, DeclaredContext>()
+    carried::<OwnedFrame, _, Owned, DeclaredContext>()
         .split(
-            indexed::<ValueFrame, _, Owned, _>(IndexSpec::Equality)
+            indexed::<OwnedFrame, _, Owned, _>(IndexSpec::Equality)
                 .under(NonEmpty::from(text_label(&note.tenant)))
                 .split(
                     carried::<u32, _, Owned, DeclaredContext>(),
-                    |parts: (ValueFrame, u32)| parts,
+                    |parts: (OwnedFrame, u32)| parts,
                     |_| {},
                 ),
             |n: Note| (n.tenant, (n.text, n.id)),
@@ -746,7 +749,7 @@ async fn open_note_typed(
         None => text_label(&tenant),
     };
     let text = cipher
-        .run_decryption(open::<ValueFrame, _>(
+        .run_decryption(open::<OwnedFrame, _>(
             stored.sealed("text"),
             NonEmpty::from(label),
         ))

@@ -480,8 +480,13 @@ func consumeExchange(t testing.TB, ctx context.Context, cipher *encrypt.Cipher, 
 		if err != nil || len(opened) != 1 || len(opened[0]) != 1 {
 			t.Fatalf("%s: open: %v", what, err)
 		}
-		if !sameValue(opened[0][corpus.Values.Field], input) {
-			t.Fatalf("%s: opened %#v, want %#v", what, opened[0][corpus.Values.Field], input)
+		// A converted input opens as the value it was stored as.
+		want := input
+		if c.Stored != nil {
+			want = conformanceValue(t, *c.Stored)
+		}
+		if !sameValue(opened[0][corpus.Values.Field], want) {
+			t.Fatalf("%s: opened %#v, want %#v", what, opened[0][corpus.Values.Field], want)
 		}
 	}
 

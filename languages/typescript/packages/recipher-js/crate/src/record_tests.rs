@@ -8,13 +8,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use serde_json::json;
-use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::kms::{
     DataKey, DataKeySource, DataKeyWithTag, DeterministicSource, Error, GenerateKeyPayload,
     IdentifiedBy, IndexKey, IndexKeySource, KeySourceKind, OwnIdentity, RetrieveKeyPayload,
     UnverifiedContext,
 };
-use stack_encrypt::{AsProtectedRef, StackCipher};
+use stack_encrypt::StackCipher;
 use uuid::Uuid;
 
 use crate::cipher::{open_rows_in, Confined, Engine};
@@ -26,7 +26,7 @@ const SEED: [u8; 32] = [3; 32];
 
 fn plan(declaration: serde_json::Value) -> Outcome<Arc<RecordPlan>> {
     let bytes = stack_encrypt::dynamic::frame::serde::to_vec(&declaration).unwrap();
-    RecordPlan::of(&ValueFrame::from_bytes(bytes.as_protected_ref()).unwrap())
+    RecordPlan::of(&OwnedFrame::from_buffer(bytes).unwrap())
 }
 
 fn users() -> Arc<RecordPlan> {
@@ -46,13 +46,13 @@ fn users() -> Arc<RecordPlan> {
 
 /// A row in the form JavaScript passes it, with an integer at its narrowest
 /// width.
-fn row(age: Option<i8>, notes: Option<&str>) -> ValueFrame {
-    let id = ValueFrame::of(7u64).unwrap();
-    let email = ValueFrame::of("ada@example.com").unwrap();
-    let name = ValueFrame::of("Ada Lovelace").unwrap();
-    let age = age.map(|age| ValueFrame::of(age).unwrap());
-    let notes = notes.map(|notes| ValueFrame::of(notes).unwrap());
-    let frame = ValueFrame::of(&Map(vec![
+fn row(age: Option<i8>, notes: Option<&str>) -> OwnedFrame {
+    let id = OwnedFrame::of(7u64).unwrap();
+    let email = OwnedFrame::of("ada@example.com").unwrap();
+    let name = OwnedFrame::of("Ada Lovelace").unwrap();
+    let age = age.map(|age| OwnedFrame::of(age).unwrap());
+    let notes = notes.map(|notes| OwnedFrame::of(notes).unwrap());
+    let frame = OwnedFrame::of(&Map(vec![
         ("id", Entry::Value(&id)),
         ("email", Entry::Value(&email)),
         ("name", Entry::Value(&name)),
@@ -64,7 +64,7 @@ fn row(age: Option<i8>, notes: Option<&str>) -> ValueFrame {
 }
 
 /// A value, or a null where there is none.
-fn or_null(value: Option<&ValueFrame>) -> Entry<'_> {
+fn or_null(value: Option<&OwnedFrame>) -> Entry<'_> {
     value.map_or(Entry::Null, Entry::Value)
 }
 
@@ -77,7 +77,7 @@ async fn engine() -> StackCipher<DeterministicSource> {
 }
 
 /// The `ciphertext` bytes of the field `name` of a stored row.
-fn ciphertext_of(stored: &ValueFrame, name: &str) -> Vec<u8> {
+fn ciphertext_of(stored: &OwnedFrame, name: &str) -> Vec<u8> {
     let field = field_value(stored, name).unwrap();
     let (_, ciphertext) = entries(&field)
         .unwrap()
@@ -87,7 +87,7 @@ fn ciphertext_of(stored: &ValueFrame, name: &str) -> Vec<u8> {
     bytes_of(&ciphertext).unwrap()
 }
 
-fn keys(frame: &ValueFrame) -> Vec<String> {
+fn keys(frame: &OwnedFrame) -> Vec<String> {
     entries(frame)
         .unwrap()
         .into_iter()
@@ -103,14 +103,14 @@ async fn a_row_round_trips_and_its_absent_field_opens_as_null() {
         .unwrap();
     let opened = open_rows(&cipher, users(), stored).await.unwrap().remove(0);
     assert_eq!(
-        field_value(&opened, "age").unwrap(),
-        ValueFrame::of(36i32).unwrap(),
+        field_value(&opened, "age").unwrap().frame(),
+        OwnedFrame::of(36i32).unwrap().frame(),
         "the integer opens at the field's width"
     );
-    assert_eq!(field_value(&opened, "notes").unwrap().kind(), None);
+    assert_eq!(field_value(&opened, "notes").unwrap().frame().kind(), None);
     assert_eq!(
-        field_value(&opened, "id").unwrap(),
-        ValueFrame::of(7u64).unwrap()
+        field_value(&opened, "id").unwrap().frame(),
+        OwnedFrame::of(7u64).unwrap().frame()
     );
 }
 
@@ -175,13 +175,13 @@ async fn one_field_opens_alone_and_a_field_alone_opens_through_the_engine() {
         .unwrap()
         .remove(0);
     assert_eq!(
-        field_value(&opened, "email").unwrap(),
-        ValueFrame::of("ada@example.com").unwrap()
+        field_value(&opened, "email").unwrap().frame(),
+        OwnedFrame::of("ada@example.com").unwrap().frame()
     );
 
     // A field encrypted on its own decrypts through the engine's typed API,
     // under its field path.
-    let value = ValueFrame::of("grace@example.com").unwrap();
+    let value = OwnedFrame::of("grace@example.com").unwrap();
     let row = conform_row(&email, &one_field_row("email", &value).unwrap()).unwrap();
     let sealed = seal_rows(&cipher.default_keyset(), email, vec![row])
         .await
@@ -206,19 +206,19 @@ fn an_integer_is_read_at_its_fields_width_and_refused_outside_it() {
         "fields": { "n": { "type": "sealed", "kind": { "name": "int8" } } },
     }))
     .unwrap();
-    let fits = ValueFrame::of(&Map(vec![(
+    let fits = OwnedFrame::of(&Map(vec![(
         "n",
-        Entry::Value(&ValueFrame::of(5u64).unwrap()),
+        Entry::Value(&OwnedFrame::of(5u64).unwrap()),
     )]))
     .unwrap();
     let read = conform_row(&small, &fits).unwrap();
     assert_eq!(
-        field_value(&read, "n").unwrap(),
-        ValueFrame::of(5i8).unwrap()
+        field_value(&read, "n").unwrap().frame(),
+        OwnedFrame::of(5i8).unwrap().frame()
     );
-    let too_big = ValueFrame::of(&Map(vec![(
+    let too_big = OwnedFrame::of(&Map(vec![(
         "n",
-        Entry::Value(&ValueFrame::of(300i16).unwrap()),
+        Entry::Value(&OwnedFrame::of(300i16).unwrap()),
     )]))
     .unwrap();
     let refused = conform_row(&small, &too_big).unwrap_err();
@@ -354,7 +354,7 @@ async fn many_rows_and_many_fields_alone_are_one_key_request_each_way() {
     let rows = ["a", "b", "c"]
         .into_iter()
         .map(|text| {
-            let value = ValueFrame::of(text).unwrap();
+            let value = OwnedFrame::of(text).unwrap();
             conform_row(&email, &one_field_row("email", &value).unwrap()).unwrap()
         })
         .collect();
@@ -401,7 +401,7 @@ async fn a_keyset_refuses_another_keysets_row_and_the_cipher_opens_it() {
         .unwrap()
         .remove(0);
     assert_eq!(
-        field_value(&opened, "email").unwrap(),
-        ValueFrame::of("ada@example.com").unwrap()
+        field_value(&opened, "email").unwrap().frame(),
+        OwnedFrame::of("ada@example.com").unwrap().frame()
     );
 }

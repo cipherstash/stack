@@ -1174,8 +1174,8 @@ pub(crate) fn leaf_under(name: &str, piece: ContextPiece<'static>) -> LeafShape 
 }
 
 /// The leaves with the caller's parts known, as a data plan carries them:
-/// what [`resolve_under`] resolves, kept as shapes so more leaves can be
-/// placed among them first.
+/// what [`resolve`] resolves, kept as shapes so more leaves can be placed
+/// among them first.
 #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
 pub(crate) fn under_declared(shapes: Shapes, declared: &DeclaredContext) -> Shapes {
     substitute(shapes, &Shape::Chain(declared_chain(declared)))

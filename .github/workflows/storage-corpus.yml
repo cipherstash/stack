@@ -1,0 +1,48 @@
+name: Storage corpus (append-only)
+
+# recipher-frame's storage profile corpus (testdata/storage-v1.json, and
+# a storage-vN.json for each later version) pins the bytes customers keep.
+# A row the corpus already had must stay, unchanged, in every later release.
+# The Rust tests hold the code to the corpus; this holds the corpus to itself:
+# scripts/storage_corpus_append_only.py compares each corpus on the pull
+# request's base branch with the one in the pull request, as parsed JSON, and
+# fails on a removed or changed row, header or version. It moved here from
+# cipherstash/vitaminc with the crate.
+#
+# Pull requests only, so `push` has no filter to mirror; recorded in
+# scripts/__tests__/workflow-paths-filter-parity.test.mjs.
+
+on:
+  pull_request:
+    paths:
+      - packages/recipher-frame/testdata/**
+      - packages/recipher-frame/scripts/**
+      - .github/workflows/storage-corpus.yml
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  append-only:
+    name: Storage corpus is append-only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # The check reads the corpus at the merge base, so it needs the base
+      # branch's history, not a shallow clone.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Test the check
+        run: python3 -m unittest discover -s packages/recipher-frame/scripts -p 'test_storage_corpus_append_only.py'
+
+      - name: Check the corpus against the base branch
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python3 packages/recipher-frame/scripts/storage_corpus_append_only.py --base "origin/$BASE_REF"

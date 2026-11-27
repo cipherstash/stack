@@ -1,0 +1,5 @@
+error: field `tenant` is `#[aead(passthrough)]`, which is lent to the sink and never taken out of `self`: remove `take`
+ --> tests/ui/derive/sink_passthrough_with_take.rs:6:8
+  |
+6 | struct Row {
+  |        ^^^

@@ -16,13 +16,13 @@ error[E0599]: no method named `encrypt` found for struct `EncryptedCustomerProfi
            candidate #5: `vitaminc_aead::encrypt::Encrypt`
            candidate #6: `vitaminc_ore::scheme::OrderEncrypt`
 
-error[E0599]: no method named `encrypt` found for struct `Elements<W, T, C, P>` in the current scope
+error[E0599]: no method named `encrypt` found for struct `stack_encrypt::field_reference::json::Elements<W, T, C, P>` in the current scope
   --> tests/ui/field_reference_elements_needs_a_condition.rs:27:10
    |
 25 |       let _ = EncryptedCustomer::PROFILE
    |  _____________-
 26 | |         .elements_text_path("$.visits[*]")
 27 | |         .encrypt(&keyset);
-   | |         -^^^^^^^ method not found in `Elements<Root<EncryptedCustomer>, JsonDocument, NoScope, TakesAny>`
+   | |         -^^^^^^^ method not found in `stack_encrypt::field_reference::json::Elements<Root<EncryptedCustomer>, JsonDocument, NoScope, TakesAny>`
    | |_________|
    |

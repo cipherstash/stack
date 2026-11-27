@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use common::frames::{frame, object};
 use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Value as Json};
-use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, QueryTerm, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record, NoTargets, Op, Operand, QueryTerm};
 use stack_encrypt::op::{Limit, Probabilistic, Stats};
 use stack_encrypt::sem::{EqualityTerm, MatchQuery, MatchTerms, OreTerm};
 use stack_encrypt::target::EncryptTarget;
@@ -102,12 +102,12 @@ fn stats_cases() -> Vec<(Json, Stats)> {
 
 /// A plan written as JSON, as frame bytes: what a binding sends.
 fn frame_of_json(value: &Json) -> vitaminc_protected::Buffer {
-    vitaminc_aead_frame::serde::to_vec(value).expect("frames")
+    recipher_frame::serde::to_vec(value).expect("frames")
 }
 
 /// A JSON value as the frame a binding sends: a number is a `u64` when it
 /// is one, else an `f64`.
-fn frame_of_value(value: &Json) -> ValueFrame {
+fn frame_of_value(value: &Json) -> OwnedFrame {
     match value {
         Json::Null => frame(Raw(None, Physical::Null)),
         Json::String(s) => frame(s.as_str()),
@@ -286,7 +286,7 @@ async fn derived() -> Json {
     }
 
     let typed = typed_match(&keyset, "alice").await;
-    let values: Vec<ValueFrame> = page()
+    let values: Vec<OwnedFrame> = page()
         .as_array()
         .expect("a list")
         .iter()
@@ -317,8 +317,9 @@ async fn derived() -> Json {
         };
         let typed = typed_match(&keyset, input).await;
         for (stats_json, stats) in stats_cases() {
-            let read = Stats::from_frame(frame_of_value(&stats_json).as_protected_ref())
-                .expect("stats read");
+            let read =
+                Stats::from_frame(frame_of_value(&stats_json).into_buffer().as_protected_ref())
+                    .expect("stats read");
             assert_eq!(read, stats, "the wire form reads as the typed stats");
             let limit =
                 dynamic::target_limit(&plan, "name", Op::Matches, bytes, 10, &read, &NoTargets)
@@ -344,7 +345,7 @@ async fn derived() -> Json {
     // as every other key is: it keeps the wording the fixture was written
     // with.
     json!({
-        "_comment": "Query terms derived by operator through the data path (stack_encrypt::dynamic::query_term), each equal to the typed query chain's, with a verified page and fetch limits. Read by tests/query_operators.rs and the Go SDK's tests; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand.",
+        "_comment": "Query terms derived by operator through the data path (stack_encrypt::dynamic::query_term), each equal to the typed query chain's, with a verified page and fetch limits. Read by tests/query_operators.rs and the Go SDK's tests; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand. After regenerating, run pnpm run code:fix.",
         "key_source": { "kind": "deterministic-sha256", "seed": hex(&SEED) },
         "keyset_id": keyset.keyset_id().await.unwrap().to_string(),
         "plan": plan_json(),

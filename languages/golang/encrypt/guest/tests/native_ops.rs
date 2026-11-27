@@ -1460,8 +1460,8 @@ fn record_validation_refuses_what_encrypt_record_refuses() {
             ]),
         ),
         (
-            "a float under equality",
-            obj(vec![("age", Tree::Float64(1.0)), ("name", s("a"))]),
+            "a float with a fraction for an integer field",
+            obj(vec![("age", Tree::Float64(1.5)), ("name", s("a"))]),
         ),
         (
             "an integer under match",
@@ -1519,6 +1519,18 @@ fn record_validation_refuses_what_encrypt_record_refuses() {
     assert_eq!(
         ops::validate::record(
             &protect(&encode(Tree::Array(vec![row(1, "a"), row(2, "b")]))),
+            &protect(&plan)
+        ),
+        Ok(())
+    );
+    // A whole float for an integer field converts exactly, so validation
+    // takes it as encrypt does.
+    assert_eq!(
+        ops::validate::record(
+            &protect(&encode(obj(vec![
+                ("age", Tree::Float64(1.0)),
+                ("name", s("a"))
+            ]))),
             &protect(&plan)
         ),
         Ok(())
