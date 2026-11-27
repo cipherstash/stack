@@ -225,8 +225,9 @@ func (w *writer) shapeStruct(name string, fields []shapeField) {
 // seals as. Each integer type has the kind of its own width (int8 is Int8,
 // int and int64 are Int64, uint8 and byte Uint8, uint, uint64 and uintptr
 // Uint64), []byte is Bytes, time.Time is Timestamp, and encrypt's Date,
-// Int128, Uint128 and Decimal have their own kinds. A composite is untyped
-// and seals as one self-describing value.
+// Int128, Uint128 and Decimal have their own kinds. [16]byte, a type
+// declared as [16]byte, github.com/google/uuid.UUID and vcvalue.UUID are
+// UUID. A composite is untyped and seals as one self-describing value.
 func kindExpr(t GoType) string {
 	return "gensupport." + kindConst(wireKind(t))
 }
