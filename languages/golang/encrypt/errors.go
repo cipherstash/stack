@@ -98,9 +98,10 @@ var ErrStorageVersion = vcffi.ErrUnsupportedVersion
 // grammar's words and the byte offset in the predicate where it starts.
 //
 // What one may carry is fixed: keyset ids and names, field names, counts,
-// row positions, value kinds, index kinds, ZeroKMS request kinds and HTTP statuses, and a refused
-// predicate's construct and offset. Never plaintext, key material,
-// tokens, ciphertext or term bytes, or the values of an encryption context.
+// row positions, value kinds, index kinds, ZeroKMS request kinds and HTTP
+// statuses, and a refused predicate's construct and offset. Never
+// plaintext, key material, tokens, ciphertext or term bytes, or the values
+// of an encryption context.
 //
 // Errors the client raises itself carry none: a closed client ([ErrState]),
 // a guest that did not return, [ErrMemoryLock], and an argument refused

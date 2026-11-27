@@ -425,12 +425,7 @@ fn answer<'p>(
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<Answer<'p>, Error> {
     let found = find(plan, field)?;
-    let not_answered = || Error::Source {
-        field: Some(field.to_owned()),
-        reason: Reason::OperatorNotAnswered,
-        found: None,
-        row: None,
-    };
+    let not_answered = || Error::bad_source(Reason::OperatorNotAnswered).in_field(field);
     let kind = found.field_type().ok_or_else(not_answered)?;
     let (operators, target) = answers(found, resolver)?;
     let index = operators
@@ -450,11 +445,7 @@ pub(super) fn find<'p>(plan: &'p Plan, field: &str) -> Result<&'p FieldPlan, Err
     plan.fields()
         .iter()
         .find(|candidate| candidate.name() == field)
-        .ok_or_else(|| Error::Plan {
-            field: Some(field.to_owned()),
-            reason: Reason::NoSuchField,
-            found: None,
-        })
+        .ok_or_else(|| Error::bad_plan(Reason::NoSuchField).in_field(field))
 }
 
 /// Operators a field answers, each with the index that answers it.
@@ -586,11 +577,7 @@ impl OperatorEntry {
 /// [`verify`] and [`target_limit`] derive nothing and take such a plan.
 fn has_context(plan: &Plan, field: &str) -> Result<(), Error> {
     if !plan.bindings().is_empty() {
-        return Err(Error::Plan {
-            field: Some(field.to_owned()),
-            reason: Reason::BindInQuery,
-            found: None,
-        });
+        return Err(Error::bad_plan(Reason::BindInQuery).in_field(field));
     }
     names_its_context(plan, field)
 }
@@ -604,11 +591,7 @@ fn has_context(plan: &Plan, field: &str) -> Result<(), Error> {
 /// it again.
 fn names_its_context(plan: &Plan, field: &str) -> Result<(), Error> {
     match plan.context_field() {
-        Some(_) => Err(Error::Plan {
-            field: Some(field.to_owned()),
-            reason: Reason::QueryContextField,
-            found: None,
-        }),
+        Some(_) => Err(Error::bad_plan(Reason::QueryContextField).in_field(field)),
         None => Ok(()),
     }
 }
@@ -624,24 +607,15 @@ fn names_its_context(plan: &Plan, field: &str) -> Result<(), Error> {
 fn read_input(answer: &Answer<'_>, operator: Op, input: impl Encrypt) -> Result<Input, Error> {
     let name = answer.field.name();
     if !operator.takes_pair() {
-        let input = OwnedFrame::of(input).map_err(|_| Error::Source {
-            field: Some(name.to_owned()),
-            reason: Reason::FieldType,
-            found: None,
-            row: None,
-        })?;
+        let input = OwnedFrame::of(input)
+            .map_err(|_| Error::bad_source(Reason::FieldType).in_field(name))?;
         // A null is found by its equality term, which a field that seals
         // its nulls stores beside each one (#1298); nothing else has one.
         if input.frame().is_null() {
             let sealed = answer.field.null() == Some(super::NullMode::Sealed);
             return match (sealed, &answer.index) {
                 (true, IndexSpec::Equality) => Ok(Input::One(input)),
-                _ => Err(Error::Source {
-                    field: Some(name.to_owned()),
-                    reason: Reason::NullQuery,
-                    found: None,
-                    row: None,
-                }),
+                _ => Err(Error::bad_source(Reason::NullQuery).in_field(name)),
             };
         }
         return read(answer.kind, input.frame())
@@ -658,12 +632,7 @@ fn read_input(answer: &Answer<'_>, operator: Op, input: impl Encrypt) -> Result<
 }
 
 fn not_a_range(field: &str) -> Error {
-    Error::Source {
-        field: Some(field.to_owned()),
-        reason: Reason::NotARange,
-        found: None,
-        row: None,
-    }
+    Error::bad_source(Reason::NotARange).in_field(field)
 }
 
 /// What a query of `input` through `index` is refused for before any term
@@ -871,12 +840,7 @@ fn json_options<'p>(answer: &Answer<'p>) -> Result<&'p crate::json::JsonOptions,
 }
 
 fn json_input(field: &str) -> Error {
-    Error::Source {
-        field: Some(field.to_owned()),
-        reason: Reason::JsonInput,
-        found: None,
-        row: None,
-    }
+    Error::bad_source(Reason::JsonInput).in_field(field)
 }
 
 /// A JSON operator's term: the operand [`json_query`](super::json_query)
@@ -1201,12 +1165,7 @@ fn probabilistic(
     // probabilistic operator, so the index says which this is.
     match answer.index {
         IndexSpec::Match(options) => Ok((options, target)),
-        _ => Err(Error::Source {
-            field: Some(field.to_owned()),
-            reason: Reason::ExactOperator,
-            found: None,
-            row: None,
-        }),
+        _ => Err(Error::bad_source(Reason::ExactOperator).in_field(field)),
     }
 }
 
@@ -1259,12 +1218,7 @@ pub fn verify<V: Encrypt>(
                         _ => Err(None),
                     },
                 ))
-                .map_err(|_| Error::Source {
-                    field: Some(field.to_owned()),
-                    reason: Reason::FieldType,
-                    found: None,
-                    row: None,
-                })
+                .map_err(|_| Error::bad_source(Reason::FieldType).in_field(field))
         })
         .collect()
 }
@@ -1306,12 +1260,7 @@ pub fn target_limit(
     } else {
         query_bits(term, &options)
     };
-    let bits = bits.ok_or_else(|| Error::Source {
-        field: Some(field.to_owned()),
-        reason: Reason::NotAQueryTerm,
-        found: None,
-        row: None,
-    })?;
+    let bits = bits.ok_or_else(|| Error::bad_source(Reason::NotAQueryTerm).in_field(field))?;
     Ok(match_limit(bits, &options, None, want, stats))
 }
 
