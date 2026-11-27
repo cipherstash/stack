@@ -7,24 +7,30 @@ import (
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
-// Ciphertext is one sealed field as a database column holds it: the frozen
-// stack-encrypt leaf encoding (version, keyset id, IV, ZeroKMS tag,
-// ciphertext). A generated type holds one for each field sealed in separate
-// columns, beside that field's terms. It is a distinct type from vitaminc's
-// own leaf on purpose: a stack-encrypt leaf is not decryptable by
-// vitaminc-encrypt and must never scan or marshal where one belongs.
+// For contributors: a Ciphertext is the frozen stack-encrypt leaf encoding
+// (version, keyset id, IV, ZeroKMS tag, ciphertext). It is a distinct type
+// from vitaminc's own leaf on purpose: a stack-encrypt leaf is not
+// decryptable by vitaminc-encrypt and must never scan or marshal where one
+// belongs. A sealed field seals as vitaminc's tagged leaf, which a Rust
+// record opens when its field is a Value (not a bare u32 or String). An
+// opaque struct crosses the binding as one storage blob and is one leaf.
+
+// Ciphertext is one sealed field as a database column holds it. The bytes
+// are a fixed encoding that later releases still read; treat them as
+// opaque. A generated type holds one for each field sealed in separate
+// columns, beside that field's terms.
 //
 // A sealed field is one scalar — a string, a number, a bool or a []byte, or
-// a type defined over one, or a pointer to either, whose nil is sealed as a
-// null as long as a value or stored as SQL NULL — and seals as vitaminc's
-// tagged leaf, which a
-// Rust record opens when its field is a Value (not a bare u32 or String). A
-// struct, slice or map is not a Ciphertext field. It seals as part of an
-// opaque struct, which crosses as one storage blob and is one leaf, or as a
-// JSON document in a field that names an EQL type which holds one
-// (encrypt_into=Json or encrypt_into=JsonSearch). stashgen refuses it
-// anywhere else, because the engine would seal it as a tree of leaves and a
-// column holds one.
+// a type defined over one, or a pointer to either. A nil pointer is sealed
+// as a null the same length as a value. With the `null=sql` tag it is
+// stored as SQL NULL instead, and stashgen requires that tag for a type of
+// variable width or a field with an index other than equality. A struct,
+// slice or map is
+// not a Ciphertext field. It seals as part of an opaque struct, which is
+// stored as one value in one column, or as a JSON document in a field that
+// names an EQL type which holds one (encrypt_into=Json or
+// encrypt_into=JsonSearch). stashgen refuses it anywhere else, because the
+// engine would seal it as many values and a column holds one.
 type Ciphertext []byte
 
 // Value implements driver.Valuer, binding the leaf as a byte column.

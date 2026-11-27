@@ -5,8 +5,8 @@
 // A field with `stash:"email,encrypt_into=TextEq"` is an [TextEq] in the
 // generated encrypted type, and its Fields entry's Eq returns a
 // [TextEqQuery]. The guest builds every value: generated code stores what
-// the guest returns and never assembles an EQL value itself (ADR-0007,
-// amended 2026-10-06). Each type implements driver.Valuer and sql.Scanner
+// the guest returns and never assembles an EQL value itself. Each type
+// implements driver.Valuer and sql.Scanner
 // for one column, and json.Marshaler, which writes the value as the JSON
 // it is. It prints (fmt.Stringer, fmt.Formatter, for every verb) and logs
 // (slog.LogValuer) as its type's name and never its bytes, so fmt.Sprint
@@ -22,12 +22,15 @@
 // an EQL type imports this package, so a program with EQL types runs the
 // build that has them and a program without runs the smaller one.
 //
-// The types and the [Types] table are generated from the EQL catalog by
-// eql-codegen (`mise run types:generate` in packages/eql); eql_gen.go is
-// committed and drift-gated. [Types] says which types the engine produces
-// today; every other type is listed with the reason it cannot be produced
-// yet, and stashgen refuses it.
+// The types and the [Types] table are generated from the EQL catalog.
+// [Types] says which types the engine produces today; every other type is
+// listed with the reason it cannot be produced yet, and stashgen refuses it.
 package eql
+
+// For contributors: that the guest builds every EQL value is ADR-0007,
+// amended 2026-10-06. eql-codegen writes eql_gen.go from the catalog
+// (`mise run types:generate` in packages/eql); the file is committed and
+// drift-gated.
 
 import (
 	"database/sql/driver"
@@ -38,9 +41,12 @@ import (
 	"log/slog"
 )
 
-// Type is one EQL type as the catalog describes it: what stashgen learns
-// from the engine's se_targets export, in Go. Name is the engine's name,
-// the value of encrypt_into; GoName is the type's name in this package.
+// For contributors: Type is what stashgen learns from the engine's
+// se_targets export, in Go.
+
+// Type is one EQL type as the catalog describes it. Name is the engine's
+// name, the value of encrypt_into; GoName is the type's name in this
+// package.
 type Type struct {
 	// Name is the type's name across languages, and the engine's: TextEq.
 	Name string

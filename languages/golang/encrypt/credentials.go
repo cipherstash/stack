@@ -22,7 +22,7 @@ import (
 // and hands the key to the guest.
 //
 // [AutoCredentials] is the default: the environment, then the developer
-// profile, in the Rust client's order. [AccessKeyCredentials] takes four
+// profile, in that order. [AccessKeyCredentials] takes four
 // values from a struct the program fills, with no fallback. [NewCredentials]
 // takes a client id, a client key, and a strategy explicitly. [OIDCFederation]
 // exchanges a token from an identity provider for a CipherStash token, and
@@ -182,13 +182,17 @@ const (
 // the first that is set decides, and CS_VITUR_HOST is the legacy name.
 var envZeroKMSHost = []string{"CS_ZEROKMS_HOST", "CS_VITUR_HOST"}
 
+// For contributors: AutoCredentials follows stack-encrypt's
+// StackCipher::with_detected_credentials(), and the token follows
+// stack-auth's AutoStrategy order.
+
 // AutoCredentials is [Credentials] from the environment first, then the
-// developer profile `stash auth login` writes — the order the Rust client
-// (stack-encrypt's StackCipher::with_detected_credentials()) resolves them
-// in, so one set of variables configures a service in either language:
+// developer profile `stash auth login` writes. The Rust SDK resolves them
+// in the same order, so one set of variables configures a service in
+// either language:
 //
-//   - The token, by stack-auth's AutoStrategy order: CS_CLIENT_ACCESS_KEY
-//     (with CS_WORKSPACE_CRN, which is then required) exchanged for a token;
+//   - The token: CS_CLIENT_ACCESS_KEY (with CS_WORKSPACE_CRN, which is
+//     then required) exchanged for a token;
 //     else the current workspace's stored device session, refreshed under
 //     the same cross-process lock as the CLI. CS_CTS_HOST overrides the
 //     authentication endpoint.
@@ -199,7 +203,7 @@ var envZeroKMSHost = []string{"CS_ZEROKMS_HOST", "CS_VITUR_HOST"}
 //
 // The profile is CS_CONFIG_PATH, else ~/.cipherstash; a profile that cannot
 // be opened is not an error — an environment-only deployment has none — it
-// just leaves the environment as the only source, as the Rust client does.
+// just leaves the environment as the only source.
 // Nothing found in either place is [ErrNoCredentials], and when the profile
 // would have been consulted, that error says why it could not be: a
 // directory that does not exist, one that cannot be read, a path that is

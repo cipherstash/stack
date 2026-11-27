@@ -92,7 +92,7 @@ var (
 type Diagnostic = guest.Diagnostic
 
 // Cause is one error in a [Diagnostic]'s cause chain: a Code and a Message.
-// A cause from a library outside the stack crates has no Code, and its
-// Message is a description the guest vouches for, never that library's own
+// A cause from a library the SDK uses, outside its own code, has no Code.
+// Its Message is a description the guest writes, never that library's own
 // text.
 type Cause = guest.Cause

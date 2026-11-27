@@ -8,10 +8,10 @@ import (
 	"log/slog"
 )
 
-// Types is every EQL type the catalog has, in catalog order: what the
-// engine's se_targets export lists, as Go. Producible says whether the
-// engine produces the type today; stashgen refuses encrypt_into for one
-// it does not, with the Reason.
+// Types is every EQL type the catalog has, in catalog order.
+// Producible says whether the engine produces the type today;
+// stashgen refuses encrypt_into for one it does not, with the
+// Reason.
 var Types = []Type{
 	{Name: "Integer", GoName: "Integer", Family: "integer", Suffix: "", Plaintext: "int32", SQLDomain: "public.eql_v4_integer", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "IntegerEq", GoName: "IntegerEq", Family: "integer", Suffix: "Eq", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_eq", Indexes: []string{"eq"}, Query: "IntegerEqQuery", QuerySQLDomain: "eql_v4.query_integer_eq", Producible: true, Reason: ""},

@@ -17,7 +17,7 @@ import (
 )
 
 // OIDCProvider supplies the identity-provider JWT of the user a call is
-// for. The Rust federation strategy asks on every Strategy.Token call: the
+// for. The federation strategy asks on every Strategy.Token call: the
 // JWT is how it tells one user from another, and it keeps one CTS token per
 // distinct JWT, exchanging a JWT only when it has no unexpired CTS token.
 // So a server that serves many users through one client must return the

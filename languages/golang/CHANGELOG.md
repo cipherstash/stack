@@ -22,6 +22,14 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one. `stashgen` does not yet map a Go type to it.
 
+### Changed
+
+- The doc comments on exported names in `encrypt`, `encrypt/eql`,
+  `encrypt/gensupport`, `auth`, and `stashgen` now say what each name does
+  and which errors it returns. The Rust crate and type names, the
+  engine's internal exports, and the storage format moved to ordinary code
+  comments. pkg.go.dev does not show those comments. Only comments changed.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

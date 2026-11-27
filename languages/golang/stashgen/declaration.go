@@ -184,7 +184,10 @@ func (o Option) String() string {
 	return o.Key + "=" + o.Value
 }
 
-// IndexName is the tag word for an index. The words are the Rust API's.
+// For contributors: the index words are the Rust API's.
+
+// IndexName is the tag word for an index. A declaration in any language
+// spells it the same way.
 type IndexName string
 
 // The index names.
@@ -194,10 +197,10 @@ const (
 	IndexOre      IndexName = "ore"
 	IndexOpe      IndexName = "ope"
 	IndexJSON     IndexName = "json"
-	// IndexOreBlock is block ORE (ore-rs's 6-bit schemes): the index of an
-	// EQL type's ORE term (`ob`), TextOrdOre's and IntegerOrdOre's. It is
-	// not a tag word: a field reaches it by naming such an EQL type
-	// (encrypt_into=), and indexNames leaves it out.
+	// IndexOreBlock is block ORE (order-revealing encryption): the index of
+	// an EQL type's ORE term, TextOrdOre's and IntegerOrdOre's. It is not a
+	// tag word: a field reaches it by naming such an EQL type
+	// (encrypt_into=).
 	IndexOreBlock IndexName = "ore_block"
 )
 

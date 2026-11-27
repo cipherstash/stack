@@ -445,26 +445,29 @@ func (c *Client) release() error {
 	return err
 }
 
-// Keyset binds the client to one keyset, by name or by id: Rust's
-// StackCipher::keyset. No request is made here — Go has no await, so the
-// keyset is resolved by the guest on the cipher's first use (and cached),
+// Keyset binds the client to one keyset, by name or by id. No request is
+// made here: the keyset is resolved on the cipher's first use, and cached,
 // which makes a Cipher cheap to make per call, per tenant or per request.
-// [Cipher.KeysetID] is the explicit resolution point. A nil selector gives a
-// cipher whose every call fails with [ErrEncoding]; the default keyset is
-// [Client.DefaultKeyset].
+// [Cipher.KeysetID] resolves it on its own. A nil selector gives a cipher
+// whose encrypt, decrypt and query calls fail with [ErrEncoding]. Its
+// KeysetID does not fail: it returns the default keyset's id. The default
+// keyset is [Client.DefaultKeyset].
 func (c *Client) Keyset(sel KeysetSelector) *Cipher {
+	// Rust's StackCipher::keyset. Go has no await, so the guest resolves
+	// the keyset on the cipher's first use.
 	if sel == nil {
 		return &Cipher{client: c, keyset: defaultKeyset{}, err: fmt.Errorf("%w: Client.Keyset(nil); the default keyset is Client.DefaultKeyset", ErrEncoding)}
 	}
 	return &Cipher{client: c, keyset: sel}
 }
 
+// For contributors: DefaultKeyset is Rust's StackCipher::default_keyset.
+
 // DefaultKeyset binds the client to its default keyset — the one a ZeroKMS
 // administrator set for this client, which is what naming no keyset
-// resolves to: Rust's StackCipher::default_keyset. Loaded at NewClient, so
-// using it never touches ZeroKMS. There is no way to redefine it from here;
-// which keyset is the default is the server's to say. Any other keyset is
-// [Client.Keyset].
+// resolves to. Loaded at NewClient, so using it never touches ZeroKMS.
+// There is no way to redefine it from here; which keyset is the default is
+// the server's to say. Any other keyset is [Client.Keyset].
 func (c *Client) DefaultKeyset() *Cipher { return &Cipher{client: c, keyset: defaultKeyset{}} }
 
 // resolveKeyset asks the guest for a selector's keyset id: the first use
