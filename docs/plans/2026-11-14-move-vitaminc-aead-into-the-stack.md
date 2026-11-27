@@ -481,6 +481,33 @@ The work:
 5. Delete `vcencrypt` and its guest from vitaminc. It was a demonstration of
    the approach, and the Go module replaces it.
 
+### Done
+
+Items 1 to 4 are done, on the branch `refactor/go-frame-codec-in-module`:
+
+- Both packages are one internal package, `languages/golang/internal/frame`:
+  the codec, the storage profile and the value model, copied from vitaminc
+  `f1fc9ae74` with their tests and fuzz targets. The tests read the value
+  corpus (`conformance/vitaminc-aead`) and the storage corpus
+  (`packages/recipher-frame/testdata`) from this repository.
+- `encrypt.Date`, `Decimal`, `Int128` and `Uint128` are types of their own,
+  and `encrypt.UUID`, `Encryptable` and `Encoder` are new. Each value type
+  is a type over the same underlying type as the codec's, which
+  `frame.Publish` tells the codec about, so the codec reads it and decodes
+  to it.
+- The sealed leaf family, `VCValueLeaves`, `TypedNull`, `FixedWidth` and
+  `FixedType` are gone. A nil pointer's typed null is built from the tag
+  table, so the codec holds no list of types, and `record.Kind` is the only
+  list of type names.
+- `go.mod` in the module and its two nested modules names no vitaminc
+  module, and `scripts/go-release-version.mjs` no longer refuses a final
+  version over a vitaminc pin.
+- `fuzz.yml`'s Go campaign fuzzes the three decoders nightly.
+
+Still to do: item 5, in vitaminc, and the differential fuzzers that compared
+the Go codec with a Rust guest in vitaminc's `vcencrypt`. They could run
+against `languages/golang/encrypt/guest`.
+
 ## What waits on this plan
 
 - The TypeScript SDK: #1775, #1776 and the prototype #1829.

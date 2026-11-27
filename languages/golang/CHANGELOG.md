@@ -16,13 +16,48 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 ### Added
 
 - `gensupport.UUID`, the kind `"uuid"`: a field the engine seals and
-  opens as a UUID, sixteen bytes under vitaminc's UUID logical type. It
-  takes an equality index and no order or match index. Its value is a
-  `vcvalue.UUID`, or a value of any type whose underlying type is
+  opens as a UUID, sixteen bytes under the UUID logical type. It takes an
+  equality index and no order or match index. Its value is an
+  `encrypt.UUID`, or a value of any type whose underlying type is
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one. `stashgen` does not yet map a Go type to it.
+- `encrypt.UUID`, with `ParseUUID` and `String`: sixteen bytes that seal
+  as a UUID, and the type an opened UUID comes back as.
+- `encrypt.Encryptable` and `encrypt.Encoder`: a type that writes its own
+  value. A field of a type with `EncryptValue(enc encrypt.Encoder) error`
+  is sealed as the one value that method writes, through one of the
+  Encoder's methods (`Int64`, `String`, `Date` and the rest, one for each
+  scalar kind).
+
+### Breaking
+
+- **`encrypt.Date`, `Decimal`, `Int128` and `Uint128` are types of their
+  own.** They were aliases of vitaminc's Go value types
+  (`github.com/cipherstash/vitaminc/bindings/go/vcvalue`). They have the
+  same fields and the same methods, except `Date.DaysFromCE` and
+  `Decimal.Normalized`, which are gone. `ParseInt128`, `ParseUint128`,
+  `ParseDecimal` and `ErrNonFiniteDecimal` are unchanged. Only code that
+  names a `vcvalue` or `vcffi` type is affected:
+  - a `vcvalue.Date`, `Decimal`, `Int128`, `Uint128` or `UUID` is now the
+    `encrypt` type of the same name;
+  - a type with `EncryptValue(enc vcffi.Encoder) error` now takes an
+    `encrypt.Encoder`, whose unsigned methods are `Uint8` to `Uint128`
+    (not `UInt8`), and which writes scalars only;
+  - `vcffi.FixedWidth` is gone: a nil pointer to an `Encryptable` is
+    written as a null, and the engine pads a sealed null to the width of
+    the field's declared type, as it does for every null.
+
+  The stored format is unchanged: every value has the same ciphertext and
+  the same terms as before.
 
 ### Changed
+
+- **The module no longer depends on vitaminc's Go packages.** The frame
+  codec and the storage profile it used from vitaminc's `vcffi` and
+  `vcvalue` are now internal to this module (`internal/frame`), so
+  `go.mod` names no vitaminc module, and a final version of the module can
+  be released. The codec writes the same bytes, and its tests read the
+  same value and storage corpora as the Rust codec, from this repository.
 
 - **A record field converts a number of another width or kind, as a
   query does.** A value sealed through `Cipher.Seal` for a field that

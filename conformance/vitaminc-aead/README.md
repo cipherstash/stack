@@ -1,7 +1,7 @@
 # Value conformance corpus
 
-`value-conformance.json` holds the shared vectors that Rust, Node, the Go
-codec and the Go WASM encryption guest all check. Payload bytes are frozen by
+`value-conformance.json` holds the shared vectors that Rust, Node and the Go
+frame codec (`languages/golang/internal/frame`) all check. Payload bytes are frozen by
 `vitaminc-aead`'s scalar tag table and leaf codec ([`vitaminc-aead`'s ADR 0001](../../packages/vitaminc-aead/docs/adr/0001-describe-plaintext-once-and-consume-it-with-sinks.md)
 section 3):
 fixed-width integers and float bits are little-endian, dates count days from
@@ -88,8 +88,8 @@ bytes gives that value, and encoding that value gives the bytes. A bug that
 decodes and encodes symmetrically wrong therefore still fails. Adding a kind
 means teaching each language's `expected` helper to build it. The Go fuzz
 targets seed themselves from `vectors`, `malformed`, `normalized` and
-`ciphertext_malformed`, so every row is also a starting point for the
-differential run against the guest.
+`ciphertext_malformed`, so every row is also a starting point for fuzzing
+the Go decoders.
 
 These are the scalar/value-level vectors needed by #375 and #414. The wider
 #332 cross-language ciphertext, guest-object and SDK corpus remains separate
