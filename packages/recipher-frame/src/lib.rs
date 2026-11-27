@@ -5,6 +5,7 @@
 //! [`FrameWriter`]: crate::FrameWriter
 //! [`Frame`]: crate::Frame
 //! [`MAX_DEPTH`]: crate::MAX_DEPTH
+//! [`OwnedFrame`]: crate::OwnedFrame
 //! [`PassthroughFrame`]: crate::PassthroughFrame
 //! [`decode_ciphertext`]: crate::decode_ciphertext
 //! [`encode_ciphertext`]: crate::encode_ciphertext
@@ -46,4 +47,4 @@ pub use vitaminc_aead::frame::{
 };
 /// The leaf tag table, which lives with the leaf codec in `vitaminc-aead`.
 pub use vitaminc_aead::tags;
-pub use vitaminc_aead::{to_frame, Frame, FrameWriter, PassthroughFrame};
+pub use vitaminc_aead::{to_frame, Frame, FrameWriter, OwnedFrame, PassthroughFrame};

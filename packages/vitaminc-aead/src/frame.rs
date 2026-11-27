@@ -13,14 +13,19 @@
 //! by walking its own bytes in place, so a host that ships frames (Go) is
 //! a source with no intermediate value. [`FrameWriter`] is a [`Sink`] that
 //! writes frame bytes, so the same host decrypts straight into a frame.
+//! [`OwnedFrame`] is one value in a frame of its own, wiped when it drops:
+//! what a host hands over, what is sealed, and what a ciphertext opens into.
 //! [`PassthroughFrame`] is the owned frame a ciphertext carries for a
-//! passthrough subtree.
+//! passthrough subtree, which is in the clear.
 
 use std::ops::Range;
 
 use vitaminc_protected::{Buffer, Controlled, OpaqueDebug, TimingSafeEq};
 
 use __private::SeenKeys;
+
+mod owned;
+pub use owned::{OwnedFrame, OwnedFrameSink};
 
 use crate::leaf::{self, Form, Item, ScalarError};
 use crate::plaintext::{

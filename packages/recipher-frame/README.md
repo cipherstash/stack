@@ -15,6 +15,8 @@ out. A frame represents a value independently of the host language:
 - [`FrameWriter`] is a `Sink` that writes frame bytes, and [`to_frame`]
   walks any `Encrypt` into one. The Node binding snapshots a JavaScript
   value this way to encrypt it off the JavaScript thread.
+- [`OwnedFrame`] is one value in a frame of its own, wiped when it drops:
+  what a binding hands the engine, and what a ciphertext opens into.
 - [`PassthroughFrame`] is an owned frame: the payload a ciphertext carries
   for a passthrough subtree, in every binding and in static Rust.
 
@@ -236,6 +238,7 @@ License: MIT.
 [`FrameWriter`]: https://docs.rs/recipher-frame/latest/recipher_frame/struct.FrameWriter.html
 [`Frame`]: https://docs.rs/recipher-frame/latest/recipher_frame/struct.Frame.html
 [`MAX_DEPTH`]: https://docs.rs/recipher-frame/latest/recipher_frame/constant.MAX_DEPTH.html
+[`OwnedFrame`]: https://docs.rs/recipher-frame/latest/recipher_frame/struct.OwnedFrame.html
 [`PassthroughFrame`]: https://docs.rs/recipher-frame/latest/recipher_frame/struct.PassthroughFrame.html
 [`Sink`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Sink.html
 [`decode_ciphertext`]: https://docs.rs/recipher-frame/latest/recipher_frame/transport/fn.decode_ciphertext.html

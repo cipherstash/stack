@@ -26,6 +26,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `ValueKind::sealed_null` says how an absent value of the kind is sealed (`SealedNull`), so that it is as long as a present one.
   `ParseValueKindError` is the error from parsing a name.
 - `leaf::sealed_null_type`, the type a typed null is sealed as.
+- `frame::OwnedFrame` (also at the crate root): one value as a frame in a buffer of its own, wiped when it drops.
+  It is a source (`Encrypt`) that walks its bytes in place, and a decrypt target (`Decrypt`, through `frame::OwnedFrameSink`) that a ciphertext opens straight into.
+  Two frames compare with `==` in constant time, and `Debug` masks the bytes.
+  `OwnedFrame::of` writes any source; `from_bytes` reads a host's bytes, refusing anything that is not one frame; `from_buffer` takes a `Buffer` a `FrameWriter` filled, without a copy.
+  `null`, `typed_null`, `kind`, `is_null`, `elements` and `has_passthrough` read or make a value without a second copy of it.
+  `zeroize` wipes the bytes and leaves none, so a zeroized frame walks as an error instead of reading as a null.
+  No frame or sealed byte changes: an `OwnedFrame` holds the bytes `to_frame` writes.
 
 ## [0.10.0] - 2026-11-19
 

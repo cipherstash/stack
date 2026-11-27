@@ -82,7 +82,7 @@ pub use typed::{decrypt, decrypt_async, DecodeError, Decrypt, DecryptProtected, 
 pub use walk::{decrypt_into, decrypt_into_async, decrypt_to_frame, walk, DecryptError};
 // The frame: a value as transport bytes, and back.
 #[doc(inline)]
-pub use frame::{to_frame, Frame, FrameWriter, PassthroughFrame};
+pub use frame::{to_frame, Frame, FrameWriter, OwnedFrame, PassthroughFrame};
 // Wipeable scalars: a UTC instant that always encrypts, and a date, a
 // decimal and a uuid, each the leaf of the type it wraps.
 #[cfg(feature = "jiff")]
