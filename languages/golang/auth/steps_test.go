@@ -139,9 +139,12 @@ func TestDeviceSessionCallersDoNotWaitBehindARefreshOfAValidToken(t *testing.T) 
 	if err := os.MkdirAll(workspaceDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	write(t, filepath.Join(workspaceDir, "auth.json"), fmt.Sprintf(
-		`{"access_token":"old","refresh_token":"refresh-1","token_type":"Bearer","expires_at":%d,"region":"ap-southeast-2.aws","client_id":"client-1"}`,
-		time.Now().Add(4*time.Second).Unix()))
+	session := func() {
+		write(t, filepath.Join(workspaceDir, "auth.json"), fmt.Sprintf(
+			`{"access_token":"old","refresh_token":"refresh-1","token_type":"Bearer","expires_at":%d,"region":"ap-southeast-2.aws","client_id":"client-1"}`,
+			time.Now().Add(4*time.Second).Unix()))
+	}
+	session()
 	refreshing := make(chan struct{}, 16)
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +171,10 @@ func TestDeviceSessionCallersDoNotWaitBehindARefreshOfAValidToken(t *testing.T) 
 	defer strategy.Close()
 
 	// The first Token uses the token, so its refresh ahead of expiry is due
-	// half way through its life, and no caller makes it.
+	// half way through its life, and no caller makes it. The session is
+	// written again now: opening the profile can take seconds under the
+	// race detector, longer than the token lasts.
+	session()
 	if token, err := strategy.Token(context.Background()); err != nil || token != "old" {
 		t.Fatalf("the first Token: %q, %v", token, err)
 	}
