@@ -13,7 +13,8 @@ A checkout of this repository does not include the compiled engine.
 The `.wasm` files are build outputs. They are not committed on development branches.
 The release workflow commits them only to the commit that a release tag names.
 
-From the repository root, build the guests before you run `go test`:
+From the repository root, install the toolchain that `mise.toml` pins (`mise install`).
+Then build the guests before you run `go test`:
 
 - `mise run wasm:guest:build` builds the engine that package `encrypt` embeds.
 - `mise run wasm:guest:build:eql` builds the engine with the EQL types. Package `encrypt/eql` embeds it, and `stashgen` needs it.
@@ -24,11 +25,27 @@ Without these builds, `NewClient` returns `encrypt.ErrGuestNotBuilt` or `encrypt
 `encrypttest.NewClient` fails its test instead of skipping.
 The `encrypttest` module's tag at the same version includes the test builds.
 
+To run `stashgen` from a checkout, build the guest that includes the EQL types first.
+`stashgen` checks each declaration with it:
+
+```sh
+mise run wasm:guest:build:eql
+```
+
+Without that build, `stashgen` stops with an error that starts `encrypt: guest module with the EQL types not built`.
+
 ## Run the tests
 
 `encrypt/encrypttest` and `encrypt/example` are Go modules of their own.
 So `go test ./...` from `languages/golang` does not test them.
 `mise run go:test` tests all three modules.
+
+`mise run go:test:postgres` runs the shared EQL and JSON conformance tests, then the PostgreSQL tests, against the EQL v4 bundle built from this tree.
+The task needs three things:
+
+- a disposable PostgreSQL database, named by `EQL_TEST_DATABASE_URL`
+- `psql`
+- the Rust test tools (`mise install --env test`), because the conformance tests include Rust tests
 
 ## How the Go code reaches the engine
 
@@ -44,10 +61,16 @@ The guide in `packages/stack-encrypt/docs/language-integration.md` explains how 
 
 ## Known gaps
 
-After `Decrypt`, one unwiped copy of each opened string can remain in the guest's memory.
+After `Decrypt`, part of the last value it opened stays in the guest's stack.
+The part is the last block that the cipher decrypted, when that block is shorter than 16 bytes.
+The cipher that seals each value is AES-256-GCM (Advanced Encryption Standard in Galois/Counter Mode).
+For a string, that is the last (length + 1) mod 16 bytes, so a string shorter than 16 bytes stays whole.
+The next `Encrypt` or `Decrypt` overwrites it.
+
+The cause is a stack buffer in the RustCrypto cipher crates that vitaminc's wasm32 backend decrypts through. Nothing wipes that buffer.
 `TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt` in `encrypt/roundtrip_test.go` records this gap.
-The test is skipped until vitaminc wipes that copy (cipherstash/vitaminc#370).
-When that fix ships, remove the skip so the test runs again.
+The test is skipped until vitaminc wipes that buffer (cipherstash/vitaminc#370).
+When that fix is released, remove the skip so the test runs again.
 
 ## Design records
 

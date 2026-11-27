@@ -35,23 +35,5 @@ the [EQL column guide](encrypt/README.md#eql-columns) when choosing a schema.
 
 ## Working in this repository
 
-From the repository root, install the toolchain pinned by `mise.toml` and
-build the guests before running Go tests:
-
-```sh
-mise run wasm:guest:build
-mise run wasm:guest:build:eql
-mise run wasm:guest:build:deterministic
-mise run wasm:guest:build:eql:deterministic
-mise run wasm:auth-guest:build
-mise run go:test
-```
-
-The `.wasm` files are build outputs and are not committed on development
-branches. `mise run go:test:postgres` also runs the PostgreSQL suite against
-the EQL v4 bundle built from this tree, and the shared EQL/JSON conformance
-lane before it. It needs the disposable database named by
-`EQL_TEST_DATABASE_URL`, `psql`, and the Rust test tools
-(`mise install --env test`), because the conformance lane runs Rust tests too.
-See `mise.toml` and [AGENTS.md](../../AGENTS.md) for the build and release
-details.
+To build the engine, run the tests or run `stashgen` from a checkout, read
+[CONTRIBUTING.md](CONTRIBUTING.md).

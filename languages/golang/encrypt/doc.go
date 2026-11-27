@@ -415,8 +415,11 @@
 //
 // Between calls the guest holds the client key and its keyset cache. Data
 // keys are per-call values, wiped when the export returns, and every buffer
-// staged for a call is wiped before the call's result is returned. One
-// exception remains: after Decrypt, one unwiped copy of each opened string
-// stays in the guest's freed heap until that memory is reused. The gap is
-// known, and remains until vitaminc wipes that copy.
+// staged for a call is wiped before the call's result is returned.
+//
+// One exception remains: after Decrypt, up to the last 15 bytes of the last
+// value it opened stay in the guest's stack. A string shorter than 16 bytes
+// stays whole. The copy stays until a later Encrypt or Decrypt overwrites
+// it, or [Client.Close] wipes the guest's memory. This gap is known and not
+// yet fixed.
 package encrypt
