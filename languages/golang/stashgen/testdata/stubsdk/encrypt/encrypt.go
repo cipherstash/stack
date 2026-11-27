@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Cipher is a keyset with any extension of the context.
+// Cipher is a keyset with any scopes of the context.
 type Cipher struct{ _ struct{} }
 
 // Client decrypts under the keyset that sealed each value.

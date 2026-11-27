@@ -441,7 +441,7 @@ func kindWord(k record.Kind) string {
 // describeField names what the engine was asked for a field: the EQL type
 // it names, or its outputs. For an EQL type the engine refuses, the refusal
 // is the engine's (an unknown or unproducible type, a kind other than its
-// plaintext, an extended context); the name is what a reader needs.
+// plaintext, a context with scopes or bindings); the name is what a reader needs.
 func describeField(f record.Field) string {
 	if f.IsTarget() {
 		return "the EQL type " + f.Target
