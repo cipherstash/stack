@@ -395,8 +395,10 @@ UTC: compare it with `Equal`, not `==`. A decimal opens at the scale it was
 sealed with, but a zero has no sign: `-0.00` opens as `0.00`. The zero
 `encrypt.Date` is not a date, and `Encrypt` or a query refuses it with
 `ErrEncoding`, naming the field; so is a decimal or a `time.Time` outside
-vitaminc's range. A sealed field cannot be a pointer, so an optional date has
-no sealed form yet: keep it in an opaque struct, or use a sentinel date. Each integer type seals at its own
+vitaminc's range. A sealed field declared over a pointer, such as
+`*encrypt.Date`, is optional: its `null=` option says whether `nil` is stored
+as a sealed null or as SQL `NULL` (see "Optional fields" in the `stashgen`
+README). Each integer type seals at its own
 width, and each width is passed to the order scheme as itself, so an `int16`
 field's terms are an `int16`'s. An `int8` or `uint8` field has no order
 index: with 256 values, an order term would rank every row among 256, which

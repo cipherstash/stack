@@ -130,9 +130,10 @@
 // built-in types. A UUID takes an equality index and no other.
 // Each integer seals at its own width. Equality applies to every one but a
 // bool. ORE and OPE apply to integers of 16 bits or more, floats, text,
-// bytes, decimals, dates and timestamps. A bool or an 8-bit integer takes no
-// order index, since over so few values its ordering terms would show which
-// rows hold which value.
+// decimals, dates and timestamps. A bool or an 8-bit integer takes no order
+// index, since over so few values its ordering terms would show which rows
+// hold which value. Bytes and a UUID take no order index either: no
+// ordering of them is meaningful.
 //
 // Passthrough fields never cross the binding: the engine does nothing to a
 // passthrough value that a program could observe, and the FFI codec cannot
