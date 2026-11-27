@@ -1,23 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { PreflightResult } from '@/installer/index.js'
 import { renderPreflightReport } from '../preflight.js'
-
-const CAPABLE: PreflightResult = {
-  currentUser: 'postgres',
-  isSuperuser: true,
-  memberOfPostgres: true,
-  hasDatabaseCreate: true,
-  hasPublicCreate: true,
-  pgcryptoInstalled: true,
-  pgcryptoSchema: 'extensions',
-  eqlV3SchemaPresent: false,
-  eqlV3InternalSchemaPresent: false,
-  canDropEqlV3Schema: null,
-  canDropEqlV3InternalSchema: null,
-  canCreateOperatorClass: true,
-  missing: [],
-  ok: true,
-}
+import { CAPABLE } from './preflight-fixtures.js'
 
 describe('renderPreflightReport', () => {
   it('renders every row, with no annotations for a capable role', () => {

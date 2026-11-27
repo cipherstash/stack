@@ -336,7 +336,13 @@ export const registry: CommandGroup[] = [
             description:
               'Emit the machine-readable preflight result instead of the table.',
           },
-          DATABASE_URL_FLAG,
+          {
+            name: '--database-url',
+            value: '<url>',
+            description:
+              "One-shot, like `eql verify`'s: bypasses config loading entirely, so the database you name is the database that gets probed, even when stash.config.ts sets a literal databaseUrl.",
+            env: 'DATABASE_URL',
+          },
         ],
       },
       {

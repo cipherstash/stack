@@ -38,8 +38,6 @@ export async function verifyCommand(
   const databaseUrl = await resolveDiagnosticDatabaseUrl({
     databaseUrlFlag: options.databaseUrl,
     json,
-    flagWins: true,
-    verb: 'Verifying',
   })
 
   const s = json ? null : p.spinner()
