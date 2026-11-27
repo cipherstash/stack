@@ -86,9 +86,10 @@ type root struct {
 	cleanup  runtime.Cleanup
 }
 
-// Resolve opens the profile directory the Rust crate would: CS_CONFIG_PATH
-// when set and not blank, else ~/.cipherstash. The directory must exist;
-// `stash auth login` creates it.
+// Resolve opens the developer profile directory: CS_CONFIG_PATH when set
+// and not blank, else ~/.cipherstash. The directory must exist;
+// `stash auth login` creates it. A directory that is missing, or is not a
+// directory, is [ErrNoProfile].
 func Resolve(ctx context.Context, opts ...Option) (*ProfileStore, error) {
 	// Blankness is tested on the trimmed value and the value itself is
 	// used, as ProfileStore::resolve does: a directory named with a space
@@ -123,9 +124,10 @@ func Open(ctx context.Context, dir string, opts ...Option) (*ProfileStore, error
 // [ProfileStore.AccessKey] and [ProfileStore.OIDC] — where there is none to
 // open: CI, a container, a server authenticating by federation. Every
 // profile read on it fails with ErrNoProfile, and [ProfileStore.Auto] on it
-// is the environment's access key or ErrNotAuthenticated, as stack-auth's
-// AutoStrategy is with no profile store.
+// is the environment's access key or ErrNotAuthenticated.
 func OpenWithoutProfile(ctx context.Context, opts ...Option) (*ProfileStore, error) {
+	// Auto here behaves as stack-auth's AutoStrategy does with no profile
+	// store.
 	return open(ctx, "", opts)
 }
 
@@ -367,12 +369,16 @@ func (s *ProfileStore) CurrentWorkspaceStore(ctx context.Context) (*ProfileStore
 	return s.WorkspaceStore(ctx, id)
 }
 
-// LockPath is the host path of the lock file the Rust crate takes for
-// filename in this store: a sibling `.<filename>.lock`. Nothing is created
-// or locked. DeviceSession holds this lock across the guest's refresh call;
-// the guest cannot lock under WASI. This package never composes a profile
-// path itself.
+// LockPath is the host path of the lock file that guards filename in this
+// store: a sibling `.<filename>.lock`. Nothing is created or locked.
+// [ProfileStore.DeviceSession] holds this lock while it refreshes a token,
+// and the CLI takes the same lock. A filename that is empty, "." or "..",
+// or that contains a path separator, is [ErrInvalidFilename].
 func (s *ProfileStore) LockPath(ctx context.Context, filename string) (string, error) {
+	// The lock file is the one the stack-profile crate takes. Go holds the
+	// lock across the guest's refresh call, because the guest cannot lock
+	// under WASI. This package never composes a profile path itself.
+	//
 	// The guest validates the filename as the crate does, against the
 	// guest's separator, which is `/`. The host's is checked here: on
 	// Windows a backslash passes the guest and would become a separator

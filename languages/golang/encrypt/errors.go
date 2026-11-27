@@ -69,11 +69,17 @@ var (
 	ErrMemoryLock = guest.ErrMemoryLock
 )
 
-// ErrStorageVersion is an opaque struct sealed as a storage blob of a
-// version this release does not read: a later release wrote it. Its error
-// wraps [ErrEncoding] too. It is vcffi.ErrUnsupportedVersion, named here so
-// a program can check for it without importing vitaminc's bindings.
+// For contributors: ErrStorageVersion is vcffi.ErrUnsupportedVersion, named
+// here so a program can check for it without importing vitaminc's bindings.
+
+// ErrStorageVersion is an opaque struct stored in a format version this
+// release does not read: a later release wrote it. Open it with that
+// release or a later one. Its error wraps [ErrEncoding] too.
 var ErrStorageVersion = vcffi.ErrUnsupportedVersion
+
+// For contributors: a guest built before the detail existed returns the
+// bare sentinel, with no Diagnostic. Package encrypt always runs the guest
+// it embeds, so only an old build in a checkout does that.
 
 // Diagnostic is the full error behind a failure the guest reports, beside
 // the kind: every such failure is a *Diagnostic wrapping one of the
@@ -102,14 +108,13 @@ var ErrStorageVersion = vcffi.ErrUnsupportedVersion
 //
 // Errors the client raises itself carry none: a closed client ([ErrState]),
 // a guest that did not return, [ErrMemoryLock], and an argument refused
-// before it reached the guest. A guest built before the detail existed
-// returns the bare sentinel too.
+// before it reached the guest.
 //
 // It is the same type as auth.Diagnostic, by identity.
 type Diagnostic = guest.Diagnostic
 
 // Cause is one error in a [Diagnostic]'s cause chain: a Code and a Message.
-// A cause from a library outside the stack crates has no Code, and its
-// Message is a description the guest vouches for, never that library's own
+// A cause from a library the SDK uses, outside its own code, has no Code.
+// Its Message is a description the guest writes, never that library's own
 // text.
 type Cause = guest.Cause

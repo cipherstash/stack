@@ -38,9 +38,12 @@ import (
 	"log/slog"
 )
 
-// Type is one EQL type as the catalog describes it: what stashgen learns
-// from the engine's se_targets export, in Go. Name is the engine's name,
-// the value of encrypt_into; GoName is the type's name in this package.
+// For contributors: Type is what stashgen learns from the engine's
+// se_targets export, in Go.
+
+// Type is one EQL type as the catalog describes it. Name is the engine's
+// name, the value of encrypt_into; GoName is the type's name in this
+// package.
 type Type struct {
 	// Name is the type's name across languages, and the engine's: TextEq.
 	Name string

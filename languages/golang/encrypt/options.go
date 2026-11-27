@@ -48,8 +48,10 @@ func WithCredentials(c Credentials) ClientOption {
 }
 
 // WithKeysetCacheSize sets how many keysets beyond the default the guest
-// keeps loaded. Zero means the crate default (1024); negative is refused.
+// keeps loaded. Zero means the default, 1024. NewClient refuses a negative
+// size with [ErrEncoding].
 func WithKeysetCacheSize(n int) ClientOption {
+	// The default of 1024 is the stack-encrypt crate's.
 	return func(o *clientOptions) { o.keysetCacheSize = n }
 }
 

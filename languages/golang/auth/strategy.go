@@ -46,8 +46,8 @@ func strategyConfig(opts []StrategyOption) strategyOptions {
 	return o
 }
 
-// Strategy is a Rust stack-auth strategy retained inside the credential
-// guest: the source of the bearer token encrypt.NewCredentials takes.
+// Strategy is an auth strategy held inside the credential guest: the
+// source of the bearer token encrypt.NewCredentials takes.
 // Close drops its cached credential; closing the parent profile closes all
 // its strategies. It is the caller's to close: an encrypt client that
 // was given it asks it for tokens but never closes it, so it must stay open
@@ -77,9 +77,12 @@ func (s *ProfileStore) newStrategy(ctx context.Context, config any, device bool)
 	return &Strategy{store: s, handle: string(out), device: device}, nil
 }
 
-// AccessKey constructs stack-auth's access-key strategy for crn. The key
-// stays in the guest after construction; it is not sent on each Token call.
+// AccessKey constructs the access-key strategy for the workspace crn: it
+// exchanges key for a token. The key stays in the guest after
+// construction; it is not sent on each Token call. An empty crn or key is
+// [ErrConfig].
 func (s *ProfileStore) AccessKey(ctx context.Context, crn, key string, opts ...StrategyOption) (*Strategy, error) {
+	// This is stack-auth's access-key strategy.
 	if crn == "" || key == "" {
 		return nil, ErrConfig
 	}
@@ -92,7 +95,7 @@ func (s *ProfileStore) AccessKey(ctx context.Context, crn, key string, opts ...S
 	}{"access_key", crn, key, o.baseURL}, false)
 }
 
-// OIDC constructs stack-auth's federation strategy. provider is called on
+// OIDC constructs the OIDC federation strategy. provider is called on
 // every Token call for the IdP JWT of the user that call is for; the
 // strategy keeps one CTS token per distinct JWT and mints a new one only
 // for a JWT that has no unexpired token. [WithCacheCapacity] sets how many
@@ -100,6 +103,7 @@ func (s *ProfileStore) AccessKey(ctx context.Context, crn, key string, opts ...S
 // [ErrConfig]; [ProfileStore.OIDCWithDetectedWorkspace] finds the workspace
 // instead.
 func (s *ProfileStore) OIDC(ctx context.Context, crn string, provider OIDCProvider, opts ...StrategyOption) (*Strategy, error) {
+	// This is stack-auth's federation strategy.
 	if crn == "" || provider == nil {
 		return nil, ErrConfig
 	}
@@ -191,8 +195,8 @@ func (s *ProfileStore) detectWorkspaceCRN(ctx context.Context) (string, error) {
 }
 
 // DeviceSession uses this workspace store's auth.json. Fresh tokens are read
-// without a lock. A refresh takes the same cross-process lock as the Rust
-// CLI, then the guest re-reads and saves before the lock is released.
+// without a lock. A refresh takes the same cross-process lock as the CLI,
+// then the guest re-reads and saves before the lock is released.
 func (s *ProfileStore) DeviceSession(ctx context.Context, opts ...StrategyOption) (*Strategy, error) {
 	if s.dir == guestRoot {
 		return nil, ErrConfig
@@ -205,9 +209,15 @@ func (s *ProfileStore) DeviceSession(ctx context.Context, opts ...StrategyOption
 	}{"device_session", s.dir, o.baseURL}, true)
 }
 
-// Auto follows stack-auth's detection order against the Go host's
-// environment: access key first, then the current workspace's device token.
+// Auto picks a strategy from the environment and the profile. When
+// CS_CLIENT_ACCESS_KEY is set, it is [ProfileStore.AccessKey] for the
+// workspace CS_WORKSPACE_CRN names. Otherwise it is
+// [ProfileStore.DeviceSession] for the current workspace's saved token.
+// An access key without CS_WORKSPACE_CRN is [ErrConfig]. No current
+// workspace, or no saved token, is [ErrNotAuthenticated].
 func (s *ProfileStore) Auto(ctx context.Context, opts ...StrategyOption) (*Strategy, error) {
+	// The order is stack-auth's AutoStrategy order, read from the Go host's
+	// environment because the guest has none.
 	crn, crnSet := os.LookupEnv("CS_WORKSPACE_CRN")
 	if crnSet {
 		_, err := s.callArgs(ctx, func(i *instance) api.Function { return i.authValidateCRN }, guest.BufArg([]byte(crn)))

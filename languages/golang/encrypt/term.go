@@ -10,10 +10,12 @@ import (
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
+// For contributors: the index words are the Rust API's words for the same
+// behaviour.
+
 // Index is one index on a field, as a generated declaration names it:
-// [Equality], [Ore], [Ope], [Match] or [JSON]. The words are the Rust API's
-// words for the same behaviour, and a declaration in any language spells
-// them the same way.
+// [Equality], [Ore], [Ope], [Match] or [JSON]. A declaration in any
+// language spells them the same way.
 type Index interface {
 	// Output is the index's wire key.
 	Output() record.Output
@@ -131,13 +133,14 @@ func (t MatchTerm) Positions() ([]uint16, error) {
 // as an EQL type, which the database compares correctly.
 type OreTerm []byte
 
-// Compare orders two ORE terms as their plaintexts: -1, 0 or +1. Ports the
-// CLLW comparison of the Rust crate (constant time over the term bytes):
-// at the first differing byte the two sides share the PRF block, so they
-// differ by exactly the plaintext bit, and the side one greater is the
-// greater plaintext. Terms of different lengths (strings, byte slices)
-// compare on their common prefix, then the shorter is less.
+// Compare orders two ORE terms as their plaintexts: -1, 0 or +1. It runs in
+// constant time over the term bytes. Terms of different lengths (strings,
+// byte slices) compare on their common prefix, then the shorter is less.
 func (t OreTerm) Compare(other OreTerm) int {
+	// This ports the CLLW comparison of the Rust crate: at the first
+	// differing byte the two sides share the PRF block, so they differ by
+	// exactly the plaintext bit, and the side one greater is the greater
+	// plaintext.
 	return compareCLLW(t, other)
 }
 

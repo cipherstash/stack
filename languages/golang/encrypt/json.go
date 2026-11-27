@@ -17,8 +17,8 @@ import (
 )
 
 // JSONOpen opens the rows that a read of a JSON document field returned.
-// It calls the guest's se_json_open, and checks the rows against the
-// request that prepared the read. The request is
+// It checks the rows against the request that prepared the read. The
+// request is
 // `{"operation": "selector" | "subtree", "path", "wildcard_bound"}`. The
 // rows argument has one group per database row:
 //

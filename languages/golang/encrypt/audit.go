@@ -13,6 +13,9 @@ import (
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
+// For contributors: AuditMetadata is the Rust crate's AuditMetadata, and
+// the unverified context of the ZeroKMS protocol.
+
 // AuditMetadata is facts about a call that ZeroKMS writes to its audit log.
 //
 // Every Encrypt and Decrypt asks ZeroKMS for data keys. ZeroKMS logs each
@@ -28,9 +31,7 @@ import (
 //		Text("request_id", requestID)
 //	people, err := users.Decrypt(ctx, cipher.Audit(metadata), rows)
 //
-// Audit metadata is optional. A cipher without it sends none. It is the
-// Rust crate's AuditMetadata, and the unverified context of the ZeroKMS
-// protocol.
+// Audit metadata is optional. A cipher without it sends none.
 //
 // # Rules
 //

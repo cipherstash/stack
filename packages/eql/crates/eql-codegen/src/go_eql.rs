@@ -133,10 +133,10 @@ pub fn render_go_eql() -> String {
         "{GO_GENERATED_MARKER}\n\npackage eql\n\nimport (\n\t\"database/sql/driver\"\n\t\"fmt\"\n\t\"log/slog\"\n)\n"
     );
     out.push_str(
-        "// Types is every EQL type the catalog has, in catalog order: what the\n\
-         // engine's se_targets export lists, as Go. Producible says whether the\n\
-         // engine produces the type today; stashgen refuses encrypt_into for one\n\
-         // it does not, with the Reason.\n\
+        "// Types is every EQL type the catalog has, in catalog order.\n\
+         // Producible says whether the engine produces the type today;\n\
+         // stashgen refuses encrypt_into for one it does not, with the\n\
+         // Reason.\n\
          var Types = []Type{\n",
     );
     for row in &rows {

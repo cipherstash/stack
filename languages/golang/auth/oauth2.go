@@ -8,7 +8,7 @@ import (
 )
 
 // OAuth2TokenSource adapts an existing x/oauth2 provider to OIDCProvider.
-// Its AccessToken is read afresh whenever the Rust federation strategy asks.
+// Its AccessToken is read again each time the federation strategy asks.
 func OAuth2TokenSource(source oauth2.TokenSource) OIDCProvider {
 	return OIDCProviderFunc(func(context.Context) (string, error) {
 		if source == nil {

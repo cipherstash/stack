@@ -9,14 +9,16 @@ import (
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
-// Engine answers the generator's questions about what the Rust engine can do.
+// For contributors: [GuestEngine] asks the guest through its se_plan_check,
+// se_targets and se_operators exports.
+
+// Engine answers the generator's questions about what the engine can do.
 // The generator holds no copy of the engine's rules: every refusal about an
 // index, an EQL type or a field type comes from here, and so does every
 // operator a field's query methods name.
 //
-// [GuestEngine] is the SDK's implementation: the WASI guest that package
-// encrypt embeds, asked through se_plan_check, se_targets and
-// se_operators.
+// [GuestEngine] is the SDK's implementation: the engine that package
+// encrypt embeds.
 type Engine interface {
 	// EQLTypes lists the EQL types the engine can produce: each name, its
 	// plaintext kind, its indexes and its query type.
@@ -72,10 +74,11 @@ type EQLType struct {
 	wire record.Kind
 }
 
-// GuestEngine is the engine the SDK embeds: the WASI guest in package
-// encrypt, asked through its se_plan_check and se_targets exports. It holds
-// no credentials and makes no request. Close it when done.
+// GuestEngine is the engine the SDK embeds, in package encrypt. It holds no
+// credentials and makes no request. Close it when done. It returns the
+// error of [encrypt.NewChecker] when that fails.
 func GuestEngine(ctx context.Context) (Engine, error) {
+	// The guest answers through its se_plan_check and se_targets exports.
 	checker, err := encrypt.NewChecker(ctx)
 	if err != nil {
 		return nil, err

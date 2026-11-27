@@ -10,14 +10,18 @@ import (
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
-// Kind is a field's wire type: the data form of the Rust chain's `::<F>`,
-// chosen by stashgen from the field's Go type. It decides the terms a field
-// derives; every field seals as vitaminc's tagged leaf whatever its kind,
-// which a Rust record opens when its field is a Value. Every sealed field has a
-// scalar kind: stashgen refuses a struct, slice or map outside an opaque
-// struct, and an opaque struct seals as Bytes (one storage blob). Untyped
-// names a field with no declared type; generated code never writes it, and
-// the engine refuses a plan whose indexed field has no type.
+// For contributors: Kind is the data form of the Rust chain's `::<F>`.
+// Every field seals as vitaminc's tagged leaf whatever its kind, which a
+// Rust record opens when its field is a Value. An opaque struct crosses as
+// one storage blob.
+
+// Kind is a field's wire type, chosen by stashgen from the field's Go type.
+// It decides the terms a field derives; the ciphertext has the same format
+// whatever the kind. Every sealed field has a scalar kind: stashgen refuses a
+// struct, slice or map outside an opaque struct, and an opaque struct seals
+// as Bytes. Untyped names a field with no declared type; generated code
+// never writes it, and the engine refuses a plan whose indexed field has no
+// type.
 type Kind string
 
 // The kinds. Each Go integer type has the kind of its own width: int8 is
@@ -49,7 +53,7 @@ const (
 	Timestamp Kind = "timestamp"
 	String    Kind = "string"
 	Bytes     Kind = "bytes"
-	// UUID is a UUID: sixteen bytes under vitaminc's uuid logical type.
+	// UUID is a UUID: sixteen bytes.
 	// Its value is a vcvalue.UUID, or a value of any type whose underlying
 	// type is [16]byte (github.com/google/uuid.UUID, say), which is
 	// converted to one.
@@ -61,13 +65,15 @@ const (
 	JSON Kind = "json"
 )
 
+// For contributors: an opaque struct crosses the binding as one storage
+// blob (vitaminc's storage profile, version 1), because the engine seals a
+// composite value as a tree of leaves, and an opaque struct is one column.
+
 // OpaqueField is the one field of an opaque declaration: the whole struct,
-// sealed as one value under <context>/value. The struct crosses the binding
-// as one storage blob (vitaminc's storage profile, version 1) — the engine
-// seals a composite value as a tree of leaves, and an opaque struct is one
-// column. A field of a struct, map or slice type that names an EQL type
-// holding a JSON document is the other way one is stored as one column. A value an earlier release sealed is a JSON document, which
-// [Opaque] still reads.
+// sealed as one value under <context>/value and stored in one column. A
+// field of a struct, map or slice type that names an EQL type holding a
+// JSON document is the other way one is stored as one column. A value an
+// earlier release sealed is a JSON document, which [Opaque] still reads.
 const OpaqueField = "value"
 
 type verb uint8
@@ -309,10 +315,11 @@ func (d Declaration) Err() error { return d.err }
 // Contexts asks the engine which contexts this declaration's fields are
 // sealed and indexed under, before any key is requested: one line per field,
 // then one indented line with its context, such as "email\n  context: users /
-// email\n". The text is [encrypt.Checker.Contexts]'s, and the same as a Rust
-// record's contexts() for the same declaration. A test pins it with
+// email\n". The text is [encrypt.Checker.Contexts]'s. A test pins it with
 // encrypttest.AssertContexts.
 func (d Declaration) Contexts(ctx context.Context, checker *encrypt.Checker) (string, error) {
+	// The text is the same as a Rust record's contexts() for the same
+	// declaration.
 	plan, err := d.plan()
 	if err != nil {
 		return "", err

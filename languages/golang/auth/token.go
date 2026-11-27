@@ -11,8 +11,8 @@ import (
 )
 
 // Token is the stored access token, as auth.json holds it and
-// [ProfileStore.Token] reads it through the Rust crate's own type. The
-// refresh token is not in it: the guest handles refresh through a Strategy.
+// [ProfileStore.Token] reads it. The refresh token is not in it: a
+// [Strategy] refreshes the token.
 type Token struct {
 	// AccessToken is the bearer credential.
 	AccessToken string
@@ -30,9 +30,11 @@ type Token struct {
 	DeviceInstanceID string
 }
 
+// For contributors: Usable is the stack-auth crate's is_usable, not its is_expired, which
+// subtracts a refresh-ahead margin that belongs to refreshing.
+
 // Usable reports whether the token is still usable at now: before its real
-// expiry. The Rust crate's is_usable, not its is_expired, which subtracts a
-// refresh-ahead margin that belongs to refreshing.
+// expiry. It subtracts no margin for an early refresh.
 func (t Token) Usable(now time.Time) bool { return now.Before(t.ExpiresAt) }
 
 // Token reads auth.json in this store (a workspace store; the root holds

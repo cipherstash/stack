@@ -47,13 +47,13 @@ func (cph *Cipher) Client() *Client { return cph.client }
 // Keyset is the selector this cipher is bound to.
 func (cph *Cipher) Keyset() KeysetSelector { return cph.keyset }
 
-// KeysetID resolves the cipher's keyset to its id: Rust's
-// KeysetCipher::keyset_id, and in Go the one explicit resolution point,
-// since a Cipher is made without a request. The first use of a name or id
-// on the client is one ZeroKMS round trip, later uses come from the
-// guest's cache; the default keyset never makes a request. Use it at boot
-// to validate a tenant's keyset and learn its id.
+// KeysetID resolves the cipher's keyset to its id. Making a Cipher sends no
+// request, so this is the one call that resolves a keyset on its own. The
+// first use of a name or id on the client is one ZeroKMS round trip, later
+// uses come from the guest's cache; the default keyset never makes a
+// request. Use it at boot to validate a tenant's keyset and learn its id.
 func (cph *Cipher) KeysetID(ctx context.Context) (KeysetID, error) {
+	// Rust's KeysetCipher::keyset_id.
 	return cph.client.resolveKeyset(ctx, cph.keyset)
 }
 
@@ -158,7 +158,7 @@ func ownedParts(parts []any) []any {
 
 // Context returns a cipher that names the context every row through it is
 // under, for a type whose context is one of its own fields (a field tagged
-// `context_field`): the Rust chain's `.context(..)`. Through such a cipher,
+// `context_field`). Through such a cipher,
 // Decrypt checks each row's stored context field against the label before
 // any key is retrieved and refuses a row that names another with
 // [ErrContextMismatch]; Encrypt refuses a value whose context field says
@@ -171,6 +171,7 @@ func ownedParts(parts []any) []any {
 // The label is segments separated by '/', such as "tenants/acme"; one that
 // is not a plain label is reported by the first call, as ErrEncoding.
 func (cph *Cipher) Context(label string) *Cipher {
+	// The Rust chain's `.context(..)`.
 	next := cph.copy()
 	next.context = label
 	if _, err := record.ParseContext(label); err != nil && next.err == nil {

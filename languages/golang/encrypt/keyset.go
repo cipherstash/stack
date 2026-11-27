@@ -7,11 +7,13 @@ import (
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
-// KeysetSelector names the keyset a call binds to, as Rust's IdentifiedBy
-// does: [KeysetName] or [KeysetID]. Every variant is spelled, there is no
-// empty-string or nil sentinel; the default keyset is not a selector but
-// [Client.DefaultKeyset], exactly as it is a method and not an IdentifiedBy
-// variant in Rust. Names follow ZeroKMS's rules
+// For contributors: KeysetSelector is Rust's IdentifiedBy. The default
+// keyset is a method, not an IdentifiedBy variant, in both languages.
+
+// KeysetSelector names the keyset a call binds to: [KeysetName] or
+// [KeysetID]. Every variant is spelled, there is no empty-string or nil
+// sentinel; the default keyset is not a selector but
+// [Client.DefaultKeyset]. Names follow ZeroKMS's rules
 // (non-empty, at most 64 bytes, of A-Z a-z 0-9 _ - /), checked by the
 // guest before any request is made; ZeroKMS itself never issues a
 // UUID-shaped name, so a name and an id cannot be confused.
