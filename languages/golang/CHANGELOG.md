@@ -21,6 +21,11 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `vcvalue.UUID`, or a value of any type whose underlying type is
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one. `stashgen` does not yet map a Go type to it.
+- The `encrypt` README has a section on separating tenants (#1885). It
+  compares a keyset for each tenant, a scope, and a `context_field`. It
+  says when to use each one, and gives the error for a wrong tenant with
+  each one. It also says that a range query through the wrong keyset or
+  scope can return the other tenant's rows, with no error.
 
 ### Changed
 

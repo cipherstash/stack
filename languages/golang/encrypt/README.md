@@ -60,7 +60,7 @@ The package reference is on [pkg.go.dev]; the generator's reference is
    	return err
    }
    defer client.Close()
-   cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
+   cipher := client.Keyset(encrypt.KeysetName("tenant42"))
 
    encrypted, err := users.Encrypt(ctx, cipher, people)
    opened, err := users.Decrypt(ctx, cipher, encrypted)
@@ -203,14 +203,18 @@ A `Cipher` is the client bound to one keyset, and to any extension of the
 context. Every generated function takes one.
 
 ```go
-cipher := client.Keyset(encrypt.KeysetName("tenant-42")).Extend("tenant-42")
+cipher := client.Keyset(encrypt.KeysetName("tenant42")).Extend("tenant42")
 ```
 
 `Extend` appends to the context that the tags declare, for every field, in
-every call through the cipher: the write, the query and the read. A row
-written through `Extend("tenant-42")` opens and matches only through a cipher
-with the same extension. No call takes a keyset or a context, so the three
-cannot use different ones.
+every call through the cipher: the write, the query, and the read. No call
+takes a keyset or a context, so the three cannot use different ones.
+
+A row written through `Extend("tenant42")` opens only through a cipher with
+the same extension. An equality query through another extension matches
+none of its rows. A match query can match one of them by chance. A range
+query through another extension can still return them: see
+[Queries with the wrong tenant](#queries-with-the-wrong-tenant).
 
 > **Take care**
 >
@@ -354,6 +358,124 @@ For a type with a `context_field`, the `*Cipher` from `cipher.Context(..)`
 also refuses a row whose stored context is another, with
 `ErrContextMismatch`; the `*Client` opens each row under the context it
 stores.
+
+## Separating tenants
+
+A tenant is a customer, or another group of users, whose rows the others
+must not read. The SDK has three ways to keep tenants' rows apart. Each one
+gives a different error when the tenant does not match.
+
+| Way | How you set it | What it separates |
+|---|---|---|
+| A keyset for each tenant | `client.Keyset(encrypt.KeysetName("tenant42"))` | the keys: each tenant's rows are encrypted under keys of its own |
+| A scope for each tenant | `cipher.Scope("tenant42")` | the context: one keyset, with the tenant added to the context of every field |
+| A `context_field` | a field tagged `stash:"tenant,context_field"` | the context of each row: the row stores its tenant, and its other fields are sealed under it |
+
+For how to select a keyset, see [The cipher](#the-cipher).
+
+### When to use each way
+
+Use a keyset for each tenant when tenants need keys of their own. A client
+opens a keyset's rows only when it has a grant for that keyset. So access
+is controlled in ZeroKMS, one tenant at a time. You create each keyset, and
+give each client a grant, before the client uses it.
+
+The `*Client` opens the rows of every keyset it has a grant for, with no
+error. To refuse another tenant's rows, decrypt through the tenant's
+`*Cipher`.
+
+Use a scope when tenants share a keyset, and your program knows the tenant
+of each call, such as from the request. A scope needs nothing created in
+ZeroKMS. A scoped row opens only through a cipher with the same keyset and
+scope. The `*Client` does not open it.
+
+Use a `context_field` when each row must store its own tenant. A value
+copied to another tenant's row does not decrypt there. The `*Client`, and
+a cipher with no `Context`, open each row under the tenant it stores. So one
+reader can decrypt rows of many tenants without knowing each tenant first.
+
+The `context_field` is stored in the clear, like a `passthrough` field.
+Nothing authenticates it. See the `context_field` note in
+[The cipher](#the-cipher).
+
+A keyset combines with a scope:
+`client.Keyset(encrypt.KeysetName(..)).Scope(..)`.
+
+### Errors when the tenant does not match
+
+A decrypt or an encrypt with the wrong tenant fails as follows. `Code` is
+the code of the error's `*Diagnostic` (see [Errors](#errors)).
+
+| Wrong tenant | Error | `Code` |
+|---|---|---|
+| Keyset: a `*Cipher` for one keyset decrypts a row sealed under another | `ErrForeignKeyset`, before any key is retrieved | `stack_encrypt::foreign_keyset` |
+| Keyset: the `*Client` decrypts a row of another keyset that it has a grant for | no error: the row opens | none |
+| Scope: a cipher with another scope, or with no scope, decrypts a scoped row | `ErrForbidden`, when ZeroKMS refuses the data key | `stack_kms::retrieve_key_failed` |
+| Scope: the `*Client` decrypts a scoped row | `ErrForbidden` | `stack_kms::retrieve_key_failed` |
+| `context_field`: a cipher from `cipher.Context(..)` decrypts a row that stores another tenant | `ErrContextMismatch`, before any key is retrieved | `stack_encrypt::context_mismatch` |
+| `context_field`: a cipher from `cipher.Context(..)` encrypts a value whose field names another tenant | `ErrContextMismatch`, before anything is sent | none: the SDK refuses the value itself |
+| `context_field`: a row's stored tenant was changed after it was written | `ErrForbidden` | `stack_kms::retrieve_key_failed` |
+
+The `ErrForbidden` for a scope does not say that the scope is wrong.
+ZeroKMS gives the same answer for a disabled keyset, and for an access
+token that lacks the scope to retrieve keys. [Errors](#errors) says why
+ZeroKMS does not name the cause. The `Help` of the error's `*Diagnostic`
+says which cause is likely:
+
+- Through a `*Cipher`, the `Help` says that the context is the likely
+  cause, and names the keyset.
+- Through the `*Client`, the `Help` names every cause.
+
+ZeroKMS answers a missing grant with HTTP 404. So the `*Client` fails with
+`ErrNotFound` when it decrypts a row of a keyset it has no grant for. The
+code is `stack_kms::retrieve_key_failed`.
+
+Check for `ErrAuthentication` too, as the [Errors](#errors) list says. A
+decrypt with the wrong scope fails with `ErrAuthentication` when ZeroKMS
+returns the key and the ciphertext then fails to open.
+
+A `*Cipher` for a keyset that its client has no grant for fails when it
+loads the keyset, before any data key is asked for. `KeysetID` and an
+encrypt both fail with `ErrNotFound` and the code
+`stack_kms::keyset_not_found`. That is the same error as for a keyset
+that does not exist, so the error cannot tell you which of the two it is.
+
+The test client from `encrypttest` gives the same errors as ZeroKMS for a
+wrong keyset, scope, or `context_field`. See
+[Testing your application](#testing-your-application).
+
+### Queries with the wrong tenant
+
+A query with the wrong keyset or the wrong scope returns no error. What it
+matches depends on the kind of query.
+
+An equality query (`Eq`) matches none of the other tenant's rows. The query
+term derives under the cipher's keyset and scope, so it differs from every
+term the other tenant stored.
+
+A match query (`Matches`) is probabilistic, as [Queries](#queries) says.
+A row of the other tenant can match by chance, as a row without the query's
+text can. A decrypt of such a row through the same cipher fails with the
+error in the table above.
+
+A range query can return the other tenant's rows, with an ORE index or an
+OPE index. The range queries are `Lt`, `Lte`, `Gt`, `Gte`, and `Between`.
+The database still compares the query term with the other tenant's terms,
+and the result of that comparison has no relation to the values. So such
+a query can return some of the other tenant's rows and not others. The
+result looks like a normal result, but it is wrong.
+
+So a count or a list of the rows that such a query returns is wrong. A
+decrypt of those rows through the same cipher fails with the error in the
+table above.
+
+A query on a type with a `context_field` derives under the tenant that
+`cipher.Context(..)` names. Through a cipher with no `Context`, the query
+fails with `ErrEncoding`.
+
+A range query through `cipher.Context(..)` can still return rows that store
+another tenant, as a range query with the wrong scope can. Add a filter on
+the `context_field` column to every range query on such a type.
 
 ## What is stored
 
@@ -990,7 +1112,7 @@ CipherStash credentials. Use it in CI that has no route to ZeroKMS.
 
    func TestSaveUser(t *testing.T) {
    	client := encrypttest.NewClient(t)
-   	cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
+   	cipher := client.Keyset(encrypt.KeysetName("tenant42"))
    ```
 
 3. Call your code with it, as you would call it with a production client.

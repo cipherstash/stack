@@ -52,7 +52,7 @@
 //		return err
 //	}
 //	defer client.Close()
-//	cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
+//	cipher := client.Keyset(encrypt.KeysetName("tenant42"))
 //	encrypted, err := users.Encrypt(ctx, cipher, people) // []users.EncryptedUser
 //	opened, err := users.Decrypt(ctx, cipher, encrypted) // []users.User
 //	term, err := users.Fields.Email.Eq(ctx, cipher, "bob@example.com")
