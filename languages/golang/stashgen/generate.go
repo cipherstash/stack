@@ -30,6 +30,7 @@ type Request struct {
 	Redact bool
 	// Output is the file to write: an absolute path as it is, or a path
 	// relative to Dir. "" is the type's name in lower case with _stash.go.
+	// The file must be in Dir itself: FromTags refuses any other directory.
 	Output string
 }
 
@@ -52,6 +53,26 @@ func outputPath(dir, output string) string {
 		return output
 	}
 	return filepath.Join(dir, output)
+}
+
+// checkOutputDir refuses an output file whose directory is not the package
+// directory dir. The file declares the package's name and uses the
+// package's names unqualified, so in any other directory it would stop that
+// directory building. The two directories are compared as files, so a
+// symbolic link to the package directory counts as the package directory.
+func checkOutputDir(dir, outPath string) error {
+	pkgDir, err := filepath.Abs(dir)
+	if err != nil {
+		return fmt.Errorf("stashgen: the package directory %s: %w", dir, err)
+	}
+	outDir, err := filepath.Abs(filepath.Dir(outPath))
+	if err != nil {
+		return fmt.Errorf("stashgen: the directory of -output %s: %w", outPath, err)
+	}
+	if outDir == pkgDir || sameStat(outDir, pkgDir) {
+		return nil
+	}
+	return fmt.Errorf("stashgen: -output %s is in %s, not in the package directory %s; the generated file declares the package and uses its names, so it must be in the package's own folder", outPath, outDir, pkgDir)
 }
 
 // File is a generated file, ready to write.
@@ -93,6 +114,9 @@ func FromTags(ctx context.Context, engine Engine, req Request) (*File, error) {
 		dir = "."
 	}
 	outPath := outputPath(dir, req.OutputPath())
+	if err := checkOutputDir(dir, outPath); err != nil {
+		return nil, err
+	}
 
 	eqlTypes, err := engine.EQLTypes(ctx)
 	if err != nil {

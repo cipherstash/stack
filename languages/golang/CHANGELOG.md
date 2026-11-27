@@ -24,12 +24,25 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ### Fixed
 
-- **`stashgen -output` writes an absolute path where it says** (#1901).
-  Before this fix, it joined an absolute path to the package directory.
-  So `-output /abs/path/file.go` wrote to `abs/path/file.go` in the
-  package, or failed when that directory did not exist. On Windows, a path
-  with a drive or a root, such as `\out\user_stash.go`, is also kept as
-  given. A relative path is still relative to the package directory.
+- **`stashgen -output` reads an absolute path as given** (#1901). Before
+  this fix, it joined an absolute path to the package directory. So
+  `-output /abs/path/file.go` wrote to `abs/path/file.go` in the package,
+  or failed when that directory did not exist. On Windows, a path with a
+  drive or a root, such as `\out\user_stash.go`, is also kept as given. A
+  relative path is still relative to the package directory.
+- **`stashgen` refuses an `-output` file outside the package's own
+  folder.** The file declares the package's name and uses its names
+  unqualified. So in another folder, or in a subfolder, it stopped that
+  folder building, and `stashgen` still exited 0. Now `stashgen` exits
+  non-zero, writes nothing, and names both folders. The rule is new,
+  and also refuses a relative path such as `-output ../other/user_stash.go`.
+  Before, `stashgen` accepted that path.
+- **A second `stashgen` run through a symbolic link replaces its own
+  file.** Say the package folder was reached through a link, and
+  `-output` named the file by its real path. Then the second run did not
+  recognise the file the first run wrote. The second run stopped because
+  the file's names were already declared. `stashgen` now compares the files
+  themselves, not only their paths.
 
 ## [0.1.0-rc.7] - 2026-11-25
 

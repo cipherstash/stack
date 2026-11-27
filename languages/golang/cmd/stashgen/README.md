@@ -402,7 +402,7 @@ Generated code uses no reflection, and no function in it panics.
 | `-model Name=R` | A model `R` for separate columns: one field for each column, each tagged with the output it holds, `stash:"email"` or `stash:"email,equality"`. Writes `EncryptName` and `DecryptName`. Any number. |
 | `-model Name=R:D` | The same, for an `R` that cannot carry tags. The struct `D` in your package declares them. |
 | `-redact` | Write `String`, `GoString` and `LogValue` methods on `T`. |
-| `-output file` | The file to write. A relative path is relative to the package directory, and an absolute path is used as it is. The default is the type's name in lower case, with `_stash.go`. |
+| `-output file` | The file to write, in the package's own folder. A relative path starts from the package directory. An absolute path is used as it is. The default is the type's name in lower case, with `_stash.go`. |
 
 `stashgen` loads the package with `golang.org/x/tools/go/packages` and reads types, not text.
 It runs none of the package's code.
@@ -466,6 +466,7 @@ The error names the type and the field, and never a value.
 - a struct whose every field is left out;
 - a struct, slice or map field with `encrypt` or `index=` outside an opaque struct;
 - a field of an opaque struct whose type the storage profile or JSON cannot carry both ways.
+- an `-output` file that is not in the package's own folder. This error names the two folders.
 
 ## Declarations from a policy
 
