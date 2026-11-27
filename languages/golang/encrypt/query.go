@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
@@ -168,7 +169,7 @@ func (cph *Cipher) QueryTerm(ctx context.Context, plan *record.Plan, field, oper
 	}
 	term, err := parseQueryTerm(decoded)
 	if err != nil {
-		return QueryTerm{}, fmt.Errorf("%w: se_query_term: %v", ErrInternal, err)
+		return QueryTerm{}, guest.BadAnswer("se_query_term", err)
 	}
 	return term, nil
 }
@@ -183,7 +184,7 @@ func (cph *Cipher) QueryTerm(ctx context.Context, plan *record.Plan, field, oper
 func parseQueryTerm(decoded any) (QueryTerm, error) {
 	obj, ok := decoded.(vcvalue.Object)
 	if !ok {
-		return QueryTerm{}, fmt.Errorf("came back as %T, not an object", decoded)
+		return QueryTerm{}, fmt.Errorf("it is %s, not an object", guest.KindOf(decoded))
 	}
 	var t QueryTerm
 	var shape string

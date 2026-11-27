@@ -180,8 +180,9 @@ pub enum Error {
         row: Option<usize>,
         /// What was wrong with the source.
         reason: Reason,
-        /// What the source, or the row, is instead of an object of fields:
-        /// set with [`Reason::NotAnObject`].
+        /// What the source, or the row, is instead of an object of fields,
+        /// or what a match's vars are: set with [`Reason::NotAnObject`] and
+        /// [`Reason::JsonVarsNotObject`].
         found: Option<Found>,
     },
 
@@ -324,6 +325,9 @@ fn misfit_text(
     let Some(found) = found else {
         return format!("{reason}{}", place_text(row, field));
     };
+    if reason != Reason::NotAnObject {
+        return format!("{reason}, found {found}{}", place_text(row, field));
+    }
     let what = match (subject, row, field) {
         (Subject::Plan, _, None) => "the plan".to_owned(),
         (Subject::Plan, _, Some(_)) => "the field's spec".to_owned(),
@@ -471,8 +475,9 @@ impl Error {
     }
 
     /// What a plan, a field's spec, a record source or a stored record was
-    /// where the operation takes an object ([`Reason::NotAnObject`]).
-    /// `None` for every other error.
+    /// where the operation takes an object ([`Reason::NotAnObject`]), or
+    /// what a match's vars were ([`Reason::JsonVarsNotObject`]). `None` for
+    /// every other error.
     pub fn found(&self) -> Option<Found> {
         match self {
             Self::Plan { found, .. } | Self::Source { found, .. } | Self::Record { found, .. } => {
@@ -791,6 +796,10 @@ reasons! {
         /// A value failed while it was read, with an error of its own
         /// ([`Error::SourceFailed`]).
         SourceFailed => "source_failed", "a value failed while it was read";
+        /// A `match` query's `vars` are not a JSON object: a list, a
+        /// number, a string, a boolean or the JSON `null`. The error says
+        /// which ([`Error::found`]).
+        JsonVarsNotObject => "json_vars_not_object", "match takes its vars as a JSON object";
     }
 }
 

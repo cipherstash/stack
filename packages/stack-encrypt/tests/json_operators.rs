@@ -3098,7 +3098,10 @@ mod compiled_match {
                 assert!(payload["construct"].is_string(), "{predicate}: {payload:?}");
             }
             for (input, reason) in [
-                (json!({"predicate": "$.a == 1", "vars": "[]"}), "json_input"),
+                (
+                    json!({"predicate": "$.a == 1", "vars": "[]"}),
+                    "json_vars_not_object",
+                ),
                 (json!({"predicate": "$.a == 1", "vars": "{"}), "json_syntax"),
                 (
                     json!({"predicate": "$.a == 1", "wildcard_bound": 0}),
@@ -3124,6 +3127,51 @@ mod compiled_match {
                 check(&json!({"predicate": "$.a == 1"})).is_ok(),
                 "vars may be absent"
             );
+        }
+
+        /// Vars that are not a JSON object are refused for the field,
+        /// saying what they are by kind and never the value, and that a
+        /// match takes an object.
+        #[test]
+        fn refuses_vars_that_are_not_an_object_saying_what_they_are() {
+            for (vars, found, phrase) in [
+                (r#"["secret"]"#, "array", "an array"),
+                ("null", "null", "null"),
+                (r#""secret""#, "string", "a string"),
+                ("7", "uint64", "a uint64"),
+                ("-7", "int64", "an int64"),
+                ("1.5", "float64", "a float64"),
+                ("true", "bool", "a bool"),
+            ] {
+                let request = json!({"predicate": "$.a == $v", "vars": vars});
+                let error = check(&request).unwrap_err();
+                assert_eq!(
+                    error.reason().map(Reason::as_str),
+                    Some("json_vars_not_object"),
+                    "{vars}: the reason"
+                );
+                assert_eq!(error.field(), Some("profile"), "{vars}: the field");
+                assert_eq!(
+                    error.found().map(|found| found.as_str()),
+                    Some(found),
+                    "{vars}: what was found"
+                );
+                let payload = stack_encrypt::ErrorPayload::payload(&error);
+                assert_eq!(
+                    Value::Object(payload.clone()),
+                    json!({"field": "profile", "reason": "json_vars_not_object", "found": found}),
+                    "{vars}: the payload"
+                );
+                let message = error.to_string();
+                assert_eq!(
+                    message,
+                    format!(
+                        r#"record source does not fit the plan: match takes its vars as a JSON object, found {phrase} (field "profile")"#
+                    ),
+                    "{vars}: the message"
+                );
+                assert!(!message.contains("secret"), "{vars}: no value: {message}");
+            }
         }
     }
 

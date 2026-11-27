@@ -43,7 +43,7 @@ func (s *ProfileStore) Token(ctx context.Context) (Token, error) {
 		return Token{}, err
 	}
 	defer guest.Wipe(out)
-	fields, err := object(out)
+	fields, err := object("sa_token", out)
 	if err != nil {
 		return Token{}, err
 	}

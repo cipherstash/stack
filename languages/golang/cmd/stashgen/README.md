@@ -283,7 +283,7 @@ SELECT id FROM entity WHERE eql_v4.json_tree_match(custom_field_values, $1::eql_
 `vars` are any value `encoding/json` writes as a JSON object (a map, a struct, or a `json.RawMessage` of one), and an empty map when the predicate has none; a Go string is refused, as it is for a `Contains` needle.
 A nil `vars` (`nil`, or a nil map, slice or pointer) does not mean "no variables".
 pgx and `database/sql` bind it as SQL `NULL`, and `jsonb_path_match` with `NULL` vars is `NULL` for every row, so `Match` does the same: it returns an empty operand, which binds as `NULL`, and the query matches no row.
-The predicate is still compiled, so text the grammar does not read is still refused. `vars` that write the JSON `null`, such as `json.RawMessage("null")` or a pointer to a nil map, are refused as `json_input`, as plaintext refuses vars that are not an object.
+The predicate is still compiled, so text the grammar does not read is still refused. `vars` that write the JSON `null`, such as `json.RawMessage("null")` or a pointer to a nil map, are refused as `json_vars_not_object`, as plaintext refuses vars that are not an object.
 The Go side reads nothing of the predicate: the engine parses it and compiles it into a tree of the operands the methods above derive, one leaf per comparison.
 The grammar is the subset of SQL/JSON path that the stored terms can answer, as PostgreSQL reads it:
 
@@ -308,7 +308,7 @@ Anything else is refused before any term is derived, as an `*encrypt.Diagnostic`
 - `json_path_no_wildcard`: a filter on a path with no `[*]`.
 - `json_path_wildcard`: a `[*]` in a filter's member.
 - `json_syntax`: JSON text that does not parse, a literal in the predicate (`1e999`) or `vars` (`{`, or an empty or whitespace-only `json.RawMessage`); with `At()` for a literal, without it for `vars`.
-- `json_input`: `vars` that are not a JSON object (`[1]`, `1`, `null`).
+- `json_vars_not_object`: `vars` that are not a JSON object (`[1]`, `1`, `null`), with `Found()` naming what they are (`"array"`, `"uint64"`, `"null"`).
 
 An ordering at a path the tag does not order is `encrypt.ErrTerm` with the code `stack_encrypt::json_path_not_ordered`.
 

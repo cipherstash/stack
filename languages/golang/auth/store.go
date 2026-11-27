@@ -484,7 +484,7 @@ func (s *ProfileStore) SecretKey(ctx context.Context) (clientID string, key *Cli
 		return "", nil, err
 	}
 	defer guest.Wipe(out)
-	fields, err := object(out)
+	fields, err := object("sa_secret_key", out)
 	if err != nil {
 		return "", nil, err
 	}
@@ -518,7 +518,7 @@ func (s *ProfileStore) DeviceIdentity(ctx context.Context) (DeviceIdentity, erro
 	if err != nil {
 		return DeviceIdentity{}, err
 	}
-	fields, err := object(out)
+	fields, err := object("sa_device_identity", out)
 	if err != nil {
 		return DeviceIdentity{}, err
 	}
@@ -535,14 +535,17 @@ func (s *ProfileStore) DeviceIdentity(ctx context.Context) (DeviceIdentity, erro
 // fields is a decoded codec object.
 type fields vcvalue.Object
 
-func object(encoded []byte) (fields, error) {
+// object decodes export's answer as an object. One that is not is
+// ErrInternal, saying what it is by its kind and never its value: the
+// answer can hold a key or a token.
+func object(export string, encoded []byte) (fields, error) {
 	decoded, err := vcffi.Unmarshal(encoded)
 	if err != nil {
-		return nil, fmt.Errorf("%w: decoding the guest's result: %w", ErrInternal, err)
+		return nil, fmt.Errorf("%w: decoding the guest's answer to %s: %w", ErrInternal, export, err)
 	}
 	obj, ok := decoded.(vcvalue.Object)
 	if !ok {
-		return nil, fmt.Errorf("%w: the guest's result is not an object", ErrInternal)
+		return nil, guest.BadAnswer(export, fmt.Errorf("it is %s, not an object", guest.KindOf(decoded)))
 	}
 	return fields(obj), nil
 }

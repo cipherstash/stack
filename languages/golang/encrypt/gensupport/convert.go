@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strconv"
 
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
@@ -108,13 +109,13 @@ func convert(v any, out any) error {
 			return mismatch(v, *out)
 		}
 	case *Values:
-		vals, err := valuesOf(v)
+		vals, err := valuesOf(v, "gensupport.Values")
 		if err != nil {
 			return err
 		}
 		*out = vals
 	case *map[string]any:
-		vals, err := valuesOf(v)
+		vals, err := valuesOf(v, "map[string]any")
 		if err != nil {
 			return err
 		}
@@ -210,7 +211,7 @@ func convertVia(v any, out any) error {
 		if t.Key().Kind() != reflect.String {
 			return fmt.Errorf("%s has a key that is not a string", t)
 		}
-		vals, err := valuesOf(v)
+		vals, err := valuesOf(v, t.String())
 		if err != nil {
 			return err
 		}
@@ -393,13 +394,15 @@ func setSlice[E any](v any, out *[]E) error {
 }
 
 // valuesOf reads an opened composite as Values, nested objects included.
-func valuesOf(v any) (Values, error) {
+// want is the Go type the field needs, which a refusal names beside what
+// the value opened as, by its kind and never its value.
+func valuesOf(v any, want string) (Values, error) {
 	switch obj := v.(type) {
 	case vcvalue.Object:
 		vals := make(Values, len(obj))
 		for _, f := range obj {
 			if inner, ok := f.Value.(vcvalue.Object); ok {
-				nested, err := valuesOf(inner)
+				nested, err := valuesOf(inner, want)
 				if err != nil {
 					return nil, err
 				}
@@ -414,5 +417,5 @@ func valuesOf(v any) (Values, error) {
 	case map[string]any:
 		return Values(obj), nil
 	}
-	return nil, fmt.Errorf("opened as %T, not an object", v)
+	return nil, fmt.Errorf("opened as %s, and %s needs an object", guest.KindOf(v), want)
 }

@@ -655,3 +655,39 @@ func TestOpaqueReadsARustWrittenBlob(t *testing.T) {
 		t.Fatalf("Opaque of the Go-written blob: %v %+v", err, back)
 	}
 }
+
+// A field of map type whose stored value opens as something else, a row
+// written by another SDK or an older struct, is refused as decrypt's
+// malformed input: the field, what it opened as by its kind, never its
+// value, and the Go type that needs an object.
+func TestAMapFieldThatOpensAsAnotherKindSaysWhatItOpenedAs(t *testing.T) {
+	read := func(read func(Values, string) error, v any) error {
+		return read(Values{"tags": v}, "tags")
+	}
+	asAny := func(vals Values, name string) error { _, err := Get[map[string]any](vals, name); return err }
+	asValues := func(vals Values, name string) error { _, err := Get[Values](vals, name); return err }
+	asInts := func(vals Values, name string) error { _, err := Get[map[string]int64](vals, name); return err }
+	for _, tc := range []struct {
+		read  func(Values, string) error
+		value any
+		kind  string
+		want  string
+	}{
+		{asAny, []any{"secret"}, "a list", "map[string]any"},
+		{asAny, "secret", "a string", "map[string]any"},
+		{asValues, int64(7), "a number", "gensupport.Values"},
+		{asInts, []any{"secret"}, "a list", "map[string]int64"},
+	} {
+		err := read(tc.read, tc.value)
+		if !errors.Is(err, encrypt.ErrEncoding) {
+			t.Fatalf("%s for %s: %v, want ErrEncoding", tc.kind, tc.want, err)
+		}
+		want := fmt.Sprintf(`gensupport: decrypt: field "tags": cipherstash: malformed input: opened as %s, and %s needs an object`, tc.kind, tc.want)
+		if err.Error() != want {
+			t.Errorf("message:\n got %q\nwant %q", err.Error(), want)
+		}
+		if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "7") {
+			t.Errorf("the error holds the value: %v", err)
+		}
+	}
+}

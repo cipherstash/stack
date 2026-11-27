@@ -110,7 +110,7 @@ func (k *Checker) Operators(ctx context.Context, plan *record.Plan, field string
 	}
 	operators, err := parseOperators(decoded)
 	if err != nil {
-		return nil, fmt.Errorf("%w: se_operators: %v", ErrInternal, err)
+		return nil, guest.BadAnswer("se_operators", err)
 	}
 	return operators, nil
 }
@@ -149,7 +149,7 @@ func contextsOf(ctx context.Context, c *Client, plan *record.Plan) (string, erro
 	}
 	text, ok := decoded.(string)
 	if !ok {
-		return "", fmt.Errorf("%w: se_contexts returned %T, not a string", ErrInternal, decoded)
+		return "", guest.BadAnswer("se_contexts", fmt.Errorf("it is %s, not a string", guest.KindOf(decoded)))
 	}
 	return text, nil
 }
@@ -162,22 +162,25 @@ func contextsOf(ctx context.Context, c *Client, plan *record.Plan) (string, erro
 // encrypt_into on a type with no kind or no indexes.
 func parseTargets(decoded any) ([]record.Target, error) {
 	obj, ok := decoded.(vcvalue.Object)
-	if !ok || len(obj) != 1 || obj[0].Key != "targets" {
-		return nil, fmt.Errorf("%w: se_targets returned %T, not {\"targets\": [...]}", ErrInternal, decoded)
+	if !ok {
+		return nil, guest.BadAnswer("se_targets", fmt.Errorf("it is %s, not an object", guest.KindOf(decoded)))
+	}
+	if len(obj) != 1 || obj[0].Key != "targets" {
+		return nil, guest.BadAnswer("se_targets", errors.New(`it is not {"targets": [...]}`))
 	}
 	items, ok := obj[0].Value.([]any)
 	if !ok {
-		return nil, fmt.Errorf("%w: se_targets returned %T for the list", ErrInternal, obj[0].Value)
+		return nil, guest.BadAnswer("se_targets", fmt.Errorf("targets is %s, not a list", guest.KindOf(obj[0].Value)))
 	}
 	targets := make([]record.Target, 0, len(items))
 	for i, item := range items {
 		entry, ok := item.(vcvalue.Object)
 		if !ok {
-			return nil, fmt.Errorf("%w: target %d came back as %T", ErrInternal, i, item)
+			return nil, guest.BadAnswer("se_targets", fmt.Errorf("target %d is %s, not an object", i, guest.KindOf(item)))
 		}
 		t, err := parseTarget(entry)
 		if err != nil {
-			return nil, fmt.Errorf("%w: target %d: %v", ErrInternal, i, err)
+			return nil, guest.BadAnswer("se_targets", fmt.Errorf("target %d: %v", i, err))
 		}
 		targets = append(targets, t)
 	}
@@ -266,13 +269,13 @@ func parseTarget(entry vcvalue.Object) (record.Target, error) {
 func parseOperators(value any) ([]record.Operator, error) {
 	list, ok := value.([]any)
 	if !ok {
-		return nil, fmt.Errorf("operators is %T, not a list", value)
+		return nil, fmt.Errorf("operators is %s, not a list", guest.KindOf(value))
 	}
 	operators := make([]record.Operator, 0, len(list))
 	for i, item := range list {
 		entry, ok := item.(vcvalue.Object)
 		if !ok {
-			return nil, fmt.Errorf("operator %d is %T, not an object", i, item)
+			return nil, fmt.Errorf("operator %d is %s, not an object", i, guest.KindOf(item))
 		}
 		var op record.Operator
 		seen := map[string]bool{}

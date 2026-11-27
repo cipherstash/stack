@@ -33,6 +33,24 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ### Changed
 
+- **`Match` refuses `vars` that are not a JSON object with the reason
+  `json_vars_not_object`, not `json_input`** (#1987). `Found` says what
+  they are (`"array"`, `"uint64"`, `"null"`), `Field` names the field,
+  and the message says `match takes its vars as a JSON object, found
+  null`. A program that switches on `Reason()` for this case needs the
+  new name.
+
+- **Errors that say "not an object" now say what was found, in words**
+  (#1987). A map field (`map[string]V`, `Values`, `map[string]any`) whose
+  stored value opens as something else is refused as `decrypt: field
+  "tags": ... opened as a list, and map[string]any needs an object`,
+  where it said `opened as []interface {}, not an object`. A guest answer
+  this module cannot read (from `se_query_term`, `se_targets`,
+  `se_operators`, `se_contexts`, `sa_token`, `sa_secret_key` or
+  `sa_device_identity`) is still `ErrInternal`, and now names the export,
+  says what the answer is by its kind, and says it is a bug or a guest
+  that does not match this module's version, not bad input.
+
 - **A record field converts a number of another width or kind, as a
   query does.** A value sealed through `Cipher.Seal` for a field that
   declares a type is read as that type when the conversion is exact: an

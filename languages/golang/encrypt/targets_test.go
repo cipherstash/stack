@@ -3,6 +3,7 @@ package encrypt
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/internal/record"
@@ -83,8 +84,28 @@ func TestParseTargetsReadsEachEntry(t *testing.T) {
 		"op key twice":        withOperators([]any{append(operator("eq", "exact", "one", "eq"), vcvalue.Field{Key: "index", Value: "eq"})}),
 		"op value not text":   withOperators([]any{vcvalue.Object{{Key: "operator", Value: int64(1)}, {Key: "fidelity", Value: "exact"}, {Key: "arity", Value: "one"}, {Key: "index", Value: "eq"}, {Key: "input", Value: "value"}}}),
 	} {
-		if _, err := parseTargets(bad); !errors.Is(err, ErrInternal) {
+		_, err := parseTargets(bad)
+		if !errors.Is(err, ErrInternal) {
 			t.Errorf("%s: %v, want ErrInternal", name, err)
+		}
+		if err != nil && !strings.Contains(err.Error(), "the guest's answer to se_targets does not read") {
+			t.Errorf("%s: %v does not name the export", name, err)
+		}
+	}
+	// What was found is named by its kind, never its value: the answer
+	// itself, its list, an entry, and an operator of an entry.
+	for _, tc := range []struct {
+		answer any
+		want   string
+	}{
+		{"secret", "it is a string, not an object"},
+		{vcvalue.Object{{Key: "targets", Value: "secret"}}, "targets is a string, not a list"},
+		{vcvalue.Object{{Key: "targets", Value: []any{"secret"}}}, "target 0 is a string, not an object"},
+		{withOperators([]any{"secret"}), "target 0: operator 0 is a string, not an object"},
+	} {
+		_, err := parseTargets(tc.answer)
+		if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "secret") {
+			t.Errorf("%v, want it to say %q and hold no value", err, tc.want)
 		}
 	}
 }
@@ -124,6 +145,20 @@ func TestParseQueryTermTakesOnlyWhatTheEngineWrites(t *testing.T) {
 		}
 		if _, err := parseTargets(withOperators([]any{operator(name, "exact", "one", "ore")})); err != nil {
 			t.Errorf("catalog %s: %v", name, err)
+		}
+	}
+	// An answer that is not an object says what it is, by its kind.
+	for _, tc := range []struct {
+		answer any
+		want   string
+	}{
+		{[]any{"secret"}, "it is a list, not an object"},
+		{nil, "it is null, not an object"},
+		{"secret", "it is a string, not an object"},
+	} {
+		_, err := parseQueryTerm(tc.answer)
+		if err == nil || err.Error() != tc.want {
+			t.Errorf("parseQueryTerm(%T) = %v, want %q", tc.answer, err, tc.want)
 		}
 	}
 	for name, bad := range map[string]vcvalue.Object{

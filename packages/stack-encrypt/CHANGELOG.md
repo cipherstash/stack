@@ -538,6 +538,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every field needs `..`. Reason codes do not change, except the two new
   ones.
 
+- **A `match` query's `vars` that are not a JSON object have their own
+  reason, `json_vars_not_object`, and say what they are** (#1987). Before,
+  they were `json_input`, the reason for any input a JSON operator does
+  not take, with nothing more. Now the error names the field, gives
+  `found` (`"array"`, `"uint64"`, `"null"`, ...), and says
+  `match takes its vars as a JSON object, found null`. The dynamic and
+  the typed paths refuse them alike.
+
 - **`dynamic::ValueFrame` is removed. The engine reads a plaintext as a
   borrowed `Frame` and keeps one as vitaminc's `OwnedFrame`** (#1955).
   `dynamic::frame` re-exports both from vitaminc. A `Frame` is one value's

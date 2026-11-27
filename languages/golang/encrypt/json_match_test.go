@@ -299,28 +299,43 @@ func TestMatchRefusalsNameTheConstructAndItsOffset(t *testing.T) {
 		}
 	}
 
-	// The input itself: vars that are not an object, or not JSON.
+	// The input itself: vars that are not an object, or not JSON. Vars that
+	// are not an object say what they are, by kind and never value, and
+	// name the field.
 	for _, tc := range []struct {
 		name   string
 		vars   any
 		reason string
+		found  string
 	}{
-		{"vars that are a list", []string{"secret-nz"}, "json_input"},
-		{"vars that are a number", 1, "json_input"},
-		{"vars that are not JSON", json.RawMessage(`{"v": "secret-nz"`), "json_syntax"},
-		{"vars that are an empty json.RawMessage", json.RawMessage{}, "json_syntax"},
-		{"vars that are whitespace", json.RawMessage(" \t\n "), "json_syntax"},
+		{"vars that are a list", []string{"secret-nz"}, "json_vars_not_object", "array"},
+		{"vars that are a number", 1, "json_vars_not_object", "uint64"},
+		{"vars that are not JSON", json.RawMessage(`{"v": "secret-nz"`), "json_syntax", ""},
+		{"vars that are an empty json.RawMessage", json.RawMessage{}, "json_syntax", ""},
+		{"vars that are whitespace", json.RawMessage(" \t\n "), "json_syntax", ""},
 		// Not nil, but the JSON null: not an object, as plaintext refuses it.
-		{"vars that are the JSON null", json.RawMessage(`null`), "json_input"},
-		{"vars that are the JSON null with space", json.RawMessage(" null\n"), "json_input"},
-		{"vars that point to a nil map", func() any { var m map[string]any; return &m }(), "json_input"},
+		{"vars that are the JSON null", json.RawMessage(`null`), "json_vars_not_object", "null"},
+		{"vars that are the JSON null with space", json.RawMessage(" null\n"), "json_vars_not_object", "null"},
+		{"vars that point to a nil map", func() any { var m map[string]any; return &m }(), "json_vars_not_object", "null"},
 	} {
 		_, err := f.Match(ctx, cipher, `$.extra.country == $v`, tc.vars, encrypt.JSONReadOptions{})
 		var d *encrypt.Diagnostic
 		if !errors.Is(err, encrypt.ErrEncoding) || !errors.As(err, &d) || d.Reason() != tc.reason {
 			t.Errorf("%s: %v, want ErrEncoding with reason %s", tc.name, err, tc.reason)
+			continue
 		}
-		if err != nil && strings.Contains(err.Error(), "secret") {
+		if d.Found() != tc.found {
+			t.Errorf("%s: found %q, want %q", tc.name, d.Found(), tc.found)
+		}
+		if tc.found != "" {
+			if d.Field() != "custom_field_values" {
+				t.Errorf("%s: field %q, want custom_field_values", tc.name, d.Field())
+			}
+			if !strings.Contains(err.Error(), "match takes its vars as a JSON object, found ") {
+				t.Errorf("%s: %v does not say what match takes", tc.name, err)
+			}
+		}
+		if strings.Contains(err.Error(), "secret") {
 			t.Errorf("%s: the error holds a value: %v", tc.name, err)
 		}
 	}

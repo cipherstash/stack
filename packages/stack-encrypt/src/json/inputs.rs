@@ -24,7 +24,7 @@ use super::{
     wipe_value, IndexPath, JsonElementsMember, JsonElementsQuery, JsonLeafQuery, JsonOptions,
     JsonPath, JsonPredicateQuery, JsonQuery, JsonSelector, JsonSubtreeKey,
 };
-use crate::refusal::{Error, Reason};
+use crate::refusal::{Error, Found, Reason};
 use crate::sem::TermError;
 use crate::target::{AeadContext, CallerContext, DeclaredContext, Owned};
 use crate::{ContextPiece, KeysetCipher, Label, NonEmpty, Pending};
@@ -210,12 +210,34 @@ impl Input {
     ) -> Result<Self, Error> {
         let bound = wildcard_bound(bound)?;
         if !vars.is_object() {
-            return Err(Error::bad_source(Reason::JsonInput));
+            return Err(Error::Source {
+                field: None,
+                row: None,
+                reason: Reason::JsonVarsNotObject,
+                found: Some(json_kind(vars)),
+            });
         }
         Ok(Self::Predicate(Box::new(super::predicate::compile(
             text, vars, options, bound,
         )?)))
     }
+}
+
+/// What a JSON value is, for a refusal that says what it found: its kind,
+/// never the value. A number is the kind the engine reads it as: an
+/// unsigned or a signed 64-bit integer, or a float.
+fn json_kind(value: &Value) -> Found {
+    use vitaminc_aead::plaintext::ValueKind;
+    Found::Kind(match value {
+        Value::Null => return Found::Null,
+        Value::Bool(_) => ValueKind::Bool,
+        Value::Number(n) if n.is_u64() => ValueKind::UInt64,
+        Value::Number(n) if n.is_i64() => ValueKind::Int64,
+        Value::Number(_) => ValueKind::Float64,
+        Value::String(_) => ValueKind::String,
+        Value::Array(_) => ValueKind::Array,
+        Value::Object(_) => ValueKind::Object,
+    })
 }
 
 /// The path of an array's elements that `element_match` reads: a path with

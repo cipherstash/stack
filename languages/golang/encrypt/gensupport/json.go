@@ -340,8 +340,9 @@ func JSONElementMatch[Q ~[]byte, T, E any](ctx context.Context, f Field[T], c *e
 //     compiled, so text the grammar does not read is still refused; a
 //     variable it names is not, as plaintext does not look for one.
 //   - A value that writes the JSON null (a json.RawMessage of null, or a
-//     pointer to a nil map) is refused as not an object, as plaintext
-//     refuses "vars" that are not an object.
+//     pointer to a nil map) is refused as not an object, with the reason
+//     json_vars_not_object, as plaintext refuses "vars" that are not an
+//     object.
 //   - Any other json.RawMessage crosses as it is, so an empty or
 //     whitespace-only one is refused by the engine as not JSON, as "{" is.
 //

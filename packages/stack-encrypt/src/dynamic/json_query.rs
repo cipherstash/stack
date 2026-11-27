@@ -170,7 +170,8 @@
 //! refuse their own inputs as they would alone: an ordering at a path the
 //! field does not order ([`TermError::JsonPathNotOrdered`]). A
 //! `wildcard_bound` of `0` is [`Reason::JsonWildcardBoundZero`], and `vars`
-//! that are not an object [`Reason::JsonInput`].
+//! that are not an object [`Reason::JsonVarsNotObject`], which says what
+//! they are ([`Error::found`](crate::dynamic::Error::found)).
 //!
 //! The operand reveals what its leaves reveal when sent one by one, and
 //! the boolean shape of the filter; an ordering under an odd number of `!`
@@ -460,9 +461,8 @@ fn read_match(options: &JsonOptions, input: Frame<'_>) -> Result<Input, Error> {
         Some(vars) => vars.parse()?,
         None => Parsed::of(Value::Object(serde_json::Map::new())),
     };
-    if !vars.0.is_object() {
-        return Err(Error::bad_source(Reason::JsonInput));
-    }
+    // Vars that are not an object are refused by `Input::predicate`, saying
+    // what they are.
     let text = std::str::from_utf8(&input.predicate.0)
         .map_err(|_| Error::bad_source(Reason::JsonInput))?;
     Input::predicate(options, text, &vars.0, Some(bound))
