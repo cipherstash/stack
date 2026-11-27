@@ -2,7 +2,9 @@ package encrypt
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"os"
 	goruntime "runtime"
 	"sync"
 	"sync/atomic"
@@ -90,6 +92,51 @@ func TestPinnedBuilds(t *testing.T) {
 			tt.run(t, p, fail)
 			if got := calls.Load(); got != tt.want {
 				t.Fatalf("compiled %d times, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// A test client pins the build it runs, so that the next client over the
+// same build reads the compiled code from the cache. Every test client is
+// built by seededClient, package encrypttest's included. Each build is its
+// own subtest, so a build that is absent shows as a skip.
+func TestSeededClientPinsItsBuild(t *testing.T) {
+	eqlBuild := func() ([]byte, error) {
+		wasm, err := os.ReadFile(deterministicEQLGuestPath)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrDeterministicEQLGuestNotBuilt
+		}
+		return wasm, err
+	}
+	for _, build := range []struct {
+		name   string
+		load   func() ([]byte, error)
+		absent error
+	}{
+		{"without the EQL types", DeterministicGuest, ErrDeterministicGuestNotBuilt},
+		{"with the EQL types", eqlBuild, ErrDeterministicEQLGuestNotBuilt},
+	} {
+		t.Run(build.name, func(t *testing.T) {
+			wasm, err := build.load()
+			if errors.Is(err, build.absent) {
+				t.Skip(err)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err := seededClient(context.Background(), wasm, [32]byte{7})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Close(); err != nil {
+				t.Error(err)
+			}
+			testBuilds.mu.Lock()
+			_, ok := testBuilds.pinned[sha256.Sum256(wasm)]
+			testBuilds.mu.Unlock()
+			if !ok {
+				t.Fatal("seededClient did not pin the build it ran")
 			}
 		})
 	}
