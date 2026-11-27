@@ -1,3 +1,15 @@
+## [Unreleased]
+
+### Breaking
+
+- **Breaking:** the crate is renamed `recipher-frame`. It was `vitaminc-aead-frame`, and crates.io's `vitaminc-aead-frame` 0.10.0 is its last release under that name.
+  Change the dependency to `recipher-frame`, and the paths from `vitaminc_aead_frame::` to `recipher_frame::`.
+  Nothing else changes: the transport frame, the ciphertext codec and the storage profile write and read the same bytes as 0.10.0.
+
+### Added
+
+- `OwnedFrame` is re-exported from `vitaminc-aead`, with the rest of the frame.
+
 
 ## [0.10.0] - 2026-11-19
 

@@ -23,7 +23,9 @@ use eql_bindings::v4::{
 };
 use eql_bindings::Identifier;
 use serde::Serialize;
-use stack_encrypt::dynamic::{self, record, FieldPlan, Op, Operand, TargetDescriptor, ValueFrame};
+use stack_encrypt::dynamic::{
+    self, frame::OwnedFrame, record, FieldPlan, Op, Operand, TargetDescriptor,
+};
 use stack_encrypt::op::{Probabilistic, Stats};
 use stack_encrypt::target::Scope;
 use stack_encrypt::{ContextPiece, Encrypt, Error, KeysetCipher, NonEmpty, StackCipher};
@@ -35,8 +37,8 @@ type Cipher = StackCipher<common::RecordingKeySource>;
 type Keyset<'k> = KeysetCipher<'k, common::RecordingKeySource>;
 
 /// A Rust value as the engine's runtime plaintext: its frame.
-fn frame<T: Encrypt>(value: T) -> ValueFrame {
-    ValueFrame::of(value).unwrap()
+fn frame<T: Encrypt>(value: T) -> OwnedFrame {
+    OwnedFrame::of(value).unwrap()
 }
 
 /// A data plan with one field, `value`, under `users/<column>`, naming the
@@ -57,7 +59,7 @@ async fn data_term(
     name: &str,
     column: &str,
     operator: Op,
-    input: ValueFrame,
+    input: OwnedFrame,
 ) -> (Vec<u8>, String) {
     let keyset = cipher.default_keyset();
     let term = dynamic::query_term(
@@ -91,7 +93,7 @@ fn typed_bytes<Q: Serialize + DomainType>(query: &Q) -> (Vec<u8>, String) {
 struct Typed {
     bytes: (Vec<u8>, String),
     column: &'static str,
-    input: ValueFrame,
+    input: OwnedFrame,
 }
 
 /// The query `$reference.<operator>(value)` under `$keyset`, for the
@@ -1159,11 +1161,12 @@ async fn a_record_stores_a_null_in_an_eql_field_as_its_plan_says() {
         .unwrap()
         .await
         .unwrap();
-    assert_eq!(opened.risky_ref(), frame(&source).risky_ref());
+    assert_eq!(opened.frame().as_bytes(), frame(&source).frame().as_bytes());
 }
 
 /// A second frame of the same bytes. A frame is not `Clone`.
-fn again(frame: &ValueFrame) -> ValueFrame {
-    use stack_encrypt::AsProtectedRef as _;
-    ValueFrame::from_bytes(frame.as_protected_ref()).unwrap()
+fn again(frame: &OwnedFrame) -> OwnedFrame {
+    let mut buffer = stack_encrypt::Buffer::new();
+    buffer.extend_from_slice(frame.frame().as_bytes());
+    OwnedFrame::from_buffer(buffer).unwrap()
 }

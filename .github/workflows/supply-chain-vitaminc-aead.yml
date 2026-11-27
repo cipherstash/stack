@@ -1,6 +1,6 @@
 name: Supply chain (vitaminc-aead)
 
-# cargo deny and cargo vet over vitaminc-aead, vitaminc-aead-frame and
+# cargo deny and cargo vet over vitaminc-aead, recipher-frame and
 # vitaminc-aead-derive and their dependency graph ONLY. Their config is
 # supply-chain/vitaminc-aead/ (see its README.md). The rest of the root
 # workspace is not checked by either tool; that is #1842.
@@ -20,7 +20,7 @@ on:
   pull_request:
     paths:
       - packages/vitaminc-aead/**
-      - packages/vitaminc-aead-frame/**
+      - packages/recipher-frame/**
       - packages/vitaminc-aead-derive/**
       - supply-chain/vitaminc-aead/**
       - Cargo.toml
@@ -77,7 +77,7 @@ jobs:
       - name: cargo deny check, one crate at a time
         run: |
           status=0
-          for crate in vitaminc-aead vitaminc-aead-frame vitaminc-aead-derive; do
+          for crate in vitaminc-aead recipher-frame vitaminc-aead-derive; do
             echo "::group::$crate"
             cargo deny --locked --config supply-chain/vitaminc-aead/deny.toml \
               --manifest-path "packages/$crate/Cargo.toml" check || status=1

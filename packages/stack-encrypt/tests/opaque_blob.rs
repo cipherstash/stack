@@ -1062,7 +1062,7 @@ mod given_a_field_serde_skips {
         let encoded = OpaqueBlob::new(source()).encode().unwrap();
 
         let whole: WithSkippedField =
-            vitaminc_aead_frame::storage::from_slice(encoded.risky_ref()).unwrap();
+            recipher_frame::storage::from_slice(encoded.risky_ref()).unwrap();
         let in_place = OpaqueBlob::<WithSkippedField>::decode(encoded.risky_ref()).unwrap();
 
         assert_eq!(whole.count, 1, "serde's own read should call `one`");

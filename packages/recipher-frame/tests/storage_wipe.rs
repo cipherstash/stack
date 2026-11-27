@@ -12,7 +12,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use vitaminc_aead_frame::storage::{from_slice, to_vec};
+use recipher_frame::storage::{from_slice, to_vec};
 use vitaminc_protected::Controlled;
 
 const MARKER: &[u8; 16] = b"S3CR3T-M4RK3R-01";

@@ -208,7 +208,7 @@ use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroizing;
 
 use super::query::{Op, Operand};
-use super::{Error, Reason, ValueFrame};
+use super::{Error, Reason};
 pub(super) use crate::json::inputs::Under;
 use crate::json::inputs::{
     elements_base, json_reason, leaf, member_path, node_path, ordered_path, path, scalar,
@@ -219,6 +219,7 @@ use crate::json::{
     JsonSubtreeKey,
 };
 use crate::{DecryptFrom, Encrypt, KeysetCipher, Pending};
+use vitaminc_aead::frame::{Frame, OwnedFrame};
 
 /// The SQL type a JSON operand binds as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -396,8 +397,8 @@ struct MatchInput {
     wildcard_bound: Option<u32>,
 }
 
-fn read_frame<T: for<'de> Deserialize<'de>>(input: &ValueFrame) -> Result<T, Error> {
-    vitaminc_aead_frame::serde::from_slice(input.risky_ref()).map_err(|_| Error::Source {
+fn read_frame<T: for<'de> Deserialize<'de>>(input: Frame<'_>) -> Result<T, Error> {
+    recipher_frame::serde::from_slice(input.as_bytes()).map_err(|_| Error::Source {
         field: None,
         reason: Reason::JsonInput,
     })
@@ -407,7 +408,7 @@ fn read_frame<T: for<'de> Deserialize<'de>>(input: &ValueFrame) -> Result<T, Err
 /// frame read into the input the operator takes ([`Input`]), checked with
 /// the rules a field reference's typed JSON queries apply, and in the order a
 /// binding has always met them.
-fn read_input(op: Op, options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error> {
+fn read_input(op: Op, options: &JsonOptions, input: Frame<'_>) -> Result<Input, Error> {
     match op {
         Op::Contains | Op::ContainedBy => Ok(Input::Document(
             read_frame::<DocumentInput>(input)?.json.parse()?,
@@ -441,7 +442,7 @@ fn read_input(op: Op, options: &JsonOptions, input: &ValueFrame) -> Result<Input
 /// (the `vars` jsonb `jsonb_path_match` takes, `{}` when absent) and the
 /// bound its element-scoped leaves are read to. The predicate is compiled
 /// here, so every refusal it can meet is met before anything is derived.
-fn read_match(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error> {
+fn read_match(options: &JsonOptions, input: Frame<'_>) -> Result<Input, Error> {
     let input: MatchInput = read_frame(input)?;
     let bound = wildcard_bound(input.wildcard_bound)?;
     let vars = match &input.vars {
@@ -458,7 +459,7 @@ fn read_match(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error>
 
 /// `element_match`'s input: an array's elements, by a path with a wildcard
 /// and no position, and one or more predicates on their fields.
-fn read_elements(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error> {
+fn read_elements(options: &JsonOptions, input: Frame<'_>) -> Result<Input, Error> {
     let elements: ElementsInput = read_frame(input)?;
     let base = elements_base(&elements.path)?;
     let bound = wildcard_bound(elements.wildcard_bound)?;
@@ -504,7 +505,7 @@ fn read_predicate(
 }
 
 /// `eq_at`'s input: a scalar at a path read through a selector.
-fn read_eq_at(input: &ValueFrame) -> Result<Input, Error> {
+fn read_eq_at(input: Frame<'_>) -> Result<Input, Error> {
     let at: AtInput = read_frame(input)?;
     let path = selector_path(&at.path)?;
     let value = at.json.parse()?;
@@ -516,7 +517,7 @@ fn read_eq_at(input: &ValueFrame) -> Result<Input, Error> {
 fn read_ordering(
     options: &JsonOptions,
     compare: Compare,
-    input: &ValueFrame,
+    input: Frame<'_>,
 ) -> Result<Input, Error> {
     let at: AtInput = read_frame(input)?;
     let path = ordered_path(options, &at.path)?;
@@ -526,7 +527,7 @@ fn read_ordering(
 }
 
 /// `between_at`'s input: two leaves the index orders at an ordered path.
-fn read_between(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error> {
+fn read_between(options: &JsonOptions, input: Frame<'_>) -> Result<Input, Error> {
     let between: BetweenInput = read_frame(input)?;
     let path = ordered_path(options, &between.path)?;
     let (low, high) = (between.low.parse()?, between.high.parse()?);
@@ -541,7 +542,7 @@ fn read_between(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Erro
 /// a wildcard expanding too wide or a path too deep for its tokens
 /// (`JsonWildcardTooWide`, `JsonTooWide`, `JsonTooDeep`), are [`derive`]'s,
 /// after the keyset is resolved.
-pub(super) fn check(op: Op, options: &JsonOptions, input: &ValueFrame) -> Result<(), Error> {
+pub(super) fn check(op: Op, options: &JsonOptions, input: Frame<'_>) -> Result<(), Error> {
     read_input(op, options, input).map(drop)
 }
 
@@ -557,7 +558,7 @@ pub(super) fn derive<'a, K: 'static>(
     under: &Under<'_>,
     options: &JsonOptions,
     op: Op,
-    input: &ValueFrame,
+    input: Frame<'_>,
 ) -> Result<Pending<'a, Operand, K>, Error> {
     Ok(
         crate::json::inputs::derive(keyset, under, options, read_input(op, options, input)?)?
@@ -617,7 +618,7 @@ enum Read {
 /// Reads and checks a read's request and its rows: everything [`open`]
 /// refuses before it derives anything. A `selector` group and a `children`
 /// group each contain one entry or none.
-fn read_open(request: &ValueFrame, rows: &ValueFrame) -> Result<(Read, Vec<Vec<JsonNode>>), Error> {
+fn read_open(request: Frame<'_>, rows: Frame<'_>) -> Result<(Read, Vec<Vec<JsonNode>>), Error> {
     let request: ReadRequest = read_frame(request)?;
     let read = match Op::parse(&request.operation) {
         Some(Op::Selector) if request.wildcard_bound.is_none() => {
@@ -656,7 +657,7 @@ fn read_open(request: &ValueFrame, rows: &ValueFrame) -> Result<(Read, Vec<Vec<J
 /// from the request and rows alone. The limits the read's key hits as it
 /// is built (`JsonWildcardTooWide`, `JsonTooWide`, `JsonTooDeep`) are
 /// [`open`]'s, after the keyset is resolved.
-pub(super) fn check_open(request: &ValueFrame, rows: &ValueFrame) -> Result<(), Error> {
+pub(super) fn check_open(request: Frame<'_>, rows: Frame<'_>) -> Result<(), Error> {
     read_open(request, rows).map(drop)
 }
 
@@ -701,9 +702,9 @@ pub(super) fn open<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     under: &Under<'_>,
     options: &JsonOptions,
-    request: &ValueFrame,
-    rows: &ValueFrame,
-) -> Result<Pending<'a, ValueFrame, K>, Error> {
+    request: Frame<'_>,
+    rows: Frame<'_>,
+) -> Result<Pending<'a, OwnedFrame, K>, Error> {
     let (read, groups) = read_open(request, rows)?;
     if keyset.loaded_state().is_some() {
         return open_read(keyset, under, options, read, groups);
@@ -740,7 +741,7 @@ fn open_read<'a, K: 'static>(
     options: &JsonOptions,
     read: Read,
     groups: Vec<Vec<JsonNode>>,
-) -> Result<Pending<'a, ValueFrame, K>, Error> {
+) -> Result<Pending<'a, OwnedFrame, K>, Error> {
     let opener = match read {
         Read::Selector(path) => Opener::Selector(keyset.json_selector_now(&path, under.query()?)?),
         Read::Subtree(path, bound) => {
@@ -789,7 +790,7 @@ fn open_children<'a, K: 'static>(
     options: &JsonOptions,
     path: &JsonPath,
     groups: Vec<Vec<JsonNode>>,
-) -> Result<Pending<'a, ValueFrame, K>, Error> {
+) -> Result<Pending<'a, OwnedFrame, K>, Error> {
     // The path has no wildcard, so the key holds one token, the parent's.
     // The bound is never used.
     let parent = keyset.json_subtree_key_now(
@@ -823,12 +824,12 @@ fn open_children<'a, K: 'static>(
 /// `{"index", "json"}`. Each child is
 /// wiped when it is dropped here, once its text is written. Each text is
 /// wiped once the frame holds it.
-fn children_frame(groups: Vec<Vec<JsonChildPlaintext>>) -> Result<ValueFrame, crate::Error> {
+fn children_frame(groups: Vec<Vec<JsonChildPlaintext>>) -> Result<OwnedFrame, crate::Error> {
     let opened: Result<Vec<Vec<OpenedChild<'_>>>, crate::Error> = groups
         .iter()
         .map(|group| group.iter().map(OpenedChild::of).collect())
         .collect();
-    let frame = ValueFrame::of(&opened?).map_err(|error| crate::Error::Other(Box::new(error)));
+    let frame = OwnedFrame::of(&opened?).map_err(|error| crate::Error::Other(Box::new(error)));
     drop(groups);
     frame
 }
@@ -885,7 +886,7 @@ impl Encrypt for &OpenedChild<'_> {
 /// The opened groups as a frame: a list per group of each value's JSON
 /// text, as bytes. Each value is wiped when it is dropped, here, once its
 /// text is written, and each text once the frame holds it.
-fn opened_frame(groups: Vec<Vec<JsonPlaintext>>) -> Result<ValueFrame, crate::Error> {
+fn opened_frame(groups: Vec<Vec<JsonPlaintext>>) -> Result<OwnedFrame, crate::Error> {
     let texts: Result<Vec<Vec<Protected<Vec<u8>>>>, crate::Error> = groups
         .iter()
         .map(|group| {
@@ -900,7 +901,7 @@ fn opened_frame(groups: Vec<Vec<JsonPlaintext>>) -> Result<ValueFrame, crate::Er
         })
         .collect();
     drop(groups);
-    ValueFrame::of(&texts?).map_err(|error| crate::Error::Other(Box::new(error)))
+    OwnedFrame::of(&texts?).map_err(|error| crate::Error::Other(Box::new(error)))
 }
 
 #[cfg(test)]

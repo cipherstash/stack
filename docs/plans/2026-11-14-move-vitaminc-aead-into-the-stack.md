@@ -36,8 +36,9 @@ define the value types, how each is encoded, and how a value is sealed.
 ## Summary
 
 Three crates move from `cipherstash/vitaminc` into this repository:
-`vitaminc-aead`, `vitaminc-aead-frame` and `vitaminc-aead-derive`. They keep
-their names and are published from here.
+`vitaminc-aead`, `vitaminc-aead-frame` and `vitaminc-aead-derive`. They are
+published from here. `vitaminc-aead` and `vitaminc-aead-derive` keep their
+names. The frame crate is renamed `recipher-frame` in step 2.4.
 
 vitaminc's two Go packages, `vcffi` and `vcvalue`, move into the Go module in
 a third stage.
@@ -124,7 +125,7 @@ this repository, they can provide them.
 | Crate | Why |
 |---|---|
 | `vitaminc-aead` | The types, the sealed leaf, the ciphertext tree, the sinks |
-| `vitaminc-aead-frame` | The frame encoding a binding sends |
+| `vitaminc-aead-frame` (`recipher-frame` from step 2.4) | The frame encoding a binding sends |
 | `vitaminc-aead-derive` | `vitaminc-aead` depends on it |
 
 The JavaScript bridge, `recipher-value-napi`, is already here. It is a renamed
@@ -154,9 +155,13 @@ copy of `vitaminc-aead-napi` 0.10.0, and depends only on `vitaminc-aead` and
 The engine passes AEAD types into all four. So the engine and these four must
 build against the same `vitaminc-aead`. Two consequences:
 
-- **The moved crates keep their names.** Under a new name, Cargo would build
-  two crates with two sets of types, and the engine's calls into the four
-  would not compile.
+- **`vitaminc-aead` and `vitaminc-aead-derive` keep their names.** Under a
+  new name, Cargo would build two crates with two sets of types, and the
+  engine's calls into the four would not compile. The frame crate is not
+  bound this way: none of the four depends on it, and only `stack-encrypt`
+  and `stack-guest-abi` do, both by path. So it could be renamed without
+  breaking anything outside this repository, and step 2.4 renames it
+  `recipher-frame`.
 - **A breaking change to `vitaminc-aead` needs new releases of all four**,
   and then of `clww-ore` and `ore-rs`, which the root `Cargo.toml` pins with
   `=`. A change that only adds a type, a method or a `Logical` variant does
@@ -313,6 +318,54 @@ This is the widest step. `ValueFrame` is named in about 50 files of
 `eql-bindings`, which is published, so this is a breaking release of that
 crate.
 
+Done in #1955:
+
+- The frame crate is renamed `recipher-frame` first, in a commit of its own.
+  No workspace patches crates.io for it any more.
+- Most uses need no owned value. A value read only within a call is a
+  `Frame` borrowed from its bytes: `Frame::parse` checks everything the old
+  `from_bytes` checked, and `Frame` is `Encrypt`. `kind`, `is_null`,
+  `has_passthrough` and `elements` are on `Frame`, and `elements` lends
+  each element as a `Frame` with no copy. The engine's readers, the
+  `TargetResolver`'s `encrypt` and `query`, and the `eql-bindings` by-name
+  entry points and generated dispatch take a `Frame<'_>`. `FieldHandle` and
+  `DynamicQuery` take any source, and `Planned` is a target over an
+  `OwnedFrame` or a `Frame`.
+- The owned value is `vitaminc_aead::frame::OwnedFrame`, re-exported by
+  `recipher-frame` and so by `stack_encrypt::dynamic::frame`: a newtype
+  over a `Buffer` that `Frame::parse` accepted, with `of`, `from_buffer`,
+  `null`, `typed_null`, `frame` and `into_buffer`. It is `Encrypt`,
+  `Decrypt` and `Zeroize`, and has no `==`: two frames compare through
+  `Frame`'s constant-time `==`. Two places need it: a record's field slots
+  (`plan/values.rs`), which hold an owned value, and the TypeScript addon's
+  async calls. It is not a `Buffer` with `Encrypt` added, because
+  `Protected<Vec<u8>>` already encrypts as a bytes scalar.
+- The decrypt sink writes the opened value into one buffer: the frame
+  writer is generic over a borrowed or an owned buffer and over the error
+  it reports, so a container's children are written in place, with no
+  copy per child.
+- A zeroized `OwnedFrame` holds the plain null, so it is always one frame
+  and `frame()` cannot fail.
+- `Planned` is `Zeroize` only for an `OwnedFrame`, which it wipes, and a
+  `Frame`, whose owner wipes it. `Frame` does not implement `Zeroize`:
+  wiping a view would wipe nothing, and `EncryptTarget`'s `Zeroize` bound
+  is on the `Planned`, not on the value.
+- The Go guest reads every plaintext input with `Frame::parse` on the
+  host's bytes, the page of values to verify included, and the TypeScript
+  addon keeps the bridge's buffer with `OwnedFrame::from_buffer`: one copy
+  fewer at each boundary.
+- In `eql-bindings`, a plaintext that may be absent reads any null, plain
+  or typed, as `None`, and seals it padded to its own type.
+- `ValueFrame::check` is not replaced: a caller checks a record source with
+  `Frame::parse`. `FromFrameError` is replaced by `FrameError`.
+- What stays in the engine is engine logic, not a wrapper: reading a text
+  frame as a context label (`IntoLabel`, the engine's trait) and splitting a
+  record source into one frame per field (`dynamic::source`). The split
+  writes with vitaminc's `FrameWriter` and names the field a refusal came
+  from itself.
+- The `eql-bindings` API that took `ValueFrame` was not released yet, so its
+  breaking change is in an unreleased changelog entry.
+
 ### 2.5 One place converts a value to its declared type
 
 Today Go converts a value to the field's type on the host, the engine
@@ -337,11 +390,11 @@ is today.
 
 ### 2.6 The bridges and the SDKs
 
-- **TypeScript:** the addon hands the bridge's frame to the engine with no
-  second copy. `OneValue`, `is_uuid`, and the `recipher_js::uuid` code are
-  deleted.
-- **Go:** the guest stops calling `ValueFrame::from_bytes` and
-  `ValueFrame::check`.
+- **TypeScript:** `OneValue`, `is_uuid`, and the `recipher_js::uuid` code
+  are deleted. (Step 2.4 already hands the bridge's buffer to the engine
+  with no second copy.)
+- **Go:** the guest stops calling `Frame::parse` itself. (Step 2.4 already
+  removed its `OwnedFrame::from_bytes` call.)
 - **EQL:** the `Plaintext` trait and the generated code use the type from
   2.2.
 
@@ -371,7 +424,8 @@ It must finish before the Go SDK's final release:
   pins an unreleased commit, and `scripts/go-release-version.mjs` refuses a
   final version while that pin is there.
 - **The codec's test data moves in stage 1.** `vcffi`'s tests read the
-  storage corpus that sits beside `vitaminc-aead-frame`.
+  storage corpus that sits beside `recipher-frame` (`vitaminc-aead-frame`
+  until step 2.4).
 
 The work:
 
@@ -389,8 +443,8 @@ The work:
 ## What waits on this plan
 
 - The TypeScript SDK: #1775, #1776 and the prototype #1829.
-- `ScalarFrame` (#1825, draft #1827). It wraps `ValueFrame`, so step 2.4
-  replaces it.
+- `ScalarFrame` (#1825, draft #1827). It wraps `ValueFrame`, which step 2.4
+  replaced with `OwnedFrame`.
 - The language integration guide's new sections on the value model (#1828).
   They describe the model this plan removes.
 - The UUID fix (#1821).
@@ -418,12 +472,9 @@ Pull requests may change the three crates.
 
 ## Open questions
 
-1. **What is a frame called?** "Frame" does not say whether it is a transport
-   or a storage format. Rename it in step 2.4, where the type is already
-   being replaced. Stages 0 and 1 do not need the answer. "Transport" is the
-   candidate: the Go codec's documentation and the language integration
-   guide already use it. "Wire" is taken: the sealed leaf's version constant
-   is `WIRE_VERSION`.
+1. **What is a frame called?** Resolved in step 2.4: "frame" stays the
+   name of the encoding, and the crate that holds its codec is
+   `recipher-frame`. The owned value is `OwnedFrame`.
 
 ## Rules this changes
 

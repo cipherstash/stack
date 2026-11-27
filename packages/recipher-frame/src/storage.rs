@@ -9,7 +9,7 @@
 //!
 //! ```
 //! use serde::{Deserialize, Serialize};
-//! use vitaminc_aead_frame::storage::{self, ErrorKind, HEADER};
+//! use recipher_frame::storage::{self, ErrorKind, HEADER};
 //! use vitaminc_protected::Controlled;
 //!
 //! #[derive(Serialize, Deserialize, PartialEq, Debug)]

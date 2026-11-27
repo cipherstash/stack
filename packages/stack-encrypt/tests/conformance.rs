@@ -13,7 +13,7 @@ use common::frames::{frame, object};
 use common::{hex, unhex};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use stack_encrypt::dynamic::{self, record, Fidelity, NoTargets, Op, Operand, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record, Fidelity, NoTargets, Op, Operand};
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{
     CipherText, Ciphertext, Error, KeysetCipher, Label, SealedValue, StackCipherText,
@@ -77,7 +77,7 @@ fn plan(corpus: &Corpus, case: &Case) -> record::Plan {
         "context": context, "outputs": ["c", "eq"], "type": case.kind,
     }});
     record::plan(
-        vitaminc_aead_frame::serde::to_vec(&declaration)
+        recipher_frame::serde::to_vec(&declaration)
             .unwrap()
             .as_protected_ref(),
     )
@@ -129,7 +129,7 @@ async fn open_scalar(
     bytes: &[u8],
     kind: &str,
     context: &Label,
-) -> ValueFrame {
+) -> OwnedFrame {
     let ct = Ciphertext::from_bytes(bytes).unwrap();
     macro_rules! open {
         ($ty:ty) => {
@@ -248,8 +248,8 @@ async fn shared_record_scalar_profile() {
             .await
             .unwrap();
         assert_eq!(
-            opened.risky_ref(),
-            expected_row.risky_ref(),
+            opened.frame().as_bytes(),
+            expected_row.frame().as_bytes(),
             "{}: record roundtrip",
             case.id
         );
@@ -276,7 +276,7 @@ async fn shared_record_scalar_profile() {
         assert_eq!(&stored_term, term, "{}: stored equality", case.id);
         let ct = scalar(&keyset, &case.input, &context).await;
         let artifact = Artifact {
-            frame: hex(input.risky_ref()),
+            frame: hex(input.frame().as_bytes()),
             ciphertext: hex(&ct.to_bytes()),
             equality: hex(term),
         };
@@ -291,8 +291,8 @@ async fn shared_record_scalar_profile() {
             let opened =
                 open_scalar(&keyset, &unhex(&candidate.ciphertext), &case.kind, &context).await;
             assert_eq!(
-                opened.risky_ref(),
-                input.risky_ref(),
+                opened.frame().as_bytes(),
+                input.frame().as_bytes(),
                 "{}: {origin} scalar cross-open",
                 case.id
             );
@@ -301,8 +301,8 @@ async fn shared_record_scalar_profile() {
                 .await
                 .unwrap();
             assert_eq!(
-                opened.risky_ref(),
-                expected_row.risky_ref(),
+                opened.frame().as_bytes(),
+                expected_row.frame().as_bytes(),
                 "{}: {origin} record cross-open",
                 case.id
             );
@@ -313,7 +313,7 @@ async fn shared_record_scalar_profile() {
         wrong.push(corpus.field.clone());
         let wrong = Label::new(wrong).unwrap();
         let result = keyset
-            .decrypt_tree::<ValueFrame, _>(
+            .decrypt_tree::<OwnedFrame, _>(
                 CipherText::Single(SealedValue::from_bytes(&unhex(&reference.ciphertext)).unwrap()),
                 wrong,
             )

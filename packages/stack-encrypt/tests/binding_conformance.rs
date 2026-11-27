@@ -13,7 +13,7 @@ use common::conformance::{value, Input};
 use common::frames::{frame, object};
 use common::{hex, unhex};
 use serde::{Deserialize, Serialize};
-use stack_encrypt::dynamic::{self, record, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record};
 use stack_encrypt::AsProtectedRef as _;
 use stack_encrypt::{CipherText, Descriptor, Label, SealedValue, StackCipherText};
 use std::collections::{BTreeMap, BTreeSet};
@@ -57,7 +57,7 @@ struct Expected {
     cases: BTreeMap<String, Vector>,
 }
 
-fn part(input: &Input) -> ValueFrame {
+fn part(input: &Input) -> OwnedFrame {
     if input.kind == "bytes" {
         frame(unhex(&input.text))
     } else {
@@ -65,13 +65,13 @@ fn part(input: &Input) -> ValueFrame {
         value(input)
     }
 }
-fn nest(head: ValueFrame, parts: &[Input]) -> ValueFrame {
+fn nest(head: OwnedFrame, parts: &[Input]) -> OwnedFrame {
     parts
         .iter()
         .fold(head, |head, p| frame(vec![head, part(p)]))
 }
 /// The field's context frame: the label and field, extended by the scopes.
-fn context(case: &Case) -> ValueFrame {
+fn context(case: &Case) -> OwnedFrame {
     let mut label = case.label.split('/').map(str::to_owned).collect::<Vec<_>>();
     label.push("text".into());
     nest(frame(label), &case.scopes)
@@ -94,7 +94,7 @@ fn plan(case: &Case, with_bind: bool) -> record::Plan {
             ("type", frame("string")),
         ]),
     ));
-    record::plan(object(fields).as_protected_ref()).unwrap()
+    record::plan(object(fields).into_buffer().as_protected_ref()).unwrap()
 }
 /// The bytes a passthrough frame holds: a stored term.
 fn passthrough_bytes(payload: &stack_encrypt::PassthroughFrame) -> Vec<u8> {
@@ -102,7 +102,7 @@ fn passthrough_bytes(payload: &stack_encrypt::PassthroughFrame) -> Vec<u8> {
     let frame = payload.parse().expect("one frame");
     vitaminc_aead::Encrypt::visit(frame, Vec::<u8>::sink()).expect("bytes")
 }
-fn source() -> ValueFrame {
+fn source() -> OwnedFrame {
     object(vec![("text", frame("hello"))])
 }
 fn ciphertext(tree: StackCipherText) -> Vec<u8> {
@@ -213,10 +213,10 @@ async fn binding_conformance() {
         let stored_context = {
             let field = frame(vec![context(&case)]);
             let _ = field;
-            let ctx = dynamic::context(context(&case).as_protected_ref()).unwrap();
+            let ctx = dynamic::context(context(&case).into_buffer().as_protected_ref()).unwrap();
             let mut piece = ctx.into_inner();
             for binding in &case.bind {
-                let part = dynamic::context(part(binding).as_protected_ref())
+                let part = dynamic::context(part(binding).into_buffer().as_protected_ref())
                     .map(|p| p.into_inner())
                     .unwrap_or_else(|_| {
                         // An empty part is not a nonempty context on its own.
@@ -277,7 +277,7 @@ async fn binding_conformance() {
             .unwrap()
             .await
             .unwrap();
-        assert_eq!(opened.risky_ref(), source().risky_ref());
+        assert_eq!(opened.frame().as_bytes(), source().frame().as_bytes());
         let other = {
             let tampered = vec![
                 (
@@ -298,7 +298,7 @@ async fn binding_conformance() {
                     ]),
                 ),
             ];
-            record::plan(object(tampered).as_protected_ref()).unwrap()
+            record::plan(object(tampered).into_buffer().as_protected_ref()).unwrap()
         };
         assert!(
             record::decrypt(keyset.clone(), stored(expected), &other, None)

@@ -14,10 +14,10 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use recipher_frame::serde::to_vec;
 use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Serialize, Serializer};
 use vitaminc_aead::to_frame;
-use vitaminc_aead_frame::serde::to_vec;
 use vitaminc_protected::Controlled;
 
 const MARKER: &[u8; 16] = b"S3CR3T-M4RK3R-02";

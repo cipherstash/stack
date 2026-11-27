@@ -35,7 +35,7 @@ use eql_bindings::encryption::EqlTargets;
 use eql_bindings::v4::json_tree::{JsonTree, JsonTreeDocument, JsonTreeLeafQuery, JsonTreeQuery};
 use eql_bindings::Identifier;
 use serde_json::{json, Value};
-use stack_encrypt::dynamic::{self, record, TargetError, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record, TargetError};
 use stack_encrypt::eql_simulator;
 use stack_encrypt::json::{JsonDocument, JsonOptions, JsonPlaintext, JsonQuery};
 use stack_encrypt::{CipherText, DecryptFrom, Encrypt, KeysetCipher, Label, NonEmpty};
@@ -70,8 +70,8 @@ fn plan() -> record::Plan {
     .unwrap()
 }
 
-fn frame<T: Encrypt>(value: T) -> ValueFrame {
-    ValueFrame::of(value).unwrap()
+fn frame<T: Encrypt>(value: T) -> OwnedFrame {
+    OwnedFrame::of(value).unwrap()
 }
 
 /// The documents a batch carries, as values.
@@ -190,7 +190,7 @@ async fn a_batch_of_documents_round_trips_in_one_request() {
         .unwrap();
     assert_eq!(calls.lock().unwrap().retrieve.len(), 1, "and one to open");
     let rows: Vec<BTreeMap<String, serde_bytes_like::Bytes>> =
-        dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
+        dynamic::frame::serde::from_slice(opened.frame().as_bytes()).unwrap();
     let back: Vec<Value> = rows
         .iter()
         .map(|row| serde_json::from_slice(&row["profile"].0).unwrap())
@@ -248,7 +248,8 @@ async fn the_data_plan_and_the_typed_layout_agree() {
                     frame(stack_encrypt::Protected::new(
                         serde_json::to_vec(&typed).unwrap(),
                     ))
-                    .risky_ref()
+                    .frame()
+                    .as_bytes()
                     .to_vec(),
                 )),
             )]),
@@ -258,7 +259,7 @@ async fn the_data_plan_and_the_typed_layout_agree() {
             .await
             .unwrap();
         let row: BTreeMap<String, serde_bytes_like::Bytes> =
-            dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
+            dynamic::frame::serde::from_slice(opened.frame().as_bytes()).unwrap();
         assert_eq!(
             serde_json::from_slice::<Value>(&row["profile"].0).unwrap(),
             document
@@ -302,7 +303,7 @@ async fn a_sql_null_stores_no_document() {
         .await
         .unwrap();
     let rows: Vec<BTreeMap<String, Option<serde_bytes_like::Bytes>>> =
-        dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
+        dynamic::frame::serde::from_slice(opened.frame().as_bytes()).unwrap();
     let back: Vec<Option<Value>> = rows
         .iter()
         .map(|row| {
@@ -410,17 +411,12 @@ async fn text_that_is_not_a_document_is_refused_before_any_key() {
 // =============================================================================
 
 /// An operator's input as a binding writes it: an object of named inputs.
-fn input(entries: &[(&str, Value)]) -> ValueFrame {
+fn input(entries: &[(&str, Value)]) -> OwnedFrame {
     let object: serde_json::Map<String, Value> = entries
         .iter()
         .map(|(k, v)| ((*k).to_owned(), v.clone()))
         .collect();
-    ValueFrame::from_bytes(
-        dynamic::frame::serde::to_vec(&object)
-            .unwrap()
-            .as_protected_ref(),
-    )
-    .unwrap()
+    OwnedFrame::from_buffer(dynamic::frame::serde::to_vec(&object).unwrap()).unwrap()
 }
 
 /// The data path's term for one operator and input on `profile`.
@@ -920,18 +916,14 @@ async fn open(
     request: Value,
     groups: Vec<Vec<String>>,
 ) -> Result<Vec<Vec<Value>>, stack_encrypt::Error> {
-    let request = ValueFrame::from_bytes(
-        dynamic::frame::serde::to_vec(&request)
-            .unwrap()
-            .as_protected_ref(),
-    )
-    .unwrap();
+    let request =
+        OwnedFrame::from_buffer(dynamic::frame::serde::to_vec(&request).unwrap()).unwrap();
     let rows = frame(&groups);
     let opened = dynamic::json_open(keyset, plan, "profile", request, rows, &EqlTargets)
         .unwrap()
         .await?;
     let groups: Vec<Vec<serde_bytes_like::Bytes>> =
-        dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
+        dynamic::frame::serde::from_slice(opened.frame().as_bytes()).unwrap();
     Ok(groups
         .into_iter()
         .map(|g| {
@@ -1242,7 +1234,7 @@ async fn a_document_has_no_one_plaintext_query() {
         &stack_encrypt::target::IndexSpec::Json(JsonOptions::default()),
         &keyset,
         &label,
-        frame("{}"),
+        frame("{}").frame(),
     )
     .err()
     .expect("refused");
@@ -1269,7 +1261,13 @@ async fn the_engine_and_the_table_agree_on_which_targets_take_json_options() {
     for target in eql_targets::targets().iter().filter(|t| t.producible) {
         let engine = target.indexes.contains(&"json");
         let refused = matches!(
-            eql_targets::encrypt_with(target.name, Some(&options), &keyset, &label, frame(true)),
+            eql_targets::encrypt_with(
+                target.name,
+                Some(&options),
+                &keyset,
+                &label,
+                frame(true).frame()
+            ),
             Err(eql_targets::TargetError::Options { .. })
         );
         assert_eq!(engine, !refused, "{}", target.name);

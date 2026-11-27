@@ -16,7 +16,7 @@ use std::sync::Arc;
 use napi::bindgen_prelude::{JavaScriptClassExt, JsValue, Object, PromiseRaw, Unknown};
 use napi::Env;
 use napi_derive::napi;
-use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::kms::{DataKeySource, IndexKeySource, StackKms};
 use stack_encrypt::{CipherRef, DecryptFrom, EncryptInto, KeysetCipher, StackCipher};
 use vitaminc_protected::OpaqueDebug;
@@ -294,7 +294,7 @@ pub(crate) async fn open_in(
     engine: &Engine,
     sealed: Vec<stack_encrypt::Ciphertext>,
     confined: Confined,
-) -> Outcome<Vec<ValueFrame>> {
+) -> Outcome<Vec<OwnedFrame>> {
     with_engine!(engine, |cipher| match confined {
         Confined::No => unseal(&**cipher, sealed).await,
         Confined::ToDefault => unseal(&cipher.default_keyset(), sealed).await,
@@ -323,11 +323,11 @@ where
 pub(crate) async fn unseal<'c, K>(
     cipher: impl Into<CipherRef<'c, K>>,
     sealed: Vec<stack_encrypt::Ciphertext>,
-) -> Outcome<Vec<ValueFrame>>
+) -> Outcome<Vec<OwnedFrame>>
 where
     K: DataKeySource + IndexKeySource + Sync + 'static,
 {
-    Vec::<ValueFrame>::decrypt_from(sealed, cipher)
+    Vec::<OwnedFrame>::decrypt_from(sealed, cipher)
         .await
         .map_err(|error| RecipherErrorFields::engine(&error))
 }

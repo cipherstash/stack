@@ -11,7 +11,7 @@ use common::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record, NoTargets, Op, Operand};
 use stack_encrypt::{AsProtectedRef as _, CipherText, StackCipherText};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -115,7 +115,7 @@ fn stored(row: &StackCipherText) -> Option<(usize, BTreeMap<String, Vec<u8>>)> {
             ("c", CipherText::Single(leaf)) => length = Some(leaf.to_bytes().len()),
             ("c", _) => panic!("ciphertext is not one leaf"),
             (index, CipherText::Passthrough(term)) => {
-                let bytes: &[u8] = vitaminc_aead_frame::serde::from_slice(&term.0).unwrap();
+                let bytes: &[u8] = recipher_frame::serde::from_slice(&term.0).unwrap();
                 terms.insert(index.to_owned(), bytes.to_vec());
             }
             (key, _) => panic!("{key}: not a term"),
@@ -124,7 +124,7 @@ fn stored(row: &StackCipherText) -> Option<(usize, BTreeMap<String, Vec<u8>>)> {
     Some((length.expect("ciphertext stored"), terms))
 }
 
-fn row(input: &Input) -> ValueFrame {
+fn row(input: &Input) -> OwnedFrame {
     object(vec![("value", value(input))])
 }
 
@@ -173,7 +173,7 @@ async fn shared_record_value_profile() {
             spec["null"] = json!(case.null);
         }
         let plan = record::plan(
-            vitaminc_aead_frame::serde::to_vec(&json!({"value": spec}))
+            recipher_frame::serde::to_vec(&json!({"value": spec}))
                 .unwrap()
                 .as_protected_ref(),
         )
@@ -182,7 +182,7 @@ async fn shared_record_value_profile() {
         retrieves.store(0, Ordering::SeqCst);
         let input = value(&case.input);
         if let Some(frozen) = &case.frame {
-            let actual = hex(input.risky_ref());
+            let actual = hex(input.frame().as_bytes());
             if &actual != frozen {
                 failures.push(format!("{}: frame {actual}, frozen {frozen}", case.id));
             }
@@ -288,7 +288,7 @@ async fn shared_record_value_profile() {
             .unwrap();
         let mut expected = vec![row(&case.input)];
         expected.extend(case.companion.iter().map(row));
-        if opened.risky_ref() != frame(expected).risky_ref() {
+        if opened.frame().as_bytes() != frame(expected).frame().as_bytes() {
             failures.push(format!("{}: typed round trip differs", case.id));
         }
         assert_eq!(
@@ -311,7 +311,8 @@ fn the_shared_text_forms_frame_as_the_value_kinds_fixture() {
             kind: kind.into(),
             text: text.into(),
         })
-        .risky_ref())
+        .frame()
+        .as_bytes())
     };
     assert_eq!(framed("date", "2024-02-29"), "1281460b00");
     assert_eq!(

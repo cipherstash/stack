@@ -10,12 +10,12 @@ use std::fmt;
 
 use quickcheck::{Arbitrary, Gen};
 use quickcheck_macros::quickcheck;
+use recipher_frame::serde::PathSegment;
+use recipher_frame::storage::{self, from_slice, Error, ErrorKind, HEADER, MAP, SOME};
 use serde::de;
 use serde::ser::{SerializeMap, SerializeSeq, SerializeStruct};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
-use vitaminc_aead_frame::serde::PathSegment;
-use vitaminc_aead_frame::storage::{self, from_slice, Error, ErrorKind, HEADER, MAP, SOME};
 use vitaminc_protected::Controlled;
 
 use support::reference::{decode, key_value, Refusal};
@@ -709,11 +709,11 @@ fn a_text_key_reads_in_the_mode_it_was_written_in() {
     assert_eq!(from_slice::<BTreeMap<Modal, u8>>(&blob), Ok(map));
 
     let map = BTreeMap::from([(Modal(1), 10u8)]);
-    let frame = vitaminc_aead_frame::serde::to_vec(&map)
+    let frame = recipher_frame::serde::to_vec(&map)
         .expect("writes")
         .risky_unwrap();
     assert!(frame.windows(7).any(|w| w == b"human-1"));
-    let back: BTreeMap<Modal, u8> = vitaminc_aead_frame::serde::from_slice(&frame).expect("reads");
+    let back: BTreeMap<Modal, u8> = recipher_frame::serde::from_slice(&frame).expect("reads");
     assert_eq!(back, map);
 }
 
@@ -761,21 +761,17 @@ fn a_key_that_reads_nothing_is_refused() {
 #[test]
 fn a_transport_frame_and_a_blob_never_read_as_each_other() {
     let value = BTreeMap::from([("a", Some(1u8))]);
-    let frame = vitaminc_aead_frame::serde::to_vec(&value)
+    let frame = recipher_frame::serde::to_vec(&value)
         .expect("writes")
         .risky_unwrap();
     let stored = to_vec(&value).expect("writes");
     let error = from_slice::<BTreeMap<String, Option<u8>>>(&frame).expect_err("not a blob");
     assert_eq!(error.kind(), ErrorKind::NotABlob);
-    assert!(
-        vitaminc_aead_frame::serde::from_slice::<BTreeMap<String, Option<u8>>>(&stored).is_err()
-    );
+    assert!(recipher_frame::serde::from_slice::<BTreeMap<String, Option<u8>>>(&stored).is_err());
     // Nor does a frame behind a blob's header: the marker and the map are
     // not in the frame's grammar.
-    assert!(vitaminc_aead_frame::serde::from_slice::<Option<u8>>(&[SOME, 0x0D, 1]).is_err());
-    assert!(
-        vitaminc_aead_frame::serde::from_slice::<BTreeMap<u8, u8>>(&[MAP, 0, 0, 0, 0]).is_err()
-    );
+    assert!(recipher_frame::serde::from_slice::<Option<u8>>(&[SOME, 0x0D, 1]).is_err());
+    assert!(recipher_frame::serde::from_slice::<BTreeMap<u8, u8>>(&[MAP, 0, 0, 0, 0]).is_err());
 }
 
 // =============================================================================

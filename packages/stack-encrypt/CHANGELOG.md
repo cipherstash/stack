@@ -74,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `IntegerEq` through encrypt, query and decrypt, with the bytes from the
   committed fixtures, and ends with a checklist built on
   `conformance/stack-encrypt`. The frame format stays in
-  `vitaminc-aead-frame`'s documentation and is linked, not restated.
+  `recipher-frame`'s documentation and is linked, not restated.
 - **A credential with each call** (#1708). A server that decrypts as the end
   user who signed in had to build its cipher inside the first request,
   because `init` needs a token and a server starting up has no user. It also
@@ -503,6 +503,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   apply when the pending is awaited, not when the term is described.
 
 ### Breaking
+
+- **`dynamic::ValueFrame` is removed. The engine reads a plaintext as a
+  borrowed `Frame` and keeps one as vitaminc's `OwnedFrame`** (#1955).
+  `dynamic::frame` re-exports both from vitaminc. A `Frame` is one value's
+  transport frame, checked and borrowed from bytes the caller keeps. An
+  `OwnedFrame` is a buffer, wiped when it drops, that holds exactly one
+  frame: what a record or a target opens into, and a value an async call
+  holds. What changes for a caller:
+  - Replace `dynamic::ValueFrame` with `dynamic::frame::OwnedFrame` where a
+    value is kept, and read bytes a host hands over with
+    `dynamic::frame::Frame::parse(&bytes)`, which borrows them with no
+    copy. `ValueFrame::from_bytes` and `ValueFrame::check` are gone:
+    `Frame::parse` accepts and refuses the same frames, and
+    `OwnedFrame::from_buffer` keeps a `Buffer` that holds one.
+  - `OwnedFrame::of` writes any source, `frame()` lends the frame, and
+    `into_buffer()` hands back the `Buffer`. `kind`, `is_null` and
+    `elements` are on `Frame` (`owned.frame().kind()`); `elements` lends
+    each element as a `Frame` with no copy. `risky_ref` and `into_inner`
+    are gone: read the bytes with `frame().as_bytes()`.
+  - An `OwnedFrame` has no `==`. Compare `a.frame() == b.frame()`, in
+    constant time.
+  - `TargetResolver::encrypt` and `TargetResolver::query` take the
+    plaintext as `Frame<'_>`; `decrypt` still resolves to an `OwnedFrame`.
+    An implementation reads `plaintext.kind()` and walks `plaintext` as
+    before.
+  - `dynamic::read_json` takes a `Frame<'_>`. `IntoLabel` is implemented
+    for `Frame<'_>` and `&OwnedFrame`.
+  - `FieldHandle`'s operator methods take a `dynamic::QueryValue`: an
+    `OwnedFrame`, a `&OwnedFrame` or a borrowed `Frame`. The trait is
+    sealed, because a query holds its value until the term is derived, so
+    only a value whose bytes are wiped is accepted. Write any other value
+    into a frame first with `OwnedFrame::of`. `DynamicQuery` takes the
+    value as a third type parameter, `V`, which defaults to `OwnedFrame`.
+    A borrowed `Frame` is queried with no copy.
+  - `Planned` is a target over an `OwnedFrame` or a borrowed `Frame`: a
+    record under a plan encrypts to the stored row, and a query value to
+    its term, from either. `Planned` is `Zeroize` for those two values
+    alone: an owned frame is wiped, and a borrowed one is its owner's to
+    wipe. Before, `Planned` was `Zeroize` for any value that is `Zeroize`,
+    so a bound such as `Planned<P, V, R>: Zeroize` with another `V` no
+    longer holds.
+  - `ValueFrame::from_bytes` returned `FromFrameError::Frame`;
+    `dynamic::FromFrameError` is removed.
+  - `dynamic::Modeled`, `dynamic::Opening` and `dynamic::Children`, the
+    sinks behind `ValueFrame`, are removed. `OwnedFrame::sink()` (from
+    `Decrypt`) is the sink a ciphertext opens into, and it writes the
+    whole value into one buffer.
+  - A zeroized `OwnedFrame` holds the plain null. It used to hold no bytes
+    and walk as an error.
+  - No stored byte, frame byte or wire name changes.
 
 - **The engine no longer keeps its own list of the value types it
   accepts; each index says which kinds it takes** (#1918). What changes:
@@ -1439,7 +1489,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `keyset.decrypt::<OpaqueBlob<T>>(ct)`, for any
   `DeserializeOwned + Default + Zeroize` type, then call `into_inner()`.
   - The value is encoded with version 1 of Vitamin C's storage profile
-    (`vitaminc_aead_frame::storage`). The encoded bytes start with a `VCS`
+    (`recipher_frame::storage`). The encoded bytes start with a `VCS`
     header and a version byte, inside the plaintext. The profile has a
     frozen specification and a golden corpus of test vectors.
   - The encoded bytes are sealed as one bytes leaf of the `SealedValue` v1
@@ -1663,7 +1713,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `KeysetCipher::decrypt_tree`, `StackCipher::decrypt`,
   `PendingStackCipherText::plan`, `seal`, and `into_pending`. A positional
   call does not change. The stored format does not change.
-- `vitaminc-aead-frame` is now always built, with its `serde` feature.
+- `recipher-frame` is now always built, with its `serde` feature.
   Before, it was built only with the `dynamic` feature. The `dynamic`
   feature now adds no dependency.
 - The rustdoc of `stack-encrypt` and `stack-encrypt-derive` states each

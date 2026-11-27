@@ -6,8 +6,13 @@ use std::fmt;
 use serde::de::{self, Deserializer, SeqAccess, Unexpected, Visitor};
 use serde::Deserialize;
 
+use vitaminc_aead::frame::{Frame, OwnedFrame};
+use vitaminc_aead::plaintext::{Encrypt, Logical, Physical};
+
+use super::term::OneScalar;
 use super::{Error, Reason};
-use crate::{ContextPiece, NonEmpty};
+use crate::plan::IntoLabel;
+use crate::{ContextPiece, Label, LabelError, NonEmpty};
 
 /// A context arrives from a binding as a frame and becomes a
 /// [`ContextPiece`] tree: vitaminc's runtime form of a context, and the
@@ -77,7 +82,7 @@ use crate::{ContextPiece, NonEmpty};
 /// use stack_encrypt::{nonempty, AsProtectedRef, IntoAad};
 ///
 /// // `[["users", "age"], 7u64]`, as a binding writes it.
-/// let frame = vitaminc_aead_frame::serde::to_vec(&(("users", "age"), 7u64))?;
+/// let frame = recipher_frame::serde::to_vec(&(("users", "age"), 7u64))?;
 /// let parsed = context(frame.as_protected_ref())?;
 /// let typed = nonempty!("users").with("age").with(7u64);
 /// assert_eq!(
@@ -96,7 +101,7 @@ use crate::{ContextPiece, NonEmpty};
 pub fn context(
     frame: vitaminc_protected::ProtectedRef<'_, [u8]>,
 ) -> Result<NonEmpty<ContextPiece<'static>>, Error> {
-    let Context(piece) = vitaminc_aead_frame::serde::from_slice(frame.risky_ref())
+    let Context(piece) = recipher_frame::serde::from_slice(frame.risky_ref())
         .map_err(|_| Error::bad_context(Reason::ContextKind))?;
     non_empty(piece)
 }
@@ -223,13 +228,54 @@ pub fn borrowed<'b>(piece: &'b ContextPiece<'_>) -> ContextPiece<'b> {
     }
 }
 
+/// A text value read as a plan's context: what a data plan's
+/// `"context_field"` holds (`"tenants/acme"`), parsed as a label
+/// ([`Label::parse`]). Anything else is [`LabelError::NotText`]. The frame
+/// is read in place: a record's context field is read once per sealed
+/// field, and nothing is copied for it.
+impl IntoLabel for Frame<'_> {
+    fn into_label(self) -> Result<Label, LabelError> {
+        self.visit(OneScalar::new(
+            |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
+                (None, Physical::Text(text)) => Ok(Label::parse(text)),
+                _ => Err(None),
+            },
+        ))
+        .unwrap_or(Err(LabelError::NotText))
+    }
+}
+
+/// An owned frame's text, read as [`Frame`]'s is.
+impl IntoLabel for &OwnedFrame {
+    fn into_label(self) -> Result<Label, LabelError> {
+        self.frame().into_label()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::dynamic::test_frame::frame_of;
     use crate::dynamic::test_frame::Tree;
     use crate::{nonempty, Descriptor, IntoAad, IntoPrfContext};
-    use vitaminc_aead_frame::serde::to_vec;
+    use recipher_frame::serde::to_vec;
+
+    fn owned(value: &Tree) -> OwnedFrame {
+        OwnedFrame::of(value).expect("in the model")
+    }
+
+    #[test]
+    fn text_reads_as_a_label_and_nothing_else_does() {
+        let tenant = owned(&Tree::String("tenants/acme".into()));
+        let label = Label::parse("tenants/acme").expect("a label");
+        assert_eq!((&tenant).into_label().expect("a label"), label);
+        assert_eq!(tenant.into_label().expect("a label"), label);
+        assert!(matches!(
+            owned(&Tree::UInt32(7)).into_label(),
+            Err(LabelError::NotText)
+        ));
+        assert!(owned(&Tree::String(String::new())).into_label().is_err());
+    }
     use vitaminc_protected::AsProtectedRef as _;
     use vitaminc_protected::Protected;
 

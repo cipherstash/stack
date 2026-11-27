@@ -27,7 +27,7 @@ use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
 use stack_encrypt::dynamic::{
-    context, query_term, NoTargets, Op, Operand, Reason, ValueFrame, ValueKind,
+    context, frame::OwnedFrame, query_term, NoTargets, Op, Operand, Reason, ValueKind,
 };
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{equality, Borrowed, CallerContext, IndexSpec};
@@ -73,8 +73,8 @@ fn decimal(mantissa: i128, scale: u8) -> Raw<'static> {
 }
 
 /// A value as the engine holds it: its frame.
-fn value(raw: Raw<'_>) -> ValueFrame {
-    ValueFrame::of(raw).expect("in the value model")
+fn value(raw: Raw<'_>) -> OwnedFrame {
+    OwnedFrame::of(raw).expect("in the value model")
 }
 
 /// 2026-10-17T01:02:03.123456789Z, in nanoseconds since the epoch.
@@ -188,12 +188,12 @@ fn data_plan() -> DataPlan {
             )
         })
         .collect();
-    record::plan(object(fields).as_protected_ref()).expect("the data plan parses")
+    record::plan(object(fields).into_buffer().as_protected_ref()).expect("the data plan parses")
 }
 
 /// The source as a binding hands it over: one frame, a map of the fields in
 /// plan order.
-fn source() -> ValueFrame {
+fn source() -> OwnedFrame {
     let mut bytes = vitaminc_protected::Buffer::new();
     {
         let kinds = kinds();
@@ -207,7 +207,7 @@ fn source() -> ValueFrame {
         }
         map.end().expect("ended");
     }
-    ValueFrame::from_bytes(bytes.as_protected_ref()).expect("in the value model")
+    OwnedFrame::from_buffer(bytes).expect("in the value model")
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -222,14 +222,14 @@ fn unhex(text: &str) -> Vec<u8> {
 }
 
 fn frame(raw: Raw<'_>) -> String {
-    hex(value(raw).risky_ref())
+    hex(value(raw).frame().as_bytes())
 }
 
 fn term_bytes(node: StackCipherText) -> Vec<u8> {
     let CipherText::Passthrough(payload) = node else {
         panic!("a term rides as a passthrough");
     };
-    vitaminc_aead_frame::serde::from_slice::<&[u8]>(&payload.0)
+    recipher_frame::serde::from_slice::<&[u8]>(&payload.0)
         .expect("a term is bytes")
         .to_vec()
 }
@@ -318,11 +318,12 @@ async fn open(
         .expect("the record fits")
         .await
         .expect("the lowering opens it")
-        .risky_ref())
+        .frame()
+        .as_bytes())
 }
 
 fn expected_frames() -> String {
-    hex(source().risky_ref())
+    hex(source().frame().as_bytes())
 }
 
 async fn query(
@@ -369,7 +370,7 @@ async fn every_new_kind_seals_opens_and_queries_as_the_typed_path() {
             kind.field
         );
         let ctx = context(
-            vitaminc_aead_frame::serde::to_vec(&("value_kinds", kind.field))
+            recipher_frame::serde::to_vec(&("value_kinds", kind.field))
                 .expect("frames")
                 .as_protected_ref(),
         )

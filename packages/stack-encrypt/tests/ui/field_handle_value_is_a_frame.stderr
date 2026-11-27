@@ -1,0 +1,35 @@
+error[E0277]: the trait bound `std::string::String: stack_encrypt::dynamic::QueryValue` is not satisfied
+ --> tests/ui/field_handle_value_is_a_frame.rs:8:23
+  |
+8 |     let _ = handle.eq(String::from("ada@example.com"));
+  |                    -- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `stack_encrypt::dynamic::QueryValue` is not implemented for `std::string::String`
+  |                    |
+  |                    required by a bound introduced by this call
+  |
+help: the following other types implement trait `stack_encrypt::dynamic::QueryValue`
+ --> src/dynamic/planned.rs
+  |
+  | impl QueryValue for OwnedFrame {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OwnedFrame`
+  | impl sealed::Sealed for &OwnedFrame {}
+  | impl QueryValue for &OwnedFrame {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&OwnedFrame`
+  | impl sealed::Sealed for Frame<'_> {}
+  | impl QueryValue for Frame<'_> {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Frame<'_>`
+note: required by a bound in `FieldHandle::<'p, R>::eq`
+ --> src/dynamic/planned.rs
+  |
+  |               pub fn $method<V: QueryValue>(self, value: V) -> Result<DynamicQuery<'p, R, V>, Error> {
+  |                                 ^^^^^^^^^^ required by this bound in `FieldHandle::<'p, R>::eq`
+...
+  | / handle_methods! {
+  | |     /// Rows whose value equals `value` (`eq`).
+  | |     eq => Eq;
+  | |     -- required by a bound in this associated function
+  | |     /// Rows whose value is below `value` (`lt`).
+... |
+  | |     between => Between;
+  | | }
+  | |_- in this macro invocation
+  = note: this error originates in the macro `handle_methods` (in Nightly builds, run with -Z macro-backtrace for more info)

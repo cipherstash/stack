@@ -116,12 +116,12 @@ pub const LOGICAL: u8 = 0xF3;
 /// written, and refused on read.
 pub const LOGICAL_LONG: u8 = 0xF4;
 
-/// Reserved for the storage profile of `vitaminc-aead-frame`, which marks
+/// Reserved for the storage profile of `recipher-frame`, which marks
 /// an `Option`'s `Some` with it: `STORAGE_SOME`, then the node the `Some`
 /// holds. Never a leaf tag or a transport frame tag, so a frame never holds
 /// one and [`Frame::parse`](crate::Frame::parse) refuses it.
 pub const STORAGE_SOME: u8 = 0xF5;
-/// Reserved for the storage profile of `vitaminc-aead-frame`, which writes
+/// Reserved for the storage profile of `recipher-frame`, which writes
 /// a serde map with it: `STORAGE_MAP`, a `u32` count, then a key node and a
 /// value node for each entry. Never a leaf tag or a transport frame tag.
 pub const STORAGE_MAP: u8 = 0xF6;

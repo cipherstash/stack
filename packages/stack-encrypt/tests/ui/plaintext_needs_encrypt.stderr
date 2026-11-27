@@ -23,12 +23,12 @@ note: there are multiple different versions of crate `vitaminc_aead` in the depe
    = help: the following other types implement trait `Encrypt`:
              &&T
              &BTreeMap<K, V>
+             &Frame<'_>
              &HashMap<K, V>
              &JsonPlaintext
              &Lent<'_, T>
+             &OwnedFrame
              &PassthroughFrame
-             &Protected<T>
-             &ProtectedRef<'_, T>
            and $N others
    = note: required for `CipherText<SealedValue, PassthroughFrame>` to implement `EncryptTarget<SerdeOnly>`
    = note: 1 redundant requirement hidden
@@ -54,12 +54,12 @@ note: there are multiple different versions of crate `vitaminc_aead` in the depe
    = help: the following other types implement trait `Encrypt`:
              &&T
              &BTreeMap<K, V>
+             &Frame<'_>
              &HashMap<K, V>
              &JsonPlaintext
              &Lent<'_, T>
+             &OwnedFrame
              &PassthroughFrame
-             &Protected<T>
-             &ProtectedRef<'_, T>
            and $N others
    = note: required for `SerdeOnly` to implement `EncryptRef`
    = note: required for `CipherText<SealedValue, PassthroughFrame>` to implement `EncryptTarget<SerdeOnly>`

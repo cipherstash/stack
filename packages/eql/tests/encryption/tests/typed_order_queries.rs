@@ -23,7 +23,7 @@ use eql_bindings::v4::text::{
 };
 use eql_bindings::v4::DomainType;
 use serde::Serialize;
-use stack_encrypt::dynamic::{self, record, FieldPlan, Op, Operand, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record, FieldPlan, Op, Operand};
 use stack_encrypt::{ContextPiece, EncryptInto, EncryptTarget, NonEmpty, StackCipher};
 use std::cmp::Ordering;
 use zeroize::Zeroize;
@@ -115,9 +115,9 @@ macro_rules! ranking_columns {
 
         /// The data path's input for the [asked](ASKED) row's value of
         /// `field`.
-        fn asked_input(field: &str) -> ValueFrame {
+        fn asked_input(field: &str) -> OwnedFrame {
             match field {
-                $(stringify!($field) => ValueFrame::of($values[ASKED]).unwrap(),)+
+                $(stringify!($field) => OwnedFrame::of($values[ASKED]).unwrap(),)+
                 other => panic!("no column {other}"),
             }
         }

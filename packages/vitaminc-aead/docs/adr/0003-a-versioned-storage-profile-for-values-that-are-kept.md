@@ -7,7 +7,7 @@ status: accepted
 > **Accepted**, and implemented in cipherstash/vitaminc#520, which closes
 > [cipherstash/vitaminc#519](https://github.com/cipherstash/vitaminc/issues/519).
 > First released in 0.8.1. Version 1 is frozen: CI refuses any change to a
-> corpus row. The format is specified in [`packages/vitaminc-aead-frame/STORAGE.md`](../../../vitaminc-aead-frame/STORAGE.md).
+> corpus row. The format is specified in [`packages/recipher-frame/STORAGE.md`](../../../recipher-frame/STORAGE.md).
 
 Stack Encrypt will seal an `OpaqueBlob<T>` as one ciphertext whose plaintext
 is `T` serialized with Vitamin C's frame machinery. That plaintext is kept,
@@ -20,7 +20,7 @@ transport as it is.
 
 ## Context
 
-The transport serde format (`vitaminc_aead_frame::serde`) has four
+The transport serde format (`recipher_frame::serde`) has four
 properties that are fine in flight and wrong at rest:
 
 - **No version.** A reader cannot tell a blob written under other rules
@@ -37,7 +37,7 @@ properties that are fine in flight and wrong at rest:
 ## Decision
 
 1. **A separate profile with its own entry points.**
-   `vitaminc_aead_frame::storage::{to_vec, from_slice}` write and read a
+   `recipher_frame::storage::{to_vec, from_slice}` write and read a
    blob. They, the blob's bytes, the constants `HEADER`, `MAGIC`,
    `VERSION`, `SOME` and `MAP`, and `ErrorKind` are stable. Everything
    else in the crate stays transport. The profile shares the transport's
@@ -84,7 +84,7 @@ properties that are fine in flight and wrong at rest:
    never drop a version.
 
 7. **A golden corpus that only grows.**
-   [`packages/vitaminc-aead-frame/testdata/storage-v1.json`](../../../vitaminc-aead-frame/testdata/storage-v1.json) describes each value in
+   [`packages/recipher-frame/testdata/storage-v1.json`](../../../recipher-frame/testdata/storage-v1.json) describes each value in
    a language-neutral model and pins its bytes, pins each refusal with its
    class, and pins what a type reads a blob as, for the reading rules that
    go beyond the bytes (a bare value read as `Some`, integer widening, a

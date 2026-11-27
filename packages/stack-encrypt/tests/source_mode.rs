@@ -225,7 +225,7 @@ async fn a_plaintext_that_is_not_clone_derives_a_match_term_alone() {
 #[cfg(feature = "dynamic")]
 #[tokio::test]
 async fn a_value_frame_seals_by_value_through_ciphertext_alone() {
-    use stack_encrypt::dynamic::ValueFrame;
+    use stack_encrypt::dynamic::frame::OwnedFrame;
 
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
@@ -233,7 +233,7 @@ async fn a_value_frame_seals_by_value_through_ciphertext_alone() {
     let sealed: StackCipherText = keyset
         .run(
             ciphertext::<_, _, Owned>(),
-            ValueFrame::of(NUMBER).unwrap(),
+            OwnedFrame::of(NUMBER).unwrap(),
             aead(),
         )
         .await

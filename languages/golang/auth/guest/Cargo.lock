@@ -1514,6 +1514,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "recipher-frame"
+version = "0.10.0"
+dependencies = [
+ "vitaminc-aead 0.10.0",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1838,10 +1845,10 @@ name = "stack-guest-abi"
 version = "0.0.0"
 dependencies = [
  "miette",
+ "recipher-frame",
  "serde_json",
  "thiserror 1.0.69",
  "vitaminc-aead 0.10.0",
- "vitaminc-aead-frame",
  "vitaminc-protected 0.10.0",
  "zeroize",
 ]
@@ -2322,13 +2329,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
-]
-
-[[package]]
-name = "vitaminc-aead-frame"
-version = "0.10.0"
-dependencies = [
- "vitaminc-aead 0.10.0",
 ]
 
 [[package]]

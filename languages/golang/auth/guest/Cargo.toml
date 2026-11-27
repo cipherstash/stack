@@ -69,5 +69,4 @@ strip = true
 # workspace does (see its [patch.crates-io]).
 [patch.crates-io]
 vitaminc-aead = { path = "../../../../packages/vitaminc-aead" }
-vitaminc-aead-frame = { path = "../../../../packages/vitaminc-aead-frame" }
 vitaminc-aead-derive = { path = "../../../../packages/vitaminc-aead-derive" }

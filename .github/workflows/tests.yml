@@ -112,7 +112,7 @@ jobs:
               - '!packages/stack-kms/**'
               - '!packages/stack-guest-abi/**'
               - '!packages/vitaminc-aead/**'
-              - '!packages/vitaminc-aead-frame/**'
+              - '!packages/recipher-frame/**'
               - '!packages/vitaminc-aead-derive/**'
               - '!packages/stack-auth/fuzz/**'
               # The TypeScript SDK on Stack Encrypt. Nothing these jobs build

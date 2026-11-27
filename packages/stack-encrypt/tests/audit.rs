@@ -518,7 +518,7 @@ async fn a_derived_record_sends_its_metadata() {
 #[cfg(feature = "dynamic")]
 mod dynamic_path {
     use serde_json::json;
-    use stack_encrypt::dynamic::{record, ValueFrame};
+    use stack_encrypt::dynamic::{frame::OwnedFrame, record};
     use stack_encrypt::AsProtectedRef as _;
 
     use super::{cipher, list_issues, list_issues_json, Call};
@@ -526,18 +526,18 @@ mod dynamic_path {
     #[tokio::test]
     async fn a_dynamic_record_sends_its_metadata() {
         let (cipher, source) = cipher().await;
-        let plan = vitaminc_aead_frame::serde::to_vec(&json!({
+        let plan = recipher_frame::serde::to_vec(&json!({
             "email": { "context": ["users", "email"], "outputs": ["c", "eq"], "type": "string" },
             "notes": { "context": ["users", "notes"], "outputs": ["c"], "type": "string" },
         }))
         .expect("the plan is a frame");
         let plan = record::plan(plan.as_protected_ref()).expect("the plan parses");
-        let user = vitaminc_aead_frame::serde::to_vec(&json!({
+        let user = recipher_frame::serde::to_vec(&json!({
             "email": "bob@example.com",
             "notes": "likes cats",
         }))
         .expect("the record is a frame");
-        let user = ValueFrame::from_bytes(user.as_protected_ref()).expect("the record is a value");
+        let user = OwnedFrame::from_buffer(user).expect("the record is a value");
 
         let sealed = record::encrypt(&cipher.default_keyset(), user, &plan)
             .expect("the record fits the plan")

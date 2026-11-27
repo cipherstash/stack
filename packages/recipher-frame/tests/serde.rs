@@ -5,11 +5,11 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use recipher_frame::serde::{self as transport, from_slice, Error, PathSegment};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
 use vitaminc_aead::plaintext::{Int, Logical, MapSink, Physical, Raw, Sink};
 use vitaminc_aead::{Encrypt, FrameWriter};
-use vitaminc_aead_frame::serde::{self as transport, from_slice, Error, PathSegment};
 use vitaminc_protected::{Buffer, Controlled};
 
 /// Write `value`, and take the frame out of its `Buffer`.
@@ -378,7 +378,7 @@ fn errors_never_echo_a_value_and_carry_the_path() {
 #[test]
 fn a_repeated_key_is_refused() {
     let mut bytes = Vec::new();
-    bytes.push(vitaminc_aead_frame::OBJECT);
+    bytes.push(recipher_frame::OBJECT);
     bytes.extend_from_slice(&2u32.to_le_bytes());
     for _ in 0..2 {
         bytes.extend_from_slice(&1u32.to_le_bytes());

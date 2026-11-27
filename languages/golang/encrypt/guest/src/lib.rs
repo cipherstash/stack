@@ -83,7 +83,7 @@
 //! On wasm32 `vitaminc-encrypt` uses its pure-Rust (RustCrypto `aes-gcm`)
 //! backend; the trade-offs are documented there. Values cross the boundary
 //! as vitaminc transport frames and ciphertext trees in vitaminc's
-//! ciphertext codec (`vitaminc_aead_frame` — FFI encodings, not a storage
+//! ciphertext codec (`recipher_frame` — FFI encodings, not a storage
 //! format); the leaves inside a ciphertext tree are
 //! the *frozen* `SealedValue` byte encoding from Phase 2, so a leaf lifted
 //! out of a tree is exactly what a database column holds.

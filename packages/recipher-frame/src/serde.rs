@@ -113,10 +113,10 @@
 //! }
 //!
 //! let options = Options { keyset: Keyset::Name("acme".into()), context: None };
-//! let bytes = vitaminc_aead_frame::serde::to_vec(&options)?;
-//! let back: Options = vitaminc_aead_frame::serde::from_slice(bytes.risky_ref())?;
+//! let bytes = recipher_frame::serde::to_vec(&options)?;
+//! let back: Options = recipher_frame::serde::from_slice(bytes.risky_ref())?;
 //! assert_eq!(back, options);
-//! # Ok::<(), vitaminc_aead_frame::serde::Error>(())
+//! # Ok::<(), recipher_frame::serde::Error>(())
 //! ```
 //!
 //! # Memory

@@ -35,7 +35,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
 
 use eql_bindings::encryption::targets;
-use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::{Label, Pending, StackCipher};
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,
@@ -187,8 +187,8 @@ fn marked(tail: &str) -> String {
     format!("{}-{tail}", std::str::from_utf8(MARK).unwrap())
 }
 
-fn text(value: &str) -> ValueFrame {
-    ValueFrame::of(value).unwrap()
+fn text(value: &str) -> OwnedFrame {
+    OwnedFrame::of(value).unwrap()
 }
 
 /// Every index the target carries, each of which a query may be asked
@@ -240,7 +240,7 @@ fn a_text_target_leaves_no_plaintext_on_the_heap() {
         let plaintext = text(&marked("stored"));
         let stored = watched(&format!("{name} encrypt"), || {
             rt.block_on(async {
-                targets::encrypt(name, &keyset, &label, plaintext)
+                targets::encrypt(name, &keyset, &label, plaintext.frame())
                     .unwrap()
                     .await
                     .unwrap()
@@ -254,7 +254,8 @@ fn a_text_target_leaves_no_plaintext_on_the_heap() {
                     .unwrap()
             });
             assert!(opened
-                .risky_ref()
+                .frame()
+                .as_bytes()
                 .windows(MARK.len())
                 .any(|window| window == MARK));
             drop(opened);
@@ -275,7 +276,7 @@ fn a_text_target_leaves_no_plaintext_on_the_heap() {
             let query = text(&marked("query"));
             watched(&format!("{name} query through {}", index.key()), || {
                 rt.block_on(async {
-                    targets::query(name, &index, &keyset, &label, query)
+                    targets::query(name, &index, &keyset, &label, query.frame())
                         .unwrap()
                         .await
                         .unwrap()
@@ -319,7 +320,7 @@ fn a_text_target_whose_plaintext_grows_leaves_no_plaintext_on_the_heap() {
         let plaintext = text(&growing("stored"));
         let stored = watched(&format!("{name} encrypt (growing)"), || {
             rt.block_on(async {
-                targets::encrypt(name, &keyset, &label, plaintext)
+                targets::encrypt(name, &keyset, &label, plaintext.frame())
                     .unwrap()
                     .await
                     .unwrap()
@@ -343,7 +344,7 @@ fn a_text_target_whose_plaintext_grows_leaves_no_plaintext_on_the_heap() {
                 &format!("{name} query through {} (growing)", index.key()),
                 || {
                     rt.block_on(async {
-                        targets::query(name, &index, &keyset, &label, query)
+                        targets::query(name, &index, &keyset, &label, query.frame())
                             .unwrap()
                             .await
                             .unwrap()
@@ -378,29 +379,31 @@ fn a_refused_or_failed_text_target_leaves_no_plaintext_on_the_heap() {
     for target in text_targets() {
         let name = target.name;
         // Bytes, where the type stores text.
-        let bytes = ValueFrame::of(marked("bytes").into_bytes()).unwrap();
+        let bytes = OwnedFrame::of(marked("bytes").into_bytes()).unwrap();
         watched(
             &format!("{name} encrypt, a plaintext of another kind"),
             || {
-                assert!(targets::encrypt(name, &keyset, &label, bytes).is_err());
+                assert!(targets::encrypt(name, &keyset, &label, bytes.frame()).is_err());
             },
         );
         if target.query.is_some() {
             for index in indexes_of(target) {
-                let bytes = ValueFrame::of(marked("bytes").into_bytes()).unwrap();
+                let bytes = OwnedFrame::of(marked("bytes").into_bytes()).unwrap();
                 watched(
                     &format!(
                         "{name} query through {}, a plaintext of another kind",
                         index.key()
                     ),
                     || {
-                        assert!(targets::query(name, &index, &keyset, &label, bytes).is_err());
+                        assert!(
+                            targets::query(name, &index, &keyset, &label, bytes.frame()).is_err()
+                        );
                     },
                 );
             }
         }
         let stored = rt.block_on(async {
-            targets::encrypt(name, &keyset, &label, text(&marked("stored")))
+            targets::encrypt(name, &keyset, &label, text(&marked("stored")).frame())
                 .unwrap()
                 .await
                 .unwrap()
@@ -508,7 +511,7 @@ fn a_cancelled_text_target_leaves_no_plaintext_on_the_heap() {
     for target in text_targets() {
         let name = target.name;
         let stored = rt.block_on(async {
-            targets::encrypt(name, &keyset, &label, text(&marked("stored")))
+            targets::encrypt(name, &keyset, &label, text(&marked("stored")).frame())
                 .unwrap()
                 .await
                 .unwrap()
@@ -518,13 +521,13 @@ fn a_cancelled_text_target_leaves_no_plaintext_on_the_heap() {
 
         let plaintext = text(&marked("unpolled"));
         watched(&format!("{name} encrypt, dropped unpolled"), || {
-            drop(targets::encrypt(name, &keyset, &label, plaintext).unwrap());
+            drop(targets::encrypt(name, &keyset, &label, plaintext.frame()).unwrap());
         });
         assert_eq!(requests.load(Ordering::SeqCst), 0, "no key was requested");
 
         let plaintext = text(&marked("in-flight"));
         watched(&format!("{name} encrypt, dropped in flight"), || {
-            let pending = targets::encrypt(name, &keyset, &label, plaintext).unwrap();
+            let pending = targets::encrypt(name, &keyset, &label, plaintext.frame()).unwrap();
             assert!(poll_then_drop(pending).is_none(), "the request stalls");
         });
         assert_eq!(requests.load(Ordering::SeqCst), 1, "one request in flight");
@@ -541,13 +544,14 @@ fn a_cancelled_text_target_leaves_no_plaintext_on_the_heap() {
                 let query = text(&marked("unpolled-query"));
                 watched(
                     &format!("{name} query through {}, dropped unpolled", index.key()),
-                    || drop(targets::query(name, &index, &keyset, &label, query).unwrap()),
+                    || drop(targets::query(name, &index, &keyset, &label, query.frame()).unwrap()),
                 );
                 let query = text(&marked("in-flight-query"));
                 watched(
                     &format!("{name} query through {}, polled once", index.key()),
                     || {
-                        let pending = targets::query(name, &index, &keyset, &label, query).unwrap();
+                        let pending =
+                            targets::query(name, &index, &keyset, &label, query.frame()).unwrap();
                         // A query term needs the index key alone, which
                         // the cipher loaded when it was built, so it has
                         // no key request to wait on and finishes here.
@@ -561,7 +565,7 @@ fn a_cancelled_text_target_leaves_no_plaintext_on_the_heap() {
     // The source is not poisoned: the same work runs once keys arrive.
     let name = text_targets()[0].name;
     rt.block_on(async {
-        targets::encrypt(name, &keyset, &label, text("after"))
+        targets::encrypt(name, &keyset, &label, text("after").frame())
             .unwrap()
             .await
             .unwrap()
@@ -751,11 +755,11 @@ mod owned_seals {
             &marked("in-array"),
             r#"\n"]}"#,
         ]);
-        let frame = ValueFrame::of(text.as_str()).unwrap();
+        let frame = OwnedFrame::of(text.as_str()).unwrap();
         drop(text);
         watched("JsonSearch, encrypt", || {
             rt.block_on(async {
-                targets::encrypt("JsonSearch", &keyset, &label, frame)
+                targets::encrypt("JsonSearch", &keyset, &label, frame.frame())
                     .unwrap()
                     .await
                     .unwrap()
