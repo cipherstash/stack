@@ -19,8 +19,28 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   opens as a UUID, sixteen bytes under vitaminc's UUID logical type. It
   takes an equality index and no order or match index. Its value is a
   `vcvalue.UUID`, or a value of any type whose underlying type is
-  `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
-  one. `stashgen` does not yet map a Go type to it.
+  `[16]byte` (`github.com/google/uuid.UUID`, say). Such a value is
+  converted to a `vcvalue.UUID`. `stashgen` does not yet map a Go type to it.
+
+### Fixed
+
+- Errors no longer contain the values of an encryption context, as the
+  `Diagnostic` doc comment and the README's "Errors" section promise. A
+  context value can be a tenant or customer identifier, so it reached any
+  log that recorded the error. The text of these errors changed:
+  - `ErrContextMismatch` from Encrypt through `Cipher.Context`. It still
+    names the row and the context field, and now says only that the
+    field does not match the cipher's context. It used to quote both
+    values.
+  - `ErrEncoding` when a cipher with a `Context` is used for a type with
+    a `context=` tag. It no longer quotes the cipher's context.
+  - `ErrEncoding` when `Cipher.Context` is given a label that is not
+    plain. It names the segment by its index, and no longer quotes the
+    label.
+  - The refusal of an EQL field whose context has more than one segment.
+    It gives the number of segments, and no longer quotes the context.
+
+  Match these errors with `errors.Is`, not by their text.
 
 ## [0.1.0-rc.7] - 2026-11-25
 
