@@ -458,3 +458,76 @@ mod tests {
             .expect("matching workspace should pass");
     }
 }
+
+/// The calls a host with no background task makes to refresh ahead of
+/// expiry.
+#[cfg(test)]
+#[cfg(feature = "http")]
+mod host_refresh_tests {
+    use super::*;
+    use crate::test_support::raw_token;
+    use mocktail::prelude::*;
+
+    #[allow(clippy::expect_used)]
+    async fn session(issues: bool) -> (MockServer, DeviceSessionStrategy) {
+        let mut mocks = MockSet::new();
+        mocks.mock(move |when, then| {
+            when.post().path("/oauth/token");
+            if issues {
+                then.json(serde_json::json!({
+                    "access_token": "refreshed",
+                    "token_type": "Bearer",
+                    "expires_in": 3600,
+                    "refresh_token": "refresh-2",
+                }));
+            } else {
+                then.internal_server_error();
+            }
+        });
+        let server = MockServer::new_http("device-session-host-refresh").with_mocks(mocks);
+        server.start().await.expect("mock server start");
+        let region = Region::aws("ap-southeast-2").expect("valid region");
+        let strategy = DeviceSessionStrategy::with_token(region, "my-client", raw_token("current"))
+            .base_url(server.url(""))
+            .build()
+            .expect("build");
+        (server, strategy)
+    }
+
+    #[tokio::test]
+    #[allow(clippy::expect_used)]
+    async fn a_used_tokens_refresh_is_due() {
+        let (_server, strategy) = session(true).await;
+        assert_eq!(
+            strategy.next_refresh().await,
+            NextRefresh::Idle,
+            "not used yet"
+        );
+        let _ = (&strategy).get_token().await.expect("get_token");
+        assert!(matches!(strategy.next_refresh().await, NextRefresh::At(_)));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::expect_used)]
+    async fn refresh_now_refreshes_and_reports_a_failure() {
+        let (_server, strategy) = session(true).await;
+        strategy
+            .refresh_now()
+            .await
+            .expect("a refresh that succeeds");
+        let token = (&strategy).get_token().await.expect("get_token");
+        assert_eq!(token.as_str(), "refreshed");
+
+        let (_server, strategy) = session(false).await;
+        assert!(strategy.refresh_now().await.is_err(), "a server fault");
+    }
+
+    #[tokio::test]
+    async fn a_host_driver_is_attached_while_it_lives() {
+        let (_server, strategy) = session(true).await;
+        let driver = strategy.drive_refresh();
+        assert_eq!(strategy.inner.drivers_attached(), 1);
+        drop(driver);
+        assert_eq!(strategy.inner.drivers_attached(), 0);
+    }
+}

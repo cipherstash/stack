@@ -400,6 +400,13 @@ impl<R, S> AutoRefresh<R, S> {
         &self.shared.refresher
     }
 
+    /// How many drivers are attached: the background task and each live
+    /// [`RefreshDriver`].
+    #[cfg(test)]
+    pub(crate) fn drivers_attached(&self) -> usize {
+        self.shared.driver.attached.load(Ordering::Acquire)
+    }
+
     /// No background task: a caller starts each refresh, as on wasm32 with
     /// no host driving it. For the tests of that path on a native target.
     #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -546,9 +553,6 @@ impl<R: Refresher, S: TokenStore> RefreshState<R, S> {
                 state.token = loaded;
             }
         }
-        if state.token.is_none() {
-            return Err(AutoRefreshError::NotFound);
-        }
         let now = self.clock.now_unix_secs();
         state.observe_token(now);
         if self.refresh_in_progress.load(Ordering::Acquire) {
@@ -557,7 +561,12 @@ impl<R: Refresher, S: TokenStore> RefreshState<R, S> {
         if let Some(err) = state.fresh_denial(now) {
             return Err(AutoRefreshError::Auth(err));
         }
+        // With no token yet this is the first exchange, for a strategy
+        // that can make one.
         let Some(credential) = self.refresher.try_credential(state.token.as_mut()) else {
+            if state.token.is_none() {
+                return Err(AutoRefreshError::NotFound);
+            }
             state.schedule.cannot_refresh();
             return Ok(());
         };
@@ -568,21 +577,21 @@ impl<R: Refresher, S: TokenStore> RefreshState<R, S> {
         }
     }
 
-    /// Refresh if the plan says one is due. Returns whether an attempt ran.
+    /// Refresh if the plan says one is due: it may have moved on since the
+    /// background task read it.
     #[cfg(not(target_arch = "wasm32"))]
-    async fn refresh_if_due(self: &Arc<Self>) -> bool {
+    async fn refresh_if_due(self: &Arc<Self>) {
         let due = {
             let mut state = self.state.lock().await;
             let now = self.clock.now_unix_secs();
             state.observe_token(now);
             matches!(state.schedule.next(), NextRefresh::At(at) if at <= now)
         };
-        if !due || self.refresh_in_progress.load(Ordering::Acquire) {
-            return false;
+        if due {
+            // The outcome is recorded in the plan; there is no caller to
+            // tell. A refresh already in flight is left to finish.
+            let _ = self.refresh_now().await;
         }
-        // The outcome is recorded in the plan; there is no caller to tell.
-        let _ = self.refresh_now().await;
-        true
     }
 
     /// Start the background task that refreshes ahead of expiry, once, on
@@ -627,29 +636,24 @@ impl<R: Refresher, S: TokenStore> RefreshState<R, S> {
                 let next = strategy.state.lock().await.schedule.next();
                 (next, strategy.clock.now_unix_secs())
             };
-            match next {
-                NextRefresh::Idle => wake.await,
-                NextRefresh::At(at) if at > now => {
-                    tokio::select! {
-                        () = tokio::time::sleep(Duration::from_secs(at - now)) => {}
-                        () = wake => {}
-                    }
-                }
-                NextRefresh::At(_) => {
-                    let Some(strategy) = strategy.upgrade() else {
-                        return;
-                    };
-                    if !strategy.refresh_if_due().await {
-                        // A caller's refresh is in flight, or the plan moved
-                        // on: look again shortly.
-                        drop(strategy);
-                        tokio::select! {
-                            () = tokio::time::sleep(Duration::from_secs(1)) => {}
-                            () = wake => {}
-                        }
-                    }
-                }
+            let NextRefresh::At(at) = next else {
+                wake.await;
+                continue;
+            };
+            // Until the refresh is due, unless a use or the drop of the
+            // strategy wakes the task to read the plan again.
+            tokio::select! {
+                () = tokio::time::sleep(Duration::from_secs(at.saturating_sub(now))) => {}
+                () = wake => continue,
             }
+            let Some(strategy) = strategy.upgrade() else {
+                return;
+            };
+            strategy.refresh_if_due().await;
+            drop(strategy);
+            // At least a second between attempts, so a plan that stays due
+            // (a caller's refresh still in flight, say) cannot spin.
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
 

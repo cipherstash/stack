@@ -297,6 +297,87 @@ mod tests {
         assert_eq!(due(&plan), 1_850);
     }
 
+    /// The generator is SplitMix64: its first outputs from two seeds, as
+    /// the reference algorithm gives them.
+    #[test]
+    fn the_jitter_generator_is_splitmix64() {
+        let mut zero = SplitMix64(0);
+        assert_eq!(
+            [zero.next(), zero.next(), zero.next()],
+            [
+                0xe220_a839_7b1d_cdaf,
+                0x6e78_9e6a_a1b9_65f4,
+                0x06c4_5d18_8009_454f
+            ]
+        );
+        let mut other = SplitMix64(1_234_567);
+        assert_eq!(
+            [other.next(), other.next()],
+            [0x599e_d017_fb08_fc85, 0x2c73_f084_5854_0fa5]
+        );
+    }
+
+    /// Plans made with `new` draw different jitter, so processes, and
+    /// strategies in one process, do not refresh in step.
+    #[test]
+    fn new_plans_draw_different_jitter() {
+        let times: std::collections::HashSet<u64> = (0..64)
+            .map(|_| {
+                let mut plan = RefreshSchedule::new();
+                plan.observe(&token(10_000), 1_000);
+                plan.used();
+                due(&plan)
+            })
+            .collect();
+        assert!(times.len() > 8, "only {} distinct times", times.len());
+    }
+
+    /// A token with little life left is refreshed half way through it,
+    /// not at once.
+    #[test]
+    fn a_short_lived_token_is_due_half_way() {
+        for seed in 0..64 {
+            let mut plan = RefreshSchedule::with_seed(seed);
+            plan.observe(&token(1_060), 1_000);
+            plan.used();
+            assert_eq!(due(&plan), 1_030);
+        }
+    }
+
+    /// The jitter covers the whole window, from REFRESH_AHEAD_SECS to
+    /// REFRESH_AHEAD_SECS - REFRESH_JITTER_SECS before expiry.
+    #[test]
+    fn the_jitter_covers_its_whole_window() {
+        let offsets: std::collections::BTreeSet<u64> = (0..2_000)
+            .map(|seed| {
+                let mut plan = RefreshSchedule::with_seed(seed);
+                plan.observe(&token(10_000), 1_000);
+                plan.used();
+                10_000 - due(&plan)
+            })
+            .collect();
+        let window: std::collections::BTreeSet<u64> =
+            (REFRESH_AHEAD_SECS - REFRESH_JITTER_SECS..=REFRESH_AHEAD_SECS).collect();
+        assert_eq!(offsets, window);
+    }
+
+    /// Each wait is chosen from the whole of its range: after a third
+    /// failure, two to four seconds.
+    #[test]
+    fn a_backoff_wait_covers_its_whole_range() {
+        let waits: std::collections::BTreeSet<u64> = (0..500)
+            .map(|seed| {
+                let mut plan = RefreshSchedule::with_seed(seed);
+                plan.observe(&token(10_000), 1_000);
+                for _ in 0..3 {
+                    plan.attempt_failed(2_000, 0);
+                }
+                plan.retry_at.unwrap() - 2_000
+            })
+            .collect();
+        assert_eq!(waits, (2..=4).collect());
+    }
+
     #[test]
     fn a_clock_that_goes_back_ends_the_backoff() {
         let mut plan = RefreshSchedule::with_seed(1);

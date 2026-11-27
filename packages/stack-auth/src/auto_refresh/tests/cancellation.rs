@@ -13,6 +13,15 @@ use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 
+/// A gate's wait, bounded: a refresh that never reaches the gate fails
+/// the test instead of hanging it. Time is paused, so the bound passes as
+/// soon as nothing else can run.
+async fn within<F: std::future::Future>(gate: F) -> F::Output {
+    tokio::time::timeout(Duration::from_secs(600), gate)
+        .await
+        .expect("the refresh never reached this gate")
+}
+
 fn token(generation: usize, expires_at: u64) -> Token {
     Token {
         access_token: SecretToken::new(format!("access-{generation}")),
@@ -145,14 +154,14 @@ async fn cancelled_at(phase: Phase, usable: bool, initial: bool) {
         let strategy = strategy.clone();
         async move { strategy.get_token().await }
     });
-    issuer.started.notified().await;
+    within(issuer.started.notified()).await;
     if !matches!(phase, Phase::Exchange) {
         issuer.exchange.add_permits(1);
-        issuer.answered.notified().await;
+        within(issuer.answered.notified()).await;
     }
     if matches!(phase, Phase::SaveStore | Phase::Install) {
         issuer.persist.add_permits(1);
-        store.entered.notified().await;
+        within(store.entered.notified()).await;
     }
     // Only the non-blocking path releases the state lock during the exchange.
     let held = if matches!(phase, Phase::Install) {
@@ -250,7 +259,7 @@ async fn cancelled_failed_refresh_restores_the_credential_for_retry() {
             let strategy = strategy.clone();
             async move { strategy.get_token().await }
         });
-        issuer.started.notified().await;
+        within(issuer.started.notified()).await;
         caller.abort();
         assert!(caller.await.unwrap_err().is_cancelled());
         issuer.exchange.add_permits(1);
@@ -278,9 +287,9 @@ async fn rotation_is_saved_even_after_all_callers_drop_the_strategy() {
         .call_driven(),
     );
     let caller = tokio::spawn(async move { strategy.get_token().await });
-    issuer.started.notified().await;
+    within(issuer.started.notified()).await;
     issuer.exchange.add_permits(1);
-    issuer.answered.notified().await;
+    within(issuer.answered.notified()).await;
     caller.abort();
     assert!(caller.await.unwrap_err().is_cancelled());
     issuer.persist.add_permits(1);
@@ -310,7 +319,7 @@ async fn a_panicking_refresh_reports_an_error_and_releases_waiters() {
         let strategy = strategy.clone();
         async move { strategy.get_token().await }
     });
-    issuer.started.notified().await;
+    within(issuer.started.notified()).await;
     clock.advance(31);
     let waiter = tokio::spawn({
         let strategy = strategy.clone();

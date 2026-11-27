@@ -278,6 +278,8 @@ async fn dropping_the_strategy_stops_its_background_refresh() {
     let now = clock.now_unix_secs();
     let strategy = strategy(&issuer, &clock, Some(token("current", now + 900)));
     strategy.get_token().await.unwrap();
+    // Used again, so the task sleeps until the refresh is due, minutes away.
+    strategy.get_token().await.unwrap();
 
     drop(strategy);
     sleep(Duration::from_secs(1)).await;
@@ -288,4 +290,102 @@ async fn dropping_the_strategy_stops_its_background_refresh() {
     );
     sleep(Duration::from_secs(10 * 900)).await;
     assert_eq!(issuer.calls(), 0);
+}
+
+/// A runtime that ends takes the background task with it; a call on the
+/// next runtime starts another, rather than the strategy believing one
+/// still runs.
+#[test]
+fn a_call_on_a_new_runtime_starts_a_new_background_task() {
+    let runtime = || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    };
+    let clock: SharedClock = Arc::new(crate::clock::SystemClock);
+    let issuer = Issuer::new(0, false);
+    let now = clock.now_unix_secs();
+    let strategy = strategy(&issuer, &clock, Some(token("current", now + 900)));
+
+    let first = runtime();
+    first.block_on(strategy.get_token()).unwrap();
+    assert_eq!(strategy.drivers_attached(), 1);
+    drop(first);
+    assert_eq!(
+        strategy.drivers_attached(),
+        0,
+        "the task ended with its runtime"
+    );
+
+    let second = runtime();
+    second.block_on(strategy.get_token()).unwrap();
+    assert_eq!(
+        strategy.drivers_attached(),
+        1,
+        "the next call started another"
+    );
+}
+
+/// A host's driver shows nothing of the strategy it drives.
+#[test]
+fn a_refresh_driver_debugs_opaquely() {
+    let clock = Arc::new(crate::clock::SystemClock) as SharedClock;
+    let issuer = Issuer::new(0, false);
+    let strategy = strategy(&issuer, &clock, None);
+    assert_eq!(
+        format!("{:?}", strategy.drive_refresh()),
+        "RefreshDriver { .. }"
+    );
+}
+
+/// Dropping the strategy wakes its background task, which ends at once
+/// rather than when its refresh would have been due, minutes later. On the
+/// wall clock: a paused one would move to that time as soon as the test
+/// waited.
+#[tokio::test]
+async fn dropping_the_strategy_ends_its_background_task_at_once() {
+    let clock: SharedClock = Arc::new(crate::clock::SystemClock);
+    let issuer = Issuer::new(0, false);
+    let now = clock.now_unix_secs();
+    let strategy = strategy(&issuer, &clock, Some(token("current", now + 900)));
+    strategy.get_token().await.unwrap();
+    strategy.get_token().await.unwrap();
+    let control = Arc::clone(&strategy.shared.driver);
+    assert_eq!(control.attached.load(Ordering::Acquire), 1);
+    // Let the task run until it sleeps on the refresh's due time.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    drop(strategy);
+    timeout(Duration::from_secs(5), async {
+        while control.attached.load(Ordering::Acquire) != 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the background task outlived its strategy");
+}
+
+/// The task sleeps until the refresh it read was due. A refresh made
+/// meanwhile, by a host's `refresh_now` here, moves the plan on, and the
+/// task does not repeat it when the old time comes.
+#[tokio::test(start_paused = true)]
+async fn a_refresh_made_before_the_task_wakes_is_not_repeated() {
+    let clock = clock();
+    let issuer = Issuer::new(0, false);
+    let now = clock.now_unix_secs();
+    let strategy = strategy(&issuer, &clock, Some(token("current", now + 900)));
+    strategy.get_token().await.unwrap();
+    strategy.get_token().await.unwrap();
+
+    sleep(Duration::from_secs(600)).await;
+    strategy.refresh_now().await.unwrap();
+    assert_eq!(issuer.calls(), 1);
+
+    sleep(Duration::from_secs(300)).await;
+    assert_eq!(
+        issuer.calls(),
+        1,
+        "the task refreshed again at its old time"
+    );
 }
