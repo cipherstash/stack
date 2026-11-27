@@ -68,7 +68,7 @@ The encoded string is one tag byte and then the text.
 
 - A string of 15 bytes or fewer fits in one block, and stays whole.
 - For a longer string, only a last block shorter than 16 bytes stays. That is the last (length + 1) mod 16 bytes of the text.
-- Nothing stays when the length is 31, 47, 63, or any other length where length + 1 is a multiple of 16.
+- For a string longer than 15 bytes, nothing stays when length + 1 is a multiple of 16. Examples are 31, 47, and 63 bytes.
 
 The next `Encrypt` or `Decrypt` overwrites it.
 
