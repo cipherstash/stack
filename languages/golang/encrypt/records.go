@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 
 	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
@@ -323,9 +324,43 @@ func sourceRow(p *record.Plan, row record.Source) (frame.Object, error) {
 		if !ok {
 			return nil, sourceDiagnostic("field_missing", f.Name, fmt.Sprintf("no value for field %q", f.Name))
 		}
+		if f.Kind == record.Untyped && nilEncryptable(v) {
+			// The codec writes a nil Encryptable as the one-byte null, and
+			// a field with no declared type gives the engine no width to
+			// pad it to, so its length would show it is a null.
+			return nil, sourceDiagnostic("field_type", f.Name, fmt.Sprintf("field %q has no declared type, so a nil %T would be stored shorter than a value; declare the field's type", f.Name, v))
+		}
 		out = append(out, frame.Field{Key: f.Name, Value: v})
 	}
 	return out, nil
+}
+
+// encryptableType is Encryptable's reflect.Type.
+var encryptableType = reflect.TypeFor[Encryptable]()
+
+// nilEncryptable reports whether v is a nil pointer, through any number of
+// pointers, to a type the codec writes through its EncryptValue: what the
+// codec writes as the one-byte null whatever the type writes for a value.
+func nilEncryptable(v any) bool {
+	rv := reflect.ValueOf(v)
+	for depth := 0; rv.IsValid() && rv.Kind() == reflect.Pointer && depth < 128; depth++ {
+		if !rv.IsNil() {
+			rv = rv.Elem()
+			continue
+		}
+		t := rv.Type()
+		for range 128 {
+			if t.Implements(encryptableType) {
+				return true
+			}
+			if t.Kind() != reflect.Pointer {
+				return false
+			}
+			t = t.Elem()
+		}
+		return false
+	}
+	return false
 }
 
 // sealedOf lifts one decoded record node into the per-field outputs.

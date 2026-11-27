@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,5 +202,58 @@ func TestQueryTermReadsATypedNilAsANull(t *testing.T) {
 		if !errors.Is(err, encrypt.ErrEncoding) || !errors.As(err, &d) || d.Field() != tc.field || d.Reason() != "null_query" {
 			t.Fatalf("%s: %v; want ErrEncoding naming %q with reason null_query", name, err, tc.field)
 		}
+	}
+}
+
+// cents writes itself as an int64 count of cents: a value nine bytes long.
+type cents int64
+
+func (c cents) EncryptValue(enc encrypt.Encoder) error {
+	enc.Int64(int64(c))
+	return nil
+}
+
+// A nil pointer to an Encryptable is written as the one-byte null, and a
+// field with no declared type gives the engine no width to pad it to. So
+// Seal refuses one there, before anything is sent, rather than store a
+// null shorter than every value. A field that declares its type pads it, a
+// nil pointer to a built-in fixed-width type is a typed null, and a present
+// value is written as itself, so none of those is refused.
+func TestSealRefusesANilEncryptableOnAFieldWithNoType(t *testing.T) {
+	c := deterministicClient(t)
+	ctx := context.Background()
+	cipher := c.DefaultKeyset()
+	untyped := &record.Plan{Context: []string{"typed_nil"}, Fields: []record.Field{
+		{Name: "v", Outputs: []record.Output{record.Ciphertext}},
+	}}
+	for name, v := range map[string]any{
+		"*cents":  (*cents)(nil),
+		"**cents": (**cents)(nil),
+		"&nil":    func() any { var p *cents; return &p }(),
+	} {
+		_, err := cipher.Seal(ctx, untyped, []record.Source{{"v": v}})
+		if !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "no declared type") {
+			t.Errorf("%s: Seal returned %v; want ErrEncoding for a nil Encryptable with no type", name, err)
+		}
+	}
+	for name, v := range map[string]any{
+		"a value":          cents(150),
+		"a pointer to one": func() any { c := cents(150); return &c }(),
+		"a nil *int64":     (*int64)(nil),
+		"nil":              nil,
+	} {
+		if _, err := cipher.Seal(ctx, untyped, []record.Source{{"v": v}}); err != nil && strings.Contains(err.Error(), "no declared type") {
+			t.Errorf("%s: refused as a nil Encryptable: %v", name, err)
+		}
+	}
+	typed := &record.Plan{Context: []string{"typed_nil"}, Fields: []record.Field{
+		{Name: "v", Kind: record.Int64, Outputs: []record.Output{record.Ciphertext}, Null: record.SealedNull},
+	}}
+	sealed, err := cipher.Seal(ctx, typed, []record.Source{{"v": (*cents)(nil)}, {"v": cents(150)}})
+	if err != nil {
+		t.Fatalf("a nil Encryptable on a typed field: %v", err)
+	}
+	if len(sealed[0]["v"].Ciphertext) != len(sealed[1]["v"].Ciphertext) {
+		t.Fatalf("on a typed field a nil Encryptable seals to %d bytes, a value to %d", len(sealed[0]["v"].Ciphertext), len(sealed[1]["v"].Ciphertext))
 	}
 }
