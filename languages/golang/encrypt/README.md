@@ -60,7 +60,7 @@ The package reference is on [pkg.go.dev]; the generator's reference is
    	return err
    }
    defer client.Close()
-   cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
+   cipher := client.Keyset(encrypt.KeysetName("tenant42"))
 
    encrypted, err := users.Encrypt(ctx, cipher, people)
    opened, err := users.Decrypt(ctx, cipher, encrypted)
@@ -203,12 +203,12 @@ A `Cipher` is the client bound to one keyset, and to any extension of the
 context. Every generated function takes one.
 
 ```go
-cipher := client.Keyset(encrypt.KeysetName("tenant-42")).Extend("tenant-42")
+cipher := client.Keyset(encrypt.KeysetName("tenant42")).Extend("tenant42")
 ```
 
 `Extend` appends to the context that the tags declare, for every field, in
 every call through the cipher: the write, the query and the read. A row
-written through `Extend("tenant-42")` opens and matches only through a cipher
+written through `Extend("tenant42")` opens and matches only through a cipher
 with the same extension. No call takes a keyset or a context, so the three
 cannot use different ones.
 
@@ -1079,7 +1079,7 @@ CipherStash credentials. Use it in CI that has no route to ZeroKMS.
 
    func TestSaveUser(t *testing.T) {
    	client := encrypttest.NewClient(t)
-   	cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
+   	cipher := client.Keyset(encrypt.KeysetName("tenant42"))
    ```
 
 3. Call your code with it, as you would call it with a production client.
