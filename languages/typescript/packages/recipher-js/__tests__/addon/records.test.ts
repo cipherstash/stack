@@ -166,6 +166,65 @@ describe('a UUID field', () => {
     expect(opened.name).toBe('sensor')
   })
 
+  it('refuses UUID text that is not hyphenated hex, naming the field', async () => {
+    const keyset = (await cipher()).defaultKeyset()
+    for (const bad of [
+      '123e4567-e89b-12d3-a456-42661417400',
+      '{123e4567-e89b-12d3-a456-426614174000}',
+      '123e4567-e89b-12d3-a456-42661417400g',
+    ]) {
+      const result = await keyset.encrypt(device, {
+        id: new VcUuid(bad),
+        name: 'sensor',
+      })
+      expect(result.isErr(), bad).toBe(true)
+      expect(result.err()?.code, bad).toBe('ERR_INVALID_UUID')
+      expect(result.err()?.field, bad).toBe('id')
+      expect(result.err()?.record, bad).toBe('devices')
+    }
+  })
+
+  it('stores and decrypts a null under each null setting, and refuses one by default', async () => {
+    const nullable = record('nullable_devices', {
+      sealed: encrypt(kinds.uuid, { index: ['equality'], null: 'sealed' }),
+      sql: encrypt(kinds.uuid, { null: 'sql' }),
+      required: encrypt(kinds.uuid),
+    })
+    const c = await cipher()
+    const keyset = c.defaultKeyset()
+    const id = new VcUuid(text)
+
+    const empty = { sealed: null, sql: null, required: id }
+    const stored = (await keyset.encrypt(nullable, empty)).unwrap()
+    // A sealed null is stored like a value, padded to a value's length.
+    // A SQL null is stored as null.
+    const full = (
+      await keyset.encrypt(nullable, { sealed: id, sql: id, required: id })
+    ).unwrap()
+    expect(stored.sealed).not.toBeNull()
+    expect(stored.sealed.ciphertext.length).toBe(full.sealed.ciphertext.length)
+    expect(Buffer.from(stored.sealed.equality)).not.toEqual(
+      Buffer.from(full.sealed.equality),
+    )
+    expect(stored.sql).toBeNull()
+
+    const opened = (await c.decrypt(nullable, stored)).unwrap()
+    expect(opened.sealed).toBeNull()
+    expect(opened.sql).toBeNull()
+    expect(opened.required.value).toBe(text)
+
+    // A field with the default null setting takes no null.
+    // @ts-expect-error: `required` has no null setting, so it takes no null.
+    const refused = await keyset.encrypt(nullable, {
+      sealed: id,
+      sql: id,
+      required: null,
+    })
+    expect(refused.err()?.code).toBe('stack_encrypt::dynamic_source')
+    expect(refused.err()?.field).toBe('required')
+    expect(refused.err()?.record).toBe('nullable_devices')
+  })
+
   it('refuses the UUID as a string', async () => {
     const keyset = (await cipher()).defaultKeyset()
     const result = await keyset.encrypt(device, {
