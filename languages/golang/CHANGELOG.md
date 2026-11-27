@@ -21,6 +21,13 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `vcvalue.UUID`, or a value of any type whose underlying type is
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one. `stashgen` does not yet map a Go type to it.
+- **A guide to choosing a column type** (#1926). This change is to the
+  documentation only. The `encrypt` README has a new section, "Choose a
+  column type". Its table lists each query need, the EQL type to use, and
+  what each type's terms show to anyone who can read the column. The
+  section also says why EQL columns are the default. It compares OPE order
+  with ORE order. It says to run `stash eql preflight` before you choose an
+  `OrdOre` type.
 
 ## [0.1.0-rc.7] - 2026-11-25
 

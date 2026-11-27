@@ -43,6 +43,7 @@ The package reference is on [pkg.go.dev]; the generator's reference is
 
    `encrypt_into=` names the EQL type the field is stored as. The Go field
    type must match it; see [EQL columns](#eql-columns).
+   To choose the type, see [Choose a column type](#choose-a-column-type).
 
 3. Run the generator. It writes `user_stash.go` beside the struct.
 
@@ -365,7 +366,8 @@ An `opaque` struct is one `Sealed` field. Every stored type implements
 `driver.Valuer` and `sql.Scanner`.
 
 A sealed field outside an opaque struct is one value of one of these types,
-or a type defined over one (`type Email string`):
+or a type defined over one (`type Email string`). To store a field in an EQL
+column instead, see [Choose a column type](#choose-a-column-type).
 
 | Go field | Seals as | Indexes it can store | Query methods |
 |---|---|---|---|
@@ -438,7 +440,8 @@ engine answers on the field: `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` and
 `Matches`. A field has no method for an operator it does not answer, so such
 a query does not compile. The generator asks the engine which operators each
 field answers, and which index answers each one; it holds no copy of those
-rules.
+rules. To choose a field's column type, see
+[Choose a column type](#choose-a-column-type).
 
 | The field declares | Methods | Each returns |
 |---|---|---|
@@ -606,7 +609,135 @@ reports it, `Client.MemoryLockError` says why not, and
 `WithRequireLockedMemory` makes `NewClient` refuse to start unlocked. See the
 package documentation for the full account.
 
+## Choose a column type
+
+Store each encrypted field in an EQL (Encrypt Query Language) column, with
+`encrypt_into=`, unless you have a reason to use separate byte columns.
+Choose the EQL type by the queries the field needs. Each type stores search
+terms beside the ciphertext. The terms show some facts about the values to
+anyone who can read the column, such as a database administrator or
+someone with a backup. The table says which facts.
+
+EQL types by need, and what each one shows to a reader of the column:
+
+| You need to | Use | What the column shows |
+|---|---|---|
+| Store a value and read it back, with no query | The type with no suffix, such as `Text` or `Integer` | No search term is stored |
+| Find rows equal to a value | An `Eq` type, such as `TextEq` or `IntegerEq` | Which rows hold equal values |
+| Find text that contains part of a word | `TextMatch` | The rough length of each value, and which rows have 3-grams or two-letter words in common |
+| Compare and sort, on any PostgreSQL install | An `Ord` type, such as `IntegerOrd` or `TextOrd`. It uses order-preserving encryption (OPE) | The order of the values, which rows hold equal values, and how many leading bits two values share |
+| Compare and sort, with no order in the stored bytes | An `OrdOre` type, such as `IntegerOrdOre`. It uses order-revealing encryption (ORE), and needs a superuser install | The bytes do not sort in order. Anyone who has the stored values and an EQL install can still find the order and which values are equal |
+| Find equal text, compare, sort, and match on one column | `TextSearch` for OPE order, or `TextSearchOre` for ORE order | What its equality, order and match terms show |
+| Store a JSON document and read it back whole | `Json` | No search term is stored. The stored value shows the size of the document |
+| Query inside a JSON document, by containment, path or order | `JsonSearch` | The structure of the document: which paths each row has, and which rows hold the same value at a path. See [Encrypted JSON documents](#encrypted-json-documents) |
+
+A column shows what all of its terms show together. A text order type, such
+as `TextOrd` or `TextOrdOre`, also stores `TextEq`'s equality term. So the column
+shows which rows contain equal text, whichever order scheme it uses. The text
+order term compares text after case and accents are folded, so `Café` and
+`cafe` get the same order term.
+
+### Why EQL columns are the default
+
+EQL columns are the default because the database compares every term in
+them correctly:
+
+- A query uses PostgreSQL's own operators: `=`, `<`, `>`, `@@`, and
+  `ORDER BY`, with the query parameter cast to the column's query type.
+- An ORE term in a byte column cannot be compared in SQL, because its byte
+  order is sometimes wrong, with no error. In an EQL column, EQL compares it
+  correctly.
+- A match query on a byte column needs a SQL function you write yourself, as
+  the example in [Queries](#queries) shows. An EQL `TextMatch` column needs
+  none.
+- Each field is one column, not one column for the ciphertext and one for
+  each term.
+
+An EQL column needs EQL v4 installed in the database first, as
+[EQL columns](#eql-columns) says. Separate byte columns need no EQL install.
+A byte-column field with an `ore` or `ope` index has a generated `Between`
+method. A field of an EQL ordered type has generated `Lt`, `Lte`, `Gt`, and
+`Gte` methods, and no `Between` method.
+
+### Choose between OPE and ORE order
+
+`IntegerOrd` and `IntegerOrdOpe` store the same OPE term, but they are two
+separate types. Each one has its own Go type, its own column type
+(`public.eql_v4_integer_ord` and `public.eql_v4_integer_ord_ope`), and its
+own query type. So the `encrypt_into=` tag, the column, and the query cast
+must all use the same name. Each other `Ord` and `OrdOpe` pair is the same.
+
+The two names say different things:
+
+- `IntegerOrd` means "ordered", whatever the scheme. The name does not tie
+  the column to one order scheme in a future migration.
+- `IntegerOrdOpe` means "ordered with OPE". Use it when the column must keep
+  the OPE term.
+
+`IntegerOrdOre` stores a block ORE term instead. The two schemes differ in
+what the stored bytes show, and in what the install needs.
+
+An OPE term's bytes sort in the order of the values:
+
+- Anyone who reads the column, or a copy of it, sees the order of the
+  values and which values are equal.
+- Two values whose encodings start with the same bits get terms that start
+  with the same bytes, one byte for each bit. For a number, the shared bits
+  are its sign and then its exponent. For text, they are its first
+  characters.
+- A plain btree index on `eql_v4.ord_term(col)` serves `<`, `>`, and
+  `ORDER BY`. So the `Ord` types work on any install, including one by a
+  role that is not a superuser.
+
+An ORE term carries a random nonce:
+
+- Equal values have different bytes.
+- The bytes do not sort in the order of the values.
+- EQL's comparison functions, such as `eql_v4.lt` and `eql_v4.eq`, take two
+  stored values and need no key. So a role that can run SQL on the column
+  can find the order of the values, and which values are equal.
+- The index on `eql_v4.ord_term_ore(col)` needs the ORE operator class.
+  Only a superuser install creates that class. On any other install, the
+  installer disables the `OrdOre` and `TextSearchOre` types, and a write to
+  one of their columns fails.
+
+So ORE stops the stored bytes from sorting in order. ORE does not keep the
+order secret from anyone who has the stored values and an EQL install. For
+example, someone with a backup can restore it into a database with EQL
+installed, and compare the values there.
+
+### Check the database before you choose an `OrdOre` type
+
+Run `stash eql preflight` before you choose an `OrdOre` or `TextSearchOre`
+type. Run it as the role that will install EQL v4:
+
+```sh
+npx stash eql preflight --database-url "$DATABASE_URL"
+```
+
+If a `stash.config.ts` file in the current directory, or in a directory
+above it, sets `databaseUrl` to a fixed URL, the command probes that
+database instead of the one `--database-url` names. The command prints a
+warning when this happens. So run the command in a directory with no
+`stash.config.ts` above it, or check the warning.
+
+Read the `ORE operator class` row of its report:
+
+- `creatable`: the role can create the ORE operator class, so the `OrdOre`
+  types will work.
+- `not creatable`: the install will skip the class. Use an `Ord` type.
+- `unknown`: the command could not find out, for example on a read-only
+  replica. Do not read it as either answer.
+
+The command changes nothing. It tries to create an operator family in a
+transaction, and then rolls the transaction back. The rest of its report,
+and its exit code, are about `stash eql install`. That command installs EQL
+v3, so those rows name the `eql_v3` schemas, not `eql_v4`.
+
 ## EQL columns
+
+To choose an EQL type for a field, see
+[Choose a column type](#choose-a-column-type).
 
 A field tagged `encrypt_into=TextEq` is stored as one EQL value, the JSON
 PostgreSQL holds in a `public.eql_v4_text_eq` column, as an `eql.TextEq`
