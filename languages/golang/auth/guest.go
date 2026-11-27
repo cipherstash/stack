@@ -73,6 +73,8 @@ type instance struct {
 	listWorkspaces, workspaceDir, lockPath                       api.Function
 	secretKey, token, hasToken, sessionCRN, deviceIdentity       api.Function
 	authNew, authValidateCRN, authToken, authRefresh, authFree   api.Function
+	// The step exports of the token operations (see step.go).
+	authIO, authResume, authAbort, authRunnable api.Function
 }
 
 // guestModuleConfig is the module configuration every guest instance runs
@@ -173,6 +175,10 @@ func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.
 		"sa_auth_token":              &inst.authToken,
 		"sa_auth_refresh":            &inst.authRefresh,
 		"sa_auth_free":               &inst.authFree,
+		"sa_auth_io":                 &inst.authIO,
+		"sa_auth_resume":             &inst.authResume,
+		"sa_auth_abort":              &inst.authAbort,
+		"sa_auth_runnable":           &inst.authRunnable,
 	}
 	for name, slot := range exports {
 		if *slot = module.ExportedFunction(name); *slot == nil {
