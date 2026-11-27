@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -152,9 +151,9 @@ func sameValue(got, want any) bool {
 }
 
 func TestSharedValueConformance(t *testing.T) {
-	data, err := os.ReadFile(valueCorpus)
-	if err != nil {
-		t.Fatal(err)
+	data, ok := readCorpus(t, valueCorpus)
+	if !ok {
+		t.Skip("no value corpus")
 	}
 	var corpus struct {
 		Vectors []struct {

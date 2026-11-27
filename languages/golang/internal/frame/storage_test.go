@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -37,11 +36,16 @@ type storageCorpusFile struct {
 	Reads   []storageRow `json:"reads"`
 }
 
+// loadStorageCorpus is the storage corpus. When it is missing outside the
+// repository, a test skips and a fuzz target gets no rows to seed from.
 func loadStorageCorpus(t testing.TB) storageCorpusFile {
 	t.Helper()
-	data, err := os.ReadFile(storageCorpus)
-	if err != nil {
-		t.Fatal(err)
+	data, ok := readCorpus(t, storageCorpus)
+	if !ok {
+		if _, fuzzing := t.(*testing.F); !fuzzing {
+			t.Skip("no storage corpus")
+		}
+		return storageCorpusFile{}
 	}
 	var c storageCorpusFile
 	if err := json.Unmarshal(data, &c); err != nil {

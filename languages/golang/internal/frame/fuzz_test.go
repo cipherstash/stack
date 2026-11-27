@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math/big"
-	"os"
 	"slices"
 	"testing"
 )
@@ -23,9 +22,10 @@ import (
 // addCorpusSeeds seeds a fuzz target with every valid and malformed vector in
 // the shared value corpus, so the fuzzer starts from each scalar tag.
 func addCorpusSeeds(f *testing.F, wrap func([]byte) []byte) {
-	data, err := os.ReadFile(valueCorpus)
-	if err != nil {
-		f.Fatal(err)
+	data, ok := readCorpus(f, valueCorpus)
+	if !ok {
+		// The fuzz target still runs, from its testdata.
+		return
 	}
 	var corpus struct {
 		Vectors, Malformed, Normalized []struct{ Transport string }
