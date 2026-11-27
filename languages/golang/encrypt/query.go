@@ -118,8 +118,9 @@ func (l Limit) FetchOr(page uint64) uint64 {
 // QueryTerm derives the query term for one field of the plan, an operator
 // and its input under this cipher's keyset: one value for every operator
 // but between, whose input is a two-element slice, low then high, and a
-// document's operators (contains, eq_at, selector, ...), whose input is a
-// frame.Object of named inputs with JSON values as JSON text. The
+// document's operators (contains, eq_at, selector, ...), whose input is the
+// operator's named inputs, in order, with JSON values as JSON text, as
+// generated code builds them. The
 // engine reads the input as the field's declared type, finds the index
 // that answers the operator, and derives that index's term under the
 // field's context; for a field that names an EQL type it runs the type's
