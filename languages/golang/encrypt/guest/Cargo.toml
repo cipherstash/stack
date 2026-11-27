@@ -51,7 +51,7 @@ stack-auth = { path = "../../../../packages/stack-auth", default-features = fals
 # `dynamic`: the runtime value model this guest speaks — contexts, index
 # terms and record plans read from frames, shared with every other binding.
 stack-encrypt = { path = "../../../../packages/stack-encrypt", default-features = false, features = ["dynamic"] }
-# The guest ABI every guest under bindings/go shares: the allocator and
+# The guest ABI every guest under languages/golang shares: the allocator and
 # buffer registry (and with them the `se_alloc`/`se_dealloc` exports), the
 # packed-result helpers, the status table and the step loop.
 # This crate defines only the exports that are its own.

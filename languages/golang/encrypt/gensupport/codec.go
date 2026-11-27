@@ -379,7 +379,7 @@ func (c *RecordsCodec[P, R]) Decrypt(ctx context.Context, d encrypt.Decrypter, r
 }
 
 // opaqueBytes is an opaque struct's fields as the one value the engine
-// seals: a storage blob (vitaminc's storage profile, version 1, written by
+// seals: a storage blob (the storage profile, version 1, written by
 // frame.MarshalStorage) of the generated shape struct, so the struct is one
 // column and every field comes back at the Go type the struct declares. The
 // storage profile is the format for bytes that are kept: unlike the

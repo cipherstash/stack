@@ -63,7 +63,7 @@ const (
 
 // OpaqueField is the one field of an opaque declaration: the whole struct,
 // sealed as one value under <context>/value. The struct crosses the binding
-// as one storage blob (vitaminc's storage profile, version 1) — the engine
+// as one storage blob (the storage profile, version 1) — the engine
 // seals a composite value as a tree of leaves, and an opaque struct is one
 // column. A field of a struct, map or slice type that names an EQL type
 // holding a JSON document is the other way one is stored as one column. A value an earlier release sealed is a JSON document, which

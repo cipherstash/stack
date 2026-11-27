@@ -31,7 +31,7 @@ url = "2"
 # Strategies and `Token`, the typed shape of `auth.json`, with default
 # features off: no reqwest, no native TLS.
 stack-auth = { path = "../../../../packages/stack-auth", default-features = false }
-# The ABI every guest under bindings/go shares: the allocator and buffer
+# The ABI every guest under languages/golang shares: the allocator and buffer
 # registry (and with them the `se_alloc`/`se_dealloc` exports), the
 # packed-result helpers and the status table. This crate defines only the
 # exports that are its own.

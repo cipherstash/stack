@@ -263,7 +263,8 @@ impl Zeroize for WitnessThenMore {
 /// reads the same hex: Rust writes, Go reads.
 const RUST_BLOB: &str = "56435301f104000000040000006e616d650a0c000000416461204c6f76656c6163650300000061676506240000000400000074616773f0020000000a050000006d617468730a07000000656e67696e6573080000006e69636b6e616d65f50a03000000616461";
 
-/// `ada()` as the Go SDK writes it, through `vcffi.MarshalStorage`, from a
+/// `ada()` as the Go SDK writes it, through its frame codec's storage
+/// profile (`languages/golang/internal/frame`), from a
 /// struct with the tags `vc:"name"`, `vc:"age"`, `vc:"tags"` and
 /// `vc:"nickname"`, where the nickname is a non-nil `*string`. Go writes a
 /// non-nil pointer as the bare value, and Rust writes `Some` with a marker

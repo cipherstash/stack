@@ -42,7 +42,8 @@ enum Keyset {
     Id(#[serde(with = "serde_bytes")] Vec<u8>),
 }
 
-/// The bytes the Go SDK's codec (`vcffi.Marshal`) writes for
+/// The bytes the Go SDK's frame codec (`languages/golang/internal/frame`)
+/// writes for
 /// `{"keyset": {"name": "acme"}, "context": "tenants/acme"}`: Go orders an
 /// object's keys, so `context` comes first.
 const GO_OPTIONS: &str = "f10200000007000000636f6e746578740a0c00000074656e616e74732f61636d65060000006b6579736574f101000000040000006e616d650a0400000061636d65";

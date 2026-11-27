@@ -69,7 +69,8 @@ rand = { version = "0.10.1", default-features = false }
 futures = { version = "0.3.25", default-features = false, features = ["std"] }
 # Two things: the storage profile (`storage`, behind `serde`) that
 # `OpaqueBlob<T>` encodes a whole value with before sealing it as one leaf,
-# the same versioned bytes the Go SDK writes through `vcffi.MarshalStorage`;
+# the same versioned bytes the Go SDK's frame codec writes for an opaque
+# struct (`languages/golang/internal/frame`);
 # and, for `dynamic`, serde over the transport frame, which reads a binding's
 # control data (statistics, options, a plan) into typed messages.
 recipher-frame = { workspace = true, features = ["serde"] }

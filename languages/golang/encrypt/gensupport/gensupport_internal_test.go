@@ -331,7 +331,7 @@ func TestDecryptErrorsHoldNoPlaintext(t *testing.T) {
 		t.Fatalf("a grown struct read %+v, %v", grown, err)
 	}
 	// A blob of a later storage version is encrypt.ErrStorageVersion, which
-	// needs no import of vitaminc's bindings to check.
+	// a program checks with errors.Is.
 	later := append([]byte(nil), old...)
 	later[3]++
 	if err := Opaque(Values{OpaqueField: later}, &grown); !errors.Is(err, encrypt.ErrStorageVersion) || !errors.Is(err, encrypt.ErrEncoding) {

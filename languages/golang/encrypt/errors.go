@@ -71,8 +71,8 @@ var (
 
 // ErrStorageVersion is an opaque struct sealed as a storage blob of a
 // version this release does not read: a later release wrote it. Its error
-// wraps [ErrEncoding] too. It is frame.ErrUnsupportedVersion, named here so
-// a program can check for it without importing vitaminc's bindings.
+// wraps [ErrEncoding] too. It is the codec's own error, named here so a
+// program can check for it with errors.Is.
 var ErrStorageVersion = frame.ErrUnsupportedVersion
 
 // Diagnostic is the full error behind a failure the guest reports, beside

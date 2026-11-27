@@ -677,8 +677,8 @@ async fn host_section(
     Json::Object(out)
 }
 
-/// A typed null a host sends (Go's `vcvalue.TypedNull`, or a nil pointer to
-/// a fixed-width type), against each null policy of a typed field, an
+/// A typed null a host sends (Go writes one for a nil pointer to a
+/// fixed-width type), against each null policy of a typed field, an
 /// untyped field, and inside an untyped value.
 async fn typed_null_section(
     cipher: &StackCipher<KeptKeys>,

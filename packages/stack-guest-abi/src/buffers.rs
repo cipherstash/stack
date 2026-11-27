@@ -1,6 +1,5 @@
-//! The guest-owned buffer registry behind `se_alloc` / `se_dealloc`,
-//! following the vitaminc guest's conventions (see `vcencrypt/guest/src/
-//! abi.rs`). Shared by every guest under `bindings/go`, so the registry
+//! The guest-owned buffer registry behind `se_alloc` / `se_dealloc`.
+//! Shared by every guest under `languages/golang`, so the registry
 //! discipline is written once:
 //!
 //! - Every buffer the guest hands out — from [`alloc`] and from packed

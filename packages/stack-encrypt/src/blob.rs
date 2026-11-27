@@ -99,8 +99,9 @@
 //!
 //! The specification is `STORAGE.md` in the `recipher-frame` crate.
 //! Every implementation must pass its golden corpus of test vectors. The Go
-//! SDK writes and reads the same profile through `vcffi`, so a Go opaque
-//! struct and a Rust `OpaqueBlob<T>` are one stored format. See [Go](#go)
+//! SDK writes and reads the same profile with its frame codec
+//! (`languages/golang/internal/frame`), so a Go opaque struct and a Rust
+//! `OpaqueBlob<T>` are one stored format. See [Go](#go)
 //! for the type rules.
 //!
 //! Every blob starts with [`HEADER`]: the ASCII bytes `VCS`, then the
