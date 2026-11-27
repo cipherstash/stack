@@ -52,8 +52,14 @@ func (cph *Cipher) Keyset() KeysetSelector { return cph.keyset }
 // since a Cipher is made without a request. The first use of a name or id
 // on the client is one ZeroKMS round trip, later uses come from the
 // guest's cache; the default keyset never makes a request. Use it at boot
-// to validate a tenant's keyset and learn its id.
+// to validate a tenant's keyset and learn its id. A cipher that holds a
+// refusal reports it here as every other call does: a cipher from
+// Client.Keyset(nil) fails with [ErrEncoding], and does not answer with the
+// default keyset's id.
 func (cph *Cipher) KeysetID(ctx context.Context) (KeysetID, error) {
+	if cph.err != nil {
+		return KeysetID{}, cph.err
+	}
 	return cph.client.resolveKeyset(ctx, cph.keyset)
 }
 
