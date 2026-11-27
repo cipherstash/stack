@@ -42,6 +42,7 @@ on:
       - .cargo/config.toml
       - .config/nextest.toml
       - pnpm-lock.yaml
+      - lychee.toml
       - .github/workflows/tests-crates.yml
   push:
     branches: [main]
@@ -68,6 +69,7 @@ on:
       - .cargo/config.toml
       - .config/nextest.toml
       - pnpm-lock.yaml
+      - lychee.toml
       - .github/workflows/tests-crates.yml
   workflow_dispatch: {}
 
@@ -174,6 +176,67 @@ jobs:
       # it.
       - name: Verify the stack-* crates package cleanly for crates.io
         run: cargo publish --locked --dry-run --allow-dirty -p stack-profile -p stack-auth -p stack-kms -p stack-encrypt-jsonpath -p stack-encrypt-derive -p stack-encrypt
+
+  # rustdoc checks intra-doc links but never fetches a URL, so this checks
+  # the web links in the crates' docs with lychee. It reads every crate under
+  # packages/ except EQL, which has its own docs checks. lychee.toml holds
+  # the shared settings and the addresses CI cannot fetch.
+  doc-links:
+    name: links in the Rust docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      # A Rust file is mostly code, and its test strings hold URLs that are
+      # not links (`http://localhost:3001/`, `https://kms/0`). This copies
+      # only the doc comments of each file, as Markdown, to one file per
+      # source file. Every other line becomes blank, so a reported line
+      # number is the line in the source.
+      - name: Extract the doc comments
+        run: |
+          out="$RUNNER_TEMP/rust-docs"
+          git ls-files -z 'packages/*.rs' ':(exclude)packages/eql' |
+            while IFS= read -r -d '' file; do
+              mkdir -p "$out/$(dirname "$file")"
+              awk '{
+                if (match($0, /^[ \t]*\/\/[\/!]/)) {
+                  line = substr($0, RLENGTH + 1)
+                  sub(/^ /, "", line)
+                  print line
+                } else {
+                  print ""
+                }
+              }' "$file" > "$out/$file.md"
+            done
+
+      # The doc comments' intra-doc links (`crate::Foo`) read as relative
+      # file paths, which rustdoc checks already, so only web links are
+      # checked here.
+      - name: Check the web links in the doc comments
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          args: >-
+            --config lychee.toml
+            --scheme https --scheme http
+            '${{ runner.temp }}/rust-docs/**/*.md'
+          token: ${{ github.token }}
+          jobSummary: false
+
+      # The crates' Markdown: READMEs (some are a crate's docs), changelogs,
+      # ADRs and guides. Links to files in the repository are checked too.
+      - name: Check the links in the crates' Markdown
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          args: >-
+            --config lychee.toml
+            'packages/*/**/*.md'
+          token: ${{ github.token }}
+          jobSummary: false
 
   node-bindings:
     name: node bindings, napi typings, stack-auth-wasm

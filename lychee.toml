@@ -1,0 +1,36 @@
+# Settings for lychee, the link checker the `doc-links` job in
+# .github/workflows/tests-crates.yml runs over the Rust crates' docs. The job
+# names its inputs; this file holds what the two runs there share.
+#
+# rustdoc checks intra-doc links. It does not fetch a URL, so a web link in a
+# doc comment or a crate's Markdown is checked only here.
+
+no_progress = true
+
+# A server that is slow or briefly down should not fail a pull request.
+max_retries = 3
+retry_wait_time = 5
+timeout = 30
+
+# 429 is a rate limit, not a broken link.
+accept = ["200..=299", "429"]
+
+# Addresses that cannot be fetched from CI: the local machine, and the
+# reserved names a doc uses as a placeholder (RFC 2606).
+exclude_loopback = true
+exclude = [
+  '^https?://([^/]+\.)?(example|invalid|test)(:[0-9]+)?(/|$)',
+  '^https?://([^/]+\.)?example\.(com|org|net)(:[0-9]+)?(/|$)',
+  # npm answers an automated client with 403 at random, so its package
+  # pages fail without being broken.
+  '^https://www\.npmjs\.com/',
+]
+
+# Generated or captured data, not docs. EQL is a separate project in
+# packages/eql with its own docs checks.
+exclude_path = [
+  '(^|/)packages/eql/',
+  '/fuzz/(corpus|artifacts|target)/',
+  '/testdata/',
+  '/tests/fixtures/',
+]
