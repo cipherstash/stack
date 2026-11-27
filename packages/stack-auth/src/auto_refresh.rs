@@ -2307,6 +2307,38 @@ mod expiry_crossing_regression {
         }
     }
 
+    /// With no driver attached, the caller that finds its token inside the
+    /// refresh window starts the refresh itself. Bounded, so a strategy that
+    /// wrongly believes a driver is attached fails here rather than hanging.
+    #[tokio::test]
+    async fn with_no_driver_a_caller_starts_the_refresh() {
+        let clock = TestClock::new(1_000_000);
+        let started = Arc::new(Notify::new());
+        let gate = Arc::new(Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let refresher = GatedRefresher {
+            started: Arc::clone(&started),
+            gate: Arc::clone(&gate),
+            calls: Arc::clone(&calls),
+            refreshed_expires_at: clock.now() + 3600,
+        };
+        let token = make_token("expiring-soon", clock.now() + 10);
+        let strategy = Arc::new(
+            AutoRefresh::with_token_and_clock(refresher, token, clock.shared()).call_driven(),
+        );
+
+        let caller = {
+            let s = Arc::clone(&strategy);
+            tokio::spawn(async move { s.get_token().await })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+            .await
+            .expect("no caller started the refresh, although nothing drives it");
+        gate.notify_one();
+        caller.await.unwrap().unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
     #[tokio::test]
     async fn waiters_wait_for_refresh_when_token_crosses_expiry() {
         let clock = TestClock::new(1_000_000);
@@ -2335,7 +2367,9 @@ mod expiry_crossing_regression {
             tokio::spawn(async move { s.get_token().await })
         };
         // Wait until the refresh is actually in flight (gated; won't complete yet).
-        started.notified().await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+            .await
+            .expect("the first caller did not start the refresh");
 
         // 2. Advance the clock past real expiry while the refresh is still gated.
         //    The token is now both expired and unusable.
@@ -2461,7 +2495,9 @@ mod expiry_crossing_regression {
             let s = Arc::clone(&strategy);
             tokio::spawn(async move { s.get_token().await })
         };
-        started.notified().await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+            .await
+            .expect("the first caller did not start the refresh");
 
         // 2. Advance the clock past real expiry while the refresh is still gated.
         //    The cached token is now both expired and unusable.
@@ -2548,7 +2584,9 @@ mod expiry_crossing_regression {
             let s = Arc::clone(&strategy);
             tokio::spawn(async move { s.get_token().await })
         };
-        started.notified().await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+            .await
+            .expect("the first caller did not start the refresh");
 
         // Cross real expiry while the refresh is gated, so the waiters park in
         // `wait_for_in_flight_refresh` instead of being served the cached token.
@@ -2652,7 +2690,9 @@ mod expiry_crossing_regression {
             let s = Arc::clone(&strategy);
             tokio::spawn(async move { s.get_token().await })
         };
-        started.notified().await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+            .await
+            .expect("the first caller did not start the refresh");
 
         // Cross real expiry while the refresh is gated, so the waiters park in
         // `wait_for_in_flight_refresh` instead of being served the cached token.
