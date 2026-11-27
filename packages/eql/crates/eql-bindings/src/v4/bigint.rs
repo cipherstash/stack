@@ -16,7 +16,7 @@ use ts_rs::TS;
     doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`i64`](i64). Implements `EncryptTarget<i64>` and `DecryptSource<i64>`.
+/// Plaintext input and decrypted output: [`i64`]. Implements `EncryptTarget<i64>` and `DecryptSource<i64>`.
 ///
 /// Both traits are also implemented for `Option<i64>`. A `None` is sealed with padding, to the length of a value. A `None` gets the terms of a null. Only the equality index has a term for a null.
 ///
@@ -69,7 +69,7 @@ impl DomainType for Bigint {
     doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`i64`](i64). Implements `EncryptTarget<i64>` and `DecryptSource<i64>`.
+/// Plaintext input and decrypted output: [`i64`]. Implements `EncryptTarget<i64>` and `DecryptSource<i64>`.
 ///
 /// Both traits are also implemented for `Option<i64>`. A `None` is sealed with padding, to the length of a value. A `None` gets the terms of a null. Only the equality index has a term for a null.
 ///
@@ -123,7 +123,7 @@ impl DomainType for BigintEq {
     doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`i64`](i64). Implements `EncryptTarget<i64>` and `DecryptSource<i64>`.
+/// Plaintext input and decrypted output: [`i64`]. Implements `EncryptTarget<i64>` and `DecryptSource<i64>`.
 ///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
@@ -176,7 +176,7 @@ impl DomainType for BigintOrdOre {
     doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`i64`](i64). Implements `EncryptTarget<i64>` and `DecryptSource<i64>`.
+/// Plaintext input and decrypted output: [`i64`]. Implements `EncryptTarget<i64>` and `DecryptSource<i64>`.
 ///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
@@ -229,7 +229,7 @@ impl DomainType for BigintOrd {
     doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`i64`](i64). Implements `EncryptTarget<i64>` and `DecryptSource<i64>`.
+/// Plaintext input and decrypted output: [`i64`]. Implements `EncryptTarget<i64>` and `DecryptSource<i64>`.
 ///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
@@ -282,7 +282,7 @@ impl DomainType for BigintOrdOpe {
     doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`i64`](i64). Implements `EncryptTarget<i64>` to build equality query terms. Query operands do not decrypt.
+/// Plaintext input: [`i64`]. Implements `EncryptTarget<i64>` to build equality query terms. Query operands do not decrypt.
 ///
 /// Also implements `EncryptTarget<Option<i64>>`. The query for a `None` finds the stored nulls.
 ///
@@ -335,7 +335,7 @@ impl DomainType for BigintEqQuery {
     doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`i64`](i64). Implements `EncryptTarget<i64>` to build order query terms. Query operands do not decrypt.
+/// Plaintext input: [`i64`]. Implements `EncryptTarget<i64>` to build order query terms. Query operands do not decrypt.
 ///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
@@ -387,7 +387,7 @@ impl DomainType for BigintOrdOreQuery {
     doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`i64`](i64). Implements `EncryptTarget<i64>` to build order query terms. Query operands do not decrypt.
+/// Plaintext input: [`i64`]. Implements `EncryptTarget<i64>` to build order query terms. Query operands do not decrypt.
 ///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
@@ -439,7 +439,7 @@ impl DomainType for BigintOrdQuery {
     doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`i64`](i64). Implements `EncryptTarget<i64>` to build order query terms. Query operands do not decrypt.
+/// Plaintext input: [`i64`]. Implements `EncryptTarget<i64>` to build order query terms. Query operands do not decrypt.
 ///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
