@@ -22,6 +22,10 @@ url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 [imports.zcash]
 url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/audits.toml"
 
+[policy.recipher-frame]
+audit-as-crates-io = false
+criteria = "safe-to-deploy"
+
 [policy.stack-auth]
 audit-as-crates-io = false
 
@@ -41,10 +45,6 @@ audit-as-crates-io = false
 audit-as-crates-io = false
 
 [policy."vitaminc-aead-derive:0.10.0"]
-audit-as-crates-io = false
-criteria = "safe-to-deploy"
-
-[policy.recipher-frame]
 audit-as-crates-io = false
 criteria = "safe-to-deploy"
 
