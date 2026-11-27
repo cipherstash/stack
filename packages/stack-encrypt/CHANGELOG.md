@@ -530,14 +530,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     before.
   - `dynamic::read_json` takes a `Frame<'_>`. `IntoLabel` is implemented
     for `Frame<'_>` and `&OwnedFrame`.
-  - `FieldHandle`'s operator methods take any source (`V: Encrypt`), and
-    `DynamicQuery` takes it as a third type parameter, `V`, which defaults
-    to `OwnedFrame`. A borrowed `Frame` is queried with no copy.
+  - `FieldHandle`'s operator methods take a `dynamic::QueryValue`: an
+    `OwnedFrame`, a `&OwnedFrame` or a borrowed `Frame`. The trait is
+    sealed, because a query holds its value until the term is derived, so
+    only a value whose bytes are wiped is accepted. Write any other value
+    into a frame first with `OwnedFrame::of`. `DynamicQuery` takes the
+    value as a third type parameter, `V`, which defaults to `OwnedFrame`.
+    A borrowed `Frame` is queried with no copy.
   - `Planned` is a target over an `OwnedFrame` or a borrowed `Frame`: a
     record under a plan encrypts to the stored row, and a query value to
     its term, from either. `Planned` is `Zeroize` for those two values
     alone: an owned frame is wiped, and a borrowed one is its owner's to
-    wipe.
+    wipe. Before, `Planned` was `Zeroize` for any value that is `Zeroize`,
+    so a bound such as `Planned<P, V, R>: Zeroize` with another `V` no
+    longer holds.
   - `ValueFrame::from_bytes` returned `FromFrameError::Frame`;
     `dynamic::FromFrameError` is removed.
   - `dynamic::Modeled`, `dynamic::Opening` and `dynamic::Children`, the

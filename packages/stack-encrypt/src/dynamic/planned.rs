@@ -1074,7 +1074,7 @@ macro_rules! handle_methods {
             /// # Errors
             ///
             /// As [`Plan::query_with`].
-            pub fn $method<V: Encrypt>(self, value: V) -> Result<DynamicQuery<'p, R, V>, Error> {
+            pub fn $method<V: QueryValue>(self, value: V) -> Result<DynamicQuery<'p, R, V>, Error> {
                 self.op(Op::$op, value)
             }
         }
@@ -1106,7 +1106,11 @@ impl<'p, R: TargetResolver + ?Sized> FieldHandle<'p, R> {
     /// # Errors
     ///
     /// As [`Plan::query_with`].
-    pub fn op<V: Encrypt>(self, operator: Op, value: V) -> Result<DynamicQuery<'p, R, V>, Error> {
+    pub fn op<V: QueryValue>(
+        self,
+        operator: Op,
+        value: V,
+    ) -> Result<DynamicQuery<'p, R, V>, Error> {
         Ok(DynamicQuery {
             plan: self.plan.query_with(&self.name, operator, self.resolver)?,
             value,
@@ -1126,11 +1130,29 @@ impl<'p, R: TargetResolver + ?Sized> FieldHandle<'p, R> {
     }
 }
 
+/// A value a [`FieldHandle`] query can hold: an [`OwnedFrame`], wiped when
+/// the query is dropped, or a [`Frame`] or `&OwnedFrame` borrowed from bytes
+/// the caller keeps and wipes.
+///
+/// The trait is sealed. A query holds its plaintext until the term is
+/// derived, so it accepts only a value whose bytes are wiped. To query with
+/// a Rust value, write it into a frame first with [`OwnedFrame::of`].
+pub trait QueryValue: Encrypt + sealed::Sealed {}
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+impl sealed::Sealed for OwnedFrame {}
+impl QueryValue for OwnedFrame {}
+impl sealed::Sealed for &OwnedFrame {}
+impl QueryValue for &OwnedFrame {}
+impl sealed::Sealed for Frame<'_> {}
+impl QueryValue for Frame<'_> {}
+
 /// A query from a [`FieldHandle`], ready for the caller's scopes and the
 /// keyset. It has no `bind` method: a binding is in no query context. The
-/// value is any source, read when the term is derived: an [`OwnedFrame`],
-/// wiped when the query is dropped, or a [`Frame`] borrowed from bytes the
-/// caller keeps.
+/// value is a [`QueryValue`], read when the term is derived.
 pub struct DynamicQuery<'p, R: ?Sized = NoTargets, V = OwnedFrame> {
     plan: QueryPlan,
     value: V,
@@ -1164,7 +1186,7 @@ impl<'p, R: ?Sized, V> DynamicQuery<'p, R, V> {
     }
 }
 
-impl<'p, R: TargetResolver + ?Sized, V: Encrypt> DynamicQuery<'p, R, V> {
+impl<'p, R: TargetResolver + ?Sized, V: QueryValue> DynamicQuery<'p, R, V> {
     /// Derive the query term under `keyset`: [`query_term`] for the plan,
     /// extended by the scopes. Nothing is requested until the pending is
     /// awaited.

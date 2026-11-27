@@ -120,7 +120,7 @@ pub use crate::json::JsonPlaintext;
 pub use context::{borrowed, context};
 pub use json::{json_frame, read_json, JsonValueError};
 pub use kind::{admits, not_admitted, read};
-pub use planned::{DynamicQuery, FieldHandle, Planned, QueryPlan};
+pub use planned::{DynamicQuery, FieldHandle, Planned, QueryPlan, QueryValue};
 pub use query::{
     check_json_open, check_query, field_operators, json_open, query_term, target_limit, verify,
     Fidelity, Op, Operand, OperatorEntry, QueryTerm,
