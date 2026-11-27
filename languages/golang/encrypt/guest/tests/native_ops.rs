@@ -868,6 +868,69 @@ fn record_terms_equal_the_native_derivations_and_probe_them() {
     assert!(matches!(value, Tree::UInt32(34)));
 }
 
+/// A `uuid` field is sealed with its equality term, opens to the UUID it
+/// was given, and an `eq` query of the same UUID derives the stored term.
+#[test]
+fn a_uuid_field_round_trips_and_queries_by_equality() {
+    use stack_encrypt::dynamic::plaintext::Logical;
+    let uuid = |byte: u8| Tree::Typed(Logical::Uuid, Box::new(Tree::Bytes(vec![byte; 16])));
+    let cipher = cipher();
+    let plan = encode(obj(vec![(
+        "id",
+        obj(vec![
+            ("context", label("id")),
+            ("outputs", Tree::Array(vec![s("c"), s("eq")])),
+            ("type", s("uuid")),
+        ]),
+    )]));
+    let source = encode(obj(vec![("id", uuid(7))]));
+    ops::validate::record(&protect(&source), &protect(&plan)).expect("the source fits");
+    let record = block_on(ops::encrypt_record(
+        &cipher.default_keyset(),
+        &protect(&source),
+        &protect(&plan),
+        AuditMetadata::new(),
+    ))
+    .expect("encrypt a uuid");
+
+    let opened = block_on(ops::decrypt_record(
+        &cipher,
+        &record,
+        &protect(&plan),
+        None,
+        AuditMetadata::new(),
+    ))
+    .expect("decrypt a uuid");
+    assert_eq!(decode(&opened), obj(vec![("id", uuid(7))]));
+
+    let CipherText::Map(fields) = decode_tree(&record) else {
+        panic!("expected a field map");
+    };
+    let (_, CipherText::Map(outputs)) = &fields[0] else {
+        panic!("expected an output map");
+    };
+    let stored = term_bytes(&outputs[1].1);
+    let query = |value: Tree| {
+        let answer = block_on(ops::query_term(
+            &cipher.default_keyset(),
+            &protect(&encode(value)),
+            &protect(&plan),
+            b"id",
+            b"eq",
+        ))
+        .expect("an eq query of a uuid");
+        let Tree::Object(entries) = decode(&answer) else {
+            panic!("a query term is an object");
+        };
+        let Some((_, Tree::Bytes(term))) = entries.into_iter().find(|(k, _)| k == "term") else {
+            panic!("the term is bytes");
+        };
+        term.as_slice().to_vec()
+    };
+    assert_eq!(query(uuid(7)), stored, "the same UUID finds the row");
+    assert_ne!(query(uuid(8)), stored, "another UUID does not");
+}
+
 // =============================================================================
 // Structured contexts
 // =============================================================================
