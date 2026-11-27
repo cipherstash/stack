@@ -24,6 +24,7 @@ const WINNER: Record<string, Winner> = {
   'eql verify': 'flag',
   // `resolveDiagnosticDatabaseUrl` with `flagWins: false`.
   'eql preflight': 'config',
+  // These five call `loadStashConfig` directly.
   'eql upgrade': 'config',
   'eql status': 'config',
   'eql validate': 'config',
@@ -33,6 +34,9 @@ const WINNER: Record<string, Winner> = {
 
 const CONFIG_WINS =
   'a hand-set literal databaseUrl in the config bypasses the resolver and wins over all of these'
+
+const FLAG_WINS =
+  'The flag wins even when stash.config.ts sets a literal databaseUrl.'
 
 const withFlag = registry
   .flatMap((group) => group.commands)
@@ -55,9 +59,7 @@ describe('--database-url help', () => {
         expect(description).toContain(CONFIG_WINS)
       } else {
         expect(description).not.toContain(CONFIG_WINS)
-        expect(description).toMatch(
-          /bypasses config loading entirely|never reads stash\.config\.ts/,
-        )
+        expect(description).toContain(FLAG_WINS)
       }
     },
   )
