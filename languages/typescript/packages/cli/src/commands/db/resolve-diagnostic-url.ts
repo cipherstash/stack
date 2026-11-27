@@ -1,4 +1,3 @@
-import * as p from '@clack/prompts'
 import { resolveDatabaseUrl } from '@/config/database-url.js'
 import { findConfigFile, loadStashConfig } from '@/config/index.js'
 
@@ -12,27 +11,23 @@ import { findConfigFile, loadStashConfig } from '@/config/index.js'
  * and failures come out as the shared `{ status: 'error', code, message }`
  * envelope (`jsonErrors`).
  *
- * The two commands differ on one deliberate point, `flagWins`:
+ * An explicit `--database-url` always wins. It bypasses config loading
+ * entirely, as it does for `stash eql install --database-url …`, so the
+ * database the user named is the database that gets judged. A hand-set
+ * literal `databaseUrl` in a stash.config.ts found up the directory tree must
+ * not redirect a diagnostic to a different database: preflight would then
+ * report the capabilities of a database the user did not name, and the user
+ * would choose column types from that answer (#1966).
  *
- * - `false` (preflight): mirrors `installCommand`'s config-loading path — a
- *   hand-set literal `databaseUrl` in stash.config.ts beats `--database-url`.
- *   Surprising enough to say out loud, to stderr in json mode.
- * - `true` (verify): mirrors `installCommand`'s one-shot path — an explicit
- *   `--database-url` bypasses config loading entirely, so the database the
- *   user named is the database that gets judged. Verify pairs with one-shot
- *   installs (`stash eql install --database-url …`), and a config literal
- *   found up the directory tree silently redirecting the verdict to a
- *   different database would defeat the flag's whole purpose.
+ * With no flag, the order is: the config's `databaseUrl` if a stash.config.ts
+ * is found, else the DATABASE_URL resolution chain.
  */
 export async function resolveDiagnosticDatabaseUrl(options: {
   databaseUrlFlag: string | undefined
   json: boolean
-  flagWins: boolean
-  /** Present-participle for the config-precedence warning, e.g. `Probing`. */
-  verb: string
 }): Promise<string> {
-  const { databaseUrlFlag, json, flagWins, verb } = options
-  if (flagWins && databaseUrlFlag !== undefined) {
+  const { databaseUrlFlag, json } = options
+  if (databaseUrlFlag !== undefined) {
     return resolveDatabaseUrl({
       databaseUrlFlag,
       quiet: json,
@@ -42,21 +37,10 @@ export async function resolveDiagnosticDatabaseUrl(options: {
   const configPath = findConfigFile(process.cwd())
   if (configPath) {
     const config = await loadStashConfig(
-      { databaseUrlFlag, quiet: json, jsonErrors: json },
+      { quiet: json, jsonErrors: json },
       configPath,
     )
-    if (
-      databaseUrlFlag !== undefined &&
-      config.databaseUrl !== databaseUrlFlag.trim()
-    ) {
-      const warning = `Ignoring --database-url: ${configPath} sets an explicit databaseUrl that takes precedence. ${verb} the config's database.`
-      if (json) {
-        process.stderr.write(`${warning}\n`)
-      } else {
-        p.log.warn(warning)
-      }
-    }
     return config.databaseUrl
   }
-  return resolveDatabaseUrl({ databaseUrlFlag, quiet: json, jsonErrors: json })
+  return resolveDatabaseUrl({ quiet: json, jsonErrors: json })
 }

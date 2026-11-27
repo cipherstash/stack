@@ -5,17 +5,15 @@ import { EQLInstaller, type PreflightResult } from '@/installer/index.js'
 import { describeOreCreatable, ORE_FALLBACK_REMEDY } from '@/installer/ore.js'
 import { resolveDiagnosticDatabaseUrl } from './resolve-diagnostic-url.js'
 
-/** See {@link resolveDiagnosticDatabaseUrl} — preflight keeps config-wins. */
+/**
+ * An explicit `--database-url` wins over a stash.config.ts literal, as it
+ * does in `eql verify`. See {@link resolveDiagnosticDatabaseUrl}.
+ */
 function resolvePreflightDatabaseUrl(
   databaseUrlFlag: string | undefined,
   json: boolean,
 ): Promise<string> {
-  return resolveDiagnosticDatabaseUrl({
-    databaseUrlFlag,
-    json,
-    flagWins: false,
-    verb: 'Probing',
-  })
+  return resolveDiagnosticDatabaseUrl({ databaseUrlFlag, json })
 }
 
 /**
