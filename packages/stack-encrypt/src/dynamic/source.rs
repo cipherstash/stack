@@ -1,5 +1,32 @@
-//! A record source, split into its rows and each row's fields, each
-//! field's value in a frame of its own.
+//! Splits the value a caller asks to encrypt into one value per field.
+//!
+//! A language SDK hands the engine a record as one value: a map from field
+//! names to values, such as `{"email": "a@example.com", "age": 34}`. The
+//! SDK can also hand over a batch: a sequence of such maps. The engine
+//! encrypts each field on its own, with that field's settings from the
+//! plan, so the engine first needs each field's value separately.
+//!
+//! [`split_source`] reads the value once, from start to end. As the split
+//! reaches each field, it writes that field's value into an
+//! [`OwnedFrame`] of its own. The split copies nothing else.
+//!
+//! The result has one entry for each record:
+//!
+//! * A map is one record. The record keeps its fields in the order the
+//!   value lists them. A field name that appears twice is kept twice.
+//! * A sequence is a batch. Each element of the sequence is one record.
+//! * Anything else is not a record: a single value, a null, a passthrough
+//!   value, or a sequence inside a batch. The entry for that value is
+//!   `None`. Nothing inside the value is kept.
+//!
+//! This module does not compare the fields with the plan. The caller,
+//! `record::source_rows`, refuses a value that is not a record, a missing
+//! field, an extra field, and a value of the wrong type.
+//!
+//! [`split_source`] fails when the frame writer refuses a field's value,
+//! such as a date out of range or a map that repeats a key. The error names
+//! that field, so the caller can report which field was wrong. When the
+//! source fails to describe itself, the error names no field.
 
 use std::cell::RefCell;
 
@@ -9,20 +36,20 @@ use vitaminc_aead::plaintext::{
 };
 use vitaminc_protected::Buffer;
 
-/// One row of a record source: its entries, each value written into its
-/// own frame as the source is walked, in source order with a repeated key
-/// kept; or `None` for a row that is not a map.
-pub(super) type SourceRow = Option<Vec<(String, OwnedFrame)>>;
+/// One record's fields, each name with its value in a frame of its own, in
+/// the order the source lists them. `None` when the source gave a value
+/// that is not a map, so is not a record.
+pub(super) type SourceRecord = Option<Vec<(String, OwnedFrame)>>;
 
-/// A record source split by [`split_rows`]: one row, or a batch.
-pub(super) enum SourceRows {
-    /// A map: one row.
-    One(SourceRow),
-    /// A sequence: each element a row.
-    Batch(Vec<SourceRow>),
+/// A source split by [`split_source`]: one record, or a batch of them.
+pub(super) enum SplitSource {
+    /// The source was a map, or a value that is not a record.
+    One(SourceRecord),
+    /// The source was a sequence. Each element is one record.
+    Batch(Vec<SourceRecord>),
 }
 
-/// Why [`split_rows`] refused a source: the frame writer's refusal, and the
+/// Why [`split_source`] failed: the error from the frame writer, and the
 /// field whose value it was writing, if it was writing one.
 #[derive(Debug)]
 pub(super) struct SplitRefusal {
@@ -30,18 +57,15 @@ pub(super) struct SplitRefusal {
     pub(super) error: FrameWriteError,
 }
 
-/// Walk a record source once, writing each field's value into a frame of
-/// its own. The source is a map (one row) or a sequence of maps (a batch);
-/// anything else, at the top or as a batch element, is a row that is not a
-/// map.
-///
-/// A value the frame writer refuses fails the walk, naming the field it
-/// was written for. A failure of the source itself names no field.
-pub(super) fn split_rows<P: Encrypt>(source: P) -> Result<SourceRows, SplitRefusal> {
-    // The field whose value is being written. A field name is in the clear
-    // in the plan and in the stored record, so it is held unwiped.
+/// Split a source into its records, writing each field's value into a
+/// frame of its own. The [module documentation](self) says what counts as
+/// a record and when the split fails.
+pub(super) fn split_source<P: Encrypt>(source: P) -> Result<SplitSource, SplitRefusal> {
+    // The field whose value is being written. Field names are not secret:
+    // the plan and the stored record both contain them unencrypted. So the
+    // name is not wiped.
     let open = RefCell::new(None);
-    source.visit(RowsSink(&open)).map_err(|error| SplitRefusal {
+    source.visit(TopSink(&open)).map_err(|error| SplitRefusal {
         field: match error {
             FrameWriteError::Source(_) => None,
             _ => open.take(),
@@ -50,143 +74,144 @@ pub(super) fn split_rows<P: Encrypt>(source: P) -> Result<SourceRows, SplitRefus
     })
 }
 
-/// The field a split is writing.
+/// The name of the field being written, shared by every sink in a split.
 type Open<'f> = &'f RefCell<Option<String>>;
 
-/// Where a finished row goes: back to the caller, or into a batch.
-trait PutRow {
+/// Where a finished record goes: returned to the caller, or added to a
+/// batch.
+trait PutRecord {
     type Ok;
-    fn put(self, row: SourceRow) -> Self::Ok;
+    fn put(self, record: SourceRecord) -> Self::Ok;
 }
 
-/// The top of a source: the row is the result.
-struct TopRow;
+/// The top of a source: the record is the result.
+struct TopRecord;
 
-impl PutRow for TopRow {
-    type Ok = SourceRows;
-    fn put(self, row: SourceRow) -> SourceRows {
-        SourceRows::One(row)
+impl PutRecord for TopRecord {
+    type Ok = SplitSource;
+    fn put(self, record: SourceRecord) -> SplitSource {
+        SplitSource::One(record)
     }
 }
 
-/// The next row of a batch.
-struct BatchRow<'s>(&'s mut Vec<SourceRow>);
+/// The next record of a batch.
+struct BatchRecord<'s>(&'s mut Vec<SourceRecord>);
 
-impl PutRow for BatchRow<'_> {
+impl PutRecord for BatchRecord<'_> {
     type Ok = ();
-    fn put(self, row: SourceRow) {
-        self.0.push(row);
+    fn put(self, record: SourceRecord) {
+        self.0.push(record);
     }
 }
 
-/// The top of a record source.
-struct RowsSink<'f>(Open<'f>);
+/// The top of a source.
+struct TopSink<'f>(Open<'f>);
 
-impl<'f> Sink for RowsSink<'f> {
-    type Ok = SourceRows;
+impl<'f> Sink for TopSink<'f> {
+    type Ok = SplitSource;
     type Error = FrameWriteError;
     type Seq = BatchSink<'f>;
-    type Map = RowMap<'f, TopRow>;
+    type Map = RecordMap<'f, TopRecord>;
 
-    fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<SourceRows, FrameWriteError> {
-        Ok(SourceRows::One(None))
+    fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<SplitSource, FrameWriteError> {
+        Ok(SplitSource::One(None))
     }
 
-    fn typed_null(self, _: FixedType) -> Result<SourceRows, FrameWriteError> {
-        Ok(SourceRows::One(None))
+    fn typed_null(self, _: FixedType) -> Result<SplitSource, FrameWriteError> {
+        Ok(SplitSource::One(None))
     }
 
     fn seq(self, _: Option<usize>) -> Result<BatchSink<'f>, FrameWriteError> {
         Ok(BatchSink {
             open: self.0,
-            rows: Vec::new(),
+            records: Vec::new(),
         })
     }
 
-    fn map(self, _: Option<usize>) -> Result<RowMap<'f, TopRow>, FrameWriteError> {
-        Ok(RowMap::new(self.0, TopRow))
+    fn map(self, _: Option<usize>) -> Result<RecordMap<'f, TopRecord>, FrameWriteError> {
+        Ok(RecordMap::new(self.0, TopRecord))
     }
 
-    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<SourceRows, FrameWriteError> {
-        Ok(SourceRows::One(None))
+    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<SplitSource, FrameWriteError> {
+        Ok(SplitSource::One(None))
     }
 }
 
-/// A batch: one row per element.
+/// A batch: one record for each element.
 struct BatchSink<'f> {
     open: Open<'f>,
-    rows: Vec<SourceRow>,
+    records: Vec<SourceRecord>,
 }
 
 impl<'f> SeqSink for BatchSink<'f> {
-    type Ok = SourceRows;
+    type Ok = SplitSource;
     type Error = FrameWriteError;
     type Element<'s>
-        = RowSink<'f, 's>
+        = ElementSink<'f, 's>
     where
         Self: 's;
 
-    fn element(&mut self) -> Result<RowSink<'f, '_>, FrameWriteError> {
-        Ok(RowSink {
+    fn element(&mut self) -> Result<ElementSink<'f, '_>, FrameWriteError> {
+        Ok(ElementSink {
             open: self.open,
-            row: BatchRow(&mut self.rows),
+            record: BatchRecord(&mut self.records),
         })
     }
 
-    fn end(self) -> Result<SourceRows, FrameWriteError> {
-        Ok(SourceRows::Batch(self.rows))
+    fn end(self) -> Result<SplitSource, FrameWriteError> {
+        Ok(SplitSource::Batch(self.records))
     }
 }
 
-/// One element of a batch: a row if it is a map, a row that is not a map
-/// otherwise, whose content is walked past.
-struct RowSink<'f, 's> {
+/// One element of a batch. A map is a record. Anything else is not a
+/// record, and the sink reads past its content.
+struct ElementSink<'f, 's> {
     open: Open<'f>,
-    row: BatchRow<'s>,
+    record: BatchRecord<'s>,
 }
 
-impl<'f, 's> Sink for RowSink<'f, 's> {
+impl<'f, 's> Sink for ElementSink<'f, 's> {
     type Ok = ();
     type Error = FrameWriteError;
-    type Seq = NotARow<'s>;
-    type Map = RowMap<'f, BatchRow<'s>>;
+    type Seq = NotARecord<'s>;
+    type Map = RecordMap<'f, BatchRecord<'s>>;
 
     fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), FrameWriteError> {
-        self.row.put(None);
+        self.record.put(None);
         Ok(())
     }
 
     fn typed_null(self, _: FixedType) -> Result<(), FrameWriteError> {
-        self.row.put(None);
+        self.record.put(None);
         Ok(())
     }
 
-    fn seq(self, _: Option<usize>) -> Result<NotARow<'s>, FrameWriteError> {
-        Ok(NotARow {
-            row: self.row,
+    fn seq(self, _: Option<usize>) -> Result<NotARecord<'s>, FrameWriteError> {
+        Ok(NotARecord {
+            record: self.record,
             skipped: Buffer::new(),
         })
     }
 
-    fn map(self, _: Option<usize>) -> Result<RowMap<'f, BatchRow<'s>>, FrameWriteError> {
-        Ok(RowMap::new(self.open, self.row))
+    fn map(self, _: Option<usize>) -> Result<RecordMap<'f, BatchRecord<'s>>, FrameWriteError> {
+        Ok(RecordMap::new(self.open, self.record))
     }
 
     fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<(), FrameWriteError> {
-        self.row.put(None);
+        self.record.put(None);
         Ok(())
     }
 }
 
-/// A batch element that is a sequence: not a row. Its elements are walked
-/// past, written into a buffer that is dropped, and it is recorded when it
-/// ends.
-struct NotARow<'s> {
-    row: BatchRow<'s>,
+/// A batch element that is a sequence, so is not a record. The source still
+/// has to describe its elements, so they are written into a buffer that is
+/// then dropped. When the sequence ends, the batch gets `None` for it.
+struct NotARecord<'s> {
+    record: BatchRecord<'s>,
     skipped: Buffer,
 }
 
-impl SeqSink for NotARow<'_> {
+impl SeqSink for NotARecord<'_> {
     type Ok = ();
     type Error = FrameWriteError;
     type Element<'e>
@@ -199,21 +224,21 @@ impl SeqSink for NotARow<'_> {
     }
 
     fn end(self) -> Result<(), FrameWriteError> {
-        self.row.put(None);
+        self.record.put(None);
         Ok(())
     }
 }
 
-/// One row's entries, each written into its own frame.
-struct RowMap<'f, O> {
+/// One record's fields, each value written into its own frame.
+struct RecordMap<'f, O> {
     open: Open<'f>,
     out: O,
-    // A row's keys are its field names, which the plan and the stored
-    // record both name in the clear, so they are held unwiped.
+    // The keys are field names. Field names are not secret, so they are
+    // not wiped.
     entries: Vec<(String, Buffer)>,
 }
 
-impl<'f, O> RowMap<'f, O> {
+impl<'f, O> RecordMap<'f, O> {
     fn new(open: Open<'f>, out: O) -> Self {
         Self {
             open,
@@ -223,7 +248,7 @@ impl<'f, O> RowMap<'f, O> {
     }
 }
 
-impl<O: PutRow> MapSink for RowMap<'_, O> {
+impl<O: PutRecord> MapSink for RecordMap<'_, O> {
     type Ok = O::Ok;
     type Error = FrameWriteError;
     type Entry<'s>
@@ -243,17 +268,18 @@ impl<O: PutRow> MapSink for RowMap<'_, O> {
     }
 
     fn end(self) -> Result<O::Ok, FrameWriteError> {
-        let mut row = Vec::with_capacity(self.entries.len());
+        let mut record = Vec::with_capacity(self.entries.len());
         for (key, buffer) in self.entries {
-            // A source that dropped an entry's sink unwritten left no frame.
+            // A source that dropped an entry's sink without writing to it
+            // left no frame.
             let value = OwnedFrame::from_buffer(buffer).map_err(|_| {
                 *self.open.borrow_mut() = Some(key.clone());
                 FrameWriteError::Unwritten
             })?;
-            row.push((key, value));
+            record.push((key, value));
         }
         *self.open.borrow_mut() = None;
-        Ok(self.out.put(Some(row)))
+        Ok(self.out.put(Some(record)))
     }
 }
 
@@ -277,9 +303,9 @@ mod tests {
         )
     }
 
-    /// A row's entries as their frames' bytes, in source order.
-    fn bytes(row: &SourceRow) -> Option<Vec<(String, Vec<u8>)>> {
-        row.as_ref().map(|entries| {
+    /// A record's fields as their frames' bytes, in source order.
+    fn bytes(record: &SourceRecord) -> Option<Vec<(String, Vec<u8>)>> {
+        record.as_ref().map(|entries| {
             entries
                 .iter()
                 .map(|(key, value)| (key.clone(), value.frame().as_bytes().to_vec()))
@@ -296,18 +322,18 @@ mod tests {
     }
 
     #[test]
-    fn a_map_is_one_row_of_its_entries_frames_in_order_with_a_repeat_kept() {
+    fn a_map_is_one_record_of_its_fields_frames_in_order_with_a_repeat_kept() {
         // A frame holds no repeated key, so the source is the tree itself.
         let source = obj(vec![
             ("b", Tree::UInt32(7)),
             ("a", obj(vec![("k", s("v"))])),
             ("b", Tree::Passthrough(Box::new(s("p")))),
         ]);
-        let Ok(SourceRows::One(row)) = split_rows(&source) else {
-            panic!("one row");
+        let Ok(SplitSource::One(record)) = split_source(&source) else {
+            panic!("one record");
         };
         assert_eq!(
-            bytes(&row),
+            bytes(&record),
             Some(vec![
                 ("b".to_owned(), owned(&Tree::UInt32(7))),
                 ("a".to_owned(), owned(&obj(vec![("k", s("v"))]))),
@@ -317,7 +343,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sequence_is_a_batch_and_what_is_not_a_map_is_no_row() {
+    fn a_sequence_is_a_batch_and_what_is_not_a_map_is_not_a_record() {
         let ty = FixedType::new(Some(Logical::Date), Width::I32).expect("fixed");
         let source = Tree::Array(vec![
             obj(vec![("a", Tree::Int32(1))]),
@@ -326,12 +352,12 @@ mod tests {
             Tree::Passthrough(Box::new(obj(vec![]))),
             obj(vec![]),
         ]);
-        let Ok(SourceRows::Batch(rows)) = split_rows(&source) else {
+        let Ok(SplitSource::Batch(records)) = split_source(&source) else {
             panic!("a batch");
         };
-        let rows: Vec<_> = rows.iter().map(bytes).collect();
+        let records: Vec<_> = records.iter().map(bytes).collect();
         assert_eq!(
-            rows,
+            records,
             [
                 Some(vec![("a".to_owned(), owned(&Tree::Int32(1)))]),
                 None,
@@ -341,29 +367,29 @@ mod tests {
             ]
         );
         for top in [s("x"), Tree::Null, Tree::Passthrough(Box::new(obj(vec![])))] {
-            assert!(matches!(split_rows(&top), Ok(SourceRows::One(None))));
+            assert!(matches!(split_source(&top), Ok(SplitSource::One(None))));
         }
 
         // A typed null, at the top or as a batch element, is a null.
         let mut one = Vec::new();
         vitaminc_aead::leaf::write_typed_null(ty, &mut one);
         let top = Frame::parse(&one).expect("a frame");
-        assert!(matches!(split_rows(top), Ok(SourceRows::One(None))));
+        assert!(matches!(split_source(top), Ok(SplitSource::One(None))));
         let mut batch = vec![ARRAY, 2, 0, 0, 0];
         batch.extend(&one);
         batch.extend(&one);
         let batch = Frame::parse(&batch).expect("a frame");
         assert!(matches!(
-            split_rows(batch),
-            Ok(SourceRows::Batch(rows)) if rows.len() == 2 && rows.iter().all(Option::is_none)
+            split_source(batch),
+            Ok(SplitSource::Batch(records)) if records.len() == 2 && records.iter().all(Option::is_none)
         ));
     }
 
     /// A refusal names the field whose value the writer refused, in the
-    /// first row or a later one; a source's own failure names none.
+    /// first record or a later one. A failure of the source itself names none.
     #[test]
     fn a_refusal_names_the_field_being_written() {
-        let refused = |source: &Tree| split_rows(source).err().expect("refused");
+        let refused = |source: &Tree| split_source(source).err().expect("refused");
         let bad_date = Tree::Typed(Logical::Date, Box::new(Tree::Int64(i64::MAX)));
 
         let one = refused(&obj(vec![
@@ -386,7 +412,7 @@ mod tests {
         assert_eq!(repeated.field.as_deref(), Some("doc"));
         assert!(matches!(repeated.error, FrameWriteError::DuplicateKey));
 
-        // After a row ends, a refusal outside any row names no field.
+        // A refusal after a record ends, outside any record, names no field.
         let after = refused(&Tree::Array(vec![
             obj(vec![("a", Tree::Int32(1))]),
             Tree::Array(vec![bad_date]),
@@ -403,13 +429,13 @@ mod tests {
                 ))
             }
         }
-        let failed = split_rows(&Fails).err().expect("refused");
+        let failed = split_source(&Fails).err().expect("refused");
         assert_eq!(failed.field, None);
         assert!(matches!(failed.error, FrameWriteError::Source(_)));
     }
 
     /// An entry whose sink the source dropped unwritten has no frame: the
-    /// row is refused, naming it.
+    /// record is refused, naming it.
     #[test]
     fn an_unwritten_entry_is_refused_naming_it() {
         struct DropsAnEntry;
@@ -422,7 +448,7 @@ mod tests {
             }
         }
         use vitaminc_aead::plaintext::Raw;
-        let refused = split_rows(&DropsAnEntry).err().expect("refused");
+        let refused = split_source(&DropsAnEntry).err().expect("refused");
         assert_eq!(refused.field.as_deref(), Some("dropped"));
         assert!(matches!(refused.error, FrameWriteError::Unwritten));
     }

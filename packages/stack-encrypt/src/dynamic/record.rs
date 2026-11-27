@@ -150,7 +150,7 @@ use std::fmt;
 use serde::de::{Deserializer, MapAccess, Visitor};
 use serde::Deserialize;
 
-use super::source::{split_rows, SourceRow, SourceRows, SplitRefusal};
+use super::source::{split_source, SourceRecord, SplitRefusal, SplitSource};
 use super::term::{IndexWire, JsonWire, MatchWire};
 use super::{TargetOptions, ValueKind};
 use vitaminc_aead::frame::{Frame, FrameWriteError, FrameWriter, OwnedFrame};
@@ -2219,16 +2219,16 @@ fn check_tree<T: RecordTree>(tree: &T, field: &str) -> Result<(), Error> {
 /// field is present exactly once in every row and no row carries a field
 /// the plan does not name, and each value fits its field ([`check_field`]).
 ///
-/// The source is walked once ([`split_rows`]): each field's value is written
+/// The source is walked once ([`split_source`]): each field's value is written
 /// into an [`OwnedFrame`] of its own as the walk reaches it, and nothing else
 /// is copied. A value the frame cannot carry, or that holds a repeated key,
 /// is refused naming its field.
 pub(super) fn source_rows(source: impl Encrypt, plan: &Plan) -> Result<Rows<Row>, Error> {
     let not_an_object = || Error::bad_source(Reason::NotAnObject);
-    let row = |row: SourceRow| source_row(row.ok_or_else(not_an_object)?, plan);
-    match split_rows(source).map_err(split_refusal)? {
-        SourceRows::One(one) => Ok(Rows::One(row(one)?)),
-        SourceRows::Batch(rows) => Ok(Rows::Batch(
+    let row = |row: SourceRecord| source_row(row.ok_or_else(not_an_object)?, plan);
+    match split_source(source).map_err(split_refusal)? {
+        SplitSource::One(one) => Ok(Rows::One(row(one)?)),
+        SplitSource::Batch(rows) => Ok(Rows::Batch(
             rows.into_iter().map(row).collect::<Result<Vec<_>, _>>()?,
         )),
     }
