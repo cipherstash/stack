@@ -32,8 +32,9 @@ use zeroize::Zeroizing;
 
 use crate::host::{HostOidcProvider, WasiAuthTransport};
 use stack_auth::AuthError;
-use stack_guest_abi::last_error::{malformed, out_of_order};
+use stack_guest_abi::last_error::{internal, malformed, out_of_order};
 use stack_guest_abi::step::Operation;
+use stack_guest_abi::value::HostValue;
 
 use crate::status::{fail_auth, fail_profile, STATUS_AUTH_REFRESH_REQUIRED};
 
@@ -176,9 +177,10 @@ fn strategy(handle: &[u8]) -> Result<Rc<Strategy>, u32> {
 
 /// A token fetch, as a step operation: the strategy's current token, after
 /// an exchange with CTS when it has none it can use. A device session's
-/// token is read from the profile and never refreshed here: past its
-/// refresh window it is `STATUS_AUTH_REFRESH_REQUIRED`, and the host
-/// refreshes under its lock ([`refresh`]).
+/// token is read from the profile and never refreshed here; its output is
+/// a frame that says whether the host should refresh it under its lock
+/// ([`refresh`]), and once the token is no longer usable it is
+/// `STATUS_AUTH_REFRESH_REQUIRED`.
 pub fn token(handle: &[u8]) -> Result<Operation, u32> {
     let strategy = strategy(handle)?;
     Ok(Box::pin(async move {
@@ -213,10 +215,32 @@ fn cached_device_token(workspace_dir: &str, base_url: &Option<url::Url>) -> Resu
     if base_url.is_none() {
         let _ = token.issuer().map_err(|e| fail_auth(&e))?;
     }
-    if token.is_expired() {
+    // Inside the refresh window the token still works: it goes to the
+    // host with the flag set, so callers keep using it while one of them
+    // refreshes. Past its expiry nothing can use it.
+    if token.is_expired() && !token.is_usable() {
         return Err(STATUS_AUTH_REFRESH_REQUIRED);
     }
-    Ok(token.access_token().as_str().as_bytes().to_vec())
+    device_token_frame(&token, token.is_expired())
+}
+
+/// A device session's token read, as the frame `sa_auth_token` returns:
+/// `{"access_token": text, "refresh_required": bool}`. The text is wiped
+/// when the value drops, and the frame by the registry once the host has
+/// taken it, as every token output is.
+fn device_token_frame(token: &Token, refresh_required: bool) -> Result<Vec<u8>, u32> {
+    HostValue::Map(vec![
+        (
+            "access_token".to_owned(),
+            HostValue::text(token.access_token().as_str()),
+        ),
+        (
+            "refresh_required".to_owned(),
+            HostValue::Bool(refresh_required),
+        ),
+    ])
+    .encode()
+    .map_err(|_| internal("a device session's token could not be encoded"))
 }
 
 /// A device session's refresh, as a step operation. The host holds the

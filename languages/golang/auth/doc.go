@@ -55,9 +55,10 @@
 // refresh: the service rotates the refresh token when it answers one, so
 // the caller returns at once while the refresh runs on, for up to 10
 // seconds, and the store keeps what it sends back for the next call.
-// [Strategy.Close] waits for such a refresh. The store closes itself, and
-// every later call is [ErrState], only when its guest traps or a call into
-// it runs on for 30 seconds after its context ended.
+// [Strategy.Close] and [ProfileStore.Close] wait for such a refresh. The
+// store closes itself, and every later call is [ErrState], only when its
+// guest traps or a call into it runs on for 30 seconds after its context
+// ended.
 //
 // A call can run the application's own code: the RoundTripper given to
 // [WithRoundTripper], and an [OIDCProvider]. A panic in it reaches the

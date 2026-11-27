@@ -10,6 +10,8 @@ import (
 	"sync"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
+	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 	"github.com/tetratelabs/wazero/api"
 )
 
@@ -336,27 +338,52 @@ func (s *Strategy) Token(ctx context.Context) (string, error) {
 
 // token is Token's work: a read, after an exchange when there is no usable
 // token, then, for a device session that needs one, a refresh under the
-// cross-process lock.
+// cross-process lock. While one caller refreshes a device session's token
+// that still works, the others get that token at once.
 func (s *Strategy) token(ctx context.Context) (string, error) {
-	run := func(ctx context.Context, export func(*instance) api.Function) (string, error) {
+	run := func(ctx context.Context, export func(*instance) api.Function) ([]byte, error) {
 		out, err := s.store.run(ctx, export, guest.BufArg([]byte(s.handle)))
+		if err != nil {
+			return nil, err
+		}
+		// A caller that has left gets no copy: a string cannot be wiped,
+		// and the next Token reads the guest's.
+		if err := ctx.Err(); err != nil {
+			guest.Wipe(out)
+			return nil, err
+		}
+		return out, nil
+	}
+	text := func(out []byte, err error) (string, error) {
 		if err != nil {
 			return "", err
 		}
 		defer guest.Wipe(out)
-		// A caller that has left gets no copy: a string cannot be wiped,
-		// and the next Token reads the guest's.
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
 		return string(out), nil
 	}
-	token, err := run(ctx, func(i *instance) api.Function { return i.authToken })
-	if !s.device || !errors.Is(err, guest.ErrAuthRefreshRequired) {
-		return token, err
+	if !s.device {
+		return text(run(ctx, func(i *instance) api.Function { return i.authToken }))
 	}
-	if err := s.refreshing.Acquire(ctx); err != nil {
+	out, err := run(ctx, func(i *instance) api.Function { return i.authToken })
+	switch {
+	case errors.Is(err, guest.ErrAuthRefreshRequired):
+		// Past its expiry: every caller waits for the refresh.
+		if err := s.refreshing.Acquire(ctx); err != nil {
+			return "", err
+		}
+	case err != nil:
 		return "", err
+	default:
+		token, refresh, err := decodeDeviceToken(out)
+		guest.Wipe(out)
+		if err != nil || !refresh {
+			return token, err
+		}
+		// Still usable: refresh it unless another caller already is, and
+		// hand out the current token meanwhile.
+		if !s.refreshing.TryLock() {
+			return token, nil
+		}
 	}
 	defer s.refreshing.Unlock()
 	path, err := s.store.LockPath(ctx, "auth.json")
@@ -366,14 +393,52 @@ func (s *Strategy) token(ctx context.Context) (string, error) {
 	// The lock is held across every step of the refresh. A refresh that
 	// waited here behind another finds the token that one saved: the
 	// guest re-reads auth.json before it asks the service.
+	var token string
 	err = withRefreshLock(ctx, path, func() error {
 		var err error
 		// The one request that rotates a credential: it runs on after its
 		// caller leaves (see refreshGrace).
-		token, err = run(withRefresh(ctx), func(i *instance) api.Function { return i.authRefresh })
+		token, err = text(run(withRefresh(ctx), func(i *instance) api.Function { return i.authRefresh }))
 		return err
 	})
 	return token, err
+}
+
+// decodeDeviceToken reads a device session's token read:
+// `{"access_token": text, "refresh_required": bool}`. The error never
+// quotes the frame: it carries the token.
+func decodeDeviceToken(raw []byte) (token string, refresh bool, err error) {
+	malformed := fmt.Errorf("%w: the guest's device session token is malformed", ErrInternal)
+	decoded, err := vcffi.Unmarshal(raw)
+	if err != nil {
+		return "", false, malformed
+	}
+	obj, ok := decoded.(vcvalue.Object)
+	if !ok {
+		return "", false, malformed
+	}
+	var sawToken, sawRefresh bool
+	for _, f := range obj {
+		switch f.Key {
+		case "access_token":
+			token, ok = f.Value.(string)
+			ok = ok && !sawToken
+			sawToken = true
+		case "refresh_required":
+			refresh, ok = f.Value.(bool)
+			ok = ok && !sawRefresh
+			sawRefresh = true
+		default:
+			ok = false
+		}
+		if !ok {
+			return "", false, malformed
+		}
+	}
+	if !sawToken || !sawRefresh || token == "" {
+		return "", false, malformed
+	}
+	return token, refresh, nil
 }
 
 // MemoryLockError is why the memory the strategy lives in is not locked in

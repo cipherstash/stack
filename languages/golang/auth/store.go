@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
@@ -91,6 +92,12 @@ type root struct {
 	// guest lists it as runnable, or when the profile closes. Guarded by
 	// mu.
 	parked map[uint64]chan struct{}
+	// closing is set by Close, under mu, before it waits for ops: no token
+	// operation starts after it, and a parked one is aborted.
+	closing bool
+	// ops counts the token operations running (run), each from its start
+	// to its last step. Close waits for them.
+	ops sync.WaitGroup
 }
 
 // Resolve opens the profile directory the Rust crate would: CS_CONFIG_PATH
@@ -207,11 +214,36 @@ func (s *ProfileStore) LogValue() slog.Value {
 }
 
 // Close releases the guest: its shutdown wipes every buffer it still
-// holds, and the runtime close wipes and frees its memory. Idempotent.
+// holds, and the runtime close wipes and frees its memory. Idempotent, and
+// safe to call at the same time as another Close, or a Strategy's Close.
 // Every store of this profile is closed by it; a call on any of them after
 // it fails with ErrState.
+//
+// Close first waits for the token requests already sent, so what the token
+// service sends back is kept: a device session's refresh in flight saves
+// the rotated refresh token before the profile closes. Token calls that
+// are waiting for that request, or have not started, fail with ErrState.
+// The wait lasts as long as the request does: until it is answered, or
+// fails at its caller's deadline, or, for a device session's refresh, 10
+// seconds after that deadline (30 seconds for a RoundTripper that ignores
+// its context). A request whose caller's context never ends is waited for
+// as long as the RoundTripper takes.
 func (s *ProfileStore) Close() error {
 	r := s.root
+	r.mu.Lock()
+	if r.released {
+		r.mu.Unlock()
+		return nil
+	}
+	if !r.closing {
+		r.closing = true
+		r.cleanup.Stop()
+		// A parked token operation wakes and aborts, rather than waiting
+		// for an exchange that may not finish before the profile closes.
+		s.wakeAllLocked()
+	}
+	r.mu.Unlock()
+	r.ops.Wait()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.released {
@@ -219,10 +251,6 @@ func (s *ProfileStore) Close() error {
 	}
 	r.released = true
 	r.closed = true
-	r.cleanup.Stop()
-	// A parked token operation wakes, resumes, and finds the profile
-	// closed, rather than waiting for good.
-	s.wakeAllLocked()
 	return r.inst.release()
 }
 
@@ -261,16 +289,32 @@ func (s *ProfileStore) callArgs(ctx context.Context, fn export, args ...guest.Ar
 }
 
 // closeLocked marks the profile closed and closes the guest's module: its
-// state is unknown.
+// state is unknown. Every parked token operation is woken, and finds the
+// profile closed.
 func (s *ProfileStore) closeLocked() {
 	s.root.closed = true
 	_ = s.root.inst.module.Close(context.Background())
+	s.wakeAllLocked()
 }
 
 // callLocked is callArgs with the profile's lock already held. A token
 // export that paused returns guest.ErrNeedsIO, whatever ctx did since: the
 // step is the caller's to take (stepLocked).
 func (s *ProfileStore) callLocked(ctx context.Context, fn export, args ...guest.Arg) ([]byte, error) {
+	return s.callLockedAs(ctx, true, fn, args...)
+}
+
+// callDetachedLocked is callLocked for a call made on behalf of an
+// operation whose caller may have gone: a resume, an abort, the runnable
+// list. It does not fail, or wipe its output, because ctx has ended. ctx
+// still arms the stuck-call backstop: the call is ended StuckAfter ctx
+// does, or at once that long into the call if ctx has already ended.
+func (s *ProfileStore) callDetachedLocked(ctx context.Context, fn export, args ...guest.Arg) ([]byte, error) {
+	return s.callLockedAs(ctx, false, fn, args...)
+}
+
+// callLockedAs is callLocked, and, with caller false, callDetachedLocked.
+func (s *ProfileStore) callLockedAs(ctx context.Context, caller bool, fn export, args ...guest.Arg) ([]byte, error) {
 	r := s.root
 	if r.closed || r.inst.module.IsClosed() {
 		r.closed = true
@@ -284,6 +328,7 @@ func (s *ProfileStore) callLocked(ctx context.Context, fn export, args ...guest.
 	switch {
 	case r.inst.module.IsClosed():
 		r.closed = true
+		s.wakeAllLocked()
 		if err == nil {
 			err = ErrState
 		}
@@ -311,7 +356,7 @@ func (s *ProfileStore) callLocked(ctx context.Context, fn export, args ...guest.
 		return nil, err
 	}
 	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
+		if ctxErr := ctx.Err(); caller && ctxErr != nil && !errors.Is(err, ctxErr) {
 			err = fmt.Errorf("%w: %w", ctxErr, err)
 		}
 		return nil, err
@@ -320,7 +365,7 @@ func (s *ProfileStore) callLocked(ctx context.Context, fn export, args ...guest.
 	// encrypt's Client.call, and its output (a token, say) is wiped. What
 	// the guest wrote stays written: a refresh that ran on keeps the
 	// rotated token, and the next call reads it.
-	if ctxErr := ctx.Err(); ctxErr != nil {
+	if ctxErr := ctx.Err(); caller && ctxErr != nil {
 		guest.Wipe(out)
 		return nil, ctxErr
 	}

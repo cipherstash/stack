@@ -272,9 +272,23 @@ pub unsafe extern "C" fn sa_auth_validate_crn(ptr: *const u8, len: u32) -> u64 {
 }
 
 /// Get a service token from a strategy, as a step operation (see
-/// [Token exports step](self#token-exports-step)). A device session returns
-/// `STATUS_AUTH_REFRESH_REQUIRED` when it enters the refresh window;
-/// this export never refreshes a device session or needs its file lock.
+/// [Token exports step](self#token-exports-step)). For an access key or
+/// OIDC strategy the output is the token's text.
+///
+/// For a device session this export only reads auth.json: it never
+/// refreshes, never pauses, and needs no file lock. Its output is a frame:
+///
+/// ```text
+/// { "access_token": <text>, "refresh_required": <bool> }
+/// ```
+///
+/// `refresh_required` is true once the token is inside stack-auth's
+/// refresh window, while it still works: the host refreshes it with
+/// [`sa_auth_refresh`] under its lock, and may hand the token to other
+/// callers until that refresh is done. A token past its expiry, which
+/// nothing can use, is `STATUS_AUTH_REFRESH_REQUIRED` instead. The frame
+/// carries the token: the host releases it with `se_dealloc`, which wipes
+/// it.
 /// # Safety
 /// The input pair is validated against guest linear memory.
 #[no_mangle]

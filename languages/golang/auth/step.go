@@ -38,9 +38,9 @@ import (
 // its caller gives up.
 
 // maxPaused is the most token operations that may be paused in the guest at
-// once, parked ones included: the guest's MAX_OPEN, which refuses one more.
-// Each operation takes a slot for its whole life, so callers past it wait
-// for a slot rather than fail.
+// once, parked ones included: the guest's MAX_OPEN, which refuses one more,
+// as TestMaxPausedIsTheGuestsLimit checks. Each operation takes a slot for
+// its whole life, so callers past it wait for a slot rather than fail.
 const maxPaused = 64
 
 // authStep is a paused operation's step, as the guest hands it over: its
@@ -207,6 +207,10 @@ func encodeResponses(responses []response) ([]byte, error) {
 // operation starts, and the wait while it is parked. Once a request is in
 // flight the operation is finished whatever ctx does (see above), and a
 // caller whose ctx ended by then gets its error and no output.
+//
+// Every operation is counted on the root from its start to its last step,
+// so ProfileStore.Close waits for it. Once Close has begun, no operation
+// starts, and a parked one is aborted rather than resumed.
 func (s *ProfileStore) run(ctx context.Context, start export, args ...guest.Arg) ([]byte, error) {
 	r := s.root
 	select {
@@ -219,19 +223,31 @@ func (s *ProfileStore) run(ctx context.Context, start export, args ...guest.Arg)
 	if err := r.mu.Acquire(ctx); err != nil {
 		return nil, err
 	}
-	out, step, err := s.stepUnlock(ctx, start, args...)
+	if r.closing || r.closed {
+		r.mu.Unlock()
+		return nil, ErrState
+	}
+	// Added under the lock, before Close can see closing unset and wait.
+	r.ops.Add(1)
+	defer r.ops.Done()
+	out, step, err := s.stepUnlock(ctx, false, start, args...)
 	// Once started, the operation is driven to its end: a resume waits for
-	// the lock, and runs, whatever the caller's context does.
-	resumeCtx := context.WithoutCancel(ctx)
+	// the lock, and runs, whatever the caller's context does. Its steps
+	// still run under the stuck-call backstop, armed by ctx (stepLocked).
 	for step != nil {
 		var responses []response
 		if step.parked {
-			if !s.waitRunnable(ctx, step.handle) {
-				r.mu.Lock()
+			woken := s.waitRunnable(ctx, step.handle)
+			r.mu.Lock()
+			if !woken || r.closing {
 				defer r.mu.Unlock()
-				s.abortLocked(resumeCtx, step.handle)
-				return nil, ctx.Err()
+				s.abortLocked(ctx, step.handle)
+				if !woken {
+					return nil, ctx.Err()
+				}
+				return nil, ErrState
 			}
+			r.mu.Unlock()
 		} else {
 			// Requests run outside the lock; there are none for a yield.
 			for _, req := range step.requests {
@@ -247,11 +263,11 @@ func (s *ProfileStore) run(ctx context.Context, start export, args ...guest.Arg)
 		if encodeErr != nil {
 			r.mu.Lock()
 			defer r.mu.Unlock()
-			s.abortLocked(resumeCtx, step.handle)
+			s.abortLocked(ctx, step.handle)
 			return nil, fmt.Errorf("%w: encoding the responses: %w", ErrInternal, encodeErr)
 		}
 		r.mu.Lock()
-		out, step, err = s.stepUnlock(resumeCtx, func(i *instance) api.Function { return i.authResume },
+		out, step, err = s.stepUnlock(ctx, true, func(i *instance) api.Function { return i.authResume },
 			guest.ScalarArg(step.handle), guest.BufArg(encoded))
 		guest.Wipe(encoded)
 		if err != nil {
@@ -282,9 +298,9 @@ func withCtxErr(ctx context.Context, err error) error {
 // stepUnlock is stepLocked for a caller that holds the profile's lock, and
 // releases it, panic or not: the application's OIDC provider runs inside a
 // guest call, and its panic is raised again here (callLocked).
-func (s *ProfileStore) stepUnlock(ctx context.Context, fn export, args ...guest.Arg) ([]byte, *authStep, error) {
+func (s *ProfileStore) stepUnlock(ctx context.Context, resume bool, fn export, args ...guest.Arg) ([]byte, *authStep, error) {
 	defer s.root.mu.Unlock()
-	return s.stepLocked(ctx, fn, args...)
+	return s.stepLocked(ctx, resume, fn, args...)
 }
 
 // stepLocked runs one step of an operation, the export fn with args, with
@@ -293,9 +309,20 @@ func (s *ProfileStore) stepUnlock(ctx context.Context, fn export, args ...guest.
 // to be woken before the lock is released, and every guest call here is
 // followed by waking the operations the guest says may run, so no wake is
 // lost between the two.
-func (s *ProfileStore) stepLocked(ctx context.Context, fn export, args ...guest.Arg) ([]byte, *authStep, error) {
+//
+// ctx is the caller's. The first step runs as any call does
+// (callLocked). A resume runs on once the caller has gone: its result is
+// the operation's, not the caller's (callDetachedLocked). Either way the
+// stuck-call backstop starts when ctx ends.
+func (s *ProfileStore) stepLocked(ctx context.Context, resume bool, fn export, args ...guest.Arg) ([]byte, *authStep, error) {
 	r := s.root
-	out, err := s.callLocked(ctx, fn, args...)
+	var out []byte
+	var err error
+	if resume {
+		out, err = s.callDetachedLocked(ctx, fn, args...)
+	} else {
+		out, err = s.callLocked(ctx, fn, args...)
+	}
 	defer s.wakeRunnableLocked(ctx)
 	if !errors.Is(err, guest.ErrNeedsIO) {
 		return out, nil, err
@@ -304,14 +331,23 @@ func (s *ProfileStore) stepLocked(ctx context.Context, fn export, args ...guest.
 	if err != nil {
 		return nil, nil, err
 	}
-	if step.parked {
+	// Once Close has begun, a parked operation is not waited on: it is
+	// left out of parked, so its caller finds it woken, and aborts it.
+	if step.parked && !r.closing {
 		r.parked[step.handle] = make(chan struct{})
 	}
 	return nil, step, nil
 }
 
 // takeIOLocked takes the step a paused export left (sa_auth_io), once.
+//
+// It runs whatever the caller's context has done since the export paused:
+// the step must be taken, and wazero closes a module called under an ended
+// context. A step that cannot be taken or read closes the profile: the
+// operation is still open in the guest, with no handle to abort it by, and
+// may hold a lock other operations wait on.
 func (s *ProfileStore) takeIOLocked(ctx context.Context) (*authStep, error) {
+	ctx = context.WithoutCancel(ctx)
 	inst := s.root.inst
 	// The memory stays mapped until the step is copied out and its buffer
 	// freed, as around any guest call.
@@ -322,26 +358,35 @@ func (s *ProfileStore) takeIOLocked(ctx context.Context) (*authStep, error) {
 		s.closeLocked()
 		return nil, fmt.Errorf("%w: guest call: %w; the profile is closed", guest.ErrTrap, err)
 	}
+	unreadable := func(why string) (*authStep, error) {
+		s.closeLocked()
+		return nil, fmt.Errorf("%w: %s; the profile is closed", ErrInternal, why)
+	}
 	if len(res) == 0 || res[0]>>32 == 0 {
-		return nil, fmt.Errorf("%w: the guest paused without a step", ErrInternal)
+		return unreadable("the guest paused without a step")
 	}
 	out := guest.Buf{Ptr: uint32(res[0] >> 32), Len: uint32(res[0])} //nolint:gosec // splits the packed u64 into its two u32 halves
 	defer inst.exports.Free(ctx, out)
 	view, ok := inst.module.Memory().Read(out.Ptr, out.Len)
 	if !ok {
-		return nil, fmt.Errorf("%w: the guest returned an out-of-range step", ErrInternal)
+		return unreadable("the guest returned an out-of-range step")
 	}
 	raw := make([]byte, len(view))
 	copy(raw, view)
 	defer guest.Wipe(raw)
-	return decodeAuthStep(raw)
+	step, err := decodeAuthStep(raw)
+	if err != nil {
+		s.closeLocked()
+		return nil, fmt.Errorf("%w; the profile is closed", err)
+	}
+	return step, nil
 }
 
 // abortLocked drops a paused or parked operation, and wakes any operation
 // that dropping it lets run.
 func (s *ProfileStore) abortLocked(ctx context.Context, handle uint64) {
 	delete(s.root.parked, handle)
-	_, _ = s.callLocked(ctx, func(i *instance) api.Function { return i.authAbort }, guest.ScalarArg(handle))
+	_, _ = s.callDetachedLocked(ctx, func(i *instance) api.Function { return i.authAbort }, guest.ScalarArg(handle))
 	s.wakeRunnableLocked(ctx)
 }
 
@@ -378,7 +423,7 @@ func (s *ProfileStore) wakeRunnableLocked(ctx context.Context) {
 	if len(r.parked) == 0 {
 		return
 	}
-	out, err := s.callLocked(context.WithoutCancel(ctx), func(i *instance) api.Function { return i.authRunnable })
+	out, err := s.callDetachedLocked(ctx, func(i *instance) api.Function { return i.authRunnable })
 	var handles []uint64
 	if err == nil {
 		handles, err = decodeRunnable(out)
