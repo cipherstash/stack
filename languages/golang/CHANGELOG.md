@@ -40,6 +40,12 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ### Fixed
 
+- **`Cipher.KeysetID` on a cipher from `Client.Keyset(nil)` now fails with
+  `ErrEncoding`** (#1998). Before, it returned the default keyset's id and
+  no error, so a program that checked a keyset with `KeysetID` at boot
+  believed it held one. Like every other call through the cipher,
+  `KeysetID` now returns any error the cipher stores. That error is a nil
+  selector, or a value that `Scope`, `Bind`, `Context`, or `Audit` refused.
 - **Other calls no longer wait behind a token refresh** (#1958). An
   `auth.Strategy` is shared by every encrypt and decrypt in a process, and
   about once every 15 minutes its token is refreshed with the token
