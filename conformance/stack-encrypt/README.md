@@ -270,10 +270,16 @@ mise run test:conformance
 ```
 
 Review the case and artifact diff together. Never regenerate artifacts merely
-to make a regression pass. Existing IDs retain their meaning; incompatible
-expectations require a new profile. Corpus version 1 is a test format, not a
-production wire version. Ciphertext/storage versions remain owned by their
-existing codecs.
+to make a regression pass.
+
+A case ID keeps its meaning. Today every reader of these profiles is in this
+repository: the Rust and Go runners and the TypeScript frame pins. While that
+holds, an engine change may change what a case expects in place, for example
+from refused to accepted. The same pull request updates every reader and lists
+the cases that changed. Once a profile has a reader outside this repository,
+an incompatible expectation needs a new profile instead. Corpus version 1 is
+a test format, not a production wire version. Ciphertext/storage versions
+remain owned by their existing codecs.
 
 Both runners currently share the Rust engine. This checks host value conversion,
 native/WASI interoperability and regressions against frozen evidence; it cannot
