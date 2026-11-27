@@ -6411,7 +6411,11 @@ mod tests {
             let CipherText::Passthrough(carried) = node(&mut id, "passthrough") else {
                 panic!("a passthrough")
             };
-            assert_eq!(passthrough_tree(&carried), Some(Tree::UInt64(7)));
+            assert_eq!(
+                passthrough_tree(&carried),
+                Some(Tree::UInt64(7)),
+                "a passthrough is carried as it came"
+            );
             let sealed = seal(
                 &keyset,
                 obj(vec![("age", Tree::UInt32(1)), ("id", Tree::UInt64(7))]),
@@ -6605,36 +6609,36 @@ mod tests {
                 #[test]
                 fn an_integer_seals_at_the_declared_width(v in any::<i32>()) {
                     let wide = i64::from(v);
-                    prop_assert_eq!(slot("int32", Tree::Int64(wide)), frame_of(Tree::Int32(v)));
-                    prop_assert_eq!(slot("int32", Tree::Float64(f64::from(v))), frame_of(Tree::Int32(v)));
-                    prop_assert_eq!(slot("int64", Tree::Int32(v)), frame_of(Tree::Int64(wide)));
-                    prop_assert_eq!(slot("int128", Tree::Int32(v)), frame_of(Tree::Int128(i128::from(v))));
-                    prop_assert_eq!(slot("float64", Tree::Int32(v)), frame_of(Tree::Float64(f64::from(v))));
-                    prop_assert_eq!(slot("decimal", Tree::Int32(v)), frame_of(decimal(i128::from(v))));
+                    prop_assert_eq!(slot("int32", Tree::Int64(wide)), frame_of(Tree::Int32(v)), "int32 from Tree::Int64");
+                    prop_assert_eq!(slot("int32", Tree::Float64(f64::from(v))), frame_of(Tree::Int32(v)), "int32 from Tree::Float64");
+                    prop_assert_eq!(slot("int64", Tree::Int32(v)), frame_of(Tree::Int64(wide)), "int64 from Tree::Int32");
+                    prop_assert_eq!(slot("int128", Tree::Int32(v)), frame_of(Tree::Int128(i128::from(v))), "int128 from Tree::Int32");
+                    prop_assert_eq!(slot("float64", Tree::Int32(v)), frame_of(Tree::Float64(f64::from(v))), "float64 from Tree::Int32");
+                    prop_assert_eq!(slot("decimal", Tree::Int32(v)), frame_of(decimal(i128::from(v))), "decimal from Tree::Int32");
                 }
 
                 #[test]
                 fn an_unsigned_integer_seals_at_the_declared_width(v in any::<u32>()) {
                     let wide = u64::from(v);
-                    prop_assert_eq!(slot("uint32", Tree::UInt64(wide)), frame_of(Tree::UInt32(v)));
-                    prop_assert_eq!(slot("uint32", Tree::Float64(f64::from(v))), frame_of(Tree::UInt32(v)));
-                    prop_assert_eq!(slot("uint64", Tree::UInt32(v)), frame_of(Tree::UInt64(wide)));
-                    prop_assert_eq!(slot("uint128", Tree::Int64(i64::from(v))), frame_of(Tree::UInt128(u128::from(v))));
+                    prop_assert_eq!(slot("uint32", Tree::UInt64(wide)), frame_of(Tree::UInt32(v)), "uint32 from Tree::UInt64");
+                    prop_assert_eq!(slot("uint32", Tree::Float64(f64::from(v))), frame_of(Tree::UInt32(v)), "uint32 from Tree::Float64");
+                    prop_assert_eq!(slot("uint64", Tree::UInt32(v)), frame_of(Tree::UInt64(wide)), "uint64 from Tree::UInt32");
+                    prop_assert_eq!(slot("uint128", Tree::Int64(i64::from(v))), frame_of(Tree::UInt128(u128::from(v))), "uint128 from Tree::Int64");
                 }
 
                 #[test]
                 fn a_float_seals_at_the_declared_width(
                     v in any::<f32>().prop_filter("a NaN converts to nothing", |v: &f32| !v.is_nan())
                 ) {
-                    prop_assert_eq!(slot("float32", Tree::Float64(f64::from(v))), frame_of(Tree::Float32(v)));
-                    prop_assert_eq!(slot("float64", Tree::Float32(v)), frame_of(Tree::Float64(f64::from(v))));
+                    prop_assert_eq!(slot("float32", Tree::Float64(f64::from(v))), frame_of(Tree::Float32(v)), "float32 from Tree::Float64");
+                    prop_assert_eq!(slot("float64", Tree::Float32(v)), frame_of(Tree::Float64(f64::from(v))), "float64 from Tree::Float32");
                 }
 
                 /// A value already of the declared type is the slot as it
                 /// came.
                 #[test]
                 fn a_value_of_the_type_is_kept_as_it_came(v in any::<i64>()) {
-                    prop_assert_eq!(slot("int64", Tree::Int64(v)), frame_of(Tree::Int64(v)));
+                    prop_assert_eq!(slot("int64", Tree::Int64(v)), frame_of(Tree::Int64(v)), "int64 from Tree::Int64");
                 }
             }
         }
@@ -6709,14 +6713,16 @@ mod tests {
             let sealed = seal(&keyset, obj(vec![("v", elements.clone())]), &plan).await;
             assert_eq!(
                 object(open(&cipher, sealed, &plan).await),
-                [("v".to_owned(), elements)]
+                [("v".to_owned(), elements)],
+                "an array's elements are kept as they came"
             );
             let members = obj(vec![("a", Tree::UInt8(1)), ("b", Tree::Undefined)]);
             let plan = plan_of("object", &["c"]);
             let sealed = seal(&keyset, obj(vec![("v", members.clone())]), &plan).await;
             assert_eq!(
                 object(open(&cipher, sealed, &plan).await),
-                [("v".to_owned(), members)]
+                [("v".to_owned(), members)],
+                "an object's members are kept as they came"
             );
         }
 
@@ -6786,12 +6792,28 @@ mod tests {
         }
 
         /// A query reads its input by the same rules: `undefined` is
-        /// refused with the same reason a write is.
-        #[test]
-        fn a_query_refuses_undefined_as_a_write_does() {
-            let error =
-                crate::dynamic::read(ValueKind::Int64, Tree::Undefined).expect_err("undefined");
-            assert_eq!(error.reason(), Some(Reason::Undefined));
+        /// refused with the same reason a write is, naming the field. The
+        /// field seals its nulls beside an equality index, so a null query
+        /// is accepted there: `undefined` is not read as that null.
+        #[tokio::test]
+        async fn a_query_refuses_undefined_as_a_write_does() {
+            use crate::dynamic::{query_term, NoTargets, Op};
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let field = obj(vec![
+                ("context", label("v")),
+                ("outputs", strings(&["c", "eq"])),
+                ("type", s("int64")),
+                ("null", s("sealed")),
+            ]);
+            let plan = plan(obj(vec![("v", field)])).expect("parses");
+            let query =
+                |input: &Tree| query_term(&keyset, &plan, "v", Op::Eq, input, &NoTargets).err();
+
+            assert!(query(&Tree::Null).is_none(), "a null query is accepted");
+            let error = query(&Tree::Undefined).expect("undefined is refused");
+            assert_eq!(error.field(), Some("v"), "the field is named");
+            assert_eq!(error.reason(), Some(Reason::Undefined), "{error}");
         }
     }
 

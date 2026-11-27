@@ -24,16 +24,19 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ### Changed
 
-- **A record field converts a number of another width, as a query does.**
-  A value sealed through `Cipher.Seal` for a field that declares a type
-  is read as that type when the conversion is exact: an `int16` 1 for an
-  `int8` field, an `int64` for an `int128`, a `float64` 1.5 for a
-  `float32`. It is stored as the same number sent at the
-  declared width, so the stored bytes and terms do not change. One that
-  would lose something is still refused with `ErrEncoding`, reason
-  `field_type`, as is a value of another kind (text for a number, say).
-  Generated code already sends each value at its field's width, so it
-  does not change.
+- **A record field converts a number of another width or kind, as a
+  query does.** A value sealed through `Cipher.Seal` for a field that
+  declares a type is read as that type when the conversion is exact: an
+  `int16` 1 for an `int8` field, an `int64` for an `int128`, a `float64`
+  34 for an `int32`, an `int32` for a `float64` or a `decimal`, a
+  `float64` 1.5 for a `float32`. It is stored as the same number sent at
+  the declared width, so the stored bytes and terms do not change. A
+  conversion that would lose something is still refused with
+  `ErrEncoding`, reason `field_type`: a fraction or an out-of-range number
+  for an integer, a number a float type would round, a float for a
+  `decimal`. Text, a date, a timestamp or a UUID never converts to or
+  from a number. Generated code already sends each value at its field's
+  width, so it does not change.
 
 ### Fixed
 

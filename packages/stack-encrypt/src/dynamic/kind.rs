@@ -39,6 +39,7 @@
 //! only carries its value through, may leave it out: no term derives from it.
 use vitaminc_aead::plaintext::{Float, Int, Logical, Physical, Raw, ValueKind};
 use vitaminc_aead::Encrypt;
+use zeroize::Zeroize;
 
 use super::term::{OneScalar, Refused};
 use vitaminc_aead::frame::{Frame, OwnedFrame};
@@ -203,7 +204,7 @@ pub(super) fn convert(kind: ValueKind, value: Frame<'_>) -> Result<Option<OwnedF
         return Ok(None);
     }
     let refused = || Error::bad_source(Reason::FieldType);
-    let number = value
+    let mut number = value
         .visit(OneScalar::new(
             |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
                 (Some(Logical::Undefined), _) => Err(Some(Error::bad_source(Reason::Undefined))),
@@ -254,6 +255,9 @@ pub(super) fn convert(kind: ValueKind, value: Frame<'_>) -> Result<Option<OwnedF
         }),
         _ => None,
     };
+    // The number is plaintext in a `Copy` value. Wipe the copy held here on
+    // every path out; the converted value now lives in a wiped frame.
+    number.zeroize();
     OwnedFrame::of(read.ok_or_else(refused)?)
         .map(Some)
         .map_err(|_| refused())
@@ -267,7 +271,7 @@ const TWO_128: f64 = 340_282_366_920_938_463_463_374_607_431_768_211_456.0;
 /// A numeric leaf, widened without loss: every integer but a `u128` above
 /// `i128::MAX` fits an `i128`, which is `Unsigned`; an `f32` widens to an
 /// `f64` exactly.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Zeroize)]
 enum Number {
     Integer(i128),
     Unsigned(u128),
@@ -1019,7 +1023,11 @@ mod tests {
         }
         // A null is no `undefined`: it is refused as any other kind is.
         let error = read(ValueKind::Int32, Tree::Null).expect_err("null");
-        assert_eq!(error.reason(), Some(Reason::FieldType));
+        assert_eq!(
+            error.reason(),
+            Some(Reason::FieldType),
+            "a null is FieldType"
+        );
     }
 
     /// A value already of the kind needs no conversion, and none is made:
@@ -1033,7 +1041,11 @@ mod tests {
         let converted = convert(ValueKind::Int64, int(Int::I32(-4)).frame())
             .expect("exact")
             .expect("converted");
-        assert_eq!(converted.frame(), tree(Tree::Int64(-4)).frame());
+        assert_eq!(
+            converted.frame(),
+            tree(Tree::Int64(-4)).frame(),
+            "an int32 -4 converts to the int64 -4"
+        );
     }
 
     #[test]
