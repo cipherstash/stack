@@ -101,13 +101,21 @@ func TestRefusals(t *testing.T) {
 		{"a slice sealed outside an opaque struct", user(ctx + "\tTags []string `stash:\"tags,encrypt\"`"), stashgen.Request{Type: "User"}, "Tags", "seals only as part of an opaque struct"},
 		{"a map sealed outside an opaque struct", user(ctx + "\tCounts map[string]int64 `stash:\"counts,encrypt\"`"), stashgen.Request{Type: "User"}, "Counts", "seals only as part of an opaque struct"},
 		{"a slice of ints sealed outside an opaque struct", user(ctx + "\tNs []int64 `stash:\"ns,encrypt\"`"), stashgen.Request{Type: "User"}, "Ns", "seals only as part of an opaque struct"},
-		// A UUID is [16]byte, or a type defined over it. An array of another
-		// length, or of a type defined over byte, is not one.
+		// A UUID is [16]byte, or a type declared as [16]byte. An array of
+		// another length, or of a type defined over byte, is not one.
 		{"an array of eight bytes sealed outside an opaque struct", user(ctx + "\tCode [8]byte `stash:\"code,encrypt\"`"), stashgen.Request{Type: "User"}, "Code", "seals only as part of an opaque struct"},
 		{"an array of sixteen defined bytes sealed outside an opaque struct", user(ctx+"\tCode [16]octet `stash:\"code,encrypt\"`") + "\ntype octet byte\n", stashgen.Request{Type: "User"}, "Code", "seals only as part of an opaque struct"},
 		{"match on a UUID", user(ctx + "\tID [16]byte `stash:\"id,encrypt,index=match\"`"), stashgen.Request{Type: "User"}, "ID", "match applies to a string"},
 		{"order on a UUID", user(ctx+"\tID id `stash:\"id,encrypt,index=equality;ore\"`") + "\ntype id [16]byte\n", stashgen.Request{Type: "User"}, "ID", "ore does not apply to id"},
 		{"ope on a UUID", user(ctx + "\tID [16]byte `stash:\"id,index=ope\"`"), stashgen.Request{Type: "User"}, "ID", "ope does not apply to [16]byte"},
+		// encrypt.Int128 and encrypt.Uint128 are [16]byte underneath, and a
+		// type declared over one is not a UUID: only a type whose
+		// declaration is the array itself is.
+		{"a type declared over encrypt.Int128", user(ctx+"\tBalance balance `stash:\"balance,encrypt,index=equality\"`") + "\ntype balance encrypt.Int128\n", stashgen.Request{Type: "User"}, "Balance", "balance is declared over another type"},
+		{"a type declared over encrypt.Uint128", user(ctx+"\tCount count `stash:\"count,encrypt\"`") + "\ntype count encrypt.Uint128\n", stashgen.Request{Type: "User"}, "Count", "count is declared over another type"},
+		{"an alias of a type declared over encrypt.Int128", user(ctx+"\tBalance owed `stash:\"balance,encrypt\"`") + "\ntype balance encrypt.Int128\n\ntype owed = balance\n", stashgen.Request{Type: "User"}, "Balance", "declared over another type"},
+		{"a pointer to a type declared over encrypt.Int128", user(ctx+"\tBalance *balance `stash:\"balance,encrypt\"`") + "\ntype balance encrypt.Int128\n", stashgen.Request{Type: "User"}, "Balance", "balance is declared over another type"},
+		{"a type declared over a UUID type", user(ctx+"\tID ownID `stash:\"id,encrypt\"`") + "\ntype id [16]byte\n\ntype ownID id\n", stashgen.Request{Type: "User"}, "ID", "ownID is declared over another type"},
 		{"an opaque struct with a channel", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tDone chan int"), stashgen.Request{Type: "User"}, "Done", "is not a type JSON carries"},
 		{"an opaque struct with an interface", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tAny any"), stashgen.Request{Type: "User"}, "Any", "is not a type JSON carries"},
 		{"an opaque struct with a struct JSON would truncate", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tTx hidden") + "\ntype hidden struct {\n\tA int\n\tb int\n}\n", stashgen.Request{Type: "User"}, "Tx", "JSON would drop"},

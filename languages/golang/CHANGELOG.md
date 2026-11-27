@@ -21,16 +21,21 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `vcvalue.UUID`, or a value of any type whose underlying type is
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one.
-- **`stashgen` stores a UUID field.** A sealed field of type `[16]byte`,
-  or of a type defined over `[16]byte` such as `github.com/google/uuid.UUID`,
-  is generated with the `uuid` kind. It takes `index=equality`, and the
+- **`stashgen` stores a UUID field.** A sealed field is generated with
+  the `uuid` kind when its type is `[16]byte`, a type whose declaration is
+  an array of 16 bytes (`type ID [16]byte`, as
+  `github.com/google/uuid.UUID` is), or an alias of either. stashgen reads
+  the type's declaration from source to decide. A type declared over
+  another type is not a UUID, even when it is `[16]byte` underneath: `type
+  Balance encrypt.Int128` and `type MyID uuid.UUID` are refused. It takes
+  `index=equality`, and the
   generated `Eq` method takes the field's own type. `stashgen` refuses an
   order index (`ore`, `ope`) or a match index on it. Decrypt gives the
   value back as the field's own type. A pointer to one may be nil: with an
   equality index or no index, nil is sealed like a value by default
   (`null=sealed`, with `EqNull`), or stored as SQL NULL with `null=sql`.
   An array of another length, or of a type defined over `byte`, is not a
-  UUID and is refused as before.
+  UUID, and is refused.
 
 ### Changed
 

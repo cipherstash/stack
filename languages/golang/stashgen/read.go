@@ -2,6 +2,7 @@ package stashgen
 
 import (
 	"fmt"
+	"go/ast"
 	"go/types"
 	"reflect"
 	"strings"
@@ -206,6 +207,10 @@ type reader struct {
 	// path writes into a package of the user's own.
 	outPkgName string
 	outPkgPath string
+	// declFiles are source files of other packages the reader has parsed to
+	// read a type's declaration (isUUID), by file name; nil for a file it
+	// could not read.
+	declFiles map[string]*ast.File
 }
 
 func (r *reader) qualifier(p *types.Package) string {
@@ -796,9 +801,14 @@ func (r *reader) buildFields(c *collected) error {
 			g.valueExpr = field.GoType.Name
 		}
 		if g.Sealed() && !g.GoType.Kind.Scalar() {
+			if sixteen := sixteenBytes(cf.typ); sixteen != nil {
+				// [16]byte underneath, and not a UUID: a type declared
+				// over another type, such as encrypt.Int128.
+				return fieldErr(typeName, cf.goName, "a UUID field is [16]byte, a type whose declaration is an array of 16 bytes (type ID [16]byte), or github.com/google/uuid.UUID; %s is declared over another type, or its declaration could not be read, so it seals only as part of an opaque struct", r.typeExpr(sixteen))
+			}
 			// The engine seals a composite as a tree of leaves, and a column
 			// holds one leaf; only an opaque struct seals a whole value.
-			return fieldErr(typeName, cf.goName, "a sealed field is one scalar (a string, number, bool, []byte, time.Time, encrypt.Date, encrypt.Decimal, encrypt.Int128 or encrypt.Uint128, a UUID as [16]byte, or a type defined over a string, number, bool, []byte or [16]byte); a %s seals only as part of an opaque struct, or as a JSON document with encrypt_into=JsonSearch or encrypt_into=Json", g.typeExpr)
+			return fieldErr(typeName, cf.goName, "a sealed field is one scalar (a string, number, bool, []byte, time.Time, encrypt.Date, encrypt.Decimal, encrypt.Int128, encrypt.Uint128 or a UUID, or a type defined over a string, number, bool or []byte); a %s seals only as part of an opaque struct, or as a JSON document with encrypt_into=JsonSearch or encrypt_into=Json", g.typeExpr)
 		}
 		switch field.Verb {
 		case VerbPassthrough, VerbContextField:
@@ -918,10 +928,12 @@ func (r *reader) embeddedTags(fieldName string) string {
 
 // goType classifies a Go type for the engine.
 func (r *reader) goType(t types.Type) GoType {
-	return classify(t, r.typeExpr, map[types.Type]bool{})
+	return classify(t, r.typeExpr, r.isUUID, map[types.Type]bool{})
 }
 
-func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Type]bool) GoType {
+// classify is a Go type's kind. isUUID decides whether a type whose
+// underlying type is [16]byte is a UUID; see [reader.isUUID].
+func classify(t types.Type, typeExpr func(types.Type) string, isUUID func(types.Type) bool, seen map[types.Type]bool) GoType {
 	g := GoType{Name: typeExpr(t), Kind: KindOther}
 	if seen[t] {
 		return g
@@ -951,21 +963,21 @@ func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Typ
 		if b, ok := u.Elem().Underlying().(*types.Basic); ok && b.Kind() == types.Byte {
 			g.Kind, g.Basic = KindBytes, "[]byte"
 		} else {
-			elem := classify(u.Elem(), typeExpr, seen)
+			elem := classify(u.Elem(), typeExpr, isUUID, seen)
 			g.Kind, g.Elem = KindSlice, &elem
 		}
 	case *types.Array:
-		if uuidArray(u) {
+		if uuidArray(u) && isUUID(t) {
 			g.Kind, g.Basic = KindUUID, "[16]byte"
 			break
 		}
-		elem := classify(u.Elem(), typeExpr, seen)
+		elem := classify(u.Elem(), typeExpr, isUUID, seen)
 		g.Kind, g.Elem = KindSlice, &elem
 	case *types.Map:
-		elem := classify(u.Elem(), typeExpr, seen)
+		elem := classify(u.Elem(), typeExpr, isUUID, seen)
 		g.Kind, g.Elem = KindMap, &elem
 	case *types.Pointer:
-		elem := classify(u.Elem(), typeExpr, seen)
+		elem := classify(u.Elem(), typeExpr, isUUID, seen)
 		g.Kind, g.Elem = KindPointer, &elem
 	case *types.Struct:
 		if hasUnexported(u) {
@@ -973,18 +985,10 @@ func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Typ
 		}
 		g.Kind = KindStruct
 		for i := range u.NumFields() {
-			g.Fields = append(g.Fields, classify(u.Field(i).Type(), typeExpr, seen))
+			g.Fields = append(g.Fields, classify(u.Field(i).Type(), typeExpr, isUUID, seen))
 		}
 	}
 	return g
-}
-
-// uuidArray reports whether an array is [16]byte, the underlying type of a
-// UUID: github.com/google/uuid.UUID, say. The element is byte itself, not a
-// type defined over it, so a value of the array converts to [16]byte and
-// back.
-func uuidArray(a *types.Array) bool {
-	return a.Len() == 16 && types.Identical(a.Elem(), types.Typ[types.Byte])
 }
 
 // vcvaluePath is vitaminc's Go value module, whose types encrypt's value

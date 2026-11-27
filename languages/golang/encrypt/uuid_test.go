@@ -9,7 +9,7 @@ import (
 )
 
 // A UUID field of generated code is stored as a UUID, queried by equality,
-// and read back as the field's own type: a type defined over [16]byte (as
+// and read back as the field's own type: a type declared as [16]byte (as
 // github.com/google/uuid.UUID is), or [16]byte itself. A pointer to one is
 // nil when the value is absent, whether nil is sealed or stored as SQL NULL.
 func TestGeneratedCodeStoresQueriesAndReadsAUUID(t *testing.T) {

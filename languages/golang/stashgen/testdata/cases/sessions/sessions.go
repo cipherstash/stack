@@ -2,8 +2,8 @@ package sessions
 
 //go:generate go tool stashgen -type Session
 
-// ID is a UUID type of the program's own. Any type defined over [16]byte,
-// such as github.com/google/uuid.UUID, is stored as a UUID.
+// ID is a UUID type of the program's own. A type declared as [16]byte, as
+// github.com/google/uuid.UUID is, is stored as a UUID.
 type ID [16]byte
 
 // Session stores UUIDs: one queried by equality, one sealed with no index,
