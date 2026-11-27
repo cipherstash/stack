@@ -755,14 +755,12 @@ async fn every_producible_type_dispatches_by_name() {
     // `Json` is run by name in the JSON tests below.
     let producible: Vec<_> = targets::targets()
         .iter()
-        .filter(|t| t.producible && t.plaintext != Some("json"))
+        .filter(|t| t.producible && t.plaintext != Some(ValueKind::Json))
         .collect();
     assert!(!producible.is_empty());
     for target in producible {
         let name = target.name;
-        let kind = target
-            .plaintext_kind()
-            .expect("a producible type names its kind");
+        let kind = target.plaintext.expect("a producible type names its kind");
         let stored = targets::encrypt(name, &keyset, &label(), sample(kind).frame())
             .unwrap()
             .await

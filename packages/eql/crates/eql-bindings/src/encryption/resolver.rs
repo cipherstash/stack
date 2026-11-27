@@ -115,7 +115,7 @@ impl From<&Target> for TargetDescriptor {
             target.name,
             target.family,
             target.suffix,
-            target.plaintext_kind(),
+            target.plaintext,
             target.sql_domain,
             target.indexes.iter().map(|key| (*key).to_owned()).collect(),
             target.query.map(str::to_owned),
@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn a_descriptor_has_its_rows_values() {
         for (row, descriptor) in targets::targets().iter().zip(EqlTargets.targets()) {
-            assert_eq!(descriptor.plaintext, row.plaintext_kind(), "{}", row.name);
+            assert_eq!(descriptor.plaintext, row.plaintext, "{}", row.name);
             assert_eq!(descriptor.producible, row.producible, "{}", row.name);
             assert_eq!(
                 descriptor.match_options.is_some(),
