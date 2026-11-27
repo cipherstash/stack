@@ -239,3 +239,28 @@ func TestTheZeroEncoderKeepsNothing(t *testing.T) {
 		t.Fatalf("Err before a refusal %v, after %v", before, after)
 	}
 }
+
+// The parse functions' errors start with this package's name, and errors.Is
+// still finds the codec's error beneath.
+func TestAValueErrorNamesThisPackage(t *testing.T) {
+	_, nan := encrypt.ParseDecimal("NaN")
+	_, decimal := encrypt.ParseDecimal("1.2.3")
+	_, i128 := encrypt.ParseInt128("x")
+	_, u128 := encrypt.ParseUint128("-1")
+	_, uuid := encrypt.ParseUUID("x")
+	for name, c := range map[string]struct {
+		err, is error
+	}{
+		"NaN":          {nan, encrypt.ErrNonFiniteDecimal},
+		"decimal":      {decimal, frame.ErrInvalidDecimal},
+		"int128":       {i128, frame.ErrIntegerRange},
+		"uint128":      {u128, frame.ErrIntegerRange},
+		"uuid":         {uuid, frame.ErrInvalidUUID},
+		"date":         {encrypt.Date{}.Validate(), frame.ErrInvalidDate},
+		"decimal type": {encrypt.Decimal{Scale: 29}.Validate(), frame.ErrInvalidDecimal},
+	} {
+		if !errors.Is(c.err, c.is) || !strings.HasPrefix(c.err.Error(), "encrypt: ") || strings.Contains(c.err.Error(), "frame") {
+			t.Errorf("%s: %v; want an encrypt: error that is %v", name, c.err, c.is)
+		}
+	}
+}

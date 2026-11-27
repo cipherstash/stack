@@ -1,6 +1,8 @@
 package encrypt
 
 import (
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/cipherstash/stack/languages/golang/internal/frame"
@@ -40,7 +42,7 @@ func DateOf(t time.Time) Date {
 
 // Validate reports an error for a date that does not exist, or that is
 // outside years -9999 to 9999.
-func (d Date) Validate() error { return frame.Date(d).Validate() }
+func (d Date) Validate() error { return valueError(frame.Date(d).Validate()) }
 
 // Int128 is a signed 128-bit integer, two's complement, little-endian.
 // ParseInt128 reads one from its decimal text, and String writes it.
@@ -50,7 +52,7 @@ type Int128 [16]byte
 // value outside its range.
 func ParseInt128(s string) (Int128, error) {
 	v, err := frame.ParseInt128(s)
-	return Int128(v), err
+	return Int128(v), valueError(err)
 }
 
 // String is the integer's decimal text.
@@ -64,7 +66,7 @@ type Uint128 [16]byte
 // a negative value or one outside its range.
 func ParseUint128(s string) (Uint128, error) {
 	v, err := frame.ParseUint128(s)
-	return Uint128(v), err
+	return Uint128(v), valueError(err)
 }
 
 // String is the integer's decimal text.
@@ -86,7 +88,7 @@ type Decimal struct {
 
 // ErrNonFiniteDecimal is the error ParseDecimal returns for NaN or an
 // infinity.
-var ErrNonFiniteDecimal = frame.ErrNonFiniteDecimal
+var ErrNonFiniteDecimal = errors.New("encrypt: decimal must be finite")
 
 // ParseDecimal reads a decimal from its fixed-point text ("-1234.5600"),
 // keeping its scale, without rounding. NaN and the infinities are
@@ -94,11 +96,11 @@ var ErrNonFiniteDecimal = frame.ErrNonFiniteDecimal
 // mantissa past 96 bits is refused too.
 func ParseDecimal(s string) (Decimal, error) {
 	v, err := frame.ParseDecimal(s)
-	return Decimal(v), err
+	return Decimal(v), valueError(err)
 }
 
 // Validate reports an error for a scale above 28.
-func (d Decimal) Validate() error { return frame.Decimal(d).Validate() }
+func (d Decimal) Validate() error { return valueError(frame.Decimal(d).Validate()) }
 
 // IsZero reports whether the decimal is zero, whatever its scale.
 func (d Decimal) IsZero() bool { return frame.Decimal(d).IsZero() }
@@ -120,11 +122,32 @@ type UUID [16]byte
 // either case.
 func ParseUUID(s string) (UUID, error) {
 	v, err := frame.ParseUUID(s)
-	return UUID(v), err
+	return UUID(v), valueError(err)
 }
 
 // String is the hyphenated spelling in lower case.
 func (u UUID) String() string { return frame.UUID(u).String() }
+
+// valueError is the codec's refusal of a value, as this package reports it:
+// ErrNonFiniteDecimal for a NaN or an infinity, and otherwise an error whose
+// text starts "encrypt: " and that errors.Is still matches to the codec's.
+func valueError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, frame.ErrNonFiniteDecimal):
+		return ErrNonFiniteDecimal
+	}
+	return &refusedValue{err: err}
+}
+
+type refusedValue struct{ err error }
+
+func (e *refusedValue) Error() string {
+	return "encrypt: " + strings.TrimPrefix(e.err.Error(), "frame: ")
+}
+
+func (e *refusedValue) Unwrap() error { return e.err }
 
 func init() {
 	// The codec writes each of these types as its value type, and decodes

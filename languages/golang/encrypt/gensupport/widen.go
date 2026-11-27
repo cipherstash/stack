@@ -1,6 +1,7 @@
 package gensupport
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -94,11 +95,14 @@ func asUUID(v any) any {
 	return v
 }
 
+// errInvalidTimestamp is the refusal of an instant outside years -9999 to
+// 9999.
+var errInvalidTimestamp = errors.New("encrypt: invalid timestamp: outside years -9999 to 9999")
+
 // checkValue refuses a date, decimal or timestamp the codec cannot write, before
 // it reaches the codec, so the caller can name the field: the codec's own
 // refusal names neither. A zero encrypt.Date (year 0, month 0, day 0) is not
-// a date and is refused here. The error is the codec's, which names the type
-// and not the value.
+// a date and is refused here. The error names the type and not the value.
 func checkValue(v any) error {
 	var err error
 	switch v := v.(type) {
@@ -107,7 +111,9 @@ func checkValue(v any) error {
 	case encrypt.Decimal:
 		err = v.Validate()
 	case time.Time:
-		err = frame.Timestamp{Seconds: v.Unix(), Nanoseconds: uint32(v.Nanosecond())}.Validate() //nolint:gosec // Nanosecond is in [0, 1e9)
+		if (frame.Timestamp{Seconds: v.Unix(), Nanoseconds: uint32(v.Nanosecond())}).Validate() != nil { //nolint:gosec // Nanosecond is in [0, 1e9)
+			err = errInvalidTimestamp
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("%w: %w", encrypt.ErrEncoding, err)
