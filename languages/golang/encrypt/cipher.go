@@ -60,10 +60,13 @@ func (cph *Cipher) KeysetID(ctx context.Context) (KeysetID, error) {
 // Scope returns a cipher that adds a scope to the context of every field,
 // in every call through it: the write, the query and the read. A scope
 // narrows the data and the queries over it: a field sealed through
-// cipher.Scope("tenant42") opens and matches only through a cipher with the
-// same scope. It appends to the context the tags declare and never
-// replaces it. A part is a string, a byte slice or an integer (int32,
-// int64, uint32, uint64; Go's int is sent as int64); a byte slice is copied.
+// cipher.Scope("tenant42") opens only through a cipher with the same scope.
+// An equality query through another scope matches none of it, but a range
+// query through another scope can still return it, with no error: see the
+// README section "Queries with the wrong tenant". It appends to the context
+// the tags declare and never replaces it. A part is a string, a byte slice
+// or an integer (int32, int64, uint32, uint64; Go's int is sent as
+// int64); a byte slice is copied.
 // Several parts nest in order: Scope(a, b) is Scope(a).Scope(b). An
 // unsupported part type is reported by the first call through the cipher,
 // as [ErrEncoding].

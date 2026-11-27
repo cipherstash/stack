@@ -461,9 +461,9 @@ error in the table above.
 A range query can return the other tenant's rows, with an ORE index or an
 OPE index. The range queries are `Lt`, `Lte`, `Gt`, `Gte`, and `Between`.
 The database still compares the query term with the other tenant's terms,
-and the result of that comparison has no relation to the values. In a test
-against EQL v4 columns, such a query returned all of the other tenant's
-rows or none of them.
+and the result of that comparison has no relation to the values. So such
+a query can return some of the other tenant's rows and not others. The
+result looks like a normal result, but it is wrong.
 
 So a count or a list of the rows that such a query returns is wrong. A
 decrypt of those rows through the same cipher fails with the error in the
