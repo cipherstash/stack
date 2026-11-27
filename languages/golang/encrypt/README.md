@@ -416,6 +416,12 @@ The `ErrForbidden` for a scope does not say that the scope is wrong, and
 the `Help` of its `*Diagnostic` is empty. The `*Client` gets the same error
 and code when it decrypts rows of a keyset it has no grant for.
 
+A `*Cipher` for a keyset that its client has no grant for fails when it
+loads the keyset, before any data key is asked for. `KeysetID` and an
+encrypt both fail with `ErrNotFound` and the code
+`stack_kms::keyset_not_found`. That is the same error as for a keyset
+that does not exist, so the error cannot tell you which of the two it is.
+
 The test client from `encrypttest` gives the same errors as ZeroKMS for a
 wrong keyset, scope, or `context_field`. See
 [Testing your application](#testing-your-application).
