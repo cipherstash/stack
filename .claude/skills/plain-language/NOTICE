@@ -1,0 +1,20 @@
+Plain language skill for Claude Code
+Copyright 2026 Lindsay Holmwood
+
+This product contains material adapted from the UK government's content
+guidance. The sources are:
+
+- the GOV.UK content guidance, as copied in the folder
+  data/context/content-guidance/ of https://github.com/DEFRA/ai-uc-rpa-guidance
+  (Copyright (c) 2023 Defra);
+- the "Words to avoid" section of the GOV.UK A to Z style guide, at
+  https://guidance.publishing.service.gov.uk/writing-to-gov-uk-standards/style-guides/a-to-z-style-guide/#words-to-avoid
+
+Contains public sector information licensed under the Open Government
+Licence v3.0:
+https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/
+
+That material is in skills/plain-language/references/content-guidance.md.
+It is also in the rules govuk-words-to-avoid and govuk-tone in
+skills/plain-language/scripts/rules.json. It stays under the Open
+Government Licence v3.0, not the Apache License 2.0.

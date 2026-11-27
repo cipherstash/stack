@@ -4,6 +4,7 @@
     "includes": [
       "**",
       "!**/package.json",
+      "!.claude/skills/plain-language",
       "!**/.turbo/",
       "!**/dist",
       "!**/nix/store",

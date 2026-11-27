@@ -1,0 +1,1115 @@
+{
+  "_comment": [
+    "The rules the plain-language checker applies. One list, read by three things:",
+    "scripts/check.py on the command line, and two hooks in the plugin's hooks folder:",
+    "stop-guard.py for chat replies, and file-guard.py for prose files. Add a rule here",
+    "and all three apply it.",
+    "",
+    "Each rule names the clause it serves: '1' is ISO 24495-1:2023 and '3' is",
+    "ISO 24495-3:2026. 'House style' rules come from the user, not from either standard.",
+    "",
+    "'block' findings make a hook send the text back for a rewrite, so a block rule has",
+    "to be right nearly every time it fires. A rule that is often right but sometimes",
+    "wrong is 'advise': the checker reports it, and the writer decides.",
+    "",
+    "Patterns are JavaScript regular expressions, matched case-insensitively unless a",
+    "rule sets 'flags'. They run on prose only: code blocks, inline code, URLs and text",
+    "inside double quotation marks are removed first. The Python checker reads them the",
+    "same way, except for \\p{Extended_Pictographic}, which it replaces with a list of",
+    "code points."
+  ],
+  "limits": {
+    "sentenceWords": 25,
+    "paragraphSentences": 5,
+    "minSentenceVariation": 3.5,
+    "variationNeedsSentences": 20,
+    "headingWords": 10
+  },
+  "knownAbbreviations": [
+    "AI",
+    "API",
+    "APIs",
+    "ASCII",
+    "AWS",
+    "CI",
+    "CLI",
+    "CPU",
+    "CSS",
+    "CSV",
+    "DNS",
+    "GPU",
+    "HTML",
+    "HTTP",
+    "HTTPS",
+    "ID",
+    "IDs",
+    "IP",
+    "ISO",
+    "JSON",
+    "JWT",
+    "OK",
+    "OS",
+    "PDF",
+    "PDFs",
+    "PR",
+    "PRs",
+    "RAM",
+    "README",
+    "SQL",
+    "SSH",
+    "SSL",
+    "TLS",
+    "TODO",
+    "UI",
+    "UK",
+    "URL",
+    "URLs",
+    "US",
+    "USB",
+    "UTC",
+    "UX",
+    "XML",
+    "YAML",
+    "TOML",
+    "CLAUDE",
+    "AGENTS",
+    "SKILL",
+    "MEMORY",
+    "CHANGELOG",
+    "LICENSE",
+    "NOTICE",
+    "CONTRIBUTING",
+    "FAQ",
+    "GB",
+    "MB",
+    "KB",
+    "TB",
+    "ms",
+    "AM",
+    "PM",
+    "NSW",
+    "VIC",
+    "QLD",
+    "ACT",
+    "SA",
+    "WA",
+    "NT",
+    "TAS",
+    "GOV",
+    "PNG",
+    "SVG",
+    "JPEG",
+    "GIF",
+    "SDK",
+    "CDN",
+    "SHA",
+    "JSX",
+    "TSX",
+    "REST",
+    "CRUD",
+    "ORM",
+    "RPC",
+    "VPN",
+    "LAN"
+  ],
+  "shoutedWords": [
+    "ALWAYS",
+    "NEVER",
+    "MUST",
+    "NOT",
+    "DO",
+    "DONT",
+    "IMPORTANT",
+    "CRITICAL",
+    "WARNING",
+    "NOTE",
+    "ONLY",
+    "ALL",
+    "NO",
+    "NONE",
+    "STOP",
+    "YES",
+    "VERY",
+    "EVERY",
+    "NOW",
+    "ANY"
+  ],
+  "phrases": [
+    {
+      "id": "wordy",
+      "clause": "1: 5.3.4 b)",
+      "severity": "block",
+      "say": "Wordy phrase. Write {instead}.",
+      "items": [
+        {
+          "pattern": "\\bin order to\\b",
+          "instead": "\"to\""
+        },
+        {
+          "pattern": "\\bin the event (?:of|that)\\b",
+          "instead": "\"if\""
+        },
+        {
+          "pattern": "\\b(?:due|owing) to the fact that\\b",
+          "instead": "\"because\""
+        },
+        {
+          "pattern": "\\bin (?:spite|light) of the fact that\\b|\\bdespite the fact that\\b",
+          "instead": "\"although\" or \"because\""
+        },
+        {
+          "pattern": "\\bat (?:this|that|the present) (?:point in )?time\\b",
+          "instead": "\"now\" or \"then\""
+        },
+        {
+          "pattern": "\\bprior to\\b",
+          "instead": "\"before\""
+        },
+        {
+          "pattern": "\\bsubsequent to\\b",
+          "instead": "\"after\""
+        },
+        {
+          "pattern": "\\b(?:with|in) (?:regard|respect|relation) to\\b|\\bwith regards to\\b",
+          "instead": "\"about\", or \"for\""
+        },
+        {
+          "pattern": "\\bfor the purposes? of\\b",
+          "instead": "\"to\" or \"for\""
+        },
+        {
+          "pattern": "\\bwith a view to\\b",
+          "instead": "\"to\""
+        },
+        {
+          "pattern": "\\bby (?:means|way) of\\b",
+          "instead": "\"by\", or name the thing that does it"
+        },
+        {
+          "pattern": "\\bin the process of\\b",
+          "instead": "the verb on its own: \"is building\", not \"is in the process of building\""
+        },
+        {
+          "pattern": "\\ba (?:large|significant|considerable) (?:number|amount) of\\b",
+          "instead": "\"many\", \"much\", or the actual number"
+        },
+        {
+          "pattern": "\\bthe (?:vast )?majority of\\b",
+          "instead": "\"most\", or the actual number"
+        },
+        {
+          "pattern": "\\bha(?:s|ve) the (?:ability|capacity) to\\b",
+          "instead": "\"can\""
+        },
+        {
+          "pattern": "\\bon a (?:daily|weekly|monthly|regular) basis\\b",
+          "instead": "\"daily\", \"weekly\", \"monthly\" or \"regularly\""
+        },
+        {
+          "pattern": "\\bin close proximity to\\b",
+          "instead": "\"near\""
+        },
+        {
+          "pattern": "\\buntil such time as\\b",
+          "instead": "\"until\""
+        },
+        {
+          "pattern": "\\beach and every\\b",
+          "instead": "\"each\" or \"every\""
+        },
+        {
+          "pattern": "\\bfirst and foremost\\b",
+          "instead": "\"first\""
+        },
+        {
+          "pattern": "\\b(?:may|might) be able to\\b",
+          "instead": "\"can\" for a choice, or \"might\" for a possibility"
+        },
+        {
+          "pattern": "\\butili[sz](?:e|es|ed|ing|ation)\\b",
+          "instead": "\"use\""
+        },
+        {
+          "pattern": "\\bleverag(?:e|es|ed|ing)\\b",
+          "instead": "\"use\""
+        },
+        {
+          "pattern": "\\bfacilitat(?:e|es|ed|ing)\\b",
+          "instead": "\"help\", \"let\" or \"make possible\""
+        },
+        {
+          "pattern": "\\bcommenc(?:e|es|ed|ing)\\b",
+          "instead": "\"start\""
+        },
+        {
+          "pattern": "\\bascertain(?:s|ed|ing)?\\b",
+          "instead": "\"find out\""
+        },
+        {
+          "pattern": "\\bendeavou?r(?:s|ed|ing)?\\b",
+          "instead": "\"try\""
+        }
+      ]
+    },
+    {
+      "id": "smothered-verb",
+      "clause": "1: 5.3.3 c), 5.3.4 b)",
+      "severity": "block",
+      "say": "The verb has been turned into a noun. Write {instead}.",
+      "items": [
+        {
+          "pattern": "\\b(?:make|makes|made|making|reach|reached|take|took) an? decision\\b",
+          "instead": "\"decide\""
+        },
+        {
+          "pattern": "\\b(?:perform|performs|performed|conduct|conducts|conducted|carry out|carried out|do|did) an? (?:analysis|review|investigation|assessment|evaluation|comparison)\\b",
+          "instead": "the verb: \"analyse\", \"review\", \"investigate\", \"assess\", \"evaluate\" or \"compare\""
+        },
+        {
+          "pattern": "\\bprovid(?:e|es|ed|ing) (?:assistance|support) (?:to|with|for)\\b",
+          "instead": "\"help\" or \"support\""
+        },
+        {
+          "pattern": "\\bg[ia]ve? consideration to\\b|\\btak(?:e|es|en|ing) into consideration\\b",
+          "instead": "\"consider\""
+        },
+        {
+          "pattern": "\\bma(?:ke|kes|de|king) an assumption\\b",
+          "instead": "\"assume\""
+        },
+        {
+          "pattern": "\\bma(?:ke|kes|de|king) a recommendation\\b",
+          "instead": "\"recommend\""
+        },
+        {
+          "pattern": "\\bc(?:o|a)me to a conclusion\\b",
+          "instead": "\"conclude\""
+        },
+        {
+          "pattern": "\\bha(?:ve|s|d|ving) a discussion\\b",
+          "instead": "\"discuss\""
+        },
+        {
+          "pattern": "\\bma(?:ke|kes|de|king) an attempt\\b",
+          "instead": "\"try\""
+        },
+        {
+          "pattern": "\\b(?:is|are|was|were) dependent (?:on|upon)\\b",
+          "instead": "\"depends on\""
+        },
+        {
+          "pattern": "\\b(?:is|are|was|were) (?:indicative|reflective|demonstrative) of\\b",
+          "instead": "\"shows\" or \"means\""
+        },
+        {
+          "pattern": "\\b(?:is|are|was|were) in agreement with\\b",
+          "instead": "\"agrees with\""
+        }
+      ]
+    },
+    {
+      "id": "hidden-actor",
+      "clause": "1: 5.3.3 c)",
+      "severity": "block",
+      "say": "Nobody is doing anything in this sentence. Name who or what does it, in the active voice.",
+      "patterns": [
+        "\\bit (?:is|was|has been) (?:recommended|suggested|decided|believed|found|determined|agreed|felt|assumed|considered) that\\b",
+        "\\b(?:is|are|was|were) (?:achieved|effected|performed|undertaken|accomplished|facilitated)\\b",
+        "\\bit (?:is|was) (?:necessary|required) (?:for|to)\\b"
+      ]
+    },
+    {
+      "id": "throat-clearing",
+      "clause": "1: 5.3.4 b)",
+      "severity": "block",
+      "say": "This phrase announces a point instead of making it. Delete it and state the point.",
+      "patterns": [
+        "\\bit(?:['’]s| is) (?:worth|important to) (?:noting|mentioning|pointing out|note|remember|understand|highlight)\\b",
+        "\\bit should be (?:noted|mentioned|pointed out)\\b",
+        "\\bneedless to say\\b",
+        "\\bit goes without saying\\b",
+        "\\bhere['’]s the thing\\b",
+        "\\bthe (?:key|important) (?:thing|point) (?:here )?is (?:that )?\\b",
+        "\\bat the end of the day\\b",
+        "\\bas an ai\\b"
+      ]
+    },
+    {
+      "id": "flattery-or-filler-closer",
+      "clause": "1: 5.3.4 b), 5.3.7",
+      "severity": "block",
+      "say": "Filler that praises or performs instead of informing. Delete it.",
+      "patterns": [
+        "\\b(?:great|good|excellent|fantastic) question\\b",
+        "\\b(?:i )?hope (?:this|that|it) helps\\b",
+        "\\byou(?:['’]re| are) (?:absolutely|completely|totally) right\\b",
+        "\\bhappy to help\\b",
+        "(?:^|[.!?]\\s+)(?:certainly|absolutely|of course)!"
+      ]
+    },
+    {
+      "id": "cliche",
+      "clause": "1: 5.3.4 b)",
+      "severity": "block",
+      "say": "A cliché costs the reader attention and says little. Say the specific thing.",
+      "patterns": [
+        "\\blow[- ]hanging fruit\\b",
+        "\\bmove the needle\\b",
+        "\\bgame[- ]?changer\\b",
+        "\\bparadigm shift\\b",
+        "\\bbest of both worlds\\b",
+        "\\bdeep[- ]?dives?\\b",
+        "\\bdouble[- ]edged sword\\b",
+        "\\bsilver bullet\\b",
+        "\\bboil(?:ing)? the ocean\\b",
+        "\\belephant in the room\\b",
+        "\\btip of the iceberg\\b",
+        "\\bperfect storm\\b",
+        "\\bthink(?:ing)? outside the box\\b",
+        "\\bpush(?:ing)? the envelope\\b",
+        "\\braise(?:s|d)? the bar\\b",
+        "\\blevel(?:s|ling)? the playing field\\b",
+        "\\b(?:to|at) the next level\\b",
+        "\\bwin[- ]win\\b",
+        "\\bno[- ]brainer\\b",
+        "\\bhit the ground running\\b",
+        "\\b(?:going|moving) forward\\b",
+        "\\bcircle back\\b",
+        "\\btouch(?:ing)? base\\b",
+        "\\bon the same page\\b",
+        "\\bdelv(?:e|es|ed|ing)\\b",
+        "\\btapestry\\b",
+        "\\ba testament to\\b",
+        "\\bplethora\\b",
+        "\\bembark(?:s|ed|ing)? on\\b",
+        "\\bseamless(?:ly)?\\b",
+        "\\bholistic(?:ally)?\\b",
+        "\\bsynerg(?:y|ies|istic)\\b",
+        "\\bcutting[- ]edge\\b",
+        "\\bbleeding[- ]edge\\b",
+        "\\bstate[- ]of[- ]the[- ]art\\b",
+        "\\bempower(?:s|ed|ing|ment)?\\b",
+        "\\bharness(?:es|ed|ing)? the power\\b",
+        "\\bnavigat(?:e|es|ed|ing) the (?:complexities|landscape|world)\\b",
+        "\\bin today['’]s (?:fast-paced|digital|modern)\\b",
+        "\\bever[- ]evolving\\b"
+      ]
+    },
+    {
+      "id": "idiom",
+      "clause": "1: 5.3.2 a), b), h)",
+      "severity": "block",
+      "say": "Figure of speech. A reader who does not already know the idiom cannot decode it, and a literal reader takes it at its word. Say what actually happens.",
+      "patterns": [
+        "\\bload[- ]bearing\\b",
+        "\\bfirst[- ]class (?:citizen|support|feature)s?\\b",
+        "\\bunder the hood\\b",
+        "\\bout of the box\\b",
+        "\\bheavy lifting\\b",
+        "\\brabbit[- ]holes?\\b",
+        "\\bfoot[- ]?guns?\\b",
+        "\\bshoot(?:s|ing)? (?:yourself|ourselves|themselves|itself) in the foot\\b",
+        "\\bsmoking gun\\b",
+        "\\bbelt[- ]and[- ](?:braces|suspenders)\\b",
+        "\\bmoving (?:parts|pieces)\\b",
+        "\\bblast radius\\b",
+        "\\bnorth star\\b",
+        "\\bsweet spot\\b",
+        "\\bescape hatch(?:es)?\\b",
+        "\\bpaper(?:s|ed|ing)? over\\b",
+        "\\bpunt(?:s|ed|ing)?\\b",
+        "\\bbike[- ]?shed(?:s|ding)?\\b",
+        "\\byak[- ]shav(?:e|ing)\\b",
+        "\\bhand[- ]?wav(?:e|es|ed|ing|y)\\b",
+        "\\bgrandfather(?:s|ed|ing)\\b",
+        "\\btribal knowledge\\b",
+        "\\bbells and whistles\\b",
+        "\\bbak(?:e|es|ed|ing) (?:in|into)\\b",
+        "\\bsharp edges?\\b",
+        "\\bdog[- ]?food(?:ing|ed)?\\b",
+        "\\bbullet[- ]?proof\\b",
+        "\\bbattle[- ]tested\\b",
+        "\\brock[- ]solid\\b",
+        "\\bin the weeds\\b",
+        "\\bdoubl(?:e|es|ed|ing) down\\b",
+        "\\bband[- ]?aids?\\b",
+        "\\bout of the woods\\b",
+        "\\bchicken[- ]and[- ]egg\\b",
+        "\\bcatch[- ]22\\b",
+        "\\bboils? down to\\b",
+        "\\bat play\\b",
+        "\\bin a nutshell\\b",
+        "\\bthe bottom line\\b",
+        "\\bloop(?:s|ed|ing)? (?:you|them|me|him|her|us) in\\b",
+        "\\bspot on\\b",
+        "\\bnail(?:s|ed)? it\\b",
+        "\\bminefield\\b",
+        "\\blandmines?\\b",
+        "\\bkill two birds\\b",
+        "\\bbite the bullet\\b",
+        "\\bpull the trigger\\b",
+        "\\bpiggy[- ]?back(?:s|ed|ing)?\\b",
+        "\\bbehind the scenes\\b",
+        "\\bout of the gate\\b",
+        "\\bjump through hoops\\b",
+        "\\b(?:fall|fell|slip|slipped|falls|slips) through the cracks\\b",
+        "\\bdrop(?:s|ped)? the ball\\b",
+        "\\bcarte blanche\\b",
+        "\\bsilver lining\\b",
+        "\\btwo sides of the same coin\\b",
+        "\\bpar for the course\\b",
+        "\\bdeal[- ]?breakers?\\b",
+        "\\bnuk(?:e|es|ed|ing)\\b",
+        "\\bblow(?:n|s|ing)? away\\b",
+        "\\bkill[- ]?switch(?:es)?\\b",
+        "\\bsanity[- ]check(?:s|ed|ing)?\\b"
+      ]
+    },
+    {
+      "id": "figurative",
+      "clause": "1: 5.3.2 a), b)",
+      "severity": "block",
+      "say": "Figurative wording: the literal meaning is something else, and the reader has to translate it. Say the literal relation: \"comes from\", \"depends on\", \"causes\", \"option\", \"explain\".",
+      "patterns": [
+        "(?<!\\bthe )\\brest(?:s|ed|ing)? on\\b",
+        "\\bhing(?:e|es|ed|ing) on\\b",
+        "\\bunderpin(?:s|ned|ning)?\\b",
+        "\\bbacked by\\b",
+        "\\b(?:grounded|rooted) in\\b",
+        "\\bdrove\\b",
+        "\\bdriv(?:e|es|ing) (?:up|down|the cost|cost|costs|growth|most|much|this|that|it)\\b",
+        "\\bwhat drives\\b",
+        "\\bdrivers? of\\b",
+        "\\blevers?\\b",
+        "\\b(?:strengthen|weaken|make|makes|made|making)s? (?:the|a|its|our|their) case\\b",
+        "\\bthe case (?:for|against)\\b",
+        "\\b(?:big|full|whole|clearer|clear) picture\\b",
+        "\\bpaint(?:s|ed|ing)? a picture\\b",
+        "\\bthrough the lens of\\b",
+        "\\blens\\b",
+        "\\bexplod(?:e|es|ed|ing)\\b",
+        "\\bexplosion\\b",
+        "\\bballoon(?:s|ed|ing)\\b",
+        "\\bskyrocket(?:s|ed|ing)?\\b",
+        "\\bsnowball(?:s|ed|ing)?\\b",
+        "\\btip(?:s|ped|ping)? the balance\\b",
+        "\\btipping point\\b",
+        "\\bpay(?:s|ing)? the price\\b",
+        "\\bbleed(?:s|ing)? (?:money|cash|cost)\\b",
+        "\\bwalk(?:s|ed|ing)? (?:you |them |me |us )?through\\b",
+        "\\bdig(?:s|ging)? (?:into|in)\\b",
+        "\\bdrill(?:s|ed|ing)? (?:into|down)\\b",
+        "\\bzoom(?:s|ed|ing)? (?:in|out)\\b",
+        "\\b(?:on|off) the table\\b",
+        "\\bin play\\b",
+        "\\bit['’]?s a wash\\b",
+        "\\bnet-net\\b",
+        "\\brough cut\\b",
+        "\\bflavou?rs? of\\b",
+        "\\bshed(?:s|ding)? light\\b",
+        "\\bzero(?:es|ed)? in\\b",
+        "\\bfront and cent(?:re|er)\\b",
+        "\\bon the radar\\b",
+        "\\bmoving target\\b",
+        "\\bcritical mass\\b",
+        "\\bthe heart of\\b",
+        "\\bat its core\\b",
+        "\\bcore of the (?:problem|issue)\\b",
+        "\\bon pace (?:to|for)\\b"
+      ]
+    },
+    {
+      "id": "govuk-words-to-avoid",
+      "clause": "GOV.UK A to Z: words to avoid; 1: 5.3.2 a)",
+      "severity": "block",
+      "say": "GOV.UK lists this as a word to avoid: it is vague, or a metaphor, and hides what is happening. Write {instead}.",
+      "items": [
+        {
+          "pattern": "\\bliais(?:e|es|ed|ing)\\b",
+          "instead": "\"work with\" or \"work alongside\""
+        },
+        {
+          "pattern": "\\boverarching\\b",
+          "instead": "nothing, or \"encompassing\""
+        },
+        {
+          "pattern": "\\b(?:one[- ]stop[- ]shop)\\b",
+          "instead": "\"website\" or \"service\""
+        },
+        {
+          "pattern": "\\bring[- ]?fenc(?:e|es|ed|ing)\\b",
+          "instead": "\"separate\", or for money, \"money that will be spent on\" the thing"
+        },
+        {
+          "pattern": "\\bslim(?:s|med|ming)? down\\b",
+          "instead": "\"make smaller\" or \"reduce the size\""
+        },
+        {
+          "pattern": "\\b(?:dis)?incentivis(?:e|es|ed|ing)\\b",
+          "instead": "\"encourage\", \"motivate\", \"discourage\" or \"deter\""
+        },
+        {
+          "pattern": "\\bcollaborat(?:e|es|ed|ing|ion)\\b",
+          "instead": "\"work with\""
+        },
+        {
+          "pattern": "\\bcombat(?:s|ted|ting|ing)?\\b",
+          "instead": "\"solve\", \"fix\" or something more specific"
+        },
+        {
+          "pattern": "\\bfoster(?:s|ed|ing)?\\b",
+          "instead": "\"encourage\" or \"help\""
+        },
+        {
+          "pattern": "\\bdialogue\\b",
+          "instead": "\"spoke to\" or \"discussion\""
+        },
+        {
+          "pattern": "\\bstreamlin(?:e|es|ed|ing)\\b",
+          "instead": "\"simplify\", or say what you removed"
+        },
+        {
+          "pattern": "\\btackl(?:e|es|ed|ing)\\b",
+          "instead": "\"stop\", \"solve\" or \"deal with\""
+        },
+        {
+          "pattern": "\\bimpact(?:s|ed|ing)\\b(?! (?:on|of)\\b)",
+          "instead": "\"have an effect on\" or \"influence\""
+        },
+        {
+          "pattern": "\\binitiat(?:e|es|ed|ing)\\b",
+          "instead": "\"start\" or \"begin\""
+        },
+        {
+          "pattern": "\\brobust(?:ly|ness)?\\b",
+          "instead": "\"well thought out\" or \"comprehensive\", or say what it withstands"
+        },
+        {
+          "pattern": "\\bdeliver(?:s|ed|ing)? (?:the |a |an |real |more )?(?:improvements?|value|outcomes?|results?|benefits?|change|impact|savings?)\\b",
+          "instead": "\"make\", \"create\", \"provide\" or something more specific"
+        },
+        {
+          "pattern": "\\bkey (?:points?|takeaways?|findings?|messages?|factors?|areas?|issues?|themes?|insights?)\\b",
+          "instead": "\"main\" or \"important\", or nothing"
+        },
+        {
+          "pattern": "\\bdriv(?:e|es|ing|en) out\\b",
+          "instead": "\"stop\", \"avoid\" or \"prevent\""
+        }
+      ]
+    },
+    {
+      "id": "govuk-tone",
+      "clause": "GOV.UK: use the right tone; 1: 5.3.7",
+      "severity": "block",
+      "say": "{instead}",
+      "items": [
+        {
+          "pattern": "\\bplease note\\b",
+          "instead": "\"Please note\" adds nothing. State the thing."
+        },
+        {
+          "pattern": "\\b(?:he or she|she or he|he/she|s/he|his or her|her or his|him or her)\\b",
+          "instead": "Use \"they\", \"their\" or \"them\"."
+        },
+        {
+          "pattern": "\\b(?:should|could|would|might|must|they|we|you)['’]ve\\b",
+          "instead": "Readers find this contraction hard to read. Write \"should have\", \"they have\"."
+        }
+      ]
+    },
+    {
+      "id": "symbol-shorthand",
+      "clause": "1: 5.3.2 d), e)",
+      "severity": "block",
+      "say": "A symbol or clipped form stands in for words, and the reader has to decode it. Write the words: \"about\", \"times\", \"compared with\", \"at most\", \"at least\", \"$3,300\", \"October\".",
+      "flags": "",
+      "patterns": [
+        "≈",
+        "(?<=\\d)\\s?×",
+        "×\\s?(?=\\d)",
+        "[≤≥]",
+        "(?:^|\\s)~\\s?[\\d$]",
+        "\\b[Vv]s\\.?(?=\\s)",
+        "\\$\\d+(?:\\.\\d+)?[kKmM]\\b"
+      ]
+    },
+    {
+      "id": "month-abbreviation",
+      "clause": "house style, GOV.UK: tables; 1: 5.3.2 d)",
+      "severity": "block",
+      "say": "Write the month in full, as in \"1 October 2026\". GOV.UK allows short month names only inside a table.",
+      "flags": "",
+      "skipKinds": [
+        "cell"
+      ],
+      "patterns": [
+        "\\b(?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\\b\\.?(?!\\w)"
+      ]
+    },
+    {
+      "id": "shorthand",
+      "clause": "1: 5.3.2 d), e)",
+      "severity": "block",
+      "say": "Shorthand the reader has to decode. Write the words out.",
+      "patterns": [
+        "(?<![\\w/])(?:w/o?|b/c)(?![\\w/])",
+        "\\b(?:imo|imho|afaik|iirc|tbh|fwiw|lgtm|tl;?dr|ftw|wrt)\\b"
+      ]
+    },
+    {
+      "id": "arrow",
+      "clause": "1: 5.3.2 d), 5.3.3 a)",
+      "severity": "block",
+      "say": "An arrow stands in for a verb, and the reader has to guess which one. Write the verb: \"becomes\", \"leads to\", \"calls\", \"then\".",
+      "flags": "",
+      "patterns": [
+        "(?:^|\\s)(?:→|⇒|⟶|⟹|->|=>|←|<-)(?:\\s|$)"
+      ]
+    },
+    {
+      "id": "condition-after-instruction",
+      "clause": "1: 5.2.2 b), 5.3.3 a) 4)",
+      "severity": "block",
+      "say": "The condition comes after the instruction, so the reader acts before they know whether it applies. Put the condition first: \"If you need it, tell me where to keep it.\"",
+      "flags": "",
+      "patterns": [
+        "^(?:Tell|Ask|Run|Use|Check|Add|Remove|Write|Send|Set|Open|Read|Delete|Install|Make|Keep|Put|Give|Let|Move|Change|Update|Stop|Start|Try|Call|Create|Choose|Pick|Select|Restart|Reply|Contact|Email|See|Look|Review|Approve|Merge|Push|Commit|Edit|Fix|Turn|Switch|Enable|Disable)\\b(?!\\s+(?:if|whether)\\b)[^.!?]{12,}?(?<!\\bonly|\\beven)\\s(?:if|when|unless|once)\\s+(?:you|your)\\b[^.!?]*[.!?]?$"
+      ],
+      "scope": "sentence"
+    },
+    {
+      "id": "stacked-hedge",
+      "clause": "3: 5.3.3 f)",
+      "severity": "block",
+      "say": "Two hedges on one claim. Keep one, and tie it to the evidence: what you saw, how often, how many.",
+      "patterns": [
+        "\\b(?:might|may|could|would|can) (?:possibly|potentially|perhaps|conceivably)\\b",
+        "\\b(?:possibly|perhaps|maybe) (?:might|may|could)\\b",
+        "\\b(?:seems?|appears?) to (?:suggest|indicate|imply)\\b"
+      ]
+    },
+    {
+      "id": "negative-contraction",
+      "clause": "house style (GOV.UK), 1: 5.3.3 d)",
+      "severity": "block",
+      "say": "Readers can misread a negative contraction as its opposite. Write the negative in full: \"cannot\", \"does not\", \"is not\".",
+      "patterns": [
+        "\\b\\w+n['’]t\\b"
+      ]
+    },
+    {
+      "id": "date-format",
+      "clause": "house style, 1: 5.3.3 e)",
+      "severity": "block",
+      "say": "Write dates as day, month, year with no ordinal and no comma: \"1 July 2026\".",
+      "patterns": [
+        "\\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\\s+\\d{1,2}(?:st|nd|rd|th)?,?\\s+\\d{4}\\b",
+        "\\b\\d{1,2}(?:st|nd|rd|th)\\s+(?:of\\s+)?(?:January|February|March|April|May|June|July|August|September|October|November|December)\\b"
+      ]
+    },
+    {
+      "id": "inclusive-language",
+      "clause": "1: 5.3.7",
+      "severity": "block",
+      "say": "Use inclusive terms: \"allowlist\" and \"blocklist\", \"primary\" and \"replica\", \"placeholder\", \"check\".",
+      "patterns": [
+        "\\b(?:white|black)[- ]?list(?:s|ed|ing)?\\b",
+        "\\bmaster/slave\\b|\\bslaves?\\b",
+        "\\bdummy (?:value|data|variable|text)\\b"
+      ]
+    },
+    {
+      "id": "figurative-jargon",
+      "clause": "1: 5.3.2 a), c)",
+      "severity": "advise",
+      "say": "Often figurative. If this sentence is not about the literal meaning, say what actually happens.",
+      "patterns": [
+        "\\bsurfac(?:e|es|ed|ing) (?:the|a|an|this|that|these|those|it|them|any|errors?|issues?|problems?|warnings?)\\b",
+        "\\b(?:lives|live|living) (?:in|under|inside|alongside|next to)\\b",
+        "\\bplumbing\\b",
+        "\\bwir(?:e|es|ed|ing) (?:up|in|into|through)\\b",
+        "\\b(?:spin|spins|spinning|spun) up\\b",
+        "\\bgotchas?\\b",
+        "\\bhappy path\\b",
+        "\\b(?:code )?smells?\\b",
+        "\\bheads[- ]up\\b",
+        "\\bon the fly\\b",
+        "\\bin flight\\b",
+        "\\bballpark\\b",
+        "\\bred flags?\\b",
+        "\\bpain points?\\b",
+        "\\bin the wild\\b",
+        "\\bguard ?rails?\\b",
+        "\\bgreenfield\\b",
+        "\\bbrownfield\\b",
+        "\\bunlock(?:s|ed|ing)?\\b",
+        "\\blandscape\\b(?! (?:mode|orientation))",
+        "\\brealm\\b",
+        "\\belevat(?:e|es|ed|ing)\\b",
+        "\\bunderscor(?:e|es|ed|ing)\\b",
+        "\\bpivotal\\b",
+        "\\bmyriad\\b",
+        "\\bjourney\\b",
+        "\\bergonomic(?:s)?\\b",
+        "\\brule of thumb\\b",
+        "\\bkey takeaways?\\b",
+        "\\b(?:no|enough|the) bandwidth (?:to|for)\\b",
+        "\\blean(?:s|ed|ing)? on\\b",
+        "\\bspeak(?:s|ing)? to (?:the|this|that|her|him|them|it)\\b",
+        "\\bbuil(?:d|ds|t) on\\b",
+        "\\bslices?\\b",
+        "\\bwindow\\b",
+        "\\bax(?:is|es)\\b",
+        "\\bheadroom\\b",
+        "\\broom for\\b",
+        "\\bspikes?\\b",
+        "\\btouch(?:es|ed|ing)? (?:the|a|any|nothing|no|files?|code|it)\\b",
+        "\\bfootprint\\b",
+        "\\bbuckets?\\b",
+        "\\bthe shape of\\b",
+        "\\bstory\\b",
+        "\\bland(?:s|ed|ing)? (?:on|in)\\b",
+        "\\bsits? (?:on|in|at|behind|between)\\b",
+        "\\bship(?:s|ped|ping)?\\b",
+        "\\b(?:run|burn)[- ]rate\\b",
+        "\\b(?:first|second|final) pass\\b",
+        "\\bp\\d{2}\\b",
+        "\\bfresh\\b",
+        "\\banchor(?:s|ed|ing)? (?:on|to|in)\\b",
+        "\\bunpack(?:s|ed|ing)?\\b",
+        "\\bprogress(?:es|ed|ing)? (?:the|this|that|it)\\b",
+        "\\bpromot(?:e|es|ed|ing) (?:the|a|an|good|best)\\b",
+        "\\btransform(?:s|ed|ing|ation)?\\b",
+        "\\bagenda\\b",
+        "\\bstrengthen(?:s|ed|ing)?\\b",
+        "\\b(?:commit|pledge)(?:s|ted|ting|d)? to\\b",
+        "\\bplease\\b",
+        "(?<!in )\\badvanc(?:e|es|ed|ing)\\b(?! (?:notice|warning|payment))",
+        "\\bfocus(?:es|ed|ing)? on\\b",
+        "\\bthe impact of\\b",
+        "\\b(?:hub|portal)s?\\b",
+        "\\bcounter(?:s|ed|ing)? (?:the|this|that|it)\\b"
+      ]
+    },
+    {
+      "id": "vague-modifier",
+      "clause": "1: 5.3.4 b), 5.3.7",
+      "severity": "advise",
+      "say": "Adds little meaning. Delete it, or replace it with a number or a fact. \"Obviously\", \"simply\" and \"just\" can also read as talking down to the reader.",
+      "patterns": [
+        "\\b(?:very|really|quite|extremely|incredibly|basically|essentially|actually|simply|obviously|honestly|genuinely|definitely|totally|just)\\b",
+        "\\bof course\\b",
+        "\\bclearly,"
+      ]
+    },
+    {
+      "id": "plainer-word",
+      "clause": "1: 5.3.2",
+      "severity": "advise",
+      "say": "A more familiar word exists: {instead}.",
+      "items": [
+        {
+          "pattern": "\\badditionally\\b",
+          "instead": "\"also\""
+        },
+        {
+          "pattern": "\\bapproximately\\b",
+          "instead": "\"about\""
+        },
+        {
+          "pattern": "\\bnumerous\\b",
+          "instead": "\"many\""
+        },
+        {
+          "pattern": "\\bsufficient(?:ly)?\\b",
+          "instead": "\"enough\""
+        },
+        {
+          "pattern": "\\bdemonstrat(?:e|es|ed|ing)\\b",
+          "instead": "\"show\""
+        },
+        {
+          "pattern": "\\bobtain(?:s|ed|ing)?\\b",
+          "instead": "\"get\""
+        },
+        {
+          "pattern": "\\bregarding\\b",
+          "instead": "\"about\""
+        },
+        {
+          "pattern": "\\b(?:is|are) able to\\b",
+          "instead": "\"can\""
+        },
+        {
+          "pattern": "\\bin terms of\\b",
+          "instead": "a direct phrase: \"in\", \"for\", \"about\""
+        },
+        {
+          "pattern": "\\bthe fact that\\b",
+          "instead": "\"that\", or rewrite the sentence"
+        },
+        {
+          "pattern": "\\bwhether or not\\b",
+          "instead": "\"whether\", unless \"or not\" changes the meaning"
+        },
+        {
+          "pattern": "\\bas (?:previously |already )?(?:mentioned|noted|discussed|stated)(?: (?:above|earlier|before))?\\b",
+          "instead": "nothing: state the point, or link to it"
+        },
+        {
+          "pattern": "\\bthere (?:is|was) a need (?:to|for)\\b",
+          "instead": "\"you need to\" or \"we need to\""
+        },
+        {
+          "pattern": "\\b(?:feel free to|let me know if you (?:have|need|want))\\b",
+          "instead": "a direct offer, or nothing"
+        }
+      ]
+    },
+    {
+      "id": "latin-abbreviation",
+      "clause": "GOV.UK A to Z: eg, etc and ie; 1: 5.3.2 d)",
+      "severity": "block",
+      "say": "GOV.UK avoids these. Write \"for example\", \"such as\" or \"including\" for e.g.; rewrite or write \"that is\" for i.e.; and do not end a list with etc.",
+      "patterns": [
+        "(?<![\\w.])(?:e\\.g\\.|i\\.e\\.|etc\\.?|viz\\.|cf\\.|n\\.b\\.)(?![\\w])",
+        "(?<![\\w.])(?:eg|ie)(?![\\w.])"
+      ]
+    },
+    {
+      "id": "symbol-for-word",
+      "clause": "1: 5.3.2 d)",
+      "severity": "advise",
+      "say": "A symbol standing for a word. Write the word: \"about\", \"and\", \"times\", \"or\".",
+      "flags": "",
+      "patterns": [
+        "\\s&\\s",
+        "\\b\\d+x (?:faster|slower|more|less|bigger|smaller|larger)\\b",
+        "\\s\\+\\s(?=[a-zA-Z])",
+        "±"
+      ]
+    },
+    {
+      "id": "slash-for-or",
+      "clause": "GOV.UK A to Z: or; 1: 5.3.2 d)",
+      "severity": "advise",
+      "say": "A slash stands in for \"or\" or \"and\", and the reader has to guess which. Write the word.",
+      "patterns": [
+        "(?<![\\w/.])[a-z]{2,}/[a-z]{2,}(?![\\w/.])"
+      ]
+    },
+    {
+      "id": "passive-with-actor",
+      "clause": "1: 5.3.3 c)",
+      "severity": "advise",
+      "say": "Passive voice that already names who does it. Put the actor first: \"the hook checks the file\", not \"the file is checked by the hook\".",
+      "patterns": [
+        "\\b(?:is|are|was|were|be|been|being) (?:\\w+ed|\\w+en|made|done|built|set|put|run|kept|held|sent|found|shown|given|taken|seen|read|written) by\\b"
+      ]
+    },
+    {
+      "id": "emoji",
+      "clause": "1: 5.3.6 a), 5.3.7",
+      "severity": "advise",
+      "say": "An emoji is decoration, and a screen reader reads its name aloud. Use a word.",
+      "flags": "u",
+      "patterns": [
+        "(?![©®™])\\p{Extended_Pictographic}"
+      ]
+    }
+  ],
+  "sourcePatterns": [
+    {
+      "id": "link-text-says-nothing",
+      "clause": "1: 5.2.3",
+      "severity": "block",
+      "say": "Link text has to say what is at the other end. Name the destination.",
+      "patterns": [
+        "\\[(?:click here|here|this link|this|link|read more|more|this page)\\]\\("
+      ]
+    },
+    {
+      "id": "link-text-is-an-address",
+      "clause": "1: 5.2.3",
+      "severity": "advise",
+      "say": "Link text repeats the address. Name the destination instead.",
+      "patterns": [
+        "\\[https?://[^\\]]+\\]\\("
+      ]
+    }
+  ],
+  "thingVerbs": {
+    "_comment": [
+      "Things that are given a person's verb: a file that holds a table, a link that a map gains, a",
+      "function that knows the answer. Ported from Slipstream's hold and carry rule",
+      "(slipstream/banned-language.json), which works on the subject, not the word: a member holds a",
+      "capability, and that is literal. A thing doing it is the figure of speech.",
+      "'things' are the subjects checked, and CODE is anything written in code formatting.",
+      "'between' lists the words allowed between the subject and the verb: \"that\", \"which\", adverbs, and modal verbs, never a noun.",
+      "'person' exempts a match when a person is the subject just before the verb.",
+      "'heldVerbs' are reported before a held thing whatever the subject, as in \"holds the data\".",
+      "Verbs of seeing are not in it: a person sees a table, and a transaction sees the data."
+    ],
+    "clause": "1: 5.3.2 a), b)",
+    "say": "A thing is given a person's verb. Use the literal verb: \"contains\", \"has\", \"lists\", \"shows\", \"stores\", \"includes\", or say what was added or changed.",
+    "things": [
+      "appendix",
+      "array",
+      "badge",
+      "block",
+      "blob",
+      "branch",
+      "bundle",
+      "caption",
+      "cell",
+      "cells",
+      "change",
+      "changes",
+      "check",
+      "checker",
+      "checks",
+      "class",
+      "column",
+      "columns",
+      "comment",
+      "comments",
+      "commit",
+      "config",
+      "cookie",
+      "database",
+      "directory",
+      "doc",
+      "docs",
+      "document",
+      "documents",
+      "endpoint",
+      "entries",
+      "entry",
+      "field",
+      "fields",
+      "file",
+      "files",
+      "folder",
+      "footer",
+      "form",
+      "function",
+      "functions",
+      "guard",
+      "guide",
+      "header",
+      "heading",
+      "hook",
+      "hooks",
+      "issue",
+      "job",
+      "jobs",
+      "line",
+      "lines",
+      "link",
+      "list",
+      "lists",
+      "log",
+      "logs",
+      "machine",
+      "map",
+      "method",
+      "migration",
+      "module",
+      "note",
+      "notes",
+      "object",
+      "page",
+      "pages",
+      "panel",
+      "paragraph",
+      "payload",
+      "query",
+      "readme",
+      "record",
+      "records",
+      "report",
+      "reports",
+      "repo",
+      "repository",
+      "request",
+      "response",
+      "row",
+      "rows",
+      "rule",
+      "rules",
+      "schema",
+      "script",
+      "scripts",
+      "section",
+      "sections",
+      "server",
+      "service",
+      "session",
+      "setting",
+      "settings",
+      "snapshot",
+      "step",
+      "suite",
+      "table",
+      "tables",
+      "task",
+      "test",
+      "tests",
+      "ticket",
+      "tool",
+      "type",
+      "variable",
+      "workflow",
+      "CODE",
+      "URL"
+    ],
+    "pronouns": [
+      "it",
+      "that",
+      "this",
+      "which",
+      "these",
+      "those"
+    ],
+    "blockVerbs": "holds|hold|holding|carries|carry|carrying|gains|gained|houses|housed|owns|owned|boasts|sports|knows|knew|wants|wanted|thinks|thought|feels|likes|cares|sees|see|saw|behaves|behave|behaved|answers|answer|answered|understands|understand|understood|notices|notice|noticed",
+    "heldVerbs": "holds|hold|holding|carries|carry|carrying|gains|gained|houses|housed|owns|owned|boasts|sports|knows|knew|wants|wanted|thinks|thought|feels|likes|cares",
+    "pronounVerbs": "holds|hold|carries|carry|gains|houses|owns|knows|wants|thinks|feels|sees|behaves|understands|notices",
+    "between": "that|which|only|never|still|also|just|already|then|now|always|often|sometimes|no longer|only ever|actually|simply|therefore|thus|either|itself|each|both|has to|have to|had to|needs to|need to|must|cannot|could|may|might|should|would|will not|will|does not|do not|did not|can",
+    "heldThings": [
+      "nothing",
+      "its own",
+      "their own",
+      "the value",
+      "a value",
+      "values",
+      "the flag",
+      "a flag",
+      "flags",
+      "the data",
+      "the state",
+      "the copy",
+      "a copy",
+      "the link",
+      "a link",
+      "the image",
+      "an image",
+      "the reference",
+      "a reference",
+      "the table",
+      "a table",
+      "the list",
+      "a list",
+      "the text",
+      "the id",
+      "an id",
+      "the glossary",
+      "a glossary",
+      "one link",
+      "a row",
+      "the row",
+      "rows"
+    ],
+    "person": "(?<!\\.)\\b(?:member|members|user|users|person|people|they|she|he|you|we|I|somebody|someone|anybody|nobody|no one|anyone|everyone|reader|readers|developer|developers|reviewer|author|team|volunteer|owner|admin|administrator)\\b[^.;]{0,60}$"
+  }
+}
