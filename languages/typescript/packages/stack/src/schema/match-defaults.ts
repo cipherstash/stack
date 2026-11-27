@@ -4,8 +4,8 @@ import type { MatchIndexOpts } from './index'
  * Fully-resolved match-index options: every field present and non-`undefined`.
  *
  * `MatchIndexOpts` (the user-facing tuning input) has all fields optional —
- * each is `.default(...).optional()` in the zod schema, so its inferred type is
- * `T | undefined`. This type pins the BUILT/resolved shape explicitly via
+ * each is `.optional()` in the zod schema, which fills in no defaults, so its
+ * inferred type is `T | undefined`. Defaults come from {@link defaultMatchOpts}. This type pins the BUILT/resolved shape explicitly via
  * `NonNullable<...>`, which states the non-null intent directly and is robust
  * regardless of `Required<>`'s subtle, `exactOptionalPropertyTypes`-dependent
  * stripping semantics.
@@ -22,8 +22,8 @@ export type BuiltMatchIndexOpts = {
  * Default match-index parameters — the single source of truth shared by the
  * v2 `freeTextSearch()` builder and the v3 domain builders.
  *
- * `include_original: true` is the v2 builder's historical default rather than
- * the zod-schema default of `false`. It is INERT: protect-ffi accepts the flag
+ * `include_original: true` is the v2 builder's historical default. The zod
+ * schema fills in no default for it. It is INERT: protect-ffi accepts the flag
  * and ignores it (measured across 0.24 and 0.29, EQL v2 and v3 — the emitted
  * bloom is trigram-only either way). It is kept here only so the v2 emitted
  * config does not move. The v3 domain builders override it to `false`, the
@@ -91,9 +91,10 @@ export function resolveMatchOpts(opts?: MatchIndexOpts): BuiltMatchIndexOpts {
  *
  * Accepts the loose {@link MatchIndexOpts} because a `ColumnSchema`'s built
  * `indexes.match` is typed from the zod schema, where `tokenizer` is optional.
- * An absent tokenizer resolves to the same default the schema itself applies
- * (`ngram`, `token_length: 3`) rather than skipping the floor — skipping would
- * reintroduce the fail-open this guard exists to close.
+ * An absent tokenizer resolves to {@link defaultMatchOpts}'s (`ngram`,
+ * `token_length: 3`) rather than skipping the floor — skipping would
+ * reintroduce the fail-open this guard exists to close. The schema fills in
+ * no tokenizer.
  */
 export function matchNeedleMinLength(opts: MatchIndexOpts): number | undefined {
   const tokenizer = opts.tokenizer ?? defaultMatchOpts().tokenizer
