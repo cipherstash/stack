@@ -212,7 +212,7 @@ rmp-serde = "1.3"
 # The derive diagnostics are recorded with every feature on, as `test:unit`
 # and CI run them. They cannot be relied on to hold under both feature sets
 # — rustc lists a trait's other implementors in its help, and the `dynamic`
-# feature adds implementors (`ValueFrame`) that can join such a list — so
+# feature adds implementors (`OwnedFrame`) that can join such a list — so
 # the test is only built with that feature rather than skipped at runtime.
 [[test]]
 name = "ui"

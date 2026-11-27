@@ -1,7 +1,7 @@
 //! Typed inputs shared by conformance profiles.
 use super::frames::frame;
 use serde::{Deserialize, Serialize};
-use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use vitaminc_aead::plaintext::{Int, Logical, Physical, Raw, TimeUnit};
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -16,7 +16,7 @@ pub struct Input {
 /// integer at its own width, a logical type over its physical scalar, and
 /// text parsed without rounding. A text the type cannot carry is a corpus
 /// error, never a silently narrowed value.
-pub fn value(input: &Input) -> ValueFrame {
+pub fn value(input: &Input) -> OwnedFrame {
     let int = |int: Int| frame(Raw(None, Physical::Int(int)));
     let text = input.text.as_str();
     match input.kind.as_str() {

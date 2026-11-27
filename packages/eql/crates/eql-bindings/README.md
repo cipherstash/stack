@@ -688,7 +688,7 @@ value, and it opens back to its text.
 // Needs the `targets` feature.
 use eql_bindings::encryption::targets;
 use eql_bindings::v4::text::{TextEq, TextEqQuery};
-use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{Label, StackCipher};
 use stack_kms::FakeDataKeySource;
@@ -706,7 +706,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let column = Label::new(["users", "email"])?;
     // The plaintext, as its transport frame. A frame is moved into the call
     // that uses it, and is not `Clone`, so each call is given its own.
-    let email = || ValueFrame::of("alice@example.com");
+    let email = || OwnedFrame::of("alice@example.com");
 
     // Each call names the type, and returns the EQL value as JSON bytes.
     let stored: Vec<u8> = targets::encrypt("TextEq", &keyset, &column, email()?)?.await?;
@@ -717,7 +717,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let query: TextEqQuery = serde_json::from_slice(&probe)?;
     assert_eq!(query.hm, stored_value.hm);
 
-    let opened: ValueFrame = targets::decrypt("TextEq", &cipher, &column, &stored)?.await?;
+    let opened: OwnedFrame = targets::decrypt("TextEq", &cipher, &column, &stored)?.await?;
     assert_eq!(opened, email()?);
     Ok(())
 }
@@ -748,7 +748,7 @@ declaration; `targets::targets()` lists them, each with `producible` and, when i
   features and without its `dynamic` layer.
 - `targets`: `stack-encrypt`, plus the by-name dispatch a language binding
   needs (`encryption::targets`, `v4::targets`), where the EQL type is named at
-  run time and the plaintext is a `ValueFrame`. It turns on Stack Encrypt's
+  run time and the plaintext is an `OwnedFrame`. It turns on Stack Encrypt's
   `dynamic` feature. The Go guest's `eql` build enables it.
 
 ### Developing the `stack-encrypt` feature

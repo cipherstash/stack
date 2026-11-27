@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
 
 use common::frames::frame;
-use stack_encrypt::dynamic::{record, ValueFrame};
+use stack_encrypt::dynamic::{frame::OwnedFrame, record};
 use stack_encrypt::{Ciphertext, EncryptInto, Pending, StackCipher, StackCipherText};
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyError,
@@ -119,7 +119,7 @@ fn plan() -> record::Plan {
     .unwrap()
 }
 
-fn rows(count: usize) -> ValueFrame {
+fn rows(count: usize) -> OwnedFrame {
     frame(vec![BTreeMap::from([("value", "lifecycle-input")]); count])
 }
 

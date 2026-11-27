@@ -30,7 +30,7 @@ use std::sync::atomic::Ordering;
 
 use common::frames::{frame, object};
 use common::{counting_cipher, recording_cipher};
-use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, Planned, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record, NoTargets, Op, Operand, Planned};
 use stack_encrypt::plan::IntoLabel;
 use stack_encrypt::target::Scope;
 use stack_encrypt::{
@@ -50,7 +50,7 @@ fn two(first: &'static str, second: &'static str) -> PlanError {
 }
 
 /// One field's declaration: its label, its outputs and its type.
-fn field(context: &[&str], outputs: &[&str], kind: &str) -> ValueFrame {
+fn field(context: &[&str], outputs: &[&str], kind: &str) -> OwnedFrame {
     object(vec![
         ("context", frame(context.to_vec())),
         ("outputs", frame(outputs.to_vec())),
@@ -58,7 +58,7 @@ fn field(context: &[&str], outputs: &[&str], kind: &str) -> ValueFrame {
     ])
 }
 
-fn plan_of(declaration: Vec<(&str, ValueFrame)>) -> Result<record::Plan, dynamic::Error> {
+fn plan_of(declaration: Vec<(&str, OwnedFrame)>) -> Result<record::Plan, dynamic::Error> {
     record::plan(object(declaration).as_protected_ref())
 }
 
@@ -72,7 +72,7 @@ fn users_plan() -> record::Plan {
     .expect("the users plan parses")
 }
 
-fn user() -> ValueFrame {
+fn user() -> OwnedFrame {
     object(vec![
         ("email", frame("bob@example.com")),
         ("age", frame(34u32)),
@@ -90,7 +90,7 @@ fn records_plan() -> record::Plan {
     .expect("the records plan parses")
 }
 
-fn tenant_record(tenant: &str) -> ValueFrame {
+fn tenant_record(tenant: &str) -> OwnedFrame {
     object(vec![
         ("tenant", frame(tenant)),
         ("email", frame("bob@example.com")),
@@ -374,7 +374,7 @@ async fn an_empty_scope_is_refused_before_any_key_request() {
         .await;
     assert!(queried.is_err(), "{queried:?}");
     let opened =
-        ValueFrame::decrypt_from_with_context(Planned::new(&plan, stored), &keyset, Scope::new(""))
+        OwnedFrame::decrypt_from_with_context(Planned::new(&plan, stored), &keyset, Scope::new(""))
             .await;
     assert_eq!(plan_error(opened), PlanError::EmptyPart);
     assert_eq!(generates.load(Ordering::SeqCst), 0);
@@ -605,7 +605,7 @@ async fn a_callers_scope_extends_every_field_and_a_query_names_it() {
         "and so does a query that names none"
     );
 
-    let back = ValueFrame::decrypt_from_with_context(
+    let back = OwnedFrame::decrypt_from_with_context(
         Planned::new(&plan, record),
         &keyset,
         Scope::new("acme"),
@@ -614,7 +614,7 @@ async fn a_callers_scope_extends_every_field_and_a_query_names_it() {
     .unwrap();
     assert_eq!(back, user());
     let unscoped =
-        ValueFrame::decrypt_from(Planned::new(&plan, write().await.unwrap()), &keyset).await;
+        OwnedFrame::decrypt_from(Planned::new(&plan, write().await.unwrap()), &keyset).await;
     assert!(
         matches!(unscoped, Err(Error::Aead)),
         "the fake key source ignores descriptors, so a missing scope reaches the AEAD"
@@ -637,7 +637,7 @@ async fn a_scope_reaches_every_field_of_a_context_field_plan() {
         sent.lock().unwrap().generated(),
         ["(tenants/acme/email)/7u64"]
     );
-    let back = ValueFrame::decrypt_from_with_context(
+    let back = OwnedFrame::decrypt_from_with_context(
         Planned::new(&plan, record),
         &keyset,
         Scope::new(7u64),
@@ -647,7 +647,7 @@ async fn a_scope_reaches_every_field_of_a_context_field_plan() {
     assert_eq!(back, tenant_record("tenants/acme"));
 
     let unscoped =
-        ValueFrame::decrypt_from(Planned::new(&plan, write().await.unwrap()), &keyset).await;
+        OwnedFrame::decrypt_from(Planned::new(&plan, write().await.unwrap()), &keyset).await;
     assert!(matches!(unscoped, Err(Error::Aead)), "{unscoped:?}");
 }
 
@@ -750,14 +750,14 @@ async fn an_empty_batch_has_its_context_checked_before_any_key_request() {
     let keyset = cipher.default_keyset();
     let users = users_plan();
     let records = records_plan();
-    let none = || frame(Vec::<ValueFrame>::new());
+    let none = || frame(Vec::<OwnedFrame>::new());
     let stored_none = || CipherText::Sequence(Vec::new());
 
     let refused = Planned::new(&users, none())
         .encrypt_into_with_context::<StackCipherText, _>(&keyset, Scope::new(""))
         .await;
     assert_eq!(plan_error(refused), PlanError::EmptyPart);
-    let refused = ValueFrame::decrypt_from_with_context(
+    let refused = OwnedFrame::decrypt_from_with_context(
         Planned::new(&users, stored_none()),
         &keyset,
         Scope::new(""),

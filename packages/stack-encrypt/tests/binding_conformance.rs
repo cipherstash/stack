@@ -13,7 +13,7 @@ use common::conformance::{value, Input};
 use common::frames::{frame, object};
 use common::{hex, unhex};
 use serde::{Deserialize, Serialize};
-use stack_encrypt::dynamic::{self, record, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record};
 use stack_encrypt::AsProtectedRef as _;
 use stack_encrypt::{CipherText, Descriptor, Label, SealedValue, StackCipherText};
 use std::collections::{BTreeMap, BTreeSet};
@@ -57,7 +57,7 @@ struct Expected {
     cases: BTreeMap<String, Vector>,
 }
 
-fn part(input: &Input) -> ValueFrame {
+fn part(input: &Input) -> OwnedFrame {
     if input.kind == "bytes" {
         frame(unhex(&input.text))
     } else {
@@ -65,13 +65,13 @@ fn part(input: &Input) -> ValueFrame {
         value(input)
     }
 }
-fn nest(head: ValueFrame, parts: &[Input]) -> ValueFrame {
+fn nest(head: OwnedFrame, parts: &[Input]) -> OwnedFrame {
     parts
         .iter()
         .fold(head, |head, p| frame(vec![head, part(p)]))
 }
 /// The field's context frame: the label and field, extended by the scopes.
-fn context(case: &Case) -> ValueFrame {
+fn context(case: &Case) -> OwnedFrame {
     let mut label = case.label.split('/').map(str::to_owned).collect::<Vec<_>>();
     label.push("text".into());
     nest(frame(label), &case.scopes)
@@ -102,7 +102,7 @@ fn passthrough_bytes(payload: &stack_encrypt::PassthroughFrame) -> Vec<u8> {
     let frame = payload.parse().expect("one frame");
     vitaminc_aead::Encrypt::visit(frame, Vec::<u8>::sink()).expect("bytes")
 }
-fn source() -> ValueFrame {
+fn source() -> OwnedFrame {
     object(vec![("text", frame("hello"))])
 }
 fn ciphertext(tree: StackCipherText) -> Vec<u8> {

@@ -41,7 +41,7 @@ eql-bindings = { path = "../../crates/eql-bindings", features = ["targets", "jif
 # The parity oracle for the generated target table (tests/targets.rs): the
 # table must name every stored catalog domain, in catalog order.
 eql-domains = { path = "../../crates/eql-domains" }
-# `dynamic`: `ValueFrame`, the runtime plaintext the target dispatch takes,
+# `dynamic`: `OwnedFrame`, the runtime plaintext the target dispatch takes,
 # as eql-bindings names it.
 # `testing`: `assert_context!`, which pins the contexts of the EQL types.
 # `eql-simulator`: Rust copies of the EQL reads of a stored JSON document, so

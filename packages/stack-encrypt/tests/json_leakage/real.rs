@@ -19,8 +19,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::{
-    self, record, Op, Operand, TargetDescriptor, TargetError, TargetOptions, TargetResolver,
-    ValueFrame, ValueKind,
+    self, frame::OwnedFrame, record, Op, Operand, TargetDescriptor, TargetError, TargetOptions,
+    TargetResolver, ValueKind,
 };
 use stack_encrypt::json::{JsonDocument, JsonLeafQuery, JsonOptions, JsonPath, JsonQuery};
 use stack_encrypt::target::{json_document, Borrowed, CallerContext, DeclaredContext, IndexSpec};
@@ -68,7 +68,7 @@ impl TargetResolver for Documents {
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
         _: &DeclaredContext,
-        _: ValueFrame,
+        _: OwnedFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("the documents are sealed by the JSON index's own operation")
     }
@@ -80,7 +80,7 @@ impl TargetResolver for Documents {
         _: &Label,
         _: &DeclaredContext,
         _: &[u8],
-    ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+    ) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
         unreachable!("nothing is opened here")
     }
 
@@ -91,7 +91,7 @@ impl TargetResolver for Documents {
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
         _: &DeclaredContext,
-        _: ValueFrame,
+        _: OwnedFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("the JSON operators are the engine's")
     }
@@ -130,7 +130,7 @@ async fn operand<T: DeserializeOwned + Serialize>(
     operator: Op,
     input: &Value,
 ) -> Value {
-    let input = ValueFrame::from_bytes(
+    let input = OwnedFrame::from_bytes(
         dynamic::frame::serde::to_vec(input)
             .expect("the input is a frame")
             .as_protected_ref(),

@@ -39,19 +39,19 @@ fn caller() -> CallerContext {
 #[cfg(feature = "dynamic")]
 #[tokio::test]
 async fn a_vec_of_indexes_is_an_index_set_in_order_and_never_empty() {
-    use stack_encrypt::dynamic::ValueFrame;
+    use stack_encrypt::dynamic::frame::OwnedFrame;
 
     let (cipher, generates, _) = counting_cipher().await;
     let keyset = cipher.default_keyset();
 
     let list: Vec<IndexSpec> = vec![IndexSpec::Ore, IndexSpec::Equality];
     assert_eq!(
-        Indexes::<ValueFrame>::specs(&list),
+        Indexes::<OwnedFrame>::specs(&list),
         [IndexSpec::Ore, IndexSpec::Equality],
         "the specs are the indexes', in the order given"
     );
     assert_eq!(
-        Indexes::<ValueFrame>::specs(&vec![IndexSpec::Equality]),
+        Indexes::<OwnedFrame>::specs(&vec![IndexSpec::Equality]),
         [IndexSpec::Equality]
     );
     assert_eq!(
@@ -62,8 +62,8 @@ async fn a_vec_of_indexes_is_an_index_set_in_order_and_never_empty() {
 
     let terms: Vec<stack_encrypt::dynamic::TermBytes> = keyset
         .run(
-            Indexes::<ValueFrame>::operations::<_, Borrowed>(&list),
-            &ValueFrame::of(34u32).unwrap(),
+            Indexes::<OwnedFrame>::operations::<_, Borrowed>(&list),
+            &OwnedFrame::of(34u32).unwrap(),
             caller(),
         )
         .await

@@ -96,7 +96,7 @@
 use std::fmt;
 
 use serde::{de::DeserializeOwned, Serialize};
-use stack_encrypt::dynamic::{TargetOptions, ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{frame::OwnedFrame, TargetOptions, ValueKind};
 use stack_encrypt::json::JsonOptions;
 use stack_encrypt::kms::MaybeSend;
 use stack_encrypt::target::{
@@ -398,7 +398,7 @@ pub fn encrypt<'a, K: 'static>(
     name: &str,
     keyset: &'a KeysetCipher<'_, K>,
     context: &Label,
-    plaintext: ValueFrame,
+    plaintext: OwnedFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     encrypt_with(name, None, keyset, context, plaintext)
 }
@@ -418,7 +418,7 @@ pub fn encrypt_with<'a, K: 'static>(
     options: Option<&TargetOptions>,
     keyset: &'a KeysetCipher<'_, K>,
     context: &Label,
-    plaintext: ValueFrame,
+    plaintext: OwnedFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     encrypt_under(
         name,
@@ -455,7 +455,7 @@ pub(crate) fn encrypt_under<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     label: &Label,
     parts: &DeclaredContext,
-    plaintext: ValueFrame,
+    plaintext: OwnedFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     producible(name)?;
     let context = field_context(label, parts)?;
@@ -489,7 +489,7 @@ pub fn decrypt<'a, K: 'static>(
     opener: impl Into<Opener<'a, K>>,
     context: &Label,
     stored: &[u8],
-) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
     decrypt_under(name, opener, context, &DeclaredContext::default(), stored)
 }
 
@@ -502,7 +502,7 @@ pub(crate) fn decrypt_under<'a, K: 'static>(
     label: &Label,
     parts: &DeclaredContext,
     stored: &[u8],
-) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
     producible(name)?;
     let context = field_context(label, parts)?;
     if let Some(document) = document(name) {
@@ -528,7 +528,7 @@ fn encrypt_document<'a, K: 'static>(
     options: &JsonOptions,
     keyset: &'a KeysetCipher<'_, K>,
     context: CallerContext,
-    plaintext: &ValueFrame,
+    plaintext: &OwnedFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     let document =
         stack_encrypt::dynamic::read_json(plaintext).map_err(|source| TargetError::Json {
@@ -551,7 +551,7 @@ fn decrypt_document<'a, K: 'static>(
     opener: Opener<'a, K>,
     context: CallerContext,
     stored: &[u8],
-) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
     use crate::v4::json_tree::JsonTreeDocument;
     use stack_encrypt::json::JsonPlaintext;
     let value: JsonTreeDocument =
@@ -589,7 +589,7 @@ pub fn query<'a, K: 'static>(
     index: &IndexSpec,
     keyset: &'a KeysetCipher<'_, K>,
     context: &Label,
-    plaintext: ValueFrame,
+    plaintext: OwnedFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     query_under(
         name,
@@ -610,7 +610,7 @@ pub(crate) fn query_under<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     label: &Label,
     scopes: &DeclaredContext,
-    plaintext: ValueFrame,
+    plaintext: OwnedFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     producible(name)?;
     let Some(target) = target(name) else {
@@ -718,7 +718,7 @@ mod sealed {
 }
 
 /// A Rust plaintext an EQL type is produced from, read out of and written
-/// back into the engine's runtime plaintext, a [`ValueFrame`]. Sealed: the
+/// back into the engine's runtime plaintext, an [`OwnedFrame`]. Sealed: the
 /// implementations are exactly the plaintext types the catalog's producible
 /// families name, and the generated dispatch picks one per type.
 /// `Zeroize`, because [`from_frame`](Self::from_frame) copies the plaintext
@@ -734,7 +734,7 @@ pub trait Plaintext:
     /// Read the value as this plaintext, refusing any other kind: the frame
     /// is walked into this type's own decrypt sink once its kind is checked,
     /// so nothing is narrowed or widened.
-    fn from_frame(target: &'static str, value: &ValueFrame) -> Result<Self, TargetError> {
+    fn from_frame(target: &'static str, value: &OwnedFrame) -> Result<Self, TargetError> {
         let refused = || TargetError::Plaintext {
             target,
             expected: Self::KIND,
@@ -752,12 +752,12 @@ pub trait Plaintext:
     ///
     /// None for the plaintexts here, every one of which is in the engine's
     /// value model; the `Result` is the frame writer's.
-    fn into_frame(self) -> Result<ValueFrame, Error>;
+    fn into_frame(self) -> Result<OwnedFrame, Error>;
 }
 
 /// The frame of a plaintext, or the error a value vitaminc cannot write is.
-fn frame_of(value: impl Encrypt) -> Result<ValueFrame, Error> {
-    ValueFrame::of(value).map_err(|error| Error::Other(Box::new(error)))
+fn frame_of(value: impl Encrypt) -> Result<OwnedFrame, Error> {
+    OwnedFrame::of(value).map_err(|error| Error::Other(Box::new(error)))
 }
 
 impl Plaintext for String {
@@ -767,7 +767,7 @@ impl Plaintext for String {
     /// returns: the frame writer copies the text into its own `Protected`
     /// buffer, and the opened `String` would otherwise go back to the
     /// allocator with the plaintext still in it.
-    fn into_frame(self) -> Result<ValueFrame, Error> {
+    fn into_frame(self) -> Result<OwnedFrame, Error> {
         let text = zeroize::Zeroizing::new(self);
         frame_of(text.as_str())
     }
@@ -781,7 +781,7 @@ macro_rules! scalar_plaintext {
         impl Plaintext for $ty {
             const KIND: ValueKind = ValueKind::$variant;
 
-            fn into_frame(self) -> Result<ValueFrame, Error> {
+            fn into_frame(self) -> Result<OwnedFrame, Error> {
                 frame_of(self)
             }
         }
@@ -823,12 +823,12 @@ impl Plaintext for crate::v4::plaintext::JsonPlaintext {
     /// [`TargetError::Json`] for a value that is not text or bytes, or
     /// whose text is not a document. It carries a code, and never any of
     /// the text.
-    fn from_frame(target: &'static str, value: &ValueFrame) -> Result<Self, TargetError> {
+    fn from_frame(target: &'static str, value: &OwnedFrame) -> Result<Self, TargetError> {
         stack_encrypt::dynamic::read_json(value)
             .map_err(|source| TargetError::Json { target, source })
     }
 
-    fn into_frame(self) -> Result<ValueFrame, Error> {
+    fn into_frame(self) -> Result<OwnedFrame, Error> {
         stack_encrypt::dynamic::json_frame(self.value())
     }
 }
@@ -846,7 +846,7 @@ impl Plaintext for crate::v4::plaintext::JsonPlaintext {
 impl<S: Plaintext> Plaintext for Option<S> {
     const KIND: ValueKind = S::KIND;
 
-    fn from_frame(target: &'static str, value: &ValueFrame) -> Result<Self, TargetError> {
+    fn from_frame(target: &'static str, value: &OwnedFrame) -> Result<Self, TargetError> {
         if value.kind().is_some() {
             return S::from_frame(target, value).map(Some);
         }
@@ -862,13 +862,13 @@ impl<S: Plaintext> Plaintext for Option<S> {
         }
     }
 
-    fn into_frame(self) -> Result<ValueFrame, Error> {
+    fn into_frame(self) -> Result<OwnedFrame, Error> {
         match self {
             Some(value) => value.into_frame(),
             None => {
                 let null =
                     stack_encrypt::Protected::new([stack_encrypt::dynamic::frame::tags::NULL]);
-                ValueFrame::from_bytes(
+                OwnedFrame::from_bytes(
                     stack_encrypt::AsProtectedRef::as_protected_ref(&null).as_ref_of(),
                 )
                 .map_err(|error| Error::Other(Box::new(error)))
@@ -889,7 +889,7 @@ pub(crate) fn run_target<'a, T, S, K>(
     name: &'static str,
     keyset: &'a KeysetCipher<'_, K>,
     context: CallerContext,
-    plaintext: ValueFrame,
+    plaintext: OwnedFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>
 where
     T: EncryptTarget<S, ContextInput = StoredContext<Identifier>> + Serialize,
@@ -913,7 +913,7 @@ fn run_owned<'a, T, S, K>(
     name: &'static str,
     keyset: &'a KeysetCipher<'_, K>,
     context: CallerContext,
-    plaintext: ValueFrame,
+    plaintext: OwnedFrame,
 ) -> Result<Pending<'a, T, K>, TargetError>
 where
     T: EncryptTarget<S, ContextInput = StoredContext<Identifier>>,
@@ -937,7 +937,7 @@ pub(crate) fn run_projected<'a, P, Q, S, K>(
     name: &'static str,
     keyset: &'a KeysetCipher<'_, K>,
     context: CallerContext,
-    plaintext: ValueFrame,
+    plaintext: OwnedFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>
 where
     P: EncryptTarget<S, ContextInput = StoredContext<Identifier>> + Into<Q>,
@@ -962,7 +962,7 @@ pub(crate) fn open_target<'a, T, S, K>(
     opener: Opener<'a, K>,
     context: CallerContext,
     stored: &[u8],
-) -> Result<Pending<'a, ValueFrame, K>, TargetError>
+) -> Result<Pending<'a, OwnedFrame, K>, TargetError>
 where
     T: DeserializeOwned + DecryptSource<S, ContextInput = ExpectedContext<Identifier>> + 'static,
     S: Plaintext + zeroize::Zeroize,
@@ -1152,8 +1152,8 @@ mod tests {
         assert!(producible("DateOrdOre").is_ok());
     }
 
-    fn frame<T: Encrypt>(value: T) -> ValueFrame {
-        ValueFrame::of(value).unwrap()
+    fn frame<T: Encrypt>(value: T) -> OwnedFrame {
+        OwnedFrame::of(value).unwrap()
     }
 
     #[test]

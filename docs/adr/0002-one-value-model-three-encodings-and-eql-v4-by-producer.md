@@ -19,7 +19,7 @@ relates-to: ADR-0001; stack-encrypt ADR-0003, ADR-0007
 > itself once, and sinks consume it). Stack Encrypt follows:
 >
 > - A plaintext whose type is known only at run time is held as its
->   transport frame (`dynamic::ValueFrame`) and walked into vitaminc's sinks.
+>   transport frame (`dynamic::frame::OwnedFrame`) and walked into vitaminc's sinks.
 > - `FfiValue` is removed. Each kind of control data a binding exchanges
 >   with the engine (a plan, a context, options, statistics, a configuration,
 >   the engine's answers) gets a type of its own, read from and written to a
@@ -145,7 +145,7 @@ bundle (see Consequences). Chosen.
   (`Encrypt`) and every consumer be a sink: the encrypting sink, a term
   deriver, a frame writer. A host binding walks its transport frame straight
   into those sinks. So Stack Encrypt holds a dynamic plaintext as its frame,
-  `dynamic::ValueFrame`, in a wiped buffer, from the source a binding hands
+  `dynamic::frame::OwnedFrame`, in a wiped buffer, from the source a binding hands
   over to the sealed leaves and from the opened leaves back to the frame it
   returns, with no value tree in between. `FfiValue` is removed rather than
   kept for control data: each control message gets its own type, read from
@@ -346,7 +346,7 @@ equal under `Value` semantics produce equal terms in both.
 - `dynamic::Value` and `dynamic::term::Scalar` are deleted. `dynamic::term`
   takes any source that describes itself to vitaminc (amended 2026-10-17,
   #1232: there is no `vitaminc_aead_value::Value`; a binding's value arrives
-  as a transport frame and stays one, `dynamic::ValueFrame`). `admits` keeps
+  as a transport frame and stays one, `dynamic::frame::OwnedFrame`). `admits` keeps
   only the rules that belong to Stack Encrypt, such as `Match` taking text
   only.
 - Order terms go through `vitaminc-ore`. The index for an ORE or OPE column

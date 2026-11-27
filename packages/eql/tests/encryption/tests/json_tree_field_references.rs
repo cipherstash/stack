@@ -32,7 +32,7 @@ use eql_bindings::v4::json_tree::{
 };
 use eql_bindings::Identifier;
 use serde_json::{json, Value};
-use stack_encrypt::dynamic::{self, record, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record};
 use stack_encrypt::eql_simulator;
 use stack_encrypt::json::{JsonChildPlaintext, JsonDocument, JsonPlaintext, JsonQuery};
 use stack_encrypt::sem::TermError;
@@ -91,7 +91,7 @@ async fn data(
     operator: &str,
     input: Value,
 ) -> dynamic::Operand {
-    let frame = ValueFrame::from_bytes(
+    let frame = OwnedFrame::from_bytes(
         dynamic::frame::serde::to_vec(&input)
             .unwrap()
             .as_protected_ref(),

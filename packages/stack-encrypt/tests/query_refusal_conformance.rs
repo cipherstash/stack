@@ -14,7 +14,7 @@ use common::{
 use miette::Diagnostic;
 use serde::Deserialize;
 use serde_json::json;
-use stack_encrypt::dynamic::{self, record, Error, NoTargets, Op, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record, Error, NoTargets, Op};
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OpeTerm, OreBlockTerm, OreTerm};
 use stack_encrypt::target::EncryptTarget;
 use stack_encrypt::{AsProtectedRef as _, Encrypted, KeysetCipher, StackCipher};
@@ -111,7 +111,7 @@ enum Refusal {
     None,
 }
 
-fn input(query: &QueryInput) -> ValueFrame {
+fn input(query: &QueryInput) -> OwnedFrame {
     match query {
         QueryInput::Scalar(scalar) => value(scalar),
         QueryInput::List { items, .. } => frame(items.iter().map(value).collect::<Vec<_>>()),
@@ -343,7 +343,7 @@ async fn shared_query_refusal_profile() {
                 &case.field,
                 operator,
                 &value,
-                Vec::<ValueFrame>::new(),
+                Vec::<OwnedFrame>::new(),
                 &NoTargets,
             )
             .map(|matched| assert!(matched.is_empty()));

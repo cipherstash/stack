@@ -34,7 +34,7 @@ use std::path::PathBuf;
 use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
-use stack_encrypt::dynamic::{admits, ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{admits, frame::OwnedFrame, ValueKind};
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::StackCipherText as Node;
 use stack_encrypt::{
@@ -327,7 +327,7 @@ async fn seal(
     source: vitaminc_protected::ProtectedRef<'_, [u8]>,
     plan: &DataPlan,
 ) -> StackCipherText {
-    let source = ValueFrame::from_bytes(source).expect("the source is a value");
+    let source = OwnedFrame::from_bytes(source).expect("the source is a value");
     record::encrypt(&cipher.default_keyset(), source, plan)
         .expect("the source fits the plan")
         .await

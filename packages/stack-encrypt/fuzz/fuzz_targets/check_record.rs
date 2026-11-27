@@ -33,7 +33,8 @@ use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use stack_encrypt::dynamic::record::{check_record, plan_with, Plan};
 use stack_encrypt::dynamic::{
-    Output, TargetDescriptor, TargetError, TargetOptions, TargetResolver, ValueFrame, ValueKind,
+    frame::OwnedFrame, Output, TargetDescriptor, TargetError, TargetOptions, TargetResolver,
+    ValueKind,
 };
 use stack_encrypt::{
     Encrypt, KeysetCipher, Label, PassthroughFrame, Pending, SealedValue, StackCipher,
@@ -46,16 +47,16 @@ use vitaminc_protected::{AsProtectedRef as _, Controlled};
 /// A value as a binding sends it: its frame. `None` for a value no frame
 /// carries (an object with a key given twice, or one nested too deep),
 /// which a binding could not send either.
-fn frame<T: Encrypt>(value: T) -> Option<ValueFrame> {
-    ValueFrame::of(value).ok()
+fn frame<T: Encrypt>(value: T) -> Option<OwnedFrame> {
+    OwnedFrame::of(value).ok()
 }
 
 /// An object of `entries`, in order.
-fn object(entries: Vec<(&'static str, ValueFrame)>) -> Option<ValueFrame> {
+fn object(entries: Vec<(&'static str, OwnedFrame)>) -> Option<OwnedFrame> {
     frame(Object(entries))
 }
 
-struct Object(Vec<(&'static str, ValueFrame)>);
+struct Object(Vec<(&'static str, OwnedFrame)>);
 
 impl Encrypt for Object {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
@@ -90,7 +91,7 @@ impl TargetResolver for Fixed {
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
         _: &stack_encrypt::target::DeclaredContext,
-        _: ValueFrame,
+        _: OwnedFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("check_record runs no cipher")
     }
@@ -101,7 +102,7 @@ impl TargetResolver for Fixed {
         _: &Label,
         _: &stack_encrypt::target::DeclaredContext,
         _: &[u8],
-    ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+    ) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
         unreachable!("check_record runs no cipher")
     }
     fn query<'a, K: 'static>(
@@ -111,7 +112,7 @@ impl TargetResolver for Fixed {
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
         _: &stack_encrypt::target::DeclaredContext,
-        _: ValueFrame,
+        _: OwnedFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("check_record runs no cipher")
     }
@@ -169,7 +170,7 @@ enum Ctx {
 }
 
 impl Ctx {
-    fn into_value(self) -> Option<ValueFrame> {
+    fn into_value(self) -> Option<OwnedFrame> {
         match self {
             Ctx::Label(a, b) => frame(vec![a.as_str(), b.as_str()]),
             Ctx::Extended(a, b, part) => {
@@ -245,7 +246,7 @@ impl Kind {
 }
 
 impl SpecEntry {
-    fn into_entry(self) -> Option<(&'static str, ValueFrame)> {
+    fn into_entry(self) -> Option<(&'static str, OwnedFrame)> {
         Some(match self {
             SpecEntry::Context(ctx) => ("context", ctx.into_value()?),
             SpecEntry::Outputs(names) => (
@@ -269,7 +270,7 @@ struct PlanSpec {
 }
 
 impl PlanSpec {
-    fn into_value(self) -> Option<ValueFrame> {
+    fn into_value(self) -> Option<OwnedFrame> {
         let fields = self
             .fields
             .into_iter()

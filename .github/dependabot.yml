@@ -307,7 +307,7 @@ updates:
       - dependency-name: "ore-rs"
       # vitaminc is pinned at 0.8.0 across the crates. The encrypt guest
       # takes it only through stack-encrypt's re-exports, so it cannot
-      # resolve a second version; one would fail at `ValueFrame: Decrypt`.
+      # resolve a second version; one would fail at `OwnedFrame: Decrypt`.
       - dependency-name: "vitaminc*"
       # Major bumps are reviewed and applied manually, not by Dependabot.
       - dependency-name: "*"

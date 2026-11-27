@@ -17,19 +17,19 @@ use eql_bindings::v4::plaintext::JsonPlaintext;
 use eql_bindings::v4::{bigint, boolean, double, integer, json, real, smallint, text};
 use eql_bindings::Identifier;
 use serde::{de::DeserializeOwned, Serialize};
-use stack_encrypt::dynamic::{ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{frame::OwnedFrame, ValueKind};
 use stack_encrypt::target::transcode::{Reader, Visitor};
 use stack_encrypt::{CipherText, DecryptFrom, Encrypt, EncryptInto, Label, NonEmpty};
 
 /// A Rust value as the engine's runtime plaintext: its frame.
-fn frame<T: Encrypt>(value: T) -> ValueFrame {
-    ValueFrame::of(value).unwrap()
+fn frame<T: Encrypt>(value: T) -> OwnedFrame {
+    OwnedFrame::of(value).unwrap()
 }
 
 /// Whether two frames hold the same value of the same kind: the frame
 /// carries both, and a float's bit pattern, so `-0.0` and a NaN's payload
 /// count.
-fn same(a: &ValueFrame, b: &ValueFrame) -> bool {
+fn same(a: &OwnedFrame, b: &OwnedFrame) -> bool {
     a.risky_ref() == b.risky_ref()
 }
 
@@ -73,7 +73,7 @@ fn assert_v4_envelope<T: Serialize>(stored: &T, keys: &[&str]) {
 async fn as_frame(
     cipher: &stack_encrypt::StackCipher<common::RecordingKeySource>,
     c: Ciphertext,
-) -> ValueFrame {
+) -> OwnedFrame {
     let native = c.read(NativeLeaf).unwrap();
     cipher.decrypt(native, column()).await.unwrap()
 }
@@ -82,7 +82,7 @@ async fn as_frame(
 /// its frame is sealed, as a Go SDK field without an EQL type is.
 async fn sealed_from_frame(
     keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
-    value: ValueFrame,
+    value: OwnedFrame,
 ) -> Ciphertext {
     match keyset.encrypt_tree(value, column()).await.unwrap() {
         CipherText::Single(leaf) => CiphertextVisitor.sealed(leaf).unwrap(),
@@ -104,7 +104,7 @@ fn stored_as<T: DeserializeOwned>(c: Ciphertext) -> T {
 async fn by_name<T: DeserializeOwned>(
     keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
-    value: ValueFrame,
+    value: OwnedFrame,
 ) -> T {
     let bytes = targets::encrypt(name, keyset, &label(), value)
         .unwrap()
@@ -114,7 +114,7 @@ async fn by_name<T: DeserializeOwned>(
 }
 
 /// A sample plaintext of each kind a producible type takes.
-fn sample(kind: ValueKind) -> ValueFrame {
+fn sample(kind: ValueKind) -> OwnedFrame {
     match kind {
         ValueKind::Int16 => frame::<i16>(i16::MIN),
         ValueKind::Int32 => frame::<i32>(-42),
@@ -213,7 +213,7 @@ async fn integers_round_trip_and_seal_the_leaf_their_frame_seals() {
 async fn eq_terms(
     keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
-    value: ValueFrame,
+    value: OwnedFrame,
 ) -> (serde_json::Value, serde_json::Value) {
     let stored: serde_json::Value = by_name(keyset, name, again(&value)).await;
     let query = targets::query(name, &common::index_of(name), keyset, &label(), value)
@@ -231,7 +231,7 @@ async fn eq_terms(
 async fn number_equality_terms_follow_the_semantic_baseline() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let hm = |name: &'static str, value: ValueFrame| {
+    let hm = |name: &'static str, value: OwnedFrame| {
         let keyset = &keyset;
         async move {
             let (stored, query) = eq_terms(keyset, name, value).await;
@@ -416,7 +416,7 @@ fn profile_text() -> String {
 }
 
 /// The document a `json` field opened to: its text, in a bytes value.
-fn document_of(opened: &ValueFrame) -> serde_json::Value {
+fn document_of(opened: &OwnedFrame) -> serde_json::Value {
     assert_eq!(
         opened.kind(),
         Some(ValueKind::Bytes),
@@ -2090,7 +2090,7 @@ mod erased {
 async fn the_v4_query_fixture_is_what_the_dispatch_derives() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let query = |name: &'static str, column: &'static str, value: ValueFrame| {
+    let query = |name: &'static str, column: &'static str, value: OwnedFrame| {
         let keyset = &keyset;
         async move {
             let label = Label::new(["profiles", column]).unwrap();
@@ -2730,7 +2730,7 @@ fn postgres_stores_and_queries_rows_the_go_sdk_sealed() {
 }
 
 /// A second frame of the same bytes. A frame is not `Clone`.
-fn again(frame: &ValueFrame) -> ValueFrame {
+fn again(frame: &OwnedFrame) -> OwnedFrame {
     use stack_encrypt::AsProtectedRef as _;
-    ValueFrame::from_bytes(frame.as_protected_ref()).unwrap()
+    OwnedFrame::from_bytes(frame.as_protected_ref()).unwrap()
 }

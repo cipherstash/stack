@@ -21,7 +21,7 @@ mod common;
 use eql_bindings::encryption::targets;
 use eql_bindings::v4::{self, integer, text, DomainType};
 use serde_json::{json, Value};
-use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{Encrypt, KeysetCipher, Label};
 
@@ -33,8 +33,8 @@ fn label() -> Label {
     Label::new(["users", "age"]).unwrap()
 }
 
-fn frame<T: Encrypt>(value: T) -> ValueFrame {
-    ValueFrame::of(value).unwrap()
+fn frame<T: Encrypt>(value: T) -> OwnedFrame {
+    OwnedFrame::of(value).unwrap()
 }
 
 /// The value the engine seals for `value` as the EQL type `name`, as the
@@ -43,7 +43,7 @@ fn frame<T: Encrypt>(value: T) -> ValueFrame {
 async fn stored(
     keyset: &KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
-    value: ValueFrame,
+    value: OwnedFrame,
 ) -> String {
     let bytes = targets::encrypt(name, keyset, &label(), value)
         .unwrap()
@@ -60,7 +60,7 @@ async fn bound(
     keyset: &KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
     index: &str,
-    value: ValueFrame,
+    value: OwnedFrame,
 ) -> Value {
     let spec = IndexSpec::parse(index).unwrap();
     let bytes = targets::query(name, &spec, keyset, &label(), value)
@@ -696,7 +696,7 @@ fn ascending(family: &str) -> Option<[Value; 5]> {
 }
 
 /// `value` as the plaintext `family`'s types seal.
-fn frame_of(family: &str, value: &Value) -> ValueFrame {
+fn frame_of(family: &str, value: &Value) -> OwnedFrame {
     match family {
         "integer" => frame(i32::try_from(value.as_i64().unwrap()).unwrap()),
         "smallint" => frame(i16::try_from(value.as_i64().unwrap()).unwrap()),

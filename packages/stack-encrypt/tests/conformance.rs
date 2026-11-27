@@ -13,7 +13,7 @@ use common::frames::{frame, object};
 use common::{hex, unhex};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use stack_encrypt::dynamic::{self, record, Fidelity, NoTargets, Op, Operand, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record, Fidelity, NoTargets, Op, Operand};
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{
     CipherText, Ciphertext, Error, KeysetCipher, Label, SealedValue, StackCipherText,
@@ -129,7 +129,7 @@ async fn open_scalar(
     bytes: &[u8],
     kind: &str,
     context: &Label,
-) -> ValueFrame {
+) -> OwnedFrame {
     let ct = Ciphertext::from_bytes(bytes).unwrap();
     macro_rules! open {
         ($ty:ty) => {
@@ -313,7 +313,7 @@ async fn shared_record_scalar_profile() {
         wrong.push(corpus.field.clone());
         let wrong = Label::new(wrong).unwrap();
         let result = keyset
-            .decrypt_tree::<ValueFrame, _>(
+            .decrypt_tree::<OwnedFrame, _>(
                 CipherText::Single(SealedValue::from_bytes(&unhex(&reference.ciphertext)).unwrap()),
                 wrong,
             )

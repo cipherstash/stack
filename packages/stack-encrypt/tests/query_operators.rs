@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use common::frames::{frame, object};
 use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Value as Json};
-use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, QueryTerm, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record, NoTargets, Op, Operand, QueryTerm};
 use stack_encrypt::op::{Limit, Probabilistic, Stats};
 use stack_encrypt::sem::{EqualityTerm, MatchQuery, MatchTerms, OreTerm};
 use stack_encrypt::target::EncryptTarget;
@@ -107,7 +107,7 @@ fn frame_of_json(value: &Json) -> vitaminc_protected::Buffer {
 
 /// A JSON value as the frame a binding sends: a number is a `u64` when it
 /// is one, else an `f64`.
-fn frame_of_value(value: &Json) -> ValueFrame {
+fn frame_of_value(value: &Json) -> OwnedFrame {
     match value {
         Json::Null => frame(Raw(None, Physical::Null)),
         Json::String(s) => frame(s.as_str()),
@@ -286,7 +286,7 @@ async fn derived() -> Json {
     }
 
     let typed = typed_match(&keyset, "alice").await;
-    let values: Vec<ValueFrame> = page()
+    let values: Vec<OwnedFrame> = page()
         .as_array()
         .expect("a list")
         .iter()

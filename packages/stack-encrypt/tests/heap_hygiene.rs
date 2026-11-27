@@ -56,7 +56,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use common::frames::{frame, object};
-use stack_encrypt::dynamic::{query_term, record, verify, NoTargets, Op, ValueFrame};
+use stack_encrypt::dynamic::{frame::OwnedFrame, query_term, record, verify, NoTargets, Op};
 use stack_encrypt::eql_simulator;
 use stack_encrypt::nonempty;
 use vitaminc_aead::plaintext::{Physical, Raw};
@@ -372,11 +372,11 @@ fn marked(tail: &str) -> String {
     format!("{}-{tail}", std::str::from_utf8(MARK).unwrap())
 }
 
-fn null() -> ValueFrame {
+fn null() -> OwnedFrame {
     frame(Raw(None, Physical::Null))
 }
 
-fn spec<'a>(field: &'a str, outputs: &[&str], ty: Option<&str>) -> (&'a str, ValueFrame) {
+fn spec<'a>(field: &'a str, outputs: &[&str], ty: Option<&str>) -> (&'a str, OwnedFrame) {
     let mut entries = vec![
         ("context", frame(vec!["users", field])),
         ("outputs", frame(outputs.to_vec())),
@@ -406,7 +406,7 @@ fn plan() -> record::Plan {
 /// The nested object ends with a value of several KiB after its marked
 /// children, so the buffer its frame is joined into grows while it already
 /// holds plaintext.
-fn row() -> ValueFrame {
+fn row() -> OwnedFrame {
     object(vec![
         ("email", frame(marked("email"))),
         (
@@ -434,7 +434,7 @@ fn a_record_encrypted_from_a_value_frame_leaves_no_plaintext_on_the_heap() {
     let keyset = cipher.default_keyset();
     let plan = plan();
     let source = row();
-    watched("record::encrypt (ValueFrame)", || {
+    watched("record::encrypt (OwnedFrame)", || {
         rt.block_on(async {
             record::encrypt(&keyset, &source, &plan)
                 .unwrap()
@@ -1007,7 +1007,7 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
         _: &'a stack_encrypt::KeysetCipher<'_, K>,
         _: &stack_encrypt::Label,
         _: &stack_encrypt::target::DeclaredContext,
-        _: ValueFrame,
+        _: OwnedFrame,
     ) -> Result<stack_encrypt::Pending<'a, Vec<u8>, K>, stack_encrypt::dynamic::TargetError> {
         unreachable!("a check seals nothing")
     }
@@ -1018,7 +1018,7 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
         _: &stack_encrypt::Label,
         _: &stack_encrypt::target::DeclaredContext,
         _: &[u8],
-    ) -> Result<stack_encrypt::Pending<'a, ValueFrame, K>, stack_encrypt::dynamic::TargetError>
+    ) -> Result<stack_encrypt::Pending<'a, OwnedFrame, K>, stack_encrypt::dynamic::TargetError>
     {
         unreachable!("a check opens nothing")
     }
@@ -1029,7 +1029,7 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
         _: &'a stack_encrypt::KeysetCipher<'_, K>,
         _: &stack_encrypt::Label,
         _: &stack_encrypt::target::DeclaredContext,
-        _: ValueFrame,
+        _: OwnedFrame,
     ) -> Result<stack_encrypt::Pending<'a, Vec<u8>, K>, stack_encrypt::dynamic::TargetError> {
         unreachable!("a document's operators are the engine's")
     }

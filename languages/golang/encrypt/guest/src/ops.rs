@@ -39,14 +39,14 @@
 //! Plaintext is never decoded into a value tree. A term's value is parsed and
 //! walked in place to the scalar it holds, the way vitaminc's own guest walks
 //! a frame into encryption. A record's source, a query's input and a page of
-//! values to verify are read as [`ValueFrame`]s: the frame is checked against
+//! values to verify are read as [`OwnedFrame`]s: the frame is checked against
 //! the engine's value model, and the engine walks it, splitting a source into
 //! one frame per field as it goes. A record opens into one frame, which is
 //! the output. Control data (a plan, a context, an options object, query
 //! statistics) carries no secret and is read from its frame with serde.
 
 use stack_encrypt::dynamic::frame::{decode_ciphertext, encode_ciphertext, Frame};
-use stack_encrypt::dynamic::{self, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::CipherRef;
@@ -636,8 +636,8 @@ pub mod validate {
 /// held as the frame, in a buffer wiped when it drops. The same frames are
 /// refused as control data's, so a malformed input fails the same way on
 /// every path.
-fn decode_plaintext(bytes: &Bytes) -> Result<ValueFrame, u32> {
-    ValueFrame::from_bytes(lend(bytes)).map_err(|_| not_a_frame())
+fn decode_plaintext(bytes: &Bytes) -> Result<OwnedFrame, u32> {
+    OwnedFrame::from_bytes(lend(bytes)).map_err(|_| not_a_frame())
 }
 
 /// Plaintext checked as [`decode_plaintext`] checks it, and walked in place
@@ -646,13 +646,13 @@ fn decode_plaintext(bytes: &Bytes) -> Result<ValueFrame, u32> {
 /// plaintext. The record split copies each field into its own wiped frame,
 /// and a query's input is read straight into its term.
 fn checked_plaintext(bytes: &Bytes) -> Result<Frame<'_>, u32> {
-    ValueFrame::check(lend(bytes)).map_err(|_| not_a_frame())
+    Frame::parse(lend(bytes).risky_ref()).map_err(|_| not_a_frame())
 }
 
 /// An opened value as the output buffer: its frame, copied into a buffer
 /// whose capacity is exactly its length (see [`encode_tree`]); the frame
 /// is wiped when it drops.
-fn encode_frame(frame: ValueFrame) -> Result<Vec<u8>, u32> {
+fn encode_frame(frame: OwnedFrame) -> Result<Vec<u8>, u32> {
     let mut out = exact_buffer(Some(frame.risky_ref().len()))?;
     out.extend_from_slice(frame.risky_ref());
     Ok(out)

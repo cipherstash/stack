@@ -28,7 +28,8 @@
 use std::fmt;
 
 use super::query::target_operators;
-use super::{Op, ValueFrame, ValueKind};
+use super::{Op, ValueKind};
+use vitaminc_aead::frame::OwnedFrame;
 
 use crate::json::JsonOptions;
 use crate::sem::MatchOptions;
@@ -612,7 +613,7 @@ pub trait TargetResolver {
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
         parts: &DeclaredContext,
-        plaintext: ValueFrame,
+        plaintext: OwnedFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>;
 
     /// Open a stored value of the named type back to its plaintext, checking
@@ -632,7 +633,7 @@ pub trait TargetResolver {
         label: &Label,
         parts: &DeclaredContext,
         stored: &[u8],
-    ) -> Result<Pending<'a, ValueFrame, K>, TargetError>;
+    ) -> Result<Pending<'a, OwnedFrame, K>, TargetError>;
 
     /// Run the named type's query twin over one value: the operand that
     /// matches stored values under `label`'s column and `scopes`, as JSON
@@ -658,7 +659,7 @@ pub trait TargetResolver {
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
         scopes: &DeclaredContext,
-        plaintext: ValueFrame,
+        plaintext: OwnedFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>;
 }
 
@@ -689,7 +690,7 @@ impl TargetResolver for NoTargets {
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
         _: &DeclaredContext,
-        _: ValueFrame,
+        _: OwnedFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         Self::refuse(name)
     }
@@ -701,7 +702,7 @@ impl TargetResolver for NoTargets {
         _: &Label,
         _: &DeclaredContext,
         _: &[u8],
-    ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+    ) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
         Self::refuse(name)
     }
 
@@ -712,7 +713,7 @@ impl TargetResolver for NoTargets {
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
         _: &DeclaredContext,
-        _: ValueFrame,
+        _: OwnedFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         Self::refuse(name)
     }
@@ -783,7 +784,7 @@ mod tests {
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: &DeclaredContext,
-            _: ValueFrame,
+            _: OwnedFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("not run here")
         }
@@ -794,7 +795,7 @@ mod tests {
             _: &Label,
             _: &DeclaredContext,
             _: &[u8],
-        ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+        ) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
             unreachable!("not run here")
         }
         fn query<'a, K: 'static>(
@@ -804,7 +805,7 @@ mod tests {
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: &DeclaredContext,
-            _: ValueFrame,
+            _: OwnedFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("not run here")
         }

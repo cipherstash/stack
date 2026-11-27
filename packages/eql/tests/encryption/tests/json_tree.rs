@@ -25,7 +25,7 @@ use eql_bindings::v4::json_tree::{
 };
 use eql_bindings::Identifier;
 use serde_json::{json, Map, Value};
-use stack_encrypt::dynamic::{self, record, Op, Operand, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record, Op, Operand};
 use stack_encrypt::json::{
     JsonChildPlaintext, JsonDocument, JsonLeafQuery, JsonOptions, JsonPath, JsonPlaintext,
     JsonQuery, JsonSelector, JsonSubtreeKey, Segment,
@@ -91,7 +91,7 @@ fn options() -> JsonOptions {
 /// The operand of one JSON operator on [`plan`]'s field, with the named
 /// inputs a binding sends: the bytes the SQL binds.
 async fn operand(cipher: &Cipher, operator: Op, inputs: Value) -> Vec<u8> {
-    let inputs = ValueFrame::from_bytes(
+    let inputs = OwnedFrame::from_bytes(
         dynamic::frame::serde::to_vec(&inputs)
             .unwrap()
             .as_protected_ref(),

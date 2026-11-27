@@ -8,7 +8,7 @@
 //!
 //! The vocabulary is vitaminc's [`ValueKind`], whose
 //! [`name`](ValueKind::name)s (`"uint64"`, `"string"`, …, `"array"`,
-//! `"object"`) are frozen wire format; [`ValueFrame::kind`] says which kind
+//! `"object"`) are frozen wire format; [`OwnedFrame::kind`] says which kind
 //! a value is. Beside it, this module adds two rules:
 //!
 //! - [`admits`]: which indexes a kind is defined for, so a plan asking for
@@ -39,7 +39,7 @@ use vitaminc_aead::plaintext::{Float, Int, Logical, Physical, Raw, ValueKind};
 use vitaminc_aead::Encrypt;
 
 use super::term::OneScalar;
-use super::ValueFrame;
+use vitaminc_aead::frame::OwnedFrame;
 
 use super::{Error, Reason};
 use crate::target::IndexSpec;
@@ -133,7 +133,7 @@ pub fn not_admitted(kind: ValueKind, index: &IndexSpec) -> Option<Reason> {
 ///
 /// The value is any source ([`Encrypt`]): a transport frame a binding was
 /// handed, walked in place. What comes back is the value as the field's kind,
-/// written into a [`ValueFrame`] in the engine's value model.
+/// written into an [`OwnedFrame`] in the engine's value model.
 ///
 /// This is for a query: what a host hands over to search with. A value
 /// being sealed is not converted; it must already be of the field's kind,
@@ -150,12 +150,12 @@ pub fn not_admitted(kind: ValueKind, index: &IndexSpec) -> Option<Reason> {
 /// its input as the field's kind.
 ///
 /// ```
-/// use stack_encrypt::dynamic::{read, ValueFrame, ValueKind};
+/// use stack_encrypt::dynamic::{read, frame::OwnedFrame, ValueKind};
 ///
 /// // A JavaScript number is a float; against a `uint64` field it is 34.
 /// let value = read(ValueKind::UInt64, 34.0f64)?;
 /// assert_eq!(value.kind(), Some(ValueKind::UInt64));
-/// assert_eq!(value, ValueFrame::of(34u64)?);
+/// assert_eq!(value, OwnedFrame::of(34u64)?);
 /// assert!(read(ValueKind::UInt64, 34.5f64).is_err());
 /// // Against an `int8` field, 34 is the 8-bit integer; 300 does not fit.
 /// assert_eq!(read(ValueKind::Int8, 34i64)?.kind(), Some(ValueKind::Int8));
@@ -168,9 +168,9 @@ pub fn not_admitted(kind: ValueKind, index: &IndexSpec) -> Option<Reason> {
 /// [`Error::Source`] ([`Reason::FieldType`]) if the value cannot be read as
 /// `kind` exactly, or is not in the engine's value model. It names no
 /// field: the caller that knows the field names it ([`Error::in_field`]).
-pub fn read(kind: ValueKind, value: impl Encrypt) -> Result<ValueFrame, Error> {
+pub fn read(kind: ValueKind, value: impl Encrypt) -> Result<OwnedFrame, Error> {
     let refused = || Error::bad_source(Reason::FieldType);
-    let value = ValueFrame::of(value).map_err(|_| refused())?;
+    let value = OwnedFrame::of(value).map_err(|_| refused())?;
     if kind.holds(value.kind()) {
         return Ok(value);
     }
@@ -222,7 +222,7 @@ pub fn read(kind: ValueKind, value: impl Encrypt) -> Result<ValueFrame, Error> {
         }),
         _ => None,
     };
-    ValueFrame::of(read.ok_or_else(refused)?).map_err(|_| refused())
+    OwnedFrame::of(read.ok_or_else(refused)?).map_err(|_| refused())
 }
 
 /// 2^127 as an `f64`, exactly: the first float past `i128::MAX`.
@@ -367,20 +367,20 @@ mod tests {
     // adds over the vocabulary.
 
     /// A scalar as the engine holds it: its frame.
-    fn scalar(ty: Option<Logical>, value: Physical<'_>) -> ValueFrame {
-        ValueFrame::of(Raw(ty, value)).expect("in the value model")
+    fn scalar(ty: Option<Logical>, value: Physical<'_>) -> OwnedFrame {
+        OwnedFrame::of(Raw(ty, value)).expect("in the value model")
     }
 
-    fn int(int: Int) -> ValueFrame {
+    fn int(int: Int) -> OwnedFrame {
         scalar(None, Physical::Int(int))
     }
 
-    fn tree(value: Tree) -> ValueFrame {
-        ValueFrame::of(&value).expect("in the value model")
+    fn tree(value: Tree) -> OwnedFrame {
+        OwnedFrame::of(&value).expect("in the value model")
     }
 
     /// One value of every kind.
-    fn sample(kind: ValueKind) -> ValueFrame {
+    fn sample(kind: ValueKind) -> OwnedFrame {
         match kind {
             ValueKind::Bool => tree(Tree::Bool(true)),
             ValueKind::Int8 => int(Int::I8(-1)),
@@ -796,12 +796,12 @@ mod tests {
 
     /// `read` from any source, as the frame it writes, for the kinds a
     /// control-data tree cannot hold.
-    fn read_frame(kind: ValueKind, value: impl Encrypt) -> Option<ValueFrame> {
+    fn read_frame(kind: ValueKind, value: impl Encrypt) -> Option<OwnedFrame> {
         read(kind, value).ok()
     }
 
     /// Whether `read` gives exactly the frame of `want`.
-    fn reads_as(kind: ValueKind, value: impl Encrypt, want: ValueFrame) -> bool {
+    fn reads_as(kind: ValueKind, value: impl Encrypt, want: OwnedFrame) -> bool {
         read_frame(kind, value).is_some_and(|read| read.risky_ref() == want.risky_ref())
     }
 

@@ -12,7 +12,7 @@
 //! key is requested ([`PlanError::BindInQuery`]).
 //!
 //! ```
-//! use stack_encrypt::dynamic::{record, Op, Planned, QueryTerm, ValueFrame};
+//! use stack_encrypt::dynamic::{record, Op, Planned, QueryTerm, frame::OwnedFrame};
 //! use stack_encrypt::target::Scope;
 //! use stack_encrypt::{AsProtectedRef, DecryptFrom, EncryptInto, StackCipher, StackCipherText};
 //! use std::collections::BTreeMap;
@@ -34,12 +34,12 @@
 //!
 //! // Each value goes straight into a frame, which keeps its bytes under
 //! // `Protected` and wipes them when it is dropped. A row is a map of them.
-//! let row = || -> Result<ValueFrame, Box<dyn std::error::Error>> {
+//! let row = || -> Result<OwnedFrame, Box<dyn std::error::Error>> {
 //!     let fields = BTreeMap::from([
-//!         ("email", ValueFrame::of("ada@example.com")?),
-//!         ("age", ValueFrame::of(36u64)?),
+//!         ("email", OwnedFrame::of("ada@example.com")?),
+//!         ("age", OwnedFrame::of(36u64)?),
 //!     ]);
-//!     Ok(ValueFrame::of(&fields)?)
+//!     Ok(OwnedFrame::of(&fields)?)
 //! };
 //!
 //! // A record under the plan, bound to its row. The values are moved in:
@@ -47,7 +47,7 @@
 //! let stored: StackCipherText = Planned::new(&plan, row()?)
 //!     .encrypt_into_with_context(&keyset, Scope::new(42u64).bind(9u128))
 //!     .await?;
-//! let opened = ValueFrame::decrypt_from_with_context(
+//! let opened = OwnedFrame::decrypt_from_with_context(
 //!     Planned::new(&plan, stored),
 //!     &keyset,
 //!     Scope::new(42u64).bind(9u128),
@@ -57,7 +57,7 @@
 //!
 //! // A query value under a query plan, by the scope alone.
 //! let by_email = plan.query("email", Op::Eq)?;
-//! let term: QueryTerm = Planned::new(&by_email, ValueFrame::of("ada@example.com")?)
+//! let term: QueryTerm = Planned::new(&by_email, OwnedFrame::of("ada@example.com")?)
 //!     .encrypt_into_with_context(&keyset, Scope::new(42u64))
 //!     .await?;
 //! assert_eq!(term.operator(), Op::Eq);
@@ -65,7 +65,7 @@
 //! // Or through the field handle, checked against the plan where it is made.
 //! let same: QueryTerm = plan
 //!     .field("email")?
-//!     .eq(ValueFrame::of("ada@example.com")?)?
+//!     .eq(OwnedFrame::of("ada@example.com")?)?
 //!     .scope(Scope::new(42u64))
 //!     .encrypt(&keyset)
 //!     .await?;
@@ -86,7 +86,6 @@ use super::record::{
     Rows, Verb,
 };
 use super::target::{NoTargets, TargetResolver};
-use super::value_frame::ValueFrame;
 use super::{Error, Op, Reason, TermBytes};
 use crate::contexts::{self, CallerShape, Contexts, LeafContext, Placeholder};
 use crate::kms::MaybeSend;
@@ -100,21 +99,22 @@ use crate::target::{Step, YIELD_EVERY};
 use crate::{
     CipherRef, CipherText, Encrypt, KeysetCipher, Label, NonEmpty, PlanError, StackCipherText,
 };
+use vitaminc_aead::frame::OwnedFrame;
 
 /// The resolver of a build without EQL types, for [`Plan::field`].
 static NO_TARGETS: NoTargets = NoTargets;
 
 /// One value under one plan: a record under a [`Plan`], or a query value
-/// under a [`QueryPlan`], each a [`ValueFrame`], the dynamic interface's
+/// under a [`QueryPlan`], each an [`OwnedFrame`], the dynamic interface's
 /// value; or a stored row under a [`Plan`]. A target in the owned API's
 /// sense: the stored row implements `EncryptTarget<Planned<Plan,
-/// ValueFrame>>`, a query term implements `EncryptTarget<Planned<QueryPlan,
-/// ValueFrame>>`, and `Planned<Plan, StackCipherText>` implements
-/// `DecryptSource<ValueFrame>`. The resolver `R` runs the EQL type a field
+/// OwnedFrame>>`, a query term implements `EncryptTarget<Planned<QueryPlan,
+/// OwnedFrame>>`, and `Planned<Plan, StackCipherText>` implements
+/// `DecryptSource<OwnedFrame>`. The resolver `R` runs the EQL type a field
 /// names; [`new`](Self::new) takes none, [`with_resolver`](Self::with_resolver)
 /// one.
 ///
-/// A `ValueFrame` is plaintext in a protected buffer: the borrowed form
+/// An `OwnedFrame` is plaintext in a protected buffer: the borrowed form
 /// reads it in place, the owned form consumes it, and the buffer is wiped
 /// as it is dropped. `Planned` prints neither the value nor the plan.
 pub struct Planned<'p, P, V, R = NoTargets> {
@@ -202,14 +202,6 @@ impl<'p, P, V, R> fmt::Debug for Planned<'p, P, V, R> {
 impl<'p, P, V: Zeroize, R> Zeroize for Planned<'p, P, V, R> {
     fn zeroize(&mut self) {
         self.value.zeroize();
-    }
-}
-
-/// Replace the frame's bytes with none. The protected buffer that held
-/// them wipes them as it is dropped.
-impl Zeroize for ValueFrame {
-    fn zeroize(&mut self) {
-        *self = ValueFrame::empty();
     }
 }
 
@@ -345,19 +337,19 @@ impl Plan {
 /// own context, the caller's scope and then its bindings after the plan's
 /// own. The borrowed form reads the frame in place; the owned form
 /// consumes it.
-impl<'p, R> EncryptTarget<Planned<'p, Plan, ValueFrame, R>> for StackCipherText
+impl<'p, R> EncryptTarget<Planned<'p, Plan, OwnedFrame, R>> for StackCipherText
 where
     R: TargetResolver + 'p,
 {
     type ContextInput = OptionalContext<CallerContext>;
     fn encryption<'s, K: 'static>(
-    ) -> Encryption<'s, Planned<'p, Plan, ValueFrame, R>, Self, K, Self::ContextInput>
+    ) -> Encryption<'s, Planned<'p, Plan, OwnedFrame, R>, Self, K, Self::ContextInput>
     where
-        Planned<'p, Plan, ValueFrame, R>: 's,
+        Planned<'p, Plan, OwnedFrame, R>: 's,
     {
         Encryption::from_build(
             contexts::caller_leaf(),
-            move |source: &Planned<'p, Plan, ValueFrame, R>,
+            move |source: &Planned<'p, Plan, OwnedFrame, R>,
                   cipher,
                   context: Self::ContextInput| {
                 encrypt_record(
@@ -371,13 +363,13 @@ where
         )
     }
     fn owned_encryption<'s, K: 'static>(
-    ) -> Encryption<'s, Planned<'p, Plan, ValueFrame, R>, Self, K, Self::ContextInput, Owned>
+    ) -> Encryption<'s, Planned<'p, Plan, OwnedFrame, R>, Self, K, Self::ContextInput, Owned>
     where
-        Planned<'p, Plan, ValueFrame, R>: 's,
+        Planned<'p, Plan, OwnedFrame, R>: 's,
     {
         Encryption::from_owned_build(
             contexts::caller_leaf(),
-            move |source: Planned<'p, Plan, ValueFrame, R>, cipher, context: Self::ContextInput| {
+            move |source: Planned<'p, Plan, OwnedFrame, R>, cipher, context: Self::ContextInput| {
                 let Planned {
                     plan,
                     value,
@@ -414,12 +406,12 @@ fn encrypt_record<'a, K: 'static>(
 /// the cipher runs later, which owns the plan, the row and the resolver,
 /// so the resolver is `Send + Sync + 'static` here where the encrypt side
 /// borrows it.
-impl<'p, R> DecryptSource<ValueFrame> for Planned<'p, Plan, StackCipherText, R>
+impl<'p, R> DecryptSource<OwnedFrame> for Planned<'p, Plan, StackCipherText, R>
 where
     R: TargetResolver + Send + Sync + 'static,
 {
     type ContextInput = OptionalContext<CallerContext>;
-    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<ValueFrame, K> {
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<OwnedFrame, K> {
         // The opening is a closure the cipher runs later, so it owns its
         // plan: one copy, with the caller's parts applied.
         let plan = match self.plan.under_caller(context.into_inner()) {
@@ -600,7 +592,7 @@ where
         self,
         cipher_ref: impl Into<CipherRef<'a, K>>,
         expected: Option<Label>,
-    ) -> Result<Pending<'a, ValueFrame, K>, Error> {
+    ) -> Result<Pending<'a, OwnedFrame, K>, Error> {
         let Planned {
             plan,
             value,
@@ -687,7 +679,7 @@ where
                                 .into_iter()
                                 .zip(per_row)
                                 .map(|(values, (absent, count))| {
-                                    let own: Vec<ValueFrame> = eql.by_ref().take(count).collect();
+                                    let own: Vec<OwnedFrame> = eql.by_ref().take(count).collect();
                                     open_record(values, own, &shape, &absent)
                                 })
                                 .collect::<Result<Vec<_>, _>>()?;
@@ -982,19 +974,19 @@ impl QueryPlan {
 /// [`query_term`] derives it: the operand bytes and the SQL type they bind
 /// as. The caller's context is its scope alone; a binding is refused
 /// before any key is requested ([`PlanError::BindInQuery`]).
-impl<'p, R> EncryptTarget<Planned<'p, QueryPlan, ValueFrame, R>> for QueryTerm
+impl<'p, R> EncryptTarget<Planned<'p, QueryPlan, OwnedFrame, R>> for QueryTerm
 where
     R: TargetResolver + 'p,
 {
     type ContextInput = OptionalContext<CallerContext>;
     fn encryption<'s, K: 'static>(
-    ) -> Encryption<'s, Planned<'p, QueryPlan, ValueFrame, R>, Self, K, Self::ContextInput>
+    ) -> Encryption<'s, Planned<'p, QueryPlan, OwnedFrame, R>, Self, K, Self::ContextInput>
     where
-        Planned<'p, QueryPlan, ValueFrame, R>: 's,
+        Planned<'p, QueryPlan, OwnedFrame, R>: 's,
     {
         Encryption::from_build(
             contexts::caller_leaf(),
-            move |source: &Planned<'p, QueryPlan, ValueFrame, R>,
+            move |source: &Planned<'p, QueryPlan, OwnedFrame, R>,
                   cipher,
                   context: Self::ContextInput| {
                 let scopes = context
@@ -1008,13 +1000,13 @@ where
         )
     }
     fn owned_encryption<'s, K: 'static>(
-    ) -> Encryption<'s, Planned<'p, QueryPlan, ValueFrame, R>, Self, K, Self::ContextInput, Owned>
+    ) -> Encryption<'s, Planned<'p, QueryPlan, OwnedFrame, R>, Self, K, Self::ContextInput, Owned>
     where
-        Planned<'p, QueryPlan, ValueFrame, R>: 's,
+        Planned<'p, QueryPlan, OwnedFrame, R>: 's,
     {
         Encryption::from_owned_build(
             contexts::caller_leaf(),
-            move |source: Planned<'p, QueryPlan, ValueFrame, R>,
+            move |source: Planned<'p, QueryPlan, OwnedFrame, R>,
                   cipher,
                   context: Self::ContextInput| {
                 let scopes = context
@@ -1071,7 +1063,7 @@ macro_rules! handle_methods {
             /// # Errors
             ///
             /// As [`Plan::query_with`].
-            pub fn $method(self, value: ValueFrame) -> Result<DynamicQuery<'p, R>, Error> {
+            pub fn $method(self, value: OwnedFrame) -> Result<DynamicQuery<'p, R>, Error> {
                 self.op(Op::$op, value)
             }
         }
@@ -1103,7 +1095,7 @@ impl<'p, R: TargetResolver + ?Sized> FieldHandle<'p, R> {
     /// # Errors
     ///
     /// As [`Plan::query_with`].
-    pub fn op(self, operator: Op, value: ValueFrame) -> Result<DynamicQuery<'p, R>, Error> {
+    pub fn op(self, operator: Op, value: OwnedFrame) -> Result<DynamicQuery<'p, R>, Error> {
         Ok(DynamicQuery {
             plan: self.plan.query_with(&self.name, operator, self.resolver)?,
             value,
@@ -1128,7 +1120,7 @@ impl<'p, R: TargetResolver + ?Sized> FieldHandle<'p, R> {
 /// value is a frame, a protected buffer wiped when the query is dropped.
 pub struct DynamicQuery<'p, R: ?Sized = NoTargets> {
     plan: QueryPlan,
-    value: ValueFrame,
+    value: OwnedFrame,
     scopes: DeclaredContext,
     resolver: &'p R,
 }
@@ -1307,7 +1299,7 @@ pub(super) fn opening<K: 'static>(
                 }
             };
             let sealed_under = extend.clone().under(NonEmpty::from(label));
-            open::<ValueFrame, K>(ciphertext, AeadContext::from(sealed_under)).map(Slot::new)
+            open::<OwnedFrame, K>(ciphertext, AeadContext::from(sealed_under)).map(Slot::new)
         };
         opened =
             opened
@@ -1349,11 +1341,11 @@ fn operation_of<'s, K: 'static>(
     let indexes = field.indexes();
     Some(match field.verb() {
         Verb::Encrypt => lift(
-            ciphertext::<ValueFrame, K, Borrowed>().accepting::<CallerContext>(),
+            ciphertext::<OwnedFrame, K, Borrowed>().accepting::<CallerContext>(),
             name,
         ),
         Verb::EncryptIndex => lift(
-            indexed::<ValueFrame, K, Borrowed, Vec<IndexSpec>>(indexes),
+            indexed::<OwnedFrame, K, Borrowed, Vec<IndexSpec>>(indexes),
             name,
         ),
         Verb::Index => lift(indexes.operations::<K, Borrowed>(), name),
@@ -1361,9 +1353,9 @@ fn operation_of<'s, K: 'static>(
             let name = Arc::clone(name);
             inspect::<FieldValues, K, CallerContext, _>(move |values| {
                 values
-                    .get::<ValueFrame>(&name)
+                    .get::<OwnedFrame>(&name)
                     .map(drop)
-                    .ok_or_else(|| field_type(&name, type_name::<ValueFrame>()))
+                    .ok_or_else(|| field_type(&name, type_name::<OwnedFrame>()))
             })
             .map(|()| None)
         }
@@ -1382,7 +1374,7 @@ fn lowered_fields<'p>(plan: &'p Plan, absent: &'p Absent) -> impl Iterator<Item 
 /// A description over one field's value, lifted to read that field out of
 /// the record by name and to hold its output in a slot.
 fn lift<'s, T, K>(
-    operation: Encryption<'s, ValueFrame, T, K, CallerContext>,
+    operation: Encryption<'s, OwnedFrame, T, K, CallerContext>,
     name: &Arc<str>,
 ) -> Encryption<'s, FieldValues, Option<Slot>, K, CallerContext>
 where
@@ -1393,8 +1385,8 @@ where
     operation
         .project_by(move |values: &FieldValues| {
             values
-                .get::<ValueFrame>(&name)
-                .ok_or_else(|| field_type(&name, type_name::<ValueFrame>()))
+                .get::<OwnedFrame>(&name)
+                .ok_or_else(|| field_type(&name, type_name::<OwnedFrame>()))
         })
         .map(|output| Some(Slot::new(output)))
 }
@@ -1410,8 +1402,8 @@ pub(super) fn check_values(
 ) -> Result<(), crate::Error> {
     check_names(values, &lowered_names(plan, absent))?;
     for field in lowered_fields(plan, absent) {
-        if values.get::<ValueFrame>(field.name()).is_none() {
-            return Err(field_type(field.name(), type_name::<ValueFrame>()));
+        if values.get::<OwnedFrame>(field.name()).is_none() {
+            return Err(field_type(field.name(), type_name::<OwnedFrame>()));
         }
     }
     if let Context::Field(of) = plan.context_source() {
@@ -1441,13 +1433,13 @@ pub(super) fn check_stored(
         };
         let keys_nothing = keys_nothing(field);
         let holds = if keys_nothing {
-            slot.is::<ValueFrame>()
+            slot.is::<OwnedFrame>()
         } else {
             slot.is::<StackCipherText>() || slot.is::<Encrypted<Vec<TermBytes>>>()
         };
         if !holds {
             let expected = if keys_nothing {
-                type_name::<ValueFrame>()
+                type_name::<OwnedFrame>()
             } else {
                 type_name::<StackCipherText>()
             };
@@ -1505,8 +1497,8 @@ fn check_names(values: &FieldValues, names: &[String]) -> Result<(), crate::Erro
 /// copies nothing for it.
 fn context_of(values: &FieldValues, field: &str) -> Result<Label, crate::Error> {
     values
-        .get::<ValueFrame>(field)
-        .ok_or_else(|| field_type(field, type_name::<ValueFrame>()))?
+        .get::<OwnedFrame>(field)
+        .ok_or_else(|| field_type(field, type_name::<OwnedFrame>()))?
         .into_label()
         .map_err(|error| PlanError::ContextLabel(error).into())
 }
@@ -1597,8 +1589,8 @@ mod tests {
             .await
             .expect("build cipher")
     }
-    fn frame(value: Tree) -> ValueFrame {
-        ValueFrame::from_bytes(frame_of(&value).as_protected_ref().as_deref()).expect("a frame")
+    fn frame(value: Tree) -> OwnedFrame {
+        OwnedFrame::from_bytes(frame_of(&value).as_protected_ref().as_deref()).expect("a frame")
     }
     fn values(age: Option<Tree>, id: Option<Tree>) -> FieldValues {
         let mut values = FieldValues::new();
@@ -1861,10 +1853,10 @@ mod tests {
                     .await
                     .expect("opens");
                 let age = Tree::UInt32(u32::try_from(at).expect("small"));
-                assert_eq!(opened.get::<ValueFrame>("age"), Some(&frame(age)));
+                assert_eq!(opened.get::<OwnedFrame>("age"), Some(&frame(age)));
                 let id = (!absent.contains("id"))
                     .then(|| frame(Tree::UInt64(u64::try_from(at).expect("small"))));
-                assert_eq!(opened.get::<ValueFrame>("id"), id.as_ref());
+                assert_eq!(opened.get::<OwnedFrame>("id"), id.as_ref());
             }
         }
     }
@@ -1921,7 +1913,7 @@ mod tests {
         assert!(matches!(
             reason(check_values(&plan, &typed, &absent).unwrap_err()),
             PlanError::FieldType { field, expected }
-                if field == "age" && expected == type_name::<ValueFrame>()
+                if field == "age" && expected == type_name::<OwnedFrame>()
         ));
 
         // A field the row leaves out is not expected.
@@ -1979,7 +1971,7 @@ mod tests {
             .await
             .expect("opens");
         assert_eq!(
-            opened.get::<ValueFrame>("age"),
+            opened.get::<OwnedFrame>("age"),
             Some(&frame(Tree::UInt32(34)))
         );
 
@@ -2010,9 +2002,9 @@ mod tests {
     fn zeroizing_a_planned_value_empties_its_frame() {
         let plan = the_plan();
         let mut planned = Planned::new(&plan, frame(obj(vec![("age", Tree::UInt32(34))])));
-        assert_ne!(planned.value, ValueFrame::empty());
+        assert!(!planned.value.risky_ref().is_empty());
         planned.zeroize();
-        assert_eq!(planned.value, ValueFrame::empty());
+        assert!(planned.value.risky_ref().is_empty());
     }
 
     /// `Debug` names the wrapper and the handle's field, and shows no value.

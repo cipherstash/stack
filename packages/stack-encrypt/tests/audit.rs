@@ -518,7 +518,7 @@ async fn a_derived_record_sends_its_metadata() {
 #[cfg(feature = "dynamic")]
 mod dynamic_path {
     use serde_json::json;
-    use stack_encrypt::dynamic::{record, ValueFrame};
+    use stack_encrypt::dynamic::{frame::OwnedFrame, record};
     use stack_encrypt::AsProtectedRef as _;
 
     use super::{cipher, list_issues, list_issues_json, Call};
@@ -537,7 +537,7 @@ mod dynamic_path {
             "notes": "likes cats",
         }))
         .expect("the record is a frame");
-        let user = ValueFrame::from_bytes(user.as_protected_ref()).expect("the record is a value");
+        let user = OwnedFrame::from_bytes(user.as_protected_ref()).expect("the record is a value");
 
         let sealed = record::encrypt(&cipher.default_keyset(), user, &plan)
             .expect("the record fits the plan")

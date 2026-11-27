@@ -18,8 +18,9 @@ use vitaminc_protected::Protected;
 use zeroize::Zeroizing;
 
 use super::term::OneScalar;
-use super::{ValueFrame, ValueKind};
+use super::ValueKind;
 use crate::json::{to_text, JsonPlaintext, JsonTextError};
+use vitaminc_aead::frame::OwnedFrame;
 
 /// Why a `json` field's value is not a document.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -53,7 +54,7 @@ impl JsonValueError {
 /// [`JsonValueError::NotText`] for a value that is not a text or bytes
 /// leaf, and [`JsonValueError::Text`] for text that is not a document by
 /// [`parse_text`](crate::json::parse_text)'s rules.
-pub fn read_json(value: &ValueFrame) -> Result<JsonPlaintext, JsonValueError> {
+pub fn read_json(value: &OwnedFrame) -> Result<JsonPlaintext, JsonValueError> {
     if !ValueKind::Json.holds(value.kind()) {
         return Err(JsonValueError::NotText);
     }
@@ -77,9 +78,9 @@ pub fn read_json(value: &ValueFrame) -> Result<JsonPlaintext, JsonValueError> {
 ///
 /// [`crate::Error::Other`] if the frame writer refuses the bytes, which a
 /// document's text never is.
-pub fn json_frame(value: &Value) -> Result<ValueFrame, crate::Error> {
+pub fn json_frame(value: &Value) -> Result<OwnedFrame, crate::Error> {
     let mut text = Zeroizing::new(to_text(value).map_err(|e| crate::Error::Other(Box::new(e)))?);
-    ValueFrame::of(Protected::new(std::mem::take(&mut *text)))
+    OwnedFrame::of(Protected::new(std::mem::take(&mut *text)))
         .map_err(|e| crate::Error::Other(Box::new(e)))
 }
 
@@ -89,8 +90,8 @@ mod tests {
     use crate::dynamic::test_frame::Tree;
     use serde_json::json;
 
-    fn frame(tree: Tree) -> ValueFrame {
-        ValueFrame::of(&tree).unwrap()
+    fn frame(tree: Tree) -> OwnedFrame {
+        OwnedFrame::of(&tree).unwrap()
     }
 
     #[test]

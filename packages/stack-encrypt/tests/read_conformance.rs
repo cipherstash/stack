@@ -8,7 +8,7 @@ use common::{
 };
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
-use stack_encrypt::dynamic::{record, ValueFrame};
+use stack_encrypt::dynamic::{frame::OwnedFrame, record};
 use stack_encrypt::AsProtectedRef as _;
 use stack_encrypt::{CipherText, ErrorPayload, Label, StackCipherText};
 use std::{
@@ -108,7 +108,7 @@ fn plan(decl: &Declaration, context_field: bool, context_name: &str) -> record::
     // Match Go Plan.Wire's declaration order explicitly, regardless of the
     // serde_json map backend or the context field's lexical position.
     let framed = |v: &Value| {
-        ValueFrame::from_bytes(recipher_frame::serde::to_vec(v).unwrap().as_protected_ref())
+        OwnedFrame::from_bytes(recipher_frame::serde::to_vec(v).unwrap().as_protected_ref())
             .unwrap()
     };
     let mut fields = Vec::new();
@@ -122,7 +122,7 @@ fn plan(decl: &Declaration, context_field: bool, context_name: &str) -> record::
     fields.push(("value", framed(&spec)));
     record::plan(object(fields).as_protected_ref()).unwrap()
 }
-fn rows(input: &[Row], context_name: Option<&str>) -> ValueFrame {
+fn rows(input: &[Row], context_name: Option<&str>) -> OwnedFrame {
     frame(
         input
             .iter()

@@ -23,7 +23,7 @@ use eql_bindings::v4::json;
 use eql_bindings::v4::plaintext::JsonPlaintext;
 use eql_bindings::Identifier;
 use serde_json::{json, Value};
-use stack_encrypt::dynamic::{self, record, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record};
 use stack_encrypt::target::transcode::{Reader, Visitor};
 use stack_encrypt::{
     AsProtectedRef as _, CipherText, Encrypt, EncryptInto, NonEmpty, SealedValue, StackCipher,
@@ -216,12 +216,12 @@ fn plan(null: Option<&str>) -> record::Plan {
     .expect("a valid plan")
 }
 
-fn frame<T: Encrypt>(value: T) -> ValueFrame {
-    ValueFrame::of(value).unwrap()
+fn frame<T: Encrypt>(value: T) -> OwnedFrame {
+    OwnedFrame::of(value).unwrap()
 }
 
-fn row(value: ValueFrame) -> ValueFrame {
-    struct Row(ValueFrame);
+fn row(value: OwnedFrame) -> OwnedFrame {
+    struct Row(OwnedFrame);
     impl Encrypt for Row {
         fn visit<S: vitaminc_aead::plaintext::Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             vitaminc_aead::plaintext::visit_map(sink, Some(1), [("profile", &self.0)])
@@ -277,7 +277,7 @@ async fn through_the_data_plan(
     cipher: &StackCipher<KeptKeys>,
     keys: &Keys,
     null: Option<&str>,
-    value: ValueFrame,
+    value: OwnedFrame,
 ) -> Result<Option<String>, String> {
     let keyset = cipher.default_keyset();
     let pending =

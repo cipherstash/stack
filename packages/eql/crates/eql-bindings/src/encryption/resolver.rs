@@ -4,7 +4,9 @@
 //! This module is private. Readers of the published docs only read the
 //! documentation on `EqlTargets`.
 
-use stack_encrypt::dynamic::{self, TargetDescriptor, TargetOptions, TargetResolver, ValueFrame};
+use stack_encrypt::dynamic::{
+    self, frame::OwnedFrame, TargetDescriptor, TargetOptions, TargetResolver,
+};
 use stack_encrypt::target::{DeclaredContext, IndexSpec};
 use stack_encrypt::{KeysetCipher, Label, Pending, StackCipher};
 
@@ -60,7 +62,7 @@ impl TargetResolver for EqlTargets {
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
         parts: &DeclaredContext,
-        plaintext: ValueFrame,
+        plaintext: OwnedFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, dynamic::TargetError> {
         Ok(encrypt_under(
             name, options, keyset, label, parts, plaintext,
@@ -74,7 +76,7 @@ impl TargetResolver for EqlTargets {
         label: &Label,
         parts: &DeclaredContext,
         stored: &[u8],
-    ) -> Result<Pending<'a, ValueFrame, K>, dynamic::TargetError> {
+    ) -> Result<Pending<'a, OwnedFrame, K>, dynamic::TargetError> {
         Ok(decrypt_under(name, cipher, label, parts, stored)?)
     }
 
@@ -85,7 +87,7 @@ impl TargetResolver for EqlTargets {
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
         scopes: &DeclaredContext,
-        plaintext: ValueFrame,
+        plaintext: OwnedFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, dynamic::TargetError> {
         Ok(query_under(name, index, keyset, label, scopes, plaintext)?)
     }
@@ -348,7 +350,7 @@ mod tests {
         ));
         // A value that is not a document keeps the engine's code, and no
         // byte of the value.
-        let Err(source) = dynamic::read_json(&ValueFrame::of(r#"{"secret": "#).unwrap()) else {
+        let Err(source) = dynamic::read_json(&OwnedFrame::of(r#"{"secret": "#).unwrap()) else {
             panic!("the text is not a JSON document");
         };
         let code = source.code();

@@ -26,15 +26,15 @@ use eql_bindings::v4::{date, numeric, timestamp};
 use eql_bindings::Identifier;
 use jiff::civil::Date as CivilDate;
 use serde::de::DeserializeOwned;
-use stack_encrypt::dynamic::{ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{frame::OwnedFrame, ValueKind};
 use stack_encrypt::target::transcode::Reader;
 use stack_encrypt::{DecryptFrom, Encrypt, EncryptInto, Label, NonEmpty};
 
-fn frame<T: Encrypt>(value: T) -> ValueFrame {
-    ValueFrame::of(value).unwrap()
+fn frame<T: Encrypt>(value: T) -> OwnedFrame {
+    OwnedFrame::of(value).unwrap()
 }
 
-fn same(a: &ValueFrame, b: &ValueFrame) -> bool {
+fn same(a: &OwnedFrame, b: &OwnedFrame) -> bool {
     a.risky_ref() == b.risky_ref()
 }
 
@@ -70,7 +70,7 @@ fn number(text: &str) -> rust_decimal::Decimal {
 async fn as_frame(
     cipher: &stack_encrypt::StackCipher<common::RecordingKeySource>,
     c: Ciphertext,
-) -> ValueFrame {
+) -> OwnedFrame {
     let native = c.read(NativeLeaf).unwrap();
     cipher.decrypt(native, column()).await.unwrap()
 }
@@ -78,7 +78,7 @@ async fn as_frame(
 async fn by_name<T: DeserializeOwned>(
     keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
-    value: ValueFrame,
+    value: OwnedFrame,
 ) -> T {
     let bytes = targets::encrypt(name, keyset, &label(), value)
         .unwrap()
@@ -91,7 +91,7 @@ async fn by_name<T: DeserializeOwned>(
 async fn hm(
     keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
-    value: ValueFrame,
+    value: OwnedFrame,
 ) -> String {
     let bytes = targets::query(name, &common::index_of(name), keyset, &label(), value)
         .unwrap()
@@ -357,7 +357,7 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
 async fn the_ledger_query_fixture_is_what_the_dispatch_derives() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let query = |name: &'static str, column: &'static str, value: ValueFrame| {
+    let query = |name: &'static str, column: &'static str, value: OwnedFrame| {
         let keyset = &keyset;
         async move {
             let label = Label::new(["profiles", column]).unwrap();
@@ -944,7 +944,7 @@ async fn a_storage_only_type_stores_a_none_as_long_as_a_value() {
     );
 
     let null = stack_encrypt::Protected::new([0x00u8]);
-    let null = ValueFrame::from_bytes(null.as_protected_ref().as_ref_of()).unwrap();
+    let null = OwnedFrame::from_bytes(null.as_protected_ref().as_ref_of()).unwrap();
     let named: date::Date = by_name(&keyset, "Date", again(&null)).await;
     assert_eq!(leaf_len(&named.c), leaf_len(&absent.c), "by name too");
     let opened = targets::decrypt(
@@ -995,7 +995,7 @@ fn refused_null(
     name: &str,
 ) -> TargetError {
     let null = stack_encrypt::Protected::new([0x00u8]);
-    let null = ValueFrame::from_bytes(null.as_protected_ref().as_ref_of()).unwrap();
+    let null = OwnedFrame::from_bytes(null.as_protected_ref().as_ref_of()).unwrap();
     refused(targets::encrypt(name, keyset, &label(), null))
 }
 
@@ -1079,7 +1079,7 @@ fn postgres_stores_a_sealed_null_in_a_storage_only_column() {
 }
 
 /// A second frame of the same bytes. A frame is not `Clone`.
-fn again(frame: &ValueFrame) -> ValueFrame {
+fn again(frame: &OwnedFrame) -> OwnedFrame {
     use stack_encrypt::AsProtectedRef as _;
-    ValueFrame::from_bytes(frame.as_protected_ref()).unwrap()
+    OwnedFrame::from_bytes(frame.as_protected_ref()).unwrap()
 }

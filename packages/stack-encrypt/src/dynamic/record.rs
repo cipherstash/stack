@@ -91,7 +91,7 @@
 //!
 //! # What a field's `"type"` decides, and what it does not
 //!
-//! Every field lowered from data is a [`ValueFrame`]: its plaintext type is
+//! Every field lowered from data is an [`OwnedFrame`]: its plaintext type is
 //! the runtime value itself, held as its transport frame and walked in place
 //! into the encrypting sink, and it seals in vitaminc's self-describing
 //! tagged leaf encoding (`[tag] ++ payload`) whatever its declared
@@ -112,7 +112,7 @@
 //!
 //! The ciphertext is where a data plan and typed Rust code meet too. Every
 //! leaf is tagged with its type, a typed Rust value's as much as
-//! a [`ValueFrame`]'s, so a Rust `u32` field and a `uint32` data field seal
+//! an [`OwnedFrame`]'s, so a Rust `u32` field and a `uint32` data field seal
 //! the same leaf under the same context, and each opens the other's. A reader
 //! of another type refuses a leaf rather than reading it as changed
 //! plaintext: the tag is authenticated. The lowering never chooses an
@@ -144,18 +144,18 @@
 //! reported as a successful decrypt. The encrypt-side refusal is what makes
 //! that a round-trip invariant rather than data loss.
 
-use super::value_frame::{split_rows, FieldFault, SourceRow, SourceRows};
 use std::collections::BTreeSet;
 use std::fmt;
 
 use serde::de::{Deserializer, MapAccess, Visitor};
 use serde::Deserialize;
 
+use super::source::{split_rows, SourceRow, SourceRows, SplitRefusal};
 use super::term::{IndexWire, JsonWire, MatchWire};
-use super::{TargetOptions, ValueFrame, ValueKind};
-use vitaminc_aead::frame::{Frame, FrameWriter};
+use super::{TargetOptions, ValueKind};
+use vitaminc_aead::frame::{Frame, FrameWriteError, FrameWriter, OwnedFrame};
 use vitaminc_aead::plaintext::{Logical, MapSink, Physical, SealedNull, SeqSink, Sink};
-use vitaminc_aead::{DecodeError, Encrypt};
+use vitaminc_aead::Encrypt;
 use vitaminc_protected::{Controlled, Protected};
 
 use super::planned::{check_stored, check_values, compose, opening_base, Planned};
@@ -1078,7 +1078,7 @@ impl Plan {
     /// one-field plan is encrypted under the scope `42u64`:
     ///
     /// ```
-    /// use stack_encrypt::dynamic::{record, Planned, ValueFrame};
+    /// use stack_encrypt::dynamic::{record, Planned, frame::OwnedFrame};
     /// use stack_encrypt::target::Scope;
     /// use stack_encrypt::{AsProtectedRef, EncryptInto, Pending, StackCipher, StackCipherText};
     /// use recipher_frame::serde::to_vec;
@@ -1095,7 +1095,7 @@ impl Plan {
     ///     "email": { "context": ["users", "email"], "outputs": ["c"], "type": "string" },
     /// }))?;
     /// let plan = record::plan(declaration.as_protected_ref())?;
-    /// let values = ValueFrame::from_bytes(
+    /// let values = OwnedFrame::from_bytes(
     ///     to_vec(&serde_json::json!({"email": "ada@example.com"}))?.as_protected_ref(),
     /// )?;
     /// let call: Pending<'_, StackCipherText, _> =
@@ -1701,13 +1701,13 @@ fn plan_refusal(error: &recipher_frame::serde::Error, frame: &[u8]) -> Error {
 ///
 /// `source` is a map of `{ field: value }` (one record), or a sequence of
 /// such maps (a batch), described by any source ([`Encrypt`]): a
-/// [`ValueFrame`] or a transport frame a binding was handed. Every plan
+/// [`OwnedFrame`] or a transport frame a binding was handed. Every plan
 /// field must be present in each record, and every record field must be
 /// named by the plan — silently dropping a field on either side would lose
 /// data or index nothing.
 ///
 /// The source is walked once, and each field's value written into a
-/// [`ValueFrame`] of its own, which is all the engine keeps of it. It is
+/// [`OwnedFrame`] of its own, which is all the engine keeps of it. It is
 /// checked here, with no cipher: that is [`check_source`], and it is where
 /// [`Error::Source`] comes from. What
 /// comes back is the plan's [`Pending`], with every term
@@ -1724,7 +1724,7 @@ fn plan_refusal(error: &recipher_frame::serde::Error, frame: &[u8]) -> Error {
 /// # Examples
 ///
 /// ```
-/// use stack_encrypt::dynamic::{record, ValueFrame};
+/// use stack_encrypt::dynamic::{record, frame::OwnedFrame};
 /// use stack_encrypt::{AsProtectedRef, StackCipher};
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
@@ -1745,7 +1745,7 @@ fn plan_refusal(error: &recipher_frame::serde::Error, frame: &[u8]) -> Error {
 /// // The row as a binding hands it over: one transport frame. Here a Rust
 /// // map writes it; a binding's codec writes the same bytes.
 /// let row = std::collections::BTreeMap::from([("age", 34u32)]);
-/// let frame = ValueFrame::of(&row)?;
+/// let frame = OwnedFrame::of(&row)?;
 /// let sealed = record::encrypt(&keyset, &frame, &plan)?.await?;
 ///
 /// // Only the ciphertext comes back, as the record's frame; the term is
@@ -1841,7 +1841,7 @@ pub fn query<'a, K: 'static>(
         field: Some(field.name.clone()),
         reason: Reason::NotATarget,
     })?;
-    let value = ValueFrame::of(value).map_err(|_| Error::Source {
+    let value = OwnedFrame::of(value).map_err(|_| Error::Source {
         field: Some(field.name.clone()),
         reason: Reason::FieldType,
     })?;
@@ -1906,7 +1906,7 @@ pub(super) fn name_target(error: TargetError, field: &str) -> TargetError {
 /// comes back is the plan's opener as a [`Pending`]: one batched
 /// `retrieve_keys` for every ciphertext leaf when it is awaited and, when
 /// opening through a reference to the client, one per keyset the leaves were sealed
-/// under. Its value is one [`ValueFrame`]: a map per record holding the
+/// under. Its value is one [`OwnedFrame`]: a map per record holding the
 /// plan's fields that come back, in plan order, or a sequence of them for a
 /// batch. Each field opens straight into a frame of its own, which is walked
 /// into its entry of the record's frame and wiped; no value tree holds the
@@ -1951,7 +1951,7 @@ pub fn decrypt<'a, K: 'static>(
     record: StackCipherText,
     plan: &Plan,
     expected: Option<Label>,
-) -> Result<Pending<'a, ValueFrame, K>, Error> {
+) -> Result<Pending<'a, OwnedFrame, K>, Error> {
     decrypt_with(cipher_ref, record, plan, expected, &NoTargets)
 }
 
@@ -1980,7 +1980,7 @@ pub fn decrypt_with<'a, K: 'static>(
     plan: &Plan,
     expected: Option<Label>,
     resolver: &(impl TargetResolver + ?Sized),
-) -> Result<Pending<'a, ValueFrame, K>, Error> {
+) -> Result<Pending<'a, OwnedFrame, K>, Error> {
     Planned::with_resolver(plan, record, resolver).run_decrypt(cipher_ref, expected)
 }
 
@@ -2057,7 +2057,7 @@ pub fn check_record(
 
 /// A tree that may carry a passthrough or a repeated map key somewhere
 /// inside it: a stored ciphertext ([`StackCipherText`]), walked the one way
-/// the record rules need. A source value is a [`ValueFrame`], which holds
+/// the record rules need. A source value is an [`OwnedFrame`], which holds
 /// no repeated key by construction, and is asked for a passthrough
 /// directly.
 trait RecordTree: Sized {
@@ -2116,7 +2116,7 @@ pub(super) enum Rows<R> {
 /// plan order, for the resolver, and the fields the row leaves out.
 pub(super) struct Row {
     pub(super) values: FieldValues,
-    pub(super) targets: Vec<ValueFrame>,
+    pub(super) targets: Vec<OwnedFrame>,
     pub(super) absent: Absent,
 }
 
@@ -2215,7 +2215,7 @@ fn check_tree<T: RecordTree>(tree: &T, field: &str) -> Result<(), Error> {
 /// the plan does not name, and each value fits its field ([`check_field`]).
 ///
 /// The source is walked once ([`split_rows`]): each field's value is written
-/// into a [`ValueFrame`] of its own as the walk reaches it, and nothing else
+/// into an [`OwnedFrame`] of its own as the walk reaches it, and nothing else
 /// is copied. A value the frame cannot carry, or that holds a repeated key,
 /// is refused naming its field.
 pub(super) fn source_rows(source: impl Encrypt, plan: &Plan) -> Result<Rows<Row>, Error> {
@@ -2234,26 +2234,22 @@ pub(super) fn source_rows(source: impl Encrypt, plan: &Plan) -> Result<Rows<Row>
 /// logical type does not admit as [`Reason::FieldType`], and anything else (too
 /// deep or too long for a frame) as [`Reason::Unframeable`]. A refusal that
 /// names no field is the source's shape, [`Reason::NotAnObject`].
-fn split_refusal(error: DecodeError) -> Error {
-    let DecodeError::Source(source) = &error else {
-        return Error::bad_source(Reason::NotAnObject);
-    };
-    let Some(FieldFault { field, error }) = source.inner().downcast_ref::<FieldFault>() else {
+fn split_refusal(SplitRefusal { field, error }: SplitRefusal) -> Error {
+    let Some(field) = field else {
         return Error::bad_source(Reason::NotAnObject);
     };
     let reason = match error {
-        DecodeError::DuplicateKey(_) => Reason::RepeatedKey,
-        error if super::value_frame::is_unnamed_repeated_key(error) => Reason::RepeatedKey,
-        DecodeError::Expected(_) => Reason::FieldType,
+        FrameWriteError::DuplicateKey => Reason::RepeatedKey,
+        FrameWriteError::Invalid => Reason::FieldType,
         _ => Reason::Unframeable,
     };
     Error::Source {
-        field: Some(field.clone()),
+        field: Some(field),
         reason,
     }
 }
 
-fn source_row(mut row: Vec<(String, ValueFrame)>, plan: &Plan) -> Result<Row, Error> {
+fn source_row(mut row: Vec<(String, OwnedFrame)>, plan: &Plan) -> Result<Row, Error> {
     let misfit = |field: &str, reason| Error::Source {
         field: Some(field.to_owned()),
         reason,
@@ -2287,7 +2283,7 @@ fn source_row(mut row: Vec<(String, ValueFrame)>, plan: &Plan) -> Result<Row, Er
             // equality's, which a null has.
             Some(NullMode::Sealed) if value.is_null() => {
                 match field.field_type.and_then(ValueKind::sealed_null) {
-                    Some(SealedNull::Typed(ty)) => ValueFrame::typed_null(ty),
+                    Some(SealedNull::Typed(ty)) => OwnedFrame::typed_null(ty),
                     _ => value,
                 }
             }
@@ -2317,9 +2313,9 @@ fn source_row(mut row: Vec<(String, ValueFrame)>, plan: &Plan) -> Result<Row, Er
 /// A source value against its plan field: a typed field needs a value of
 /// its type, every term output needs a scalar the scheme defines the term
 /// for ([`IndexSpec::defines`]), and a ciphertext refuses a passthrough
-/// anywhere in the value. A [`ValueFrame`] holds no repeated key, and is a
+/// anywhere in the value. An [`OwnedFrame`] holds no repeated key, and is a
 /// frame already, so a passthrough output needs nothing more.
-fn check_field(value: &ValueFrame, field: &FieldPlan) -> Result<(), Error> {
+fn check_field(value: &OwnedFrame, field: &FieldPlan) -> Result<(), Error> {
     let misfit = |reason| Error::Source {
         field: Some(field.name.clone()),
         reason,
@@ -2407,14 +2403,14 @@ fn bytes_node(bytes: Vec<u8>) -> Result<StackCipherText, crate::Error> {
 
 /// A passthrough field's value as its node: its frame, as it is, in the
 /// clear (a passthrough is not secret by contract).
-fn passthrough_frame(value: &ValueFrame) -> StackCipherText {
+fn passthrough_frame(value: &OwnedFrame) -> StackCipherText {
     CipherText::Passthrough(PassthroughFrame(value.risky_ref().to_vec()))
 }
 
 /// The one value a passthrough node carries, in the value model, or `None`
 /// if its frame holds something the model does not.
-fn passthrough_value(payload: &PassthroughFrame) -> Option<ValueFrame> {
-    ValueFrame::from_clear(&payload.0).ok()
+fn passthrough_value(payload: &PassthroughFrame) -> Option<OwnedFrame> {
+    OwnedFrame::of(payload.parse().ok()?).ok()
 }
 
 /// The bytes a passthrough node carries, if it carries bytes: what a stored
@@ -2491,8 +2487,8 @@ fn keyed_terms(
 }
 
 /// The field `name` out of the record, as the value it holds.
-fn take_leaf(values: &mut FieldValues, name: &str) -> Result<ValueFrame, crate::Error> {
-    slot::<ValueFrame>(values, name)
+fn take_leaf(values: &mut FieldValues, name: &str) -> Result<OwnedFrame, crate::Error> {
+    slot::<OwnedFrame>(values, name)
 }
 
 /// The record the plan opened: the fields that come back, in plan order,
@@ -2501,16 +2497,16 @@ fn take_leaf(values: &mut FieldValues, name: &str) -> Result<ValueFrame, crate::
 /// was sealed as another type than the plan now declares.
 pub(super) fn open_record(
     mut values: FieldValues,
-    eql: Vec<ValueFrame>,
+    eql: Vec<OwnedFrame>,
     shape: &[FieldShape],
     absent: &Absent,
-) -> Result<Vec<(String, ValueFrame)>, crate::Error> {
+) -> Result<Vec<(String, OwnedFrame)>, crate::Error> {
     let mut fields = Vec::with_capacity(shape.len());
     let mut eql = eql.into_iter();
     for field in shape.iter().filter(|field| field.verb != Verb::Index) {
         // A field the stored row leaves out was null: it opens as one.
         if absent.contains(&field.name) {
-            fields.push((field.name.clone(), ValueFrame::null()));
+            fields.push((field.name.clone(), OwnedFrame::null()));
             continue;
         }
         let value = if field.verb == Verb::Target {
@@ -2541,11 +2537,11 @@ pub(super) fn open_record(
 /// which wipes it; the result is the only copy of the record's plaintext
 /// left.
 pub(super) fn write_record(
-    rows: Rows<Vec<(String, ValueFrame)>>,
-) -> Result<ValueFrame, crate::Error> {
+    rows: Rows<Vec<(String, OwnedFrame)>>,
+) -> Result<OwnedFrame, crate::Error> {
     fn row<S: MapSink<Error = vitaminc_aead::frame::FrameWriteError>>(
         mut map: S,
-        fields: Vec<(String, ValueFrame)>,
+        fields: Vec<(String, OwnedFrame)>,
     ) -> Result<S::Ok, vitaminc_aead::frame::FrameWriteError> {
         for (name, value) in fields {
             let _ = value.visit(map.entry(&name)?)?;
@@ -2571,7 +2567,7 @@ pub(super) fn write_record(
     // already; one that did would be the engine answering with another
     // shape than it was asked.
     written.map_err(|_| crate::Error::ResponseShape)?;
-    ValueFrame::from_written(out)
+    OwnedFrame::from_buffer(out).map_err(|_| crate::Error::ResponseShape)
 }
 
 // =============================================================================
@@ -2902,7 +2898,7 @@ mod tests {
         }
     }
 
-    impl AsTree for ValueFrame {
+    impl AsTree for OwnedFrame {
         fn tree(self) -> Tree {
             Tree::from_frame(self.risky_ref()).expect("a value")
         }
@@ -3974,14 +3970,14 @@ mod tests {
 
         /// The lowering is the combinators: each field of the record a data
         /// plan seals is what the combinator for its outputs seals over the
-        /// same plaintext type, a [`ValueFrame`], under the field's label.
+        /// same plaintext type, an [`OwnedFrame`], under the field's label.
         /// The terms are the same, and each side opens the other's
         /// ciphertext.
         #[tokio::test]
         async fn seals_what_the_combinators_seal_under_the_same_declaration() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let frame = |value: Tree| ValueFrame::of(&value).expect("a value");
+            let frame = |value: Tree| OwnedFrame::of(&value).expect("a value");
             let default_match = IndexSpec::Match(crate::sem::MatchOptions::default());
             // `c`, `eq` and `ore`: a ciphertext with its terms beside it.
             let age: Encrypted<(TermBytes, TermBytes)> = keyset
@@ -4005,7 +4001,7 @@ mod tests {
             // `match` alone: the terms, with no ciphertext.
             let nick: TermBytes = keyset
                 .run(
-                    Indexes::<ValueFrame>::operations::<_, Borrowed>(&default_match)
+                    Indexes::<OwnedFrame>::operations::<_, Borrowed>(&default_match)
                         .under(nonempty!("users").with("nick")),
                     &frame(s("al smith")),
                     DeclaredContext::default(),
@@ -6429,7 +6425,7 @@ mod tests {
                 .collect()
         }
 
-        fn text_of_value(name: &str, value: ValueFrame) -> Result<String, TargetError> {
+        fn text_of_value(name: &str, value: OwnedFrame) -> Result<String, TargetError> {
             match Tree::from_frame(value.risky_ref()) {
                 Ok(Tree::String(text)) => Ok(text),
                 _ => Err(TargetError::Plaintext {
@@ -6525,7 +6521,7 @@ mod tests {
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
                 parts: &crate::target::DeclaredContext,
-                plaintext: ValueFrame,
+                plaintext: OwnedFrame,
             ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
                 let _ = self.resolve(name)?;
                 let text = text_of_value(name, plaintext)?;
@@ -6554,7 +6550,7 @@ mod tests {
                 label: &Label,
                 parts: &crate::target::DeclaredContext,
                 stored: &[u8],
-            ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+            ) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
                 let _ = self.resolve(name)?;
                 let column = column(name, label)?;
                 let stored: serde_json::Value =
@@ -6582,7 +6578,7 @@ mod tests {
                 let opening: Decryption<String, K> =
                     crate::target::open(CipherText::Single(leaf), context);
                 Ok(cipher.run_decryption(opening).try_map(|text| {
-                    ValueFrame::of(text.as_str()).map_err(|e| crate::Error::Other(Box::new(e)))
+                    OwnedFrame::of(text.as_str()).map_err(|e| crate::Error::Other(Box::new(e)))
                 }))
             }
 
@@ -6593,7 +6589,7 @@ mod tests {
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
                 scopes: &crate::target::DeclaredContext,
-                plaintext: ValueFrame,
+                plaintext: OwnedFrame,
             ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
                 let _ = self.resolve(name)?;
                 let text = text_of_value(name, plaintext)?;
@@ -7876,8 +7872,8 @@ mod tests {
             }
 
             /// The row as a binding hands it to the owned entry point.
-            fn row_frame() -> ValueFrame {
-                ValueFrame::from_bytes(
+            fn row_frame() -> OwnedFrame {
+                OwnedFrame::from_bytes(
                     crate::dynamic::test_frame::frame_of(&mixed_row(AGE, EMAIL))
                         .as_protected_ref()
                         .as_deref(),
@@ -7894,7 +7890,7 @@ mod tests {
                     .await
                     .expect("encrypt_with seals the row");
 
-                let opened = ValueFrame::decrypt_from(
+                let opened = OwnedFrame::decrypt_from(
                     Planned::with_resolver(&plan, sealed, FakeEql),
                     &keyset,
                 )
@@ -7924,7 +7920,7 @@ mod tests {
             mod assertions {
                 use super::*;
 
-                pub(super) fn opens_to_the_row(opened: &ValueFrame, row: Tree) {
+                pub(super) fn opens_to_the_row(opened: &OwnedFrame, row: Tree) {
                     assert_eq!(
                         Tree::from_frame(opened.risky_ref()).expect("the opened row is a frame"),
                         row,
@@ -8159,7 +8155,7 @@ mod tests {
             cipher: &StackCipher<Counting>,
             field: Tree,
             value: Raw<'_>,
-        ) -> (vitaminc_protected::Buffer, ValueFrame) {
+        ) -> (vitaminc_protected::Buffer, OwnedFrame) {
             let plan = plan(obj(vec![("f", field)])).expect("the plan parses");
             let sealed = seal_one(cipher, &plan, value).await;
             let opened = decrypt(cipher, sealed, &plan, None)
@@ -8472,43 +8468,30 @@ mod tests {
         /// shape; one that names a field is that field's, by its cause.
         #[test]
         fn a_split_refusal_names_its_field_and_cause() {
-            use crate::dynamic::value_frame::FieldFault;
-            let fault = |error| {
-                split_refusal(DecodeError::Source(
-                    vitaminc_aead::plaintext::SourceError::new(FieldFault {
-                        field: "age".to_string(),
-                        error,
-                    }),
-                ))
+            let refusal = |field: Option<&str>, error| {
+                split_refusal(SplitRefusal {
+                    field: field.map(str::to_owned),
+                    error,
+                })
             };
+            let fault = |error| refusal(Some("age"), error);
             expect(
-                &fault(DecodeError::duplicate_key("k")),
+                &fault(FrameWriteError::DuplicateKey),
                 "Source",
                 Some("age"),
                 Reason::RepeatedKey,
             );
             expect(
-                &fault(DecodeError::Expected("a value")),
+                &fault(FrameWriteError::Invalid),
                 "Source",
                 Some("age"),
                 Reason::FieldType,
             );
+            for error in [FrameWriteError::TooDeep, FrameWriteError::Unwritten] {
+                expect(&fault(error), "Source", Some("age"), Reason::Unframeable);
+            }
             expect(
-                &fault(DecodeError::unknown_key("k")),
-                "Source",
-                Some("age"),
-                Reason::Unframeable,
-            );
-            expect(
-                &split_refusal(DecodeError::Expected("a value")),
-                "Source",
-                None,
-                Reason::NotAnObject,
-            );
-            expect(
-                &split_refusal(DecodeError::Source(
-                    vitaminc_aead::plaintext::SourceError::msg("not a field's"),
-                )),
+                &refusal(None, FrameWriteError::Invalid),
                 "Source",
                 None,
                 Reason::NotAnObject,

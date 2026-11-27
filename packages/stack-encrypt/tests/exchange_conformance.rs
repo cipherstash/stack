@@ -16,7 +16,7 @@ use common::{hex, unhex};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
-use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record, NoTargets, Op, Operand};
 use stack_encrypt::{
     AsProtectedRef as _, CipherText, Ciphertext, KeysetCipher, Label, OpaqueBlob, PassthroughFrame,
     SealedValue, StackCipherText,
@@ -876,7 +876,7 @@ fn a_null_input_is_the_runtime_profile_null() {
         kind: "null".into(),
         text: String::new(),
     };
-    let expected: ValueFrame = frame(vitaminc_aead::plaintext::Raw(
+    let expected: OwnedFrame = frame(vitaminc_aead::plaintext::Raw(
         None,
         vitaminc_aead::plaintext::Physical::Null,
     ));

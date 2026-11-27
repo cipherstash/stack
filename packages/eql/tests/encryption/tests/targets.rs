@@ -10,12 +10,12 @@ use eql_bindings::encryption::targets::{self as targets, Opener, Target, TargetE
 use eql_bindings::v4::text::{TextEq, TextEqQuery};
 use eql_bindings::{v4, Identifier};
 use eql_domains::{Term, CATALOG};
-use stack_encrypt::dynamic::{ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{frame::OwnedFrame, ValueKind};
 use stack_encrypt::{Decrypt, DecryptFrom, Encrypt, EncryptInto, Label};
 
 /// A Rust value as the engine's runtime plaintext: its frame.
-fn frame<T: Encrypt>(value: T) -> ValueFrame {
-    ValueFrame::of(value).unwrap()
+fn frame<T: Encrypt>(value: T) -> OwnedFrame {
+    OwnedFrame::of(value).unwrap()
 }
 
 fn email() -> Label {
@@ -26,12 +26,12 @@ fn column() -> stack_encrypt::NonEmpty<Identifier> {
     Identifier::for_column("users", "email").unwrap()
 }
 
-fn text(value: &str) -> ValueFrame {
+fn text(value: &str) -> OwnedFrame {
     frame(value)
 }
 
 /// An opened frame read as text; any other kind fails the test.
-fn opened(value: ValueFrame) -> String {
+fn opened(value: OwnedFrame) -> String {
     let kind = value.kind();
     value
         .visit(String::sink())

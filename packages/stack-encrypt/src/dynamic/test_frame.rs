@@ -2,7 +2,7 @@
 //! test spells, written as frame bytes, and a frame read back as one.
 //!
 //! The tree is a test's own notation, never a type the engine takes: every
-//! entry point reads frames ([`ValueFrame`](super::ValueFrame), or bytes),
+//! entry point reads frames ([`OwnedFrame`](vitaminc_aead::frame::OwnedFrame), or bytes),
 //! and a tree reaches one only as its frame or as an [`Encrypt`] source.
 //! [`frame_of`] writes objects and arrays by hand, so a test can send a
 //! repeated key, which no frame writer would.
@@ -85,7 +85,7 @@ impl Tree {
     /// from the tree's frame: `None` for a null, an `undefined`, a
     /// passthrough, or a tree no frame holds.
     pub(crate) fn kind(&self) -> Option<super::ValueKind> {
-        super::ValueFrame::of(self).ok()?.kind()
+        vitaminc_aead::frame::OwnedFrame::of(self).ok()?.kind()
     }
 
     /// A frame read back as a tree.

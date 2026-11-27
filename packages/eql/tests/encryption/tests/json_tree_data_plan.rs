@@ -35,7 +35,7 @@ use eql_bindings::encryption::EqlTargets;
 use eql_bindings::v4::json_tree::{JsonTree, JsonTreeDocument, JsonTreeLeafQuery, JsonTreeQuery};
 use eql_bindings::Identifier;
 use serde_json::{json, Value};
-use stack_encrypt::dynamic::{self, record, TargetError, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record, TargetError};
 use stack_encrypt::eql_simulator;
 use stack_encrypt::json::{JsonDocument, JsonOptions, JsonPlaintext, JsonQuery};
 use stack_encrypt::{CipherText, DecryptFrom, Encrypt, KeysetCipher, Label, NonEmpty};
@@ -70,8 +70,8 @@ fn plan() -> record::Plan {
     .unwrap()
 }
 
-fn frame<T: Encrypt>(value: T) -> ValueFrame {
-    ValueFrame::of(value).unwrap()
+fn frame<T: Encrypt>(value: T) -> OwnedFrame {
+    OwnedFrame::of(value).unwrap()
 }
 
 /// The documents a batch carries, as values.
@@ -410,12 +410,12 @@ async fn text_that_is_not_a_document_is_refused_before_any_key() {
 // =============================================================================
 
 /// An operator's input as a binding writes it: an object of named inputs.
-fn input(entries: &[(&str, Value)]) -> ValueFrame {
+fn input(entries: &[(&str, Value)]) -> OwnedFrame {
     let object: serde_json::Map<String, Value> = entries
         .iter()
         .map(|(k, v)| ((*k).to_owned(), v.clone()))
         .collect();
-    ValueFrame::from_bytes(
+    OwnedFrame::from_bytes(
         dynamic::frame::serde::to_vec(&object)
             .unwrap()
             .as_protected_ref(),
@@ -920,7 +920,7 @@ async fn open(
     request: Value,
     groups: Vec<Vec<String>>,
 ) -> Result<Vec<Vec<Value>>, stack_encrypt::Error> {
-    let request = ValueFrame::from_bytes(
+    let request = OwnedFrame::from_bytes(
         dynamic::frame::serde::to_vec(&request)
             .unwrap()
             .as_protected_ref(),

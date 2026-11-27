@@ -11,7 +11,7 @@ use common::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record, NoTargets, Op, Operand};
 use stack_encrypt::{AsProtectedRef as _, CipherText, StackCipherText};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -124,7 +124,7 @@ fn stored(row: &StackCipherText) -> Option<(usize, BTreeMap<String, Vec<u8>>)> {
     Some((length.expect("ciphertext stored"), terms))
 }
 
-fn row(input: &Input) -> ValueFrame {
+fn row(input: &Input) -> OwnedFrame {
     object(vec![("value", value(input))])
 }
 

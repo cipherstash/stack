@@ -17,8 +17,8 @@ mod common;
 use common::frames::{frame, object, payload};
 use recipher_frame::serde::from_slice;
 use serde::Deserialize;
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
-use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{
     passthrough, Borrowed, DeclaredContext, DeclaredScopes, DecryptSource, Decryption,
@@ -130,7 +130,7 @@ fn data_plan() -> DataPlan {
     let declaration = recipher_frame::serde::to_vec(&json).expect("frames");
     record::plan(declaration.as_protected_ref()).expect("a plan")
 }
-fn dynamic_source(user: &User) -> ValueFrame {
+fn dynamic_source(user: &User) -> OwnedFrame {
     object(vec![
         ("id", frame(user.id)),
         ("name", frame(user.name.as_str())),

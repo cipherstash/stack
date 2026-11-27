@@ -21,13 +21,13 @@ use eql_bindings::v4::text::{
     TextSearchQuery,
 };
 use eql_bindings::Identifier;
-use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::sem::TermError;
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{DecryptFrom, Encrypt, EncryptInto, Label, NonEmpty};
 
-fn frame<T: Encrypt>(value: T) -> ValueFrame {
-    ValueFrame::of(value).unwrap()
+fn frame<T: Encrypt>(value: T) -> OwnedFrame {
+    OwnedFrame::of(value).unwrap()
 }
 
 fn column() -> NonEmpty<Identifier> {

@@ -80,16 +80,15 @@ use std::fmt;
 use super::record::{FieldPlan, Plan};
 use super::term::derive;
 use super::term::OneScalar;
-use super::value_frame::Parts;
 use super::ValueKind;
 use super::{
     admits, read, Error, Reason, TargetDescriptor, TargetError, TargetOptions, TargetResolver,
-    ValueFrame,
 };
 use crate::op::{Limit, Stats};
 use crate::sem::{match_limit, MatchOptions, QueryTokens, Side, TermError};
 use crate::target::IndexSpec;
 use crate::{KeysetCipher, Pending};
+use vitaminc_aead::frame::OwnedFrame;
 use vitaminc_aead::plaintext::{Logical, Physical};
 use vitaminc_aead::Encrypt;
 
@@ -406,8 +405,8 @@ struct Answer<'p> {
 
 /// The input of a query, read as its field's kind.
 enum Input {
-    One(ValueFrame),
-    Pair(ValueFrame, ValueFrame),
+    One(OwnedFrame),
+    Pair(OwnedFrame, OwnedFrame),
 }
 
 /// Find `field` in `plan` and the index that answers `operator` for it.
@@ -620,7 +619,7 @@ fn names_its_context(plan: &Plan, field: &str) -> Result<(), Error> {
 fn read_input(answer: &Answer<'_>, operator: Op, input: impl Encrypt) -> Result<Input, Error> {
     let name = answer.field.name();
     if !operator.takes_pair() {
-        let input = ValueFrame::of(input).map_err(|_| Error::Source {
+        let input = OwnedFrame::of(input).map_err(|_| Error::Source {
             field: Some(name.to_owned()),
             reason: Reason::FieldType,
         })?;
@@ -640,16 +639,14 @@ fn read_input(answer: &Answer<'_>, operator: Op, input: impl Encrypt) -> Result<
             .map(Input::One)
             .map_err(|error| error.in_field(name));
     }
-    let one = |value: ValueFrame| read(answer.kind, value).map_err(|error| error.in_field(name));
-    let bounds = ValueFrame::of(input)
-        .and_then(|input| input.parts())
-        .map_err(|_| not_a_range(name))?;
-    match bounds {
-        Parts::Seq(bounds) => match <[ValueFrame; 2]>::try_from(bounds) {
-            Ok([lo, hi]) => Ok(Input::Pair(one(lo)?, one(hi)?)),
-            Err(_) => Err(not_a_range(name)),
-        },
-        _ => Err(not_a_range(name)),
+    let one = |value: OwnedFrame| read(answer.kind, value).map_err(|error| error.in_field(name));
+    let bounds = OwnedFrame::of(input)
+        .ok()
+        .and_then(|input| input.elements())
+        .ok_or_else(|| not_a_range(name))?;
+    match <[OwnedFrame; 2]>::try_from(bounds) {
+        Ok([lo, hi]) => Ok(Input::Pair(one(lo)?, one(hi)?)),
+        Err(_) => Err(not_a_range(name)),
     }
 }
 
@@ -727,7 +724,7 @@ fn prepare_answer(answer: &Answer<'_>, input: &Input) -> Result<(), Error> {
 /// takes ([`crate::sem::query::order_text`]): the fold exists, and under
 /// block ORE (`block`) fits the scheme and does not end in NUL. Anything
 /// but text has nothing to refuse.
-fn order_text(value: &ValueFrame, block: bool) -> Result<(), TermError> {
+fn order_text(value: &OwnedFrame, block: bool) -> Result<(), TermError> {
     value
         .visit(OneScalar::new(
             |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
@@ -750,7 +747,7 @@ fn order_text(value: &ValueFrame, block: bool) -> Result<(), TermError> {
 /// [`TermError::EmptyTermText`] for text that cuts no token, whose filter
 /// would match every row. [`Error::Internal`] for a value that is not text,
 /// which [`read_input`] has ruled out.
-fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryTokens, Error> {
+fn query_tokens(value: &OwnedFrame, options: &MatchOptions) -> Result<QueryTokens, Error> {
     value
         .visit(OneScalar::new(
             |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
@@ -773,7 +770,7 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
 ///
 /// ```
 /// use serde_json::json;
-/// use stack_encrypt::dynamic::{check_query, frame, record, Op, Reason, ValueFrame};
+/// use stack_encrypt::dynamic::{check_query, frame, record, Op, Reason, frame::OwnedFrame};
 /// use stack_encrypt::AsProtectedRef;
 /// # use stack_encrypt::dynamic::{TargetDescriptor, TargetError, TargetOptions, TargetResolver, ValueKind};
 /// # use stack_encrypt::target::{DeclaredContext, IndexSpec};
@@ -790,13 +787,13 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
 /// #         .with_predicate_query_sql_domain("eql_v4.query_json_predicate")]
 /// #     }
 /// #     fn encrypt<'a, K: 'static>(&self, _: &str, _: Option<&TargetOptions>,
-/// #         _: &'a KeysetCipher<'_, K>, _: &Label, _: &DeclaredContext, _: ValueFrame,
+/// #         _: &'a KeysetCipher<'_, K>, _: &Label, _: &DeclaredContext, _: OwnedFrame,
 /// #     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> { unreachable!() }
 /// #     fn decrypt<'a, K: 'static>(&self, _: &str, _: &'a StackCipher<K>, _: &Label,
 /// #         _: &DeclaredContext, _: &[u8],
-/// #     ) -> Result<Pending<'a, ValueFrame, K>, TargetError> { unreachable!() }
+/// #     ) -> Result<Pending<'a, OwnedFrame, K>, TargetError> { unreachable!() }
 /// #     fn query<'a, K: 'static>(&self, _: &str, _: &IndexSpec, _: &'a KeysetCipher<'_, K>,
-/// #         _: &Label, _: &DeclaredContext, _: ValueFrame,
+/// #         _: &Label, _: &DeclaredContext, _: OwnedFrame,
 /// #     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> { unreachable!() }
 /// # }
 /// // A document field that orders `$.age`.
@@ -809,12 +806,12 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
 /// // variables as the JSON text of one object.
 /// // Each part goes straight into a protected frame, so no plain buffer
 /// // holds the query's values.
-/// let input = |predicate: &str| -> ValueFrame {
+/// let input = |predicate: &str| -> OwnedFrame {
 ///     let parts = std::collections::BTreeMap::from([
-///         ("predicate", ValueFrame::of(predicate).unwrap()),
-///         ("vars", ValueFrame::of(r#"{"min": 18, "r": "sibling"}"#).unwrap()),
+///         ("predicate", OwnedFrame::of(predicate).unwrap()),
+///         ("vars", OwnedFrame::of(r#"{"min": 18, "r": "sibling"}"#).unwrap()),
 ///     ]);
-///     ValueFrame::of(&parts).unwrap()
+///     OwnedFrame::of(&parts).unwrap()
 /// };
 /// let check = |predicate: &str| {
 ///     check_query(&plan, "profile", Op::Match, input(predicate), &Documents)
@@ -846,7 +843,7 @@ pub fn check_query(
     let answer = answer(plan, field, operator, resolver)?;
     has_context(plan, field)?;
     if operator.is_json() {
-        let input = ValueFrame::of(input).map_err(|_| json_input(field))?;
+        let input = OwnedFrame::of(input).map_err(|_| json_input(field))?;
         return super::json_query::check(operator, json_options(&answer)?, &input)
             .map_err(|error| error.in_field(field));
     }
@@ -881,7 +878,7 @@ fn json_term<'a, K: 'static>(
     input: impl Encrypt,
 ) -> Result<Pending<'a, QueryTerm, K>, Error> {
     let field = answer.field.name();
-    let input = ValueFrame::of(input).map_err(|_| json_input(field))?;
+    let input = OwnedFrame::of(input).map_err(|_| json_input(field))?;
     let target = answer.target.as_ref().ok_or(Error::Internal)?;
     // The SQL type each operand binds as, from the target: `answer` lists
     // no operator whose domain the target does not name.
@@ -922,8 +919,8 @@ pub fn check_json_open(
 ) -> Result<(), Error> {
     let _ = answer(plan, field, Op::Selector, resolver)?;
     names_its_context(plan, field)?;
-    let request = ValueFrame::of(request).map_err(|_| json_input(field))?;
-    let rows = ValueFrame::of(rows).map_err(|_| json_input(field))?;
+    let request = OwnedFrame::of(request).map_err(|_| json_input(field))?;
+    let rows = OwnedFrame::of(rows).map_err(|_| json_input(field))?;
     super::json_query::check_open(&request, &rows).map_err(|error| error.in_field(field))
 }
 
@@ -1003,15 +1000,15 @@ pub fn json_open<'a, K>(
     request: impl Encrypt,
     rows: impl Encrypt,
     resolver: &(impl TargetResolver + ?Sized),
-) -> Result<Pending<'a, ValueFrame, K>, Error>
+) -> Result<Pending<'a, OwnedFrame, K>, Error>
 where
     K: Sync + 'static,
 {
     // Answering `selector` is what makes a field a document field.
     let answer = answer(plan, field, Op::Selector, resolver)?;
     names_its_context(plan, field)?;
-    let request = ValueFrame::of(request).map_err(|_| json_input(field))?;
-    let rows = ValueFrame::of(rows).map_err(|_| json_input(field))?;
+    let request = OwnedFrame::of(request).map_err(|_| json_input(field))?;
+    let rows = OwnedFrame::of(rows).map_err(|_| json_input(field))?;
     // Under the field's label, then the plan's scopes and bindings, as
     // the document was sealed.
     let under = super::json_query::Under::new(answer.field.label(), plan.declared_context());
@@ -1145,7 +1142,7 @@ pub fn query_term<'a, K: 'static>(
         );
     }
     let context = answer.field.context();
-    let term = |value: &ValueFrame| {
+    let term = |value: &OwnedFrame| {
         derive(cipher, value, &answer.index, context.clone(), Side::Query)
             .map_err(|error| error.in_field(field))
     };
@@ -1439,8 +1436,8 @@ mod tests {
         Tree::String(s.into())
     }
 
-    fn vf(value: &Tree) -> ValueFrame {
-        ValueFrame::of(value).expect("a value")
+    fn vf(value: &Tree) -> OwnedFrame {
+        OwnedFrame::of(value).expect("a value")
     }
 
     /// One field of `users`, as a binding spells it.
@@ -1801,8 +1798,8 @@ mod tests {
             .as_deref(),
         )
         .expect("the plan parses");
-        let one = |text: &str| ValueFrame::of(text).expect("a value");
-        let two = |lo: &str, hi: &str| ValueFrame::of(vec![lo, hi]).expect("a value");
+        let one = |text: &str| OwnedFrame::of(text).expect("a value");
+        let two = |lo: &str, hi: &str| OwnedFrame::of(vec![lo, hi]).expect("a value");
         let longest = "a".repeat(1023);
         let accepted = [
             (Op::Lt, one(&longest)),
@@ -2232,10 +2229,10 @@ mod tests {
         )
         .expect("the plan parses");
         let frame = |ty: Option<Logical>, value: Physical<'_>| {
-            ValueFrame::of(Raw(ty, value)).expect("a value")
+            OwnedFrame::of(Raw(ty, value)).expect("a value")
         };
         let int = |int: Int| frame(None, Physical::Int(int));
-        let ask = |name: &'static str, operator: Op, input: ValueFrame| {
+        let ask = |name: &'static str, operator: Op, input: OwnedFrame| {
             let plan = &plan;
             let keyset = &keyset;
             async move {
@@ -2269,7 +2266,7 @@ mod tests {
             .encrypt(&keyset)
             .await
             .unwrap();
-        let bounds = ValueFrame::of(vec![
+        let bounds = OwnedFrame::of(vec![
             Raw(None, Physical::Int(Int::I128(i128::MIN))),
             Raw(None, Physical::Int(Int::I128(i128::MAX))),
         ])
@@ -2282,7 +2279,7 @@ mod tests {
                 hi: typed.hi().to_bytes(),
             }
         );
-        let inverted = ValueFrame::of(vec![
+        let inverted = OwnedFrame::of(vec![
             Raw(None, Physical::Int(Int::I128(1))),
             Raw(None, Physical::Int(Int::I128(0))),
         ])
@@ -2292,7 +2289,7 @@ mod tests {
             "an inverted 128-bit range is not refused"
         );
 
-        let stored = |value: &ValueFrame, name: &'static str| {
+        let stored = |value: &OwnedFrame, name: &'static str| {
             let keyset = &keyset;
             let ctx = super::super::context(
                 recipher_frame::serde::to_vec(&("users", name))
@@ -2301,7 +2298,7 @@ mod tests {
             )
             .expect("context");
             // A frame is not `Clone`: the future owns a frame of the same bytes.
-            let value = ValueFrame::from_bytes(value.as_protected_ref()).expect("a frame");
+            let value = OwnedFrame::from_bytes(value.as_protected_ref()).expect("a frame");
             async move {
                 super::super::term(keyset, &value, &IndexSpec::Equality, ctx)
                     .await
@@ -2679,7 +2676,7 @@ mod tests {
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: &crate::target::DeclaredContext,
-            _: ValueFrame,
+            _: OwnedFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("a query encrypts nothing")
         }
@@ -2690,7 +2687,7 @@ mod tests {
             _: &Label,
             _: &crate::target::DeclaredContext,
             _: &[u8],
-        ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+        ) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
             unreachable!("a query decrypts nothing")
         }
         fn query<'a, K: 'static>(
@@ -2700,7 +2697,7 @@ mod tests {
             keyset: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: &crate::target::DeclaredContext,
-            _: ValueFrame,
+            _: OwnedFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             Ok(Pending::ready(keyset, Ok(br#"{"bf":[1,5,2047]}"#.to_vec())))
         }
@@ -2840,7 +2837,7 @@ mod tests {
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: &crate::target::DeclaredContext,
-            _: ValueFrame,
+            _: OwnedFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("a query encrypts nothing")
         }
@@ -2851,7 +2848,7 @@ mod tests {
             _: &Label,
             _: &crate::target::DeclaredContext,
             _: &[u8],
-        ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+        ) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
             unreachable!("a query decrypts nothing")
         }
         fn query<'a, K: 'static>(
@@ -2861,7 +2858,7 @@ mod tests {
             keyset: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: &crate::target::DeclaredContext,
-            _: ValueFrame,
+            _: OwnedFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             Ok(Pending::ready(keyset, Ok(br#"{"hm":"00"}"#.to_vec())))
         }
@@ -2947,7 +2944,7 @@ mod tests {
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: &crate::target::DeclaredContext,
-            _: ValueFrame,
+            _: OwnedFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("a query encrypts nothing")
         }
@@ -2958,7 +2955,7 @@ mod tests {
             _: &Label,
             _: &crate::target::DeclaredContext,
             _: &[u8],
-        ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+        ) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
             unreachable!("a query decrypts nothing")
         }
         fn query<'a, K: 'static>(
@@ -2968,7 +2965,7 @@ mod tests {
             keyset: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: &crate::target::DeclaredContext,
-            _: ValueFrame,
+            _: OwnedFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             Ok(Pending::ready(
                 keyset,

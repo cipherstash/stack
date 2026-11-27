@@ -102,7 +102,7 @@ context argument.
   [`vitaminc_protected::ProtectedRef`]; call
   [`crate::AsProtectedRef::as_protected_ref`] on the bytes.
 - A **value**: the record, as one frame in a
-  [`crate::dynamic::ValueFrame`]. A binding never builds a tree of values; it
+  [`crate::dynamic::frame::OwnedFrame`]. A binding never builds a tree of values; it
   writes the host value straight into a frame, which holds the bytes in a
   buffer wiped when it drops, and the engine walks them in place.
 - A **keyset cipher**: which ZeroKMS keyset mints and opens the keys.
@@ -147,7 +147,7 @@ the stored term was derived.
 
 ### Decrypt a record
 
-`ValueFrame::decrypt_from(Planned::new(&plan, stored), cipher)` settles to
+`OwnedFrame::decrypt_from(Planned::new(&plan, stored), cipher)` settles to
 the record's frame, in a buffer wiped when it drops. The `cipher` argument
 says which cipher opens ([`crate::CipherRef`]):
 
@@ -343,9 +343,9 @@ Two kinds of data cross a binding, and the engine treats them differently.
 self-describing transport encoding, the same bytes a native Rust value
 describes itself as. The engine never decodes a frame into a tree. It reads
 it in place, walks it into the encrypting sink and the term derivers, and
-drops it. [`crate::dynamic::ValueFrame::from_bytes`] accepts a frame that
-holds one value, and [`crate::dynamic::ValueFrame::check`] checks a record
-source in place. Both refuse a scalar its logical type does not admit, such
+drops it. [`crate::dynamic::frame::OwnedFrame::from_bytes`] accepts a frame
+that holds one value, and [`crate::dynamic::frame::Frame::parse`] checks a
+record source in place. Both refuse a scalar its logical type does not admit, such
 as a date out of range. A logical type this build does not know is carried
 as it is: an untyped or passthrough field stores it, and no typed field or
 index takes it. A decrypted record comes back as a frame
@@ -384,7 +384,7 @@ binding inherits the rule for every copy it makes.
 
 What the engine does for every binding:
 
-- The engine holds a value as a [`crate::dynamic::ValueFrame`] in a
+- The engine holds a value as a [`crate::dynamic::frame::OwnedFrame`] in a
   `Protected` buffer, and an opened value as the same, so the one copy is
   wiped by the type, not by a line someone has to remember. A `Planned`
   value is moved in and wiped when the call is done with it.
@@ -681,17 +681,17 @@ as a test of that:
 
 ```
 use std::collections::BTreeMap;
-use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::Controlled as _;
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-let value = ValueFrame::of(42i32)?;
+let value = OwnedFrame::of(42i32)?;
 assert_eq!(hex(value.risky_ref()), "042a000000");
 
-let row = ValueFrame::of(BTreeMap::from([("age", 42i32)]))?;
+let row = OwnedFrame::of(BTreeMap::from([("age", 42i32)]))?;
 assert_eq!(hex(row.risky_ref()), "f10100000003000000616765042a000000");
 
 // A control message is written by serde into a buffer wiped on drop.
@@ -758,7 +758,8 @@ frame that went in:
 
 ```
 use std::collections::BTreeMap;
-use stack_encrypt::dynamic::{record, Op, Operand, Planned, QueryTerm, ValueFrame};
+use stack_encrypt::dynamic::frame::OwnedFrame;
+use stack_encrypt::dynamic::{record, Op, Operand, Planned, QueryTerm};
 use stack_encrypt::{AsProtectedRef, DecryptFrom, EncryptInto, StackCipher, StackCipherText};
 
 # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
@@ -779,20 +780,20 @@ let by_age = plan.query("age", Op::Eq)?;
 
 // A frame is moved into each call and wiped by it, so the row is written
 // once for each call that takes it.
-let row = || ValueFrame::of(BTreeMap::from([("age", 42i32)]));
+let row = || OwnedFrame::of(BTreeMap::from([("age", 42i32)]));
 
 // Encrypt: one ZeroKMS request, the stored record.
 let stored: StackCipherText = Planned::new(&plan, row()?).encrypt_into(&keyset).await?;
 
 // Query: the equality term for 42, the bytes the stored `eq` term holds.
-let term: QueryTerm = Planned::new(&by_age, ValueFrame::of(42i32)?)
+let term: QueryTerm = Planned::new(&by_age, OwnedFrame::of(42i32)?)
     .encrypt_into(&keyset)
     .await?;
 assert!(matches!(term.operand(), Operand::One(bytes) if bytes.len() == 32));
 
 // Decrypt through the keyset: the record's frame, equal to what went in,
 // in a buffer wiped when it drops.
-let opened = ValueFrame::decrypt_from(Planned::new(&plan, stored), &keyset).await?;
+let opened = OwnedFrame::decrypt_from(Planned::new(&plan, stored), &keyset).await?;
 assert_eq!(opened, row()?);
 # Ok::<(), Box<dyn std::error::Error>>(())
 # }).unwrap();
@@ -831,7 +832,7 @@ done:
    the frame is the crate's, and what you test is the conversion from a
    value of your language to a frame and back: run the value profile
    against it, and fuzz the conversion of a host value to a frame and back
-   against [`crate::dynamic::ValueFrame::of`] for the same value. For a
+   against [`crate::dynamic::frame::OwnedFrame::of`] for the same value. For a
    guest, the host's codec writes and reads every frame of the raw-frame
    profile and refuses every frame it says to refuse; add a fuzz target
    that feeds the codec's output to the engine's reader and the engine's

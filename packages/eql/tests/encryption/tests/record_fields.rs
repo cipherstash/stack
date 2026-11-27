@@ -41,7 +41,7 @@ use eql_bindings::v4::text::{Text, TextEq, TextEqQuery};
 use eql_bindings::Identifier;
 use serde::Serialize;
 use serde_json::{json, Value};
-use stack_encrypt::dynamic::{self, record, Op, Operand, Planned, QueryTerm, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record, Op, Operand, Planned, QueryTerm};
 use stack_encrypt::json::JsonPlaintext;
 use stack_encrypt::target::transcode::Reader as _;
 use stack_encrypt::target::{AeadContext, Bind, Parts, Scope};
@@ -309,7 +309,7 @@ async fn the_derive_and_a_data_plan_write_the_same_row() {
         age: 36,
         profile: profile().to_string(),
     };
-    let source = ValueFrame::from_bytes(
+    let source = OwnedFrame::from_bytes(
         dynamic::frame::serde::to_vec(&source)
             .unwrap()
             .as_protected_ref(),
@@ -567,7 +567,7 @@ fn lead_plan() -> record::Plan {
 }
 
 /// A lead as a binding sends it to a data plan.
-fn lead_row() -> ValueFrame {
+fn lead_row() -> OwnedFrame {
     #[derive(Serialize)]
     struct Row {
         email: String,
@@ -577,7 +577,7 @@ fn lead_row() -> ValueFrame {
         email: "ada@example.com".into(),
         profile: profile().to_string(),
     };
-    ValueFrame::from_bytes(
+    OwnedFrame::from_bytes(
         dynamic::frame::serde::to_vec(&row)
             .unwrap()
             .as_protected_ref(),
@@ -642,7 +642,7 @@ async fn the_derive_and_a_data_plan_write_the_same_row_under_a_scope_and_a_bindi
     // The record's values, in the data plan's row, open through the plan.
     write_eql(&mut row, "email", &derived.email);
     write_eql(&mut row, "profile", &derived.profile);
-    let opened = ValueFrame::decrypt_from_with_context(
+    let opened = OwnedFrame::decrypt_from_with_context(
         Planned::with_resolver(&plan, row, EqlTargets),
         &keyset,
         tenant_and_row(),
@@ -666,7 +666,7 @@ async fn the_derive_and_a_data_plan_write_the_same_row_under_a_scope_and_a_bindi
         Scope::new(43u64).bind(9u128),
         Scope::new(42u64).bind(10u128),
     ] {
-        let refused = ValueFrame::decrypt_from_with_context(
+        let refused = OwnedFrame::decrypt_from_with_context(
             Planned::with_resolver(&plan, seal().await, EqlTargets),
             &keyset,
             parts,
@@ -674,7 +674,7 @@ async fn the_derive_and_a_data_plan_write_the_same_row_under_a_scope_and_a_bindi
         .await;
         assert!(refused.is_err());
     }
-    let refused = ValueFrame::decrypt_from(
+    let refused = OwnedFrame::decrypt_from(
         Planned::with_resolver(&plan, seal().await, EqlTargets),
         &keyset,
     )
@@ -687,7 +687,7 @@ async fn the_derive_and_a_data_plan_write_the_same_row_under_a_scope_and_a_bindi
     let term = |tenant: u64| {
         let (by_email, keyset) = (&by_email, &keyset);
         async move {
-            let value = ValueFrame::of("ada@example.com").unwrap();
+            let value = OwnedFrame::of("ada@example.com").unwrap();
             let term: QueryTerm = Planned::with_resolver(by_email, value, EqlTargets)
                 .encrypt_into_with_context(keyset, Scope::new(tenant))
                 .await

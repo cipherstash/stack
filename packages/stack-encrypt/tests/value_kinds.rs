@@ -27,7 +27,7 @@ use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
 use stack_encrypt::dynamic::{
-    context, query_term, NoTargets, Op, Operand, Reason, ValueFrame, ValueKind,
+    context, frame::OwnedFrame, query_term, NoTargets, Op, Operand, Reason, ValueKind,
 };
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{equality, Borrowed, CallerContext, IndexSpec};
@@ -73,8 +73,8 @@ fn decimal(mantissa: i128, scale: u8) -> Raw<'static> {
 }
 
 /// A value as the engine holds it: its frame.
-fn value(raw: Raw<'_>) -> ValueFrame {
-    ValueFrame::of(raw).expect("in the value model")
+fn value(raw: Raw<'_>) -> OwnedFrame {
+    OwnedFrame::of(raw).expect("in the value model")
 }
 
 /// 2026-10-17T01:02:03.123456789Z, in nanoseconds since the epoch.
@@ -193,7 +193,7 @@ fn data_plan() -> DataPlan {
 
 /// The source as a binding hands it over: one frame, a map of the fields in
 /// plan order.
-fn source() -> ValueFrame {
+fn source() -> OwnedFrame {
     let mut bytes = vitaminc_protected::Buffer::new();
     {
         let kinds = kinds();
@@ -207,7 +207,7 @@ fn source() -> ValueFrame {
         }
         map.end().expect("ended");
     }
-    ValueFrame::from_bytes(bytes.as_protected_ref()).expect("in the value model")
+    OwnedFrame::from_bytes(bytes.as_protected_ref()).expect("in the value model")
 }
 
 fn hex(bytes: &[u8]) -> String {

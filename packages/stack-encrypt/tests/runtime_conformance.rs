@@ -8,7 +8,7 @@ use common::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record, NoTargets, Op, Operand};
 use stack_encrypt::AsProtectedRef as _;
 use stack_encrypt::CipherText;
 use std::{
@@ -62,7 +62,7 @@ struct ExpectedError {
     field: String,
 }
 
-fn rows(input: &[Row]) -> ValueFrame {
+fn rows(input: &[Row]) -> OwnedFrame {
     frame(
         input
             .iter()

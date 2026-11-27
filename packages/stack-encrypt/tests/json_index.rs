@@ -365,8 +365,8 @@ fn scalar_in_array(stored: &Value, needle: &Value) -> bool {
 #[cfg(feature = "dynamic")]
 mod query {
     use stack_encrypt::dynamic::{
-        self, record, Operand, QueryTerm, TargetDescriptor, TargetError, TargetOptions,
-        TargetResolver, ValueFrame, ValueKind,
+        self, frame::OwnedFrame, record, Operand, QueryTerm, TargetDescriptor, TargetError,
+        TargetOptions, TargetResolver, ValueKind,
     };
     use stack_encrypt::json::JsonLeafQuery;
     use stack_encrypt::target::DeclaredContext;
@@ -417,7 +417,7 @@ mod query {
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: &DeclaredContext,
-            _: ValueFrame,
+            _: OwnedFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("these tests seal a document without a plan")
         }
@@ -429,7 +429,7 @@ mod query {
             _: &Label,
             _: &DeclaredContext,
             _: &[u8],
-        ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+        ) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
             unreachable!("these tests open a document without a plan")
         }
 
@@ -440,7 +440,7 @@ mod query {
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: &DeclaredContext,
-            _: ValueFrame,
+            _: OwnedFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("the JSON operators are the engine's")
         }
@@ -481,8 +481,8 @@ mod query {
 
     /// A JSON value as a frame: what a binding sends as an operator's
     /// input.
-    fn frame(input: &Value) -> ValueFrame {
-        ValueFrame::from_bytes(
+    fn frame(input: &Value) -> OwnedFrame {
+        OwnedFrame::from_bytes(
             dynamic::frame::serde::to_vec(input)
                 .unwrap()
                 .as_protected_ref(),

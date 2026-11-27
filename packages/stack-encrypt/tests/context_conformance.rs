@@ -15,7 +15,7 @@ use common::frames::{frame, object};
 use common::{hex, unhex};
 use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
-use stack_encrypt::dynamic::{self, record, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record};
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{
     equality, indexed, open, Borrowed, CallerContext, DeclaredContext, Decryption, Encrypted,
@@ -67,7 +67,7 @@ struct Expected {
     cases: BTreeMap<String, Vector>,
 }
 
-fn part(input: &Input) -> ValueFrame {
+fn part(input: &Input) -> OwnedFrame {
     if input.kind == "bytes" {
         frame(unhex(&input.text))
     } else {
@@ -97,13 +97,13 @@ fn extended(parts: &[Input]) -> DeclaredContext {
             context.with(extension(part))
         })
 }
-fn nest(head: ValueFrame, parts: &[Input]) -> ValueFrame {
+fn nest(head: OwnedFrame, parts: &[Input]) -> OwnedFrame {
     parts
         .iter()
         .fold(head, |head, p| frame(vec![head, part(p)]))
 }
 
-fn context(case: &Case, field_only: bool) -> ValueFrame {
+fn context(case: &Case, field_only: bool) -> OwnedFrame {
     let mut label = if field_only {
         vec![]
     } else {
@@ -135,7 +135,7 @@ fn plan(case: &Case) -> record::Plan {
     ));
     record::plan(object(fields).as_protected_ref()).unwrap()
 }
-fn source(case: &Case) -> ValueFrame {
+fn source(case: &Case) -> OwnedFrame {
     let mut fields = vec![];
     if case.base == "field" {
         fields.push(("tenant", frame(case.label.clone())));
@@ -307,7 +307,7 @@ async fn shared_context_composition() {
                 object(vec![
                     (
                         "context",
-                        ValueFrame::from_bytes(context_frame.as_protected_ref()).unwrap(),
+                        OwnedFrame::from_bytes(context_frame.as_protected_ref()).unwrap(),
                     ),
                     ("outputs", frame(vec!["c", "eq"])),
                     ("type", frame("string")),

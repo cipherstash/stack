@@ -8,7 +8,7 @@ use crate::v4::plaintext::Date;
 use crate::v4::plaintext::Decimal;
 use crate::v4::plaintext::JsonPlaintext;
 use crate::v4::plaintext::Timestamp;
-use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::target::{CallerContext, IndexSpec};
 use stack_encrypt::{KeysetCipher, Pending};
 /// Every EQL type a plan may name as a target, in
@@ -643,7 +643,7 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
     name: &str,
     keyset: &'a KeysetCipher<'_, K>,
     context: CallerContext,
-    plaintext: ValueFrame,
+    plaintext: OwnedFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     match name {
         "Integer" => run_target::<super::integer::Integer, Option<i32>, K>(
@@ -881,7 +881,7 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
     opener: Opener<'a, K>,
     context: CallerContext,
     stored: &[u8],
-) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
     match name {
         "Integer" => open_target::<super::integer::Integer, Option<i32>, K>(
             "Integer", opener, context, stored,
@@ -1107,7 +1107,7 @@ pub(crate) fn query_named<'a, K: 'static>(
     index: &IndexSpec,
     keyset: &'a KeysetCipher<'_, K>,
     context: CallerContext,
-    plaintext: ValueFrame,
+    plaintext: OwnedFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     match name {
         "IntegerEq" => run_target::<super::integer::IntegerEqQuery, Option<i32>, K>(

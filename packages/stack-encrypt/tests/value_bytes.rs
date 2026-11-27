@@ -38,7 +38,7 @@ use common::conformance::{value, Input};
 use common::frames::{frame, object};
 use common::{hex, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
-use stack_encrypt::dynamic::{self, record, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record};
 use stack_encrypt::json::JsonPlaintext;
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{equality, Borrowed, CallerContext};
@@ -51,7 +51,9 @@ use stack_kms::{
 use uuid::Uuid;
 use vitaminc_aead::plaintext::{FixedType, Float, Int, Logical, Physical, Raw, TimeUnit, Width};
 use vitaminc_aead::seal::Cipher;
-use vitaminc_aead::{Context, Encrypt, FrameWriter, IntoContext, LocalCipherText, Unspecified};
+use vitaminc_aead::{
+    Context, Encrypt, Frame, FrameWriter, IntoContext, LocalCipherText, Unspecified,
+};
 use vitaminc_encrypt::{Aes256Cipher, Key as AesKey};
 use vitaminc_protected::{Buffer, Controlled as _, Protected};
 
@@ -446,7 +448,7 @@ async fn dynamic_section(
     for (kind, text) in KINDS {
         let value = value(&input(kind, text));
         let frame = hex(value.risky_ref());
-        let row = |value: ValueFrame| object(vec![("value", value)]);
+        let row = |value: OwnedFrame| object(vec![("value", value)]);
         let mut entry = Map::new();
         let _ = entry.insert("text".into(), json!(text));
         let _ = entry.insert("frame".into(), json!(frame));
@@ -487,8 +489,8 @@ async fn dynamic_section(
     let untyped = json!({"outputs": ["c"]});
     let nested = object(vec![
         ("list", frame(vec![frame(1i32), frame(String::from("x"))])),
-        ("empty_list", frame(Vec::<ValueFrame>::new())),
-        ("empty_map", object(Vec::<(&str, ValueFrame)>::new())),
+        ("empty_list", frame(Vec::<OwnedFrame>::new())),
+        ("empty_map", object(Vec::<(&str, OwnedFrame)>::new())),
     ]);
     let _ = out.insert(
         "untyped_object".into(),
@@ -506,7 +508,7 @@ async fn dynamic_section(
     Json::Object(out)
 }
 
-fn value_of_null() -> ValueFrame {
+fn value_of_null() -> OwnedFrame {
     value(&input("null", ""))
 }
 
@@ -515,7 +517,7 @@ fn value_of_null() -> ValueFrame {
 // =============================================================================
 
 /// Frame bytes as a host writes them, read the way the Go guest reads a
-/// record: checked with [`ValueFrame::check`] and walked in place.
+/// record: checked with [`Frame::parse`] and walked in place.
 fn host_row(field_frame: &[u8]) -> Vec<u8> {
     // An object of one entry, `value`, whose frame is spliced in after the
     // key: the frame writer would drop a typed null, so the bytes are built
@@ -544,7 +546,7 @@ async fn host_row_outcome(
 ) -> Json {
     let row = host_row(field_frame);
     let row = protected(&row);
-    match ValueFrame::check(row.as_protected_ref()) {
+    match Frame::parse(row.risky_ref()) {
         Ok(checked) => seal_row(cipher, keys, spec, checked).await,
         Err(_) => json!({ "frame_refused": true }),
     }
@@ -557,11 +559,11 @@ fn protected(bytes: &[u8]) -> Buffer {
     buffer
 }
 
-/// A host frame read on its own: what [`ValueFrame::from_bytes`] keeps of it,
+/// A host frame read on its own: what [`OwnedFrame::from_bytes`] keeps of it,
 /// or that it refuses it.
 fn engine_frame(host: &[u8]) -> Json {
     let host = protected(host);
-    match ValueFrame::from_bytes(host.as_protected_ref()) {
+    match OwnedFrame::from_bytes(host.as_protected_ref()) {
         Ok(value) => json!(hex(value.risky_ref())),
         Err(_) => json!({ "refused": true }),
     }
@@ -858,7 +860,7 @@ async fn value_bytes_are_the_pinned_bytes() {
 async fn a_timestamp_in_any_unit_seals_to_the_nanosecond_leaf() {
     let (cipher, keys) = cipher().await;
     let spec = || json!({"outputs": ["c"], "type": "timestamp"});
-    let leaves = |field: ValueFrame| {
+    let leaves = |field: OwnedFrame| {
         let row = object(vec![("value", field)]);
         seal_row(&cipher, &keys, spec(), row)
     };
@@ -919,7 +921,7 @@ async fn a_passthrough_timestamp_keeps_the_hosts_bytes() {
             ("sealed", frame(7i32)),
             (
                 "value",
-                ValueFrame::from_bytes(protected(&host).as_protected_ref()).expect("in the model"),
+                OwnedFrame::from_bytes(protected(&host).as_protected_ref()).expect("in the model"),
             ),
         ]);
         let sent = row.risky_ref().to_vec();

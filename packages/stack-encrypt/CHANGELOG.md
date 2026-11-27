@@ -504,6 +504,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **The engine's plaintext is vitaminc's `OwnedFrame`; `dynamic::ValueFrame`
+  is removed** (#1955). `vitaminc_aead::frame::OwnedFrame`, which
+  `dynamic::frame` re-exports as `dynamic::frame::OwnedFrame`, is the same
+  thing: one value as its transport frame, in a buffer wiped when it drops,
+  a source and a decrypt target, compared in constant time. Every API that
+  took or returned a `ValueFrame` takes or returns an `OwnedFrame`. What
+  changes for a caller:
+  - Replace `dynamic::ValueFrame` with `dynamic::frame::OwnedFrame`.
+    `of`, `from_bytes`, `kind`, `elements`, `risky_ref` and `into_inner`
+    keep their names and meaning.
+  - `ValueFrame::check` is gone: check a record source with
+    `dynamic::frame::Frame::parse(bytes.risky_ref())`, which accepts and
+    refuses the same frames.
+  - `ValueFrame::from_bytes` returned `FromFrameError::Frame`;
+    `OwnedFrame::from_bytes` returns the `FrameError` it carried.
+    `dynamic::FromFrameError` is removed.
+  - `dynamic::Modeled`, `dynamic::Opening` and `dynamic::Children`, the
+    sinks behind `ValueFrame`, are removed. `OwnedFrame::sink()` (from
+    `Decrypt`) is the sink a ciphertext opens into.
+  - A zeroized frame holds no bytes and walks as an error, as before.
+  - No stored byte, frame byte or wire name changes.
+
 - **The engine no longer keeps its own list of the value types it
   accepts; each index says which kinds it takes** (#1918). What changes:
   - **A field can be declared `"uuid"`.** `dynamic::ValueKind::Uuid` is a
