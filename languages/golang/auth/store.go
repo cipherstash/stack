@@ -84,6 +84,13 @@ type root struct {
 	// still allocated. Close frees it even then.
 	released bool
 	cleanup  runtime.Cleanup
+	// slots bounds the token operations open in the guest at once (see
+	// maxPaused); each holds one for its whole life.
+	slots chan struct{}
+	// parked is how a parked token operation is woken: closed when the
+	// guest lists it as runnable, or when the profile closes. Guarded by
+	// mu.
+	parked map[uint64]chan struct{}
 }
 
 // Resolve opens the profile directory the Rust crate would: CS_CONFIG_PATH
@@ -148,7 +155,10 @@ func open(ctx context.Context, hostDir string, opts []Option) (*ProfileStore, er
 	if err != nil {
 		return nil, err
 	}
-	r := &root{inst: inst, hostDir: hostDir, stuck: guest.StuckAfter}
+	r := &root{
+		inst: inst, hostDir: hostDir, stuck: guest.StuckAfter,
+		slots: make(chan struct{}, maxPaused), parked: make(map[uint64]chan struct{}),
+	}
 	// The cleanup takes the instance, not the root: a cleanup whose
 	// argument reaches its object keeps that object alive forever.
 	r.cleanup = runtime.AddCleanup(r, func(inst *instance) { _ = inst.release() }, inst)
@@ -210,6 +220,9 @@ func (s *ProfileStore) Close() error {
 	r.released = true
 	r.closed = true
 	r.cleanup.Stop()
+	// A parked token operation wakes, resumes, and finds the profile
+	// closed, rather than waiting for good.
+	s.wakeAllLocked()
 	return r.inst.release()
 }
 
@@ -237,14 +250,28 @@ func (s *ProfileStore) call(ctx context.Context, fn export, args ...string) ([]b
 //
 // The caller's context bounds the wait for the lock, as encrypt's
 // Client.call does, and the guest runs under guest.Detach, so a caller
-// that gives up never closes the profile. A refresh request runs on for
-// refreshGrace, so the guest keeps the rotated token the service sends.
+// that gives up never closes the profile.
 func (s *ProfileStore) callArgs(ctx context.Context, fn export, args ...guest.Arg) ([]byte, error) {
 	r := s.root
 	if err := r.mu.Acquire(ctx); err != nil {
 		return nil, err
 	}
 	defer r.mu.Unlock()
+	return s.callLocked(ctx, fn, args...)
+}
+
+// closeLocked marks the profile closed and closes the guest's module: its
+// state is unknown.
+func (s *ProfileStore) closeLocked() {
+	s.root.closed = true
+	_ = s.root.inst.module.Close(context.Background())
+}
+
+// callLocked is callArgs with the profile's lock already held. A token
+// export that paused returns guest.ErrNeedsIO, whatever ctx did since: the
+// step is the caller's to take (stepLocked).
+func (s *ProfileStore) callLocked(ctx context.Context, fn export, args ...guest.Arg) ([]byte, error) {
+	r := s.root
 	if r.closed || r.inst.module.IsClosed() {
 		r.closed = true
 		return nil, ErrState
@@ -262,8 +289,7 @@ func (s *ProfileStore) callArgs(ctx context.Context, fn export, args ...guest.Ar
 		}
 		err = fmt.Errorf("%w: the guest ran on after its caller's context ended, and the profile is closed", err)
 	case errors.Is(err, guest.ErrTrap):
-		r.closed = true
-		_ = r.inst.module.Close(context.Background())
+		s.closeLocked()
 		err = fmt.Errorf("%w; the profile is closed", err)
 	}
 	// Under RequireLockedMemory a growth that cannot be locked is refused,
@@ -281,6 +307,9 @@ func (s *ProfileStore) callArgs(ctx context.Context, fn export, args ...guest.Ar
 	// succeed (a refresh that failed falls back to a cached token), so what
 	// it returned is wiped first.
 	panicked.raise(func() { guest.Wipe(out) })
+	if errors.Is(err, guest.ErrNeedsIO) {
+		return nil, err
+	}
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
 			err = fmt.Errorf("%w: %w", ctxErr, err)

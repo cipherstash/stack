@@ -22,6 +22,23 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one. `stashgen` does not yet map a Go type to it.
 
+### Fixed
+
+- **Other calls no longer wait behind a token refresh** (#1958). An
+  `auth.Strategy` is shared by every encrypt and decrypt in a process, and
+  about once every 15 minutes its token is refreshed with the token
+  service. That request held the strategy until the service answered, so
+  every other call that needed a token waited for it too, for as long as
+  the request took: a new connection each time, and about a second when the
+  service was slow. Now a refresh holds
+  up only the call that started it. Other calls get the current token at
+  once while it still works. A call that finds no usable token, at startup
+  or after the token has expired, waits for the exchange already in flight
+  rather than starting a second one.
+  - A device session's refresh still held up at the 30-second backstop now
+    fails as a transport failure, and the profile stays open. Before, the
+    backstop closed the profile.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

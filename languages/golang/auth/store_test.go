@@ -69,7 +69,9 @@ func write(t *testing.T, path, content string) {
 	}
 }
 
-// The guest may reach the profile mount and the two named auth host imports.
+// The guest may reach the profile mount and the one named auth host import,
+// the OIDC provider. It has no HTTP import: a request to the token service
+// is a step the host performs between two guest calls.
 func TestImportSurfaceIsWASIAndAuthTransport(t *testing.T) {
 	ctx := context.Background()
 	r := wazero.NewRuntime(ctx)
@@ -80,17 +82,13 @@ func TestImportSurfaceIsWASIAndAuthTransport(t *testing.T) {
 	}
 	defer compiled.Close(ctx)
 	sawPathOpen := false
-	sawTransport := false
 	sawOIDC := false
 	for _, imp := range compiled.ImportedFunctions() {
 		module, name, _ := imp.Import()
 		if module == "cipherstash_transport" {
-			switch name {
-			case "transport_send":
-				sawTransport = true
-			case "oidc_token_get":
+			if name == "oidc_token_get" {
 				sawOIDC = true
-			default:
+			} else {
 				t.Errorf("unexpected auth host import %s", name)
 			}
 			continue
@@ -109,10 +107,10 @@ func TestImportSurfaceIsWASIAndAuthTransport(t *testing.T) {
 	if !sawPathOpen {
 		t.Error("guest does not import path_open; it cannot be reading a profile")
 	}
-	if !sawTransport || !sawOIDC {
-		t.Errorf("missing auth imports: transport=%t oidc=%t", sawTransport, sawOIDC)
+	if !sawOIDC {
+		t.Error("missing the auth import oidc_token_get")
 	}
-	for _, name := range []string{"se_alloc", "se_dealloc", "sa_shutdown", "sa_current_workspace", "sa_set_current_workspace", "sa_clear_current_workspace", "sa_list_workspaces", "sa_workspace_dir", "sa_lock_path", "sa_secret_key", "sa_token", "sa_has_token", "sa_session_crn", "sa_device_identity", "sa_auth_new", "sa_auth_validate_crn", "sa_auth_token", "sa_auth_refresh", "sa_auth_free"} {
+	for _, name := range []string{"se_alloc", "se_dealloc", "sa_shutdown", "sa_current_workspace", "sa_set_current_workspace", "sa_clear_current_workspace", "sa_list_workspaces", "sa_workspace_dir", "sa_lock_path", "sa_secret_key", "sa_token", "sa_has_token", "sa_session_crn", "sa_device_identity", "sa_auth_new", "sa_auth_validate_crn", "sa_auth_token", "sa_auth_refresh", "sa_auth_free", "sa_auth_io", "sa_auth_resume", "sa_auth_abort", "sa_auth_runnable"} {
 		if _, ok := compiled.ExportedFunctions()[name]; !ok {
 			t.Errorf("guest does not export %s", name)
 		}

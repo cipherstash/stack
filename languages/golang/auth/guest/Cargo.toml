@@ -42,16 +42,20 @@ stack-guest-abi = { path = "../../../../packages/stack-guest-abi" }
 stack-profile = { path = "../../../../packages/stack-profile" }
 # The deserialized form of `secretkey.json` is wiped when it drops.
 zeroize = { version = "1", features = ["derive"] }
+# A step's request and response bytes cross as `HostValue::Bytes`, held in
+# `Protected`, wiped when it drops (`io`). The tests read codec values back
+# through `Controlled::risky_ref` too.
+vitaminc-protected = "0.10.0"
 
 [dev-dependencies]
+# The wasm32 token-step tests mint CTS tokens (a JWT's claims segment).
+base64 = "0.22"
 # The tests build the parse errors of a CRN, a region and a workspace id.
 cts-common = { version = "=0.43.0", default-features = false }
 serde_json = "1"
 tempfile = "3"
 # Native stack-auth refreshes run in a Tokio task, including with a mock transport.
 tokio = { version = "1.47.1", default-features = false, features = ["macros", "rt"] }
-# `Controlled::risky_ref`, to read a codec value back in the tests.
-vitaminc-protected = "0.10.0"
 
 [profile.release]
 # Smaller .wasm; the guest is IO-bound on the FFI copy and the file reads,

@@ -1818,6 +1818,7 @@ dependencies = [
 name = "stack-auth-guest"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "cts-common",
  "futures",
  "serde",
