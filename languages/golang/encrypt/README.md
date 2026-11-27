@@ -207,12 +207,14 @@ cipher := client.Keyset(encrypt.KeysetName("tenant42")).Extend("tenant42")
 ```
 
 `Extend` appends to the context that the tags declare, for every field, in
-every call through the cipher: the write, the query and the read. A row
-written through `Extend("tenant42")` opens only through a cipher with the
-same extension. An equality or match query through another extension
-matches none of its rows. A range query through another extension can still
-return them: see [Queries with the wrong tenant](#queries-with-the-wrong-tenant).
-No call takes a keyset or a context, so the three cannot use different ones.
+every call through the cipher: the write, the query, and the read. No call
+takes a keyset or a context, so the three cannot use different ones.
+
+A row written through `Extend("tenant42")` opens only through a cipher with
+the same extension. An equality query through another extension matches
+none of its rows. A match query can match one of them by chance. A range
+query through another extension can still return them: see
+[Queries with the wrong tenant](#queries-with-the-wrong-tenant).
 
 > **Take care**
 >
@@ -447,9 +449,14 @@ wrong keyset, scope, or `context_field`. See
 A query with the wrong keyset or the wrong scope returns no error. What it
 matches depends on the kind of query.
 
-An equality query (`Eq`) or a match query (`Matches`) matches none of the
-other tenant's rows. The query term derives under the cipher's keyset and
-scope, so it differs from every term the other tenant stored.
+An equality query (`Eq`) matches none of the other tenant's rows. The query
+term derives under the cipher's keyset and scope, so it differs from every
+term the other tenant stored.
+
+A match query (`Matches`) is probabilistic, as [Queries](#queries) says.
+A row of the other tenant can match by chance, as a row without the query's
+text can. A decrypt of such a row through the same cipher fails with the
+error in the table above.
 
 A range query can return the other tenant's rows, with an ORE index or an
 OPE index. The range queries are `Lt`, `Lte`, `Gt`, `Gte`, and `Between`.
