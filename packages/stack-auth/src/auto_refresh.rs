@@ -2413,3 +2413,8 @@ mod cancellation_tests;
 #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 #[path = "auto_refresh/tests/soak.rs"]
 mod cancellation_soak;
+
+#[cfg(test)]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+#[path = "auto_refresh/tests/background.rs"]
+mod background_tests;
