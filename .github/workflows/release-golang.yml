@@ -30,8 +30,7 @@ name: Release (Go)
 # languages/golang/CHANGELOG.md must have a `## [<version>]` section, which
 # becomes the release notes, or the run stops at the `notes` job. A version with a pre-release
 # suffix may be cut from any branch and is published as a GitHub pre-release;
-# a final version is cut from main only, and not while go.mod pins vitaminc's
-# Go bindings at a pseudo-version (scripts/go-release-version.mjs).
+# a final version is cut from main only.
 #
 # Four jobs, split by what they may touch:
 #
