@@ -75,8 +75,10 @@ type EQLType struct {
 }
 
 // GuestEngine is the engine the SDK embeds, in package encrypt. It holds no
-// credentials and makes no request. Close it when done. It returns the
-// error of [encrypt.NewChecker] when that fails.
+// credentials and makes no request. The returned engine is an [io.Closer]:
+// close it when done, with a type assertion, as in
+// `if c, ok := e.(io.Closer); ok { defer c.Close() }`. It returns the error
+// of [encrypt.NewChecker] when that fails.
 func GuestEngine(ctx context.Context) (Engine, error) {
 	// The guest answers through its se_plan_check and se_targets exports.
 	checker, err := encrypt.NewChecker(ctx)

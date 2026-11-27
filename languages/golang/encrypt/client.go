@@ -449,8 +449,9 @@ func (c *Client) release() error {
 // made here: the keyset is resolved on the cipher's first use, and cached,
 // which makes a Cipher cheap to make per call, per tenant or per request.
 // [Cipher.KeysetID] resolves it on its own. A nil selector gives a cipher
-// whose every call fails with [ErrEncoding]; the default keyset is
-// [Client.DefaultKeyset].
+// whose encrypt, decrypt and query calls fail with [ErrEncoding]. Its
+// KeysetID does not fail: it returns the default keyset's id. The default
+// keyset is [Client.DefaultKeyset].
 func (c *Client) Keyset(sel KeysetSelector) *Cipher {
 	// Rust's StackCipher::keyset. Go has no await, so the guest resolves
 	// the keyset on the cipher's first use.
