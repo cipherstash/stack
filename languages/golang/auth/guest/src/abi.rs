@@ -283,10 +283,12 @@ pub unsafe extern "C" fn sa_auth_validate_crn(ptr: *const u8, len: u32) -> u64 {
 /// ```
 ///
 /// `refresh_required` is true once the token is inside stack-auth's
-/// refresh window, while it still works: the host refreshes it with
+/// refresh window, while it still works, unless the strategy was created
+/// with `refresh_ahead` (the host refreshes ahead of expiry): the host refreshes it with
 /// [`sa_auth_refresh`] under its lock, and may hand the token to other
 /// callers until that refresh is done. A token past its expiry, which
-/// nothing can use, is `STATUS_AUTH_REFRESH_REQUIRED` instead. The frame
+/// nothing can use, is `STATUS_AUTH_REFRESH_REQUIRED` instead, or, while
+/// a failed refresh backs off, that refresh's error. The frame
 /// carries the token: the host releases it with `se_dealloc`, which wipes
 /// it.
 /// # Safety
@@ -304,6 +306,31 @@ pub unsafe extern "C" fn sa_auth_token(ptr: *const u8, len: u32) -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn sa_auth_refresh(ptr: *const u8, len: u32) -> u64 {
     start1(ptr, len, auth::refresh)
+}
+
+/// When a strategy's next refresh ahead of expiry is due, as a step
+/// operation: empty output while it is idle (nothing is due until a call
+/// uses the token again), else the time in decimal seconds since the Unix
+/// epoch. The host calls [`sa_auth_refresh_ahead`] when the time comes; a
+/// strategy created with `refresh_ahead` leaves that to it, so a call for
+/// a token that still works never refreshes it. See
+/// [`auth::next_refresh`].
+/// # Safety
+/// The input pair is validated against guest linear memory.
+#[no_mangle]
+pub unsafe extern "C" fn sa_auth_next_refresh(ptr: *const u8, len: u32) -> u64 {
+    start1(ptr, len, auth::next_refresh)
+}
+
+/// Refresh a strategy's token ahead of its expiry if a refresh is due, as a
+/// step operation with empty output. For a device session the Go host must
+/// hold the workspace's auth.json lock across every step, as for
+/// [`sa_auth_refresh`]. See [`auth::refresh_ahead`].
+/// # Safety
+/// The input pair is validated against guest linear memory.
+#[no_mangle]
+pub unsafe extern "C" fn sa_auth_refresh_ahead(ptr: *const u8, len: u32) -> u64 {
+    start1(ptr, len, auth::refresh_ahead)
 }
 
 /// The step a paused token export left: its handle, whether it is parked,

@@ -47,6 +47,19 @@
 // token still works gets it at once, and one with no usable token waits
 // for that exchange rather than starting a second.
 //
+// An access-key or device-session strategy refreshes its token in the
+// background, from a goroutine of its own, between 90 seconds and two
+// minutes before the token expires, so no call waits for the token service
+// while its token still works. It does so only while the strategy is in
+// use: a strategy no call has used since its last refresh is left alone.
+// After a refresh fails, the next attempt waits about a second, doubling
+// with each failure up to 30 seconds. Meanwhile a call whose token still works gets it, and
+// one whose token has expired fails at once with the failed refresh's
+// error rather than asking the service itself. [Strategy.Close] and
+// [ProfileStore.Close] stop the goroutine, as does the strategy being
+// garbage collected. An OIDC strategy has none: its [OIDCProvider] is asked
+// for a JWT on every call, which a timer cannot do.
+//
 // A call whose context ends, [Strategy.Token] included, fails with the
 // context's error and leaves the store and its strategies open: a request
 // cancelled while its token is exchanged or refreshed does not stop the

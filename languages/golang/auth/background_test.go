@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -117,4 +118,136 @@ func TestATokenInUseIsRefreshedBeforeItExpires(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// loopEnded reports whether a refresh loop has returned.
+func loopEnded(done <-chan struct{}) bool {
+	select {
+	case <-done:
+		return true
+	default:
+		return false
+	}
+}
+
+// Close ends the strategy's refresh loop before it returns.
+func TestClosingAStrategyEndsItsRefreshLoop(t *testing.T) {
+	guestOrSkip(t)
+	server, _, _ := shortTokenServer(t, time.Hour, 0)
+	profile, err := Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profile.Close()
+	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Used twice, so the loop sleeps until the refresh ahead is due.
+	for range 2 {
+		if _, err := strategy.Token(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	done := strategy.loopDone
+	if err := strategy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !loopEnded(done) {
+		t.Fatal("Close returned with the refresh loop still running")
+	}
+}
+
+// Closing the profile ends the refresh loops of its strategies, which
+// their own Close then finds ended.
+func TestClosingTheProfileEndsItsStrategiesRefreshLoops(t *testing.T) {
+	_, store := profile(t)
+	server, _, _ := shortTokenServer(t, time.Hour, 0)
+	key, err := store.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := key.Token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := store.WorkspaceStore(context.Background(), wsA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := ws.DeviceSession(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []*Strategy{key, device} {
+		eventually(t, "the refresh loop ended", func() bool { return loopEnded(s.loopDone) })
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// A strategy its application never closes is still collected: its refresh
+// loop holds it only weakly, and ends when it goes.
+func TestAForgottenStrategysRefreshLoopEnds(t *testing.T) {
+	guestOrSkip(t)
+	server, _, _ := shortTokenServer(t, time.Hour, 0)
+	profile, err := Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profile.Close()
+	done := func() <-chan struct{} {
+		strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range 2 {
+			if _, err := strategy.Token(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return strategy.loopDone
+	}()
+	eventually(t, "the forgotten strategy's loop ended", func() bool {
+		runtime.GC()
+		return loopEnded(done)
+	})
+}
+
+// Every refresh loop a test started has ended once its strategies and
+// profiles are closed.
+func TestNoRefreshLoopOutlivesItsStrategies(t *testing.T) {
+	guestOrSkip(t)
+	server, _, _ := shortTokenServer(t, time.Hour, 0)
+	before := refreshLoops.Load()
+	profile, err := Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var strategies []*Strategy
+	for range 4 {
+		s, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Token(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		strategies = append(strategies, s)
+	}
+	if n := refreshLoops.Load() - before; n < 4 {
+		t.Fatalf("%d refresh loops started for 4 strategies", n)
+	}
+	for _, s := range strategies {
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := profile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "every refresh loop this test started ended", func() bool { return refreshLoops.Load() <= before })
 }

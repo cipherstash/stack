@@ -24,8 +24,8 @@ use std::rc::Rc;
 use serde::Deserialize;
 use stack_auth::Crn;
 use stack_auth::{
-    AccessKey, AccessKeyStrategy, AuthStrategy, DeviceSessionStrategy, OidcFederationStrategy,
-    Token,
+    AccessKey, AccessKeyStrategy, AuthStrategy, DeviceSessionStrategy, NextRefresh,
+    OidcFederationStrategy, RefreshDriver, RefreshSchedule, ServerError, Token,
 };
 use stack_profile::ProfileStore;
 use zeroize::Zeroizing;
@@ -45,6 +45,12 @@ enum Config {
         crn: String,
         access_key: String,
         base_url: Option<String>,
+        /// The host refreshes ahead of expiry ([`next_refresh`],
+        /// [`refresh_ahead`]), so a call with a token that still works
+        /// never does. Absent, calls refresh in the 90 seconds before
+        /// expiry.
+        #[serde(default)]
+        refresh_ahead: bool,
     },
     Oidc {
         crn: String,
@@ -57,11 +63,19 @@ enum Config {
     DeviceSession {
         workspace_dir: String,
         base_url: Option<String>,
+        /// As for an access key.
+        #[serde(default)]
+        refresh_ahead: bool,
     },
 }
 
 enum Strategy {
-    AccessKey(AccessKeyStrategy),
+    AccessKey {
+        strategy: AccessKeyStrategy,
+        /// Held when the host refreshes ahead of expiry: a call with a
+        /// token that still works then never does.
+        _driver: Option<RefreshDriver>,
+    },
     Oidc(OidcFederationStrategy<HostOidcProvider>),
     // A device session is rebuilt for refresh only after Go has acquired the
     // cross-process lock. A fresh token can be read without the lock; keeping
@@ -69,7 +83,60 @@ enum Strategy {
     DeviceSession {
         workspace_dir: String,
         base_url: Option<url::Url>,
+        /// stack-auth's refresh rule for the token in auth.json. Only the
+        /// plan is kept, never the token.
+        plan: RefCell<DevicePlan>,
     },
+}
+
+/// A device session's refresh plan, and the last refresh's error, replayed
+/// to a caller whose token has expired while the refresh backs off.
+#[derive(Default)]
+struct DevicePlan {
+    schedule: RefreshSchedule,
+    /// Whether the host refreshes ahead of expiry.
+    driven: bool,
+    last_error: Option<LastFailure>,
+}
+
+/// A failed refresh's error, kept so it can be reported again. A server
+/// fault keeps its kind, so the host reads the same status for it.
+struct LastFailure {
+    code: &'static str,
+    message: String,
+    server: bool,
+}
+
+impl LastFailure {
+    fn of(error: &AuthError) -> Self {
+        match error {
+            AuthError::Server(ServerError(message)) => Self {
+                code: error.error_code(),
+                message: message.clone(),
+                server: true,
+            },
+            _ => Self {
+                code: error.error_code(),
+                message: error.to_string(),
+                server: false,
+            },
+        }
+    }
+
+    fn to_error(&self) -> AuthError {
+        if self.server {
+            return ServerError(self.message.clone()).into();
+        }
+        AuthError::from_error_code(self.code, &self.message, &serde_json::Map::new())
+    }
+}
+
+/// The time now, in seconds since the Unix epoch: the host's clock.
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default()
 }
 
 thread_local! {
@@ -110,6 +177,7 @@ pub fn create(config: &[u8]) -> Result<Vec<u8>, u32> {
             crn,
             access_key,
             base_url,
+            refresh_ahead,
         } => {
             let access_key = Zeroizing::new(access_key);
             let crn: Crn = crn.parse().map_err(|e| fail_auth(&AuthError::from(e)))?;
@@ -120,7 +188,11 @@ pub fn create(config: &[u8]) -> Result<Vec<u8>, u32> {
             if let Some(url) = parse_base_url(base_url)? {
                 builder = builder.base_url(url);
             }
-            Strategy::AccessKey(builder.build().map_err(|e| fail_auth(&e))?)
+            let strategy = builder.build().map_err(|e| fail_auth(&e))?;
+            Strategy::AccessKey {
+                _driver: refresh_ahead.then(|| strategy.drive_refresh()),
+                strategy,
+            }
         }
         Config::Oidc {
             crn,
@@ -142,6 +214,7 @@ pub fn create(config: &[u8]) -> Result<Vec<u8>, u32> {
         Config::DeviceSession {
             workspace_dir,
             base_url,
+            refresh_ahead,
         } => {
             if workspace_dir.is_empty() {
                 return Err(malformed("the strategy config's workspace_dir is empty"));
@@ -149,6 +222,10 @@ pub fn create(config: &[u8]) -> Result<Vec<u8>, u32> {
             Strategy::DeviceSession {
                 workspace_dir,
                 base_url: parse_base_url(base_url)?,
+                plan: RefCell::new(DevicePlan {
+                    driven: refresh_ahead,
+                    ..DevicePlan::default()
+                }),
             }
         }
     };
@@ -185,7 +262,7 @@ pub fn token(handle: &[u8]) -> Result<Operation, u32> {
     let strategy = strategy(handle)?;
     Ok(Box::pin(async move {
         match &*strategy {
-            Strategy::AccessKey(strategy) => strategy
+            Strategy::AccessKey { strategy, .. } => strategy
                 .get_token()
                 .await
                 .map(|token| token.as_str().as_bytes().to_vec())
@@ -198,14 +275,45 @@ pub fn token(handle: &[u8]) -> Result<Operation, u32> {
             Strategy::DeviceSession {
                 workspace_dir,
                 base_url,
-            } => cached_device_token(workspace_dir, base_url),
+                plan,
+            } => cached_device_token(workspace_dir, base_url, plan),
         }
     }))
 }
 
-/// A fresh token needs only a profile read. The 90-second refresh window is
-/// decided by stack-auth's Token, so Go does not duplicate that rule.
-fn cached_device_token(workspace_dir: &str, base_url: &Option<url::Url>) -> Result<Vec<u8>, u32> {
+/// A fresh token needs only a profile read. The 90-second refresh window and
+/// the backoff after a failed refresh are decided by stack-auth, so Go does
+/// not duplicate those rules.
+fn cached_device_token(
+    workspace_dir: &str,
+    base_url: &Option<url::Url>,
+    plan: &RefCell<DevicePlan>,
+) -> Result<Vec<u8>, u32> {
+    let token = load_device_token(workspace_dir, base_url)?;
+    let now = now_secs();
+    let mut plan = plan.borrow_mut();
+    plan.schedule.observe(&token, now);
+    let _ = plan.schedule.used();
+    // Past its expiry nothing can use the token. While a failed refresh
+    // backs off, the caller gets that refresh's error at once rather than
+    // refreshing again itself.
+    if !token.is_usable() {
+        if plan.schedule.backing_off(now) {
+            if let Some(failure) = &plan.last_error {
+                return Err(fail_auth(&failure.to_error()));
+            }
+        }
+        return Err(STATUS_AUTH_REFRESH_REQUIRED);
+    }
+    // Inside the refresh window the token still works. With no host
+    // refreshing ahead, it goes to the host with the flag set, so one
+    // caller refreshes while the others keep using it.
+    device_token_frame(&token, token.is_expired() && !plan.driven)
+}
+
+/// The device session's token in auth.json, checked as every read checks
+/// it.
+fn load_device_token(workspace_dir: &str, base_url: &Option<url::Url>) -> Result<Token, u32> {
     let token: Token = ProfileStore::new(workspace_dir)
         .load_profile()
         .map_err(|e| fail_profile(&e))?;
@@ -215,13 +323,7 @@ fn cached_device_token(workspace_dir: &str, base_url: &Option<url::Url>) -> Resu
     if base_url.is_none() {
         let _ = token.issuer().map_err(|e| fail_auth(&e))?;
     }
-    // Inside the refresh window the token still works: it goes to the
-    // host with the flag set, so callers keep using it while one of them
-    // refreshes. Past its expiry nothing can use it.
-    if token.is_expired() && !token.is_usable() {
-        return Err(STATUS_AUTH_REFRESH_REQUIRED);
-    }
-    device_token_frame(&token, token.is_expired())
+    Ok(token)
 }
 
 /// A device session's token read, as the frame `sa_auth_token` returns:
@@ -250,10 +352,32 @@ fn device_token_frame(token: &Token, refresh_required: bool) -> Result<Vec<u8>, 
 /// saved before the operation finishes.
 pub fn refresh(handle: &[u8]) -> Result<Operation, u32> {
     let strategy = strategy(handle)?;
+    let session = device_session(&strategy)?;
+    Ok(Box::pin(async move {
+        let Strategy::DeviceSession {
+            workspace_dir,
+            plan,
+            ..
+        } = &*strategy
+        else {
+            unreachable!("device_session accepted it");
+        };
+        plan.borrow_mut().schedule.attempt_started();
+        let result = session.get_token().await;
+        record_device_refresh(workspace_dir, plan, result.as_ref().err());
+        let token = result.map_err(|e| fail_auth(&e))?;
+        Ok(token.as_str().as_bytes().to_vec())
+    }))
+}
+
+/// The device session in auth.json, rebuilt so it re-reads the token
+/// another process may have rotated while the host waited for its lock.
+fn device_session(strategy: &Strategy) -> Result<DeviceSessionStrategy, u32> {
     let Strategy::DeviceSession {
         workspace_dir,
         base_url,
-    } = &*strategy
+        ..
+    } = strategy
     else {
         return Err(out_of_order("only a device session strategy refreshes"));
     };
@@ -263,10 +387,114 @@ pub fn refresh(handle: &[u8]) -> Result<Operation, u32> {
     if let Some(url) = base_url {
         builder = builder.base_url(url.clone());
     }
-    let session = builder.build().map_err(|e| fail_auth(&e))?;
+    builder.build().map_err(|e| fail_auth(&e))
+}
+
+/// Record a device session refresh's outcome in its plan: a success plans
+/// for the token it saved, a failure starts or extends the backoff.
+fn record_device_refresh(
+    workspace_dir: &str,
+    plan: &RefCell<DevicePlan>,
+    error: Option<&AuthError>,
+) {
+    let now = now_secs();
+    let mut plan = plan.borrow_mut();
+    match error {
+        None => {
+            plan.last_error = None;
+            if let Ok(token) = ProfileStore::new(workspace_dir).load_profile::<Token>() {
+                plan.schedule.observe(&token, now);
+            }
+        }
+        Some(error) => {
+            plan.schedule.refresh_failed(error, now);
+            plan.last_error = Some(LastFailure::of(error));
+        }
+    }
+}
+
+/// When the strategy's next refresh ahead of expiry is due, as a step
+/// operation: empty output while nothing is due until the token is used
+/// again, else the time, in decimal seconds since the Unix epoch. The host
+/// calls [`refresh_ahead`] when the time comes. An OIDC strategy is always
+/// idle: its provider is asked for a JWT on each call, which a timer
+/// cannot do.
+pub fn next_refresh(handle: &[u8]) -> Result<Operation, u32> {
+    let strategy = strategy(handle)?;
     Ok(Box::pin(async move {
-        let token = session.get_token().await.map_err(|e| fail_auth(&e))?;
-        Ok(token.as_str().as_bytes().to_vec())
+        let next = match &*strategy {
+            Strategy::AccessKey { strategy, .. } => strategy.next_refresh().await,
+            Strategy::Oidc(_) => NextRefresh::Idle,
+            Strategy::DeviceSession {
+                workspace_dir,
+                base_url,
+                plan,
+            } => {
+                let mut plan = plan.borrow_mut();
+                // No readable token is nothing to refresh ahead: the next
+                // call reports why.
+                match load_device_token(workspace_dir, base_url) {
+                    Ok(token) => {
+                        plan.schedule.observe(&token, now_secs());
+                        plan.schedule.next()
+                    }
+                    Err(_) => {
+                        stack_guest_abi::last_error::clear();
+                        NextRefresh::Idle
+                    }
+                }
+            }
+        };
+        Ok(match next {
+            NextRefresh::Idle => Vec::new(),
+            NextRefresh::At(at) => at.to_string().into_bytes(),
+        })
+    }))
+}
+
+/// Refresh ahead of expiry if a refresh is due, as a step operation, with
+/// empty output. Nothing happens when the plan has moved on since the host
+/// asked: a caller refreshed meanwhile, or another process rotated a device
+/// session's token. For a device session the host holds the workspace's
+/// auth.json lock across every step, as for [`refresh`].
+pub fn refresh_ahead(handle: &[u8]) -> Result<Operation, u32> {
+    let strategy = strategy(handle)?;
+    let session = match &*strategy {
+        Strategy::DeviceSession { .. } => Some(device_session(&strategy)?),
+        _ => None,
+    };
+    Ok(Box::pin(async move {
+        let due = |next: NextRefresh| matches!(next, NextRefresh::At(at) if at <= now_secs());
+        match &*strategy {
+            Strategy::AccessKey { strategy, .. } => {
+                if due(strategy.next_refresh().await) {
+                    strategy.refresh_now().await.map_err(|e| fail_auth(&e))?;
+                }
+            }
+            Strategy::Oidc(_) => {}
+            Strategy::DeviceSession {
+                workspace_dir,
+                base_url,
+                plan,
+            } => {
+                let token = load_device_token(workspace_dir, base_url)?;
+                let next = {
+                    let mut plan = plan.borrow_mut();
+                    plan.schedule.observe(&token, now_secs());
+                    plan.schedule.next()
+                };
+                if due(next) {
+                    let Some(session) = session else {
+                        unreachable!("built for a device session");
+                    };
+                    plan.borrow_mut().schedule.attempt_started();
+                    let result = session.refresh_now().await;
+                    record_device_refresh(workspace_dir, plan, result.as_ref().err());
+                    result.map_err(|e| fail_auth(&e))?;
+                }
+            }
+        }
+        Ok(Vec::new())
     }))
 }
 
