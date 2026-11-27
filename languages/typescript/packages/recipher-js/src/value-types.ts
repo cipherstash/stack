@@ -34,9 +34,9 @@ export interface VcDecimal {
 }
 
 /**
- * A universally unique identifier (UUID). The class comes from vitaminc.
- * The engine has no plaintext type for a UUID yet. Encrypting a `VcUuid` is
- * an `Err` with the code `recipher_js::uuid`. `VcUuid` is not a `Scalar`.
+ * A universally unique identifier (UUID), such as
+ * `new VcUuid('123e4567-e89b-12d3-a456-426614174000')`. The class comes from
+ * vitaminc.
  */
 export interface VcUuid {
   /** The UUID as hyphenated hex. */
@@ -56,6 +56,7 @@ export type Scalar =
   | VcTimestamp
   | VcDate
   | VcDecimal
+  | VcUuid
   | null
 
 /**
@@ -114,11 +115,13 @@ export type Opened<V> = V extends string
                 ? VcDate
                 : V extends VcDecimal
                   ? VcDecimal
-                  : V extends null
-                    ? null
-                    : V extends JsonMarker
-                      ? OpenedJson
-                      : never
+                  : V extends VcUuid
+                    ? VcUuid
+                    : V extends null
+                      ? null
+                      : V extends JsonMarker
+                        ? OpenedJson
+                        : never
 
 /** Any scalar type that a stored ciphertext can decrypt to. */
 export type OpenedScalar = Opened<Scalar>

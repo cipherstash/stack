@@ -57,7 +57,9 @@ zeroize = "1"
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
-stack-encrypt = { path = "../../../../../packages/stack-encrypt", default-features = false, features = ["dynamic", "http", "test-support"] }
+# `uuid` gives the tests the engine's UUID type, to seal and open one
+# through the engine's typed API.
+stack-encrypt = { path = "../../../../../packages/stack-encrypt", default-features = false, features = ["dynamic", "http", "test-support", "uuid"] }
 tokio = { version = "1", features = ["rt", "macros"] }
 # The values the engine-interop tests seal through the engine's typed API,
 # and the types the counting key source names. The versions the engine

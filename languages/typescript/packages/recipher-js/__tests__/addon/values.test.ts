@@ -35,6 +35,7 @@ async function encryptOne(
     | VcDate
     | VcTimestamp
     | VcDecimal
+    | VcUuid
     | null,
 ) {
   return (await c.defaultKeyset().encrypt(value)).unwrap()
@@ -102,6 +103,14 @@ describe('every value in the mapping round-trips', () => {
     const price = await roundTrip(new VcDecimal('1.50'))
     expect(price).toBeInstanceOf(VcDecimal)
     expect((price as VcDecimal).value).toBe('1.50')
+  })
+
+  it('a UUID, as a VcUuid', async () => {
+    const id = await roundTrip(
+      new VcUuid('123e4567-e89b-12d3-a456-426614174000'),
+    )
+    expect(id).toBeInstanceOf(VcUuid)
+    expect((id as VcUuid).value).toBe('123e4567-e89b-12d3-a456-426614174000')
   })
 
   it('null', async () => {
@@ -278,6 +287,23 @@ describe('a ciphertext read back with a kind', () => {
     expect(opened).toBe(42n)
   })
 
+  it('opens a UUID with kinds.uuid, and refuses its text', async () => {
+    const c = await cipher()
+    const keyset = c.defaultKeyset()
+    const text = '123e4567-e89b-12d3-a456-426614174000'
+    const sealed = (await keyset.encrypt(new VcUuid(text))).unwrap()
+    const stored = Ciphertext.fromBytes(sealed.toBytes(), kinds.uuid).unwrap()
+    const opened: VcUuid = (await c.decrypt(stored)).unwrap()
+    expect(opened.value).toBe(text)
+
+    // The same UUID as a string is text, not a UUID.
+    const asText = (await keyset.encrypt(text)).unwrap()
+    const refused = await c.decrypt(
+      Ciphertext.fromBytes(asText.toBytes(), kinds.uuid).unwrap(),
+    )
+    expect(refused.err()?.code).toBe('recipher_js::opened_type')
+  })
+
   it('refuses a value sealed as another type', async () => {
     const c = await cipher()
     const sealed = (await c.defaultKeyset().encrypt('text')).unwrap()
@@ -295,15 +321,6 @@ describe('a ciphertext read back with a kind', () => {
 })
 
 describe('refusals', () => {
-  it('a UUID, which the engine does not hold yet', async () => {
-    const keyset = (await cipher()).defaultKeyset()
-    const uuid = new VcUuid('123e4567-e89b-12d3-a456-426614174000')
-    // @ts-expect-error: a UUID is not a scalar of the engine's value model.
-    const result = await keyset.encrypt(uuid)
-    expect(result.err()?.code).toBe('recipher_js::uuid')
-    expect(result.err()?.message).toContain('UUID')
-  })
-
   it("an integer vitaminc cannot hold, with vitaminc's code", async () => {
     const keyset = (await cipher()).defaultKeyset()
     const result = await keyset.encrypt(2n ** 128n)

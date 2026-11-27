@@ -10,6 +10,7 @@ import type {
   VcDate,
   VcDecimal,
   VcTimestamp,
+  VcUuid,
 } from '../src/index'
 import { encrypt, kinds, passthrough, record } from '../src/index'
 
@@ -69,6 +70,7 @@ const all = record('all', {
   at: encrypt(kinds.timestamp),
   blob: encrypt(kinds.bytes),
   small: encrypt(kinds.uint8),
+  id: encrypt(kinds.uuid, { index: ['equality'] }),
 })
 check<
   Exact<
@@ -81,6 +83,7 @@ check<
       at: Date | VcTimestamp
       blob: Uint8Array
       small: bigint
+      id: VcUuid
     }
   >
 >()

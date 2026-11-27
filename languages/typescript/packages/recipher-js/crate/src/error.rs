@@ -40,11 +40,6 @@ pub(crate) enum Error {
         help("Use `null` for a value that is not there.")
     )]
     Undefined,
-    /// A `VcUuid`. The engine's value model, the set of value types the
-    /// engine reads, has no UUID type.
-    #[error("a UUID cannot be encrypted yet: the engine's value model does not hold one")]
-    #[diagnostic(code(recipher_js::uuid), help("Encrypt its text instead."))]
-    Uuid,
     /// A value outside the engine's value model, or a value that Node-API
     /// failed to read.
     #[error("the value cannot be encrypted: it is not one the engine reads")]
@@ -614,7 +609,6 @@ mod tests {
         let name = || "x".to_owned();
         let all = vec![
             Error::Undefined,
-            Error::Uuid,
             Error::Value,
             Error::Threw,
             Error::NotAScalar,
@@ -652,7 +646,6 @@ mod tests {
         for error in &all {
             match error {
                 Error::Undefined
-                | Error::Uuid
                 | Error::Value
                 | Error::Threw
                 | Error::NotAScalar

@@ -13,7 +13,7 @@ use stack_encrypt::kms::{
     IdentifiedBy, IndexKey, IndexKeySource, KeySourceKind, OwnIdentity, RetrieveKeyPayload,
     UnverifiedContext,
 };
-use stack_encrypt::value::{Decimal, Timestamp};
+use stack_encrypt::value::{Decimal, Timestamp, Uuid as EngineUuid};
 use stack_encrypt::{Encrypt, StackCipher};
 use uuid::Uuid;
 
@@ -101,6 +101,24 @@ async fn the_sdk_opens_what_the_engine_sealed_of_every_type() {
         let stored = stack_encrypt::Ciphertext::from_bytes(&sealed.to_bytes()).unwrap();
         assert_eq!(sdk_open(stored).await.frame(), expected.frame());
     }
+}
+
+/// A UUID crosses both ways: the engine opens the SDK's as its own UUID
+/// type, and the SDK opens the engine's as the same frame.
+#[tokio::test]
+async fn a_uuid_crosses_between_the_sdk_and_the_engine() {
+    let id = Uuid::from_u128(0x123e_4567_e89b_12d3_a456_4266_1417_4000);
+    let cipher = engine().await;
+    let keyset = cipher.default_keyset();
+
+    let sealed = sdk_seal(vec![one(EngineUuid::new(id))]).await.remove(0);
+    let opened: EngineUuid = keyset.decrypt(sealed).await.unwrap();
+    assert_eq!(opened.to_uuid(), id);
+
+    let sealed = keyset.encrypt(EngineUuid::new(id)).await.unwrap();
+    let expected = OwnedFrame::of(EngineUuid::new(id)).unwrap();
+    assert_eq!(sdk_open(sealed).await.frame(), expected.frame());
+    assert_eq!(expected.frame().kind(), Some(ValueKind::Uuid));
 }
 
 #[tokio::test]

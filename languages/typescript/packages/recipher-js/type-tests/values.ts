@@ -45,6 +45,9 @@ check<Exact<typeof dated, Result<Ciphertext<VcDate>, RecipherError>>>()
 declare const price: VcDecimal
 const priced = await keyset.encrypt(price)
 check<Exact<typeof priced, Result<Ciphertext<VcDecimal>, RecipherError>>>()
+declare const id: VcUuid
+const identified = await keyset.encrypt(id)
+check<Exact<typeof identified, Result<Ciphertext<VcUuid>, RecipherError>>>()
 const document = await keyset.encrypt(json({ a: [1, 2n, null] }))
 check<Exact<typeof document, Result<Ciphertext<OpenedJson>, RecipherError>>>()
 
@@ -75,10 +78,6 @@ expectType<Value>(plainObject)
 // What `json(..)` returns is both.
 expectType<Json>(json({ a: 1 }))
 expectType<Value>(json({ a: 1 }))
-// A UUID is not in the engine's value model yet.
-declare const uuid: VcUuid
-// @ts-expect-error: a UUID is not a value.
-void keyset.encrypt(uuid)
 // @ts-expect-error: undefined is not a value.
 void keyset.encrypt(undefined)
 // @ts-expect-error: a Map is not a value.
@@ -90,12 +89,16 @@ void json({ d: new Date() })
 // The wrapper types are distinct.
 // @ts-expect-error: a VcDate is not a VcDecimal.
 expectType<VcDecimal>(day)
+// @ts-expect-error: a VcUuid is not a VcDate.
+expectType<VcDate>(id)
 
 // A ciphertext read from stored bytes is typed by the kind named, and as
 // any scalar when none is.
 declare const stored: Uint8Array
 const typed = Ciphertext.fromBytes(stored, kinds.int64)
 check<Exact<typeof typed, Result<Ciphertext<bigint>, RecipherError>>>()
+const typedUuid = Ciphertext.fromBytes(stored, kinds.uuid)
+check<Exact<typeof typedUuid, Result<Ciphertext<VcUuid>, RecipherError>>>()
 const typedJson = Ciphertext.fromBytes(stored, kinds.json)
 check<Exact<typeof typedJson, Result<Ciphertext<OpenedJson>, RecipherError>>>()
 const untyped = Ciphertext.fromBytes(stored)
