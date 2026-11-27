@@ -77,6 +77,9 @@ async fn the_sdk_opens_what_the_engine_sealed_of_every_type() {
     let decimal = Decimal::new(rust_decimal::Decimal::new(150, 2));
     let timestamp_frame = OwnedFrame::of(&timestamp).unwrap();
     let decimal_frame = OwnedFrame::of(&decimal).unwrap();
+    let id = EngineUuid::new(Uuid::from_u128(0x123e_4567_e89b_12d3_a456_4266_1417_4000));
+    let uuid_frame = OwnedFrame::of(&id).unwrap();
+    assert_eq!(uuid_frame.frame().kind(), Some(ValueKind::Uuid));
     let cases: Vec<(stack_encrypt::Ciphertext, OwnedFrame)> = vec![
         (
             keyset.encrypt("text".to_owned()).await.unwrap(),
@@ -96,6 +99,7 @@ async fn the_sdk_opens_what_the_engine_sealed_of_every_type() {
         ),
         (keyset.encrypt(timestamp).await.unwrap(), timestamp_frame),
         (keyset.encrypt(decimal).await.unwrap(), decimal_frame),
+        (keyset.encrypt(id).await.unwrap(), uuid_frame),
     ];
     for (sealed, expected) in cases {
         let stored = stack_encrypt::Ciphertext::from_bytes(&sealed.to_bytes()).unwrap();
@@ -103,22 +107,21 @@ async fn the_sdk_opens_what_the_engine_sealed_of_every_type() {
     }
 }
 
-/// A UUID crosses both ways: the engine opens the SDK's as its own UUID
-/// type, and the SDK opens the engine's as the same frame.
+/// The engine opens a UUID the SDK sealed, read back from its stored
+/// bytes, as the engine's own UUID type. The other direction is a case of
+/// the test above.
 #[tokio::test]
-async fn a_uuid_crosses_between_the_sdk_and_the_engine() {
+async fn the_engine_opens_a_uuid_the_sdk_sealed_from_its_stored_bytes() {
     let id = Uuid::from_u128(0x123e_4567_e89b_12d3_a456_4266_1417_4000);
-    let cipher = engine().await;
-    let keyset = cipher.default_keyset();
-
     let sealed = sdk_seal(vec![one(EngineUuid::new(id))]).await.remove(0);
-    let opened: EngineUuid = keyset.decrypt(sealed).await.unwrap();
+    let stored = stack_encrypt::Ciphertext::from_bytes(&sealed.to_bytes()).unwrap();
+    let opened: EngineUuid = engine()
+        .await
+        .default_keyset()
+        .decrypt(stored)
+        .await
+        .unwrap();
     assert_eq!(opened.to_uuid(), id);
-
-    let sealed = keyset.encrypt(EngineUuid::new(id)).await.unwrap();
-    let expected = OwnedFrame::of(EngineUuid::new(id)).unwrap();
-    assert_eq!(sdk_open(sealed).await.frame(), expected.frame());
-    assert_eq!(expected.frame().kind(), Some(ValueKind::Uuid));
 }
 
 #[tokio::test]
