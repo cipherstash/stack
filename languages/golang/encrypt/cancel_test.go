@@ -639,14 +639,31 @@ func TestManyCallersCancellingAtRandomShareOneClient(t *testing.T) {
 func TestACallCancelledDuringATokenExchangeLeavesTheProfileOpen(t *testing.T) {
 	var hold atomic.Bool
 	done := make(chan struct{})
+	// The call is cancelled only once its token request is held, so the
+	// test cancels an exchange in flight, not one that never started.
+	arrived := make(chan struct{}, 1)
+	// The server sees a cancelled request only once it notices the client
+	// closed the connection, which it does in the background. The test
+	// waits for that below rather than assuming it has happened.
+	cancelled := make(chan struct{}, 1)
 	var jwt string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		if hold.Load() {
 			select {
+			case arrived <- struct{}{}:
+			default:
+			}
+			select {
 			case <-r.Context().Done():
+				select {
+				case cancelled <- struct{}{}:
+				default:
+				}
 			case <-done:
-				t.Error("a held token request was never cancelled")
+				// Released at cleanup, so server.Close does not block on a
+				// request that was never cancelled. The wait in the test
+				// body reports that case.
 			}
 			return
 		}
@@ -677,10 +694,28 @@ func TestACallCancelledDuringATokenExchangeLeavesTheProfileOpen(t *testing.T) {
 	rt := &switchable{rt: unauthorized}
 	c := cancelClient(t, rt, strategy)
 	hold.Store(true)
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := cipherInit(ctx, c); !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrState) {
-		t.Fatalf("call cancelled during the exchange: %v, want the deadline", err)
+	result := make(chan error, 1)
+	go func() { result <- cipherInit(ctx, c) }()
+	select {
+	case <-arrived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the token request never reached the server")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) || errors.Is(err, ErrState) {
+			t.Fatalf("call cancelled during the exchange: %v, want the cancellation", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the cancelled call never returned")
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a held token request was never cancelled")
 	}
 	hold.Store(false)
 	wantOpen(t, c, rt)
