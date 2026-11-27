@@ -2,7 +2,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { PreflightResult } from '@/installer/index.js'
+import { findConfigFile } from '@/config/index.js'
+import { CAPABLE } from './preflight-fixtures.js'
 
 // Which database `stash eql preflight` probes, with and without
 // `--database-url`, when a stash.config.ts sets a literal `databaseUrl` (#1966).
@@ -10,23 +11,6 @@ import type { PreflightResult } from '@/installer/index.js'
 // database is faked, by recording the URL the installer is built with.
 
 const probedUrls: string[] = []
-
-const CAPABLE: PreflightResult = {
-  currentUser: 'postgres',
-  isSuperuser: true,
-  memberOfPostgres: true,
-  hasDatabaseCreate: true,
-  hasPublicCreate: true,
-  pgcryptoInstalled: true,
-  pgcryptoSchema: 'extensions',
-  eqlV3SchemaPresent: false,
-  eqlV3InternalSchemaPresent: false,
-  canDropEqlV3Schema: null,
-  canDropEqlV3InternalSchema: null,
-  canCreateOperatorClass: true,
-  missing: [],
-  ok: true,
-}
 
 vi.mock('@clack/prompts', () => ({
   intro: vi.fn(),
@@ -99,6 +83,10 @@ describe('stash eql preflight database URL', () => {
   })
 
   it('falls back to DATABASE_URL when there is no flag and no config', async () => {
+    // findConfigFile walks up to the filesystem root, so a stray
+    // stash.config.ts above the temporary folder would break this case. Name
+    // it here rather than fail on a confusing URL mismatch.
+    expect(findConfigFile(projectDir)).toBeUndefined()
     vi.spyOn(console, 'log').mockImplementation(() => {})
     const { preflightCommand } = await import('../preflight.js')
     await preflightCommand({ json: true })

@@ -156,7 +156,7 @@ First hit wins:
 4. Interactive prompt — skipped under CI / non-TTY
 5. Hard fail, naming the sources it tried
 
-`stash.config.ts` is **not** a separate tier: the scaffolded config calls this same resolver, and the `--database-url` flag still wins. The one exception is a hand-edited config assigning a literal `databaseUrl` string — that bypasses the resolver entirely and beats both flag and env. `eql install`, `eql preflight`, and `eql verify` are the exceptions to that exception: an explicit `--database-url` skips config loading in those three, so the flag wins there.
+`stash.config.ts` is **not** a separate tier: the scaffolded config calls this same resolver, and the `--database-url` flag still wins. The one exception is a hand-edited config assigning a literal `databaseUrl` string — that bypasses the resolver entirely and beats both flag and env. `eql install`, `eql preflight`, `eql repair`, and `eql verify` are the exceptions to that exception: an explicit `--database-url` skips config loading in those four, so the flag wins there.
 
 The resolved URL is returned in memory only. It is never written to disk or into `process.env`.
 

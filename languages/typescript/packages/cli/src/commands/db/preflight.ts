@@ -6,17 +6,6 @@ import { describeOreCreatable, ORE_FALLBACK_REMEDY } from '@/installer/ore.js'
 import { resolveDiagnosticDatabaseUrl } from './resolve-diagnostic-url.js'
 
 /**
- * An explicit `--database-url` wins over a stash.config.ts literal, as it
- * does in `eql verify`. See {@link resolveDiagnosticDatabaseUrl}.
- */
-function resolvePreflightDatabaseUrl(
-  databaseUrlFlag: string | undefined,
-  json: boolean,
-): Promise<string> {
-  return resolveDiagnosticDatabaseUrl({ databaseUrlFlag, json })
-}
-
-/**
  * `stash eql preflight` — read-only "will `eql install` work here, and if not,
  * why" report. Runs the same catalogue query the installer runs at the head of
  * `eql install`, but as a standalone command an operator (or agent, via
@@ -25,15 +14,19 @@ function resolvePreflightDatabaseUrl(
  * Exit code: 1 when a blocking gap is present (`result.ok === false`), else 0.
  * Membership of `postgres` is reported but never blocks — the installer
  * skips the optional owner-scoped Supabase grants for non-member roles.
+ *
+ * An explicit `--database-url` wins over a literal `databaseUrl` in
+ * stash.config.ts, as it does in `eql verify`. See
+ * {@link resolveDiagnosticDatabaseUrl}.
  */
 export async function preflightCommand(
   options: { databaseUrl?: string; json?: boolean } = {},
 ): Promise<void> {
   if (options.json) {
-    const databaseUrl = await resolvePreflightDatabaseUrl(
-      options.databaseUrl,
-      true,
-    )
+    const databaseUrl = await resolveDiagnosticDatabaseUrl({
+      databaseUrlFlag: options.databaseUrl,
+      json: true,
+    })
     const installer = new EQLInstaller({ databaseUrl })
     let result: PreflightResult
     try {
@@ -54,10 +47,10 @@ export async function preflightCommand(
 
   // Resolve the URL before any spinner exists: tier 4 of the resolver is an
   // interactive prompt, and a live spinner would redraw over it.
-  const databaseUrl = await resolvePreflightDatabaseUrl(
-    options.databaseUrl,
-    false,
-  )
+  const databaseUrl = await resolveDiagnosticDatabaseUrl({
+    databaseUrlFlag: options.databaseUrl,
+    json: false,
+  })
 
   const s = p.spinner()
   s.start('Probing database role capability...')
