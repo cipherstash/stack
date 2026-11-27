@@ -530,5 +530,9 @@ A protobuf message with a `oneof` cannot be generated from a policy: protoc-gen-
 
 ## Status
 
-The command runs the WASI guest the SDK embeds, so it needs the guests built: `mise run wasm:guest:build wasm:guest:build:eql`.
+A tagged version of the module needs no build step.
+For what a tag includes, and why a pseudo-version does not, see [Building](../../encrypt/README.md#building) in the SDK guide.
+Without the engine, the command stops with an error that starts `encrypt: guest module with the EQL types not built`.
+To run `stashgen` from a checkout of this repository, see [Working in this repository](../../README.md#working-in-this-repository).
+
 The library, `github.com/cipherstash/stack/languages/golang/stashgen`, takes any `Engine`; `stashgen.Generate` takes one with `WithEngine`, and `stashgen/enginetest` has a static one for tests.
