@@ -273,12 +273,17 @@ pub mod store {
 /// After a refresh fails, the next attempt waits about a second, doubling
 /// up to [`BACKOFF_CAP_SECS`], and a minute after a refusal of the account.
 ///
-/// On native targets every strategy that caches a token runs that rule on a
-/// background task on the current Tokio runtime, started by the first
-/// `get_token`. The task holds the strategy weakly and ends when it is
-/// dropped. On wasm32 there is no task: a host can keep the timer itself
+/// On native targets an access-key or device-session strategy runs that
+/// rule on a background task on the current Tokio runtime, started by the
+/// first `get_token`. The task holds the strategy weakly and ends when it
+/// is dropped. On wasm32 there is no task: a host can keep the timer itself
 /// ([`AccessKeyStrategy::drive_refresh`]); without one, calls refresh as
 /// described below.
+///
+/// An [`OidcFederationStrategy`] has no task on any target. Each user's
+/// token is refreshed by that user's calls, as described below, so nothing
+/// renews it once their requests stop, and nothing re-exchanges a JWT that
+/// may have expired by then.
 ///
 /// ## What a call does
 ///

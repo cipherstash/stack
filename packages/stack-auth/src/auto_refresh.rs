@@ -408,10 +408,16 @@ impl<R, S> AutoRefresh<R, S> {
         self.shared.driver.attached.load(Ordering::Acquire)
     }
 
-    /// No background task: a caller starts each refresh, as on wasm32 with
-    /// no host driving it. For the tests of that path on a native target.
-    #[cfg(all(test, feature = "http", not(target_arch = "wasm32")))]
-    pub(crate) fn call_driven(self) -> Self {
+    /// No background task: a call in the 90 seconds before expiry starts
+    /// the refresh, as on wasm32 with no host driving it.
+    ///
+    /// For an engine whose refresh only a call should start: an OIDC
+    /// engine re-exchanges one user's JWT, which a timer has no business
+    /// renewing once that user's requests stop, and which may expire
+    /// before the token it was exchanged for.
+    pub(crate) fn refreshed_by_calls(self) -> Self {
+        // The task's flag, set for good: no call starts one.
+        #[cfg(not(target_arch = "wasm32"))]
         self.shared.driver.task.store(true, Ordering::Release);
         self
     }
@@ -1055,7 +1061,7 @@ mod tests {
             None,
             crate::transport::default_transport(),
         );
-        AutoRefresh::with_token(refresher, token).call_driven()
+        AutoRefresh::with_token(refresher, token).refreshed_by_calls()
     }
 
     mod given_no_cached_token {
@@ -1073,7 +1079,7 @@ mod tests {
                 None,
                 crate::transport::default_transport(),
             );
-            let strategy = AutoRefresh::with_store(refresher, NoStore).call_driven();
+            let strategy = AutoRefresh::with_store(refresher, NoStore).refreshed_by_calls();
 
             let err = strategy.get_token().await.unwrap_err();
 
@@ -1140,7 +1146,8 @@ mod tests {
             let store = CountingStore {
                 load_calls: Arc::clone(&load_calls),
             };
-            let strategy = AutoRefresh::with_store(AlwaysOverLimitRefresher, store).call_driven();
+            let strategy =
+                AutoRefresh::with_store(AlwaysOverLimitRefresher, store).refreshed_by_calls();
 
             let first = strategy.get_token().await;
             assert!(
@@ -1860,7 +1867,7 @@ mod stress_tests {
             None,
             crate::transport::default_transport(),
         );
-        AutoRefresh::with_token(refresher, token).call_driven()
+        AutoRefresh::with_token(refresher, token).refreshed_by_calls()
     }
 
     const CONCURRENCY: usize = 50;
@@ -2276,7 +2283,7 @@ mod expiry_crossing_regression {
                     make_token("expiring-soon", clock.now() + 10),
                     clock.shared(),
                 )
-                .call_driven(),
+                .refreshed_by_calls(),
             );
             let caller = tokio::spawn({
                 let strategy = Arc::clone(&strategy);
@@ -2324,7 +2331,8 @@ mod expiry_crossing_regression {
         };
         let token = make_token("expiring-soon", clock.now() + 10);
         let strategy = Arc::new(
-            AutoRefresh::with_token_and_clock(refresher, token, clock.shared()).call_driven(),
+            AutoRefresh::with_token_and_clock(refresher, token, clock.shared())
+                .refreshed_by_calls(),
         );
 
         let caller = {
@@ -2358,7 +2366,8 @@ mod expiry_crossing_regression {
         // path and gets the old token).
         let token = make_token("expiring-soon", clock.now() + 10);
         let strategy = Arc::new(
-            AutoRefresh::with_token_and_clock(refresher, token, clock.shared()).call_driven(),
+            AutoRefresh::with_token_and_clock(refresher, token, clock.shared())
+                .refreshed_by_calls(),
         );
 
         // 1. First caller starts the non-blocking refresh.
@@ -2487,7 +2496,8 @@ mod expiry_crossing_regression {
         // first caller takes the non-blocking path and captures the old token.
         let token = make_token("expiring-soon", clock.now() + 10);
         let strategy = Arc::new(
-            AutoRefresh::with_token_and_clock(refresher, token, clock.shared()).call_driven(),
+            AutoRefresh::with_token_and_clock(refresher, token, clock.shared())
+                .refreshed_by_calls(),
         );
 
         // 1. First caller starts the (gated) non-blocking refresh.
@@ -2577,7 +2587,8 @@ mod expiry_crossing_regression {
         // first caller takes the non-blocking path.
         let token = make_token("expiring-soon", clock.now() + 10);
         let strategy = Arc::new(
-            AutoRefresh::with_token_and_clock(refresher, token, clock.shared()).call_driven(),
+            AutoRefresh::with_token_and_clock(refresher, token, clock.shared())
+                .refreshed_by_calls(),
         );
 
         let first = {
@@ -2683,7 +2694,8 @@ mod expiry_crossing_regression {
         // first caller takes the non-blocking path.
         let token = make_token("expiring-soon", clock.now() + 10);
         let strategy = Arc::new(
-            AutoRefresh::with_token_and_clock(refresher, token, clock.shared()).call_driven(),
+            AutoRefresh::with_token_and_clock(refresher, token, clock.shared())
+                .refreshed_by_calls(),
         );
 
         let first = {
@@ -2747,8 +2759,8 @@ mod expiry_crossing_regression {
         let clock = TestClock::new(1_000_000);
         // Fresh token: expires well beyond the 90s leeway.
         let token = make_token("fresh", clock.now() + 3600);
-        let strategy =
-            AutoRefresh::with_token_and_clock(NeverRefresher, token, clock.shared()).call_driven();
+        let strategy = AutoRefresh::with_token_and_clock(NeverRefresher, token, clock.shared())
+            .refreshed_by_calls();
 
         // Forward reading returns the cached token without refreshing.
         assert_eq!(strategy.get_token().await.unwrap().as_str(), "fresh");

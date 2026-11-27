@@ -148,7 +148,7 @@ async fn cancelled_at(phase: Phase, usable: bool, initial: bool) {
             (!initial).then(|| token(0, if usable { 1_030 } else { 999 })),
             clock.shared(),
         )
-        .call_driven(),
+        .refreshed_by_calls(),
     );
     let caller = tokio::spawn({
         let strategy = strategy.clone();
@@ -253,7 +253,7 @@ async fn cancelled_failed_refresh_restores_the_credential_for_retry() {
                 token(0, if usable { 1_030 } else { 999 }),
                 clock.shared(),
             )
-            .call_driven(),
+            .refreshed_by_calls(),
         );
         let caller = tokio::spawn({
             let strategy = strategy.clone();
@@ -284,7 +284,7 @@ async fn rotation_is_saved_even_after_all_callers_drop_the_strategy() {
             token(0, 999),
             TestClock::new(1_000).shared(),
         )
-        .call_driven(),
+        .refreshed_by_calls(),
     );
     let caller = tokio::spawn(async move { strategy.get_token().await });
     within(issuer.started.notified()).await;
@@ -313,7 +313,7 @@ async fn a_panicking_refresh_reports_an_error_and_releases_waiters() {
             token(0, 1_030),
             clock.shared(),
         )
-        .call_driven(),
+        .refreshed_by_calls(),
     );
     let caller = tokio::spawn({
         let strategy = strategy.clone();
@@ -346,7 +346,7 @@ async fn guard_notification_before_waiter_registration_is_not_lost() {
         token(0, 999),
         TestClock::new(1_000).shared(),
     )
-    .call_driven();
+    .refreshed_by_calls();
     let shared = &strategy.shared;
     let state = shared.state.clone().lock_owned().await;
     shared.refresh_in_progress.store(true, Ordering::Release);

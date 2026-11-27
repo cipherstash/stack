@@ -190,7 +190,7 @@ async fn soak_with(seed: u64, rounds: usize, pace: Pace, driven: bool) {
     let strategy = Arc::new(if driven {
         strategy
     } else {
-        strategy.call_driven()
+        strategy.refreshed_by_calls()
     });
     let mut callers = JoinSet::new();
     for caller in 1..=256 {
