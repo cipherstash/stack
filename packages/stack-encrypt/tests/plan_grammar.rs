@@ -59,7 +59,7 @@ fn field(context: &[&str], outputs: &[&str], kind: &str) -> OwnedFrame {
 }
 
 fn plan_of(declaration: Vec<(&str, OwnedFrame)>) -> Result<record::Plan, dynamic::Error> {
-    record::plan(object(declaration).as_protected_ref())
+    record::plan(object(declaration).into_buffer().as_protected_ref())
 }
 
 /// A plan whose context is in the declaration: `email` sealed and indexed
@@ -227,7 +227,7 @@ async fn a_context_field_is_the_context_of_every_other_field() {
         .unwrap()
         .await
         .unwrap();
-    assert_eq!(back, tenant_record("tenants/acme"));
+    assert_eq!(back.frame(), tenant_record("tenants/acme").frame());
 }
 
 /// A batch through a plan with a context field seals each record under its
@@ -256,7 +256,7 @@ async fn a_batch_through_a_context_field_plan_seals_each_record_under_its_own_te
         .unwrap()
         .await
         .unwrap();
-    assert_eq!(back, records());
+    assert_eq!(back.frame(), records().frame());
 
     let written = record::encrypt(&keyset, records(), &plan)
         .unwrap()
@@ -287,7 +287,7 @@ async fn opening_checks_the_context_field_against_the_expected_context() {
         .unwrap()
         .await
         .unwrap();
-    assert_eq!(back, tenant_record("tenants/acme"));
+    assert_eq!(back.frame(), tenant_record("tenants/acme").frame());
     let before = retrieves.load(Ordering::SeqCst);
 
     let refused = record::decrypt(
@@ -612,7 +612,7 @@ async fn a_callers_scope_extends_every_field_and_a_query_names_it() {
     )
     .await
     .unwrap();
-    assert_eq!(back, user());
+    assert_eq!(back.frame(), user().frame());
     let unscoped =
         OwnedFrame::decrypt_from(Planned::new(&plan, write().await.unwrap()), &keyset).await;
     assert!(
@@ -644,7 +644,7 @@ async fn a_scope_reaches_every_field_of_a_context_field_plan() {
     )
     .await
     .unwrap();
-    assert_eq!(back, tenant_record("tenants/acme"));
+    assert_eq!(back.frame(), tenant_record("tenants/acme").frame());
 
     let unscoped =
         OwnedFrame::decrypt_from(Planned::new(&plan, write().await.unwrap()), &keyset).await;
@@ -684,7 +684,7 @@ async fn a_pinned_identity_keys_the_field_for_the_write_the_query_and_the_read()
         .unwrap()
         .await
         .unwrap();
-    assert_eq!(back, source());
+    assert_eq!(back.frame(), source().frame());
 
     // Under a context field the identity is the whole of the field's
     // label, and the record's context comes before it.
@@ -717,7 +717,7 @@ async fn a_pinned_identity_keys_the_field_for_the_write_the_query_and_the_read()
         .unwrap()
         .await
         .unwrap();
-    assert_eq!(back, reading());
+    assert_eq!(back.frame(), reading().frame());
 }
 
 /// A context is written as a label, or as text that parses as one: a
@@ -774,7 +774,7 @@ async fn an_empty_batch_has_its_context_checked_before_any_key_request() {
     .unwrap()
     .await
     .unwrap();
-    assert_eq!(opened, none());
+    assert_eq!(opened.frame(), none().frame());
     let sealed: StackCipherText = Planned::new(&users, none())
         .encrypt_into_with_context(&keyset, Scope::new("acme"))
         .await

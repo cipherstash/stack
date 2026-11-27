@@ -182,7 +182,7 @@ async fn shared_record_value_profile() {
         retrieves.store(0, Ordering::SeqCst);
         let input = value(&case.input);
         if let Some(frozen) = &case.frame {
-            let actual = hex(input.risky_ref());
+            let actual = hex(input.frame().as_bytes());
             if &actual != frozen {
                 failures.push(format!("{}: frame {actual}, frozen {frozen}", case.id));
             }
@@ -288,7 +288,7 @@ async fn shared_record_value_profile() {
             .unwrap();
         let mut expected = vec![row(&case.input)];
         expected.extend(case.companion.iter().map(row));
-        if opened.risky_ref() != frame(expected).risky_ref() {
+        if opened.frame().as_bytes() != frame(expected).frame().as_bytes() {
             failures.push(format!("{}: typed round trip differs", case.id));
         }
         assert_eq!(
@@ -311,7 +311,8 @@ fn the_shared_text_forms_frame_as_the_value_kinds_fixture() {
             kind: kind.into(),
             text: text.into(),
         })
-        .risky_ref())
+        .frame()
+        .as_bytes())
     };
     assert_eq!(framed("date", "2024-02-29"), "1281460b00");
     assert_eq!(

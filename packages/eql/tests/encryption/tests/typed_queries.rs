@@ -1161,11 +1161,12 @@ async fn a_record_stores_a_null_in_an_eql_field_as_its_plan_says() {
         .unwrap()
         .await
         .unwrap();
-    assert_eq!(opened.risky_ref(), frame(&source).risky_ref());
+    assert_eq!(opened.frame().as_bytes(), frame(&source).frame().as_bytes());
 }
 
 /// A second frame of the same bytes. A frame is not `Clone`.
 fn again(frame: &OwnedFrame) -> OwnedFrame {
-    use stack_encrypt::AsProtectedRef as _;
-    OwnedFrame::from_bytes(frame.as_protected_ref()).unwrap()
+    let mut buffer = stack_encrypt::Buffer::new();
+    buffer.extend_from_slice(frame.frame().as_bytes());
+    OwnedFrame::from_buffer(buffer).unwrap()
 }

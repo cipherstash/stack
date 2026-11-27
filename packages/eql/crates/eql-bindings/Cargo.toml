@@ -84,7 +84,7 @@ stack-encrypt = [
 jiff = ["stack-encrypt"]
 rust_decimal = ["stack-encrypt"]
 # The by-name dispatch a language binding needs (`encryption::targets`,
-# `v4::targets`): an EQL type named at run time, an `OwnedFrame` plaintext,
+# `v4::targets`): an EQL type named at run time, a `Frame` plaintext,
 # and the target table a guest serializes. Turns on stack-encrypt's
 # `dynamic` feature. The Go guest's `eql` build and the encryption tests
 # enable it.

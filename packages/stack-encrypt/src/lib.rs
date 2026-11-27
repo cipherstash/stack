@@ -856,7 +856,7 @@ pub use vitaminc_prf::PrfContext;
 // to be wrapped. `#[derive(EncryptTarget)]` names these through this crate.
 pub use vitaminc_protected::{nonempty, nonempty_bytes, EmptyError, MaybeEmpty, NonEmpty};
 
-// And the wrapper plaintext comes back in (`OwnedFrame::into_inner`, a
+// And the wrapper plaintext comes back in (`OwnedFrame::into_buffer`, a
 // decrypted `Protected<T>`), with the trait that reads it, and the wiping
 // buffer the re-exported frame writer writes into (`dynamic::frame`). The
 // frame readers take a `ProtectedRef` of bytes, which that buffer lends

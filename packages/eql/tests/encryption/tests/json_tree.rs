@@ -91,12 +91,7 @@ fn options() -> JsonOptions {
 /// The operand of one JSON operator on [`plan`]'s field, with the named
 /// inputs a binding sends: the bytes the SQL binds.
 async fn operand(cipher: &Cipher, operator: Op, inputs: Value) -> Vec<u8> {
-    let inputs = OwnedFrame::from_bytes(
-        dynamic::frame::serde::to_vec(&inputs)
-            .unwrap()
-            .as_protected_ref(),
-    )
-    .unwrap();
+    let inputs = OwnedFrame::from_buffer(dynamic::frame::serde::to_vec(&inputs).unwrap()).unwrap();
     let term = dynamic::query_term(
         &cipher.default_keyset(),
         &plan(),

@@ -33,8 +33,8 @@ use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use stack_encrypt::dynamic::record::{check_record, plan_with, Plan};
 use stack_encrypt::dynamic::{
-    frame::OwnedFrame, Output, TargetDescriptor, TargetError, TargetOptions, TargetResolver,
-    ValueKind,
+    frame::{Frame, OwnedFrame},
+    Output, TargetDescriptor, TargetError, TargetOptions, TargetResolver, ValueKind,
 };
 use stack_encrypt::{
     Encrypt, KeysetCipher, Label, PassthroughFrame, Pending, SealedValue, StackCipher,
@@ -91,7 +91,7 @@ impl TargetResolver for Fixed {
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
         _: &stack_encrypt::target::DeclaredContext,
-        _: OwnedFrame,
+        _: Frame<'_>,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("check_record runs no cipher")
     }
@@ -112,7 +112,7 @@ impl TargetResolver for Fixed {
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
         _: &stack_encrypt::target::DeclaredContext,
-        _: OwnedFrame,
+        _: Frame<'_>,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("check_record runs no cipher")
     }
@@ -314,7 +314,7 @@ fn leaf() -> SealedValue {
 /// A value as a passthrough node: its frame, in the clear.
 fn passthrough<T: Encrypt>(value: T) -> StackCipherText {
     let frame = frame(value).expect("a scalar frames");
-    StackCipherText::Passthrough(PassthroughFrame(frame.into_inner().risky_unwrap()))
+    StackCipherText::Passthrough(PassthroughFrame(frame.into_buffer().risky_unwrap()))
 }
 
 impl Tree {
@@ -432,6 +432,7 @@ fuzz_target!(|case: Case| {
     let Some(frame) = spec.into_value() else {
         return;
     };
+    let frame = frame.into_buffer();
     let Ok(plan) = plan_with(frame.as_protected_ref(), &Fixed) else {
         if trace {
             eprintln!("verdict: plan refused");

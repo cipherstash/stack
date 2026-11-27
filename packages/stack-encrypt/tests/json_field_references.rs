@@ -1612,8 +1612,10 @@ mod a_nullable_field {
 mod as_the_data_plan_derives {
     use super::*;
     use stack_encrypt::dynamic::{
-        self, frame::OwnedFrame, record, Op, Operand, TargetDescriptor, TargetError, TargetOptions,
-        TargetResolver, ValueKind,
+        self,
+        frame::{Frame, OwnedFrame},
+        record, Op, Operand, TargetDescriptor, TargetError, TargetOptions, TargetResolver,
+        ValueKind,
     };
     use stack_encrypt::target::{DeclaredContext, IndexSpec};
     use stack_encrypt::{AsProtectedRef as _, Label, Pending};
@@ -1648,7 +1650,7 @@ mod as_the_data_plan_derives {
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: &DeclaredContext,
-            _: OwnedFrame,
+            _: Frame<'_>,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("only queried")
         }
@@ -1671,7 +1673,7 @@ mod as_the_data_plan_derives {
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: &DeclaredContext,
-            _: OwnedFrame,
+            _: Frame<'_>,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("the JSON operators are the engine's")
         }
@@ -1708,12 +1710,8 @@ mod as_the_data_plan_derives {
         op: Op,
         input: Value,
     ) -> Operand {
-        let frame = OwnedFrame::from_bytes(
-            dynamic::frame::serde::to_vec(&input)
-                .unwrap()
-                .as_protected_ref(),
-        )
-        .unwrap();
+        let frame =
+            OwnedFrame::from_buffer(dynamic::frame::serde::to_vec(&input).unwrap()).unwrap();
         dynamic::query_term(keyset, &plan(), "profile", op, frame, &Documents)
             .unwrap()
             .await

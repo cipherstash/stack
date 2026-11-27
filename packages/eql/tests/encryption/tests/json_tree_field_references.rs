@@ -91,12 +91,7 @@ async fn data(
     operator: &str,
     input: Value,
 ) -> dynamic::Operand {
-    let frame = OwnedFrame::from_bytes(
-        dynamic::frame::serde::to_vec(&input)
-            .unwrap()
-            .as_protected_ref(),
-    )
-    .unwrap();
+    let frame = OwnedFrame::from_buffer(dynamic::frame::serde::to_vec(&input).unwrap()).unwrap();
     dynamic::query_term(
         keyset,
         &plan(),

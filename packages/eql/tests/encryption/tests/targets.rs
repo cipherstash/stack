@@ -32,7 +32,7 @@ fn text(value: &str) -> OwnedFrame {
 
 /// An opened frame read as text; any other kind fails the test.
 fn opened(value: OwnedFrame) -> String {
-    let kind = value.kind();
+    let kind = value.frame().kind();
     value
         .visit(String::sink())
         .unwrap_or_else(|_| panic!("a text target opens to a string, not {kind:?}"))
@@ -59,7 +59,7 @@ mod given_text_eq {
         let (cipher, calls) = common::cipher().await;
         let keyset = cipher.default_keyset();
         for value in ["alice@example.com", "", "雪☃", "cafe\u{301}"] {
-            let by_name = targets::encrypt("TextEq", &keyset, &email(), text(value))
+            let by_name = targets::encrypt("TextEq", &keyset, &email(), text(value).frame())
                 .unwrap()
                 .await
                 .unwrap();
@@ -120,7 +120,7 @@ mod given_text_eq {
     async fn round_trips_through_both_openers() {
         let (cipher, _) = common::cipher().await;
         let keyset = cipher.default_keyset();
-        let stored = targets::encrypt("TextEq", &keyset, &email(), text("secret"))
+        let stored = targets::encrypt("TextEq", &keyset, &email(), text("secret").frame())
             .unwrap()
             .await
             .unwrap();
@@ -154,7 +154,7 @@ mod given_text_eq {
         let named = |n: &str| IdentifiedBy::Name(n.to_string().into());
         let acme = cipher.keyset(named("acme"));
         let globex = cipher.keyset(named("globex"));
-        let stored = targets::encrypt("TextEq", &acme, &email(), text("secret"))
+        let stored = targets::encrypt("TextEq", &acme, &email(), text("secret").frame())
             .unwrap()
             .await
             .unwrap();
@@ -191,7 +191,7 @@ mod given_text_eq {
             &common::index_of("TextEq"),
             &keyset,
             &email(),
-            text("alice@example.com"),
+            text("alice@example.com").frame(),
         )
         .unwrap()
         .await
@@ -206,10 +206,15 @@ mod given_text_eq {
             serde_json::to_vec(&typed).unwrap(),
             "a query has no fresh key in it, so the bytes are identical"
         );
-        let stored = targets::encrypt("TextEq", &keyset, &email(), text("alice@example.com"))
-            .unwrap()
-            .await
-            .unwrap();
+        let stored = targets::encrypt(
+            "TextEq",
+            &keyset,
+            &email(),
+            text("alice@example.com").frame(),
+        )
+        .unwrap()
+        .await
+        .unwrap();
         let stored: TextEq = serde_json::from_slice(&stored).unwrap();
         assert_eq!(typed.hm, stored.hm, "the query matches the stored value");
         let calls = calls.lock().unwrap();
@@ -225,7 +230,7 @@ mod given_text_eq {
     async fn opens_under_the_expected_column_only() {
         let (cipher, calls) = common::cipher().await;
         let keyset = cipher.default_keyset();
-        let stored = targets::encrypt("TextEq", &keyset, &email(), text("secret"))
+        let stored = targets::encrypt("TextEq", &keyset, &email(), text("secret").frame())
             .unwrap()
             .await
             .unwrap();
@@ -250,7 +255,12 @@ mod given_text_eq {
     async fn refuses_a_value_of_another_kind_before_minting() {
         let (cipher, calls) = common::cipher().await;
         let keyset = cipher.default_keyset();
-        let error = refused(targets::encrypt("TextEq", &keyset, &email(), frame(34u64)));
+        let error = refused(targets::encrypt(
+            "TextEq",
+            &keyset,
+            &email(),
+            frame(34u64).frame(),
+        ));
         assert!(
             matches!(
                 error,
@@ -267,7 +277,7 @@ mod given_text_eq {
             &common::index_of("TextEq"),
             &keyset,
             &email(),
-            frame(vec![34u64]),
+            frame(vec![34u64]).frame(),
         ));
         assert!(
             matches!(
@@ -286,7 +296,7 @@ mod given_text_eq {
             &common::index_of("TextEq"),
             &keyset,
             &email(),
-            frame(None::<String>),
+            frame(None::<String>).frame(),
         )
         .is_ok());
         assert!(
@@ -323,7 +333,7 @@ mod given_text_eq {
     async fn refuses_a_stored_payload_of_the_other_version() {
         let (cipher, _) = common::cipher().await;
         let keyset = cipher.default_keyset();
-        let stored = targets::encrypt("TextEq", &keyset, &email(), text("secret"))
+        let stored = targets::encrypt("TextEq", &keyset, &email(), text("secret").frame())
             .unwrap()
             .await
             .unwrap();
@@ -351,7 +361,12 @@ mod given_text_eq {
         let (cipher, _) = common::cipher().await;
         let keyset = cipher.default_keyset();
         let tenant = Label::new(["tenant", "users", "email"]).unwrap();
-        let error = refused(targets::encrypt("TextEq", &keyset, &tenant, text("x")));
+        let error = refused(targets::encrypt(
+            "TextEq",
+            &keyset,
+            &tenant,
+            text("x").frame(),
+        ));
         assert!(
             matches!(&error, TargetError::Context { label } if label == "tenant/users/email"),
             "{error}"
@@ -377,19 +392,25 @@ mod given_an_unknown_name {
                 name,
                 &keyset,
                 &email(),
-                text("x"),
+                text("x").frame(),
             )));
             unknown(refused(targets::query(
                 name,
                 &common::index_of(name),
                 &keyset,
                 &email(),
-                text("x"),
+                text("x").frame(),
             )));
             unknown(refused(targets::decrypt(name, &cipher, &email(), b"{}")));
         }
         assert_eq!(
-            refused(targets::encrypt("Nope", &keyset, &email(), text("x"))).to_string(),
+            refused(targets::encrypt(
+                "Nope",
+                &keyset,
+                &email(),
+                text("x").frame()
+            ))
+            .to_string(),
             "no such EQL type: Nope"
         );
     }
@@ -405,7 +426,7 @@ mod given_an_unknown_name {
             "Nope",
             &keyset,
             &not_a_column,
-            frame(None::<i32>),
+            frame(None::<i32>).frame(),
         ));
         assert!(matches!(error, TargetError::Unknown { .. }), "{error}");
         let error = refused(targets::decrypt(
@@ -421,7 +442,7 @@ mod given_an_unknown_name {
             "TextEq",
             &keyset,
             &not_a_column,
-            frame(None::<i32>),
+            frame(None::<i32>).frame(),
         ));
         assert!(matches!(error, TargetError::Context { .. }), "{error}");
         let calls = calls.lock().unwrap();
@@ -759,7 +780,7 @@ mod the_cross_language_fixture {
             &common::index_of("TextEq"),
             &keyset,
             &email(),
-            text(PLAINTEXT),
+            text(PLAINTEXT).frame(),
         )
         .unwrap()
         .await

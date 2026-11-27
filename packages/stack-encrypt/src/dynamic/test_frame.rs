@@ -85,7 +85,10 @@ impl Tree {
     /// from the tree's frame: `None` for a null, an `undefined`, a
     /// passthrough, or a tree no frame holds.
     pub(crate) fn kind(&self) -> Option<super::ValueKind> {
-        vitaminc_aead::frame::OwnedFrame::of(self).ok()?.kind()
+        vitaminc_aead::frame::OwnedFrame::of(self)
+            .ok()?
+            .frame()
+            .kind()
     }
 
     /// A frame read back as a tree.
@@ -109,6 +112,13 @@ pub(crate) fn frame_of(value: &Tree) -> vitaminc_protected::Protected<Vec<u8>> {
     let mut out = Vec::new();
     write(value, &mut out);
     vitaminc_protected::Protected::new(out)
+}
+
+/// [`frame_of`] in an owned frame of its own, as a binding hands one over.
+pub(crate) fn owned_frame_of(value: &Tree) -> vitaminc_aead::frame::OwnedFrame {
+    let mut bytes = vitaminc_protected::Buffer::new();
+    bytes.extend_from_slice(frame_of(value).risky_ref());
+    vitaminc_aead::frame::OwnedFrame::from_buffer(bytes).expect("a frame")
 }
 
 fn write(value: &Tree, out: &mut Vec<u8>) {

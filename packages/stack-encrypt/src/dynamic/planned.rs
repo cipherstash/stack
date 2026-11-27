@@ -53,7 +53,7 @@
 //!     Scope::new(42u64).bind(9u128),
 //! )
 //! .await?;
-//! assert_eq!(opened, row()?);
+//! assert_eq!(opened.frame(), row()?.frame());
 //!
 //! // A query value under a query plan, by the scope alone.
 //! let by_email = plan.query("email", Op::Eq)?;
@@ -99,7 +99,7 @@ use crate::target::{Step, YIELD_EVERY};
 use crate::{
     CipherRef, CipherText, Encrypt, KeysetCipher, Label, NonEmpty, PlanError, StackCipherText,
 };
-use vitaminc_aead::frame::OwnedFrame;
+use vitaminc_aead::frame::{Frame, OwnedFrame};
 
 /// The resolver of a build without EQL types, for [`Plan::field`].
 static NO_TARGETS: NoTargets = NoTargets;
@@ -199,10 +199,19 @@ impl<'p, P, V, R> fmt::Debug for Planned<'p, P, V, R> {
     }
 }
 
-impl<'p, P, V: Zeroize, R> Zeroize for Planned<'p, P, V, R> {
+/// Wipes the owned frame the plan holds.
+impl<'p, P, R> Zeroize for Planned<'p, P, OwnedFrame, R> {
     fn zeroize(&mut self) {
         self.value.zeroize();
     }
+}
+
+/// Wipes nothing: a borrowed frame holds no bytes of its own, and the
+/// buffer it borrows is wiped by its owner. A `Planned` is wiped when the
+/// owned form of an encryption takes it, which for a borrowed frame lets
+/// the borrow go.
+impl<'p, P, R> Zeroize for Planned<'p, P, Frame<'_>, R> {
+    fn zeroize(&mut self) {}
 }
 
 /// A dynamic refusal as the owned path reports it. A binding on a query is
@@ -335,23 +344,25 @@ impl Plan {
 
 /// A record under a plan encrypts to the stored row: every field under its
 /// own context, the caller's scope and then its bindings after the plan's
-/// own. The borrowed form reads the frame in place; the owned form
-/// consumes it.
-impl<'p, R> EncryptTarget<Planned<'p, Plan, OwnedFrame, R>> for StackCipherText
+/// own. The value is an [`OwnedFrame`], or a [`Frame`] borrowed from bytes
+/// the caller keeps. The borrowed form reads the frame in place; the owned
+/// form consumes it.
+impl<'p, V, R> EncryptTarget<Planned<'p, Plan, V, R>> for StackCipherText
 where
+    V: Encrypt + 'p,
+    for<'x> &'x V: Encrypt,
+    Planned<'p, Plan, V, R>: Zeroize,
     R: TargetResolver + 'p,
 {
     type ContextInput = OptionalContext<CallerContext>;
     fn encryption<'s, K: 'static>(
-    ) -> Encryption<'s, Planned<'p, Plan, OwnedFrame, R>, Self, K, Self::ContextInput>
+    ) -> Encryption<'s, Planned<'p, Plan, V, R>, Self, K, Self::ContextInput>
     where
-        Planned<'p, Plan, OwnedFrame, R>: 's,
+        Planned<'p, Plan, V, R>: 's,
     {
         Encryption::from_build(
             contexts::caller_leaf(),
-            move |source: &Planned<'p, Plan, OwnedFrame, R>,
-                  cipher,
-                  context: Self::ContextInput| {
+            move |source: &Planned<'p, Plan, V, R>, cipher, context: Self::ContextInput| {
                 encrypt_record(
                     cipher,
                     source.plan,
@@ -363,13 +374,13 @@ where
         )
     }
     fn owned_encryption<'s, K: 'static>(
-    ) -> Encryption<'s, Planned<'p, Plan, OwnedFrame, R>, Self, K, Self::ContextInput, Owned>
+    ) -> Encryption<'s, Planned<'p, Plan, V, R>, Self, K, Self::ContextInput, Owned>
     where
-        Planned<'p, Plan, OwnedFrame, R>: 's,
+        Planned<'p, Plan, V, R>: 's,
     {
         Encryption::from_owned_build(
             contexts::caller_leaf(),
-            move |source: Planned<'p, Plan, OwnedFrame, R>, cipher, context: Self::ContextInput| {
+            move |source: Planned<'p, Plan, V, R>, cipher, context: Self::ContextInput| {
                 let Planned {
                     plan,
                     value,
@@ -485,7 +496,7 @@ where
                             cipher,
                             field.label(),
                             &extend,
-                            value,
+                            value.frame(),
                         )
                         .map_err(|error| Error::Target(name_target(error, field.name())))?,
                 );
@@ -972,23 +983,25 @@ impl QueryPlan {
 
 /// A query value under a query plan encrypts to the query term, as
 /// [`query_term`] derives it: the operand bytes and the SQL type they bind
-/// as. The caller's context is its scope alone; a binding is refused
-/// before any key is requested ([`PlanError::BindInQuery`]).
-impl<'p, R> EncryptTarget<Planned<'p, QueryPlan, OwnedFrame, R>> for QueryTerm
+/// as. The value is an [`OwnedFrame`] or a borrowed [`Frame`]. The caller's
+/// context is its scope alone; a binding is refused before any key is
+/// requested ([`PlanError::BindInQuery`]).
+impl<'p, V, R> EncryptTarget<Planned<'p, QueryPlan, V, R>> for QueryTerm
 where
+    V: Encrypt + 'p,
+    for<'x> &'x V: Encrypt,
+    Planned<'p, QueryPlan, V, R>: Zeroize,
     R: TargetResolver + 'p,
 {
     type ContextInput = OptionalContext<CallerContext>;
     fn encryption<'s, K: 'static>(
-    ) -> Encryption<'s, Planned<'p, QueryPlan, OwnedFrame, R>, Self, K, Self::ContextInput>
+    ) -> Encryption<'s, Planned<'p, QueryPlan, V, R>, Self, K, Self::ContextInput>
     where
-        Planned<'p, QueryPlan, OwnedFrame, R>: 's,
+        Planned<'p, QueryPlan, V, R>: 's,
     {
         Encryption::from_build(
             contexts::caller_leaf(),
-            move |source: &Planned<'p, QueryPlan, OwnedFrame, R>,
-                  cipher,
-                  context: Self::ContextInput| {
+            move |source: &Planned<'p, QueryPlan, V, R>, cipher, context: Self::ContextInput| {
                 let scopes = context
                     .into_inner()
                     .map(DeclaredContext::from)
@@ -1000,15 +1013,13 @@ where
         )
     }
     fn owned_encryption<'s, K: 'static>(
-    ) -> Encryption<'s, Planned<'p, QueryPlan, OwnedFrame, R>, Self, K, Self::ContextInput, Owned>
+    ) -> Encryption<'s, Planned<'p, QueryPlan, V, R>, Self, K, Self::ContextInput, Owned>
     where
-        Planned<'p, QueryPlan, OwnedFrame, R>: 's,
+        Planned<'p, QueryPlan, V, R>: 's,
     {
         Encryption::from_owned_build(
             contexts::caller_leaf(),
-            move |source: Planned<'p, QueryPlan, OwnedFrame, R>,
-                  cipher,
-                  context: Self::ContextInput| {
+            move |source: Planned<'p, QueryPlan, V, R>, cipher, context: Self::ContextInput| {
                 let scopes = context
                     .into_inner()
                     .map(DeclaredContext::from)
@@ -1063,7 +1074,7 @@ macro_rules! handle_methods {
             /// # Errors
             ///
             /// As [`Plan::query_with`].
-            pub fn $method(self, value: OwnedFrame) -> Result<DynamicQuery<'p, R>, Error> {
+            pub fn $method<V: Encrypt>(self, value: V) -> Result<DynamicQuery<'p, R, V>, Error> {
                 self.op(Op::$op, value)
             }
         }
@@ -1095,7 +1106,7 @@ impl<'p, R: TargetResolver + ?Sized> FieldHandle<'p, R> {
     /// # Errors
     ///
     /// As [`Plan::query_with`].
-    pub fn op(self, operator: Op, value: OwnedFrame) -> Result<DynamicQuery<'p, R>, Error> {
+    pub fn op<V: Encrypt>(self, operator: Op, value: V) -> Result<DynamicQuery<'p, R, V>, Error> {
         Ok(DynamicQuery {
             plan: self.plan.query_with(&self.name, operator, self.resolver)?,
             value,
@@ -1117,15 +1128,17 @@ impl<'p, R: TargetResolver + ?Sized> FieldHandle<'p, R> {
 
 /// A query from a [`FieldHandle`], ready for the caller's scopes and the
 /// keyset. It has no `bind` method: a binding is in no query context. The
-/// value is a frame, a protected buffer wiped when the query is dropped.
-pub struct DynamicQuery<'p, R: ?Sized = NoTargets> {
+/// value is any source, read when the term is derived: an [`OwnedFrame`],
+/// wiped when the query is dropped, or a [`Frame`] borrowed from bytes the
+/// caller keeps.
+pub struct DynamicQuery<'p, R: ?Sized = NoTargets, V = OwnedFrame> {
     plan: QueryPlan,
-    value: OwnedFrame,
+    value: V,
     scopes: DeclaredContext,
     resolver: &'p R,
 }
 
-impl<'p, R: ?Sized> fmt::Debug for DynamicQuery<'p, R> {
+impl<'p, R: ?Sized, V> fmt::Debug for DynamicQuery<'p, R, V> {
     /// Names the field and the operator; the value is plaintext.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DynamicQuery")
@@ -1135,7 +1148,7 @@ impl<'p, R: ?Sized> fmt::Debug for DynamicQuery<'p, R> {
     }
 }
 
-impl<'p, R: ?Sized> DynamicQuery<'p, R> {
+impl<'p, R: ?Sized, V> DynamicQuery<'p, R, V> {
     /// Add a scope the stored values were written under. A `Scope`, a
     /// `NonEmpty` or a bare integer converts; a `Bind` does not, and a
     /// context with a binding inside it is refused when the query runs
@@ -1151,7 +1164,7 @@ impl<'p, R: ?Sized> DynamicQuery<'p, R> {
     }
 }
 
-impl<'p, R: TargetResolver + ?Sized> DynamicQuery<'p, R> {
+impl<'p, R: TargetResolver + ?Sized, V: Encrypt> DynamicQuery<'p, R, V> {
     /// Derive the query term under `keyset`: [`query_term`] for the plan,
     /// extended by the scopes. Nothing is requested until the pending is
     /// awaited.
@@ -1590,7 +1603,7 @@ mod tests {
             .expect("build cipher")
     }
     fn frame(value: Tree) -> OwnedFrame {
-        OwnedFrame::from_bytes(frame_of(&value).as_protected_ref().as_deref()).expect("a frame")
+        OwnedFrame::of(&value).expect("a frame")
     }
     fn values(age: Option<Tree>, id: Option<Tree>) -> FieldValues {
         let mut values = FieldValues::new();
@@ -1853,10 +1866,16 @@ mod tests {
                     .await
                     .expect("opens");
                 let age = Tree::UInt32(u32::try_from(at).expect("small"));
-                assert_eq!(opened.get::<OwnedFrame>("age"), Some(&frame(age)));
+                assert_eq!(
+                    opened.get::<OwnedFrame>("age").map(OwnedFrame::frame),
+                    Some(frame(age).frame())
+                );
                 let id = (!absent.contains("id"))
                     .then(|| frame(Tree::UInt64(u64::try_from(at).expect("small"))));
-                assert_eq!(opened.get::<OwnedFrame>("id"), id.as_ref());
+                assert_eq!(
+                    opened.get::<OwnedFrame>("id").map(OwnedFrame::frame),
+                    id.as_ref().map(OwnedFrame::frame)
+                );
             }
         }
     }
@@ -1971,8 +1990,8 @@ mod tests {
             .await
             .expect("opens");
         assert_eq!(
-            opened.get::<OwnedFrame>("age"),
-            Some(&frame(Tree::UInt32(34)))
+            opened.get::<OwnedFrame>("age").map(OwnedFrame::frame),
+            Some(frame(Tree::UInt32(34)).frame())
         );
 
         // A sealed field holding a frame, an extra field, a missing field.
@@ -1996,15 +2015,16 @@ mod tests {
         ));
     }
 
-    /// Zeroizing a planned value wipes the value it holds: the frame is
-    /// replaced by the empty one, whose dropped buffer wipes the bytes.
+    /// Zeroizing a planned value wipes the value it holds: the frame's bytes
+    /// are wiped and it is left holding the plain null.
     #[test]
-    fn zeroizing_a_planned_value_empties_its_frame() {
+    fn zeroizing_a_planned_value_leaves_a_null() {
         let plan = the_plan();
         let mut planned = Planned::new(&plan, frame(obj(vec![("age", Tree::UInt32(34))])));
-        assert!(!planned.value.risky_ref().is_empty());
+        assert!(!planned.value.frame().is_null());
         planned.zeroize();
-        assert!(planned.value.risky_ref().is_empty());
+        assert!(planned.value.frame().is_null());
+        assert_eq!(planned.value.frame(), OwnedFrame::null().frame());
     }
 
     /// `Debug` names the wrapper and the handle's field, and shows no value.

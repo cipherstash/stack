@@ -317,8 +317,9 @@ async fn derived() -> Json {
         };
         let typed = typed_match(&keyset, input).await;
         for (stats_json, stats) in stats_cases() {
-            let read = Stats::from_frame(frame_of_value(&stats_json).as_protected_ref())
-                .expect("stats read");
+            let read =
+                Stats::from_frame(frame_of_value(&stats_json).into_buffer().as_protected_ref())
+                    .expect("stats read");
             assert_eq!(read, stats, "the wire form reads as the typed stats");
             let limit =
                 dynamic::target_limit(&plan, "name", Op::Matches, bytes, 10, &read, &NoTargets)

@@ -18,8 +18,10 @@ use std::collections::BTreeMap;
 use base64ct::{Base64, Encoding};
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::{
-    self, frame::OwnedFrame, record, Op, Operand, QueryTerm, Reason, TargetDescriptor, TargetError,
-    TargetOptions, TargetResolver, ValueKind,
+    self,
+    frame::{Frame, OwnedFrame},
+    record, Op, Operand, QueryTerm, Reason, TargetDescriptor, TargetError, TargetOptions,
+    TargetResolver, ValueKind,
 };
 use stack_encrypt::eql_simulator;
 use stack_encrypt::json::{JsonDocument, Tag};
@@ -64,14 +66,14 @@ impl TargetResolver for Documents {
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
         parts: &stack_encrypt::target::DeclaredContext,
-        plaintext: OwnedFrame,
+        plaintext: Frame<'_>,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         let options = options
             .and_then(TargetOptions::json)
             .cloned()
             .unwrap_or_default();
         let document =
-            dynamic::read_json(&plaintext).map_err(|e| TargetError::Other(Box::new(e)))?;
+            dynamic::read_json(plaintext).map_err(|e| TargetError::Other(Box::new(e)))?;
         Ok(keyset
             .run(
                 stack_encrypt::target::json_document::<_, Borrowed>(options),
@@ -101,7 +103,7 @@ impl TargetResolver for Documents {
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
         _: &stack_encrypt::target::DeclaredContext,
-        _: OwnedFrame,
+        _: Frame<'_>,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("the JSON operators are the engine's")
     }
@@ -157,12 +159,7 @@ fn frame<T: Encrypt>(value: T) -> OwnedFrame {
 
 /// A JSON value as a frame: what a binding sends as an input or a request.
 fn json_frame(value: &Value) -> OwnedFrame {
-    OwnedFrame::from_bytes(
-        dynamic::frame::serde::to_vec(value)
-            .unwrap()
-            .as_protected_ref(),
-    )
-    .unwrap()
+    OwnedFrame::from_buffer(dynamic::frame::serde::to_vec(value).unwrap()).unwrap()
 }
 
 async fn term<K: Source>(
@@ -311,7 +308,7 @@ fn open_pending<'a, K: Send + Sync + 'static>(
 /// The values a read opened, one list for each group of rows.
 fn opened_values(opened: &OwnedFrame) -> Vec<Vec<Value>> {
     let groups: Vec<Vec<bytes::Bytes>> =
-        dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
+        dynamic::frame::serde::from_slice(opened.frame().as_bytes()).unwrap();
     groups
         .into_iter()
         .map(|g| {
@@ -331,7 +328,8 @@ async fn open_children<K: Source>(
     groups: Vec<Vec<String>>,
 ) -> Result<Vec<Vec<Opened>>, stack_encrypt::Error> {
     let opened = open_pending(keyset, plan, &request, &groups).await?;
-    let groups: Vec<Vec<ChildMap>> = dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
+    let groups: Vec<Vec<ChildMap>> =
+        dynamic::frame::serde::from_slice(opened.frame().as_bytes()).unwrap();
     Ok(groups
         .into_iter()
         .map(|group| group.into_iter().map(ChildMap::opened).collect())
@@ -2150,7 +2148,7 @@ mod element_match {
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
                 parts: &stack_encrypt::target::DeclaredContext,
-                plaintext: OwnedFrame,
+                plaintext: Frame<'_>,
             ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
                 Documents.encrypt(name, options, keyset, label, parts, plaintext)
             }
@@ -2171,7 +2169,7 @@ mod element_match {
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
                 scopes: &stack_encrypt::target::DeclaredContext,
-                plaintext: OwnedFrame,
+                plaintext: Frame<'_>,
             ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
                 Documents.query(name, index, keyset, label, scopes, plaintext)
             }
@@ -3150,7 +3148,7 @@ mod compiled_match {
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
                 parts: &stack_encrypt::target::DeclaredContext,
-                plaintext: OwnedFrame,
+                plaintext: Frame<'_>,
             ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
                 Documents.encrypt(name, options, keyset, label, parts, plaintext)
             }
@@ -3171,7 +3169,7 @@ mod compiled_match {
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
                 scopes: &stack_encrypt::target::DeclaredContext,
-                plaintext: OwnedFrame,
+                plaintext: Frame<'_>,
             ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
                 Documents.query(name, index, keyset, label, scopes, plaintext)
             }

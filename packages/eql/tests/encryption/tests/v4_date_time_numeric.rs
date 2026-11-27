@@ -15,7 +15,6 @@
 
 mod common;
 
-use stack_encrypt::AsProtectedRef as _;
 use std::str::FromStr;
 
 use eql_bindings::encryption::targets::{self as targets, TargetError};
@@ -35,7 +34,7 @@ fn frame<T: Encrypt>(value: T) -> OwnedFrame {
 }
 
 fn same(a: &OwnedFrame, b: &OwnedFrame) -> bool {
-    a.risky_ref() == b.risky_ref()
+    a.frame().as_bytes() == b.frame().as_bytes()
 }
 
 fn column() -> NonEmpty<Identifier> {
@@ -80,7 +79,7 @@ async fn by_name<T: DeserializeOwned>(
     name: &str,
     value: OwnedFrame,
 ) -> T {
-    let bytes = targets::encrypt(name, keyset, &label(), value)
+    let bytes = targets::encrypt(name, keyset, &label(), value.frame())
         .unwrap()
         .await
         .unwrap();
@@ -93,10 +92,16 @@ async fn hm(
     name: &str,
     value: OwnedFrame,
 ) -> String {
-    let bytes = targets::query(name, &common::index_of(name), keyset, &label(), value)
-        .unwrap()
-        .await
-        .unwrap();
+    let bytes = targets::query(
+        name,
+        &common::index_of(name),
+        keyset,
+        &label(),
+        value.frame(),
+    )
+    .unwrap()
+    .await
+    .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     json["hm"].as_str().unwrap().to_owned()
 }
@@ -327,7 +332,7 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
         ("Numeric", frame::<f64>(1.5), ValueKind::Decimal),
         ("NumericEq", frame("1.50"), ValueKind::Decimal),
     ] {
-        let error = refused(targets::encrypt(name, &keyset, &label(), value));
+        let error = refused(targets::encrypt(name, &keyset, &label(), value.frame()));
         assert!(
             matches!(error, TargetError::Plaintext { target, expected: e, .. } if target == name && e == expected),
             "{name}: {error}"
@@ -361,10 +366,11 @@ async fn the_ledger_query_fixture_is_what_the_dispatch_derives() {
         let keyset = &keyset;
         async move {
             let label = Label::new(["profiles", column]).unwrap();
-            let bytes = targets::query(name, &common::index_of(name), keyset, &label, value)
-                .unwrap()
-                .await
-                .unwrap();
+            let bytes =
+                targets::query(name, &common::index_of(name), keyset, &label, value.frame())
+                    .unwrap()
+                    .await
+                    .unwrap();
             String::from_utf8(bytes).unwrap()
         }
     };
@@ -943,8 +949,7 @@ async fn a_storage_only_type_stores_a_none_as_long_as_a_value() {
         "and an Option opens a value"
     );
 
-    let null = stack_encrypt::Protected::new([0x00u8]);
-    let null = OwnedFrame::from_bytes(null.as_protected_ref().as_ref_of()).unwrap();
+    let null = OwnedFrame::null();
     let named: date::Date = by_name(&keyset, "Date", again(&null)).await;
     assert_eq!(leaf_len(&named.c), leaf_len(&absent.c), "by name too");
     let opened = targets::decrypt(
@@ -994,9 +999,8 @@ fn refused_null(
     keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
 ) -> TargetError {
-    let null = stack_encrypt::Protected::new([0x00u8]);
-    let null = OwnedFrame::from_bytes(null.as_protected_ref().as_ref_of()).unwrap();
-    refused(targets::encrypt(name, keyset, &label(), null))
+    let null = OwnedFrame::null();
+    refused(targets::encrypt(name, keyset, &label(), null.frame()))
 }
 
 /// Needs an EQL v4 installation. A storage-only column stores an absent
@@ -1080,6 +1084,7 @@ fn postgres_stores_a_sealed_null_in_a_storage_only_column() {
 
 /// A second frame of the same bytes. A frame is not `Clone`.
 fn again(frame: &OwnedFrame) -> OwnedFrame {
-    use stack_encrypt::AsProtectedRef as _;
-    OwnedFrame::from_bytes(frame.as_protected_ref()).unwrap()
+    let mut buffer = stack_encrypt::Buffer::new();
+    buffer.extend_from_slice(frame.frame().as_bytes());
+    OwnedFrame::from_buffer(buffer).unwrap()
 }

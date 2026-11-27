@@ -59,12 +59,7 @@ fn contact_plan() -> record::Plan {
 }
 
 pub(super) fn frame_of(value: &Value) -> OwnedFrame {
-    OwnedFrame::from_bytes(
-        dynamic::frame::serde::to_vec(value)
-            .unwrap()
-            .as_protected_ref(),
-    )
-    .unwrap()
+    OwnedFrame::from_buffer(dynamic::frame::serde::to_vec(value).unwrap()).unwrap()
 }
 
 /// The operand of `operator` on `profile` for `input`, as the SQL binds

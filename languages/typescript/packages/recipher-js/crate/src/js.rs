@@ -5,8 +5,9 @@
 //! engine's value model is the set of value types it reads.
 //!
 //! `JsRef::to_frame` reads a JavaScript value, on the JavaScript thread,
-//! into the engine's [`OwnedFrame`]. A frame is a byte buffer that contains
-//! one value. The buffer is wiped when it drops. A worker thread then
+//! into a buffer, which becomes the engine's [`OwnedFrame`] without a copy.
+//! A frame is a byte buffer that contains one value. The buffer is wiped
+//! when it drops. A worker thread then
 //! encrypts the frame, with no access to JavaScript. `JsBuilder::build`
 //! builds a decrypted frame back into a JavaScript value. This module does
 //! not convert any value itself.
@@ -25,9 +26,6 @@ use napi::bindgen_prelude::Unknown;
 use napi::{Env, Status};
 use recipher_value_napi::{JsBuilder, JsFault, JsRef};
 use stack_encrypt::dynamic::frame::OwnedFrame;
-use stack_encrypt::AsProtectedRef;
-use vitaminc_aead::Frame;
-use vitaminc_protected::Controlled;
 
 use crate::error::{Error, RecipherErrorFields};
 
@@ -45,7 +43,8 @@ pub fn read(env: &Env, value: Unknown<'_>) -> Result<OwnedFrame, RecipherErrorFi
     let frame = JsRef::new(value)
         .to_frame()
         .map_err(|error| refused(env, &error))?;
-    OwnedFrame::from_bytes(frame.as_protected_ref()).map_err(|_| Error::Value.into())
+    // The bridge's buffer becomes the frame: checked, and kept as written.
+    OwnedFrame::from_buffer(frame).map_err(|_| Error::Value.into())
 }
 
 /// Builds the JavaScript value of a decrypted frame.
@@ -54,9 +53,7 @@ pub fn read(env: &Env, value: Unknown<'_>) -> Result<OwnedFrame, RecipherErrorFi
 ///
 /// Returns `recipher_js::build_value` when the value cannot be built.
 pub fn build(env: &Env, value: OwnedFrame) -> Result<Unknown<'_>, RecipherErrorFields> {
-    let bytes = value.into_inner();
-    let frame = Frame::parse(bytes.risky_ref()).map_err(|_| Error::BuildValue)?;
-    JsBuilder::build(env, frame).map_err(|error| not_built(env, &error))
+    JsBuilder::build(env, value.frame()).map_err(|error| not_built(env, &error))
 }
 
 /// Returns the failure for a value that `JsBuilder` did not build.

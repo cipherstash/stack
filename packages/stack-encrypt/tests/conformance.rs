@@ -248,8 +248,8 @@ async fn shared_record_scalar_profile() {
             .await
             .unwrap();
         assert_eq!(
-            opened.risky_ref(),
-            expected_row.risky_ref(),
+            opened.frame().as_bytes(),
+            expected_row.frame().as_bytes(),
             "{}: record roundtrip",
             case.id
         );
@@ -276,7 +276,7 @@ async fn shared_record_scalar_profile() {
         assert_eq!(&stored_term, term, "{}: stored equality", case.id);
         let ct = scalar(&keyset, &case.input, &context).await;
         let artifact = Artifact {
-            frame: hex(input.risky_ref()),
+            frame: hex(input.frame().as_bytes()),
             ciphertext: hex(&ct.to_bytes()),
             equality: hex(term),
         };
@@ -291,8 +291,8 @@ async fn shared_record_scalar_profile() {
             let opened =
                 open_scalar(&keyset, &unhex(&candidate.ciphertext), &case.kind, &context).await;
             assert_eq!(
-                opened.risky_ref(),
-                input.risky_ref(),
+                opened.frame().as_bytes(),
+                input.frame().as_bytes(),
                 "{}: {origin} scalar cross-open",
                 case.id
             );
@@ -301,8 +301,8 @@ async fn shared_record_scalar_profile() {
                 .await
                 .unwrap();
             assert_eq!(
-                opened.risky_ref(),
-                expected_row.risky_ref(),
+                opened.frame().as_bytes(),
+                expected_row.frame().as_bytes(),
                 "{}: {origin} record cross-open",
                 case.id
             );

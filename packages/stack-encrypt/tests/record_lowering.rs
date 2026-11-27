@@ -35,7 +35,7 @@
 
 mod common;
 
-use stack_encrypt::{AsProtectedRef as _, Protected};
+use stack_encrypt::AsProtectedRef as _;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -156,7 +156,7 @@ fn source_of(plaintext: &Json, plan: &DataPlan) -> OwnedFrame {
 
 /// An opened value, read back from its frame as JSON.
 fn json_of_opened(value: OwnedFrame) -> Json {
-    exact(value.risky_ref())
+    exact(value.frame().as_bytes())
 }
 
 /// A frame read as JSON, holding the fixture's kinds and nothing else: an
@@ -370,9 +370,12 @@ impl StoredFields {
     /// The passthrough field `name`, which must be text in its frame.
     fn text(&mut self, name: &str) -> OwnedFrame {
         let payload = self.carried.remove(name).expect(name);
-        let text = OwnedFrame::from_bytes(Protected::new(payload).as_protected_ref().as_deref())
-            .expect("a value");
-        assert_eq!(text.kind(), Some(ValueKind::String), "{name} is text");
+        let text = common::frames::owned(&payload);
+        assert_eq!(
+            text.frame().kind(),
+            Some(ValueKind::String),
+            "{name} is text"
+        );
         text
     }
 }

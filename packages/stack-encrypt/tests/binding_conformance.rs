@@ -94,7 +94,7 @@ fn plan(case: &Case, with_bind: bool) -> record::Plan {
             ("type", frame("string")),
         ]),
     ));
-    record::plan(object(fields).as_protected_ref()).unwrap()
+    record::plan(object(fields).into_buffer().as_protected_ref()).unwrap()
 }
 /// The bytes a passthrough frame holds: a stored term.
 fn passthrough_bytes(payload: &stack_encrypt::PassthroughFrame) -> Vec<u8> {
@@ -213,10 +213,10 @@ async fn binding_conformance() {
         let stored_context = {
             let field = frame(vec![context(&case)]);
             let _ = field;
-            let ctx = dynamic::context(context(&case).as_protected_ref()).unwrap();
+            let ctx = dynamic::context(context(&case).into_buffer().as_protected_ref()).unwrap();
             let mut piece = ctx.into_inner();
             for binding in &case.bind {
-                let part = dynamic::context(part(binding).as_protected_ref())
+                let part = dynamic::context(part(binding).into_buffer().as_protected_ref())
                     .map(|p| p.into_inner())
                     .unwrap_or_else(|_| {
                         // An empty part is not a nonempty context on its own.
@@ -277,7 +277,7 @@ async fn binding_conformance() {
             .unwrap()
             .await
             .unwrap();
-        assert_eq!(opened.risky_ref(), source().risky_ref());
+        assert_eq!(opened.frame().as_bytes(), source().frame().as_bytes());
         let other = {
             let tampered = vec![
                 (
@@ -298,7 +298,7 @@ async fn binding_conformance() {
                     ]),
                 ),
             ];
-            record::plan(object(tampered).as_protected_ref()).unwrap()
+            record::plan(object(tampered).into_buffer().as_protected_ref()).unwrap()
         };
         assert!(
             record::decrypt(keyset.clone(), stored(expected), &other, None)

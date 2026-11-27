@@ -30,7 +30,7 @@ fn frame<T: Encrypt>(value: T) -> OwnedFrame {
 /// carries both, and a float's bit pattern, so `-0.0` and a NaN's payload
 /// count.
 fn same(a: &OwnedFrame, b: &OwnedFrame) -> bool {
-    a.risky_ref() == b.risky_ref()
+    a.frame().as_bytes() == b.frame().as_bytes()
 }
 
 fn column() -> NonEmpty<Identifier> {
@@ -106,7 +106,7 @@ async fn by_name<T: DeserializeOwned>(
     name: &str,
     value: OwnedFrame,
 ) -> T {
-    let bytes = targets::encrypt(name, keyset, &label(), value)
+    let bytes = targets::encrypt(name, keyset, &label(), value.frame())
         .unwrap()
         .await
         .unwrap();
@@ -216,10 +216,16 @@ async fn eq_terms(
     value: OwnedFrame,
 ) -> (serde_json::Value, serde_json::Value) {
     let stored: serde_json::Value = by_name(keyset, name, again(&value)).await;
-    let query = targets::query(name, &common::index_of(name), keyset, &label(), value)
-        .unwrap()
-        .await
-        .unwrap();
+    let query = targets::query(
+        name,
+        &common::index_of(name),
+        keyset,
+        &label(),
+        value.frame(),
+    )
+    .unwrap()
+    .await
+    .unwrap();
     let query: serde_json::Value = serde_json::from_slice(&query).unwrap();
     (stored["hm"].clone(), query["hm"].clone())
 }
@@ -418,11 +424,11 @@ fn profile_text() -> String {
 /// The document a `json` field opened to: its text, in a bytes value.
 fn document_of(opened: &OwnedFrame) -> serde_json::Value {
     assert_eq!(
-        opened.kind(),
+        opened.frame().kind(),
         Some(ValueKind::Bytes),
         "a document opens to its text, in bytes"
     );
-    stack_encrypt::dynamic::read_json(opened)
+    stack_encrypt::dynamic::read_json(opened.frame())
         .expect("a document")
         .value()
         .clone()
@@ -592,7 +598,7 @@ async fn a_json_document_dispatches_by_name() {
         &common::index_of("Json"),
         &keyset,
         &label(),
-        frame("{}"),
+        frame("{}").frame(),
     ));
     assert!(
         matches!(error, TargetError::NoQuery { name: "Json" }),
@@ -604,7 +610,7 @@ async fn a_json_document_dispatches_by_name() {
         Some(&options),
         &keyset,
         &label(),
-        frame("{}"),
+        frame("{}").frame(),
     ));
     assert!(
         matches!(error, TargetError::Options { name: "Json" }),
@@ -634,7 +640,7 @@ async fn a_value_that_is_not_a_json_document_is_refused_before_minting() {
         (frame(36i64), "json_not_text"),
         (frame(vec!["{}".to_owned()]), "json_not_text"),
     ] {
-        let error = refused(targets::encrypt("Json", &keyset, &label(), value));
+        let error = refused(targets::encrypt("Json", &keyset, &label(), value.frame()));
         assert!(
             matches!(&error, TargetError::Json { target: "Json", source } if source.code() == code),
             "{code}: {error}"
@@ -686,7 +692,7 @@ async fn a_stored_value_that_is_not_a_json_document_is_refused() {
         );
     }
     // A searchable document is another type, with another shape.
-    let searchable = targets::encrypt("JsonSearch", &keyset, &label(), frame("{}"))
+    let searchable = targets::encrypt("JsonSearch", &keyset, &label(), frame("{}").frame())
         .unwrap()
         .await
         .unwrap();
@@ -757,7 +763,7 @@ async fn every_producible_type_dispatches_by_name() {
         let kind = target
             .plaintext_kind()
             .expect("a producible type names its kind");
-        let stored = targets::encrypt(name, &keyset, &label(), sample(kind))
+        let stored = targets::encrypt(name, &keyset, &label(), sample(kind).frame())
             .unwrap()
             .await
             .unwrap();
@@ -776,7 +782,7 @@ async fn every_producible_type_dispatches_by_name() {
                     &common::index_of(name),
                     &keyset,
                     &label(),
-                    sample(kind),
+                    sample(kind).frame(),
                 ));
                 assert!(
                     matches!(error, TargetError::NoQuery { .. }),
@@ -800,10 +806,11 @@ async fn every_producible_type_dispatches_by_name() {
                 };
                 for key in target.indexes {
                     let index = stack_encrypt::target::IndexSpec::parse(key).unwrap();
-                    let query = targets::query(name, &index, &keyset, &label(), sample(kind))
-                        .unwrap()
-                        .await
-                        .unwrap();
+                    let query =
+                        targets::query(name, &index, &keyset, &label(), sample(kind).frame())
+                            .unwrap()
+                            .await
+                            .unwrap();
                     let query: serde_json::Value = serde_json::from_slice(&query).unwrap();
                     assert!(
                         query.get("c").is_none(),
@@ -870,7 +877,7 @@ async fn storage_only_text_round_trips_through_both_entry_points() {
         &common::index_of("Text"),
         &keyset,
         &label(),
-        frame("note"),
+        frame("note").frame(),
     ));
     assert!(
         matches!(error, TargetError::NoQuery { name: "Text" }),
@@ -1055,7 +1062,7 @@ async fn a_query_keeps_its_two_letter_words_only_when_it_cuts_no_trigram() {
             &stack_encrypt::target::IndexSpec::parse("match").unwrap(),
             &keyset,
             &label(),
-            frame(needle),
+            frame(needle).frame(),
         )
         .unwrap()
         .await
@@ -1130,7 +1137,7 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
         ("Real", frame::<f64>(1.0), ValueKind::Float32),
         ("Text", frame::<i32>(1), ValueKind::String),
     ] {
-        let error = refused(targets::encrypt(name, &keyset, &label(), value));
+        let error = refused(targets::encrypt(name, &keyset, &label(), value.frame()));
         assert!(
             matches!(error, TargetError::Plaintext { target, expected: e, .. } if target == name && e == expected),
             "{name}: {error}"
@@ -1522,7 +1529,7 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
     // The storage-only JSON domain holds the flat `{v, i, c}` payload and
     // nothing else: a searchable document is refused by the column.
     let searchable = runtime.block_on(async {
-        targets::encrypt("JsonSearch", &keyset, &label(), frame("{}"))
+        targets::encrypt("JsonSearch", &keyset, &label(), frame("{}").frame())
             .unwrap()
             .await
             .unwrap()
@@ -2094,10 +2101,11 @@ async fn the_v4_query_fixture_is_what_the_dispatch_derives() {
         let keyset = &keyset;
         async move {
             let label = Label::new(["profiles", column]).unwrap();
-            let bytes = targets::query(name, &common::index_of(name), keyset, &label, value)
-                .unwrap()
-                .await
-                .unwrap();
+            let bytes =
+                targets::query(name, &common::index_of(name), keyset, &label, value.frame())
+                    .unwrap()
+                    .await
+                    .unwrap();
             String::from_utf8(bytes).unwrap()
         }
     };
@@ -2731,6 +2739,7 @@ fn postgres_stores_and_queries_rows_the_go_sdk_sealed() {
 
 /// A second frame of the same bytes. A frame is not `Clone`.
 fn again(frame: &OwnedFrame) -> OwnedFrame {
-    use stack_encrypt::AsProtectedRef as _;
-    OwnedFrame::from_bytes(frame.as_protected_ref()).unwrap()
+    let mut buffer = stack_encrypt::Buffer::new();
+    buffer.extend_from_slice(frame.frame().as_bytes());
+    OwnedFrame::from_buffer(buffer).unwrap()
 }

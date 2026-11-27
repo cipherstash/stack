@@ -14,8 +14,10 @@ use std::sync::atomic::Ordering;
 use common::frames::{frame, object};
 use miette::Diagnostic as _;
 use stack_encrypt::dynamic::{
-    self, frame::OwnedFrame, record, Op, Operand, Planned, QueryTerm, TargetDescriptor,
-    TargetError, TargetResolver, ValueKind,
+    self,
+    frame::{Frame, OwnedFrame},
+    record, Op, Operand, Planned, QueryTerm, TargetDescriptor, TargetError, TargetResolver,
+    ValueKind,
 };
 use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::sem::EqualityTerm;
@@ -35,7 +37,8 @@ struct Row {
 }
 
 fn row_of(frame: &OwnedFrame) -> Row {
-    recipher_frame::serde::from_slice(frame.risky_ref()).expect("an object of the two fields")
+    recipher_frame::serde::from_slice(frame.frame().as_bytes())
+        .expect("an object of the two fields")
 }
 
 fn ada_row() -> Row {
@@ -96,7 +99,7 @@ impl TargetResolver for OneType {
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
         _: &stack_encrypt::target::DeclaredContext,
-        _: OwnedFrame,
+        _: Frame<'_>,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("these tests query, and encrypt nothing")
     }
@@ -117,7 +120,7 @@ impl TargetResolver for OneType {
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
         scopes: &stack_encrypt::target::DeclaredContext,
-        _: OwnedFrame,
+        _: Frame<'_>,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         let context = scopes.clone().under(NonEmpty::from(label.clone()));
         let under = Descriptor::from_piece(&context.query());
@@ -319,7 +322,8 @@ mod a_record_under_a_plan {
             .await
             .unwrap();
         assert_eq!(
-            recipher_frame::serde::from_slice::<serde_json::Value>(back.risky_ref()).unwrap(),
+            recipher_frame::serde::from_slice::<serde_json::Value>(back.frame().as_bytes())
+                .unwrap(),
             serde_json::json!({"email": "ada@example.com"})
         );
     }
@@ -372,12 +376,12 @@ mod a_record_under_a_plan {
 
     #[test]
     fn wipes_its_value() {
-        // A frame wipes to no bytes; a `Planned` wipes its frame the same
-        // way, and the owned entry points consume or read the frame in
+        // A frame wipes to the plain null; a `Planned` wipes its frame the
+        // same way, and the owned entry points consume or read the frame in
         // place, so its buffer is wiped as it is dropped.
         let mut value = frame("a secret");
         value.zeroize();
-        assert!(value.risky_ref().is_empty());
+        assert_eq!(value.frame(), OwnedFrame::null().frame());
         let plan = plan();
         let mut planned = Planned::new(&plan, frame("a secret"));
         planned.zeroize();

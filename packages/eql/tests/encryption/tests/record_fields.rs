@@ -309,12 +309,7 @@ async fn the_derive_and_a_data_plan_write_the_same_row() {
         age: 36,
         profile: profile().to_string(),
     };
-    let source = OwnedFrame::from_bytes(
-        dynamic::frame::serde::to_vec(&source)
-            .unwrap()
-            .as_protected_ref(),
-    )
-    .unwrap();
+    let source = OwnedFrame::from_buffer(dynamic::frame::serde::to_vec(&source).unwrap()).unwrap();
     let mut row = record::encrypt_with(&keyset, source, &plan, &EqlTargets)
         .unwrap()
         .await
@@ -354,7 +349,8 @@ async fn the_derive_and_a_data_plan_write_the_same_row() {
         .unwrap()
         .await
         .unwrap();
-    let opened: OpenedContact = dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
+    let opened: OpenedContact =
+        dynamic::frame::serde::from_slice(opened.frame().as_bytes()).unwrap();
     assert_eq!(opened.email, "ada@example.com");
     assert_eq!(opened.name, "Ada");
     assert_eq!(opened.age, 36);
@@ -577,12 +573,7 @@ fn lead_row() -> OwnedFrame {
         email: "ada@example.com".into(),
         profile: profile().to_string(),
     };
-    OwnedFrame::from_bytes(
-        dynamic::frame::serde::to_vec(&row)
-            .unwrap()
-            .as_protected_ref(),
-    )
-    .unwrap()
+    OwnedFrame::from_buffer(dynamic::frame::serde::to_vec(&row).unwrap()).unwrap()
 }
 
 /// A scope and a binding reach an EQL type through a data plan as they
@@ -654,7 +645,7 @@ async fn the_derive_and_a_data_plan_write_the_same_row_under_a_scope_and_a_bindi
         email: String,
         profile: Bytes,
     }
-    let opened: Opened = dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
+    let opened: Opened = dynamic::frame::serde::from_slice(opened.frame().as_bytes()).unwrap();
     assert_eq!(opened.email, "ada@example.com");
     assert_eq!(
         serde_json::from_slice::<Value>(&opened.profile.0).unwrap(),

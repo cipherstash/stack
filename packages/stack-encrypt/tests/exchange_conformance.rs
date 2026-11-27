@@ -361,7 +361,7 @@ fn passthrough_node(input: &Input) -> StackCipherText {
     use vitaminc_protected::Controlled;
     CipherText::Map(vec![(
         "passthrough".to_owned(),
-        CipherText::Passthrough(PassthroughFrame(value(input).into_inner().risky_unwrap())),
+        CipherText::Passthrough(PassthroughFrame(value(input).into_buffer().risky_unwrap())),
     )])
 }
 
@@ -504,7 +504,7 @@ async fn produce(
             if field.passthrough {
                 assert_eq!(
                     passthrough_of(&sealed, &field.name),
-                    value(input).risky_ref(),
+                    value(input).frame().as_bytes(),
                     "{}: {}: the passthrough is the input's frame",
                     row.id,
                     field.name
@@ -659,8 +659,8 @@ async fn consume(
             .unwrap();
         let expected = object(vec![(corpus.values.field.as_str(), value(&case.input))]);
         assert_eq!(
-            opened.risky_ref(),
-            expected.risky_ref(),
+            opened.frame().as_bytes(),
+            expected.frame().as_bytes(),
             "{what}: opened value"
         );
     }
@@ -732,8 +732,8 @@ async fn consume(
             .await
             .unwrap();
         assert_eq!(
-            opened.risky_ref(),
-            object(expected).risky_ref(),
+            opened.frame().as_bytes(),
+            object(expected).frame().as_bytes(),
             "{what}: opened record"
         );
     }
@@ -880,5 +880,5 @@ fn a_null_input_is_the_runtime_profile_null() {
         None,
         vitaminc_aead::plaintext::Physical::Null,
     ));
-    assert_eq!(value(&null).risky_ref(), expected.risky_ref());
+    assert_eq!(value(&null).frame().as_bytes(), expected.frame().as_bytes());
 }

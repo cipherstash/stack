@@ -792,7 +792,7 @@ fn render_targets_from(rows: &[Row]) -> String {
     let file = quote! {
         #![doc = #mod_doc]
 
-        use stack_encrypt::dynamic::frame::OwnedFrame;
+        use stack_encrypt::dynamic::frame::{Frame, OwnedFrame};
         use stack_encrypt::target::{CallerContext, IndexSpec};
 
         #imports
@@ -822,7 +822,7 @@ fn render_targets_from(rows: &[Row]) -> String {
             name: &str,
             keyset: &'a KeysetCipher<'_, K>,
             context: CallerContext,
-            plaintext: OwnedFrame,
+            plaintext: Frame<'_>,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             match name {
                 #encrypt_arms
@@ -854,7 +854,7 @@ fn render_targets_from(rows: &[Row]) -> String {
             #index_param: &IndexSpec,
             keyset: &'a KeysetCipher<'_, K>,
             context: CallerContext,
-            plaintext: OwnedFrame,
+            plaintext: Frame<'_>,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             match name {
                 #query_arms

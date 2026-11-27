@@ -188,7 +188,7 @@ fn data_plan() -> DataPlan {
             )
         })
         .collect();
-    record::plan(object(fields).as_protected_ref()).expect("the data plan parses")
+    record::plan(object(fields).into_buffer().as_protected_ref()).expect("the data plan parses")
 }
 
 /// The source as a binding hands it over: one frame, a map of the fields in
@@ -207,7 +207,7 @@ fn source() -> OwnedFrame {
         }
         map.end().expect("ended");
     }
-    OwnedFrame::from_bytes(bytes.as_protected_ref()).expect("in the value model")
+    OwnedFrame::from_buffer(bytes).expect("in the value model")
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -222,7 +222,7 @@ fn unhex(text: &str) -> Vec<u8> {
 }
 
 fn frame(raw: Raw<'_>) -> String {
-    hex(value(raw).risky_ref())
+    hex(value(raw).frame().as_bytes())
 }
 
 fn term_bytes(node: StackCipherText) -> Vec<u8> {
@@ -318,11 +318,12 @@ async fn open(
         .expect("the record fits")
         .await
         .expect("the lowering opens it")
-        .risky_ref())
+        .frame()
+        .as_bytes())
 }
 
 fn expected_frames() -> String {
-    hex(source().risky_ref())
+    hex(source().frame().as_bytes())
 }
 
 async fn query(

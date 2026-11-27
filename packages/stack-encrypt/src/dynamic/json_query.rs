@@ -219,7 +219,7 @@ use crate::json::{
     JsonSubtreeKey,
 };
 use crate::{DecryptFrom, Encrypt, KeysetCipher, Pending};
-use vitaminc_aead::frame::OwnedFrame;
+use vitaminc_aead::frame::{Frame, OwnedFrame};
 
 /// The SQL type a JSON operand binds as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -397,8 +397,8 @@ struct MatchInput {
     wildcard_bound: Option<u32>,
 }
 
-fn read_frame<T: for<'de> Deserialize<'de>>(input: &OwnedFrame) -> Result<T, Error> {
-    recipher_frame::serde::from_slice(input.risky_ref()).map_err(|_| Error::Source {
+fn read_frame<T: for<'de> Deserialize<'de>>(input: Frame<'_>) -> Result<T, Error> {
+    recipher_frame::serde::from_slice(input.as_bytes()).map_err(|_| Error::Source {
         field: None,
         reason: Reason::JsonInput,
     })
@@ -408,7 +408,7 @@ fn read_frame<T: for<'de> Deserialize<'de>>(input: &OwnedFrame) -> Result<T, Err
 /// frame read into the input the operator takes ([`Input`]), checked with
 /// the rules a field reference's typed JSON queries apply, and in the order a
 /// binding has always met them.
-fn read_input(op: Op, options: &JsonOptions, input: &OwnedFrame) -> Result<Input, Error> {
+fn read_input(op: Op, options: &JsonOptions, input: Frame<'_>) -> Result<Input, Error> {
     match op {
         Op::Contains | Op::ContainedBy => Ok(Input::Document(
             read_frame::<DocumentInput>(input)?.json.parse()?,
@@ -442,7 +442,7 @@ fn read_input(op: Op, options: &JsonOptions, input: &OwnedFrame) -> Result<Input
 /// (the `vars` jsonb `jsonb_path_match` takes, `{}` when absent) and the
 /// bound its element-scoped leaves are read to. The predicate is compiled
 /// here, so every refusal it can meet is met before anything is derived.
-fn read_match(options: &JsonOptions, input: &OwnedFrame) -> Result<Input, Error> {
+fn read_match(options: &JsonOptions, input: Frame<'_>) -> Result<Input, Error> {
     let input: MatchInput = read_frame(input)?;
     let bound = wildcard_bound(input.wildcard_bound)?;
     let vars = match &input.vars {
@@ -459,7 +459,7 @@ fn read_match(options: &JsonOptions, input: &OwnedFrame) -> Result<Input, Error>
 
 /// `element_match`'s input: an array's elements, by a path with a wildcard
 /// and no position, and one or more predicates on their fields.
-fn read_elements(options: &JsonOptions, input: &OwnedFrame) -> Result<Input, Error> {
+fn read_elements(options: &JsonOptions, input: Frame<'_>) -> Result<Input, Error> {
     let elements: ElementsInput = read_frame(input)?;
     let base = elements_base(&elements.path)?;
     let bound = wildcard_bound(elements.wildcard_bound)?;
@@ -505,7 +505,7 @@ fn read_predicate(
 }
 
 /// `eq_at`'s input: a scalar at a path read through a selector.
-fn read_eq_at(input: &OwnedFrame) -> Result<Input, Error> {
+fn read_eq_at(input: Frame<'_>) -> Result<Input, Error> {
     let at: AtInput = read_frame(input)?;
     let path = selector_path(&at.path)?;
     let value = at.json.parse()?;
@@ -517,7 +517,7 @@ fn read_eq_at(input: &OwnedFrame) -> Result<Input, Error> {
 fn read_ordering(
     options: &JsonOptions,
     compare: Compare,
-    input: &OwnedFrame,
+    input: Frame<'_>,
 ) -> Result<Input, Error> {
     let at: AtInput = read_frame(input)?;
     let path = ordered_path(options, &at.path)?;
@@ -527,7 +527,7 @@ fn read_ordering(
 }
 
 /// `between_at`'s input: two leaves the index orders at an ordered path.
-fn read_between(options: &JsonOptions, input: &OwnedFrame) -> Result<Input, Error> {
+fn read_between(options: &JsonOptions, input: Frame<'_>) -> Result<Input, Error> {
     let between: BetweenInput = read_frame(input)?;
     let path = ordered_path(options, &between.path)?;
     let (low, high) = (between.low.parse()?, between.high.parse()?);
@@ -542,7 +542,7 @@ fn read_between(options: &JsonOptions, input: &OwnedFrame) -> Result<Input, Erro
 /// a wildcard expanding too wide or a path too deep for its tokens
 /// (`JsonWildcardTooWide`, `JsonTooWide`, `JsonTooDeep`), are [`derive`]'s,
 /// after the keyset is resolved.
-pub(super) fn check(op: Op, options: &JsonOptions, input: &OwnedFrame) -> Result<(), Error> {
+pub(super) fn check(op: Op, options: &JsonOptions, input: Frame<'_>) -> Result<(), Error> {
     read_input(op, options, input).map(drop)
 }
 
@@ -558,7 +558,7 @@ pub(super) fn derive<'a, K: 'static>(
     under: &Under<'_>,
     options: &JsonOptions,
     op: Op,
-    input: &OwnedFrame,
+    input: Frame<'_>,
 ) -> Result<Pending<'a, Operand, K>, Error> {
     Ok(
         crate::json::inputs::derive(keyset, under, options, read_input(op, options, input)?)?
@@ -618,7 +618,7 @@ enum Read {
 /// Reads and checks a read's request and its rows: everything [`open`]
 /// refuses before it derives anything. A `selector` group and a `children`
 /// group each contain one entry or none.
-fn read_open(request: &OwnedFrame, rows: &OwnedFrame) -> Result<(Read, Vec<Vec<JsonNode>>), Error> {
+fn read_open(request: Frame<'_>, rows: Frame<'_>) -> Result<(Read, Vec<Vec<JsonNode>>), Error> {
     let request: ReadRequest = read_frame(request)?;
     let read = match Op::parse(&request.operation) {
         Some(Op::Selector) if request.wildcard_bound.is_none() => {
@@ -657,7 +657,7 @@ fn read_open(request: &OwnedFrame, rows: &OwnedFrame) -> Result<(Read, Vec<Vec<J
 /// from the request and rows alone. The limits the read's key hits as it
 /// is built (`JsonWildcardTooWide`, `JsonTooWide`, `JsonTooDeep`) are
 /// [`open`]'s, after the keyset is resolved.
-pub(super) fn check_open(request: &OwnedFrame, rows: &OwnedFrame) -> Result<(), Error> {
+pub(super) fn check_open(request: Frame<'_>, rows: Frame<'_>) -> Result<(), Error> {
     read_open(request, rows).map(drop)
 }
 
@@ -702,8 +702,8 @@ pub(super) fn open<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     under: &Under<'_>,
     options: &JsonOptions,
-    request: &OwnedFrame,
-    rows: &OwnedFrame,
+    request: Frame<'_>,
+    rows: Frame<'_>,
 ) -> Result<Pending<'a, OwnedFrame, K>, Error> {
     let (read, groups) = read_open(request, rows)?;
     if keyset.loaded_state().is_some() {

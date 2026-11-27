@@ -259,7 +259,8 @@ async fn open_dynamic(cipher: &StackCipher<common::RecordingSource>, stored: &St
         .expect("the record fits the plan")
         .await
         .expect("the lowering opens it");
-    let opened: Opened = from_slice(opened.risky_ref()).expect("an object of the three fields");
+    let opened: Opened =
+        from_slice(opened.frame().as_bytes()).expect("an object of the three fields");
     User {
         id: opened.id,
         name: opened.name,

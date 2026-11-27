@@ -704,21 +704,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // The field's context: the table, then the column.
     let column = Label::new(["users", "email"])?;
-    // The plaintext, as its transport frame. A frame is moved into the call
-    // that uses it, and is not `Clone`, so each call is given its own.
-    let email = || OwnedFrame::of("alice@example.com");
+    // The plaintext, as its transport frame. Each call borrows it.
+    let email = OwnedFrame::of("alice@example.com")?;
 
     // Each call names the type, and returns the EQL value as JSON bytes.
-    let stored: Vec<u8> = targets::encrypt("TextEq", &keyset, &column, email()?)?.await?;
+    let stored: Vec<u8> = targets::encrypt("TextEq", &keyset, &column, email.frame())?.await?;
     // A query also names the index that answers its operator.
     let index = IndexSpec::Equality;
-    let probe: Vec<u8> = targets::query("TextEq", &index, &keyset, &column, email()?)?.await?;
+    let probe: Vec<u8> = targets::query("TextEq", &index, &keyset, &column, email.frame())?.await?;
     let stored_value: TextEq = serde_json::from_slice(&stored)?;
     let query: TextEqQuery = serde_json::from_slice(&probe)?;
     assert_eq!(query.hm, stored_value.hm);
 
     let opened: OwnedFrame = targets::decrypt("TextEq", &cipher, &column, &stored)?.await?;
-    assert_eq!(opened, email()?);
+    // Frames compare in constant time.
+    assert_eq!(opened.frame(), email.frame());
     Ok(())
 }
 ```
@@ -748,7 +748,8 @@ declaration; `targets::targets()` lists them, each with `producible` and, when i
   features and without its `dynamic` layer.
 - `targets`: `stack-encrypt`, plus the by-name dispatch a language binding
   needs (`encryption::targets`, `v4::targets`), where the EQL type is named at
-  run time and the plaintext is an `OwnedFrame`. It turns on Stack Encrypt's
+  run time, the plaintext is a borrowed transport frame (`Frame`), and a
+  decrypted value opens into an `OwnedFrame`. It turns on Stack Encrypt's
   `dynamic` feature. The Go guest's `eql` build enables it.
 
 ### Developing the `stack-encrypt` feature

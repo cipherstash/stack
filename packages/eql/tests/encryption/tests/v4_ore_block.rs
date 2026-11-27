@@ -58,7 +58,7 @@ fn hex(bytes: &[u8]) -> String {
 
 /// The stored JSON the named type writes for `value`.
 async fn stored(keyset: &Keyset<'_>, name: &str, value: OwnedFrame) -> serde_json::Value {
-    let bytes = targets::encrypt(name, keyset, &label(), value)
+    let bytes = targets::encrypt(name, keyset, &label(), value.frame())
         .unwrap()
         .await
         .unwrap();
@@ -893,10 +893,16 @@ fn postgres_answers_the_orderings_through_a_btree_index() {
     .unwrap();
     let probe = |name: &str, value: OwnedFrame| -> String {
         runtime.block_on(async {
-            let bytes = targets::query(name, &common::index_of(name), &keyset, &label(), value)
-                .unwrap()
-                .await
-                .unwrap();
+            let bytes = targets::query(
+                name,
+                &common::index_of(name),
+                &keyset,
+                &label(),
+                value.frame(),
+            )
+            .unwrap()
+            .await
+            .unwrap();
             String::from_utf8(bytes).unwrap()
         })
     };

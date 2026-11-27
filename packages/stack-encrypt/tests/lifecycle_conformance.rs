@@ -252,7 +252,7 @@ async fn cancelling_in_flight_decrypt_drops_provider_and_captures() {
         .unwrap()
         .await
         .unwrap();
-    assert_eq!(opened.risky_ref(), rows(3).risky_ref());
+    assert_eq!(opened.frame().as_bytes(), rows(3).frame().as_bytes());
     assert_eq!(*calls.retrievals.lock().unwrap(), vec![3, 3]);
     assert_eq!(calls.retrieve_drops.load(Ordering::SeqCst), 2);
 }

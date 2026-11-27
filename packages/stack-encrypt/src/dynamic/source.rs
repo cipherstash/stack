@@ -282,7 +282,7 @@ mod tests {
         row.as_ref().map(|entries| {
             entries
                 .iter()
-                .map(|(key, value)| (key.clone(), value.risky_ref().to_vec()))
+                .map(|(key, value)| (key.clone(), value.frame().as_bytes().to_vec()))
                 .collect()
         })
     }
@@ -290,7 +290,8 @@ mod tests {
     fn owned(value: &Tree) -> Vec<u8> {
         OwnedFrame::of(value)
             .expect("in the model")
-            .risky_ref()
+            .frame()
+            .as_bytes()
             .to_vec()
     }
 

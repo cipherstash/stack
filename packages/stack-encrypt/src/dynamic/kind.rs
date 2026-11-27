@@ -154,11 +154,11 @@ pub fn not_admitted(kind: ValueKind, index: &IndexSpec) -> Option<Reason> {
 ///
 /// // A JavaScript number is a float; against a `uint64` field it is 34.
 /// let value = read(ValueKind::UInt64, 34.0f64)?;
-/// assert_eq!(value.kind(), Some(ValueKind::UInt64));
-/// assert_eq!(value, OwnedFrame::of(34u64)?);
+/// assert_eq!(value.frame().kind(), Some(ValueKind::UInt64));
+/// assert_eq!(value.frame(), OwnedFrame::of(34u64)?.frame());
 /// assert!(read(ValueKind::UInt64, 34.5f64).is_err());
 /// // Against an `int8` field, 34 is the 8-bit integer; 300 does not fit.
-/// assert_eq!(read(ValueKind::Int8, 34i64)?.kind(), Some(ValueKind::Int8));
+/// assert_eq!(read(ValueKind::Int8, 34i64)?.frame().kind(), Some(ValueKind::Int8));
 /// assert!(read(ValueKind::Int8, 300i64).is_err());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -171,7 +171,7 @@ pub fn not_admitted(kind: ValueKind, index: &IndexSpec) -> Option<Reason> {
 pub fn read(kind: ValueKind, value: impl Encrypt) -> Result<OwnedFrame, Error> {
     let refused = || Error::bad_source(Reason::FieldType);
     let value = OwnedFrame::of(value).map_err(|_| refused())?;
-    if kind.holds(value.kind()) {
+    if kind.holds(value.frame().kind()) {
         return Ok(value);
     }
     let number = (&value)
@@ -445,9 +445,9 @@ mod tests {
             assert!(!kind.holds(None), "{kind}");
         }
         let text = read_frame(ValueKind::Json, sample(ValueKind::Json)).expect("text");
-        assert_eq!(text.kind(), Some(ValueKind::String));
+        assert_eq!(text.frame().kind(), Some(ValueKind::String));
         let bytes = read_frame(ValueKind::Json, Tree::Bytes(b"[1]".to_vec())).expect("bytes");
-        assert_eq!(bytes.kind(), Some(ValueKind::Bytes));
+        assert_eq!(bytes.frame().kind(), Some(ValueKind::Bytes));
         assert!(read_frame(ValueKind::Json, Tree::UInt32(1)).is_none());
         assert_eq!(
             ValueKind::Json.sealed_null(),
@@ -611,10 +611,10 @@ mod tests {
             &IndexSpec::Match(MatchOptions::default())
         ));
         let uuid = sample(ValueKind::Uuid);
-        assert_eq!(uuid.kind(), Some(ValueKind::Uuid));
+        assert_eq!(uuid.frame().kind(), Some(ValueKind::Uuid));
         assert!(IndexSpec::Equality.defines(&uuid));
         assert!(!IndexSpec::Ore.defines(&uuid));
-        assert!(!ValueKind::Bytes.holds(uuid.kind()));
+        assert!(!ValueKind::Bytes.holds(uuid.frame().kind()));
         // Sixteen bytes are bytes, not a UUID: read as a UUID they are
         // refused, since nothing converts to one.
         assert!(read_frame(ValueKind::Uuid, Tree::Bytes(vec![7; 16])).is_none());
@@ -791,7 +791,7 @@ mod tests {
     /// compare.
     fn read_ok(kind: ValueKind, value: Tree) -> Option<Tree> {
         let read = read(kind, value).ok()?;
-        Some(Tree::from_frame(read.risky_ref()).expect("a value"))
+        Some(Tree::from_frame(read.frame().as_bytes()).expect("a value"))
     }
 
     /// `read` from any source, as the frame it writes, for the kinds a
@@ -802,17 +802,18 @@ mod tests {
 
     /// Whether `read` gives exactly the frame of `want`.
     fn reads_as(kind: ValueKind, value: impl Encrypt, want: OwnedFrame) -> bool {
-        read_frame(kind, value).is_some_and(|read| read.risky_ref() == want.risky_ref())
+        read_frame(kind, value)
+            .is_some_and(|read| read.frame().as_bytes() == want.frame().as_bytes())
     }
 
     #[test]
     fn read_returns_a_value_of_the_kind_as_it_is() {
         for kind in value_kinds() {
             let read = read_frame(kind, sample(kind)).expect("its own kind");
-            assert_eq!(read.kind(), Some(kind));
+            assert_eq!(read.frame().kind(), Some(kind));
             assert_eq!(
-                read.risky_ref(),
-                sample(kind).risky_ref(),
+                read.frame().as_bytes(),
+                sample(kind).frame().as_bytes(),
                 "{kind} as it is"
             );
         }

@@ -95,6 +95,7 @@ impl Tree {
     pub(crate) fn kind(&self) -> Option<stack_encrypt::dynamic::ValueKind> {
         stack_encrypt::dynamic::frame::OwnedFrame::of(self)
             .ok()?
+            .frame()
             .kind()
     }
 

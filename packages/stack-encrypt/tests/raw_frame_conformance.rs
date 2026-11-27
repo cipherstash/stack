@@ -342,7 +342,7 @@ async fn shared_raw_frame_profile() {
                         .iter()
                         .map(|row| object(row.iter().map(|(k, v)| (k, value(v))).collect()))
                         .collect();
-                    if opened.risky_ref() != frame(rows).risky_ref() {
+                    if opened.frame().as_bytes() != frame(rows).frame().as_bytes() {
                         fail("typed rows differ".into());
                     }
                 }

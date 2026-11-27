@@ -298,7 +298,7 @@ mod a_data_plan {
             "id": 7,
             "tenant": "acme",
         });
-        OwnedFrame::from_bytes(to_vec(&record).unwrap().as_protected_ref()).unwrap()
+        OwnedFrame::from_buffer(to_vec(&record).unwrap()).unwrap()
     }
 
     /// The binding the caller of a run may add: `{bind?: CallerContext}`.

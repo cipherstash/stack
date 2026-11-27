@@ -20,7 +20,7 @@ use zeroize::Zeroizing;
 use super::term::OneScalar;
 use super::ValueKind;
 use crate::json::{to_text, JsonPlaintext, JsonTextError};
-use vitaminc_aead::frame::OwnedFrame;
+use vitaminc_aead::frame::{Frame, OwnedFrame};
 
 /// Why a `json` field's value is not a document.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -54,7 +54,7 @@ impl JsonValueError {
 /// [`JsonValueError::NotText`] for a value that is not a text or bytes
 /// leaf, and [`JsonValueError::Text`] for text that is not a document by
 /// [`parse_text`](crate::json::parse_text)'s rules.
-pub fn read_json(value: &OwnedFrame) -> Result<JsonPlaintext, JsonValueError> {
+pub fn read_json(value: Frame<'_>) -> Result<JsonPlaintext, JsonValueError> {
     if !ValueKind::Json.holds(value.kind()) {
         return Err(JsonValueError::NotText);
     }
@@ -96,9 +96,9 @@ mod tests {
 
     #[test]
     fn a_document_is_read_from_text_or_bytes() {
-        let text = read_json(&frame(Tree::String(r#"{"a": [1, null]}"#.into()))).unwrap();
+        let text = read_json(frame(Tree::String(r#"{"a": [1, null]}"#.into())).frame()).unwrap();
         assert_eq!(text.value(), &json!({"a": [1, null]}));
-        let bytes = read_json(&frame(Tree::Bytes(b"null".to_vec()))).unwrap();
+        let bytes = read_json(frame(Tree::Bytes(b"null".to_vec())).frame()).unwrap();
         assert_eq!(bytes.value(), &Value::Null, "a JSON null is a document");
     }
 
@@ -110,9 +110,12 @@ mod tests {
             Tree::Array(vec![]),
             Tree::Bool(true),
         ] {
-            assert_eq!(read_json(&frame(tree)).err(), Some(JsonValueError::NotText));
+            assert_eq!(
+                read_json(frame(tree).frame()).err(),
+                Some(JsonValueError::NotText)
+            );
         }
-        let error = read_json(&frame(Tree::String(r#"{"a":1,"a":2}"#.into())))
+        let error = read_json(frame(Tree::String(r#"{"a":1,"a":2}"#.into())).frame())
             .err()
             .unwrap();
         assert_eq!(error.code(), "json_duplicate_key");
@@ -122,7 +125,7 @@ mod tests {
     fn an_opened_document_is_its_text_in_bytes() {
         let value = json!({"name": "Alice", "n": [1.5, -2]});
         let opened = json_frame(&value).unwrap();
-        assert_eq!(opened.kind(), Some(ValueKind::Bytes));
-        assert_eq!(read_json(&opened).unwrap().value(), &value);
+        assert_eq!(opened.frame().kind(), Some(ValueKind::Bytes));
+        assert_eq!(read_json(opened.frame()).unwrap().value(), &value);
     }
 }

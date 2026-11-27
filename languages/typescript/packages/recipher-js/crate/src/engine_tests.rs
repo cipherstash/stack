@@ -52,7 +52,10 @@ async fn the_sdk_opens_what_the_engine_sealed() {
         .await
         .unwrap();
     let opened = unseal(&cipher, vec![sealed]).await.unwrap().remove(0);
-    assert_eq!(opened, OwnedFrame::of("from the engine").unwrap());
+    assert_eq!(
+        opened.frame(),
+        OwnedFrame::of("from the engine").unwrap().frame()
+    );
 }
 
 #[tokio::test]
@@ -97,5 +100,8 @@ async fn a_keyset_refuses_another_keysets_ciphertext_and_the_cipher_opens_it() {
         .await
         .unwrap()
         .remove(0);
-    assert_eq!(opened, OwnedFrame::of("in another keyset").unwrap());
+    assert_eq!(
+        opened.frame(),
+        OwnedFrame::of("in another keyset").unwrap().frame()
+    );
 }

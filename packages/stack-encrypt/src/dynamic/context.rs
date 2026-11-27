@@ -6,7 +6,7 @@ use std::fmt;
 use serde::de::{self, Deserializer, SeqAccess, Unexpected, Visitor};
 use serde::Deserialize;
 
-use vitaminc_aead::frame::OwnedFrame;
+use vitaminc_aead::frame::{Frame, OwnedFrame};
 use vitaminc_aead::plaintext::{Encrypt, Logical, Physical};
 
 use super::term::OneScalar;
@@ -233,7 +233,7 @@ pub fn borrowed<'b>(piece: &'b ContextPiece<'_>) -> ContextPiece<'b> {
 /// ([`Label::parse`]). Anything else is [`LabelError::NotText`]. The frame
 /// is read in place: a record's context field is read once per sealed
 /// field, and nothing is copied for it.
-impl IntoLabel for &OwnedFrame {
+impl IntoLabel for Frame<'_> {
     fn into_label(self) -> Result<Label, LabelError> {
         self.visit(OneScalar::new(
             |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
@@ -245,9 +245,10 @@ impl IntoLabel for &OwnedFrame {
     }
 }
 
-impl IntoLabel for OwnedFrame {
+/// An owned frame's text, read as [`Frame`]'s is.
+impl IntoLabel for &OwnedFrame {
     fn into_label(self) -> Result<Label, LabelError> {
-        (&self).into_label()
+        self.frame().into_label()
     }
 }
 

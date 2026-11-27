@@ -49,7 +49,7 @@ async fn stored(
     name: &str,
     text: &str,
 ) -> serde_json::Value {
-    let bytes = targets::encrypt(name, keyset, &label(), frame(text))
+    let bytes = targets::encrypt(name, keyset, &label(), frame(text).frame())
         .unwrap()
         .await
         .unwrap();
@@ -62,9 +62,15 @@ async fn query(
     key: &str,
     text: &str,
 ) -> Result<serde_json::Value, stack_encrypt::Error> {
-    let bytes = targets::query("TextSearch", &index(key), keyset, &label(), frame(text))
-        .unwrap()
-        .await?;
+    let bytes = targets::query(
+        "TextSearch",
+        &index(key),
+        keyset,
+        &label(),
+        frame(text).frame(),
+    )
+    .unwrap()
+    .await?;
     Ok(serde_json::from_slice(&bytes).unwrap())
 }
 
@@ -104,7 +110,7 @@ async fn a_stored_value_carries_the_three_single_index_terms() {
     .unwrap()
     .await
     .unwrap();
-    assert_eq!(opened.risky_ref(), frame("Alice").risky_ref());
+    assert_eq!(opened.frame().as_bytes(), frame("Alice").frame().as_bytes());
 }
 
 /// Text that cuts no match token (one letter, or none) has no filter.
@@ -139,9 +145,13 @@ async fn short_text_stores_the_empty_filter_where_text_match_refuses_it() {
         .unwrap()
         .await
         .unwrap();
-        assert_eq!(opened.risky_ref(), frame(text).risky_ref(), "{text:?}");
+        assert_eq!(
+            opened.frame().as_bytes(),
+            frame(text).frame().as_bytes(),
+            "{text:?}"
+        );
 
-        let refused = targets::encrypt("TextMatch", &keyset, &label(), frame(text))
+        let refused = targets::encrypt("TextMatch", &keyset, &label(), frame(text).frame())
             .unwrap()
             .await
             .unwrap_err();
@@ -172,8 +182,13 @@ async fn a_query_carries_only_the_term_its_operator_reads() {
         assert_eq!(q["v"], 4);
     }
     // An index the type does not carry is refused before anything runs.
-    let Err(refused) = targets::query("TextSearch", &IndexSpec::Ore, &keyset, &label(), frame("x"))
-    else {
+    let Err(refused) = targets::query(
+        "TextSearch",
+        &IndexSpec::Ore,
+        &keyset,
+        &label(),
+        frame("x").frame(),
+    ) else {
         panic!("an ore query on TextSearch was dispatched");
     };
     assert!(

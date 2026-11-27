@@ -37,7 +37,7 @@ impl OneValue {
     ///
     /// Returns `recipher_js::not_a_string` for any other value.
     pub(crate) fn new(value: OwnedFrame) -> Result<Self, RecipherErrorFields> {
-        if value.kind() == Some(ValueKind::String) {
+        if value.frame().kind() == Some(ValueKind::String) {
             Ok(Self(Some(value)))
         } else {
             Err(Error::NotAString.into())

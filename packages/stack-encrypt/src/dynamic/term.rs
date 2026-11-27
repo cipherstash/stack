@@ -1530,7 +1530,7 @@ mod tests {
             // the ones their frame's own value derives.
             for value in [date(19_782), instant(-1), decimal(-150, 2)] {
                 assert_eq!(
-                    derive(value.risky_ref().to_vec(), IndexSpec::Equality).await,
+                    derive(value.frame().as_bytes().to_vec(), IndexSpec::Equality).await,
                     term(&keyset, &value, &IndexSpec::Equality, ctx.clone())
                         .await
                         .expect("derives"),

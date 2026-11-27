@@ -537,7 +537,7 @@ mod dynamic_path {
             "notes": "likes cats",
         }))
         .expect("the record is a frame");
-        let user = OwnedFrame::from_bytes(user.as_protected_ref()).expect("the record is a value");
+        let user = OwnedFrame::from_buffer(user).expect("the record is a value");
 
         let sealed = record::encrypt(&cipher.default_keyset(), user, &plan)
             .expect("the record fits the plan")

@@ -29,7 +29,7 @@ use std::fmt;
 
 use super::query::target_operators;
 use super::{Op, ValueKind};
-use vitaminc_aead::frame::OwnedFrame;
+use vitaminc_aead::frame::{Frame, OwnedFrame};
 
 use crate::json::JsonOptions;
 use crate::sem::MatchOptions;
@@ -613,7 +613,7 @@ pub trait TargetResolver {
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
         parts: &DeclaredContext,
-        plaintext: OwnedFrame,
+        plaintext: Frame<'_>,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>;
 
     /// Open a stored value of the named type back to its plaintext, checking
@@ -659,7 +659,7 @@ pub trait TargetResolver {
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
         scopes: &DeclaredContext,
-        plaintext: OwnedFrame,
+        plaintext: Frame<'_>,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>;
 }
 
@@ -690,7 +690,7 @@ impl TargetResolver for NoTargets {
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
         _: &DeclaredContext,
-        _: OwnedFrame,
+        _: Frame<'_>,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         Self::refuse(name)
     }
@@ -713,7 +713,7 @@ impl TargetResolver for NoTargets {
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
         _: &DeclaredContext,
-        _: OwnedFrame,
+        _: Frame<'_>,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         Self::refuse(name)
     }
@@ -784,7 +784,7 @@ mod tests {
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: &DeclaredContext,
-            _: OwnedFrame,
+            _: Frame<'_>,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("not run here")
         }
@@ -805,7 +805,7 @@ mod tests {
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: &DeclaredContext,
-            _: OwnedFrame,
+            _: Frame<'_>,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("not run here")
         }

@@ -45,7 +45,7 @@ async fn stored(
     name: &str,
     value: OwnedFrame,
 ) -> String {
-    let bytes = targets::encrypt(name, keyset, &label(), value)
+    let bytes = targets::encrypt(name, keyset, &label(), value.frame())
         .unwrap()
         .await
         .unwrap();
@@ -63,7 +63,7 @@ async fn bound(
     value: OwnedFrame,
 ) -> Value {
     let spec = IndexSpec::parse(index).unwrap();
-    let bytes = targets::query(name, &spec, keyset, &label(), value)
+    let bytes = targets::query(name, &spec, keyset, &label(), value.frame())
         .unwrap()
         .await
         .unwrap();

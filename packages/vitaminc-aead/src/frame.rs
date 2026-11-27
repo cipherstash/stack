@@ -13,11 +13,13 @@
 //! by walking its own bytes in place, so a host that ships frames (Go) is
 //! a source with no intermediate value. [`FrameWriter`] is a [`Sink`] that
 //! writes frame bytes, so the same host decrypts straight into a frame.
-//! [`OwnedFrame`] is one value in a frame of its own, wiped when it drops:
-//! what a host hands over, what is sealed, and what a ciphertext opens into.
+//! [`OwnedFrame`] is a [`Buffer`] that holds exactly one frame: what a
+//! ciphertext opens into, and a value kept past the call that made it.
 //! [`PassthroughFrame`] is the owned frame a ciphertext carries for a
 //! passthrough subtree, which is in the clear.
 
+use std::borrow::BorrowMut;
+use std::marker::PhantomData;
 use std::ops::Range;
 
 use vitaminc_protected::{Buffer, Controlled, OpaqueDebug, TimingSafeEq};
@@ -30,6 +32,7 @@ pub use owned::{OwnedFrame, OwnedFrameSink};
 use crate::leaf::{self, Form, Item, ScalarError};
 use crate::plaintext::{
     Encrypt, EncryptRef, Error, FixedType, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
+    ValueKind,
 };
 
 /// Framing tag for a sequence: `ARRAY`, `u32` count, then the elements.
@@ -114,8 +117,144 @@ impl<'a> Frame<'a> {
     pub fn as_bytes(&self) -> &'a [u8] {
         self.bytes
     }
+
+    /// The value's [`ValueKind`], or `None` for a null, plain or typed,
+    /// `undefined`, a passthrough, or a logical type this build does not
+    /// know, which have no kind.
+    ///
+    /// ```
+    /// use vitaminc_aead::{Frame, OwnedFrame, ValueKind};
+    ///
+    /// let owned = OwnedFrame::of("alice")?;
+    /// assert_eq!(owned.frame().kind(), Some(ValueKind::String));
+    /// assert_eq!(OwnedFrame::null().frame().kind(), None);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn kind(&self) -> Option<ValueKind> {
+        match self.tag() {
+            ARRAY => Some(ValueKind::Array),
+            OBJECT => Some(ValueKind::Object),
+            PASSTHROUGH => None,
+            _ => match self.scalar() {
+                Item::Scalar(ty, value) => ValueKind::of(ty, &value),
+                Item::TypedNull(_) => None,
+            },
+        }
+    }
+
+    /// Whether the value is a null, plain or typed. `undefined` is not.
+    pub fn is_null(&self) -> bool {
+        match self.tag() {
+            ARRAY | OBJECT | PASSTHROUGH => false,
+            _ => matches!(
+                self.scalar(),
+                Item::Scalar(None, Physical::Null) | Item::TypedNull(_)
+            ),
+        }
+    }
+
+    /// Whether the value holds a passthrough at any depth.
+    pub fn has_passthrough(&self) -> bool {
+        holds_passthrough(&mut self.cursor())
+    }
+
+    /// The elements of a sequence, each the frame it is inside this one,
+    /// in order, with nothing copied; `None` for any other value.
+    ///
+    /// ```
+    /// use vitaminc_aead::{Frame, OwnedFrame};
+    ///
+    /// let owned = OwnedFrame::of(vec!["a", "b"])?;
+    /// let elements = owned.frame().elements().expect("a sequence");
+    /// assert_eq!(elements.len(), 2);
+    /// assert!(OwnedFrame::of("a")?.frame().elements().is_none());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn elements(&self) -> Option<Elements<'a>> {
+        let mut cursor = self.cursor();
+        if cursor.byte().expect(VALIDATED) != ARRAY {
+            return None;
+        }
+        let left = cursor.count().expect(VALIDATED);
+        Some(Elements { cursor, left })
+    }
+
+    fn cursor(&self) -> Cursor<'a> {
+        Cursor {
+            buf: self.bytes,
+            pos: 0,
+        }
+    }
+
+    /// The first byte: a container's tag, or a scalar's first.
+    fn tag(&self) -> u8 {
+        self.cursor().peek().expect(VALIDATED)
+    }
+
+    /// The value, read as a scalar: for a frame whose tag is no container's.
+    fn scalar(&self) -> Item<'a> {
+        self.cursor().scalar().expect(VALIDATED)
+    }
 }
 
+/// The elements of a sequence frame, each a [`Frame`] borrowed from it:
+/// what [`Frame::elements`] returns. `Debug` shows nothing of them.
+#[derive(Clone, OpaqueDebug)]
+pub struct Elements<'a> {
+    cursor: Cursor<'a>,
+    left: usize,
+}
+
+impl<'a> Iterator for Elements<'a> {
+    type Item = Frame<'a>;
+
+    fn next(&mut self) -> Option<Frame<'a>> {
+        self.left = self.left.checked_sub(1)?;
+        Some(self.cursor.node(1).expect(VALIDATED))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.left, Some(self.left))
+    }
+}
+
+impl ExactSizeIterator for Elements<'_> {}
+
+/// Whether the node at the cursor, which `Frame::parse` accepted, holds a
+/// passthrough. Leaves the cursor after the node.
+fn holds_passthrough(cursor: &mut Cursor<'_>) -> bool {
+    match cursor.peek().expect(VALIDATED) {
+        ARRAY => {
+            cursor.byte().expect(VALIDATED);
+            let count = cursor.count().expect(VALIDATED);
+            let mut found = false;
+            for _ in 0..count {
+                found |= holds_passthrough(cursor);
+            }
+            found
+        }
+        OBJECT => {
+            cursor.byte().expect(VALIDATED);
+            let count = cursor.count().expect(VALIDATED);
+            let mut found = false;
+            for _ in 0..count {
+                cursor.key().expect(VALIDATED);
+                found |= holds_passthrough(cursor);
+            }
+            found
+        }
+        PASSTHROUGH => {
+            cursor.node(0).expect(VALIDATED);
+            true
+        }
+        _ => {
+            cursor.scalar().expect(VALIDATED);
+            false
+        }
+    }
+}
+
+#[derive(Clone)]
 struct Cursor<'a> {
     buf: &'a [u8],
     pos: usize,
@@ -416,10 +555,7 @@ pub fn to_frame<P: Encrypt>(p: P) -> Result<Buffer, FrameWriteError> {
 /// decoder counts it.
 pub(crate) fn to_frame_at<P: Encrypt>(p: P, depth: usize) -> Result<Buffer, FrameWriteError> {
     let mut out = Buffer::new();
-    p.visit(FrameWriter {
-        out: &mut out,
-        depth,
-    })?;
+    p.visit(FrameWriter::at_depth(&mut out, depth))?;
     Frame::parse(out.risky_ref()).map_err(|_| FrameWriteError::Unfinished)?;
     Ok(out)
 }
@@ -431,9 +567,15 @@ pub(crate) fn to_frame_at<P: Encrypt>(p: P, depth: usize) -> Result<Buffer, Fram
 /// an incomplete suffix in the borrowed buffer. The writer neither rolls back
 /// nor wipes that suffix. Prefer [`to_frame`] for an owned protected result
 /// returned only after successful writing and validation.
-pub struct FrameWriter<'o> {
+///
+/// `E` is the error the writer reports, [`FrameWriteError`] unless a sink
+/// that writes through it reports its own: the sink of an [`OwnedFrame`],
+/// a decrypt target, reports [`DecodeError`](crate::DecodeError). A frame
+/// writer's refusal reaches `E` through `From`.
+pub struct FrameWriter<'o, E = FrameWriteError> {
     out: &'o mut Buffer,
     depth: usize,
+    error: PhantomData<fn() -> E>,
 }
 
 impl<'o> FrameWriter<'o> {
@@ -441,14 +583,25 @@ impl<'o> FrameWriter<'o> {
     /// The caller owns the buffer, which wipes its bytes when dropped,
     /// including after an error.
     pub fn new(out: &'o mut Buffer) -> Self {
-        Self { out, depth: 0 }
+        Self::at_depth(out, 0)
     }
 
     /// A writer for a node that sits `depth` levels below the top of a
     /// document, so [`MAX_DEPTH`] counts from the top: for a subtree
     /// written to a buffer of its own and copied into the document later.
     pub fn at_depth(out: &'o mut Buffer, depth: usize) -> Self {
-        Self { out, depth }
+        Self::reporting(out, depth)
+    }
+}
+
+impl<'o, E> FrameWriter<'o, E> {
+    /// A writer that reports `E`.
+    fn reporting(out: &'o mut Buffer, depth: usize) -> Self {
+        Self {
+            out,
+            depth,
+            error: PhantomData,
+        }
     }
 
     /// How many levels below the top of its document this writer's node
@@ -456,28 +609,15 @@ impl<'o> FrameWriter<'o> {
     pub fn depth(&self) -> usize {
         self.depth
     }
+}
 
-    fn node(self, tag: u8) -> Result<&'o mut Buffer, FrameWriteError> {
+impl<'o, E: Error + From<FrameWriteError>> FrameWriter<'o, E> {
+    fn node(self, tag: u8) -> Result<&'o mut Buffer, E> {
         if self.depth > MAX_DEPTH {
-            return Err(FrameWriteError::TooDeep);
+            return Err(FrameWriteError::TooDeep.into());
         }
         self.out.push(tag);
         Ok(self.out)
-    }
-
-    fn container(self, tag: u8) -> Result<Count<'o>, FrameWriteError> {
-        let depth = self.depth;
-        self.out.reserve(5);
-        let out = self.node(tag)?;
-        let at = out.len();
-        out.extend_from_slice(&[0; 4]);
-        Ok(Count {
-            out,
-            depth,
-            at,
-            n: 0,
-            open: None,
-        })
     }
 }
 
@@ -487,60 +627,125 @@ fn write_len(out: &mut Buffer, len: usize) -> Result<(), FrameWriteError> {
     Ok(())
 }
 
-/// A container whose count is written once the children are known.
-struct Count<'o> {
-    out: &'o mut Buffer,
+/// A container being written: its tag and a count, written once the
+/// children are known, into a buffer `B` it borrows (`&mut Buffer`) or owns
+/// (`Buffer`). Its children write straight into the same buffer, so a
+/// container costs no copy whichever it is.
+struct Container<B, E> {
+    out: B,
     depth: usize,
+    /// Where the count goes.
     at: usize,
     n: usize,
+    expected: Option<usize>,
     /// Where the last child sink handed out would start writing. Every
     /// node writes at least its tag, so if the buffer has not grown past
     /// it by the next child or the end, that sink was dropped unused.
     open: Option<usize>,
+    /// Where each key of a map lies in the buffer. A repeat is found among
+    /// them at the end, so no key is copied out of the frame, where it
+    /// would be freed unwiped. Empty for a sequence.
+    keys: Vec<Range<usize>>,
+    error: PhantomData<fn() -> E>,
 }
 
-impl Count<'_> {
-    fn settle(&mut self) -> Result<(), FrameWriteError> {
+impl<B: BorrowMut<Buffer>, E: Error + From<FrameWriteError>> Container<B, E> {
+    /// Write `tag` and room for the count onto `out`, for a container at
+    /// `depth` that says it holds `expected` children.
+    fn open(mut out: B, tag: u8, depth: usize, expected: Option<usize>) -> Result<Self, E> {
+        if depth > MAX_DEPTH {
+            return Err(FrameWriteError::TooDeep.into());
+        }
+        let buffer = out.borrow_mut();
+        buffer.reserve(5);
+        buffer.push(tag);
+        let at = buffer.len();
+        buffer.extend_from_slice(&[0; 4]);
+        Ok(Self {
+            out,
+            depth,
+            at,
+            n: 0,
+            expected,
+            open: None,
+            keys: Vec::new(),
+            error: PhantomData,
+        })
+    }
+
+    fn settle(&mut self) -> Result<(), E> {
         match self.open.take() {
-            Some(start) if self.out.len() == start => Err(FrameWriteError::Unwritten),
+            Some(start) if self.out.borrow().len() == start => {
+                Err(FrameWriteError::Unwritten.into())
+            }
             _ => Ok(()),
         }
     }
 
-    fn child(&mut self) -> FrameWriter<'_> {
+    fn child(&mut self) -> FrameWriter<'_, E> {
         self.n += 1;
-        self.open = Some(self.out.len());
-        FrameWriter {
-            out: &mut *self.out,
-            depth: self.depth + 1,
-        }
+        let out = self.out.borrow_mut();
+        self.open = Some(out.len());
+        FrameWriter::reporting(out, self.depth + 1)
     }
 
-    fn end(mut self, expected: Option<usize>) -> Result<(), FrameWriteError> {
+    fn element(&mut self) -> Result<FrameWriter<'_, E>, E> {
         self.settle()?;
-        if expected.is_some_and(|e| e != self.n) {
-            return Err(FrameWriteError::CountMismatch);
+        Ok(self.child())
+    }
+
+    fn entry(&mut self, key: &str) -> Result<FrameWriter<'_, E>, E> {
+        self.settle()?;
+        let out = self.out.borrow_mut();
+        out.reserve(key.len().saturating_add(4));
+        write_len(out, key.len())?;
+        let start = out.len();
+        out.extend_from_slice(key.as_bytes());
+        self.keys.push(start..out.len());
+        Ok(self.child())
+    }
+
+    /// Check the children and write the count; the buffer, finished.
+    fn end(mut self) -> Result<B, E> {
+        self.settle()?;
+        // The frame only grows while the container is written, so every
+        // range still holds its key.
+        let out: &[u8] = self.out.borrow().risky_ref();
+        self.keys
+            .sort_unstable_by(|a, b| out[a.clone()].cmp(&out[b.clone()]));
+        if self
+            .keys
+            .windows(2)
+            .any(|pair| out[pair[0].clone()] == out[pair[1].clone()])
+        {
+            return Err(FrameWriteError::DuplicateKey.into());
+        }
+        if self.expected.is_some_and(|e| e != self.n) {
+            return Err(FrameWriteError::CountMismatch.into());
         }
         let n = u32::try_from(self.n).map_err(|_| FrameWriteError::TooLong)?;
-        self.out.overwrite(self.at, &n.to_le_bytes());
-        Ok(())
+        self.out.borrow_mut().overwrite(self.at, &n.to_le_bytes());
+        Ok(self.out)
     }
 }
 
-impl<'o> Sink for FrameWriter<'o> {
+impl<'o, E: Error + From<FrameWriteError>> Sink for FrameWriter<'o, E> {
     type Ok = ();
-    type Error = FrameWriteError;
-    type Seq = FrameSeq<'o>;
-    type Map = FrameMap<'o>;
+    type Error = E;
+    type Seq = FrameSeq<'o, E>;
+    type Map = FrameMap<'o, E>;
 
-    fn scalar(self, ty: Option<Logical>, v: Physical<'_>) -> Result<(), FrameWriteError> {
+    fn scalar(self, ty: Option<Logical>, v: Physical<'_>) -> Result<(), E> {
         if self.depth > MAX_DEPTH {
-            return Err(FrameWriteError::TooDeep);
+            return Err(FrameWriteError::TooDeep.into());
         }
         self.out.reserve(leaf::max_len(&v));
-        leaf::write(ty, v, Form::Frame, self.out).map_err(|e| match e {
-            ScalarError::Invalid => FrameWriteError::Invalid,
-            ScalarError::TooLong | ScalarError::Malformed => FrameWriteError::TooLong,
+        leaf::write(ty, v, Form::Frame, self.out).map_err(|e| {
+            match e {
+                ScalarError::Invalid => FrameWriteError::Invalid,
+                ScalarError::TooLong | ScalarError::Malformed => FrameWriteError::TooLong,
+            }
+            .into()
         })
     }
 
@@ -550,106 +755,68 @@ impl<'o> Sink for FrameWriter<'o> {
     /// returns) or into the clear (a passthrough subtree), where the plain
     /// null is what every reader already knows. A frame a host sends may
     /// still carry a typed null, which [`Frame`] reads, so the host's
-    /// absent values are padded when sealed.
-    fn typed_null(self, _: FixedType) -> Result<(), FrameWriteError> {
+    /// absent values are padded when sealed; [`OwnedFrame::typed_null`]
+    /// writes one.
+    fn typed_null(self, _: FixedType) -> Result<(), E> {
         self.scalar(None, Physical::Null)
     }
 
-    fn seq(self, len: Option<usize>) -> Result<FrameSeq<'o>, FrameWriteError> {
-        Ok(FrameSeq {
-            count: self.container(ARRAY)?,
-            expected: len,
-        })
+    fn seq(self, len: Option<usize>) -> Result<FrameSeq<'o, E>, E> {
+        Container::open(self.out, ARRAY, self.depth, len).map(FrameSeq)
     }
 
-    fn map(self, len: Option<usize>) -> Result<FrameMap<'o>, FrameWriteError> {
-        Ok(FrameMap {
-            count: self.container(OBJECT)?,
-            expected: len,
-            keys: Vec::new(),
-        })
+    fn map(self, len: Option<usize>) -> Result<FrameMap<'o, E>, E> {
+        Container::open(self.out, OBJECT, self.depth, len).map(FrameMap)
     }
 
-    fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<(), FrameWriteError> {
+    fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<(), E> {
         let depth = self.depth;
         let out = self.node(PASSTHROUGH)?;
-        value.visit_ref(FrameWriter {
-            out,
-            depth: depth + 1,
-        })
+        value.visit_ref(FrameWriter::reporting(out, depth + 1))
     }
 }
 
 /// In-progress frame sequence. Each child must write one node, and
 /// [`SeqSink::end`] checks the supplied length and completes the count header.
 /// Dropping it leaves partial bytes in the writer's buffer.
-pub struct FrameSeq<'o> {
-    count: Count<'o>,
-    expected: Option<usize>,
-}
+pub struct FrameSeq<'o, E = FrameWriteError>(Container<&'o mut Buffer, E>);
 
-impl SeqSink for FrameSeq<'_> {
+impl<E: Error + From<FrameWriteError>> SeqSink for FrameSeq<'_, E> {
     type Ok = ();
-    type Error = FrameWriteError;
+    type Error = E;
     type Element<'s>
-        = FrameWriter<'s>
+        = FrameWriter<'s, E>
     where
         Self: 's;
 
-    fn element(&mut self) -> Result<FrameWriter<'_>, FrameWriteError> {
-        self.count.settle()?;
-        Ok(self.count.child())
+    fn element(&mut self) -> Result<FrameWriter<'_, E>, E> {
+        self.0.element()
     }
 
-    fn end(self) -> Result<(), FrameWriteError> {
-        self.count.end(self.expected)
+    fn end(self) -> Result<(), E> {
+        self.0.end().map(drop)
     }
 }
 
 /// In-progress frame map. Rejects duplicate keys and unfinished children;
 /// [`MapSink::end`] checks the supplied length and completes the count header.
 /// Keys are written as cleartext UTF-8. Errors do not roll back earlier bytes.
-pub struct FrameMap<'o> {
-    count: Count<'o>,
-    expected: Option<usize>,
-    /// Where each key's bytes lie in the frame. A repeat is found among
-    /// them at the end, so no key is copied out of the frame, where it
-    /// would be freed unwiped.
-    keys: Vec<Range<usize>>,
-}
+pub struct FrameMap<'o, E = FrameWriteError>(Container<&'o mut Buffer, E>);
 
-impl MapSink for FrameMap<'_> {
+impl<E: Error + From<FrameWriteError>> MapSink for FrameMap<'_, E> {
     type Ok = ();
-    type Error = FrameWriteError;
+    type Error = E;
     type Entry<'s>
-        = FrameWriter<'s>
+        = FrameWriter<'s, E>
     where
         Self: 's;
 
-    fn entry(&mut self, key: &str) -> Result<FrameWriter<'_>, FrameWriteError> {
-        self.count.settle()?;
-        self.count.out.reserve(key.len().saturating_add(4));
-        write_len(self.count.out, key.len())?;
-        let start = self.count.out.len();
-        self.count.out.extend_from_slice(key.as_bytes());
-        self.keys.push(start..self.count.out.len());
-        Ok(self.count.child())
+    fn entry(&mut self, key: &str) -> Result<FrameWriter<'_, E>, E> {
+        self.0.entry(key)
     }
 
-    fn end(mut self) -> Result<(), FrameWriteError> {
-        // The frame only grows while the map is written, so every range
-        // still holds its key.
-        let out: &[u8] = self.count.out.risky_ref();
-        self.keys
-            .sort_unstable_by(|a, b| out[a.clone()].cmp(&out[b.clone()]));
-        if self
-            .keys
-            .windows(2)
-            .any(|pair| out[pair[0].clone()] == out[pair[1].clone()])
-        {
-            return Err(FrameWriteError::DuplicateKey);
-        }
-        self.count.end(self.expected)
+    fn end(self) -> Result<(), E> {
+        self.0.end().map(drop)
     }
 }
 
@@ -1033,6 +1200,186 @@ mod tests {
         assert_ne!(frame, Frame::parse(&other).expect("parses"));
         assert_eq!(PassthroughFrame(bytes.clone()), PassthroughFrame(same));
         assert_ne!(PassthroughFrame(bytes), PassthroughFrame(other));
+    }
+
+    fn typed_null(ty: FixedType) -> Vec<u8> {
+        let mut out = Vec::new();
+        leaf::write_typed_null(ty, &mut out);
+        out
+    }
+
+    /// A passthrough of a value: a frame with a passthrough at its top.
+    struct Pass<T>(T);
+    impl<T: EncryptRef> Encrypt for Pass<T> {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            sink.passthrough(&self.0)
+        }
+    }
+
+    /// A frame names its kind: a container's, a scalar's, or none for a
+    /// null, `undefined`, a passthrough or an unknown logical type.
+    #[test]
+    fn a_frame_names_its_kind() {
+        use crate::plaintext::{Raw, Width};
+        let date = FixedType::new(Some(Logical::Date), Width::I32).expect("fixed");
+        let unknown = Logical::from_wire(200, 0).expect("an unknown logical type");
+        let mut map = BTreeMap::new();
+        map.insert("k", 1u16);
+        let cases = [
+            (frame_of(None::<&str>), None),
+            (
+                frame_of(Raw(Some(Logical::Undefined), Physical::Null)),
+                None,
+            ),
+            (frame_of(true), Some(ValueKind::Bool)),
+            (frame_of(1i32), Some(ValueKind::Int32)),
+            (frame_of(1u64), Some(ValueKind::UInt64)),
+            (frame_of(1.0f64), Some(ValueKind::Float64)),
+            (frame_of("a"), Some(ValueKind::String)),
+            (frame_of(vec!["a"]), Some(ValueKind::Array)),
+            (frame_of(map), Some(ValueKind::Object)),
+            (frame_of(Pass("p")), None),
+            (
+                frame_of(Raw(Some(unknown), Physical::Int(Int::I32(1)))),
+                None,
+            ),
+            (typed_null(date), None),
+        ];
+        for (bytes, kind) in cases {
+            let frame = Frame::parse(&bytes).expect("parses");
+            assert_eq!(frame.kind(), kind, "{bytes:?}");
+        }
+    }
+
+    /// Only a null, plain or typed, is a null; `undefined`, a scalar, a
+    /// container and a passthrough of a null are not.
+    #[test]
+    fn only_a_null_is_a_null() {
+        use crate::plaintext::{Raw, Width};
+        let parsed = |bytes: &[u8]| Frame::parse(bytes).expect("parses").is_null();
+        assert!(parsed(&frame_of(None::<&str>)));
+        assert!(parsed(&typed_null(
+            FixedType::new(None, Width::I64).expect("fixed")
+        )));
+        for bytes in [
+            frame_of(Raw(Some(Logical::Undefined), Physical::Null)),
+            frame_of(false),
+            frame_of(0u16),
+            frame_of(""),
+            frame_of(vec![None::<&str>]),
+            frame_of(BTreeMap::<&str, u16>::new()),
+            frame_of(Pass(None::<&str>)),
+        ] {
+            assert!(!parsed(&bytes), "{bytes:?}");
+        }
+    }
+
+    /// A sequence's elements are borrowed from it, in order and as they
+    /// are, a typed null included; any other value has none.
+    #[test]
+    fn elements_are_the_childrens_frames_in_place() {
+        use crate::plaintext::Width;
+        let date = FixedType::new(Some(Logical::Date), Width::I32).expect("fixed");
+        let mut seq = vec![ARRAY, 3, 0, 0, 0];
+        seq.extend(frame_of("a"));
+        seq.extend(typed_null(date));
+        seq.extend(frame_of(vec![1i32]));
+        let frame = Frame::parse(&seq).expect("parses");
+        let elements = frame.elements().expect("a sequence");
+        assert_eq!(elements.len(), 3);
+        assert_eq!(elements.size_hint(), (3, Some(3)));
+        let items: Vec<Frame<'_>> = elements.clone().collect();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].as_bytes(), &frame_of("a")[..]);
+        assert_eq!(items[1].as_bytes(), &typed_null(date)[..]);
+        assert!(items[1].is_null());
+        assert_eq!(items[2].as_bytes(), &frame_of(vec![1i32])[..]);
+        // Borrowed from the sequence, not copied.
+        assert_eq!(items[0].as_bytes().as_ptr(), seq[5..].as_ptr());
+
+        let mut rest = frame.elements().expect("a sequence");
+        assert!(rest.next().is_some());
+        assert_eq!(rest.len(), 2);
+        assert!(rest.next().is_some());
+        assert!(rest.next().is_some());
+        assert_eq!(rest.len(), 0);
+        assert!(rest.next().is_none());
+        assert!(rest.next().is_none(), "stays done");
+
+        let empty = frame_of(Vec::<u16>::new());
+        let none = Frame::parse(&empty).expect("parses").elements();
+        assert_eq!(none.map(|e| e.len()), Some(0));
+        let mut map = BTreeMap::new();
+        map.insert("k", "a");
+        for other in [
+            frame_of("a"),
+            frame_of(map),
+            frame_of(Pass(Vec::<u16>::new())),
+        ] {
+            assert!(Frame::parse(&other).expect("parses").elements().is_none());
+        }
+    }
+
+    #[test]
+    fn elements_debug_shows_nothing_of_them() {
+        let bytes = frame_of(vec!["secret"]);
+        let frame = Frame::parse(&bytes).expect("parses");
+        let shown = format!("{:?}", frame.elements().expect("a sequence"));
+        assert!(
+            shown.contains("***") && !shown.contains("secret"),
+            "{shown}"
+        );
+    }
+
+    /// A passthrough is found at any depth, and nowhere else.
+    #[test]
+    fn a_passthrough_is_found_at_any_depth() {
+        struct Inside(bool);
+        impl Encrypt for Inside {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                if self.0 {
+                    let mut map = sink.map(Some(2))?;
+                    "a".visit(map.entry("a")?)?;
+                    Pass("p").visit(map.entry("p")?)?;
+                    map.end()
+                } else {
+                    let mut seq = sink.seq(Some(2))?;
+                    None::<&str>.visit(seq.element()?)?;
+                    Pass(None::<&str>).visit(seq.element()?)?;
+                    seq.end()
+                }
+            }
+        }
+        let has = |bytes: Vec<u8>| Frame::parse(&bytes).expect("parses").has_passthrough();
+        assert!(has(frame_of(Pass("p"))));
+        assert!(has(frame_of(Inside(true))));
+        assert!(has(frame_of(Inside(false))));
+        let mut map = BTreeMap::new();
+        map.insert("k", vec!["a"]);
+        assert!(!has(frame_of("a")));
+        assert!(!has(frame_of(map)));
+        assert!(!has(frame_of(vec![vec![None::<&str>], vec![]])));
+    }
+
+    /// A passthrough below the bound is refused before its tag is written;
+    /// at the bound, its tag fits and the value inside it does not.
+    #[test]
+    fn a_passthrough_past_the_bound_writes_nothing() {
+        let mut out = Buffer::new();
+        assert!(matches!(
+            FrameWriter::at_depth(&mut out, MAX_DEPTH + 1).passthrough(&1u16),
+            Err(FrameWriteError::TooDeep)
+        ));
+        assert!(out.is_empty());
+        assert!(matches!(
+            FrameWriter::at_depth(&mut out, MAX_DEPTH).passthrough(&1u16),
+            Err(FrameWriteError::TooDeep)
+        ));
+        assert_eq!(out.risky_ref().as_slice(), [PASSTHROUGH]);
+        let mut out = Buffer::new();
+        assert!(FrameWriter::at_depth(&mut out, MAX_DEPTH - 1)
+            .passthrough(&1u16)
+            .is_ok());
     }
 
     #[test]

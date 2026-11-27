@@ -327,7 +327,9 @@ async fn seal(
     source: vitaminc_protected::ProtectedRef<'_, [u8]>,
     plan: &DataPlan,
 ) -> StackCipherText {
-    let source = OwnedFrame::from_bytes(source).expect("the source is a value");
+    let mut bytes = vitaminc_protected::Buffer::new();
+    bytes.extend_from_slice(source.risky_ref());
+    let source = OwnedFrame::from_buffer(bytes).expect("the source is a value");
     record::encrypt(&cipher.default_keyset(), source, plan)
         .expect("the source fits the plan")
         .await
@@ -344,7 +346,8 @@ async fn open(
         .expect("the stored record fits the plan")
         .await
         .expect("the stored record opens")
-        .risky_ref()
+        .frame()
+        .as_bytes()
         .to_vec()
 }
 

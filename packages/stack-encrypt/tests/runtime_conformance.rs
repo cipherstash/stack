@@ -191,8 +191,8 @@ async fn shared_record_runtime_profile() {
                     .await
                     .unwrap();
                 assert_eq!(
-                    opened.risky_ref(),
-                    rows(&expected_rows).risky_ref(),
+                    opened.frame().as_bytes(),
+                    rows(&expected_rows).frame().as_bytes(),
                     "typed ordered roundtrip"
                 );
                 assert_eq!(
