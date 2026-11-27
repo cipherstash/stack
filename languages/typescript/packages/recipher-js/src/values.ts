@@ -58,6 +58,11 @@ export type VcDecimal = VcDecimalValue
  * A universally unique identifier (UUID), such as
  * `new VcUuid('123e4567-e89b-12d3-a456-426614174000')`. The class comes from
  * vitaminc.
+ *
+ * The text is hyphenated hex, in either case. Encrypting other text, such
+ * as text in braces, of the wrong length, or with a digit that is not hex,
+ * is an `Err` with the code `ERR_INVALID_UUID`. A decrypted `VcUuid` holds
+ * lowercase hyphenated hex, whatever case it was built with.
  */
 export type VcUuid = VcUuidValue
 

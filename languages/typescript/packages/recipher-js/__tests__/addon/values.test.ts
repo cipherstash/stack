@@ -113,6 +113,14 @@ describe('every value in the mapping round-trips', () => {
     expect((id as VcUuid).value).toBe('123e4567-e89b-12d3-a456-426614174000')
   })
 
+  it('a UUID built in uppercase, which decrypts as lowercase', async () => {
+    const id = await roundTrip(
+      new VcUuid('123E4567-E89B-12D3-A456-426614174ABC'),
+    )
+    expect(id).toBeInstanceOf(VcUuid)
+    expect((id as VcUuid).value).toBe('123e4567-e89b-12d3-a456-426614174abc')
+  })
+
   it('null', async () => {
     expect(await roundTrip(null)).toBeNull()
   })
@@ -321,6 +329,25 @@ describe('a ciphertext read back with a kind', () => {
 })
 
 describe('refusals', () => {
+  it('UUID text that is not hyphenated hex, as an Err', async () => {
+    const keyset = (await cipher()).defaultKeyset()
+    for (const text of [
+      // One digit short.
+      '123e4567-e89b-12d3-a456-42661417400',
+      // In braces.
+      '{123e4567-e89b-12d3-a456-426614174000}',
+      // A digit that is not hex.
+      '123e4567-e89b-12d3-a456-42661417400g',
+    ]) {
+      const pending = keyset.encrypt(new VcUuid(text))
+      expect(pending, text).toBeInstanceOf(Promise)
+      const result = await pending
+      expect(result.isErr(), text).toBe(true)
+      expect(result.err()?.code, text).toBe('ERR_INVALID_UUID')
+      expect(result.err()?.message, text).not.toContain(text)
+    }
+  })
+
   it("an integer vitaminc cannot hold, with vitaminc's code", async () => {
     const keyset = (await cipher()).defaultKeyset()
     const result = await keyset.encrypt(2n ** 128n)

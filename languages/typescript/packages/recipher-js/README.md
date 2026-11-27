@@ -73,6 +73,9 @@ The `recipher-value-napi` crate, in `value-napi/`, converts JavaScript values by
   Wrap it in `json(..)`.
 - A UUID is a `VcUuid`, not a string.
   A string that holds a UUID is encrypted as text.
+  A `VcUuid` takes hyphenated hex, in either case.
+  Other text, such as text in braces, is an `Err` with the code `ERR_INVALID_UUID` when it is encrypted.
+  A decrypted `VcUuid` holds lowercase hyphenated hex, whatever case it was built with.
 - vitaminc's rules refuse each of these values, with an error code for each:
   - a `Map` or a `Set`;
   - a class instance;
