@@ -13,8 +13,9 @@ const codeRetrieveKeyFailed = "stack_kms::retrieve_key_failed"
 // does not say which: the value is opened under another context than it was
 // sealed under, the keyset is disabled, or the access token lacks the scope
 // to retrieve keys. A client with no grant for the keyset is answered 404,
-// which is ErrNotFound. The guest gives a Help that names all three. The
-// call knows more, so these say which cause is likely where they can.
+// which is ErrNotFound. ZeroKMS leaves the cause out by design, so a Help
+// cannot name it. The guest gives a Help that names all three. The call
+// knows more, so these say which cause is likely where they can.
 //
 // A Help never names a scope's or a binding's value, or a context label:
 // those are context values, which a Diagnostic never carries. It names how
@@ -32,7 +33,8 @@ func (cph *Cipher) explainRefusal(err error) error {
 			"The likely cause is that the value was sealed under another context than this cipher opens it under. "+
 			"This cipher adds %s and %s to the context. "+
 			"Open the value through a cipher with the same Cipher.Scope and Cipher.Bind parts as the cipher that encrypted it. "+
-			"A row whose context field was changed after it was written fails the same way, and so does a keyset disabled since it was loaded.",
+			"A row whose context field was changed after it was written fails the same way, and so does a keyset disabled since it was loaded. "+
+			refusalCauseNotGiven,
 		describeKeyset(cph.keyset), countParts(len(cph.extension), "scope"), countParts(len(cph.bindings), "binding")))
 }
 
@@ -45,7 +47,14 @@ const clientRefusalHelp = "ZeroKMS refused the data key. The Client opens a valu
 	"the keyset the value was sealed under is disabled; " +
 	"or the access token lacks the scope to retrieve keys. " +
 	"Open a scoped or bound value through a cipher like the one that encrypted it. " +
-	"A keyset that is not granted to this client gives ErrNotFound, not this error."
+	"A keyset that is not granted to this client gives ErrNotFound, not this error. " +
+	refusalCauseNotGiven
+
+// refusalCauseNotGiven ends every Help for a refused data key. ZeroKMS
+// does not say which cause applies on purpose: a refusal that named its
+// cause would tell an attacker which part of a request to change.
+const refusalCauseNotGiven = "ZeroKMS does not say which cause applies, by design. " +
+	"To find the exact cause, contact CipherStash Support."
 
 // explainClientRefusal gives err the Help for a data key ZeroKMS refused on
 // a call through the Client. Any other error is returned as it is.

@@ -604,6 +604,10 @@ is likely where the call knows:
   scope and binding parts the cipher adds.
 - Through the `*Client`, the `Help` names every cause.
 
+ZeroKMS does not say which cause applies, by design. A refusal that named
+its cause would tell an attacker which part of a request to change. To find
+the exact cause of a refusal, contact CipherStash Support.
+
 A keyset that ZeroKMS does not find (`ErrNotFound`, code
 `stack_kms::keyset_not_found`) is named in the `Message`, and in `Fields` as
 `keyset_name` or `keyset_id`. ZeroKMS gives the same answer for a keyset

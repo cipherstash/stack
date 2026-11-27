@@ -14,7 +14,9 @@ import (
 // stack_kms::retrieve_key_failed, whatever the cause. The Help says which
 // cause is likely where the call knows: a cipher loaded its keyset first, so
 // for a cipher the context is the likely cause; the Client did not, so its
-// Help names every cause. Neither names a scope's value.
+// Help names every cause. ZeroKMS does not say which cause applies, by
+// design, so every Help says so and points to CipherStash Support. Neither
+// names a scope's value.
 func TestARefusedDataKeySaysWhichCause(t *testing.T) {
 	c := deterministicClient(t)
 	ctx := context.Background()
@@ -78,7 +80,7 @@ func TestARefusedDataKeySaysWhichCause(t *testing.T) {
 			if d.Code != "stack_kms::retrieve_key_failed" {
 				t.Errorf("Code = %q, want stack_kms::retrieve_key_failed", d.Code)
 			}
-			for _, want := range tc.want {
+			for _, want := range append(tc.want, "does not say which cause applies, by design", "contact CipherStash Support") {
 				if !strings.Contains(d.Help, want) {
 					t.Errorf("Help = %q, want it to contain %q", d.Help, want)
 				}

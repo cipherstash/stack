@@ -43,8 +43,15 @@ var (
 	// keyset first, the likely cause is the context: the Help names the
 	// keyset and how many scope and binding parts the cipher adds, never
 	// their values. On a read through the [Client], the Help names every
-	// cause. A keyset ZeroKMS refuses to load, a disabled one or one asked
-	// for with a token that lacks the scope, is
+	// cause.
+	//
+	// ZeroKMS does not say which cause applies, by design: a refusal that
+	// named its cause would tell an attacker which part of a request to
+	// change. To find the exact cause of a refusal, contact CipherStash
+	// Support.
+	//
+	// A keyset ZeroKMS refuses to load, a disabled one or one asked for
+	// with a token that lacks the scope, is
 	// "stack_kms::load_keyset_forbidden", and its message names the keyset.
 	// A keyset that is not granted to this client is [ErrNotFound].
 	ErrForbidden = guest.ErrForbidden

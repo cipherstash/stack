@@ -30,7 +30,9 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   names the cipher's keyset, and says how many scope and binding parts the
   cipher adds. Through the `*Client`, it names every cause: another
   context, a disabled keyset, or a token without the scope to retrieve
-  keys. Before, the `Help` was empty.
+  keys. Before, the `Help` was empty. Both say that ZeroKMS does not say
+  which cause applies, by design, and that CipherStash Support can find
+  the exact cause.
 - A keyset that ZeroKMS does not find (`ErrNotFound`, code
   `stack_kms::keyset_not_found`) is named in the error's message, and in
   its `Fields` as `keyset_name` or `keyset_id` (#1897). The message and the
