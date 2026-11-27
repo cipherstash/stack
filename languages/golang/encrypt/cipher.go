@@ -15,8 +15,9 @@ import (
 // leaf sealed under another keyset is refused as [ErrForeignKeyset] before
 // any key is retrieved. To open ciphertexts from any keyset, pass the
 // [Client] where a [Decrypter] is taken. A Client opens only rows that a
-// cipher with no scope encrypted; rows sealed through [Cipher.Scope]
-// open only through a cipher with the same scopes.
+// cipher with no scope and no binding encrypted; rows sealed through
+// [Cipher.Scope] or [Cipher.Bind] open only through a cipher with the same
+// scopes and bindings.
 //
 // A Cipher holds no guest state: the keyset is selected on every call, and
 // loaded by the guest on first use, so one is cheap to make per request or

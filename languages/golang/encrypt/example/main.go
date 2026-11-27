@@ -57,7 +57,7 @@ func run(ctx context.Context) error {
 
 	// Decrypt through the cipher. It carries the scope that Encrypt used,
 	// and it refuses rows from another keyset. The client would refuse these
-	// rows: it opens only rows sealed with no scope.
+	// rows: it opens only rows sealed with no scope and no binding.
 	//
 	// Audit gives the cipher audit metadata: facts about the call, which
 	// ZeroKMS writes to its audit log with the request for the data keys.

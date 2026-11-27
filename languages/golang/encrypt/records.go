@@ -20,9 +20,9 @@ import (
 // Decrypter opens records: a *Cipher, which refuses a record sealed under
 // another keyset before any key is retrieved, or a *Client, which opens each
 // record under the keyset that sealed it. A *Client opens only records that
-// a cipher with no scope sealed, and checks no stored context field
-// against a label: that is [Cipher.Context]. Generated Decrypt functions
-// take one. Its method is for generated code; a program does not call it.
+// a cipher with no scope and no binding sealed, and checks no stored
+// context field against a label: that is [Cipher.Context]. Generated
+// Decrypt functions take one. Its method is for generated code; a program does not call it.
 type Decrypter interface {
 	Open(ctx context.Context, plan *record.Plan, records []record.Sealed) ([]record.Source, error)
 }
