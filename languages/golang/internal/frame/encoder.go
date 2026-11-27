@@ -25,22 +25,6 @@ type Encryptable interface {
 	EncryptValue(enc Encoder) error
 }
 
-// FixedWidth is the Go side of Rust's `Encrypt::FIXED`: an Encryptable whose
-// EncryptValue always writes one value of one fixed-width type (a money type
-// that writes its cents with Int64, say). A nil pointer to such a type is
-// written as a typed null of that type, so a sealed absence is as long as a
-// sealed value. A nil pointer to an Encryptable that does not implement it
-// is the plain null, since its encoding is its own.
-//
-// FixedType is called once per type, on a pointer to a zero value, so it
-// must answer from the type alone. A type that returns an invalid FixedType
-// fails the encode with ErrInvalidFixedType rather than write the
-// plain null in its place.
-type FixedWidth interface {
-	Encryptable
-	FixedType() FixedType
-}
-
 // encState is the buffer and first-error shared by an Encoder and every
 // sub-encoder it hands out. Errors accumulate: once one is recorded, further
 // channel calls are no-ops, so consumer code can chain writes without
@@ -470,9 +454,8 @@ func Marshal(v any) ([]byte, error) {
 //     storage profile's `,default`, do not change the name), in
 //     declaration order;
 //   - pointers                   → dereferenced; a nil pointer → a typed
-//     null if its element type is fixed width (see [fixedTypeOf]), Null
-//     otherwise;
-//   - TypedNull          → a typed null of its type.
+//     null if its element type is fixed width (see [typedNullOf]), Null
+//     otherwise.
 //
 // Map keys are sorted because Go map iteration order is randomized;
 // sorting makes the encrypted structure deterministic. Struct fields keep
@@ -516,8 +499,8 @@ func encodeAny(enc Encoder, v any) {
 //     the record's structure.
 //   - Encryptable hands control to the user type — except a typed nil
 //     pointer, which still satisfies the assertion but would dereference nil
-//     in typical implementations; it encodes as Null like every other nil,
-//     or as a typed null when the type declares its width (FixedWidth).
+//     in typical implementations; it encodes as Null like every other nil
+//     whose type has no fixed width.
 func interceptMarkers(enc Encoder, v any) bool {
 	if m, ok := markers[reflect.TypeOf(v)]; ok {
 		m.encode(enc, v)
@@ -525,11 +508,7 @@ func interceptMarkers(enc Encoder, v any) bool {
 	}
 	if e, ok := v.(Encryptable); ok {
 		if ev := reflect.ValueOf(e); ev.Kind() == reflect.Pointer && ev.IsNil() {
-			if t, ok := fixedTypeOf(ev.Type()); ok {
-				enc.TypedNull(t)
-			} else {
-				enc.Null()
-			}
+			enc.Null()
 			return true
 		}
 		if err := e.EncryptValue(enc); err != nil {
@@ -603,8 +582,8 @@ func encodeReflect(enc Encoder, rv reflect.Value) {
 			// interface has no type to go by.
 			if rv.Kind() != reflect.Pointer {
 				enc.Null()
-			} else if t, ok := fixedTypeOf(rv.Type()); ok {
-				enc.TypedNull(t)
+			} else if null := typedNullOf(rv.Type()); null != nil {
+				enc.typedNull(null)
 			} else {
 				enc.Null()
 			}
@@ -681,24 +660,24 @@ func encodeStruct(enc Encoder, rv reflect.Value) {
 }
 
 // marker is how interceptMarkers writes a type it handles by exact type,
-// and the fixed-width type of its typed null, if it has one (zero if not).
-// One table for both, so a new marker type cannot be written one way and
-// padded, or not, another.
+// and the typed null of the type, if it is fixed width (nil if not). One
+// table for both, so a new marker type cannot be written one way and
+// padded, or not, another. A typed null is built from the tag a value of
+// the type is written with, so the tag table is the only list of types.
 type marker struct {
-	fixed  FixedType
+	null   []byte
 	encode func(Encoder, any)
 }
 
 // numeric is how encodeReflect writes an int, uint or float kind, and the
-// fixed-width type of its typed null: the same one-table rule as marker.
+// typed null of the kind: the same one-table rule as marker.
 type numeric struct {
-	fixed  FixedType
+	null   []byte
 	encode func(Encoder, reflect.Value)
 }
 
 var (
 	encryptableType = reflect.TypeOf((*Encryptable)(nil)).Elem()
-	fixedWidthType  = reflect.TypeOf((*FixedWidth)(nil)).Elem()
 	float32Type     = reflect.TypeOf(float32(0))
 
 	// markers is filled in init: Plain and Object encode by calling back
@@ -706,24 +685,24 @@ var (
 	markers map[reflect.Type]marker
 
 	numericKinds = map[reflect.Kind]numeric{
-		reflect.Int8:  {TypeInt8, func(e Encoder, rv reflect.Value) { e.Int8(int8(rv.Int())) }},
-		reflect.Int16: {TypeInt16, func(e Encoder, rv reflect.Value) { e.Int16(int16(rv.Int())) }},
-		reflect.Int32: {TypeInt32, func(e Encoder, rv reflect.Value) { e.Int32(int32(rv.Int())) }},
-		reflect.Int:   {TypeInt64, func(e Encoder, rv reflect.Value) { e.Int64(rv.Int()) }},
-		reflect.Int64: {TypeInt64, func(e Encoder, rv reflect.Value) { e.Int64(rv.Int()) }},
-		reflect.Uint8: {TypeUint8, func(e Encoder, rv reflect.Value) { e.UInt8(uint8(rv.Uint())) }},
-		reflect.Uint16: {TypeUint16, func(e Encoder, rv reflect.Value) {
+		reflect.Int8:  {nullOf(tagInt8), func(e Encoder, rv reflect.Value) { e.Int8(int8(rv.Int())) }},
+		reflect.Int16: {nullOf(tagInt16), func(e Encoder, rv reflect.Value) { e.Int16(int16(rv.Int())) }},
+		reflect.Int32: {nullOf(tagInt32), func(e Encoder, rv reflect.Value) { e.Int32(int32(rv.Int())) }},
+		reflect.Int:   {nullOf(tagInt64), func(e Encoder, rv reflect.Value) { e.Int64(rv.Int()) }},
+		reflect.Int64: {nullOf(tagInt64), func(e Encoder, rv reflect.Value) { e.Int64(rv.Int()) }},
+		reflect.Uint8: {nullOf(tagUint8), func(e Encoder, rv reflect.Value) { e.UInt8(uint8(rv.Uint())) }},
+		reflect.Uint16: {nullOf(tagUint16), func(e Encoder, rv reflect.Value) {
 			e.UInt16(uint16(rv.Uint()))
 		}},
-		reflect.Uint32: {TypeUint32, func(e Encoder, rv reflect.Value) {
+		reflect.Uint32: {nullOf(tagUint32), func(e Encoder, rv reflect.Value) {
 			e.UInt32(uint32(rv.Uint()))
 		}},
 		// Every unsigned word-or-wider kind keeps its unsigned identity as
 		// UInt64 (no fit-check: a bare uint always maps to UINT64).
-		reflect.Uint:    {TypeUint64, func(e Encoder, rv reflect.Value) { e.UInt64(rv.Uint()) }},
-		reflect.Uint64:  {TypeUint64, func(e Encoder, rv reflect.Value) { e.UInt64(rv.Uint()) }},
-		reflect.Uintptr: {TypeUint64, func(e Encoder, rv reflect.Value) { e.UInt64(rv.Uint()) }},
-		reflect.Float32: {TypeFloat32, func(e Encoder, rv reflect.Value) {
+		reflect.Uint:    {nullOf(tagUint64), func(e Encoder, rv reflect.Value) { e.UInt64(rv.Uint()) }},
+		reflect.Uint64:  {nullOf(tagUint64), func(e Encoder, rv reflect.Value) { e.UInt64(rv.Uint()) }},
+		reflect.Uintptr: {nullOf(tagUint64), func(e Encoder, rv reflect.Value) { e.UInt64(rv.Uint()) }},
+		reflect.Float32: {nullOf(tagFloat32), func(e Encoder, rv reflect.Value) {
 			// rv.Float() widens to float64, and the hardware widening sets
 			// the quiet bit of a signaling NaN. Converting to the built-in
 			// float32 instead copies the bits (reflect special-cases float32
@@ -736,109 +715,80 @@ var (
 				e.Float32(float32(rv.Float()))
 			}
 		}},
-		reflect.Float64: {TypeFloat64, func(e Encoder, rv reflect.Value) { e.Float64(rv.Float()) }},
+		reflect.Float64: {nullOf(tagFloat64), func(e Encoder, rv reflect.Value) { e.Float64(rv.Float()) }},
 	}
 
-	// fixedTypes caches fixedTypeOf by pointer type: every nil pointer of a
+	// typedNulls caches typedNullOf by pointer type: every nil pointer of a
 	// record type would otherwise pay its reflection again.
-	fixedTypes sync.Map
+	typedNulls sync.Map
 )
 
 func init() {
 	markers = map[reflect.Type]marker{
-		reflect.TypeOf(Int128{}): {TypeInt128, func(e Encoder, v any) {
+		reflect.TypeOf(Int128{}): {nullOf(tagInt128), func(e Encoder, v any) {
 			e.Int128(v.(Int128))
 		}},
-		reflect.TypeOf(Uint128{}): {TypeUint128, func(e Encoder, v any) {
+		reflect.TypeOf(Uint128{}): {nullOf(tagUint128), func(e Encoder, v any) {
 			e.UInt128(v.(Uint128))
 		}},
-		reflect.TypeOf(Date{}): {TypeDate, func(e Encoder, v any) {
+		reflect.TypeOf(Date{}): {nullOf(tagDate), func(e Encoder, v any) {
 			e.Date(v.(Date))
 		}},
-		reflect.TypeOf(time.Time{}): {TypeTimestamp, func(e Encoder, v any) {
+		reflect.TypeOf(time.Time{}): {nullOf(tagTimestamp), func(e Encoder, v any) {
 			e.Timestamp(v.(time.Time))
 		}},
-		reflect.TypeOf(Timestamp{}): {TypeTimestamp, func(e Encoder, v any) {
+		reflect.TypeOf(Timestamp{}): {nullOf(tagTimestamp), func(e Encoder, v any) {
 			e.TimestampParts(v.(Timestamp))
 		}},
-		reflect.TypeOf(Decimal{}): {TypeDecimal, func(e Encoder, v any) {
+		reflect.TypeOf(Decimal{}): {nullOf(tagDecimal), func(e Encoder, v any) {
 			e.Decimal(v.(Decimal))
 		}},
-		reflect.TypeOf(UUID{}): {TypeUUID, func(e Encoder, v any) {
+		reflect.TypeOf(UUID{}): {uuidNull, func(e Encoder, v any) {
 			e.UUID(v.(UUID))
 		}},
 		// A tagged value's physical type is in the value, not the type.
-		reflect.TypeOf(Tagged{}): {0, func(e Encoder, v any) { e.Tagged(v.(Tagged)) }},
-		reflect.TypeOf(TypedNull{}): {0, func(e Encoder, v any) {
-			e.TypedNull(v.(TypedNull).Type)
-		}},
-		reflect.TypeOf(Plain{}): {0, func(e Encoder, v any) {
+		reflect.TypeOf(Tagged{}): {nil, func(e Encoder, v any) { e.Tagged(v.(Tagged)) }},
+		reflect.TypeOf(Plain{}): {nil, func(e Encoder, v any) {
 			encodeAny(e.Passthrough(), v.(Plain).V)
 		}},
-		reflect.TypeOf(Object{}): {0, func(e Encoder, v any) {
+		reflect.TypeOf(Object{}): {nil, func(e Encoder, v any) {
 			encodeObject(e, v.(Object))
 		}},
 	}
 }
 
-// fixedAnswer is what fixedTypeOf caches: whether the type has a fixed-width
-// type at all, and which. A type declared through FixedWidth is kept even
-// when it is invalid, so that the encode fails instead of writing the plain
-// null in its place.
-type fixedAnswer struct {
-	ft  FixedType
-	has bool
-}
-
-// fixedTypeOf is the fixed-width type a pointer of type t points at, through
-// any number of pointers, when encodeReflect writes every value of it with
-// one fixed-width tag: the int, uint and float kinds (a named type over one
-// included) and the fixed-width marker types, exactly (a named type over a
-// marker is a struct to reflection, written field by field). A type that
-// implements Encryptable chooses its own encoding, which may not be fixed
-// width, so it has none unless it says so through FixedWidth.
-func fixedTypeOf(t reflect.Type) (FixedType, bool) {
-	if cached, ok := fixedTypes.Load(t); ok {
-		a := cached.(fixedAnswer)
-		return a.ft, a.has
+// typedNullOf is the typed null of the type a pointer of type t points at,
+// through any number of pointers, when encodeReflect writes every value of
+// it with one fixed-width tag: the int, uint and float kinds (a named type
+// over one included) and the fixed-width marker types, exactly (a named
+// type over a marker is a struct to reflection, written field by field).
+// It is nil for any other type. A type that implements Encryptable chooses
+// its own encoding, which may not be fixed width, so it has none.
+func typedNullOf(t reflect.Type) []byte {
+	if cached, ok := typedNulls.Load(t); ok {
+		return cached.([]byte)
 	}
-	var a fixedAnswer
+	var null []byte
 	elem := t
 	// A pointer type that points at itself (type P *P) never reaches a
 	// non-pointer, so the walk is bounded by the same depth budget that
 	// bounds a value cycle. Past it the type has no fixed width.
 	for depth := 0; elem.Kind() == reflect.Pointer && !elem.Implements(encryptableType); depth++ {
 		if depth == maxDepth {
-			fixedTypes.Store(t, a)
-			return 0, false
+			typedNulls.Store(t, null)
+			return nil
 		}
 		elem = elem.Elem()
 	}
-	switch {
-	case elem.Implements(fixedWidthType):
-		a = fixedAnswer{zeroValueOf(elem).Interface().(FixedWidth).FixedType(), true}
-	case elem.Implements(encryptableType):
-		// Its encoding is its own.
-	default:
+	if !elem.Implements(encryptableType) {
 		if m, ok := markers[elem]; ok {
-			a.ft = m.fixed
+			null = m.null
 		} else {
-			a.ft = numericKinds[elem.Kind()].fixed
+			null = numericKinds[elem.Kind()].null
 		}
-		a.has = a.ft != 0
 	}
-	fixedTypes.Store(t, a)
-	return a.ft, a.has
-}
-
-// zeroValueOf is a zero value of t that a method can be called on: for a
-// pointer type, a pointer to a zero value rather than nil, so a method with
-// a value receiver does not dereference nil.
-func zeroValueOf(t reflect.Type) reflect.Value {
-	if t.Kind() == reflect.Pointer {
-		return reflect.New(t.Elem())
-	}
-	return reflect.Zero(t)
+	typedNulls.Store(t, null)
+	return null
 }
 
 // interfaceOf is rv.Interface(), or nil where reflection forbids it

@@ -108,8 +108,8 @@ func unwritable(format string, args ...any) error {
 //   - [Some], [StorageEntries], Object and []any → as they read.
 //
 // The transport's Encryptable, passthrough (Plain) and logical
-// types (Date, Timestamp, Decimal, Tagged, TypedNull) have no
-// storage form, and are refused.
+// types (Date, Timestamp, Decimal, Tagged) have no storage form, and are
+// refused.
 func MarshalStorage(v any) ([]byte, error) {
 	w := &storageWriter{buf: append([]byte(nil), StorageHeader[:]...)}
 	if err := w.any(v, 0); err != nil {
@@ -145,7 +145,6 @@ var (
 	timestampType = reflect.TypeOf(Timestamp{})
 	decimalType   = reflect.TypeOf(Decimal{})
 	taggedType    = reflect.TypeOf(Tagged{})
-	typedNullType = reflect.TypeOf(TypedNull{})
 )
 
 // model writes rv if its type is one of the model's own, which have a form
@@ -171,7 +170,7 @@ func (w *storageWriter) model(rv reflect.Value, depth int) (bool, error) {
 		x := rv.Interface().(Uint128)
 		w.buf = append(append(w.buf, tagUint128), x[:]...)
 		return true, nil
-	case plainType, dateType, timestampType, decimalType, taggedType, typedNullType:
+	case plainType, dateType, timestampType, decimalType, taggedType:
 		return true, unwritable("%s has no storage form", rv.Type())
 	}
 	return false, nil

@@ -265,13 +265,13 @@ func TestUnmarshalRejectsPassthroughDepthBomb(t *testing.T) {
 func TestCipherTextPassthroughTransportRoundTrip(t *testing.T) {
 	ct := map[string]any{
 		"id":    Plain{V: int64(42)},
-		"email": Sealed{9, 9, 9},
+		"email": sealed{9, 9, 9},
 	}
-	buf, err := MarshalCipherText(VCValueLeaves(), ct)
+	buf, err := MarshalCipherText(testLeaves(), ct)
 	if err != nil {
 		t.Fatalf("MarshalCipherText: %v", err)
 	}
-	got, err := UnmarshalCipherText(VCValueLeaves(), buf)
+	got, err := UnmarshalCipherText(testLeaves(), buf)
 	if err != nil {
 		t.Fatalf("UnmarshalCipherText: %v", err)
 	}
@@ -282,14 +282,14 @@ func TestCipherTextPassthroughTransportRoundTrip(t *testing.T) {
 
 func TestCipherTextTransportRoundTrip(t *testing.T) {
 	ct := map[string]any{
-		"a": Sealed{9, 9, 9},
-		"b": []any{Sealed{1}, SealedEmptySeq{2}},
+		"a": sealed{9, 9, 9},
+		"b": []any{sealed{1}, sealedEmptySeq{2}},
 	}
-	buf, err := MarshalCipherText(VCValueLeaves(), ct)
+	buf, err := MarshalCipherText(testLeaves(), ct)
 	if err != nil {
 		t.Fatalf("MarshalCipherText: %v", err)
 	}
-	got, err := UnmarshalCipherText(VCValueLeaves(), buf)
+	got, err := UnmarshalCipherText(testLeaves(), buf)
 	if err != nil {
 		t.Fatalf("UnmarshalCipherText: %v", err)
 	}
@@ -301,11 +301,11 @@ func TestCipherTextTransportRoundTrip(t *testing.T) {
 // A bare plaintext value in ciphertext position is rejected: passthrough must
 // be explicit (Plain), so nothing travels unencrypted by accident.
 func TestCipherTextRejectsBarePlaintext(t *testing.T) {
-	if _, err := MarshalCipherText(VCValueLeaves(), map[string]any{"x": "oops"}); err == nil {
+	if _, err := MarshalCipherText(testLeaves(), map[string]any{"x": "oops"}); err == nil {
 		t.Fatal("bare plaintext in ciphertext position must be rejected")
 	}
-	if _, err := MarshalCipherText(VCValueLeaves(), []byte{1, 2, 3}); err == nil {
-		t.Fatal("bare []byte must be rejected (use Sealed or Plain)")
+	if _, err := MarshalCipherText(testLeaves(), []byte{1, 2, 3}); err == nil {
+		t.Fatal("bare []byte must be rejected (use a leaf type or Plain)")
 	}
 }
 
@@ -356,11 +356,11 @@ func TestObjectReencodesWithObjectFraming(t *testing.T) {
 // round trip shape-intact (PR review P1).
 func TestCipherTextPassthroughObjectRoundTrip(t *testing.T) {
 	o := Object{{Key: "id", Value: int64(42)}}
-	buf, err := MarshalCipherText(VCValueLeaves(), Plain{V: o})
+	buf, err := MarshalCipherText(testLeaves(), Plain{V: o})
 	if err != nil {
 		t.Fatalf("MarshalCipherText: %v", err)
 	}
-	got, err := UnmarshalCipherText(VCValueLeaves(), buf)
+	got, err := UnmarshalCipherText(testLeaves(), buf)
 	if err != nil {
 		t.Fatalf("UnmarshalCipherText: %v", err)
 	}
@@ -427,7 +427,7 @@ func TestMarshalCipherTextRejectsPassthroughBeyondDepthBudget(t *testing.T) {
 	for range 129 {
 		deep = []any{deep}
 	}
-	if _, err := MarshalCipherText(VCValueLeaves(), deep); !errors.Is(err, ErrTooDeep) {
+	if _, err := MarshalCipherText(testLeaves(), deep); !errors.Is(err, ErrTooDeep) {
 		t.Fatalf("over-deep passthrough must be rejected with ErrTooDeep at encode time, got %v", err)
 	}
 
@@ -436,11 +436,11 @@ func TestMarshalCipherTextRejectsPassthroughBeyondDepthBudget(t *testing.T) {
 	for range 127 {
 		ok = []any{ok}
 	}
-	buf, err := MarshalCipherText(VCValueLeaves(), ok)
+	buf, err := MarshalCipherText(testLeaves(), ok)
 	if err != nil {
 		t.Fatalf("MarshalCipherText at the bound: %v", err)
 	}
-	if _, err := UnmarshalCipherText(VCValueLeaves(), buf); err != nil {
+	if _, err := UnmarshalCipherText(testLeaves(), buf); err != nil {
 		t.Fatalf("UnmarshalCipherText at the bound: %v", err)
 	}
 }
@@ -472,7 +472,7 @@ func TestUnmarshalCipherTextRejectsDuplicateKey(t *testing.T) {
 	dup = append(dup, u32le(2)...)
 	dup = append(dup, ctEntry("a")...)
 	dup = append(dup, ctEntry("a")...)
-	if _, err := UnmarshalCipherText(VCValueLeaves(), dup); err == nil {
+	if _, err := UnmarshalCipherText(testLeaves(), dup); err == nil {
 		t.Fatal("duplicate ciphertext map key must be rejected")
 	}
 
@@ -481,7 +481,7 @@ func TestUnmarshalCipherTextRejectsDuplicateKey(t *testing.T) {
 	ok = append(ok, u32le(2)...)
 	ok = append(ok, ctEntry("a")...)
 	ok = append(ok, ctEntry("b")...)
-	if _, err := UnmarshalCipherText(VCValueLeaves(), ok); err != nil {
+	if _, err := UnmarshalCipherText(testLeaves(), ok); err != nil {
 		t.Fatalf("distinct keys should decode: %v", err)
 	}
 }
@@ -531,24 +531,24 @@ func TestUnmarshalCipherTextRejectsMalformed(t *testing.T) {
 		deep = append(deep, u32le(1)...)
 	}
 	deep = append(deep, ctEntry("")[4:]...) // a bare ctSingle leaf
-	if _, err := UnmarshalCipherText(VCValueLeaves(), deep); err == nil {
+	if _, err := UnmarshalCipherText(testLeaves(), deep); err == nil {
 		t.Fatal("ciphertext depth bomb must be rejected")
 	}
 
 	// Hostile count.
-	if _, err := UnmarshalCipherText(VCValueLeaves(), []byte{0x03, 0xFF, 0xFF, 0xFF, 0xFF}); err == nil {
+	if _, err := UnmarshalCipherText(testLeaves(), []byte{0x03, 0xFF, 0xFF, 0xFF, 0xFF}); err == nil {
 		t.Fatal("hostile ciphertext count must be rejected")
 	}
 
 	// Trailing bytes after a complete node.
 	leaf := append([]byte{0x01}, u32le(1)...)
 	leaf = append(leaf, 0xAB, 0xFF) // one extra byte
-	if _, err := UnmarshalCipherText(VCValueLeaves(), leaf); err == nil {
+	if _, err := UnmarshalCipherText(testLeaves(), leaf); err == nil {
 		t.Fatal("trailing bytes must be rejected")
 	}
 
 	// Unknown tag.
-	if _, err := UnmarshalCipherText(VCValueLeaves(), []byte{0x7F}); err == nil {
+	if _, err := UnmarshalCipherText(testLeaves(), []byte{0x7F}); err == nil {
 		t.Fatal("unknown ciphertext tag must be rejected")
 	}
 }
@@ -717,7 +717,7 @@ func TestMarshalCipherTextRejectsPayloadMiscount(t *testing.T) {
 		Plain{V: rootMiscount{writes: 2}},
 		Plain{V: unclosedRoot{}},
 	} {
-		if _, err := MarshalCipherText(VCValueLeaves(), v); err == nil {
+		if _, err := MarshalCipherText(testLeaves(), v); err == nil {
 			t.Fatalf("malformed passthrough payload %#v must fail the encode", v)
 		}
 	}
@@ -837,9 +837,9 @@ func TestEndReturnsFirstEncodeErrorNotContainerScoped(t *testing.T) {
 	}
 }
 
-// A binding-specific LeafSet round-trips its own distinct leaf types — the
-// reason the ciphertext codec is parameterised at all: a stack-encrypt leaf
-// must come back as a stack-encrypt type, never as Sealed.
+// A caller's LeafSet round-trips its own distinct leaf types — the reason
+// the ciphertext codec is parameterised at all: a leaf must come back as the
+// caller's type, never as another set's.
 type otherSealed []byte
 
 var otherLeaves = LeafSet{
@@ -872,21 +872,21 @@ func TestCipherTextLeafSetKeepsBindingTypesDistinct(t *testing.T) {
 	}
 
 	// The wire bytes are identical across LeafSets — only the Go types
-	// differ — so the same buffer decodes to vcvalue types under
-	// VCValueLeaves. This pins that a LeafSet changes materialization, not
-	// the encoding.
-	asVC, err := UnmarshalCipherText(VCValueLeaves(), buf)
+	// differ — so the same buffer decodes to the test leaf types under
+	// testLeaves. This pins that a LeafSet changes materialization, not the
+	// encoding.
+	asVC, err := UnmarshalCipherText(testLeaves(), buf)
 	if err != nil {
-		t.Fatalf("UnmarshalCipherText(VCValueLeaves): %v", err)
+		t.Fatalf("UnmarshalCipherText(testLeaves): %v", err)
 	}
-	want := map[string]any{"email": Sealed{9, 9, 9}}
+	want := map[string]any{"email": sealed{9, 9, 9}}
 	if !reflect.DeepEqual(asVC, want) {
 		t.Fatalf("got %#v, want %#v", asVC, want)
 	}
 
 	// And a foreign leaf type is a bare plaintext to a LeafSet that does not
 	// claim it — rejected, not silently passed through.
-	if _, err := MarshalCipherText(VCValueLeaves(), ct); err == nil {
+	if _, err := MarshalCipherText(testLeaves(), ct); err == nil {
 		t.Fatal("a leaf type outside the LeafSet must be rejected as bare plaintext")
 	}
 }
@@ -915,9 +915,9 @@ func TestCipherTextMakeMustMaterializeDecodedKind(t *testing.T) {
 		t.Fatal("a kind the LeafSet does not materialize must be rejected")
 	}
 
-	// The vcvalue set likewise rejects an unlisted kind instead of minting a
-	// Sealed for it — mirroring leafTag's refusal on the encode side.
-	if got := VCValueLeaves().Make(LeafKind(9), []byte{1}); got != nil {
+	// The test set likewise rejects an unlisted kind instead of minting a
+	// leaf for it — mirroring leafTag's refusal on the encode side.
+	if got := testLeaves().Make(LeafKind(9), []byte{1}); got != nil {
 		t.Fatalf("an unknown LeafKind must not materialize, got %#v", got)
 	}
 }
@@ -945,15 +945,15 @@ func TestCipherTextRoundTripsAllLeafKinds(t *testing.T) {
 	// unexercised: a swapped arm (an empty-map marker materialized where an
 	// empty-seq belongs) fails here rather than at some later decrypt.
 	ct := map[string]any{
-		"single":   Sealed{9, 9, 9},
-		"emptySeq": SealedEmptySeq{7},
-		"emptyMap": SealedEmptyMap{8},
+		"single":   sealed{9, 9, 9},
+		"emptySeq": sealedEmptySeq{7},
+		"emptyMap": sealedEmptyMap{8},
 	}
-	buf, err := MarshalCipherText(VCValueLeaves(), ct)
+	buf, err := MarshalCipherText(testLeaves(), ct)
 	if err != nil {
 		t.Fatalf("MarshalCipherText: %v", err)
 	}
-	got, err := UnmarshalCipherText(VCValueLeaves(), buf)
+	got, err := UnmarshalCipherText(testLeaves(), buf)
 	if err != nil {
 		t.Fatalf("UnmarshalCipherText: %v", err)
 	}
@@ -979,7 +979,7 @@ func TestLeafTagsHasNoUnwiredKinds(t *testing.T) {
 	if _, ok := leafKind(0); ok {
 		t.Fatal("tag 0x00 is not a ciphertext tag and must not map to a kind")
 	}
-	if _, err := UnmarshalCipherText(VCValueLeaves(), []byte{0x00, 0, 0, 0, 0}); err == nil {
+	if _, err := UnmarshalCipherText(testLeaves(), []byte{0x00, 0, 0, 0, 0}); err == nil {
 		t.Fatal("a 0x00 tag must be rejected on the wire")
 	}
 }

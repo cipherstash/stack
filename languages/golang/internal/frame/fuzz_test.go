@@ -316,11 +316,11 @@ func FuzzUnmarshalCipherText(f *testing.F) {
 	addCorpusSeeds(f, func(raw []byte) []byte { return append([]byte{0x05}, raw...) })
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		v, err := UnmarshalCipherText(VCValueLeaves(), data)
+		v, err := UnmarshalCipherText(testLeaves(), data)
 		if err != nil {
 			return
 		}
-		out, err := MarshalCipherText(VCValueLeaves(), v)
+		out, err := MarshalCipherText(testLeaves(), v)
 		if err != nil {
 			t.Fatalf("accepted ciphertext decode failed to re-encode: %v (value %#v)", err, v)
 		}

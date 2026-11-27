@@ -15,7 +15,6 @@ var (
 	ErrNonFiniteDecimal = errors.New("frame: decimal must be finite")
 	ErrInvalidUUID      = errors.New("frame: invalid UUID")
 	ErrInvalidTagged    = errors.New("frame: a tagged value must hold a physical scalar under an unknown logical id")
-	ErrInvalidFixedType = errors.New("frame: not a fixed-width type")
 )
 
 // Int128 is a signed two's-complement integer in little-endian byte order.

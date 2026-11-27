@@ -231,51 +231,32 @@ func numericTag(tag byte, floats bool) bool {
 	return false
 }
 
-// fixedTags is the tag each FixedType is written with, all but the UUID,
-// whose header is uuidEnvelope over tagBytes.
-var fixedTags = map[FixedType]byte{
-	TypeInt8:      tagInt8,
-	TypeInt16:     tagInt16,
-	TypeInt32:     tagInt32,
-	TypeInt64:     tagInt64,
-	TypeInt128:    tagInt128,
-	TypeUint8:     tagUint8,
-	TypeUint16:    tagUint16,
-	TypeUint32:    tagUint32,
-	TypeUint64:    tagUint64,
-	TypeUint128:   tagUint128,
-	TypeFloat32:   tagFloat32,
-	TypeFloat64:   tagFloat64,
-	TypeDate:      tagDate,
-	TypeTimestamp: tagTimestamp,
-	TypeDecimal:   tagDecimal,
+// nullOf is the typed null of a type whose values are written with the
+// scalar tag: tagTypedNull, the tag, then zeros to the length of a value,
+// so the two seal to the same length. One byte of that length goes to
+// tagTypedNull.
+func nullOf(tag byte) []byte {
+	return typedNull([]byte{tag}, fixedWidth(tag))
 }
 
-// TypedNull records an absent value of a fixed-width type: a null padded to
-// the length of a value of t, so the two seal to the same length. Encode
-// writes one for a nil pointer to a fixed-width type; this channel is for a
-// caller that knows the type some other way. An invalid t fails the
-// encode.
-func (e Encoder) TypedNull(t FixedType) {
+// uuidNull is the typed null of a UUID: its header is the UUID envelope over
+// bytes, and a value's sealed leaf has no length prefix, so its padding is
+// the UUID's sixteen bytes.
+var uuidNull = typedNull(append(uuidEnvelope[:], tagBytes), len(UUID{}))
+
+func typedNull(header []byte, payload int) []byte {
+	out := append([]byte{tagTypedNull}, header...)
+	return append(out, make([]byte, payload-1)...)
+}
+
+// typedNull records an absent value of a fixed-width type, as nullOf or
+// uuidNull built it. Encode writes one for a nil pointer to a fixed-width
+// type.
+func (e Encoder) typedNull(null []byte) {
 	if e.st.err != nil {
 		return
 	}
-	if !t.Valid() {
-		e.st.fail(ErrInvalidFixedType)
-		return
-	}
-	var header []byte
-	var payload int
-	if t == TypeUUID {
-		header, payload = append(uuidEnvelope[:], tagBytes), len(UUID{})
-	} else {
-		tag := fixedTags[t]
-		header, payload = []byte{tag}, fixedWidth(tag)
-	}
-	e.push(tagTypedNull)
-	e.push(header...)
-	// One byte of the value's length went to tagTypedNull.
-	e.push(make([]byte, payload-1)...)
+	e.push(null...)
 	e.complete()
 }
 

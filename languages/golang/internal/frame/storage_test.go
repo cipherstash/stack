@@ -646,7 +646,6 @@ func TestStorageRefusesWhatHasNoStorageForm(t *testing.T) {
 		"a passthrough":                  Plain{V: 1},
 		"a date":                         Date{},
 		"a decimal":                      Decimal{},
-		"a typed null":                   TypedNull{},
 		"unexported fields":              hidden{secret: "s3cr3t"},
 		"a float key":                    map[float64]bool{1.5: true},
 		"a bool key":                     map[bool]bool{true: true},

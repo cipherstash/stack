@@ -263,7 +263,7 @@ func TestSharedValueConformance(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := UnmarshalCipherText(VCValueLeaves(), raw); err != ErrMalformed {
+			if _, err := UnmarshalCipherText(testLeaves(), raw); err != ErrMalformed {
 				t.Fatalf("got %v, want ErrMalformed", err)
 			}
 		})

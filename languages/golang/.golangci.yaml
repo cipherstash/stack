@@ -20,6 +20,13 @@ linters:
       - path: (_test\.go|internal/guesttest/)
         linters:
           - gosec
+      # The frame codec converts between integer widths on purpose: it
+      # reads and writes two's complement wire bytes, and it bounds every
+      # length and count before it converts one.
+      - path: internal/frame/
+        linters:
+          - gosec
+        text: G115
 
 formatters:
   enable:

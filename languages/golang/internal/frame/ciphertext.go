@@ -10,9 +10,9 @@ import (
 // decoded plaintext — with marker types distinguishing what is sealed from
 // what travels in the clear:
 //
-//   - a sealed-leaf marker (one of the binding's [LeafSet] types, e.g.
-//     Sealed): one encrypted leaf, an authenticated absent marker,
-//     or an authenticated empty-composite marker
+//   - a sealed-leaf marker (one of the caller's [LeafSet] types): one
+//     encrypted leaf, an authenticated absent marker, or an authenticated
+//     empty-composite marker
 //   - Plain{V: ...}: a passthrough field, readable without the key
 //   - []any: a sequence of ciphertext nodes
 //   - map[string]any: a record of named nodes. Keys travel in the clear but
@@ -21,12 +21,9 @@ import (
 //     (encoding sorts keys for determinism), and there is no whole-map seal:
 //     any subset of entries decrypts independently.
 //
-// There is deliberately no dedicated tree type and no conversion step: a
-// map-shaped ciphertext binds directly as database named parameters (the leaf
-// types and Plain implement driver.Valuer), and leaves loaded back
-// from columns go into a map[string]any for decryption. Only the sealed leaf
-// bytes are a frozen format; the transport encoding crossing the FFI boundary
-// is an implementation detail.
+// There is deliberately no dedicated tree type. Only the sealed leaf bytes
+// are a frozen format; the transport encoding crossing the FFI boundary is
+// an implementation detail.
 //
 // Which concrete leaf types appear in the tree is the one thing this codec
 // does not decide: each binding supplies a [LeafSet] so its leaves stay a
@@ -74,50 +71,9 @@ const (
 //     Returning nil rejects the kind: the decoder turns it into an error, so
 //     a LeafSet that materializes only some kinds fails loudly instead of
 //     injecting nil nodes into the decoded tree.
-//
-// [VCValueLeaves] is the set for the vcvalue model types.
 type LeafSet struct {
 	Classify func(v any) (LeafKind, []byte, bool)
 	Make     func(kind LeafKind, bytes []byte) any
-}
-
-// VCValueLeaves returns the [LeafSet] of the vcvalue model: Sealed,
-// SealedEmptySeq and SealedEmptyMap.
-// These are the leaf types the vitaminc-encrypt binding materializes; other
-// bindings define their own set so their leaves stay a distinct Go type. A
-// function rather than an exported var, so no importer can reassign the set
-// out from under every other consumer in the process.
-func VCValueLeaves() LeafSet {
-	return vcValueLeaves
-}
-
-var vcValueLeaves = LeafSet{
-	Classify: func(v any) (LeafKind, []byte, bool) {
-		switch n := v.(type) {
-		case Sealed:
-			return LeafSingle, n, true
-		case SealedEmptySeq:
-			return LeafEmptySeq, n, true
-		case SealedEmptyMap:
-			return LeafEmptyMap, n, true
-		default:
-			return 0, nil, false
-		}
-	},
-	Make: func(kind LeafKind, bytes []byte) any {
-		switch kind {
-		case LeafSingle:
-			return Sealed(bytes)
-		case LeafEmptySeq:
-			return SealedEmptySeq(bytes)
-		case LeafEmptyMap:
-			return SealedEmptyMap(bytes)
-		default:
-			// An unlisted kind is rejected (nil), mirroring leafTag on the
-			// encode side — a future fourth kind must not silently mint Sealed.
-			return nil
-		}
-	},
 }
 
 // check rejects a partially wired LeafSet up front, where the mistake is
