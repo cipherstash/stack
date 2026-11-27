@@ -47,8 +47,11 @@ export interface CommandGroup {
 }
 
 /**
- * Shared `--database-url` flag — every db/eql/schema command accepts it, so it's
- * declared once and referenced, not copy-pasted.
+ * Shared `--database-url` flag, for the commands that load stash.config.ts
+ * through `loadStashConfig`, where a literal `databaseUrl` in the config wins
+ * over the flag. Commands where the flag wins (`eql install`, `eql repair`,
+ * `eql verify`) declare their own text. `cli/__tests__/database-url-help.test.ts`
+ * holds each command to the one that matches what it does.
  */
 const DATABASE_URL_FLAG: Flag = {
   name: '--database-url',
@@ -354,7 +357,13 @@ export const registry: CommandGroup[] = [
             description:
               'Use Supabase-compatible mode (auto-detected from DATABASE_URL).',
           },
-          DATABASE_URL_FLAG,
+          {
+            name: '--database-url',
+            value: '<url>',
+            description:
+              "One-shot, like `eql verify`'s: bypasses config loading entirely, so EQL is installed into the database you name, even when stash.config.ts sets a literal databaseUrl, and no stash.config.ts is scaffolded. Never written to disk. With no flag, install uses the databaseUrl of a stash.config.ts if it finds one, else DATABASE_URL env → supabase status → interactive prompt.",
+            env: 'DATABASE_URL',
+          },
         ],
       },
       {
@@ -507,7 +516,13 @@ export const registry: CommandGroup[] = [
               "Drizzle's migration ledger, when drizzle.config.ts overrides `migrations.table` / `migrations.schema`. Defaults to `drizzle.__drizzle_migrations`. Only read with --database-url.",
           },
           DRY_RUN_FLAG,
-          DATABASE_URL_FLAG,
+          {
+            name: '--database-url',
+            value: '<url>',
+            description:
+              'Database to check applied migrations against, for this run only — never written to disk. Repair never reads stash.config.ts, so this flag wins even when the config sets a literal databaseUrl. With no flag, repair uses DATABASE_URL; with neither, it skips the check and warns. It never runs supabase status or prompts.',
+            env: 'DATABASE_URL',
+          },
         ],
       },
       {
