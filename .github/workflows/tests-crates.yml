@@ -172,23 +172,21 @@ jobs:
       # it.
       #
       # One failure is a warning, not an error: a dependency cargo cannot find
-      # on crates.io at all, when that dependency is a crate of this workspace
-      # with `publish = false`. That is a crate here that has not been
-      # published yet (recipher-frame, say), so no packaged build can resolve
-      # it until it is published. `cargo publish` refuses the same crate at
-      # release time, so nothing can ship by mistake. The crate that needs it
-      # is dropped with a warning and the rest are packaged again, so they
-      # are still verified. Any other failure, including an unknown name that
-      # is not such a crate, fails the step.
+      # on crates.io at all, when that dependency is named in
+      # `awaiting_first_publish`. Those are crates of this workspace that will
+      # be published but have not been yet, so no packaged build can resolve
+      # them until they are. `cargo publish` refuses the crate that needs one
+      # at release time, so nothing can ship by mistake. The crate that needs
+      # it is dropped with a warning and the rest are packaged again, so they
+      # are still verified. Any other failure fails the step, including a
+      # dependency on a crate that is `publish = false` for good, such as
+      # stack-guest-abi. Remove a name from the list once it is on crates.io.
       - name: Verify the stack-* crates package cleanly for crates.io
         run: |
           set -euo pipefail
           crates=(stack-profile stack-auth stack-kms stack-encrypt-jsonpath stack-encrypt-derive stack-encrypt)
-          # Workspace members with `publish = false` (cargo reports it as an
-          # empty registry list).
-          metadata="$(cargo metadata --locked --no-deps --format-version 1)"
-          unpublished="$(jq -r '.packages[] | select(.publish == []) | .name' <<<"$metadata")"
-          target_dir="$(jq -r '.target_directory' <<<"$metadata")"
+          awaiting_first_publish=(recipher-frame)
+          target_dir="$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.target_directory')"
           while [ "${#crates[@]}" -gt 0 ]; do
             args=()
             for crate in "${crates[@]}"; do args+=(-p "$crate"); done
@@ -202,7 +200,11 @@ jobs:
             fi
             missing="$(sed -n 's/^ *no matching package named `\([^`]*\)` found$/\1/p' <<<"$out" | head -n 1)"
             needs="$(sed -n 's/^ *required by package `\([^ `]*\) v.*$/\1/p' <<<"$out" | head -n 1)"
-            if [ -z "$missing" ] || [ -z "$needs" ] || ! grep -qxF -- "$missing" <<<"$unpublished"; then
+            awaiting=0
+            for crate in "${awaiting_first_publish[@]}"; do
+              if [ "$crate" = "$missing" ]; then awaiting=1; fi
+            done
+            if [ -z "$missing" ] || [ -z "$needs" ] || [ "$awaiting" -eq 0 ]; then
               exit "$status"
             fi
             remaining=()
@@ -212,7 +214,7 @@ jobs:
             if [ "${#remaining[@]}" -eq "${#crates[@]}" ]; then
               exit "$status"
             fi
-            echo "::warning title=${needs} not verified against crates.io::${needs} depends on ${missing}, a crate of this workspace that is not on crates.io yet, so it cannot be packaged against crates.io. cargo publish refuses ${needs} until ${missing} is published. The other crates are verified without it."
+            echo "::warning title=${needs} not verified against crates.io::${needs} depends on ${missing}, a crate of this workspace that is waiting for its first publish, so it cannot be packaged against crates.io. cargo publish refuses ${needs} until ${missing} is published. The other crates are verified without it."
             crates=("${remaining[@]}")
             # The attempt left its temporary registry of packaged crates
             # behind; the next one must start without it, or cargo finds a
