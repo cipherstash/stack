@@ -24,7 +24,7 @@ use eql_bindings::v4::{
 use eql_bindings::Identifier;
 use serde::Serialize;
 use stack_encrypt::dynamic::{
-    self, frame::OwnedFrame, record, FieldPlan, Op, Operand, TargetDescriptor,
+    self, frame::OwnedFrame, record, FieldPlan, Op, Operand, TargetDescriptor, ValueKind,
 };
 use stack_encrypt::op::{Probabilistic, Stats};
 use stack_encrypt::target::Scope;
@@ -281,7 +281,7 @@ fn a_field_reference_answers_what_the_data_path_answers() {
     // to the data path.
     for target in eql_targets::targets()
         .iter()
-        .filter(|t| t.plaintext != Some("json"))
+        .filter(|t| t.plaintext != Some(ValueKind::Json))
     {
         let data: Vec<&str> = TargetDescriptor::from(target)
             .operators()

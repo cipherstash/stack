@@ -527,7 +527,7 @@ mod the_table {
             assert_eq!(row.name, stored.name);
             assert_eq!(row.family, family.name);
             assert_eq!(row.sql_domain, stored.sql_domain);
-            assert_eq!(row.plaintext, Some(family.plaintext));
+            assert_eq!(row.plaintext, family.plaintext.parse().ok());
             assert_eq!(row.indexes, [family.index]);
             assert_eq!(row.query, Some(query.name));
             assert_eq!(row.query_sql_domain, Some(query.sql_domain));
@@ -580,16 +580,7 @@ mod the_table {
                 // eql-bindings until it is given one.
                 _ => None,
             };
-            assert_eq!(
-                row.plaintext,
-                kind.map(ValueKind::name),
-                "{name}: the family's plaintext kind"
-            );
-            assert_eq!(
-                row.plaintext_kind(),
-                kind,
-                "{name}: the plaintext name is a vitaminc kind"
-            );
+            assert_eq!(row.plaintext, kind, "{name}: the family's plaintext kind");
             if domain.terms.is_empty() {
                 assert_eq!(
                     (row.query, row.query_sql_domain),

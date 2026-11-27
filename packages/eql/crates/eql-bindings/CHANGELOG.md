@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Earlier unreleased builds took and returned Stack Encrypt's
   `dynamic::ValueFrame`, which is removed. The frame's bytes are the same,
   so no stored value or query changes.
+- **A target's plaintext kind is a `ValueKind`.** `Target::plaintext` is
+  `Option<ValueKind>` (`stack_encrypt::dynamic::ValueKind`), where it was
+  the kind's name as text, and `Target::plaintext_kind` is removed. The
+  generated table names each kind as `ValueKind::Int32` and so on, so a
+  name cannot drift from the engine's. The `se_targets` wire format still
+  writes the kind's name, so nothing a guest serializes changes.
 - **A type that may hold a null reads any null as one.** A plaintext of a
   type whose terms a null has reads a plain null, and a typed null of any
   type, as absent, and seals it padded to its own type's length. A typed

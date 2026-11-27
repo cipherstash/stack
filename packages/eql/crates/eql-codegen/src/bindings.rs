@@ -12,6 +12,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use eql_domains::{Domain, DomainFamily, Term, CATALOG, ENVELOPE_KEYS, RANGE_BOUND_KEYS};
+use vitaminc_aead::plaintext::ValueKind;
 
 use crate::consts::RUST_GENERATED_MARKER;
 use crate::context::v4_optional_query_terms;
@@ -731,9 +732,9 @@ pub const V3_ENCRYPTION_GAP: &str =
     "Stack Encrypt produces EQL v4 only: its output is not byte-for-byte compatible with \
      cipherstash-client's, which writes the eql_v3 domains";
 
-/// The plaintext a family's v4 domains are produced from: the vitaminc
-/// `ValueKind` name a plan field's `"type"` key spells, and the Rust type the
-/// derive and the by-name dispatch name. `None` for a family eql-bindings
+/// The plaintext a family's v4 domains are produced from: its
+/// [`ValueKind`], whose name a plan field's `"type"` key spells, and the
+/// Rust type the derive and the by-name dispatch name. `None` for a family eql-bindings
 /// names no Rust plaintext type for yet. A date, a timestamp and a decimal
 /// are Stack Encrypt's own types (`stack_encrypt::value`, re-exported as
 /// `v4::plaintext`), which can be wiped where jiff's and rust_decimal's
@@ -741,19 +742,19 @@ pub const V3_ENCRYPTION_GAP: &str =
 /// A JSON document is Stack Encrypt's `JsonPlaintext`, re-exported
 /// there too: it can be wiped where a `serde_json::Value` cannot, and it
 /// seals as one leaf, the document's JSON text.
-pub fn plaintext_of(family: &str) -> Option<(&'static str, &'static str)> {
+pub fn plaintext_of(family: &str) -> Option<(ValueKind, &'static str)> {
     Some(match family {
-        "text" => ("string", "String"),
-        "smallint" => ("int16", "i16"),
-        "integer" => ("int32", "i32"),
-        "bigint" => ("int64", "i64"),
-        "boolean" => ("bool", "bool"),
-        "real" => ("float32", "f32"),
-        "double" => ("float64", "f64"),
-        "date" => ("date", "crate::v4::plaintext::Date"),
-        "timestamp" => ("timestamp", "crate::v4::plaintext::Timestamp"),
-        "numeric" => ("decimal", "crate::v4::plaintext::Decimal"),
-        "json" => ("json", "crate::v4::plaintext::JsonPlaintext"),
+        "text" => (ValueKind::String, "String"),
+        "smallint" => (ValueKind::Int16, "i16"),
+        "integer" => (ValueKind::Int32, "i32"),
+        "bigint" => (ValueKind::Int64, "i64"),
+        "boolean" => (ValueKind::Bool, "bool"),
+        "real" => (ValueKind::Float32, "f32"),
+        "double" => (ValueKind::Float64, "f64"),
+        "date" => (ValueKind::Date, "crate::v4::plaintext::Date"),
+        "timestamp" => (ValueKind::Timestamp, "crate::v4::plaintext::Timestamp"),
+        "numeric" => (ValueKind::Decimal, "crate::v4::plaintext::Decimal"),
+        "json" => (ValueKind::Json, "crate::v4::plaintext::JsonPlaintext"),
         _ => return None,
     })
 }

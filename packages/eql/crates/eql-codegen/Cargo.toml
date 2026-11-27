@@ -6,6 +6,9 @@ publish = false
 
 [dependencies]
 eql-domains = { path = "../eql-domains" }
+# `ValueKind`: the generated code names a type's plaintext by it, and the Go
+# table writes its name.
+vitaminc-aead = { path = "../../../vitaminc-aead", version = "0.10.0" }
 minijinja = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
