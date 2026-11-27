@@ -18,7 +18,7 @@ use ts_rs::TS;
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptTarget<String>` and `DecryptSource<String>`.
+/// Plaintext input and decrypted output: [`String`]. Implements `EncryptTarget<String>` and `DecryptSource<String>`.
 ///
 /// Both traits are also implemented for `Option<String>`. Text has no fixed length, so a `None` is sealed without padding. The length of the sealed null can show that the value is absent. A `None` gets the terms of a null. Only the equality index has a term for a null.
 ///
@@ -71,7 +71,7 @@ impl DomainType for Text {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptTarget<String>` and `DecryptSource<String>`.
+/// Plaintext input and decrypted output: [`String`]. Implements `EncryptTarget<String>` and `DecryptSource<String>`.
 ///
 /// Both traits are also implemented for `Option<String>`. Text has no fixed length, so a `None` is sealed without padding. The length of the sealed null can show that the value is absent. A `None` gets the terms of a null. Only the equality index has a term for a null.
 ///
@@ -125,7 +125,7 @@ impl DomainType for TextEq {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptTarget<String>` and `DecryptSource<String>`.
+/// Plaintext input and decrypted output: [`String`]. Implements `EncryptTarget<String>` and `DecryptSource<String>`.
 ///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
@@ -176,7 +176,7 @@ impl DomainType for TextMatch {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptTarget<String>` and `DecryptSource<String>`.
+/// Plaintext input and decrypted output: [`String`]. Implements `EncryptTarget<String>` and `DecryptSource<String>`.
 ///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
@@ -230,7 +230,7 @@ impl DomainType for TextOrdOre {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptTarget<String>` and `DecryptSource<String>`.
+/// Plaintext input and decrypted output: [`String`]. Implements `EncryptTarget<String>` and `DecryptSource<String>`.
 ///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
@@ -284,7 +284,7 @@ impl DomainType for TextOrd {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptTarget<String>` and `DecryptSource<String>`.
+/// Plaintext input and decrypted output: [`String`]. Implements `EncryptTarget<String>` and `DecryptSource<String>`.
 ///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
@@ -338,7 +338,7 @@ impl DomainType for TextOrdOpe {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptTarget<String>` and `DecryptSource<String>`.
+/// Plaintext input and decrypted output: [`String`]. Implements `EncryptTarget<String>` and `DecryptSource<String>`.
 ///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
@@ -393,7 +393,7 @@ impl DomainType for TextSearchOre {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptTarget<String>` and `DecryptSource<String>`.
+/// Plaintext input and decrypted output: [`String`]. Implements `EncryptTarget<String>` and `DecryptSource<String>`.
 ///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
@@ -448,7 +448,7 @@ impl DomainType for TextSearch {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`String`](String). Implements `EncryptTarget<String>` to build equality query terms. Query operands do not decrypt.
+/// Plaintext input: [`String`]. Implements `EncryptTarget<String>` to build equality query terms. Query operands do not decrypt.
 ///
 /// Also implements `EncryptTarget<Option<String>>`. The query for a `None` finds the stored nulls.
 ///
@@ -501,7 +501,7 @@ impl DomainType for TextEqQuery {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`String`](String). Implements `EncryptTarget<String>` to build match query terms. Query operands do not decrypt.
+/// Plaintext input: [`String`]. Implements `EncryptTarget<String>` to build match query terms. Query operands do not decrypt.
 ///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
@@ -551,7 +551,7 @@ impl DomainType for TextMatchQuery {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`String`](String). Implements `EncryptTarget<String>` to build equality and order query terms. Query operands do not decrypt.
+/// Plaintext input: [`String`]. Implements `EncryptTarget<String>` to build equality and order query terms. Query operands do not decrypt.
 ///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
@@ -604,7 +604,7 @@ impl DomainType for TextOrdOreQuery {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`String`](String). Implements `EncryptTarget<String>` to build equality and order query terms. Query operands do not decrypt.
+/// Plaintext input: [`String`]. Implements `EncryptTarget<String>` to build equality and order query terms. Query operands do not decrypt.
 ///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
@@ -657,7 +657,7 @@ impl DomainType for TextOrdQuery {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`String`](String). Implements `EncryptTarget<String>` to build equality and order query terms. Query operands do not decrypt.
+/// Plaintext input: [`String`]. Implements `EncryptTarget<String>` to build equality and order query terms. Query operands do not decrypt.
 ///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
@@ -710,7 +710,7 @@ impl DomainType for TextOrdOpeQuery {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`String`](String), through one projection per index: [`TextSearchOreEqualityQuery`], [`TextSearchOreOrderQuery`], [`TextSearchOreMatchQuery`]. Each projection implements `EncryptTarget<String>` and `Into<Self>`. A query contains only the term of the index for its operator. Query operands do not decrypt.
+/// Plaintext input: [`String`], through one projection per index: [`TextSearchOreEqualityQuery`], [`TextSearchOreOrderQuery`], [`TextSearchOreMatchQuery`]. Each projection implements `EncryptTarget<String>` and `Into<Self>`. A query contains only the term of the index for its operator. Query operands do not decrypt.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextSearchOreQuery {
@@ -835,7 +835,7 @@ impl From<TextSearchOreMatchQuery> for TextSearchOreQuery {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`String`](String), through one projection per index: [`TextSearchEqualityQuery`], [`TextSearchOrderQuery`], [`TextSearchMatchQuery`]. Each projection implements `EncryptTarget<String>` and `Into<Self>`. A query contains only the term of the index for its operator. Query operands do not decrypt.
+/// Plaintext input: [`String`], through one projection per index: [`TextSearchEqualityQuery`], [`TextSearchOrderQuery`], [`TextSearchMatchQuery`]. Each projection implements `EncryptTarget<String>` and `Into<Self>`. A query contains only the term of the index for its operator. Query operands do not decrypt.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextSearchQuery {

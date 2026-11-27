@@ -561,6 +561,34 @@ func TestAsKindLeavesAValueThatWritesItself(t *testing.T) {
 	}
 }
 
+// googleUUID stands for a UUID type of another package, github.com/google/uuid.UUID
+// say: sixteen bytes and no EncryptValue.
+type googleUUID [16]byte
+
+// A UUID field's value crosses as a vcvalue.UUID, which vcffi writes under the
+// uuid logical type: any other type whose underlying type is [16]byte is
+// converted, since vcffi writes that as plain bytes and the engine would refuse
+// it. A value of another shape is left for the engine to refuse.
+func TestAsKindMakesASixteenByteArrayAUUID(t *testing.T) {
+	id := [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	for _, in := range []any{id, googleUUID(id), vcvalue.UUID(id)} {
+		got, err := asKind(UUID, in)
+		if err != nil || got != vcvalue.UUID(id) {
+			t.Errorf("asKind(UUID, %T) = %v (%T), %v; want a vcvalue.UUID", in, got, got, err)
+		}
+	}
+	for _, in := range []any{id[:], [15]byte{}, "0102", encodedInt(7), vcvalue.Int128(id)} {
+		got, err := asKind(UUID, in)
+		if err != nil || fmt.Sprint(got) != fmt.Sprint(in) {
+			t.Errorf("asKind(UUID, %T) = %v (%T), %v; want it unchanged", in, got, got, err)
+		}
+	}
+	// A sixteen-byte array is a UUID only in a UUID field.
+	if got, err := asKind(Bytes, id); err != nil || got != id {
+		t.Errorf("asKind(Bytes, [16]byte) = %v (%T), %v; want it unchanged", got, got, err)
+	}
+}
+
 // EncryptNull seals nil only for a field that stores it as a sealed null.
 // Under null=sql nil is SQL NULL, and a field of no null mode has no nil,
 // so both are refused before any cipher is used.

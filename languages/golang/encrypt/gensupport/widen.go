@@ -26,6 +26,13 @@ import (
 // engine holds what it writes to the field's kind. A write and a query of one
 // field both convert here ([Field.Encrypt], [Field.Term]), so they agree.
 //
+// A UUID field's value crosses as a vcvalue.UUID, which vcffi writes under
+// the uuid logical type. A value of another type whose underlying type is
+// [16]byte (github.com/google/uuid.UUID, say) is converted to it here, since
+// vcffi writes such a value as plain bytes and the engine refuses bytes in a
+// UUID field. vcvalue.Int128 and Uint128 are integers, not UUIDs, and are not
+// converted.
+//
 // The error names the kind and not the value, which is plaintext.
 func asKind(kind Kind, v any) (any, error) {
 	if err := checkValue(v); err != nil {
@@ -36,6 +43,9 @@ func asKind(kind Kind, v any) (any, error) {
 		// engine parses it. A json.RawMessage is that text; a field of
 		// another Go type (a struct, say) is marshalled, explicitly, here.
 		return JSONText(v)
+	}
+	if kind == UUID {
+		return asUUID(v), nil
 	}
 	if !isInteger(kind) {
 		return v, nil
@@ -65,6 +75,24 @@ func asKind(kind Kind, v any) (any, error) {
 		return nil, fmt.Errorf("%w: a value does not fit the field's kind %s", encrypt.ErrEncoding, kind)
 	}
 	return out, nil
+}
+
+// uuidType is vcvalue.UUID's reflect.Type.
+var uuidType = reflect.TypeFor[vcvalue.UUID]()
+
+// asUUID is v as a vcvalue.UUID when its underlying type is [16]byte, and v
+// unchanged otherwise: a vcvalue.UUID already, a value that writes itself, a
+// 128-bit integer, or a value of another shape, which the engine refuses.
+func asUUID(v any) any {
+	switch v.(type) {
+	case vcvalue.UUID, vcvalue.Int128, vcvalue.Uint128, vcffi.Encryptable:
+		return v
+	}
+	rv := reflect.ValueOf(v)
+	if rv.IsValid() && rv.Type().ConvertibleTo(uuidType) && rv.Kind() == reflect.Array {
+		return rv.Convert(uuidType).Interface()
+	}
+	return v
 }
 
 // checkValue refuses a date, decimal or timestamp the codec cannot write, before

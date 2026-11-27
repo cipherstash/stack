@@ -326,13 +326,11 @@
       }
     },
     "uuid": {
-      "frame": {
-        "refused": true
-      },
+      "frame": "f305000b10000000123e4567e89b12d3a456426614174000",
       "host_frame": "f305000b10000000123e4567e89b12d3a456426614174000",
       "type": "",
       "value": {
-        "frame_refused": true
+        "leaves": ["f305000b123e4567e89b12d3a456426614174000"]
       }
     }
   },

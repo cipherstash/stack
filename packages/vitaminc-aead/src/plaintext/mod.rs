@@ -26,6 +26,7 @@ pub mod kinds;
 mod path;
 mod sources;
 mod tee;
+mod value_kind;
 
 pub use kinds::{
     FixedType, Float, Int, Kind, KnownLogical, Logical, Physical, TimeUnit, UnknownLogical,
@@ -43,6 +44,7 @@ pub mod __private {
     pub use super::sources::discard_one;
 }
 pub use tee::Tee;
+pub use value_kind::{ParseValueKindError, SealedNull, ValueKind};
 
 /// A value that can describe itself to a [`Sink`].
 ///
