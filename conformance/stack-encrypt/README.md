@@ -52,6 +52,16 @@ these rules.
 
 Rust readers are under `packages/stack-encrypt/`; Go readers are under
 `languages/golang/encrypt/`; EQL's are under `packages/eql/`.
+
+### Other readers
+
+These files read or copy cases, and are not runners:
+
+| File | Profile | What it reads |
+|---|---|---|
+| `languages/typescript/packages/recipher-js/value-napi/tests/testdata/corpus-frames.json` | `record-values-v1` | The frames of the corpus cases that the TypeScript value bridge must write. `tests/frames.cjs` regenerates it with `RECIPHER_UPDATE_FIXTURES=1`, and `scripts/__tests__/recipher-js-frame-parity.test.mjs` holds it to the corpus. |
+| `scripts/__tests__/stack-exchange-conformance.test.mjs` | `record-values-v1` | The IDs of the positive cases, to build test artifacts. |
+| `scripts/__tests__/stack-eql-conformance.test.mjs` | `eql-json-v1` | The documents and the reasons of `invalid_documents`. |
 `fixture-enrollment.json` is the one file not named after a profile: it maps
 requirement IDs of several profiles onto existing fixtures and tests (see
 [the fixture contract](fixture-contract.md)), and
@@ -270,10 +280,25 @@ mise run test:conformance
 ```
 
 Review the case and artifact diff together. Never regenerate artifacts merely
-to make a regression pass. Existing IDs retain their meaning; incompatible
-expectations require a new profile. Corpus version 1 is a test format, not a
-production wire version. Ciphertext/storage versions remain owned by their
-existing codecs.
+to make a regression pass.
+
+A case ID names one input and one operation. Today every reader of every
+profile is in this repository. Until that changes, an engine change may change
+what a case expects in place, for example from refused to accepted. It may
+also rename or remove a case. The pull request that does so updates every
+reader and lists each case it changed, renamed or removed.
+
+Once code outside this repository reads a profile, its case IDs and
+expectations are fixed. A change to them then needs a new profile.
+
+The readers of a profile are the files in the table under [Files](#files), and
+the [other readers](#other-readers) below it. To check that none is missed,
+search the repository for the profile ID, such as
+`git grep -l record-values-v1`. That also finds a test that copies part of a
+case.
+
+Corpus version 1 is a test format, not a production wire version.
+Ciphertext/storage versions remain owned by their existing codecs.
 
 Both runners currently share the Rust engine. This checks host value conversion,
 native/WASI interoperability and regressions against frozen evidence; it cannot

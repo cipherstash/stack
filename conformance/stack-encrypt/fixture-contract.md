@@ -95,8 +95,10 @@ the guard with absent, empty and nonempty update flags without writing fixtures.
 Deliberate fixture maintenance remains available outside
 required mode through the existing documented regeneration commands.
 
-Keep requirement IDs stable. Add a new profile version for incompatible
-expectations, and review fixture regeneration explicitly. The enrollment
+Review fixture regeneration explicitly. A requirement ID follows the
+[evolution rule for case IDs](README.md#artifacts-and-evolution). It may
+change in place only while every reader is in this repository. The pull
+request that changes it updates every reader and lists the change. The enrollment
 index's `version` is its metadata format, not a production storage version.
 
 This slice consolidates the coverage inventory and execution selection, not
