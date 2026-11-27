@@ -7201,9 +7201,11 @@ mod tests {
                 matches!(&error, TargetError::Column { name, label, .. } if name == "email" && label == "app/users/email"),
                 "{error}"
             );
+            // The label is a context, so the message names the field alone
+            // (#1981).
             assert_eq!(
                 error.to_string(),
-                "email: the label app/users/email is not an EQL column: an EQL column is a \
+                "email: the field's label is not an EQL column: an EQL column is a \
                  two-segment label: table and column"
             );
             // A sealed field under the same three-segment label is fine: the

@@ -504,6 +504,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`dynamic::TargetError::Column` no longer shows the field's label**
+  (#1981). A label is an encryption context, and an error never shows the
+  value of a context. The error still names the field. What changes:
+  - The message was `email: the label app/users/email is not an EQL
+    column: <reason>`. It is now `email: the field's label is not an EQL
+    column: <reason>`.
+  - The payload has no `label` key. It keeps `field` and `reason`.
+  - `Debug` shows the label as `<redacted>`. `TargetError`'s `Debug` is
+    now written by hand. It prints every other variant as the derived
+    `Debug` did.
+  - The variant keeps its `label` field, so code that builds or matches
+    `Column` still compiles.
+
+  To migrate: code that read `payload()["label"]` gets nothing there now.
+  Take the label from the plan instead: `payload()["field"]` names the
+  field, and the plan holds that field's label.
+
 - **The engine no longer keeps its own list of the value types it
   accepts; each index says which kinds it takes** (#1918). What changes:
   - **A field can be declared `"uuid"`.** `dynamic::ValueKind::Uuid` is a
