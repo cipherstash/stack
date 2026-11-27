@@ -543,8 +543,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they were `json_input`, the reason for any input a JSON operator does
   not take, with nothing more. Now the error names the field, gives
   `found` (`"array"`, `"uint64"`, `"null"`, ...), and says
-  `match takes its vars as a JSON object, found null`. The dynamic and
-  the typed paths refuse them alike.
+  `match takes its vars as a JSON object, found null`. They are refused
+  before the predicate is read. Only the dynamic path can receive vars
+  that are not an object: a field reference always builds an object.
 
 - **`dynamic::ValueFrame` is removed. The engine reads a plaintext as a
   borrowed `Frame` and keeps one as vitaminc's `OwnedFrame`** (#1955).

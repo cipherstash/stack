@@ -209,18 +209,25 @@ impl Input {
         bound: Option<u32>,
     ) -> Result<Self, Error> {
         let bound = wildcard_bound(bound)?;
-        if !vars.is_object() {
-            return Err(Error::Source {
-                field: None,
-                row: None,
-                reason: Reason::JsonVarsNotObject,
-                found: Some(json_kind(vars)),
-            });
-        }
+        vars_object(vars)?;
         Ok(Self::Predicate(Box::new(super::predicate::compile(
             text, vars, options, bound,
         )?)))
     }
+}
+
+/// `match`'s vars, which must be a JSON object: one that is not is refused
+/// as [`Reason::JsonVarsNotObject`], saying what it is by its kind.
+pub(crate) fn vars_object(vars: &Value) -> Result<(), Error> {
+    if vars.is_object() {
+        return Ok(());
+    }
+    Err(Error::Source {
+        field: None,
+        row: None,
+        reason: Reason::JsonVarsNotObject,
+        found: Some(json_kind(vars)),
+    })
 }
 
 /// What a JSON value is, for a refusal that says what it found: its kind,

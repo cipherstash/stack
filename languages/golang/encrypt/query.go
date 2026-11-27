@@ -163,9 +163,9 @@ func (cph *Cipher) QueryTerm(ctx context.Context, plan *record.Plan, field, oper
 	if err != nil {
 		return QueryTerm{}, err
 	}
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := decodeAnswer("se_query_term", out)
 	if err != nil {
-		return QueryTerm{}, fmt.Errorf("%w: %v", ErrInternal, err)
+		return QueryTerm{}, err
 	}
 	term, err := parseQueryTerm(decoded)
 	if err != nil {
@@ -240,7 +240,7 @@ func parseQueryTerm(decoded any) (QueryTerm, error) {
 					case string:
 						t.Text = append(t.Text, x)
 					default:
-						return QueryTerm{}, fmt.Errorf("a term part is %T", item)
+						return QueryTerm{}, fmt.Errorf("a term part is %s", guest.KindOf(item))
 					}
 				}
 				if t.Terms != nil && (len(t.Terms) != 2 || t.Text != nil) {
@@ -251,7 +251,7 @@ func parseQueryTerm(decoded any) (QueryTerm, error) {
 					t.Text = []string{}
 				}
 			default:
-				return QueryTerm{}, fmt.Errorf("term is %T", f.Value)
+				return QueryTerm{}, fmt.Errorf("term is %s", guest.KindOf(f.Value))
 			}
 		default:
 			return QueryTerm{}, fmt.Errorf("unknown key %q", f.Key)
@@ -318,19 +318,28 @@ func (cph *Cipher) Verify(ctx context.Context, plan *record.Plan, field, operato
 	if err != nil {
 		return nil, err
 	}
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := decodeAnswer("se_verify", out)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInternal, err)
+		return nil, err
 	}
+	return parseVerified(decoded, len(values))
+}
+
+// parseVerified reads se_verify's answer: one boolean for each of the
+// count values sent.
+func parseVerified(decoded any, count int) ([]bool, error) {
 	list, ok := decoded.([]any)
-	if !ok || len(list) != len(values) {
-		return nil, fmt.Errorf("%w: se_verify returned %T for %d values", ErrInternal, decoded, len(values))
+	if !ok {
+		return nil, guest.BadAnswer("se_verify", fmt.Errorf("it is %s, not a list", guest.KindOf(decoded)))
+	}
+	if len(list) != count {
+		return nil, guest.BadAnswer("se_verify", fmt.Errorf("it has %d answers for %d values", len(list), count))
 	}
 	verified := make([]bool, len(list))
 	for i, v := range list {
 		b, ok := v.(bool)
 		if !ok {
-			return nil, fmt.Errorf("%w: se_verify returned %T for value %d", ErrInternal, v, i)
+			return nil, guest.BadAnswer("se_verify", fmt.Errorf("answer %d is %s, not a boolean", i, guest.KindOf(v)))
 		}
 		verified[i] = b
 	}
@@ -361,17 +370,23 @@ func (cph *Cipher) TargetLimit(ctx context.Context, plan *record.Plan, field, op
 	if err != nil {
 		return Limit{}, err
 	}
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := decodeAnswer("se_target_limit", out)
 	if err != nil {
-		return Limit{}, fmt.Errorf("%w: %v", ErrInternal, err)
+		return Limit{}, err
 	}
+	return parseLimit(decoded)
+}
+
+// parseLimit reads se_target_limit's answer: null for no bound, or the row
+// count.
+func parseLimit(decoded any) (Limit, error) {
 	switch v := decoded.(type) {
 	case nil:
 		return Limit{}, nil
 	case uint64:
 		return Limit{rows: v, bounded: true}, nil
 	default:
-		return Limit{}, fmt.Errorf("%w: se_target_limit returned %T", ErrInternal, decoded)
+		return Limit{}, guest.BadAnswer("se_target_limit", fmt.Errorf("it is %s, not a row count or null", guest.KindOf(decoded)))
 	}
 }
 

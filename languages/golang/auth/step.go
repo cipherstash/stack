@@ -169,17 +169,17 @@ func decodeAuthRequest(item any) (authRequest, bool) {
 func decodeRunnable(raw []byte) ([]uint64, error) {
 	decoded, err := vcffi.Unmarshal(raw)
 	if err != nil {
-		return nil, fmt.Errorf("%w: the runnable operations: %w", ErrInternal, err)
+		return nil, guest.BadAnswer("sa_auth_runnable", err)
 	}
 	items, ok := decoded.([]any)
 	if !ok {
-		return nil, fmt.Errorf("%w: the runnable operations are not a list", ErrInternal)
+		return nil, guest.BadAnswer("sa_auth_runnable", fmt.Errorf("it is %s, not a list", guest.KindOf(decoded)))
 	}
 	handles := make([]uint64, 0, len(items))
-	for _, item := range items {
+	for i, item := range items {
 		h, ok := item.(uint64)
 		if !ok {
-			return nil, fmt.Errorf("%w: a runnable operation is not a handle", ErrInternal)
+			return nil, guest.BadAnswer("sa_auth_runnable", fmt.Errorf("operation %d is %s, not a handle", i, guest.KindOf(item)))
 		}
 		handles = append(handles, h)
 	}

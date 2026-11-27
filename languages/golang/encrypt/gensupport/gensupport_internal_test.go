@@ -691,3 +691,17 @@ func TestAMapFieldThatOpensAsAnotherKindSaysWhatItOpenedAs(t *testing.T) {
 		}
 	}
 }
+
+// A document field that opens as something other than its JSON text is a
+// decrypt refusal naming the field and what it opened as, by kind.
+func TestADocumentFieldThatOpensAsAnotherKindSaysWhatItOpenedAs(t *testing.T) {
+	_, err := GetDocument[map[string]any](Values{"doc": "secret"}, "doc")
+	want := `gensupport: decrypt: field "doc": cipherstash: malformed input: the document opened as a string, not its JSON text`
+	if !errors.Is(err, encrypt.ErrEncoding) || err.Error() != want {
+		t.Errorf("message:\n got %v\nwant %q", err, want)
+	}
+	_, err = GetDocument[map[string]any](Values{"doc": []byte("{")}, "doc")
+	if err == nil || !strings.HasPrefix(err.Error(), `gensupport: decrypt: field "doc": `) {
+		t.Errorf("JSON that does not decode: %v", err)
+	}
+}

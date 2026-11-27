@@ -3173,6 +3173,63 @@ mod compiled_match {
                 assert!(!message.contains("secret"), "{vars}: no value: {message}");
             }
         }
+
+        /// Vars that are not an object are refused before the predicate is
+        /// read: a predicate that is not UTF-8 beside vars `[]` is refused
+        /// for its vars.
+        #[test]
+        fn refuses_vars_before_reading_the_predicate() {
+            /// A match input whose predicate is bytes, as a binding may send it.
+            struct Input<'a> {
+                predicate: &'a [u8],
+                vars: &'a str,
+            }
+            struct Bytes<'a>(&'a [u8]);
+            impl serde::Serialize for Bytes<'_> {
+                fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                    s.serialize_bytes(self.0)
+                }
+            }
+            impl serde::Serialize for Input<'_> {
+                fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                    use serde::ser::SerializeMap;
+                    let mut map = s.serialize_map(Some(2))?;
+                    map.serialize_entry("predicate", &Bytes(self.predicate))?;
+                    map.serialize_entry("vars", self.vars)?;
+                    map.end()
+                }
+            }
+            let request = |vars| {
+                OwnedFrame::from_buffer(
+                    dynamic::frame::serde::to_vec(&Input {
+                        predicate: &[0xff, 0xfe],
+                        vars,
+                    })
+                    .unwrap(),
+                )
+                .unwrap()
+            };
+            let check = |vars| {
+                dynamic::check_query(&people(), "profile", Op::Match, request(vars), &Documents)
+                    .unwrap_err()
+            };
+            let error = check("[]");
+            assert_eq!(
+                error.reason().map(Reason::as_str),
+                Some("json_vars_not_object"),
+                "the vars are refused first"
+            );
+            assert_eq!(
+                error.found().map(|found| found.as_str()),
+                Some("array"),
+                "what the vars are"
+            );
+            assert_eq!(
+                check("{}").reason().map(Reason::as_str),
+                Some("json_input"),
+                "with object vars, the predicate that is not UTF-8 is refused"
+            );
+        }
     }
 
     mod given_the_fields_type {

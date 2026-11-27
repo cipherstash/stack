@@ -405,19 +405,24 @@ func (s *ProfileStore) ListWorkspaces(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return workspaceIDs(out)
+}
+
+// workspaceIDs reads sa_list_workspaces's answer: a list of workspace ids.
+func workspaceIDs(out []byte) ([]string, error) {
 	decoded, err := vcffi.Unmarshal(out)
 	if err != nil {
-		return nil, fmt.Errorf("%w: decoding the workspace list: %w", ErrInternal, err)
+		return nil, guest.BadAnswer("sa_list_workspaces", err)
 	}
 	items, ok := decoded.([]any)
 	if !ok {
-		return nil, fmt.Errorf("%w: the workspace list is not a list", ErrInternal)
+		return nil, guest.BadAnswer("sa_list_workspaces", fmt.Errorf("it is %s, not a list", guest.KindOf(decoded)))
 	}
 	ids := make([]string, 0, len(items))
-	for _, item := range items {
+	for i, item := range items {
 		id, ok := item.(string)
 		if !ok {
-			return nil, fmt.Errorf("%w: a workspace id is not a string", ErrInternal)
+			return nil, guest.BadAnswer("sa_list_workspaces", fmt.Errorf("workspace id %d is %s, not a string", i, guest.KindOf(item)))
 		}
 		ids = append(ids, id)
 	}
@@ -541,7 +546,7 @@ type fields vcvalue.Object
 func object(export string, encoded []byte) (fields, error) {
 	decoded, err := vcffi.Unmarshal(encoded)
 	if err != nil {
-		return nil, fmt.Errorf("%w: decoding the guest's answer to %s: %w", ErrInternal, export, err)
+		return nil, guest.BadAnswer(export, err)
 	}
 	obj, ok := decoded.(vcvalue.Object)
 	if !ok {

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/internal/record"
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
@@ -210,4 +211,86 @@ func TestParseQueryTermRefusesAMixedShape(t *testing.T) {
 			t.Errorf("%s: read, want refused", name)
 		}
 	}
+}
+
+// Every export's answer is decoded through one path: bytes that do not
+// decode are ErrInternal naming the export, with the version hint, never
+// bad input.
+func TestAnAnswerThatDoesNotDecodeNamesTheExport(t *testing.T) {
+	for _, export := range []string{"se_query_term", "se_targets", "se_operators", "se_contexts", "se_verify", "se_target_limit"} {
+		_, err := decodeAnswer(export, []byte{0xff})
+		if !errors.Is(err, ErrInternal) || errors.Is(err, ErrEncoding) {
+			t.Fatalf("%s: %v, want ErrInternal alone", export, err)
+		}
+		want := "cipherstash: internal guest failure: the guest's answer to " + export + " does not read: "
+		if !strings.HasPrefix(err.Error(), want) || !strings.Contains(err.Error(), "does not match this module's version") {
+			t.Errorf("%s: %v", export, err)
+		}
+	}
+	if decoded, err := decodeAnswer("se_contexts", mustMarshal(t, "users / email")); err != nil || decoded != "users / email" {
+		t.Errorf("a good answer: %v, %v", decoded, err)
+	}
+}
+
+// se_verify's and se_target_limit's answers say what they are, by kind.
+func TestVerifyAndLimitAnswersSayWhatTheyAre(t *testing.T) {
+	for _, tc := range []struct {
+		answer any
+		count  int
+		want   string
+	}{
+		{"secret", 1, "se_verify does not read: it is a string, not a list"},
+		{[]any{true}, 2, "se_verify does not read: it has 1 answers for 2 values"},
+		{[]any{true, "secret"}, 2, "se_verify does not read: answer 1 is a string, not a boolean"},
+	} {
+		_, err := parseVerified(tc.answer, tc.count)
+		if !errors.Is(err, ErrInternal) || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "secret") {
+			t.Errorf("%v, want %q", err, tc.want)
+		}
+	}
+	if got, err := parseVerified([]any{true, false}, 2); err != nil || !reflect.DeepEqual(got, []bool{true, false}) {
+		t.Errorf("a good answer: %v, %v", got, err)
+	}
+	_, err := parseLimit("secret")
+	if !errors.Is(err, ErrInternal) || !strings.Contains(err.Error(), "se_target_limit does not read: it is a string, not a row count or null") {
+		t.Errorf("limit: %v", err)
+	}
+	if limit, err := parseLimit(nil); err != nil || limit != (Limit{}) {
+		t.Errorf("no bound: %+v, %v", limit, err)
+	}
+	if limit, err := parseLimit(uint64(7)); err != nil || limit != (Limit{rows: 7, bounded: true}) {
+		t.Errorf("a bound: %+v, %v", limit, err)
+	}
+}
+
+// An index, a producible flag or a name of the wrong kind says what it is.
+func TestATargetFieldOfTheWrongKindSaysWhatItIs(t *testing.T) {
+	entry := func(fields ...vcvalue.Field) vcvalue.Object {
+		return vcvalue.Object{{Key: "targets", Value: []any{vcvalue.Object(fields)}}}
+	}
+	name := vcvalue.Field{Key: "name", Value: "TextEq"}
+	for _, tc := range []struct {
+		answer vcvalue.Object
+		want   string
+	}{
+		{entry(name, vcvalue.Field{Key: "indexes", Value: "secret"}, vcvalue.Field{Key: "producible", Value: true}), "indexes is a string, not a list"},
+		{entry(name, vcvalue.Field{Key: "indexes", Value: []any{int64(1)}}, vcvalue.Field{Key: "producible", Value: true}), "an index is a number, not a string"},
+		{entry(name, vcvalue.Field{Key: "indexes", Value: []any{}}, vcvalue.Field{Key: "producible", Value: "secret"}), "producible is a string, not a bool"},
+		{entry(vcvalue.Field{Key: "name", Value: int64(1)}), "name is a number, not a string"},
+	} {
+		_, err := parseTargets(tc.answer)
+		if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "secret") {
+			t.Errorf("%v, want %q", err, tc.want)
+		}
+	}
+}
+
+// mustMarshal is v in the transport.
+func mustMarshal(t *testing.T, v any) []byte {
+	t.Helper()
+	out, err := vcffi.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

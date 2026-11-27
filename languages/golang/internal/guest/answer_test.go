@@ -9,7 +9,11 @@ import (
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
-// KindOf names a decoded value by its kind, never its value.
+// named is a Go type of its own over a string.
+type named string
+
+// KindOf names a decoded value by its kind, never its value: the vcvalue
+// types by what they are, and any other Go value by its reflect.Kind.
 func TestKindOfNamesAValueByItsKind(t *testing.T) {
 	for _, tc := range []struct {
 		value any
@@ -38,7 +42,24 @@ func TestKindOfNamesAValueByItsKind(t *testing.T) {
 		{vcvalue.Timestamp{}, "a timestamp"},
 		{vcvalue.Decimal{}, "a decimal"},
 		{vcvalue.UUID{}, "a UUID"},
-		{struct{ secret string }{"secret"}, "a single value"},
+		{vcvalue.Sealed("secret"), "a sealed value"},
+		{vcvalue.SealedEmptySeq("secret"), "a sealed empty list"},
+		{vcvalue.SealedEmptyMap("secret"), "a sealed empty map"},
+		{vcvalue.Plain{V: "secret"}, "a passthrough value"},
+		{vcvalue.Tagged{ID: 200, V: "secret"}, "a value of a type this build does not know"},
+		{int(1), "a number"},
+		{uint(1), "a number"},
+		{uintptr(1), "a number"},
+		{named("secret"), "a string"},
+		{[]int64{1}, "a list"},
+		{[2]string{"secret"}, "a list"},
+		{[4]byte{1}, "bytes"},
+		{map[string]any{"secret": 1}, "a map"},
+		{map[string]int64{"secret": 1}, "a map"},
+		{struct{ secret string }{"secret"}, "a struct"},
+		{new(int), "a pointer"},
+		{func() {}, "a single value"},
+		{make(chan int), "a single value"},
 	} {
 		if got := guest.KindOf(tc.value); got != tc.want {
 			t.Errorf("KindOf(%T) = %q, want %q", tc.value, got, tc.want)
@@ -59,5 +80,10 @@ func TestBadAnswerIsInternalAndNamesTheExport(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "malformed input") {
 		t.Errorf("reads as bad input: %v", err)
+	}
+	// The problem is wrapped, so a caller can still match what is behind it.
+	cause := errors.New("the decoder's error")
+	if !errors.Is(guest.BadAnswer("se_targets", cause), cause) {
+		t.Error("the problem is not wrapped")
 	}
 }

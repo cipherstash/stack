@@ -461,8 +461,9 @@ fn read_match(options: &JsonOptions, input: Frame<'_>) -> Result<Input, Error> {
         Some(vars) => vars.parse()?,
         None => Parsed::of(Value::Object(serde_json::Map::new())),
     };
-    // Vars that are not an object are refused by `Input::predicate`, saying
-    // what they are.
+    // Vars that are not an object are refused before the predicate is
+    // read, so their refusal does not depend on the predicate's text.
+    crate::json::inputs::vars_object(&vars.0)?;
     let text = std::str::from_utf8(&input.predicate.0)
         .map_err(|_| Error::bad_source(Reason::JsonInput))?;
     Input::predicate(options, text, &vars.0, Some(bound))
