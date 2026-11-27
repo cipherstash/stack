@@ -6,7 +6,10 @@ use stack_profile::ProfileStore;
 use crate::auto_refresh::AutoRefresh;
 use crate::device_session_refresher::{ensure_workspace, DeviceSessionRefresher};
 use crate::transport::{self, SharedTransport};
-use crate::{ensure_trailing_slash, AuthError, AuthStrategy, HttpTransport, ServiceToken, Token};
+use crate::{
+    ensure_trailing_slash, AuthError, AuthStrategy, HttpTransport, NextRefresh, RefreshDriver,
+    ServiceToken, Token,
+};
 
 /// An [`AuthStrategy`] that renews a CTS session minted by an interactive
 /// OAuth login (the device-code flow), using its OAuth refresh token.
@@ -96,6 +99,35 @@ impl DeviceSessionStrategy {
     /// Return the workspace CRN, if one was extracted from the token at build time.
     pub fn workspace_crn(&self) -> Option<&Crn> {
         self.crn.as_ref()
+    }
+}
+
+impl DeviceSessionStrategy {
+    /// Hand refreshing this strategy's token ahead of its expiry to the
+    /// caller's own timer, for a host with no background task of its own,
+    /// such as a WebAssembly host. See [`RefreshDriver`] for the contract,
+    /// and [`next_refresh`](Self::next_refresh) and
+    /// [`refresh_now`](Self::refresh_now) for the two calls a driver makes.
+    ///
+    /// A native strategy refreshes ahead from a Tokio task of its own, and
+    /// needs no driver.
+    pub fn drive_refresh(&self) -> RefreshDriver {
+        self.inner.drive_refresh()
+    }
+
+    /// When the token's next refresh ahead of its expiry is due, by the
+    /// rule in [`RefreshSchedule`](crate::RefreshSchedule): idle until a
+    /// call uses the token, and later after a failed refresh.
+    pub async fn next_refresh(&self) -> NextRefresh {
+        self.inner.next_refresh().await
+    }
+
+    /// Refresh the token now. A refresh already in flight is not repeated.
+    /// Returns this attempt's error, which a caller of `get_token` does not
+    /// see while the cached token still works; the next attempt then backs
+    /// off.
+    pub async fn refresh_now(&self) -> Result<(), AuthError> {
+        self.inner.refresh_now().await.map_err(AuthError::from)
     }
 }
 

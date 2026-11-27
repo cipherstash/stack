@@ -1,9 +1,10 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use tokio::sync::{Mutex, Notify, OwnedMutexGuard};
 
 use crate::clock::{system_clock, SharedClock};
+use crate::refresh_schedule::{NextRefresh, RefreshSchedule};
 use crate::refresher::Refresher;
 use crate::token_store::{NoStore, TokenStore};
 use crate::{ServiceToken, Token};
@@ -62,6 +63,78 @@ struct RefreshState<R, S> {
     /// Source of "now" for token-expiry checks. [`SystemClock`](crate::clock::SystemClock)
     /// in production; an injected clock in tests so expiry is deterministic.
     clock: SharedClock,
+    /// Who refreshes the token ahead of its expiry, if anyone.
+    driver: Arc<DriverControl>,
+}
+
+/// Who refreshes a token ahead of its expiry: the background task on a
+/// native target, or a host holding a [`RefreshDriver`]. While one is
+/// attached, a call with a token that still works never starts a refresh.
+#[derive(Default)]
+struct DriverControl {
+    /// The drivers attached: the background task, and each live
+    /// [`RefreshDriver`].
+    attached: AtomicUsize,
+    /// Whether the background task has been started and has not ended.
+    #[cfg(not(target_arch = "wasm32"))]
+    task: AtomicBool,
+    /// Set when the strategy is dropped, so its background task ends.
+    stopped: AtomicBool,
+    /// Wakes the background task: an idle plan was used, or the strategy
+    /// was dropped.
+    wake: Notify,
+}
+
+/// A driver's place in [`DriverControl::attached`], given up on drop.
+struct Attachment(Arc<DriverControl>);
+
+impl Attachment {
+    fn new(control: &Arc<DriverControl>) -> Self {
+        let _ = control.attached.fetch_add(1, Ordering::AcqRel);
+        Self(Arc::clone(control))
+    }
+}
+
+impl Drop for Attachment {
+    fn drop(&mut self) {
+        let _ = self.0.attached.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// The background task's attachment. When the task ends, or its runtime
+/// drops it, the next call may start another.
+#[cfg(not(target_arch = "wasm32"))]
+struct TaskAttachment(Attachment);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for TaskAttachment {
+    fn drop(&mut self) {
+        (self.0).0.task.store(false, Ordering::Release);
+    }
+}
+
+/// A host's hold on refreshing one strategy's token ahead of its expiry.
+///
+/// A WebAssembly host has no background task in the strategy, so it keeps
+/// the timer itself: it asks the strategy when the next refresh is due
+/// (`next_refresh`), waits until then, and calls `refresh_now`. While a
+/// `RefreshDriver` lives, a call for a token that still works never starts
+/// a refresh: the host does. Drop it when the host stops driving; calls
+/// then refresh in the 90 seconds before expiry, as they do with no
+/// driver.
+///
+/// A host that holds a driver and never refreshes loses nothing but time:
+/// once the token expires, the next call exchanges it, as at startup.
+///
+/// A native strategy refreshes ahead from a task of its own and needs no
+/// driver.
+#[must_use = "dropping the driver hands refreshing back to the calls"]
+pub struct RefreshDriver(#[allow(dead_code, reason = "held for its drop")] Attachment);
+
+impl std::fmt::Debug for RefreshDriver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RefreshDriver").finish_non_exhaustive()
+    }
 }
 
 /// How long a cached refusal is replayed before the server is asked again.
@@ -92,7 +165,44 @@ struct State {
     /// sees the *same* outcome as whoever actually performed the refresh it
     /// was waiting on, instead of a generic `Expired` that discards why the
     /// wait ended in failure.
-    last_refresh_error: Option<(&'static str, String)>,
+    last_refresh_error: Option<LastRefreshError>,
+    /// When the token is refreshed ahead of its expiry, and the backoff
+    /// after a failed refresh.
+    schedule: RefreshSchedule,
+}
+
+/// A failed refresh's error, held so it can be handed to more than one
+/// caller. A server fault keeps its kind, so a caller that retries on one
+/// still does; any other error round-trips through its wire code, as
+/// [`StickyDenial`] does.
+struct LastRefreshError {
+    code: &'static str,
+    message: String,
+    server: bool,
+}
+
+impl LastRefreshError {
+    fn of(err: &crate::AuthError) -> Self {
+        match err {
+            crate::AuthError::Server(crate::error::ServerError(message)) => Self {
+                code: err.error_code(),
+                message: message.clone(),
+                server: true,
+            },
+            _ => Self {
+                code: err.error_code(),
+                message: err.to_string(),
+                server: false,
+            },
+        }
+    }
+
+    fn to_error(&self) -> crate::AuthError {
+        if self.server {
+            return crate::error::ServerError(self.message.clone()).into();
+        }
+        crate::AuthError::from_error_code(self.code, &self.message, &serde_json::Map::new())
+    }
 }
 
 /// A non-retryable refusal, held in a form that can be handed to more than one
@@ -182,6 +292,14 @@ impl State {
             token,
             denial: None,
             last_refresh_error: None,
+            schedule: RefreshSchedule::new(),
+        }
+    }
+
+    /// Plan for the cached token, if there is one, as of `now`.
+    fn observe_token(&mut self, now: u64) {
+        if let Some(token) = &self.token {
+            self.schedule.observe(token, now);
         }
     }
 
@@ -204,15 +322,16 @@ impl State {
         if err.is_account_refusal() {
             self.denial = Some(StickyDenial::new(err, now));
         }
-        self.last_refresh_error = Some((err.error_code(), err.to_string()));
+        self.last_refresh_error = Some(LastRefreshError::of(err));
+        self.schedule.refresh_failed(err, now);
     }
 
     /// The error from the most recently completed refresh attempt, if it
     /// failed and no success has happened since.
     fn last_refresh_error(&self) -> Option<crate::AuthError> {
-        self.last_refresh_error.as_ref().map(|(code, message)| {
-            crate::AuthError::from_error_code(code, message, &serde_json::Map::new())
-        })
+        self.last_refresh_error
+            .as_ref()
+            .map(LastRefreshError::to_error)
     }
 
     /// The recorded refusal if it is still within its window, discarding it if
@@ -266,6 +385,7 @@ impl<R, S> AutoRefresh<R, S> {
                 refresh_in_progress: AtomicBool::new(false),
                 refresh_notify: Notify::new(),
                 clock,
+                driver: Arc::default(),
             }),
         }
     }
@@ -279,11 +399,48 @@ impl<R, S> AutoRefresh<R, S> {
     pub(crate) fn refresher(&self) -> &R {
         &self.shared.refresher
     }
+
+    /// No background task: a caller starts each refresh, as on wasm32 with
+    /// no host driving it. For the tests of that path on a native target.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn call_driven(self) -> Self {
+        self.shared.driver.task.store(true, Ordering::Release);
+        self
+    }
+
+    /// Hand refreshing ahead of expiry to the caller's timer. See
+    /// [`RefreshDriver`].
+    pub(crate) fn drive_refresh(&self) -> RefreshDriver {
+        RefreshDriver(Attachment::new(&self.shared.driver))
+    }
+}
+
+impl<R, S> Drop for AutoRefresh<R, S> {
+    /// The background task holds only a weak reference; this wakes it so it
+    /// sees the strategy is gone and ends now rather than at its next
+    /// refresh.
+    fn drop(&mut self) {
+        self.shared.driver.stopped.store(true, Ordering::Release);
+        self.shared.driver.wake.notify_one();
+    }
 }
 
 impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
     pub(crate) async fn get_token(&self) -> Result<ServiceToken, AutoRefreshError> {
         self.shared.get_token().await
+    }
+
+    /// When the token's next refresh ahead of expiry is due.
+    pub(crate) async fn next_refresh(&self) -> NextRefresh {
+        let mut state = self.shared.state.lock().await;
+        state.observe_token(self.shared.clock.now_unix_secs());
+        state.schedule.next()
+    }
+
+    /// Refresh the token now, whether or not it is due, and report how the
+    /// attempt went. A refresh already in flight is not joined or repeated.
+    pub(crate) async fn refresh_now(&self) -> Result<(), AutoRefreshError> {
+        self.shared.refresh_now().await
     }
 }
 
@@ -317,6 +474,14 @@ impl<R: Refresher, S: TokenStore> RefreshState<R, S> {
         // the checks are mutually consistent and deterministic under test.
         let now = self.clock.now_unix_secs();
 
+        // This call uses the token, so it is due a refresh ahead of expiry.
+        state.observe_token(now);
+        if state.schedule.used() {
+            self.driver.wake.notify_one();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.ensure_driver();
+
         if state.token.is_none() {
             if let Some(err) = state.fresh_denial(now) {
                 return Err(AutoRefreshError::Auth(err));
@@ -346,6 +511,21 @@ impl<R: Refresher, S: TokenStore> RefreshState<R, S> {
             };
         }
 
+        // A token that still works is the driver's to refresh, and while a
+        // failed refresh backs off nobody starts another. A token that has
+        // expired meanwhile fails at once with that refresh's error, rather
+        // than every call making an exchange of its own.
+        let usable = state.token.as_ref().is_some_and(|t| t.is_usable_at(now));
+        let driven = self.driver.attached.load(Ordering::Acquire) > 0;
+        if usable && (driven || state.schedule.backing_off(now)) {
+            return state.service_token();
+        }
+        if !usable && state.schedule.backing_off(now) {
+            return Err(state
+                .last_refresh_error()
+                .map_or(AutoRefreshError::Expired, AutoRefreshError::Auth));
+        }
+
         let Some(credential) = self.refresher.try_credential(state.token.as_mut()) else {
             return state.require_usable_token(now);
         };
@@ -353,14 +533,135 @@ impl<R: Refresher, S: TokenStore> RefreshState<R, S> {
         self.start_refresh(state, credential).await
     }
 
+    /// Refresh now, unless a refresh is in flight. Loads a stored token
+    /// first if none is cached. The result is this attempt's: a failure
+    /// is reported even when the cached token still works.
+    async fn refresh_now(self: &Arc<Self>) -> Result<(), AutoRefreshError> {
+        let mut state = self.state.clone().lock_owned().await;
+        if state.token.is_none() {
+            drop(state);
+            let loaded = self.store.load().await;
+            state = self.state.clone().lock_owned().await;
+            if state.token.is_none() {
+                state.token = loaded;
+            }
+        }
+        if state.token.is_none() {
+            return Err(AutoRefreshError::NotFound);
+        }
+        let now = self.clock.now_unix_secs();
+        state.observe_token(now);
+        if self.refresh_in_progress.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        if let Some(err) = state.fresh_denial(now) {
+            return Err(AutoRefreshError::Auth(err));
+        }
+        let Some(credential) = self.refresher.try_credential(state.token.as_mut()) else {
+            state.schedule.cannot_refresh();
+            return Ok(());
+        };
+        let _refreshed = self.start_refresh(state, credential).await?;
+        match self.state.lock().await.last_refresh_error() {
+            Some(err) => Err(AutoRefreshError::Auth(err)),
+            None => Ok(()),
+        }
+    }
+
+    /// Refresh if the plan says one is due. Returns whether an attempt ran.
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn refresh_if_due(self: &Arc<Self>) -> bool {
+        let due = {
+            let mut state = self.state.lock().await;
+            let now = self.clock.now_unix_secs();
+            state.observe_token(now);
+            matches!(state.schedule.next(), NextRefresh::At(at) if at <= now)
+        };
+        if !due || self.refresh_in_progress.load(Ordering::Acquire) {
+            return false;
+        }
+        // The outcome is recorded in the plan; there is no caller to tell.
+        let _ = self.refresh_now().await;
+        true
+    }
+
+    /// Start the background task that refreshes ahead of expiry, once, on
+    /// the current Tokio runtime. Outside a runtime there is none, and
+    /// calls refresh in the 90 seconds before expiry instead.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn ensure_driver(self: &Arc<Self>) {
+        let control = &self.driver;
+        if control.task.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            control.task.store(false, Ordering::Release);
+            return;
+        };
+        // Attached before the task runs, so a call right after this one
+        // already leaves the refresh to it. A runtime that drops the task
+        // unrun drops the attachment too, and the next call starts another.
+        let attachment = TaskAttachment(Attachment::new(control));
+        let _task = runtime.spawn(Self::drive(Arc::downgrade(self), attachment));
+    }
+
+    /// The background task: wait until the plan says a refresh is due, run
+    /// it, and repeat, until the strategy is dropped. Holds the strategy
+    /// only while it refreshes.
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn drive(strategy: std::sync::Weak<Self>, attachment: TaskAttachment) {
+        use std::time::Duration;
+        let control = Arc::clone(&(attachment.0).0);
+        loop {
+            let mut wake = std::pin::pin!(control.wake.notified());
+            // Listed before the plan is read, so a use or a drop between
+            // the read and the wait still wakes it.
+            let _ = wake.as_mut().enable();
+            if control.stopped.load(Ordering::Acquire) {
+                return;
+            }
+            let (next, now) = {
+                let Some(strategy) = strategy.upgrade() else {
+                    return;
+                };
+                let next = strategy.state.lock().await.schedule.next();
+                (next, strategy.clock.now_unix_secs())
+            };
+            match next {
+                NextRefresh::Idle => wake.await,
+                NextRefresh::At(at) if at > now => {
+                    tokio::select! {
+                        () = tokio::time::sleep(Duration::from_secs(at - now)) => {}
+                        () = wake => {}
+                    }
+                }
+                NextRefresh::At(_) => {
+                    let Some(strategy) = strategy.upgrade() else {
+                        return;
+                    };
+                    if !strategy.refresh_if_due().await {
+                        // A caller's refresh is in flight, or the plan moved
+                        // on: look again shortly.
+                        drop(strategy);
+                        tokio::select! {
+                            () = tokio::time::sleep(Duration::from_secs(1)) => {}
+                            () = wake => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// There is no suspension between extracting the credential and spawning
     /// its owner. Dropping the JoinHandle cancels only the caller's wait, not
     /// the exchange, persistence, state installation, or waiter notification.
     async fn start_refresh(
         self: &Arc<Self>,
-        state: OwnedMutexGuard<State>,
+        mut state: OwnedMutexGuard<State>,
         credential: R::Credential,
     ) -> Result<ServiceToken, AutoRefreshError> {
+        state.schedule.attempt_started();
         self.refresh_in_progress.store(true, Ordering::Release);
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -411,6 +712,9 @@ impl<R: Refresher, S: TokenStore> RefreshState<R, S> {
     /// [`save_refreshed_token`](Self::save_refreshed_token).
     fn install_refreshed_token(&self, state: &mut State, new_token: Token) -> ServiceToken {
         let service_token = ServiceToken::new(new_token.access_token().clone());
+        state
+            .schedule
+            .observe(&new_token, self.clock.now_unix_secs());
         state.token = Some(new_token);
         // A success proves whatever previously refused us has changed its mind.
         state.denial = None;
@@ -717,6 +1021,18 @@ mod tests {
         server
     }
 
+    /// Wait, on the wall clock, until a failed refresh's backoff has ended,
+    /// so the next call may refresh again.
+    async fn wait_out_backoff<R: Refresher, S: TokenStore>(strategy: &AutoRefresh<R, S>) {
+        loop {
+            let now = strategy.shared.clock.now_unix_secs();
+            if !strategy.shared.state.lock().await.schedule.backing_off(now) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
     fn auto_refresh_with_token(
         dir: &tempfile::TempDir,
         server: &MockServer,
@@ -734,7 +1050,7 @@ mod tests {
             None,
             crate::transport::default_transport(),
         );
-        AutoRefresh::with_token(refresher, token)
+        AutoRefresh::with_token(refresher, token).call_driven()
     }
 
     mod given_no_cached_token {
@@ -752,7 +1068,7 @@ mod tests {
                 None,
                 crate::transport::default_transport(),
             );
-            let strategy = AutoRefresh::with_store(refresher, NoStore);
+            let strategy = AutoRefresh::with_store(refresher, NoStore).call_driven();
 
             let err = strategy.get_token().await.unwrap_err();
 
@@ -819,7 +1135,7 @@ mod tests {
             let store = CountingStore {
                 load_calls: Arc::clone(&load_calls),
             };
-            let strategy = AutoRefresh::with_store(AlwaysOverLimitRefresher, store);
+            let strategy = AutoRefresh::with_store(AlwaysOverLimitRefresher, store).call_driven();
 
             let first = strategy.get_token().await;
             assert!(
@@ -1066,6 +1382,7 @@ mod tests {
                 });
 
                 // Second call: refresh token is available → retry succeeds.
+                wait_out_backoff(&strategy).await;
                 let token = strategy.get_token().await.unwrap();
                 assert_eq!(
                     token.as_str(),
@@ -1223,6 +1540,7 @@ mod tests {
                 });
 
                 // Second call: refresh token was restored, so the retry succeeds.
+                wait_out_backoff(&strategy).await;
                 let token = strategy.get_token().await.unwrap();
                 assert!(
                     token.as_str() == "still-usable" || token.as_str() == "refreshed-token",
@@ -1537,7 +1855,7 @@ mod stress_tests {
             None,
             crate::transport::default_transport(),
         );
-        AutoRefresh::with_token(refresher, token)
+        AutoRefresh::with_token(refresher, token).call_driven()
     }
 
     const CONCURRENCY: usize = 50;
@@ -1942,16 +2260,19 @@ mod expiry_crossing_regression {
             let started = Arc::new(Notify::new());
             let gate = Arc::new(Notify::new());
             let calls = Arc::new(AtomicUsize::new(0));
-            let strategy = Arc::new(AutoRefresh::with_token_and_clock(
-                GatedRefresher {
-                    started: Arc::clone(&started),
-                    gate: Arc::clone(&gate),
-                    calls: Arc::clone(&calls),
-                    refreshed_expires_at: clock.now() + 3600,
-                },
-                make_token("expiring-soon", clock.now() + 10),
-                clock.shared(),
-            ));
+            let strategy = Arc::new(
+                AutoRefresh::with_token_and_clock(
+                    GatedRefresher {
+                        started: Arc::clone(&started),
+                        gate: Arc::clone(&gate),
+                        calls: Arc::clone(&calls),
+                        refreshed_expires_at: clock.now() + 3600,
+                    },
+                    make_token("expiring-soon", clock.now() + 10),
+                    clock.shared(),
+                )
+                .call_driven(),
+            );
             let caller = tokio::spawn({
                 let strategy = Arc::clone(&strategy);
                 async move { strategy.get_token().await }
@@ -1999,11 +2320,9 @@ mod expiry_crossing_regression {
         // the current clock value (so the first caller takes the non-blocking
         // path and gets the old token).
         let token = make_token("expiring-soon", clock.now() + 10);
-        let strategy = Arc::new(AutoRefresh::with_token_and_clock(
-            refresher,
-            token,
-            clock.shared(),
-        ));
+        let strategy = Arc::new(
+            AutoRefresh::with_token_and_clock(refresher, token, clock.shared()).call_driven(),
+        );
 
         // 1. First caller starts the non-blocking refresh.
         let first = {
@@ -2128,11 +2447,9 @@ mod expiry_crossing_regression {
         // Within the 90s leeway (triggers a refresh) but still usable now, so the
         // first caller takes the non-blocking path and captures the old token.
         let token = make_token("expiring-soon", clock.now() + 10);
-        let strategy = Arc::new(AutoRefresh::with_token_and_clock(
-            refresher,
-            token,
-            clock.shared(),
-        ));
+        let strategy = Arc::new(
+            AutoRefresh::with_token_and_clock(refresher, token, clock.shared()).call_driven(),
+        );
 
         // 1. First caller starts the (gated) non-blocking refresh.
         let first = {
@@ -2218,11 +2535,9 @@ mod expiry_crossing_regression {
         // Inside the leeway (so a refresh starts) but still usable, so the
         // first caller takes the non-blocking path.
         let token = make_token("expiring-soon", clock.now() + 10);
-        let strategy = Arc::new(AutoRefresh::with_token_and_clock(
-            refresher,
-            token,
-            clock.shared(),
-        ));
+        let strategy = Arc::new(
+            AutoRefresh::with_token_and_clock(refresher, token, clock.shared()).call_driven(),
+        );
 
         let first = {
             let s = Arc::clone(&strategy);
@@ -2324,11 +2639,9 @@ mod expiry_crossing_regression {
         // Inside the leeway (so a refresh starts) but still usable, so the
         // first caller takes the non-blocking path.
         let token = make_token("expiring-soon", clock.now() + 10);
-        let strategy = Arc::new(AutoRefresh::with_token_and_clock(
-            refresher,
-            token,
-            clock.shared(),
-        ));
+        let strategy = Arc::new(
+            AutoRefresh::with_token_and_clock(refresher, token, clock.shared()).call_driven(),
+        );
 
         let first = {
             let s = Arc::clone(&strategy);
@@ -2389,7 +2702,8 @@ mod expiry_crossing_regression {
         let clock = TestClock::new(1_000_000);
         // Fresh token: expires well beyond the 90s leeway.
         let token = make_token("fresh", clock.now() + 3600);
-        let strategy = AutoRefresh::with_token_and_clock(NeverRefresher, token, clock.shared());
+        let strategy =
+            AutoRefresh::with_token_and_clock(NeverRefresher, token, clock.shared()).call_driven();
 
         // Forward reading returns the cached token without refreshing.
         assert_eq!(strategy.get_token().await.unwrap().as_str(), "fresh");

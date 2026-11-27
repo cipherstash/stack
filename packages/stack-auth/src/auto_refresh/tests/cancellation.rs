@@ -1,5 +1,9 @@
 //! Cancellation must leave the rotating session usable, including after the
 //! issuer has spent the old credential. Gates pin each await without sleeps.
+//!
+//! Every engine here is call-driven: a caller starts each refresh, as on
+//! wasm32 with no host driving it, so the caller's cancellation is what is
+//! tested.
 #![allow(clippy::unwrap_used)]
 
 use super::*;
@@ -128,12 +132,15 @@ async fn cancelled_at(phase: Phase, usable: bool, initial: bool) {
         save: Semaphore::new(0),
         saved: AtomicUsize::new(0),
     });
-    let strategy = Arc::new(AutoRefresh::new(
-        RotatingRefresher(issuer.clone()),
-        store.clone(),
-        (!initial).then(|| token(0, if usable { 1_030 } else { 999 })),
-        clock.shared(),
-    ));
+    let strategy = Arc::new(
+        AutoRefresh::new(
+            RotatingRefresher(issuer.clone()),
+            store.clone(),
+            (!initial).then(|| token(0, if usable { 1_030 } else { 999 })),
+            clock.shared(),
+        )
+        .call_driven(),
+    );
     let caller = tokio::spawn({
         let strategy = strategy.clone();
         async move { strategy.get_token().await }
@@ -231,11 +238,14 @@ async fn cancelled_failed_refresh_restores_the_credential_for_retry() {
         let clock = TestClock::new(1_000);
         let issuer = Arc::new(Issuer::new(false));
         issuer.fail_once.store(true, Ordering::SeqCst);
-        let strategy = Arc::new(AutoRefresh::with_token_and_clock(
-            RotatingRefresher(issuer.clone()),
-            token(0, if usable { 1_030 } else { 999 }),
-            clock.shared(),
-        ));
+        let strategy = Arc::new(
+            AutoRefresh::with_token_and_clock(
+                RotatingRefresher(issuer.clone()),
+                token(0, if usable { 1_030 } else { 999 }),
+                clock.shared(),
+            )
+            .call_driven(),
+        );
         let caller = tokio::spawn({
             let strategy = strategy.clone();
             async move { strategy.get_token().await }
@@ -259,11 +269,14 @@ async fn cancelled_failed_refresh_restores_the_credential_for_retry() {
 #[tokio::test(start_paused = true)]
 async fn rotation_is_saved_even_after_all_callers_drop_the_strategy() {
     let issuer = Arc::new(Issuer::new(false));
-    let strategy = Arc::new(AutoRefresh::with_token_and_clock(
-        RotatingRefresher(issuer.clone()),
-        token(0, 999),
-        TestClock::new(1_000).shared(),
-    ));
+    let strategy = Arc::new(
+        AutoRefresh::with_token_and_clock(
+            RotatingRefresher(issuer.clone()),
+            token(0, 999),
+            TestClock::new(1_000).shared(),
+        )
+        .call_driven(),
+    );
     let caller = tokio::spawn(async move { strategy.get_token().await });
     issuer.started.notified().await;
     issuer.exchange.add_permits(1);
@@ -285,11 +298,14 @@ async fn rotation_is_saved_even_after_all_callers_drop_the_strategy() {
 async fn a_panicking_refresh_reports_an_error_and_releases_waiters() {
     let issuer = Arc::new(Issuer::new(false));
     let clock = TestClock::new(1_000);
-    let strategy = Arc::new(AutoRefresh::with_token_and_clock(
-        RotatingRefresher(issuer.clone()),
-        token(0, 1_030),
-        clock.shared(),
-    ));
+    let strategy = Arc::new(
+        AutoRefresh::with_token_and_clock(
+            RotatingRefresher(issuer.clone()),
+            token(0, 1_030),
+            clock.shared(),
+        )
+        .call_driven(),
+    );
     let caller = tokio::spawn({
         let strategy = strategy.clone();
         async move { strategy.get_token().await }
@@ -320,7 +336,8 @@ async fn guard_notification_before_waiter_registration_is_not_lost() {
         RotatingRefresher(Arc::new(Issuer::new(false))),
         token(0, 999),
         TestClock::new(1_000).shared(),
-    );
+    )
+    .call_driven();
     let shared = &strategy.shared;
     let state = shared.state.clone().lock_owned().await;
     shared.refresh_in_progress.store(true, Ordering::Release);

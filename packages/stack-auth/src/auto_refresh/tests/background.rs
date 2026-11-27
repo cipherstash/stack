@@ -140,9 +140,10 @@ async fn a_caller_with_a_valid_token_does_not_wait_for_its_refresh() {
         .unwrap();
     assert_eq!(got.as_str(), "current");
 
-    // The refresh runs without any caller waiting on it.
+    // The refresh runs without any caller waiting on it, half way through
+    // the token's remaining life.
     issuer.gate.add_permits(1);
-    timeout(Duration::from_secs(5), async {
+    timeout(Duration::from_secs(35), async {
         while strategy
             .shared
             .state
@@ -254,9 +255,11 @@ async fn a_failed_refresh_is_retried_with_backoff() {
     let now = clock.now_unix_secs();
     let strategy = strategy(&issuer, &clock, Some(token("current", now + 900)));
 
-    for _ in 0..(900 / 5) {
+    // A call every second keeps the token in use, so only the backoff
+    // spaces the retries.
+    for _ in 0..900 {
         assert!(strategy.get_token().await.is_ok());
-        sleep(Duration::from_secs(5)).await;
+        sleep(Duration::from_secs(1)).await;
     }
 
     let attempts = issuer.attempts.lock().unwrap().clone();

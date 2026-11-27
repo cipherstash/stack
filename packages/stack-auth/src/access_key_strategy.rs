@@ -6,7 +6,10 @@ use crate::auto_refresh::AutoRefresh;
 use crate::token_store::{NoStore, TokenStore};
 use crate::transport::{self, SharedTransport};
 use crate::HttpTransport;
-use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, ServiceToken};
+use crate::{
+    ensure_trailing_slash, AuthError, AuthStrategy, NextRefresh, RefreshDriver, SecretToken,
+    ServiceToken,
+};
 
 /// An [`AuthStrategy`] that uses a static access key to authenticate against
 /// a specific workspace.
@@ -91,6 +94,35 @@ impl AccessKeyStrategy {
             token_store: NoStore,
             transport: None,
         }
+    }
+}
+
+impl<S: TokenStore> AccessKeyStrategy<S> {
+    /// Hand refreshing this strategy's token ahead of its expiry to the
+    /// caller's own timer, for a host with no background task of its own,
+    /// such as a WebAssembly host. See [`RefreshDriver`] for the contract,
+    /// and [`next_refresh`](Self::next_refresh) and
+    /// [`refresh_now`](Self::refresh_now) for the two calls a driver makes.
+    ///
+    /// A native strategy refreshes ahead from a Tokio task of its own, and
+    /// needs no driver.
+    pub fn drive_refresh(&self) -> RefreshDriver {
+        self.inner.drive_refresh()
+    }
+
+    /// When the token's next refresh ahead of its expiry is due, by the
+    /// rule in [`RefreshSchedule`](crate::RefreshSchedule): idle until a
+    /// call uses the token, and later after a failed refresh.
+    pub async fn next_refresh(&self) -> NextRefresh {
+        self.inner.next_refresh().await
+    }
+
+    /// Refresh the token now. A refresh already in flight is not repeated.
+    /// Returns this attempt's error, which a caller of `get_token` does not
+    /// see while the cached token still works; the next attempt then backs
+    /// off.
+    pub async fn refresh_now(&self) -> Result<(), AuthError> {
+        self.inner.refresh_now().await.map_err(AuthError::from)
     }
 }
 

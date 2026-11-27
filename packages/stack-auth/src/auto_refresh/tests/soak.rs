@@ -1,5 +1,11 @@
 //! Seeded cancellation soak. No credentials or network needed.
 //!
+//! Each seed runs twice: with the background task that refreshes ahead of
+//! expiry (the native default), and call-driven, where callers start every
+//! refresh (as on wasm32 with no host driving it), so callers' cancellation
+//! still reaches every phase of a refresh. Injected failures exercise the
+//! backoff in both.
+//!
 //! The seeded runs use a current-thread runtime with paused time, so a seed
 //! replays exactly. That cannot interleave callers across worker threads, so
 //! a short run on a multi-thread runtime in real time, sped up by [`Pace`],
@@ -43,9 +49,11 @@ impl Pace {
     /// The bound within which a caller must get a token or give up. Paced
     /// runs share real CPUs with the rest of the suite, so they get a fixed
     /// real-time bound instead of a scaled one that a busy runner could miss.
+    /// A caller whose token expired while refreshes fail waits out their
+    /// backoff, so the bound allows for its cap.
     fn stranded_after(self) -> Duration {
         if self.0 == 1 {
-            Duration::from_secs(30)
+            Duration::from_secs(30 + crate::BACKOFF_CAP_SECS)
         } else {
             Duration::from_secs(10)
         }
@@ -155,6 +163,11 @@ impl TokenStore for RotationStore {
 }
 
 async fn soak(seed: u64, rounds: usize, pace: Pace) {
+    soak_with(seed, rounds, pace, true).await;
+    soak_with(seed, rounds, pace, false).await;
+}
+
+async fn soak_with(seed: u64, rounds: usize, pace: Pace, driven: bool) {
     let clock: SharedClock = Arc::new(PacedClock(Instant::now(), pace));
     let idp = Arc::new(StdMutex::new(IdentityProvider {
         random: Random(seed),
@@ -164,7 +177,7 @@ async fn soak(seed: u64, rounds: usize, pace: Pace) {
         saved: 0,
         errors: 0,
     }));
-    let strategy = Arc::new(AutoRefresh::new(
+    let strategy = AutoRefresh::new(
         RotatingRefresher {
             idp: idp.clone(),
             clock: clock.clone(),
@@ -173,7 +186,12 @@ async fn soak(seed: u64, rounds: usize, pace: Pace) {
         RotationStore(idp.clone(), pace),
         Some(token(0, clock.now_unix_secs())),
         clock.clone(),
-    ));
+    );
+    let strategy = Arc::new(if driven {
+        strategy
+    } else {
+        strategy.call_driven()
+    });
     let mut callers = JoinSet::new();
     for caller in 1..=256 {
         let strategy = strategy.clone();
@@ -289,7 +307,7 @@ async fn soak(seed: u64, rounds: usize, pace: Pace) {
     // Test-only progress counters make the long CI run's coverage reviewable.
     #[allow(clippy::print_stderr)]
     {
-        eprintln!("seed={seed}, rotations={}, injected_errors={}, completed={completed}, timeouts={timed_out}, select_cancels={selected_out}", idp.generation, idp.errors);
+        eprintln!("seed={seed}, driven={driven}, rotations={}, injected_errors={}, completed={completed}, timeouts={timed_out}, select_cancels={selected_out}", idp.generation, idp.errors);
     }
 }
 
