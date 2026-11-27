@@ -859,7 +859,13 @@ fn encryption_attrs(
             (main, None)
         }
     };
-    let (plaintext, null) = plaintext_doc(&format!("[`{shown}`]({rust})"));
+    // rustdoc refuses an explicit target that names the label's own path.
+    let link = if shown == rust {
+        format!("[`{shown}`]")
+    } else {
+        format!("[`{shown}`]({rust})")
+    };
+    let (plaintext, null) = plaintext_doc(&link);
     let null = null.map(|null| {
         quote! {
             #[doc = ""]
@@ -879,7 +885,7 @@ fn encryption_attrs(
             .collect::<Vec<_>>()
             .join(", ");
         let built = format!(
-            " Plaintext input: [`{shown}`]({rust}), through one projection per index: \
+            " Plaintext input: {link}, through one projection per index: \
              {projections}. Each projection implements `EncryptTarget<{shown}>` and `Into<Self>`. \
              A query contains only the term of the index for its operator. Query operands do not \
              decrypt."
