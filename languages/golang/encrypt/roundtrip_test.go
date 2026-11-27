@@ -346,14 +346,14 @@ func TestPlaintextDoesNotRemainInGuestMemory(t *testing.T) {
 // The same check after Decrypt, which is the call that puts plaintext back
 // into the guest. It fails today, and the copy it finds is not the engine's.
 //
-// The copy that stays is on the stack, not the heap. It is the last block
-// that AES-256-GCM decrypted, when that block is shorter than 16 bytes. A
-// leaf is vitaminc's STRING tag 0x0a, then the text. So the copy is the last
-// (len+1) mod 16 bytes of the text.
+// The copy that stays is on the stack, not the heap. It is the last 16-byte
+// block that AES-256-GCM decrypted. A leaf is vitaminc's STRING tag 0x0a,
+// then the text.
 //
-// A text shorter than 16 bytes stays whole. Nothing stays when len+1 is a
-// multiple of 16. This test's plaintext is 15 bytes, so the whole of it is
-// the last block.
+// A text of 15 bytes or fewer fits in one block, and stays whole, even when
+// that block is full. For a longer text, only a last block shorter than 16
+// bytes stays: the last (len+1) mod 16 bytes. Nothing stays at 31, 47, 63,
+// 79, or 95 bytes. This test's plaintext is 15 bytes, so all of it stays.
 //
 // The copy is at the same address on every run: 1041212, just below 1 MiB,
 // in the wasm shadow stack. Only the last value a call opens stays there.
@@ -373,7 +373,7 @@ func TestPlaintextDoesNotRemainInGuestMemory(t *testing.T) {
 // same name), whose allocator fails a test on any freed block that still
 // holds plaintext.
 func TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt(t *testing.T) {
-	t.Skip("known: after Decrypt, the last AES-256-GCM block of the last value opened stays in the guest's shadow stack when it is shorter than 16 bytes, in an unwiped stack buffer of the RustCrypto crates behind vitaminc-encrypt's wasm32 backend (cipherstash/vitaminc#370); run this test again when that is wiped")
+	t.Skip("known: after Decrypt, the last AES-256-GCM block of the last value opened stays in the guest's shadow stack (all of a value in one block, else a final block shorter than 16 bytes), in an unwiped stack buffer of the RustCrypto crates behind vitaminc-encrypt's wasm32 backend (cipherstash/vitaminc#370); run this test again when that is wiped")
 	c := deterministicClient(t)
 	cipher := c.DefaultKeyset()
 	const plaintext = "probe-4111-b1c2"

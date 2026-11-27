@@ -62,9 +62,14 @@ The guide in `packages/stack-encrypt/docs/language-integration.md` explains how 
 ## Known gaps
 
 After `Decrypt`, part of the last value it opened stays in the guest's stack.
-The part is the last block that the cipher decrypted, when that block is shorter than 16 bytes.
+The part is the last 16-byte block that the cipher decrypted.
 The cipher that seals each value is AES-256-GCM (Advanced Encryption Standard in Galois/Counter Mode).
-For a string, that is the last (length + 1) mod 16 bytes, so a string shorter than 16 bytes stays whole.
+The encoded string is one tag byte and then the text.
+
+- A string of 15 bytes or fewer fits in one block, and stays whole.
+- For a longer string, only a last block shorter than 16 bytes stays. That is the last (length + 1) mod 16 bytes of the text.
+- Nothing stays when the length is 31, 47, 63, or any other length where length + 1 is a multiple of 16.
+
 The next `Encrypt` or `Decrypt` overwrites it.
 
 The cause is a stack buffer in the RustCrypto cipher crates that vitaminc's wasm32 backend decrypts through. Nothing wipes that buffer.
