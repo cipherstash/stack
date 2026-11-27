@@ -380,7 +380,7 @@ or a type defined over one (`type Email string`):
 | `encrypt.Decimal` | a decimal: a 96-bit coefficient and a scale up to 28 | `equality` | `Eq` |
 | `encrypt.Date` | a calendar date | `equality` | `Eq` |
 | `time.Time` | a timestamp, to the nanosecond, in UTC | `equality` | `Eq` |
-| `[16]byte`, or a type declared as `[16]byte`, such as `uuid.UUID` | a UUID | `equality` | `Eq` |
+| `[16]byte`, a type declared as `[16]byte`, `uuid.UUID` or `vcvalue.UUID` | a UUID | `equality` | `Eq` |
 
 Each query method needs its index declared. A field of bytes takes no `ore`
 or `ope` index: the engine answers no ordering over bytes, so the term

@@ -49,10 +49,33 @@ func TestUUIDTypes(t *testing.T) {
 	}
 	// A type of another package declared over encrypt.Int128 is refused,
 	// as one of the struct's own package is.
+	refusesAmount(t)
+}
+
+func refusesAmount(t *testing.T) {
+	t.Helper()
 	dir := writeModule(t, map[string]string{"model.go": user(ctx + "\tTotal crm.Amount `stash:\"total,encrypt\"`"), "crm/contact.go": crmPackage, "crm/ids.go": crmIDs})
 	_, err := stashgen.FromTags(context.Background(), enginetest.Static{}, stashgen.Request{Dir: dir, Type: "User"})
 	var fe *stashgen.FieldError
 	if !errors.As(err, &fe) || fe.Field != "Total" || !strings.Contains(err.Error(), "crm.Amount is declared over another type") {
 		t.Fatalf("err = %v, want a refusal of crm.Amount naming Total", err)
 	}
+}
+
+// Under -trimpath the position go/packages records for an imported type
+// names a module path, not a file on disk. The declaration of a type in
+// another package is still read, from that package's source files, so a
+// UUID type there is accepted and one declared over encrypt.Int128 is
+// refused.
+func TestUUIDTypesOfAnotherPackageUnderTrimpath(t *testing.T) {
+	t.Setenv("GOFLAGS", "-trimpath")
+	dir := writeModule(t, map[string]string{"model.go": user(ctx + "\tID crm.Ref `stash:\"id,encrypt,index=equality\"`"), "crm/contact.go": crmPackage, "crm/ids.go": crmIDs})
+	file, err := stashgen.FromTags(context.Background(), enginetest.Static{}, stashgen.Request{Dir: dir, Type: "User"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(file.Content), `EncryptIndex("id", gensupport.UUID, encrypt.Equality)`) {
+		t.Fatalf("crm.Ref is not declared a UUID:\n%s", file.Content)
+	}
+	refusesAmount(t)
 }

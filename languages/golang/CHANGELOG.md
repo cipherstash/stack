@@ -24,8 +24,10 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 - **`stashgen` stores a UUID field.** A sealed field is generated with
   the `uuid` kind when its type is `[16]byte`, a type whose declaration is
   an array of 16 bytes (`type ID [16]byte`, as
-  `github.com/google/uuid.UUID` is), or an alias of either. stashgen reads
-  the type's declaration from source to decide. A type declared over
+  `github.com/google/uuid.UUID` is), `github.com/google/uuid.UUID` or
+  `vcvalue.UUID`, or an alias of any of them. stashgen reads the type's
+  declaration from source to decide, and refuses the field when it cannot
+  read it. A type declared over
   another type is not a UUID, even when it is `[16]byte` underneath: `type
   Balance encrypt.Int128` and `type MyID uuid.UUID` are refused. It takes
   `index=equality`, and the

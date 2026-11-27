@@ -1,6 +1,7 @@
 package stashgen
 
 import (
+	"context"
 	"fmt"
 	"go/ast"
 	"go/types"
@@ -207,10 +208,14 @@ type reader struct {
 	// path writes into a package of the user's own.
 	outPkgName string
 	outPkgPath string
-	// declFiles are source files of other packages the reader has parsed to
-	// read a type's declaration (isUUID), by file name; nil for a file it
-	// could not read.
-	declFiles map[string]*ast.File
+	// ctx and dir are the context and directory the package was loaded
+	// with, for loading the source of an imported package (isUUID).
+	ctx context.Context
+	dir string
+	// declFiles are the parsed source files of imported packages, by import
+	// path, read to find a type's declaration (isUUID); nil for a package
+	// whose source could not be loaded.
+	declFiles map[string][]*ast.File
 }
 
 func (r *reader) qualifier(p *types.Package) string {
@@ -802,9 +807,13 @@ func (r *reader) buildFields(c *collected) error {
 		}
 		if g.Sealed() && !g.GoType.Kind.Scalar() {
 			if sixteen := sixteenBytes(cf.typ); sixteen != nil {
-				// [16]byte underneath, and not a UUID: a type declared
-				// over another type, such as encrypt.Int128.
-				return fieldErr(typeName, cf.goName, "a UUID field is [16]byte, a type whose declaration is an array of 16 bytes (type ID [16]byte), or github.com/google/uuid.UUID; %s is declared over another type, or its declaration could not be read, so it seals only as part of an opaque struct", r.typeExpr(sixteen))
+				// [16]byte underneath, and not a UUID.
+				switch r.uuidVerdict(sixteen) {
+				case declaredOver:
+					return fieldErr(typeName, cf.goName, "%s; %s is declared over another type (as type Balance encrypt.Int128 is), so it is not a UUID, and seals only as part of an opaque struct", uuidTypes, r.typeExpr(sixteen))
+				case unreadDeclaration:
+					return fieldErr(typeName, cf.goName, "%s; stashgen could not read the declaration of %s, so it cannot tell whether it is a UUID. Its package's source files could not be loaded or parsed (a module missing from the module cache, or a vendor directory without it), or the type is not declared at package level", uuidTypes, r.typeExpr(sixteen))
+				}
 			}
 			// The engine seals a composite as a tree of leaves, and a column
 			// holds one leaf; only an opaque struct seals a whole value.
@@ -967,7 +976,7 @@ func classify(t types.Type, typeExpr func(types.Type) string, isUUID func(types.
 			g.Kind, g.Elem = KindSlice, &elem
 		}
 	case *types.Array:
-		if uuidArray(u) && isUUID(t) {
+		if isUUID(t) {
 			g.Kind, g.Basic = KindUUID, "[16]byte"
 			break
 		}

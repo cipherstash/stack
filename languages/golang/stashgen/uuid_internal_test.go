@@ -54,3 +54,23 @@ func TestVcvalueIntegersAreNotUUIDs(t *testing.T) {
 		}
 	}
 }
+
+// A type of a package whose source cannot be loaded has a declaration the
+// generator cannot read, which it reports apart from a type declared over
+// another type. vcvalue.UUID, known by name, needs no source.
+func TestAnUnreadDeclarationIsNotAUUID(t *testing.T) {
+	array := types.NewArray(types.Typ[types.Byte], 16)
+	missing := types.NewPackage("example.com/missing", "missing")
+	id := types.NewNamed(types.NewTypeName(token.NoPos, missing, "ID", nil), array, nil)
+	known := types.NewNamed(types.NewTypeName(token.NoPos, types.NewPackage(vcvaluePath, "vcvalue"), "UUID", nil), array, nil)
+	r := &reader{pkg: &packages.Package{PkgPath: "example.com/app"}, imports: newImportSet(), dir: t.TempDir()}
+	if got := r.uuidVerdict(id); got != unreadDeclaration {
+		t.Errorf("a type of a package with no source: verdict %d, want unreadDeclaration", got)
+	}
+	if got := r.goType(id).Kind; got == KindUUID {
+		t.Error("a type whose declaration could not be read is a UUID")
+	}
+	if got := r.uuidVerdict(known); got != uuidType {
+		t.Errorf("vcvalue.UUID: verdict %d, want uuidType", got)
+	}
+}

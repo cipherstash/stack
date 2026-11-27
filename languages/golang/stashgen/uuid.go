@@ -1,10 +1,13 @@
 package stashgen
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"go/types"
+
+	"golang.org/x/tools/go/packages"
 )
 
 // uuidArray reports whether an array is [16]byte, the underlying type of a
@@ -15,13 +18,40 @@ func uuidArray(a *types.Array) bool {
 }
 
 // knownUUIDs are UUID types the generator knows by name, so a field of one
-// is a UUID even when the source of its package cannot be read.
+// is a UUID without reading its package's source. They are kept apart from
+// valueKind's types: those are types the codec writes by their exact type,
+// which the other checks (a JSON document, a storage blob) treat as one
+// value. A UUID type is written as its bytes and converted by gensupport.
 var knownUUIDs = map[[2]string]bool{
 	{"github.com/google/uuid", "UUID"}: true,
 	{vcvaluePath, "UUID"}:              true,
 }
 
-// isUUID reports whether t, or the type an alias of it stands for, is a
+// uuidTypes names the types a UUID field takes, for the generator's
+// messages.
+const uuidTypes = "a UUID field is [16]byte, a type whose declaration is an array of 16 bytes (type ID [16]byte), github.com/google/uuid.UUID or vcvalue.UUID"
+
+// uuidVerdict is whether a type whose underlying type is [16]byte is a
+// UUID, and why not.
+type uuidVerdict uint8
+
+const (
+	// notUUID is a type that is not [16]byte underneath.
+	notUUID uuidVerdict = iota
+	// uuidType is a UUID.
+	uuidType
+	// declaredOver is a type declared over another named type, such as
+	// type Balance encrypt.Int128.
+	declaredOver
+	// unreadDeclaration is a type whose declaration the generator could
+	// not read.
+	unreadDeclaration
+)
+
+// isUUID reports whether t is a UUID; see [reader.uuidVerdict].
+func (r *reader) isUUID(t types.Type) bool { return r.uuidVerdict(t) == uuidType }
+
+// uuidVerdict decides whether t, or the type an alias of it stands for, is a
 // UUID:
 //
 //   - [16]byte itself;
@@ -37,37 +67,44 @@ var knownUUIDs = map[[2]string]bool{
 // the generator reads the declaration from source. When it cannot read it,
 // the type is not a UUID: the field is refused rather than sealed as the
 // wrong kind.
-func (r *reader) isUUID(t types.Type) bool {
+func (r *reader) uuidVerdict(t types.Type) uuidVerdict {
 	switch t := types.Unalias(t).(type) {
 	case *types.Array:
-		return uuidArray(t)
+		if uuidArray(t) {
+			return uuidType
+		}
 	case *types.Named:
 		u, ok := t.Underlying().(*types.Array)
 		if !ok || !uuidArray(u) {
-			return false
+			return notUUID
 		}
 		obj := t.Origin().Obj()
 		if obj.Pkg() == nil {
-			return false
+			return unreadDeclaration
 		}
 		if knownUUIDs[[2]string{obj.Pkg().Path(), obj.Name()}] {
-			return true
+			return uuidType
 		}
 		spec := r.typeSpec(obj)
-		if spec == nil || spec.Assign.IsValid() {
-			return false
+		if spec == nil {
+			return unreadDeclaration
 		}
-		_, array := ast.Unparen(spec.Type).(*ast.ArrayType)
-		return array
+		if _, array := ast.Unparen(spec.Type).(*ast.ArrayType); array && !spec.Assign.IsValid() {
+			return uuidType
+		}
+		return declaredOver
 	}
-	return false
+	return notUUID
 }
 
 // typeSpec finds the declaration of a package-level type: in the loaded
 // package's syntax for a type of that package, and otherwise in the source
-// file the type's position names, which go/packages records for an imported
-// package too. It returns nil when the file cannot be read or holds no such
-// declaration, such as for a type declared inside a function.
+// files of the type's package, which it loads by import path from the
+// directory the package was loaded from. It does not use the position
+// recorded for an imported type: under -trimpath, or after a //line
+// directive, that names no file on disk. It returns nil when the package's
+// source cannot be loaded or parsed, or holds no package-level declaration
+// of the type.
 func (r *reader) typeSpec(obj *types.TypeName) *ast.TypeSpec {
 	if obj.Pkg().Path() == r.pkg.PkgPath && len(r.pkg.Syntax) > 0 {
 		for _, file := range r.pkg.Syntax {
@@ -77,28 +114,52 @@ func (r *reader) typeSpec(obj *types.TypeName) *ast.TypeSpec {
 		}
 		return nil
 	}
-	if r.pkg.Fset == nil {
-		return nil
-	}
-	pos := r.pkg.Fset.Position(obj.Pos())
-	if !pos.IsValid() || pos.Filename == "" {
-		return nil
-	}
-	file, ok := r.declFiles[pos.Filename]
-	if !ok {
-		parsed, err := parser.ParseFile(token.NewFileSet(), pos.Filename, nil, parser.SkipObjectResolution)
-		if err == nil && parsed.Name.Name == obj.Pkg().Name() {
-			file = parsed
+	for _, file := range r.packageSource(obj.Pkg()) {
+		if spec := findTypeSpec(file, obj.Name()); spec != nil {
+			return spec
 		}
-		if r.declFiles == nil {
-			r.declFiles = map[string]*ast.File{}
-		}
-		r.declFiles[pos.Filename] = file
 	}
-	if file == nil {
+	return nil
+}
+
+// packageSource is the parsed source of an imported package, loaded by its
+// import path once per reader, or nil when it cannot be loaded or a file
+// does not parse.
+func (r *reader) packageSource(pkg *types.Package) []*ast.File {
+	if files, ok := r.declFiles[pkg.Path()]; ok {
+		return files
+	}
+	if r.declFiles == nil {
+		r.declFiles = map[string][]*ast.File{}
+	}
+	files := loadSource(r.ctx, r.dir, pkg)
+	r.declFiles[pkg.Path()] = files
+	return files
+}
+
+// loadSource lists an imported package's Go files with go/packages, from
+// dir, as the package itself was loaded, and parses them.
+func loadSource(ctx context.Context, dir string, pkg *types.Package) []*ast.File {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cfg := &packages.Config{Context: ctx, Dir: dir, Mode: packages.NeedName | packages.NeedFiles}
+	loaded, err := packages.Load(cfg, pkg.Path())
+	if err != nil || len(loaded) != 1 || len(loaded[0].Errors) > 0 || len(loaded[0].GoFiles) == 0 {
 		return nil
 	}
-	return findTypeSpec(file, obj.Name())
+	fset := token.NewFileSet()
+	files := make([]*ast.File, 0, len(loaded[0].GoFiles))
+	for _, name := range loaded[0].GoFiles {
+		file, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
+		if err != nil {
+			return nil
+		}
+		if file.Name.Name == pkg.Name() {
+			files = append(files, file)
+		}
+	}
+	return files
 }
 
 // findTypeSpec is the package-level declaration of the type named in file,

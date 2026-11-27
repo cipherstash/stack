@@ -283,11 +283,11 @@ const (
 	// it back. A field is classified so only where it names such an EQL
 	// type; anywhere else the type keeps its own kind.
 	KindJSONValue
-	// KindUUID is a UUID: [16]byte, or a type whose declaration is an
-	// array of 16 bytes, such as github.com/google/uuid.UUID (see
-	// reader.isUUID). A type declared over another type, such as one over
-	// encrypt.Int128, is not one, nor is an array of another length or of
-	// another element type.
+	// KindUUID is a UUID: [16]byte, a type whose declaration is an array
+	// of 16 bytes (type ID [16]byte), github.com/google/uuid.UUID or
+	// vcvalue.UUID (see reader.uuidVerdict). A type declared over another
+	// type, such as one over encrypt.Int128, is not one, nor is an array of
+	// another length or of another element type.
 	KindUUID
 )
 
