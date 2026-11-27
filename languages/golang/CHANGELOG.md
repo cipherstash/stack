@@ -27,7 +27,9 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   value. A field of a type with `EncryptValue(enc encrypt.Encoder) error`
   is sealed as the one value that method writes, through one of the
   Encoder's methods (`Int64`, `String`, `Date` and the rest, one for each
-  scalar kind).
+  scalar kind). `Encoder.Err` reports the encode's first error. The zero
+  Encoder, which a type's own unit test might pass to `EncryptValue`,
+  keeps nothing and does not panic; its `Err` says so.
 
 ### Breaking
 
@@ -35,9 +37,11 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   own.** They were aliases of vitaminc's Go value types
   (`github.com/cipherstash/vitaminc/bindings/go/vcvalue`). They have the
   same fields and the same methods, except `Date.DaysFromCE` and
-  `Decimal.Normalized`, which are gone. `ParseInt128`, `ParseUint128`,
-  `ParseDecimal` and `ErrNonFiniteDecimal` are unchanged. Only code that
-  names a `vcvalue` or `vcffi` type is affected:
+  `Decimal.Normalized`, which are gone. `ParseInt128`, `ParseUint128` and
+  `ParseDecimal` take the same text and refuse the same text. Their errors,
+  and those of `Validate`, now start "encrypt: ". `ErrNonFiniteDecimal` is
+  a new error value of this package, which `errors.Is` matches as before.
+  Otherwise only code that names a `vcvalue` or `vcffi` type is affected:
   - a `vcvalue.Date`, `Decimal`, `Int128`, `Uint128` or `UUID` is now the
     `encrypt` type of the same name;
   - a type with `EncryptValue(enc vcffi.Encoder) error` now takes an
@@ -45,7 +49,10 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
     (not `UInt8`), and which writes scalars only;
   - `vcffi.FixedWidth` is gone: a nil pointer to an `Encryptable` is
     written as a null, and the engine pads a sealed null to the width of
-    the field's declared type, as it does for every null.
+    the field's declared type, as it does for every null. `Cipher.Seal`
+    refuses one, with `ErrEncoding`, on a field that declares no type,
+    where nothing would pad it and its length would show it is a null.
+    Generated code always declares a type.
 
   The stored format is unchanged: every value has the same ciphertext and
   the same terms as before.
