@@ -691,6 +691,21 @@ jobs:
         run: |
           mise run types:check
 
+      # rustdoc for eql-bindings, warnings as errors, in each feature set a
+      # reader can get: the default (no Stack Encrypt), `targets` (what docs.rs
+      # builds, from `[package.metadata.docs.rs]`), and every feature. A broken
+      # or ambiguous intra-doc link compiles and passes every test; only
+      # rustdoc reports it, and docs.rs would publish the page with the link
+      # missing.
+      - name: Build eql-bindings' rustdoc with warnings as errors
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          set -euo pipefail
+          cargo doc --locked --no-deps -p eql-bindings
+          cargo doc --locked --no-deps -p eql-bindings --features targets
+          cargo doc --locked --no-deps -p eql-bindings --all-features
+
       # Publish gate for eql-bindings (the one crate we ship to crates.io via
       # release-plz). `--dry-run` packages + compiles the crate exactly as
       # crates.io would, catching publish-blockers — missing `license`/metadata,
