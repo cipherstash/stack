@@ -39,6 +39,8 @@ on:
       - packages/stack-kms/**
       - packages/stack-encrypt/**
       - conformance/stack-encrypt/**
+      # internal/frame's tests read the value corpus.
+      - conformance/vitaminc-aead/**
       - packages/stack-encrypt-derive/**
       - packages/stack-encrypt-jsonpath/**
       - packages/stack-guest-abi/**
@@ -87,6 +89,8 @@ on:
       - packages/stack-kms/**
       - packages/stack-encrypt/**
       - conformance/stack-encrypt/**
+      # internal/frame's tests read the value corpus.
+      - conformance/vitaminc-aead/**
       - packages/stack-encrypt-derive/**
       - packages/stack-encrypt-jsonpath/**
       - packages/stack-guest-abi/**
