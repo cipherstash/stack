@@ -22,6 +22,20 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one. `stashgen` does not yet map a Go type to it.
 
+### Fixed
+
+- **The `encrypt` and `stashgen` READMEs say a query through a cipher with
+  a binding is refused** (#1862). The refusal is `ErrEncoding`. Query
+  through a cipher with the same scope and no binding, then open the row
+  through the cipher with the binding. The READMEs did not say that such a
+  query is refused.
+- **The `encrypt` README's note on the context names bindings** (#1862).
+  The context binds each value to its scopes and any bindings too. The
+  note now gives `cipher.Scope(tenant).Bind(rowID)` as a way to tie a
+  value to its row. A cipher with a binding cannot query. The note also
+  keeps the `context_field` way. A `context_field` can query within one
+  context. Before, the note offered only the `context_field`.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

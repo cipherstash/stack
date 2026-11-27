@@ -443,8 +443,10 @@ Put the column on the left of `@@` (`WHERE name @@ $1::eql_v4.query_text_match`)
 `encrypt_into` with any other type is refused with the type's name and the reason it is not produced yet.
 Separate columns work today for four indexes: `equality`, `match`, `ore` and `ope`.
 
-A field with `encrypt_into` is stored under its table and column, which is what an EQL value records in its `i`.
-A cipher with a scope or a binding (`cipher.Scope(tenant).Bind(rowID)`) seals a struct with an `encrypt_into` field as it seals any other. The scope and the binding come after the column in the field's context, and `i` still holds the table and the column alone. Open the value through a cipher with the same scope and binding, and query it through a cipher with the same scope.
+A field with `encrypt_into` is stored under its table and column. An EQL value records them in its `i`.
+A cipher with a scope or a binding (`cipher.Scope(tenant).Bind(rowID)`) seals a struct with an `encrypt_into` field as it seals any other. The scope and the binding come after the column in the field's context, and `i` still contains the table and the column alone.
+
+Open the value through a cipher with the same scope and binding. Query it through a cipher with the same scope and no binding, such as `cipher.Scope(tenant)`. A query through a cipher with a binding is refused with `ErrEncoding`, because a binding is in no query context.
 
 ## When stashgen stops
 
