@@ -26,8 +26,13 @@ each row stores the field at all. Both must have the input row count.
 - SQL-null fields accept both, omit the stored field, and open as explicit null.
 - Sealed-null fields require the key to exist. An explicit null stores both
   ciphertext and equality, then opens as null.
-- Runtime writes require the declared numeric type. A losslessly convertible
-  value of another width is still refused on this path.
+- A write reads each value as the declared type, by the rules a query
+  reads its input by. A number of another width or kind converts when the
+  conversion is exact, and seals, stores its terms and opens as the same
+  number sent at the declared width (`required-other-width`,
+  `sql-other-width`, `sealed-other-width`, `required-integral-float`). A
+  conversion that would lose something is refused (`required-fractional-float`),
+  and text is never read as a number (`late-wrong-type`).
 - Unknown fields are refused, including when an omitted SQL-null field makes
   the input field count match the declaration; they cannot be silently dropped.
 - An invalid later row rejects the whole batch before data-key generation.

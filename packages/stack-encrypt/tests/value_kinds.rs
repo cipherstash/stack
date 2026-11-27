@@ -419,13 +419,8 @@ async fn every_new_kind_seals_opens_and_queries_as_the_typed_path() {
     }
 }
 
-/// A value of another width is not of the field's kind: sealing refuses
-/// it, naming the field, where a query reads it as the field's kind.
-#[tokio::test]
-async fn a_value_of_another_width_is_refused_when_sealed() {
-    let cipher = deterministic_cipher(SEED).await;
-    let plan = data_plan();
-    // The source with the `int8` field's value sent at 32 bits.
+/// The source with the `int8` field's value sent as `i8_as` instead.
+fn source_with_i8_as(i8_as: Raw<'_>) -> vitaminc_protected::Buffer {
     let mut bytes = vitaminc_protected::Buffer::new();
     {
         let kinds = kinds();
@@ -435,19 +430,51 @@ async fn a_value_of_another_width_is_refused_when_sealed() {
         for kind in kinds {
             let entry = map.entry(kind.field).expect("an entry");
             match kind.field {
-                "i8" => int(Int::I32(-8)).visit(entry),
+                "i8" => i8_as.visit(entry),
                 _ => kind.value.visit(entry),
             }
             .expect("written");
         }
         map.end().expect("ended");
     }
+    bytes
+}
+
+/// A value of another width is read as the field's kind when the
+/// conversion is exact: the record seals the terms, and opens to the
+/// value, of the same number at the field's width. One that does not fit
+/// is refused, naming the field.
+#[tokio::test]
+async fn a_value_of_another_width_seals_at_the_declared_width() {
+    let cipher = deterministic_cipher(SEED).await;
+    let plan = data_plan();
     let keyset = cipher.default_keyset();
+    let at_width = json_of_record(seal(&cipher, &plan).await);
+    let bytes = source_with_i8_as(int(Int::I32(-8)));
+    let source = vitaminc_aead::Frame::parse(bytes.risky_ref()).expect("a frame");
+    let converted = json_of_record(
+        record::encrypt(&keyset, source, &plan)
+            .expect("an int32 -8 converts to the int8 -8")
+            .await
+            .expect("seals"),
+    );
+    assert_eq!(
+        terms_of(&converted),
+        terms_of(&at_width),
+        "the terms of the int8 -8"
+    );
+    assert_eq!(
+        open(&cipher, record_of_json(&converted), &plan).await,
+        expected_frames(),
+        "it opens as the int8 -8"
+    );
+
+    let bytes = source_with_i8_as(int(Int::I32(300)));
     let source = vitaminc_aead::Frame::parse(bytes.risky_ref()).expect("a frame");
     let refused = record::encrypt(&keyset, source, &plan);
     assert!(
         matches!(&refused, Err(error) if error.field() == Some("i8") && error.reason() == Some(Reason::FieldType)),
-        "an int32 is not an int8: {:?}",
+        "300 is not an int8: {:?}",
         refused.err()
     );
 }

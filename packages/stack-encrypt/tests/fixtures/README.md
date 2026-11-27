@@ -394,8 +394,9 @@ is read.
   which the engine refuses because each has a shorter tag of its own; a
   UUID, which an untyped field seals in the `0xF3` envelope it arrived in;
   `undefined`, which an untyped field seals as
-  written and a typed field refuses; and an `f64` for a `float32` field,
-  which it refuses. The two millisecond frames are the frames the
+  written and a typed field refuses with the reason `undefined`; and an
+  `f64` for a `float32` field, which the field converts exactly and seals
+  to the same leaf as the `float32` value under `dynamic`. The two millisecond frames are the frames the
   JavaScript bridge writes for `new Date(123)` and `new Date(-1)`;
   `scripts/__tests__/recipher-js-frame-parity.test.mjs` holds them to
   the bridge's pinned frames.

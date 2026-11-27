@@ -54,6 +54,11 @@ pub fn value(input: &Input) -> OwnedFrame {
             assert!(input.text.is_empty());
             frame(Raw(None, Physical::Null))
         }
+        // JavaScript's `undefined`, as its bridge writes it.
+        "undefined" => {
+            assert!(input.text.is_empty());
+            frame(Raw(Some(Logical::Undefined), Physical::Null))
+        }
         other => panic!("unsupported input kind {other}"),
     }
 }

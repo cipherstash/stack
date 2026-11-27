@@ -76,7 +76,7 @@
       "equal_lengths": true
     },
     {
-      "id": "required-wrong-width",
+      "id": "required-other-width",
       "operation": "seal",
       "kind": "int32",
       "null": "",
@@ -85,6 +85,78 @@
           "value": {
             "type": "int64",
             "text": "34"
+          }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "expected_rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "expected_stored": [true, true],
+      "equal_lengths": true
+    },
+    {
+      "id": "required-integral-float",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "",
+      "rows": [
+        {
+          "value": {
+            "type": "float64",
+            "text": "34"
+          }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "expected_rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "expected_stored": [true, true],
+      "equal_lengths": true
+    },
+    {
+      "id": "required-fractional-float",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "",
+      "rows": [
+        {
+          "value": {
+            "type": "float64",
+            "text": "34.5"
           }
         }
       ],
@@ -172,7 +244,7 @@
       "equal_lengths": true
     },
     {
-      "id": "sql-wrong-width",
+      "id": "sql-other-width",
       "operation": "seal",
       "kind": "int32",
       "null": "sql",
@@ -182,13 +254,30 @@
             "type": "int64",
             "text": "34"
           }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
         }
       ],
-      "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
-        "reason": "field_type",
-        "field": "value"
-      }
+      "expected_rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "expected_stored": [true, true],
+      "equal_lengths": true
     },
     {
       "id": "sealed-missing",
@@ -263,7 +352,7 @@
       "equal_lengths": true
     },
     {
-      "id": "sealed-wrong-width",
+      "id": "sealed-other-width",
       "operation": "seal",
       "kind": "int32",
       "null": "sealed",
@@ -273,13 +362,30 @@
             "type": "int64",
             "text": "34"
           }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
         }
       ],
-      "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
-        "reason": "field_type",
-        "field": "value"
-      }
+      "expected_rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "expected_stored": [true, true],
+      "equal_lengths": true
     },
     {
       "id": "sql-mixed-batch",

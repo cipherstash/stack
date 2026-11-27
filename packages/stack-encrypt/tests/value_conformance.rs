@@ -18,7 +18,7 @@ use std::{
     sync::atomic::Ordering,
 };
 
-const KINDS: [&str; 19] = [
+const KINDS: [&str; 20] = [
     "bool",
     "int8",
     "int16",
@@ -38,6 +38,7 @@ const KINDS: [&str; 19] = [
     "string",
     "bytes",
     "null",
+    "undefined",
 ];
 
 /// The host constructions the Go runner knows how to make and the engine
@@ -75,6 +76,10 @@ struct Case {
     /// A value of the kind sealed in a second row: with a sealed null, the
     /// row whose ciphertext length the null's must equal.
     companion: Option<Input>,
+    /// The input as the field's kind, for an input of another kind that
+    /// converts exactly. It is sealed in a second row, whose terms and
+    /// ciphertext length the input's must equal, and both rows open to it.
+    stored: Option<Input>,
     /// Another spelling whose equality query must derive the stored term.
     equal_query: Option<Input>,
     expected_error: Option<ExpectedError>,
@@ -164,6 +169,11 @@ async fn shared_record_value_profile() {
         eprintln!("value conformance: {}", case.id);
         assert!(["", "sql", "sealed"].contains(&case.null.as_str()));
         assert!(KINDS[..18].contains(&case.kind.as_str()), "{}", case.id);
+        if let Some(stored) = &case.stored {
+            assert_eq!(stored.kind, case.kind, "{}: stored as the kind", case.id);
+            assert_ne!(case.input.kind, case.kind, "{}: a conversion", case.id);
+            assert!(case.companion.is_none(), "{}", case.id);
+        }
         assert!(KINDS.contains(&case.input.kind.as_str()), "{}", case.id);
         assert!(!case.outputs.is_empty() && case.outputs[0] == "c");
         let is_null = case.input.kind == "null";
@@ -188,7 +198,9 @@ async fn shared_record_value_profile() {
             }
         }
         if let Some(expected) = &case.expected_error {
-            assert!(case.companion.is_none() && case.equal_query.is_none());
+            assert!(
+                case.companion.is_none() && case.equal_query.is_none() && case.stored.is_none()
+            );
             let error = record::encrypt(&keyset, frame(vec![row(&case.input)]), &plan)
                 .err()
                 .expect("refused before any pending operation");
@@ -197,8 +209,11 @@ async fn shared_record_value_profile() {
             assert_eq!(retrieves.load(Ordering::SeqCst), 0, "{}", case.id);
             continue;
         }
+        // The second row: a sealed null's companion, or what a converted
+        // input is stored as.
+        let second = case.companion.as_ref().or(case.stored.as_ref());
         let mut rows = vec![row(&case.input)];
-        rows.extend(case.companion.iter().map(row));
+        rows.extend(second.map(row));
         let sealed = record::encrypt(&keyset, frame(rows), &plan)
             .unwrap()
             .await
@@ -229,16 +244,25 @@ async fn shared_record_value_profile() {
             if let Some(Some((companion_length, _))) = outputs.get(1) {
                 assert_eq!(
                     null_length, companion_length,
-                    "{}: a sealed null is as long as a value",
+                    "{}: a sealed null, or a converted value, is as long as the value of the kind",
                     case.id
                 );
+            }
+        }
+        if case.stored.is_some() {
+            let terms = |at: usize| outputs[at].as_ref().map(|(_, terms)| terms);
+            if terms(0) != terms(1) {
+                failures.push(format!(
+                    "{}: the converted value's terms are not the stored kind's",
+                    case.id
+                ));
             }
         }
         // Every stored term is the term a query of the value derives.
         let mut queried = Vec::new();
         for (target, output) in [(&case.input, 0usize)]
             .into_iter()
-            .chain(case.companion.iter().map(|c| (c, 1usize)))
+            .chain(second.map(|c| (c, 1usize)))
         {
             let Some((_, terms)) = &outputs[output] else {
                 continue;
@@ -286,8 +310,8 @@ async fn shared_record_value_profile() {
             .unwrap()
             .await
             .unwrap();
-        let mut expected = vec![row(&case.input)];
-        expected.extend(case.companion.iter().map(row));
+        let mut expected = vec![row(case.stored.as_ref().unwrap_or(&case.input))];
+        expected.extend(second.map(row));
         if opened.frame().as_bytes() != frame(expected).frame().as_bytes() {
             failures.push(format!("{}: typed round trip differs", case.id));
         }

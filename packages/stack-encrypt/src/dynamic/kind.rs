@@ -15,19 +15,20 @@
 //! - [`admits`]: which indexes a kind is defined for, so a plan asking for
 //!   match on an integer or equality on a boolean is refused when it is
 //!   built;
-//! - [`read`]: how a query value is read as a field's kind, converting a
-//!   number only when the conversion is exact.
+//! - [`read`]: how a value is read as a field's kind, converting a number
+//!   only when the conversion is exact.
 //!
 //! The engine then uses a declared kind three times:
 //!
 //! - **encrypt** admits only the indexes the kind is defined for (when the
-//!   plan is built), and refuses a value of any other kind (when it runs),
-//!   so the term bytes are the declared kind's and no binding is trusted to
-//!   have tagged the value right;
-//! - **query** is meant to read the query value *as* the field's kind
-//!   ([`read`]): `34` against a `uint64` field is the `u64` term, whatever
-//!   number type the host handed over. The engine does not do this for the
-//!   caller yet; see [`read`];
+//!   plan is built), and reads each value as the kind (when it runs): a
+//!   number of another width or kind is converted when the conversion is
+//!   exact, and anything else is refused. So the sealed bytes and the term
+//!   bytes are the declared kind's, and no binding is trusted to have tagged
+//!   the value right, or has to know the field's type;
+//! - **query** reads the query value *as* the field's kind ([`read`]): `34`
+//!   against a `uint64` field is the `u64` term, whatever number type the
+//!   host handed over, by the same rules as a write;
 //! - **decrypt** refuses an opened value of any other kind, so a host with no
 //!   types of its own can rely on the declaration for what it gets back (an
 //!   integer, not a float; bytes, not a string).
@@ -39,8 +40,8 @@
 use vitaminc_aead::plaintext::{Float, Int, Logical, Physical, Raw, ValueKind};
 use vitaminc_aead::Encrypt;
 
-use super::term::OneScalar;
-use vitaminc_aead::frame::OwnedFrame;
+use super::term::{OneScalar, Refused};
+use vitaminc_aead::frame::{Frame, OwnedFrame};
 
 use super::{Error, Reason};
 use crate::target::IndexSpec;
@@ -117,7 +118,7 @@ pub fn not_admitted(kind: ValueKind, index: &IndexSpec) -> Option<Reason> {
     })
 }
 
-/// Read a query value as `kind`.
+/// Read a value as `kind`: the one conversion a write and a query share.
 ///
 /// A value already of this kind is returned as it is. A number of another
 /// width or kind is converted when the conversion is exact: an integer in
@@ -128,17 +129,32 @@ pub fn not_admitted(kind: ValueKind, index: &IndexSpec) -> Option<Reason> {
 /// the decimal `34`, which equals `34.00`). A NaN is never converted, in
 /// either float direction: it equals nothing, so no conversion of it is
 /// exact. A float is never read as a decimal, since most floats have no
-/// short decimal form, and nothing converts to or from a date or a
-/// timestamp. Nothing else converts: a string is never parsed as a number,
+/// short decimal form, and nothing converts to or from a date, a timestamp
+/// or a UUID. Nothing else converts: a string is never parsed as a number,
 /// and a number never becomes a string.
+///
+/// The value is read as a whole. A scalar is converted to a scalar kind; a
+/// container is never converted, and nothing inside one is: an `array`
+/// or `object` field takes a container, and its elements are kept as they
+/// are, since the field declares no type for them. A `json` field takes
+/// its document's text or bytes as they are.
+///
+/// A converted value is the value the host would have sent at the declared
+/// width, so it seals to the same bytes and derives the same terms.
+///
+/// JavaScript's `undefined` is refused with [`Reason::Undefined`]: a field
+/// that declares a type takes a value or a null, and `undefined` is most
+/// often a property name spelt wrong. Inside a container it is kept, as
+/// any element is.
 ///
 /// The value is any source ([`Encrypt`]): a transport frame a binding was
 /// handed, walked in place. What comes back is the value as the field's kind,
 /// written into an [`OwnedFrame`] in the engine's value model.
 ///
-/// This is for a query: what a host hands over to search with. A value
-/// being sealed is not converted; it must already be of the field's kind,
-/// and is refused otherwise.
+/// A record's write runs this conversion on each typed field's value
+/// ([`record::encrypt`](super::record::encrypt), [`check_source`](super::record::check_source),
+/// [`Planned`](super::Planned)), and a query named by operator runs it on its
+/// input ([`query_term`](super::query_term)).
 ///
 /// **[`term`](super::term()) does not call this.** It takes a value and an
 /// [`IndexSpec`] and never sees the field's declared kind, so a binding
@@ -166,20 +182,35 @@ pub fn not_admitted(kind: ValueKind, index: &IndexSpec) -> Option<Reason> {
 ///
 /// # Errors
 ///
-/// [`Error::Source`] ([`Reason::FieldType`]) if the value cannot be read as
-/// `kind` exactly, or is not in the engine's value model. It names no
-/// field: the caller that knows the field names it ([`Error::in_field`]).
+/// [`Error::Source`] with [`Reason::FieldType`] if the value cannot be read
+/// as `kind` exactly, or is not in the engine's value model, and with
+/// [`Reason::Undefined`] for `undefined`. It names no field: the caller that
+/// knows the field names it ([`Error::in_field`]).
 pub fn read(kind: ValueKind, value: impl Encrypt) -> Result<OwnedFrame, Error> {
-    let refused = || Error::bad_source(Reason::FieldType);
-    let value = OwnedFrame::of(value).map_err(|_| refused())?;
-    if kind.holds(value.frame().kind()) {
-        return Ok(value);
+    let value = OwnedFrame::of(value).map_err(|_| Error::bad_source(Reason::FieldType))?;
+    Ok(convert(kind, value.frame())?.unwrap_or(value))
+}
+
+/// [`read`] over a value already in a frame: `None` when it is of `kind`
+/// already, so a caller that owns it keeps it with no copy, or the value
+/// converted to `kind`.
+///
+/// # Errors
+///
+/// As [`read`].
+pub(super) fn convert(kind: ValueKind, value: Frame<'_>) -> Result<Option<OwnedFrame>, Error> {
+    if kind.holds(value.kind()) {
+        return Ok(None);
     }
-    let number = (&value)
+    let refused = || Error::bad_source(Reason::FieldType);
+    let number = value
         .visit(OneScalar::new(
-            |ty: Option<Logical>, value: Physical<'_>| Number::of(ty, value).ok_or(None),
+            |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
+                (Some(Logical::Undefined), _) => Err(Some(Error::bad_source(Reason::Undefined))),
+                (ty, value) => Number::of(ty, value).ok_or(None),
+            },
         ))
-        .map_err(|_| refused())?;
+        .map_err(|Refused(error)| error.unwrap_or_else(refused))?;
     let int = |int: Int| Raw(None, Physical::Int(int));
     let signed = || number.integer();
     let read = match kind {
@@ -223,7 +254,9 @@ pub fn read(kind: ValueKind, value: impl Encrypt) -> Result<OwnedFrame, Error> {
         }),
         _ => None,
     };
-    OwnedFrame::of(read.ok_or_else(refused)?).map_err(|_| refused())
+    OwnedFrame::of(read.ok_or_else(refused)?)
+        .map(Some)
+        .map_err(|_| refused())
 }
 
 /// 2^127 as an `f64`, exactly: the first float past `i128::MAX`.
@@ -974,6 +1007,33 @@ mod tests {
             read(ValueKind::Float64, Tree::Float32(f32::NAN)),
             Err(Error::Source { .. })
         ));
+    }
+
+    /// `undefined` is refused as every kind, `json` included, with a
+    /// reason of its own, and never read as a null.
+    #[test]
+    fn read_refuses_undefined_with_its_own_reason() {
+        for kind in ValueKind::ALL {
+            let error = read(kind, Tree::Undefined).expect_err("undefined");
+            assert_eq!(error.reason(), Some(Reason::Undefined), "{kind}");
+        }
+        // A null is no `undefined`: it is refused as any other kind is.
+        let error = read(ValueKind::Int32, Tree::Null).expect_err("null");
+        assert_eq!(error.reason(), Some(Reason::FieldType));
+    }
+
+    /// A value already of the kind needs no conversion, and none is made:
+    /// the caller keeps the frame it has.
+    #[test]
+    fn convert_returns_nothing_for_a_value_of_the_kind() {
+        for kind in value_kinds() {
+            let value = sample(kind);
+            assert!(matches!(convert(kind, value.frame()), Ok(None)), "{kind}");
+        }
+        let converted = convert(ValueKind::Int64, int(Int::I32(-4)).frame())
+            .expect("exact")
+            .expect("converted");
+        assert_eq!(converted.frame(), tree(Tree::Int64(-4)).frame());
     }
 
     #[test]
