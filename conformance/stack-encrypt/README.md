@@ -190,7 +190,7 @@ data-key call counts; Go host source validation preserves shared structured diag
 The [declaration grammar](declaration-grammar.md) defines the engine's current
 record-plan syntax, defaults, context rules, kind/index table and null policies.
 `v1/record-declarations-v1.cases.json` contains cases, including malformed frames and all
-21 kinds against five scalar indexes. The resolver is explicitly `none`; EQL
+22 kinds against five scalar indexes. The resolver is explicitly `none`; EQL
 targets need their own profile.
 
 The runners are `packages/stack-encrypt/tests/declarations.rs` and

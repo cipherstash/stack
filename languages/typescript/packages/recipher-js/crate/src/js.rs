@@ -37,7 +37,8 @@ use crate::error::{Error, RecipherErrorFields};
 ///
 /// Returns one of these errors:
 ///
-/// - `recipher_js::value` for a value outside the engine's value model;
+/// - `recipher_js::value` when the bridge's bytes are not one well-formed
+///   frame the engine reads (`FromFrameError::Frame`);
 /// - `recipher_js::threw` when reading the value threw;
 /// - the bridge's code, for a value the bridge refused.
 pub fn read(env: &Env, value: Unknown<'_>) -> Result<ValueFrame, RecipherErrorFields> {

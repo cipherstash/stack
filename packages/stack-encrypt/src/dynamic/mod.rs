@@ -116,10 +116,7 @@ mod value_frame;
 pub use crate::json::JsonPlaintext;
 pub use context::{borrowed, context};
 pub use json::{json_frame, read_json, JsonValueError};
-/// The value kinds, the type a plan field declares in its `"type"` key. A
-/// kind's names are frozen wire format; see [`admits`] and [`read`] for what
-/// a kind means to this engine.
-pub use kind::{admits, not_admitted, read, ParseValueKindError, ValueKind};
+pub use kind::{admits, not_admitted, read};
 pub use planned::{DynamicQuery, FieldHandle, Planned, QueryPlan};
 pub use query::{
     check_json_open, check_query, field_operators, json_open, query_term, target_limit, verify,
@@ -129,6 +126,10 @@ pub use record::{FieldPlan, NullMode, Output, Plan};
 pub use target::{NoTargets, TargetDescriptor, TargetError, TargetOptions, TargetResolver};
 pub use term::{term, TermBytes};
 pub use value_frame::{Children, FromFrameError, Modeled, Opening, ValueFrame};
+/// The value kinds, the type a plan field declares in its `"type"` key:
+/// vitaminc's. A kind's names are frozen wire format; see [`admits`] and
+/// [`read`] for what a kind means to this engine.
+pub use vitaminc_aead::plaintext::{ParseValueKindError, ValueKind};
 
 /// vitaminc's value model, the sinks and scalar types a value describes
 /// itself through. A binding implements [`Encrypt`](crate::Encrypt) for its

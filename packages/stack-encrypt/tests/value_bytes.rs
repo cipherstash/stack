@@ -13,8 +13,8 @@
 //! What the file holds is today's behaviour, including rules a reader may
 //! expect to change: a host's typed null reads as a plain null, a timestamp
 //! in another unit keeps its unit in the frame and is sealed in
-//! nanoseconds, a UUID is refused by the dynamic path, and opaque JSON is a text leaf on the typed path and a
-//! bytes frame when it opens. A change to any of these is a change to a
+//! nanoseconds, and opaque JSON is a text leaf on the typed path and a bytes
+//! frame when it opens. A change to any of these is a change to a
 //! pinned value, and shows in the fixture's diff.
 //!
 //! Regenerate with `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p

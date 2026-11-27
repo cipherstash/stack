@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 use vitaminc_aead::frame::{Frame, FrameError, FrameMap, FrameSeq, FrameWriteError, FrameWriter};
 use vitaminc_aead::plaintext::{
-    Error as _, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
+    Error as _, FixedType, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
 };
 use vitaminc_aead::{DecodeError, Decrypt, Encrypt, EncryptRef};
 use vitaminc_protected::{
@@ -49,11 +49,11 @@ use crate::{Label, LabelError};
 /// transport frame: the plaintext of a record field, an opened value, a
 /// query's input.
 ///
-/// The bytes are exactly one well-formed frame with no repeated map key and
-/// no scalar outside the model, held in a [`Protected`] buffer that is
-/// wiped when it drops. A `ValueFrame` is a source ([`Encrypt`]) that walks
-/// its own bytes in place, and a decrypt target ([`Decrypt`]) that writes
-/// what it opens straight into a frame, so a dynamic plaintext passes from
+/// The bytes are exactly one well-formed frame with no repeated map key,
+/// held in a [`Protected`] buffer that is wiped when it drops. A
+/// `ValueFrame` is a source ([`Encrypt`]) that walks its own bytes in place,
+/// and a decrypt target ([`Decrypt`]) that writes what it opens straight
+/// into a frame, so a dynamic plaintext passes from
 /// a host to the sealing sink, and from an opened leaf back to the host,
 /// with no value tree in between.
 ///
@@ -65,29 +65,34 @@ use crate::{Label, LabelError};
 ///
 /// # The value model
 ///
-/// A frame can carry any of vitaminc's scalars. The engine admits a subset,
-/// the *value model*: null, `undefined`, booleans, integers of every width
-/// (`i8` to `u128`, each kept at its own width), both floats, text, bytes,
-/// and three logical types: a date, a decimal (its scale kept), and a
-/// timestamp in any unit (its unit kept; a timestamp is sealed in
-/// nanoseconds, the unit vitaminc's `TIMESTAMP` leaf carries); and
-/// sequences, maps and passthroughs of them. A uuid, and a logical type this build does not
-/// know, are refused, as is a date, decimal or timestamp outside vitaminc's
-/// range. Every [`ValueFrame`] is in the model: it is written through the
-/// sink adapter that holds these rules, so a frame from a host and a frame
-/// opened from a ciphertext are read the same way.
+/// A frame holds any of vitaminc's scalars, the *value model*: null,
+/// `undefined`, booleans, integers of every width (`i8` to `u128`, each kept
+/// at its own width), both floats, text, bytes, and a scalar under a logical
+/// type that admits it ([`Logical::admits`]): a date, a decimal (its scale
+/// kept), a timestamp in any unit (its unit kept; a timestamp is sealed in
+/// nanoseconds, the unit vitaminc's `TIMESTAMP` leaf carries), a UUID; and
+/// sequences, maps and passthroughs of them. A date, decimal or timestamp
+/// outside vitaminc's range is refused, and so is a UUID that is not sixteen
+/// bytes.
+///
+/// A logical type this build does not know is carried as it is: a frame
+/// holds it, a passthrough or an untyped sealed field stores it, and it
+/// opens to the bytes it was written as. It has no [`ValueKind`], so no
+/// typed field holds it and no index takes it.
+///
+/// Which values a field takes is the field's declared [`ValueKind`] and its
+/// indexes' rule, checked where the record is planned and split, not here.
 #[derive(OpaqueDebug)]
 pub struct ValueFrame(Equatable<Protected<Vec<u8>>>);
 
 /// Why [`ValueFrame::from_bytes`] or [`ValueFrame::check`] refused its bytes.
 #[derive(Debug, thiserror::Error)]
 pub enum FromFrameError {
-    /// The bytes are not exactly one well-formed frame.
+    /// The bytes are not exactly one well-formed frame: a malformed
+    /// encoding, trailing bytes, nesting too deep, a repeated map key, or a
+    /// scalar its logical type does not admit, inside a passthrough too.
     #[error(transparent)]
     Frame(FrameError),
-    /// The frame holds a value outside the value model.
-    #[error(transparent)]
-    Value(DecodeError),
 }
 
 impl ValueFrame {
@@ -95,9 +100,9 @@ impl ValueFrame {
     ///
     /// # Errors
     ///
-    /// - [`DecodeError::Expected`] for a scalar outside the model. That is a
-    ///   uuid, a logical type this build does not know, or a date, decimal, or
-    ///   timestamp outside vitaminc's range.
+    /// - [`DecodeError::Expected`] for a scalar its logical type does not
+    ///   admit: a date, decimal or timestamp outside vitaminc's range, or a
+    ///   UUID that is not sixteen bytes.
     /// - [`DecodeError::DuplicateKey`] for a map inside a passthrough that
     ///   repeats a key.
     /// - [`DecodeError::Source`] for a source that fails, or for a value
@@ -127,10 +132,10 @@ impl ValueFrame {
     ///
     /// # Errors
     ///
-    /// [`FromFrameError::Frame`] when the
-    /// bytes are not exactly one frame, and
-    /// [`FromFrameError::Value`] as
-    /// [`of`](Self::of) refuses a value.
+    /// [`FromFrameError::Frame`] when the bytes are not exactly one
+    /// well-formed frame. The frame parse refuses everything the value model
+    /// refuses, a scalar its logical type does not admit and a repeated key
+    /// among them, so a frame that parses is always in the model.
     pub fn from_bytes(
         bytes: vitaminc_protected::ProtectedRef<'_, [u8]>,
     ) -> Result<Self, FromFrameError> {
@@ -141,7 +146,11 @@ impl ValueFrame {
     /// a passthrough field's frame, which is not secret by contract.
     pub(super) fn from_clear(bytes: &[u8]) -> Result<Self, FromFrameError> {
         let frame = Frame::parse(bytes).map_err(FromFrameError::Frame)?;
-        Self::of(frame).map_err(FromFrameError::Value)
+        // The parse refused every value the writer refuses: an inadmissible
+        // scalar, a repeated key, nesting past the depth bound. A refusal
+        // here would be a frame the parse and the writer disagree on, so it
+        // is the parse's error.
+        Self::of(frame).map_err(|_| FromFrameError::Frame(FrameError))
     }
 
     /// Check frame bytes a host handed over as [`from_bytes`](Self::from_bytes)
@@ -151,19 +160,17 @@ impl ValueFrame {
     /// split copies each field into its own frame, so a whole-source copy
     /// first would be one copy of the plaintext too many.
     ///
-    /// The frame parse refuses a malformed frame and a repeated key; the
-    /// walk that follows writes nothing and refuses what the value model does
-    /// not hold, inside a passthrough subtree too.
+    /// The frame parse refuses a malformed frame, a repeated key, and a
+    /// scalar its logical type does not admit, inside a passthrough subtree
+    /// too.
     ///
     /// # Errors
     ///
-    /// As [`from_bytes`](Self::from_bytes).
+    /// [`FromFrameError::Frame`] when the bytes are not exactly one frame.
     pub fn check(
         bytes: vitaminc_protected::ProtectedRef<'_, [u8]>,
     ) -> Result<Frame<'_>, FromFrameError> {
-        let frame = Frame::parse(bytes.risky_ref()).map_err(FromFrameError::Frame)?;
-        frame.visit(Check).map_err(FromFrameError::Value)?;
-        Ok(frame)
+        Frame::parse(bytes.risky_ref()).map_err(FromFrameError::Frame)
     }
 
     /// A frame this module's writers wrote from frames already in the value
@@ -187,9 +194,8 @@ impl ValueFrame {
 
     /// A typed null of `ty`, as a frame: the leaf alone. Walked into the
     /// encrypting sink it seals as a typed null, as long as a value of `ty`
-    /// (vitaminc 0.8); any other sink sees a null. The value model holds a
-    /// typed null of its own types only ([`model_null`]), so `ty` is one of
-    /// those a [`ValueKind`] names.
+    /// (vitaminc 0.8); any other sink sees a null. `ty` is the fixed type of
+    /// the [`ValueKind`] a field declares ([`ValueKind::sealed_null`]).
     pub(super) fn typed_null(ty: FixedType) -> Self {
         let mut leaf = Equatable::new(Vec::new());
         vitaminc_aead::leaf::write_typed_null(ty, leaf.risky_inner_mut());
@@ -252,70 +258,6 @@ impl ValueFrame {
     }
 }
 
-/// The value model's check with nothing written: [`ValueFrame::check`]'s
-/// walk. A repeated key needs no check here, because the frame parse
-/// refuses one.
-struct Check;
-
-impl Sink for Check {
-    type Ok = ();
-    type Error = DecodeError;
-    type Seq = Check;
-    type Map = Check;
-
-    fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<(), DecodeError> {
-        model(ty, value)
-            .map(drop)
-            .ok_or(DecodeError::Expected(EXPECTED))
-    }
-
-    fn typed_null(self, ty: FixedType) -> Result<(), DecodeError> {
-        model_null(ty)
-            .map(drop)
-            .ok_or(DecodeError::Expected(EXPECTED))
-    }
-
-    fn seq(self, _: Option<usize>) -> Result<Check, DecodeError> {
-        Ok(Check)
-    }
-
-    fn map(self, _: Option<usize>) -> Result<Check, DecodeError> {
-        Ok(Check)
-    }
-
-    fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<(), DecodeError> {
-        value.visit_ref(Check)
-    }
-}
-
-impl SeqSink for Check {
-    type Ok = ();
-    type Error = DecodeError;
-    type Element<'s> = Check;
-
-    fn element(&mut self) -> Result<Check, DecodeError> {
-        Ok(Check)
-    }
-
-    fn end(self) -> Result<(), DecodeError> {
-        Ok(())
-    }
-}
-
-impl MapSink for Check {
-    type Ok = ();
-    type Error = DecodeError;
-    type Entry<'s> = Check;
-
-    fn entry(&mut self, _: &str) -> Result<Check, DecodeError> {
-        Ok(Check)
-    }
-
-    fn end(self) -> Result<(), DecodeError> {
-        Ok(())
-    }
-}
-
 /// Write one value into a fresh protected buffer.
 fn write(
     f: impl FnOnce(FrameWriter<'_>) -> Result<(), DecodeError>,
@@ -355,9 +297,8 @@ impl Encrypt for ValueFrame {
 }
 
 /// What a frame is opened into: the opened value written straight into a
-/// frame, through the value model. A container's children are each written
-/// into a frame of their own as they are opened, and joined into one frame
-/// when the container ends.
+/// frame. A container's children are each written into a frame of their own
+/// as they are opened, and joined into one frame when the container ends.
 impl Decrypt for ValueFrame {
     type Sink = Opening;
     fn sink() -> Opening {
@@ -420,43 +361,15 @@ impl IntoLabel for ValueFrame {
 // The value model, as a sink adapter
 // =============================================================================
 
-/// What [`Modeled`] refuses a scalar with.
-const EXPECTED: &str =
-    "a null, bool, integer, float, string, bytes, date, timestamp or decimal in range";
-
-/// A scalar in the value model, as it is, or `None` for one outside the
-/// model. A timestamp is in the model in every unit and keeps its unit: it
-/// is sealed in nanoseconds when it is sealed, and a passthrough stores it
-/// as the host wrote it.
-fn model(ty: Option<Logical>, value: Physical<'_>) -> Option<(Option<Logical>, Physical<'_>)> {
-    match ty {
-        None => Some((None, value)),
-        Some(
-            logical @ (Logical::Undefined
-            | Logical::Date
-            | Logical::Timestamp(_)
-            | Logical::Decimal { .. }),
-        ) if logical.admits(&value) => Some((ty, value)),
-        _ => None,
-    }
-}
-
-/// A typed null in the value model, as it is, or `None` for a type outside
-/// the model (a uuid, or a logical type this crate does not know). A
-/// timestamp's keeps its unit, as [`model`] keeps the timestamp's.
-fn model_null(ty: FixedType) -> Option<FixedType> {
-    match ty.logical() {
-        None | Some(Logical::Date | Logical::Timestamp(_) | Logical::Decimal { .. }) => Some(ty),
-        _ => None,
-    }
-}
+/// What [`Modeled`] refuses a scalar its logical type does not admit with.
+const EXPECTED: &str = "a scalar its logical type admits";
 
 /// A frame writer that holds the [value model](ValueFrame#the-value-model):
-/// each scalar is read through the model before it is written, and every
-/// error is a [`DecodeError`], the error a [`Decrypt`] target reports. A
-/// writer for one field of a record names the field in every error it
-/// reports, so a value refused while a source is split is refused naming its
-/// field.
+/// the frame writer refuses a scalar its logical type does not admit, and
+/// every error is a [`DecodeError`], the error a [`Decrypt`] target
+/// reports. A writer for one field of a record names the field in every
+/// error it reports, so a value refused while a source is split is refused
+/// naming its field.
 pub struct Modeled<S> {
     inner: S,
     field: Option<Arc<str>>,
@@ -522,10 +435,11 @@ pub(super) fn is_unnamed_repeated_key(error: &DecodeError) -> bool {
 /// Converts a frame writer's refusal into a decode error.
 ///
 /// Inside a passthrough subtree, [`ModelOnly`] can only return the writer's
-/// error type. So a value outside the model, or a repeated key, arrives
-/// wrapped as the writer's source error. This function unwraps it, and the
-/// caller gets the same `Expected` or `DuplicateKey` error a sealed value
-/// gives.
+/// error type. So a repeated key arrives wrapped as the writer's source
+/// error. This function unwraps it, and the caller gets the same
+/// `DuplicateKey` error a sealed value gives. A scalar its logical type does
+/// not admit is the writer's [`FrameWriteError::Invalid`], which becomes
+/// `Expected`.
 ///
 /// Outside a passthrough, the writer finds a repeated key when the map ends,
 /// by comparing it with the keys already in the frame. The writer then
@@ -553,9 +467,6 @@ impl<'o> Sink for Modeled<FrameWriter<'o>> {
     type Map = Modeled<FrameMap<'o>>;
 
     fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<(), DecodeError> {
-        let Some((ty, value)) = model(ty, value) else {
-            return Err(self.fault(DecodeError::Expected(EXPECTED)));
-        };
         let Self { inner, field } = self;
         inner
             .scalar(ty, value)
@@ -563,9 +474,6 @@ impl<'o> Sink for Modeled<FrameWriter<'o>> {
     }
 
     fn typed_null(self, ty: FixedType) -> Result<(), DecodeError> {
-        let Some(ty) = model_null(ty) else {
-            return Err(self.fault(DecodeError::Expected(EXPECTED)));
-        };
         let Self { inner, field } = self;
         inner
             .typed_null(ty)
@@ -652,8 +560,8 @@ impl MapSink for Modeled<FrameMap<'_>> {
     }
 }
 
-/// A passthrough subtree, walked through the value model too: what it
-/// carries is held to the same rules as what is sealed beside it.
+/// A passthrough subtree, walked through [`ModelOnly`]: what it carries is
+/// held to the same rules as what is sealed beside it.
 struct ModeledSource<'a, P: ?Sized>(&'a P);
 
 impl<P: ?Sized + EncryptRef> Encrypt for &ModeledSource<'_, P> {
@@ -662,10 +570,9 @@ impl<P: ?Sized + EncryptRef> Encrypt for &ModeledSource<'_, P> {
     }
 }
 
-/// [`model`] in front of any sink, keeping that sink's error: the
-/// passthrough half of [`Modeled`], whose inner writer reports frame errors.
-/// A map refuses a repeated key itself, naming it, before the writer can
-/// refuse it as a bare frame error.
+/// The passthrough half of [`Modeled`], in front of any sink, keeping that
+/// sink's error. A map refuses a repeated key itself, naming it, before the
+/// writer can refuse it as a bare frame error.
 struct ModelOnly<S>(S);
 
 /// A map under [`ModelOnly`], with the keys it has been given. A
@@ -682,21 +589,11 @@ impl<S: Sink> Sink for ModelOnly<S> {
     type Map = ModelOnlyMap<S::Map>;
 
     fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<S::Ok, S::Error> {
-        match model(ty, value) {
-            Some((ty, value)) => self.0.scalar(ty, value),
-            None => Err(S::Error::source(SourceError::new(DecodeError::Expected(
-                EXPECTED,
-            )))),
-        }
+        self.0.scalar(ty, value)
     }
 
     fn typed_null(self, ty: FixedType) -> Result<S::Ok, S::Error> {
-        match model_null(ty) {
-            Some(ty) => self.0.typed_null(ty),
-            None => Err(S::Error::source(SourceError::new(DecodeError::Expected(
-                EXPECTED,
-            )))),
-        }
+        self.0.typed_null(ty)
     }
 
     fn seq(self, len: Option<usize>) -> Result<Self::Seq, S::Error> {
@@ -781,13 +678,11 @@ impl Sink for Split {
     type Seq = Children<Parts>;
     type Map = Skip<Parts>;
 
-    fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<Parts, DecodeError> {
-        let _ = model(ty, value).ok_or(DecodeError::Expected(EXPECTED))?;
+    fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<Parts, DecodeError> {
         Ok(Parts::Scalar)
     }
 
-    fn typed_null(self, ty: FixedType) -> Result<Parts, DecodeError> {
-        let _ = model_null(ty).ok_or(DecodeError::Expected(EXPECTED))?;
+    fn typed_null(self, _: FixedType) -> Result<Parts, DecodeError> {
         Ok(Parts::Scalar)
     }
 
@@ -896,7 +791,7 @@ impl<T> MapSink for Children<T> {
 // =============================================================================
 
 /// The [`Decrypt`] sink of a [`ValueFrame`]: writes the opened value into a
-/// frame through the value model. A scalar or a passthrough is written
+/// frame. A scalar or a passthrough is written
 /// directly; a container's children are written into frames of their own as
 /// they are opened (the sink owns no buffer for a child writer to borrow
 /// until the container exists), and the container is written around them
@@ -1070,7 +965,7 @@ impl Sink for KindOf {
     type Map = Skip<Option<ValueKind>>;
 
     fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<Self::Ok, DecodeError> {
-        Ok(scalar_kind(ty, &value))
+        Ok(ValueKind::of(ty, &value))
     }
 
     /// A typed null is a null, which has no kind.
@@ -1091,35 +986,6 @@ impl Sink for KindOf {
     }
 }
 
-/// The kind of one scalar in the value model, or `None` for a null, an
-/// `undefined`, or a scalar outside the model.
-pub(super) fn scalar_kind(ty: Option<Logical>, value: &Physical<'_>) -> Option<ValueKind> {
-    let (ty, value) = model(ty, *value)?;
-    Some(match (ty, value) {
-        (Some(Logical::Date), _) => ValueKind::Date,
-        (Some(Logical::Timestamp(_)), _) => ValueKind::Timestamp,
-        (Some(Logical::Decimal { .. }), _) => ValueKind::Decimal,
-        (Some(_), _) | (None, Physical::Null) => return None,
-        (None, Physical::Bool(_)) => ValueKind::Bool,
-        (None, Physical::Int(int)) => match int {
-            Int::I8(_) => ValueKind::Int8,
-            Int::I16(_) => ValueKind::Int16,
-            Int::I32(_) => ValueKind::Int32,
-            Int::I64(_) => ValueKind::Int64,
-            Int::I128(_) => ValueKind::Int128,
-            Int::U8(_) => ValueKind::UInt8,
-            Int::U16(_) => ValueKind::UInt16,
-            Int::U32(_) => ValueKind::UInt32,
-            Int::U64(_) => ValueKind::UInt64,
-            Int::U128(_) => ValueKind::UInt128,
-        },
-        (None, Physical::Float(Float::F32(_))) => ValueKind::Float32,
-        (None, Physical::Float(Float::F64(_))) => ValueKind::Float64,
-        (None, Physical::Text(_)) => ValueKind::String,
-        (None, Physical::Bytes(_)) => ValueKind::Bytes,
-    })
-}
-
 // =============================================================================
 // A record source, split into its rows and each row's fields
 // =============================================================================
@@ -1138,9 +1004,9 @@ pub(super) enum SourceRows {
 }
 
 /// Walk a record source once, writing each field's value into a frame of its
-/// own through the value model. The source is a map (one row) or a sequence
-/// of maps (a batch); anything else, at the top or as a batch element, is a
-/// row that is not a map. A value the model refuses fails the walk with a
+/// own. The source is a map (one row) or a sequence of maps (a batch);
+/// anything else, at the top or as a batch element, is a row that is not a
+/// map. A value the frame writer refuses fails the walk with a
 /// [`FieldFault`] naming its field.
 pub(super) fn split_rows<P: Encrypt>(source: P) -> Result<SourceRows, DecodeError> {
     source.visit(RowsSink)
@@ -1328,7 +1194,7 @@ impl<O: PutRow> MapSink for RowMap<O> {
 mod tests {
     use super::*;
     use crate::dynamic::test_frame::Tree;
-    use vitaminc_aead::plaintext::{TimeUnit, Width};
+    use vitaminc_aead::plaintext::{Int, TimeUnit, Width};
 
     mod equality {
         use super::*;
@@ -1419,9 +1285,9 @@ mod tests {
         FixedType::new(ty, width).expect("a fixed-width type")
     }
 
-    /// A typed null of each kind of type the value model holds: a plain
-    /// int and float, and the three logical types, a timestamp of another
-    /// unit than the model's among them.
+    /// A typed null of each kind of fixed type: a plain int and float, the
+    /// logical types (a timestamp of another unit than the sealed one among
+    /// them), and a logical type this build does not know.
     fn typed_nulls_in_the_model() -> Vec<FixedType> {
         vec![
             fixed(None, Width::I64),
@@ -1430,12 +1296,12 @@ mod tests {
             fixed(Some(Logical::Decimal { scale: 2 }), Width::I128),
             fixed(Some(Logical::Timestamp(TimeUnit::Micros)), Width::I64),
             fixed(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128),
+            fixed(Some(Logical::Uuid), Width::Bytes16),
+            fixed(
+                Some(Logical::from_wire(200, 0).expect("an unknown logical type")),
+                Width::I32,
+            ),
         ]
-    }
-
-    /// A uuid has a typed null, and no place in the value model.
-    fn uuid_null() -> FixedType {
-        fixed(Some(Logical::Uuid), Width::Bytes16)
     }
 
     /// The frame a host sends for a typed null: the leaf alone.
@@ -1472,36 +1338,6 @@ mod tests {
         }
     }
 
-    /// A typed null of a type outside the model is refused wherever a
-    /// value of that type is.
-    #[test]
-    fn a_typed_null_outside_the_model_is_refused() {
-        let uuid = uuid_null();
-        assert!(matches!(
-            ValueFrame::of(TypedNull(uuid)),
-            Err(DecodeError::Expected(EXPECTED))
-        ));
-        let bytes = typed_null_frame(uuid);
-        for refused in [
-            ValueFrame::check(Protected::new(bytes.to_vec()).as_protected_ref().as_deref())
-                .map(drop),
-            ValueFrame::from_bytes(Protected::new(bytes.to_vec()).as_protected_ref().as_deref())
-                .map(drop),
-        ] {
-            assert!(
-                matches!(
-                    refused,
-                    Err(FromFrameError::Value(DecodeError::Expected(EXPECTED)))
-                ),
-                "{refused:?}"
-            );
-        }
-        assert!(matches!(
-            TypedNull(uuid).visit(Opening),
-            Err(DecodeError::Expected(EXPECTED))
-        ));
-    }
-
     /// A host's frame of a typed null inside a passthrough.
     fn hidden_typed_null_frame(ty: FixedType) -> Vec<u8> {
         let mut out = vec![vitaminc_aead::frame::PASSTHROUGH];
@@ -1509,11 +1345,10 @@ mod tests {
         out
     }
 
-    /// A passthrough holds a typed null to the same rules: one in the model
-    /// is a null, written or read from a host's bytes, and a uuid's is
-    /// refused.
+    /// A passthrough holds a typed null to the same rules: it is a null,
+    /// written or read from a host's bytes.
     #[test]
-    fn a_typed_null_in_a_passthrough_is_held_to_the_model() {
+    fn a_typed_null_in_a_passthrough_is_a_null() {
         let null = frame_of(&Tree::Passthrough(Box::new(Tree::Null)));
         for ty in typed_nulls_in_the_model() {
             let written = ValueFrame::of(Hidden(TypedNull(ty))).expect("in the model");
@@ -1529,25 +1364,6 @@ mod tests {
             )
             .expect("reads");
             assert_eq!(read.risky_ref(), null.risky_ref(), "{ty:?} read");
-        }
-        assert!(matches!(
-            ValueFrame::of(Hidden(TypedNull(uuid_null()))),
-            Err(DecodeError::Expected(EXPECTED))
-        ));
-        let bytes = hidden_typed_null_frame(uuid_null());
-        for refused in [
-            ValueFrame::check(Protected::new(bytes.to_vec()).as_protected_ref().as_deref())
-                .map(drop),
-            ValueFrame::from_bytes(Protected::new(bytes.to_vec()).as_protected_ref().as_deref())
-                .map(drop),
-        ] {
-            assert!(
-                matches!(
-                    refused,
-                    Err(FromFrameError::Value(DecodeError::Expected(EXPECTED)))
-                ),
-                "{refused:?}"
-            );
         }
     }
 
@@ -1669,49 +1485,64 @@ mod tests {
         }
     }
 
-    /// A scalar outside the model is refused wherever it is, a passthrough
-    /// included, and so is a repeated key.
-    /// `check` refuses exactly what `from_bytes` refuses, and hands back the
-    /// bytes it was given.
+    /// A host's frame of a UUID over `len` bytes: the `0xF3` envelope.
+    fn uuid_envelope(len: u8) -> Vec<u8> {
+        let mut out = vec![
+            vitaminc_aead::tags::LOGICAL,
+            5,
+            0,
+            vitaminc_aead::tags::BYTES,
+        ];
+        out.extend_from_slice(&u32::from(len).to_le_bytes());
+        out.extend(std::iter::repeat_n(7, usize::from(len)));
+        out
+    }
+
+    /// `check` takes exactly what `from_bytes` takes, and hands back the
+    /// bytes it was given. A UUID and a logical type this build does not
+    /// know are taken, at the top or inside a passthrough; a scalar its
+    /// logical type does not admit is not a frame.
     #[test]
-    fn check_refuses_what_from_bytes_refuses_without_a_copy() {
+    fn check_takes_what_from_bytes_takes_without_a_copy() {
         let good = every_variant();
         let bytes = ValueFrame::of(&good).expect("frames");
         let checked = ValueFrame::check(bytes.as_protected_ref()).expect("checks");
         assert_eq!(checked.as_bytes().as_ptr(), bytes.risky_ref().as_ptr());
         assert_eq!(checked.as_bytes(), bytes.risky_ref());
-        let hidden = vitaminc_aead::to_frame(Hidden(vitaminc_aead::plaintext::Raw(
-            Some(Logical::Uuid),
-            Physical::Bytes(&[7; 16]),
-        )))
-        .expect("frames");
-        let uuid = vitaminc_aead::to_frame(vitaminc_aead::plaintext::Raw(
-            Some(Logical::Uuid),
-            Physical::Bytes(&[7; 16]),
-        ))
-        .expect("frames");
-        for refused in [hidden.risky_ref(), uuid.risky_ref()] {
+        let uuid = vitaminc_aead::plaintext::Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 16]));
+        let unknown = vitaminc_aead::plaintext::Raw(
+            Some(Logical::from_wire(200, 0).expect("an unknown logical type")),
+            Physical::Int(Int::I32(1)),
+        );
+        let taken = [
+            vitaminc_aead::to_frame(uuid).expect("frames"),
+            vitaminc_aead::to_frame(Hidden(uuid)).expect("frames"),
+            vitaminc_aead::to_frame(unknown).expect("frames"),
+            vitaminc_aead::to_frame(Hidden(unknown)).expect("frames"),
+        ];
+        for host in &taken {
+            let checked = ValueFrame::check(host.as_protected_ref()).expect("checks");
+            assert_eq!(checked.as_bytes(), host.risky_ref().as_slice());
+            let read = ValueFrame::from_bytes(host.as_protected_ref()).expect("reads");
+            assert_eq!(read.risky_ref(), host.risky_ref(), "kept as written");
+        }
+        assert_eq!(uuid_envelope(16), taken[0].risky_ref().as_slice());
+        let mut hidden_short = vec![vitaminc_aead::frame::PASSTHROUGH];
+        hidden_short.extend(uuid_envelope(15));
+        for refused in [uuid_envelope(15), hidden_short, Vec::new()] {
             assert!(matches!(
                 ValueFrame::check(
-                    Protected::new(refused.to_vec())
+                    Protected::new(refused.clone())
                         .as_protected_ref()
                         .as_deref()
                 ),
-                Err(super::FromFrameError::Value(DecodeError::Expected(_)))
+                Err(super::FromFrameError::Frame(_))
             ));
             assert!(matches!(
-                ValueFrame::from_bytes(
-                    Protected::new(refused.to_vec())
-                        .as_protected_ref()
-                        .as_deref()
-                ),
-                Err(super::FromFrameError::Value(DecodeError::Expected(_)))
+                ValueFrame::from_bytes(Protected::new(refused).as_protected_ref().as_deref()),
+                Err(super::FromFrameError::Frame(_))
             ));
         }
-        assert!(matches!(
-            ValueFrame::check(Protected::new(Vec::new()).as_protected_ref().as_deref()),
-            Err(super::FromFrameError::Frame(_))
-        ));
     }
 
     /// A value that travels as a passthrough subtree.
@@ -1723,15 +1554,19 @@ mod tests {
         }
     }
 
+    /// A scalar its logical type does not admit is refused, at the top, in
+    /// a container or inside a passthrough, and so is a repeated key.
     #[test]
-    fn what_the_model_does_not_hold_is_refused() {
+    fn what_a_logical_type_does_not_admit_is_refused() {
         use vitaminc_aead::plaintext::kinds::{MAX_DATE_DAYS, MAX_TIMESTAMP_NANOS};
         use vitaminc_aead::plaintext::Raw;
         let refused =
             |value: Raw<'_>| matches!(ValueFrame::of(value), Err(DecodeError::Expected(_)));
-        assert!(refused(Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 16]))));
-        let unknown = Logical::from_wire(200, 0).expect("an unknown logical type");
-        assert!(refused(Raw(Some(unknown), Physical::Int(Int::I32(1)))));
+        assert!(refused(Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 15]))));
+        assert!(refused(Raw(
+            Some(Logical::Uuid),
+            Physical::Text("0123456789abcdef")
+        )));
         assert!(refused(Raw(
             Some(Logical::Date),
             Physical::Int(Int::I64(i64::from(MAX_DATE_DAYS) + 1))
@@ -1754,16 +1589,13 @@ mod tests {
         )));
         assert!(refused(Raw(Some(Logical::Undefined), Physical::Bool(true))));
         assert!(matches!(
-            ValueFrame::of(vec![Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 16]))]),
+            ValueFrame::of(vec![Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 15]))]),
             Err(DecodeError::Expected(_))
         ));
         let hidden = Tree::Passthrough(Box::new(Tree::Null));
         assert!(ValueFrame::of(&hidden).is_ok());
         // Inside a passthrough too, and refused the same way.
-        let hidden = Hidden(vitaminc_aead::plaintext::Raw(
-            Some(Logical::Uuid),
-            Physical::Bytes(&[7; 16]),
-        ));
+        let hidden = Hidden(Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 15])));
         assert!(matches!(
             ValueFrame::of(hidden),
             Err(DecodeError::Expected(_))
@@ -1779,12 +1611,36 @@ mod tests {
             ValueFrame::from_bytes(Protected::new(Vec::new()).as_protected_ref().as_deref()),
             Err(super::FromFrameError::Frame(_))
         ));
-        let uuid = vitaminc_aead::to_frame(Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 16])))
-            .expect("frames");
-        assert!(matches!(
-            ValueFrame::from_bytes(uuid.as_protected_ref()),
-            Err(super::FromFrameError::Value(DecodeError::Expected(_)))
-        ));
+    }
+
+    /// A UUID is a value of its own kind, kept as written. A logical type
+    /// this build does not know is carried as written too, and has no kind.
+    #[test]
+    fn a_uuid_and_an_unknown_logical_type_are_kept_as_written() {
+        use vitaminc_aead::plaintext::Raw;
+        let raw = Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 16]));
+        let uuid = ValueFrame::of(raw).expect("a uuid");
+        assert_eq!(uuid.kind(), Some(ValueKind::Uuid));
+        assert_eq!(
+            uuid.risky_ref(),
+            vitaminc_aead::to_frame(raw).expect("frames").risky_ref()
+        );
+        let opened = raw.visit(Opening).expect("opens");
+        assert_eq!(opened.risky_ref(), uuid.risky_ref());
+        let raw = Raw(
+            Some(Logical::from_wire(200, 9).expect("an unknown logical type")),
+            Physical::Int(Int::I32(1)),
+        );
+        let unknown = ValueFrame::of(raw).expect("carried");
+        assert_eq!(unknown.kind(), None);
+        assert_eq!(
+            unknown.risky_ref(),
+            vitaminc_aead::to_frame(raw).expect("frames").risky_ref()
+        );
+        let opened = raw.visit(Opening).expect("opens");
+        assert_eq!(opened.risky_ref(), unknown.risky_ref());
+        let hidden = ValueFrame::of(Hidden(raw)).expect("carried in a passthrough");
+        assert_eq!(hidden.kind(), None);
     }
 
     /// Every value opens to the frame it was written as, through a walk of

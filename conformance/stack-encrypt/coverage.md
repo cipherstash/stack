@@ -78,7 +78,7 @@ and the fault evidence that replaced it.
 | Existing evidence | Relationship to conformance | Consolidation action |
 |---|---|---|
 | Rust `dynamic/record.rs` plan-refusal tests | Their inputs and diagnostic outcomes are shared declaration cases | Removed; the message naming its field stays in `a_plan_refusal_names_its_field_in_the_message` (see [consolidations](#consolidations)) |
-| Rust kind/index admission tests | The corpus has the complete 21-kind/five-index acceptance matrix | Share case data; retain direct tests that compare declaration admission with actual term execution |
+| Rust kind/index admission tests | The corpus has the complete 22-kind/five-index acceptance matrix | Share case data; retain direct tests that compare declaration admission with actual term execution |
 | Rust `value_kinds.rs`, Go `value_kinds_test.go` | Enrolled as `record-value-kinds-v1`, retaining the shared fixture and generated SDK calls | Extend the existing fixture/requirements for missing boundaries; retain typed and generated-code assertions |
 | Rust `query_operators.rs`, Go `query_test.go` | Enrolled as `record-query-operators-v1`, including verification and target limits | Add shared refusal cases separately; retain host/generated query mapping tests |
 | Go checker and host validation tests in `guest_test.go` | Exercise host rejection and diagnostic forwarding through public checker methods | Keep adapter-specific assertions; representable declaration cases also use `Checker.Check`, while raw frames observe the guest boundary |
