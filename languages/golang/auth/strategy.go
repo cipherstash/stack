@@ -77,6 +77,12 @@ type Strategy struct {
 	// refreshing takes a device session's refreshes in this process one at
 	// a time, before the cross-process lock does across processes.
 	refreshing guest.Lock
+	// The refresh loop of an access-key or device-session strategy (see
+	// background.go): stopLoop ends it, loopDone is closed when it has,
+	// and used wakes it when it is idle. All nil for OIDC.
+	stopLoop context.CancelFunc
+	loopDone chan struct{}
+	used     chan struct{}
 }
 
 func (s *ProfileStore) newStrategy(ctx context.Context, config any, device bool) (*Strategy, error) {
@@ -102,12 +108,18 @@ func (s *ProfileStore) AccessKey(ctx context.Context, crn, key string, opts ...S
 		return nil, ErrConfig
 	}
 	o := strategyConfig(opts)
-	return s.newStrategy(ctx, struct {
-		Kind    string `json:"kind"`
-		CRN     string `json:"crn"`
-		Key     string `json:"access_key"`
-		BaseURL string `json:"base_url,omitempty"`
-	}{"access_key", crn, key, o.baseURL}, false)
+	strategy, err := s.newStrategy(ctx, struct {
+		Kind         string `json:"kind"`
+		CRN          string `json:"crn"`
+		Key          string `json:"access_key"`
+		BaseURL      string `json:"base_url,omitempty"`
+		RefreshAhead bool   `json:"refresh_ahead"`
+	}{"access_key", crn, key, o.baseURL, true}, false)
+	if err != nil {
+		return nil, err
+	}
+	strategy.startRefreshLoop()
+	return strategy, nil
 }
 
 // OIDC constructs stack-auth's federation strategy. provider is called on
@@ -216,11 +228,17 @@ func (s *ProfileStore) DeviceSession(ctx context.Context, opts ...StrategyOption
 		return nil, ErrConfig
 	}
 	o := strategyConfig(opts)
-	return s.newStrategy(ctx, struct {
-		Kind    string `json:"kind"`
-		Dir     string `json:"workspace_dir"`
-		BaseURL string `json:"base_url,omitempty"`
-	}{"device_session", s.dir, o.baseURL}, true)
+	strategy, err := s.newStrategy(ctx, struct {
+		Kind         string `json:"kind"`
+		Dir          string `json:"workspace_dir"`
+		BaseURL      string `json:"base_url,omitempty"`
+		RefreshAhead bool   `json:"refresh_ahead"`
+	}{"device_session", s.dir, o.baseURL, true}, true)
+	if err != nil {
+		return nil, err
+	}
+	strategy.startRefreshLoop()
+	return strategy, nil
 }
 
 // Auto follows stack-auth's detection order against the Go host's
@@ -317,6 +335,12 @@ func (s *Strategy) Token(ctx context.Context) (string, error) {
 		ctx, status := withAuthHTTPStatus(ctx)
 		r.token, r.err = s.token(ctx)
 		r.err = status.wrap(r.err)
+		if s.used != nil && r.err == nil {
+			// The token was used: its refresh ahead of expiry is due again.
+			// Only after a success, when no exchange holds the strategy, so
+			// the loop's question does not wait behind one.
+			s.signalUse()
+		}
 		panicked.raise(nil)
 	}()
 	select {
@@ -473,6 +497,12 @@ func (s *Strategy) Close() error {
 	s.closeDone = make(chan struct{})
 	s.mu.Unlock()
 	defer close(s.closeDone)
+	if s.stopLoop != nil {
+		// A device session refresh the loop has sent runs on for the
+		// grace, as a cancelled Token's does.
+		s.stopLoop()
+		<-s.loopDone
+	}
 	s.inflight.Wait()
 	if s.providerID != 0 {
 		s.store.root.inst.transport.unregister(s.providerID)

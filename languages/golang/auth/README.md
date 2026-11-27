@@ -121,6 +121,16 @@ exchanged, other callers of the same strategy get its current token at
 once, and a caller with no usable token waits for that exchange rather
 than starting its own.
 
+An access-key or device-session strategy refreshes its token ahead of its
+expiry from a goroutine of its own, by stack-auth's rule
+(`RefreshSchedule`): between 90 seconds and two minutes before expiry,
+only while the strategy is in use, and with backoff after a failure. The guest keeps the
+rule; Go keeps the timer. It asks the guest when the next refresh is due
+(`sa_auth_next_refresh`), sleeps until then, and calls
+`sa_auth_refresh_ahead`, both step operations like a token fetch. The
+goroutine holds the strategy only weakly, and never holds the profile's
+lock while it sleeps.
+
 The crypto guest behind `encrypt` is not widened by this package
 existing: it still has no filesystem and no environment.
 

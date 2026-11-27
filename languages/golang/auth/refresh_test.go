@@ -20,35 +20,6 @@ import (
 // token service, which can take a second or more, must not hold up the
 // others while they have a token that still works (#1958).
 
-// slowRefreshServer answers the first access-key exchange at once with a
-// token inside the guest's 90-second refresh window (so the next Token
-// refreshes it), named "old". Every later exchange is announced on
-// refreshing and answered after delay, with a token named "new" that lasts
-// an hour.
-func slowRefreshServer(t *testing.T, delay time.Duration) (server *httptest.Server, requests *atomic.Int32, refreshing chan struct{}) {
-	t.Helper()
-	requests = new(atomic.Int32)
-	refreshing = make(chan struct{}, 16)
-	var issuer string
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		if requests.Add(1) == 1 {
-			fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, testJWTFor(t, issuer, "old"), time.Now().Add(60*time.Second).Unix())
-			return
-		}
-		refreshing <- struct{}{}
-		select {
-		case <-time.After(delay):
-		case <-r.Context().Done():
-			return
-		}
-		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, testJWTFor(t, issuer, "new"), time.Now().Add(time.Hour).Unix())
-	}))
-	issuer = server.URL
-	t.Cleanup(server.Close)
-	return server, requests, refreshing
-}
-
 // subject is a test token's sub claim, its name here, or "" for anything
 // else. Safe off the test's goroutine, unlike jwtSubject.
 func subject(token string) string {
@@ -66,13 +37,13 @@ func subject(token string) string {
 	return claims.Sub
 }
 
-// While one caller refreshes a token that is still valid, every other
+// While a token that is still valid is refreshed in the background, every
 // caller gets that token at once, rather than waiting for the token
 // service to answer.
 func TestCallersDoNotWaitBehindARefreshOfAValidToken(t *testing.T) {
 	guestOrSkip(t)
 	const delay = time.Second
-	server, requests, refreshing := slowRefreshServer(t, delay)
+	server, requests, refreshing := shortTokenServer(t, 4*time.Second, delay)
 	profile, err := Open(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -84,17 +55,13 @@ func TestCallersDoNotWaitBehindARefreshOfAValidToken(t *testing.T) {
 	}
 	defer strategy.Close()
 
-	if token, err := strategy.Token(context.Background()); err != nil || jwtSubject(t, token) != "old" {
-		t.Fatalf("the first Token: %q, %v", token, err)
-	}
-	refreshed := make(chan string, 1)
-	go func() {
-		token, err := strategy.Token(context.Background())
-		if err != nil {
-			t.Errorf("the refreshing Token: %v", err)
+	// The first Token exchanges; the second uses the token, so its
+	// refresh ahead of expiry is due half way through its life.
+	for range 2 {
+		if token, err := strategy.Token(context.Background()); err != nil || jwtSubject(t, token) != "1" {
+			t.Fatalf("Token: %q, %v", token, err)
 		}
-		refreshed <- token
-	}()
+	}
 	select {
 	case <-refreshing:
 	case <-time.After(5 * time.Second):
@@ -110,22 +77,19 @@ func TestCallersDoNotWaitBehindARefreshOfAValidToken(t *testing.T) {
 			if waited := time.Since(start); waited > delay/4 {
 				t.Errorf("caller %d waited %v behind the refresh", i, waited)
 			}
-			if err != nil || subject(token) != "old" {
-				t.Errorf("caller %d got token %q, %v, want the current token, %q", i, subject(token), err, "old")
+			if err != nil || subject(token) != "1" {
+				t.Errorf("caller %d got token %q, %v, want the current token, %q", i, subject(token), err, "1")
 			}
 		})
 	}
 	wg.Wait()
-
-	if token := <-refreshed; jwtSubject(t, token) != "new" {
-		t.Fatalf("the refreshing Token got %q, want the new token", jwtSubject(t, token))
-	}
-	if token, err := strategy.Token(context.Background()); err != nil || jwtSubject(t, token) != "new" {
-		t.Fatalf("a Token after the refresh: %q, %v", token, err)
-	}
 	if n := requests.Load(); n != 2 {
 		t.Fatalf("%d exchanges, want 2: the first, and one refresh", n)
 	}
+	eventually(t, "the refreshed token", func() bool {
+		token, err := strategy.Token(context.Background())
+		return err == nil && subject(token) == "2"
+	})
 }
 
 // heldServer answers access-key exchanges with an hour-long token named by
@@ -207,7 +171,13 @@ func TestManyCallersWithNoTokenYetShareOneExchange(t *testing.T) {
 		t.Fatalf("%d exchanges, want 1", n)
 	}
 	wantProfileOpen(t, profile)
-	wantNoneOpen(t, profile)
+	// The strategy's refresh loop may hold an operation open for a moment,
+	// asking when the next refresh is due.
+	eventually(t, "no operation open", func() bool {
+		profile.root.mu.Lock()
+		defer profile.root.mu.Unlock()
+		return profile.root.open == 0
+	})
 }
 
 // A caller waiting for another's exchange that gives up returns at its

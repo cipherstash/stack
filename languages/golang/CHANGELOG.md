@@ -13,6 +13,26 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Changed
+
+- **Tokens are refreshed in the background, before they expire** (#1962).
+  An access-key or device-session `auth.Strategy` now runs a goroutine that
+  refreshes its token between 90 seconds and two minutes before the token
+  expires, so no call waits for the token service while its token still
+  works, including the call that used to start the refresh.
+  - The refresh runs only while the strategy is in use: a strategy no call
+    has used since its last refresh is left alone, so an idle process does
+    not keep calling the service.
+  - After a refresh fails, the next attempt waits about a second, doubling
+    with each failure up to 30 seconds. Meanwhile a call whose token still
+    works gets it, and a call whose token has expired fails at once with
+    the failed refresh's error, rather than each call asking the service
+    again.
+  - `Strategy.Close` and `ProfileStore.Close` stop the goroutine, as does
+    the strategy being garbage collected.
+  - An OIDC strategy has no such goroutine: its provider is asked for a JWT
+    on every call, which a timer cannot do.
+
 ### Added
 
 - `gensupport.UUID`, the kind `"uuid"`: a field the engine seals and

@@ -128,8 +128,8 @@ func TestClosingTheProfileDuringARefreshKeepsTheRotatedRefreshToken(t *testing.T
 	}
 }
 
-// F3: a device session's token inside the 90-second refresh window still
-// works. While one caller refreshes it, every other caller gets it at
+// A device session's token inside the 90-second refresh window still
+// works. While it is refreshed in the background, every caller gets it at
 // once, as for the other strategies.
 func TestDeviceSessionCallersDoNotWaitBehindARefreshOfAValidToken(t *testing.T) {
 	guestOrSkip(t)
@@ -139,9 +139,12 @@ func TestDeviceSessionCallersDoNotWaitBehindARefreshOfAValidToken(t *testing.T) 
 	if err := os.MkdirAll(workspaceDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	write(t, filepath.Join(workspaceDir, "auth.json"), fmt.Sprintf(
-		`{"access_token":"old","refresh_token":"refresh-1","token_type":"Bearer","expires_at":%d,"region":"ap-southeast-2.aws","client_id":"client-1"}`,
-		time.Now().Add(60*time.Second).Unix()))
+	session := func() {
+		write(t, filepath.Join(workspaceDir, "auth.json"), fmt.Sprintf(
+			`{"access_token":"old","refresh_token":"refresh-1","token_type":"Bearer","expires_at":%d,"region":"ap-southeast-2.aws","client_id":"client-1"}`,
+			time.Now().Add(4*time.Second).Unix()))
+	}
+	session()
 	refreshing := make(chan struct{}, 16)
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -167,14 +170,14 @@ func TestDeviceSessionCallersDoNotWaitBehindARefreshOfAValidToken(t *testing.T) 
 	}
 	defer strategy.Close()
 
-	refreshed := make(chan string, 1)
-	go func() {
-		token, err := strategy.Token(context.Background())
-		if err != nil {
-			t.Errorf("the refreshing Token: %v", err)
-		}
-		refreshed <- token
-	}()
+	// The first Token uses the token, so its refresh ahead of expiry is due
+	// half way through its life, and no caller makes it. The session is
+	// written again now: opening the profile can take seconds under the
+	// race detector, longer than the token lasts.
+	session()
+	if token, err := strategy.Token(context.Background()); err != nil || token != "old" {
+		t.Fatalf("the first Token: %q, %v", token, err)
+	}
 	select {
 	case <-refreshing:
 	case <-time.After(5 * time.Second):
@@ -195,9 +198,10 @@ func TestDeviceSessionCallersDoNotWaitBehindARefreshOfAValidToken(t *testing.T) 
 		})
 	}
 	wg.Wait()
-	if token := <-refreshed; token != "fresh" {
-		t.Fatalf("the refreshing Token got %q, want the refreshed one", token)
-	}
+	eventually(t, "the refreshed token", func() bool {
+		token, err := strategy.Token(context.Background())
+		return err == nil && token == "fresh"
+	})
 	if n := requests.Load(); n != 1 {
 		t.Fatalf("%d refresh requests, want 1", n)
 	}

@@ -6,7 +6,10 @@ use crate::auto_refresh::AutoRefresh;
 use crate::token_store::{NoStore, TokenStore};
 use crate::transport::{self, SharedTransport};
 use crate::HttpTransport;
-use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, ServiceToken};
+use crate::{
+    ensure_trailing_slash, AuthError, AuthStrategy, NextRefresh, RefreshDriver, SecretToken,
+    ServiceToken,
+};
 
 /// An [`AuthStrategy`] that uses a static access key to authenticate against
 /// a specific workspace.
@@ -91,6 +94,35 @@ impl AccessKeyStrategy {
             token_store: NoStore,
             transport: None,
         }
+    }
+}
+
+impl<S: TokenStore> AccessKeyStrategy<S> {
+    /// Hand refreshing this strategy's token ahead of its expiry to the
+    /// caller's own timer, for a host with no background task of its own,
+    /// such as a WebAssembly host. See [`RefreshDriver`] for the contract,
+    /// and [`next_refresh`](Self::next_refresh) and
+    /// [`refresh_now`](Self::refresh_now) for the two calls a driver makes.
+    ///
+    /// A native strategy refreshes ahead from a Tokio task of its own, and
+    /// needs no driver.
+    pub fn drive_refresh(&self) -> RefreshDriver {
+        self.inner.drive_refresh()
+    }
+
+    /// When the token's next refresh ahead of its expiry is due, by the
+    /// rule in [`RefreshSchedule`](crate::RefreshSchedule): idle until a
+    /// call uses the token, and later after a failed refresh.
+    pub async fn next_refresh(&self) -> NextRefresh {
+        self.inner.next_refresh().await
+    }
+
+    /// Refresh the token now. A refresh already in flight is not repeated.
+    /// Returns this attempt's error, which a caller of `get_token` does not
+    /// see while the cached token still works; the next attempt then backs
+    /// off.
+    pub async fn refresh_now(&self) -> Result<(), AuthError> {
+        self.inner.refresh_now().await.map_err(AuthError::from)
     }
 }
 
@@ -414,5 +446,111 @@ mod workspace_verification_tests {
                 "call {call}: expected WorkspaceMismatch, got {err:?}",
             );
         }
+    }
+}
+
+/// The calls a host with no background task makes to refresh ahead of
+/// expiry.
+#[cfg(test)]
+#[cfg(feature = "http")]
+mod host_refresh_tests {
+    use super::*;
+    use crate::test_support::{crn_with_workspace, jwt_with_workspace};
+    use mocktail::prelude::*;
+
+    const WS: &str = "ZVATKW3VHMFG27DY";
+
+    /// An auth server that issues an hour-long token, or refuses with a
+    /// server fault.
+    async fn server(issues: bool) -> MockServer {
+        let mut mocks = MockSet::new();
+        let jwt = jwt_with_workspace(WS);
+        mocks.mock(move |when, then| {
+            when.post().path("/api/authorise");
+            if issues {
+                then.json(serde_json::json!({ "accessToken": jwt, "expiry": now() + 3_600 }));
+            } else {
+                then.internal_server_error();
+            }
+        });
+        let server = MockServer::new_http("access-key-host-refresh").with_mocks(mocks);
+        #[allow(clippy::expect_used)]
+        server.start().await.expect("mock server start");
+        server
+    }
+
+    fn strategy(server: &MockServer) -> AccessKeyStrategy {
+        #[allow(clippy::expect_used)]
+        AccessKeyStrategy::builder(
+            crn_with_workspace(WS),
+            "CSAKtestKeyId.testKeySecret".parse().expect("access key"),
+        )
+        .base_url(server.url(""))
+        .build()
+        .expect("builder")
+    }
+
+    fn now() -> u64 {
+        web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or_default()
+    }
+
+    #[tokio::test]
+    #[allow(clippy::expect_used)]
+    async fn a_used_tokens_refresh_is_due_ahead_of_its_expiry() {
+        let server = server(true).await;
+        let strategy = strategy(&server);
+        assert_eq!(
+            strategy.next_refresh().await,
+            NextRefresh::Idle,
+            "no token yet"
+        );
+
+        // The first call exchanges, which is a refresh attempt; the second
+        // uses the token.
+        let _ = (&strategy).get_token().await.expect("get_token");
+        assert_eq!(
+            strategy.next_refresh().await,
+            NextRefresh::Idle,
+            "not used since"
+        );
+        let _ = (&strategy).get_token().await.expect("get_token");
+        let NextRefresh::At(at) = strategy.next_refresh().await else {
+            panic!("a used token has a refresh due");
+        };
+        let now = now();
+        assert!(
+            at > now + 3_000 && at < now + 3_600,
+            "due {} s from now, not ahead of an hour-long token's expiry",
+            at.saturating_sub(now)
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::expect_used)]
+    async fn refresh_now_exchanges_and_reports_a_failure() {
+        let ok = server(true).await;
+        strategy(&ok)
+            .refresh_now()
+            .await
+            .expect("an exchange that succeeds");
+
+        let refusing = server(false).await;
+        let strategy = strategy(&refusing);
+        let err = strategy.refresh_now().await.expect_err("a server fault");
+        assert!(matches!(err, AuthError::Server(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::expect_used)]
+    async fn a_host_driver_is_attached_while_it_lives() {
+        let server = server(true).await;
+        let strategy = strategy(&server);
+        let driver = strategy.drive_refresh();
+        assert_eq!(strategy.inner.drivers_attached(), 1);
+        drop(driver);
+        assert_eq!(strategy.inner.drivers_attached(), 0);
     }
 }

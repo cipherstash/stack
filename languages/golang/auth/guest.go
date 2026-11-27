@@ -73,6 +73,7 @@ type instance struct {
 	listWorkspaces, workspaceDir, lockPath                       api.Function
 	secretKey, token, hasToken, sessionCRN, deviceIdentity       api.Function
 	authNew, authValidateCRN, authToken, authRefresh, authFree   api.Function
+	authNextRefresh, authRefreshAhead                            api.Function
 	// The step exports of the token operations (see step.go).
 	authIO, authResume, authAbort, authRunnable api.Function
 }
@@ -174,6 +175,8 @@ func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.
 		"sa_auth_validate_crn":       &inst.authValidateCRN,
 		"sa_auth_token":              &inst.authToken,
 		"sa_auth_refresh":            &inst.authRefresh,
+		"sa_auth_next_refresh":       &inst.authNextRefresh,
+		"sa_auth_refresh_ahead":      &inst.authRefreshAhead,
 		"sa_auth_free":               &inst.authFree,
 		"sa_auth_io":                 &inst.authIO,
 		"sa_auth_resume":             &inst.authResume,

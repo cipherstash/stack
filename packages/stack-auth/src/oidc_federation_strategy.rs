@@ -389,13 +389,19 @@ impl<P, S: TokenStore> OidcFederationStrategy<P, S> {
         if let Some(err) = self.fresh_denial() {
             return Err(err);
         }
-        let engine = Arc::new(AutoRefresh::with_store(
-            JwtRefresher::new(jwt, Arc::clone(&self.federation)),
-            BoundStore {
-                inner: Arc::clone(&self.store),
-                digest,
-            },
-        ));
+        // Refreshed by calls only: a background task would keep renewing
+        // this user's token after their requests stop, with a JWT that may
+        // have expired by then.
+        let engine = Arc::new(
+            AutoRefresh::with_store(
+                JwtRefresher::new(jwt, Arc::clone(&self.federation)),
+                BoundStore {
+                    inner: Arc::clone(&self.store),
+                    digest,
+                },
+            )
+            .refreshed_by_calls(),
+        );
         let _ = engines.pending.insert(digest, Arc::clone(&engine));
         Ok(engine)
     }
@@ -1269,6 +1275,30 @@ mod tests {
             "CS|a"
         );
         assert_eq!(calls.load(Ordering::SeqCst), 5);
+    }
+
+    /// A user's token is refreshed by that user's calls, never by a task
+    /// that would go on renewing it once their requests stop. A call in a
+    /// Tokio runtime is where an access-key strategy starts its task.
+    #[tokio::test]
+    async fn a_users_token_is_refreshed_by_their_calls_not_a_background_task() {
+        let server = start_mock_server().await;
+        accept_exchange(&server, "jwt-a", "CS|a");
+        let (current, _calls, provider) = switchable_provider();
+        let strategy = strategy_on(&server, provider).build().expect("builder");
+
+        act_as(&current, "jwt-a");
+        let _ = (&strategy).get_token().await.expect("A");
+        let _ = (&strategy).get_token().await.expect("A cached");
+
+        let engine = strategy
+            .engine_for(SecretToken::new("jwt-a".to_string()))
+            .expect("A's engine");
+        assert_eq!(
+            engine.drivers_attached(),
+            0,
+            "no background task refreshes a user's token"
+        );
     }
 
     /// A provider that cannot say who the caller is fails the call before any

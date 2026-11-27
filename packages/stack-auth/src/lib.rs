@@ -75,6 +75,7 @@ mod device_session_refresher;
 mod device_session_strategy;
 mod oidc_federation_strategy;
 mod oidc_refresher;
+mod refresh_schedule;
 mod refresher;
 
 pub use error::StoreError;
@@ -115,12 +116,16 @@ mod test_support;
 pub use access_key::{AccessKey, InvalidAccessKey};
 pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
 pub use auth_strategy_fn::AuthStrategyFn;
+pub use auto_refresh::RefreshDriver;
 pub use auto_strategy::{AutoStrategy, AutoStrategyBuilder};
 pub use device_session_strategy::{DeviceSessionStrategy, DeviceSessionStrategyBuilder};
 pub use oidc_federation_strategy::{
     profile_workspace_crn, OidcFederationStrategy, OidcFederationStrategyBuilder,
 };
 pub use oidc_refresher::{CredentialPerCall, OidcProvider, OidcProviderFn};
+pub use refresh_schedule::{
+    NextRefresh, RefreshSchedule, BACKOFF_CAP_SECS, REFRESH_AHEAD_SECS, REFRESH_JITTER_SECS,
+};
 pub use service_token::ServiceToken;
 #[cfg(any(test, feature = "test-utils"))]
 pub use static_token_strategy::StaticTokenStrategy;
@@ -259,15 +264,40 @@ pub mod store {
 ///   A token can be "expired" (in the preemptive sense) but still "usable"
 ///   (the server will still accept it).
 ///
-/// ## Concurrent refresh strategies
+/// ## Refreshing ahead of expiry
 ///
-/// The gap between "expired" and "unusable" enables two refresh modes:
+/// A token is refreshed before it expires, off the caller's path, by the
+/// rule in [`RefreshSchedule`]: its refresh is due 90 to 120 seconds before
+/// it expires (later for a token with little life left), and only while
+/// the strategy is in use, so an idle process stops asking the auth server.
+/// After a refresh fails, the next attempt waits about a second, doubling
+/// up to [`BACKOFF_CAP_SECS`], and a minute after a refusal of the account.
 ///
-/// 1. **Expiring but still usable** — The first caller triggers a background
-///    refresh. Concurrent callers receive the current (still-valid) token
-///    immediately without blocking.
-/// 2. **Fully expired** — The first caller blocks while refreshing. Concurrent
-///    callers wait until the refresh completes, then all receive the new token.
+/// On native targets an access-key or device-session strategy runs that
+/// rule on a background task on the current Tokio runtime, started by the
+/// first `get_token`. The task holds the strategy weakly and ends when it
+/// is dropped. On wasm32 there is no task: a host can keep the timer itself
+/// ([`AccessKeyStrategy::drive_refresh`]); without one, calls refresh as
+/// described below.
+///
+/// An [`OidcFederationStrategy`] has no task on any target. Each user's
+/// token is refreshed by that user's calls, as described below, so nothing
+/// renews it once their requests stop, and nothing re-exchanges a JWT that
+/// may have expired by then.
+///
+/// ## What a call does
+///
+/// - **Its token still works**: it gets that token, at once. With a
+///   background task or a host driving the refresh, it never starts or
+///   waits for one. Without either, the first call within 90 seconds of
+///   expiry refreshes and waits for its own refresh, while concurrent
+///   callers get the current token.
+/// - **The token has expired**: the first caller refreshes, and concurrent
+///   callers wait for it, then all receive the new token. If a refresh has
+///   failed and its backoff has not ended, the call fails at once with that
+///   refresh's error instead.
+/// - **There is no token yet**: the first caller authenticates, and
+///   concurrent callers wait for it.
 ///
 /// Only one refresh runs at a time, regardless of how many callers request a
 /// token concurrently.

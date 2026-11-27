@@ -104,6 +104,9 @@ type root struct {
 	// ops counts the token operations running (run), each from its start
 	// to its last step. Close waits for them.
 	ops sync.WaitGroup
+	// done is closed by Close, with closing set: the strategies' refresh
+	// loops end.
+	done chan struct{}
 }
 
 // Resolve opens the profile directory the Rust crate would: CS_CONFIG_PATH
@@ -171,6 +174,7 @@ func open(ctx context.Context, hostDir string, opts []Option) (*ProfileStore, er
 	r := &root{
 		inst: inst, hostDir: hostDir, stuck: guest.StuckAfter,
 		freed: make(chan struct{}), parked: make(map[uint64]chan struct{}),
+		done: make(chan struct{}),
 	}
 	// The cleanup takes the instance, not the root: a cleanup whose
 	// argument reaches its object keeps that object alive forever.
@@ -243,6 +247,7 @@ func (s *ProfileStore) Close() error {
 	}
 	if !r.closing {
 		r.closing = true
+		close(r.done)
 		r.cleanup.Stop()
 		// A parked token operation wakes and aborts, rather than waiting
 		// for an exchange that may not finish before the profile closes.

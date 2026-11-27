@@ -871,12 +871,14 @@ mod tests {
     /// stick. Treating a transient failure as permanent locks a client out of
     /// a service that has since recovered — the worse of the two mistakes.
     #[tokio::test]
-    async fn a_server_fault_is_retried_on_the_next_call() {
+    async fn a_server_fault_is_retried_after_its_backoff() {
         let (url, calls) = start_counting_server(
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             serde_json::json!({}),
         )
         .await;
+        let start = now_secs();
+        let clock = crate::clock::TestClock::new(start);
 
         let refresher = AccessKeyRefresher::new(
             SecretToken::new("test-access-key"),
@@ -884,16 +886,24 @@ mod tests {
             None,
             default_transport(),
         );
-        let strategy = AutoRefresh::with_token(refresher, make_expired_token("old-token"));
+        let strategy = AutoRefresh::with_token_and_clock(
+            refresher,
+            make_token_expiring_at("old-token", start - 1),
+            clock.shared(),
+        );
 
-        for _ in 0..3 {
+        for attempt in 1..=3 {
             strategy.get_token().await.unwrap_err();
+            // A caller during the backoff gets the same error, without a
+            // request of its own.
+            strategy.get_token().await.unwrap_err();
+            assert_eq!(calls.load(Ordering::SeqCst), attempt);
+            clock.advance(crate::BACKOFF_CAP_SECS);
         }
-
         assert_eq!(
             calls.load(Ordering::SeqCst),
             3,
-            "a server fault must be retried; only settled refusals stick",
+            "a server fault must be retried once its backoff ends; only settled refusals stick",
         );
     }
 
@@ -1256,20 +1266,16 @@ mod tests {
             );
         }
 
-        // At least N-1 callers should be fast (non-blocking).
+        // Every caller is fast: the token still works, so the refresh is
+        // the background task's, and no caller starts or waits for it.
         let fast_callers = results
             .iter()
             .filter(|(_, dur)| *dur < Duration::from_millis(100))
             .count();
-        assert!(
-            fast_callers >= CONCURRENCY - 1,
-            "expected at least {} fast callers, got {}",
-            CONCURRENCY - 1,
-            fast_callers,
-        );
+        assert_eq!(fast_callers, CONCURRENCY, "every caller should be fast");
 
-        assert_eq!(stats.peak(), 1, "peak concurrency to auth endpoint");
-        assert_eq!(stats.total(), 1, "total auth requests");
+        assert!(stats.peak() <= 1, "peak concurrency to auth endpoint");
+        assert!(stats.total() <= 1, "total auth requests");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
