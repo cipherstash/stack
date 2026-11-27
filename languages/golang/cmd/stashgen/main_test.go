@@ -125,6 +125,153 @@ func TestRunFlags(t *testing.T) {
 	}
 }
 
+// -output takes an absolute path as given, and a relative path relative to
+// the package directory (#1901). An output whose directory is not the
+// package directory is refused: the file declares the package's name and
+// uses its names unqualified, so the other directory would stop building.
+func TestRunOutputPath(t *testing.T) {
+	elsewhere := t.TempDir()
+	cases := []struct {
+		name string
+		// output gives the -output value for the package directory dir.
+		output func(dir string) string
+		// want gives the file the run writes. Nil means the run refuses.
+		want func(dir string) string
+		// refusedDir gives the directory a refusal names.
+		refusedDir func(dir string) string
+	}{
+		{
+			name:   "relative",
+			output: func(string) string { return "custom_stash.go" },
+			want:   func(dir string) string { return filepath.Join(dir, "custom_stash.go") },
+		},
+		{
+			name:       "relative in a subdirectory",
+			output:     func(string) string { return filepath.Join("gen", "custom_stash.go") },
+			refusedDir: func(dir string) string { return filepath.Join(dir, "gen") },
+		},
+		{
+			name:       "relative, out of the package",
+			output:     func(string) string { return filepath.Join("..", "other", "custom_stash.go") },
+			refusedDir: func(dir string) string { return filepath.Join(filepath.Dir(dir), "other") },
+		},
+		{
+			name:   "absolute, in the package",
+			output: func(dir string) string { return filepath.Join(dir, "custom_stash.go") },
+			want:   func(dir string) string { return filepath.Join(dir, "custom_stash.go") },
+		},
+		{
+			name:       "absolute, outside the package",
+			output:     func(string) string { return filepath.Join(elsewhere, "custom_stash.go") },
+			refusedDir: func(string) string { return elsewhere },
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := writeModule(t, map[string]string{"model.go": userSource})
+			for _, d := range []string{filepath.Join(dir, "gen"), filepath.Join(filepath.Dir(dir), "other")} {
+				if err := os.MkdirAll(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			output := c.output(dir)
+			if c.want == nil {
+				var stdout, stderr bytes.Buffer
+				if code := run([]string{"-type", "User", "-output", output}, dir, &stdout, &stderr, fake); code != 1 {
+					t.Fatalf("exit %d, want 1\n%s", code, stderr.String())
+				}
+				refusedDir := c.refusedDir(dir)
+				for _, want := range []string{"stashgen: ", refusedDir, dir, "must be in the package's own folder"} {
+					if !strings.Contains(stderr.String(), want) {
+						t.Errorf("stderr lacks %q:\n%s", want, stderr.String())
+					}
+				}
+				if _, err := os.Stat(filepath.Join(refusedDir, "custom_stash.go")); err == nil {
+					t.Errorf("the refused run wrote a file in %s", refusedDir)
+				}
+				return
+			}
+			want := c.want(dir)
+			// A second run reads the package with the first run's file in
+			// it, which the generator ignores only when it names that file.
+			for i := range 2 {
+				var stdout, stderr bytes.Buffer
+				if code := run([]string{"-type", "User", "-output", output}, dir, &stdout, &stderr, fake); code != 0 {
+					t.Fatalf("run %d: exit %d\n%s", i+1, code, stderr.String())
+				}
+			}
+			if _, err := os.Stat(want); err != nil {
+				t.Errorf("-output %s: %v", output, err)
+			}
+		})
+	}
+}
+
+// An absolute -output that goes through a symbolic link in the package and
+// then up with .. is cleaned before it is checked and written. The check and
+// the write then name one file, in the package, and not the file the
+// operating system would reach by following the link first.
+func TestRunOutputPathThroughALinkAndDotDot(t *testing.T) {
+	dir := writeModule(t, map[string]string{"model.go": userSource})
+	child := filepath.Join(t.TempDir(), "other", "child")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(child, filepath.Join(dir, "escape")); err != nil {
+		t.Skipf("this system does not let the test create a symlink: %v", err)
+	}
+	sep := string(filepath.Separator)
+	output := dir + sep + "escape" + sep + ".." + sep + "custom_stash.go"
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"-type", "User", "-output", output}, dir, &stdout, &stderr, fake); code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "custom_stash.go")); err != nil {
+		t.Errorf("the file is not in the package: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(child), "custom_stash.go")); err == nil {
+		t.Errorf("the file was written outside the package, in %s", filepath.Dir(child))
+	}
+}
+
+// A second run through a symlinked package directory recognises the file
+// the first run wrote, and replaces it. That holds for the default output
+// and for an absolute -output on either side of the link.
+func TestRunThroughASymlinkedPackage(t *testing.T) {
+	real := writeModule(t, map[string]string{"model.go": userSource})
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("this system does not let the test create a symlink: %v", err)
+	}
+	cases := []struct {
+		name string
+		args []string
+		file string
+	}{
+		{"the default output", []string{"-type", "User"}, "user_stash.go"},
+		{"an absolute output through the link", []string{"-type", "User", "-output", filepath.Join(link, "link_stash.go")}, "link_stash.go"},
+		{"an absolute output in the real directory", []string{"-type", "User", "-output", filepath.Join(real, "real_stash.go")}, "real_stash.go"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			for i := range 2 {
+				var stdout, stderr bytes.Buffer
+				if code := run(c.args, link, &stdout, &stderr, fake); code != 0 {
+					t.Fatalf("run %d: exit %d\n%s", i+1, code, stderr.String())
+				}
+			}
+			if _, err := os.Stat(filepath.Join(real, c.file)); err != nil {
+				t.Errorf("%s: %v", c.file, err)
+			}
+			// Leave only model.go, so the next case's package does not
+			// hold this case's generated declarations.
+			if err := os.Remove(filepath.Join(real, c.file)); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 // A storage-only EQL type over a pointer (#1293): the generator takes
 // *encrypt.Date as it takes encrypt.Date, and stores nil as a sealed null,
 // as long as a date, since Date carries no index. From the reproduction in

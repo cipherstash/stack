@@ -7,6 +7,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -49,12 +50,34 @@ func loadPackage(ctx context.Context, dir, ignore string) (*packages.Package, er
 	return pkg, nil
 }
 
+// sameFile reports whether a and the absolute path b name one file. Two
+// paths that differ can name the same file through a symbolic link, or by
+// case on a file system that ignores case, so the paths are compared first
+// and the files after. A file that does not exist is the same as b only
+// when the paths match.
 func sameFile(a, b string) bool {
 	absA, err := filepath.Abs(a)
 	if err != nil {
 		return false
 	}
-	return absA == b
+	if absA == b {
+		return true
+	}
+	return sameStat(absA, b)
+}
+
+// sameStat reports whether a and b both exist and are one file or
+// directory, as os.SameFile decides.
+func sameStat(a, b string) bool {
+	infoA, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	infoB, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(infoA, infoB)
 }
 
 // packageErrors joins the errors go/packages reported, for a message that

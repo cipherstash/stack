@@ -28,17 +28,57 @@ type Request struct {
 	Models []ModelRequest
 	// Redact writes String and LogValue methods on Type.
 	Redact bool
-	// Output is the file to write, relative to Dir. "" is the type's name in
-	// lower case with _stash.go.
+	// Output is the file to write: an absolute path as it is, or a path
+	// relative to Dir. "" is the type's name in lower case with _stash.go.
+	// The file must be in Dir itself: FromTags refuses any other directory.
 	Output string
 }
 
-// OutputPath is the file the request writes, relative to Dir.
+// OutputPath is the file the request writes: an absolute path, or a path
+// relative to Dir.
 func (r Request) OutputPath() string {
 	if r.Output != "" {
 		return r.Output
 	}
 	return strings.ToLower(r.Type) + "_stash.go"
+}
+
+// outputPath is the file that output names, for the package directory dir. A
+// path relative to the current directory is joined to dir. Any other path is
+// kept as it is: an absolute path, and on Windows also a path with a drive
+// and no root (C:out.go) or a root and no drive (\out.go). Joining one of
+// those to dir would drop its drive or its root.
+//
+// The result is always clean, as filepath.Join's is, so it holds no ..
+// element. The output directory check reads the path lexically, and the
+// write must reach the same file. With a .. left in, the operating system
+// would follow a symbolic link before the .., and could write outside the
+// directory the check passed.
+func outputPath(dir, output string) string {
+	if filepath.IsAbs(output) || filepath.VolumeName(output) != "" || (output != "" && os.IsPathSeparator(output[0])) {
+		return filepath.Clean(output)
+	}
+	return filepath.Join(dir, output)
+}
+
+// checkOutputDir refuses an output file whose directory is not the package
+// directory dir. The file declares the package's name and uses the
+// package's names unqualified, so in any other directory it would stop that
+// directory building. The two directories are compared as files, so a
+// symbolic link to the package directory counts as the package directory.
+func checkOutputDir(dir, outPath string) error {
+	pkgDir, err := filepath.Abs(dir)
+	if err != nil {
+		return fmt.Errorf("stashgen: the package directory %s: %w", dir, err)
+	}
+	outDir, err := filepath.Abs(filepath.Dir(outPath))
+	if err != nil {
+		return fmt.Errorf("stashgen: the directory of -output %s: %w", outPath, err)
+	}
+	if outDir == pkgDir || sameStat(outDir, pkgDir) {
+		return nil
+	}
+	return fmt.Errorf("stashgen: -output %s is in %s, not in the package directory %s; the generated file declares the package and uses its names, so it must be in the package's own folder", outPath, outDir, pkgDir)
 }
 
 // File is a generated file, ready to write.
@@ -79,7 +119,10 @@ func FromTags(ctx context.Context, engine Engine, req Request) (*File, error) {
 	if dir == "" {
 		dir = "."
 	}
-	outPath := filepath.Join(dir, req.OutputPath())
+	outPath := outputPath(dir, req.OutputPath())
+	if err := checkOutputDir(dir, outPath); err != nil {
+		return nil, err
+	}
 
 	eqlTypes, err := engine.EQLTypes(ctx)
 	if err != nil {
