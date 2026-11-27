@@ -15,7 +15,8 @@ creates a temporary table, so it does not leave data behind.
 From the repository root:
 
 ```sh
-mise run wasm:guest:build:eql wasm:auth-guest:build
+mise run wasm:guest:build:eql
+mise run wasm:auth-guest:build
 export DATABASE_URL='postgres://localhost:5432/your_database'
 cd languages/golang/encrypt/example
 go run ./json

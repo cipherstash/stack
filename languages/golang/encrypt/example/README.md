@@ -14,7 +14,8 @@ mise run go:encrypt:example   # builds both guests, then runs
 Or, if you would rather drive it yourself:
 
 ```bash
-mise run wasm:guest:build wasm:auth-guest:build
+mise run wasm:guest:build
+mise run wasm:auth-guest:build
 cd languages/golang/encrypt/example && go run .
 ```
 
