@@ -333,19 +333,28 @@ pub enum TargetError {
     },
     /// The stored bytes do not parse as the type: not JSON, not this
     /// domain's shape, or another EQL version.
-    #[error("stored value is not a {target}: {source}")]
+    ///
+    /// The message and `Debug` give the parser's error by kind, line and
+    /// column only. The parser's own message can quote the input it
+    /// refused, and the input is stored ciphertext.
+    #[error(
+        "stored value is not a {target}: {}",
+        stack_encrypt::diagnostic::describe_json_error(source)
+    )]
     Stored {
         /// The type the bytes were read as.
         target: &'static str,
-        /// What the parser refused.
+        /// What the parser refused. Its own `Display` and `Debug` can quote
+        /// the stored bytes, so do not print it.
         #[source]
         source: serde_json::Error,
     },
 }
 
 /// The derived form, except that [`TargetError::Context`]'s label is shown
-/// as `<redacted>`. A `Debug` of an error reaches logs through `unwrap` and
-/// `{:?}`, so it keeps the rule the message keeps.
+/// as `<redacted>`, and [`TargetError::Stored`]'s parser error by kind, line
+/// and column only. A `Debug` of an error reaches logs through `unwrap` and
+/// `{:?}`, so it keeps the rules the message keeps.
 impl fmt::Debug for TargetError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -387,7 +396,10 @@ impl fmt::Debug for TargetError {
             Self::Stored { target, source } => f
                 .debug_struct("Stored")
                 .field("target", target)
-                .field("source", source)
+                .field(
+                    "source",
+                    &stack_encrypt::diagnostic::describe_json_error(source),
+                )
                 .finish(),
         }
     }
@@ -1100,6 +1112,30 @@ mod tests {
              column"
         );
         assert_eq!(format!("{error:?}"), "Context { label: <redacted> }");
+    }
+
+    /// The parser's own message quotes the string it refused, and that
+    /// string is stored ciphertext: the message and `Debug` give the kind,
+    /// line and column only.
+    #[test]
+    fn a_stored_refusal_quotes_none_of_the_stored_value() {
+        let source = serde_json::from_str::<u8>(r#""marker-ciphertext""#).unwrap_err();
+        assert!(source.to_string().contains("marker"), "{source}");
+        let error = TargetError::Stored {
+            target: "TextEq",
+            source,
+        };
+        for text in [error.to_string(), format!("{error:?}")] {
+            assert!(!text.contains("marker"), "the stored value leaked: {text}");
+        }
+        assert_eq!(
+            error.to_string(),
+            "stored value is not a TextEq: unexpected data at line 1 column 19"
+        );
+        assert_eq!(
+            format!("{error:?}"),
+            "Stored { target: \"TextEq\", source: \"unexpected data at line 1 column 19\" }"
+        );
     }
 
     /// The hand-written `Debug` keeps the derived form for the variants that

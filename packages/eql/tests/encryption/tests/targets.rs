@@ -343,17 +343,23 @@ mod given_text_eq {
         let as_v3 = serde_json::to_vec(&payload).unwrap();
 
         let error = refused(targets::decrypt("TextEq", &cipher, &email(), &as_v3));
+        let TargetError::Stored {
+            target: "TextEq",
+            source,
+        } = &error
+        else {
+            panic!("{error}");
+        };
+        // The parser's error names the version it refused. The message
+        // gives the parser's error by kind and position only, because the
+        // parser's own text can quote the stored bytes.
+        assert!(source.to_string().contains("version 3"), "{source}");
         assert!(
-            matches!(
-                error,
-                TargetError::Stored {
-                    target: "TextEq",
-                    ..
-                }
-            ),
+            error
+                .to_string()
+                .starts_with("stored value is not a TextEq: "),
             "{error}"
         );
-        assert!(error.to_string().contains("version 3"), "{error}");
     }
 
     #[tokio::test]

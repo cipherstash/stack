@@ -9,14 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **A column refusal no longer shows the field's label** (#1999). A label
-  is an encryption context, and an error never shows the value of a
-  context. The message of `encryption::targets::TargetError::Context`
-  now starts `the field's label`, and the message of
+- **Two column refusals no longer show the field's label** (#1999). A
+  label is an encryption context. The message of
+  `encryption::targets::TargetError::Context` now starts
+  `the field's label`, and the message of
   `encryption::query::QueryLabelError::NotAColumn` now starts
   `the query's label`. `Debug` shows the label of both as
   `<redacted>`. Both variants keep their `label` field, so code that
-  builds or matches them still compiles.
+  builds or matches them still compiles. On the data path,
+  `stack-encrypt`'s `TargetError::Column` still shows the label until
+  #1983 lands.
+- **`TargetError::Stored` no longer quotes the stored bytes** (#1999). Its
+  message and `Debug` now show only the kind, line, and column of the
+  JSON parser's error. The parser's own message could quote the stored
+  ciphertext it refused. The `source` field and `source()` still return
+  the parser's error.
 - **The by-name target entry points borrow the plaintext as a `Frame`, and
   open into an `OwnedFrame`** (#1955). `encryption::targets::encrypt`,
   `encrypt_with` and `query`, and the `v4::targets` table, take the
