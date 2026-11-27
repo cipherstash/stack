@@ -22,6 +22,19 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one. `stashgen` does not yet map a Go type to it.
 
+### Changed
+
+- **A record field converts a number of another width, as a query does.**
+  A value sealed through `Cipher.Seal` for a field that declares a type
+  is read as that type when the conversion is exact: an `int16` 1 for an
+  `int8` field, an `int64` for an `int128`, a `float64` 1.5 for a
+  `float32`. It is stored as the same number sent at the
+  declared width, so the stored bytes and terms do not change. One that
+  would lose something is still refused with `ErrEncoding`, reason
+  `field_type`, as is a value of another kind (text for a number, say).
+  Generated code already sends each value at its field's width, so it
+  does not change.
+
 ### Fixed
 
 - **Other calls no longer wait behind a token refresh** (#1958). An

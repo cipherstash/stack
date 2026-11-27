@@ -127,6 +127,14 @@ call is `encrypt_into_with_context(&keyset, Scope::new(7u64).bind(9u64))`
 (see "Scopes and bindings" below). The row is moved in, and wiped when the
 call is done with it.
 
+Each field that declares a type reads its value as that type, by the same
+rules a query reads its input by ([`crate::dynamic::read`]). A number of
+another width or kind converts when the conversion is exact, so a binding
+can pass a language's own number, or the narrowest integer that holds it,
+and never needs the field's type. Anything else of another type is refused
+with the reason `field_type`, and JavaScript's `undefined` with the reason
+`undefined`. A field that declares no type takes its value as it is.
+
 ### Derive a query term
 
 A query is planned before any value exists:
