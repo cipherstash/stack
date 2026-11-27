@@ -396,14 +396,19 @@ fn check_column(label: &Label) -> Result<(), Error> {
 /// The label of a derived record's field reference is the record's scope and
 /// the field's name, two segments, so a query from such a field reference is never
 /// refused this way.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// The message and `Debug` leave out the label: a label is an encryption
+/// context, and an error never shows a context's value.
+#[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum QueryLabelError {
     /// The label names no column: an EQL query value stores the
     /// [`Identifier`] it queries, a two-segment label, table then column.
     /// The data path refuses the same label as `TargetError::Context`.
     NotAColumn {
-        /// The label, rendered.
+        /// The label, rendered. Never shown: not in the message or `Debug`.
+        /// Kept so that code which builds or matches this variant still
+        /// compiles.
         label: String,
     },
 }
@@ -411,10 +416,22 @@ pub enum QueryLabelError {
 impl fmt::Display for QueryLabelError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotAColumn { label } => write!(
-                f,
-                "{label:?} is not an EQL column identifier: expected two segments, table and column"
+            Self::NotAColumn { .. } => f.write_str(
+                "the query's label is not an EQL column identifier: expected two segments, table \
+                 and column",
             ),
+        }
+    }
+}
+
+/// The derived form, except that the label is shown as `<redacted>`.
+impl fmt::Debug for QueryLabelError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotAColumn { .. } => f
+                .debug_struct("NotAColumn")
+                .field("label", &format_args!("<redacted>"))
+                .finish(),
         }
     }
 }
@@ -646,5 +663,41 @@ impl<Q> Probabilistic for MatchTwin<Q> {
 impl<Q: Serialize> Serialize for MatchTwin<Q> {
     fn serialize<Ser: Serializer>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error> {
         self.twin.serialize(serializer)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A label is an encryption context, and an error never shows a
+    /// context's value: not in the message, not in `Debug`.
+    #[test]
+    fn a_label_refusal_never_shows_the_label() {
+        let label = Label::new(&["tenant-acme", "users", "email"]).unwrap();
+        let Err(Error::Other(error)) = check_column(&label) else {
+            panic!("a three-segment label is not a column");
+        };
+        let refusal = error
+            .downcast_ref::<QueryLabelError>()
+            .expect("the refusal is a QueryLabelError");
+        assert!(matches!(
+            refusal,
+            QueryLabelError::NotAColumn { label } if label == "tenant-acme/users/email"
+        ));
+        let shown = [
+            error.to_string(),
+            format!("{error:?}"),
+            format!("{refusal:#?}"),
+        ];
+        for text in &shown {
+            assert!(!text.contains("tenant-acme"), "the label leaked: {text}");
+        }
+        assert_eq!(
+            error.to_string(),
+            "the query's label is not an EQL column identifier: expected two segments, table and \
+             column"
+        );
+        assert_eq!(format!("{refusal:?}"), "NotAColumn { label: <redacted> }");
     }
 }
