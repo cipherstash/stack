@@ -403,13 +403,14 @@ impl<R, S> AutoRefresh<R, S> {
     /// How many drivers are attached: the background task and each live
     /// [`RefreshDriver`].
     #[cfg(test)]
+    #[cfg(feature = "http")]
     pub(crate) fn drivers_attached(&self) -> usize {
         self.shared.driver.attached.load(Ordering::Acquire)
     }
 
     /// No background task: a caller starts each refresh, as on wasm32 with
     /// no host driving it. For the tests of that path on a native target.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
+    #[cfg(all(test, feature = "http", not(target_arch = "wasm32")))]
     pub(crate) fn call_driven(self) -> Self {
         self.shared.driver.task.store(true, Ordering::Release);
         self
