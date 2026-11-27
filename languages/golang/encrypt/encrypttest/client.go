@@ -88,6 +88,15 @@ func WithSeed(seed [32]byte) ClientOption {
 // or [encrypt.ErrForbidden] for a keyset the client has no grant for. The
 // client has no token, so it never returns [encrypt.ErrUnauthorized].
 //
+// # Start-up time
+//
+// The first client in a test binary compiles the engine, on every core.
+// That takes under a second, or a few seconds under the race detector. The
+// compiled engine is kept until the test binary exits, so every later
+// client starts in tens of milliseconds, or a few hundred under the race
+// detector. A client per test is fine. A client is also safe for
+// concurrent use, so parallel tests may share one.
+//
 // # Seeds
 //
 // Every client with the default seed opens what any other client with it
