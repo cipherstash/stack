@@ -13,18 +13,6 @@ import (
 	"unicode/utf8"
 )
 
-// Encryptable is the extension point for user types: a type implements it to
-// control how it is sealed, the way a Rust type implements `Encrypt`. Because
-// Go has no orphan impls, this interface (rather than reflection) is how a
-// type opts into a bespoke encoding. Encode and Marshal consult it before
-// falling back to reflection.
-type Encryptable interface {
-	// EncryptValue records this value into enc. Implementations write
-	// exactly one value: one terminal channel (String, Int, …) or one
-	// container (Seq, Map). Returning an error aborts the whole encode.
-	EncryptValue(enc Encoder) error
-}
-
 // encState is the buffer and first-error shared by an Encoder and every
 // sub-encoder it hands out. Errors accumulate: once one is recorded, further
 // channel calls are no-ops, so consumer code can chain writes without
@@ -44,15 +32,17 @@ func (s *encState) fail(err error) {
 // Encoder records a single value in transport form. It mirrors the Rust
 // Cipher channels — it is a recorder that writes the transport bytes, not a
 // live cipher handle. Exactly one channel must be used per Encoder: a
-// terminal (Null, Undefined, Bool, Int32, Int64, UInt32, UInt64, Float32,
-// Float64, String, Bytes) or a container (Seq, Map).
+// terminal (Null, Undefined, Bool, String, Bytes, or one of the scalar
+// methods in this file and scalars.go: the integer and float widths, Date,
+// Timestamp, TimestampParts, Decimal, UUID and Tagged) or a container (Seq,
+// Map).
 //
 // Encoder is passed and stored by value; all instances handed out for one
 // encode share the same underlying buffer and first-error via a pointer, so
 // copying an Encoder is cheap and safe. The zero Encoder is not usable and
-// its methods panic: usable Encoders are only the one handed to
-// [Encryptable.EncryptValue] and those returned by Passthrough, Elem and
-// Field.
+// its methods panic: usable Encoders are only the one the codec hands to a
+// published Encryptable (see [PublishEncryptable]) and those returned by
+// Passthrough, Elem and Field. [Encoder.Usable] tells the two apart.
 type Encoder struct {
 	st    *encState
 	depth int
@@ -153,9 +143,9 @@ func (e Encoder) Int64(i int64) {
 	e.complete()
 }
 
-// UInt32 records an unsigned 32-bit integer. For schema fidelity with the
+// Uint32 records an unsigned 32-bit integer. For schema fidelity with the
 // EQL layer.
-func (e Encoder) UInt32(u uint32) {
+func (e Encoder) Uint32(u uint32) {
 	if e.st.err != nil {
 		return
 	}
@@ -164,8 +154,8 @@ func (e Encoder) UInt32(u uint32) {
 	e.complete()
 }
 
-// UInt64 records an unsigned 64-bit integer without changing its width.
-func (e Encoder) UInt64(u uint64) {
+// Uint64 records an unsigned 64-bit integer without changing its width.
+func (e Encoder) Uint64(u uint64) {
 	if e.st.err != nil {
 		return
 	}
@@ -434,15 +424,15 @@ func Marshal(v any) ([]byte, error) {
 }
 
 // Encode records v into enc following encoding/json-style rules, but
-// consulting the Encryptable interface first:
+// consulting the published Encryptable first:
 //
-//   - a value implementing Encryptable uses its EncryptValue;
+//   - a value implementing the published Encryptable uses its EncryptValue;
 //   - nil                        → Null;
 //   - bool                       → Bool;
 //   - int8/int16/int32           → Int8/Int16/Int32;
 //   - int/int64                  → Int64;
-//   - uint8/uint16/uint32        → UInt8/UInt16/UInt32;
-//   - uint/uint64/uintptr        → UInt64;
+//   - uint8/uint16/uint32        → Uint8/Uint16/Uint32;
+//   - uint/uint64/uintptr        → Uint64;
 //   - float32                    → Float32;
 //   - float64                    → Float64;
 //   - string                     → String;
@@ -679,8 +669,7 @@ type numeric struct {
 }
 
 var (
-	encryptableType = reflect.TypeOf((*Encryptable)(nil)).Elem()
-	float32Type     = reflect.TypeOf(float32(0))
+	float32Type = reflect.TypeOf(float32(0))
 
 	// markers is filled in init: Plain and Object encode by calling back
 	// into encodeAny, which reads the table.
@@ -692,18 +681,18 @@ var (
 		reflect.Int32: {nullOf(tagInt32), func(e Encoder, rv reflect.Value) { e.Int32(int32(rv.Int())) }},
 		reflect.Int:   {nullOf(tagInt64), func(e Encoder, rv reflect.Value) { e.Int64(rv.Int()) }},
 		reflect.Int64: {nullOf(tagInt64), func(e Encoder, rv reflect.Value) { e.Int64(rv.Int()) }},
-		reflect.Uint8: {nullOf(tagUint8), func(e Encoder, rv reflect.Value) { e.UInt8(uint8(rv.Uint())) }},
+		reflect.Uint8: {nullOf(tagUint8), func(e Encoder, rv reflect.Value) { e.Uint8(uint8(rv.Uint())) }},
 		reflect.Uint16: {nullOf(tagUint16), func(e Encoder, rv reflect.Value) {
-			e.UInt16(uint16(rv.Uint()))
+			e.Uint16(uint16(rv.Uint()))
 		}},
 		reflect.Uint32: {nullOf(tagUint32), func(e Encoder, rv reflect.Value) {
-			e.UInt32(uint32(rv.Uint()))
+			e.Uint32(uint32(rv.Uint()))
 		}},
 		// Every unsigned word-or-wider kind keeps its unsigned identity as
-		// UInt64 (no fit-check: a bare uint always maps to UINT64).
-		reflect.Uint:    {nullOf(tagUint64), func(e Encoder, rv reflect.Value) { e.UInt64(rv.Uint()) }},
-		reflect.Uint64:  {nullOf(tagUint64), func(e Encoder, rv reflect.Value) { e.UInt64(rv.Uint()) }},
-		reflect.Uintptr: {nullOf(tagUint64), func(e Encoder, rv reflect.Value) { e.UInt64(rv.Uint()) }},
+		// Uint64 (no fit-check: a bare uint always maps to UINT64).
+		reflect.Uint:    {nullOf(tagUint64), func(e Encoder, rv reflect.Value) { e.Uint64(rv.Uint()) }},
+		reflect.Uint64:  {nullOf(tagUint64), func(e Encoder, rv reflect.Value) { e.Uint64(rv.Uint()) }},
+		reflect.Uintptr: {nullOf(tagUint64), func(e Encoder, rv reflect.Value) { e.Uint64(rv.Uint()) }},
 		reflect.Float32: {nullOf(tagFloat32), func(e Encoder, rv reflect.Value) {
 			// rv.Float() widens to float64, and the hardware widening sets
 			// the quiet bit of a signaling NaN. Converting to the built-in
@@ -731,7 +720,7 @@ func init() {
 			e.Int128(v.(Int128))
 		}},
 		reflect.TypeOf(Uint128{}): {nullOf(tagUint128), func(e Encoder, v any) {
-			e.UInt128(v.(Uint128))
+			e.Uint128(v.(Uint128))
 		}},
 		reflect.TypeOf(Date{}): {nullOf(tagDate), func(e Encoder, v any) {
 			e.Date(v.(Date))

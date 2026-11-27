@@ -1,6 +1,7 @@
 package frame
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 )
@@ -12,6 +13,9 @@ import (
 // about it: the codec writes a value of the SDK's type as the value type
 // here, and decodes that value type as the SDK's. PublishEncryptable does the
 // same for the SDK's Encryptable.
+//
+// The codec has no Encryptable of its own: the published one is the only
+// interface a type writes itself through.
 //
 // Both are called from package encrypt's init function, before any value of
 // an SDK type can exist, and never after. The tables are read without a lock.
@@ -61,9 +65,9 @@ func Publish[P, V any]() {
 	publicOf[v] = p
 }
 
-// PublishEncryptable makes I, an interface, a second Encryptable: the codec
-// asks a value that implements I to write itself with call, as it asks an
-// Encryptable. It panics if I is not an interface, or if another interface
+// PublishEncryptable makes I, an interface, the Encryptable: the codec asks a
+// value that implements I to write itself with call, before it falls back to
+// reflection. It panics if I is not an interface, or if another interface
 // is already published.
 func PublishEncryptable[I any](call func(v I, enc Encoder) error) {
 	iface := reflect.TypeFor[I]()
@@ -118,20 +122,44 @@ func public(v any) any {
 	return v
 }
 
-// encryptableOf is how v writes itself: its EncryptValue, when v is an
-// Encryptable or implements the published one.
+// encryptableOf is how v writes itself: its EncryptValue, when v
+// implements the published Encryptable.
 func encryptableOf(v any) (func(Encoder) error, bool) {
-	if e, ok := v.(Encryptable); ok {
-		return e.EncryptValue, true
-	}
 	if external.iface != nil && v != nil && reflect.TypeOf(v).Implements(external.iface) {
 		return func(enc Encoder) error { return external.call(v, enc) }, true
 	}
 	return nil, false
 }
 
-// implementsEncryptable reports whether t is an Encryptable or implements
-// the published one.
+// implementsEncryptable reports whether t implements the published
+// Encryptable.
 func implementsEncryptable(t reflect.Type) bool {
-	return t.Implements(encryptableType) || (external.iface != nil && t.Implements(external.iface))
+	return external.iface != nil && t.Implements(external.iface)
 }
+
+// Unpublished is every value type that may be published and is not: a
+// program that links package encrypt has none.
+func Unpublished() []reflect.Type {
+	var out []reflect.Type
+	for t := range publishable {
+		if _, ok := publicOf[t]; !ok {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// Usable reports whether e is an Encoder the codec handed out, which
+// records what is written to it. The zero Encoder is not.
+func (e Encoder) Usable() bool { return e.st != nil }
+
+// Err is the first error of the encode e writes to, or an error saying e is
+// the zero Encoder.
+func (e Encoder) Err() error {
+	if e.st == nil {
+		return errZeroEncoder
+	}
+	return e.st.err
+}
+
+var errZeroEncoder = errors.New("frame: the zero Encoder writes nothing; use the one EncryptValue is given")

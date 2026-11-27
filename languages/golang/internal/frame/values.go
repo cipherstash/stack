@@ -200,7 +200,7 @@ func (u UUID) String() string {
 // rather than dropped or mistaken for its bare physical value. V must be a
 // physical scalar (nil, bool, an integer or float width, Int128, Uint128,
 // string or []byte); ID must be above the ids this build knows. An int or
-// uint is written as Int64 or UInt64, as everywhere else in the codec, so
+// uint is written as Int64 or Uint64, as everywhere else in the codec, so
 // it reads back as int64 or uint64.
 type Tagged struct {
 	ID    uint8

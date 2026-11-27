@@ -27,8 +27,8 @@
 // [Marshal] and [Unmarshal] carry a value: Go's own scalars, the value
 // types, []any for a list, [Object] for a map read back, and [Plain] for
 // passthrough. Marshal walks other Go values with encoding/json-style rules,
-// and asks [Encryptable] first, so a type can write itself through an
-// [Encoder].
+// and asks the published Encryptable first (see [PublishEncryptable]), so a
+// type can write itself through an [Encoder].
 //
 // [MarshalCipherText] and [UnmarshalCipherText] carry the ciphertext tree.
 // Its structural nodes ([]any, map[string]any, [Plain]) are the codec's. Its

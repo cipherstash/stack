@@ -15,11 +15,11 @@ func (e Encoder) scalar(tag byte, payload []byte) {
 }
 
 func (e Encoder) Int8(v int8)       { e.scalar(tagInt8, []byte{byte(v)}) }
-func (e Encoder) UInt8(v uint8)     { e.scalar(tagUint8, []byte{v}) }
+func (e Encoder) Uint8(v uint8)     { e.scalar(tagUint8, []byte{v}) }
 func (e Encoder) Int16(v int16)     { e.scalar(tagInt16, binary.LittleEndian.AppendUint16(nil, uint16(v))) }
-func (e Encoder) UInt16(v uint16)   { e.scalar(tagUint16, binary.LittleEndian.AppendUint16(nil, v)) }
+func (e Encoder) Uint16(v uint16)   { e.scalar(tagUint16, binary.LittleEndian.AppendUint16(nil, v)) }
 func (e Encoder) Int128(v Int128)   { e.scalar(tagInt128, v[:]) }
-func (e Encoder) UInt128(v Uint128) { e.scalar(tagUint128, v[:]) }
+func (e Encoder) Uint128(v Uint128) { e.scalar(tagUint128, v[:]) }
 
 func (e Encoder) Date(v Date) {
 	if e.st.err != nil {
@@ -113,28 +113,28 @@ func (e Encoder) physical(v any) bool {
 	case int8:
 		e.Int8(x)
 	case uint8:
-		e.UInt8(x)
+		e.Uint8(x)
 	case int16:
 		e.Int16(x)
 	case uint16:
-		e.UInt16(x)
+		e.Uint16(x)
 	case int32:
 		e.Int32(x)
 	case uint32:
-		e.UInt32(x)
+		e.Uint32(x)
 	case int64:
 		e.Int64(x)
 	case uint64:
-		e.UInt64(x)
+		e.Uint64(x)
 	case int:
 		// As Encode writes int and uint everywhere else.
 		e.Int64(int64(x))
 	case uint:
-		e.UInt64(uint64(x))
+		e.Uint64(uint64(x))
 	case Int128:
 		e.Int128(x)
 	case Uint128:
-		e.UInt128(x)
+		e.Uint128(x)
 	case float32:
 		e.Float32(x)
 	case float64:

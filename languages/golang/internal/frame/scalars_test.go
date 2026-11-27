@@ -189,7 +189,7 @@ func TestTaggedRoundTripsEveryPhysicalScalar(t *testing.T) {
 	}
 }
 
-// A Go int or uint in a Tagged value is written as Int64 or UInt64, as Encode
+// A Go int or uint in a Tagged value is written as Int64 or Uint64, as Encode
 // writes it everywhere else, and reads back at that width.
 func TestTaggedWritesIntAndUintAtSixtyFourBits(t *testing.T) {
 	for _, tc := range []struct {

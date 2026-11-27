@@ -47,6 +47,9 @@ func publishForTest(t *testing.T) {
 	t.Cleanup(func() {
 		published, publicOf, external = savedPublished, savedPublic, savedExternal
 	})
+	// One Encryptable is published at a time: these tests' own stands in
+	// for encrypt's, which takes an Encoder of its own.
+	external.iface, external.call = nil, nil
 	Publish[pubDate, Date]()
 	Publish[pubInt128, Int128]()
 	Publish[pubUUID, UUID]()
@@ -201,7 +204,7 @@ func TestPublishRefusesWhatItCannotPublish(t *testing.T) {
 			PublishEncryptable(func(cents, Encoder) error { return nil })
 		},
 		"a second Encryptable": func() {
-			PublishEncryptable(func(Encryptable, Encoder) error { return nil })
+			PublishEncryptable(func(testEncryptable, Encoder) error { return nil })
 		},
 	} {
 		func() {
@@ -224,4 +227,39 @@ func mustMarshal(t *testing.T, v any) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// checksEncoder records what the Encoder it is handed reports, and writes a
+// value only when that Encoder is usable.
+type checksEncoder struct{ usable *bool }
+
+func (c checksEncoder) EncryptValue(enc Encoder) error {
+	*c.usable = enc.Usable()
+	if enc.Err() != nil {
+		return enc.Err()
+	}
+	enc.Bool(true)
+	return nil
+}
+
+func TestTheZeroEncoderIsNotUsable(t *testing.T) {
+	var zero Encoder
+	if zero.Usable() || zero.Err() == nil {
+		t.Fatalf("the zero Encoder: usable %v, err %v", zero.Usable(), zero.Err())
+	}
+	var usable bool
+	if _, err := Marshal(checksEncoder{usable: &usable}); err != nil || !usable {
+		t.Fatalf("the Encoder the codec hands out: usable %v, %v", usable, err)
+	}
+	// Err reports the first error of the encode so far.
+	enc := func(e Encoder) error {
+		e.String(string([]byte{0xff}))
+		if e.Err() == nil {
+			return errors.New("Err reported nothing after a refused string")
+		}
+		return nil
+	}
+	if _, err := Marshal(encryptableFunc(enc)); err == nil || strings.Contains(err.Error(), "reported nothing") {
+		t.Fatalf("got %v", err)
+	}
 }

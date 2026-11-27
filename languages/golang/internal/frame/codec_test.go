@@ -40,9 +40,9 @@ func TestReflectNatives(t *testing.T) {
 		{"int64", int64(-9), int64(-9)},        // Int64
 		{"uint8", uint8(7), uint8(7)},          // exact unsigned width
 		{"uint16", uint16(300), uint16(300)},   // exact unsigned width
-		{"uint32", uint32(7), uint32(7)},       // UInt32, exact width
-		{"uint", uint(7), uint64(7)},           // bare uint → UInt64 (no fit-check)
-		{"uint64-small", uint64(7), uint64(7)}, // uint64 → UInt64
+		{"uint32", uint32(7), uint32(7)},       // Uint32, exact width
+		{"uint", uint(7), uint64(7)},           // bare uint → Uint64 (no fit-check)
+		{"uint64-small", uint64(7), uint64(7)}, // uint64 → Uint64
 		{"uint64-max", uint64(math.MaxUint64), uint64(math.MaxUint64)},
 		{"float32", float32(1.5), float32(1.5)}, // Float32, exact width
 		{"float", 1.5, 1.5},                     // float64 → Float64
@@ -173,8 +173,8 @@ func (seqBuilder) EncryptValue(enc Encoder) error {
 	s.Elem().Float32(0.5)
 	s.Elem().Int32(-1)
 	s.Elem().Int64(-1)
-	s.Elem().UInt32(math.MaxUint32)
-	s.Elem().UInt64(math.MaxUint64)
+	s.Elem().Uint32(math.MaxUint32)
+	s.Elem().Uint64(math.MaxUint64)
 	s.Elem().String("s")
 	s.Elem().Bytes([]byte{9})
 	return s.End()

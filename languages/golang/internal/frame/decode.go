@@ -15,8 +15,8 @@ import (
 //   - Bool               → bool;
 //   - Int32              → int32;
 //   - Int64              → int64;
-//   - UInt32             → uint32;
-//   - UInt64             → uint64;
+//   - Uint32             → uint32;
+//   - Uint64             → uint64;
 //   - Float32            → float32;
 //   - Float64            → float64;
 //   - String             → string;

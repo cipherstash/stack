@@ -39,3 +39,13 @@ func testLeaves() LeafSet {
 		},
 	}
 }
+
+// testEncryptable is the Encryptable these tests publish, as package encrypt
+// publishes its own: the codec has none of its own.
+type testEncryptable interface {
+	EncryptValue(enc Encoder) error
+}
+
+func init() {
+	PublishEncryptable(func(v testEncryptable, enc Encoder) error { return v.EncryptValue(enc) })
+}

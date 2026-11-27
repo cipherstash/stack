@@ -186,3 +186,56 @@ func TestAStorageRefusalNamesTheEncryptType(t *testing.T) {
 		}
 	}
 }
+
+// Every value type the codec can publish is published by this package, so
+// none is written by reflection or decoded as the codec's own type.
+func TestEveryPublishableValueTypeIsPublished(t *testing.T) {
+	if left := frame.Unpublished(); len(left) != 0 {
+		t.Fatalf("not published: %v", left)
+	}
+}
+
+// The zero Encoder does not panic: it keeps nothing, and its Err says so.
+func TestTheZeroEncoderKeepsNothing(t *testing.T) {
+	var zero encrypt.Encoder
+	zero.Null()
+	zero.Bool(true)
+	zero.Int8(1)
+	zero.Int16(1)
+	zero.Int32(1)
+	zero.Int64(1)
+	zero.Int128(encrypt.Int128{})
+	zero.Uint8(1)
+	zero.Uint16(1)
+	zero.Uint32(1)
+	zero.Uint64(1)
+	zero.Uint128(encrypt.Uint128{})
+	zero.Float32(1)
+	zero.Float64(1)
+	zero.String("s")
+	zero.Bytes(nil)
+	zero.Date(encrypt.Date{Year: 2000, Month: 1, Day: 1})
+	zero.Timestamp(time.Now())
+	zero.Decimal(encrypt.Decimal{})
+	zero.UUID(encrypt.UUID{})
+	if err := zero.Err(); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("the zero Encoder's Err is %v; want ErrEncoding", err)
+	}
+	// A type's own unit test can call EncryptValue with one.
+	if err := writesWith(func(e encrypt.Encoder) { e.Int64(1) }).EncryptValue(encrypt.Encoder{}); err != nil {
+		t.Fatal(err)
+	}
+	// The Encoder the codec hands out has no error until one is written.
+	var before, after error
+	write := writesWith(func(e encrypt.Encoder) {
+		before = e.Err()
+		e.String(string([]byte{0xff}))
+		after = e.Err()
+	})
+	if _, err := frame.Marshal(write); err == nil {
+		t.Fatal("a string that is not UTF-8 was written")
+	}
+	if before != nil || !errors.Is(after, encrypt.ErrEncoding) {
+		t.Fatalf("Err before a refusal %v, after %v", before, after)
+	}
+}
