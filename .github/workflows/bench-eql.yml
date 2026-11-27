@@ -93,6 +93,8 @@ defaults:
 jobs:
   bench:
     name: "Bench EQL (Postgres 17)"
+    # m8a, not c8a+m8a. ADR 0004 moves a job that runs out of memory to m8a.
+    # On c8a this job ran out of memory in run 45927123386.
     runs-on: runs-on=${{ github.run_id }}/family=m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 60
 

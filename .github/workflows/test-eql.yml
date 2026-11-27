@@ -425,6 +425,8 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
+    # m8a, not c8a+m8a. ADR 0004 moves a job that runs out of memory to m8a.
+    # On c8a, "Shard PG17 1/2" ran out of memory in run 45937486282.
     runs-on: runs-on=${{ github.run_id }}/family=m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 75
     strategy:
