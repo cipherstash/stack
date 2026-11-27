@@ -22,7 +22,21 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one. `stashgen` does not yet map a Go type to it.
 
+- `encrypt.ReleaseEngine` frees the compiled engine at once. Without it,
+  the compiled engine is freed one minute after the last client closes.
+  `ReleaseEngine` is safe to call more than once. A client or checker that
+  is open when it is called keeps working. The compiled engine is then
+  freed when the last of them closes.
+
 ### Fixed
+
+- A program that opens and closes clients one after another compiles the
+  engine once, not once per client. Before, the compiled engine was freed
+  when the last open client closed. So the next `NewClient` or
+  `NewChecker` compiled it again, for about 1 second each. Now the
+  compiled engine is kept for one minute after the last client or checker
+  closes. The first compile also uses every core. `encrypt.ReleaseEngine`
+  frees the compiled engine sooner.
 
 - `encrypttest.AssertContexts` and `encrypttest.Contexts` compile the
   engine once per test binary, not once per call. Before, each call

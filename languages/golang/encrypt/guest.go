@@ -111,6 +111,9 @@ type instance struct {
 	// mem supplied the module's linear memory (internal/guest) and reports
 	// on it.
 	mem *guest.Allocator
+	// engine keeps the compiled guest in the shared cache while this
+	// instance is open (see engineCache). Nil when that compile failed.
+	engine *engineLease
 
 	exports                       guest.Exports
 	cipherInit, shutdown, keyset  api.Function
@@ -146,8 +149,21 @@ func guestModuleConfig() wazero.ModuleConfig {
 // newInstance instantiates wasm with the transport as its host module and
 // its linear memory from the guest packages' shared allocator. Under the
 // strict policy, memory that cannot be locked fails instantiation with
-// ErrMemoryLock.
+// ErrMemoryLock. The compiled guest is shared with every other instance of
+// the same build, and kept after the last one closes: see ReleaseEngine.
 func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.LockPolicy) (*instance, error) {
+	lease := engines.acquire(ctx, wasm)
+	inst, err := instantiate(ctx, wasm, t, policy)
+	if err != nil {
+		lease.release()
+		return nil, err
+	}
+	inst.engine = lease
+	return inst, nil
+}
+
+// instantiate is newInstance's work, on a runtime of the instance's own.
+func instantiate(ctx context.Context, wasm []byte, t *transport, policy guest.LockPolicy) (*instance, error) {
 	// No WithCloseOnContextDone. That option makes wazero compile a call
 	// back into Go at the top of every loop the guest runs, so that a call
 	// whose context ends can be interrupted. The guest is cryptography,
@@ -260,7 +276,9 @@ func (inst *instance) release() error {
 		_, _ = inst.shutdown.Call(ctx)
 		inst.mem.Exit()
 	}
-	return inst.runtime.Close(ctx)
+	err := inst.runtime.Close(ctx)
+	inst.engine.release()
+	return err
 }
 
 // The call plumbing — stage each buffer argument through se_alloc, call,

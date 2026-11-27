@@ -24,6 +24,11 @@ import (
 // a ZeroKMS request is performed between steps, with the client free for
 // other callers (see step.go). Close it when done, as with any resource.
 //
+// Clients share the compiled engine. The first client in a process
+// compiles it, in about a second, and it is kept for a minute after the
+// last client closes, so the next client does not compile it again.
+// [ReleaseEngine] frees it at once.
+//
 // A call whose context ends fails with the context's error, and only that
 // call: one request's cancellation or deadline never closes the client for
 // the others sharing it. A call waiting its turn leaves the queue when its

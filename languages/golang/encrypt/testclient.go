@@ -4,14 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	goruntime "runtime"
 	"sync"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testclient"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/tetratelabs/wazero"
-	"github.com/tetratelabs/wazero/experimental"
 )
 
 // Package encrypttest builds its clients through this constructor. It is
@@ -131,17 +128,14 @@ func (p *pinnedBuilds) pin(ctx context.Context, wasm []byte) error {
 	return nil
 }
 
-// compileForever compiles wasm on a runtime that is never closed, with
-// guestRuntimeConfig, the configuration newInstance uses, so the module
-// has the cache entry a client looks up. It compiles the guest's
-// functions on every core: the compiled code is the same, and under the
-// race detector the compile takes about ten seconds on one core.
+// compileForever compiles wasm into the shared cache, as compileShared
+// does, and never frees it.
 func compileForever(ctx context.Context, wasm []byte) (any, error) {
-	runtime := wazero.NewRuntimeWithConfig(ctx, guestRuntimeConfig())
-	compiled, err := runtime.CompileModule(experimental.WithCompilationWorkers(ctx, goruntime.GOMAXPROCS(0)), wasm)
+	free, err := compileShared(ctx, wasm)
 	if err != nil {
-		_ = runtime.Close(ctx)
 		return nil, fmt.Errorf("encrypt: compiling the test build: %w", err)
 	}
-	return compiled, nil
+	// What keeps the build compiled is the runtime free would close, which
+	// free holds.
+	return free, nil
 }
