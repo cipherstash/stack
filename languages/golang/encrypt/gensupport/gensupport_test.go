@@ -53,10 +53,12 @@ func TestNoticesPrintOnceForEachType(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("got %d notices, want 3:\n%s", len(lines), buf.String())
 	}
-	if want := `stashgen: Account: not encrypted and not stored: the unexported field "cache". Tag it ` + "`stash:\"-\"`" + ` to confirm that.`; lines[0] != want {
+	// The user's program prints these notices too, so they name the SDK
+	// (#1898).
+	if want := `encrypt: Account: not encrypted and not stored: the unexported field "cache". Tag it ` + "`stash:\"-\"`" + ` to confirm that.`; lines[0] != want {
 		t.Fatalf("line 0 = %q\nwant     %q", lines[0], want)
 	}
-	if want := `stashgen: Other: not encrypted and not stored: the unexported fields "a" and "b". Tag each ` + "`stash:\"-\"`" + ` to confirm that.`; lines[1] != want {
+	if want := `encrypt: Other: not encrypted and not stored: the unexported fields "a" and "b". Tag each ` + "`stash:\"-\"`" + ` to confirm that.`; lines[1] != want {
 		t.Fatalf("line 1 = %q\nwant     %q", lines[1], want)
 	}
 	// The user's program prints this notice, not stashgen, so it names the

@@ -104,8 +104,10 @@ func TestGenerateFromAPolicy(t *testing.T) {
 	if !bytes.Equal(got, want) {
 		t.Errorf("generated file differs from %s:\n%s", golden, got)
 	}
-	if !strings.Contains(notices.String(), "pb.Individual prints its sealed fields in the clear") {
-		t.Errorf("notices = %q", notices.String())
+	// pb.Individual is in another package, which -redact refuses, so the
+	// notice does not suggest it.
+	if want := "stashgen: pb.Individual prints its sealed fields in the clear, and stashgen cannot add print methods to a type from another package.\n"; !strings.Contains(notices.String(), want) || strings.Contains(notices.String(), "-redact") {
+		t.Errorf("notices = %q\nwant a line %q", notices.String(), want)
 	}
 	// The policy path and the tag path write the same file for the same
 	// declaration, but for the header comments the tag path cannot know.

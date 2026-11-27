@@ -98,13 +98,14 @@ var (
 // NoticeUntagged prints, once for each type, that the unexported fields are
 // neither encrypted nor stored. stashgen printed the same notice when it
 // wrote the file, and the file names the fields in a comment. The tag
-// `stash:"-"` on each field stops all three.
+// `stash:"-"` on each field stops all three. Here the user's program prints
+// it, so it starts with "encrypt:", the SDK's name.
 func NoticeUntagged(typeName string, fields []string) {
 	if len(fields) == 0 {
 		return
 	}
 	notice("untagged:"+typeName, fmt.Sprintf(
-		"stashgen: %s: not encrypted and not stored: the unexported %s. Tag %s `stash:\"-\"` to confirm that.",
+		"encrypt: %s: not encrypted and not stored: the unexported %s. Tag %s `stash:\"-\"` to confirm that.",
 		typeName, fieldList(fields), itOrEach(fields)))
 }
 

@@ -24,16 +24,19 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ### Changed
 
-- **The warning your program prints for a type that prints its sealed
-  fields now starts with `encrypt:`** (#1898). It started with
-  `stashgen:`, although your program prints it, not stashgen. It is
-  printed at the same times as before. For a type from another package,
-  it no longer tells you to run stashgen with `-redact`. That flag
-  refuses such a type.
-  - Your program's other warning still starts with `stashgen:`. It says
-    that unexported fields are not encrypted and not stored.
-  - The warnings that stashgen prints when it writes the file also still
-    start with `stashgen:`.
+- **The two warnings your program prints at run time now start with
+  `encrypt:`** (#1898). They started with `stashgen:`, although your
+  program prints them, not stashgen. One says that a type prints its
+  sealed fields in the clear. The other says that unexported fields are
+  not encrypted and not stored. Each is printed at the same times as
+  before.
+- **No warning tells you to run stashgen with `-redact` for a type from
+  another package** (#1898). That flag refuses such a type. The warning
+  your program prints, and the one stashgen prints when it writes the
+  file, now say that stashgen cannot add print methods to a type from
+  another package. For a type in your own package, both still suggest
+  `-redact`. The warnings that stashgen prints still start with
+  `stashgen:`.
 
 ## [0.1.0-rc.7] - 2026-11-25
 
