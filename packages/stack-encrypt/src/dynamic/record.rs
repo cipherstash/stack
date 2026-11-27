@@ -1451,32 +1451,8 @@ impl<'de> Deserialize<'de> for PlanWire {
 /// The key of the `position`th entry of the object `frame` holds, or `None`
 /// when it is not an object of that many entries.
 fn entry_key(frame: &[u8], position: usize) -> Option<String> {
-    struct Keys(Vec<String>);
-    impl<'de> Deserialize<'de> for Keys {
-        fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-            struct V;
-            impl<'de> Visitor<'de> for V {
-                type Value = Keys;
-                fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                    f.write_str("an object")
-                }
-                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Keys, A::Error> {
-                    let mut keys = Vec::new();
-                    while let Some(key) = map.next_key::<&'de str>()? {
-                        let _: serde::de::IgnoredAny = map.next_value()?;
-                        keys.push(key.to_owned());
-                    }
-                    Ok(Keys(keys))
-                }
-            }
-            d.deserialize_map(V)
-        }
-    }
-    recipher_frame::serde::from_slice::<Keys>(frame)
-        .ok()?
-        .0
-        .into_iter()
-        .nth(position)
+    let root = Frame::parse(frame).ok()?;
+    crate::refusal::object_keys(root)?.into_iter().nth(position)
 }
 
 /// The keys a field's spec reads ([`FieldSpecWire`]).
@@ -9018,6 +8994,20 @@ mod tests {
                     "the message"
                 );
             }
+            // A spec that is a typed null is a null too.
+            let ty = vitaminc_aead::plaintext::FixedType::new(
+                Some(vitaminc_aead::plaintext::Logical::Date),
+                vitaminc_aead::plaintext::Width::I32,
+            )
+            .expect("fixed");
+            let mut typed_null = vec![vitaminc_aead::frame::OBJECT, 1, 0, 0, 0];
+            typed_null.extend_from_slice(&3u32.to_le_bytes());
+            typed_null.extend_from_slice(b"age");
+            vitaminc_aead::leaf::write_typed_null(ty, &mut typed_null);
+            let error =
+                super::super::plan(Protected::new(typed_null).as_protected_ref().as_deref())
+                    .expect_err("a typed null spec");
+            expect_shape(&error, "Plan", Some("age"), None, Found::Null);
             // A spec that is an object of keys the spec does not take is not
             // refused as not an object, even where the frame holds a
             // passthrough the reader does not read.

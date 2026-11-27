@@ -3436,6 +3436,21 @@
       }
     },
     {
+      "id": "frame-typed-null-spec",
+      "input": {
+        "frame_hex": "f1010000000500000076616c75651506000000"
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": {
+          "reason": "not_an_object",
+          "field": "value",
+          "found": "null"
+        }
+      }
+    },
+    {
       "id": "frame-field-order",
       "input": {
         "frame_hex": "f102000000010000007af10200000007000000636f6e74657874f0020000000a0500000075736572730a010000007a070000006f757470757473f0010000000a01000000630100000061f10200000007000000636f6e74657874f0020000000a0500000075736572730a0100000061070000006f757470757473f0010000000a0100000063"

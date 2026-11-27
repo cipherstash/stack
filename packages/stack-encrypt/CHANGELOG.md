@@ -519,7 +519,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Bytes given as a plan that are not one transport frame (empty, cut
     short, JSON text, a repeated key, bytes after the value) have their
     own reason, `not_a_frame`. A frame that is not an object of field
-    specs keeps `not_an_object`, with what it is.
+    specs keeps `not_an_object`, with what it is. A field's spec that is a
+    typed null now names its field, where it named none.
   - A value that fails while it is read, such as a JSON document nested
     too deep, is the new `Error::SourceFailed`, with the code
     `stack_encrypt::dynamic_source_failed` and the reason `source_failed`.

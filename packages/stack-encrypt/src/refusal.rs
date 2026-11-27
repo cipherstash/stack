@@ -117,8 +117,9 @@ pub enum Error {
     },
 
     /// A record plan is malformed: not one transport frame, not an object
-    /// of field specs, empty, missing or duplicating an output, carrying a key that is not
-    /// `"context"`, `"outputs"`, `"target"` or `"type"`, naming a type that
+    /// of field specs, empty, missing or duplicating an output, carrying a
+    /// key that is not `"context"`, `"outputs"`, `"target"` or `"type"`,
+    /// naming a type that
     /// is not one, asking for an index its declared type is not defined
     /// for, giving a field a context that is not a label a plan can
     /// seal it under, or declaring what no plan allows (two fields
@@ -156,8 +157,8 @@ pub enum Error {
     },
 
     /// A record source does not fit its plan: not an object (or an array of
-    /// them, the row then named), a field the plan does not name, a plan field the source does
-    /// not carry or carries twice, or a passthrough or a repeated map key
+    /// them, the row then named), a field the plan does not name, a plan
+    /// field the source does not carry or carries twice, or a passthrough or a repeated map key
     /// under a field the plan seals, or a value of another type than its
     /// field declares that does not convert to it exactly, or `undefined`
     /// for a field that declares a type. Also a query its field does not answer: an operator
@@ -206,8 +207,8 @@ pub enum Error {
     },
 
     /// A stored record does not fit its plan: not a map (or a sequence of
-    /// them, the row then named), a ciphertext-bearing field that is absent or given twice, or
-    /// has no `"c"` node or two of them, a repeated map key under `"c"`, a
+    /// them, the row then named), a ciphertext-bearing field that is absent
+    /// or given twice, or has no `"c"` node or two of them, a repeated map key under `"c"`, a
     /// passthrough under `"c"` — which would hand back unauthenticated
     /// bytes as if they had been opened — or a passthrough field that is
     /// absent, carries no `"passthrough"` node, or carries a value of
@@ -883,6 +884,16 @@ impl Found {
         });
         found.get().map(|found| (found, keys.into_inner()))
     }
+}
+
+/// The keys of an object frame, in order; `None` for a frame that is not an
+/// object. Read with the probe, so a value the frame reader refuses to read,
+/// such as a typed null, does not hide the keys beside it.
+pub(crate) fn object_keys(frame: Frame<'_>) -> Option<Vec<String>> {
+    let found = Cell::new(None);
+    let keys = RefCell::new(Vec::new());
+    let _ = frame.visit(Probe::noting(&found, Some(&keys)));
+    (found.get() == Some(Found::Kind(ValueKind::Object))).then(|| keys.into_inner())
 }
 
 impl fmt::Display for Found {
