@@ -366,7 +366,8 @@ An `opaque` struct is one `Sealed` field. Every stored type implements
 `driver.Valuer` and `sql.Scanner`.
 
 A sealed field outside an opaque struct is one value of one of these types,
-or a type defined over one (`type Email string`):
+or a type defined over one (`type Email string`). To store a field in an EQL
+column instead, see [Choose a column type](#choose-a-column-type).
 
 | Go field | Seals as | Indexes it can store | Query methods |
 |---|---|---|---|
@@ -439,7 +440,8 @@ engine answers on the field: `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` and
 `Matches`. A field has no method for an operator it does not answer, so such
 a query does not compile. The generator asks the engine which operators each
 field answers, and which index answers each one; it holds no copy of those
-rules.
+rules. To choose a field's column type, see
+[Choose a column type](#choose-a-column-type).
 
 | The field declares | Methods | Each returns |
 |---|---|---|
