@@ -150,7 +150,9 @@ rust_decimal = ["vitaminc-aead/rust_decimal", "vitaminc-ore/rust_decimal"]
 # `value::Uuid`: vitaminc's wipeable uuid, built from the uuid crate's
 # `Uuid`, sealed as one leaf with an equality term. On by default. It turns
 # on no order term: an order index takes no uuid, so `vitaminc-ore/uuid`
-# stays off. `dynamic` does not need it: the dynamic path refuses a uuid.
+# stays off. `dynamic` does not need it: the dynamic path admits a uuid
+# (`ValueKind::Uuid`), and seals and indexes one without this feature. The
+# feature adds only the typed `value::Uuid`.
 uuid = ["vitaminc-aead/uuid"]
 # `stack_encrypt::kms::FakeDataKeySource`: the in-memory key source for tests
 # with no ZeroKMS, so a caller's dev-dependency on stack-encrypt is enough and
