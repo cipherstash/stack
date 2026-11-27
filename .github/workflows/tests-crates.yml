@@ -150,6 +150,8 @@ jobs:
 
       # Rustdoc with warnings as errors, one `doc:<crate>` task per crate.
       # `test:doc` runs the examples; only this sees a broken intra-doc link.
+      # Each task builds the public docs, then the docs of private items too,
+      # so a broken link in a private module's docs also fails.
       - name: rustdoc
         run: mise run doc
 

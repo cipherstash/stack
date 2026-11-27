@@ -81,13 +81,19 @@ dir = "{{config_root}}/packages/stack-encrypt"
 run = "mise x --env test -- cargo +nightly fuzz run label_parse --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
 
 # Rustdoc with warnings as errors: a broken intra-doc link or a rustdoc
-# warning fails the build. Doc *examples* are `test:doc:stack-encrypt`. Both run
-# with all features so nothing feature-gated goes unchecked; the root `doc`
-# task fans out over every `doc:<crate>`.
+# warning fails the build. It builds twice. The first build documents
+# public items only, and only it warns when a public doc links to a
+# private item. The second documents private items too, so a broken link
+# in a private module's docs fails as well. Doc *examples* are
+# `test:doc:stack-encrypt`. Both run with all features so nothing feature-gated
+# goes unchecked; the root `doc` task fans out over every `doc:<crate>`.
 ["doc:stack-encrypt"]
-description = "Build docs for stack-encrypt with all features (warnings are errors)"
+description = "Build docs for stack-encrypt with all features, public then private items (warnings are errors)"
 env = { RUSTDOCFLAGS = "-D warnings" }
-run = "cargo doc -p stack-encrypt --no-deps --all-features"
+run = [
+  "cargo doc -p stack-encrypt --no-deps --all-features",
+  "cargo doc -p stack-encrypt --no-deps --all-features --document-private-items",
+]
 
 ["test:doc:stack-encrypt"]
 description = "Run documentation tests for stack-encrypt"

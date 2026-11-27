@@ -54,7 +54,10 @@ run = "mise x --env test -- cargo test --doc --all-features --workspace"
 
 # Rustdoc with warnings as errors, one crate at a time. `test:doc` runs the
 # doc *examples*; it cannot see a broken intra-doc link or a rustdoc warning,
-# which only a `cargo doc` build surfaces. Each crate defines its own
+# which only a `cargo doc` build surfaces. Each crate's task builds twice:
+# the public docs, then the docs of private items too. Only the public build
+# warns when a public doc links to a private item, and only the private
+# build checks the links in private docs. Each crate defines its own
 # `doc:<crate>` in its tasks.toml so a change to one crate is checked with
 # `mise run doc:<crate>` alone; this task is the one entry point CI runs, and
 # it only fans out over those. A crate that adds a `doc:` task joins it.

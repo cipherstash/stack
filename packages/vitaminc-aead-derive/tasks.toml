@@ -2,7 +2,13 @@
 # root mise.toml.
 
 # Rustdoc with warnings as errors, which the root `doc` task fans out to.
+# It builds the public docs, then the docs of private items too: only the
+# public build warns when a public doc links to a private item, and only
+# the private build checks the links in private docs.
 ["doc:vitaminc-aead-derive"]
-description = "Build docs for vitaminc-aead-derive with all features (warnings are errors)"
+description = "Build docs for vitaminc-aead-derive with all features, public then private items (warnings are errors)"
 env = { RUSTDOCFLAGS = "-D warnings" }
-run = "cargo doc -p vitaminc-aead-derive --no-deps --all-features"
+run = [
+  "cargo doc -p vitaminc-aead-derive --no-deps --all-features",
+  "cargo doc -p vitaminc-aead-derive --no-deps --all-features --document-private-items",
+]
