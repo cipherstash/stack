@@ -131,15 +131,13 @@ func (p *pinnedBuilds) pin(ctx context.Context, wasm []byte) error {
 	return nil
 }
 
-// compileForever compiles wasm on a runtime that is never closed, with the
-// configuration newInstance uses, so the module has the cache entry a
-// client looks up. It compiles the guest's functions on every core: the
-// compiled code is the same, and under the race detector the compile takes
-// about ten seconds on one core.
+// compileForever compiles wasm on a runtime that is never closed, with
+// guestRuntimeConfig, the configuration newInstance uses, so the module
+// has the cache entry a client looks up. It compiles the guest's
+// functions on every core: the compiled code is the same, and under the
+// race detector the compile takes about ten seconds on one core.
 func compileForever(ctx context.Context, wasm []byte) (any, error) {
-	config := wazero.NewRuntimeConfig().
-		WithCompilationCache(compilationCache())
-	runtime := wazero.NewRuntimeWithConfig(ctx, config)
+	runtime := wazero.NewRuntimeWithConfig(ctx, guestRuntimeConfig())
 	compiled, err := runtime.CompileModule(experimental.WithCompilationWorkers(ctx, goruntime.GOMAXPROCS(0)), wasm)
 	if err != nil {
 		_ = runtime.Close(ctx)

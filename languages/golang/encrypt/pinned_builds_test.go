@@ -13,6 +13,7 @@ import (
 
 	"github.com/tetratelabs/wazero"
 
+	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testclient"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
@@ -201,7 +202,7 @@ func TestPinnedBuildsKeepTheGuestCompiled(t *testing.T) {
 	if err := p.pin(context.Background(), wasm); err != nil {
 		t.Fatal(err)
 	}
-	shared := wazero.NewRuntimeConfig().WithCompilationCache(compilationCache())
+	shared := guestRuntimeConfig()
 	compile(shared)
 	if again := compile(shared); again > cold/4 {
 		t.Fatalf("a compile after the pin took %v and a cold compile %v: the pinned build left the cache", again, cold)
@@ -243,6 +244,44 @@ func TestTestCheckersCompileTheirBuildOnce(t *testing.T) {
 	}
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("compiled %d times, want 1", got)
+	}
+}
+
+// The checker package encrypttest gets, through internal/testclient, pins
+// the test build that selectBuild picks, in the testBuilds that test
+// clients pin theirs in. So encrypttest.Contexts compiles that build at
+// most once in a test binary, and none at all after NewClient.
+func TestTheRegisteredTestCheckerPinsItsBuild(t *testing.T) {
+	eqlBuild := func() ([]byte, error) {
+		wasm, err := os.ReadFile(deterministicEQLGuestPath)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrDeterministicEQLGuestNotBuilt
+		}
+		return wasm, err
+	}
+	wasm, err := selectBuild(DeterministicGuest, eqlBuild)
+	if errors.Is(err, ErrDeterministicGuestNotBuilt) || errors.Is(err, ErrDeterministicEQLGuestNotBuilt) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, err := testclient.NewChecker(context.Background(), DeterministicGuest, eqlBuild)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checker, ok := built.(*Checker)
+	if !ok {
+		t.Fatalf("the checker constructor returned %T, not *Checker", built)
+	}
+	if err := checker.Close(); err != nil {
+		t.Error(err)
+	}
+	testBuilds.mu.Lock()
+	_, ok = testBuilds.pinned[sha256.Sum256(wasm)]
+	testBuilds.mu.Unlock()
+	if !ok {
+		t.Fatal("the registered checker constructor did not pin the build it ran")
 	}
 }
 

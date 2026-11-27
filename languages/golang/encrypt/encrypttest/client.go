@@ -157,16 +157,9 @@ func NewClient(tb testing.TB, opts ...ClientOption) *encrypt.Client {
 	for _, opt := range opts {
 		opt(&o)
 	}
-	built, err := testclient.New(context.Background(), plainTestBuild, eqlTestBuild, o.seed)
+	client, err := narrow[*encrypt.Client](testclient.New(context.Background(), plainTestBuild, eqlTestBuild, o.seed))
 	if err != nil {
 		tb.Fatalf("encrypttest: %v", err)
-	}
-	client, ok := built.(*encrypt.Client)
-	if !ok {
-		if closer, ok := built.(interface{ Close() error }); ok {
-			_ = closer.Close()
-		}
-		tb.Fatalf("encrypttest: the constructor returned %T, not *encrypt.Client", built)
 	}
 	tb.Cleanup(func() {
 		if err := client.Close(); err != nil {

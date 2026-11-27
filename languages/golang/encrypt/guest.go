@@ -92,6 +92,17 @@ func compilationCache() wazero.CompilationCache {
 	return sharedCache
 }
 
+// guestRuntimeConfig is the runtime configuration every guest runtime
+// uses. wazero finds a compiled module in the cache by its bytes and by
+// parts of this configuration: the engine, and WithCloseOnContextDone. So
+// compileForever, which compiles a build ahead of any client, uses this
+// one too. With another, a client would miss the entry and compile the
+// build again.
+func guestRuntimeConfig() wazero.RuntimeConfig {
+	return wazero.NewRuntimeConfig().
+		WithCompilationCache(compilationCache())
+}
+
 // instance is one instantiated guest with its exports resolved. It is
 // the unsynchronised half of a Client; the Client serialises access.
 type instance struct {
@@ -157,9 +168,7 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.Lo
 	// keys while it builds, seals or opens a batch, and the host
 	// resumes it at once (see step.go). A pause then waits for one chunk,
 	// not a whole batch.
-	config := wazero.NewRuntimeConfig().
-		WithCompilationCache(compilationCache())
-	runtime := wazero.NewRuntimeWithConfig(ctx, config)
+	runtime := wazero.NewRuntimeWithConfig(ctx, guestRuntimeConfig())
 	// The Must* form of this panics on any error, which is the wrong
 	// failure mode for a constructor in a library and would strand the
 	// runtime it was instantiating into. No error is reachable here today —

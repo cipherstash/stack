@@ -2,8 +2,9 @@
 // two constructors it needs: a client over a given guest build, initialised
 // with a seed in place of a client key, and a checker over a given guest
 // build. The constructors reach encrypt's unexported instance and client,
-// and encrypttest imports encrypt, so encrypt registers them here on init. Nothing outside the encrypt tree can import this
-// package, so the constructors are in no public API.
+// and encrypttest imports encrypt, so encrypt registers them here on
+// init. Nothing outside the encrypt tree can import this package, so the
+// constructors are in no public API.
 package testclient
 
 import (
