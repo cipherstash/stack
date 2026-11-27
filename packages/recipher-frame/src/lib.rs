@@ -43,7 +43,8 @@ pub use transport::{decode_ciphertext, encode_ciphertext, CodecError};
 /// `vitaminc-aead` next to the leaf codec they share, and are re-exported
 /// here so a binding that depends on this crate has the whole transport.
 pub use vitaminc_aead::frame::{
-    FrameError, FrameWriteError, ARRAY, MAX_DEPTH, OBJECT, PASSTHROUGH,
+    Elements, FrameError, FrameWriteError, OwnedFrameContainer, OwnedFrameSink, ARRAY, MAX_DEPTH,
+    OBJECT, PASSTHROUGH,
 };
 /// The leaf tag table, which lives with the leaf codec in `vitaminc-aead`.
 pub use vitaminc_aead::tags;

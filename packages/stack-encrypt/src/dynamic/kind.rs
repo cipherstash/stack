@@ -8,8 +8,9 @@
 //!
 //! The vocabulary is vitaminc's [`ValueKind`], whose
 //! [`name`](ValueKind::name)s (`"uint64"`, `"string"`, …, `"array"`,
-//! `"object"`) are frozen wire format; [`OwnedFrame::kind`] says which kind
-//! a value is. Beside it, this module adds two rules:
+//! `"object"`) are frozen wire format;
+//! [`Frame::kind`](vitaminc_aead::frame::Frame::kind) says which kind a
+//! value is. Beside it, this module adds two rules:
 //!
 //! - [`admits`]: which indexes a kind is defined for, so a plan asking for
 //!   match on an integer or equality on a boolean is refused when it is

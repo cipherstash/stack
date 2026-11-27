@@ -27,7 +27,7 @@ use vitaminc_protected::{Buffer, Controlled, OpaqueDebug, TimingSafeEq};
 use __private::SeenKeys;
 
 mod owned;
-pub use owned::{OwnedFrame, OwnedFrameSink};
+pub use owned::{OwnedFrame, OwnedFrameContainer, OwnedFrameSink};
 
 use crate::leaf::{self, Form, Item, ScalarError};
 use crate::plaintext::{

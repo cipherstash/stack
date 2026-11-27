@@ -364,9 +364,8 @@ a binding can use to hold plaintext as a tree, by design. If you find
 yourself building one, you are building a second value model.
 
 The frame format itself is documented in the crate that owns it,
-[`recipher-frame`](https://docs.rs/recipher-frame/0.10.0): the
-byte layout, the tag table, and the depth and length limits. This guide
-does not restate it. This crate re-exports it as
+`recipher-frame`: the byte layout, the tag table, and the depth and
+length limits. This guide does not restate it. This crate re-exports it as
 [`crate::dynamic::frame`], so a binding builds against the same version the
 engine does.
 
@@ -859,7 +858,7 @@ done:
 
 ## 12. Where the rest is
 
-- The frame format: [`recipher-frame` on docs.rs](https://docs.rs/recipher-frame/0.10.0).
+- The frame format: [`crate::dynamic::frame`], the `recipher-frame` crate.
 - The `dynamic` API: [`crate::dynamic`], [`crate::dynamic::Planned`] for
   the operations, and `src/dynamic/record.rs` for the plan grammar in full.
 - The binding contract and its cases: `conformance/stack-encrypt`, starting
