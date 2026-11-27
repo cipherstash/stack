@@ -596,7 +596,7 @@ reasons! {
         /// A field with `"null": "sealed"` declares no type, or one of no
         /// fixed width (text, bytes, a container), whose absence the length
         /// of its ciphertext would show.
-        SealedNullType => "sealed_null_type", "a sealed null needs a declared type of fixed width: a bool, a number, a date, a timestamp or a decimal";
+        SealedNullType => "sealed_null_type", "a sealed null needs a declared type of fixed width: a bool, a number, a date, a timestamp, a decimal or a UUID";
         /// A query's input is a null, and the field does not seal its nulls
         /// beside an equality term: only `eq` on a `"null": "sealed"` field
         /// finds a null by its term. A `"null": "sql"` field's nulls are SQL

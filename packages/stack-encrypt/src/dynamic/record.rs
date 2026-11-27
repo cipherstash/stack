@@ -237,8 +237,8 @@ pub enum NullMode {
     /// the one term every null of the field shares, so an `eq` query of a
     /// null finds the absent rows; no other index has a term for a null.
     /// Only for a field of a declared type of fixed width (a boolean, a
-    /// number, a date, a timestamp or a decimal) whose indexes are equality
-    /// alone; a target field takes it when its EQL type's are.
+    /// number, a date, a timestamp, a decimal or a UUID) whose indexes are
+    /// equality alone; a target field takes it when its EQL type's are.
     Sealed,
     /// `"sql"`: a null, or a row with no entry for the field, produces
     /// nothing: the stored record has no entry for the field, so the host
@@ -1275,7 +1275,7 @@ pub fn plan(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Plan, E
 /// show it, and beside an equality index stores a null's equality term, the
 /// one every null of the field shares, which an `eq` query of a null finds;
 /// the field must declare a type of fixed width (a bool, a number, a date, a
-/// timestamp or a decimal) and have no index but equality, on the field or,
+/// timestamp, a decimal or a UUID) and have no index but equality, on the field or,
 /// for a target field, on its EQL type. `"sql"` stores nothing for a null
 /// or a missing field, so the host's columns hold SQL `NULL`; any field but
 /// a passthrough takes it.
