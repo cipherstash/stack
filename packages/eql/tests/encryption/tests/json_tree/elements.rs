@@ -24,7 +24,7 @@
 use super::*;
 
 use eql_bindings::encryption::EqlTargets;
-use stack_encrypt::dynamic::{self, record, Op, Operand, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record, Op, Operand};
 use stack_encrypt::KeysetCipher;
 
 const RELATIONSHIP: &str = "$.extra.emergency_contacts[*].relationship";
@@ -58,13 +58,8 @@ fn contact_plan() -> record::Plan {
     .unwrap()
 }
 
-pub(super) fn frame_of(value: &Value) -> ValueFrame {
-    ValueFrame::from_bytes(
-        dynamic::frame::serde::to_vec(value)
-            .unwrap()
-            .as_protected_ref(),
-    )
-    .unwrap()
+pub(super) fn frame_of(value: &Value) -> OwnedFrame {
+    OwnedFrame::from_buffer(dynamic::frame::serde::to_vec(value).unwrap()).unwrap()
 }
 
 /// The operand of `operator` on `profile` for `input`, as the SQL binds

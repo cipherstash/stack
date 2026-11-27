@@ -1,0 +1,606 @@
+//! The plaintext data model: a source describes itself once ([`Encrypt`])
+//! to a consumer ([`Sink`]), the way serde splits `Serialize` from
+//! `Serializer`.
+//!
+//! - **Containers are push-style.** [`SeqSink::element`] returns a sink for
+//!   the next element rather than taking the element as a value, so the
+//!   source drives the whole walk and any number of sinks can share it
+//!   (see [`Tee`]).
+//! - **Sources can fail.** Every sink error implements [`Error`], so a
+//!   source can stop the walk with [`Error::source`] without knowing which
+//!   sink it is feeding. That is what lets a native binding walk a live host
+//!   object, where a getter can throw, without taking a snapshot first.
+//! - **Lengths are optional,** for host iterables that do not know their
+//!   size.
+//! - **A scalar is a physical value plus an optional logical type.** One
+//!   [`Sink::scalar`] method takes a [`Physical`] value and an optional
+//!   [`Logical`] type, rather than a method per kind. See [`kinds`].
+//!
+//! `Sink` is implemented inside vitaminc and its host bindings. Application
+//! code implements `Encrypt`, usually by derive.
+
+pub mod depth;
+#[cfg(test)]
+mod encrypt_ref_tests;
+pub mod kinds;
+mod path;
+mod sources;
+mod tee;
+mod value_kind;
+
+pub use kinds::{
+    FixedType, Float, Int, Kind, KnownLogical, Logical, Physical, TimeUnit, UnknownLogical,
+    UnknownLogicalId, Width,
+};
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub use path::render;
+pub use path::{Path, Step};
+pub use sources::{Bytes, Raw};
+
+/// What `#[derive(Encrypt)]`'s expansion needs by path. Not an API.
+#[doc(hidden)]
+pub mod __private {
+    pub use super::sources::discard_one;
+}
+pub use tee::Tee;
+pub use value_kind::{ParseValueKindError, SealedNull, ValueKind};
+
+/// A value that can describe itself to a [`Sink`].
+///
+/// Implemented by Rust primitives and containers, by the optional jiff,
+/// `rust_decimal` and uuid types, and by host bindings for their own values.
+/// A struct implements it by walking its fields into a map, which is what
+/// `#[derive(Encrypt)]` generates.
+///
+/// `Encrypt` and [`Decrypt`](crate::Decrypt) are the pair a type implements
+/// to say how it is encrypted and decrypted. Neither does any cryptography:
+/// that is the [`Cipher`](crate::Cipher)'s job, and the same walk also
+/// feeds sinks that are not ciphers, such as equality terms and the
+/// transport frame. This trait replaces the visitor-based `Encrypt` of
+/// vitaminc 0.5, which drove a cipher directly.
+///
+/// # Owned values and `Protected`
+///
+/// A source implements `Encrypt` for `T` and for `&T`. The by-value walk
+/// consumes the value; the borrowed walk hands the sink borrows of what
+/// the value holds and leaves it where it is. `Protected<T>` walks as a
+/// borrow of what it wraps, so nothing leaves the wrapper during the walk
+/// and everything in it, visited or not, is zeroized when it drops. That
+/// is why a type that is to sit inside a `Protected`, a derived struct
+/// included, needs the borrowed impl; the derive generates it.
+///
+/// An owned byte or text leaf (`String`, `Vec<u8>`, `[u8; N]`) wraps itself
+/// in a `Protected` before the sink sees it, so its buffer is wiped however
+/// it arrives. A bare container that is walked by value and stops part way
+/// discards the children it did not reach through their own walks, so
+/// their owned leaves are wiped too rather than dropped bare. A
+/// hand-written leaf that owns a secret buffer should wrap itself the same
+/// way, and a hand-written container should not drop unvisited children
+/// bare.
+pub trait Encrypt {
+    /// How deep a value of this type can nest below its own root, when the
+    /// type alone fixes it: `Some(0)` for a scalar, one more than its
+    /// deepest child for a sequence or map (see [`depth`]). `None`, the
+    /// default, when it depends on the value: a recursive type, a frame, a
+    /// live host value.
+    ///
+    /// `#[derive(Encrypt)]` works this out from the fields' depths and fails
+    /// to compile a type deeper than [`MAX_DEPTH`](crate::frame::MAX_DEPTH),
+    /// whose fully populated values the encrypting sink would always
+    /// refuse. A hand-written impl may leave it `None`, which skips the
+    /// check for every type that contains it; the walk still refuses a
+    /// value that is too deep. It must never be more than the deepest a
+    /// value of the type can nest, or a type that is fine fails to compile.
+    const DEPTH: Option<usize> = None;
+
+    /// The fixed-width scalar type every value of this type has, if it has
+    /// one: an int, a float, a date, a timestamp, a decimal. `None`, the
+    /// default, for everything else: a bool (whose leaf is already as short
+    /// as a null's), text, bytes, a container, a value whose type depends
+    /// on the value.
+    ///
+    /// `Option<Self>` walks its `None` as a [`Sink::typed_null`] of this
+    /// type, so the encrypting sink seals it padded to the length of a
+    /// `Some`, and [`Decrypt`](crate::Decrypt) reads that typed null back
+    /// only into an `Option` of the same type. It must be the type
+    /// [`visit`](Encrypt::visit) always walks, normalised as
+    /// [`FixedType`] normalises it, or a `None` and a `Some` seal at
+    /// different lengths.
+    const FIXED: Option<FixedType> = None;
+
+    /// Describe `self` to `sink`, consuming it.
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error>;
+}
+
+/// A source that can be described by reference: `&T` is an [`Encrypt`]
+/// source for every lifetime. The bound generic code writes when it holds a
+/// borrowed plaintext and must not copy it.
+///
+/// Implemented for every `T` whose borrow is a source, so a type gets it
+/// by implementing `Encrypt for &T`, as every built-in source and
+/// `#[derive(Encrypt)]` already do. Hand it on with [`lend`](Self::lend).
+///
+/// It says the same as `for<'a> &'a T: Encrypt`, without naming a lifetime,
+/// and is the bound this crate's own containers (`&Option<T>`, `&Vec<T>`,
+/// the maps, `Protected<T>`) put on what they hold. Those used to bound on
+/// `&'a T: Encrypt`, and with `T` still being inferred the trait solver
+/// tried `&Option<U>`, `&Option<Option<U>>`, and so on until it overflowed
+/// (`E0275`). Bounding on `T` itself stops it at `U`, which waits until
+/// `U` is known.
+///
+/// ```
+/// use vitaminc_aead::{Encrypt, EncryptRef};
+///
+/// // Generic over a borrowed plaintext, with no copy and no `Clone`.
+/// fn depth<T: ?Sized + EncryptRef>(value: &T) -> Option<usize> {
+///     fn of<P: Encrypt>(_: P) -> Option<usize> {
+///         P::DEPTH
+///     }
+///     of(value.lend())
+/// }
+///
+/// assert_eq!(depth(&42i32), Some(0));
+/// assert_eq!(depth("text"), Some(0));
+/// assert_eq!(depth(&vec![Some(1u16)]), Some(1));
+/// ```
+pub trait EncryptRef {
+    /// [`Encrypt::DEPTH`] of `&Self`. Named apart from it, so `T::DEPTH`
+    /// stays unambiguous where both traits are in scope.
+    const REF_DEPTH: Option<usize>;
+    /// [`Encrypt::FIXED`] of `&Self`, named apart as `REF_DEPTH` is.
+    const REF_FIXED: Option<FixedType>;
+
+    /// Describe `self` to `sink` by reference, leaving it where it is.
+    fn visit_ref<S: Sink>(&self, sink: S) -> Result<S::Ok, S::Error>;
+
+    /// `self` as an [`Encrypt`] source that reads it in place.
+    fn lend(&self) -> Lent<'_, Self> {
+        Lent(self)
+    }
+}
+
+impl<T: ?Sized> EncryptRef for T
+where
+    for<'a> &'a T: Encrypt,
+{
+    const REF_DEPTH: Option<usize> = <&T as Encrypt>::DEPTH;
+    const REF_FIXED: Option<FixedType> = <&T as Encrypt>::FIXED;
+    fn visit_ref<S: Sink>(&self, sink: S) -> Result<S::Ok, S::Error> {
+        self.visit(sink)
+    }
+}
+
+/// A borrowed plaintext as an [`Encrypt`] source: what
+/// [`EncryptRef::lend`] returns. It walks exactly as `&T` does.
+pub struct Lent<'a, T: ?Sized>(&'a T);
+
+impl<T: ?Sized> Clone for Lent<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T: ?Sized> Copy for Lent<'_, T> {}
+
+impl<T: ?Sized + EncryptRef> Encrypt for Lent<'_, T> {
+    const DEPTH: Option<usize> = T::REF_DEPTH;
+    const FIXED: Option<FixedType> = T::REF_FIXED;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.0.visit_ref(sink)
+    }
+}
+
+/// A borrow of a `Lent` walks as the `Lent` does, so a `Lent` is itself
+/// [`EncryptRef`]: it can sit in a container walked by reference
+/// (`&Vec<Lent<T>>`) or in a derived struct's field.
+impl<T: ?Sized + EncryptRef> Encrypt for &Lent<'_, T> {
+    const DEPTH: Option<usize> = T::REF_DEPTH;
+    const FIXED: Option<FixedType> = T::REF_FIXED;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.0.visit_ref(sink)
+    }
+}
+
+/// A source whose walk is exactly one leaf.
+///
+/// The encrypt-side counterpart of [`FromScalar`](crate::FromScalar). An
+/// implementing type's [`visit`](Encrypt::visit) makes one call, to
+/// [`Sink::scalar`] or [`Sink::typed_null`], and nothing else, so its
+/// [`DEPTH`](Encrypt::DEPTH) is [`depth::SCALAR`]. Every built-in leaf
+/// source implements it: `bool`, the integers (except `u8`, which is not a
+/// source at all), the floats, `String` and `&str`, `Vec<u8>`, `[u8; N]`
+/// and `&[u8]`, [`Bytes`] and [`Raw`], the borrowed, `Protected` and
+/// `ProtectedRef` forms of each, and the jiff, `rust_decimal` and uuid
+/// types behind their features. A container does not, and neither does an
+/// `Option<T>`, even of a scalar: its `None` is a leaf too, but a caller
+/// that bounds on `Scalar` asks for a value that is present, and decides
+/// for itself how to seal an absent one.
+///
+/// `DEPTH` says the same thing, but stable Rust cannot bound a generic on
+/// a constant, so a caller that must produce one sealed leaf from any source
+/// bounds on this trait instead. The trait is open: a hand-written leaf,
+/// such as a newtype that encodes itself to one byte string, implements it
+/// with an empty impl, and should assert that its depth agrees, so the
+/// marker can never land on a container. A generic caller cannot see that
+/// assertion, so it repeats the check at its own use, in an inline `const`
+/// that is evaluated once `S` is known:
+///
+/// ```
+/// use vitaminc_aead::plaintext::depth;
+/// use vitaminc_aead::{Encrypt, Physical, Scalar, Sink};
+///
+/// /// An opaque value, sealed as the bytes of its encoding.
+/// struct Blob(Vec<u8>);
+///
+/// impl Encrypt for Blob {
+///     const DEPTH: Option<usize> = depth::SCALAR;
+///     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+///         self.0.visit(sink)
+///     }
+/// }
+///
+/// impl Scalar for Blob {}
+/// const _: () = assert!(depth::is_scalar(<Blob as Encrypt>::DEPTH));
+///
+/// /// Seals exactly one leaf, whatever it is handed.
+/// fn seals_one_leaf<S: Scalar>(value: S) -> S {
+///     const { assert!(depth::is_scalar(S::DEPTH), "a `Scalar` is one leaf") };
+///     value
+/// }
+///
+/// seals_one_leaf(42i32);
+/// seals_one_leaf(vec![1u8, 2, 3]);
+/// seals_one_leaf(Blob(vec![7]));
+/// ```
+///
+/// `Vec<u8>` is the one exception to the rule that a `Vec` is a sequence:
+/// it is a byte string, sealed as a single bytes leaf. The same goes for
+/// `[u8; N]` and `&[u8]`. So `vec![1u8, 2, 3]` is a `Scalar`, while a
+/// `Vec` of any other scalar walks as a sequence of leaves, one per
+/// element, and is not:
+///
+/// ```compile_fail,E0277
+/// use vitaminc_aead::Scalar;
+/// fn seals_one_leaf<S: Scalar>(value: S) -> S { value }
+/// seals_one_leaf(vec![1i32, 2, 3]);
+/// ```
+pub trait Scalar: Encrypt {}
+
+/// Every sink's error type.
+///
+/// A source reports its own failure through [`source`](Error::source),
+/// without knowing which sink it is feeding.
+pub trait Error: Sized {
+    /// Wrap a failure that came from the source, not the sink.
+    fn source(error: SourceError) -> Self;
+}
+
+/// A failure reading the source: a host getter threw, a string had an
+/// unpaired surrogate, a big integer was out of range, a timestamp was a
+/// leap second.
+///
+/// Transparent: it displays as the wrapped error, and its `source()` is the
+/// wrapped error's, so a reporter that walks the chain sees what lies behind
+/// a failed getter.
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub struct SourceError(Box<dyn core::error::Error + Send + Sync>);
+
+impl SourceError {
+    /// A source error from any error type.
+    pub fn new(error: impl core::error::Error + Send + Sync + 'static) -> Self {
+        Self(Box::new(error))
+    }
+
+    /// A source error from a message.
+    pub fn msg(msg: impl Into<String>) -> Self {
+        Self(msg.into().into())
+    }
+
+    /// The underlying error, which can be downcast to its concrete type.
+    pub fn inner(&self) -> &(dyn core::error::Error + Send + Sync + 'static) {
+        &*self.0
+    }
+}
+
+/// A consumer of one value's description.
+///
+/// A sink is used once: each method takes `self`. Containers hand back a
+/// [`SeqSink`] or [`MapSink`] that produces one child sink per element or
+/// entry.
+///
+/// Sources must finish each child before requesting another, propagate errors,
+/// and call a container's `end` only after all children succeed. Dropping a
+/// sink does not mean successful completion. Implementations that write into
+/// borrowed buffers or external state must document partial-write behavior;
+/// this trait provides no rollback on source or sink failure.
+pub trait Sink: Sized {
+    /// What the sink produces when the walk ends successfully.
+    type Ok;
+    /// The sink's error, which can also carry a [`SourceError`].
+    type Error: Error;
+    /// The sink for a sequence's elements.
+    type Seq: SeqSink<Ok = Self::Ok, Error = Self::Error>;
+    /// The sink for a map's entries.
+    type Map: MapSink<Ok = Self::Ok, Error = Self::Error>;
+
+    /// One scalar: a physical value, and the logical type it represents,
+    /// if any. See [`kinds`].
+    ///
+    /// # Examples
+    ///
+    /// A plain value has no logical type. A value that means something
+    /// more names the type it is stored as, and the sink checks that the
+    /// physical value fits it ([`Logical::admits`]).
+    ///
+    /// ```
+    /// use vitaminc_aead::plaintext::{Int, Logical, Physical, Encrypt, Sink};
+    ///
+    /// struct Celsius(i32);
+    ///
+    /// impl Encrypt for Celsius {
+    ///     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+    ///         sink.scalar(None, Physical::Int(Int::I32(self.0)))
+    ///     }
+    /// }
+    ///
+    /// /// Days since 1970-01-01.
+    /// struct Day(i32);
+    ///
+    /// impl Encrypt for Day {
+    ///     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+    ///         sink.scalar(Some(Logical::Date), Physical::Int(Int::I32(self.0)))
+    ///     }
+    /// }
+    /// ```
+    fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<Self::Ok, Self::Error>;
+
+    /// An absent value of a fixed-width type: a null that says what it
+    /// stands in for. `Option<T>` walks its `None` here when `T` has a
+    /// [`FIXED`](Encrypt::FIXED) type, and a host that knows a missing
+    /// value's type does the same.
+    ///
+    /// It means what `scalar(None, Physical::Null)` means; the type is
+    /// there so its length can be hidden. The encrypting sink seals it as a
+    /// typed null padded to the type's leaf length (see
+    /// [`tags::TYPED_NULL`](crate::tags::TYPED_NULL)), the frame carries
+    /// it, and a typed decode target reads it only as an `Option` of the
+    /// same type. A sink that only needs to know a value is absent treats
+    /// it as a null. A sink that forwards to other sinks must forward it as
+    /// it is, or the padding is lost and absent values show again.
+    fn typed_null(self, ty: FixedType) -> Result<Self::Ok, Self::Error>;
+
+    /// Start a sequence. `len` is a hint; a source that does not know its
+    /// length passes `None`.
+    fn seq(self, len: Option<usize>) -> Result<Self::Seq, Self::Error>;
+
+    /// Start a map with string keys. `len` is a hint.
+    fn map(self, len: Option<usize>) -> Result<Self::Map, Self::Error>;
+
+    /// A subtree that travels in the clear. It is walked like anything
+    /// else; the sink decides what "in the clear" means for it.
+    ///
+    /// The subtree is lent, not handed over: a sink walks it in place
+    /// ([`EncryptRef::visit_ref`]), and a sink which is really several sinks
+    /// (see [`Tee`]) lends the same subtree to each of them, so it is never
+    /// copied.
+    fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<Self::Ok, Self::Error>;
+}
+
+/// The sink for a sequence's elements.
+pub trait SeqSink: Sized {
+    /// Result produced when this container or value is completed successfully.
+    type Ok;
+    /// Sink failure type, including errors forwarded from the source.
+    type Error: Error;
+    /// A sink for one element. It borrows the sequence sink and writes
+    /// into it; its own `Ok` is incidental.
+    type Element<'s>: Sink<Error = Self::Error>
+    where
+        Self: 's;
+
+    /// A sink for the next element.
+    fn element(&mut self) -> Result<Self::Element<'_>, Self::Error>;
+
+    /// Finish the sequence.
+    fn end(self) -> Result<Self::Ok, Self::Error>;
+}
+
+/// The sink for a map's entries. Keys are strings and travel in the clear.
+pub trait MapSink: Sized {
+    /// Result produced when this container or value is completed successfully.
+    type Ok;
+    /// Sink failure type, including errors forwarded from the source.
+    type Error: Error;
+    /// A sink for one entry's value.
+    type Entry<'s>: Sink<Error = Self::Error>
+    where
+        Self: 's;
+
+    /// A sink for the value under `key`.
+    fn entry(&mut self, key: &str) -> Result<Self::Entry<'_>, Self::Error>;
+
+    /// Finish the map.
+    fn end(self) -> Result<Self::Ok, Self::Error>;
+}
+
+/// Walk each item into its own element sink: the loop every sequence
+/// source writes.
+pub fn visit_seq<S, I>(sink: S, len: Option<usize>, items: I) -> Result<S::Ok, S::Error>
+where
+    S: Sink,
+    I: IntoIterator,
+    I::Item: Encrypt,
+{
+    let mut seq = sink.seq(len)?;
+    for item in items {
+        item.visit(seq.element()?)?;
+    }
+    seq.end()
+}
+
+/// Walk each `(key, value)` into its own entry sink: the loop every map
+/// source writes.
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::BTreeMap;
+/// use vitaminc_aead::plaintext::{visit_map, Encrypt, Sink};
+///
+/// struct Scores(BTreeMap<String, u32>);
+///
+/// impl Encrypt for Scores {
+///     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+///         let len = Some(self.0.len());
+///         visit_map(sink, len, self.0.iter().map(|(name, score)| (name.as_str(), *score)))
+///     }
+/// }
+/// ```
+pub fn visit_map<'k, S, I, P>(sink: S, len: Option<usize>, entries: I) -> Result<S::Ok, S::Error>
+where
+    S: Sink,
+    I: IntoIterator<Item = (&'k str, P)>,
+    P: Encrypt,
+{
+    let mut map = sink.map(len)?;
+    for (key, value) in entries {
+        value.visit(map.entry(key)?)?;
+    }
+    map.end()
+}
+
+#[cfg(test)]
+pub(crate) mod record {
+    //! A sink that records every call, for tests of sources and of sinks
+    //! that forward to other sinks.
+
+    use super::*;
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum Event {
+        Scalar(Option<Logical>, Owned),
+        TypedNull(FixedType),
+        Seq(Option<usize>),
+        Element,
+        EndSeq,
+        Map(Option<usize>),
+        Entry(String),
+        EndMap,
+        Passthrough,
+    }
+
+    /// An owned copy of a physical value, so a recording can outlive the
+    /// borrow a source handed over.
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum Owned {
+        Null,
+        Bool(bool),
+        Int(Int),
+        Float(Float),
+        Text(String),
+        Bytes(Vec<u8>),
+    }
+
+    impl From<Physical<'_>> for Owned {
+        fn from(v: Physical<'_>) -> Self {
+            match v {
+                Physical::Null => Owned::Null,
+                Physical::Bool(b) => Owned::Bool(b),
+                Physical::Int(i) => Owned::Int(i),
+                Physical::Float(f) => Owned::Float(f),
+                Physical::Text(s) => Owned::Text(s.to_owned()),
+                Physical::Bytes(b) => Owned::Bytes(b.to_vec()),
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct RecordError(pub String);
+
+    impl Error for RecordError {
+        fn source(error: SourceError) -> Self {
+            Self(error.to_string())
+        }
+    }
+
+    /// Records into a shared log. `Ok` is `()`.
+    pub struct Record<'l>(pub &'l mut Vec<Event>);
+
+    impl Sink for Record<'_> {
+        type Ok = ();
+        type Error = RecordError;
+        type Seq = Self;
+        type Map = Self;
+
+        fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<(), RecordError> {
+            self.0.push(Event::Scalar(ty, value.into()));
+            Ok(())
+        }
+
+        fn typed_null(self, ty: FixedType) -> Result<(), RecordError> {
+            self.0.push(Event::TypedNull(ty));
+            Ok(())
+        }
+
+        fn seq(self, len: Option<usize>) -> Result<Self, RecordError> {
+            self.0.push(Event::Seq(len));
+            Ok(self)
+        }
+
+        fn map(self, len: Option<usize>) -> Result<Self, RecordError> {
+            self.0.push(Event::Map(len));
+            Ok(self)
+        }
+
+        fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<(), RecordError> {
+            self.0.push(Event::Passthrough);
+            value.visit_ref(Record(self.0))
+        }
+    }
+
+    impl SeqSink for Record<'_> {
+        type Ok = ();
+        type Error = RecordError;
+        type Element<'s>
+            = Record<'s>
+        where
+            Self: 's;
+
+        fn element(&mut self) -> Result<Record<'_>, RecordError> {
+            self.0.push(Event::Element);
+            Ok(Record(self.0))
+        }
+
+        fn end(self) -> Result<(), RecordError> {
+            self.0.push(Event::EndSeq);
+            Ok(())
+        }
+    }
+
+    impl MapSink for Record<'_> {
+        type Ok = ();
+        type Error = RecordError;
+        type Entry<'s>
+            = Record<'s>
+        where
+            Self: 's;
+
+        fn entry(&mut self, key: &str) -> Result<Record<'_>, RecordError> {
+            self.0.push(Event::Entry(key.to_owned()));
+            Ok(Record(self.0))
+        }
+
+        fn end(self) -> Result<(), RecordError> {
+            self.0.push(Event::EndMap);
+            Ok(())
+        }
+    }
+
+    /// Walk `p` and return what a sink would have seen.
+    pub fn record<P: Encrypt>(p: P) -> Result<Vec<Event>, RecordError> {
+        let mut log = Vec::new();
+        p.visit(Record(&mut log))?;
+        Ok(log)
+    }
+}

@@ -625,6 +625,11 @@ const NO_DEPENDABOT_ECOSYSTEM: Record<string, string> = {
   // 1password CLI. A toolchain pin, not an application dependency tree, and
   // Nixpkgs is not a Dependabot ecosystem.
   'manifest.lock': 'Flox/Nix environment lock, not a dependency ecosystem',
+  // supply-chain/vitaminc-aead/imports.lock — cargo vet's record of the audits
+  // it imported from other registries. It pins audit entries, not packages:
+  // the crates it vets are resolved by the root Cargo.lock, which the cargo
+  // entry covers.
+  'imports.lock': 'cargo vet imported-audits record, not a package lockfile',
 }
 
 // Where each ecosystem's *manifest* lives, so a `directory` can be checked for

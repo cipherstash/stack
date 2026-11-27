@@ -50,8 +50,29 @@
 //! batch hands control back to the host between chunks, so the host can run
 //! other work (a Go host: its garbage collector, other callers) while a guest
 //! cannot be preempted. Work that returns pending without asking for
-//! anything and without waking itself would never be woken: that is still
-//! an internal failure.
+//! anything and without waking itself would never be woken by the host:
+//! unless it was started to allow parking (below), that is still an
+//! internal failure.
+//!
+//! # Parking
+//!
+//! Some work waits on other work in the same guest: a token fetch that finds
+//! another caller already exchanging the credential waits on that caller's
+//! lock, not on the host. It returns pending having asked for nothing and
+//! without waking itself, and only the other operation's progress will wake
+//! it. Work started with [`start_parkable`] may do this: the step then
+//! parks it under a handle ([`Step::Parked`]) and keeps the waker it was
+//! polled with. When another operation's step, or an abort that drops one,
+//! wakes that waker, the parked operation appears in [`runnable`], and the
+//! host resumes it with no responses. A host checks [`runnable`] after every
+//! step, resume and abort: a lock hands itself to one waiter at a time, so
+//! one parked operation running can be what makes the next one runnable.
+//! Resuming a parked operation that was not woken is harmless: it parks
+//! again.
+//!
+//! Work started with [`start`] cannot park. A guest whose work never waits
+//! on other work in the guest (the encrypt guest's) keeps a stalled future
+//! an internal failure, rather than a pause that no one will ever resume.
 //!
 //! This module holds no encoding: the guest decides how a step's requests
 //! and the host's responses cross the boundary.
@@ -156,6 +177,14 @@ pub enum Step {
         /// What it waits on.
         requests: Vec<Request>,
     },
+    /// The operation is parked under `handle`: it waits on another operation
+    /// in this guest, not on the host. The host [`resume`]s it, with no
+    /// responses, once [`runnable`] lists it. Only work started with
+    /// [`start_parkable`] parks.
+    Parked {
+        /// The parked operation.
+        handle: u64,
+    },
 }
 
 /// A request made outside a step: the work was polled by something other
@@ -189,6 +218,11 @@ struct Open {
     /// The exchanges whose requests the host was handed at the last step,
     /// in the order it was handed them: where [`resume`]'s responses go.
     awaiting: Vec<usize>,
+    /// Whether the work may park (see [`start_parkable`]).
+    parkable: bool,
+    /// While parked, the waker of the step that parked it: once woken, the
+    /// operation is [`runnable`].
+    parked: Option<Arc<Woken>>,
 }
 
 thread_local! {
@@ -275,7 +309,20 @@ impl Future for HostRequest {
 /// it comes back as a [`Step::NeedsIo`] with no requests.
 pub fn start(work: Operation) -> Result<Step, u32> {
     clear_pending();
-    step(None, work, Rc::default())
+    step(None, work, Rc::default(), false)
+}
+
+/// Run an operation's first step, as [`start`] does, for work that may wait
+/// on other work in this guest: a pause that asks the host for nothing and
+/// did not wake itself parks it ([`Step::Parked`]) rather than failing. The
+/// operation may park at any later step too.
+///
+/// # Errors
+///
+/// As [`start`], except that such a pause is not `STATUS_INTERNAL`.
+pub fn start_parkable(work: Operation) -> Result<Step, u32> {
+    clear_pending();
+    step(None, work, Rc::default(), true)
 }
 
 /// Hand a paused operation the responses to the requests its last step
@@ -310,7 +357,7 @@ pub fn resume(handle: u64, responses: Vec<Response>) -> Result<Step, u32> {
             }
         }
     }
-    step(Some(handle), open.work, open.io)
+    step(Some(handle), open.work, open.io, open.parkable)
 }
 
 /// Drop a paused operation, wiping everything it held.
@@ -336,14 +383,30 @@ pub fn drop_all() {
     clear_pending();
 }
 
-/// How many operations are paused.
+/// How many operations are paused, parked ones included.
 pub fn open_count() -> usize {
     OPEN.with(|open| open.borrow().len())
 }
 
+/// The parked operations woken since they parked, in handle order: the ones
+/// the host resumes now, with no responses. See [Parking](self#parking).
+pub fn runnable() -> Vec<u64> {
+    OPEN.with(|open| {
+        open.borrow()
+            .iter()
+            .filter(|(_, o)| {
+                o.parked
+                    .as_ref()
+                    .is_some_and(|woken| woken.0.load(Ordering::Relaxed))
+            })
+            .map(|(handle, _)| *handle)
+            .collect()
+    })
+}
+
 /// Poll `work` once, as operation `handle` if it has one, and say what came
 /// of it.
-fn step(handle: Option<u64>, mut work: Operation, io: Rc<Io>) -> Result<Step, u32> {
+fn step(handle: Option<u64>, mut work: Operation, io: Rc<Io>, parkable: bool) -> Result<Step, u32> {
     let previous = CURRENT.with(|current| current.replace(Some(io.clone())));
     let woken = Arc::new(Woken::default());
     let waker = Waker::from(woken.clone());
@@ -361,15 +424,19 @@ fn step(handle: Option<u64>, mut work: Operation, io: Rc<Io>) -> Result<Step, u3
             .filter_map(|(index, exchange)| exchange.request.take().map(|r| (index, r)))
             .unzip()
     };
-    if requests.is_empty() && !woken.0.load(Ordering::Relaxed) {
-        // Nothing to wait for and not woken, so nothing would ever wake it.
-        // Woken with nothing to wait for is a yield: it pauses below with
-        // no requests, and the host resumes it at once.
+    // Nothing to wait for and not woken, so no host step would wake it.
+    // Work that may park waits on another operation, whose progress wakes
+    // it; any other work has stalled. Woken with nothing to wait for is a
+    // yield: it pauses below with no requests, and the host resumes it at
+    // once.
+    let stalled = requests.is_empty() && !woken.0.load(Ordering::Relaxed);
+    if stalled && !parkable {
         drop(work);
         return Err(last_error::internal(
             "an operation paused without asking the host for anything",
         ));
     }
+    let parked = stalled.then_some(woken);
     let handle = match handle {
         Some(handle) => handle,
         None => {
@@ -382,11 +449,22 @@ fn step(handle: Option<u64>, mut work: Operation, io: Rc<Io>) -> Result<Step, u3
             issue()?
         }
     };
+    let is_parked = parked.is_some();
     OPEN.with(|open| {
-        let _ = open
-            .borrow_mut()
-            .insert(handle, Open { work, io, awaiting });
+        let _ = open.borrow_mut().insert(
+            handle,
+            Open {
+                work,
+                io,
+                awaiting,
+                parkable,
+                parked,
+            },
+        );
     });
+    if is_parked {
+        return Ok(Step::Parked { handle });
+    }
     Ok(Step::NeedsIo { handle, requests })
 }
 
@@ -738,6 +816,170 @@ mod tests {
             Ok(Vec::new())
         });
         assert_eq!(start(work).unwrap_err(), STATUS_STATE);
+    }
+
+    fn parked(step: Result<Step, u32>) -> u64 {
+        match step {
+            Ok(Step::Parked { handle }) => handle,
+            other => panic!("expected Parked, got {other:?}"),
+        }
+    }
+
+    /// Work that takes `lock` and holds it across one request: what a
+    /// token fetch that exchanges the credential does.
+    fn exchange_holding(lock: Rc<futures::lock::Mutex<u32>>) -> Operation {
+        Box::pin(async move {
+            let mut held = lock.lock().await;
+            let response = request(get("https://cts/api/authorise"))
+                .await
+                .map_err(|_| STATUS_INTERNAL)?;
+            *held += 1;
+            Ok(response.body.to_vec())
+        })
+    }
+
+    /// Work that waits for `lock`, then reads it: what a second caller does
+    /// while the first exchanges.
+    fn wait_for(lock: Rc<futures::lock::Mutex<u32>>) -> Operation {
+        Box::pin(async move {
+            let held = lock.lock().await;
+            Ok(held.to_string().into_bytes())
+        })
+    }
+
+    #[test]
+    fn work_that_waits_on_other_work_parks_and_runs_once_woken() {
+        let _reset = reset();
+        let lock = Rc::new(futures::lock::Mutex::new(0));
+        let (exchanging, _) = needs_io(start_parkable(exchange_holding(lock.clone())));
+        let waiting = parked(start_parkable(wait_for(lock.clone())));
+        assert_ne!(waiting, exchanging);
+        assert_eq!(open_count(), 2, "a parked operation holds a handle");
+        assert!(runnable().is_empty(), "nothing has woken it yet");
+        let done = resume(exchanging, vec![ok(b"token")]).unwrap();
+        assert!(matches!(done, Step::Done(out) if out == b"token"));
+        assert_eq!(runnable(), vec![waiting], "releasing the lock wakes it");
+        let done = resume(waiting, vec![]).unwrap();
+        assert!(matches!(done, Step::Done(out) if out == b"1"));
+        assert_eq!(open_count(), 0);
+        assert!(runnable().is_empty());
+    }
+
+    /// Without `start_parkable` the same pause is the internal failure it
+    /// always was: a guest whose work never waits on other work keeps a
+    /// stalled future loud.
+    #[test]
+    fn work_not_started_parkable_cannot_park() {
+        let _reset = reset();
+        let lock = Rc::new(futures::lock::Mutex::new(0));
+        let (exchanging, _) = needs_io(start_parkable(exchange_holding(lock.clone())));
+        assert_eq!(start(wait_for(lock.clone())).unwrap_err(), STATUS_INTERNAL);
+        assert_eq!(open_count(), 1, "the refused operation was dropped");
+        abort(exchanging).unwrap();
+    }
+
+    #[test]
+    fn a_parked_operation_resumed_before_it_is_woken_parks_again() {
+        let _reset = reset();
+        let lock = Rc::new(futures::lock::Mutex::new(0));
+        let (exchanging, _) = needs_io(start_parkable(exchange_holding(lock.clone())));
+        let waiting = parked(start_parkable(wait_for(lock.clone())));
+        assert_eq!(
+            parked(resume(waiting, vec![])),
+            waiting,
+            "it keeps its handle"
+        );
+        assert!(runnable().is_empty());
+        let _ = resume(exchanging, vec![ok(b"t")]).unwrap();
+        assert_eq!(runnable(), vec![waiting]);
+        assert!(matches!(resume(waiting, vec![]), Ok(Step::Done(_))));
+    }
+
+    #[test]
+    fn a_parked_operation_takes_no_responses() {
+        let _reset = reset();
+        let lock = Rc::new(futures::lock::Mutex::new(0));
+        let (exchanging, _) = needs_io(start_parkable(exchange_holding(lock.clone())));
+        let waiting = parked(start_parkable(wait_for(lock.clone())));
+        assert_eq!(
+            resume(waiting, vec![ok(b"x")]).unwrap_err(),
+            STATUS_ENCODING
+        );
+        assert_eq!(open_count(), 1, "the parked operation was dropped");
+        abort(exchanging).unwrap();
+    }
+
+    /// A lock hands itself to one waiter at a time: the second waiter is
+    /// woken only once the first has run. So a host checks `runnable` after
+    /// every step, not once.
+    #[test]
+    fn parked_operations_are_woken_one_at_a_time() {
+        let _reset = reset();
+        let lock = Rc::new(futures::lock::Mutex::new(0));
+        let (exchanging, _) = needs_io(start_parkable(exchange_holding(lock.clone())));
+        let first = parked(start_parkable(wait_for(lock.clone())));
+        let second = parked(start_parkable(wait_for(lock.clone())));
+        let _ = resume(exchanging, vec![ok(b"t")]).unwrap();
+        assert_eq!(runnable(), vec![first], "only the first waiter is woken");
+        assert!(matches!(resume(first, vec![]), Ok(Step::Done(_))));
+        assert_eq!(runnable(), vec![second], "the first, done, woke the second");
+        assert!(matches!(resume(second, vec![]), Ok(Step::Done(_))));
+        assert_eq!(open_count(), 0);
+    }
+
+    /// Aborting the operation that holds the lock wakes the one waiting on
+    /// it, which takes over; aborting a parked one wakes nothing and leaves
+    /// nothing behind.
+    #[test]
+    fn aborts_drop_parked_operations_and_wake_their_waiters() {
+        let _reset = reset();
+        let lock = Rc::new(futures::lock::Mutex::new(0));
+        let (exchanging, _) = needs_io(start_parkable(exchange_holding(lock.clone())));
+        let gone = parked(start_parkable(wait_for(lock.clone())));
+        let waiting = parked(start_parkable(exchange_holding(lock.clone())));
+        abort(gone).unwrap();
+        assert!(runnable().is_empty());
+        assert_eq!(abort(gone).unwrap_err(), STATUS_STATE);
+        abort(exchanging).unwrap();
+        assert_eq!(runnable(), vec![waiting], "the lock passed to the waiter");
+        let (again, requests) = needs_io(resume(waiting, vec![]));
+        assert_eq!(again, waiting, "it takes over the exchange");
+        assert_eq!(requests.len(), 1);
+        assert!(runnable().is_empty(), "a paused operation is not runnable");
+        assert!(matches!(resume(waiting, vec![ok(b"t")]), Ok(Step::Done(_))));
+        assert_eq!(open_count(), 0);
+    }
+
+    #[test]
+    fn a_parkable_operation_that_yields_is_paused_not_parked() {
+        let _reset = reset();
+        let work: Operation = Box::pin(async {
+            YieldOnce(false).await;
+            Ok(b"done".to_vec())
+        });
+        let (handle, requests) = needs_io(start_parkable(work));
+        assert!(requests.is_empty());
+        assert!(
+            runnable().is_empty(),
+            "a yield is resumed at once, not listed"
+        );
+        assert!(matches!(resume(handle, vec![]), Ok(Step::Done(_))));
+    }
+
+    #[test]
+    fn a_parked_operation_counts_against_max_open() {
+        let _reset = reset();
+        let lock = Rc::new(futures::lock::Mutex::new(0));
+        let (exchanging, _) = needs_io(start_parkable(exchange_holding(lock.clone())));
+        for _ in 1..MAX_OPEN {
+            parked(start_parkable(wait_for(lock.clone())));
+        }
+        assert_eq!(
+            start_parkable(wait_for(lock.clone())).unwrap_err(),
+            STATUS_STATE
+        );
+        assert_eq!(open_count(), MAX_OPEN);
+        abort(exchanging).unwrap();
     }
 
     #[test]

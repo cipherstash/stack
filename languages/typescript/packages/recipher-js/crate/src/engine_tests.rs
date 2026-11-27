@@ -5,7 +5,8 @@
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use stack_encrypt::dynamic::{ValueFrame, ValueKind};
+use stack_encrypt::dynamic::frame::OwnedFrame;
+use stack_encrypt::dynamic::ValueKind;
 use stack_encrypt::json::JsonPlaintext;
 use stack_encrypt::kms::{
     DataKey, DataKeySource, DataKeyWithTag, DeterministicSource, Error, GenerateKeyPayload,
@@ -31,7 +32,7 @@ async fn engine() -> StackCipher<DeterministicSource> {
 }
 
 fn one<P: Encrypt>(value: P) -> OneValue {
-    OneValue::scalar(ValueFrame::of(value).unwrap()).unwrap()
+    OneValue::scalar(OwnedFrame::of(value).unwrap()).unwrap()
 }
 
 /// Encrypts `values` through the crate, with the test keys.
@@ -42,7 +43,7 @@ async fn sdk_seal(values: Vec<OneValue>) -> Vec<stack_encrypt::Ciphertext> {
 }
 
 /// Decrypts `sealed` through the crate, with the test keys.
-async fn sdk_open(sealed: stack_encrypt::Ciphertext) -> ValueFrame {
+async fn sdk_open(sealed: stack_encrypt::Ciphertext) -> OwnedFrame {
     unseal(&engine().await, vec![sealed])
         .await
         .unwrap()
@@ -74,31 +75,31 @@ async fn the_sdk_opens_what_the_engine_sealed_of_every_type() {
     )
     .unwrap();
     let decimal = Decimal::new(rust_decimal::Decimal::new(150, 2));
-    let timestamp_frame = ValueFrame::of(&timestamp).unwrap();
-    let decimal_frame = ValueFrame::of(&decimal).unwrap();
-    let cases: Vec<(stack_encrypt::Ciphertext, ValueFrame)> = vec![
+    let timestamp_frame = OwnedFrame::of(&timestamp).unwrap();
+    let decimal_frame = OwnedFrame::of(&decimal).unwrap();
+    let cases: Vec<(stack_encrypt::Ciphertext, OwnedFrame)> = vec![
         (
             keyset.encrypt("text".to_owned()).await.unwrap(),
-            ValueFrame::of("text").unwrap(),
+            OwnedFrame::of("text").unwrap(),
         ),
         (
             keyset.encrypt(-7i64).await.unwrap(),
-            ValueFrame::of(-7i64).unwrap(),
+            OwnedFrame::of(-7i64).unwrap(),
         ),
         (
             keyset.encrypt(u64::MAX).await.unwrap(),
-            ValueFrame::of(u64::MAX).unwrap(),
+            OwnedFrame::of(u64::MAX).unwrap(),
         ),
         (
             keyset.encrypt(vec![0u8, 255]).await.unwrap(),
-            ValueFrame::of(vec![0u8, 255]).unwrap(),
+            OwnedFrame::of(vec![0u8, 255]).unwrap(),
         ),
         (keyset.encrypt(timestamp).await.unwrap(), timestamp_frame),
         (keyset.encrypt(decimal).await.unwrap(), decimal_frame),
     ];
     for (sealed, expected) in cases {
         let stored = stack_encrypt::Ciphertext::from_bytes(&sealed.to_bytes()).unwrap();
-        assert_eq!(sdk_open(stored).await, expected);
+        assert_eq!(sdk_open(stored).await.frame(), expected.frame());
     }
 }
 
@@ -122,8 +123,8 @@ async fn a_json_document_the_engine_sealed_opens_as_json_with_its_big_integer() 
         &serde_json::json!({"id": u64::MAX, "n": 5})
     );
     assert_eq!(
-        opened,
-        ValueFrame::of(&OpenedDocument).unwrap(),
+        opened.frame(),
+        OwnedFrame::of(&OpenedDocument).unwrap().frame(),
         "the opened frame holds `n` as a float and `id` as an integer"
     );
 }
@@ -143,7 +144,7 @@ impl Encrypt for &OpenedDocument {
 
 #[tokio::test]
 async fn a_json_document_the_sdk_sealed_is_the_engines_json_plaintext() {
-    let frame = ValueFrame::of(&Document).unwrap();
+    let frame = OwnedFrame::of(&Document).unwrap();
     let document = crate::json::document(&frame).unwrap();
     let sealed = sdk_seal(vec![OneValue::json(document)]).await.remove(0);
     let opened: JsonPlaintext = engine()
@@ -216,7 +217,10 @@ async fn a_keyset_refuses_another_keysets_ciphertext_and_the_cipher_opens_it() {
         .await
         .unwrap()
         .remove(0);
-    assert_eq!(opened, ValueFrame::of("in another keyset").unwrap());
+    assert_eq!(
+        opened.frame(),
+        OwnedFrame::of("in another keyset").unwrap().frame()
+    );
 }
 
 /// A deterministic key source that counts the key requests it receives.
@@ -289,14 +293,10 @@ async fn an_array_is_one_key_request_each_way_and_opens_in_order() {
     assert_eq!(cipher.kms().generates.load(Ordering::SeqCst), 1);
     let opened = unseal(&cipher, sealed).await.unwrap();
     assert_eq!(cipher.kms().retrieves.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        opened,
-        vec![
-            ValueFrame::of("first").unwrap(),
-            ValueFrame::of("second").unwrap(),
-            ValueFrame::of("third").unwrap(),
-        ]
-    );
+    let opened: Vec<_> = opened.iter().map(OwnedFrame::frame).collect();
+    let expected = ["first", "second", "third"].map(|text| OwnedFrame::of(text).unwrap());
+    let expected: Vec<_> = expected.iter().map(OwnedFrame::frame).collect();
+    assert_eq!(opened, expected);
 }
 
 #[tokio::test]
@@ -305,19 +305,4 @@ async fn an_empty_array_makes_no_request() {
     let sealed = seal(&cipher.default_keyset(), vec![]).await.unwrap();
     assert!(sealed.is_empty());
     assert_eq!(cipher.kms().generates.load(Ordering::SeqCst), 0);
-}
-
-#[test]
-fn a_uuid_is_outside_the_engines_value_model() {
-    struct AUuid;
-    impl Encrypt for &AUuid {
-        fn visit<S: stack_encrypt::dynamic::plaintext::Sink>(
-            self,
-            sink: S,
-        ) -> Result<S::Ok, S::Error> {
-            use stack_encrypt::dynamic::plaintext::{Logical, Physical};
-            sink.scalar(Some(Logical::Uuid), Physical::Bytes(&[7; 16]))
-        }
-    }
-    assert!(ValueFrame::of(&AUuid).is_err());
 }

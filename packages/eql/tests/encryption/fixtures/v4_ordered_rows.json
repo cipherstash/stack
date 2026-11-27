@@ -1,5 +1,5 @@
 {
-  "_comment": "Ranking rows sealed by the Go SDK's generated code over the deterministic EQL guest with the seed below; the Rust suite opens and compares them. Regenerate with EQL_UPDATE_FIXTURES=1 go test ./encrypt -run TestV4OrderedRows, do not edit.",
+  "_comment": "Ranking rows sealed by the Go SDK's generated code over the deterministic EQL guest with the seed below; the Rust suite opens and compares them. Regenerate with EQL_UPDATE_FIXTURES=1 go test ./encrypt -run TestV4OrderedRows, do not edit. After regenerating, run pnpm run code:fix.",
   "seed": "encrypt round-trip tests seed v1",
   "table": "rankings",
   "rows": [

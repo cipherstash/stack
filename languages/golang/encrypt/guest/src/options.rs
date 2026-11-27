@@ -222,7 +222,7 @@ pub fn parse_selector(bytes: &[u8]) -> Result<KeysetSelector, u32> {
 }
 
 /// The options and the selector as a host writes them, read straight from
-/// the frame by serde (`vitaminc_aead_frame::serde`). Each field type
+/// the frame by serde (`recipher_frame::serde`). Each field type
 /// validates as it reads, through `TryFrom`, so a parsed value is already
 /// the guest's. The frame's serde never repeats a `TryFrom` error's text,
 /// so a refusal names the key and says only that its value was not

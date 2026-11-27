@@ -41,11 +41,12 @@ use napi::bindgen_prelude::{ClassInstance, FromNapiValue, JavaScriptClassExt, Un
 use napi::Env;
 use napi_derive::napi;
 use serde_json::{Map, Number, Value};
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::dynamic::plaintext::{
     Error as SinkError, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink, Sink,
     SourceError,
 };
-use stack_encrypt::dynamic::{read_json, ValueFrame};
+use stack_encrypt::dynamic::read_json;
 use stack_encrypt::json::{wipe_value, JsonPlaintext};
 use stack_encrypt::{Encrypt, EncryptRef};
 use vitaminc_protected::OpaqueDebug;
@@ -147,7 +148,7 @@ impl SinkError for Error {
 }
 
 /// Returns the document in a frame, as the engine's [`JsonPlaintext`].
-pub(crate) fn document(frame: &ValueFrame) -> Result<JsonPlaintext, RecipherErrorFields> {
+pub(crate) fn document(frame: &OwnedFrame) -> Result<JsonPlaintext, RecipherErrorFields> {
     frame
         .visit(ToJson {
             out: Root,
@@ -159,9 +160,9 @@ pub(crate) fn document(frame: &ValueFrame) -> Result<JsonPlaintext, RecipherErro
 
 /// Returns the value of a decrypted document's text, as a frame. The
 /// conversion follows the rules in the module docs.
-pub(crate) fn opened(frame: &ValueFrame) -> Result<ValueFrame, RecipherErrorFields> {
-    let document = read_json(frame).map_err(|_| Error::NotADocument)?;
-    ValueFrame::of(&FromJson(document.value())).map_err(|_| Error::BuildValue.into())
+pub(crate) fn opened(frame: &OwnedFrame) -> Result<OwnedFrame, RecipherErrorFields> {
+    let document = read_json(frame.frame()).map_err(|_| Error::NotADocument)?;
+    OwnedFrame::of(&FromJson(document.value())).map_err(|_| Error::BuildValue.into())
 }
 
 /// The place a built JSON value goes.
@@ -471,11 +472,11 @@ fn number_of(number: &Number) -> Physical<'static> {
 mod tests {
     use super::{document, opened, MAX_DEPTH};
     use serde_json::json;
-    use stack_encrypt::dynamic::ValueFrame;
+    use stack_encrypt::dynamic::frame::OwnedFrame;
     use stack_encrypt::json::JsonPlaintext;
 
-    fn frame_of_text(text: &str) -> ValueFrame {
-        ValueFrame::of(text).unwrap()
+    fn frame_of_text(text: &str) -> OwnedFrame {
+        OwnedFrame::of(text).unwrap()
     }
 
     /// Arrays nested `.0` levels deep. The innermost array is empty.
@@ -496,19 +497,19 @@ mod tests {
     }
 
     /// Returns a frame of `depth` nested arrays, each inside the one before.
-    fn nested(depth: usize) -> ValueFrame {
-        ValueFrame::of(&Nested(depth)).unwrap()
+    fn nested(depth: usize) -> OwnedFrame {
+        OwnedFrame::of(&Nested(depth)).unwrap()
     }
 
     #[test]
     fn a_safe_integer_float_is_written_as_an_integer() {
-        let frame = ValueFrame::of(vec![5.0f64, 1.5]).unwrap();
+        let frame = OwnedFrame::of(vec![5.0f64, 1.5]).unwrap();
         assert_eq!(document(&frame).unwrap().value(), &json!([5, 1.5]));
     }
 
     #[test]
     fn a_whole_number_between_2_53_and_2_64_is_refused() {
-        let frame = ValueFrame::of(9_007_199_254_740_993.0f64).unwrap();
+        let frame = OwnedFrame::of(9_007_199_254_740_993.0f64).unwrap();
         let error = document(&frame).unwrap_err();
         assert_eq!(error.code, "recipher_js::not_json");
         assert!(error.message.contains("bigint"));
@@ -517,7 +518,7 @@ mod tests {
     #[test]
     fn a_large_float_is_written_as_a_float_and_reads_back_the_same() {
         for value in [1e20f64, f64::MAX, -6.02e23] {
-            let written = document(&ValueFrame::of(value).unwrap()).unwrap();
+            let written = document(&OwnedFrame::of(value).unwrap()).unwrap();
             assert_eq!(written.value().as_f64(), Some(value));
             // The engine's parser reads the text back as the same float.
             let text = stack_encrypt::json::to_text(written.value()).unwrap();
@@ -528,18 +529,18 @@ mod tests {
 
     #[test]
     fn a_bigint_is_written_as_its_digits_within_64_bits() {
-        let frame = ValueFrame::of(u64::MAX).unwrap();
+        let frame = OwnedFrame::of(u64::MAX).unwrap();
         assert_eq!(
             document(&frame).unwrap().value(),
             &json!(18_446_744_073_709_551_615u64)
         );
-        assert!(document(&ValueFrame::of(u128::MAX).unwrap()).is_err());
-        assert!(document(&ValueFrame::of(i128::MIN).unwrap()).is_err());
+        assert!(document(&OwnedFrame::of(u128::MAX).unwrap()).is_err());
+        assert!(document(&OwnedFrame::of(i128::MIN).unwrap()).is_err());
     }
 
     #[test]
     fn bytes_have_no_json_form() {
-        let frame = ValueFrame::of(vec![1u8, 2, 3]).unwrap();
+        let frame = OwnedFrame::of(vec![1u8, 2, 3]).unwrap();
         assert_eq!(document(&frame).unwrap_err().code, "recipher_js::not_json");
     }
 

@@ -91,7 +91,7 @@
 //!
 //! # What a field's `"type"` decides, and what it does not
 //!
-//! Every field lowered from data is a [`ValueFrame`]: its plaintext type is
+//! Every field lowered from data is an [`OwnedFrame`]: its plaintext type is
 //! the runtime value itself, held as its transport frame and walked in place
 //! into the encrypting sink, and it seals in vitaminc's self-describing
 //! tagged leaf encoding (`[tag] ++ payload`) whatever its declared
@@ -112,7 +112,7 @@
 //!
 //! The ciphertext is where a data plan and typed Rust code meet too. Every
 //! leaf is tagged with its type, a typed Rust value's as much as
-//! a [`ValueFrame`]'s, so a Rust `u32` field and a `uint32` data field seal
+//! an [`OwnedFrame`]'s, so a Rust `u32` field and a `uint32` data field seal
 //! the same leaf under the same context, and each opens the other's. A reader
 //! of another type refuses a leaf rather than reading it as changed
 //! plaintext: the tag is authenticated. The lowering never chooses an
@@ -144,20 +144,21 @@
 //! reported as a successful decrypt. The encrypt-side refusal is what makes
 //! that a round-trip invariant rather than data loss.
 
-use super::value_frame::{split_rows, FieldFault, SourceRow, SourceRows};
 use std::collections::BTreeSet;
 use std::fmt;
 
 use serde::de::{Deserializer, MapAccess, Visitor};
 use serde::Deserialize;
 
+use super::source::{split_source, SourceRecord, SplitRefusal, SplitSource};
 use super::term::{IndexWire, JsonWire, MatchWire};
-use super::{TargetOptions, ValueFrame, ValueKind};
-use vitaminc_aead::frame::{Frame, FrameWriter};
-use vitaminc_aead::plaintext::{Logical, MapSink, Physical, SeqSink, Sink};
-use vitaminc_aead::{DecodeError, Encrypt};
+use super::{TargetOptions, ValueKind};
+use vitaminc_aead::frame::{Frame, FrameWriteError, FrameWriter, OwnedFrame};
+use vitaminc_aead::plaintext::{Logical, MapSink, Physical, SealedNull, SeqSink, Sink};
+use vitaminc_aead::Encrypt;
 use vitaminc_protected::{Controlled, Protected};
 
+use super::kind::convert;
 use super::planned::{check_stored, check_values, compose, opening_base, Planned};
 use super::{not_admitted, Error, NoTargets, Reason, TargetError, TargetResolver, TermBytes};
 use crate::plan::FieldValues;
@@ -1078,10 +1079,10 @@ impl Plan {
     /// one-field plan is encrypted under the scope `42u64`:
     ///
     /// ```
-    /// use stack_encrypt::dynamic::{record, Planned, ValueFrame};
+    /// use stack_encrypt::dynamic::{record, Planned, frame::OwnedFrame};
     /// use stack_encrypt::target::Scope;
     /// use stack_encrypt::{AsProtectedRef, EncryptInto, Pending, StackCipher, StackCipherText};
-    /// use vitaminc_aead_frame::serde::to_vec;
+    /// use recipher_frame::serde::to_vec;
     ///
     /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
     /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
@@ -1095,9 +1096,7 @@ impl Plan {
     ///     "email": { "context": ["users", "email"], "outputs": ["c"], "type": "string" },
     /// }))?;
     /// let plan = record::plan(declaration.as_protected_ref())?;
-    /// let values = ValueFrame::from_bytes(
-    ///     to_vec(&serde_json::json!({"email": "ada@example.com"}))?.as_protected_ref(),
-    /// )?;
+    /// let values = OwnedFrame::from_buffer(to_vec(&serde_json::json!({"email": "ada@example.com"}))?)?;
     /// let call: Pending<'_, StackCipherText, _> =
     ///     Planned::new(&plan, values).encrypt_into_with_context(&keyset, Scope::new(42u64));
     /// // The field's context is its label, then the scope.
@@ -1129,7 +1128,7 @@ impl Plan {
     }
 
     /// The shapes of every field's leaf, run under this plan's context and
-    /// then the context the caller hands a [`Planned`](super::Planned)
+    /// then the context the caller hands a [`Planned`]
     /// record.
     pub(super) fn caller_shapes(&self) -> Result<crate::contexts::Shapes, crate::Error> {
         Ok(crate::contexts::under_declared_then_caller(
@@ -1185,7 +1184,7 @@ pub fn plan(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Plan, E
 /// through `resolver`.
 ///
 /// The plan is a frame object, read by serde
-/// (`vitaminc_aead_frame::serde`):
+/// (`recipher_frame::serde`):
 ///
 /// ```text
 /// { <field>: { "context": <context>, "outputs": [ "c" | "passthrough" | <index>, ... ], "type": <type> }, ... }
@@ -1294,7 +1293,7 @@ pub fn plan(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Plan, E
 ///
 /// // As a binding sends it: seal `age` under the label users/age and index
 /// // it for equality.
-/// let frame = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+/// let frame = recipher_frame::serde::to_vec(&serde_json::json!({
 ///     "age": {
 ///         "context": ["users", "age"],
 ///         "outputs": ["c", "eq"],
@@ -1341,7 +1340,7 @@ pub fn plan_with(
 ) -> Result<Plan, Error> {
     let frame = frame.risky_ref();
     let wire: PlanWire =
-        vitaminc_aead_frame::serde::from_slice(frame).map_err(|e| plan_refusal(&e, frame))?;
+        recipher_frame::serde::from_slice(frame).map_err(|e| plan_refusal(&e, frame))?;
     let mut fields: Vec<FieldPlan> = Vec::with_capacity(wire.fields.len());
     for (name, spec) in wire.fields {
         let spec = FieldSpec::try_from(spec).map_err(|reason| Error::Plan {
@@ -1458,7 +1457,7 @@ fn entry_key(frame: &[u8], position: usize) -> Option<String> {
             d.deserialize_map(V)
         }
     }
-    vitaminc_aead_frame::serde::from_slice::<Keys>(frame)
+    recipher_frame::serde::from_slice::<Keys>(frame)
         .ok()?
         .0
         .into_iter()
@@ -1477,7 +1476,7 @@ fn spec_keys(frame: &[u8], field: &str) -> Option<Vec<String>> {
         Object(std::collections::BTreeMap<String, serde::de::IgnoredAny>),
         Other(serde::de::IgnoredAny),
     }
-    match vitaminc_aead_frame::serde::from_slice::<std::collections::BTreeMap<String, Spec>>(frame)
+    match recipher_frame::serde::from_slice::<std::collections::BTreeMap<String, Spec>>(frame)
         .ok()?
         .remove(field)?
     {
@@ -1643,8 +1642,8 @@ impl TryFrom<&str> for NullName {
 /// The parser's refusal of a plan the frame reader refused: the field from
 /// the error's path, and the reason from where in the field it happened,
 /// or from the reason a field's own rule gave.
-fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Error {
-    use vitaminc_aead_frame::serde::PathSegment::{Entry, Key};
+fn plan_refusal(error: &recipher_frame::serde::Error, frame: &[u8]) -> Error {
+    use recipher_frame::serde::PathSegment::{Entry, Key};
 
     let path = error.path();
     // A plan's keys are the host's, so the adapter places an error under one
@@ -1701,13 +1700,13 @@ fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Erro
 ///
 /// `source` is a map of `{ field: value }` (one record), or a sequence of
 /// such maps (a batch), described by any source ([`Encrypt`]): a
-/// [`ValueFrame`] or a transport frame a binding was handed. Every plan
+/// [`OwnedFrame`] or a transport frame a binding was handed. Every plan
 /// field must be present in each record, and every record field must be
 /// named by the plan — silently dropping a field on either side would lose
 /// data or index nothing.
 ///
 /// The source is walked once, and each field's value written into a
-/// [`ValueFrame`] of its own, which is all the engine keeps of it. It is
+/// [`OwnedFrame`] of its own, which is all the engine keeps of it. It is
 /// checked here, with no cipher: that is [`check_source`], and it is where
 /// [`Error::Source`] comes from. What
 /// comes back is the plan's [`Pending`], with every term
@@ -1724,7 +1723,7 @@ fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Erro
 /// # Examples
 ///
 /// ```
-/// use stack_encrypt::dynamic::{record, ValueFrame};
+/// use stack_encrypt::dynamic::{record, frame::OwnedFrame};
 /// use stack_encrypt::{AsProtectedRef, StackCipher};
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
@@ -1737,7 +1736,7 @@ fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Erro
 /// let keyset = cipher.default_keyset();
 ///
 /// // Seal `age` under users/age with an equality term beside it.
-/// let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+/// let declaration = recipher_frame::serde::to_vec(&serde_json::json!({
 ///     "age": { "context": ["users", "age"], "outputs": ["c", "eq"], "type": "uint32" },
 /// }))?;
 /// let plan = record::plan(declaration.as_protected_ref())?;
@@ -1745,13 +1744,13 @@ fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Erro
 /// // The row as a binding hands it over: one transport frame. Here a Rust
 /// // map writes it; a binding's codec writes the same bytes.
 /// let row = std::collections::BTreeMap::from([("age", 34u32)]);
-/// let frame = ValueFrame::of(&row)?;
+/// let frame = OwnedFrame::of(&row)?;
 /// let sealed = record::encrypt(&keyset, &frame, &plan)?.await?;
 ///
 /// // Only the ciphertext comes back, as the record's frame; the term is
 /// // one-way.
 /// let opened = record::decrypt(&cipher, sealed, &plan, None)?.await?;
-/// assert_eq!(opened, frame);
+/// assert_eq!(opened.frame(), frame.frame());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// # }).unwrap();
 /// ```
@@ -1841,24 +1840,32 @@ pub fn query<'a, K: 'static>(
         field: Some(field.name.clone()),
         reason: Reason::NotATarget,
     })?;
-    let value = ValueFrame::of(value).map_err(|_| Error::Source {
+    let value = OwnedFrame::of(value).map_err(|_| Error::Source {
         field: Some(field.name.clone()),
         reason: Reason::FieldType,
     })?;
     // A null is queried by the term a field that seals its nulls stores
     // beside each (#1298), through the type's equality index alone.
-    if value.is_null() {
+    let value = if value.frame().is_null() {
         if field.null != Some(NullMode::Sealed) || *index != IndexSpec::Equality {
             return Err(Error::Source {
                 field: Some(field.name.clone()),
                 reason: Reason::NullQuery,
             });
         }
+        value
     } else {
-        check_field(&value, field)?;
-    }
+        check_field(value, field)?
+    };
     resolver
-        .query(name, index, cipher, field.label(), &plan.scopes(), value)
+        .query(
+            name,
+            index,
+            cipher,
+            field.label(),
+            &plan.scopes(),
+            value.frame(),
+        )
         .map_err(|error| Error::Target(name_target(error, &field.name)))
 }
 
@@ -1906,7 +1913,7 @@ pub(super) fn name_target(error: TargetError, field: &str) -> TargetError {
 /// comes back is the plan's opener as a [`Pending`]: one batched
 /// `retrieve_keys` for every ciphertext leaf when it is awaited and, when
 /// opening through a reference to the client, one per keyset the leaves were sealed
-/// under. Its value is one [`ValueFrame`]: a map per record holding the
+/// under. Its value is one [`OwnedFrame`]: a map per record holding the
 /// plan's fields that come back, in plan order, or a sequence of them for a
 /// batch. Each field opens straight into a frame of its own, which is walked
 /// into its entry of the record's frame and wiped; no value tree holds the
@@ -1951,7 +1958,7 @@ pub fn decrypt<'a, K: 'static>(
     record: StackCipherText,
     plan: &Plan,
     expected: Option<Label>,
-) -> Result<Pending<'a, ValueFrame, K>, Error> {
+) -> Result<Pending<'a, OwnedFrame, K>, Error> {
     decrypt_with(cipher_ref, record, plan, expected, &NoTargets)
 }
 
@@ -1980,7 +1987,7 @@ pub fn decrypt_with<'a, K: 'static>(
     plan: &Plan,
     expected: Option<Label>,
     resolver: &(impl TargetResolver + ?Sized),
-) -> Result<Pending<'a, ValueFrame, K>, Error> {
+) -> Result<Pending<'a, OwnedFrame, K>, Error> {
     Planned::with_resolver(plan, record, resolver).run_decrypt(cipher_ref, expected)
 }
 
@@ -2057,7 +2064,7 @@ pub fn check_record(
 
 /// A tree that may carry a passthrough or a repeated map key somewhere
 /// inside it: a stored ciphertext ([`StackCipherText`]), walked the one way
-/// the record rules need. A source value is a [`ValueFrame`], which holds
+/// the record rules need. A source value is an [`OwnedFrame`], which holds
 /// no repeated key by construction, and is asked for a passthrough
 /// directly.
 trait RecordTree: Sized {
@@ -2116,7 +2123,7 @@ pub(super) enum Rows<R> {
 /// plan order, for the resolver, and the fields the row leaves out.
 pub(super) struct Row {
     pub(super) values: FieldValues,
-    pub(super) targets: Vec<ValueFrame>,
+    pub(super) targets: Vec<OwnedFrame>,
     pub(super) absent: Absent,
 }
 
@@ -2214,46 +2221,42 @@ fn check_tree<T: RecordTree>(tree: &T, field: &str) -> Result<(), Error> {
 /// field is present exactly once in every row and no row carries a field
 /// the plan does not name, and each value fits its field ([`check_field`]).
 ///
-/// The source is walked once ([`split_rows`]): each field's value is written
-/// into a [`ValueFrame`] of its own as the walk reaches it, and nothing else
+/// The source is walked once ([`split_source`]): each field's value is written
+/// into an [`OwnedFrame`] of its own as the walk reaches it, and nothing else
 /// is copied. A value the frame cannot carry, or that holds a repeated key,
 /// is refused naming its field.
 pub(super) fn source_rows(source: impl Encrypt, plan: &Plan) -> Result<Rows<Row>, Error> {
     let not_an_object = || Error::bad_source(Reason::NotAnObject);
-    let row = |row: SourceRow| source_row(row.ok_or_else(not_an_object)?, plan);
-    match split_rows(source).map_err(split_refusal)? {
-        SourceRows::One(one) => Ok(Rows::One(row(one)?)),
-        SourceRows::Batch(rows) => Ok(Rows::Batch(
+    let row = |row: SourceRecord| source_row(row.ok_or_else(not_an_object)?, plan);
+    match split_source(source).map_err(split_refusal)? {
+        SplitSource::One(one) => Ok(Rows::One(row(one)?)),
+        SplitSource::Batch(rows) => Ok(Rows::Batch(
             rows.into_iter().map(row).collect::<Result<Vec<_>, _>>()?,
         )),
     }
 }
 
 /// A value refused while the source was split, as the source error that
-/// names its field: a repeated key as [`Reason::RepeatedKey`], a scalar
-/// outside the value model as [`Reason::FieldType`], and anything else (too
+/// names its field: a repeated key as [`Reason::RepeatedKey`], a scalar its
+/// logical type does not admit as [`Reason::FieldType`], and anything else (too
 /// deep or too long for a frame) as [`Reason::Unframeable`]. A refusal that
 /// names no field is the source's shape, [`Reason::NotAnObject`].
-fn split_refusal(error: DecodeError) -> Error {
-    let DecodeError::Source(source) = &error else {
-        return Error::bad_source(Reason::NotAnObject);
-    };
-    let Some(FieldFault { field, error }) = source.inner().downcast_ref::<FieldFault>() else {
+fn split_refusal(SplitRefusal { field, error }: SplitRefusal) -> Error {
+    let Some(field) = field else {
         return Error::bad_source(Reason::NotAnObject);
     };
     let reason = match error {
-        DecodeError::DuplicateKey(_) => Reason::RepeatedKey,
-        error if super::value_frame::is_unnamed_repeated_key(error) => Reason::RepeatedKey,
-        DecodeError::Expected(_) => Reason::FieldType,
+        FrameWriteError::DuplicateKey => Reason::RepeatedKey,
+        FrameWriteError::Invalid => Reason::FieldType,
         _ => Reason::Unframeable,
     };
     Error::Source {
-        field: Some(field.clone()),
+        field: Some(field),
         reason,
     }
 }
 
-fn source_row(mut row: Vec<(String, ValueFrame)>, plan: &Plan) -> Result<Row, Error> {
+fn source_row(mut row: Vec<(String, OwnedFrame)>, plan: &Plan) -> Result<Row, Error> {
     let misfit = |field: &str, reason| Error::Source {
         field: Some(field.to_owned()),
         reason,
@@ -2276,7 +2279,7 @@ fn source_row(mut row: Vec<(String, ValueFrame)>, plan: &Plan) -> Result<Row, Er
             return Err(misfit(&field.name, reason));
         };
         let value = match field.null {
-            Some(NullMode::Sql) if value.is_null() => {
+            Some(NullMode::Sql) if value.frame().is_null() => {
                 let _ = absent.insert(field.name.clone());
                 continue;
             }
@@ -2285,16 +2288,13 @@ fn source_row(mut row: Vec<(String, ValueFrame)>, plan: &Plan) -> Result<Row, Er
             // is already as long as one. `Plan::build` refuses a sealed
             // null on any other type, and on a field with a term other than
             // equality's, which a null has.
-            Some(NullMode::Sealed) if value.is_null() => {
+            Some(NullMode::Sealed) if value.frame().is_null() => {
                 match field.field_type.and_then(ValueKind::sealed_null) {
-                    Some(Some(ty)) => ValueFrame::typed_null(ty),
+                    Some(SealedNull::Typed(ty)) => OwnedFrame::typed_null(ty),
                     _ => value,
                 }
             }
-            _ => {
-                check_field(&value, field)?;
-                value
-            }
+            _ => check_field(value, field)?,
         };
         if field.is_target() {
             targets.push(value);
@@ -2314,21 +2314,31 @@ fn source_row(mut row: Vec<(String, ValueFrame)>, plan: &Plan) -> Result<Row, Er
     })
 }
 
-/// A source value against its plan field: a typed field needs a value of
-/// its type, every term output needs a scalar the scheme defines the term
-/// for ([`IndexSpec::defines`]), and a ciphertext refuses a passthrough
-/// anywhere in the value. A [`ValueFrame`] holds no repeated key, and is a
-/// frame already, so a passthrough output needs nothing more.
-fn check_field(value: &ValueFrame, field: &FieldPlan) -> Result<(), Error> {
+/// A source value against its plan field, as the value the field takes: a
+/// typed field's value is read as its type, converted when the conversion
+/// is exact ([`read`](super::read)); every term output needs a scalar the
+/// scheme defines the term for ([`IndexSpec::defines`]); and a ciphertext
+/// refuses a passthrough anywhere in the value. An [`OwnedFrame`] holds no
+/// repeated key, and is a frame already, so a passthrough output needs
+/// nothing more.
+///
+/// This is where a write meets its field's type, once: every write path
+/// (`encrypt`, `encrypt_with`, `check_source`, [`Planned`]) splits its
+/// source into rows here, and a target field's query reads its value here
+/// too. What comes back is what is sealed: a value already of the type,
+/// as it came, or the converted one, with the value it came as wiped.
+fn check_field(value: OwnedFrame, field: &FieldPlan) -> Result<OwnedFrame, Error> {
     let misfit = |reason| Error::Source {
         field: Some(field.name.clone()),
         reason,
     };
-    if let Some(declared) = field.field_type {
-        if !declared.holds(value.kind()) {
-            return Err(misfit(Reason::FieldType));
-        }
-    }
+    let value = match field.field_type {
+        Some(declared) => convert(declared, value.frame())
+            .map_err(|error| error.in_field(&field.name))?
+            .unwrap_or(value),
+        None => value,
+    };
+    let frame = value.frame();
     // A document is read by the engine's rules here, before any key, so a
     // check refuses what encrypt refuses, and no resolver has to. The
     // parse is kept to a check and the document dropped (wiped, as every
@@ -2338,7 +2348,7 @@ fn check_field(value: &ValueFrame, field: &FieldPlan) -> Result<(), Error> {
     // the field's value as a frame, as it does for every target, so it
     // reads the text it is handed.
     if field.field_type == Some(ValueKind::Json) {
-        if let Err(error) = super::read_json(value) {
+        if let Err(error) = super::read_json(frame) {
             return Err(Error::Target(TargetError::Json {
                 name: field.name.clone(),
                 target: field.target().unwrap_or_default().to_owned(),
@@ -2349,12 +2359,12 @@ fn check_field(value: &ValueFrame, field: &FieldPlan) -> Result<(), Error> {
     // A target field's value is sealed by the type's own plan, which
     // refuses a passthrough as any ciphertext does.
     let sealed = field.is_target() || field.outputs.contains(&Output::Ciphertext);
-    if sealed && value.has_passthrough() {
+    if sealed && frame.has_passthrough() {
         return Err(misfit(Reason::Passthrough));
     }
     for output in &field.outputs {
         if let Output::Term(kind) = output {
-            if !kind.defines(value) {
+            if !kind.defines(frame) {
                 return Err(Error::Term {
                     field: Some(field.name.clone()),
                     kind: kind.clone(),
@@ -2362,7 +2372,7 @@ fn check_field(value: &ValueFrame, field: &FieldPlan) -> Result<(), Error> {
             }
         }
     }
-    Ok(())
+    Ok(value)
 }
 
 // =============================================================================
@@ -2407,14 +2417,14 @@ fn bytes_node(bytes: Vec<u8>) -> Result<StackCipherText, crate::Error> {
 
 /// A passthrough field's value as its node: its frame, as it is, in the
 /// clear (a passthrough is not secret by contract).
-fn passthrough_frame(value: &ValueFrame) -> StackCipherText {
-    CipherText::Passthrough(PassthroughFrame(value.risky_ref().to_vec()))
+fn passthrough_frame(value: Frame<'_>) -> StackCipherText {
+    CipherText::Passthrough(PassthroughFrame(value.as_bytes().to_vec()))
 }
 
 /// The one value a passthrough node carries, in the value model, or `None`
 /// if its frame holds something the model does not.
-fn passthrough_value(payload: &PassthroughFrame) -> Option<ValueFrame> {
-    ValueFrame::from_clear(&payload.0).ok()
+fn passthrough_value(payload: &PassthroughFrame) -> Option<OwnedFrame> {
+    OwnedFrame::of(payload.parse().ok()?).ok()
 }
 
 /// The bytes a passthrough node carries, if it carries bytes: what a stored
@@ -2466,7 +2476,7 @@ pub(super) fn shape_record(
             Verb::Index => keyed_terms(slot(&mut values, &field.name)?, &field.keys)?,
             Verb::Passthrough => {
                 let value = take_leaf(&mut values, &field.name)?;
-                vec![("passthrough".to_string(), passthrough_frame(&value))]
+                vec![("passthrough".to_string(), passthrough_frame(value.frame()))]
             }
         };
         fields.push((field.name.clone(), CipherText::Map(outputs)));
@@ -2491,8 +2501,8 @@ fn keyed_terms(
 }
 
 /// The field `name` out of the record, as the value it holds.
-fn take_leaf(values: &mut FieldValues, name: &str) -> Result<ValueFrame, crate::Error> {
-    slot::<ValueFrame>(values, name)
+fn take_leaf(values: &mut FieldValues, name: &str) -> Result<OwnedFrame, crate::Error> {
+    slot::<OwnedFrame>(values, name)
 }
 
 /// The record the plan opened: the fields that come back, in plan order,
@@ -2501,16 +2511,16 @@ fn take_leaf(values: &mut FieldValues, name: &str) -> Result<ValueFrame, crate::
 /// was sealed as another type than the plan now declares.
 pub(super) fn open_record(
     mut values: FieldValues,
-    eql: Vec<ValueFrame>,
+    eql: Vec<OwnedFrame>,
     shape: &[FieldShape],
     absent: &Absent,
-) -> Result<Vec<(String, ValueFrame)>, crate::Error> {
+) -> Result<Vec<(String, OwnedFrame)>, crate::Error> {
     let mut fields = Vec::with_capacity(shape.len());
     let mut eql = eql.into_iter();
     for field in shape.iter().filter(|field| field.verb != Verb::Index) {
         // A field the stored row leaves out was null: it opens as one.
         if absent.contains(&field.name) {
-            fields.push((field.name.clone(), ValueFrame::null()));
+            fields.push((field.name.clone(), OwnedFrame::null()));
             continue;
         }
         let value = if field.verb == Verb::Target {
@@ -2520,9 +2530,9 @@ pub(super) fn open_record(
         };
         // A field that stores a null opens one, sealed: a typed null
         // opens as a plain null, as every frame carries one.
-        let null = field.null.is_some() && value.is_null();
+        let null = field.null.is_some() && value.frame().is_null();
         if let Some(kind) = field.kind.filter(|_| !null) {
-            if !kind.holds(value.kind()) {
+            if !kind.holds(value.frame().kind()) {
                 return Err(crate::PlanError::FieldType {
                     field: field.name.clone(),
                     expected: kind.name(),
@@ -2541,11 +2551,11 @@ pub(super) fn open_record(
 /// which wipes it; the result is the only copy of the record's plaintext
 /// left.
 pub(super) fn write_record(
-    rows: Rows<Vec<(String, ValueFrame)>>,
-) -> Result<ValueFrame, crate::Error> {
+    rows: Rows<Vec<(String, OwnedFrame)>>,
+) -> Result<OwnedFrame, crate::Error> {
     fn row<S: MapSink<Error = vitaminc_aead::frame::FrameWriteError>>(
         mut map: S,
-        fields: Vec<(String, ValueFrame)>,
+        fields: Vec<(String, OwnedFrame)>,
     ) -> Result<S::Ok, vitaminc_aead::frame::FrameWriteError> {
         for (name, value) in fields {
             let _ = value.visit(map.entry(&name)?)?;
@@ -2571,7 +2581,7 @@ pub(super) fn write_record(
     // already; one that did would be the engine answering with another
     // shape than it was asked.
     written.map_err(|_| crate::Error::ResponseShape)?;
-    ValueFrame::from_written(out)
+    OwnedFrame::from_buffer(out).map_err(|_| crate::Error::ResponseShape)
 }
 
 // =============================================================================
@@ -2652,7 +2662,7 @@ fn record_row(mut row: Vec<(String, StackCipherText)>, plan: &Plan) -> Result<St
                     passthrough_value(&payload).ok_or_else(|| misfit(Reason::NotPassthrough))?;
                 if field
                     .field_type
-                    .is_some_and(|kind| !kind.holds(value.kind()))
+                    .is_some_and(|kind| !kind.holds(value.frame().kind()))
                 {
                     return Err(misfit(Reason::FieldType));
                 }
@@ -2902,9 +2912,9 @@ mod tests {
         }
     }
 
-    impl AsTree for ValueFrame {
+    impl AsTree for OwnedFrame {
         fn tree(self) -> Tree {
-            Tree::from_frame(self.risky_ref()).expect("a value")
+            Tree::from_frame(self.frame().as_bytes()).expect("a value")
         }
     }
 
@@ -3974,14 +3984,14 @@ mod tests {
 
         /// The lowering is the combinators: each field of the record a data
         /// plan seals is what the combinator for its outputs seals over the
-        /// same plaintext type, a [`ValueFrame`], under the field's label.
+        /// same plaintext type, an [`OwnedFrame`], under the field's label.
         /// The terms are the same, and each side opens the other's
         /// ciphertext.
         #[tokio::test]
         async fn seals_what_the_combinators_seal_under_the_same_declaration() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let frame = |value: Tree| ValueFrame::of(&value).expect("a value");
+            let frame = |value: Tree| OwnedFrame::of(&value).expect("a value");
             let default_match = IndexSpec::Match(crate::sem::MatchOptions::default());
             // `c`, `eq` and `ore`: a ciphertext with its terms beside it.
             let age: Encrypted<(TermBytes, TermBytes)> = keyset
@@ -4005,7 +4015,7 @@ mod tests {
             // `match` alone: the terms, with no ciphertext.
             let nick: TermBytes = keyset
                 .run(
-                    Indexes::<ValueFrame>::operations::<_, Borrowed>(&default_match)
+                    Indexes::<OwnedFrame>::operations::<_, Borrowed>(&default_match)
                         .under(nonempty!("users").with("nick")),
                     &frame(s("al smith")),
                     DeclaredContext::default(),
@@ -5702,6 +5712,7 @@ mod tests {
                     "timestamp",
                     typed(Logical::Timestamp(TimeUnit::Nanos), Tree::Int128(1)),
                 ),
+                ("id", "uuid", typed(Logical::Uuid, Tree::Bytes(vec![7; 16]))),
             ];
             let plan = plan(obj(fields
                 .iter()
@@ -6020,36 +6031,43 @@ mod tests {
             assert_eq!(sealed_only.field_type(), Some(ValueKind::Object));
         }
 
-        /// The engine verifies the tag rather than trusting the binding: a
-        /// `u32` is not a `uint64`, however small. Refused before any key
-        /// is minted, by `check_source` alike — and for the two kinds that
-        /// lower to a Rust leaf type as well.
+        /// The engine reads the tag rather than trusting the binding: a
+        /// value that is not of the field's type and does not convert to it
+        /// exactly is refused, before any key is minted, by `check_source`
+        /// alike.
         #[tokio::test]
-        async fn encrypt_refuses_a_value_of_another_type_with_no_key_request() {
+        async fn encrypt_refuses_a_value_that_does_not_convert_with_no_key_request() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let u64_plan = age_plan("uint64");
-            let check = check_source(obj(vec![("age", Tree::UInt32(34))]), &u64_plan);
+            let check = check_source(obj(vec![("age", Tree::Float64(34.5))]), &u64_plan);
             assert!(
-                matches!(check, Err(Error::Source { .. })),
-                "check_source refuses it too"
+                matches!(&check, Err(error) if error.reason() == Some(Reason::FieldType)),
+                "check_source refuses it too: {check:?}"
             );
             for (label_, value) in [
-                ("a u32 for a uint64 field", Tree::UInt32(34)),
-                ("a float for a uint64 field", Tree::Float64(34.0)),
+                ("a fraction for a uint64 field", Tree::Float64(34.5)),
+                ("a negative for a uint64 field", Tree::Int64(-1)),
+                ("text for a uint64 field", s("34")),
+                ("a bool for a uint64 field", Tree::Bool(true)),
                 ("null for a uint64 field", Tree::Null),
             ] {
                 let result = encrypt(&keyset, obj(vec![("age", value)]), &u64_plan).err();
                 assert!(
-                    matches!(result, Some(Error::Source { .. })),
+                    matches!(&result, Some(Error::Source { field: Some(field), reason: Reason::FieldType }) if field == "age"),
                     "{label_}: {result:?}"
                 );
             }
             let as_u32 = age_plan("uint32");
-            let result = encrypt(&keyset, obj(vec![("age", Tree::UInt64(34))]), &as_u32).err();
+            let result = encrypt(
+                &keyset,
+                obj(vec![("age", Tree::UInt64(u64::from(u32::MAX) + 1))]),
+                &as_u32,
+            )
+            .err();
             assert!(
                 matches!(result, Some(Error::Source { .. })),
-                "a u64 for a uint32 field: {result:?}"
+                "a u64 past a uint32: {result:?}"
             );
             let as_string =
                 plan(obj(vec![("age", typed(label("age"), &["c"], "string"))])).expect("plan");
@@ -6374,11 +6392,30 @@ mod tests {
             .expect("plan");
             let refused = encrypt(
                 &keyset,
-                obj(vec![("age", Tree::UInt32(1)), ("id", Tree::UInt32(7))]),
+                obj(vec![("age", Tree::UInt32(1)), ("id", s("7"))]),
                 &plan,
             )
             .err();
             assert!(matches!(refused, Some(Error::Source { .. })), "{refused:?}");
+            // A value that converts exactly is carried at the declared type.
+            let sealed = seal(
+                &keyset,
+                obj(vec![("age", Tree::UInt32(1)), ("id", Tree::UInt32(7))]),
+                &plan,
+            )
+            .await;
+            let mut fields = map(sealed);
+            let CipherText::Map(mut id) = node(&mut fields, "id") else {
+                panic!("outputs")
+            };
+            let CipherText::Passthrough(carried) = node(&mut id, "passthrough") else {
+                panic!("a passthrough")
+            };
+            assert_eq!(
+                passthrough_tree(&carried),
+                Some(Tree::UInt64(7)),
+                "a passthrough is carried as it came"
+            );
             let sealed = seal(
                 &keyset,
                 obj(vec![("age", Tree::UInt32(1)), ("id", Tree::UInt64(7))]),
@@ -6395,6 +6432,388 @@ mod tests {
             ));
             let refused = decrypt(&cipher, CipherText::Map(fields), &plan, None).err();
             assert!(matches!(refused, Some(Error::Record { .. })), "{refused:?}");
+        }
+    }
+
+    /// A write reads each typed field's value as the field's type, by the
+    /// rules a query reads its input by: a number converts when the
+    /// conversion is exact, and nothing else converts.
+    mod given_a_value_of_another_type {
+        use super::*;
+
+        /// A plan of one field, `v`, of type `ty`, sealed and indexed by
+        /// `outputs`.
+        fn plan_of(ty: &str, outputs: &[&str]) -> Plan {
+            plan(obj(vec![("v", typed(label("v"), outputs, ty))])).expect("plan")
+        }
+
+        /// The one field's ciphertext length and its terms, by index key.
+        fn outputs_of(sealed: &StackCipherText) -> (usize, Vec<(String, Vec<u8>)>) {
+            let CipherText::Map(fields) = sealed else {
+                panic!("a record")
+            };
+            let [(_, CipherText::Map(outputs))] = &fields[..] else {
+                panic!("one field of outputs")
+            };
+            let mut length = 0;
+            let mut terms = Vec::new();
+            for (key, output) in outputs {
+                match output {
+                    CipherText::Single(leaf) => length = leaf.to_bytes().len(),
+                    CipherText::Passthrough(_) => terms.push((key.clone(), term_bytes(output))),
+                    _ => panic!("{key}: not a leaf or a term"),
+                }
+            }
+            (length, terms)
+        }
+
+        fn decimal(mantissa: i128) -> Tree {
+            Tree::Typed(
+                Logical::Decimal { scale: 0 },
+                Box::new(Tree::Int128(mantissa)),
+            )
+        }
+
+        /// The value a write converts, as `(type, outputs, sent, at the
+        /// declared width)`.
+        fn converted() -> Vec<(&'static str, &'static [&'static str], Tree, Tree)> {
+            vec![
+                ("int8", &["c", "eq"], Tree::Int16(1), Tree::Int8(1)),
+                ("uint8", &["c", "eq"], Tree::Int8(1), Tree::UInt8(1)),
+                (
+                    "int16",
+                    &["c", "eq", "ore"],
+                    Tree::UInt8(200),
+                    Tree::Int16(200),
+                ),
+                (
+                    "uint16",
+                    &["c", "eq", "ope"],
+                    Tree::UInt64(65_535),
+                    Tree::UInt16(65_535),
+                ),
+                (
+                    "int32",
+                    &["c", "eq", "ore"],
+                    Tree::Int64(34),
+                    Tree::Int32(34),
+                ),
+                (
+                    "int64",
+                    &["c", "eq", "ore"],
+                    Tree::Int8(34),
+                    Tree::Int64(34),
+                ),
+                (
+                    "int128",
+                    &["c", "eq", "ore"],
+                    Tree::Int64(1),
+                    Tree::Int128(1),
+                ),
+                (
+                    "uint128",
+                    &["c", "eq", "ore"],
+                    Tree::UInt64(1),
+                    Tree::UInt128(1),
+                ),
+                // A JavaScript number is a float, and a `bigint` arrives at
+                // the narrowest width that holds it.
+                (
+                    "uint64",
+                    &["c", "eq", "ore"],
+                    Tree::Float64(34.0),
+                    Tree::UInt64(34),
+                ),
+                ("uint32", &["c", "eq"], Tree::UInt8(34), Tree::UInt32(34)),
+                ("int64", &["c", "eq"], Tree::Float64(-0.0), Tree::Int64(0)),
+                (
+                    "float32",
+                    &["c", "eq", "ore"],
+                    Tree::Float64(1.5),
+                    Tree::Float32(1.5),
+                ),
+                (
+                    "float64",
+                    &["c", "eq", "ore"],
+                    Tree::Int32(-5),
+                    Tree::Float64(-5.0),
+                ),
+                (
+                    "float64",
+                    &["c", "eq"],
+                    Tree::Float32(0.5),
+                    Tree::Float64(0.5),
+                ),
+                (
+                    "decimal",
+                    &["c", "eq", "ore"],
+                    Tree::Int64(-34),
+                    decimal(-34),
+                ),
+            ]
+        }
+
+        /// A value of another type that converts exactly seals to what the
+        /// same value sent at the declared width seals to: the same terms,
+        /// a ciphertext of the same length, and the same value opened. The
+        /// ciphertext's own bytes are random, so they are not compared.
+        #[tokio::test]
+        async fn a_converted_write_seals_as_the_value_at_the_declared_width() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            for (ty, outputs, sent, want) in converted() {
+                let plan = plan_of(ty, outputs);
+                let as_sent = seal(&keyset, obj(vec![("v", sent.clone())]), &plan).await;
+                let at_width = seal(&keyset, obj(vec![("v", want.clone())]), &plan).await;
+                let (sent_c, sent_terms) = outputs_of(&as_sent);
+                let (want_c, want_terms) = outputs_of(&at_width);
+                assert_eq!(sent_terms, want_terms, "{ty} from {sent:?}: the terms");
+                assert_eq!(sent_c, want_c, "{ty} from {sent:?}: the ciphertext length");
+                let opened = object(open(&cipher, as_sent, &plan).await);
+                assert_eq!(
+                    opened,
+                    [("v".to_owned(), want.clone())],
+                    "{ty} from {sent:?}"
+                );
+            }
+        }
+
+        /// A record's slot holds the converted value, byte for byte the
+        /// frame of the value at the declared width: what is sealed is
+        /// that frame, so no stored byte changes.
+        mod the_converted_slot {
+            use super::*;
+            use proptest::prelude::*;
+
+            /// The frame a record's slot holds for `sent` under a field of
+            /// type `ty`.
+            fn slot(ty: &str, sent: Tree) -> Vec<u8> {
+                let rows = source_rows(obj(vec![("v", sent)]), &plan_of(ty, &["c"]))
+                    .expect("the value converts");
+                let Rows::One(mut row) = rows else {
+                    panic!("one row")
+                };
+                let value: OwnedFrame = row.values.take("v").expect("a slot");
+                value.frame().as_bytes().to_vec()
+            }
+
+            fn frame_of(value: Tree) -> Vec<u8> {
+                OwnedFrame::of(&value)
+                    .expect("in the value model")
+                    .frame()
+                    .as_bytes()
+                    .to_vec()
+            }
+
+            proptest! {
+                #[test]
+                fn an_integer_seals_at_the_declared_width(v in any::<i32>()) {
+                    let wide = i64::from(v);
+                    prop_assert_eq!(slot("int32", Tree::Int64(wide)), frame_of(Tree::Int32(v)), "int32 from Tree::Int64");
+                    prop_assert_eq!(slot("int32", Tree::Float64(f64::from(v))), frame_of(Tree::Int32(v)), "int32 from Tree::Float64");
+                    prop_assert_eq!(slot("int64", Tree::Int32(v)), frame_of(Tree::Int64(wide)), "int64 from Tree::Int32");
+                    prop_assert_eq!(slot("int128", Tree::Int32(v)), frame_of(Tree::Int128(i128::from(v))), "int128 from Tree::Int32");
+                    prop_assert_eq!(slot("float64", Tree::Int32(v)), frame_of(Tree::Float64(f64::from(v))), "float64 from Tree::Int32");
+                    prop_assert_eq!(slot("decimal", Tree::Int32(v)), frame_of(decimal(i128::from(v))), "decimal from Tree::Int32");
+                }
+
+                #[test]
+                fn an_unsigned_integer_seals_at_the_declared_width(v in any::<u32>()) {
+                    let wide = u64::from(v);
+                    prop_assert_eq!(slot("uint32", Tree::UInt64(wide)), frame_of(Tree::UInt32(v)), "uint32 from Tree::UInt64");
+                    prop_assert_eq!(slot("uint32", Tree::Float64(f64::from(v))), frame_of(Tree::UInt32(v)), "uint32 from Tree::Float64");
+                    prop_assert_eq!(slot("uint64", Tree::UInt32(v)), frame_of(Tree::UInt64(wide)), "uint64 from Tree::UInt32");
+                    prop_assert_eq!(slot("uint128", Tree::Int64(i64::from(v))), frame_of(Tree::UInt128(u128::from(v))), "uint128 from Tree::Int64");
+                }
+
+                #[test]
+                fn a_float_seals_at_the_declared_width(
+                    v in any::<f32>().prop_filter("a NaN converts to nothing", |v: &f32| !v.is_nan())
+                ) {
+                    prop_assert_eq!(slot("float32", Tree::Float64(f64::from(v))), frame_of(Tree::Float32(v)), "float32 from Tree::Float64");
+                    prop_assert_eq!(slot("float64", Tree::Float32(v)), frame_of(Tree::Float64(f64::from(v))), "float64 from Tree::Float32");
+                }
+
+                /// A value already of the declared type is the slot as it
+                /// came.
+                #[test]
+                fn a_value_of_the_type_is_kept_as_it_came(v in any::<i64>()) {
+                    prop_assert_eq!(slot("int64", Tree::Int64(v)), frame_of(Tree::Int64(v)), "int64 from Tree::Int64");
+                }
+            }
+        }
+
+        /// What stays refused: a conversion that would lose something, one
+        /// between a number and a value that is not one, a float to a
+        /// decimal, anything to or from a date, timestamp or UUID, text to
+        /// a number, and a container to anything else. Refused before any
+        /// key request, naming the field, with `field_type`.
+        #[tokio::test]
+        async fn a_value_that_does_not_convert_exactly_is_refused() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let uuid = Tree::Typed(Logical::Uuid, Box::new(Tree::Bytes(vec![7; 16])));
+            let date = Tree::Typed(Logical::Date, Box::new(Tree::Int32(0)));
+            let refused = [
+                ("int8", Tree::Int16(300)),
+                ("uint64", Tree::Int64(-1)),
+                ("int32", Tree::Float64(34.5)),
+                ("int64", Tree::Float64(f64::INFINITY)),
+                ("float64", Tree::UInt64((1 << 53) + 1)),
+                ("float32", Tree::Float64(0.1)),
+                ("float32", Tree::Float64(f64::NAN)),
+                ("decimal", Tree::Float64(1.5)),
+                ("date", Tree::Int32(0)),
+                ("timestamp", Tree::Int64(0)),
+                ("int32", date),
+                ("uuid", Tree::Bytes(vec![7; 16])),
+                ("bytes", uuid),
+                ("string", Tree::UInt32(34)),
+                ("uint64", s("34")),
+                ("bool", Tree::UInt32(1)),
+                ("uint32", Tree::Bool(true)),
+                ("bytes", s("ab")),
+                ("string", Tree::Bytes(b"ab".to_vec())),
+                ("array", obj(vec![])),
+                ("object", Tree::Array(vec![])),
+                ("int64", Tree::Array(vec![Tree::Int64(1)])),
+                ("int32", Tree::Null),
+            ];
+            for (ty, sent) in refused {
+                let plan = plan_of(ty, &["c"]);
+                let result = encrypt(&keyset, obj(vec![("v", sent.clone())]), &plan).err();
+                assert!(
+                    matches!(&result, Some(Error::Source { field: Some(field), reason: Reason::FieldType }) if field == "v"),
+                    "{ty} from {sent:?}: {result:?}"
+                );
+                let checked = check_source(obj(vec![("v", sent.clone())]), &plan);
+                assert_eq!(
+                    checked.err().and_then(|e| e.reason()),
+                    Some(Reason::FieldType),
+                    "{ty} from {sent:?}"
+                );
+            }
+            assert_eq!(generates(&cipher), 0, "refused before any key request");
+        }
+
+        /// A container field's value is not converted, and nor is anything
+        /// in it: its elements are kept as they came, since the field
+        /// declares no type for them.
+        #[tokio::test]
+        async fn a_container_is_kept_as_it_came() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let elements = Tree::Array(vec![
+                Tree::Int8(1),
+                Tree::Float64(2.0),
+                s("3"),
+                Tree::Undefined,
+            ]);
+            let plan = plan_of("array", &["c"]);
+            let sealed = seal(&keyset, obj(vec![("v", elements.clone())]), &plan).await;
+            assert_eq!(
+                object(open(&cipher, sealed, &plan).await),
+                [("v".to_owned(), elements)],
+                "an array's elements are kept as they came"
+            );
+            let members = obj(vec![("a", Tree::UInt8(1)), ("b", Tree::Undefined)]);
+            let plan = plan_of("object", &["c"]);
+            let sealed = seal(&keyset, obj(vec![("v", members.clone())]), &plan).await;
+            assert_eq!(
+                object(open(&cipher, sealed, &plan).await),
+                [("v".to_owned(), members)],
+                "an object's members are kept as they came"
+            );
+        }
+
+        /// JavaScript's `undefined` is refused on a typed field with a
+        /// reason of its own, whatever the type and null policy: it is not
+        /// a null, and storing it as one would hide a property name spelt
+        /// wrong.
+        #[tokio::test]
+        async fn undefined_on_a_typed_field_is_refused_as_undefined() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            for kind in ValueKind::ALL.into_iter().filter(|k| *k != ValueKind::Json) {
+                let plan = plan_of(kind.name(), &["c"]);
+                let result = encrypt(&keyset, obj(vec![("v", Tree::Undefined)]), &plan).err();
+                assert!(
+                    matches!(&result, Some(Error::Source { field: Some(field), reason: Reason::Undefined }) if field == "v"),
+                    "{kind}: {result:?}"
+                );
+                let checked = check_source(obj(vec![("v", Tree::Undefined)]), &plan);
+                assert_eq!(
+                    checked.err().and_then(|e| e.reason()),
+                    Some(Reason::Undefined),
+                    "{kind}"
+                );
+            }
+            for null in ["sql", "sealed"] {
+                let plan = plan(obj(vec![(
+                    "v",
+                    obj(vec![
+                        ("context", label("v")),
+                        ("outputs", strings(&["c", "eq"])),
+                        ("type", s("int64")),
+                        ("null", s(null)),
+                    ]),
+                )]))
+                .expect("plan");
+                let result = encrypt(&keyset, obj(vec![("v", Tree::Undefined)]), &plan).err();
+                assert_eq!(
+                    result.and_then(|e| e.reason()),
+                    Some(Reason::Undefined),
+                    "{null}"
+                );
+            }
+            assert_eq!(generates(&cipher), 0, "refused before any key request");
+        }
+
+        /// In a field that declares no type, `undefined` is sealed, carried
+        /// and opened as it is.
+        #[tokio::test]
+        async fn undefined_in_an_untyped_field_is_kept() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            for outputs in [&["c"][..], &["passthrough"][..]] {
+                let plan = plan(obj(vec![("v", spec(label("v"), outputs))])).expect("plan");
+                for value in [
+                    Tree::Undefined,
+                    Tree::Array(vec![Tree::Undefined, Tree::Null]),
+                ] {
+                    let sealed = seal(&keyset, obj(vec![("v", value.clone())]), &plan).await;
+                    assert_eq!(
+                        object(open(&cipher, sealed, &plan).await),
+                        [("v".to_owned(), value.clone())],
+                        "{outputs:?}"
+                    );
+                }
+            }
+        }
+
+        /// A query reads its input by the same rules: `undefined` is
+        /// refused with the same reason a write is, naming the field. The
+        /// field seals its nulls beside an equality index, so a null query
+        /// is accepted there: `undefined` is not read as that null.
+        #[tokio::test]
+        async fn a_query_refuses_undefined_as_a_write_does() {
+            use crate::dynamic::{query_term, NoTargets, Op};
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let field = obj(vec![
+                ("context", label("v")),
+                ("outputs", strings(&["c", "eq"])),
+                ("type", s("int64")),
+                ("null", s("sealed")),
+            ]);
+            let plan = plan(obj(vec![("v", field)])).expect("parses");
+            let query =
+                |input: &Tree| query_term(&keyset, &plan, "v", Op::Eq, input, &NoTargets).err();
+
+            assert!(query(&Tree::Null).is_none(), "a null query is accepted");
+            let error = query(&Tree::Undefined).expect("undefined is refused");
+            assert_eq!(error.field(), Some("v"), "the field is named");
+            assert_eq!(error.reason(), Some(Reason::Undefined), "{error}");
         }
     }
 
@@ -6428,8 +6847,8 @@ mod tests {
                 .collect()
         }
 
-        fn text_of_value(name: &str, value: ValueFrame) -> Result<String, TargetError> {
-            match Tree::from_frame(value.risky_ref()) {
+        fn text_of_value(name: &str, value: Frame<'_>) -> Result<String, TargetError> {
+            match Tree::from_frame(value.as_bytes()) {
                 Ok(Tree::String(text)) => Ok(text),
                 _ => Err(TargetError::Plaintext {
                     name: String::new(),
@@ -6524,7 +6943,7 @@ mod tests {
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
                 parts: &crate::target::DeclaredContext,
-                plaintext: ValueFrame,
+                plaintext: Frame<'_>,
             ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
                 let _ = self.resolve(name)?;
                 let text = text_of_value(name, plaintext)?;
@@ -6553,7 +6972,7 @@ mod tests {
                 label: &Label,
                 parts: &crate::target::DeclaredContext,
                 stored: &[u8],
-            ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+            ) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
                 let _ = self.resolve(name)?;
                 let column = column(name, label)?;
                 let stored: serde_json::Value =
@@ -6581,7 +7000,7 @@ mod tests {
                 let opening: Decryption<String, K> =
                     crate::target::open(CipherText::Single(leaf), context);
                 Ok(cipher.run_decryption(opening).try_map(|text| {
-                    ValueFrame::of(text.as_str()).map_err(|e| crate::Error::Other(Box::new(e)))
+                    OwnedFrame::of(text.as_str()).map_err(|e| crate::Error::Other(Box::new(e)))
                 }))
             }
 
@@ -6592,7 +7011,7 @@ mod tests {
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
                 scopes: &crate::target::DeclaredContext,
-                plaintext: ValueFrame,
+                plaintext: Frame<'_>,
             ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
                 let _ = self.resolve(name)?;
                 let text = text_of_value(name, plaintext)?;
@@ -6671,7 +7090,7 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(
-                Tree::from_frame(opened.risky_ref()).unwrap(),
+                Tree::from_frame(opened.frame().as_bytes()).unwrap(),
                 mixed_row(34, "ada@example.com")
             );
             // Another row, and no binding at all, do not open it.
@@ -6697,7 +7116,7 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(
-                Tree::from_frame(opened.risky_ref()).unwrap(),
+                Tree::from_frame(opened.frame().as_bytes()).unwrap(),
                 mixed_row(34, "ada@example.com")
             );
         }
@@ -7251,6 +7670,50 @@ mod tests {
             }
         }
 
+        /// A target field's value is read as the type's kind before the
+        /// resolver sees it, on a write and on a query, by the rules a
+        /// lowered field's is. This resolver seals text alone, so its
+        /// refusal names the kind it was handed: the `int32` the `int64`
+        /// converted to.
+        #[tokio::test]
+        async fn a_target_field_reads_its_value_as_the_types_kind() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = plan_with(
+                obj(vec![("f", target_spec(label("f"), "IntegerEq"))]),
+                &FakeEql,
+            )
+            .expect("parses");
+            let handed_an_int32 = |error: Option<Error>| {
+                matches!(
+                    error,
+                    Some(Error::Target(TargetError::Plaintext {
+                        found: Some(ValueKind::Int32),
+                        ..
+                    }))
+                )
+            };
+            let queried = |value: Tree| {
+                query(&keyset, &plan, "f", &IndexSpec::Equality, value, &FakeEql).err()
+            };
+            let written =
+                |value: Tree| encrypt_with(&keyset, obj(vec![("f", value)]), &plan, &FakeEql).err();
+            assert!(handed_an_int32(queried(Tree::Int64(34))), "a query");
+            assert!(handed_an_int32(written(Tree::Int64(34))), "a write");
+            for (reason, value) in [
+                (Reason::FieldType, Tree::Float64(34.5)),
+                (Reason::Undefined, Tree::Undefined),
+            ] {
+                for error in [queried(value.clone()), written(value.clone())] {
+                    assert!(
+                        matches!(&error, Some(Error::Source { field: Some(f), reason: r }) if f == "f" && *r == reason),
+                        "{value:?}: {error:?}"
+                    );
+                }
+            }
+            assert_eq!(generates(&cipher), 0, "refused before any key request");
+        }
+
         /// A target field stores a null as its plan says (#1298): under
         /// `"sql"` in any type; sealed only in a type of fixed width whose
         /// terms are equality's alone, since a null has an equality term and
@@ -7533,7 +7996,7 @@ mod tests {
                 .unwrap()
                 .await
                 .unwrap();
-            assert_eq!(Tree::from_frame(opened.risky_ref()).unwrap(), row());
+            assert_eq!(Tree::from_frame(opened.frame().as_bytes()).unwrap(), row());
             // Under another extension the value does not open.
             let refused = decrypt_with(&cipher, seal().await, &plan(8), None, &FakeEql)
                 .unwrap()
@@ -7875,13 +8338,8 @@ mod tests {
             }
 
             /// The row as a binding hands it to the owned entry point.
-            fn row_frame() -> ValueFrame {
-                ValueFrame::from_bytes(
-                    crate::dynamic::test_frame::frame_of(&mixed_row(AGE, EMAIL))
-                        .as_protected_ref()
-                        .as_deref(),
-                )
-                .expect("the row is a frame")
+            fn row_frame() -> OwnedFrame {
+                crate::dynamic::test_frame::owned_frame_of(&mixed_row(AGE, EMAIL))
             }
 
             #[tokio::test]
@@ -7893,7 +8351,7 @@ mod tests {
                     .await
                     .expect("encrypt_with seals the row");
 
-                let opened = ValueFrame::decrypt_from(
+                let opened = OwnedFrame::decrypt_from(
                     Planned::with_resolver(&plan, sealed, FakeEql),
                     &keyset,
                 )
@@ -7923,9 +8381,10 @@ mod tests {
             mod assertions {
                 use super::*;
 
-                pub(super) fn opens_to_the_row(opened: &ValueFrame, row: Tree) {
+                pub(super) fn opens_to_the_row(opened: &OwnedFrame, row: Tree) {
                     assert_eq!(
-                        Tree::from_frame(opened.risky_ref()).expect("the opened row is a frame"),
+                        Tree::from_frame(opened.frame().as_bytes())
+                            .expect("the opened row is a frame"),
                         row,
                         "the row, its target field's value included, opens to what was sealed"
                     );
@@ -8119,6 +8578,176 @@ mod tests {
         }
     }
 
+    /// A UUID is a kind a field declares, and a logical type this build does
+    /// not know is carried only where no type is declared and nothing is
+    /// indexed.
+    mod uuids_and_unknown_logical_types {
+        use super::*;
+        use vitaminc_aead::plaintext::{Int, Logical, Physical, Raw};
+
+        fn uuid() -> Raw<'static> {
+            Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 16]))
+        }
+
+        fn unknown() -> Raw<'static> {
+            Raw(
+                Some(Logical::from_wire(200, 0).expect("an unknown logical type")),
+                Physical::Int(Int::I32(1)),
+            )
+        }
+
+        /// The record `{ "f": value }`, as a host frames it.
+        fn record_of(value: Raw<'_>) -> vitaminc_protected::Buffer {
+            let mut frame = vitaminc_protected::Buffer::new();
+            {
+                let mut map = vitaminc_aead::FrameWriter::new(&mut frame)
+                    .map(Some(1))
+                    .expect("a map");
+                value
+                    .visit(map.entry("f").expect("an entry"))
+                    .expect("written");
+                map.end().expect("ended");
+            }
+            frame
+        }
+
+        /// Seal `{ "f": value }` under a plan whose one field is `field`,
+        /// open it, and give back what it opened to.
+        async fn round_trip(
+            cipher: &StackCipher<Counting>,
+            field: Tree,
+            value: Raw<'_>,
+        ) -> (vitaminc_protected::Buffer, OwnedFrame) {
+            let plan = plan(obj(vec![("f", field)])).expect("the plan parses");
+            let sealed = seal_one(cipher, &plan, value).await;
+            let opened = decrypt(cipher, sealed, &plan, None)
+                .expect("the record fits the plan")
+                .await
+                .expect("decrypt");
+            (record_of(value), opened)
+        }
+
+        async fn seal_one(
+            cipher: &StackCipher<Counting>,
+            plan: &Plan,
+            value: Raw<'_>,
+        ) -> StackCipherText {
+            let keyset = cipher.default_keyset();
+            let source = record_of(value);
+            let frame = Frame::parse(crate::Controlled::risky_ref(&source)).expect("a frame");
+            encrypt(&keyset, frame, plan)
+                .expect("the source fits the plan")
+                .await
+                .expect("encrypt")
+        }
+
+        /// A `uuid` field is sealed, opens to the UUID it was given, and
+        /// stores the equality term a probe of the same UUID derives.
+        #[tokio::test]
+        async fn a_uuid_field_is_sealed_and_indexed_for_equality() {
+            let cipher = cipher().await;
+            let field = || typed(label("f"), &["c", "eq"], "uuid");
+            let (source, opened) = round_trip(&cipher, field(), uuid()).await;
+            assert_eq!(
+                opened.frame().as_bytes(),
+                crate::Controlled::risky_ref(&source)
+            );
+            let sealed = seal_one(
+                &cipher,
+                &plan(obj(vec![("f", field())])).expect("plan"),
+                uuid(),
+            )
+            .await;
+            let keyset = cipher.default_keyset();
+            let probe = term(
+                &keyset,
+                uuid(),
+                &IndexSpec::Equality,
+                context(label("f")).expect("a context"),
+            )
+            .await
+            .expect("a uuid has an equality term");
+            let mut fields = map(sealed);
+            let mut f = map(node(&mut fields, "f"));
+            assert_eq!(term_bytes(&node(&mut f, "eq")), probe);
+            // Sixteen bytes are bytes, not a UUID: their term differs.
+            let bytes = term(
+                &keyset,
+                Raw(None, Physical::Bytes(&[7; 16])),
+                &IndexSpec::Equality,
+                context(label("f")).expect("a context"),
+            )
+            .await
+            .expect("bytes have an equality term");
+            assert_ne!(bytes, probe);
+        }
+
+        /// A `uuid` field takes no order and no match index, and holds
+        /// nothing but a UUID.
+        #[test]
+        fn a_uuid_field_takes_equality_alone_and_holds_only_uuids() {
+            for index in ["ore", "ope", "ore_block", "match"] {
+                let error = plan(obj(vec![("f", typed(label("f"), &["c", index], "uuid"))]))
+                    .expect_err(index);
+                assert_eq!(error.reason(), Some(Reason::IndexNotAdmitted), "{index}");
+            }
+            let plan = plan(obj(vec![("f", typed(label("f"), &["c"], "uuid"))])).expect("plan");
+            let bytes = record_of(Raw(None, Physical::Bytes(&[7; 16])));
+            let frame = Frame::parse(crate::Controlled::risky_ref(&bytes)).expect("a frame");
+            let error = check_source(frame, &plan).expect_err("bytes are not a uuid");
+            assert_eq!(error.reason(), Some(Reason::FieldType));
+            // And a `bytes` field does not hold a UUID.
+            let plan =
+                super::plan(obj(vec![("f", typed(label("f"), &["c"], "bytes"))])).expect("plan");
+            let source = record_of(uuid());
+            let frame = Frame::parse(crate::Controlled::risky_ref(&source)).expect("a frame");
+            let error = check_source(frame, &plan).expect_err("a uuid is not bytes");
+            assert_eq!(error.reason(), Some(Reason::FieldType));
+        }
+
+        /// A logical type this build does not know is sealed and opened as
+        /// it was written in an untyped field, and carried as it is in a
+        /// passthrough.
+        #[tokio::test]
+        async fn an_unknown_logical_type_is_carried_where_nothing_is_declared() {
+            let cipher = cipher().await;
+            for field in [spec(label("f"), &["c"]), spec(label("f"), &["passthrough"])] {
+                let (source, opened) = round_trip(&cipher, field, unknown()).await;
+                assert_eq!(
+                    opened.frame().as_bytes(),
+                    crate::Controlled::risky_ref(&source)
+                );
+            }
+        }
+
+        /// No declared type holds a value of a logical type this build does
+        /// not know, and no index takes one.
+        #[test]
+        fn an_unknown_logical_type_is_held_by_no_type_and_taken_by_no_index() {
+            for kind in ValueKind::ALL {
+                if kind == ValueKind::Json {
+                    // A document is stored through a target, not here.
+                    continue;
+                }
+                let plan =
+                    plan(obj(vec![("f", typed(label("f"), &["c"], kind.name()))])).expect("plan");
+                let source = record_of(unknown());
+                let frame = Frame::parse(crate::Controlled::risky_ref(&source)).expect("a frame");
+                let error = check_source(frame, &plan).expect_err(kind.name());
+                assert_eq!(error.reason(), Some(Reason::FieldType), "{kind}");
+            }
+            for index in [
+                IndexSpec::Equality,
+                IndexSpec::Match(crate::sem::MatchOptions::default()),
+                IndexSpec::Ore,
+                IndexSpec::Ope,
+                IndexSpec::OreBlock,
+            ] {
+                assert!(!index.defines(unknown()), "{index}");
+            }
+        }
+    }
+
     /// Every refusal names the field it is about, where there is one, and
     /// says why with a [`Reason`]: the message, the accessors and the
     /// payload all carry the same two facts.
@@ -8220,42 +8849,48 @@ mod tests {
             let error = check_source(Tree::Passthrough(Box::new(row(34))), &plan)
                 .expect_err("a passthrough at the top");
             expect(&error, "Source", None, NotAnObject);
-            // A uuid is outside the value model: a frame can carry it, the
-            // engine cannot hold it, and the field is named.
-            let wide = vitaminc_aead::plaintext::Raw(
+            // A value that is not of its field's declared type is refused
+            // naming the field: a UUID or a logical type this build does
+            // not know, in a `uint32` field.
+            let uuid = vitaminc_aead::plaintext::Raw(
                 Some(vitaminc_aead::plaintext::Logical::Uuid),
                 vitaminc_aead::plaintext::Physical::Bytes(&[7; 16]),
             );
-            let mut frame = vitaminc_protected::Buffer::new();
-            {
-                let mut map = vitaminc_aead::FrameWriter::new(&mut frame)
-                    .map(Some(1))
-                    .expect("a map");
-                wide.visit(map.entry("email").expect("an entry"))
-                    .expect("written");
-                map.end().expect("ended");
+            let unknown = vitaminc_aead::plaintext::Raw(
+                Some(vitaminc_aead::plaintext::Logical::from_wire(200, 0).expect("unknown")),
+                vitaminc_aead::plaintext::Physical::Int(vitaminc_aead::plaintext::Int::U32(1)),
+            );
+            let one_field =
+                |field: &str, value: vitaminc_aead::plaintext::Raw<'_>, hidden: bool| {
+                    let mut frame = vitaminc_protected::Buffer::new();
+                    {
+                        let mut map = vitaminc_aead::FrameWriter::new(&mut frame)
+                            .map(Some(1))
+                            .expect("a map");
+                        let entry = map.entry(field).expect("an entry");
+                        if hidden {
+                            entry.passthrough(&value).expect("written");
+                        } else {
+                            value.visit(entry).expect("written");
+                        }
+                        map.end().expect("ended");
+                    }
+                    frame
+                };
+            for value in [uuid, unknown] {
+                let frame = one_field("age", value, false);
+                let source = vitaminc_aead::Frame::parse(crate::Controlled::risky_ref(&frame))
+                    .expect("a frame");
+                let error = check_source(source, &plan).expect_err("not a uint32");
+                expect(&error, "Source", Some("age"), FieldType);
+                // An untyped passthrough carries either as it is.
+                let frame = one_field("id", value, true);
+                let source = vitaminc_aead::Frame::parse(crate::Controlled::risky_ref(&frame))
+                    .expect("a frame");
+                let carried = super::plan(obj(vec![("id", spec(label("id"), &["passthrough"]))]))
+                    .expect("plan");
+                check_source(source, &carried).expect("carried in a passthrough");
             }
-            let source =
-                vitaminc_aead::Frame::parse(crate::Controlled::risky_ref(&frame)).expect("a frame");
-            let error = check_source(source, &plan).expect_err("a uuid field");
-            expect(&error, "Source", Some("email"), FieldType);
-            // The same inside a passthrough subtree: the field is named, and
-            // the cause is the value's type, not an unframeable source.
-            let mut frame = vitaminc_protected::Buffer::new();
-            {
-                let mut map = vitaminc_aead::FrameWriter::new(&mut frame)
-                    .map(Some(1))
-                    .expect("a map");
-                map.entry("id")
-                    .expect("an entry")
-                    .passthrough(&wide)
-                    .expect("written");
-                map.end().expect("ended");
-            }
-            let source =
-                vitaminc_aead::Frame::parse(crate::Controlled::risky_ref(&frame)).expect("a frame");
-            let error = check_source(source, &plan).expect_err("a uuid in a passthrough");
-            expect(&error, "Source", Some("id"), FieldType);
             // Each row of a batch is split the same way, and the first fault
             // in source order names its field.
             let mut repeated = object(row(34));
@@ -8301,43 +8936,30 @@ mod tests {
         /// shape; one that names a field is that field's, by its cause.
         #[test]
         fn a_split_refusal_names_its_field_and_cause() {
-            use crate::dynamic::value_frame::FieldFault;
-            let fault = |error| {
-                split_refusal(DecodeError::Source(
-                    vitaminc_aead::plaintext::SourceError::new(FieldFault {
-                        field: "age".to_string(),
-                        error,
-                    }),
-                ))
+            let refusal = |field: Option<&str>, error| {
+                split_refusal(SplitRefusal {
+                    field: field.map(str::to_owned),
+                    error,
+                })
             };
+            let fault = |error| refusal(Some("age"), error);
             expect(
-                &fault(DecodeError::duplicate_key("k")),
+                &fault(FrameWriteError::DuplicateKey),
                 "Source",
                 Some("age"),
                 Reason::RepeatedKey,
             );
             expect(
-                &fault(DecodeError::Expected("a value")),
+                &fault(FrameWriteError::Invalid),
                 "Source",
                 Some("age"),
                 Reason::FieldType,
             );
+            for error in [FrameWriteError::TooDeep, FrameWriteError::Unwritten] {
+                expect(&fault(error), "Source", Some("age"), Reason::Unframeable);
+            }
             expect(
-                &fault(DecodeError::unknown_key("k")),
-                "Source",
-                Some("age"),
-                Reason::Unframeable,
-            );
-            expect(
-                &split_refusal(DecodeError::Expected("a value")),
-                "Source",
-                None,
-                Reason::NotAnObject,
-            );
-            expect(
-                &split_refusal(DecodeError::Source(
-                    vitaminc_aead::plaintext::SourceError::msg("not a field's"),
-                )),
+                &refusal(None, FrameWriteError::Invalid),
                 "Source",
                 None,
                 Reason::NotAnObject,

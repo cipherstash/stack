@@ -1514,6 +1514,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "recipher-frame"
+version = "0.10.0"
+dependencies = [
+ "vitaminc-aead 0.10.0",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1818,6 +1825,7 @@ dependencies = [
 name = "stack-auth-guest"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "cts-common",
  "futures",
  "serde",
@@ -1837,10 +1845,10 @@ name = "stack-guest-abi"
 version = "0.0.0"
 dependencies = [
  "miette",
+ "recipher-frame",
  "serde_json",
  "thiserror 1.0.69",
  "vitaminc-aead 0.10.0",
- "vitaminc-aead-frame",
  "vitaminc-protected 0.10.0",
  "zeroize",
 ]
@@ -2291,8 +2299,6 @@ dependencies = [
 [[package]]
 name = "vitaminc-aead"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fcccedca9d80812af295cba43dc2ac388f4fbb0415faa3ebec783d072d014d8"
 dependencies = [
  "bytes",
  "futures-util",
@@ -2319,21 +2325,10 @@ dependencies = [
 [[package]]
 name = "vitaminc-aead-derive"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3de85a0ff50572db91a5528b72775f63d57a2b24b8263fb8e728baf6a7731502"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
-]
-
-[[package]]
-name = "vitaminc-aead-frame"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e858adec6cbbe353227dbff1876a426909a9e304fc996e0f706441dcd7eb9dac"
-dependencies = [
- "vitaminc-aead 0.10.0",
 ]
 
 [[package]]

@@ -7,7 +7,7 @@ error[E0277]: the trait bound `for<'a> &'a Vec<i32>: Scalar` is not satisfied
   |                    required by a bound introduced by this call
   |
 help: the following other types implement trait `Scalar`
- --> $CARGO/vitaminc-aead-$VERSION/src/plaintext/sources.rs
+ --> $WORKSPACE/packages/vitaminc-aead/src/plaintext/sources.rs
   |
   |               impl Scalar for $ty {}
   |               ^^^^^^^^^^^^^^^^^^^

@@ -1097,7 +1097,7 @@ where
 /// pending's result and no plaintext outlives this call in the pending.
 /// Mapping the encrypted output preserves the scalar's optional-context policy;
 /// it does not turn this into an EQL ciphertext or term operation. A wrapper may
-/// require caller context with [`RequiredContext`](super::RequiredContext), or
+/// require caller context with [`RequiredContext`], or
 /// declare a nonempty context with [`Encryption::under`].
 pub fn scalar_ciphertext<'s, S: crate::OpaqueEncode, K: 'static>(
 ) -> Encryption<'s, S, crate::Ciphertext, K, super::OptionalContext<super::ScalarContext>> {

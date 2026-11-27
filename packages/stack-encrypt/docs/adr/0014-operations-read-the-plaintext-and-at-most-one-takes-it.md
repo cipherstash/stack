@@ -231,7 +231,7 @@ type. Two operations that both take the value therefore do not compile.
   the borrowed form, a caller who needs the plaintext afterwards would
   clone the whole value, its secrets included.
 - No other public bound in Stack Encrypt or `eql-bindings` requires a
-  plaintext to be `Clone`. `ValueFrame` and `JsonPlaintext` are not
+  plaintext to be `Clone`. `OwnedFrame` and `JsonPlaintext` are not
   `Clone`.
 - There is no adapter that copies a plaintext by name. The first version
   proposed one. Nothing needs it, and #1734 asks for no copies.
@@ -295,7 +295,7 @@ type. Two operations that both take the value therefore do not compile.
   encoding into a buffer, and `OpaqueBlob` encodes a whole value
   (ADR-0011). Those buffers are part of the work, and are wiped.
 - **A decoded frame is a second value.** The dynamic interface decodes
-  the caller's frame into one owned `ValueFrame` for each field before it
+  the caller's frame into one owned `OwnedFrame` for each field before it
   runs a target. This decision does not remove that step. It stops the
   further copy that follows it: each field's value is read in place and
   wiped once, and a passthrough field's value is moved into the output.
@@ -340,7 +340,7 @@ type. Two operations that both take the value therefore do not compile.
     `Encrypt` adds `impl Encrypt for &T`;
   - `zip` takes a borrowed description as its argument, and runs it
     first;
-  - `ShareSource`, `Clone for ValueFrame` and `Clone for JsonPlaintext`
+  - `ShareSource`, `Clone for OwnedFrame` and `Clone for JsonPlaintext`
     are removed, and `Index::operation` has a new bound;
   - `Date`, `Timestamp` and `Decimal` are Vitamin C's. They are built
     from jiff's and rust_decimal's values, and none is `Clone`. The
@@ -411,7 +411,7 @@ Three pull requests touch the same code. They land in this order:
    corpus pass unchanged. No plaintext type of Stack Encrypt lacks
    `EncryptRef`.
 4. **The dynamic interface.** It fits. A data plan's sealed and indexed
-   fields read their `ValueFrame` in place, and a passthrough field's
+   fields read their `OwnedFrame` in place, and a passthrough field's
    value is moved into the output.
 
 ## Amended 2026-11-22 (#1737)

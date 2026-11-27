@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The by-name target entry points borrow the plaintext as a `Frame`, and
+  open into an `OwnedFrame`** (#1955). `encryption::targets::encrypt`,
+  `encrypt_with` and `query`, and the `v4::targets` table, take the
+  plaintext as `stack_encrypt::dynamic::frame::Frame<'_>`, read only while
+  the call runs: pass `owned.frame()`, or `Frame::parse(&bytes)?` for bytes
+  a host handed over, with no copy. `decrypt` resolves to
+  `stack_encrypt::dynamic::frame::OwnedFrame` (vitaminc's owned frame).
+  Earlier unreleased builds took and returned Stack Encrypt's
+  `dynamic::ValueFrame`, which is removed. The frame's bytes are the same,
+  so no stored value or query changes.
+- **A type that may hold a null reads any null as one.** A plaintext of a
+  type whose terms a null has reads a plain null, and a typed null of any
+  type, as absent, and seals it padded to its own type's length. A typed
+  null of another type was refused before.
+
 ### Added
 
 - **Read one child of a JSON tree node** (#1677). Your app can now decrypt
@@ -319,7 +336,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that feature alone, and its producible types derive `EncryptTarget` and
   `DecryptSource` with no attribute of their own gated on it.
 - **A `targets` feature for the by-name dispatch.** `encryption::targets` and
-  `v4::targets`, which name an EQL type at run time and take a `ValueFrame`,
+  `v4::targets`, which name an EQL type at run time and take an `OwnedFrame`,
   need `targets`, which turns on `stack-encrypt` and Stack Encrypt's
   `dynamic` feature. `stack-encrypt` alone builds Stack Encrypt with no
   default features and no `dynamic` layer, so a Rust program that encrypts
@@ -413,7 +430,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `encrypt` / `decrypt` / `query` entry points that dispatch on the name and
   run the type's own `EncryptTarget` / `DecryptSource`, resolving to the EQL
   value's JSON bytes through the engine's `Pending`. The plaintext crosses as
-  Stack Encrypt's `dynamic::ValueFrame`, one value as its transport frame:
+  Stack Encrypt's `dynamic::frame::OwnedFrame`, one value as its transport frame:
   `encrypt` and `query` take one, `decrypt` resolves to one, and the
   `Plaintext` trait reads a type's plaintext out of a frame (`from_frame`,
   which walks the frame into the type's own decrypt sink once its kind is
@@ -500,7 +517,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `PrfValue`, and the feature no longer depends on `vitaminc-prf`.
 
 - **The `stack-encrypt` feature builds on vitaminc ADR 0001.**
-  `encryption::targets` takes `ValueFrame` and `ValueKind` from
+  `encryption::targets` takes `OwnedFrame` and `ValueKind` from
   `stack_encrypt::dynamic` (the `targets` feature turns on stack-encrypt's
   `dynamic` feature) in place of `vitaminc-aead-value`, which is gone, and the
   `Ciphertext` target takes any vitaminc `Encrypt` plaintext and opens into any

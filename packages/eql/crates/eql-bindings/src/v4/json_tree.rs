@@ -5,7 +5,7 @@
 //! `src/v3/json_tree/`, confined to EQL v4; the family is not in the
 //! catalog yet, so it is not in [`super::all`] nor in the target table.
 //!
-//! Stack Encrypt's [`Json`](stack_encrypt::target::Json) index produces the
+//! Stack Encrypt's [`Json`](struct@stack_encrypt::target::Json) index produces the
 //! document ([`stack_encrypt::json::JsonDocument`], whose wire form is the
 //! `h` and `sv` here) and the query operands; these types are the SQL
 //! contract around them, with the `v` and `i` envelope, and the
@@ -15,14 +15,12 @@
 //! [`Identifier`]. As a field of a derived record, its field reference has the
 //! JSON queries (`contains`, `at`, `elements`, `predicate`, `children`),
 //! which return the query types here
-//! ([`JsonQueries`](stack_encrypt::json::JsonQueries)), under the options
+//! ([`JsonQueries`]), under the options
 //! the field's `#[stash(json(..))]` names
-//! ([`JsonTarget`](stack_encrypt::json::JsonTarget)). A document with
+//! ([`JsonTarget`]). A document with
 //! no record is queried through a data plan that names the type
 //! (`JsonSearch`) under the same column, and its operand converts into the
-//! operand types here (see [`crate::encryption`]). The
-//! design is `docs/plans/2026-10-17-json-tree-index.md` at
-//! the repository root.
+//! operand types here (see [`crate::encryption`]).
 
 use schemars::{schema_for, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
@@ -289,7 +287,7 @@ pub enum JsonTreePredicateQuery {
 /// sealed root asked for at `$`. The only constructor,
 /// [`from_selector`](Self::from_selector), takes the selector, and opening
 /// refuses an entry that does not carry it
-/// ([`Error::JsonWrongEntry`](stack_encrypt::Error::JsonWrongEntry)), as
+/// ([`Error::JsonWrongEntry`]), as
 /// [`JsonSelector::open`] does: a database that answers one path with
 /// another path's entry, or with the sealed root, returns an entry that
 /// would otherwise open.
@@ -328,7 +326,7 @@ impl JsonTreeExtracted {
 /// `Option<Value>` when the row has no node there; or to a list, one value
 /// per concrete path a wildcard reaches. A wildcard read of an array longer
 /// than the key's bound fails with
-/// [`Error::JsonWildcardTruncated`](stack_encrypt::Error::JsonWildcardTruncated)
+/// [`Error::JsonWildcardTruncated`]
 /// rather than open to part of the answer.
 ///
 /// Past its budget a read returns the sealed root alone, at depth `0`;
@@ -541,7 +539,7 @@ impl JsonTreeEntry {
 /// defaults, such as the paths that carry an ordering term
 /// ([`JsonOptions::ordered`]). A Rust program runs it as
 /// `keyset.run(JsonTree::new(options).encryption(), &value, column)`. Its
-/// index is the engine's [`Json`] under the same options, which a query
+/// index is the engine's [`Json`](struct@Json) under the same options, which a query
 /// derives through. [`JsonTreeDocument`]'s own [`EncryptTarget`] is this
 /// layout under the defaults.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

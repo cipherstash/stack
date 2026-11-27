@@ -1,0 +1,180 @@
+name: Kani (storage reader)
+
+# Proves, rather than tests, the pieces recipher-frame's storage reader
+# is built from. The reader parses bytes that may be corrupt or tampered with:
+#
+# - the header is refused exactly as its rules say;
+# - a count never exceeds the bytes left;
+# - a scalar, an object's key and a map's key are read at the cursor and in
+#   bounds, from any position, and a wide scalar is read whole or refused;
+# - the depth bound is 128;
+# - two map keys are one key exactly when their values (integers, across
+#   every pair of widths) or bytes (text and bytes) are equal, and keys of
+#   different kinds are never one key.
+#
+# The harnesses are in packages/recipher-frame/src/storage/proofs.rs and
+# build only under `cfg(kani)`. They take about ten minutes, two at a time,
+# so they do not run on every pull request that touches the crates:
+#
+#   * pull_request: when the reader or its proofs change (storage.rs,
+#     storage/, the crate manifest), when the vitaminc-aead modules the
+#     reader calls change (leaf.rs, tags.rs, frame.rs), or this workflow.
+#   * schedule: nightly on the default branch, and only when something the
+#     reader compiles from (the frame and aead sources, their manifests, the
+#     root manifest and lockfile) differs from the commit of the last
+#     successful scheduled run. Kani is deterministic, so a run over
+#     unchanged inputs proves nothing new. With no such run to compare with,
+#     the proofs run.
+#   * workflow_dispatch: always.
+#
+# Kani installs its own pinned nightly and CBMC (`cargo kani setup`). Both,
+# and the kani binaries, stay in this job and its cache; no other workflow
+# or mise task installs them. Pull requests are the only filtered event, so
+# `push` has no filter to mirror; recorded in
+# scripts/__tests__/workflow-paths-filter-parity.test.mjs.
+
+on:
+  pull_request:
+    paths:
+      - packages/recipher-frame/src/storage.rs
+      - packages/recipher-frame/src/storage/**
+      - packages/recipher-frame/Cargo.toml
+      - packages/vitaminc-aead/src/leaf.rs
+      - packages/vitaminc-aead/src/tags.rs
+      - packages/vitaminc-aead/src/frame.rs
+      - .github/workflows/kani.yml
+  schedule:
+    # Nightly at 05:41 UTC. Scheduled runs fire from the default branch only.
+    - cron: "41 5 * * *"
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The one pin for Kani. A bump changes the nightly and CBMC it installs.
+  KANI_VERSION: "0.67.0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # On a scheduled run: did anything the reader compiles from change since
+  # the last successful scheduled run? On every other event the answer is
+  # yes, without looking.
+  changes:
+    name: Kani inputs changed
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # Lists this workflow's earlier runs.
+      actions: read
+    outputs:
+      relevant: ${{ steps.check.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        if: github.event_name == 'schedule'
+        with:
+          persist-credentials: false
+          # History without file contents: enough to compare two trees.
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Look for a change to the reader's inputs
+        id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT_NAME" != schedule ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The commit the last successful scheduled run checked. Comparing
+          # trees, not listing commits by date, sees a change however it was
+          # merged and however long ago it was written, and a missed or
+          # failed night is compared against again the next night.
+          last=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow kani.yml \
+            --event schedule --branch "$BRANCH" --status success --limit 1 \
+            --json headSha --jq '.[0].headSha // empty' || true)
+          if [ -z "$last" ] || ! git cat-file -e "$last^{commit}" 2>/dev/null; then
+            echo "No earlier successful scheduled run to compare with; running the proofs."
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --no-renames --name-only "$last" HEAD -- \
+            packages/recipher-frame/src \
+            packages/recipher-frame/Cargo.toml \
+            packages/vitaminc-aead/src \
+            packages/vitaminc-aead/Cargo.toml \
+            Cargo.toml Cargo.lock .github/workflows/kani.yml)
+          if [ -n "$changed" ]; then
+            echo "Changed since $last:"; echo "$changed"
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nothing the proofs read changed since $last; they would repeat that run."
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  kani:
+    name: Kani (storage reader)
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # About ten minutes of proofs, plus Kani's setup when the cache misses.
+    # Anything past this is a hang.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      # The kani binaries, CBMC under ~/.kani, and the crates the proofs
+      # fetch. Keyed on the Kani version and the lockfile. Kani's nightly is
+      # not cached: ~/.kani/kani-<version>/toolchain is a symlink into
+      # ~/.rustup/toolchains, which the next step checks.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-kani
+            ~/.cargo/bin/kani
+            ~/.kani/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+          key: ${{ runner.os }}-kani-${{ env.KANI_VERSION }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-kani-${{ env.KANI_VERSION }}-
+
+      # The runner's stable Rust builds kani-verifier; Kani then proves with
+      # its own nightly. A fixed-string, whole-word match, so a cached
+      # 10.67.0 or 0.67.01 is not taken for 0.67.0. A restored ~/.kani on a
+      # fresh runner has a dangling toolchain link, so the setup also runs
+      # when the nightly's rustc is missing; it reinstalls the nightly.
+      - name: Install Kani
+        run: |
+          installed=$(cargo kani --version 2>/dev/null || true)
+          if ! grep -qwF "$KANI_VERSION" <<<"$installed"; then
+            cargo install --locked kani-verifier --version "$KANI_VERSION"
+            cargo kani setup
+          elif [ ! -x "$HOME/.kani/kani-$KANI_VERSION/toolchain/bin/rustc" ]; then
+            cargo kani setup
+          fi
+          cargo kani --version
+          test -x "$HOME/.kani/kani-$KANI_VERSION/toolchain/bin/rustc"
+
+      # `cargo kani` has no --locked, and would re-resolve a stale lockfile
+      # in memory, so check the committed one first.
+      - name: Check Cargo.lock is current
+        run: cargo metadata --locked --format-version 1 > /dev/null
+
+      # Two at a time: the map key proofs each solve over 128-bit values,
+      # and a 16 GB runner is not sure to hold four of them at once.
+      - name: Prove
+        run: cargo kani -p recipher-frame --features serde -j 2 --output-format terse

@@ -87,6 +87,18 @@
         }
       ]
     },
+    "sealed-null-uuid": {
+      "Context": ["users"],
+      "Fields": [
+        {
+          "Name": "value",
+          "Identity": "value",
+          "Kind": "uuid",
+          "Outputs": ["c", "eq"],
+          "Null": "sealed"
+        }
+      ]
+    },
     "sql-null-untyped": {
       "Context": ["users"],
       "Fields": [
@@ -1179,6 +1191,66 @@
         }
       ]
     },
+    "type-uuid-eq": {
+      "Context": ["users"],
+      "Fields": [
+        {
+          "Name": "value",
+          "Identity": "value",
+          "Kind": "uuid",
+          "Outputs": ["c", "eq"],
+          "Null": ""
+        }
+      ]
+    },
+    "type-uuid-match": {
+      "Context": ["users"],
+      "Fields": [
+        {
+          "Name": "value",
+          "Identity": "value",
+          "Kind": "uuid",
+          "Outputs": ["c", "match"],
+          "Null": ""
+        }
+      ]
+    },
+    "type-uuid-ore": {
+      "Context": ["users"],
+      "Fields": [
+        {
+          "Name": "value",
+          "Identity": "value",
+          "Kind": "uuid",
+          "Outputs": ["c", "ore"],
+          "Null": ""
+        }
+      ]
+    },
+    "type-uuid-ope": {
+      "Context": ["users"],
+      "Fields": [
+        {
+          "Name": "value",
+          "Identity": "value",
+          "Kind": "uuid",
+          "Outputs": ["c", "ope"],
+          "Null": ""
+        }
+      ]
+    },
+    "type-uuid-ore_block": {
+      "Context": ["users"],
+      "Fields": [
+        {
+          "Name": "value",
+          "Identity": "value",
+          "Kind": "uuid",
+          "Outputs": ["c", "ore_block"],
+          "Null": ""
+        }
+      ]
+    },
     "type-array-eq": {
       "Context": ["users"],
       "Fields": [
@@ -1401,7 +1473,7 @@
         {
           "Name": "value",
           "Identity": "value",
-          "Kind": "uuid",
+          "Kind": "guid",
           "Outputs": ["c"],
           "Null": ""
         }

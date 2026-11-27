@@ -99,15 +99,21 @@ jobs:
               # read); plan-docs-unread-by-tests.test.mjs holds the
               # plans half for the `paths:` filter above.
               - '!docs/**'
-              # The Go module, and the Rust crates no binding these jobs build
-              # depends on. The auth and profile bindings compile stack-auth and
-              # stack-profile, which stay in.
+              # The Go module, and Rust crates these jobs do not test. The auth
+              # and profile bindings compile stack-auth and stack-profile, which
+              # stay in. The auth binding also compiles the vitaminc-aead
+              # crates, through crates.io's `vitaminc` 0.10, but nothing these
+              # jobs run reaches them: tests-crates.yml builds and tests the
+              # bindings and those crates when either changes.
               - '!languages/golang/**'
               - '!packages/stack-encrypt/**'
               - '!packages/stack-encrypt-derive/**'
               - '!packages/stack-encrypt-jsonpath/**'
               - '!packages/stack-kms/**'
               - '!packages/stack-guest-abi/**'
+              - '!packages/vitaminc-aead/**'
+              - '!packages/recipher-frame/**'
+              - '!packages/vitaminc-aead-derive/**'
               - '!packages/stack-auth/fuzz/**'
               # The TypeScript SDK on Stack Encrypt. Nothing these jobs build
               # depends on it, and tests-recipher-js.yml runs its tests.

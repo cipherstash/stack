@@ -1,0 +1,108 @@
+# cargo-deny configuration for vitaminc-aead, recipher-frame and
+# vitaminc-aead-derive, and their dependency graph ONLY. It does not cover
+# the rest of the root workspace; that is #1842.
+#
+# CI (.github/workflows/supply-chain-vitaminc-aead.yml) runs it once per crate:
+#
+#   cargo deny --locked --config supply-chain/vitaminc-aead/deny.toml \
+#     --manifest-path packages/<crate>/Cargo.toml check
+#
+# `--manifest-path` on a workspace member checks that package's graph, not
+# the workspace's. `cargo deny check` at the repository root does NOT read
+# this file.
+#
+# What it holds the lockfile to:
+#   advisories  no RustSec advisory, no yanked version
+#   bans        no crate with a build script that is not listed below
+#   sources     crates.io only
+#   licenses    the allow list below, for everything that ships
+#
+# Reference: https://embarkstudios.github.io/cargo-deny/checks/cfg.html
+
+[graph]
+# Optional dependencies (jiff, uuid, rust_decimal, serde) are part of what
+# ships, so check the graph with every feature on.
+all-features = true
+
+[output]
+feature-depth = 1
+
+[advisories]
+db-path = "$CARGO_HOME/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Unmaintained advisories fail too, for crates the three depend on directly.
+unmaintained = "workspace"
+yanked = "deny"
+# Each entry needs the advisory id and a reason. Prefer a bump to an ignore.
+ignore = []
+
+[licenses]
+# SPDX identifiers. Dev-dependencies are not licence-checked
+# (`include-dev` defaults to false): they are not distributed. Advisories,
+# bans and sources do cover them.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-3-Clause",
+  "Unicode-3.0",
+  "Unlicense",
+]
+confidence-threshold = 0.8
+exceptions = []
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+# Registry wildcards are denied; path dependencies between workspace members
+# may use them.
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+deny = []
+
+[bans.build]
+# A build script runs arbitrary code on every developer machine and in CI,
+# and a new one is the most common shape of a malicious release. This is
+# every crate in the three crates' graph with a build script today
+# (platform-specific ones included, because the graph is checked for every
+# target). A dependency change that adds one fails here, and the review
+# decides whether to add it.
+allow-build-scripts = [
+  "alloca",
+  "borsh",
+  "crunchy",
+  "getrandom",
+  "libc",
+  "num-traits",
+  "portable-atomic",
+  "portable-atomic-util",
+  "proc-macro2",
+  "quote",
+  "radium",
+  "rust_decimal",
+  "rustversion",
+  "serde",
+  "serde_core",
+  "serde_json",
+  "target-tuple",
+  "thiserror",
+  "typenum",
+  "vitaminc-protected",
+  "wasm-bindgen",
+  "wasm-bindgen-shared",
+  "winapi",
+  "winapi-i686-pc-windows-gnu",
+  "winapi-x86_64-pc-windows-gnu",
+  "wit-bindgen",
+  "zerocopy",
+  "zmij",
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

@@ -8,7 +8,7 @@ use common::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record, NoTargets, Op, Operand};
 use stack_encrypt::AsProtectedRef as _;
 use stack_encrypt::CipherText;
 use std::{
@@ -62,7 +62,7 @@ struct ExpectedError {
     field: String,
 }
 
-fn rows(input: &[Row]) -> ValueFrame {
+fn rows(input: &[Row]) -> OwnedFrame {
     frame(
         input
             .iter()
@@ -104,7 +104,7 @@ async fn shared_record_runtime_profile() {
             spec["null"] = json!(case.null);
         }
         let plan = record::plan(
-            vitaminc_aead_frame::serde::to_vec(&json!({"value":spec}))
+            recipher_frame::serde::to_vec(&json!({"value":spec}))
                 .unwrap()
                 .as_protected_ref(),
         )
@@ -191,8 +191,8 @@ async fn shared_record_runtime_profile() {
                     .await
                     .unwrap();
                 assert_eq!(
-                    opened.risky_ref(),
-                    rows(&expected_rows).risky_ref(),
+                    opened.frame().as_bytes(),
+                    rows(&expected_rows).frame().as_bytes(),
                     "typed ordered roundtrip"
                 );
                 assert_eq!(

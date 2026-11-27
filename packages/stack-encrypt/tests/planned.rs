@@ -14,8 +14,10 @@ use std::sync::atomic::Ordering;
 use common::frames::{frame, object};
 use miette::Diagnostic as _;
 use stack_encrypt::dynamic::{
-    self, record, Op, Operand, Planned, QueryTerm, TargetDescriptor, TargetError, TargetResolver,
-    ValueFrame, ValueKind,
+    self,
+    frame::{Frame, OwnedFrame},
+    record, Op, Operand, Planned, QueryTerm, TargetDescriptor, TargetError, TargetResolver,
+    ValueKind,
 };
 use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::sem::EqualityTerm;
@@ -34,8 +36,9 @@ struct Row {
     age: u32,
 }
 
-fn row_of(frame: &ValueFrame) -> Row {
-    vitaminc_aead_frame::serde::from_slice(frame.risky_ref()).expect("an object of the two fields")
+fn row_of(frame: &OwnedFrame) -> Row {
+    recipher_frame::serde::from_slice(frame.frame().as_bytes())
+        .expect("an object of the two fields")
 }
 
 fn ada_row() -> Row {
@@ -55,7 +58,7 @@ async fn cipher() -> StackCipher<FakeDataKeySource> {
 
 /// A data plan read from its JSON declaration, with no EQL types.
 fn plan_of(declaration: serde_json::Value) -> record::Plan {
-    let declaration = vitaminc_aead_frame::serde::to_vec(&declaration).unwrap();
+    let declaration = recipher_frame::serde::to_vec(&declaration).unwrap();
     record::plan(declaration.as_protected_ref()).unwrap()
 }
 
@@ -96,7 +99,7 @@ impl TargetResolver for OneType {
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
         _: &stack_encrypt::target::DeclaredContext,
-        _: ValueFrame,
+        _: Frame<'_>,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("these tests query, and encrypt nothing")
     }
@@ -107,7 +110,7 @@ impl TargetResolver for OneType {
         _: &Label,
         _: &stack_encrypt::target::DeclaredContext,
         _: &[u8],
-    ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+    ) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
         unreachable!("these tests query, and decrypt nothing")
     }
     fn query<'a, K: 'static>(
@@ -117,7 +120,7 @@ impl TargetResolver for OneType {
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
         scopes: &stack_encrypt::target::DeclaredContext,
-        _: ValueFrame,
+        _: Frame<'_>,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         let context = scopes.clone().under(NonEmpty::from(label.clone()));
         let under = Descriptor::from_piece(&context.query());
@@ -128,14 +131,14 @@ impl TargetResolver for OneType {
 
 /// The data plan of a record whose email names the EQL type `Some`.
 fn target_plan() -> record::Plan {
-    let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+    let declaration = recipher_frame::serde::to_vec(&serde_json::json!({
         "email": { "context": ["users", "email"], "target": "Some" },
     }))
     .unwrap();
     record::plan_with(declaration.as_protected_ref(), &OneType).unwrap()
 }
 
-fn ada() -> ValueFrame {
+fn ada() -> OwnedFrame {
     object(vec![
         ("email", frame("ada@example.com")),
         ("age", frame(36u32)),
@@ -169,7 +172,7 @@ mod a_record_under_a_plan {
             .encrypt_into(&keyset)
             .await
             .unwrap();
-        let back = ValueFrame::decrypt_from(Planned::new(&plan, row), &keyset)
+        let back = OwnedFrame::decrypt_from(Planned::new(&plan, row), &keyset)
             .await
             .unwrap();
         assert_eq!(row_of(&back), ada_row());
@@ -191,7 +194,7 @@ mod a_record_under_a_plan {
         let keyset = cipher.default_keyset();
         let plan = plan();
         let row = bound_row(&keyset).await;
-        let back = ValueFrame::decrypt_from_with_context(
+        let back = OwnedFrame::decrypt_from_with_context(
             Planned::new(&plan, row),
             &keyset,
             Scope::new(42u64).bind(9u128),
@@ -214,12 +217,12 @@ mod a_record_under_a_plan {
         ] {
             let row = bound_row(&keyset).await;
             let refused =
-                ValueFrame::decrypt_from_with_context(Planned::new(&plan, row), &keyset, wrong)
+                OwnedFrame::decrypt_from_with_context(Planned::new(&plan, row), &keyset, wrong)
                     .await;
             assert!(refused.is_err());
         }
         let row = bound_row(&keyset).await;
-        assert!(ValueFrame::decrypt_from(Planned::new(&plan, row), &keyset)
+        assert!(OwnedFrame::decrypt_from(Planned::new(&plan, row), &keyset)
             .await
             .is_err());
     }
@@ -233,7 +236,7 @@ mod a_record_under_a_plan {
             .encrypt_into_with_context(&keyset, stack_encrypt::target::Bind::new(9u128))
             .await
             .unwrap();
-        let back = ValueFrame::decrypt_from_with_context(
+        let back = OwnedFrame::decrypt_from_with_context(
             Planned::new(&plan, row),
             &keyset,
             stack_encrypt::target::Bind::new(9u128),
@@ -315,11 +318,12 @@ mod a_record_under_a_plan {
         let spelled = plan_of(serde_json::json!({
             "email": { "context": [[["users", "email"], 5], 42], "outputs": ["c", "eq"], "type": "string" },
         }));
-        let back = ValueFrame::decrypt_from(Planned::new(&spelled, row), &keyset)
+        let back = OwnedFrame::decrypt_from(Planned::new(&spelled, row), &keyset)
             .await
             .unwrap();
         assert_eq!(
-            vitaminc_aead_frame::serde::from_slice::<serde_json::Value>(back.risky_ref()).unwrap(),
+            recipher_frame::serde::from_slice::<serde_json::Value>(back.frame().as_bytes())
+                .unwrap(),
             serde_json::json!({"email": "ada@example.com"})
         );
     }
@@ -347,7 +351,7 @@ mod a_record_under_a_plan {
             "bind": [7, 9],
         }));
         assert!(
-            ValueFrame::decrypt_from(Planned::new(&in_order, row().await), &keyset)
+            OwnedFrame::decrypt_from(Planned::new(&in_order, row().await), &keyset)
                 .await
                 .is_ok()
         );
@@ -356,7 +360,7 @@ mod a_record_under_a_plan {
             "bind": [9, 7],
         }));
         assert!(
-            ValueFrame::decrypt_from(Planned::new(&reversed, row().await), &keyset)
+            OwnedFrame::decrypt_from(Planned::new(&reversed, row().await), &keyset)
                 .await
                 .is_err()
         );
@@ -372,12 +376,12 @@ mod a_record_under_a_plan {
 
     #[test]
     fn wipes_its_value() {
-        // A frame wipes to no bytes; a `Planned` wipes its frame the same
-        // way, and the owned entry points consume or read the frame in
+        // A frame wipes to the plain null; a `Planned` wipes its frame the
+        // same way, and the owned entry points consume or read the frame in
         // place, so its buffer is wiped as it is dropped.
         let mut value = frame("a secret");
         value.zeroize();
-        assert!(value.risky_ref().is_empty());
+        assert_eq!(value.frame(), OwnedFrame::null().frame());
         let plan = plan();
         let mut planned = Planned::new(&plan, frame("a secret"));
         planned.zeroize();

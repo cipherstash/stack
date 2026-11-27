@@ -139,7 +139,8 @@ pub enum Error {
     /// them), a field the plan does not name, a plan field the source does
     /// not carry or carries twice, or a passthrough or a repeated map key
     /// under a field the plan seals, or a value of another type than its
-    /// field declares. Also a query its field does not answer: an operator
+    /// field declares that does not convert to it exactly, or `undefined`
+    /// for a field that declares a type. Also a query its field does not answer: an operator
     /// the field's type does not answer, an input that cannot be read as the
     /// field's type ([`read`](crate::dynamic::read)) or is not the pair a range takes, a page of
     /// values to verify that holds a value of another type, or statistics
@@ -516,8 +517,15 @@ reasons! {
         FieldRepeated => "field_repeated", "a field is given twice";
         /// A field is there that the plan does not name.
         UnknownField => "unknown_field", "a field the plan does not name";
-        /// A value is not of the type its field declares.
+        /// A value is not of the type its field declares, and does not
+        /// convert to it exactly ([`read`](crate::dynamic::read)).
         FieldType => "field_type", "a value is not of the type its field declares";
+        /// A value is JavaScript's `undefined` where its field declares a
+        /// type. A typed field takes a value of its type or a null, and
+        /// `undefined` is not a null: storing it as one would hide a
+        /// property name spelt wrong. Inside a container, or in a field
+        /// that declares no type, `undefined` is kept as it is.
+        Undefined => "undefined", "a value is undefined where its field declares a type";
         /// A passthrough sits where a sealed value, or a ciphertext, must be.
         Passthrough => "passthrough", "a passthrough where a sealed value must be";
         /// A passthrough value cannot be stored as a frame: it nests deeper,

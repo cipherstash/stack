@@ -22,3 +22,10 @@
 /languages/typescript/packages/auth/    @cipherstash/developers
 /languages/typescript/packages/profile/ @cipherstash/developers
 /languages/typescript/packages/stack-auth-wasm/ @cipherstash/developers
+
+# vitaminc's AEAD crates, moved from cipherstash/vitaminc, and the value
+# conformance corpus their tests read. Not published from here yet.
+/packages/vitaminc-aead/                @cipherstash/developers
+/packages/recipher-frame/               @cipherstash/developers
+/packages/vitaminc-aead-derive/         @cipherstash/developers
+/conformance/vitaminc-aead/             @cipherstash/developers

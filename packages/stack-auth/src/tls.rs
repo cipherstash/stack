@@ -55,8 +55,8 @@ pub(crate) struct BlockedSpki {
 /// Certificate Services" root, which stays in distro bundles — 16
 /// certificates over 8 keys, so 8 entries.
 ///
-/// - Source: <https://emudhra.we-have-a-problem.com/affected-certificates.json>
-///   (each intermediate's `spki_sha256` field), read 2026-10-20. Its `sha256`
+/// - Source: <https://emudhra.we-have-a-problem.com/impacted-intermediates.json>
+///   (each intermediate's `spki_sha256` field), read 2026-11-27. Its `sha256`
 ///   fields are whole-certificate fingerprints and are not used here.
 /// - Cross-checked, entry for entry, against the byte arrays in Node's
 ///   blocklist (nodejs/node#66871, `src/crypto/crypto_context.cc`).

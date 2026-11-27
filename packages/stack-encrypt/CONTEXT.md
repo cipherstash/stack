@@ -326,8 +326,9 @@ _Avoid_: typed path (that is the target-directed form), static path
 
 **Planned**:
 A value under a plan that is data, `Planned::new(&plan, value)`. The
-value is a `ValueFrame` under a record plan or a query plan, or a stored
-row under a record plan. A target in the owned API's sense, so
+value is a frame under a record plan or a query plan, an `OwnedFrame` or a
+`Frame` borrowed from bytes the caller keeps, or a stored row under a
+record plan. A target in the owned API's sense, so
 `encrypt_into`, `decrypt_from`, and their `_with_context` forms run it.
 The caller's scope and bindings are the one context argument, after the
 plan's own.

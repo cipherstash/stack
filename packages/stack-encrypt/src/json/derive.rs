@@ -6,7 +6,7 @@
 //! document carries. The walk is depth-first, pre-order, siblings in key
 //! order for an object and in position order for an array. Sealing runs the
 //! other way, from the leaves up, so that each node's AAD can bind the AEAD
-//! tags of its children ([`cascade`](super::cascade)); the AAD also binds the
+//! tags of its children ([`cascade`]); the AAD also binds the
 //! slot the entry is stored at.
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -1828,7 +1828,7 @@ enum ExpectedSelector<'p> {
 
 /// Put the rows of a read back into the nodes its `reads` named, in the
 /// reads' order, opening every node under the cascade
-/// ([`cascade`](super::cascade)); and refuse the whole read with
+/// ([`cascade`]); and refuse the whole read with
 /// [`Error::JsonWildcardTruncated`] at `bound` if a probe named a node.
 ///
 /// The rows arrive in any order, and nothing here reads a row's slot `j` as

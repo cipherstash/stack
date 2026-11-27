@@ -23,3 +23,10 @@ rand = "0.8"
 hex = "0.4"
 
 [workspace]
+
+# vitaminc-aead 0.10 and its sibling crates live in this repository and are
+# not published from here yet. Build against the copies, as the root
+# workspace does (see its [patch.crates-io]).
+[patch.crates-io]
+vitaminc-aead = { path = "../../../../../vitaminc-aead" }
+vitaminc-aead-derive = { path = "../../../../../vitaminc-aead-derive" }

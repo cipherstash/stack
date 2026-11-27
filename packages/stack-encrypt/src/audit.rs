@@ -720,10 +720,10 @@ mod tests {
     /// metadata.
     fn from_frame<T: serde::Serialize>(value: &T) -> Result<AuditMetadata, String> {
         use crate::AsProtectedRef as _;
-        let frame = vitaminc_aead_frame::serde::to_vec(value).expect("the value is a frame");
+        let frame = recipher_frame::serde::to_vec(value).expect("the value is a frame");
         // `risky_ref`: the reader takes plain bytes, and the frame holds this
         // test's own values, which are not secret.
-        vitaminc_aead_frame::serde::from_slice(frame.as_protected_ref().risky_ref())
+        recipher_frame::serde::from_slice(frame.as_protected_ref().risky_ref())
             .map_err(|e| e.to_string())
     }
 

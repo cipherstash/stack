@@ -1,5 +1,5 @@
 {
-  "_comment": "The v4 query operands eql-bindings derives for each plaintext under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit.",
+  "_comment": "The v4 query operands eql-bindings derives for each plaintext under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit. After regenerating, run pnpm run code:fix.",
   "age": {
     "plaintext": 42,
     "query": "{\"v\":4,\"i\":{\"t\":\"profiles\",\"c\":\"age\"},\"hm\":\"ed60c97cff62963a142f9b7762de2e2b98e3d486a178b07f6e930318770fbecb\"}"

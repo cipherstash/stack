@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-10-18
 amended: 2026-10-26
-extends: vitaminc ADR 0002
+extends: packages/vitaminc-aead/docs/adr/0002-leaves-are-authenticated-container-membership-and-order-are-not.md
 ---
 
 # What a stored value authenticates
@@ -11,7 +11,7 @@ Automated reviews of Stack Encrypt keep reporting the same properties as
 vulnerabilities. They are deliberate. This ADR says what a value Stack
 Encrypt stores does and does not authenticate, so a reviewer can check a
 finding against it. The sealing itself is vitaminc's, and the underlying
-decision is vitaminc's ADR 0002 ("Leaves are authenticated; a container's
+decision is [`vitaminc-aead`'s ADR 0002](../../../vitaminc-aead/docs/adr/0002-leaves-are-authenticated-container-membership-and-order-are-not.md) ("Leaves are authenticated; a container's
 membership and order are not"). This applies it to what Stack Encrypt
 stores.
 
@@ -92,5 +92,5 @@ Three things stay outside it, by design, as they were before the cascade:
 - **Stricter authentication is opt-in, by type.** A caller who needs a
   sequence's positions or a record's field set authenticated will ask for it
   by naming a type that carries that rule, the way `serde_bytes` selects a
-  different encoding by type (vitaminc ADR 0002). It is not a default and
+  different encoding by type ([`vitaminc-aead`'s ADR 0002](../../../vitaminc-aead/docs/adr/0002-leaves-are-authenticated-container-membership-and-order-are-not.md)). It is not a default and
   not a flag, and it does not exist yet.

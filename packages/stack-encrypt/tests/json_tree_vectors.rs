@@ -166,7 +166,7 @@ say so in the changeset.";
 #[tokio::test]
 async fn the_derivations_are_pinned_under_the_deterministic_source() {
     let actual = json!({
-        "_comment": "The JSON index's s, x and p per entry in the stored order, the path stored at each slot (the permutation the seeded generator drew), the selector multiset, q as sets, and the tokens a read sends, under the deterministic key source. Read by tests/json_tree_vectors.rs; regenerate with STACK_ENCRYPT_UPDATE_JSON_TREE_VECTORS=1 only for an intended break. Do not edit by hand.",
+        "_comment": "The JSON index's s, x and p per entry in the stored order, the path stored at each slot (the permutation the seeded generator drew), the selector multiset, q as sets, and the tokens a read sends, under the deterministic key source. Read by tests/json_tree_vectors.rs; regenerate with STACK_ENCRYPT_UPDATE_JSON_TREE_VECTORS=1 only for an intended break. Do not edit by hand. After regenerating, run pnpm run code:fix.",
         "document": document(),
         "sealed_root": vectors(&JsonOptions::default()).await,
         "open_root": vectors(&JsonOptions { sealed_root: false, ..JsonOptions::new() }).await,

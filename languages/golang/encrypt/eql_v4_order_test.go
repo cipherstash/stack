@@ -298,7 +298,7 @@ func TestV4OrderedRowsMatchTheCommittedFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture := orderedRowsFixture{
-		Comment: "Ranking rows sealed by the Go SDK's generated code over the deterministic EQL guest with the seed below; the Rust suite opens and compares them. Regenerate with EQL_UPDATE_FIXTURES=1 go test ./encrypt -run TestV4OrderedRows, do not edit.",
+		Comment: "Ranking rows sealed by the Go SDK's generated code over the deterministic EQL guest with the seed below; the Rust suite opens and compares them. Regenerate with EQL_UPDATE_FIXTURES=1 go test ./encrypt -run TestV4OrderedRows, do not edit. After regenerating, run pnpm run code:fix.",
 		Seed:    string(testSeed[:]),
 		Table:   "rankings",
 	}

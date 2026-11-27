@@ -34,7 +34,7 @@ use std::path::PathBuf;
 use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
-use stack_encrypt::dynamic::{admits, ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{admits, frame::OwnedFrame, ValueKind};
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::StackCipherText as Node;
 use stack_encrypt::{
@@ -313,7 +313,7 @@ fn refreeze_order_terms(stored: &mut Json, resealed: &Json) {
 
 /// A plan written as JSON, as frame bytes: what a binding sends.
 fn frame_of_json(value: &Json) -> vitaminc_protected::Buffer {
-    vitaminc_aead_frame::serde::to_vec(value).expect("frames")
+    recipher_frame::serde::to_vec(value).expect("frames")
 }
 
 fn plan_of(json: &Json) -> DataPlan {
@@ -327,7 +327,9 @@ async fn seal(
     source: vitaminc_protected::ProtectedRef<'_, [u8]>,
     plan: &DataPlan,
 ) -> StackCipherText {
-    let source = ValueFrame::from_bytes(source).expect("the source is a value");
+    let mut bytes = vitaminc_protected::Buffer::new();
+    bytes.extend_from_slice(source.risky_ref());
+    let source = OwnedFrame::from_buffer(bytes).expect("the source is a value");
     record::encrypt(&cipher.default_keyset(), source, plan)
         .expect("the source fits the plan")
         .await
@@ -344,7 +346,8 @@ async fn open(
         .expect("the stored record fits the plan")
         .await
         .expect("the stored record opens")
-        .risky_ref()
+        .frame()
+        .as_bytes()
         .to_vec()
 }
 
@@ -716,7 +719,7 @@ async fn write_stored_rows_v1() {
         }));
     }
     let fixture = json!({
-        "_comment": "FROZEN. Records the next build stored, under a deterministic key source. Every later build must open each one to `opened` and seal its `source` to the same shape, terms and passthroughs. Read by tests/stored_rows.rs; the schema is in README.md beside this file. Never regenerate this file, and edit it only as README.md allows for order terms: a change to the stored format adds stored_rows_v2.json beside it.",
+        "_comment": "FROZEN. Records the next build stored, under a deterministic key source. Every later build must open each one to `opened` and seal its `source` to the same shape, terms and passthroughs. Read by tests/stored_rows.rs; the schema is in README.md beside this file. Never regenerate this file, and edit it only as README.md allows for order terms: a change to the stored format adds stored_rows_v2.json beside it. Formatting with pnpm run code:fix may change this file's layout; its parsed content must never change, this note excepted.",
         "key_source": { "kind": "deterministic-sha256", "seed": hex(&SEED) },
         "keyset_id": cipher.default_keyset().keyset_id().await.unwrap().to_string(),
         "cases": written,

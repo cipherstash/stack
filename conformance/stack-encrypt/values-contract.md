@@ -35,6 +35,7 @@ extended to every kind:
 | `timestamp` | RFC 3339 in UTC, `YYYY-MM-DDTHH:MM:SS[.fraction]Z`, at most nine fraction digits |
 | `decimal` | fixed-point text keeping every trailing zero; the scale is the number of fraction digits |
 | `null` | empty |
+| `undefined` | empty: JavaScript's `undefined`, which only a refused case uses |
 
 A float's canonical spelling is built from the shortest decimal digits
 that parse back to the value at its width. Spelled positionally (Rust's
@@ -109,14 +110,25 @@ A row stored under an earlier declaration of such an index still opens
 once the index is removed from the plan: opening ignores a stored term the
 plan does not declare.
 
+A write reads each value as its field's type, by the rules a query reads
+its input by. A case whose input is of another type and converts exactly
+has `stored`: the input converted to the field's type, in the same
+`{type, text}` form. Its runners seal `stored` as a second row and check
+that the input's row stores the same terms and a ciphertext of the same
+length, and that both rows open to `stored`. The cases are an `int16` for
+an `int8` field, an `int8` for a `uint8`, an `int64` for an `int128`, a
+`uint64` for a `uint128` and a `float64` 1.5 for a `float32`.
+
 `expected_error` cases are refused before any pending operation, with the
 structured diagnostic `code`, `reason` and `field`, and no key call. They
-cover a value of another width or kind for every new kind (an `int16` for
-an `int8` field, an `int64` for an `int128` field, a `float64` for a
-`decimal` or `float32` field, an `int32` for a `date`, text for `bytes`,
-bytes for `string`, an integer for `bool`) and a null for a required
-`bool`, `bytes` or `decimal`. A losslessly convertible value of another
-width is still refused on the write path, as the runtime profile says.
+cover a value of another kind that does not convert (a `float64` for a
+`decimal` field, an `int32` for a `date`, an `int64` for a `timestamp`,
+text for `bytes`, bytes for `string`, an integer for `bool`), a null for a
+required `bool`, `bytes` or `decimal`, and JavaScript's `undefined` for an
+`int32` field, which is refused with the reason `undefined` even though the
+field takes a SQL null. The input type `undefined` has an empty `text` and
+the frame `01`. Go has no value that writes it, so the Go runner checks the
+case's shape and skips it; the native runner runs it.
 
 ## Unsupported host conversions
 

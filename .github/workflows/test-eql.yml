@@ -105,7 +105,8 @@ on:
       # (`eql-bindings`' `stack-encrypt` feature): stack-encrypt, its derive
       # and stack-kms through `path =`, and stack-auth and stack-profile
       # through `workspace = true` entries the root `Cargo.toml` resolves to
-      # paths. The mise-task derivation in eql-workflow-filters.test.mjs
+      # paths, and the vitaminc-aead crates through the patch table in
+      # packages/eql/Cargo.toml. The mise-task derivation in eql-workflow-filters.test.mjs
       # cannot see them (a task body names a cargo package, not a path); the
       # manifest walk in eql-suite-ci.test.mjs does, and fails when one of them
       # is missing from this list.
@@ -113,6 +114,9 @@ on:
       - "packages/stack-encrypt/**"
       - "packages/stack-encrypt-derive/**"
       - "packages/stack-encrypt-jsonpath/**"
+      - "packages/vitaminc-aead/**"
+      - "packages/recipher-frame/**"
+      - "packages/vitaminc-aead-derive/**"
       - "packages/stack-kms/**"
       - "packages/stack-auth/**"
       - "packages/stack-profile/**"
@@ -215,6 +219,9 @@ jobs:
               - "packages/stack-encrypt/**"
               - "packages/stack-encrypt-derive/**"
               - "packages/stack-encrypt-jsonpath/**"
+              - "packages/vitaminc-aead/**"
+              - "packages/recipher-frame/**"
+              - "packages/vitaminc-aead-derive/**"
               - "packages/stack-kms/**"
               - "packages/stack-auth/**"
               - "packages/stack-profile/**"
@@ -683,6 +690,21 @@ jobs:
       - name: Verify eql-types bindings and schemas are fresh
         run: |
           mise run types:check
+
+      # rustdoc for eql-bindings, warnings as errors, in each feature set a
+      # reader can get: the default (no Stack Encrypt), `targets` (what docs.rs
+      # builds, from `[package.metadata.docs.rs]`), and every feature. A broken
+      # or ambiguous intra-doc link compiles and passes every test; only
+      # rustdoc reports it, and docs.rs would publish the page with the link
+      # missing.
+      - name: Build eql-bindings' rustdoc with warnings as errors
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          set -euo pipefail
+          cargo doc --locked --no-deps -p eql-bindings
+          cargo doc --locked --no-deps -p eql-bindings --features targets
+          cargo doc --locked --no-deps -p eql-bindings --all-features
 
       # Publish gate for eql-bindings (the one crate we ship to crates.io via
       # release-plz). `--dry-run` packages + compiles the crate exactly as

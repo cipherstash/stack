@@ -24,6 +24,7 @@ type valueCase struct {
 	Input         conformanceInput  `json:"input"`
 	Frame         *string           `json:"frame"`
 	Companion     *conformanceInput `json:"companion"`
+	Stored        *conformanceInput `json:"stored"`
 	EqualQuery    *conformanceInput `json:"equal_query"`
 	ExpectedError *struct {
 		Code   string `json:"code"`
@@ -117,6 +118,17 @@ func TestValueConformance(t *testing.T) {
 			if c.Null != "" && c.Null != "sql" && c.Null != "sealed" {
 				t.Fatalf("unknown null policy %q", c.Null)
 			}
+			if c.Input.Type == "undefined" {
+				// JavaScript's undefined: Go has no value the codec writes
+				// it from. The native runner runs the case.
+				if c.ExpectedError == nil || c.Frame == nil || *c.Frame != "01" {
+					t.Fatal("an undefined input is refused, with the frame 01")
+				}
+				t.Skip("Go has no undefined value")
+			}
+			if c.Stored != nil && (c.Stored.Type != c.Kind || c.Input.Type == c.Kind || c.Companion != nil) {
+				t.Fatal("a stored value is the input converted to the field's kind")
+			}
 			if !record.Kind(c.Kind).Known() || c.Kind == "" || len(c.Outputs) == 0 || c.Outputs[0] != "c" {
 				t.Fatal("unsupported declaration")
 			}
@@ -139,13 +151,19 @@ func TestValueConformance(t *testing.T) {
 					t.Fatalf("typed frame %x differs from the frozen %s", encoded, *c.Frame)
 				}
 			}
+			// The second row: a sealed null's companion, or what a
+			// converted input is stored as.
+			second := c.Companion
+			if c.Stored != nil {
+				second = c.Stored
+			}
 			rows := []record.Source{{"value": input}}
-			if c.Companion != nil {
-				rows = append(rows, record.Source{"value": conformanceValue(t, *c.Companion)})
+			if second != nil {
+				rows = append(rows, record.Source{"value": conformanceValue(t, *second)})
 			}
 			sealed, err := cipher.Seal(ctx, plan, rows)
 			if c.ExpectedError != nil {
-				if c.Companion != nil || c.EqualQuery != nil {
+				if c.Companion != nil || c.Stored != nil || c.EqualQuery != nil {
 					t.Fatal("a refused case has no companion or query")
 				}
 				assertConformanceDiagnostic(t, err, c.ExpectedError.Code, c.ExpectedError.Reason, c.ExpectedError.Field)
@@ -188,11 +206,14 @@ func TestValueConformance(t *testing.T) {
 			if present {
 				check(t, stored, input, c.EqualQuery)
 			}
-			if c.Companion != nil {
+			if second != nil {
 				companion := sealed[1]["value"]
 				check(t, companion, rows[1]["value"], nil)
 				if present && len(companion.Ciphertext) != len(stored.Ciphertext) {
-					t.Fatal("a sealed null is as long as a value")
+					t.Fatal("a sealed null, or a converted value, is as long as the value of the kind")
+				}
+				if c.Stored != nil && !reflect.DeepEqual(companion.Terms, stored.Terms) {
+					t.Fatal("the converted value's terms are not the stored kind's")
 				}
 			}
 			opened, err := cipher.Open(ctx, plan, sealed)
@@ -201,6 +222,10 @@ func TestValueConformance(t *testing.T) {
 			}
 			if len(opened) != len(rows) {
 				t.Fatal("opened row count differs")
+			}
+			// A converted input opens as the value it was stored as.
+			if c.Stored != nil {
+				rows[0] = rows[1]
 			}
 			for i, row := range rows {
 				if len(opened[i]) != 1 || !sameValue(opened[i]["value"], row["value"]) {

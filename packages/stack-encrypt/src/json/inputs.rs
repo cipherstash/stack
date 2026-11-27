@@ -13,6 +13,8 @@
 //! The rules each operator applies are documented with the dynamic
 //! interface's JSON operators (`stack_encrypt::dynamic`, with the `dynamic`
 //! feature), where a binding meets them.
+//!
+//! [`derive`]: fn@derive
 
 use serde_json::Value;
 use zeroize::Zeroizing;
@@ -86,9 +88,9 @@ pub(crate) struct Predicate {
     pub(crate) bounds: Bounds,
 }
 
-/// An operator's input, checked: everything [`derive`] would refuse
-/// before it derives anything. `match`'s is its predicate compiled to a tree
-/// of the other operators' inputs.
+/// An operator's input, checked: everything [`derive`](fn@derive) would
+/// refuse before it derives anything. `match`'s is its predicate compiled
+/// to a tree of the other operators' inputs.
 #[derive(PartialEq)]
 pub(crate) enum Input {
     /// `contains`, `contained_by`: a document.
@@ -459,9 +461,9 @@ fn terms<'a, K: 'static>(
     )
 }
 
-/// An operand, as [`derive`] gives it: what the dynamic interface writes as
-/// the operand a binding binds, and what a field reference hands to the field's
-/// own query type.
+/// An operand, as [`derive`](fn@derive) gives it: what the dynamic
+/// interface writes as the operand a binding binds, and what a field
+/// reference hands to the field's own query type.
 pub(crate) enum Derived {
     /// `contains`, `contained_by`, `eq_at`: a containment needle.
     Query(JsonQuery),

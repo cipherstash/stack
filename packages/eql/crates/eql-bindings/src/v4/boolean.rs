@@ -15,7 +15,7 @@ use ts_rs::TS;
     doc = " See the [EQL boolean reference](https://cipherstash.com/docs/reference/eql/booleans) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`bool`](bool). Implements `EncryptTarget<bool>` and `DecryptSource<bool>`.
+/// Plaintext input and decrypted output: [`bool`]. Implements `EncryptTarget<bool>` and `DecryptSource<bool>`.
 ///
 /// Both traits are also implemented for `Option<bool>`. A `None` is sealed with padding, to the length of a value. A `None` gets the terms of a null. Only the equality index has a term for a null.
 ///

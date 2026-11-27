@@ -15,7 +15,7 @@ use common::frames::{frame, object};
 use common::{hex, unhex};
 use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
-use stack_encrypt::dynamic::{self, record, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame, record};
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{
     equality, indexed, open, Borrowed, CallerContext, DeclaredContext, Decryption, Encrypted,
@@ -67,7 +67,7 @@ struct Expected {
     cases: BTreeMap<String, Vector>,
 }
 
-fn part(input: &Input) -> ValueFrame {
+fn part(input: &Input) -> OwnedFrame {
     if input.kind == "bytes" {
         frame(unhex(&input.text))
     } else {
@@ -97,13 +97,13 @@ fn extended(parts: &[Input]) -> DeclaredContext {
             context.with(extension(part))
         })
 }
-fn nest(head: ValueFrame, parts: &[Input]) -> ValueFrame {
+fn nest(head: OwnedFrame, parts: &[Input]) -> OwnedFrame {
     parts
         .iter()
         .fold(head, |head, p| frame(vec![head, part(p)]))
 }
 
-fn context(case: &Case, field_only: bool) -> ValueFrame {
+fn context(case: &Case, field_only: bool) -> OwnedFrame {
     let mut label = if field_only {
         vec![]
     } else {
@@ -133,9 +133,9 @@ fn plan(case: &Case) -> record::Plan {
             ("type", frame("string")),
         ]),
     ));
-    record::plan(object(fields).as_protected_ref()).unwrap()
+    record::plan(object(fields).into_buffer().as_protected_ref()).unwrap()
 }
-fn source(case: &Case) -> ValueFrame {
+fn source(case: &Case) -> OwnedFrame {
     let mut fields = vec![];
     if case.base == "field" {
         fields.push(("tenant", frame(case.label.clone())));
@@ -199,7 +199,7 @@ fn equality_term(row: &StackCipherText) -> Vec<u8> {
     else {
         panic!("term")
     };
-    vitaminc_aead_frame::serde::from_slice::<&[u8]>(&term.0)
+    recipher_frame::serde::from_slice::<&[u8]>(&term.0)
         .unwrap()
         .to_vec()
 }
@@ -217,7 +217,7 @@ fn opening(row: &StackCipherText) -> Decryption<String, common::CountingSource> 
     else {
         panic!("passthrough")
     };
-    let tenant: String = vitaminc_aead_frame::serde::from_slice(&tenant.0).unwrap();
+    let tenant: String = recipher_frame::serde::from_slice(&tenant.0).unwrap();
     let (_, CipherText::Single(leaf)) = text_outputs(row).iter().find(|(k, _)| k == "c").unwrap()
     else {
         panic!("leaf")
@@ -268,7 +268,7 @@ async fn shared_context_composition() {
         Label::parse(&case.label).unwrap();
         eprintln!("context conformance: {}", case.id);
         let context_frame = context(&case, false);
-        let ctx = dynamic::context(context_frame.as_protected_ref()).unwrap();
+        let ctx = dynamic::context(context(&case, false).into_buffer().as_protected_ref()).unwrap();
         let descriptor = Descriptor::of(ctx.clone()).as_str().to_owned();
         let aad = hex(ctx.clone().into_aad().as_bytes());
         let prf = hex(ctx.clone().into_prf_context().as_bytes());
@@ -283,8 +283,8 @@ async fn shared_context_composition() {
             .await
             .unwrap();
         let vector = Vector {
-            context_frame: hex(context_frame.risky_ref()),
-            plan_context_frame: hex(context(&case, case.base == "field").risky_ref()),
+            context_frame: hex(context_frame.frame().as_bytes()),
+            plan_context_frame: hex(context(&case, case.base == "field").frame().as_bytes()),
             descriptor,
             aad,
             prf,
@@ -305,14 +305,12 @@ async fn shared_context_composition() {
             object(vec![(
                 "text",
                 object(vec![
-                    (
-                        "context",
-                        ValueFrame::from_bytes(context_frame.as_protected_ref()).unwrap(),
-                    ),
+                    ("context", context_frame),
                     ("outputs", frame(vec!["c", "eq"])),
                     ("type", frame("string")),
                 ]),
             )])
+            .into_buffer()
             .as_protected_ref(),
         )
         .unwrap();
@@ -357,7 +355,7 @@ async fn shared_context_composition() {
             .unwrap()
             .await
             .unwrap();
-        assert_eq!(opened.risky_ref(), source(&case).risky_ref());
+        assert_eq!(opened.frame().as_bytes(), source(&case).frame().as_bytes());
         let plain: String = cipher
             .decrypt(
                 CipherText::Single(SealedValue::from_bytes(&unhex(&expected.ciphertext)).unwrap()),
@@ -595,7 +593,7 @@ async fn shared_context_boundaries() {
             Err(error) => Err(error.code().unwrap().to_string()),
         };
         match case.outcome.as_str() {
-            "success" => assert_eq!(result.unwrap().risky_ref(), rows.risky_ref()),
+            "success" => assert_eq!(result.unwrap().frame().as_bytes(), rows.frame().as_bytes()),
             "mismatch" => assert_eq!(result.unwrap_err(), "stack_encrypt::context_mismatch"),
             "authentication" | "aead" => assert_eq!(result.unwrap_err(), "stack_encrypt::aead"),
             "shape" => {
@@ -649,6 +647,7 @@ async fn shared_context_boundaries() {
                         ("type", frame("string")),
                     ]),
                 )])
+                .into_buffer()
                 .as_protected_ref(),
             )
         };
@@ -731,7 +730,7 @@ async fn a_grouped_extension_remains_one_part_when_appended() {
             ("outputs", frame(vec!["c"])),
         ]),
     )]);
-    assert!(record::plan(declaration.as_protected_ref()).is_err());
+    assert!(record::plan(declaration.into_buffer().as_protected_ref()).is_err());
 }
 
 /// A record the removed plan chain sealed when a second `.extend` replaced
