@@ -467,7 +467,7 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 /// derivation itself fails: text with a code point unassigned in Unicode 16
 /// ([`TermError::Normalize`]), or the one query value the engine refuses,
 /// match text that cuts no token under the index's options
-/// ([`TermError::EmptyTermText`](crate::sem::TermError::EmptyTermText)), whose filter would match every row. That
+/// ([`TermError::EmptyTermText`]), whose filter would match every row. That
 /// refusal is the query path's alone; the record path stores such a value
 /// as the empty filter, which no query matches.
 pub async fn term<'c, K, P, D>(
@@ -575,9 +575,10 @@ impl AsRef<[u8]> for TermBytes {
 ///
 /// [`Error::Term`] if the value is not one scalar `kind` takes, and
 /// [`Error::Cipher`] for text the index cannot normalize. The query
-/// refusals are not here: a caller that derives a query term has prepared
-/// the input ([`super::query::prepare_scalar`]), and the record path
-/// stores match text with no token as the empty filter.
+/// refusals are not here: a caller that derives a query term has checked
+/// the input first, as [`query_term`](super::query_term) and
+/// [`verify`](super::verify) do, and the record path stores match text with
+/// no token as the empty filter.
 pub(super) fn derive<'a, 'c, K: 'static, P, D>(
     cipher: &'a KeysetCipher<'_, K>,
     value: P,
@@ -948,7 +949,7 @@ impl Index<ValueFrame> for IndexSpec {
 }
 
 /// The description that derives `spec`'s term of a [`ValueFrame`] for
-/// `side`: [`derive`], under the query context.
+/// `side`: [`derive`](fn@derive), under the query context.
 fn spec_operation<'s, K: 'static, M: WipeSource<'s, ValueFrame>>(
     spec: IndexSpec,
     side: Side,

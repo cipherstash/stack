@@ -20,7 +20,7 @@
 //! | `match` | `{"predicate", "vars"?, "wildcard_bound"?}`: a jsonpath predicate in the subset below, and its variables as one JSON object | EQL: the predicate as a boolean tree of the operands above (`eql_v4.query_json_predicate`), which `json_tree_match` and `@@` evaluate |
 //!
 //! Every JSON value in an input is UTF-8 JSON text, parsed by
-//! [`parse_text`](crate::json::parse_text)'s rules. A path is JSONPath text
+//! [`parse_text`]'s rules. A path is JSONPath text
 //! ([`JsonPath::parse`]). A position in a path (`[2]`) is refused for the
 //! operators whose operand is a selector (`eq_at`, the orderings,
 //! `selector`): a selector reads every position as the wildcard, so the
@@ -198,6 +198,13 @@
 //! array element can stand for the same field under another, and the
 //! database can leave whole nodes out. Opening does not prove the result is
 //! complete.
+//!
+//! [`TermError::JsonOrderingAtPosition`]: crate::sem::TermError::JsonOrderingAtPosition
+//! [`TermError::JsonPathNotOrdered`]: crate::sem::TermError::JsonPathNotOrdered
+//! [`TermError::JsonLeafNotOrdered`]: crate::sem::TermError::JsonLeafNotOrdered
+//! [`TermError::JsonPath`]: crate::sem::TermError::JsonPath
+//! [`json_open`]: super::json_open
+//! [`JsonSelector::open`]: crate::json::JsonSelector::open
 
 use serde::de::{self, Deserializer, Visitor};
 use serde::Deserialize;
@@ -541,6 +548,8 @@ fn read_between(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Erro
 /// a wildcard expanding too wide or a path too deep for its tokens
 /// (`JsonWildcardTooWide`, `JsonTooWide`, `JsonTooDeep`), are [`derive`]'s,
 /// after the keyset is resolved.
+///
+/// [`derive`]: fn@derive
 pub(super) fn check(op: Op, options: &JsonOptions, input: &ValueFrame) -> Result<(), Error> {
     read_input(op, options, input).map(drop)
 }
