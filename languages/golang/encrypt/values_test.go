@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -163,5 +164,25 @@ func TestEachEncoderMethodWritesItsType(t *testing.T) {
 	// A nil pointer to an Encryptable is a null, and its method is not run.
 	if got, err := frame.Marshal((*writesWith)(nil)); err != nil || !bytes.Equal(got, []byte{0}) {
 		t.Errorf("a nil Encryptable writes %x, %v", got, err)
+	}
+}
+
+// A date or a decimal has no storage form, and the refusal names the type
+// the program used, not the codec's.
+func TestAStorageRefusalNamesTheEncryptType(t *testing.T) {
+	for _, c := range []struct {
+		v    any
+		name string
+	}{
+		{encrypt.Decimal{Scale: 2}, "encrypt.Decimal"},
+		{struct{ When encrypt.Date }{}, "encrypt.Date"},
+	} {
+		_, err := frame.MarshalStorage(c.v)
+		if !errors.Is(err, frame.ErrUnwritable) || !strings.Contains(err.Error(), c.name+" has no storage form") {
+			t.Errorf("%T: %v; want a refusal naming %s", c.v, err, c.name)
+		}
+		if err != nil && strings.Contains(err.Error(), "frame.") {
+			t.Errorf("%T: the refusal names the codec's type: %v", c.v, err)
+		}
 	}
 }

@@ -160,8 +160,10 @@ func TestAPublishedTypeInAStorageBlob(t *testing.T) {
 	if !reflect.DeepEqual(out, in) {
 		t.Fatalf("read back %#v, want %#v", out, in)
 	}
-	// A published date has no storage form, as a Date has none.
-	if _, err := MarshalStorage(pubDate{Year: 1, Month: 1, Day: 1}); !errors.Is(err, ErrUnwritable) {
+	// A published date has no storage form, as a Date has none, and the
+	// refusal names the type the program used.
+	_, err = MarshalStorage(pubDate{Year: 1, Month: 1, Day: 1})
+	if !errors.Is(err, ErrUnwritable) || !strings.Contains(err.Error(), "frame.pubDate has no storage form") {
 		t.Fatalf("a published date: %v", err)
 	}
 }

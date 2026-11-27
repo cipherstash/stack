@@ -154,6 +154,9 @@ func (w *storageWriter) model(rv reflect.Value, depth int) (bool, error) {
 	if !rv.CanInterface() {
 		return false, nil
 	}
+	// A published type is written as the value type it stands for, and a
+	// refusal names the type the program used.
+	given := rv.Type()
 	rv = internalValue(rv)
 	switch rv.Type() {
 	case someType:
@@ -172,7 +175,7 @@ func (w *storageWriter) model(rv reflect.Value, depth int) (bool, error) {
 		w.buf = append(append(w.buf, tagUint128), x[:]...)
 		return true, nil
 	case plainType, dateType, timestampType, decimalType, taggedType:
-		return true, unwritable("%s has no storage form", rv.Type())
+		return true, unwritable("%s has no storage form", given)
 	}
 	return false, nil
 }
