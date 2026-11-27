@@ -214,11 +214,24 @@ cannot use different ones.
 
 > **Take care**
 >
-> The context binds each value to its table, its column and the cipher's
-> extension. It does not bind the value to its row, so a value copied to
-> another row of the same table decrypts there with no error. To bind each
-> row to a context of its own, such as its tenant, give the struct a
-> `context_field` instead of a `context=` tag:
+> The context binds each value to its table, its column, the cipher's
+> scopes, and any bindings. Without a binding or a `context_field`, a value
+> copied to another row of the same table decrypts there with no error.
+> There are two ways to tie a value to its row.
+>
+> **Bind the value to its row ID.** Encrypt and decrypt through
+> `cipher.Scope(tenant).Bind(rowID)`. A value sealed this way opens only
+> through a cipher with the same scope and binding. A value copied to
+> another row does not open under that row's ID.
+>
+> A cipher with a binding cannot query: every query method refuses it with
+> `ErrEncoding`. Query through `cipher.Scope(tenant)`, then open each row it
+> finds through the cipher with that row's binding.
+>
+> **Give the struct a `context_field`** instead of a `context=` tag. The
+> field stays queryable, within one context. The value is tied to the
+> context its row stores, such as its tenant, rather than to the row
+> itself:
 >
 > ```go
 > type Note struct {
@@ -228,16 +241,20 @@ cannot use different ones.
 > ```
 >
 > The field's value is the context every other field is sealed under, a
-> label such as `"tenants/acme"`. It is stored as it is, in the clear and
-> unauthenticated like a passthrough field, so the row names its own
-> context. A row's sealed values open only under the context the row
+> label such as `"tenants/acme"`. The field is stored as it is, in the
+> clear and unauthenticated like a passthrough field, so the row names its
+> own context. A row's sealed values open only under the context the row
 > stores: a value copied to another tenant's row does not decrypt there.
+> A value copied to another row with the same context does decrypt there.
+>
 > `Encrypt` and `Decrypt` take each row's context from the row.
 > `cipher.Context("tenants/acme")` names the context every row through the
-> cipher is under: `Decrypt` then refuses a row stored under another tenant
-> with `ErrContextMismatch`, before any key is retrieved, and `Encrypt`
-> refuses a value whose field says otherwise. A query on such a type derives
-> its term under the context the cipher names, and fails without one.
+> cipher is under. `Decrypt` then refuses a row stored under another tenant
+> with `ErrContextMismatch`, before any key is retrieved. `Encrypt` refuses
+> a value whose field says otherwise.
+>
+> A query on such a type derives its term under the context the cipher
+> names, and fails without one. So a query through `cipher.Context("tenants/acme")` finds that tenant's rows.
 
 `Client.DefaultKeyset()` is the keyset a ZeroKMS administrator set for the
 client; `Client.Keyset(encrypt.KeysetName(..))` or `Client.Keyset(id)` any
