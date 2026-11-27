@@ -49,7 +49,7 @@
 //! | `name` | The type's name, one across Rust, TypeScript and Go: the catalog struct identifier. The data plan's target form names this. (Go spells the `Json` family's types `JSON`; that rename is the Go generator's.) |
 //! | `family` | The catalog family, lower case: `text`, `integer`, `json`, … |
 //! | `suffix` | What a query can do, as the plan's table of suffixes spells it: `""` (stored and read only), `Eq`, `Ord`, `OrdOpe`, `OrdOre`, `Match`, `Search`, `SearchOre`; `""` too for a document family's stored type, whose queries are the JSON index's operators. |
-//! | `plaintext` | The vitaminc [`ValueKind`] name the type is produced from — the same names a plan field's `"type"` key uses — or `null` while the family's plaintext encoding for the stack-encrypt producer profile is unspecified. |
+//! | `plaintext` | The name of the [`ValueKind`] the type is produced from — the same names a plan field's `"type"` key uses — or `null` while the family's plaintext encoding for the stack-encrypt producer profile is unspecified. |
 //! | `sql_domain` | The schema-qualified PostgreSQL domain the stored value inhabits. |
 //! | `indexes` | The indexes the type carries, by the engine's `IndexSpec::key()` names: `eq`, `match`, `ore`, `ope`, and `json` for a document family's stored type. A query may ask a field typed with this target for exactly these. |
 //! | `query` | The query twin's type name (`TextEqQuery`, `JsonSearchQuery`), or `null` for a storage-only type, which answers no query. |
@@ -126,10 +126,10 @@ pub struct Target {
     pub family: &'static str,
     /// The query-capability suffix: `Eq`; empty for a storage-only type.
     pub suffix: &'static str,
-    /// The [`ValueKind`] name of the plaintext this type is produced from,
-    /// or `None` while the family's encoding is unspecified. See
-    /// [`plaintext_kind`](Self::plaintext_kind) for the parsed kind.
-    pub plaintext: Option<&'static str>,
+    /// The kind of plaintext this type is produced from, or `None` while the
+    /// family's encoding is unspecified. On the wire it is the kind's name.
+    #[serde(serialize_with = "kind_name")]
+    pub plaintext: Option<ValueKind>,
     /// The stored value's PostgreSQL domain: `public.eql_v4_text_eq`.
     pub sql_domain: &'static str,
     /// The indexes the type carries, by `IndexSpec::key()` name.
@@ -144,15 +144,16 @@ pub struct Target {
     pub reason: Option<&'static str>,
 }
 
-impl Target {
-    /// The plaintext kind, parsed. `None` when the table records none; the
-    /// table is generated from names vitaminc freezes, so a recorded name
-    /// always parses, and a `None` here means the same as a `None` in
-    /// [`plaintext`](Self::plaintext).
-    pub fn plaintext_kind(&self) -> Option<ValueKind> {
-        self.plaintext.and_then(|name| name.parse().ok())
-    }
+/// Writes a plaintext kind as its name, the name a plan field's `"type"`
+/// key spells, or `null` when there is none.
+fn kind_name<S: serde::Serializer>(
+    kind: &Option<ValueKind>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    kind.map(ValueKind::name).serialize(serializer)
+}
 
+impl Target {
     /// The PostgreSQL domain of the type's ordering operand at a path, for
     /// a type that stores a JSON document (`JsonSearch`:
     /// `eql_v4.query_json_leaf`); `None` for every other type. Stack
@@ -1043,12 +1044,6 @@ mod tests {
                 "{}: a reason exactly when not producible",
                 t.name
             );
-            assert_eq!(
-                t.plaintext_kind().is_some(),
-                t.plaintext.is_some(),
-                "{}: a recorded plaintext name is a vitaminc kind",
-                t.name
-            );
         }
     }
 
@@ -1098,7 +1093,6 @@ mod tests {
                 "reason": "its encoding is not decided"
             })
         );
-        assert_eq!(WAITING.plaintext_kind(), None);
     }
 
     #[test]

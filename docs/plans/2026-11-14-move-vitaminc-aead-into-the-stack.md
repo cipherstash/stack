@@ -441,6 +441,36 @@ Done (#1990):
 
 A UUID then works in every SDK, which closes #1821.
 
+Done (#1992):
+
+- **TypeScript:** nothing removed on `next`. `is_uuid` and the
+  `recipher_js::uuid` code are only on the values and records branches
+  (#1775, #1776), and are removed there when they rebase. `OneValue` stays
+  on `next`: the addon's `keyset.encrypt` takes a string only, through the
+  engine's opaque scalar path, and that path needs a `Scalar`. An
+  `OwnedFrame` is not one, because it can hold an array.
+- **Go:** the guest keeps its `Frame::parse`. It is not a second check:
+  the engine's readers take a `Frame`, and `Frame::parse` is the only way
+  to make one from the host's bytes. It also gives the Go SDK its "not a
+  frame" error before any key request. The two identical helpers are now
+  one, `parse_frame`, with a comment that says why.
+- **EQL:** `Target::plaintext` is an `Option<ValueKind>`, and
+  `plaintext_kind` is gone. `eql-codegen`'s `plaintext_of` returns a
+  `ValueKind`, the generated table writes `ValueKind::Int32` and so on, and
+  the Go table writes `ValueKind::name`. The `Plaintext` trait already used
+  `ValueKind`. The wire format and the Go file did not change.
+- **UUID:** Rust stores, queries by equality and reads a `uuid` field
+  (`dynamic::record`'s tests). The Go guest does too, through its record
+  and query exports (a new guest test). The Go SDK's `gensupport` takes a
+  UUID, but `stashgen` maps no Go type to the `uuid` kind, so generated
+  code cannot declare one yet. The TypeScript addon on `next` encrypts a
+  string only, so it cannot store a UUID. The values and records branches
+  still refuse a `VcUuid` with `recipher_js::uuid`, and test that refusal;
+  once they drop it, they need a test that stores, queries and reads one.
+  So #1821 stays open for `stashgen` and the addon.
+- No stored bytes changed: the pinned fixtures and conformance cases pass
+  unchanged.
+
 ## Stage 3: move the Go packages
 
 vitaminc has two Go packages that the Go module imports in about 60 places:

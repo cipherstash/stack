@@ -1198,6 +1198,7 @@ dependencies = [
  "serde_json",
  "syn 2.0.119",
  "thiserror 2.0.20",
+ "vitaminc-aead 0.10.0",
 ]
 
 [[package]]
