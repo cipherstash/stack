@@ -27,6 +27,11 @@ func NewChecker(ctx context.Context) (*Checker, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newCheckerOver(ctx, wasm)
+}
+
+// newCheckerOver is a checker over wasm, a build of the guest.
+func newCheckerOver(ctx context.Context, wasm []byte) (*Checker, error) {
 	t := &transport{rt: refusingTransport{}, token: noToken{}}
 	inst, err := newInstance(ctx, wasm, t, guest.BestEffort)
 	if err != nil {

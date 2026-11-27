@@ -22,6 +22,14 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one. `stashgen` does not yet map a Go type to it.
 
+- `encrypt.ReleaseEngine` frees the compiled engine at once. Without it,
+  the compiled engine is freed one minute after the last client closes.
+  `ReleaseEngine` is safe to call more than once. A client or checker that
+  is open when it is called keeps working. The compiled engine is then
+  freed when the last of them closes. In a test binary, `ReleaseEngine`
+  does not free the test builds that `encrypttest` clients and checkers
+  run: those are kept until the test binary exits.
+
 ### Changed
 
 - **A record field converts a number of another width or kind, as a
@@ -39,6 +47,32 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   width, so it does not change.
 
 ### Fixed
+
+- A program that opens and closes clients one after another compiles the
+  engine once, not once per client. Before, the compiled engine was freed
+  when the last open client closed. So the next `NewClient` or
+  `NewChecker` compiled it again, for about 1 second each. Now the
+  compiled engine is kept for one minute after the last client or checker
+  closes. The first compile also uses every core. `encrypt.ReleaseEngine`
+  frees the compiled engine sooner.
+
+- `encrypttest.AssertContexts` and `encrypttest.Contexts` compile the
+  engine once per test binary, not once per call. Before, each call
+  compiled it: about 1 second, or 10 to 50 seconds under the race
+  detector. They now ask the test build that `encrypttest.NewClient` runs,
+  so a test binary that uses both compiles one build. In this module's own
+  tests, the three `AssertContexts` tests took 138 seconds under `-race`,
+  and now take 5. A checkout of the repository now needs the test build
+  for them (`mise run wasm:guest:build:deterministic`), as `NewClient`
+  already does. A released module includes it.
+
+- `encrypttest.NewClient` compiles the engine once per test binary, not
+  once per client. A suite that started a client in each test compiled the
+  engine again in every test. Under `go test -race` that took about 11
+  seconds a test. Now the first client compiles it, on every core. Every
+  later client starts in about 0.25 seconds under `-race`, and about 30
+  milliseconds without it. Parallel tests that start clients at once wait
+  for one compile, where before each compiled the engine itself.
 
 - **Other calls no longer wait behind a token refresh** (#1958). An
   `auth.Strategy` is shared by every encrypt and decrypt in a process, and

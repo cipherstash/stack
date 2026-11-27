@@ -16,20 +16,38 @@ import (
 // embedded for production refuse a bare seed as their config. It picks
 // between the two test builds by selectBuild, the rule embeddedGuest uses.
 func init() {
-	testclient.Register(func(ctx context.Context, plain, withEQL func() ([]byte, error), seed [32]byte) (any, error) {
-		wasm, err := selectBuild(plain, withEQL)
+	testclient.Register(func(ctx context.Context, builds testclient.Builds, seed [32]byte) (any, error) {
+		wasm, err := selectBuild(builds.Plain, builds.WithEQL)
 		if err != nil {
 			return nil, err
 		}
 		return seededClient(ctx, wasm, seed)
+	}, func(ctx context.Context, builds testclient.Builds) (any, error) {
+		return testChecker(ctx, builds)
 	})
+}
+
+// testChecker is a checker over the test build selectBuild picks, the one
+// a test client in this program runs. It pins that build in engines, as
+// seededClient does, so that encrypttest.AssertContexts, which makes a
+// checker on every call, compiles the guest once per test binary, and not
+// on every call.
+func testChecker(ctx context.Context, builds testclient.Builds) (*Checker, error) {
+	wasm, err := selectBuild(builds.Plain, builds.WithEQL)
+	if err != nil {
+		return nil, err
+	}
+	engines.pin(ctx, wasm)
+	return newCheckerOver(ctx, wasm)
 }
 
 // seededClient is a client over wasm, a deterministic-kms build of the
 // guest. Its config is the 32-byte seed every key derives from. It has no
 // token and a transport that refuses every request, so nothing it does can
-// reach the network.
+// reach the network. It pins wasm in engines, so the test binary compiles
+// it once, however many test clients start and close.
 func seededClient(ctx context.Context, wasm []byte, seed [32]byte) (*Client, error) {
+	engines.pin(ctx, wasm)
 	tr := &transport{rt: refusingTransport{}, token: noToken{}}
 	inst, err := newInstance(ctx, wasm, tr, guest.BestEffort)
 	if err != nil {

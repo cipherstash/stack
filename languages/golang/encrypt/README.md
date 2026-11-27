@@ -120,6 +120,19 @@ if err != nil {
 defer client.Close()
 ```
 
+The first `NewClient` in a process compiles the engine to machine code.
+That takes about a second. The engine is a WebAssembly module. Every later
+client reuses the compiled engine and skips that second.
+
+The compiled engine is kept while any client is open, and for one minute
+after the last client closes. So a program that opens and closes clients
+one after another compiles the engine once. After that minute, the
+compiled engine is freed. The next client compiles it again.
+
+To free the compiled engine at once, call `encrypt.ReleaseEngine()`. A
+client that is still open keeps working. The compiled engine is then freed
+when the last open client closes.
+
 `ctx` is Go's `context.Context`: the deadline and cancellation for the one
 ZeroKMS round trip `NewClient` makes. It has nothing to do with an
 *encryption* context, which is what a field is sealed under; that is the
