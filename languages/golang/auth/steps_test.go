@@ -287,9 +287,10 @@ func TestAStuckResumeIsEndedByTheBackstop(t *testing.T) {
 }
 
 // F5: maxPaused is the guest's own limit on open operations (MAX_OPEN in
-// stack-guest-abi's step loop). The steps are driven past the slots: one
-// exchange in flight, maxPaused-1 callers parked behind it, and the next
-// start refused. A guest that held more or fewer fails here.
+// stack-guest-abi's step loop). The starts are driven directly, past the
+// wait for an operation to end (startUnlock): one exchange in flight,
+// maxPaused-1 callers parked behind it, and the next start refused. A guest
+// that held more or fewer fails here.
 func TestMaxPausedIsTheGuestsLimit(t *testing.T) {
 	guestOrSkip(t)
 	server, _, _, release := heldServer(t)
@@ -418,4 +419,252 @@ func TestDecodeDeviceTokenRefusesAnyOtherShape(t *testing.T) {
 			t.Errorf("%s: the error quotes the frame: %v", name, err)
 		}
 	}
+}
+
+// One strategy's callers, parked behind its exchange as many as the guest
+// holds, must not hold up a second strategy of the same profile whose
+// token is cached: a call that never pauses takes no slot.
+func TestParkedCallersOfOneStrategyDoNotHoldUpAnother(t *testing.T) {
+	guestOrSkip(t)
+	server, _, started, release := heldServer(t)
+	profile, a := heldAccessKey(t, server)
+	serverB, _, startedB, releaseB := heldServer(t)
+	close(releaseB)
+	b, err := profile.AccessKey(context.Background(), testCRN, "CSAKotherKeyId.otherSecret", WithBaseURL(serverB.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if _, err := b.Token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	<-startedB
+
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	defer close(release)
+	for range maxPaused {
+		wg.Go(func() { _, _ = a.Token(context.Background()) })
+	}
+	<-started
+	awaitParked(t, profile, maxPaused-1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	start := time.Now()
+	if _, err := b.Token(ctx); err != nil {
+		t.Fatalf("the second strategy's cached token, after %v: %v", time.Since(start), err)
+	}
+}
+
+// A Close that finds another Close already running waits for it, and
+// returns what it returned: the provider is no longer called once any
+// Close has returned.
+func TestASecondStrategyCloseWaitsForTheFirst(t *testing.T) {
+	guestOrSkip(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, testJWT(t, "https://cts.example"), time.Now().Add(time.Hour).Unix())
+	}))
+	defer server.Close()
+	profile, err := Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profile.Close()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var returned atomic.Bool
+	strategy, err := profile.OIDC(context.Background(), testCRN, OIDCProviderFunc(func(context.Context) (string, error) {
+		close(entered)
+		<-release
+		returned.Store(true)
+		return "idp-token", nil
+	}), WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenDone := make(chan struct{})
+	go func() { _, _ = strategy.Token(context.Background()); close(tokenDone) }()
+	<-entered
+
+	first := make(chan error, 1)
+	go func() { first <- strategy.Close() }()
+	time.Sleep(50 * time.Millisecond)
+	second := make(chan error, 1)
+	go func() { second <- strategy.Close() }()
+	select {
+	case err := <-second:
+		close(release)
+		<-tokenDone
+		t.Fatalf("the second Close returned %v while the first was still waiting for the provider", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	<-tokenDone
+	firstErr, secondErr := <-first, <-second
+	if !returned.Load() || firstErr != secondErr {
+		t.Fatalf("Closes returned %v and %v (provider returned: %v)", firstErr, secondErr, returned.Load())
+	}
+}
+
+// byteLeaves is every []byte in a decoded frame.
+func byteLeaves(v any) [][]byte {
+	switch v := v.(type) {
+	case []byte:
+		return [][]byte{v}
+	case []any:
+		var out [][]byte
+		for _, item := range v {
+			out = append(out, byteLeaves(item)...)
+		}
+		return out
+	case vcvalue.Object:
+		var out [][]byte
+		for _, f := range v {
+			out = append(out, byteLeaves(f.Value)...)
+		}
+		return out
+	}
+	return nil
+}
+
+// A step the decoder refuses is wiped whole: every request's headers and
+// body, wherever the refusal comes, carry a credential.
+func TestARefusedStepIsWipedWhole(t *testing.T) {
+	marker := func() []byte { return []byte("leak-marker-credential") }
+	request := func(fields ...vcvalue.Field) vcvalue.Object { return vcvalue.Object(fields) }
+	good := func() vcvalue.Object {
+		return request(
+			vcvalue.Field{Key: "method", Value: "POST"},
+			vcvalue.Field{Key: "url", Value: "https://cts.example/api/authorise"},
+			vcvalue.Field{Key: "headers", Value: marker()},
+			vcvalue.Field{Key: "body", Value: marker()},
+		)
+	}
+	for name, frame := range map[string]vcvalue.Object{
+		"a field refused before the requests": {
+			{Key: "handle", Value: uint64(1)},
+			{Key: "unknown", Value: true},
+			{Key: "parked", Value: false},
+			{Key: "requests", Value: []any{good()}},
+		},
+		"the requests after a refused one": {
+			{Key: "handle", Value: uint64(1)},
+			{Key: "parked", Value: false},
+			{Key: "requests", Value: []any{request(vcvalue.Field{Key: "method", Value: uint64(5)}), good()}},
+		},
+		"the fields after a refused one": {
+			{Key: "handle", Value: uint64(1)},
+			{Key: "parked", Value: false},
+			{Key: "requests", Value: []any{request(
+				vcvalue.Field{Key: "method", Value: marker()},
+				vcvalue.Field{Key: "url", Value: "https://cts.example"},
+				vcvalue.Field{Key: "headers", Value: marker()},
+				vcvalue.Field{Key: "body", Value: marker()},
+			)}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := vcffi.Marshal(frame)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := vcffi.Unmarshal(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			leaves := byteLeaves(decoded)
+			if len(leaves) == 0 {
+				t.Fatal("the frame decoded with no bytes")
+			}
+			if _, err := authStepFrom(decoded); err == nil {
+				t.Fatal("the step was accepted")
+			}
+			for i, leaf := range leaves {
+				if strings.Contains(string(leaf), "leak-marker") {
+					t.Errorf("bytes leaf %d of %d still holds the credential", i+1, len(leaves))
+				}
+			}
+		})
+	}
+}
+
+// stuckIO takes the step, then stands in for a guest that never returns
+// from sa_auth_io: it runs until its call's context ends, or for fallback.
+type stuckIO struct {
+	stuckResume
+}
+
+func (f stuckIO) Call(ctx context.Context, params ...uint64) ([]uint64, error) {
+	_, _ = f.Function.Call(context.WithoutCancel(ctx), params...)
+	return f.stuckResume.Call(ctx)
+}
+
+// Taking a step is a guest call like any other: one that never returns,
+// after its caller gave up, is ended by the stuck-call backstop.
+func TestAStuckStepTakeIsEndedByTheBackstop(t *testing.T) {
+	guestOrSkip(t)
+	server, _, _, release := heldServer(t)
+	defer close(release)
+	profile, strategy := heldAccessKey(t, server)
+	profile.root.stuck = 50 * time.Millisecond
+	stuck := stuckIO{stuckResume{
+		Function: profile.root.inst.authIO, fallback: 4 * time.Second,
+		started: make(chan time.Time, 1), ended: make(chan time.Time, 1),
+	}}
+	profile.root.inst.authIO = stuck
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	go func() { _, _ = strategy.Token(ctx) }()
+	took := <-stuck.started
+	ended := <-stuck.ended
+	if d := ended.Sub(took); d > 2*time.Second {
+		t.Fatalf("the stuck step take ran %v: no backstop ended it", d)
+	}
+}
+
+// wantNoneOpen fails unless the profile counts no token operation open.
+func wantNoneOpen(t *testing.T, profile *ProfileStore) {
+	t.Helper()
+	profile.root.mu.Lock()
+	defer profile.root.mu.Unlock()
+	if n := profile.root.open; n != 0 {
+		t.Fatalf("%d token operations still counted open", n)
+	}
+}
+
+// A start the guest refuses because it holds as many operations as it can
+// waits for one to end, and its caller leaves at its deadline. Once they
+// end, the next start goes through.
+func TestACallerRefusedByAFullGuestLeavesAtItsDeadline(t *testing.T) {
+	guestOrSkip(t)
+	server, requests, started, release := heldServer(t)
+	profile, strategy := heldAccessKey(t, server)
+	var wg sync.WaitGroup
+	for range maxPaused {
+		wg.Go(func() { _, _ = strategy.Token(context.Background()) })
+	}
+	<-started
+	awaitParked(t, profile, maxPaused-1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := strategy.Token(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a Token refused by a full guest: %v, want the deadline", err)
+	}
+	if waited := time.Since(start); waited > time.Second {
+		t.Fatalf("it returned after %v", waited)
+	}
+	close(release)
+	wg.Wait()
+	if token, err := strategy.Token(context.Background()); err != nil || subject(token) != "1" {
+		t.Fatalf("the next Token: %q, %v", subject(token), err)
+	}
+	if n := requests.Load(); n != 1 {
+		t.Fatalf("%d exchanges, want 1", n)
+	}
+	wantNoneOpen(t, profile)
 }

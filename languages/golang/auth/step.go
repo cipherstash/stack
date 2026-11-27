@@ -39,8 +39,10 @@ import (
 
 // maxPaused is the most token operations that may be paused in the guest at
 // once, parked ones included: the guest's MAX_OPEN, which refuses one more,
-// as TestMaxPausedIsTheGuestsLimit checks. Each operation takes a slot for
-// its whole life, so callers past it wait for a slot rather than fail.
+// as TestMaxPausedIsTheGuestsLimit checks. A call that finishes on its first
+// step opens nothing and never waits. A start the guest refuses because
+// that many are open waits for one of them to end, and is tried again
+// (startUnlock).
 const maxPaused = 64
 
 // authStep is a paused operation's step, as the guest hands it over: its
@@ -76,9 +78,21 @@ func decodeAuthStep(raw []byte) (*authStep, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errMalformedStep, err)
 	}
+	return authStepFrom(decoded)
+}
+
+// authStepFrom is decodeAuthStep over the decoded frame, which it owns: the
+// step it returns keeps the frame's byte slices. A frame it refuses is
+// wiped whole, every request's headers and body included, wherever the
+// refusal came.
+func authStepFrom(decoded any) (*authStep, error) {
+	refuse := func() (*authStep, error) {
+		guest.WipeDecoded(decoded)
+		return nil, errMalformedStep
+	}
 	obj, ok := decoded.(vcvalue.Object)
 	if !ok {
-		return nil, errMalformedStep
+		return refuse()
 	}
 	step := &authStep{}
 	var sawHandle, sawParked, sawRequests bool
@@ -105,23 +119,27 @@ func decodeAuthStep(raw []byte) (*authStep, error) {
 			ok = false
 		}
 		if !ok {
-			step.wipe()
-			return nil, errMalformedStep
+			return refuse()
 		}
 	}
 	// A parked operation asks for nothing; an empty list otherwise is a
 	// yield.
 	if !sawHandle || !sawParked || !sawRequests || (step.parked && len(step.requests) > 0) {
-		step.wipe()
-		return nil, errMalformedStep
+		return refuse()
 	}
 	return step, nil
 }
 
+// decodeAuthRequest reads one request of a step. A request it refuses is
+// wiped whole, the fields after the refused one included.
 func decodeAuthRequest(item any) (authRequest, bool) {
+	refuse := func() (authRequest, bool) {
+		guest.WipeDecoded(item)
+		return authRequest{}, false
+	}
 	obj, ok := item.(vcvalue.Object)
 	if !ok {
-		return authRequest{}, false
+		return refuse()
 	}
 	var r authRequest
 	for _, f := range obj {
@@ -138,15 +156,11 @@ func decodeAuthRequest(item any) (authRequest, bool) {
 			ok = false
 		}
 		if !ok {
-			guest.Wipe(r.headers)
-			guest.Wipe(r.body)
-			return authRequest{}, false
+			return refuse()
 		}
 	}
 	if r.method == "" || r.url == "" {
-		guest.Wipe(r.headers)
-		guest.Wipe(r.body)
-		return authRequest{}, false
+		return refuse()
 	}
 	return r, true
 }
@@ -203,8 +217,9 @@ func encodeResponses(responses []response) ([]byte, error) {
 
 // run drives one token operation, started by the export start selects with
 // args, to its end, and returns its output: a token. ctx is the caller's.
-// It bounds the wait for a slot and for the profile's lock before the
-// operation starts, and the wait while it is parked. Once a request is in
+// It bounds the wait for the profile's lock before the operation starts,
+// for an operation to end when the guest holds as many as it can, and the
+// wait while it is parked. Once a request is in
 // flight the operation is finished whatever ctx does (see above), and a
 // caller whose ctx ended by then gets its error and no output.
 //
@@ -213,13 +228,6 @@ func encodeResponses(responses []response) ([]byte, error) {
 // starts, and a parked one is aborted rather than resumed.
 func (s *ProfileStore) run(ctx context.Context, start export, args ...guest.Arg) ([]byte, error) {
 	r := s.root
-	select {
-	case r.slots <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	defer func() { <-r.slots }()
-
 	if err := r.mu.Acquire(ctx); err != nil {
 		return nil, err
 	}
@@ -230,7 +238,12 @@ func (s *ProfileStore) run(ctx context.Context, start export, args ...guest.Arg)
 	// Added under the lock, before Close can see closing unset and wait.
 	r.ops.Add(1)
 	defer r.ops.Done()
-	out, step, err := s.stepUnlock(ctx, false, start, args...)
+	out, step, err := s.startUnlock(ctx, start, args...)
+	if step != nil {
+		// Paused: open in the guest until driven to its end (stepLocked
+		// counted it).
+		defer s.endOpen()
+	}
 	// Once started, the operation is driven to its end: a resume waits for
 	// the lock, and runs, whatever the caller's context does. Its steps
 	// still run under the stuck-call backstop, armed by ctx (stepLocked).
@@ -295,6 +308,52 @@ func withCtxErr(ctx context.Context, err error) error {
 	return err
 }
 
+// startUnlock runs an operation's first step for a caller that holds the
+// profile's lock, and releases it. A start the guest refuses because as many
+// operations as it holds are open waits, without the lock, for one of them
+// to end, and is tried again. ctx bounds that wait.
+func (s *ProfileStore) startUnlock(ctx context.Context, start export, args ...guest.Arg) ([]byte, *authStep, error) {
+	r := s.root
+	for {
+		// Unlocked by a defer: the application's OIDC provider runs in a
+		// first step, and its panic is raised again in it (callLocked).
+		out, step, full, err := func() ([]byte, *authStep, <-chan struct{}, error) {
+			defer r.mu.Unlock()
+			out, step, err := s.stepLocked(ctx, false, start, args...)
+			if errors.Is(err, ErrState) && !r.closed && !r.closing && r.open >= maxPaused {
+				return nil, nil, r.freed, err
+			}
+			return out, step, nil, err
+		}()
+		if full == nil {
+			return out, step, err
+		}
+		select {
+		case <-full:
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
+		if err := r.mu.Acquire(ctx); err != nil {
+			return nil, nil, err
+		}
+		if r.closing || r.closed {
+			r.mu.Unlock()
+			return nil, nil, ErrState
+		}
+	}
+}
+
+// endOpen takes an operation its caller has driven to its end off open,
+// and wakes the starts waiting for one to end.
+func (s *ProfileStore) endOpen() {
+	r := s.root
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.open--
+	close(r.freed)
+	r.freed = make(chan struct{})
+}
+
 // stepUnlock is stepLocked for a caller that holds the profile's lock, and
 // releases it, panic or not: the application's OIDC provider runs inside a
 // guest call, and its panic is raised again here (callLocked).
@@ -331,6 +390,9 @@ func (s *ProfileStore) stepLocked(ctx context.Context, resume bool, fn export, a
 	if err != nil {
 		return nil, nil, err
 	}
+	if !resume {
+		r.open++
+	}
 	// Once Close has begun, a parked operation is not waited on: it is
 	// left out of parked, so its caller finds it woken, and aborts it.
 	if step.parked && !r.closing {
@@ -343,11 +405,14 @@ func (s *ProfileStore) stepLocked(ctx context.Context, resume bool, fn export, a
 //
 // It runs whatever the caller's context has done since the export paused:
 // the step must be taken, and wazero closes a module called under an ended
-// context. A step that cannot be taken or read closes the profile: the
+// context. So it runs detached, as a resume does (callDetachedLocked): ctx
+// only arms the stuck-call backstop, which ends the call StuckAfter ctx
+// does. A step that cannot be taken or read closes the profile: the
 // operation is still open in the guest, with no handle to abort it by, and
 // may hold a lock other operations wait on.
 func (s *ProfileStore) takeIOLocked(ctx context.Context) (*authStep, error) {
-	ctx = context.WithoutCancel(ctx)
+	ctx, done := guest.Detach(ctx, s.root.stuck)
+	defer done()
 	inst := s.root.inst
 	// The memory stays mapped until the step is copied out and its buffer
 	// freed, as around any guest call.

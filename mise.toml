@@ -366,7 +366,7 @@ echo "embedded into languages/golang/auth/wasm/stack_auth_guest.wasm"
 """
 
 [tasks."wasm:auth-guest:test"]
-description = "Lint and natively test the credential WASI guest (ops/status modules run on the host target)"
+description = "Lint and test the credential WASI guest: fmt, clippy for the host and for wasm32 (its tests included), rustdoc, the native tests, and the token-step tests on wasm32 under wazero (internal/wasmtestrun, so it needs Go)"
 shell = "bash -c"
 run = """
 set -euo pipefail

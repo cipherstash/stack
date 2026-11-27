@@ -85,9 +85,15 @@ type root struct {
 	// still allocated. Close frees it even then.
 	released bool
 	cleanup  runtime.Cleanup
-	// slots bounds the token operations open in the guest at once (see
-	// maxPaused); each holds one for its whole life.
-	slots chan struct{}
+	// open counts the token operations open in the guest. The step that
+	// pauses an operation adds it, and its caller takes it off once it has
+	// driven the operation to its end, both under mu. So open is never less
+	// than the guest's own count, and a start the guest refuses as full
+	// finds open at maxPaused or more. Guarded by mu.
+	open int
+	// freed is closed, and replaced, each time open goes down: a start the
+	// guest refused as full waits on it. Guarded by mu.
+	freed chan struct{}
 	// parked is how a parked token operation is woken: closed when the
 	// guest lists it as runnable, or when the profile closes. Guarded by
 	// mu.
@@ -164,7 +170,7 @@ func open(ctx context.Context, hostDir string, opts []Option) (*ProfileStore, er
 	}
 	r := &root{
 		inst: inst, hostDir: hostDir, stuck: guest.StuckAfter,
-		slots: make(chan struct{}, maxPaused), parked: make(map[uint64]chan struct{}),
+		freed: make(chan struct{}), parked: make(map[uint64]chan struct{}),
 	}
 	// The cleanup takes the instance, not the root: a cleanup whose
 	// argument reaches its object keeps that object alive forever.

@@ -252,24 +252,14 @@ func TestATokenRequestWhoseContextEndsInTheQueueNeverReachesTheGuest(t *testing.
 	}
 	defer strategy.Close()
 
-	// A Token waits for the profile's lock, and for a slot when the guest
-	// holds as many token operations as it can.
+	// A Token waits for the profile's lock. TestACallerRefusedByAFullGuest
+	// LeavesAtItsDeadline has the wait for an operation to end.
 	for name, hold := range map[string]func() (release func()){
 		"the profile's lock": func() func() {
 			if err := profile.root.mu.Acquire(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			return profile.root.mu.Unlock
-		},
-		"a slot": func() func() {
-			for range maxPaused {
-				profile.root.slots <- struct{}{}
-			}
-			return func() {
-				for range maxPaused {
-					<-profile.root.slots
-				}
-			}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

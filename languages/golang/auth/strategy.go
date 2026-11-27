@@ -66,6 +66,10 @@ type Strategy struct {
 	// guest instead (see step.go).
 	mu     sync.Mutex
 	closed bool
+	// closeDone is closed once the first Close has finished, with its
+	// result in closeErr: a later Close waits for it and returns the same.
+	closeDone chan struct{}
+	closeErr  error
 	// inflight counts Token calls still running, a device session's
 	// refresh left running by a caller that gave up included. Close waits
 	// for them.
@@ -454,22 +458,28 @@ func (s *Strategy) MemoryLockError() error { return s.store.MemoryLockError() }
 // It waits for the Token calls in flight, including a device session's
 // refresh that a cancelled Token left running: that refresh finishes, for
 // up to 10 seconds, so the rotated refresh token it brings is saved rather
-// than lost.
+// than lost. A Close called while another is running waits for it, and
+// returns what it returns: once any Close has returned, the strategy's
+// OIDC provider is not called again.
 func (s *Strategy) Close() error {
 	s.mu.Lock()
 	if s.closed {
+		done := s.closeDone
 		s.mu.Unlock()
-		return nil
+		<-done
+		return s.closeErr
 	}
 	s.closed = true
+	s.closeDone = make(chan struct{})
 	s.mu.Unlock()
+	defer close(s.closeDone)
 	s.inflight.Wait()
 	if s.providerID != 0 {
 		s.store.root.inst.transport.unregister(s.providerID)
 	}
 	_, err := s.store.callArgs(context.Background(), func(i *instance) api.Function { return i.authFree }, guest.BufArg([]byte(s.handle)))
-	if errors.Is(err, ErrState) {
-		return nil
+	if !errors.Is(err, ErrState) {
+		s.closeErr = err
 	}
-	return err
+	return s.closeErr
 }

@@ -207,9 +207,7 @@ func TestManyCallersWithNoTokenYetShareOneExchange(t *testing.T) {
 		t.Fatalf("%d exchanges, want 1", n)
 	}
 	wantProfileOpen(t, profile)
-	if n := len(profile.root.slots); n != 0 {
-		t.Fatalf("%d slots still held", n)
-	}
+	wantNoneOpen(t, profile)
 }
 
 // A caller waiting for another's exchange that gives up returns at its
