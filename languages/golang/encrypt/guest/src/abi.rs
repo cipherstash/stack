@@ -156,6 +156,14 @@ fn deliver(step: Result<Step, u32>) -> Result<Vec<u8>, u32> {
             step::set_pending(encoded);
             Err(STATUS_NEEDS_IO)
         }
+        // Every operation here starts with `step::start`, which never parks:
+        // a stalled one is already STATUS_INTERNAL.
+        Step::Parked { handle } => {
+            let _ = step::abort(handle);
+            Err(last_error::internal(
+                "an operation parked, which this guest never starts",
+            ))
+        }
     }
 }
 
