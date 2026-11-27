@@ -41,12 +41,13 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   null`. A program that switches on `Reason()` for this case needs the
   new name.
 
-- **Errors that say "not an object" now say what was found, in words**
+- **Errors that said "not an object" now say what they mean, in words**
   (#1987). A map field (`map[string]V`, `Values`, `map[string]any`) whose
   stored value opens as something else is refused as `decrypt: field
-  "tags": ... opened as a list, and map[string]any needs an object`,
+  "tags": ... does not open as an object, and map[string]any needs one`,
   where it said `opened as []interface {}, not an object`, and a document
-  field likewise. A guest answer this module cannot read, whether it does
+  field likewise. It no longer names what the value opened as: that is
+  known only once the value is decrypted. A guest answer this module cannot read, whether it does
   not decode or is not the shape the export writes (from `se_query_term`,
   `se_targets`, `se_operators`, `se_contexts`, `se_verify`,
   `se_target_limit`, `sa_token`, `sa_secret_key`, `sa_device_identity`,

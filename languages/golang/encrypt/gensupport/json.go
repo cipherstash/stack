@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
-	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
@@ -119,7 +118,8 @@ func GetDocument[T any](vals Values, name string) (T, error) {
 	}
 	text, ok := v.([]byte)
 	if !ok {
-		return out, fmt.Errorf("gensupport: decrypt: field %q: %w: the document opened as %s, not its JSON text", name, encrypt.ErrEncoding, guest.KindOf(v))
+		// What the value opened as is not named: only decryption shows it.
+		return out, fmt.Errorf("gensupport: decrypt: field %q: %w: does not open as its JSON text", name, encrypt.ErrEncoding)
 	}
 	out, err := encrypt.DecodeJSON[T](text)
 	if err != nil {

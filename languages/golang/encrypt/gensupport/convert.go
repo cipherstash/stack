@@ -8,7 +8,6 @@ import (
 	"reflect"
 	"strconv"
 
-	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
@@ -394,8 +393,8 @@ func setSlice[E any](v any, out *[]E) error {
 }
 
 // valuesOf reads an opened composite as Values, nested objects included.
-// want is the Go type the field needs, which a refusal names beside what
-// the value opened as, by its kind and never its value.
+// want is the Go type the field needs, which a refusal names. It never
+// names what the value opened as, which only decryption shows.
 func valuesOf(v any, want string) (Values, error) {
 	switch obj := v.(type) {
 	case vcvalue.Object:
@@ -417,5 +416,7 @@ func valuesOf(v any, want string) (Values, error) {
 	case map[string]any:
 		return Values(obj), nil
 	}
-	return nil, fmt.Errorf("opened as %s, and %s needs an object", guest.KindOf(v), want)
+	// What the value opened as is not named: it is known only once the
+	// value is decrypted, so it is the plaintext's own metadata.
+	return nil, fmt.Errorf("does not open as an object, and %s needs one", want)
 }

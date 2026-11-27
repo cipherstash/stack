@@ -658,49 +658,58 @@ func TestOpaqueReadsARustWrittenBlob(t *testing.T) {
 
 // A field of map type whose stored value opens as something else, a row
 // written by another SDK or an older struct, is refused as decrypt's
-// malformed input: the field, what it opened as by its kind, never its
-// value, and the Go type that needs an object.
-func TestAMapFieldThatOpensAsAnotherKindSaysWhatItOpenedAs(t *testing.T) {
-	read := func(read func(Values, string) error, v any) error {
-		return read(Values{"tags": v}, "tags")
-	}
+// malformed input naming the field and the Go type that needs an object,
+// and never what the value opened as: that is known only once it is
+// decrypted, so it is the plaintext's own metadata.
+func TestAMapFieldThatOpensAsAnotherKindNamesNoKind(t *testing.T) {
 	asAny := func(vals Values, name string) error { _, err := Get[map[string]any](vals, name); return err }
 	asValues := func(vals Values, name string) error { _, err := Get[Values](vals, name); return err }
 	asInts := func(vals Values, name string) error { _, err := Get[map[string]int64](vals, name); return err }
 	for _, tc := range []struct {
 		read  func(Values, string) error
 		value any
-		kind  string
 		want  string
 	}{
-		{asAny, []any{"secret"}, "a list", "map[string]any"},
-		{asAny, "secret", "a string", "map[string]any"},
-		{asValues, int64(7), "a number", "gensupport.Values"},
-		{asInts, []any{"secret"}, "a list", "map[string]int64"},
+		{asAny, []any{"secret"}, "map[string]any"},
+		{asAny, "secret", "map[string]any"},
+		{asValues, int64(7), "gensupport.Values"},
+		{asInts, []any{"secret"}, "map[string]int64"},
 	} {
-		err := read(tc.read, tc.value)
+		err := tc.read(Values{"tags": tc.value}, "tags")
 		if !errors.Is(err, encrypt.ErrEncoding) {
-			t.Fatalf("%s for %s: %v, want ErrEncoding", tc.kind, tc.want, err)
+			t.Fatalf("%T for %s: %v, want ErrEncoding", tc.value, tc.want, err)
 		}
-		want := fmt.Sprintf(`gensupport: decrypt: field "tags": cipherstash: malformed input: opened as %s, and %s needs an object`, tc.kind, tc.want)
+		want := fmt.Sprintf(`gensupport: decrypt: field "tags": cipherstash: malformed input: does not open as an object, and %s needs one`, tc.want)
 		if err.Error() != want {
 			t.Errorf("message:\n got %q\nwant %q", err.Error(), want)
 		}
-		if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "7") {
-			t.Errorf("the error holds the value: %v", err)
+		assertNamesNoKind(t, err)
+	}
+}
+
+// assertNamesNoKind fails if a decrypt error names what the value opened
+// as, or holds the value.
+func assertNamesNoKind(t *testing.T, err error) {
+	t.Helper()
+	for _, kind := range []string{"a list", "a string", "a number", "bytes", "null", "interface", "secret", "7"} {
+		if strings.Contains(err.Error(), kind) {
+			t.Errorf("%q in %v", kind, err)
 		}
 	}
 }
 
 // A document field that opens as something other than its JSON text is a
-// decrypt refusal naming the field and what it opened as, by kind.
-func TestADocumentFieldThatOpensAsAnotherKindSaysWhatItOpenedAs(t *testing.T) {
-	_, err := GetDocument[map[string]any](Values{"doc": "secret"}, "doc")
-	want := `gensupport: decrypt: field "doc": cipherstash: malformed input: the document opened as a string, not its JSON text`
-	if !errors.Is(err, encrypt.ErrEncoding) || err.Error() != want {
-		t.Errorf("message:\n got %v\nwant %q", err, want)
+// decrypt refusal naming the field, and never what it opened as.
+func TestADocumentFieldThatOpensAsAnotherKindNamesNoKind(t *testing.T) {
+	for _, v := range []any{"secret", int64(7), []any{"secret"}} {
+		_, err := GetDocument[map[string]any](Values{"doc": v}, "doc")
+		want := `gensupport: decrypt: field "doc": cipherstash: malformed input: does not open as its JSON text`
+		if !errors.Is(err, encrypt.ErrEncoding) || err.Error() != want {
+			t.Errorf("%T: message:\n got %v\nwant %q", v, err, want)
+		}
+		assertNamesNoKind(t, err)
 	}
-	_, err = GetDocument[map[string]any](Values{"doc": []byte("{")}, "doc")
+	_, err := GetDocument[map[string]any](Values{"doc": []byte("{")}, "doc")
 	if err == nil || !strings.HasPrefix(err.Error(), `gensupport: decrypt: field "doc": `) {
 		t.Errorf("JSON that does not decode: %v", err)
 	}
