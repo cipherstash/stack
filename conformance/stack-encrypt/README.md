@@ -149,7 +149,8 @@ EQL/JSON profiles are described below.
 Three profiles close the gaps the representative profiles left. The
 [value contract](values-contract.md) defines `record-values-v1` in
 `v1/record-values-v1.cases.json`: every kind at its edges, sealed and SQL nulls for the
-fixed-width kinds, write refusals between kinds, frozen typed frames, and
+fixed-width kinds, exact write conversions between widths, write
+refusals between kinds, `undefined` on a typed field, frozen typed frames, and
 the Go-only host conversions the host refuses before the engine. The
 [query-refusal contract](query-refusals-contract.md) defines
 `record-query-refusals-v1` in `v1/record-query-refusals-v1.cases.json`: one plan, every

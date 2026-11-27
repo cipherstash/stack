@@ -388,6 +388,47 @@ with a general error, and no test covers it. Storing it as a null would hide
 a misspelt property name. Inside an untyped value, `undefined` is kept as it
 is today.
 
+Done (#1990):
+
+- `dynamic::read` and the write path share one function, `kind::convert`.
+  It takes a `Frame` and returns `None` when the value is already of the
+  kind, so a value that needs no conversion is not copied. `read` is
+  `convert` over any source.
+- The write path converts in `check_field`, which now takes the field's
+  `OwnedFrame` and returns the value the field stores: the one it came as,
+  or the converted one, with the other wiped. `source_rows` calls it for
+  each field, so `record::encrypt`, `encrypt_with`, `check_source` and
+  `Planned` all convert, and `check_source` and `encrypt` still share the
+  code. A target field's `record::query` calls it too.
+- The rule for containers: the value is read as a whole. A scalar converts
+  to a scalar kind. An `array` or `object` field takes a container as it
+  is, and nothing inside one converts, since the field declares no type for
+  its elements. A `json` field takes its text or bytes as they are.
+- `undefined` is refused in `convert` with the new `Reason::Undefined`
+  (`"undefined"`), on a write and on a query, whatever the field's null
+  policy. In an untyped field, or inside a container, it is kept.
+- No stored bytes moved. `value_bytes_v1.json` pinned two of the changed
+  refusals; its `float64_for_float32` case now seals the same leaf as the
+  `float32` 1.5, and the test asserts that, and `undefined_for_string` now
+  reports `undefined`.
+- Conformance: five `record-values-v1` cases (an `int16` for `int8`, an
+  `int8` for `uint8`, an `int64` for `int128`, a `uint64` for `uint128`, a
+  `float64` 1.5 for `float32`) changed from refused to accepted, with a new
+  `stored` key naming the converted value. The runners seal it as a second
+  row and compare terms, ciphertext length and the opened value. Three
+  `record-runtime-v1` "wrong width" cases became `*-other-width` and are
+  accepted; `required-integral-float` and `required-fractional-float`
+  were added. A new `int32-given-undefined` case pins the refusal. Go has
+  no `undefined`, so its runner skips that case.
+- Go needed no change to its reason handling: `Diagnostic.Reason()`
+  passes the engine's reason through, and no Go code lists the reasons.
+  `Cipher.Seal` now takes a number of another width for a typed field, so
+  the Go changelog says so. The Go guest's own test of a refused float now
+  uses a fraction.
+- The TypeScript addon needs no change: it hands the bridge's frame to the
+  engine, which converts. `value-napi`'s README says a typed field reads
+  `5` and `5n` alike and refuses `undefined`.
+
 ### 2.6 The bridges and the SDKs
 
 - **TypeScript:** `OneValue`, `is_uuid`, and the `recipher_js::uuid` code

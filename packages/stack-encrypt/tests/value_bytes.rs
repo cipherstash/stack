@@ -830,6 +830,12 @@ async fn value_bytes_are_the_pinned_bytes() {
     for (key, section) in actual.as_object().unwrap() {
         document[key] = section.clone();
     }
+    // A value of another type that converts exactly seals to the leaf of
+    // the same value sent at the declared width: no stored byte moves.
+    assert_eq!(
+        document["host"]["float64_for_float32"]["value"], document["dynamic"]["float32"]["value"],
+        "an f64 1.5 for a float32 field seals as the float32 1.5"
+    );
     let path = fixture_path();
     if update {
         std::fs::write(

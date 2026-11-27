@@ -719,10 +719,9 @@
         "text": "1"
       },
       "frame": "0e0100",
-      "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
-        "reason": "field_type",
-        "field": "value"
+      "stored": {
+        "type": "int8",
+        "text": "1"
       }
     },
     {
@@ -735,10 +734,9 @@
         "text": "1"
       },
       "frame": "0c01",
-      "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
-        "reason": "field_type",
-        "field": "value"
+      "stored": {
+        "type": "uint8",
+        "text": "1"
       }
     },
     {
@@ -751,10 +749,9 @@
         "text": "1"
       },
       "frame": "050100000000000000",
-      "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
-        "reason": "field_type",
-        "field": "value"
+      "stored": {
+        "type": "int128",
+        "text": "1"
       }
     },
     {
@@ -767,10 +764,9 @@
         "text": "1"
       },
       "frame": "070100000000000000",
-      "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
-        "reason": "field_type",
-        "field": "value"
+      "stored": {
+        "type": "uint128",
+        "text": "1"
       }
     },
     {
@@ -783,10 +779,9 @@
         "text": "1.5"
       },
       "frame": "09000000000000f83f",
-      "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
-        "reason": "field_type",
-        "field": "value"
+      "stored": {
+        "type": "float32",
+        "text": "1.5"
       }
     },
     {
@@ -882,6 +877,22 @@
       "expected_error": {
         "code": "stack_encrypt::dynamic_source",
         "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "int32-given-undefined",
+      "kind": "int32",
+      "null": "sql",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "undefined",
+        "text": ""
+      },
+      "frame": "01",
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "undefined",
         "field": "value"
       }
     },

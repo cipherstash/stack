@@ -109,7 +109,10 @@ Equality terms share one domain across integer widths, so a `BigInt`
 written as `int8` matches the same number written as `int64` from Go;
 both float widths likewise share one domain. Integers and floats stay
 distinct, so a JS `number` 5 does not match an `int64` 5: use `BigInt` for
-integer data.
+integer data. A record field that declares a type is the exception: the
+engine reads each value written to it, or queried against it, as that
+type when the conversion is exact, so `5` and `5n` are both the `int64` 5
+on an `int64` field.
 
 ### The wrapper classes
 
@@ -199,7 +202,9 @@ it is not itself loadable from Node.
 - Object enumeration reads **own, enumerable, string-keyed** properties
   only, so a polluted `Object.prototype` (or inherited enumerable getters)
   can never leak keys into — or run code during — encryption. An own
-  property explicitly set to `undefined` round-trips.
+  property explicitly set to `undefined` round-trips, except as the value
+  of a record field that declares a type, which refuses it with the reason
+  `undefined`.
 - Sparse arrays (`[, , "x"]`, `new Array(n)`) are rejected; `[undefined]`
   is not sparse and round-trips. A hole is detected per index via
   `Object.hasOwn` semantics, so a polluted `Array.prototype` cannot fill

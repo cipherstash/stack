@@ -264,7 +264,7 @@
       "host_frame": "09000000000000f83f",
       "type": "float32",
       "value": {
-        "refused": "stack_encrypt::dynamic_source/field_type"
+        "leaves": ["080000c03f"]
       }
     },
     "timestamp_micros": {
@@ -322,7 +322,7 @@
       "host_frame": "01",
       "type": "string",
       "value": {
-        "refused": "stack_encrypt::dynamic_source/field_type"
+        "refused": "stack_encrypt::dynamic_source/undefined"
       }
     },
     "uuid": {

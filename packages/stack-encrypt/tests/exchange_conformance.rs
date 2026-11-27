@@ -132,6 +132,8 @@ struct ValueCase {
     input: Input,
     frame: Option<String>,
     companion: Option<Input>,
+    /// The input as the field's kind, when it converts: what opens.
+    stored: Option<Input>,
     equal_query: Option<Input>,
     expected_error: Option<serde_json::Value>,
 }
@@ -657,7 +659,8 @@ async fn consume(
             .unwrap()
             .await
             .unwrap();
-        let expected = object(vec![(corpus.values.field.as_str(), value(&case.input))]);
+        let opens_as = case.stored.as_ref().unwrap_or(&case.input);
+        let expected = object(vec![(corpus.values.field.as_str(), value(opens_as))]);
         assert_eq!(
             opened.frame().as_bytes(),
             expected.frame().as_bytes(),

@@ -42,7 +42,8 @@ of every type. Values use the fixture's `type` and `text` with a frozen `frame`;
 | `values.normalized-queries` | Decimal queries differing only in trailing zeros and timestamp queries truncated to microseconds derive the stored equality and order terms, while the opened values retain their original precision. | Every `queries` entry and its field's order output |
 
 Rust additionally compares dynamic execution with typed term derivation and
-retains its wrong-width write refusal test. Go runs the real generated
+retains its test of a write of another width: an exact one seals as the
+field's width, and one out of range is refused. Go runs the real generated
 `testusers.ValueKinds` encrypt/decrypt and field-query methods, including its
 field-context substitution refusal. These assertions stay in their owning
 tests. The separate Go invalid-date/decimal/timestamp tests remain in the full

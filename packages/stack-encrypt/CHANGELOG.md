@@ -1597,6 +1597,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A write converts a value to its field's type, as a query does.** A
+  data plan's typed field now reads each value it seals by the rules
+  `dynamic::read` reads a query's input by. A number of another width or
+  kind converts when the conversion is exact: an `int64` 34, a `float64`
+  34.0 or a JavaScript `bigint` 34n written to an `int32` field is stored
+  as the `int32` 34. A conversion that would lose something stays refused
+  with `field_type`: a fraction or an out-of-range number for an integer,
+  a number a float type would round, a NaN to the other float type, a
+  float to a decimal. Nothing converts between a number and a value that
+  is not a number, to or from a date, a timestamp or a UUID, or from text.
+  A container is taken as it is, and nothing in it converts. The value is
+  sealed at the declared width, so stored bytes and terms are the ones
+  the same value sent at that width gives. This covers `record::encrypt`,
+  `encrypt_with`, `check_source`, `dynamic::Planned` and a target field's
+  `record::query`. A binding no longer needs to know a field's type to
+  write to it.
+- **`undefined` on a typed field is refused with a reason of its own.**
+  JavaScript's `undefined` written to a field that declares a type is
+  refused with the new `Reason::Undefined` (`"undefined"`), where it was
+  refused with `field_type`. It is not stored as a null, even on a field
+  with `"null": "sql"` or `"sealed"`: that would hide a property name spelt
+  wrong. A query of `undefined` is refused the same way. In a field that
+  declares no type, and inside a container, `undefined` is kept as it is.
+
 - **`dynamic::ValueKind` is defined in `vitaminc-aead`** (#1907). It is
   re-exported at the same path, with the same 21 variants and names, so
   code that names a kind does not change. What moved with it:
