@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
 type valueCase struct {
@@ -143,7 +143,7 @@ func TestValueConformance(t *testing.T) {
 			plan := &record.Plan{Context: []string{"conformance"}, Fields: []record.Field{{Name: "value", Kind: record.Kind(c.Kind), Null: record.Null(c.Null), Outputs: outputs}}}
 			input := conformanceValue(t, c.Input)
 			if c.Frame != nil {
-				encoded, err := vcffi.Marshal(input)
+				encoded, err := frame.Marshal(input)
 				if err != nil {
 					t.Fatal(err)
 				}

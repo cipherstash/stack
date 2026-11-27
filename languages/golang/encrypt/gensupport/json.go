@@ -12,8 +12,8 @@ import (
 	"strings"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // The operators of a field stored as a JSONSearch document, for the
@@ -148,7 +148,7 @@ func GetDocumentPtr[T any](vals Values, name string) (*T, error) {
 // jsonTerm derives one JSON operator's term on the field: an exact term in
 // encoding, of parts byte strings ("eql") or texts ("text"); parts 0 takes
 // any number of texts ("text_array").
-func (f Field[T]) jsonTerm(ctx context.Context, c *encrypt.Cipher, operator, encoding string, parts int, input vcvalue.Object) (encrypt.QueryTerm, error) {
+func (f Field[T]) jsonTerm(ctx context.Context, c *encrypt.Cipher, operator, encoding string, parts int, input frame.Object) (encrypt.QueryTerm, error) {
 	if f.err != nil {
 		return encrypt.QueryTerm{}, f.err
 	}
@@ -212,7 +212,7 @@ func JSONQuery[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cip
 	if bytes.Equal(text, []byte("null")) {
 		return nil, fmt.Errorf("%w: gensupport: %s: a %T needle that writes JSON null (a nil one) matches only a null document; pass a map, a struct or JSON text", encrypt.ErrEncoding, f.name, needle)
 	}
-	term, err := f.jsonTerm(ctx, c, operator, "eql", 1, vcvalue.Object{{Key: "json", Value: text}})
+	term, err := f.jsonTerm(ctx, c, operator, "eql", 1, frame.Object{{Key: "json", Value: text}})
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +228,7 @@ func JSONQueryAt[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.C
 	if err != nil {
 		return nil, err
 	}
-	term, err := f.jsonTerm(ctx, c, operator, "eql", 1, vcvalue.Object{{Key: "path", Value: path}, {Key: "json", Value: text}})
+	term, err := f.jsonTerm(ctx, c, operator, "eql", 1, frame.Object{{Key: "path", Value: path}, {Key: "json", Value: text}})
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +246,7 @@ func JSONBetweenAt[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt
 	if err != nil {
 		return encrypt.JSONRange[Q]{}, err
 	}
-	term, err := f.jsonTerm(ctx, c, "between_at", "eql", 2, vcvalue.Object{{Key: "path", Value: path}, {Key: "low", Value: low}, {Key: "high", Value: high}})
+	term, err := f.jsonTerm(ctx, c, "between_at", "eql", 2, frame.Object{{Key: "path", Value: path}, {Key: "low", Value: low}, {Key: "high", Value: high}})
 	if err != nil {
 		return encrypt.JSONRange[Q]{}, err
 	}
@@ -294,7 +294,7 @@ func JSONElementMatch[Q ~[]byte, T, E any](ctx context.Context, f Field[T], c *e
 		if !slices.Contains(members, member) {
 			return nil, fmt.Errorf("%w: gensupport: %s: Match at %s: the member %q is not ordered, so no element carries a term to compare (%s); order its full path in the field's tag, ordered=", encrypt.ErrTerm, f.name, path, member, orderedMembers(members))
 		}
-		entry := vcvalue.Object{{Key: "member", Value: member}, {Key: "op", Value: op}}
+		entry := frame.Object{{Key: "member", Value: member}, {Key: "op", Value: op}}
 		// Each comparison gives its op its values: between the low and
 		// the high, every other op one.
 		keys := []string{"json"}
@@ -306,15 +306,15 @@ func JSONElementMatch[Q ~[]byte, T, E any](ctx context.Context, f Field[T], c *e
 			if err != nil {
 				return nil, err
 			}
-			entry = append(entry, vcvalue.Field{Key: key, Value: text})
+			entry = append(entry, frame.Field{Key: key, Value: text})
 		}
 		list[i] = entry
 	}
-	input := vcvalue.Object{{Key: "path", Value: path}}
+	input := frame.Object{{Key: "path", Value: path}}
 	if opts.WildcardBound != 0 {
-		input = append(input, vcvalue.Field{Key: "wildcard_bound", Value: opts.WildcardBound})
+		input = append(input, frame.Field{Key: "wildcard_bound", Value: opts.WildcardBound})
 	}
-	input = append(input, vcvalue.Field{Key: "predicates", Value: list})
+	input = append(input, frame.Field{Key: "predicates", Value: list})
 	term, err := f.jsonTerm(ctx, c, "element_match", "eql", 1, input)
 	if err != nil {
 		return nil, err
@@ -358,9 +358,9 @@ func JSONMatch[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cip
 	if f.err != nil {
 		return nil, f.err
 	}
-	input := vcvalue.Object{{Key: "predicate", Value: predicate}}
+	input := frame.Object{{Key: "predicate", Value: predicate}}
 	if opts.WildcardBound != 0 {
-		input = append(input, vcvalue.Field{Key: "wildcard_bound", Value: opts.WildcardBound})
+		input = append(input, frame.Field{Key: "wildcard_bound", Value: opts.WildcardBound})
 	}
 	if isNilValue(vars) {
 		// SQL NULL vars: compile with none for what plaintext refuses
@@ -377,7 +377,7 @@ func JSONMatch[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cip
 	if err != nil {
 		return nil, err
 	}
-	input = append(input, vcvalue.Field{Key: "vars", Value: text})
+	input = append(input, frame.Field{Key: "vars", Value: text})
 	term, err := f.jsonTerm(ctx, c, "match", "eql", 1, input)
 	if err != nil {
 		return nil, err
@@ -434,7 +434,7 @@ func (f Field[T]) elementMembers(path string) []string {
 // JSONSelect prepares `->` at a path on a JSON field: the selector to
 // bind, and what opens the entries it returns. E is the field's entry type.
 func JSONSelect[E ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cipher, path string) (encrypt.JSONSelection[E], error) {
-	term, err := f.jsonTerm(ctx, c, record.JSONSelector, "text", 1, vcvalue.Object{{Key: "path", Value: path}})
+	term, err := f.jsonTerm(ctx, c, record.JSONSelector, "text", 1, frame.Object{{Key: "path", Value: path}})
 	if err != nil {
 		return encrypt.JSONSelection[E]{}, err
 	}
@@ -446,9 +446,9 @@ func JSONSelect[E ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Ci
 // built once, here, and the read keeps it: opening sends the engine the
 // same request the tokens were derived from.
 func JSONSubtree[E ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cipher, path string, opts encrypt.JSONReadOptions) (encrypt.JSONRead[E], error) {
-	input := vcvalue.Object{{Key: "path", Value: path}}
+	input := frame.Object{{Key: "path", Value: path}}
 	if opts.WildcardBound != 0 {
-		input = append(input, vcvalue.Field{Key: "wildcard_bound", Value: opts.WildcardBound})
+		input = append(input, frame.Field{Key: "wildcard_bound", Value: opts.WildcardBound})
 	}
 	term, err := f.jsonTerm(ctx, c, record.JSONSubtree, "text_array", 0, input)
 	if err != nil {
@@ -462,7 +462,7 @@ func JSONSubtree[E ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.C
 // each entry eql_v4.json_tree_children returns. E is the field's entry
 // type.
 func JSONChildren[E ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cipher, path string) (encrypt.JSONChildren[E], error) {
-	term, err := f.jsonTerm(ctx, c, record.JSONChildren, "text", 1, vcvalue.Object{{Key: "path", Value: path}})
+	term, err := f.jsonTerm(ctx, c, record.JSONChildren, "text", 1, frame.Object{{Key: "path", Value: path}})
 	if err != nil {
 		return encrypt.JSONChildren[E]{}, err
 	}
@@ -482,7 +482,7 @@ func JSONNodeToken[T any](ctx context.Context, f Field[T], c *encrypt.Cipher, op
 	if operator != record.JSONChildCount && operator != record.JSONChildren {
 		return "", fmt.Errorf("%w: gensupport: %s: %s derives no node token", encrypt.ErrEncoding, f.name, operator)
 	}
-	term, err := f.jsonTerm(ctx, c, record.JSONChildCount, "text", 1, vcvalue.Object{{Key: "path", Value: path}})
+	term, err := f.jsonTerm(ctx, c, record.JSONChildCount, "text", 1, frame.Object{{Key: "path", Value: path}})
 	if err != nil {
 		return "", err
 	}

@@ -5,9 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 	"github.com/tetratelabs/wazero/api"
 )
 
@@ -74,7 +73,7 @@ var errMalformedStep = fmt.Errorf("%w: the guest's step is malformed", ErrIntern
 // [{"method", "url", "headers", "body"}, ...]}`. Every byte slice it
 // returns is its own copy.
 func decodeAuthStep(raw []byte) (*authStep, error) {
-	decoded, err := vcffi.Unmarshal(raw)
+	decoded, err := frame.Unmarshal(raw)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errMalformedStep, err)
 	}
@@ -90,7 +89,7 @@ func authStepFrom(decoded any) (*authStep, error) {
 		guest.WipeDecoded(decoded)
 		return nil, errMalformedStep
 	}
-	obj, ok := decoded.(vcvalue.Object)
+	obj, ok := decoded.(frame.Object)
 	if !ok {
 		return refuse()
 	}
@@ -137,7 +136,7 @@ func decodeAuthRequest(item any) (authRequest, bool) {
 		guest.WipeDecoded(item)
 		return authRequest{}, false
 	}
-	obj, ok := item.(vcvalue.Object)
+	obj, ok := item.(frame.Object)
 	if !ok {
 		return refuse()
 	}
@@ -167,7 +166,7 @@ func decodeAuthRequest(item any) (authRequest, bool) {
 
 // decodeRunnable reads the list of parked handles the guest may resume.
 func decodeRunnable(raw []byte) ([]uint64, error) {
-	decoded, err := vcffi.Unmarshal(raw)
+	decoded, err := frame.Unmarshal(raw)
 	if err != nil {
 		return nil, fmt.Errorf("%w: the runnable operations: %w", ErrInternal, err)
 	}
@@ -206,13 +205,13 @@ func encodeResponses(responses []response) ([]byte, error) {
 		if body == nil {
 			body = []byte{}
 		}
-		items = append(items, vcvalue.Object{
+		items = append(items, frame.Object{
 			{Key: "status", Value: r.status},
 			{Key: "headers", Value: headers},
 			{Key: "body", Value: body},
 		})
 	}
-	return vcffi.Marshal(items)
+	return frame.Marshal(items)
 }
 
 // run drives one token operation, started by the export start selects with

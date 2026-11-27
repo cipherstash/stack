@@ -14,8 +14,7 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 )
 
 // Pure Go: no guest needed.
@@ -150,9 +149,9 @@ func TestTermsAndLeavesScanAndValue(t *testing.T) {
 func TestLeafSetKeepsStackEncryptLeavesDistinct(t *testing.T) {
 	ct := map[string]any{
 		"a": Ciphertext{1},
-		"c": otherLeaf{kind: vcffi.LeafEmptySeq, bytes: []byte{3}},
-		"d": otherLeaf{kind: vcffi.LeafEmptyMap, bytes: []byte{4}},
-		"p": vcvalue.Plain{V: "clear"},
+		"c": otherLeaf{kind: frame.LeafEmptySeq, bytes: []byte{3}},
+		"d": otherLeaf{kind: frame.LeafEmptyMap, bytes: []byte{4}},
+		"p": frame.Plain{V: "clear"},
 	}
 	encoded, err := marshalCipherText(ct)
 	if err != nil {
@@ -164,13 +163,6 @@ func TestLeafSetKeepsStackEncryptLeavesDistinct(t *testing.T) {
 	}
 	if !reflect.DeepEqual(back, ct) {
 		t.Fatalf("round trip %#v", back)
-	}
-	// A vitaminc leaf is not a stack-encrypt node.
-	if _, err := marshalCipherText(map[string]any{"a": vcvalue.Sealed{1}}); err == nil {
-		t.Fatal("vcvalue.Sealed accepted as a stack-encrypt leaf")
-	}
-	if _, err := vcffi.MarshalCipherText(vcffi.VCValueLeaves(), Ciphertext{1}); err == nil {
-		t.Fatal("encrypt.Ciphertext accepted as a vitaminc leaf")
 	}
 }
 

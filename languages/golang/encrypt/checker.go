@@ -6,10 +6,9 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // Checker asks the embedded engine about declarations, with no credentials,
@@ -53,7 +52,7 @@ func (k *Checker) Check(ctx context.Context, plan *record.Plan) error {
 // engineCheck asks se_plan_check alone, with no host rule first: the half
 // of Check that reaches the engine.
 func (k *Checker) engineCheck(ctx context.Context, plan *record.Plan) error {
-	encoded, err := vcffi.Marshal(plan.Wire())
+	encoded, err := frame.Marshal(plan.Wire())
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
@@ -77,7 +76,7 @@ func (k *Checker) Targets(ctx context.Context) ([]record.Target, error) {
 	if err != nil {
 		return nil, err
 	}
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := frame.Unmarshal(out)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInternal, err)
 	}
@@ -94,7 +93,7 @@ func (k *Checker) Operators(ctx context.Context, plan *record.Plan, field string
 	if err := plan.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	encoded, err := vcffi.Marshal(plan.Wire())
+	encoded, err := frame.Marshal(plan.Wire())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
@@ -104,7 +103,7 @@ func (k *Checker) Operators(ctx context.Context, plan *record.Plan, field string
 	if err != nil {
 		return nil, err
 	}
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := frame.Unmarshal(out)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInternal, err)
 	}
@@ -133,7 +132,7 @@ func (k *Checker) Contexts(ctx context.Context, plan *record.Plan) (string, erro
 // contextsOf asks se_contexts about a lowered plan: the half of
 // [Checker.Contexts] and [Cipher.Contexts] that reaches the engine.
 func contextsOf(ctx context.Context, c *Client, plan *record.Plan) (string, error) {
-	encoded, err := vcffi.Marshal(plan.Wire())
+	encoded, err := frame.Marshal(plan.Wire())
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
@@ -143,7 +142,7 @@ func contextsOf(ctx context.Context, c *Client, plan *record.Plan) (string, erro
 	if err != nil {
 		return "", err
 	}
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := frame.Unmarshal(out)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrInternal, err)
 	}
@@ -161,7 +160,7 @@ func contextsOf(ctx context.Context, c *Client, plan *record.Plan) (string, erro
 // ErrInternal: a decoder that kept a zero value would let stashgen decide an
 // encrypt_into on a type with no kind or no indexes.
 func parseTargets(decoded any) ([]record.Target, error) {
-	obj, ok := decoded.(vcvalue.Object)
+	obj, ok := decoded.(frame.Object)
 	if !ok || len(obj) != 1 || obj[0].Key != "targets" {
 		return nil, fmt.Errorf("%w: se_targets returned %T, not {\"targets\": [...]}", ErrInternal, decoded)
 	}
@@ -171,7 +170,7 @@ func parseTargets(decoded any) ([]record.Target, error) {
 	}
 	targets := make([]record.Target, 0, len(items))
 	for i, item := range items {
-		entry, ok := item.(vcvalue.Object)
+		entry, ok := item.(frame.Object)
 		if !ok {
 			return nil, fmt.Errorf("%w: target %d came back as %T", ErrInternal, i, item)
 		}
@@ -184,7 +183,7 @@ func parseTargets(decoded any) ([]record.Target, error) {
 	return targets, nil
 }
 
-func parseTarget(entry vcvalue.Object) (record.Target, error) {
+func parseTarget(entry frame.Object) (record.Target, error) {
 	var t record.Target
 	seen := map[string]bool{}
 	for _, f := range entry {
@@ -270,7 +269,7 @@ func parseOperators(value any) ([]record.Operator, error) {
 	}
 	operators := make([]record.Operator, 0, len(list))
 	for i, item := range list {
-		entry, ok := item.(vcvalue.Object)
+		entry, ok := item.(frame.Object)
 		if !ok {
 			return nil, fmt.Errorf("operator %d is %T, not an object", i, item)
 		}
@@ -358,7 +357,7 @@ func parseOperatorIndex(s string) (record.Output, error) {
 	return "", fmt.Errorf("unknown index %q", s)
 }
 
-func targetString(f vcvalue.Field) (string, error) {
+func targetString(f frame.Field) (string, error) {
 	s, ok := f.Value.(string)
 	if !ok {
 		return "", fmt.Errorf("%s is %T, not a string", f.Key, f.Value)
@@ -366,7 +365,7 @@ func targetString(f vcvalue.Field) (string, error) {
 	return s, nil
 }
 
-func targetOptionalString(f vcvalue.Field) (string, error) {
+func targetOptionalString(f frame.Field) (string, error) {
 	if f.Value == nil {
 		return "", nil
 	}

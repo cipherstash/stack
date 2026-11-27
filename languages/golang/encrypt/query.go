@@ -8,9 +8,8 @@ import (
 	"log/slog"
 	"math"
 
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // Queries named by operator (ADR-0009; ADR-0007, amended 2026-10-16): the
@@ -78,17 +77,17 @@ type Stats struct {
 }
 
 // wire is the statistics as se_target_limit reads them.
-func (s Stats) wire() vcvalue.Object {
-	out := vcvalue.Object{{Key: "rows", Value: s.Rows}}
+func (s Stats) wire() frame.Object {
+	out := frame.Object{{Key: "rows", Value: s.Rows}}
 	if s.Histogram != nil {
 		buckets := make([]any, len(s.Histogram))
 		for i, b := range s.Histogram {
 			buckets[i] = []any{b.Bits, b.Rows}
 		}
-		out = append(out, vcvalue.Field{Key: "histogram", Value: buckets})
+		out = append(out, frame.Field{Key: "histogram", Value: buckets})
 	}
 	if s.Confidence != 0 {
-		out = append(out, vcvalue.Field{Key: "confidence", Value: s.Confidence})
+		out = append(out, frame.Field{Key: "confidence", Value: s.Confidence})
 	}
 	return out
 }
@@ -120,7 +119,7 @@ func (l Limit) FetchOr(page uint64) uint64 {
 // and its input under this cipher's keyset: one value for every operator
 // but between, whose input is a two-element slice, low then high, and a
 // document's operators (contains, eq_at, selector, ...), whose input is a
-// vcvalue.Object of named inputs with JSON values as JSON text. The
+// frame.Object of named inputs with JSON values as JSON text. The
 // engine reads the input as the field's declared type, finds the index
 // that answers the operator, and derives that index's term under the
 // field's context; for a field that names an EQL type it runs the type's
@@ -141,14 +140,14 @@ func (cph *Cipher) QueryTerm(ctx context.Context, plan *record.Plan, field, oper
 	if err != nil {
 		return QueryTerm{}, err
 	}
-	encodedInput, err := vcffi.Marshal(input)
+	encodedInput, err := frame.Marshal(input)
 	if err != nil {
 		return QueryTerm{}, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
 	// The input is plaintext: its transport copy is wiped once it is in the
 	// guest.
 	defer wipe(encodedInput)
-	encodedPlan, err := vcffi.Marshal(p.Wire())
+	encodedPlan, err := frame.Marshal(p.Wire())
 	if err != nil {
 		return QueryTerm{}, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
@@ -162,7 +161,7 @@ func (cph *Cipher) QueryTerm(ctx context.Context, plan *record.Plan, field, oper
 	if err != nil {
 		return QueryTerm{}, err
 	}
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := frame.Unmarshal(out)
 	if err != nil {
 		return QueryTerm{}, fmt.Errorf("%w: %v", ErrInternal, err)
 	}
@@ -181,7 +180,7 @@ func (cph *Cipher) QueryTerm(ctx context.Context, plan *record.Plan, field, oper
 // strings, perhaps empty. The operator, fidelity and index take only the
 // values the engine writes, as the catalog reader's do.
 func parseQueryTerm(decoded any) (QueryTerm, error) {
-	obj, ok := decoded.(vcvalue.Object)
+	obj, ok := decoded.(frame.Object)
 	if !ok {
 		return QueryTerm{}, fmt.Errorf("came back as %T, not an object", decoded)
 	}
@@ -293,7 +292,7 @@ func (cph *Cipher) Verify(ctx context.Context, plan *record.Plan, field, operato
 	if err != nil {
 		return nil, err
 	}
-	encodedInput, err := vcffi.Marshal(input)
+	encodedInput, err := frame.Marshal(input)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
@@ -301,13 +300,13 @@ func (cph *Cipher) Verify(ctx context.Context, plan *record.Plan, field, operato
 	if values == nil {
 		values = []any{}
 	}
-	encodedValues, err := vcffi.Marshal(values)
+	encodedValues, err := frame.Marshal(values)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
 	// The values are decrypted plaintext: wiped once they are in the guest.
 	defer wipe(encodedValues)
-	encodedPlan, err := vcffi.Marshal(p.Wire())
+	encodedPlan, err := frame.Marshal(p.Wire())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
@@ -317,7 +316,7 @@ func (cph *Cipher) Verify(ctx context.Context, plan *record.Plan, field, operato
 	if err != nil {
 		return nil, err
 	}
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := frame.Unmarshal(out)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInternal, err)
 	}
@@ -346,11 +345,11 @@ func (cph *Cipher) TargetLimit(ctx context.Context, plan *record.Plan, field, op
 	if err != nil {
 		return Limit{}, err
 	}
-	encodedStats, err := vcffi.Marshal(stats.wire())
+	encodedStats, err := frame.Marshal(stats.wire())
 	if err != nil {
 		return Limit{}, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	encodedPlan, err := vcffi.Marshal(p.Wire())
+	encodedPlan, err := frame.Marshal(p.Wire())
 	if err != nil {
 		return Limit{}, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
@@ -360,7 +359,7 @@ func (cph *Cipher) TargetLimit(ctx context.Context, plan *record.Plan, field, op
 	if err != nil {
 		return Limit{}, err
 	}
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := frame.Unmarshal(out)
 	if err != nil {
 		return Limit{}, fmt.Errorf("%w: %v", ErrInternal, err)
 	}

@@ -4,7 +4,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 )
 
 // Ciphertext is one sealed field as a database column holds it: the frozen
@@ -59,24 +59,24 @@ func scanBytes(kind string, src any) ([]byte, error) {
 // produces. Decoding one is an error at the use site. An absent value is a
 // sealed null, a Ciphertext like any other value.
 type otherLeaf struct {
-	kind  vcffi.LeafKind
+	kind  frame.LeafKind
 	bytes []byte
 }
 
-// leaves is the vcffi.LeafSet of this binding's leaf types.
-var leaves = vcffi.LeafSet{
-	Classify: func(v any) (vcffi.LeafKind, []byte, bool) {
+// leaves is the frame.LeafSet of this binding's leaf types.
+var leaves = frame.LeafSet{
+	Classify: func(v any) (frame.LeafKind, []byte, bool) {
 		switch n := v.(type) {
 		case Ciphertext:
-			return vcffi.LeafSingle, n, true
+			return frame.LeafSingle, n, true
 		case otherLeaf:
 			return n.kind, n.bytes, true
 		default:
 			return 0, nil, false
 		}
 	},
-	Make: func(kind vcffi.LeafKind, bytes []byte) any {
-		if kind == vcffi.LeafSingle {
+	Make: func(kind frame.LeafKind, bytes []byte) any {
+		if kind == frame.LeafSingle {
 			return Ciphertext(bytes)
 		}
 		return otherLeaf{kind: kind, bytes: bytes}
@@ -84,9 +84,9 @@ var leaves = vcffi.LeafSet{
 }
 
 func marshalCipherText(v any) ([]byte, error) {
-	return vcffi.MarshalCipherText(leaves, v)
+	return frame.MarshalCipherText(leaves, v)
 }
 
 func unmarshalCipherText(buf []byte) (any, error) {
-	return vcffi.UnmarshalCipherText(leaves, buf)
+	return frame.UnmarshalCipherText(leaves, buf)
 }

@@ -16,9 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 	"github.com/tetratelabs/wazero/api"
 )
 
@@ -383,19 +382,19 @@ func TestStrategyAndProfileCloseInAnyOrderReturn(t *testing.T) {
 }
 
 // A device session's token read is refused unless it holds both fields,
-// with their types, and nothing else. (vcffi refuses a duplicate key
+// with their types, and nothing else. (The codec refuses a duplicate key
 // before decodeDeviceToken sees the frame.)
 func TestDecodeDeviceTokenRefusesAnyOtherShape(t *testing.T) {
-	type f = vcvalue.Field
-	frame := func(t *testing.T, v any) []byte {
+	type f = frame.Field
+	encode := func(t *testing.T, v any) []byte {
 		t.Helper()
-		raw, err := vcffi.Marshal(v)
+		raw, err := frame.Marshal(v)
 		if err != nil {
 			t.Fatalf("Marshal: %v", err)
 		}
 		return raw
 	}
-	token, refresh, err := decodeDeviceToken(frame(t, vcvalue.Object{
+	token, refresh, err := decodeDeviceToken(encode(t, frame.Object{
 		{Key: "access_token", Value: "Zq7-secret"}, {Key: "refresh_required", Value: true},
 	}))
 	if err != nil || token != "Zq7-secret" || !refresh {
@@ -403,13 +402,13 @@ func TestDecodeDeviceTokenRefusesAnyOtherShape(t *testing.T) {
 	}
 	for name, raw := range map[string][]byte{
 		"empty":           {},
-		"not a map":       frame(t, []any{}),
-		"no token":        frame(t, vcvalue.Object{f{Key: "refresh_required", Value: false}}),
-		"no flag":         frame(t, vcvalue.Object{f{Key: "access_token", Value: "Zq7-secret"}}),
-		"empty token":     frame(t, vcvalue.Object{f{Key: "access_token", Value: ""}, f{Key: "refresh_required", Value: false}}),
-		"token not text":  frame(t, vcvalue.Object{f{Key: "access_token", Value: int64(1)}, f{Key: "refresh_required", Value: false}}),
-		"flag not a bool": frame(t, vcvalue.Object{f{Key: "access_token", Value: "Zq7-secret"}, f{Key: "refresh_required", Value: "no"}}),
-		"an extra field":  frame(t, vcvalue.Object{f{Key: "access_token", Value: "Zq7-secret"}, f{Key: "refresh_required", Value: false}, f{Key: "extra", Value: true}}),
+		"not a map":       encode(t, []any{}),
+		"no token":        encode(t, frame.Object{f{Key: "refresh_required", Value: false}}),
+		"no flag":         encode(t, frame.Object{f{Key: "access_token", Value: "Zq7-secret"}}),
+		"empty token":     encode(t, frame.Object{f{Key: "access_token", Value: ""}, f{Key: "refresh_required", Value: false}}),
+		"token not text":  encode(t, frame.Object{f{Key: "access_token", Value: int64(1)}, f{Key: "refresh_required", Value: false}}),
+		"flag not a bool": encode(t, frame.Object{f{Key: "access_token", Value: "Zq7-secret"}, f{Key: "refresh_required", Value: "no"}}),
+		"an extra field":  encode(t, frame.Object{f{Key: "access_token", Value: "Zq7-secret"}, f{Key: "refresh_required", Value: false}, f{Key: "extra", Value: true}}),
 	} {
 		_, _, err := decodeDeviceToken(raw)
 		if !errors.Is(err, ErrInternal) {
@@ -519,7 +518,7 @@ func byteLeaves(v any) [][]byte {
 			out = append(out, byteLeaves(item)...)
 		}
 		return out
-	case vcvalue.Object:
+	case frame.Object:
 		var out [][]byte
 		for _, f := range v {
 			out = append(out, byteLeaves(f.Value)...)
@@ -533,16 +532,16 @@ func byteLeaves(v any) [][]byte {
 // body, wherever the refusal comes, carry a credential.
 func TestARefusedStepIsWipedWhole(t *testing.T) {
 	marker := func() []byte { return []byte("leak-marker-credential") }
-	request := func(fields ...vcvalue.Field) vcvalue.Object { return vcvalue.Object(fields) }
-	good := func() vcvalue.Object {
+	request := func(fields ...frame.Field) frame.Object { return frame.Object(fields) }
+	good := func() frame.Object {
 		return request(
-			vcvalue.Field{Key: "method", Value: "POST"},
-			vcvalue.Field{Key: "url", Value: "https://cts.example/api/authorise"},
-			vcvalue.Field{Key: "headers", Value: marker()},
-			vcvalue.Field{Key: "body", Value: marker()},
+			frame.Field{Key: "method", Value: "POST"},
+			frame.Field{Key: "url", Value: "https://cts.example/api/authorise"},
+			frame.Field{Key: "headers", Value: marker()},
+			frame.Field{Key: "body", Value: marker()},
 		)
 	}
-	for name, frame := range map[string]vcvalue.Object{
+	for name, step := range map[string]frame.Object{
 		"a field refused before the requests": {
 			{Key: "handle", Value: uint64(1)},
 			{Key: "unknown", Value: true},
@@ -552,25 +551,25 @@ func TestARefusedStepIsWipedWhole(t *testing.T) {
 		"the requests after a refused one": {
 			{Key: "handle", Value: uint64(1)},
 			{Key: "parked", Value: false},
-			{Key: "requests", Value: []any{request(vcvalue.Field{Key: "method", Value: uint64(5)}), good()}},
+			{Key: "requests", Value: []any{request(frame.Field{Key: "method", Value: uint64(5)}), good()}},
 		},
 		"the fields after a refused one": {
 			{Key: "handle", Value: uint64(1)},
 			{Key: "parked", Value: false},
 			{Key: "requests", Value: []any{request(
-				vcvalue.Field{Key: "method", Value: marker()},
-				vcvalue.Field{Key: "url", Value: "https://cts.example"},
-				vcvalue.Field{Key: "headers", Value: marker()},
-				vcvalue.Field{Key: "body", Value: marker()},
+				frame.Field{Key: "method", Value: marker()},
+				frame.Field{Key: "url", Value: "https://cts.example"},
+				frame.Field{Key: "headers", Value: marker()},
+				frame.Field{Key: "body", Value: marker()},
 			)}},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			raw, err := vcffi.Marshal(frame)
+			raw, err := frame.Marshal(step)
 			if err != nil {
 				t.Fatal(err)
 			}
-			decoded, err := vcffi.Unmarshal(raw)
+			decoded, err := frame.Unmarshal(raw)
 			if err != nil {
 				t.Fatal(err)
 			}

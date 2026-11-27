@@ -4,27 +4,26 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 func TestWipeDecodedZeroesEveryBytesLeafAtAnyDepth(t *testing.T) {
 	secret := func() []byte { return []byte("secret") }
-	raw, err := vcffi.Marshal(vcvalue.Object{
+	raw, err := frame.Marshal(frame.Object{
 		{Key: "top", Value: secret()},
 		{Key: "text", Value: "kept"},
 		{Key: "n", Value: uint64(7)},
 		{Key: "list", Value: []any{secret(), "kept", []any{secret()}}},
-		{Key: "object", Value: vcvalue.Object{
+		{Key: "object", Value: frame.Object{
 			{Key: "inner", Value: secret()},
-			{Key: "deeper", Value: vcvalue.Object{{Key: "leaf", Value: secret()}}},
+			{Key: "deeper", Value: frame.Object{{Key: "leaf", Value: secret()}}},
 		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := vcffi.Unmarshal(raw)
+	decoded, err := frame.Unmarshal(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +37,7 @@ func TestWipeDecodedZeroesEveryBytesLeafAtAnyDepth(t *testing.T) {
 			for _, item := range v {
 				collect(item)
 			}
-		case vcvalue.Object:
+		case frame.Object:
 			for _, f := range v {
 				collect(f.Value)
 			}
@@ -54,14 +53,14 @@ func TestWipeDecodedZeroesEveryBytesLeafAtAnyDepth(t *testing.T) {
 			t.Errorf("bytes leaf %d was not wiped", i)
 		}
 	}
-	obj := decoded.(vcvalue.Object)
+	obj := decoded.(frame.Object)
 	if obj[1].Value != "kept" || obj[2].Value != uint64(7) {
 		t.Error("a value that is not bytes changed")
 	}
 }
 
 func TestWipeDecodedTakesAnyValue(t *testing.T) {
-	for _, v := range []any{nil, "text", uint64(1), true, []byte{}, []any{}, vcvalue.Object{}} {
+	for _, v := range []any{nil, "text", uint64(1), true, []byte{}, []any{}, frame.Object{}} {
 		guest.WipeDecoded(v)
 	}
 	b := []byte("secret")

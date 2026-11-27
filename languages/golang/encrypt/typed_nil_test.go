@@ -9,18 +9,17 @@ import (
 	"time"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
 // A typed nil pointer on the two raw paths. Generated code passes a nil
 // pointer through gensupport.Deref, which gives an untyped nil; the two
 // paths that take a caller's value as it is are Cipher.Seal with a
 // hand-built record.Source and Cipher.QueryTerm's input. There a
-// (*int64)(nil) is not == nil, so it is sent, and vcffi, from vitaminc
-// e9c3837b on (on main, in no Go tag yet), writes it as a typed null,
-// padded to the width of an int64, where it wrote a one-byte null. These
-// tests pin what the engine does with it: a typed null is a null to the
+// (*int64)(nil) is not == nil, so it is sent, and the codec writes it as a
+// typed null, padded to the width of an int64, not as the one-byte null an
+// untyped nil is. These tests pin what the engine does with it: a typed null is a null to the
 // engine, so each path answers a typed nil as it answers an untyped one, on
 // a field of every null mode.
 
@@ -33,12 +32,12 @@ var typedNilPlan = &record.Plan{Context: []string{"typed_nil"}, Fields: []record
 	{Name: "when", Kind: record.Timestamp, Outputs: []record.Output{record.Ciphertext, record.Equality}, Null: record.SealedNull},
 }}
 
-// The pinned vcffi behaviour itself, so the engine tests below are read
+// The codec's behaviour itself, so the engine tests below are read
 // against the bytes that reach it: a nil pointer to a fixed-width type is a
 // typed null (tag 0x15, then the type, padded to the type's width), not the
 // one-byte null an untyped nil is, and it decodes as nil like every null.
 func TestANilFixedWidthPointerMarshalsAsATypedNull(t *testing.T) {
-	untyped, err := vcffi.Marshal(nil)
+	untyped, err := frame.Marshal(nil)
 	if err != nil || !bytes.Equal(untyped, []byte{0x00}) {
 		t.Fatalf("an untyped nil marshals as %x, %v; want the one-byte null", untyped, err)
 	}
@@ -50,21 +49,21 @@ func TestANilFixedWidthPointerMarshalsAsATypedNull(t *testing.T) {
 		"*float64":   {(*float64)(nil), 1.5},
 		"*time.Time": {(*time.Time)(nil), time.Unix(1_700_000_000, 0).UTC()},
 	} {
-		got, err := vcffi.Marshal(tc.nilPointer)
+		got, err := frame.Marshal(tc.nilPointer)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 		if bytes.Equal(got, untyped) || got[0] != 0x15 {
 			t.Fatalf("%s: a nil pointer marshals as %x; want a typed null (tag 0x15)", name, got)
 		}
-		value, err := vcffi.Marshal(tc.present)
+		value, err := frame.Marshal(tc.present)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(got) != len(value) {
 			t.Fatalf("%s: the typed null is %d bytes, a value %d; want them as long", name, len(got), len(value))
 		}
-		back, err := vcffi.Unmarshal(got)
+		back, err := frame.Unmarshal(got)
 		if err != nil || back != nil {
 			t.Fatalf("%s: the typed null decodes as %#v, %v; want nil", name, back, err)
 		}

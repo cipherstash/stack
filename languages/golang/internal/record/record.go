@@ -30,7 +30,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 )
 
 // Kind is a plan field's declared type: the data form of the Rust chain's
@@ -192,17 +192,17 @@ func (o *TargetOptions) ElementArrays() []ElementArray {
 }
 
 // wire is the options object as the plan spells it: only the options set.
-func (o *TargetOptions) wire() vcvalue.Object {
-	out := vcvalue.Object{}
+func (o *TargetOptions) wire() frame.Object {
+	out := frame.Object{}
 	if o.SealedRoot != nil {
-		out = append(out, vcvalue.Field{Key: "sealed_root", Value: *o.SealedRoot})
+		out = append(out, frame.Field{Key: "sealed_root", Value: *o.SealedRoot})
 	}
 	if o.Ordered != nil {
 		paths := make([]any, len(o.Ordered))
 		for i, p := range o.Ordered {
 			paths[i] = p
 		}
-		out = append(out, vcvalue.Field{Key: "ordered", Value: paths})
+		out = append(out, frame.Field{Key: "ordered", Value: paths})
 	}
 	return out
 }
@@ -508,19 +508,19 @@ func (p *Plan) Field(name string) *Field {
 // (the label, extended), its outputs or its target, and its type; with a
 // context field, the plan-level "context_field" key and that field's own
 // entry, a passthrough of type string. Validate first.
-func (p *Plan) Wire() vcvalue.Object {
-	out := make(vcvalue.Object, 0, len(p.Fields)+3)
+func (p *Plan) Wire() frame.Object {
+	out := make(frame.Object, 0, len(p.Fields)+3)
 	if len(p.Bind) != 0 {
 		parts := make([]any, len(p.Bind))
 		for i, part := range p.Bind {
 			parts[i] = ownPart(part)
 		}
-		out = append(out, vcvalue.Field{Key: "bind", Value: parts})
+		out = append(out, frame.Field{Key: "bind", Value: parts})
 	}
 	if p.ContextField != "" {
 		out = append(out,
-			vcvalue.Field{Key: "context_field", Value: p.ContextField},
-			vcvalue.Field{Key: p.ContextField, Value: vcvalue.Object{
+			frame.Field{Key: "context_field", Value: p.ContextField},
+			frame.Field{Key: p.ContextField, Value: frame.Object{
 				{Key: "context", Value: p.FieldContext(Field{Name: p.ContextField})},
 				{Key: "outputs", Value: []any{string(Passthrough)}},
 				{Key: "type", Value: string(String)},
@@ -528,29 +528,29 @@ func (p *Plan) Wire() vcvalue.Object {
 		)
 	}
 	for _, f := range p.Fields {
-		spec := vcvalue.Object{{Key: "context", Value: p.FieldContext(f)}}
+		spec := frame.Object{{Key: "context", Value: p.FieldContext(f)}}
 		switch {
 		case f.IsTarget() && f.TargetOptions != nil:
-			spec = append(spec, vcvalue.Field{Key: "target", Value: vcvalue.Object{
+			spec = append(spec, frame.Field{Key: "target", Value: frame.Object{
 				{Key: "name", Value: f.Target},
 				{Key: "options", Value: f.TargetOptions.wire()},
 			}})
 		case f.IsTarget():
-			spec = append(spec, vcvalue.Field{Key: "target", Value: f.Target})
+			spec = append(spec, frame.Field{Key: "target", Value: f.Target})
 		default:
 			outputs := make([]any, len(f.Outputs))
 			for i, o := range f.Outputs {
 				outputs[i] = string(o)
 			}
-			spec = append(spec, vcvalue.Field{Key: "outputs", Value: outputs})
+			spec = append(spec, frame.Field{Key: "outputs", Value: outputs})
 		}
 		if f.Kind != Untyped {
-			spec = append(spec, vcvalue.Field{Key: "type", Value: string(f.Kind)})
+			spec = append(spec, frame.Field{Key: "type", Value: string(f.Kind)})
 		}
 		if f.Null != NotNull {
-			spec = append(spec, vcvalue.Field{Key: "null", Value: string(f.Null)})
+			spec = append(spec, frame.Field{Key: "null", Value: string(f.Null)})
 		}
-		out = append(out, vcvalue.Field{Key: f.Name, Value: spec})
+		out = append(out, frame.Field{Key: f.Name, Value: spec})
 	}
 	return out
 }

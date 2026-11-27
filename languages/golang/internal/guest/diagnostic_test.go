@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/experimental"
 )
@@ -186,7 +186,7 @@ func callStub(t *testing.T, status uint32, detail []byte, mode lastErrorMode) ([
 
 func encode(t *testing.T, v any) []byte {
 	t.Helper()
-	raw, err := vcffi.Marshal(v)
+	raw, err := frame.Marshal(v)
 	if err != nil {
 		t.Fatal(err)
 	}

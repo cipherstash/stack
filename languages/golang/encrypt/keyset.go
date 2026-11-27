@@ -4,7 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 )
 
 // KeysetSelector names the keyset a call binds to, as Rust's IdentifiedBy
@@ -107,7 +107,7 @@ func (o callOptions) wire() map[string]any {
 
 // marshal is the options object in the transport codec.
 func (o callOptions) marshal() ([]byte, error) {
-	return vcffi.Marshal(o.wire())
+	return frame.Marshal(o.wire())
 }
 
 // dataKeyCall is the options of a call through this cipher that asks

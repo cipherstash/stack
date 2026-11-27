@@ -1161,7 +1161,7 @@ func itOrEach(fields []string) string {
 // each, or "" from one that carries it. encoding/json: a row an earlier
 // release sealed holds the struct as one JSON document, which comes back
 // by decoding it into the generated shape struct. The storage profile
-// (vcffi.MarshalStorage and UnmarshalStorage): the struct is sealed as a
+// (frame.MarshalStorage and UnmarshalStorage): the struct is sealed as a
 // storage blob now. One walk asks both rules of every type it reaches, so
 // a case one rule covers and the other does not cannot fall between two
 // walkers; byJSON and byStorage say which rules still apply, and each stops
@@ -1172,7 +1172,7 @@ func itOrEach(fields []string) string {
 // string or integer keys, a pointer, or a struct whose every field is
 // exported and carried; a struct with an unexported field would come back
 // without it, an interface or a channel not at all. The storage rule,
-// vcffi's own: a scalar by its kind; a slice, array or pointer by its
+// the codec's own: a scalar by its kind; a slice, array or pointer by its
 // element; a map whose key is an integer, a string, bytes or text, by its
 // value; a struct by its exported fields; no logical value type
 // (encrypt.Decimal, encrypt.Date, which have no storage form); and no type
@@ -1229,7 +1229,7 @@ func notCarried(t types.Type, seen map[types.Type]bool, byJSON, byStorage bool) 
 		return notCarried(u.Elem(), seen, byJSON, byStorage)
 	case *types.Struct:
 		// Both write a struct by its exported fields and drop the rest:
-		// vcffi refuses a struct that has unexported fields only, and a
+		// the codec refuses a struct that has unexported fields only, and a
 		// struct with none at all (struct{}) is an empty object to both,
 		// read back as itself.
 		for i := range u.NumFields() {
@@ -1476,7 +1476,7 @@ func methodOf(t types.Type, name string) (*types.Selection, bool) {
 
 // noStorageForm refuses vitaminc's logical value types, which the
 // transport carries and the storage profile does not: encrypt.Date and
-// encrypt.Decimal (vcvalue.Date and vcvalue.Decimal), and vcvalue's other
+// encrypt.Decimal (frame.Date and frame.Decimal), and vcvalue's other
 // logical types. Its 128-bit integers and Object have a storage form.
 func noStorageForm(t types.Type) string {
 	switch kind, _ := valueKind(t); kind {
@@ -1491,7 +1491,7 @@ func noStorageForm(t types.Type) string {
 	if !ok || named.Obj().Pkg() == nil || named.Obj().Pkg().Path() != vcvaluePath || named.Obj().Name() == "Object" {
 		return ""
 	}
-	return "is vcvalue." + named.Obj().Name() + ", which has no storage form"
+	return "is frame." + named.Obj().Name() + ", which has no storage form"
 }
 
 // textForm reports whether t is written as its text, and why not when it
@@ -1519,7 +1519,7 @@ func textForm(t types.Type) (bool, string) {
 	return false, ""
 }
 
-// notStorableKey says why a map key has no storage form: vcffi takes an
+// notStorableKey says why a map key has no storage form: the codec takes an
 // integer, a string, bytes (a byte array, a 128-bit integer; a slice is
 // not comparable, so Go never keys a map by one) or a type with MarshalText
 // and UnmarshalText.

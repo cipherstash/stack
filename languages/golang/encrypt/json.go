@@ -11,9 +11,8 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // JSONOpen opens the rows that a read of a JSON document field returned.
@@ -57,7 +56,7 @@ import (
 // Opening does not prove the database returned every row the read asked
 // for, or rows of the database row the caller meant: see the EQL json_tree
 // leakage reference.
-func (cph *Cipher) JSONOpen(ctx context.Context, plan *record.Plan, field string, request vcvalue.Object, rows [][][]byte) ([][][]byte, error) {
+func (cph *Cipher) JSONOpen(ctx context.Context, plan *record.Plan, field string, request frame.Object, rows [][][]byte) ([][][]byte, error) {
 	for _, f := range request {
 		if f.Key == "operation" && f.Value == record.JSONChildren {
 			return nil, fmt.Errorf("%w: a children read opens with JSONChildren.Open, which returns each child's key or index", ErrEncoding)
@@ -88,7 +87,7 @@ func (cph *Cipher) JSONOpen(ctx context.Context, plan *record.Plan, field string
 // jsonOpen calls se_json_open with the request and the rows. It returns the
 // decoded list, with one item per group of rows. Each read's Open reads its
 // values from that list.
-func (cph *Cipher) jsonOpen(ctx context.Context, plan *record.Plan, field string, request vcvalue.Object, rows [][][]byte) ([]any, error) {
+func (cph *Cipher) jsonOpen(ctx context.Context, plan *record.Plan, field string, request frame.Object, rows [][][]byte) ([]any, error) {
 	p, err := cph.readPlan(plan, field)
 	if err != nil {
 		return nil, err
@@ -101,15 +100,15 @@ func (cph *Cipher) jsonOpen(ctx context.Context, plan *record.Plan, field string
 		}
 		groups[i] = entries
 	}
-	encodedRows, err := vcffi.Marshal(groups)
+	encodedRows, err := frame.Marshal(groups)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	encodedRequest, err := vcffi.Marshal(request)
+	encodedRequest, err := frame.Marshal(request)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	encodedPlan, err := vcffi.Marshal(p.Wire())
+	encodedPlan, err := frame.Marshal(p.Wire())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
@@ -126,7 +125,7 @@ func (cph *Cipher) jsonOpen(ctx context.Context, plan *record.Plan, field string
 	// The output is plaintext: wiped once it is decoded into the caller's
 	// values.
 	defer wipe(out)
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := frame.Unmarshal(out)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInternal, err)
 	}
@@ -396,7 +395,7 @@ func (s JSONSelection[E]) Open(ctx context.Context, rows []*E) ([]JSONValue, err
 	if !entries {
 		return make([]JSONValue, len(rows)), nil
 	}
-	opened, err := s.cipher.JSONOpen(ctx, s.plan, s.field, vcvalue.Object{{Key: "operation", Value: record.JSONSelector}, {Key: "path", Value: s.path}}, groups)
+	opened, err := s.cipher.JSONOpen(ctx, s.plan, s.field, frame.Object{{Key: "operation", Value: record.JSONSelector}, {Key: "path", Value: s.path}}, groups)
 	if err != nil {
 		return nil, err
 	}
@@ -430,14 +429,14 @@ type JSONRead[E ~[]byte] struct {
 	plan   *record.Plan
 	// input is the subtree operator's input the tokens were derived from;
 	// opening sends it back as the read's request, unchanged.
-	input  vcvalue.Object
+	input  frame.Object
 	tokens JSONTokens
 }
 
 // NewJSONRead is a read prepared by [Cipher.QueryTerm]'s subtree operator
 // on field of the record type that declaration declares, from input, its
 // {"path", "wildcard_bound"?} object. For generated code.
-func NewJSONRead[E ~[]byte](c *Cipher, declaration *record.Plan, field string, input vcvalue.Object, tokens []string) JSONRead[E] {
+func NewJSONRead[E ~[]byte](c *Cipher, declaration *record.Plan, field string, input frame.Object, tokens []string) JSONRead[E] {
 	return JSONRead[E]{redactedRead: redactedRead[subtreeRead]{field: field, count: len(tokens)}, cipher: c, plan: declaration, input: input, tokens: JSONTokens(tokens)}
 }
 
@@ -474,7 +473,7 @@ func (r JSONRead[E]) Open(ctx context.Context, rows [][]E) ([][]json.RawMessage,
 			groups[i][j] = []byte(entry)
 		}
 	}
-	request := append(vcvalue.Object{{Key: "operation", Value: record.JSONSubtree}}, r.input...)
+	request := append(frame.Object{{Key: "operation", Value: record.JSONSubtree}}, r.input...)
 	opened, err := r.cipher.JSONOpen(ctx, r.plan, r.field, request, groups)
 	if err != nil {
 		return nil, err
@@ -622,7 +621,7 @@ func (c JSONChildren[E]) Open(ctx context.Context, entries []E) ([]JSONChildValu
 	for i, entry := range entries {
 		groups[i] = [][]byte{[]byte(entry)}
 	}
-	request := vcvalue.Object{{Key: "operation", Value: record.JSONChildren}, {Key: "path", Value: c.path}}
+	request := frame.Object{{Key: "operation", Value: record.JSONChildren}, {Key: "path", Value: c.path}}
 	list, err := c.cipher.jsonOpen(ctx, c.plan, c.field, request, groups)
 	if err != nil {
 		return nil, err
@@ -699,7 +698,7 @@ func (v JSONChildValue) LogValue() slog.Value { return slog.StringValue(redacted
 // {"key": string, "json": bytes} for a member, or {"index": uint64, "json":
 // bytes} for an element. An error names what is wrong, never a value.
 func jsonChildValue(item any) (JSONChildValue, error) {
-	fields, ok := item.(vcvalue.Object)
+	fields, ok := item.(frame.Object)
 	if !ok || len(fields) != 2 {
 		return JSONChildValue{}, fmt.Errorf("a child is %T, not a map of a key or an index and json", item)
 	}

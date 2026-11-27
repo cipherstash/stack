@@ -19,8 +19,8 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // The query fixture holds the guest's query exports to the Rust results:
@@ -96,7 +96,7 @@ func readQueryFixture(t *testing.T) queryFixture {
 // objects as maps, lists as []any.
 func wireJSON(v any) any {
 	switch v := v.(type) {
-	case vcvalue.Object:
+	case frame.Object:
 		out := make(map[string]any, len(v))
 		for _, f := range v {
 			out[f.Key] = wireJSON(f.Value)

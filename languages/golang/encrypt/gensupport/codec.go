@@ -8,8 +8,8 @@ import (
 	"sync"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
 // Values is a struct's field values by declared name: what Source gives and
@@ -380,17 +380,17 @@ func (c *RecordsCodec[P, R]) Decrypt(ctx context.Context, d encrypt.Decrypter, r
 
 // opaqueBytes is an opaque struct's fields as the one value the engine
 // seals: a storage blob (vitaminc's storage profile, version 1, written by
-// vcffi.MarshalStorage) of the generated shape struct, so the struct is one
+// frame.MarshalStorage) of the generated shape struct, so the struct is one
 // column and every field comes back at the Go type the struct declares. The
 // storage profile is the format for bytes that are kept: unlike the
 // transport, its version 1 is a compatibility commitment shared with Rust,
 // and it carries every float, NaN and the infinities included.
 func opaqueBytes(fields any) ([]byte, error) {
-	encoded, err := vcffi.MarshalStorage(fields)
+	encoded, err := frame.MarshalStorage(fields)
 	if err != nil {
-		// vcffi's error names a type or a kind (no storage form, a string
+		// The codec's error names a type or a kind (no storage form, a string
 		// that is not UTF-8, a repeated key, nesting too deep), never a
-		// value, so it is wrapped: errors.Is reads vcffi.ErrUnwritable.
+		// value, so it is wrapped: errors.Is reads frame.ErrUnwritable.
 		return nil, fmt.Errorf("%w: the opaque value cannot be written as a storage blob: %w", encrypt.ErrEncoding, err)
 	}
 	return encoded, nil
@@ -414,9 +414,9 @@ func Opaque[T any](vals Values, out *T) error {
 	if !ok {
 		return fmt.Errorf("gensupport: %w: the opaque value opened as %T, not bytes", encrypt.ErrEncoding, v)
 	}
-	if bytes.HasPrefix(encoded, vcffi.StorageHeader[:3]) {
-		if err := vcffi.UnmarshalStorage(encoded, out); err != nil {
-			// The vcffi error names the kind found and where, never the
+	if bytes.HasPrefix(encoded, frame.StorageHeader[:3]) {
+		if err := frame.UnmarshalStorage(encoded, out); err != nil {
+			// The codec's error names the kind found and where, never the
 			// value; it is wrapped so errors.Is reads its class
 			// (encrypt.ErrStorageVersion for a blob a later release
 			// wrote, say).

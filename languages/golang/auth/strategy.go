@@ -9,9 +9,8 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 	"github.com/tetratelabs/wazero/api"
 )
 
@@ -413,11 +412,11 @@ func (s *Strategy) token(ctx context.Context) (string, error) {
 // quotes the frame: it carries the token.
 func decodeDeviceToken(raw []byte) (token string, refresh bool, err error) {
 	malformed := fmt.Errorf("%w: the guest's device session token is malformed", ErrInternal)
-	decoded, err := vcffi.Unmarshal(raw)
+	decoded, err := frame.Unmarshal(raw)
 	if err != nil {
 		return "", false, malformed
 	}
-	obj, ok := decoded.(vcvalue.Object)
+	obj, ok := decoded.(frame.Object)
 	if !ok {
 		return "", false, malformed
 	}

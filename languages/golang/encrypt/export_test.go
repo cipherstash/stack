@@ -11,10 +11,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 	"github.com/tetratelabs/wazero/api"
 )
 
@@ -64,7 +63,7 @@ func FixedCredentials() Credentials { return testCredentials(staticToken("stub-t
 // names operator as its operation, at path: nil when the engine opens a
 // read of that operation.
 func (cph *Cipher) JSONOpensForTest(ctx context.Context, plan *record.Plan, field, operator, path string) error {
-	_, err := cph.jsonOpen(ctx, plan, field, vcvalue.Object{{Key: "operation", Value: operator}, {Key: "path", Value: path}}, nil)
+	_, err := cph.jsonOpen(ctx, plan, field, frame.Object{{Key: "operation", Value: operator}, {Key: "path", Value: path}}, nil)
 	return err
 }
 
@@ -323,11 +322,11 @@ func (r *recordingTransport) take() []RecordedRequest {
 // key, so the SDK leaves the metadata out. The test reads what the guest
 // answers to a host that sends it anyway.
 func (cph *Cipher) TermWithAuditForTest(ctx context.Context, value any, fieldContext []any) ([]byte, error) {
-	encodedValue, err := vcffi.Marshal(value)
+	encodedValue, err := frame.Marshal(value)
 	if err != nil {
 		return nil, err
 	}
-	encodedContext, err := vcffi.Marshal(fieldContext)
+	encodedContext, err := frame.Marshal(fieldContext)
 	if err != nil {
 		return nil, err
 	}
@@ -355,11 +354,11 @@ func (cph *Cipher) AuditFactsForTest() (any, error) {
 	if !ok {
 		return nil, nil
 	}
-	encoded, err := vcffi.Marshal(facts)
+	encoded, err := frame.Marshal(facts)
 	if err != nil {
 		return nil, err
 	}
-	return vcffi.Unmarshal(encoded)
+	return frame.Unmarshal(encoded)
 }
 
 // AuditUncheckedForTest is the cipher with facts as its audit metadata, as

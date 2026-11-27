@@ -13,9 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 	"github.com/tetratelabs/wazero/api"
 )
 
@@ -405,7 +404,7 @@ func (s *ProfileStore) ListWorkspaces(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := frame.Unmarshal(out)
 	if err != nil {
 		return nil, fmt.Errorf("%w: decoding the workspace list: %w", ErrInternal, err)
 	}
@@ -533,14 +532,14 @@ func (s *ProfileStore) DeviceIdentity(ctx context.Context) (DeviceIdentity, erro
 }
 
 // fields is a decoded codec object.
-type fields vcvalue.Object
+type fields frame.Object
 
 func object(encoded []byte) (fields, error) {
-	decoded, err := vcffi.Unmarshal(encoded)
+	decoded, err := frame.Unmarshal(encoded)
 	if err != nil {
 		return nil, fmt.Errorf("%w: decoding the guest's result: %w", ErrInternal, err)
 	}
-	obj, ok := decoded.(vcvalue.Object)
+	obj, ok := decoded.(frame.Object)
 	if !ok {
 		return nil, fmt.Errorf("%w: the guest's result is not an object", ErrInternal)
 	}

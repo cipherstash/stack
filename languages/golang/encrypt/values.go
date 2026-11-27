@@ -3,7 +3,7 @@ package encrypt
 import (
 	"time"
 
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 )
 
 // The value types a struct field can hold beside Go's own, each sealed as
@@ -26,7 +26,7 @@ import (
 // ErrEncoding, naming the field. An optional date is a *Date field: nil is
 // stored as a sealed null as long as a date, or, with the tag's null=sql, as
 // SQL NULL (see stashgen's README, "Optional fields").
-type Date = vcvalue.Date
+type Date = frame.Date
 
 // DateOf is the calendar day t falls on in its own location: what t.Date()
 // returns. A local midnight east of UTC is that day, not the UTC day before
@@ -38,19 +38,19 @@ func DateOf(t time.Time) Date {
 
 // Int128 is a signed 128-bit integer, two's complement, little-endian.
 // ParseInt128 reads one from its decimal text, and String writes it.
-type Int128 = vcvalue.Int128
+type Int128 = frame.Int128
 
 // Uint128 is an unsigned 128-bit integer, little-endian. ParseUint128 reads
 // one from its decimal text, and String writes it.
-type Uint128 = vcvalue.Uint128
+type Uint128 = frame.Uint128
 
 // ParseInt128 reads a signed 128-bit integer from decimal text, refusing a
 // value outside its range.
-func ParseInt128(s string) (Int128, error) { return vcvalue.ParseInt128(s) }
+func ParseInt128(s string) (Int128, error) { return frame.ParseInt128(s) }
 
 // ParseUint128 reads an unsigned 128-bit integer from decimal text, refusing
 // a negative value or one outside its range.
-func ParseUint128(s string) (Uint128, error) { return vcvalue.ParseUint128(s) }
+func ParseUint128(s string) (Uint128, error) { return frame.ParseUint128(s) }
 
 // Decimal is a finite decimal number with its scale: "1.50" is not "1.5",
 // and opens as it was sealed, except that a zero has no sign: -0.00 opens as
@@ -58,14 +58,14 @@ func ParseUint128(s string) (Uint128, error) { return vcvalue.ParseUint128(s) }
 // most 28, rust_decimal's range. There is no NaN and no infinity: the type
 // cannot hold one, and ParseDecimal refuses one. An equality term normalises
 // the scale, so 1.5, 1.50 and 1.500 match each other.
-type Decimal = vcvalue.Decimal
+type Decimal = frame.Decimal
 
 // ErrNonFiniteDecimal is the error ParseDecimal returns for NaN or an
 // infinity.
-var ErrNonFiniteDecimal = vcvalue.ErrNonFiniteDecimal
+var ErrNonFiniteDecimal = frame.ErrNonFiniteDecimal
 
 // ParseDecimal reads a decimal from its fixed-point text ("-1234.5600"),
 // keeping its scale, without rounding. NaN and the infinities are
 // ErrNonFiniteDecimal; a value with more than 28 digits after the point or a
 // mantissa past 96 bits is refused too.
-func ParseDecimal(s string) (Decimal, error) { return vcvalue.ParseDecimal(s) }
+func ParseDecimal(s string) (Decimal, error) { return frame.ParseDecimal(s) }

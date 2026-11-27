@@ -7,8 +7,7 @@ import (
 	"time"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 )
 
 // asKind is a sealed field's value as the Go type of its declared kind, the
@@ -21,16 +20,16 @@ import (
 // with encrypt.ErrEncoding: a Go type wider than the kind is accepted by
 // stashgen and range checked here, value by value.
 //
-// A value whose type writes itself (vcffi.Encryptable) crosses as it is too:
+// A value whose type writes itself (frame.Encryptable) crosses as it is too:
 // converting it to a built-in integer would drop its EncryptValue, and the
 // engine holds what it writes to the field's kind. A write and a query of one
 // field both convert here ([Field.Encrypt], [Field.Term]), so they agree.
 //
-// A UUID field's value crosses as a vcvalue.UUID, which vcffi writes under
+// A UUID field's value crosses as a frame.UUID, which vcffi writes under
 // the uuid logical type. A value of another type whose underlying type is
 // [16]byte (github.com/google/uuid.UUID, say) is converted to it here, since
 // vcffi writes such a value as plain bytes and the engine refuses bytes in a
-// UUID field. vcvalue.Int128 and Uint128 are integers, not UUIDs, and are not
+// UUID field. frame.Int128 and Uint128 are integers, not UUIDs, and are not
 // converted.
 //
 // The error names the kind and not the value, which is plaintext.
@@ -51,7 +50,7 @@ func asKind(kind Kind, v any) (any, error) {
 		return v, nil
 	}
 	switch v.(type) {
-	case vcvalue.Int128, vcvalue.Uint128, vcffi.Encryptable:
+	case frame.Int128, frame.Uint128, frame.Encryptable:
 		return v, nil
 	}
 	rv := reflect.ValueOf(v)
@@ -77,15 +76,15 @@ func asKind(kind Kind, v any) (any, error) {
 	return out, nil
 }
 
-// uuidType is vcvalue.UUID's reflect.Type.
-var uuidType = reflect.TypeFor[vcvalue.UUID]()
+// uuidType is frame.UUID's reflect.Type.
+var uuidType = reflect.TypeFor[frame.UUID]()
 
-// asUUID is v as a vcvalue.UUID when its underlying type is [16]byte, and v
-// unchanged otherwise: a vcvalue.UUID already, a value that writes itself, a
+// asUUID is v as a frame.UUID when its underlying type is [16]byte, and v
+// unchanged otherwise: a frame.UUID already, a value that writes itself, a
 // 128-bit integer, or a value of another shape, which the engine refuses.
 func asUUID(v any) any {
 	switch v.(type) {
-	case vcvalue.UUID, vcvalue.Int128, vcvalue.Uint128, vcffi.Encryptable:
+	case frame.UUID, frame.Int128, frame.Uint128, frame.Encryptable:
 		return v
 	}
 	rv := reflect.ValueOf(v)
@@ -103,12 +102,12 @@ func asUUID(v any) any {
 func checkValue(v any) error {
 	var err error
 	switch v := v.(type) {
-	case vcvalue.Date:
+	case frame.Date:
 		err = v.Validate()
-	case vcvalue.Decimal:
+	case frame.Decimal:
 		err = v.Validate()
 	case time.Time:
-		err = vcvalue.Timestamp{Seconds: v.Unix(), Nanoseconds: uint32(v.Nanosecond())}.Validate() //nolint:gosec // Nanosecond is in [0, 1e9)
+		err = frame.Timestamp{Seconds: v.Unix(), Nanoseconds: uint32(v.Nanosecond())}.Validate() //nolint:gosec // Nanosecond is in [0, 1e9)
 	}
 	if err != nil {
 		return fmt.Errorf("%w: %w", encrypt.ErrEncoding, err)

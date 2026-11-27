@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // The step loop. The guest never waits on the network: an export that
@@ -85,11 +84,11 @@ func (inst *instance) takeIO(ctx context.Context) (*ioStep, error) {
 // "headers", "body"}, ...]}`. Every byte slice the decoder returns is its
 // own copy.
 func decodeStep(raw []byte) (*ioStep, error) {
-	decoded, err := vcffi.Unmarshal(raw)
+	decoded, err := frame.Unmarshal(raw)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errMalformedStep, err)
 	}
-	obj, ok := decoded.(vcvalue.Object)
+	obj, ok := decoded.(frame.Object)
 	if !ok {
 		return nil, errMalformedStep
 	}
@@ -131,7 +130,7 @@ func decodeStep(raw []byte) (*ioStep, error) {
 }
 
 func decodeRequest(item any) (ioRequest, bool) {
-	obj, ok := item.(vcvalue.Object)
+	obj, ok := item.(frame.Object)
 	if !ok {
 		return ioRequest{}, false
 	}
@@ -223,11 +222,11 @@ func (t *transport) performStep(ctx context.Context, step *ioStep) ([]byte, erro
 		if body == nil {
 			body = []byte{}
 		}
-		responses = append(responses, vcvalue.Object{
+		responses = append(responses, frame.Object{
 			{Key: "status", Value: status},
 			{Key: "headers", Value: headers},
 			{Key: "body", Value: body},
 		})
 	}
-	return vcffi.Marshal(responses)
+	return frame.Marshal(responses)
 }

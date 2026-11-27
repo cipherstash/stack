@@ -136,7 +136,7 @@
 // passthrough value that a program could observe, and the FFI codec cannot
 // carry every Go type a program stores beside a ciphertext (a
 // driver.Valuer, a sql.NullTime). An opaque struct crosses as one storage
-// blob (vitaminc's storage profile, vcffi.MarshalStorage) and is one column;
+// blob (the storage profile, version 1) and is one column;
 // a row an earlier release sealed as a JSON document still opens.
 //
 // # Terms

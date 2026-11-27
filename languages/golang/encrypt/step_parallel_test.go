@@ -12,8 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 )
 
 // A step's requests are performed at the same time, and their responses
@@ -158,7 +157,7 @@ func okResponse(body string) *http.Response {
 // body, in order.
 func responseBodies(t *testing.T, encoded []byte) []string {
 	t.Helper()
-	decoded, err := vcffi.Unmarshal(encoded)
+	decoded, err := frame.Unmarshal(encoded)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +167,7 @@ func responseBodies(t *testing.T, encoded []byte) []string {
 	}
 	bodies := make([]string, len(list))
 	for i, item := range list {
-		obj, ok := item.(vcvalue.Object)
+		obj, ok := item.(frame.Object)
 		if !ok {
 			t.Fatalf("response %d is %T, want an object", i, item)
 		}

@@ -1,8 +1,8 @@
 package encrypt
 
 import (
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
 // Failure kinds surfaced across the boundary: the guest reports a status
@@ -71,9 +71,9 @@ var (
 
 // ErrStorageVersion is an opaque struct sealed as a storage blob of a
 // version this release does not read: a later release wrote it. Its error
-// wraps [ErrEncoding] too. It is vcffi.ErrUnsupportedVersion, named here so
+// wraps [ErrEncoding] too. It is frame.ErrUnsupportedVersion, named here so
 // a program can check for it without importing vitaminc's bindings.
-var ErrStorageVersion = vcffi.ErrUnsupportedVersion
+var ErrStorageVersion = frame.ErrUnsupportedVersion
 
 // Diagnostic is the full error behind a failure the guest reports, beside
 // the kind: every such failure is a *Diagnostic wrapping one of the

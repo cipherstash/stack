@@ -14,9 +14,8 @@ import (
 	"time"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 func TestDeclarationLowersToTheEnginesPlan(t *testing.T) {
@@ -138,7 +137,7 @@ func TestConvertStaysWithinAFamily(t *testing.T) {
 		t.Fatal("a mixed array became []string")
 	}
 	var vals Values
-	obj := vcvalue.Object{{Key: "title", Value: "x"}, {Key: "inner", Value: vcvalue.Object{{Key: "n", Value: int64(1)}}}}
+	obj := frame.Object{{Key: "title", Value: "x"}, {Key: "inner", Value: frame.Object{{Key: "n", Value: int64(1)}}}}
 	if err := convert(obj, &vals); err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +161,7 @@ func TestConvertStaysWithinAFamily(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.HasPrefix(encoded, vcffi.StorageHeader[:]) {
+	if !bytes.HasPrefix(encoded, frame.StorageHeader[:]) {
 		t.Fatalf("opaqueBytes wrote % x, not a version 1 storage blob", encoded[:4])
 	}
 	var back shape
@@ -178,9 +177,9 @@ func TestConvertStaysWithinAFamily(t *testing.T) {
 	// A blob of a storage version this release does not read is refused as
 	// such, not misread as JSON.
 	future := append([]byte(nil), encoded...)
-	future[3] = vcffi.StorageVersion + 1
-	if err := Opaque(Values{OpaqueField: future}, &back); !errors.Is(err, encrypt.ErrEncoding) || !errors.Is(err, vcffi.ErrUnsupportedVersion) {
-		t.Fatalf("Opaque of a version %d blob: %v", vcffi.StorageVersion+1, err)
+	future[3] = frame.StorageVersion + 1
+	if err := Opaque(Values{OpaqueField: future}, &back); !errors.Is(err, encrypt.ErrEncoding) || !errors.Is(err, frame.ErrUnsupportedVersion) {
+		t.Fatalf("Opaque of a version %d blob: %v", frame.StorageVersion+1, err)
 	}
 	// A value that is neither a storage blob nor a JSON object (a JSON
 	// array, a header cut short of its "S", nothing at all) is refused as
@@ -375,7 +374,7 @@ func TestAnOpaqueStructCarriesAPointerToATextType(t *testing.T) {
 // mustStorage is v as a storage blob.
 func mustStorage(t *testing.T, v any) []byte {
 	t.Helper()
-	b, err := vcffi.MarshalStorage(v)
+	b, err := frame.MarshalStorage(v)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +455,7 @@ func TestGetReadsEveryTypeTheGeneratorAccepts(t *testing.T) {
 			return check(err, v["a"] == "b")
 		},
 		"map[string]int": func() error {
-			v, err := Get[map[string]int](Values{"v": vcvalue.Object{{Key: "a", Value: int64(3)}}}, "v")
+			v, err := Get[map[string]int](Values{"v": frame.Object{{Key: "a", Value: int64(3)}}}, "v")
 			return check(err, v["a"] == 3)
 		},
 		"exact passthrough": func() error {
@@ -544,7 +543,7 @@ func TestAsKindConvertsAnIntegerThatFitsAndRefusesOneThatDoesNot(t *testing.T) {
 // plus 100.
 type encodedInt int16
 
-func (v encodedInt) EncryptValue(enc vcffi.Encoder) error {
+func (v encodedInt) EncryptValue(enc frame.Encoder) error {
 	enc.Int32(int32(v) + 100)
 	return nil
 }
@@ -565,19 +564,19 @@ func TestAsKindLeavesAValueThatWritesItself(t *testing.T) {
 // say: sixteen bytes and no EncryptValue.
 type googleUUID [16]byte
 
-// A UUID field's value crosses as a vcvalue.UUID, which vcffi writes under the
+// A UUID field's value crosses as a frame.UUID, which vcffi writes under the
 // uuid logical type: any other type whose underlying type is [16]byte is
 // converted, since vcffi writes that as plain bytes and the engine would refuse
 // it. A value of another shape is left for the engine to refuse.
 func TestAsKindMakesASixteenByteArrayAUUID(t *testing.T) {
 	id := [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
-	for _, in := range []any{id, googleUUID(id), vcvalue.UUID(id)} {
+	for _, in := range []any{id, googleUUID(id), frame.UUID(id)} {
 		got, err := asKind(UUID, in)
-		if err != nil || got != vcvalue.UUID(id) {
-			t.Errorf("asKind(UUID, %T) = %v (%T), %v; want a vcvalue.UUID", in, got, got, err)
+		if err != nil || got != frame.UUID(id) {
+			t.Errorf("asKind(UUID, %T) = %v (%T), %v; want a frame.UUID", in, got, got, err)
 		}
 	}
-	for _, in := range []any{id[:], [15]byte{}, "0102", encodedInt(7), vcvalue.Int128(id)} {
+	for _, in := range []any{id[:], [15]byte{}, "0102", encodedInt(7), frame.Int128(id)} {
 		got, err := asKind(UUID, in)
 		if err != nil || fmt.Sprint(got) != fmt.Sprint(in) {
 			t.Errorf("asKind(UUID, %T) = %v (%T), %v; want it unchanged", in, got, got, err)
@@ -638,7 +637,7 @@ func TestOpaqueReadsARustWrittenBlob(t *testing.T) {
 	// a non-nil pointer as the bare value. The bytes differ in that one
 	// byte, and both read as the same value here.
 	nick := "ada"
-	ours, err := vcffi.MarshalStorage(profile{Name: "Ada Lovelace", Age: 36, Tags: []string{"maths", "engines"}, Nickname: &nick})
+	ours, err := frame.MarshalStorage(profile{Name: "Ada Lovelace", Age: 36, Tags: []string{"maths", "engines"}, Nickname: &nick})
 	if err != nil {
 		t.Fatal(err)
 	}

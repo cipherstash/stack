@@ -12,7 +12,7 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 )
 
 // Audit metadata. The unit tests here need no guest. The round trips run
@@ -41,9 +41,9 @@ func sent(t *testing.T, metadata encrypt.AuditMetadata) any {
 	return facts(t, (&encrypt.Client{}).DefaultKeyset().Audit(metadata))
 }
 
-func object(fields ...vcvalue.Field) vcvalue.Object { return fields }
+func object(fields ...frame.Field) frame.Object { return fields }
 
-func field(key string, value any) vcvalue.Field { return vcvalue.Field{Key: key, Value: value} }
+func field(key string, value any) frame.Field { return frame.Field{Key: key, Value: value} }
 
 // Each method sends its fact as the caller gave it. A time is the
 // exception: it is sent as RFC 3339 text in UTC.
@@ -100,7 +100,7 @@ func TestAuditMetadataSendsEachFactAsBuilt(t *testing.T) {
 			[]any{utc}, object(field("at", utc)),
 		}),
 		field("none", []any{}),
-		field("nothing", vcvalue.Object{}),
+		field("nothing", frame.Object{}),
 		field("purpose", "export"),
 		field("ratio", 0.25),
 		field("request", object(field("id", "req_01J9Z3"))),

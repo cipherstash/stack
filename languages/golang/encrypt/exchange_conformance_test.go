@@ -16,8 +16,8 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/gensupport"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
 // The fresh cross-language artifact exchange profile: this runner writes
@@ -374,7 +374,7 @@ func produceExchange(t *testing.T, ctx context.Context, cipher *encrypt.Cipher, 
 
 	blobPlan := exchangeBlobPlan(corpus)
 	for _, c := range corpus.Blob.Cases {
-		encoded, err := vcffi.MarshalStorage(c.Value)
+		encoded, err := frame.MarshalStorage(c.Value)
 		if err != nil {
 			t.Fatalf("blob: %s: %v", c.ID, err)
 		}

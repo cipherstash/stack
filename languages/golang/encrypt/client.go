@@ -12,9 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // Client is one wasm instance holding one ZeroKMS client: its key, its
@@ -376,17 +375,17 @@ func encodeConfig(cfg initConfig) ([]byte, error) {
 	// neither can the marshaller's copy; both live until the collector takes
 	// them: the copies of the key this package cannot zero, accepted for the
 	// length of NewClient. A marshaller that took bytes would remove both.
-	fields := vcvalue.Object{
+	fields := frame.Object{
 		{Key: "client_id", Value: cfg.clientID},
 		{Key: "client_key", Value: string(guest.KeyBytes(cfg.clientKey))},
 	}
 	if cfg.zerokmsURL != "" {
-		fields = append(fields, vcvalue.Field{Key: "zerokms_url", Value: cfg.zerokmsURL})
+		fields = append(fields, frame.Field{Key: "zerokms_url", Value: cfg.zerokmsURL})
 	}
 	if cfg.keysetCacheSize > 0 {
-		fields = append(fields, vcvalue.Field{Key: "keyset_cache_size", Value: strconv.Itoa(cfg.keysetCacheSize)})
+		fields = append(fields, frame.Field{Key: "keyset_cache_size", Value: strconv.Itoa(cfg.keysetCacheSize)})
 	}
-	return vcffi.Marshal(fields)
+	return frame.Marshal(fields)
 }
 
 // Close shuts the guest down — the client key and every loaded index key
@@ -471,7 +470,7 @@ func (c *Client) DefaultKeyset() *Cipher { return &Cipher{client: c, keyset: def
 // of a name or id on this client is one ZeroKMS round trip, later uses
 // come from the guest's cache. The default keyset never makes a request.
 func (c *Client) resolveKeyset(ctx context.Context, sel KeysetSelector) (KeysetID, error) {
-	encoded, err := vcffi.Marshal(sel.selector())
+	encoded, err := frame.Marshal(sel.selector())
 	if err != nil {
 		return KeysetID{}, err
 	}
@@ -604,7 +603,7 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 			if c.onYield != nil {
 				c.onYield()
 			}
-			responses, err = vcffi.Marshal([]any{})
+			responses, err = frame.Marshal([]any{})
 		} else {
 			responses, err = c.performStep(ctx, io)
 		}
