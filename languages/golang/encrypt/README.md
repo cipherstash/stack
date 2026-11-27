@@ -208,9 +208,11 @@ cipher := client.Keyset(encrypt.KeysetName("tenant42")).Extend("tenant42")
 
 `Extend` appends to the context that the tags declare, for every field, in
 every call through the cipher: the write, the query and the read. A row
-written through `Extend("tenant42")` opens and matches only through a cipher
-with the same extension. No call takes a keyset or a context, so the three
-cannot use different ones.
+written through `Extend("tenant42")` opens only through a cipher with the
+same extension. An equality or match query through another extension
+matches none of its rows. A range query through another extension can still
+return them: see [Queries with the wrong tenant](#queries-with-the-wrong-tenant).
+No call takes a keyset or a context, so the three cannot use different ones.
 
 > **Take care**
 >
@@ -416,6 +418,10 @@ The `ErrForbidden` for a scope does not say that the scope is wrong, and
 the `Help` of its `*Diagnostic` is empty. The `*Client` gets the same error
 and code when it decrypts rows of a keyset it has no grant for.
 
+Check for `ErrAuthentication` too, as the [Errors](#errors) list says. A
+decrypt with the wrong scope fails with `ErrAuthentication` when ZeroKMS
+returns the key and the ciphertext then fails to open.
+
 A `*Cipher` for a keyset that its client has no grant for fails when it
 loads the keyset, before any data key is asked for. `KeysetID` and an
 encrypt both fail with `ErrNotFound` and the code
@@ -449,6 +455,10 @@ table above.
 A query on a type with a `context_field` derives under the tenant that
 `cipher.Context(..)` names. Through a cipher with no `Context`, the query
 fails with `ErrEncoding`.
+
+A range query through `cipher.Context(..)` can still return rows that store
+another tenant, as a range query with the wrong scope can. Add a filter on
+the `context_field` column to every range query on such a type.
 
 ## What is stored
 
