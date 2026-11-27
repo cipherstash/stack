@@ -12,8 +12,10 @@
 // [OpenWithoutProfile] mounts nothing, for the access-key and OIDC
 // strategies where there is no profile. The guest is given that directory
 // and nothing else: no environment, no other path, and no way out through a
-// symlink inside it, which the mount refuses to follow. Authentication HTTP
-// requests go through the Go host's transport import. Everything the napi
+// symlink inside it, which the mount refuses to follow. The guest never
+// waits on the network: a token operation that needs the token service
+// pauses at its request, Go performs it, and the guest carries on with the
+// answer. Everything the napi
 // binding of stack-profile exposes is a method here, named as in Rust: the
 // current workspace ([ProfileStore.CurrentWorkspace],
 // [ProfileStore.SetCurrentWorkspace], [ProfileStore.ClearCurrentWorkspace]),
@@ -40,6 +42,11 @@
 // [OAuth2TokenSource] adapts an existing golang.org/x/oauth2.TokenSource
 // into the OIDC provider interface.
 //
+// Callers of one strategy do not wait for each other. While one caller's
+// token is exchanged or refreshed with the token service, another whose
+// token still works gets it at once, and one with no usable token waits
+// for that exchange rather than starting a second.
+//
 // A call whose context ends, [Strategy.Token] included, fails with the
 // context's error and leaves the store and its strategies open: a request
 // cancelled while its token is exchanged or refreshed does not stop the
@@ -48,9 +55,10 @@
 // refresh: the service rotates the refresh token when it answers one, so
 // the caller returns at once while the refresh runs on, for up to 10
 // seconds, and the store keeps what it sends back for the next call.
-// [Strategy.Close] waits for such a refresh. The store closes itself, and
-// every later call is [ErrState], only when its guest traps or a call runs
-// on for 30 seconds after its context ended.
+// [Strategy.Close] and [ProfileStore.Close] wait for such a refresh. The
+// store closes itself, and every later call is [ErrState], only when its
+// guest traps or a call into it runs on for 30 seconds after its context
+// ended.
 //
 // A call can run the application's own code: the RoundTripper given to
 // [WithRoundTripper], and an [OIDCProvider]. A panic in it reaches the
@@ -61,7 +69,8 @@
 // calls are left running for a store; past that a call fails at once with
 // [ErrTransport] until one returns. A device session's refresh is waited
 // for until the 30-second backstop instead, so the rotated refresh token
-// the service sends back is kept.
+// the service sends back is kept; one still running then fails as a
+// transport failure.
 //
 // # Why a second guest
 //

@@ -324,7 +324,7 @@ describe('fresh cross-language artifact exchange', () => {
       'packages/eql/Cargo.lock',
     ])
       expect(
-        lockedVersions(read(path), ['stack-encrypt', 'vitaminc-aead-frame']),
+        lockedVersions(read(path), ['stack-encrypt', 'recipher-frame']),
       ).toBeTruthy()
   })
 

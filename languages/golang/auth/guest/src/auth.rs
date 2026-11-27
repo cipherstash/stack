@@ -1,20 +1,28 @@
 //! Auth strategies retained inside one credential guest instance. The Go
 //! package constructs typed sources; this registry owns the Rust strategies
 //! and their cached CTS tokens until a source or the guest is closed.
+//!
+//! A token fetch and a device session's refresh are step operations
+//! ([`stack_guest_abi::step`]): each runs as a future that pauses at its
+//! request to CTS and returns to the host, which performs the request and
+//! resumes it. While one caller's exchange is in flight the guest is free,
+//! so another caller gets the strategy's current token from `stack-auth`'s
+//! own cache at once. A caller that finds no usable token while another
+//! exchanges waits on that caller's lock inside `stack-auth`: its operation
+//! parks, and the host resumes it once the exchange is done.
+//!
+//! Sound on wasm32 only: there `stack-auth` runs a refresh inline, in the
+//! future the step loop polls. On a native target it spawns the refresh
+//! onto a Tokio runtime, whose task the step loop does not poll, so its
+//! request would be made outside a step. The functions that build
+//! operations are reached only through the wasm32 `abi` exports.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::rc::Rc;
 
-use stack_auth::Crn;
-// Sound on wasm32 only. There stack-auth runs a token refresh inline, so a
-// plain executor can drive `get_token` to completion. On a native target
-// stack-auth spawns the refresh onto the current Tokio runtime, and
-// `block_on` provides none, so the first refresh panics (and inside a
-// current-thread runtime it would block the thread the task needs). `token`
-// and `refresh` below are reached only through the wasm32 `abi` exports. A
-// native build, a test included, must not call them.
-use futures::executor::block_on;
 use serde::Deserialize;
+use stack_auth::Crn;
 use stack_auth::{
     AccessKey, AccessKeyStrategy, AuthStrategy, DeviceSessionStrategy, OidcFederationStrategy,
     Token,
@@ -24,7 +32,9 @@ use zeroize::Zeroizing;
 
 use crate::host::{HostOidcProvider, WasiAuthTransport};
 use stack_auth::AuthError;
-use stack_guest_abi::last_error::{malformed, out_of_order};
+use stack_guest_abi::last_error::{internal, malformed, out_of_order};
+use stack_guest_abi::step::Operation;
+use stack_guest_abi::value::HostValue;
 
 use crate::status::{fail_auth, fail_profile, STATUS_AUTH_REFRESH_REQUIRED};
 
@@ -63,7 +73,10 @@ enum Strategy {
 }
 
 thread_local! {
-    static STRATEGIES: RefCell<HashMap<u32, Strategy>> = RefCell::new(HashMap::new());
+    /// Each strategy, shared with the operations paused on it: freeing one
+    /// removes it here, and it is dropped, with its access key and cached
+    /// tokens, when the last of those operations finishes or is aborted.
+    static STRATEGIES: RefCell<HashMap<u32, Rc<Strategy>>> = RefCell::new(HashMap::new());
     static NEXT: Cell<u32> = const { Cell::new(1) };
 }
 
@@ -145,7 +158,7 @@ pub fn create(config: &[u8]) -> Result<Vec<u8>, u32> {
         id
     });
     STRATEGIES.with(|items| {
-        let _ = items.borrow_mut().insert(id, strategy);
+        let _ = items.borrow_mut().insert(id, Rc::new(strategy));
     });
     Ok(id.to_string().into_bytes())
 }
@@ -156,16 +169,30 @@ fn parse_handle(bytes: &[u8]) -> Result<u32, u32> {
     text.parse::<u32>().map_err(|_| refuse())
 }
 
-pub fn token(handle: &[u8]) -> Result<Vec<u8>, u32> {
+/// The strategy a handle names, shared with the operation about to run on it.
+fn strategy(handle: &[u8]) -> Result<Rc<Strategy>, u32> {
     let id = parse_handle(handle)?;
-    STRATEGIES.with(|items| {
-        let items = items.borrow();
-        let strategy = items.get(&id).ok_or_else(no_strategy)?;
-        match strategy {
-            Strategy::AccessKey(strategy) => block_on(strategy.get_token())
+    STRATEGIES.with(|items| items.borrow().get(&id).cloned().ok_or_else(no_strategy))
+}
+
+/// A token fetch, as a step operation: the strategy's current token, after
+/// an exchange with CTS when it has none it can use. A device session's
+/// token is read from the profile and never refreshed here; its output is
+/// a frame that says whether the host should refresh it under its lock
+/// ([`refresh`]), and once the token is no longer usable it is
+/// `STATUS_AUTH_REFRESH_REQUIRED`.
+pub fn token(handle: &[u8]) -> Result<Operation, u32> {
+    let strategy = strategy(handle)?;
+    Ok(Box::pin(async move {
+        match &*strategy {
+            Strategy::AccessKey(strategy) => strategy
+                .get_token()
+                .await
                 .map(|token| token.as_str().as_bytes().to_vec())
                 .map_err(|e| fail_auth(&e)),
-            Strategy::Oidc(strategy) => block_on(strategy.get_token())
+            Strategy::Oidc(strategy) => strategy
+                .get_token()
+                .await
                 .map(|token| token.as_str().as_bytes().to_vec())
                 .map_err(|e| fail_auth(&e)),
             Strategy::DeviceSession {
@@ -173,7 +200,7 @@ pub fn token(handle: &[u8]) -> Result<Vec<u8>, u32> {
                 base_url,
             } => cached_device_token(workspace_dir, base_url),
         }
-    })
+    }))
 }
 
 /// A fresh token needs only a profile read. The 90-second refresh window is
@@ -188,37 +215,63 @@ fn cached_device_token(workspace_dir: &str, base_url: &Option<url::Url>) -> Resu
     if base_url.is_none() {
         let _ = token.issuer().map_err(|e| fail_auth(&e))?;
     }
-    if token.is_expired() {
+    // Inside the refresh window the token still works: it goes to the
+    // host with the flag set, so callers keep using it while one of them
+    // refreshes. Past its expiry nothing can use it.
+    if token.is_expired() && !token.is_usable() {
         return Err(STATUS_AUTH_REFRESH_REQUIRED);
     }
-    Ok(token.access_token().as_str().as_bytes().to_vec())
+    device_token_frame(&token, token.is_expired())
 }
 
-/// Called only after Go acquires the profile lock. Building from the store
-/// here re-reads a token another process may have rotated while Go waited.
-pub fn refresh(handle: &[u8]) -> Result<Vec<u8>, u32> {
-    let id = parse_handle(handle)?;
-    STRATEGIES.with(|items| {
-        let items = items.borrow();
-        let Strategy::DeviceSession {
-            workspace_dir,
-            base_url,
-        } = items.get(&id).ok_or_else(no_strategy)?
-        else {
-            return Err(out_of_order("only a device session strategy refreshes"));
-        };
-        let store = ProfileStore::new(workspace_dir);
-        let mut builder =
-            DeviceSessionStrategy::with_workspace_store(store).transport(WasiAuthTransport);
-        if let Some(url) = base_url {
-            builder = builder.base_url(url.clone());
-        }
-        let strategy = builder.build().map_err(|e| fail_auth(&e))?;
-        let token = block_on(strategy.get_token()).map_err(|e| fail_auth(&e))?;
+/// A device session's token read, as the frame `sa_auth_token` returns:
+/// `{"access_token": text, "refresh_required": bool}`. The text is wiped
+/// when the value drops, and the frame by the registry once the host has
+/// taken it, as every token output is.
+fn device_token_frame(token: &Token, refresh_required: bool) -> Result<Vec<u8>, u32> {
+    HostValue::Map(vec![
+        (
+            "access_token".to_owned(),
+            HostValue::text(token.access_token().as_str()),
+        ),
+        (
+            "refresh_required".to_owned(),
+            HostValue::Bool(refresh_required),
+        ),
+    ])
+    .encode()
+    .map_err(|_| internal("a device session's token could not be encoded"))
+}
+
+/// A device session's refresh, as a step operation. The host holds the
+/// workspace's auth.json lock across every step of it. Building the
+/// strategy from the store re-reads a token another process may have
+/// rotated while the host waited for the lock, and the refreshed token is
+/// saved before the operation finishes.
+pub fn refresh(handle: &[u8]) -> Result<Operation, u32> {
+    let strategy = strategy(handle)?;
+    let Strategy::DeviceSession {
+        workspace_dir,
+        base_url,
+    } = &*strategy
+    else {
+        return Err(out_of_order("only a device session strategy refreshes"));
+    };
+    let store = ProfileStore::new(workspace_dir);
+    let mut builder =
+        DeviceSessionStrategy::with_workspace_store(store).transport(WasiAuthTransport);
+    if let Some(url) = base_url {
+        builder = builder.base_url(url.clone());
+    }
+    let session = builder.build().map_err(|e| fail_auth(&e))?;
+    Ok(Box::pin(async move {
+        let token = session.get_token().await.map_err(|e| fail_auth(&e))?;
         Ok(token.as_str().as_bytes().to_vec())
-    })
+    }))
 }
 
+/// Remove a strategy. An operation paused on it goes on, and the strategy
+/// is dropped when the last such operation finishes or is aborted.
 pub fn free(handle: &[u8]) -> Result<Vec<u8>, u32> {
     let id = parse_handle(handle)?;
     STRATEGIES.with(|items| {

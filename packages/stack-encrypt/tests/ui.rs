@@ -6,7 +6,7 @@
 //! CI run them (`--all-features`), and this test is only built with the
 //! `dynamic` feature (`required-features` in `Cargo.toml`): rustc lists a
 //! trait's other implementors in its help, that feature adds implementors
-//! (`ValueFrame`) that can join such a list, and one recording cannot be
+//! (`OwnedFrame`) that can join such a list, and one recording cannot be
 //! relied on to hold under both feature sets.
 
 #[test]

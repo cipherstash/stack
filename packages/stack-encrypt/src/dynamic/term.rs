@@ -2,7 +2,7 @@
 //!
 //! A value arrives here as anything that describes itself to vitaminc
 //! ([`Encrypt`]): a transport frame a guest walks in place, a
-//! [`ValueFrame`] the engine holds, a Rust value. It is walked to the one
+//! [`OwnedFrame`] the engine holds, a Rust value. It is walked to the one
 //! scalar it must be, and the term derives there, from the scalar vitaminc
 //! hands the sink, so this module restates none of vitaminc's vocabulary.
 //! The derivation is the typed path's. That makes a term a cross-language
@@ -35,8 +35,8 @@ use std::collections::BTreeSet;
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
-use super::ValueFrame;
 use stack_kms::{DataKeySource, IndexKeySource};
+use vitaminc_aead::frame::OwnedFrame;
 use vitaminc_aead::plaintext::{
     Error as SinkError, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink, Sink,
     SourceError,
@@ -132,7 +132,7 @@ impl IndexSpec {
     /// frame (an option given twice is refused by the frame). It names no
     /// field: the plan parser names it.
     pub fn from_frame(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Self, Error> {
-        vitaminc_aead_frame::serde::from_slice::<IndexWire>(frame.risky_ref())
+        recipher_frame::serde::from_slice::<IndexWire>(frame.risky_ref())
             .map(IndexSpec::from)
             .map_err(|_| Error::bad_plan(Reason::UnknownOutput))
     }
@@ -447,7 +447,7 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 /// let keyset = cipher.default_keyset();
 ///
 /// // `["users", "age"]`, as a binding writes it.
-/// let ctx = context(vitaminc_aead_frame::serde::to_vec(&("users", "age"))?.as_protected_ref())?;
+/// let ctx = context(recipher_frame::serde::to_vec(&("users", "age"))?.as_protected_ref())?;
 /// let probe = term(&keyset, &34u32, &IndexSpec::Equality, ctx.clone()).await?;
 /// let typed: EqualityTerm = 34u32.encrypt_into_with_context(&keyset, ctx).await?;
 /// assert_eq!(probe, typed.into_bytes().to_vec());
@@ -456,7 +456,7 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 /// ```
 ///
 /// The record path runs the same derivation as an [`Index`] of a
-/// [`ValueFrame`] field. It is local to the keyset cipher, so the await
+/// [`OwnedFrame`] field. It is local to the keyset cipher, so the await
 /// settles a pending that has nothing to request.
 ///
 /// # Errors
@@ -467,7 +467,7 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 /// derivation itself fails: text with a code point unassigned in Unicode 16
 /// ([`TermError::Normalize`]), or the one query value the engine refuses,
 /// match text that cuts no token under the index's options
-/// ([`TermError::EmptyTermText`](crate::sem::TermError::EmptyTermText)), whose filter would match every row. That
+/// ([`TermError::EmptyTermText`]), whose filter would match every row. That
 /// refusal is the query path's alone; the record path stores such a value
 /// as the empty filter, which no query matches.
 pub async fn term<'c, K, P, D>(
@@ -575,9 +575,10 @@ impl AsRef<[u8]> for TermBytes {
 ///
 /// [`Error::Term`] if the value is not one scalar `kind` takes, and
 /// [`Error::Cipher`] for text the index cannot normalize. The query
-/// refusals are not here: a caller that derives a query term has prepared
-/// the input ([`super::query::prepare_scalar`]), and the record path
-/// stores match text with no token as the empty filter.
+/// refusals are not here: a caller that derives a query term has checked
+/// the input first, as [`query_term`](super::query_term) and
+/// [`verify`](super::verify) do, and the record path stores match text with
+/// no token as the empty filter.
 pub(super) fn derive<'a, 'c, K: 'static, P, D>(
     cipher: &'a KeysetCipher<'_, K>,
     value: P,
@@ -916,13 +917,13 @@ impl<T> MapSink for NoContainer<T> {
     }
 }
 
-/// An [`IndexSpec`] is an [`Index`] of a [`ValueFrame`]: the index named as
+/// An [`IndexSpec`] is an [`Index`] of an [`OwnedFrame`]: the index named as
 /// data, over a plaintext whose type is known only when it arrives. Its
 /// `operation` is [`term`]'s derivation wrapped as a description, which
 /// walks the frame in place to its one scalar, so a field lowered from data
 /// runs through the same `indexed()` and `zip` every other field does, and
 /// its term is a [`TermBytes`]. Rust code that runs the combinators over a
-/// `ValueFrame` names its indexes this way too
+/// `OwnedFrame` names its indexes this way too
 /// (`indexed((IndexSpec::Equality, IndexSpec::Ore))`), and is then the same
 /// declaration as a data plan's.
 ///
@@ -930,31 +931,31 @@ impl<T> MapSink for NoContainer<T> {
 /// fails the description when it runs, with the dynamic [`Error::Term`]
 /// inside [`crate::Error::Input`]; a plan lowered from data refuses it
 /// before that, at its boundary ([`admits`](super::admits)).
-impl Index<ValueFrame> for IndexSpec {
+impl Index<OwnedFrame> for IndexSpec {
     type Term = TermBytes;
     fn spec(&self) -> IndexSpec {
         self.clone()
     }
-    fn operation<'s, K: 'static, M: WipeSource<'s, ValueFrame>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, OwnedFrame>>(
         &self,
-    ) -> Encryption<'s, ValueFrame, TermBytes, K, CallerContext, M> {
+    ) -> Encryption<'s, OwnedFrame, TermBytes, K, CallerContext, M> {
         spec_operation(self.clone(), Side::Stored)
     }
-    fn query_operation<'s, K: 'static, M: WipeSource<'s, ValueFrame>>(
+    fn query_operation<'s, K: 'static, M: WipeSource<'s, OwnedFrame>>(
         &self,
-    ) -> Encryption<'s, ValueFrame, TermBytes, K, CallerContext, M> {
+    ) -> Encryption<'s, OwnedFrame, TermBytes, K, CallerContext, M> {
         spec_operation(self.clone(), Side::Query)
     }
 }
 
-/// The description that derives `spec`'s term of a [`ValueFrame`] for
-/// `side`: [`derive`], under the query context.
-fn spec_operation<'s, K: 'static, M: WipeSource<'s, ValueFrame>>(
+/// The description that derives `spec`'s term of an [`OwnedFrame`] for
+/// `side`: [`derive`](fn@derive), under the query context.
+fn spec_operation<'s, K: 'static, M: WipeSource<'s, OwnedFrame>>(
     spec: IndexSpec,
     side: Side,
-) -> Encryption<'s, ValueFrame, TermBytes, K, CallerContext, M> {
+) -> Encryption<'s, OwnedFrame, TermBytes, K, CallerContext, M> {
     chosen(
-        move |source: Source<'_, ValueFrame>, cipher, cx: CallerContext| {
+        move |source: Source<'_, OwnedFrame>, cipher, cx: CallerContext| {
             // A term derives under the query context: the scopes, with no
             // binding.
             let (query, stored) = (cx.query(), cx.stored());
@@ -1015,7 +1016,7 @@ mod tests {
     }
 
     /// A pair the scheme refuses fails the run of `IndexSpec`'s public
-    /// `Index<ValueFrame>` with the dynamic `Error::Term` inside the crate
+    /// `Index<OwnedFrame>` with the dynamic `Error::Term` inside the crate
     /// error, and requests nothing: the record path refuses such a pair at
     /// its boundary, a Rust caller running the index directly meets it here.
     #[tokio::test]
@@ -1039,7 +1040,7 @@ mod tests {
         ] {
             let refused = keyset
                 .run(
-                    Index::<ValueFrame>::operation::<FakeDataKeySource, crate::target::Owned>(
+                    Index::<OwnedFrame>::operation::<FakeDataKeySource, crate::target::Owned>(
                         &kind,
                     ),
                     vf(value),
@@ -1070,7 +1071,7 @@ mod tests {
         for kind in [IndexSpec::Equality, default_match()] {
             let refused = keyset
                 .run(
-                    Index::<ValueFrame>::operation::<FakeDataKeySource, crate::target::Owned>(
+                    Index::<OwnedFrame>::operation::<FakeDataKeySource, crate::target::Owned>(
                         &kind,
                     ),
                     vf(s("a\u{0378}bc")),
@@ -1088,7 +1089,7 @@ mod tests {
     }
 
     /// The query path refuses match text with no tokens; the record path,
-    /// which runs the same derivation as an index of a `ValueFrame`, stores
+    /// which runs the same derivation as an index of an `OwnedFrame`, stores
     /// it as the empty filter. Same value, same options, two answers,
     /// because a query with no tokens would match every row and a stored
     /// value with none is matched by no query.
@@ -1109,7 +1110,7 @@ mod tests {
 
             let stored: TermBytes = keyset
                 .run(
-                    Index::<ValueFrame>::operation::<FakeDataKeySource, crate::target::Owned>(
+                    Index::<OwnedFrame>::operation::<FakeDataKeySource, crate::target::Owned>(
                         &default_match(),
                     ),
                     vf(s(text)),
@@ -1152,7 +1153,7 @@ mod tests {
     /// A `TermBytes` reads as the typed term's bytes, through every
     /// accessor: `as_bytes`, `as_ref` and `into_bytes` give the same
     /// 32 PRF bytes an `EqualityTerm` holds, for a term derived through
-    /// `IndexSpec`'s `Index<ValueFrame>`.
+    /// `IndexSpec`'s `Index<OwnedFrame>`.
     #[tokio::test]
     async fn term_bytes_read_as_the_typed_terms_bytes() {
         let cipher = cipher().await;
@@ -1167,7 +1168,7 @@ mod tests {
 
         let through_value: TermBytes = keyset
             .run(
-                Index::<ValueFrame>::operation::<FakeDataKeySource, crate::target::Owned>(
+                Index::<OwnedFrame>::operation::<FakeDataKeySource, crate::target::Owned>(
                     &IndexSpec::Equality,
                 ),
                 vf(Tree::UInt32(34)),
@@ -1198,7 +1199,7 @@ mod tests {
     /// A one-part context, read from its frame as a binding sends it.
     fn ctx(label: &str) -> NonEmpty<crate::ContextPiece<'static>> {
         context(
-            vitaminc_aead_frame::serde::to_vec(&label)
+            recipher_frame::serde::to_vec(&label)
                 .expect("frames")
                 .as_protected_ref(),
         )
@@ -1209,27 +1210,27 @@ mod tests {
         Tree::String(value.into())
     }
 
-    fn logical(ty: Logical, value: i128) -> ValueFrame {
-        ValueFrame::of(Raw(Some(ty), Physical::Int(Int::I128(value)))).expect("in range")
+    fn logical(ty: Logical, value: i128) -> OwnedFrame {
+        OwnedFrame::of(Raw(Some(ty), Physical::Int(Int::I128(value)))).expect("in range")
     }
 
-    fn decimal(mantissa: i128, scale: u8) -> ValueFrame {
+    fn decimal(mantissa: i128, scale: u8) -> OwnedFrame {
         logical(Logical::Decimal { scale }, mantissa)
     }
 
-    fn date(days: i128) -> ValueFrame {
+    fn date(days: i128) -> OwnedFrame {
         logical(Logical::Date, days)
     }
 
-    fn instant(nanos: i128) -> ValueFrame {
+    fn instant(nanos: i128) -> OwnedFrame {
         logical(
             Logical::Timestamp(vitaminc_aead::plaintext::TimeUnit::Nanos),
             nanos,
         )
     }
 
-    fn vf(value: Tree) -> ValueFrame {
-        ValueFrame::of(&value).expect("in the value model")
+    fn vf(value: Tree) -> OwnedFrame {
+        OwnedFrame::of(&value).expect("in the value model")
     }
 
     fn bytes(value: &[u8]) -> Tree {
@@ -1530,7 +1531,7 @@ mod tests {
             // the ones their frame's own value derives.
             for value in [date(19_782), instant(-1), decimal(-150, 2)] {
                 assert_eq!(
-                    derive(value.risky_ref().to_vec(), IndexSpec::Equality).await,
+                    derive(value.frame().as_bytes().to_vec(), IndexSpec::Equality).await,
                     term(&keyset, &value, &IndexSpec::Equality, ctx.clone())
                         .await
                         .expect("derives"),
@@ -1549,7 +1550,7 @@ mod tests {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let ctx = ctx("users/x");
-            let eq = |value: ValueFrame| {
+            let eq = |value: OwnedFrame| {
                 let ctx = ctx.clone();
                 let keyset = &keyset;
                 async move {
@@ -1574,7 +1575,7 @@ mod tests {
             assert_ne!(eq(instant(micro + 1_000)).await, at, "the next microsecond");
             assert_ne!(eq(instant(micro - 1)).await, at, "the microsecond before");
             assert_ne!(eq(date(1)).await, eq(date(2)).await, "two days");
-            let thirty_four = eq(ValueFrame::of(34u32).expect("a value")).await;
+            let thirty_four = eq(OwnedFrame::of(34u32).expect("a value")).await;
             assert_ne!(
                 eq(decimal(34, 0)).await,
                 thirty_four,
@@ -1586,9 +1587,9 @@ mod tests {
                 "a date is not its day count"
             );
             for width in [
-                ValueFrame::of(34i8).expect("a value"),
-                ValueFrame::of(34i128).expect("a value"),
-                ValueFrame::of(34u128).expect("a value"),
+                OwnedFrame::of(34i8).expect("a value"),
+                OwnedFrame::of(34i128).expect("a value"),
+                OwnedFrame::of(34u128).expect("a value"),
             ] {
                 assert_eq!(eq(width).await, thirty_four, "34 at every width");
             }
@@ -1670,7 +1671,7 @@ mod tests {
                     assert!(kind.defines(&leaf), "{kind}");
                 }
             }
-            let ope = |leaf: ValueFrame| {
+            let ope = |leaf: OwnedFrame| {
                 let ctx = ctx.clone();
                 let keyset = &keyset;
                 async move {
@@ -2203,11 +2204,11 @@ mod tests {
             let run = |query: bool| {
                 let keyset = &keyset;
                 let operation = if query {
-                    Index::<ValueFrame>::query_operation::<FakeDataKeySource, crate::target::Owned>(
+                    Index::<OwnedFrame>::query_operation::<FakeDataKeySource, crate::target::Owned>(
                         &index,
                     )
                 } else {
-                    Index::<ValueFrame>::operation::<FakeDataKeySource, crate::target::Owned>(
+                    Index::<OwnedFrame>::operation::<FakeDataKeySource, crate::target::Owned>(
                         &index,
                     )
                 };

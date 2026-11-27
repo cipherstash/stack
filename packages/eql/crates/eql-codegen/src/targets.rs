@@ -42,6 +42,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use eql_domains::{Domain, DomainFamily, Shape, Term};
+use vitaminc_aead::plaintext::ValueKind;
 
 use crate::bindings::{
     encryption_gap, format_rs, plaintext_of, query_projection_ident, query_term_newtype,
@@ -326,7 +327,7 @@ pub(crate) fn answers_for_indexes(
 
 /// The plaintext a family's domains are produced from: see
 /// [`bindings::plaintext_of`](crate::bindings::plaintext_of).
-pub fn plaintext(family: &DomainFamily) -> Option<(&'static str, &'static str)> {
+pub fn plaintext(family: &DomainFamily) -> Option<(ValueKind, &'static str)> {
     plaintext_of(family.name)
 }
 
@@ -345,7 +346,7 @@ pub(crate) struct Row {
     pub(crate) name: String,
     pub(crate) family: &'static str,
     pub(crate) suffix: String,
-    pub(crate) plaintext: Option<&'static str>,
+    pub(crate) plaintext: Option<ValueKind>,
     pub(crate) sql_domain: String,
     pub(crate) indexes: Vec<&'static str>,
     /// The query twin's struct identifier and SQL domain, if the type
@@ -396,7 +397,12 @@ fn document_row(family: &'static eql_domains::DocumentFamily) -> Row {
         name: stored.name.to_owned(),
         family: family.name,
         suffix: String::new(),
-        plaintext: Some(family.plaintext),
+        plaintext: Some(
+            family
+                .plaintext
+                .parse()
+                .expect("a document family's plaintext is a ValueKind name"),
+        ),
         sql_domain: stored.sql_domain.to_owned(),
         indexes: vec![family.index],
         query: family
@@ -625,6 +631,18 @@ fn option_str(value: Option<&str>) -> TokenStream {
     }
 }
 
+/// A plaintext kind as the generated table writes it:
+/// `Some(ValueKind::Int32)`. The variant's identifier is its `Debug` name.
+fn option_kind(kind: Option<ValueKind>) -> TokenStream {
+    match kind {
+        Some(kind) => {
+            let variant = format_ident!("{kind:?}");
+            quote!(Some(ValueKind::#variant))
+        }
+        None => quote!(None),
+    }
+}
+
 /// Render the generated `crates/eql-bindings/src/v4/targets.rs`.
 pub fn render_targets_rs() -> String {
     render_targets_from(&rows())
@@ -640,7 +658,7 @@ fn render_targets_from(rows: &[Row]) -> String {
             let name = &r.name;
             let family = r.family;
             let suffix = &r.suffix;
-            let plaintext = option_str(r.plaintext);
+            let plaintext = option_kind(r.plaintext);
             let sql_domain = &r.sql_domain;
             let indexes = &r.indexes;
             let query = option_str(r.query.as_ref().map(|(n, _)| n.as_str()));
@@ -792,7 +810,8 @@ fn render_targets_from(rows: &[Row]) -> String {
     let file = quote! {
         #![doc = #mod_doc]
 
-        use stack_encrypt::dynamic::ValueFrame;
+        use stack_encrypt::dynamic::frame::{Frame, OwnedFrame};
+        use stack_encrypt::dynamic::ValueKind;
         use stack_encrypt::target::{CallerContext, IndexSpec};
 
         #imports
@@ -822,7 +841,7 @@ fn render_targets_from(rows: &[Row]) -> String {
             name: &str,
             keyset: &'a KeysetCipher<'_, K>,
             context: CallerContext,
-            plaintext: ValueFrame,
+            plaintext: Frame<'_>,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             match name {
                 #encrypt_arms
@@ -837,7 +856,7 @@ fn render_targets_from(rows: &[Row]) -> String {
             opener: Opener<'a, K>,
             context: CallerContext,
             stored: &[u8],
-        ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+        ) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
             match name {
                 #decrypt_arms
                 _ => Err(refuse(name)),
@@ -854,7 +873,7 @@ fn render_targets_from(rows: &[Row]) -> String {
             #index_param: &IndexSpec,
             keyset: &'a KeysetCipher<'_, K>,
             context: CallerContext,
-            plaintext: ValueFrame,
+            plaintext: Frame<'_>,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             match name {
                 #query_arms

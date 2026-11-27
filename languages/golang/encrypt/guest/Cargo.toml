@@ -71,7 +71,7 @@ zerokms-protocol = "=0.12.31"
 # codec (`stack_encrypt::dynamic::frame`, vitaminc's own, shared with its
 # guest), the value model and `Protected` all come through stack-encrypt's
 # re-exports, so the guest cannot build against another vitaminc. Two
-# versions would fail only at the `ValueFrame: Decrypt` bound.
+# versions would fail only at the `OwnedFrame: Decrypt` bound.
 
 futures = { version = "0.3", default-features = false, features = ["executor"] }
 serde = "1"
@@ -103,5 +103,4 @@ strip = true
 # workspace does (see its [patch.crates-io]).
 [patch.crates-io]
 vitaminc-aead = { path = "../../../../packages/vitaminc-aead" }
-vitaminc-aead-frame = { path = "../../../../packages/vitaminc-aead-frame" }
 vitaminc-aead-derive = { path = "../../../../packages/vitaminc-aead-derive" }

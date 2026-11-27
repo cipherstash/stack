@@ -27,7 +27,7 @@ on:
       - packages/stack-encrypt-derive/**
       - packages/stack-encrypt-jsonpath/**
       - packages/vitaminc-aead/**
-      - packages/vitaminc-aead-frame/**
+      - packages/recipher-frame/**
       - packages/vitaminc-aead-derive/**
       - Cargo.toml
       - mise.toml
@@ -46,7 +46,7 @@ on:
       - packages/stack-encrypt-derive/**
       - packages/stack-encrypt-jsonpath/**
       - packages/vitaminc-aead/**
-      - packages/vitaminc-aead-frame/**
+      - packages/recipher-frame/**
       - packages/vitaminc-aead-derive/**
       - Cargo.toml
       - mise.toml

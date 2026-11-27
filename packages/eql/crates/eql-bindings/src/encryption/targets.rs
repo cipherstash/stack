@@ -49,7 +49,7 @@
 //! | `name` | The type's name, one across Rust, TypeScript and Go: the catalog struct identifier. The data plan's target form names this. (Go spells the `Json` family's types `JSON`; that rename is the Go generator's.) |
 //! | `family` | The catalog family, lower case: `text`, `integer`, `json`, … |
 //! | `suffix` | What a query can do, as the plan's table of suffixes spells it: `""` (stored and read only), `Eq`, `Ord`, `OrdOpe`, `OrdOre`, `Match`, `Search`, `SearchOre`; `""` too for a document family's stored type, whose queries are the JSON index's operators. |
-//! | `plaintext` | The vitaminc [`ValueKind`] name the type is produced from — the same names a plan field's `"type"` key uses — or `null` while the family's plaintext encoding for the stack-encrypt producer profile is unspecified. |
+//! | `plaintext` | The name of the [`ValueKind`] the type is produced from — the same names a plan field's `"type"` key uses — or `null` while the family's plaintext encoding for the stack-encrypt producer profile is unspecified. |
 //! | `sql_domain` | The schema-qualified PostgreSQL domain the stored value inhabits. |
 //! | `indexes` | The indexes the type carries, by the engine's `IndexSpec::key()` names: `eq`, `match`, `ore`, `ope`, and `json` for a document family's stored type. A query may ask a field typed with this target for exactly these. |
 //! | `query` | The query twin's type name (`TextEqQuery`, `JsonSearchQuery`), or `null` for a storage-only type, which answers no query. |
@@ -96,7 +96,10 @@
 use std::fmt;
 
 use serde::{de::DeserializeOwned, Serialize};
-use stack_encrypt::dynamic::{TargetOptions, ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{
+    frame::{Frame, OwnedFrame},
+    TargetOptions, ValueKind,
+};
 use stack_encrypt::json::JsonOptions;
 use stack_encrypt::kms::MaybeSend;
 use stack_encrypt::target::{
@@ -123,10 +126,10 @@ pub struct Target {
     pub family: &'static str,
     /// The query-capability suffix: `Eq`; empty for a storage-only type.
     pub suffix: &'static str,
-    /// The [`ValueKind`] name of the plaintext this type is produced from,
-    /// or `None` while the family's encoding is unspecified. See
-    /// [`plaintext_kind`](Self::plaintext_kind) for the parsed kind.
-    pub plaintext: Option<&'static str>,
+    /// The kind of plaintext this type is produced from, or `None` while the
+    /// family's encoding is unspecified. On the wire it is the kind's name.
+    #[serde(serialize_with = "kind_name")]
+    pub plaintext: Option<ValueKind>,
     /// The stored value's PostgreSQL domain: `public.eql_v4_text_eq`.
     pub sql_domain: &'static str,
     /// The indexes the type carries, by `IndexSpec::key()` name.
@@ -141,15 +144,16 @@ pub struct Target {
     pub reason: Option<&'static str>,
 }
 
-impl Target {
-    /// The plaintext kind, parsed. `None` when the table records none; the
-    /// table is generated from names vitaminc freezes, so a recorded name
-    /// always parses, and a `None` here means the same as a `None` in
-    /// [`plaintext`](Self::plaintext).
-    pub fn plaintext_kind(&self) -> Option<ValueKind> {
-        self.plaintext.and_then(|name| name.parse().ok())
-    }
+/// Writes a plaintext kind as its name, the name a plan field's `"type"`
+/// key spells, or `null` when there is none.
+fn kind_name<S: serde::Serializer>(
+    kind: &Option<ValueKind>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    kind.map(ValueKind::name).serialize(serializer)
+}
 
+impl Target {
     /// The PostgreSQL domain of the type's ordering operand at a path, for
     /// a type that stores a JSON document (`JsonSearch`:
     /// `eql_v4.query_json_leaf`); `None` for every other type. Stack
@@ -398,7 +402,7 @@ pub fn encrypt<'a, K: 'static>(
     name: &str,
     keyset: &'a KeysetCipher<'_, K>,
     context: &Label,
-    plaintext: ValueFrame,
+    plaintext: Frame<'_>,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     encrypt_with(name, None, keyset, context, plaintext)
 }
@@ -418,7 +422,7 @@ pub fn encrypt_with<'a, K: 'static>(
     options: Option<&TargetOptions>,
     keyset: &'a KeysetCipher<'_, K>,
     context: &Label,
-    plaintext: ValueFrame,
+    plaintext: Frame<'_>,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     encrypt_under(
         name,
@@ -455,7 +459,7 @@ pub(crate) fn encrypt_under<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     label: &Label,
     parts: &DeclaredContext,
-    plaintext: ValueFrame,
+    plaintext: Frame<'_>,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     producible(name)?;
     let context = field_context(label, parts)?;
@@ -466,7 +470,7 @@ pub(crate) fn encrypt_under<'a, K: 'static>(
                 name: document.name,
             })?,
         };
-        return encrypt_document(document.name, &options, keyset, context, &plaintext);
+        return encrypt_document(document.name, &options, keyset, context, plaintext);
     }
     if let Some(target) = options.and(target(name)) {
         return Err(TargetError::Options { name: target.name });
@@ -489,7 +493,7 @@ pub fn decrypt<'a, K: 'static>(
     opener: impl Into<Opener<'a, K>>,
     context: &Label,
     stored: &[u8],
-) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
     decrypt_under(name, opener, context, &DeclaredContext::default(), stored)
 }
 
@@ -502,7 +506,7 @@ pub(crate) fn decrypt_under<'a, K: 'static>(
     label: &Label,
     parts: &DeclaredContext,
     stored: &[u8],
-) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
     producible(name)?;
     let context = field_context(label, parts)?;
     if let Some(document) = document(name) {
@@ -528,7 +532,7 @@ fn encrypt_document<'a, K: 'static>(
     options: &JsonOptions,
     keyset: &'a KeysetCipher<'_, K>,
     context: CallerContext,
-    plaintext: &ValueFrame,
+    plaintext: Frame<'_>,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     let document =
         stack_encrypt::dynamic::read_json(plaintext).map_err(|source| TargetError::Json {
@@ -551,7 +555,7 @@ fn decrypt_document<'a, K: 'static>(
     opener: Opener<'a, K>,
     context: CallerContext,
     stored: &[u8],
-) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
     use crate::v4::json_tree::JsonTreeDocument;
     use stack_encrypt::json::JsonPlaintext;
     let value: JsonTreeDocument =
@@ -589,7 +593,7 @@ pub fn query<'a, K: 'static>(
     index: &IndexSpec,
     keyset: &'a KeysetCipher<'_, K>,
     context: &Label,
-    plaintext: ValueFrame,
+    plaintext: Frame<'_>,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     query_under(
         name,
@@ -610,7 +614,7 @@ pub(crate) fn query_under<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     label: &Label,
     scopes: &DeclaredContext,
-    plaintext: ValueFrame,
+    plaintext: Frame<'_>,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     producible(name)?;
     let Some(target) = target(name) else {
@@ -718,7 +722,7 @@ mod sealed {
 }
 
 /// A Rust plaintext an EQL type is produced from, read out of and written
-/// back into the engine's runtime plaintext, a [`ValueFrame`]. Sealed: the
+/// back into the engine's runtime plaintext, an [`OwnedFrame`]. Sealed: the
 /// implementations are exactly the plaintext types the catalog's producible
 /// families name, and the generated dispatch picks one per type.
 /// `Zeroize`, because [`from_frame`](Self::from_frame) copies the plaintext
@@ -734,7 +738,7 @@ pub trait Plaintext:
     /// Read the value as this plaintext, refusing any other kind: the frame
     /// is walked into this type's own decrypt sink once its kind is checked,
     /// so nothing is narrowed or widened.
-    fn from_frame(target: &'static str, value: &ValueFrame) -> Result<Self, TargetError> {
+    fn from_frame(target: &'static str, value: Frame<'_>) -> Result<Self, TargetError> {
         let refused = || TargetError::Plaintext {
             target,
             expected: Self::KIND,
@@ -752,12 +756,12 @@ pub trait Plaintext:
     ///
     /// None for the plaintexts here, every one of which is in the engine's
     /// value model; the `Result` is the frame writer's.
-    fn into_frame(self) -> Result<ValueFrame, Error>;
+    fn into_frame(self) -> Result<OwnedFrame, Error>;
 }
 
 /// The frame of a plaintext, or the error a value vitaminc cannot write is.
-fn frame_of(value: impl Encrypt) -> Result<ValueFrame, Error> {
-    ValueFrame::of(value).map_err(|error| Error::Other(Box::new(error)))
+fn frame_of(value: impl Encrypt) -> Result<OwnedFrame, Error> {
+    OwnedFrame::of(value).map_err(|error| Error::Other(Box::new(error)))
 }
 
 impl Plaintext for String {
@@ -767,7 +771,7 @@ impl Plaintext for String {
     /// returns: the frame writer copies the text into its own `Protected`
     /// buffer, and the opened `String` would otherwise go back to the
     /// allocator with the plaintext still in it.
-    fn into_frame(self) -> Result<ValueFrame, Error> {
+    fn into_frame(self) -> Result<OwnedFrame, Error> {
         let text = zeroize::Zeroizing::new(self);
         frame_of(text.as_str())
     }
@@ -781,7 +785,7 @@ macro_rules! scalar_plaintext {
         impl Plaintext for $ty {
             const KIND: ValueKind = ValueKind::$variant;
 
-            fn into_frame(self) -> Result<ValueFrame, Error> {
+            fn into_frame(self) -> Result<OwnedFrame, Error> {
                 frame_of(self)
             }
         }
@@ -823,12 +827,12 @@ impl Plaintext for crate::v4::plaintext::JsonPlaintext {
     /// [`TargetError::Json`] for a value that is not text or bytes, or
     /// whose text is not a document. It carries a code, and never any of
     /// the text.
-    fn from_frame(target: &'static str, value: &ValueFrame) -> Result<Self, TargetError> {
+    fn from_frame(target: &'static str, value: Frame<'_>) -> Result<Self, TargetError> {
         stack_encrypt::dynamic::read_json(value)
             .map_err(|source| TargetError::Json { target, source })
     }
 
-    fn into_frame(self) -> Result<ValueFrame, Error> {
+    fn into_frame(self) -> Result<OwnedFrame, Error> {
         stack_encrypt::dynamic::json_frame(self.value())
     }
 }
@@ -846,33 +850,28 @@ impl Plaintext for crate::v4::plaintext::JsonPlaintext {
 impl<S: Plaintext> Plaintext for Option<S> {
     const KIND: ValueKind = S::KIND;
 
-    fn from_frame(target: &'static str, value: &ValueFrame) -> Result<Self, TargetError> {
+    fn from_frame(target: &'static str, value: Frame<'_>) -> Result<Self, TargetError> {
         if value.kind().is_some() {
             return S::from_frame(target, value).map(Some);
         }
-        // No kind: a null, which reads as `None`, or something no plaintext
-        // is (an `undefined`, a passthrough), refused as `S` refuses it.
-        match value.visit(Self::sink()) {
-            Ok(None) => Ok(None),
-            _ => Err(TargetError::Plaintext {
-                target,
-                expected: Self::KIND,
-                found: None,
-            }),
+        // A null, plain or typed, reads as `None`, which seals padded to
+        // this plaintext's own type: a host's typed null of another type
+        // does not decide the padding. Anything else with no kind (an
+        // `undefined`, a passthrough) is no plaintext.
+        if value.is_null() {
+            return Ok(None);
         }
+        Err(TargetError::Plaintext {
+            target,
+            expected: Self::KIND,
+            found: None,
+        })
     }
 
-    fn into_frame(self) -> Result<ValueFrame, Error> {
+    fn into_frame(self) -> Result<OwnedFrame, Error> {
         match self {
             Some(value) => value.into_frame(),
-            None => {
-                let null =
-                    stack_encrypt::Protected::new([stack_encrypt::dynamic::frame::tags::NULL]);
-                ValueFrame::from_bytes(
-                    stack_encrypt::AsProtectedRef::as_protected_ref(&null).as_ref_of(),
-                )
-                .map_err(|error| Error::Other(Box::new(error)))
-            }
+            None => Ok(OwnedFrame::null()),
         }
     }
 }
@@ -889,7 +888,7 @@ pub(crate) fn run_target<'a, T, S, K>(
     name: &'static str,
     keyset: &'a KeysetCipher<'_, K>,
     context: CallerContext,
-    plaintext: ValueFrame,
+    plaintext: Frame<'_>,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>
 where
     T: EncryptTarget<S, ContextInput = StoredContext<Identifier>> + Serialize,
@@ -913,14 +912,14 @@ fn run_owned<'a, T, S, K>(
     name: &'static str,
     keyset: &'a KeysetCipher<'_, K>,
     context: CallerContext,
-    plaintext: ValueFrame,
+    plaintext: Frame<'_>,
 ) -> Result<Pending<'a, T, K>, TargetError>
 where
     T: EncryptTarget<S, ContextInput = StoredContext<Identifier>>,
     S: Plaintext + zeroize::Zeroize,
     K: 'static,
 {
-    let plaintext = stack_encrypt::Protected::new(S::from_frame(name, &plaintext)?);
+    let plaintext = stack_encrypt::Protected::new(S::from_frame(name, plaintext)?);
     let description = T::owned_encryption();
     Ok(keyset.run(
         description,
@@ -937,7 +936,7 @@ pub(crate) fn run_projected<'a, P, Q, S, K>(
     name: &'static str,
     keyset: &'a KeysetCipher<'_, K>,
     context: CallerContext,
-    plaintext: ValueFrame,
+    plaintext: Frame<'_>,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>
 where
     P: EncryptTarget<S, ContextInput = StoredContext<Identifier>> + Into<Q>,
@@ -962,7 +961,7 @@ pub(crate) fn open_target<'a, T, S, K>(
     opener: Opener<'a, K>,
     context: CallerContext,
     stored: &[u8],
-) -> Result<Pending<'a, ValueFrame, K>, TargetError>
+) -> Result<Pending<'a, OwnedFrame, K>, TargetError>
 where
     T: DeserializeOwned + DecryptSource<S, ContextInput = ExpectedContext<Identifier>> + 'static,
     S: Plaintext + zeroize::Zeroize,
@@ -1045,12 +1044,6 @@ mod tests {
                 "{}: a reason exactly when not producible",
                 t.name
             );
-            assert_eq!(
-                t.plaintext_kind().is_some(),
-                t.plaintext.is_some(),
-                "{}: a recorded plaintext name is a vitaminc kind",
-                t.name
-            );
         }
     }
 
@@ -1100,7 +1093,6 @@ mod tests {
                 "reason": "its encoding is not decided"
             })
         );
-        assert_eq!(WAITING.plaintext_kind(), None);
     }
 
     #[test]
@@ -1152,31 +1144,63 @@ mod tests {
         assert!(producible("DateOrdOre").is_ok());
     }
 
-    fn frame<T: Encrypt>(value: T) -> ValueFrame {
-        ValueFrame::of(value).unwrap()
+    fn frame<T: Encrypt>(value: T) -> OwnedFrame {
+        OwnedFrame::of(value).unwrap()
     }
 
     #[test]
     fn a_string_plaintext_is_read_exactly_and_nothing_else_is_converted() {
-        let text = String::from_frame("TextEq", &frame("café")).unwrap();
+        let text = String::from_frame("TextEq", frame("café").frame()).unwrap();
         assert_eq!(text, "café");
         assert!(matches!(
-            String::from_frame("TextEq", &frame(34u64)),
+            String::from_frame("TextEq", frame(34u64).frame()),
             Err(TargetError::Plaintext {
                 target: "TextEq",
                 expected: ValueKind::String,
                 found: Some(ValueKind::UInt64)
             })
         ));
-        let error = String::from_frame("TextEq", &frame(None::<i32>)).unwrap_err();
+        let error = String::from_frame("TextEq", frame(None::<i32>).frame()).unwrap_err();
         assert!(matches!(error, TargetError::Plaintext { found: None, .. }));
         assert_eq!(
             error.to_string(),
             "TextEq is produced from a string plaintext, not a value with no kind"
         );
         assert_eq!(
-            String::from("x").into_frame().unwrap().risky_ref(),
-            frame("x").risky_ref()
+            String::from("x").into_frame().unwrap().frame().as_bytes(),
+            frame("x").frame().as_bytes()
+        );
+    }
+
+    /// A plaintext that may be absent reads any null as `None`: the plain
+    /// null, and a host's typed null of its own type or of another, which
+    /// then seals padded to the plaintext's own type. Anything else with no
+    /// kind is refused.
+    #[test]
+    fn an_optional_plaintext_reads_any_null_as_absent() {
+        use stack_encrypt::dynamic::frame::{tags, Frame};
+        // A typed null as a host writes it: its tag, the type's header, zeros.
+        let int32 = [tags::TYPED_NULL, tags::INT32, 0, 0, 0];
+        let int64 = [tags::TYPED_NULL, tags::INT64, 0, 0, 0, 0, 0, 0, 0];
+        for null in [&[tags::NULL][..], &int32, &int64] {
+            let null = Frame::parse(null).unwrap();
+            assert!(null.is_null());
+            assert_eq!(Option::<i32>::from_frame("IntegerEq", null).unwrap(), None);
+        }
+        assert_eq!(
+            Option::<i32>::from_frame("IntegerEq", frame(5i32).frame()).unwrap(),
+            Some(5)
+        );
+        let undefined = Frame::parse(&[tags::UNDEFINED]).unwrap();
+        assert!(!undefined.is_null());
+        assert!(matches!(
+            Option::<i32>::from_frame("IntegerEq", undefined),
+            Err(TargetError::Plaintext { found: None, .. })
+        ));
+        // `None` opens back as the plain null.
+        assert_eq!(
+            None::<i32>.into_frame().unwrap().frame().as_bytes(),
+            [tags::NULL]
         );
     }
 
@@ -1184,18 +1208,18 @@ mod tests {
     /// frame of the value it holds.
     #[test]
     fn a_scalar_plaintext_is_read_at_its_own_width() {
-        let read = i32::from_frame("IntegerEq", &frame(-7i32)).unwrap();
+        let read = i32::from_frame("IntegerEq", frame(-7i32).frame()).unwrap();
         assert_eq!(read, -7);
         assert!(matches!(
-            i32::from_frame("IntegerEq", &frame(-7i64)),
+            i32::from_frame("IntegerEq", frame(-7i64).frame()),
             Err(TargetError::Plaintext {
                 found: Some(ValueKind::Int64),
                 ..
             })
         ));
         assert_eq!(
-            9i64.into_frame().unwrap().risky_ref(),
-            frame(9i64).risky_ref()
+            9i64.into_frame().unwrap().frame().as_bytes(),
+            frame(9i64).frame().as_bytes()
         );
     }
 }

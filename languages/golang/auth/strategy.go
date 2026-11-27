@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"sync"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
+	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 	"github.com/tetratelabs/wazero/api"
 )
 
@@ -57,8 +60,23 @@ type Strategy struct {
 	handle     string
 	providerID uint32
 	device     bool
-	mu         guest.Lock
-	closed     bool
+	// mu guards closed and the start of a Token call. It is never held
+	// across one: callers share the strategy without waiting for each
+	// other, and a caller whose token is being exchanged waits inside the
+	// guest instead (see step.go).
+	mu     sync.Mutex
+	closed bool
+	// closeDone is closed once the first Close has finished, with its
+	// result in closeErr: a later Close waits for it and returns the same.
+	closeDone chan struct{}
+	closeErr  error
+	// inflight counts Token calls still running, a device session's
+	// refresh left running by a caller that gave up included. Close waits
+	// for them.
+	inflight sync.WaitGroup
+	// refreshing takes a device session's refreshes in this process one at
+	// a time, before the cross-process lock does across processes.
+	refreshing guest.Lock
 }
 
 func (s *ProfileStore) newStrategy(ctx context.Context, config any, device bool) (*Strategy, error) {
@@ -249,77 +267,182 @@ func (s *ProfileStore) hasToken(ctx context.Context) (bool, error) {
 	return out[0] == 1, nil
 }
 
-// Token gets the current CTS bearer credential. Device sessions read a fresh
-// token without a file lock; only a refresh call takes the cross-process lock.
+// Token gets the current CTS bearer credential. It is safe for concurrent
+// use, and callers do not wait for each other: while one caller's token is
+// exchanged or refreshed, another whose token still works gets it at once.
+// A caller with no usable token waits for the exchange already in flight
+// rather than starting a second one. Device sessions read a fresh token
+// without a file lock; only a refresh takes the cross-process lock.
 func (s *Strategy) Token(ctx context.Context) (string, error) {
-	// A request queued behind another's refresh leaves when its context
-	// ends, as at the profile's own lock.
-	if err := s.mu.Acquire(ctx); err != nil {
-		return "", err
-	}
+	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return "", ErrState
 	}
-	// The work runs on its own goroutine, which holds the lock until it is
-	// done, so a caller that gives up returns at once. A device session's
-	// refresh already sent finishes there, and the guest keeps what the
-	// service sends (see refreshGrace): a rotated refresh token is never
-	// lost. The token it brings is dropped; the next Token reads it. Any
-	// other request ends with the caller.
+	s.inflight.Add(1)
+	s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		s.inflight.Done()
+		return "", err
+	}
+	// The work runs on its own goroutine, so a caller that gives up
+	// returns at once. A request to the token service already sent is
+	// finished there, and the guest keeps what the service sends (see
+	// step.go): a rotated refresh token is never lost. The token it brings
+	// is dropped; the next Token reads it.
 	//
 	// A panic of the application's code in the call (its RoundTripper, an
-	// OIDCProvider) is raised again on the caller's goroutine, as callArgs
-	// raises it, rather than ending the process from this one. A caller that
-	// has left does not get it.
-	ctx, panicked := withHostPanic(ctx)
-	token, err := callApplication(ctx, nil, func() (string, error) {
-		defer s.mu.Unlock()
-		ctx, status := withAuthHTTPStatus(ctx)
-		token, err := s.token(ctx)
-		return token, status.wrap(err)
-	}, nil)
-	panicked.raise(nil)
-	if errors.Is(err, errAbandoned) {
-		// The caller sees its context's error, as when it waits anywhere
-		// else.
-		return "", ctx.Err()
+	// OIDCProvider) is raised again on the caller's goroutine rather than
+	// ending the process from this one. A caller that has left does not get
+	// it.
+	type result struct {
+		token    string
+		err      error
+		panicked bool
+		panic    any
 	}
-	return token, err
+	done := make(chan result, 1)
+	go func() {
+		defer s.inflight.Done()
+		var r result
+		defer func() {
+			if p := recover(); p != nil {
+				r = result{panicked: true, panic: p}
+			}
+			done <- r
+		}()
+		// A panic of the RoundTripper, recovered where it ran and recorded
+		// here, is raised again on this goroutine, then the caller's.
+		ctx, panicked := withHostPanic(ctx)
+		ctx, status := withAuthHTTPStatus(ctx)
+		r.token, r.err = s.token(ctx)
+		r.err = status.wrap(r.err)
+		panicked.raise(nil)
+	}()
+	select {
+	case r := <-done:
+		if r.panicked {
+			panic(r.panic)
+		}
+		return r.token, r.err
+	case <-ctx.Done():
+		// The caller sees its context's error, as when it waits anywhere
+		// else, unless the work finished as the context ended.
+		select {
+		case r := <-done:
+			if r.panicked {
+				panic(r.panic)
+			}
+			return r.token, r.err
+		default:
+			return "", ctx.Err()
+		}
+	}
 }
 
-// token is Token under the strategy's lock: a read, then a locked refresh
-// for a device session that needs one.
+// token is Token's work: a read, after an exchange when there is no usable
+// token, then, for a device session that needs one, a refresh under the
+// cross-process lock. While one caller refreshes a device session's token
+// that still works, the others get that token at once.
 func (s *Strategy) token(ctx context.Context) (string, error) {
-	call := func(ctx context.Context, export func(*instance) api.Function) (string, error) {
-		out, err := s.store.callArgs(ctx, export, guest.BufArg([]byte(s.handle)))
+	run := func(ctx context.Context, export func(*instance) api.Function) ([]byte, error) {
+		out, err := s.store.run(ctx, export, guest.BufArg([]byte(s.handle)))
+		if err != nil {
+			return nil, err
+		}
+		// A caller that has left gets no copy: a string cannot be wiped,
+		// and the next Token reads the guest's.
+		if err := ctx.Err(); err != nil {
+			guest.Wipe(out)
+			return nil, err
+		}
+		return out, nil
+	}
+	text := func(out []byte, err error) (string, error) {
 		if err != nil {
 			return "", err
 		}
 		defer guest.Wipe(out)
-		// A caller that has left gets no copy: a string cannot be wiped,
-		// and the next Token reads the guest's.
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
 		return string(out), nil
 	}
-	token, err := call(ctx, func(i *instance) api.Function { return i.authToken })
-	if !s.device || !errors.Is(err, guest.ErrAuthRefreshRequired) {
-		return token, err
+	if !s.device {
+		return text(run(ctx, func(i *instance) api.Function { return i.authToken }))
 	}
+	out, err := run(ctx, func(i *instance) api.Function { return i.authToken })
+	switch {
+	case errors.Is(err, guest.ErrAuthRefreshRequired):
+		// Past its expiry: every caller waits for the refresh.
+		if err := s.refreshing.Acquire(ctx); err != nil {
+			return "", err
+		}
+	case err != nil:
+		return "", err
+	default:
+		token, refresh, err := decodeDeviceToken(out)
+		guest.Wipe(out)
+		if err != nil || !refresh {
+			return token, err
+		}
+		// Still usable: refresh it unless another caller already is, and
+		// hand out the current token meanwhile.
+		if !s.refreshing.TryLock() {
+			return token, nil
+		}
+	}
+	defer s.refreshing.Unlock()
 	path, err := s.store.LockPath(ctx, "auth.json")
 	if err != nil {
 		return "", err
 	}
+	// The lock is held across every step of the refresh. A refresh that
+	// waited here behind another finds the token that one saved: the
+	// guest re-reads auth.json before it asks the service.
+	var token string
 	err = withRefreshLock(ctx, path, func() error {
 		var err error
 		// The one request that rotates a credential: it runs on after its
 		// caller leaves (see refreshGrace).
-		token, err = call(withRefresh(ctx), func(i *instance) api.Function { return i.authRefresh })
+		token, err = text(run(withRefresh(ctx), func(i *instance) api.Function { return i.authRefresh }))
 		return err
 	})
 	return token, err
+}
+
+// decodeDeviceToken reads a device session's token read:
+// `{"access_token": text, "refresh_required": bool}`. The error never
+// quotes the frame: it carries the token.
+func decodeDeviceToken(raw []byte) (token string, refresh bool, err error) {
+	malformed := fmt.Errorf("%w: the guest's device session token is malformed", ErrInternal)
+	decoded, err := vcffi.Unmarshal(raw)
+	if err != nil {
+		return "", false, malformed
+	}
+	obj, ok := decoded.(vcvalue.Object)
+	if !ok {
+		return "", false, malformed
+	}
+	var sawToken, sawRefresh bool
+	for _, f := range obj {
+		switch f.Key {
+		case "access_token":
+			token, ok = f.Value.(string)
+			ok = ok && !sawToken
+			sawToken = true
+		case "refresh_required":
+			refresh, ok = f.Value.(bool)
+			ok = ok && !sawRefresh
+			sawRefresh = true
+		default:
+			ok = false
+		}
+		if !ok {
+			return "", false, malformed
+		}
+	}
+	if !sawToken || !sawRefresh || token == "" {
+		return "", false, malformed
+	}
+	return token, refresh, nil
 }
 
 // MemoryLockError is why the memory the strategy lives in is not locked in
@@ -332,22 +455,31 @@ func (s *Strategy) token(ctx context.Context) (string, error) {
 func (s *Strategy) MemoryLockError() error { return s.store.MemoryLockError() }
 
 // Close drops the strategy's cached token and unregisters its provider.
-// It waits for a call in flight, including a device session's refresh that
-// a cancelled Token left running: that refresh finishes, for up to 10
-// seconds, so the rotated refresh token it brings is saved rather than lost.
+// It waits for the Token calls in flight, including a device session's
+// refresh that a cancelled Token left running: that refresh finishes, for
+// up to 10 seconds, so the rotated refresh token it brings is saved rather
+// than lost. A Close called while another is running waits for it, and
+// returns what it returns: once any Close has returned, the strategy's
+// OIDC provider is not called again.
 func (s *Strategy) Close() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		done := s.closeDone
+		s.mu.Unlock()
+		<-done
+		return s.closeErr
 	}
 	s.closed = true
+	s.closeDone = make(chan struct{})
+	s.mu.Unlock()
+	defer close(s.closeDone)
+	s.inflight.Wait()
 	if s.providerID != 0 {
 		s.store.root.inst.transport.unregister(s.providerID)
 	}
 	_, err := s.store.callArgs(context.Background(), func(i *instance) api.Function { return i.authFree }, guest.BufArg([]byte(s.handle)))
-	if errors.Is(err, ErrState) {
-		return nil
+	if !errors.Is(err, ErrState) {
+		s.closeErr = err
 	}
-	return err
+	return s.closeErr
 }

@@ -64,15 +64,19 @@
 //! key in `secretkey.json` crosses as the text the file holds; the Go side
 //! wraps it in its opaque `ClientKey` and wipes its transport copy. A
 //! refresh token never crosses: the auth strategy retains it inside this
-//! module, while the Go host supplies HTTP through a single transport
-//! import. The host can provide an access key or an OIDC provider callback.
+//! module. The guest never waits on the network: a token export that needs
+//! CTS pauses at its request and hands it to the host, which performs it
+//! and resumes the export with the response ([`abi`], [`io`]). So while one
+//! caller's exchange is in flight, the guest is free for others. The host
+//! can provide an access key or an OIDC provider callback.
 //!
 //! # Locking
 //!
 //! WASI preview 1 has no file locking, so this module takes none. The Go
 //! side takes the same lock the Rust CLI takes, on the path
 //! [`ProfileStore::lock_path`](stack_profile::ProfileStore::lock_path)
-//! names (exported here), around the entire device-session refresh export.
+//! names (exported here), around the entire device-session refresh: from
+//! the export that starts it to the step that finishes it.
 //! A fresh token is read without that lock. The refresh export re-reads
 //! auth.json after acquisition and saves a rotated token before returning.
 //! Go never composes a profile path.
@@ -87,14 +91,15 @@
 //!
 //! Split into:
 //!
-//! - [`ops`], [`status`], [`headers`] — everything that is pure logic over a
-//!   `ProfileStore` and bytes. Compiles and unit-tests on the native host
-//!   target (`cargo test` here) against a temporary directory.
+//! - [`ops`], [`status`], [`headers`], [`io`] — everything that is pure
+//!   logic over a `ProfileStore` and bytes. Compiles and unit-tests on the
+//!   native host target (`cargo test` here) against a temporary directory.
 //! - [`auth`], [`host`] (wasm32 only) — stack-auth strategies and host HTTP.
 //! - [`abi`] (wasm32 only) — the export surface, over the conventions
 //!   every guest shares (`stack_guest_abi`).
 
 pub mod headers;
+pub mod io;
 pub mod ops;
 pub mod status;
 

@@ -1,7 +1,7 @@
 //! Parsing of the `se_cipher_init` configuration.
 //!
 //! The config crosses the boundary as one frame object, read by serde
-//! (`vitaminc_aead_frame::serde`), the same format as every other control
+//! (`recipher_frame::serde`), the same format as every other control
 //! message. Recognised keys (all string values):
 //!
 //! | key           | required | meaning |

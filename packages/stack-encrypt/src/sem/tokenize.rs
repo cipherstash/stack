@@ -189,7 +189,7 @@ pub(crate) fn tokens(
 /// exists, because its filter would match every row.
 ///
 /// The tokenizer must be valid: an n-gram length of zero panics. Callers
-/// validate the [`MatchOptions`](super::MatchOptions) first.
+/// validate the [`MatchOptions`] first.
 ///
 /// An n-gram length of zero yields no tokens rather than panicking, so a
 /// caller that tokenizes before validating the options (a query's verifier)

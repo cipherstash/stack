@@ -154,7 +154,7 @@ pub struct OidcFederationStrategy<P, S = NoStore> {
     ///
     /// Each engine remembers refusals for its own JWT, but an engine whose
     /// first exchange is refused is not kept (see
-    /// [`forget_failed`](Self::forget_failed)), and a refusal of the
+    /// [`settle`](Self::settle)), and a refusal of the
     /// *account* is the same answer for every JWT. Without this, a client
     /// over its usage limit would re-ask CTS once per request per user, the
     /// storm the engine's own denial exists to stop.
@@ -351,7 +351,7 @@ impl OidcFederationStrategy<crate::CredentialPerCall> {
     /// Use this constructor when the caller holds the JWT, as a request
     /// handler holds the JWT of the user who signed in. Each call hands
     /// its JWT in
-    /// ([`CredentialAuthStrategy::get_token_with_credential`](crate::CredentialAuthStrategy::get_token_with_credential)).
+    /// ([`CredentialAuthStrategy::get_token_with_credential`]).
     /// The strategy has no [`get_token`](AuthStrategy::get_token), so a
     /// call that brings no JWT does not compile.
     ///

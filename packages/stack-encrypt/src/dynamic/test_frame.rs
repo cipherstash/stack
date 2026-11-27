@@ -2,7 +2,7 @@
 //! test spells, written as frame bytes, and a frame read back as one.
 //!
 //! The tree is a test's own notation, never a type the engine takes: every
-//! entry point reads frames ([`ValueFrame`](super::ValueFrame), or bytes),
+//! entry point reads frames ([`OwnedFrame`](vitaminc_aead::frame::OwnedFrame), or bytes),
 //! and a tree reaches one only as its frame or as an [`Encrypt`] source.
 //! [`frame_of`] writes objects and arrays by hand, so a test can send a
 //! repeated key, which no frame writer would.
@@ -85,7 +85,10 @@ impl Tree {
     /// from the tree's frame: `None` for a null, an `undefined`, a
     /// passthrough, or a tree no frame holds.
     pub(crate) fn kind(&self) -> Option<super::ValueKind> {
-        super::ValueFrame::of(self).ok()?.kind()
+        vitaminc_aead::frame::OwnedFrame::of(self)
+            .ok()?
+            .frame()
+            .kind()
     }
 
     /// A frame read back as a tree.
@@ -109,6 +112,13 @@ pub(crate) fn frame_of(value: &Tree) -> vitaminc_protected::Protected<Vec<u8>> {
     let mut out = Vec::new();
     write(value, &mut out);
     vitaminc_protected::Protected::new(out)
+}
+
+/// [`frame_of`] in an owned frame of its own, as a binding hands one over.
+pub(crate) fn owned_frame_of(value: &Tree) -> vitaminc_aead::frame::OwnedFrame {
+    let mut bytes = vitaminc_protected::Buffer::new();
+    bytes.extend_from_slice(frame_of(value).risky_ref());
+    vitaminc_aead::frame::OwnedFrame::from_buffer(bytes).expect("a frame")
 }
 
 fn write(value: &Tree, out: &mut Vec<u8>) {
@@ -137,7 +147,7 @@ fn write(value: &Tree, out: &mut Vec<u8>) {
 /// What a binding reads back from an answer the engine writes: its frame,
 /// read back.
 pub(crate) fn value_of<T: serde::Serialize>(answer: &T) -> Tree {
-    let frame = vitaminc_aead_frame::serde::to_vec(answer).expect("frames");
+    let frame = recipher_frame::serde::to_vec(answer).expect("frames");
     Tree::from_frame(frame.risky_ref()).expect("a value")
 }
 

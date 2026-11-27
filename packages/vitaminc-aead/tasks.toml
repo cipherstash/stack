@@ -2,15 +2,21 @@
 # the root mise.toml.
 
 # Rustdoc with warnings as errors, which the root `doc` task fans out to.
+# It builds the public docs, then the docs of private items too: only the
+# public build warns when a public doc links to a private item, and only
+# the private build checks the links in private docs.
 ["doc:vitaminc-aead"]
-description = "Build docs for vitaminc-aead with all features (warnings are errors)"
+description = "Build docs for vitaminc-aead with all features, public then private items (warnings are errors)"
 env = { RUSTDOCFLAGS = "-D warnings" }
-run = "cargo doc -p vitaminc-aead --no-deps --all-features"
+run = [
+  "cargo doc -p vitaminc-aead --no-deps --all-features",
+  "cargo doc -p vitaminc-aead --no-deps --all-features --document-private-items",
+]
 
 # The workspace test run unifies features across every member, so no
 # optional feature is tested alone there: stack-encrypt's default features
 # turn on vitaminc-aead's `jiff`, `rust_decimal` and `uuid`, and it uses
-# vitaminc-aead-frame with `serde`. A `cargo test -p` run builds only that
+# recipher-frame with `serde`. A `cargo test -p` run builds only that
 # package's graph, so each feature is tested on its own here, with the
 # storage bench's smoke run.
 #
@@ -20,7 +26,7 @@ run = "cargo doc -p vitaminc-aead --no-deps --all-features"
 # test, so the step also checks that both ran. On a failure it prints the
 # test output before it exits.
 ["test:vitaminc-aead:features"]
-description = "Test vitaminc-aead with each optional feature alone (jiff, rust_decimal, uuid, hlist), its release-only jiff tests, and vitaminc-aead-frame with and without serde"
+description = "Test vitaminc-aead with each optional feature alone (jiff, rust_decimal, uuid, hlist), its release-only jiff tests, and recipher-frame with and without serde"
 run = [
   "cargo test --locked -p vitaminc-aead",
   "cargo test --locked -p vitaminc-aead --features jiff",
@@ -37,7 +43,7 @@ run = [
   "cargo test --locked -p vitaminc-aead --features rust_decimal",
   "cargo test --locked -p vitaminc-aead --features uuid",
   "cargo test --locked -p vitaminc-aead --features hlist",
-  "cargo test --locked -p vitaminc-aead-frame",
-  "cargo test --locked -p vitaminc-aead-frame --features serde",
-  "cargo test --locked -p vitaminc-aead-frame --features serde --bench storage",
+  "cargo test --locked -p recipher-frame",
+  "cargo test --locked -p recipher-frame --features serde",
+  "cargo test --locked -p recipher-frame --features serde --bench storage",
 ]

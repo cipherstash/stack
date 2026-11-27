@@ -42,13 +42,12 @@ func (f OIDCProviderFunc) Token(ctx context.Context) (string, error) { return f(
 const maxAuthResponseBytes = 16 << 20
 
 // authHTTPStatus records the status of the last HTTP response the transport
-// received during one guest call. The guest's error does not always name it
+// received for one Token call. The guest's error does not always name it
 // (a refused response whose body could not be read reaches the guest as a
 // transport failure, with no status), and a guest built before se_last_error
 // gives no error at all, so without it a refused exchange (the edge in front
 // of CTS answering 403) could reach the caller as a bare ErrTransport. It lives on the call's
-// context, which wazero hands to the host import, so concurrent calls on
-// different profiles never see each other's status.
+// context, so concurrent calls never see each other's status.
 type authHTTPStatus struct{ code int }
 
 type authHTTPStatusKey struct{}
@@ -114,11 +113,11 @@ func (t *authTransport) unregister(id uint32) {
 // the service has retired. So a refresh is not cancelled with its caller:
 // the caller returns at once (Strategy.Token), the request finishes, and
 // the guest saves what came back. A refresh still running this long after
-// its caller gave up fails as a transport failure, well inside
-// guest.StuckAfter, so the profile stays open.
+// its caller gave up fails as a transport failure.
 //
 // Every other request to the token service (an access-key exchange, an
-// OIDC exchange) rotates nothing, and is cancelled with its caller.
+// OIDC exchange) rotates nothing, and is cancelled with its caller. Its
+// operation is still finished, with the failure (see step.go).
 const refreshGrace = 10 * time.Second
 
 // refreshKey marks the context of a device session's refresh call
@@ -135,55 +134,47 @@ func withRefresh(ctx context.Context) context.Context {
 // which runs on for the grace (see refreshGrace). done must be called when
 // the request is finished with.
 //
-// wait is how long send waits for the application's RoundTripper
+// wait is how long perform waits for the application's RoundTripper
 // (callApplication). For most requests it is the request's own context.
-// For a refresh it is the guest call's: the RoundTripper may ignore its
-// request's context, and a rotated refresh token it brings back after the
-// grace must still reach the guest, so send waits for it until the
-// stuck-call backstop, as it did before it could leave a hung call.
-func (t *authTransport) requestContext(ctx context.Context) (req, wait context.Context, done func()) {
+// For a refresh it runs until stuck after the caller's context ends: the
+// RoundTripper may ignore its request's context, and a rotated refresh
+// token it brings back after the grace must still reach the guest. A
+// refresh still hung then fails as a transport failure.
+func (t *authTransport) requestContext(ctx context.Context, stuck time.Duration) (req, wait context.Context, done func()) {
 	if refresh, _ := ctx.Value(refreshKey{}).(bool); refresh {
-		req, done := guest.Detach(guest.Caller(ctx), t.grace)
-		return req, ctx, done
+		req, reqDone := guest.Detach(ctx, t.grace)
+		wait, waitDone := guest.Detach(ctx, stuck)
+		return req, wait, func() { reqDone(); waitDone() }
 	}
-	return guest.Caller(ctx), guest.Caller(ctx), func() {}
+	return ctx, ctx, func() {}
 }
 
 func (t *authTransport) instantiate(ctx context.Context, r wazero.Runtime) error {
 	_, err := r.NewHostModuleBuilder("cipherstash_transport").
-		NewFunctionBuilder().WithFunc(t.send).Export("transport_send").
 		NewFunctionBuilder().WithFunc(t.oidcTokenGet).Export("oidc_token_get").
 		Instantiate(ctx)
 	return err
 }
 
-// send is the same host import contract used by encrypt: four input
-// buffers and two output slots, with a negative status on transport failure.
-func (t *authTransport) send(ctx context.Context, m api.Module,
-	methodPtr, methodLen, urlPtr, urlLen, headersPtr, headersLen, bodyPtr, bodyLen uint32,
-	respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut uint32,
-) int32 {
-	mem := m.Memory()
-	method, ok1 := mem.Read(methodPtr, methodLen)
-	url, ok2 := mem.Read(urlPtr, urlLen)
-	headers, ok3 := mem.Read(headersPtr, headersLen)
-	body, ok4 := mem.Read(bodyPtr, bodyLen)
-	if !ok1 || !ok2 || !ok3 || !ok4 {
-		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, []byte("request buffer out of range"))
-	}
-	requestBody := newAuthRequestBody(body)
-	reqCtx, waitCtx, done := t.requestContext(ctx)
+// perform sends one request a paused token operation asked for, outside the
+// guest and outside the profile's lock, and returns the response as the
+// guest reads it: the HTTP status, or -1 with the failure's text as the
+// body. ctx is the caller's; stuck bounds how long a refresh is waited for
+// after it ends (requestContext). The response body can carry a token: the
+// caller wipes it once the guest has it.
+func (t *authTransport) perform(ctx context.Context, r authRequest, stuck time.Duration) (status int32, headers, body []byte) {
+	requestBody := newAuthRequestBody(r.body)
+	reqCtx, waitCtx, done := t.requestContext(ctx, stuck)
 	defer done()
-	req, err := http.NewRequestWithContext(reqCtx, string(method), string(url), requestBody)
+	req, err := http.NewRequestWithContext(reqCtx, r.method, r.url, requestBody)
 	if err != nil {
 		_ = requestBody.Close()
-		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, []byte(err.Error()))
+		return -1, nil, []byte(err.Error())
 	}
-	req.ContentLength = int64(len(body))
-	req.Header = parseAuthHeaders(headers)
+	req.ContentLength = int64(len(r.body))
+	req.Header = parseAuthHeaders(r.headers)
 	resp, err := callApplication(waitCtx, &t.abandoned, func() (authResponse, error) { return t.exchange(req) },
 		func(r authResponse) { guest.Wipe(r.body) })
-	defer guest.Wipe(resp.body)
 	// The body carries the access key or the refresh grant. The transport
 	// wipes it by closing it, as the RoundTripper contract asks, but code
 	// that panicked or was left running may never close it; a read after
@@ -191,13 +182,14 @@ func (t *authTransport) send(ctx context.Context, m api.Module,
 	if errors.Is(err, errApplicationPanicked) || errors.Is(err, errAbandoned) || errors.Is(err, errTooManyAbandoned) {
 		_ = requestBody.Close()
 	}
-	if status, ok := ctx.Value(authHTTPStatusKey{}).(*authHTTPStatus); ok && resp.status != 0 {
-		status.code = resp.status
+	if code, ok := ctx.Value(authHTTPStatusKey{}).(*authHTTPStatus); ok && resp.status != 0 {
+		code.code = resp.status
 	}
 	if err != nil {
-		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, []byte(err.Error()))
+		guest.Wipe(resp.body)
+		return -1, nil, []byte(err.Error())
 	}
-	return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, int32(resp.status), encodeAuthHeaders(resp.header), resp.body) //nolint:gosec // range-checked in exchange
+	return int32(resp.status), encodeAuthHeaders(resp.header), resp.body //nolint:gosec // range-checked in exchange
 }
 
 // authResponse is a token service response, read whole.
@@ -237,14 +229,14 @@ func (t *authTransport) exchange(req *http.Request) (authResponse, error) {
 	return authResponse{status: resp.StatusCode, header: resp.Header, body: body}, nil
 }
 
-// The application's code that the guest's host functions call (the
-// RoundTripper, an OIDCProvider) runs in the middle of a guest call, with
-// the ProfileStore locked. callApplication keeps it from ending that call
-// badly. Without it, a panic there was recovered by wazero as a guest trap,
-// which closed the profile for good and never reached the caller; and a
-// RoundTripper that ignored its request's context held the store's lock,
-// and every caller that needed a token, until it returned, or until the
-// stuck-call backstop closed the profile.
+// The application's code the package calls (the RoundTripper, an
+// OIDCProvider) runs on a goroutine of its own, through callApplication. An
+// OIDCProvider runs in the middle of a guest call, with the ProfileStore
+// locked; the RoundTripper runs between two steps of a token operation.
+// Without callApplication, a panic in the provider was recovered by wazero
+// as a guest trap, which closed the profile for good and never reached the
+// caller; and code that ignored its context held its caller, and the
+// store's lock for a provider, until it returned.
 
 // errApplicationPanicked is the failure a host function gives the guest
 // when the application's code it called panicked. The guest fails the
@@ -410,15 +402,6 @@ func callApplication[T any](ctx context.Context, limit *abandonLimit, f func() (
 		}()
 		return zero, fmt.Errorf("%w: %w", errAbandoned, ctx.Err())
 	}
-}
-
-func (t *authTransport) placeResponse(ctx context.Context, m api.Module,
-	hp, hl, bp, bl uint32, status int32, headers, body []byte,
-) int32 {
-	if !guest.Place(ctx, m, hp, hl, headers) || !guest.Place(ctx, m, bp, bl, body) {
-		return -1
-	}
-	return status
 }
 
 func (t *authTransport) oidcTokenGet(ctx context.Context, m api.Module, provider, ptrOut, lenOut uint32) int32 {

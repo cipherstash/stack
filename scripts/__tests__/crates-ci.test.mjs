@@ -269,7 +269,7 @@ describe('the scan sees every task mise sees', () => {
         'packages/stack-kms/tasks.toml',
         'packages/stack-profile/tasks.toml',
         'packages/vitaminc-aead/tasks.toml',
-        'packages/vitaminc-aead-frame/tasks.toml',
+        'packages/recipher-frame/tasks.toml',
         'packages/vitaminc-aead-derive/tasks.toml',
       ].sort(),
     )
@@ -323,7 +323,7 @@ describe('the scan sees every task mise sees', () => {
         'doc:stack-profile',
         'doc:vitaminc-aead',
         'doc:vitaminc-aead-derive',
-        'doc:vitaminc-aead-frame',
+        'doc:recipher-frame',
       ].sort(),
     )
   })
@@ -392,6 +392,78 @@ describe('every task the set defines is reached by a root workflow', () => {
         ).length > 0,
     )
     expect(soleCallers).toEqual(SOLE_CALLER_WORKFLOWS)
+  })
+})
+
+describe('every doc:<crate> task builds the public docs and the private docs', () => {
+  // A doc comment in a private module, or on a private item, is built only
+  // with `--document-private-items`, so a broken link there passes a public
+  // build. The private build cannot replace the public one: with private
+  // items documented, rustdoc no longer warns when a public doc links to a
+  // private item. So each task runs both, with warnings as errors.
+
+  /** The commands of a task's `run`, a string or an array of strings. */
+  const runCommands = (block) => {
+    const body = stripCommentLines(block)
+    const array = /^run\s*=\s*\[([\s\S]*?)\]/m.exec(body)
+    if (array) return parseStringArray(array[1])
+    const one = /^run\s*=\s*(?:"([^"]*)"|'([^']*)')/m.exec(body)
+    return one ? [one[1] ?? one[2]] : []
+  }
+  const rustdocFlags = (block) =>
+    /RUSTDOCFLAGS\s*=\s*"([^"]*)"/.exec(stripCommentLines(block))?.[1] ?? ''
+  const cargoDocs = (block, crate) =>
+    runCommands(block).filter((command) =>
+      new RegExp(
+        String.raw`\bcargo\s+doc\b.*\s-p\s+${crate.replace(/[.+?^${}()|[\]\\]/g, '\\$&')}(?:\s|$)`,
+      ).test(command),
+    )
+  const PRIVATE = /\s--document-private-items(?:\s|$)/
+
+  const DOC_TASKS = [...TASKS.keys()].filter((name) => name.startsWith('doc:'))
+
+  it('finds the doc tasks', () => {
+    expect(DOC_TASKS.length).toBeGreaterThan(0)
+  })
+
+  it.each(DOC_TASKS)('%s sets warnings as errors for every build', (name) => {
+    const { body } = TASKS.get(name)
+    expect(rustdocFlags(body)).toMatch(/(?:^|\s)-D\s+warnings(?:\s|$)/)
+    expect(
+      runCommands(body).filter((command) => /RUSTDOCFLAGS=/.test(command)),
+      'A command that sets RUSTDOCFLAGS itself replaces the task env, and with it `-D warnings`.',
+    ).toEqual([])
+  })
+
+  it.each(DOC_TASKS)('%s builds with and without private items', (name) => {
+    const crate = name.slice('doc:'.length)
+    const builds = cargoDocs(TASKS.get(name).body, crate)
+    expect(
+      builds.filter((command) => !PRIVATE.test(command)),
+      'the public build',
+    ).toHaveLength(1)
+    expect(
+      builds.filter((command) => PRIVATE.test(command)),
+      'the build with --document-private-items',
+    ).toHaveLength(1)
+  })
+
+  it('reads the shapes it is meant to', () => {
+    const block = [
+      '["doc:x"]',
+      'env = { RUSTDOCFLAGS = "-D warnings" }',
+      'run = [',
+      '  "cargo doc -p x --no-deps",',
+      '  "cargo doc -p x --no-deps --document-private-items",',
+      ']',
+    ].join('\n')
+    expect(rustdocFlags(block)).toBe('-D warnings')
+    expect(cargoDocs(block, 'x')).toHaveLength(2)
+    expect(cargoDocs(block, 'x').filter((c) => PRIVATE.test(c))).toHaveLength(1)
+    expect(cargoDocs(block, 'x-y')).toEqual([])
+    expect(runCommands('run = "cargo doc -p x --no-deps"\n')).toEqual([
+      'cargo doc -p x --no-deps',
+    ])
   })
 })
 

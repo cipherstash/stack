@@ -1,4 +1,4 @@
-# cargo-deny configuration for vitaminc-aead, vitaminc-aead-frame and
+# cargo-deny configuration for vitaminc-aead, recipher-frame and
 # vitaminc-aead-derive, and their dependency graph ONLY. It does not cover
 # the rest of the root workspace; that is #1842.
 #

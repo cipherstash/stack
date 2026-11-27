@@ -278,12 +278,12 @@ mod a_collection {
 #[cfg(feature = "dynamic")]
 mod a_data_plan {
     use super::*;
+    use recipher_frame::serde::to_vec;
     use stack_encrypt::dynamic::record::{self, FieldPlan, Output, Plan as DataPlan};
-    use stack_encrypt::dynamic::{Planned, ValueFrame, ValueKind};
+    use stack_encrypt::dynamic::{frame::OwnedFrame, Planned, ValueKind};
     use stack_encrypt::target::IndexSpec;
     use stack_encrypt::testing::{caller_scope, from_plaintext, Expect};
     use stack_encrypt::{AsProtectedRef as _, Describe as _, Label, Placeholder};
-    use vitaminc_aead_frame::serde::to_vec;
 
     /// A data plan read from its JSON declaration.
     fn plan_of(declaration: serde_json::Value) -> DataPlan {
@@ -291,14 +291,14 @@ mod a_data_plan {
     }
 
     /// One record, as a binding sends it.
-    fn ada() -> ValueFrame {
+    fn ada() -> OwnedFrame {
         let record = serde_json::json!({
             "email": "ada@example.com",
             "age": 36,
             "id": 7,
             "tenant": "acme",
         });
-        ValueFrame::from_bytes(to_vec(&record).unwrap().as_protected_ref()).unwrap()
+        OwnedFrame::from_buffer(to_vec(&record).unwrap()).unwrap()
     }
 
     /// The binding the caller of a run may add: `{bind?: CallerContext}`.

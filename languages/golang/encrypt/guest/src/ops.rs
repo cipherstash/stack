@@ -5,7 +5,7 @@
 //! here knows about linear memory.
 //!
 //! Values cross the boundary as vitaminc transport frames, and ciphertext
-//! trees in vitaminc's ciphertext codec (`vitaminc_aead_frame`) — the same
+//! trees in vitaminc's ciphertext codec (`recipher_frame`) — the same
 //! encodings the vitaminc guest uses, so the Go side carries exactly one
 //! codec. A ciphertext tree's
 //! leaves are re-encoded through [`SealedValue::to_bytes`] /
@@ -39,14 +39,14 @@
 //! Plaintext is never decoded into a value tree. A term's value is parsed and
 //! walked in place to the scalar it holds, the way vitaminc's own guest walks
 //! a frame into encryption. A record's source, a query's input and a page of
-//! values to verify are read as [`ValueFrame`]s: the frame is checked against
-//! the engine's value model, and the engine walks it, splitting a source into
-//! one frame per field as it goes. A record opens into one frame, which is
-//! the output. Control data (a plan, a context, an options object, query
+//! values to verify are read as [`Frame`]s borrowed from the export's
+//! buffer: the frame is checked against the engine's value model, and the
+//! engine walks it, splitting a source into one frame per field as it goes.
+//! A record opens into one [`OwnedFrame`], which is the output. Control data (a plan, a context, an options object, query
 //! statistics) carries no secret and is read from its frame with serde.
 
 use stack_encrypt::dynamic::frame::{decode_ciphertext, encode_ciphertext, Frame};
-use stack_encrypt::dynamic::{self, ValueFrame};
+use stack_encrypt::dynamic::{self, frame::OwnedFrame};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::CipherRef;
@@ -195,12 +195,11 @@ where
     K: DataKeySource + IndexKeySource + Sync + 'static,
 {
     let plan = parse_plan(plan)?;
-    let tree =
-        dynamic::record::encrypt_with(cipher, checked_plaintext(source)?, &plan, &resolver())
-            .map_err(|e| fail_dynamic(&e))?
-            .audit(audit)
-            .await
-            .map_err(|e| fail_error(&e))?;
+    let tree = dynamic::record::encrypt_with(cipher, parse_frame(source)?, &plan, &resolver())
+        .map_err(|e| fail_dynamic(&e))?
+        .audit(audit)
+        .await
+        .map_err(|e| fail_error(&e))?;
     encode_tree(tree)
 }
 
@@ -293,7 +292,7 @@ where
         &plan,
         field,
         operator,
-        checked_plaintext(input)?,
+        parse_frame(input)?,
         &resolver(),
     )
     .map_err(|e| fail_dynamic(&e))?
@@ -361,18 +360,16 @@ pub fn verify(
     operator: &[u8],
 ) -> Result<Vec<u8>, u32> {
     let (plan, field, operator) = parse_query(plan, field, operator)?;
-    // Each value becomes a frame of its own (wiped on drop): vitaminc's
-    // `Frame` walks a sequence but does not hand out its elements' frames,
-    // and reading them out of the frame layout here would duplicate
-    // vitaminc's parser.
-    let values = decode_plaintext(values)?
+    // Each value is a frame borrowed from the list's, walked in place: the
+    // bytes stay in the export's buffer, which wipes them when it drops.
+    let values = parse_frame(values)?
         .elements()
         .ok_or_else(|| last_error::malformed("the values to verify are not a list"))?;
     let verified = dynamic::verify(
         &plan,
         field,
         operator,
-        checked_plaintext(input)?,
+        parse_frame(input)?,
         values,
         &resolver(),
     )
@@ -575,8 +572,7 @@ pub mod validate {
     /// against its field's outputs).
     pub fn record(source: &Bytes, plan: &Bytes) -> Result<(), u32> {
         let plan = parse_plan(plan)?;
-        dynamic::record::check_source(checked_plaintext(source)?, &plan)
-            .map_err(|e| fail_dynamic(&e))
+        dynamic::record::check_source(parse_frame(source)?, &plan).map_err(|e| fail_dynamic(&e))
     }
 
     /// A query's inputs, as [`query_term`](super::query_term) takes them:
@@ -591,14 +587,8 @@ pub mod validate {
         operator: &[u8],
     ) -> Result<(), u32> {
         let (plan, field, operator) = parse_query(plan, field, operator)?;
-        dynamic::check_query(
-            &plan,
-            field,
-            operator,
-            checked_plaintext(input)?,
-            &resolver(),
-        )
-        .map_err(|e| fail_dynamic(&e))
+        dynamic::check_query(&plan, field, operator, parse_frame(input)?, &resolver())
+            .map_err(|e| fail_dynamic(&e))
     }
 
     /// A read's inputs, as [`json_open`](super::json_open) takes them: the
@@ -632,38 +622,28 @@ pub mod validate {
 // Codec glue
 // =============================================================================
 
-/// Plaintext from a frame: checked against the engine's value model and
-/// held as the frame, in a buffer wiped when it drops. The same frames are
-/// refused as control data's, so a malformed input fails the same way on
-/// every path.
-fn decode_plaintext(bytes: &Bytes) -> Result<ValueFrame, u32> {
-    ValueFrame::from_bytes(lend(bytes)).map_err(|_| not_a_frame())
-}
-
-/// Plaintext checked as [`decode_plaintext`] checks it, and walked in place
-/// from the buffer the export took it into: for a source or an input that
-/// is walked once, where a frame of its own would be one more copy of the
-/// plaintext. The record split copies each field into its own wiped frame,
-/// and a query's input is read straight into its term.
-fn checked_plaintext(bytes: &Bytes) -> Result<Frame<'_>, u32> {
-    ValueFrame::check(lend(bytes)).map_err(|_| not_a_frame())
-}
-
 /// An opened value as the output buffer: its frame, copied into a buffer
 /// whose capacity is exactly its length (see [`encode_tree`]); the frame
 /// is wiped when it drops.
-fn encode_frame(frame: ValueFrame) -> Result<Vec<u8>, u32> {
-    let mut out = exact_buffer(Some(frame.risky_ref().len()))?;
-    out.extend_from_slice(frame.risky_ref());
+fn encode_frame(frame: OwnedFrame) -> Result<Vec<u8>, u32> {
+    let bytes = frame.frame().as_bytes();
+    let mut out = exact_buffer(Some(bytes.len()))?;
+    out.extend_from_slice(bytes);
     Ok(out)
 }
 
-/// One frame, parsed and checked but not decoded: what a term's value is
-/// walked from, in place.
+/// One input as a frame, parsed and checked but not decoded: a value is
+/// walked from it in place, from the buffer the export took it into, which
+/// wipes it when it drops. Nothing is copied here.
 ///
-/// This is the one place the guest reads an input's bytes itself:
-/// vitaminc's frame parser takes a slice. Everywhere else an input is lent
-/// to a reader ([`lend`]).
+/// The parse is not a second check of what the engine checks. The engine's
+/// value readers take a [`Frame`], and [`Frame::parse`] is the only way to
+/// make one from bytes. It also refuses bytes that are not one well-formed
+/// frame, before any key is requested and before that input's own grammar
+/// is read, so the Go SDK reports "not a frame" for a malformed plan,
+/// context or value alike. Query statistics, the options and the keyset
+/// selector are not read through it: their own readers refuse malformed
+/// bytes with errors of their own.
 fn parse_frame(bytes: &Bytes) -> Result<Frame<'_>, u32> {
     Frame::parse(bytes.risky_ref()).map_err(|_| not_a_frame())
 }

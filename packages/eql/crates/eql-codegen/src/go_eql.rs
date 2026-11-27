@@ -23,6 +23,8 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+use vitaminc_aead::plaintext::ValueKind;
+
 use crate::targets::{rows, Row};
 
 /// The generated file, relative to the EQL subtree root (`repo_root()`):
@@ -82,7 +84,7 @@ fn table_row(row: &Row) -> String {
         quote(&go_name(&row.name)),
         quote(row.family),
         quote(&row.suffix),
-        quote(row.plaintext.unwrap_or_default()),
+        quote(row.plaintext.map(ValueKind::name).unwrap_or_default()),
         quote(&row.sql_domain),
         strings(&row.indexes),
         quote(query),
@@ -156,6 +158,7 @@ pub fn render_go_eql() -> String {
         };
         let status = match (row.reason, row.plaintext) {
             (None, Some(kind)) => {
+                let kind = kind.name();
                 // The Go kinds are read as words: "an int32", "a float64".
                 let article = if kind.starts_with(['a', 'e', 'i', 'o', 'u']) {
                     "an"

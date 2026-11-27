@@ -132,7 +132,7 @@ impl FieldValues {
 }
 
 /// Let go of every field. A record a data plan encrypts holds its fields as
-/// [`ValueFrame`](crate::dynamic::ValueFrame)s, which keep their bytes under
+/// [`OwnedFrame`](vitaminc_aead::frame::OwnedFrame)s, which keep their bytes under
 /// `Protected` and wipe them as they drop. So clearing the record wipes
 /// each field once.
 impl zeroize::Zeroize for FieldValues {

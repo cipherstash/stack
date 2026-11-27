@@ -194,7 +194,9 @@ impl State {
     ///   this refresher's own future `get_token` calls. A usage limit is
     ///   different in kind from most non-retryable failures: the credential
     ///   was never the problem, so re-presenting it cannot change the answer.
-    ///   See [`AuthError::is_account_refusal`] for why this is narrower than
+    ///   See
+    ///   [`AuthError::is_account_refusal`](crate::AuthError::is_account_refusal)
+    ///   for why this is narrower than
     ///   [`is_retryable`](crate::AuthError::is_retryable).
     /// - `err` always becomes [`last_refresh_error`](Self::last_refresh_error),
     ///   regardless of its class, for any caller parked in

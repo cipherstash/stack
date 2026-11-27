@@ -5,8 +5,9 @@
 //! engine's value model is the set of value types it reads.
 //!
 //! `JsRef::to_frame` reads a JavaScript value, on the JavaScript thread,
-//! into the engine's [`ValueFrame`]. A frame is a byte buffer that contains
-//! one value. The buffer is wiped when it drops. A worker thread then
+//! into a buffer, which becomes the engine's [`OwnedFrame`] without a copy.
+//! A frame is a byte buffer that contains one value. The buffer is wiped
+//! when it drops. A worker thread then
 //! encrypts the frame, with no access to JavaScript. `JsBuilder::build`
 //! builds a decrypted frame back into a JavaScript value. This module does
 //! not convert any value itself.
@@ -24,10 +25,7 @@
 use napi::bindgen_prelude::Unknown;
 use napi::{Env, Status};
 use recipher_value_napi::{JsBuilder, JsFault, JsRef};
-use stack_encrypt::dynamic::ValueFrame;
-use stack_encrypt::AsProtectedRef;
-use vitaminc_aead::Frame;
-use vitaminc_protected::Controlled;
+use stack_encrypt::dynamic::frame::OwnedFrame;
 
 use crate::error::{Error, RecipherErrorFields};
 
@@ -38,14 +36,15 @@ use crate::error::{Error, RecipherErrorFields};
 /// Returns one of these errors:
 ///
 /// - `recipher_js::value` when the bridge's bytes are not one well-formed
-///   frame the engine reads (`FromFrameError::Frame`);
+///   frame the engine reads (`FrameError`);
 /// - `recipher_js::threw` when reading the value threw;
 /// - the bridge's code, for a value the bridge refused.
-pub fn read(env: &Env, value: Unknown<'_>) -> Result<ValueFrame, RecipherErrorFields> {
+pub fn read(env: &Env, value: Unknown<'_>) -> Result<OwnedFrame, RecipherErrorFields> {
     let frame = JsRef::new(value)
         .to_frame()
         .map_err(|error| refused(env, &error))?;
-    ValueFrame::from_bytes(frame.as_protected_ref()).map_err(|_| Error::Value.into())
+    // The bridge's buffer becomes the frame: checked, and kept as written.
+    OwnedFrame::from_buffer(frame).map_err(|_| Error::Value.into())
 }
 
 /// Builds the JavaScript value of a decrypted frame.
@@ -53,10 +52,8 @@ pub fn read(env: &Env, value: Unknown<'_>) -> Result<ValueFrame, RecipherErrorFi
 /// # Errors
 ///
 /// Returns `recipher_js::build_value` when the value cannot be built.
-pub fn build(env: &Env, value: ValueFrame) -> Result<Unknown<'_>, RecipherErrorFields> {
-    let bytes = value.into_inner();
-    let frame = Frame::parse(bytes.risky_ref()).map_err(|_| Error::BuildValue)?;
-    JsBuilder::build(env, frame).map_err(|error| not_built(env, &error))
+pub fn build(env: &Env, value: OwnedFrame) -> Result<Unknown<'_>, RecipherErrorFields> {
+    JsBuilder::build(env, value.frame()).map_err(|error| not_built(env, &error))
 }
 
 /// Returns the failure for a value that `JsBuilder` did not build.

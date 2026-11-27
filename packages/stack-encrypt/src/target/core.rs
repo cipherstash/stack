@@ -119,7 +119,7 @@ pub(crate) fn seal_pending<'a, K>(
 }
 
 /// Retrieve every leaf's data key and bind it onto its leaf, ready for
-/// [`open_keyed`](crate::cipher::open_keyed).
+/// [`open_keyed`].
 pub(crate) fn bind_pending<'a, K>(
     cipher_ref: impl Into<CipherRef<'a, K>>,
     ciphertext: StackCipherText,

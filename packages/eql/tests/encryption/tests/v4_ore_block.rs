@@ -29,7 +29,7 @@ mod common;
 use std::cmp::Ordering;
 
 use eql_bindings::encryption::targets;
-use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::sem::OreBlockTerm;
 use stack_encrypt::value::{Date, Decimal, Timestamp};
 use stack_encrypt::Orderable;
@@ -37,8 +37,8 @@ use stack_encrypt::{Encrypt, Label};
 
 type Keyset<'a> = stack_encrypt::KeysetCipher<'a, common::RecordingKeySource>;
 
-fn frame<T: Encrypt>(value: T) -> ValueFrame {
-    ValueFrame::of(value).unwrap()
+fn frame<T: Encrypt>(value: T) -> OwnedFrame {
+    OwnedFrame::of(value).unwrap()
 }
 
 fn label() -> Label {
@@ -57,8 +57,8 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// The stored JSON the named type writes for `value`.
-async fn stored(keyset: &Keyset<'_>, name: &str, value: ValueFrame) -> serde_json::Value {
-    let bytes = targets::encrypt(name, keyset, &label(), value)
+async fn stored(keyset: &Keyset<'_>, name: &str, value: OwnedFrame) -> serde_json::Value {
+    let bytes = targets::encrypt(name, keyset, &label(), value.frame())
         .unwrap()
         .await
         .unwrap();
@@ -67,7 +67,7 @@ async fn stored(keyset: &Keyset<'_>, name: &str, value: ValueFrame) -> serde_jso
 
 /// The block ORE term the named type stores for `value`, as bytes: one hex
 /// string, the whole ore-rs ciphertext.
-async fn ob(keyset: &Keyset<'_>, name: &str, value: ValueFrame) -> Vec<u8> {
+async fn ob(keyset: &Keyset<'_>, name: &str, value: OwnedFrame) -> Vec<u8> {
     let json = stored(keyset, name, value).await;
     unhex(json["ob"].as_str().expect("ob is one hex string"))
 }
@@ -891,12 +891,18 @@ fn postgres_answers_the_orderings_through_a_btree_index() {
          ANALYZE v4_ore_block; SET enable_seqscan = off;",
     )
     .unwrap();
-    let probe = |name: &str, value: ValueFrame| -> String {
+    let probe = |name: &str, value: OwnedFrame| -> String {
         runtime.block_on(async {
-            let bytes = targets::query(name, &common::index_of(name), &keyset, &label(), value)
-                .unwrap()
-                .await
-                .unwrap();
+            let bytes = targets::query(
+                name,
+                &common::index_of(name),
+                &keyset,
+                &label(),
+                value.frame(),
+            )
+            .unwrap()
+            .await
+            .unwrap();
             String::from_utf8(bytes).unwrap()
         })
     };

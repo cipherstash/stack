@@ -56,7 +56,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use common::frames::{frame, object};
-use stack_encrypt::dynamic::{query_term, record, verify, NoTargets, Op, ValueFrame};
+use stack_encrypt::dynamic::{frame::OwnedFrame, query_term, record, verify, NoTargets, Op};
 use stack_encrypt::eql_simulator;
 use stack_encrypt::nonempty;
 use vitaminc_aead::plaintext::{Physical, Raw};
@@ -372,11 +372,11 @@ fn marked(tail: &str) -> String {
     format!("{}-{tail}", std::str::from_utf8(MARK).unwrap())
 }
 
-fn null() -> ValueFrame {
+fn null() -> OwnedFrame {
     frame(Raw(None, Physical::Null))
 }
 
-fn spec<'a>(field: &'a str, outputs: &[&str], ty: Option<&str>) -> (&'a str, ValueFrame) {
+fn spec<'a>(field: &'a str, outputs: &[&str], ty: Option<&str>) -> (&'a str, OwnedFrame) {
     let mut entries = vec![
         ("context", frame(vec!["users", field])),
         ("outputs", frame(outputs.to_vec())),
@@ -394,6 +394,7 @@ fn plan() -> record::Plan {
             spec("doc", &["c"], None),
             spec("id", &["passthrough"], None),
         ])
+        .into_buffer()
         .as_protected_ref(),
     )
     .unwrap()
@@ -406,7 +407,7 @@ fn plan() -> record::Plan {
 /// The nested object ends with a value of several KiB after its marked
 /// children, so the buffer its frame is joined into grows while it already
 /// holds plaintext.
-fn row() -> ValueFrame {
+fn row() -> OwnedFrame {
     object(vec![
         ("email", frame(marked("email"))),
         (
@@ -434,7 +435,7 @@ fn a_record_encrypted_from_a_value_frame_leaves_no_plaintext_on_the_heap() {
     let keyset = cipher.default_keyset();
     let plan = plan();
     let source = row();
-    watched("record::encrypt (ValueFrame)", || {
+    watched("record::encrypt (OwnedFrame)", || {
         rt.block_on(async {
             record::encrypt(&keyset, &source, &plan)
                 .unwrap()
@@ -453,7 +454,7 @@ fn a_record_encrypted_from_a_raw_frame_leaves_no_plaintext_on_the_heap() {
     let plan = plan();
     let source = row();
     watched("record::encrypt (Frame)", || {
-        let frame = Frame::parse(source.risky_ref()).unwrap();
+        let frame = Frame::parse(source.frame().as_bytes()).unwrap();
         rt.block_on(async {
             record::encrypt(&keyset, frame, &plan)
                 .unwrap()
@@ -485,7 +486,8 @@ fn a_record_decrypted_with_a_nested_field_leaves_no_plaintext_on_the_heap() {
         });
         // The opened record holds the plaintext until here, in `Protected`.
         assert!(opened
-            .risky_ref()
+            .frame()
+            .as_bytes()
             .windows(MARK.len())
             .any(|window| window == MARK));
         drop(opened);
@@ -499,11 +501,18 @@ fn a_late_read_type_failure_leaves_no_plaintext_on_the_heap() {
     let rt = runtime();
     let cipher = rt.block_on(common::stack_cipher());
     let keyset = cipher.default_keyset();
-    let writer =
-        record::plan(object(vec![spec("value", &["c"], None)]).as_protected_ref()).unwrap();
-    let reader =
-        record::plan(object(vec![spec("value", &["c"], Some("string"))]).as_protected_ref())
-            .unwrap();
+    let writer = record::plan(
+        object(vec![spec("value", &["c"], None)])
+            .into_buffer()
+            .as_protected_ref(),
+    )
+    .unwrap();
+    let reader = record::plan(
+        object(vec![spec("value", &["c"], Some("string"))])
+            .into_buffer()
+            .as_protected_ref(),
+    )
+    .unwrap();
     let source = frame(vec![
         object(vec![("value", frame(marked("first-row")))]),
         object(vec![("value", frame(true))]),
@@ -970,7 +979,7 @@ fn verify_leaves_no_plaintext_on_the_heap() {
     let query = frame(marked("query"));
     let page = frame(vec![frame(marked("page")), null()]);
     watched("verify", || {
-        let values = page.elements().unwrap();
+        let values = page.frame().elements().unwrap();
         let matched = verify(&plan, "email", Op::Matches, &query, values, &NoTargets).unwrap();
         assert_eq!(matched.len(), 2);
         drop(page);
@@ -1007,7 +1016,7 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
         _: &'a stack_encrypt::KeysetCipher<'_, K>,
         _: &stack_encrypt::Label,
         _: &stack_encrypt::target::DeclaredContext,
-        _: ValueFrame,
+        _: stack_encrypt::dynamic::frame::Frame<'_>,
     ) -> Result<stack_encrypt::Pending<'a, Vec<u8>, K>, stack_encrypt::dynamic::TargetError> {
         unreachable!("a check seals nothing")
     }
@@ -1018,7 +1027,7 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
         _: &stack_encrypt::Label,
         _: &stack_encrypt::target::DeclaredContext,
         _: &[u8],
-    ) -> Result<stack_encrypt::Pending<'a, ValueFrame, K>, stack_encrypt::dynamic::TargetError>
+    ) -> Result<stack_encrypt::Pending<'a, OwnedFrame, K>, stack_encrypt::dynamic::TargetError>
     {
         unreachable!("a check opens nothing")
     }
@@ -1029,7 +1038,7 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
         _: &'a stack_encrypt::KeysetCipher<'_, K>,
         _: &stack_encrypt::Label,
         _: &stack_encrypt::target::DeclaredContext,
-        _: ValueFrame,
+        _: stack_encrypt::dynamic::frame::Frame<'_>,
     ) -> Result<stack_encrypt::Pending<'a, Vec<u8>, K>, stack_encrypt::dynamic::TargetError> {
         unreachable!("a document's operators are the engine's")
     }
@@ -1110,9 +1119,9 @@ fn a_json_document_read_from_a_frame_leaves_no_plaintext_on_the_heap() {
     ]);
     let (document, refused) = (frame(document.as_str()), frame(refused.as_str()));
     watched("read_json", || {
-        let parsed = stack_encrypt::dynamic::read_json(&document).expect("a document");
+        let parsed = stack_encrypt::dynamic::read_json(document.frame()).expect("a document");
         drop(parsed);
-        assert!(stack_encrypt::dynamic::read_json(&refused).is_err());
+        assert!(stack_encrypt::dynamic::read_json(refused.frame()).is_err());
     });
 }
 
@@ -1156,7 +1165,7 @@ fn a_word_that_lengthens_when_folded_leaves_no_plaintext_on_the_heap() {
     });
     let page = frame(vec![frame(text.as_str())]);
     watched("verify (a word that lengthens)", || {
-        let values = page.elements().unwrap();
+        let values = page.frame().elements().unwrap();
         let matched = verify(&plan, "email", Op::Matches, &query, values, &NoTargets).unwrap();
         assert_eq!(matched, [true]);
     });
@@ -2807,7 +2816,8 @@ mod json_index {
                 })
             });
             assert!(opened
-                .risky_ref()
+                .frame()
+                .as_bytes()
                 .windows(MARK.len())
                 .any(|window| window == MARK));
         }

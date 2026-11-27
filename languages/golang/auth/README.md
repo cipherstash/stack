@@ -109,10 +109,17 @@ workspace id, and the mount itself is confined — a symlink inside the
 profile that leads outside it is refused, for reads and for the one write,
 rather than followed with the process's permissions as a plain directory
 mount would. Files it creates are mode 0600. It takes no file lock (WASI
-preview 1 has none); Go holds the same lock as the CLI across the device
-session refresh call, on the path `ProfileStore.LockPath` names. A fresh
-token is read without the lock; on refresh the guest re-reads
+preview 1 has none); Go holds the same lock as the CLI across every step
+of a device session's refresh, on the path `ProfileStore.LockPath` names. A
+fresh token is read without the lock; on refresh the guest re-reads
 auth.json after acquisition and saves refreshed tokens before release.
+
+The guest never waits on the network. A token operation that needs the
+token service pauses at its request and returns to Go, which performs the
+request and resumes it with the answer. So while one caller's token is
+exchanged, other callers of the same strategy get its current token at
+once, and a caller with no usable token waits for that exchange rather
+than starting its own.
 
 The crypto guest behind `encrypt` is not widened by this package
 existing: it still has no filesystem and no environment.

@@ -25,7 +25,8 @@
 //! not read at the byte where it stops. This module holds the compiler
 //! ([`compile`]), which binds the values and maps each comparison onto the
 //! inputs `eq_at`, `selector`, the orderings and `element_match` take, so
-//! that every leaf is derived by that operator's own code ([`derive`]).
+//! that every leaf is derived by that operator's own code
+//! ([`derive`](fn@super::inputs::derive)).
 //!
 //! A refusal names a construct in the grammar's words and an offset, never
 //! a slice of the text: a key name or a value in it can be customer data.

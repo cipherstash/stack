@@ -1,7 +1,7 @@
 //! Typed inputs shared by conformance profiles.
 use super::frames::frame;
 use serde::{Deserialize, Serialize};
-use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use vitaminc_aead::plaintext::{Int, Logical, Physical, Raw, TimeUnit};
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -16,7 +16,7 @@ pub struct Input {
 /// integer at its own width, a logical type over its physical scalar, and
 /// text parsed without rounding. A text the type cannot carry is a corpus
 /// error, never a silently narrowed value.
-pub fn value(input: &Input) -> ValueFrame {
+pub fn value(input: &Input) -> OwnedFrame {
     let int = |int: Int| frame(Raw(None, Physical::Int(int)));
     let text = input.text.as_str();
     match input.kind.as_str() {
@@ -53,6 +53,11 @@ pub fn value(input: &Input) -> ValueFrame {
         "null" => {
             assert!(input.text.is_empty());
             frame(Raw(None, Physical::Null))
+        }
+        // JavaScript's `undefined`, as its bridge writes it.
+        "undefined" => {
+            assert!(input.text.is_empty());
+            frame(Raw(Some(Logical::Undefined), Physical::Null))
         }
         other => panic!("unsupported input kind {other}"),
     }
@@ -234,7 +239,7 @@ pub fn stored_outputs(
         panic!("expected equality bytes")
     };
     Some((
-        vitaminc_aead_frame::serde::from_slice::<&[u8]>(&term.0)
+        recipher_frame::serde::from_slice::<&[u8]>(&term.0)
             .unwrap()
             .to_vec(),
         leaf.to_bytes().len(),

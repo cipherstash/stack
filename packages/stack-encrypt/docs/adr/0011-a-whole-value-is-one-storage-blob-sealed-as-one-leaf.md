@@ -44,7 +44,7 @@ codebase by searching for the name.
 
 ### The encoding is Vitamin C's storage profile, version 1
 
-The codec is `vitaminc_aead_frame::storage`, a part of Vitamin C. The
+The codec is `recipher_frame::storage`, a part of Vitamin C. The
 profile is a binary encoding that describes its own structure. It uses the
 sealed leaf's scalar tags and the transport frame's containers. It adds:
 
@@ -214,7 +214,7 @@ Vitamin C.
   implement `Decrypt`. The sealed `open` method takes its place.
 - `Error` has a new transparent variant, `Blob(BlobError)`. `BlobError`
   has five error codes, all named `stack_encrypt::blob_*`.
-- The crate always depends on `vitaminc-aead-frame`, with its `serde`
+- The crate always depends on `recipher-frame`, with its `serde`
   feature. The `dynamic` feature no longer controls that dependency.
 - The conformance coverage map lists three kinds of evidence for blobs:
   - the fixed blob vectors

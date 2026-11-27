@@ -330,27 +330,34 @@ pub fn passthrough_u32(payload: &stack_encrypt::PassthroughFrame) -> u32 {
 /// object of them in the order a test writes it.
 #[cfg(feature = "dynamic")]
 pub mod frames {
-    use stack_encrypt::dynamic::ValueFrame;
+    use stack_encrypt::dynamic::frame::OwnedFrame;
     use stack_encrypt::Encrypt;
     use vitaminc_aead::plaintext::{visit_map, Sink};
     use vitaminc_protected::Controlled;
 
     /// A Rust value as its frame.
-    pub fn frame<T: Encrypt>(value: T) -> ValueFrame {
-        ValueFrame::of(value).expect("a value in the model")
+    pub fn frame<T: Encrypt>(value: T) -> OwnedFrame {
+        OwnedFrame::of(value).expect("a value in the model")
+    }
+
+    /// The frame in `bytes`, kept as they are, in an owned frame of its own.
+    pub fn owned(bytes: &[u8]) -> OwnedFrame {
+        let mut buffer = vitaminc_protected::Buffer::new();
+        buffer.extend_from_slice(bytes);
+        OwnedFrame::from_buffer(buffer).expect("one frame")
     }
 
     /// An object of `entries`, in order.
-    pub fn object<K: AsRef<str>>(entries: Vec<(K, ValueFrame)>) -> ValueFrame {
+    pub fn object<K: AsRef<str>>(entries: Vec<(K, OwnedFrame)>) -> OwnedFrame {
         frame(Object(entries))
     }
 
     /// A value as a passthrough node's payload: its frame, in the clear.
     pub fn payload<T: Encrypt>(value: T) -> Vec<u8> {
-        frame(value).into_inner().risky_unwrap()
+        frame(value).into_buffer().risky_unwrap()
     }
 
-    struct Object<K>(Vec<(K, ValueFrame)>);
+    struct Object<K>(Vec<(K, OwnedFrame)>);
 
     impl<K: AsRef<str>> Encrypt for Object<K> {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {

@@ -8,7 +8,7 @@ JSON, so the layout does not fail it.
 
 One declaration, two authors, one engine. Typed Rust code (the engine's
 combinators, `indexed(..).under(label)` and the rest, run over fields of type
-`stack_encrypt::dynamic::ValueFrame`, the frame a binding's values arrive as)
+`stack_encrypt::dynamic::frame::OwnedFrame`, the frame each field of a binding's record is split into)
 and the data-plan lowering (`stack_encrypt::dynamic::record`, what a
 language binding calls) each sealed the same plaintext under the same
 declaration. The fixture's key for the first author is `typed_chain`: it was
@@ -84,7 +84,7 @@ by hand.
   `"passthrough"`, or an index key `"eq"`, `"match"`, `"ore"`, `"ope"`) and its
   `"type"` (a vitaminc `ValueKind` name). The typed author writes the same
   declaration as one combinator per field under the label `users/<field>`,
-  its indexes named as `IndexSpec`s over `ValueFrame` fields.
+  its indexes named as `IndexSpec`s over `OwnedFrame` fields.
 - **`plaintext`.** The value both authors sealed, each field as JSON at the
   kind `plan` declares for it.
 - **`records`.** Each record in the stored shape, field by field, output by
@@ -367,7 +367,7 @@ An `<outcome>` is what the record path did with one row whose field
 of the field's ciphertext in walk order (an empty container's marker is
 `""`); `{"stored": "sql_null"}`, no ciphertext stored; `{"refused":
 "<code>/<reason>"}` or `{"plan_refused": "<code>/<reason>"}`; or
-`{"frame_refused": true}`, refused by `ValueFrame::check` before the plan
+`{"frame_refused": true}`, refused by `Frame::parse` before the plan
 is read.
 
 - **`typed`.** Each Rust type sealed alone by `encrypt_tree`: its frame as
@@ -394,8 +394,9 @@ is read.
   which the engine refuses because each has a shorter tag of its own; a
   UUID, which an untyped field seals in the `0xF3` envelope it arrived in;
   `undefined`, which an untyped field seals as
-  written and a typed field refuses; and an `f64` for a `float32` field,
-  which it refuses. The two millisecond frames are the frames the
+  written and a typed field refuses with the reason `undefined`; and an
+  `f64` for a `float32` field, which the field converts exactly and seals
+  to the same leaf as the `float32` value under `dynamic`. The two millisecond frames are the frames the
   JavaScript bridge writes for `new Date(123)` and `new Date(-1)`;
   `scripts/__tests__/recipher-js-frame-parity.test.mjs` holds them to
   the bridge's pinned frames.

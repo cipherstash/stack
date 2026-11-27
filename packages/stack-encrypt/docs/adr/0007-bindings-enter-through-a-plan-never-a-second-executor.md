@@ -375,7 +375,7 @@ point is added for it.
 `FieldRef`, the typed verbs, `Runs`, and `Opens`.
 
 The data side stays: the parsed `Plan` and its parser in
-`dynamic::record`, `FieldValues`, `ValueFrame`, the target resolver, and
+`dynamic::record`, `FieldValues`, `OwnedFrame`, the target resolver, and
 the field index list. The functions in `dynamic::record` that the guest
 calls become thin wrappers. Each parses a frame and builds a `Planned`.
 The first pull request for #1488 did the lowering: `compose` and

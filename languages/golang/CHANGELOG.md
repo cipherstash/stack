@@ -28,6 +28,22 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   is open when it is called keeps working. The compiled engine is then
   freed when the last of them closes.
 
+### Changed
+
+- **A record field converts a number of another width or kind, as a
+  query does.** A value sealed through `Cipher.Seal` for a field that
+  declares a type is read as that type when the conversion is exact: an
+  `int16` 1 for an `int8` field, an `int64` for an `int128`, a `float64`
+  34 for an `int32`, an `int32` for a `float64` or a `decimal`, a
+  `float64` 1.5 for a `float32`. It is stored as the same number sent at
+  the declared width, so the stored bytes and terms do not change. A
+  conversion that would lose something is still refused with
+  `ErrEncoding`, reason `field_type`: a fraction or an out-of-range number
+  for an integer, a number a float type would round, a float for a
+  `decimal`. Text, a date, a timestamp or a UUID never converts to or
+  from a number. Generated code already sends each value at its field's
+  width, so it does not change.
+
 ### Fixed
 
 - A program that opens and closes clients one after another compiles the
@@ -55,6 +71,25 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   later client starts in about 0.25 seconds under `-race`, and about 30
   milliseconds without it. Parallel tests that start clients at once wait
   for one compile, where before each compiled the engine itself.
+
+- **Other calls no longer wait behind a token refresh** (#1958). An
+  `auth.Strategy` is shared by every encrypt and decrypt in a process, and
+  about once every 15 minutes its token is refreshed with the token
+  service. That request held the strategy until the service answered, so
+  every other call that needed a token waited for it too, for as long as
+  the request took: a new connection each time, and about a second when the
+  service was slow. Now a refresh holds up only the call that started it,
+  for every strategy: an access key, OIDC and a device session. Other calls
+  get the current token at once while it still works. A call that finds no
+  usable token, at startup or after the token has expired, waits for the
+  exchange already in flight rather than starting a second one.
+  - `ProfileStore.Close` waits for a token request already sent, so a
+    device session's refresh in flight saves the rotated refresh token
+    before the profile closes. Token calls waiting behind it fail with
+    `ErrState`.
+  - A device session's refresh still held up at the 30-second backstop now
+    fails as a transport failure, and the profile stays open. Before, the
+    backstop closed the profile.
 
 ## [0.1.0-rc.7] - 2026-11-25
 
