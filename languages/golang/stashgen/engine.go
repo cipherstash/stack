@@ -80,7 +80,8 @@ type EQLType struct {
 // `if c, ok := e.(io.Closer); ok { defer c.Close() }`. It returns the error
 // of [encrypt.NewChecker] when that fails.
 func GuestEngine(ctx context.Context) (Engine, error) {
-	// The guest answers through its se_plan_check and se_targets exports.
+	// The guest answers through its se_plan_check, se_targets and
+	// se_operators exports.
 	checker, err := encrypt.NewChecker(ctx)
 	if err != nil {
 		return nil, err

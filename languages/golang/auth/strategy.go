@@ -213,8 +213,9 @@ func (s *ProfileStore) DeviceSession(ctx context.Context, opts ...StrategyOption
 // CS_CLIENT_ACCESS_KEY is set, it is [ProfileStore.AccessKey] for the
 // workspace CS_WORKSPACE_CRN names. Otherwise it is
 // [ProfileStore.DeviceSession] for the current workspace's saved token.
-// An access key without CS_WORKSPACE_CRN is [ErrConfig]. No current
-// workspace, or no saved token, is [ErrNotAuthenticated].
+// An access key without CS_WORKSPACE_CRN is [ErrConfig], and so is a
+// CS_WORKSPACE_CRN that is set but is not a CRN, with or without an access
+// key. No current workspace, or no saved token, is [ErrNotAuthenticated].
 func (s *ProfileStore) Auto(ctx context.Context, opts ...StrategyOption) (*Strategy, error) {
 	// The order is stack-auth's AutoStrategy order, read from the Go host's
 	// environment because the guest has none.

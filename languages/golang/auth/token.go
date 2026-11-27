@@ -30,8 +30,9 @@ type Token struct {
 	DeviceInstanceID string
 }
 
-// For contributors: Usable is the stack-auth crate's is_usable, not its is_expired, which
-// subtracts a refresh-ahead margin that belongs to refreshing.
+// For contributors: Usable is the stack-auth crate's is_usable, not its
+// is_expired, which subtracts a refresh-ahead margin that belongs to
+// refreshing.
 
 // Usable reports whether the token is still usable at now: before its real
 // expiry. It subtracts no margin for an early refresh.

@@ -21,8 +21,11 @@ import (
 // columns, beside that field's terms.
 //
 // A sealed field is one scalar — a string, a number, a bool or a []byte, or
-// a type defined over one, or a pointer to either, whose nil is sealed as a
-// null as long as a value or stored as SQL NULL. A struct, slice or map is
+// a type defined over one, or a pointer to either. A nil pointer is sealed
+// as a null the same length as a value. With the `null=sql` tag it is
+// stored as SQL NULL instead, and stashgen requires that tag for a type of
+// variable width or a field with an index other than equality. A struct,
+// slice or map is
 // not a Ciphertext field. It seals as part of an opaque struct, which is
 // stored as one value in one column, or as a JSON document in a field that
 // names an EQL type which holds one (encrypt_into=Json or

@@ -186,7 +186,8 @@ func (o Option) String() string {
 
 // For contributors: the index words are the Rust API's.
 
-// IndexName is the tag word for an index.
+// IndexName is the tag word for an index. A declaration in any language
+// spells it the same way.
 type IndexName string
 
 // The index names.
