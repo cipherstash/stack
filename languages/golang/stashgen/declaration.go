@@ -69,7 +69,7 @@ const (
 	// one every nil shares, and the generated EqNull queries it. The default
 	// for a field whose only index, if any, is equality and whose type has a
 	// fixed width: a bool, a number, encrypt.Date, time.Time,
-	// encrypt.Decimal, encrypt.Int128 or encrypt.Uint128.
+	// encrypt.Decimal, encrypt.Int128, encrypt.Uint128 or a UUID.
 	NullSealed Null = "sealed"
 	// NullSQL stores nothing for nil: the field's columns hold SQL NULL,
 	// which shows that the value is absent. A field with an index other than
@@ -83,7 +83,7 @@ const (
 func (k Kind) fixedWidth() bool {
 	switch k {
 	case KindBool, KindInt, KindUint, KindFloat, KindInt128, KindUint128,
-		KindDate, KindTimestamp, KindDecimal:
+		KindDate, KindTimestamp, KindDecimal, KindUUID:
 		return true
 	}
 	return false
@@ -233,10 +233,10 @@ type GoType struct {
 	// Kind is the type's underlying kind.
 	Kind Kind
 	// Basic is the underlying basic type's name for a scalar kind — "uint8",
-	// "int", "string" — which decides the wire type the field seals as. It is
-	// "" for a value type the generator knows by name (time.Time,
-	// encrypt.Date, encrypt.Int128, encrypt.Uint128, encrypt.Decimal), whose
-	// kind says all there is.
+	// "int", "string", and "[16]byte" for a UUID — which decides the wire
+	// type the field seals as. It is "" for a value type the generator knows
+	// by name (time.Time, encrypt.Date, encrypt.Int128, encrypt.Uint128,
+	// encrypt.Decimal), whose kind says all there is.
 	Basic string
 	// Elem is the element type of a slice, map or pointer, and nil otherwise.
 	Elem *GoType
@@ -283,6 +283,10 @@ const (
 	// it back. A field is classified so only where it names such an EQL
 	// type; anywhere else the type keeps its own kind.
 	KindJSONValue
+	// KindUUID is a UUID: [16]byte, or a type defined over [16]byte, such
+	// as github.com/google/uuid.UUID. An array of another length or of
+	// another element type is a slice kind.
+	KindUUID
 )
 
 var kindNames = [...]string{
@@ -304,6 +308,7 @@ var kindNames = [...]string{
 	KindDecimal:   "decimal",
 	KindJSON:      "json",
 	KindJSONValue: "json value",
+	KindUUID:      "uuid",
 }
 
 // String returns the kind's name.
@@ -318,7 +323,7 @@ func (k Kind) String() string {
 func (k Kind) Scalar() bool {
 	switch k {
 	case KindString, KindBool, KindInt, KindUint, KindFloat, KindBytes,
-		KindInt128, KindUint128, KindDate, KindTimestamp, KindDecimal, KindJSON, KindJSONValue:
+		KindInt128, KindUint128, KindDate, KindTimestamp, KindDecimal, KindJSON, KindJSONValue, KindUUID:
 		return true
 	}
 	return false

@@ -344,6 +344,8 @@ func wireKind(t GoType) record.Kind {
 		return record.Decimal
 	case KindJSON, KindJSONValue:
 		return record.JSON
+	case KindUUID:
+		return record.UUID
 	}
 	return record.Untyped
 }
@@ -379,6 +381,8 @@ func kindOfWire(k record.Kind) Kind {
 		return KindDecimal
 	case record.JSON:
 		return KindJSON
+	case record.UUID:
+		return KindUUID
 	}
 	return KindOther
 }

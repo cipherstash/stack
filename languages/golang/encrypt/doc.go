@@ -124,8 +124,10 @@
 //
 // A sealed field outside an opaque struct is one value: a string, []byte,
 // bool, an integer of any width (int8 to int64, uint8 to uint64, int, uint,
-// or [Int128] and [Uint128]), a float32 or float64, a [Decimal], a [Date] or a
-// time.Time (a timestamp), or a type defined over one of the built-in types.
+// or [Int128] and [Uint128]), a float32 or float64, a [Decimal], a [Date], a
+// time.Time (a timestamp), a UUID ([16]byte, or a type defined over it such
+// as github.com/google/uuid.UUID), or a type defined over one of the
+// built-in types. A UUID takes an equality index and no other.
 // Each integer seals at its own width. Equality applies to every one but a
 // bool. ORE and OPE apply to integers of 16 bits or more, floats, text,
 // bytes, decimals, dates and timestamps. A bool or an 8-bit integer takes no

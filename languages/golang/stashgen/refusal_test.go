@@ -101,6 +101,13 @@ func TestRefusals(t *testing.T) {
 		{"a slice sealed outside an opaque struct", user(ctx + "\tTags []string `stash:\"tags,encrypt\"`"), stashgen.Request{Type: "User"}, "Tags", "seals only as part of an opaque struct"},
 		{"a map sealed outside an opaque struct", user(ctx + "\tCounts map[string]int64 `stash:\"counts,encrypt\"`"), stashgen.Request{Type: "User"}, "Counts", "seals only as part of an opaque struct"},
 		{"a slice of ints sealed outside an opaque struct", user(ctx + "\tNs []int64 `stash:\"ns,encrypt\"`"), stashgen.Request{Type: "User"}, "Ns", "seals only as part of an opaque struct"},
+		// A UUID is [16]byte, or a type defined over it. An array of another
+		// length, or of a type defined over byte, is not one.
+		{"an array of eight bytes sealed outside an opaque struct", user(ctx + "\tCode [8]byte `stash:\"code,encrypt\"`"), stashgen.Request{Type: "User"}, "Code", "seals only as part of an opaque struct"},
+		{"an array of sixteen defined bytes sealed outside an opaque struct", user(ctx+"\tCode [16]octet `stash:\"code,encrypt\"`") + "\ntype octet byte\n", stashgen.Request{Type: "User"}, "Code", "seals only as part of an opaque struct"},
+		{"match on a UUID", user(ctx + "\tID [16]byte `stash:\"id,encrypt,index=match\"`"), stashgen.Request{Type: "User"}, "ID", "match applies to a string"},
+		{"order on a UUID", user(ctx+"\tID id `stash:\"id,encrypt,index=equality;ore\"`") + "\ntype id [16]byte\n", stashgen.Request{Type: "User"}, "ID", "ore does not apply to id"},
+		{"ope on a UUID", user(ctx + "\tID [16]byte `stash:\"id,index=ope\"`"), stashgen.Request{Type: "User"}, "ID", "ope does not apply to [16]byte"},
 		{"an opaque struct with a channel", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tDone chan int"), stashgen.Request{Type: "User"}, "Done", "is not a type JSON carries"},
 		{"an opaque struct with an interface", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tAny any"), stashgen.Request{Type: "User"}, "Any", "is not a type JSON carries"},
 		{"an opaque struct with a struct JSON would truncate", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tTx hidden") + "\ntype hidden struct {\n\tA int\n\tb int\n}\n", stashgen.Request{Type: "User"}, "Tx", "JSON would drop"},
@@ -355,6 +362,9 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 		{"match on an integer", "Age", "\tAge int32 `stash:\"age,encrypt,index=match\"`", "the engine refuses the declaration"},
 		{"two order indexes on one field", "Score", "\tScore int64 `stash:\"score,encrypt,index=equality;ore;ope\"`", "the engine refuses the declaration"},
 		{"encrypt_into, no EQL type in this build", "Email", "\tEmail string `stash:\"email,encrypt_into=TextEq\"`", "EQL types are not available yet"},
+		{"match on a UUID", "ID", "\tID [16]byte `stash:\"id,encrypt,index=match\"`", "the engine refuses the declaration"},
+		{"order on a UUID", "ID", "\tID [16]byte `stash:\"id,encrypt,index=equality;ore\"`", "the engine refuses the declaration"},
+		{"ope on a UUID", "ID", "\tID [16]byte `stash:\"id,index=ope\"`", "the engine refuses the declaration"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := writeModule(t, map[string]string{"model.go": user(ctx + c.line), "crm/contact.go": crmPackage})
@@ -386,6 +396,11 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 		{"ore on bytes", "\tBlob []byte `stash:\"blob,encrypt,index=equality;ore\"`"},
 		{"ope on bytes", "\tBlob []byte `stash:\"blob,index=ope\"`"},
 		{"a match query on an index-only field", "\tName string `stash:\"name,index=match\"`"},
+		{"equality on a UUID", "\tID [16]byte `stash:\"id,encrypt,index=equality\"`"},
+		{"a UUID that may be nil", "\tID *[16]byte `stash:\"id,encrypt,index=equality\"`\n\tRef *[16]byte `stash:\"ref,encrypt,null=sql\"`"},
+		{"match on a UUID", "\tID [16]byte `stash:\"id,encrypt,index=match\"`"},
+		{"order on a UUID", "\tID [16]byte `stash:\"id,encrypt,index=equality;ore\"`"},
+		{"ope on a UUID", "\tID [16]byte `stash:\"id,index=ope\"`"},
 	} {
 		dir := writeModule(t, map[string]string{"model.go": user(ctx + c.line), "crm/contact.go": crmPackage})
 		realFile, real := stashgen.FromTags(context.Background(), engine, stashgen.Request{Dir: dir, Type: "User"})

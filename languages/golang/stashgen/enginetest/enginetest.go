@@ -247,18 +247,20 @@ func eightBit(t stashgen.GoType) bool {
 
 // indexApplies mirrors dynamic::admits in stack-encrypt: equality over
 // every kind vitaminc gives an equality domain (integers of every width,
-// floats, decimals, dates, timestamps, text and bytes; a boolean has none),
+// floats, decimals, dates, timestamps, UUIDs, text and bytes; a boolean has
+// none),
 // match over text alone, ORE and OPE over integers of 16 bits and wider,
 // floats, text, decimals, dates and timestamps. Not over a boolean or an
 // 8-bit integer, whose order term would reveal which rows are true, or
 // each row's rank among 256 values. Not over bytes: no ordering operator
-// accepts bytes, so no query could use the stored term.
+// accepts bytes, so no query could use the stored term. A UUID takes
+// equality alone.
 // The JSON index is not in the engine yet.
 func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 	switch name {
 	case stashgen.IndexEquality:
 		switch t.Kind {
-		case stashgen.KindString, stashgen.KindBytes, stashgen.KindFloat, stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp:
+		case stashgen.KindString, stashgen.KindBytes, stashgen.KindFloat, stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp, stashgen.KindUUID:
 			return nil
 		}
 		if integer(t) {
@@ -289,7 +291,7 @@ func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 func sealable(t stashgen.GoType) bool {
 	switch t.Kind {
 	case stashgen.KindString, stashgen.KindBool, stashgen.KindInt, stashgen.KindUint, stashgen.KindFloat, stashgen.KindBytes,
-		stashgen.KindInt128, stashgen.KindUint128, stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp:
+		stashgen.KindInt128, stashgen.KindUint128, stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp, stashgen.KindUUID:
 		return true
 	case stashgen.KindSlice, stashgen.KindPointer:
 		return t.Elem != nil && sealable(*t.Elem)

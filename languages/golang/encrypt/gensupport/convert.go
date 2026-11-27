@@ -15,8 +15,8 @@ import (
 // the struct declares. The engine returns a value at the field's declared
 // kind — an integer of its own width (int8 to uint64, or vcvalue.Int128 and
 // vcvalue.Uint128), float32, float64, string, []byte, bool, time.Time for a
-// timestamp, vcvalue.Date, vcvalue.Decimal, or a vcvalue.Object for a
-// composite — and the struct's type is that type, or in the same family and
+// timestamp, vcvalue.Date, vcvalue.Decimal, vcvalue.UUID for a UUID, or a
+// vcvalue.Object for a composite — and the struct's type is that type, or in the same family and
 // narrower at most (an EQL type's int32 opening into the int16 field it was
 // widened from). A value outside the target's range, or of another family,
 // is an error. A time, date, decimal or 128-bit integer is read only into
@@ -60,6 +60,15 @@ func convert(v any, out any) error {
 			return mismatch(v, *out)
 		}
 		*out = append([]byte(nil), b...)
+	case *[16]byte:
+		// A UUID field opens as a vcvalue.UUID. Generated code reads it as
+		// [16]byte and converts it to the field's own type (uuid.UUID, say).
+		// Any other value is read as an array, as before.
+		u, ok := v.(vcvalue.UUID)
+		if !ok {
+			return convertVia(v, out)
+		}
+		*out = u
 	case *bool:
 		b, ok := v.(bool)
 		if !ok {

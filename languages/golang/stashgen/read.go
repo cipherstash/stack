@@ -798,7 +798,7 @@ func (r *reader) buildFields(c *collected) error {
 		if g.Sealed() && !g.GoType.Kind.Scalar() {
 			// The engine seals a composite as a tree of leaves, and a column
 			// holds one leaf; only an opaque struct seals a whole value.
-			return fieldErr(typeName, cf.goName, "a sealed field is one scalar (a string, number, bool, []byte, time.Time, encrypt.Date, encrypt.Decimal, encrypt.Int128 or encrypt.Uint128, or a type defined over a string, number, bool or []byte); a %s seals only as part of an opaque struct, or as a JSON document with encrypt_into=JsonSearch or encrypt_into=Json", g.typeExpr)
+			return fieldErr(typeName, cf.goName, "a sealed field is one scalar (a string, number, bool, []byte, time.Time, encrypt.Date, encrypt.Decimal, encrypt.Int128 or encrypt.Uint128, a UUID as [16]byte, or a type defined over a string, number, bool, []byte or [16]byte); a %s seals only as part of an opaque struct, or as a JSON document with encrypt_into=JsonSearch or encrypt_into=Json", g.typeExpr)
 		}
 		switch field.Verb {
 		case VerbPassthrough, VerbContextField:
@@ -955,6 +955,10 @@ func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Typ
 			g.Kind, g.Elem = KindSlice, &elem
 		}
 	case *types.Array:
+		if uuidArray(u) {
+			g.Kind, g.Basic = KindUUID, "[16]byte"
+			break
+		}
 		elem := classify(u.Elem(), typeExpr, seen)
 		g.Kind, g.Elem = KindSlice, &elem
 	case *types.Map:
@@ -973,6 +977,14 @@ func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Typ
 		}
 	}
 	return g
+}
+
+// uuidArray reports whether an array is [16]byte, the underlying type of a
+// UUID: github.com/google/uuid.UUID, say. The element is byte itself, not a
+// type defined over it, so a value of the array converts to [16]byte and
+// back.
+func uuidArray(a *types.Array) bool {
+	return a.Len() == 16 && types.Identical(a.Elem(), types.Typ[types.Byte])
 }
 
 // vcvaluePath is vitaminc's Go value module, whose types encrypt's value

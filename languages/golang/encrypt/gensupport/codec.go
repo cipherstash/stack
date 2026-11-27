@@ -288,7 +288,8 @@ func Passthrough[T any](rec Record, name string) (T, error) {
 // a uint8 that holds it) and refuses anything else, so a value that opens to
 // another type is an error and never a silent zero. A defined type over a
 // scalar (type Email string) is read at its underlying type and converted by
-// the generated code.
+// the generated code. So is a UUID: it is read as [16]byte and converted to
+// the field's type, such as github.com/google/uuid.UUID.
 func Get[T any](vals Values, name string) (T, error) {
 	var out T
 	v, ok := vals[name]

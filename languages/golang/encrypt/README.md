@@ -380,6 +380,7 @@ or a type defined over one (`type Email string`):
 | `encrypt.Decimal` | a decimal: a 96-bit coefficient and a scale up to 28 | `equality` | `Eq` |
 | `encrypt.Date` | a calendar date | `equality` | `Eq` |
 | `time.Time` | a timestamp, to the nanosecond, in UTC | `equality` | `Eq` |
+| `[16]byte`, or a type defined over it, such as `uuid.UUID` | a UUID | `equality` | `Eq` |
 
 Each query method needs its index declared. A field of bytes takes no `ore`
 or `ope` index: the engine answers no ordering over bytes, so the term
@@ -388,7 +389,8 @@ would be stored and never queried, and `stashgen` refuses the declaration
 
 `encrypt.Date`, `Int128`, `Uint128` and `Decimal` are vitaminc's `vcvalue`
 types; build them with `encrypt.DateOf`, `ParseInt128`, `ParseUint128` and
-`ParseDecimal` (which refuses NaN and the infinities). A `time.Time` opens in
+`ParseDecimal` (which refuses NaN and the infinities). A UUID opens as the
+field's own type, such as `github.com/google/uuid.UUID`. A `time.Time` opens in
 UTC: compare it with `Equal`, not `==`. A decimal opens at the scale it was
 sealed with, but a zero has no sign: `-0.00` opens as `0.00`. The zero
 `encrypt.Date` is not a date, and `Encrypt` or a query refuses it with

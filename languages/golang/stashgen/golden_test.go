@@ -42,6 +42,9 @@ var goldenCases = map[string]goldenCase{
 	// An EQL type with three indexes, TextSearch: Eq, the orderings and
 	// Matches, each returning its own query.
 	"directory": {req: stashgen.Request{Type: "Entry"}, golden: "entry_stash.go.golden"},
+	// UUIDs: a type defined over [16]byte and [16]byte itself, with an
+	// equality index, and over a pointer with each way of storing nil.
+	"sessions": {req: stashgen.Request{Type: "Session"}, golden: "session_stash.go.golden"},
 }
 
 func TestGolden(t *testing.T) {
