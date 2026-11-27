@@ -48,9 +48,15 @@ func (r Request) OutputPath() string {
 // kept as it is: an absolute path, and on Windows also a path with a drive
 // and no root (C:out.go) or a root and no drive (\out.go). Joining one of
 // those to dir would drop its drive or its root.
+//
+// The result is always clean, as filepath.Join's is, so it holds no ..
+// element. The output directory check reads the path lexically, and the
+// write must reach the same file. With a .. left in, the operating system
+// would follow a symbolic link before the .., and could write outside the
+// directory the check passed.
 func outputPath(dir, output string) string {
 	if filepath.IsAbs(output) || filepath.VolumeName(output) != "" || (output != "" && os.IsPathSeparator(output[0])) {
-		return output
+		return filepath.Clean(output)
 	}
 	return filepath.Join(dir, output)
 }

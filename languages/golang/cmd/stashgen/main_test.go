@@ -207,6 +207,33 @@ func TestRunOutputPath(t *testing.T) {
 	}
 }
 
+// An absolute -output that goes through a symbolic link in the package and
+// then up with .. is cleaned before it is checked and written. The check and
+// the write then name one file, in the package, and not the file the
+// operating system would reach by following the link first.
+func TestRunOutputPathThroughALinkAndDotDot(t *testing.T) {
+	dir := writeModule(t, map[string]string{"model.go": userSource})
+	child := filepath.Join(t.TempDir(), "other", "child")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(child, filepath.Join(dir, "escape")); err != nil {
+		t.Skipf("this system does not let the test create a symlink: %v", err)
+	}
+	sep := string(filepath.Separator)
+	output := dir + sep + "escape" + sep + ".." + sep + "custom_stash.go"
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"-type", "User", "-output", output}, dir, &stdout, &stderr, fake); code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "custom_stash.go")); err != nil {
+		t.Errorf("the file is not in the package: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(child), "custom_stash.go")); err == nil {
+		t.Errorf("the file was written outside the package, in %s", filepath.Dir(child))
+	}
+}
+
 // A second run through a symlinked package directory recognises the file
 // the first run wrote, and replaces it. That holds for the default output
 // and for an absolute -output on either side of the link.

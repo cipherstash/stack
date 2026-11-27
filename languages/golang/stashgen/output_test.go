@@ -20,6 +20,7 @@ func TestOutputPath(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		cases = append(cases,
 			struct{ name, output, want string }{"an absolute path", `C:\out\user_stash.go`, `C:\out\user_stash.go`},
+			struct{ name, output, want string }{"an absolute path with ..", `C:\out\link\..\user_stash.go`, `C:\out\user_stash.go`},
 			// Rooted, with no drive: the drive of the current directory.
 			struct{ name, output, want string }{"a rooted path", `\out\user_stash.go`, `\out\user_stash.go`},
 			// A drive, with no root: relative to that drive's current directory.
@@ -29,6 +30,7 @@ func TestOutputPath(t *testing.T) {
 	} else {
 		cases = append(cases,
 			struct{ name, output, want string }{"an absolute path", "/out/user_stash.go", "/out/user_stash.go"},
+			struct{ name, output, want string }{"an absolute path with ..", "/out/link/../user_stash.go", "/out/user_stash.go"},
 		)
 	}
 	for _, c := range cases {
