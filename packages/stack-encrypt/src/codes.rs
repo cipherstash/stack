@@ -655,9 +655,9 @@ mod tests {
                     label: "app/users/email".into(),
                     reason: "two segments".into(),
                 }),
+                // The label is a context, so the payload leaves it out.
                 json!({
                     "field": "email",
-                    "label": "app/users/email",
                     "reason": "two segments",
                 }),
             ),

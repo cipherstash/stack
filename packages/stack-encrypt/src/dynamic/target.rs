@@ -320,7 +320,10 @@ impl TargetOptions {
 /// [`ErrorPayload`](crate::ErrorPayload) like everything else here: a
 /// resolver says what it refused, never a byte of the value or the stored
 /// ciphertext it refused.
-#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+///
+/// `Debug` is written by hand so that it leaves out
+/// [`Column`](Self::Column)'s label, which is an encryption context.
+#[derive(thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum TargetError {
     /// This build holds no EQL types: the plan names one, and only a build
@@ -393,12 +396,18 @@ pub enum TargetError {
         declared: ValueKind,
     },
     /// The field's label is not a column the EQL type can be stored under.
-    #[error("{name}: the label {label} is not an EQL column: {reason}")]
+    ///
+    /// The message, the payload and `Debug` name the field and leave out
+    /// the label: a label is an encryption context, and an error never
+    /// shows a context's value.
+    #[error("{name}: the field's label is not an EQL column: {reason}")]
     #[diagnostic(code(stack_encrypt::target_column))]
     Column {
         /// The target field's name.
         name: String,
-        /// The label.
+        /// The label. Never shown: not in the message, the payload or
+        /// `Debug`. Kept so that code which builds or matches this variant
+        /// still compiles.
         label: String,
         /// What the resolver said.
         reason: String,
@@ -461,6 +470,83 @@ pub enum TargetError {
     Other(Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
+/// The derived form, except that [`TargetError::Column`]'s label is shown as
+/// `<redacted>`. A `Debug` of an error reaches logs through `unwrap` and
+/// `{:?}`, so it keeps the rule the message keeps.
+impl std::fmt::Debug for TargetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoTargets { name } => f.debug_struct("NoTargets").field("name", name).finish(),
+            Self::Unknown { name } => f.debug_struct("Unknown").field("name", name).finish(),
+            Self::Unproducible { name, reason } => f
+                .debug_struct("Unproducible")
+                .field("name", name)
+                .field("reason", reason)
+                .finish(),
+            Self::NoQuery { name } => f.debug_struct("NoQuery").field("name", name).finish(),
+            Self::ContextField {
+                name,
+                context_field,
+            } => f
+                .debug_struct("ContextField")
+                .field("name", name)
+                .field("context_field", context_field)
+                .finish(),
+            Self::Kind {
+                name,
+                target,
+                expected,
+                declared,
+            } => f
+                .debug_struct("Kind")
+                .field("name", name)
+                .field("target", target)
+                .field("expected", expected)
+                .field("declared", declared)
+                .finish(),
+            Self::Column { name, reason, .. } => f
+                .debug_struct("Column")
+                .field("name", name)
+                .field("label", &format_args!("<redacted>"))
+                .field("reason", reason)
+                .finish(),
+            Self::Plaintext {
+                name,
+                target,
+                expected,
+                found,
+            } => f
+                .debug_struct("Plaintext")
+                .field("name", name)
+                .field("target", target)
+                .field("expected", expected)
+                .field("found", found)
+                .finish(),
+            Self::Json {
+                name,
+                target,
+                reason,
+            } => f
+                .debug_struct("Json")
+                .field("name", name)
+                .field("target", target)
+                .field("reason", reason)
+                .finish(),
+            Self::Stored {
+                name,
+                target,
+                reason,
+            } => f
+                .debug_struct("Stored")
+                .field("name", name)
+                .field("target", target)
+                .field("reason", reason)
+                .finish(),
+            Self::Other(error) => f.debug_tuple("Other").field(error).finish(),
+        }
+    }
+}
+
 impl crate::ErrorPayload for TargetError {
     fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
         use crate::diagnostic::payload;
@@ -486,10 +572,8 @@ impl crate::ErrorPayload for TargetError {
                 ("expected", kind(expected)),
                 ("declared", declared.name().into()),
             ]),
-            Self::Column { label, reason, .. } => payload([
-                ("label", label.as_str().into()),
-                ("reason", reason.as_str().into()),
-            ]),
+            // The label is a context: never in the payload.
+            Self::Column { reason, .. } => payload([("reason", reason.as_str().into())]),
             Self::Plaintext {
                 target,
                 expected,
@@ -920,5 +1004,72 @@ mod tests {
             error.to_string(),
             "email: TextEq is produced from a string plaintext, not a value with no kind"
         );
+    }
+
+    /// A label is an encryption context, and an error never shows a
+    /// context's value (#1981): not in the message, not in the payload, not
+    /// in `Debug`. The field's name is a schema name, and stays.
+    #[test]
+    fn a_column_refusal_names_the_field_and_never_the_label() {
+        use crate::ErrorPayload;
+        let error = TargetError::Column {
+            name: "email".into(),
+            label: "tenant-acme/users/email".into(),
+            reason: "an EQL column is a two-segment label: table and column".into(),
+        };
+        let shown = [
+            error.to_string(),
+            serde_json::Value::Object(error.payload()).to_string(),
+            format!("{error:?}"),
+            format!("{error:#?}"),
+        ];
+        for text in &shown {
+            assert!(!text.contains("tenant-acme"), "the label leaked: {text}");
+            assert!(text.contains("email"), "the field is not named: {text}");
+        }
+        assert_eq!(
+            error.to_string(),
+            "email: the field's label is not an EQL column: an EQL column is a two-segment \
+             label: table and column"
+        );
+        assert_eq!(
+            serde_json::Value::Object(error.payload()),
+            serde_json::json!({
+                "field": "email",
+                "reason": "an EQL column is a two-segment label: table and column",
+            })
+        );
+        assert_eq!(
+            format!("{error:?}"),
+            "Column { name: \"email\", label: <redacted>, reason: \"an EQL column is a \
+             two-segment label: table and column\" }"
+        );
+    }
+
+    /// The hand-written `Debug` keeps the derived form for the variants that
+    /// carry no context.
+    #[test]
+    fn debug_keeps_the_derived_form_for_the_other_variants() {
+        let kind = TargetError::Kind {
+            name: "email".into(),
+            target: "TextEq".into(),
+            expected: Some(ValueKind::String),
+            declared: ValueKind::UInt64,
+        };
+        assert_eq!(
+            format!("{kind:?}"),
+            "Kind { name: \"email\", target: \"TextEq\", expected: Some(String), declared: UInt64 }"
+        );
+        let json = TargetError::Json {
+            name: "doc".into(),
+            target: "JsonSearch".into(),
+            reason: "json_syntax",
+        };
+        assert_eq!(
+            format!("{json:?}"),
+            "Json { name: \"doc\", target: \"JsonSearch\", reason: \"json_syntax\" }"
+        );
+        let other = TargetError::Other("resolver failed".into());
+        assert_eq!(format!("{other:?}"), "Other(\"resolver failed\")");
     }
 }
