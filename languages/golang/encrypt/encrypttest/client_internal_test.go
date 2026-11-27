@@ -2,9 +2,45 @@ package encrypttest
 
 import (
 	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
 )
+
+// closer counts its Close calls.
+type closer struct{ closed int }
+
+func (c *closer) Close() error {
+	c.closed++
+	return nil
+}
+
+// narrow gives back what a constructor built when it is the type asked
+// for. A constructor's error comes back unchanged. A value of another type
+// is an error, and is closed so that it does not leak.
+func TestNarrow(t *testing.T) {
+	built := &closer{}
+	if got, err := narrow[*closer](built, nil); err != nil || got != built {
+		t.Fatalf("narrow = %v, %v; want the value built", got, err)
+	}
+	if built.closed != 0 {
+		t.Fatal("narrow closed the value it gave back")
+	}
+
+	failed := errors.New("constructor failed")
+	if _, err := narrow[*closer](nil, failed); !errors.Is(err, failed) {
+		t.Fatalf("%v, want the constructor's error", err)
+	}
+
+	wrong := &closer{}
+	_, err := narrow[*strings.Builder](wrong, nil)
+	if err == nil || !strings.Contains(err.Error(), "*encrypttest.closer, not *strings.Builder") {
+		t.Fatalf("%v, want an error naming both types", err)
+	}
+	if wrong.closed != 1 {
+		t.Fatalf("the value of the wrong type was closed %d times, want 1", wrong.closed)
+	}
+}
 
 // The default seed is a promise: values an application's fixtures sealed
 // under it in one release open under the next. Comparing two clients cannot

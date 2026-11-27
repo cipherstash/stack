@@ -26,24 +26,50 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/gensupport"
+	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testclient"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
-// Contexts asks the embedded engine for the contexts of the declaration's
-// fields. The text has one line per field, then one indented line with its
+// Contexts asks the engine for the contexts of the declaration's fields.
+// The text has one line per field, then one indented line with its
 // context: "email\n  context: users / email\n". It needs no credentials
 // and no network. [AssertContexts] reads this text; a test that wants the
 // text itself, to print or to compare whole, calls this.
+//
+// It asks the test build of the engine, the one [NewClient] runs. The test
+// build gives the same contexts as the production build: the two differ
+// only in where their keys come from. The first call, or the first client,
+// in a test binary compiles the test build, and every later call reuses
+// it.
 func Contexts(ctx context.Context, d gensupport.Declaration) (string, error) {
 	if err := versionSkew(); err != nil {
 		return "", err
 	}
-	checker, err := encrypt.NewChecker(ctx)
+	checker, err := narrow[*encrypt.Checker](testclient.NewChecker(ctx, plainTestBuild, eqlTestBuild))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("encrypttest: %w", err)
 	}
 	defer func() { _ = checker.Close() }()
 	return d.Contexts(ctx, checker)
+}
+
+// narrow is what a testclient constructor returned, as the type T it
+// builds. The constructors return any, because package testclient cannot
+// import package encrypt to name the type. A value of another type is
+// closed, if it can be, and is an error.
+func narrow[T any](built any, err error) (T, error) {
+	var zero T
+	if err != nil {
+		return zero, err
+	}
+	v, ok := built.(T)
+	if !ok {
+		if closer, ok := built.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+		return zero, fmt.Errorf("the constructor returned %T, not %T", built, zero)
+	}
+	return v, nil
 }
 
 // A FieldContext is the context of one field, as a test states it: the

@@ -22,6 +22,26 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one. `stashgen` does not yet map a Go type to it.
 
+### Fixed
+
+- `encrypttest.AssertContexts` and `encrypttest.Contexts` compile the
+  engine once per test binary, not once per call. Before, each call
+  compiled it: about 1 second, or 10 to 50 seconds under the race
+  detector. They now ask the test build that `encrypttest.NewClient` runs,
+  so a test binary that uses both compiles one build. In this module's own
+  tests, the three `AssertContexts` tests took 138 seconds under `-race`,
+  and now take 5. A checkout of the repository now needs the test build
+  for them (`mise run wasm:guest:build:deterministic`), as `NewClient`
+  already does. A released module includes it.
+
+- `encrypttest.NewClient` compiles the engine once per test binary, not
+  once per client. A suite that started a client in each test compiled the
+  engine again in every test. Under `go test -race` that took about 11
+  seconds a test. Now the first client compiles it, on every core. Every
+  later client starts in about 0.25 seconds under `-race`, and about 30
+  milliseconds without it. Parallel tests that start clients at once wait
+  for one compile, where before each compiled the engine itself.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

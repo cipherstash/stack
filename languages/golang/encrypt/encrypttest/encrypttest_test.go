@@ -2,7 +2,6 @@ package encrypttest_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -30,15 +29,7 @@ func users() gensupport.Declaration {
 		Encrypt("notes", gensupport.String)
 }
 
-func skipWithoutGuest(t *testing.T) {
-	t.Helper()
-	if _, err := encrypttest.Contexts(context.Background(), users()); errors.Is(err, encrypt.ErrGuestNotBuilt) {
-		t.Skip(err)
-	}
-}
-
 func TestAssertContextsPassesOnTheEnginesContexts(t *testing.T) {
-	skipWithoutGuest(t)
 	encrypttest.AssertContexts(t, users(),
 		encrypttest.Field("email", "users", "email"),
 		encrypttest.Field("notes", "users", "notes"),
@@ -54,7 +45,6 @@ func TestAssertContextsPassesOnTheEnginesContexts(t *testing.T) {
 }
 
 func TestAssertContextsNamesTheFirstFieldThatDiffers(t *testing.T) {
-	skipWithoutGuest(t)
 	r := &recorder{TB: t}
 	encrypttest.AssertContexts(r, users(),
 		encrypttest.Field("email", "users", "email"),
@@ -101,7 +91,6 @@ func TestAssertContextsNamesTheFirstFieldThatDiffers(t *testing.T) {
 }
 
 func TestAssertContextsReportsARefusedDeclaration(t *testing.T) {
-	skipWithoutGuest(t)
 	bad := gensupport.Declare("users").EncryptIndex("age", gensupport.Uint32, encrypt.Match())
 	r := &recorder{TB: t}
 	encrypttest.AssertContexts(r, bad)
