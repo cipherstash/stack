@@ -26,7 +26,13 @@ import (
 //   - Passthrough        → Plain{V: <decoded value>} (the clear-field marker);
 //   - the 0xF3 envelope  → time.Time for a timestamp in seconds, milliseconds
 //     or microseconds, UUID for a UUID, and Tagged for a
-//     logical id this build does not know, which re-encodes unchanged.
+//     logical id this build does not know, which re-encodes unchanged;
+//   - the 8-, 16- and 128-bit integers, Date, Timestamp and Decimal → int8,
+//     uint8, int16, uint16, Int128, Uint128, Date, time.Time and Decimal.
+//
+// A value type that is published (see [Publish]) decodes as the type it is
+// published as: Date as encrypt.Date, say, in a program that links package
+// encrypt.
 //
 // Go maps exactly in both directions — the 32-bit tags decode to int32 /
 // uint32 / float32, not widened to 64-bit. JavaScript decodes integer tags
@@ -221,7 +227,7 @@ func decodeEnvelope(r *reader) (any, error) {
 		}
 		var u UUID
 		copy(u[:], b)
-		return u, nil
+		return public(u), nil
 	default:
 		return Tagged{ID: id, Param: param, V: physical}, nil
 	}
@@ -298,7 +304,7 @@ func smallIntegerOf(v any) (int64, bool) {
 // wideIntegerOf is the value of a decoded int that smallIntegerOf does not
 // take: a uint64 above math.MaxInt64, an Int128 or a Uint128.
 func wideIntegerOf(v any) (*big.Int, bool) {
-	switch x := v.(type) {
+	switch x := internal(v).(type) {
 	case uint64:
 		return new(big.Int).SetUint64(x), true
 	case Int128:

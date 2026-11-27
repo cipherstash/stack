@@ -975,14 +975,9 @@ func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Typ
 	return g
 }
 
-// vcvaluePath is vitaminc's Go value module, whose types encrypt's value
-// types alias.
-const vcvaluePath = "github.com/cipherstash/vitaminc/bindings/go/vcvalue"
-
 // valueKind is the kind of a value type the generator knows by name:
 // time.Time, json.RawMessage, and encrypt's Date, Int128, Uint128 and
-// Decimal, whether the field names the alias in encrypt or the vcvalue type
-// it stands for, or an alias of any of them. A type defined over one of
+// Decimal, or an alias of any of them. A type defined over one of
 // them is not one: the codec writes these by their exact type, so it is
 // classified by its underlying type and refused as a struct or array.
 func valueKind(t types.Type) (Kind, bool) {
@@ -1010,7 +1005,7 @@ func valueKind(t types.Type) (Kind, bool) {
 		if path == "encoding/json" && name == "RawMessage" {
 			return KindJSON, true
 		}
-		if path != encryptPath && path != vcvaluePath {
+		if path != encryptPath {
 			continue
 		}
 		switch name {
@@ -1474,24 +1469,18 @@ func methodOf(t types.Type, name string) (*types.Selection, bool) {
 	return nil, false
 }
 
-// noStorageForm refuses vitaminc's logical value types, which the
-// transport carries and the storage profile does not: encrypt.Date and
-// encrypt.Decimal (frame.Date and frame.Decimal), and vcvalue's other
-// logical types. Its 128-bit integers and Object have a storage form.
+// noStorageForm refuses the logical value types, which the transport
+// carries and the storage profile does not: encrypt.Date and
+// encrypt.Decimal. The 128-bit integers have a storage form, and so does
+// encrypt.UUID, which is its sixteen bytes.
 func noStorageForm(t types.Type) string {
 	switch kind, _ := valueKind(t); kind {
 	case KindDate:
 		return "is a date, which has no storage form (store it as text, or by its parts)"
 	case KindDecimal:
 		return "is a decimal, which has no storage form (store it as text, or by its parts)"
-	case KindInt128, KindUint128:
-		return ""
 	}
-	named, ok := types.Unalias(t).(*types.Named)
-	if !ok || named.Obj().Pkg() == nil || named.Obj().Pkg().Path() != vcvaluePath || named.Obj().Name() == "Object" {
-		return ""
-	}
-	return "is frame." + named.Obj().Name() + ", which has no storage form"
+	return ""
 }
 
 // textForm reports whether t is written as its text, and why not when it

@@ -49,8 +49,8 @@ const (
 	Timestamp Kind = "timestamp"
 	String    Kind = "string"
 	Bytes     Kind = "bytes"
-	// UUID is a UUID: sixteen bytes under vitaminc's uuid logical type.
-	// Its value is a vcvalue.UUID, or a value of any type whose underlying
+	// UUID is a UUID: sixteen bytes under the uuid logical type. Its
+	// value is an encrypt.UUID, or a value of any type whose underlying
 	// type is [16]byte (github.com/google/uuid.UUID, say), which is
 	// converted to one.
 	UUID Kind = "uuid"

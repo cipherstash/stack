@@ -13,9 +13,9 @@ import (
 
 // convert writes an opened sealed value into out, a pointer to the Go type
 // the struct declares. The engine returns a value at the field's declared
-// kind — an integer of its own width (int8 to uint64, or frame.Int128 and
-// frame.Uint128), float32, float64, string, []byte, bool, time.Time for a
-// timestamp, frame.Date, frame.Decimal, or a frame.Object for a
+// kind — an integer of its own width (int8 to uint64, or encrypt.Int128 and
+// encrypt.Uint128), float32, float64, string, []byte, bool, time.Time for a
+// timestamp, encrypt.Date, encrypt.Decimal, encrypt.UUID, or a frame.Object for a
 // composite — and the struct's type is that type, or in the same family and
 // narrower at most (an EQL type's int32 opening into the int16 field it was
 // widened from). A value outside the target's range, or of another family,

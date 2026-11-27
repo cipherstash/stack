@@ -105,7 +105,7 @@ func (e Encoder) Tagged(t Tagged) {
 // physical writes v through its scalar channel, for the kinds the envelope
 // may carry, and reports whether v was one of them.
 func (e Encoder) physical(v any) bool {
-	switch x := v.(type) {
+	switch x := internal(v).(type) {
 	case nil:
 		e.Null()
 	case bool:
@@ -164,15 +164,15 @@ func decodeScalar(r *reader, tag byte) (any, error) {
 	case tagUint16:
 		return binary.LittleEndian.Uint16(b), nil
 	case tagInt128:
-		return Int128(b), nil
+		return public(Int128(b)), nil
 	case tagUint128:
-		return Uint128(b), nil
+		return public(Uint128(b)), nil
 	case tagDate:
 		d, err := DateFromDaysCE(int32(binary.LittleEndian.Uint32(b)))
 		if err != nil {
 			return nil, ErrMalformed
 		}
-		return d, nil
+		return public(d), nil
 	case tagTimestamp:
 		// A leap second (nanoseconds of one billion or more) has no count
 		// since the epoch and is refused by Validate.
@@ -192,7 +192,7 @@ func decodeScalar(r *reader, tag byte) (any, error) {
 			return nil, ErrMalformed
 		}
 		// A negative zero reads as zero, with its scale kept.
-		return d.Normalized(), nil
+		return public(d.Normalized()), nil
 	default:
 		return nil, ErrMalformed
 	}

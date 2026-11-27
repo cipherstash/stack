@@ -154,6 +154,7 @@ func (w *storageWriter) model(rv reflect.Value, depth int) (bool, error) {
 	if !rv.CanInterface() {
 		return false, nil
 	}
+	rv = internalValue(rv)
 	switch rv.Type() {
 	case someType:
 		w.buf = append(w.buf, StorageSome)
@@ -294,6 +295,7 @@ func startsOptional(rv reflect.Value) bool {
 // byteArray reports whether t is [N]byte, a UUID say, written as bytes.
 // Int128 and Uint128 are [16]byte too, and are integers.
 func byteArray(t reflect.Type) bool {
+	t = internalType(t)
 	return t.Kind() == reflect.Array && t.Elem().Kind() == reflect.Uint8 && t != int128Type && t != uint128Type
 }
 
@@ -307,7 +309,7 @@ func arrayBytes(rv reflect.Value) []byte {
 // Encryptable: its fields are not its value, so reflection must not write
 // them.
 func encryptable(t reflect.Type) bool {
-	return t.Implements(encryptableType) || reflect.PointerTo(t).Implements(encryptableType)
+	return implementsEncryptable(t) || implementsEncryptable(reflect.PointerTo(t))
 }
 
 // marshalText is rv's MarshalText, if its type has one, through a pointer
@@ -537,7 +539,7 @@ func wideKey(word []byte, signed bool) keyID {
 // decodedKeyID is the keyID of a key as the reader decodes it: a Go
 // integer, Int128 or Uint128, a string, or bytes.
 func decodedKeyID(k any) (keyID, bool) {
-	switch x := k.(type) {
+	switch x := internal(k).(type) {
 	case int8:
 		return signedKey(int64(x)), true
 	case int16:
@@ -587,6 +589,7 @@ func keyOf(k any) (mapKey, error) {
 	}
 	w := &storageWriter{}
 	var id keyID
+	rv = internalValue(rv)
 	switch t := rv.Type(); {
 	case t == int128Type || t == uint128Type:
 		b := arrayBytes(rv)

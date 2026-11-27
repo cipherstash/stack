@@ -497,21 +497,23 @@ func encodeAny(enc Encoder, v any) {
 //     legitimately feeds it back in; without interception the reflect slice
 //     arm would encode it as a SEQ of {Key,Value} structs, silently changing
 //     the record's structure.
+//   - A published type is read as the value type it stands for.
 //   - Encryptable hands control to the user type — except a typed nil
 //     pointer, which still satisfies the assertion but would dereference nil
 //     in typical implementations; it encodes as Null like every other nil
 //     whose type has no fixed width.
 func interceptMarkers(enc Encoder, v any) bool {
+	v = internal(v)
 	if m, ok := markers[reflect.TypeOf(v)]; ok {
 		m.encode(enc, v)
 		return true
 	}
-	if e, ok := v.(Encryptable); ok {
-		if ev := reflect.ValueOf(e); ev.Kind() == reflect.Pointer && ev.IsNil() {
+	if write, ok := encryptableOf(v); ok {
+		if ev := reflect.ValueOf(v); ev.Kind() == reflect.Pointer && ev.IsNil() {
 			enc.Null()
 			return true
 		}
-		if err := e.EncryptValue(enc); err != nil {
+		if err := write(enc); err != nil {
 			enc.st.fail(err)
 		}
 		return true
@@ -773,15 +775,15 @@ func typedNullOf(t reflect.Type) []byte {
 	// A pointer type that points at itself (type P *P) never reaches a
 	// non-pointer, so the walk is bounded by the same depth budget that
 	// bounds a value cycle. Past it the type has no fixed width.
-	for depth := 0; elem.Kind() == reflect.Pointer && !elem.Implements(encryptableType); depth++ {
+	for depth := 0; elem.Kind() == reflect.Pointer && !implementsEncryptable(elem); depth++ {
 		if depth == maxDepth {
 			typedNulls.Store(t, null)
 			return nil
 		}
 		elem = elem.Elem()
 	}
-	if !elem.Implements(encryptableType) {
-		if m, ok := markers[elem]; ok {
+	if !implementsEncryptable(elem) {
+		if m, ok := markers[internalType(elem)]; ok {
 			null = m.null
 		} else {
 			null = numericKinds[elem.Kind()].null

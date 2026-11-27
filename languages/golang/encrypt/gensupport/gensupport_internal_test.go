@@ -543,7 +543,7 @@ func TestAsKindConvertsAnIntegerThatFitsAndRefusesOneThatDoesNot(t *testing.T) {
 // plus 100.
 type encodedInt int16
 
-func (v encodedInt) EncryptValue(enc frame.Encoder) error {
+func (v encodedInt) EncryptValue(enc encrypt.Encoder) error {
 	enc.Int32(int32(v) + 100)
 	return nil
 }
@@ -564,19 +564,19 @@ func TestAsKindLeavesAValueThatWritesItself(t *testing.T) {
 // say: sixteen bytes and no EncryptValue.
 type googleUUID [16]byte
 
-// A UUID field's value crosses as a frame.UUID, which vcffi writes under the
-// uuid logical type: any other type whose underlying type is [16]byte is
-// converted, since vcffi writes that as plain bytes and the engine would refuse
+// A UUID field's value crosses as an encrypt.UUID, which the codec writes
+// under the uuid logical type: any other type whose underlying type is
+// [16]byte is converted, since the codec writes that as plain bytes and the engine would refuse
 // it. A value of another shape is left for the engine to refuse.
 func TestAsKindMakesASixteenByteArrayAUUID(t *testing.T) {
 	id := [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
-	for _, in := range []any{id, googleUUID(id), frame.UUID(id)} {
+	for _, in := range []any{id, googleUUID(id), encrypt.UUID(id)} {
 		got, err := asKind(UUID, in)
-		if err != nil || got != frame.UUID(id) {
-			t.Errorf("asKind(UUID, %T) = %v (%T), %v; want a frame.UUID", in, got, got, err)
+		if err != nil || got != encrypt.UUID(id) {
+			t.Errorf("asKind(UUID, %T) = %v (%T), %v; want an encrypt.UUID", in, got, got, err)
 		}
 	}
-	for _, in := range []any{id[:], [15]byte{}, "0102", encodedInt(7), frame.Int128(id)} {
+	for _, in := range []any{id[:], [15]byte{}, "0102", encodedInt(7), encrypt.Int128(id)} {
 		got, err := asKind(UUID, in)
 		if err != nil || fmt.Sprint(got) != fmt.Sprint(in) {
 			t.Errorf("asKind(UUID, %T) = %v (%T), %v; want it unchanged", in, got, got, err)

@@ -20,16 +20,16 @@ import (
 // with encrypt.ErrEncoding: a Go type wider than the kind is accepted by
 // stashgen and range checked here, value by value.
 //
-// A value whose type writes itself (frame.Encryptable) crosses as it is too:
+// A value whose type writes itself (encrypt.Encryptable) crosses as it is too:
 // converting it to a built-in integer would drop its EncryptValue, and the
 // engine holds what it writes to the field's kind. A write and a query of one
 // field both convert here ([Field.Encrypt], [Field.Term]), so they agree.
 //
-// A UUID field's value crosses as a frame.UUID, which vcffi writes under
+// A UUID field's value crosses as an encrypt.UUID, which the codec writes under
 // the uuid logical type. A value of another type whose underlying type is
 // [16]byte (github.com/google/uuid.UUID, say) is converted to it here, since
-// vcffi writes such a value as plain bytes and the engine refuses bytes in a
-// UUID field. frame.Int128 and Uint128 are integers, not UUIDs, and are not
+// the codec writes such a value as plain bytes and the engine refuses bytes in a
+// UUID field. encrypt.Int128 and Uint128 are integers, not UUIDs, and are not
 // converted.
 //
 // The error names the kind and not the value, which is plaintext.
@@ -50,7 +50,7 @@ func asKind(kind Kind, v any) (any, error) {
 		return v, nil
 	}
 	switch v.(type) {
-	case frame.Int128, frame.Uint128, frame.Encryptable:
+	case encrypt.Int128, encrypt.Uint128, encrypt.Encryptable:
 		return v, nil
 	}
 	rv := reflect.ValueOf(v)
@@ -76,15 +76,15 @@ func asKind(kind Kind, v any) (any, error) {
 	return out, nil
 }
 
-// uuidType is frame.UUID's reflect.Type.
-var uuidType = reflect.TypeFor[frame.UUID]()
+// uuidType is encrypt.UUID's reflect.Type.
+var uuidType = reflect.TypeFor[encrypt.UUID]()
 
-// asUUID is v as a frame.UUID when its underlying type is [16]byte, and v
-// unchanged otherwise: a frame.UUID already, a value that writes itself, a
+// asUUID is v as an encrypt.UUID when its underlying type is [16]byte, and v
+// unchanged otherwise: an encrypt.UUID already, a value that writes itself, a
 // 128-bit integer, or a value of another shape, which the engine refuses.
 func asUUID(v any) any {
 	switch v.(type) {
-	case frame.UUID, frame.Int128, frame.Uint128, frame.Encryptable:
+	case encrypt.UUID, encrypt.Int128, encrypt.Uint128, encrypt.Encryptable:
 		return v
 	}
 	rv := reflect.ValueOf(v)
@@ -97,14 +97,14 @@ func asUUID(v any) any {
 // checkValue refuses a date, decimal or timestamp the codec cannot write, before
 // it reaches the codec, so the caller can name the field: the codec's own
 // refusal names neither. A zero encrypt.Date (year 0, month 0, day 0) is not
-// a date and is refused here. The error is vitaminc's, which names the type
+// a date and is refused here. The error is the codec's, which names the type
 // and not the value.
 func checkValue(v any) error {
 	var err error
 	switch v := v.(type) {
-	case frame.Date:
+	case encrypt.Date:
 		err = v.Validate()
-	case frame.Decimal:
+	case encrypt.Decimal:
 		err = v.Validate()
 	case time.Time:
 		err = frame.Timestamp{Seconds: v.Unix(), Nanoseconds: uint32(v.Nanosecond())}.Validate() //nolint:gosec // Nanosecond is in [0, 1e9)

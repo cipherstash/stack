@@ -103,9 +103,8 @@ type clientOptions struct{}
 // Close closes the client.
 func (*Client) Close() error { return nil }
 
-// The value types a field can hold beside Go's own. The real ones are
-// aliases of vitaminc's vcvalue types; the generator recognises them by
-// their name in this package.
+// The value types a field can hold beside Go's own. The generator
+// recognises them by their name in this package.
 type (
 	Date struct {
 		Year  int

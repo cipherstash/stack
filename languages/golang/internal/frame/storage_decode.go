@@ -186,7 +186,7 @@ func storageNode(r *reader, depth int) (any, error) {
 
 // kindOf names what a model value is, for a refusal: never the value.
 func kindOf(m any) string {
-	switch m.(type) {
+	switch internal(m).(type) {
 	case nil:
 		return "null"
 	case bool:
@@ -272,7 +272,7 @@ func assign(m any, rv reflect.Value, path string) error {
 		return mismatch(path, rv.Type().String(), m)
 	}
 	switch t := rv.Type(); {
-	case t == int128Type || t == uint128Type:
+	case internalType(t) == int128Type || internalType(t) == uint128Type:
 		return assignInteger(m, rv, path)
 	case byteArray(t):
 		b, ok := m.([]byte)
@@ -362,14 +362,14 @@ func assignInteger(m any, rv reflect.Value, path string) error {
 		return mismatch(path, "an integer", m)
 	}
 	fits := false
-	switch t := rv.Type(); {
+	switch t := internalType(rv.Type()); {
 	case t == int128Type:
 		if fits = v.Cmp(minInt128) >= 0 && v.Cmp(maxInt128) <= 0; fits {
-			rv.Set(reflect.ValueOf(Int128(int128Of(v))))
+			rv.Set(reflect.ValueOf(Int128(int128Of(v))).Convert(rv.Type()))
 		}
 	case t == uint128Type:
 		if fits = v.Sign() >= 0 && v.Cmp(maxUint128) <= 0; fits {
-			rv.Set(reflect.ValueOf(Uint128(int128Of(v))))
+			rv.Set(reflect.ValueOf(Uint128(int128Of(v))).Convert(rv.Type()))
 		}
 	case rv.CanInt():
 		if fits = v.IsInt64() && !rv.OverflowInt(v.Int64()); fits {
