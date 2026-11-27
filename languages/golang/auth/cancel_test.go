@@ -228,7 +228,7 @@ func TestARefreshThatSucceedsAfterItsContextEndsFailsWithIt(t *testing.T) {
 	}
 	defer strategy.Close()
 
-	out, err := strategy.store.callArgs(withRefresh(ctx), func(i *instance) api.Function { return i.authRefresh }, guest.BufArg([]byte(strategy.handle)))
+	out, err := strategy.store.run(withRefresh(ctx), func(i *instance) api.Function { return i.authRefresh }, guest.BufArg([]byte(strategy.handle)))
 	if !errors.Is(err, context.Canceled) || out != nil {
 		t.Fatalf("refresh: %q, %v, want no token and context.Canceled", out, err)
 	}
@@ -252,16 +252,20 @@ func TestATokenRequestWhoseContextEndsInTheQueueNeverReachesTheGuest(t *testing.
 	}
 	defer strategy.Close()
 
-	for name, lock := range map[string]interface {
-		Acquire(context.Context) error
-		Unlock()
-	}{"the strategy's": &strategy.mu, "the profile's": &profile.root.mu} {
-		t.Run(name, func(t *testing.T) {
-			if err := lock.Acquire(context.Background()); err != nil {
+	// A Token waits for the profile's lock. TestACallerRefusedByAFullGuest
+	// LeavesAtItsDeadline has the wait for an operation to end.
+	for name, hold := range map[string]func() (release func()){
+		"the profile's lock": func() func() {
+			if err := profile.root.mu.Acquire(context.Background()); err != nil {
 				t.Fatal(err)
 			}
+			return profile.root.mu.Unlock
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			release := hold()
 			released := make(chan struct{})
-			time.AfterFunc(200*time.Millisecond, func() { lock.Unlock(); close(released) })
+			time.AfterFunc(200*time.Millisecond, func() { release(); close(released) })
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 			defer cancel()
 			if _, err := strategy.Token(ctx); !errors.Is(err, context.DeadlineExceeded) {
@@ -558,9 +562,11 @@ func TestARefreshAnsweredAfterTheGraceByARoundTripperThatIgnoresItsContextIsKept
 }
 
 // The backstop: a refresh is waited for until the stuck-call backstop,
-// past its grace, and one still hung then closes the profile. The caller
-// has returned by then; the next call is ErrState.
-func TestARefreshStillHungAtTheBackstopClosesTheProfile(t *testing.T) {
+// past its grace, and one still hung then fails as a transport failure.
+// The request is outside the guest, so the guest is not stuck, and the
+// profile stays open: the refresh finishes, failed, and Close is not held
+// up by it. The caller has returned long before.
+func TestARefreshStillHungAtTheBackstopFailsAndLeavesTheProfileOpen(t *testing.T) {
 	guestOrSkip(t)
 	dir, _ := expiredDeviceProfile(t)
 	rt := newModalRoundTripper(http.DefaultTransport)
@@ -579,7 +585,6 @@ func TestARefreshStillHungAtTheBackstopClosesTheProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer strategy.Close()
 
 	rt.mode.Store("hang")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
@@ -587,13 +592,23 @@ func TestARefreshStillHungAtTheBackstopClosesTheProfile(t *testing.T) {
 	if _, err := strategy.Token(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("stuck Token: %v, want the deadline", err)
 	}
-	eventually(t, "the backstop to close the profile", func() bool {
-		profile.root.mu.Lock()
-		defer profile.root.mu.Unlock()
-		return profile.root.closed || profile.root.inst.module.IsClosed()
-	})
-	if _, err := strategy.Token(context.Background()); !errors.Is(err, ErrState) {
-		t.Fatalf("a Token after the backstop: %v, want ErrState", err)
+	// Close waits for the refresh left running, which ends at the backstop.
+	closed := make(chan error, 1)
+	go func() { closed <- strategy.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the hung refresh was not ended at the backstop")
+	}
+	if n := rt.started.Load(); n != 1 {
+		t.Fatalf("%d hung requests, want 1", n)
+	}
+	wantProfileOpen(t, profile)
+	if _, err := ws.CurrentWorkspace(context.Background()); err != nil && !errors.Is(err, ErrNoCurrentWorkspace) {
+		t.Fatalf("a profile call after the backstop: %v", err)
 	}
 }
 

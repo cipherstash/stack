@@ -42,12 +42,13 @@ by `.github/workflows/release-golang.yml` as `languages/golang/vX.Y.Z` and
 for security reports on the same terms as the npm packages above.
 
 It also carries the source of three Rust crates moved from
-`cipherstash/vitaminc`: **`vitaminc-aead`**, **`vitaminc-aead-frame`** and
+`cipherstash/vitaminc`: **`vitaminc-aead`**, **`recipher-frame`** and
 **`vitaminc-aead-derive`** (`packages/vitaminc-aead`,
-`packages/vitaminc-aead-frame`, `packages/vitaminc-aead-derive`). They define
+`packages/recipher-frame`, `packages/vitaminc-aead-derive`). They define
 the value types Stack Encrypt seals, how each is encoded, and how a value is
 sealed. Their crates.io releases up to 0.10.0 were published from
-`cipherstash/vitaminc`, and they are not published from this repository yet.
+`cipherstash/vitaminc`, the frame crate's under its old name
+`vitaminc-aead-frame`, and they are not published from this repository yet.
 Every build that uses `vitaminc-aead` 0.10 uses the copies here; the 0.5.1
 and 0.2.0-pre that some builds still reach come from crates.io. The three
 crates are licensed under MIT, and are in scope for security reports on the

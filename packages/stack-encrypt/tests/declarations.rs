@@ -116,7 +116,7 @@ fn shared_declaration_grammar() {
         );
         let frame = match case.input {
             Input::Json(value) => {
-                vitaminc_aead_frame::serde::to_vec(&projection(&value).unwrap()).unwrap()
+                recipher_frame::serde::to_vec(&projection(&value).unwrap()).unwrap()
             }
             Input::FrameHex(text) => {
                 let mut frame = vitaminc_protected::Buffer::new();
@@ -217,15 +217,13 @@ fn projection(raw: &RawValue) -> Result<Projection, Box<dyn std::error::Error>> 
 fn json_projection_is_lexical_and_lossless() {
     fn encoded(text: &str) -> Vec<u8> {
         let raw = serde_json::from_str::<Box<RawValue>>(text).unwrap();
-        vitaminc_aead_frame::serde::to_vec(&projection(&raw).unwrap())
+        recipher_frame::serde::to_vec(&projection(&raw).unwrap())
             .unwrap()
             .risky_unwrap()
     }
     assert_eq!(
         encoded("-0"),
-        vitaminc_aead_frame::serde::to_vec(&0i64)
-            .unwrap()
-            .risky_unwrap()
+        recipher_frame::serde::to_vec(&0i64).unwrap().risky_unwrap()
     );
     assert_eq!(encoded(r#"{"z":1,"a":2}"#), encoded(r#"{"a":2,"z":1}"#));
     for invalid in ["18446744073709551616", "-9223372036854775809", "1e400"] {

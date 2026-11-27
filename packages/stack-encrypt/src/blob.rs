@@ -82,7 +82,7 @@
 //! # The stored format
 //!
 //! The value is encoded with version 1 of Vitamin C's **storage profile**
-//! (`vitaminc_aead_frame::storage`). The encoded bytes are sealed as one
+//! (`recipher_frame::storage`). The encoded bytes are sealed as one
 //! **bytes leaf** of the ordinary [`SealedValue`] v1 envelope. A blob adds
 //! no second envelope, no new kind of key request and no new AAD. The
 //! ciphertext is the same as sealing a `Vec<u8>` that contains the encoded
@@ -97,7 +97,7 @@
 //! - map keys that keep their kind
 //! - a promise that a version's bytes never change meaning
 //!
-//! The specification is `STORAGE.md` in the `vitaminc-aead-frame` crate.
+//! The specification is `STORAGE.md` in the `recipher-frame` crate.
 //! Every implementation must pass its golden corpus of test vectors. The Go
 //! SDK writes and reads the same profile through `vcffi`, so a Go opaque
 //! struct and a Rust `OpaqueBlob<T>` are one stored format. See [Go](#go)
@@ -386,10 +386,10 @@
 
 use std::fmt;
 
+use recipher_frame::serde::PathSegment;
+use recipher_frame::storage::{self, ErrorKind};
 use serde::de::{DeserializeOwned, Deserializer};
 use serde::{Deserialize, Serialize};
-use vitaminc_aead_frame::serde::PathSegment;
-use vitaminc_aead_frame::storage::{self, ErrorKind};
 use vitaminc_protected::{AsProtectedRef, Buffer, Controlled, Protected};
 use zeroize::{Zeroize, Zeroizing};
 

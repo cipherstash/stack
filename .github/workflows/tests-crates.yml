@@ -27,7 +27,7 @@ on:
       - packages/stack-encrypt-jsonpath/**
       - packages/stack-guest-abi/**
       - packages/vitaminc-aead/**
-      - packages/vitaminc-aead-frame/**
+      - packages/recipher-frame/**
       - packages/vitaminc-aead-derive/**
       - languages/typescript/packages/auth/**
       - languages/typescript/packages/profile/**
@@ -57,7 +57,7 @@ on:
       - packages/stack-encrypt-jsonpath/**
       - packages/stack-guest-abi/**
       - packages/vitaminc-aead/**
-      - packages/vitaminc-aead-frame/**
+      - packages/recipher-frame/**
       - packages/vitaminc-aead-derive/**
       - languages/typescript/packages/auth/**
       - languages/typescript/packages/profile/**
@@ -174,8 +174,57 @@ jobs:
       # `--allow-dirty` tolerates files earlier steps leave in the tree. Once a
       # version is on crates.io, cargo warns rather than fails on a dry run of
       # it.
+      #
+      # One failure is a warning, not an error: a dependency cargo cannot find
+      # on crates.io at all, when that dependency is named in
+      # `awaiting_first_publish`. Those are crates of this workspace that will
+      # be published but have not been yet, so no packaged build can resolve
+      # them until they are. `cargo publish` refuses the crate that needs one
+      # at release time, so nothing can ship by mistake. The crate that needs
+      # it is dropped with a warning and the rest are packaged again, so they
+      # are still verified. Any other failure fails the step, including a
+      # dependency on a crate that is `publish = false` for good, such as
+      # stack-guest-abi. Remove a name from the list once it is on crates.io.
       - name: Verify the stack-* crates package cleanly for crates.io
-        run: cargo publish --locked --dry-run --allow-dirty -p stack-profile -p stack-auth -p stack-kms -p stack-encrypt-jsonpath -p stack-encrypt-derive -p stack-encrypt
+        run: |
+          set -euo pipefail
+          crates=(stack-profile stack-auth stack-kms stack-encrypt-jsonpath stack-encrypt-derive stack-encrypt)
+          awaiting_first_publish=(recipher-frame)
+          target_dir="$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.target_directory')"
+          while [ "${#crates[@]}" -gt 0 ]; do
+            args=()
+            for crate in "${crates[@]}"; do args+=(-p "$crate"); done
+            # cargo's own status is kept in `status`: `|| status=$?` reads it
+            # before anything else runs.
+            status=0
+            out="$(cargo publish --locked --dry-run --allow-dirty "${args[@]}" 2>&1)" || status=$?
+            printf '%s\n' "$out"
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+            missing="$(sed -n 's/^ *no matching package named `\([^`]*\)` found$/\1/p' <<<"$out" | head -n 1)"
+            needs="$(sed -n 's/^ *required by package `\([^ `]*\) v.*$/\1/p' <<<"$out" | head -n 1)"
+            awaiting=0
+            for crate in "${awaiting_first_publish[@]}"; do
+              if [ "$crate" = "$missing" ]; then awaiting=1; fi
+            done
+            if [ -z "$missing" ] || [ -z "$needs" ] || [ "$awaiting" -eq 0 ]; then
+              exit "$status"
+            fi
+            remaining=()
+            for crate in "${crates[@]}"; do
+              if [ "$crate" != "$needs" ]; then remaining+=("$crate"); fi
+            done
+            if [ "${#remaining[@]}" -eq "${#crates[@]}" ]; then
+              exit "$status"
+            fi
+            echo "::warning title=${needs} not verified against crates.io::${needs} depends on ${missing}, a crate of this workspace that is waiting for its first publish, so it cannot be packaged against crates.io. cargo publish refuses ${needs} until ${missing} is published. The other crates are verified without it."
+            crates=("${remaining[@]}")
+            # The attempt left its temporary registry of packaged crates
+            # behind; the next one must start without it, or cargo finds a
+            # crate there with no checksum and stops.
+            rm -rf -- "${target_dir}/package"
+          done
 
   # rustdoc checks intra-doc links but never fetches a URL, so this checks
   # the web links in the crates' docs with lychee. It reads every crate under

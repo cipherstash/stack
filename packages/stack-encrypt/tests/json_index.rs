@@ -365,8 +365,10 @@ fn scalar_in_array(stored: &Value, needle: &Value) -> bool {
 #[cfg(feature = "dynamic")]
 mod query {
     use stack_encrypt::dynamic::{
-        self, record, Operand, QueryTerm, TargetDescriptor, TargetError, TargetOptions,
-        TargetResolver, ValueFrame, ValueKind,
+        self,
+        frame::{Frame, OwnedFrame},
+        record, Operand, QueryTerm, TargetDescriptor, TargetError, TargetOptions, TargetResolver,
+        ValueKind,
     };
     use stack_encrypt::json::JsonLeafQuery;
     use stack_encrypt::target::DeclaredContext;
@@ -417,7 +419,7 @@ mod query {
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: &DeclaredContext,
-            _: ValueFrame,
+            _: Frame<'_>,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("these tests seal a document without a plan")
         }
@@ -429,7 +431,7 @@ mod query {
             _: &Label,
             _: &DeclaredContext,
             _: &[u8],
-        ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+        ) -> Result<Pending<'a, OwnedFrame, K>, TargetError> {
             unreachable!("these tests open a document without a plan")
         }
 
@@ -440,7 +442,7 @@ mod query {
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: &DeclaredContext,
-            _: ValueFrame,
+            _: Frame<'_>,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("the JSON operators are the engine's")
         }
@@ -481,13 +483,8 @@ mod query {
 
     /// A JSON value as a frame: what a binding sends as an operator's
     /// input.
-    fn frame(input: &Value) -> ValueFrame {
-        ValueFrame::from_bytes(
-            dynamic::frame::serde::to_vec(input)
-                .unwrap()
-                .as_protected_ref(),
-        )
-        .unwrap()
+    fn frame(input: &Value) -> OwnedFrame {
+        OwnedFrame::from_buffer(dynamic::frame::serde::to_vec(input).unwrap()).unwrap()
     }
 
     /// The input of an operator that takes a document.
@@ -3108,13 +3105,13 @@ mod given_the_json_index_spec {
             "every option is written when any is not the default"
         );
         let frame =
-            vitaminc_aead_frame::serde::to_vec(&json!({"json": {"sealed_root": false}})).unwrap();
+            recipher_frame::serde::to_vec(&json!({"json": {"sealed_root": false}})).unwrap();
         assert_eq!(
             IndexSpec::from_frame(frame.as_protected_ref()).unwrap(),
             IndexSpec::Json(open_root()),
             "an option read from a frame"
         );
-        let frame = vitaminc_aead_frame::serde::to_vec(&json!({"json": {"nope": true}})).unwrap();
+        let frame = recipher_frame::serde::to_vec(&json!({"json": {"nope": true}})).unwrap();
         assert!(
             IndexSpec::from_frame(frame.as_protected_ref()).is_err(),
             "an unknown option refuses the index"
@@ -3128,7 +3125,7 @@ mod given_the_json_index_spec {
             json!({"json": {"sealed_root": true, "ordered": ["$.age", "$.orders[*].total"]}}),
             "ordered paths are written once, in canonical order"
         );
-        let frame = vitaminc_aead_frame::serde::to_vec(
+        let frame = recipher_frame::serde::to_vec(
             &json!({"json": {"ordered": ["$.age", "$.orders[*].total"]}}),
         )
         .unwrap();
@@ -3137,8 +3134,7 @@ mod given_the_json_index_spec {
             ordered,
             "ordered paths read back parsed"
         );
-        let frame =
-            vitaminc_aead_frame::serde::to_vec(&json!({"json": {"ordered": ["age"]}})).unwrap();
+        let frame = recipher_frame::serde::to_vec(&json!({"json": {"ordered": ["age"]}})).unwrap();
         assert!(
             IndexSpec::from_frame(frame.as_protected_ref()).is_err(),
             "a text that is not a path refuses the index"
@@ -3146,8 +3142,7 @@ mod given_the_json_index_spec {
         // A position in an ordered path refuses the index too: no ordering
         // can reach the leaf it names.
         let frame =
-            vitaminc_aead_frame::serde::to_vec(&json!({"json": {"ordered": ["$.scores[2]"]}}))
-                .unwrap();
+            recipher_frame::serde::to_vec(&json!({"json": {"ordered": ["$.scores[2]"]}})).unwrap();
         assert!(
             IndexSpec::from_frame(frame.as_protected_ref()).is_err(),
             "a position in an ordered path refuses the index"

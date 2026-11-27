@@ -269,7 +269,7 @@ describe('the scan sees every task mise sees', () => {
         'packages/stack-kms/tasks.toml',
         'packages/stack-profile/tasks.toml',
         'packages/vitaminc-aead/tasks.toml',
-        'packages/vitaminc-aead-frame/tasks.toml',
+        'packages/recipher-frame/tasks.toml',
         'packages/vitaminc-aead-derive/tasks.toml',
       ].sort(),
     )
@@ -323,7 +323,7 @@ describe('the scan sees every task mise sees', () => {
         'doc:stack-profile',
         'doc:vitaminc-aead',
         'doc:vitaminc-aead-derive',
-        'doc:vitaminc-aead-frame',
+        'doc:recipher-frame',
       ].sort(),
     )
   })

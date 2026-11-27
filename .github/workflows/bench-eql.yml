@@ -69,7 +69,7 @@ on:
       - "packages/stack-encrypt-derive/**"
       - "packages/stack-encrypt-jsonpath/**"
       - "packages/vitaminc-aead/**"
-      - "packages/vitaminc-aead-frame/**"
+      - "packages/recipher-frame/**"
       - "packages/vitaminc-aead-derive/**"
       - "packages/stack-kms/**"
       - "packages/stack-auth/**"

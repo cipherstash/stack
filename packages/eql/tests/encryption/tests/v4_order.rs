@@ -17,11 +17,11 @@ mod common;
 use eql_bindings::encryption::targets::{self as targets};
 use eql_bindings::v4::{bigint, double, integer, real, text};
 use eql_bindings::Identifier;
-use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::{DecryptFrom, Encrypt, EncryptInto, Label, NonEmpty};
 
-fn frame<T: Encrypt>(value: T) -> ValueFrame {
-    ValueFrame::of(value).unwrap()
+fn frame<T: Encrypt>(value: T) -> OwnedFrame {
+    OwnedFrame::of(value).unwrap()
 }
 
 fn column() -> NonEmpty<Identifier> {
@@ -59,9 +59,9 @@ const ORDERED: &[&str] = &[
 async fn stored(
     keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
-    value: ValueFrame,
+    value: OwnedFrame,
 ) -> serde_json::Value {
-    let bytes = targets::encrypt(name, keyset, &label(), value)
+    let bytes = targets::encrypt(name, keyset, &label(), value.frame())
         .unwrap()
         .await
         .unwrap();
@@ -72,12 +72,18 @@ async fn stored(
 async fn query(
     keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
-    value: ValueFrame,
+    value: OwnedFrame,
 ) -> serde_json::Value {
-    let bytes = targets::query(name, &common::index_of(name), keyset, &label(), value)
-        .unwrap()
-        .await
-        .unwrap();
+    let bytes = targets::query(
+        name,
+        &common::index_of(name),
+        keyset,
+        &label(),
+        value.frame(),
+    )
+    .unwrap()
+    .await
+    .unwrap();
     serde_json::from_slice(&bytes).unwrap()
 }
 
@@ -167,7 +173,11 @@ async fn each_ordered_type_stores_its_catalog_terms() {
             .unwrap()
             .await
             .unwrap();
-        assert_eq!(opened.risky_ref(), value.risky_ref(), "{name}: opens back");
+        assert_eq!(
+            opened.frame().as_bytes(),
+            value.frame().as_bytes(),
+            "{name}: opens back"
+        );
     }
 }
 
@@ -177,7 +187,7 @@ async fn each_ordered_type_stores_its_catalog_terms() {
 async fn sorts_as(
     keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
-    values: Vec<(usize, ValueFrame, &str)>,
+    values: Vec<(usize, OwnedFrame, &str)>,
 ) {
     let mut terms = Vec::new();
     for (group, value, shown) in values {
@@ -395,7 +405,7 @@ async fn text_with_no_fold_is_refused() {
     let keyset = cipher.default_keyset();
     let unassigned = "a\u{0378}b";
     for name in ["TextOrd", "TextOrdOpe"] {
-        let stored = match targets::encrypt(name, &keyset, &label(), frame(unassigned)) {
+        let stored = match targets::encrypt(name, &keyset, &label(), frame(unassigned).frame()) {
             Ok(pending) => pending.await,
             Err(error) => panic!("{name}: refused before the plan ran: {error}"),
         };
@@ -405,7 +415,7 @@ async fn text_with_no_fold_is_refused() {
             &common::index_of(name),
             &keyset,
             &label(),
-            frame(unassigned),
+            frame(unassigned).frame(),
         ) {
             Ok(pending) => pending.await,
             Err(error) => panic!("{name}: refused before the plan ran: {error}"),
@@ -488,14 +498,15 @@ async fn the_typed_entry_point_stores_the_dispatchs_terms() {
 async fn the_ordered_query_fixture_is_what_the_dispatch_derives() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let query = |name: &'static str, column: &'static str, value: ValueFrame| {
+    let query = |name: &'static str, column: &'static str, value: OwnedFrame| {
         let keyset = &keyset;
         async move {
             let label = Label::new(["rankings", column]).unwrap();
-            let bytes = targets::query(name, &common::index_of(name), keyset, &label, value)
-                .unwrap()
-                .await
-                .unwrap();
+            let bytes =
+                targets::query(name, &common::index_of(name), keyset, &label, value.frame())
+                    .unwrap()
+                    .await
+                    .unwrap();
             String::from_utf8(bytes).unwrap()
         }
     };
@@ -740,7 +751,7 @@ fn postgres_compares_and_orders_ope_rows() {
         (4, Plain(7, 1 << 40, 2.5, 1e300, "carol")),
         (5, Plain(i32::MAX, i64::MAX, f32::NAN, f64::NAN, "Zoe")),
     ];
-    let frames = |p: &Plain| -> Vec<(&'static str, ValueFrame)> {
+    let frames = |p: &Plain| -> Vec<(&'static str, OwnedFrame)> {
         vec![
             ("IntegerOrd", frame(p.0)),
             ("IntegerOrdOpe", frame(p.0)),
@@ -759,7 +770,7 @@ fn postgres_compares_and_orders_ope_rows() {
         let stored: Vec<String> = runtime.block_on(async {
             let mut stored = Vec::new();
             for ((column, _, _), (name, value)) in COLUMNS.iter().zip(frames(plain)) {
-                let bytes = targets::encrypt(name, &keyset, &under(column), value)
+                let bytes = targets::encrypt(name, &keyset, &under(column), value.frame())
                     .unwrap()
                     .await
                     .unwrap();
@@ -779,7 +790,7 @@ fn postgres_compares_and_orders_ope_rows() {
                 &common::index_of(name),
                 &keyset,
                 &under(column),
-                value,
+                value.frame(),
             )
             .unwrap()
             .await
@@ -984,7 +995,8 @@ fn postgres_compares_rows_the_go_sdk_sealed() {
 }
 
 /// A second frame of the same bytes. A frame is not `Clone`.
-fn again(frame: &ValueFrame) -> ValueFrame {
-    use stack_encrypt::AsProtectedRef as _;
-    ValueFrame::from_bytes(frame.as_protected_ref()).unwrap()
+fn again(frame: &OwnedFrame) -> OwnedFrame {
+    let mut buffer = stack_encrypt::Buffer::new();
+    buffer.extend_from_slice(frame.frame().as_bytes());
+    OwnedFrame::from_buffer(buffer).unwrap()
 }

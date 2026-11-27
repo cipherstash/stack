@@ -2,7 +2,7 @@
 //! Rust API. Each side decrypts the other's ciphertexts. So the tests show
 //! that the crate writes the engine's bytes.
 
-use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::kms::DeterministicSource;
 use stack_encrypt::StackCipher;
 
@@ -20,7 +20,7 @@ async fn engine() -> StackCipher<DeterministicSource> {
 }
 
 fn one(text: &str) -> OneValue {
-    OneValue::new(ValueFrame::of(text).unwrap()).unwrap()
+    OneValue::new(OwnedFrame::of(text).unwrap()).unwrap()
 }
 
 /// Encrypts `values` through the crate, with the test keys.
@@ -52,7 +52,10 @@ async fn the_sdk_opens_what_the_engine_sealed() {
         .await
         .unwrap();
     let opened = unseal(&cipher, vec![sealed]).await.unwrap().remove(0);
-    assert_eq!(opened, ValueFrame::of("from the engine").unwrap());
+    assert_eq!(
+        opened.frame(),
+        OwnedFrame::of("from the engine").unwrap().frame()
+    );
 }
 
 #[tokio::test]
@@ -97,5 +100,8 @@ async fn a_keyset_refuses_another_keysets_ciphertext_and_the_cipher_opens_it() {
         .await
         .unwrap()
         .remove(0);
-    assert_eq!(opened, ValueFrame::of("in another keyset").unwrap());
+    assert_eq!(
+        opened.frame(),
+        OwnedFrame::of("in another keyset").unwrap().frame()
+    );
 }

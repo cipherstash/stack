@@ -40,8 +40,8 @@ mod tests {
 
     /// A storage profile error, from reading `bytes` as a `u32`: the
     /// profile's errors have no public constructor, so one is provoked.
-    fn storage_error(bytes: &[u8]) -> vitaminc_aead_frame::storage::Error {
-        vitaminc_aead_frame::storage::from_slice::<u32>(bytes).unwrap_err()
+    fn storage_error(bytes: &[u8]) -> recipher_frame::storage::Error {
+        recipher_frame::storage::from_slice::<u32>(bytes).unwrap_err()
     }
 
     /// One of every variant of every error type here.
