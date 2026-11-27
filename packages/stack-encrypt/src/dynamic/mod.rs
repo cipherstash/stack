@@ -92,6 +92,7 @@
 //! binding has to be taught, and an exhaustive match is how the compiler
 //! tells a binding author that.
 mod context;
+mod found;
 mod json;
 mod json_query;
 mod kind;

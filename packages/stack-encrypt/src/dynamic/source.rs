@@ -95,9 +95,6 @@ impl Place {
     }
 }
 
-/// The place shared by every sink in a split.
-type Open<'f> = &'f Place;
-
 /// Where a finished record goes: returned to the caller, or added to a
 /// batch.
 trait PutRecord {
@@ -118,19 +115,19 @@ impl PutRecord for TopRecord {
 /// The next record of a batch. Putting it finishes its row.
 struct BatchRecord<'s> {
     records: &'s mut Vec<SourceRecord>,
-    open: Open<'s>,
+    place: &'s Place,
 }
 
 impl PutRecord for BatchRecord<'_> {
     type Ok = ();
     fn put(self, record: SourceRecord) {
         self.records.push(record);
-        self.open.row.set(None);
+        self.place.row.set(None);
     }
 }
 
 /// The top of a source.
-struct TopSink<'f>(Open<'f>);
+struct TopSink<'f>(&'f Place);
 
 impl<'f> Sink for TopSink<'f> {
     type Ok = SplitSource;
@@ -152,7 +149,7 @@ impl<'f> Sink for TopSink<'f> {
 
     fn seq(self, _: Option<usize>) -> Result<BatchSink<'f>, FrameWriteError> {
         Ok(BatchSink {
-            open: self.0,
+            place: self.0,
             records: Vec::new(),
             begun: 0,
         })
@@ -171,7 +168,7 @@ impl<'f> Sink for TopSink<'f> {
 /// source began, so an element whose sink it dropped unwritten, leaving no
 /// record, is refused rather than shifting the rows after it.
 struct BatchSink<'f> {
-    open: Open<'f>,
+    place: &'f Place,
     records: Vec<SourceRecord>,
     begun: usize,
 }
@@ -183,7 +180,7 @@ impl BatchSink<'_> {
         if self.records.len() == self.begun {
             return Ok(());
         }
-        self.open.row.set(Some(self.records.len()));
+        self.place.row.set(Some(self.records.len()));
         Err(FrameWriteError::Unwritten)
     }
 }
@@ -198,13 +195,13 @@ impl<'f> SeqSink for BatchSink<'f> {
 
     fn element(&mut self) -> Result<ElementSink<'f, '_>, FrameWriteError> {
         self.check_written()?;
-        self.open.row.set(Some(self.begun));
+        self.place.row.set(Some(self.begun));
         self.begun += 1;
         Ok(ElementSink {
-            open: self.open,
+            place: self.place,
             record: BatchRecord {
                 records: &mut self.records,
-                open: self.open,
+                place: self.place,
             },
         })
     }
@@ -218,7 +215,7 @@ impl<'f> SeqSink for BatchSink<'f> {
 /// One element of a batch. A map is a record. Anything else is not a
 /// record, and the sink reads past its content.
 struct ElementSink<'f, 's> {
-    open: Open<'f>,
+    place: &'f Place,
     record: BatchRecord<'s>,
 }
 
@@ -245,7 +242,7 @@ impl<'f, 's> Sink for ElementSink<'f, 's> {
     }
 
     fn map(self, _: Option<usize>) -> Result<RecordMap<'f, BatchRecord<'s>>, FrameWriteError> {
-        Ok(RecordMap::new(self.open, self.record))
+        Ok(RecordMap::new(self.place, self.record))
     }
 
     fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<(), FrameWriteError> {
@@ -346,7 +343,7 @@ impl MapSink for Discard {
 
 /// One record's fields, each value written into its own frame.
 struct RecordMap<'f, O> {
-    open: Open<'f>,
+    place: &'f Place,
     out: O,
     // The keys are field names. Field names are not secret, so they are
     // not wiped.
@@ -354,9 +351,9 @@ struct RecordMap<'f, O> {
 }
 
 impl<'f, O> RecordMap<'f, O> {
-    fn new(open: Open<'f>, out: O) -> Self {
+    fn new(place: &'f Place, out: O) -> Self {
         Self {
-            open,
+            place,
             out,
             entries: Vec::new(),
         }
@@ -372,7 +369,7 @@ impl<'f, O: PutRecord> MapSink for RecordMap<'f, O> {
         Self: 's;
 
     fn entry(&mut self, key: &str) -> Result<FieldWriter<'_, 'f>, FrameWriteError> {
-        *self.open.field.borrow_mut() = Some(key.to_owned());
+        *self.place.field.borrow_mut() = Some(key.to_owned());
         self.entries.push((key.to_owned(), Buffer::new()));
         let buffer = match self.entries.last_mut() {
             Some((_, buffer)) => buffer,
@@ -381,7 +378,7 @@ impl<'f, O: PutRecord> MapSink for RecordMap<'f, O> {
         };
         Ok(FieldWriter {
             writer: FrameWriter::new(buffer),
-            open: self.open,
+            place: self.place,
         })
     }
 
@@ -391,7 +388,7 @@ impl<'f, O: PutRecord> MapSink for RecordMap<'f, O> {
             // A source that dropped an entry's sink without writing to it
             // left no frame.
             let value = OwnedFrame::from_buffer(buffer).map_err(|_| {
-                *self.open.field.borrow_mut() = Some(key.clone());
+                *self.place.field.borrow_mut() = Some(key.clone());
                 FrameWriteError::Unwritten
             })?;
             record.push((key, value));
@@ -406,7 +403,7 @@ impl<'f, O: PutRecord> MapSink for RecordMap<'f, O> {
 /// neither.
 struct FieldWriter<'s, 'f> {
     writer: FrameWriter<'s>,
-    open: Open<'f>,
+    place: &'f Place,
 }
 
 impl<'s, 'f> Sink for FieldWriter<'s, 'f> {
@@ -417,33 +414,33 @@ impl<'s, 'f> Sink for FieldWriter<'s, 'f> {
 
     fn scalar(self, logical: Option<Logical>, value: Physical<'_>) -> Result<(), FrameWriteError> {
         self.writer.scalar(logical, value)?;
-        self.open.field_done();
+        self.place.field_done();
         Ok(())
     }
 
     fn typed_null(self, ty: FixedType) -> Result<(), FrameWriteError> {
         self.writer.typed_null(ty)?;
-        self.open.field_done();
+        self.place.field_done();
         Ok(())
     }
 
     fn seq(self, len: Option<usize>) -> Result<FieldSeq<'s, 'f>, FrameWriteError> {
         Ok(FieldSeq {
             inner: self.writer.seq(len)?,
-            open: self.open,
+            place: self.place,
         })
     }
 
     fn map(self, len: Option<usize>) -> Result<FieldMap<'s, 'f>, FrameWriteError> {
         Ok(FieldMap {
             inner: self.writer.map(len)?,
-            open: self.open,
+            place: self.place,
         })
     }
 
     fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<(), FrameWriteError> {
         self.writer.passthrough(value)?;
-        self.open.field_done();
+        self.place.field_done();
         Ok(())
     }
 }
@@ -451,7 +448,7 @@ impl<'s, 'f> Sink for FieldWriter<'s, 'f> {
 /// A field's value that is a sequence: finished when the sequence ends.
 struct FieldSeq<'s, 'f> {
     inner: FrameSeq<'s>,
-    open: Open<'f>,
+    place: &'f Place,
 }
 
 impl<'s> SeqSink for FieldSeq<'s, '_> {
@@ -468,7 +465,7 @@ impl<'s> SeqSink for FieldSeq<'s, '_> {
 
     fn end(self) -> Result<(), FrameWriteError> {
         self.inner.end()?;
-        self.open.field_done();
+        self.place.field_done();
         Ok(())
     }
 }
@@ -476,7 +473,7 @@ impl<'s> SeqSink for FieldSeq<'s, '_> {
 /// A field's value that is a map: finished when the map ends.
 struct FieldMap<'s, 'f> {
     inner: FrameMap<'s>,
-    open: Open<'f>,
+    place: &'f Place,
 }
 
 impl<'s> MapSink for FieldMap<'s, '_> {
@@ -493,7 +490,7 @@ impl<'s> MapSink for FieldMap<'s, '_> {
 
     fn end(self) -> Result<(), FrameWriteError> {
         self.inner.end()?;
-        self.open.field_done();
+        self.place.field_done();
         Ok(())
     }
 }

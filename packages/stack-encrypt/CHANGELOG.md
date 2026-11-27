@@ -535,9 +535,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `stack_encrypt::dynamic_source_failed` and the reason `source_failed`.
     It names the row being read, and the field while its value is being
     written; a failure between two fields, or between two rows, names
-    neither. It keeps the value's own error as its cause. The cause is not
-    in the message, because a host's error can quote the value. Before, it
-    was `not_an_object` with no field.
+    neither. It keeps the value's own error as its cause, reached through
+    `source()`. The cause is not in the message, and `Debug` shows it as
+    `SourceError(..)`, because a host's error can quote the value. Before,
+    it was `not_an_object` with no field.
+  - A source refusal only a query's input meets (an operator, a range, a
+    term, statistics, a null query, a JSON operator's input) now says
+    `query input does not fit the field`, where it said `record source
+    does not fit the plan`.
 
   `Error::Plan` has a new `found` field, and `Error::Source` and
   `Error::Record` new `row` and `found` fields, so a match on them that

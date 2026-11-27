@@ -20,13 +20,9 @@
     allow(dead_code, rustdoc::broken_intra_doc_links)
 )]
 
-use std::cell::{Cell, RefCell};
 use std::fmt;
 
-use vitaminc_aead::frame::{Frame, FrameWriteError};
-use vitaminc_aead::plaintext::{
-    Encrypt as _, EncryptRef, FixedType, Logical, MapSink, Physical, SeqSink, Sink, ValueKind,
-};
+use vitaminc_aead::plaintext::ValueKind;
 
 use crate::target::IndexSpec;
 
@@ -84,7 +80,11 @@ use crate::target::IndexSpec;
 /// [`UntypedIndex`](Error::UntypedIndex) the field (`field`), `Target` and
 /// `Cipher` carry the payload of the error they hold, and `Internal` carries
 /// none. A binding reads `reason` when it is there, and does not require it.
-#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+///
+/// `Debug` shows every field as a derived `Debug` would, except the cause of
+/// [`SourceFailed`](Error::SourceFailed), which it shows as `SourceError(..)`:
+/// a host's error can quote the value it failed on.
+#[derive(thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum Error {
     /// A value used as an encryption context is not one — a boolean, float,
@@ -172,10 +172,7 @@ pub enum Error {
     /// values to verify that holds a value of another type, or statistics
     /// or a term that are not what [`target_limit`](crate::dynamic::target_limit) reads — the same shape of
     /// refusal as a mistyped field, naming the field.
-    #[error(
-        "record source does not fit the plan: {}",
-        misfit_text(Subject::Source, *reason, *found, *row, field)
-    )]
+    #[error("{}", source_text(*reason, *found, *row, field))]
     #[diagnostic(code(stack_encrypt::dynamic_source))]
     Source {
         /// The source field at fault, if the fault is one field's.
@@ -194,8 +191,9 @@ pub enum Error {
     /// of its own as it described itself, such as a host getter that threw,
     /// or a JSON document nested too deep. The value's own error is the
     /// cause ([`source`](std::error::Error::source)). It is not in the
-    /// message, because a host's error can quote the value it failed on.
-    /// Its reason is [`Reason::SourceFailed`].
+    /// message, because a host's error can quote the value it failed on,
+    /// nor in `Debug`, which shows it as `SourceError(..)`. Its reason is
+    /// [`Reason::SourceFailed`].
     #[error("record source failed while it was read{}", place_text(*row, field))]
     #[diagnostic(
         code(stack_encrypt::dynamic_source_failed),
@@ -290,6 +288,85 @@ pub enum Error {
     Cipher(#[from] crate::Error),
 }
 
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Context { field, reason } => f
+                .debug_struct("Context")
+                .field("field", field)
+                .field("reason", reason)
+                .finish(),
+            Self::Term { field, kind } => f
+                .debug_struct("Term")
+                .field("field", field)
+                .field("kind", kind)
+                .finish(),
+            Self::Plan {
+                field,
+                reason,
+                found,
+            } => f
+                .debug_struct("Plan")
+                .field("field", field)
+                .field("reason", reason)
+                .field("found", found)
+                .finish(),
+            Self::UntypedIndex { field } => f
+                .debug_struct("UntypedIndex")
+                .field("field", field)
+                .finish(),
+            Self::Source {
+                field,
+                row,
+                reason,
+                found,
+            } => f
+                .debug_struct("Source")
+                .field("field", field)
+                .field("row", row)
+                .field("reason", reason)
+                .field("found", found)
+                .finish(),
+            // The cause is the host's own error, which can quote the value
+            // it failed on: it is reached through `source()`, never shown.
+            Self::SourceFailed { field, row, .. } => f
+                .debug_struct("SourceFailed")
+                .field("field", field)
+                .field("row", row)
+                .field("cause", &format_args!("SourceError(..)"))
+                .finish(),
+            Self::Record {
+                field,
+                row,
+                reason,
+                found,
+            } => f
+                .debug_struct("Record")
+                .field("field", field)
+                .field("row", row)
+                .field("reason", reason)
+                .field("found", found)
+                .finish(),
+            Self::Predicate {
+                field,
+                reason,
+                construct,
+                at,
+            } => f
+                .debug_struct("Predicate")
+                .field("field", field)
+                .field("reason", reason)
+                .field("construct", construct)
+                .field("at", at)
+                .finish(),
+            Self::Internal => f.write_str("Internal"),
+            #[cfg(feature = "dynamic")]
+            Self::Target(error) => f.debug_tuple("Target").field(error).finish(),
+            Self::Cipher(error) => f.debug_tuple("Cipher").field(error).finish(),
+        }
+    }
+}
+
 /// ` (field "age")`, or nothing: the tail of an input error's message.
 fn in_field_text(field: &Option<String>) -> String {
     field
@@ -306,6 +383,55 @@ fn place_text(row: Option<usize>, field: &Option<String>) -> String {
         (Some(row), None) => format!(" (row {row})"),
         (None, _) => in_field_text(field),
     }
+}
+
+/// A source error's message: "query input does not fit the field" for a
+/// refusal only a query's input meets ([`answers_a_query`]), and "record
+/// source does not fit the plan" for the rest.
+fn source_text(
+    reason: Reason,
+    found: Option<Found>,
+    row: Option<usize>,
+    field: &Option<String>,
+) -> String {
+    let what = if answers_a_query(reason) {
+        "query input does not fit the field"
+    } else {
+        "record source does not fit the plan"
+    };
+    format!(
+        "{what}: {}",
+        misfit_text(Subject::Source, reason, found, row, field)
+    )
+}
+
+/// Whether a source refusal's reason is one only a query's input meets: an
+/// operator, a range, a term, statistics, a null query, or a JSON
+/// operator's input. A value that cannot be read as the field's type is
+/// [`Reason::FieldType`] for a query and a record alike, and keeps the
+/// record's words.
+fn answers_a_query(reason: Reason) -> bool {
+    use Reason::*;
+    matches!(
+        reason,
+        UnknownOperator
+            | OperatorNotAnswered
+            | NotARange
+            | ExactOperator
+            | NotAQueryTerm
+            | NotStats
+            | NullQuery
+            | JsonInput
+            | JsonSyntax
+            | JsonDuplicateKey
+            | JsonIntegerRange
+            | JsonPathPosition
+            | JsonPathWildcard
+            | JsonPathNoWildcard
+            | JsonNoPredicates
+            | JsonWildcardBoundZero
+            | JsonUnknownPredicateOp
+    )
 }
 
 /// What a plan, source or stored-record error is about.
@@ -375,7 +501,6 @@ impl Error {
     }
 
     /// A stored-record error with no field named yet.
-    #[cfg(test)]
     pub(crate) fn bad_record(reason: Reason) -> Self {
         Self::Record {
             field: None,
@@ -851,55 +976,6 @@ impl Found {
             Self::Unknown => "unknown",
         }
     }
-
-    /// What a scalar is, from how it describes itself.
-    pub(crate) fn scalar(logical: Option<Logical>, value: &Physical<'_>) -> Self {
-        match (ValueKind::of(logical, value), logical, value) {
-            (Some(kind), _, _) => Self::Kind(kind),
-            (None, Some(Logical::Undefined), _) => Self::Undefined,
-            (None, None, Physical::Null) => Self::Null,
-            (None, _, _) => Self::Unknown,
-        }
-    }
-
-    /// What a frame holds, reading no more of it than its first node.
-    pub(crate) fn of_frame(frame: Frame<'_>) -> Self {
-        if let Some(kind) = frame.kind() {
-            return Self::Kind(kind);
-        }
-        if frame.is_null() {
-            return Self::Null;
-        }
-        // A passthrough, `undefined` or a logical type this build does not
-        // know: one node, which the probe reads without walking inside it.
-        let found = Cell::new(None);
-        let _ = frame.visit(Probe::noting(&found, None));
-        found.get().unwrap_or(Self::Unknown)
-    }
-
-    /// What the entry under `key` holds, for a frame that is an object with
-    /// one, and the entry's own keys, in order, when it is an object too.
-    /// `None` for a frame that is not an object or has no such key.
-    pub(crate) fn of_entry(frame: Frame<'_>, key: &str) -> Option<(Self, Vec<String>)> {
-        let found = Cell::new(None);
-        let keys = RefCell::new(Vec::new());
-        let _ = frame.visit(Lookup {
-            key,
-            found: &found,
-            keys: &keys,
-        });
-        found.get().map(|found| (found, keys.into_inner()))
-    }
-}
-
-/// The keys of an object frame, in order; `None` for a frame that is not an
-/// object. Read with the probe, so a value the frame reader refuses to read,
-/// such as a typed null, does not hide the keys beside it.
-pub(crate) fn object_keys(frame: Frame<'_>) -> Option<Vec<String>> {
-    let found = Cell::new(None);
-    let keys = RefCell::new(Vec::new());
-    let _ = frame.visit(Probe::noting(&found, Some(&keys)));
-    (found.get() == Some(Found::Kind(ValueKind::Object))).then(|| keys.into_inner())
 }
 
 impl fmt::Display for Found {
@@ -915,167 +991,5 @@ impl fmt::Display for Found {
             }
             Self::Unknown => f.write_str("a value of a type this build does not know"),
         }
-    }
-}
-
-/// A sink that reads past a value and keeps none of it: where it is given
-/// a cell, it notes what kind of value the node is, and where it is given
-/// a list, the keys of an object it is. Children are read past with
-/// neither, so nothing inside a container is noted, and no value is copied.
-struct Probe<'c> {
-    found: Option<&'c Cell<Option<Found>>>,
-    keys: Option<&'c RefCell<Vec<String>>>,
-}
-
-impl<'c> Probe<'c> {
-    /// A probe that notes the node's kind, and its keys if `keys` is given.
-    fn noting(found: &'c Cell<Option<Found>>, keys: Option<&'c RefCell<Vec<String>>>) -> Self {
-        Self {
-            found: Some(found),
-            keys,
-        }
-    }
-
-    /// A probe that reads past a node and notes nothing.
-    fn past() -> Self {
-        Self {
-            found: None,
-            keys: None,
-        }
-    }
-
-    fn note(&self, found: Found) {
-        if let Some(cell) = self.found {
-            cell.set(Some(found));
-        }
-    }
-}
-
-impl<'c> Sink for Probe<'c> {
-    type Ok = ();
-    type Error = FrameWriteError;
-    type Seq = Probe<'c>;
-    type Map = Probe<'c>;
-
-    fn scalar(self, logical: Option<Logical>, value: Physical<'_>) -> Result<(), FrameWriteError> {
-        self.note(Found::scalar(logical, &value));
-        Ok(())
-    }
-
-    fn typed_null(self, _: FixedType) -> Result<(), FrameWriteError> {
-        self.note(Found::Null);
-        Ok(())
-    }
-
-    fn seq(self, _: Option<usize>) -> Result<Probe<'c>, FrameWriteError> {
-        self.note(Found::Kind(ValueKind::Array));
-        Ok(Probe::past())
-    }
-
-    fn map(self, _: Option<usize>) -> Result<Probe<'c>, FrameWriteError> {
-        self.note(Found::Kind(ValueKind::Object));
-        // The map's entries are read with the keys list, to note their keys.
-        Ok(Probe {
-            found: None,
-            keys: self.keys,
-        })
-    }
-
-    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<(), FrameWriteError> {
-        self.note(Found::Passthrough);
-        Ok(())
-    }
-}
-
-impl<'c> SeqSink for Probe<'c> {
-    type Ok = ();
-    type Error = FrameWriteError;
-    type Element<'e>
-        = Probe<'c>
-    where
-        Self: 'e;
-
-    fn element(&mut self) -> Result<Probe<'c>, FrameWriteError> {
-        Ok(Probe::past())
-    }
-
-    fn end(self) -> Result<(), FrameWriteError> {
-        Ok(())
-    }
-}
-
-impl<'c> MapSink for Probe<'c> {
-    type Ok = ();
-    type Error = FrameWriteError;
-    type Entry<'e>
-        = Probe<'c>
-    where
-        Self: 'e;
-
-    fn entry(&mut self, key: &str) -> Result<Probe<'c>, FrameWriteError> {
-        if let Some(keys) = self.keys {
-            keys.borrow_mut().push(key.to_owned());
-        }
-        Ok(Probe::past())
-    }
-
-    fn end(self) -> Result<(), FrameWriteError> {
-        Ok(())
-    }
-}
-
-/// A sink that notes what kind of value one entry of an object is, and its
-/// keys if it is an object, and reads past everything else.
-struct Lookup<'k, 'c> {
-    key: &'k str,
-    found: &'c Cell<Option<Found>>,
-    keys: &'c RefCell<Vec<String>>,
-}
-
-impl<'k, 'c> Sink for Lookup<'k, 'c> {
-    type Ok = ();
-    type Error = FrameWriteError;
-    type Seq = Probe<'c>;
-    type Map = Lookup<'k, 'c>;
-
-    fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), FrameWriteError> {
-        Ok(())
-    }
-
-    fn typed_null(self, _: FixedType) -> Result<(), FrameWriteError> {
-        Ok(())
-    }
-
-    fn seq(self, _: Option<usize>) -> Result<Probe<'c>, FrameWriteError> {
-        Ok(Probe::past())
-    }
-
-    fn map(self, _: Option<usize>) -> Result<Self, FrameWriteError> {
-        Ok(self)
-    }
-
-    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<(), FrameWriteError> {
-        Ok(())
-    }
-}
-
-impl<'c> MapSink for Lookup<'_, 'c> {
-    type Ok = ();
-    type Error = FrameWriteError;
-    type Entry<'e>
-        = Probe<'c>
-    where
-        Self: 'e;
-
-    fn entry(&mut self, key: &str) -> Result<Probe<'c>, FrameWriteError> {
-        if key == self.key {
-            Ok(Probe::noting(self.found, Some(self.keys)))
-        } else {
-            Ok(Probe::past())
-        }
-    }
-
-    fn end(self) -> Result<(), FrameWriteError> {
-        Ok(())
     }
 }

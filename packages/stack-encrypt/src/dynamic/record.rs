@@ -312,11 +312,7 @@ impl FieldPlan {
         outputs: Vec<Output>,
     ) -> Result<Self, Error> {
         let name = name.into();
-        let refuse = |reason| Error::Plan {
-            field: Some(name.clone()),
-            reason,
-            found: None,
-        };
+        let refuse = |reason| Error::bad_plan(reason).in_field(&name);
         if outputs.is_empty() {
             return Err(refuse(Reason::NoOutputs));
         }
@@ -376,11 +372,7 @@ impl FieldPlan {
         let name = name.into();
         let target = target.into();
         if target.is_empty() {
-            return Err(Error::Plan {
-                field: Some(name),
-                reason: Reason::InvalidTarget,
-                found: None,
-            });
+            return Err(Error::bad_plan(Reason::InvalidTarget).in_field(&name));
         }
         let (label, extension) = field_context(&name, context.get())?;
         Ok(Self {
@@ -429,11 +421,7 @@ impl FieldPlan {
         for output in &self.outputs {
             if let Output::Term(index) = output {
                 if let Some(reason) = not_admitted(field_type, index) {
-                    return Err(Error::Plan {
-                        field: Some(self.name.clone()),
-                        reason,
-                        found: None,
-                    });
+                    return Err(Error::bad_plan(reason).in_field(&self.name));
                 }
             }
         }
@@ -543,11 +531,8 @@ impl FieldPlan {
         let Some((_, prefix)) = segments.split_last() else {
             return Err(Error::Internal);
         };
-        Label::new(prefix).map_err(|_| Error::Plan {
-            field: Some(self.name.clone()),
-            reason: Reason::ContextNotLabel,
-            found: None,
-        })
+        Label::new(prefix)
+            .map_err(|_| Error::bad_plan(Reason::ContextNotLabel).in_field(&self.name))
     }
 
     /// What the output adapters need of the field: no context, which is the
@@ -649,11 +634,7 @@ fn field_context(
     name: &str,
     piece: &ContextPiece<'_>,
 ) -> Result<(Label, Vec<ContextPiece<'static>>), Error> {
-    split_context(piece).ok_or_else(|| Error::Plan {
-        field: Some(name.to_owned()),
-        reason: Reason::ContextNotLabel,
-        found: None,
-    })
+    split_context(piece).ok_or_else(|| Error::bad_plan(Reason::ContextNotLabel).in_field(name))
 }
 
 /// A refusal of the lowering or the engine's own check, as the field it
@@ -759,11 +740,7 @@ impl Plan {
             // `prefix` refuses a one-segment label, which has nothing to
             // sit under; a longer one must sit under the first field's.
             if field.prefix()? != context {
-                return Err(Error::Plan {
-                    field: Some(field.name.clone()),
-                    reason: Reason::MixedContexts,
-                    found: None,
-                });
+                return Err(Error::bad_plan(Reason::MixedContexts).in_field(&field.name));
             }
         }
         for field in fields.iter_mut().filter(|field| field.is_target()) {
@@ -807,19 +784,13 @@ impl Plan {
                 (None, false) => None,
                 (None, true) => Some(TargetOptions::Json(Default::default())),
                 (Some(TargetOptions::Json(options)), true) => {
-                    options.check().map_err(|_| Error::Plan {
-                        field: Some(field.name.clone()),
-                        reason: Reason::InvalidTarget,
-                        found: None,
+                    options.check().map_err(|_| {
+                        Error::bad_plan(Reason::InvalidTarget).in_field(&field.name)
                     })?;
                     Some(TargetOptions::Json(options))
                 }
                 (Some(_), false) => {
-                    return Err(Error::Plan {
-                        field: Some(field.name.clone()),
-                        reason: Reason::TargetOptions,
-                        found: None,
-                    })
+                    return Err(Error::bad_plan(Reason::TargetOptions).in_field(&field.name))
                 }
             };
             // A null has an equality term and no other, so a sealed null
@@ -830,11 +801,7 @@ impl Plan {
                     .iter()
                     .any(|index| index != IndexSpec::Equality.key())
             {
-                return Err(Error::Plan {
-                    field: Some(field.name.clone()),
-                    reason: Reason::SealedNullIndex,
-                    found: None,
-                });
+                return Err(Error::bad_plan(Reason::SealedNullIndex).in_field(&field.name));
             }
         }
         Self::build(Context::Label(context), fields)
@@ -865,11 +832,7 @@ impl Plan {
         fields: Vec<FieldPlan>,
     ) -> Result<Self, Error> {
         let context_field = context_field.into();
-        let refuse = |reason| Error::Plan {
-            field: Some(context_field.clone()),
-            reason,
-            found: None,
-        };
+        let refuse = |reason| Error::bad_plan(reason).in_field(&context_field);
         let Some(field) = fields.iter().find(|field| field.name == context_field) else {
             return Err(refuse(Reason::NoSuchField));
         };
@@ -884,11 +847,7 @@ impl Plan {
             .iter()
             .find(|field| field.label.segments().count() != 1)
         {
-            return Err(Error::Plan {
-                field: Some(field.name.clone()),
-                reason: Reason::ContextNotLabel,
-                found: None,
-            });
+            return Err(Error::bad_plan(Reason::ContextNotLabel).in_field(&field.name));
         }
         // A target field's label must be a column, `<table>/<column>`,
         // which a context field's one-segment identity is not: the table
@@ -925,11 +884,7 @@ impl Plan {
         };
         let extension = first.extension.clone();
         for (at, field) in fields.iter().enumerate() {
-            let refuse = |reason| Error::Plan {
-                field: Some(field.name.clone()),
-                reason,
-                found: None,
-            };
+            let refuse = |reason| Error::bad_plan(reason).in_field(&field.name);
             if fields[..at].iter().any(|prior| prior.name == field.name) {
                 return Err(refuse(Reason::DuplicateField));
             }
@@ -1357,11 +1312,8 @@ pub fn plan_with(
         recipher_frame::serde::from_slice(frame).map_err(|e| plan_refusal(&e, frame))?;
     let mut fields: Vec<FieldPlan> = Vec::with_capacity(wire.fields.len());
     for (name, spec) in wire.fields {
-        let spec = FieldSpec::try_from(spec).map_err(|reason| Error::Plan {
-            field: Some(name.clone()),
-            reason,
-            found: None,
-        })?;
+        let spec =
+            FieldSpec::try_from(spec).map_err(|reason| Error::bad_plan(reason).in_field(&name))?;
         let context = super::context::non_empty(spec.context.0).map_err(|e| e.in_field(&name))?;
         let field = match spec.what {
             What::Outputs(outputs) => FieldPlan::new(name, context, outputs)?,
@@ -1452,7 +1404,7 @@ impl<'de> Deserialize<'de> for PlanWire {
 /// when it is not an object of that many entries.
 fn entry_key(frame: &[u8], position: usize) -> Option<String> {
     let root = Frame::parse(frame).ok()?;
-    crate::refusal::object_keys(root)?.into_iter().nth(position)
+    super::found::object_keys(root)?.into_iter().nth(position)
 }
 
 /// The keys a field's spec reads ([`FieldSpecWire`]).
@@ -1683,11 +1635,7 @@ fn plan_refusal(error: &recipher_frame::serde::Error, frame: &[u8]) -> Error {
             }
         },
     };
-    Error::Plan {
-        field: Some(field.clone()),
-        reason,
-        found: None,
-    }
+    Error::bad_plan(reason).in_field(field)
 }
 
 /// Encrypt a record — or a batch of records — per a plan.
@@ -1826,32 +1774,17 @@ pub fn query<'a, K: 'static>(
         .fields
         .iter()
         .find(|candidate| candidate.name == field)
-        .ok_or_else(|| Error::Plan {
-            field: Some(field.to_owned()),
-            reason: Reason::NoSuchField,
-            found: None,
-        })?;
-    let name = field.target().ok_or_else(|| Error::Plan {
-        field: Some(field.name.clone()),
-        reason: Reason::NotATarget,
-        found: None,
-    })?;
-    let value = OwnedFrame::of(value).map_err(|_| Error::Source {
-        field: Some(field.name.clone()),
-        reason: Reason::FieldType,
-        found: None,
-        row: None,
-    })?;
+        .ok_or_else(|| Error::bad_plan(Reason::NoSuchField).in_field(field))?;
+    let name = field
+        .target()
+        .ok_or_else(|| Error::bad_plan(Reason::NotATarget).in_field(&field.name))?;
+    let value = OwnedFrame::of(value)
+        .map_err(|_| Error::bad_source(Reason::FieldType).in_field(&field.name))?;
     // A null is queried by the term a field that seals its nulls stores
     // beside each (#1298), through the type's equality index alone.
     let value = if value.frame().is_null() {
         if field.null != Some(NullMode::Sealed) || *index != IndexSpec::Equality {
-            return Err(Error::Source {
-                field: Some(field.name.clone()),
-                reason: Reason::NullQuery,
-                found: None,
-                row: None,
-            });
+            return Err(Error::bad_source(Reason::NullQuery).in_field(&field.name));
         }
         value
     } else {
@@ -2098,12 +2031,7 @@ enum Children<'a, T> {
 
 impl RecordTree for StackCipherText {
     fn misfit(field: &str, reason: Reason) -> Error {
-        Error::Record {
-            field: Some(field.to_owned()),
-            row: None,
-            reason,
-            found: None,
-        }
+        Error::bad_record(reason).in_field(field)
     }
 
     fn is_passthrough(&self) -> bool {
@@ -2262,15 +2190,20 @@ pub(super) fn source_rows(source: impl Encrypt, plan: &Plan) -> Result<Rows<Row>
 /// names its field and the row of a batch it is in: a repeated key as
 /// [`Reason::RepeatedKey`], a scalar its logical type does not admit as
 /// [`Reason::FieldType`], and anything else (too deep or too long for a
-/// frame, or a value the source never wrote) as [`Reason::Unframeable`],
-/// naming no field when the source left a row of a batch unwritten. A
-/// failure of the source's own is [`Error::SourceFailed`], with the field
-/// and the row it was reading and its error as the cause.
+/// frame, or a value the source never wrote) as [`Reason::Unframeable`].
+/// A refusal that names no field (a row the source left unwritten, or a
+/// writer's refusal the source kept and returned after the field ended)
+/// cannot say whose value it was, so it is [`Reason::Unframeable`] with the
+/// row. A failure of the source's own is [`Error::SourceFailed`], with the
+/// field and the row it was reading and its error as the cause.
 fn split_refusal(SplitRefusal { row, field, error }: SplitRefusal) -> Error {
-    let reason = match error {
+    let error = match error {
         FrameWriteError::Source(cause) => return Error::SourceFailed { field, row, cause },
-        FrameWriteError::DuplicateKey => Reason::RepeatedKey,
-        FrameWriteError::Invalid => Reason::FieldType,
+        error => error,
+    };
+    let reason = match (error, field.is_some()) {
+        (FrameWriteError::DuplicateKey, true) => Reason::RepeatedKey,
+        (FrameWriteError::Invalid, true) => Reason::FieldType,
         _ => Reason::Unframeable,
     };
     Error::Source {
@@ -2282,12 +2215,7 @@ fn split_refusal(SplitRefusal { row, field, error }: SplitRefusal) -> Error {
 }
 
 fn source_row(mut row: Vec<(String, OwnedFrame)>, plan: &Plan) -> Result<Row, Error> {
-    let misfit = |field: &str, reason| Error::Source {
-        field: Some(field.to_owned()),
-        row: None,
-        reason,
-        found: None,
-    };
+    let misfit = |field: &str, reason| Error::bad_source(reason).in_field(field);
     let mut values = FieldValues::new();
     let mut targets = Vec::new();
     let mut absent = Absent::new();
@@ -2355,12 +2283,7 @@ fn source_row(mut row: Vec<(String, OwnedFrame)>, plan: &Plan) -> Result<Row, Er
 /// too. What comes back is what is sealed: a value already of the type,
 /// as it came, or the converted one, with the value it came as wiped.
 fn check_field(value: OwnedFrame, field: &FieldPlan) -> Result<OwnedFrame, Error> {
-    let misfit = |reason| Error::Source {
-        field: Some(field.name.clone()),
-        reason,
-        found: None,
-        row: None,
-    };
+    let misfit = |reason| Error::bad_source(reason).in_field(&field.name);
     let value = match field.field_type {
         Some(declared) => convert(declared, value.frame())
             .map_err(|error| error.in_field(&field.name))?
@@ -9189,7 +9112,9 @@ mod tests {
         }
 
         /// A refusal from the split names its field, by its cause. One that
-        /// names no field and is not the source's own is this module's bug.
+        /// names no field (a row left unwritten, or a source that kept a
+        /// writer's refusal and returned it after the field) is the
+        /// caller's input too: `unframeable`, with the row.
         #[test]
         fn a_split_refusal_names_its_field_and_cause() {
             let refusal = |field: Option<&str>, error| {
@@ -9245,12 +9170,13 @@ mod tests {
                 matches!(unwritten.into_crate(), crate::Error::Input(_)),
                 "an input refusal"
             );
-            expect(
-                &refusal(None, FrameWriteError::Invalid),
-                "Source",
-                None,
-                Reason::FieldType,
-            );
+            for error in [
+                FrameWriteError::Invalid,
+                FrameWriteError::DuplicateKey,
+                FrameWriteError::TooDeep,
+            ] {
+                expect(&refusal(None, error), "Source", None, Reason::Unframeable);
+            }
         }
 
         /// A source that fails as it is read is refused as
@@ -9302,6 +9228,22 @@ mod tests {
             );
             let shown = format!("{message} {fields:?}");
             assert!(!shown.contains("marker-value"), "no cause text: {shown}");
+            // `Debug`, plain and pretty, shows the field and the row and
+            // not the cause's text: a log line or a panic does not leak it.
+            for debug in [format!("{error:?}"), format!("{error:#?}")] {
+                assert!(
+                    !debug.contains("marker-value"),
+                    "no cause text in Debug: {debug}"
+                );
+                for part in ["SourceFailed", "\"email\"", "SourceError(..)"] {
+                    assert!(debug.contains(part), "{part} in Debug: {debug}");
+                }
+            }
+            assert_eq!(
+                format!("{error:?}"),
+                r#"SourceFailed { field: Some("email"), row: Some(1), cause: SourceError(..) }"#,
+                "Debug"
+            );
             assert!(
                 matches!(error.into_crate(), crate::Error::Input(_)),
                 "an input error"
@@ -9565,6 +9507,54 @@ mod tests {
             for (error, field, reason) in cases {
                 let shown = format!("{error:?}");
                 assert_eq!(refusal(error), (field, reason), "{shown}");
+            }
+        }
+
+        /// A refusal only a query's input meets says so; one a record source
+        /// meets, or a value of another type in either, says it is the
+        /// record source that does not fit.
+        #[test]
+        fn a_query_refusal_names_the_query_input() {
+            use Reason::*;
+            for reason in [
+                UnknownOperator,
+                OperatorNotAnswered,
+                NotARange,
+                ExactOperator,
+                NotAQueryTerm,
+                NotStats,
+                NullQuery,
+                JsonInput,
+                JsonSyntax,
+                JsonDuplicateKey,
+                JsonIntegerRange,
+                JsonPathPosition,
+                JsonPathWildcard,
+                JsonPathNoWildcard,
+                JsonNoPredicates,
+                JsonWildcardBoundZero,
+                JsonUnknownPredicateOp,
+            ] {
+                let error = Error::bad_source(reason).in_field("age");
+                assert_eq!(
+                    error.to_string(),
+                    format!(r#"query input does not fit the field: {reason} (field "age")"#),
+                    "{reason:?}"
+                );
+            }
+            for reason in [
+                FieldMissing,
+                UnknownField,
+                FieldType,
+                Passthrough,
+                Unframeable,
+            ] {
+                let error = Error::bad_source(reason).in_field("age");
+                assert_eq!(
+                    error.to_string(),
+                    format!(r#"record source does not fit the plan: {reason} (field "age")"#),
+                    "{reason:?}"
+                );
             }
         }
 

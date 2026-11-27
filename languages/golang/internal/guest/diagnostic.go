@@ -25,9 +25,9 @@ import (
 // keyset ids and names, field names, counts, row positions, value kinds,
 // index kinds, ZeroKMS request kinds and HTTP statuses, workspace ids, CRNs
 // and regions, profile file paths, and for a refused predicate the
-// construct in the grammar's words and a byte offset. Never plaintext, key material, tokens, ciphertext or
-// term bytes, or a context's values: a stored context's length and parts
-// at most.
+// construct in the grammar's words and a byte offset. Never plaintext, key
+// material, tokens, ciphertext or term bytes, or a context's values: a
+// stored context's length and parts at most.
 //
 // A guest built before se_last_error, or one whose error does not decode,
 // returns the bare sentinel instead: the detail is never allowed to hide
