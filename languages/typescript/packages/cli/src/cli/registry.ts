@@ -47,8 +47,12 @@ export interface CommandGroup {
 }
 
 /**
- * Shared `--database-url` flag — every db/eql/schema command accepts it, so it's
- * declared once and referenced, not copy-pasted.
+ * Shared `--database-url` flag, for the commands that load stash.config.ts
+ * through `loadStashConfig`, where a literal `databaseUrl` in the config wins
+ * over the flag. Commands where the flag wins (`eql install`, `eql repair`,
+ * `eql verify`) spread it and replace only the description.
+ * `cli/__tests__/database-url-help.test.ts` holds each command to the text that
+ * matches what it does.
  */
 const DATABASE_URL_FLAG: Flag = {
   name: '--database-url',
@@ -354,7 +358,11 @@ export const registry: CommandGroup[] = [
             description:
               'Use Supabase-compatible mode (auto-detected from DATABASE_URL).',
           },
-          DATABASE_URL_FLAG,
+          {
+            ...DATABASE_URL_FLAG,
+            description:
+              'One-shot: bypasses config loading entirely, so EQL is installed into the database you name and no stash.config.ts is scaffolded. The flag wins even when stash.config.ts sets a literal databaseUrl. Never written to disk. DATABASE_URL alone is not a one-shot: with no flag, install uses the databaseUrl of a stash.config.ts if it finds one, else DATABASE_URL env → supabase status → interactive prompt.',
+          },
         ],
       },
       {
@@ -396,11 +404,9 @@ export const registry: CommandGroup[] = [
               'Emit the machine-readable verification report instead of the table.',
           },
           {
-            name: '--database-url',
-            value: '<url>',
+            ...DATABASE_URL_FLAG,
             description:
-              "One-shot, like `eql install`'s: bypasses config loading entirely, so the database you name is the database that gets judged. Also settable via DATABASE_URL.",
-            env: 'DATABASE_URL',
+              'One-shot: bypasses config loading entirely, so the database you name is the database that gets judged. The flag wins even when stash.config.ts sets a literal databaseUrl. DATABASE_URL alone is not a one-shot: with no flag, verify uses the databaseUrl of a stash.config.ts if it finds one, else the DATABASE_URL chain.',
           },
         ],
       },
@@ -507,7 +513,11 @@ export const registry: CommandGroup[] = [
               "Drizzle's migration ledger, when drizzle.config.ts overrides `migrations.table` / `migrations.schema`. Defaults to `drizzle.__drizzle_migrations`. Only read with --database-url.",
           },
           DRY_RUN_FLAG,
-          DATABASE_URL_FLAG,
+          {
+            ...DATABASE_URL_FLAG,
+            description:
+              'Database to check applied migrations against, for this run only — never written to disk. Repair never reads stash.config.ts. The flag wins even when stash.config.ts sets a literal databaseUrl. With no flag, repair uses DATABASE_URL, and the config cannot override that either. With neither, it skips the check and warns. It never runs supabase status or prompts.',
+          },
         ],
       },
       {

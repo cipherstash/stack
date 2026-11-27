@@ -156,7 +156,7 @@ First hit wins:
 4. Interactive prompt — skipped under CI / non-TTY
 5. Hard fail, naming the sources it tried
 
-`stash.config.ts` is **not** a separate tier: the scaffolded config calls this same resolver, and the `--database-url` flag still wins. The one exception is a hand-edited config assigning a literal `databaseUrl` string — that bypasses the resolver entirely and beats both flag and env.
+`stash.config.ts` is **not** a separate tier: the scaffolded config calls this same resolver, and the `--database-url` flag still wins. The one exception is a hand-edited config assigning a literal `databaseUrl` string — that bypasses the resolver entirely and beats both flag and env. Three commands work differently. `eql install` and `eql verify` skip the config when you pass `--database-url`, so the flag wins there. `eql repair` never reads the config, so the flag wins, and with no flag `DATABASE_URL` wins.
 
 The resolved URL is returned in memory only. It is never written to disk or into `process.env`.
 
@@ -484,7 +484,7 @@ stash eql repair --drizzle --out db/migrations \
 | `--drizzle` | Required. Repair a Drizzle migration directory. |
 | `--out <path>` | Directory to sweep. Default `drizzle`; set it to match your `drizzle.config.ts`. |
 | `--dry-run` | Report what would be rewritten without writing anything. |
-| `--database-url <url>` | Check which migrations the database has already applied, and leave those alone. Also read from `DATABASE_URL`. |
+| `--database-url <url>` | Check which migrations the database has already applied, and leave those alone. Also read from `DATABASE_URL`. Repair never reads `stash.config.ts`, so the flag wins even when the config sets a literal `databaseUrl`. |
 | `--migrations-table <[schema.]table>` | Drizzle's migration ledger, when `drizzle.config.ts` overrides `migrations.table` / `migrations.schema`. Defaults to `drizzle.__drizzle_migrations`. Only read alongside `--database-url`. |
 
 What it rewrites, what it refuses, and the schema reconciliation afterwards are identical to the `eql migration --drizzle` sweep above — both call the same rewriter and print the same report. It exits non-zero if any statement is left unrepaired.
