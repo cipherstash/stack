@@ -26,6 +26,13 @@ pub struct ClientKey {
 }
 
 impl ClientKey {
+    /// Wrap a keyset that is already built.
+    ///
+    /// This does not check the keyset's permutations, as the parse
+    /// functions do. A keyset from `ProxyKeySet::generate` is valid. A
+    /// keyset from `ProxyKeySet::from_bytes` is not checked. Read bytes
+    /// with [`ClientKey::from_bytes`] instead: a keyset whose permutations
+    /// are not permutations can make the first key derivation loop forever.
     pub fn new_v1(key_id: Uuid, keyset: KeySet) -> Self {
         Self {
             key_id,
@@ -40,7 +47,7 @@ impl ClientKey {
     pub fn from_bytes(key_id: Uuid, bytes: &[u8]) -> serde_cbor::Result<Self> {
         Ok(Self {
             key_id,
-            keyset: KeySet::from_bytes(bytes).map(V1KeySet)?,
+            keyset: V1KeySet::from_bytes(bytes)?,
         })
     }
 
@@ -273,8 +280,24 @@ impl From<Key> for IndexKey {
 pub struct V1KeySet(pub(crate) KeySet);
 
 impl V1KeySet {
+    /// Read a v1 keyset from its CBOR bytes.
+    ///
+    /// A keyset whose permutations are not permutations is refused here,
+    /// because re-encrypting with it can loop forever or panic. p1, p2_from
+    /// and p2_to must each permute `0..16`, and p3 must permute `0..33`.
+    ///
+    /// Every error is a fixed message. None includes a value read from the
+    /// key.
     pub fn from_bytes(bytes: &[u8]) -> serde_cbor::Result<Self> {
-        KeySet::from_bytes(bytes).map(Self)
+        check_permutations(bytes)?;
+        // The bytes already parsed as a keyset's shape, so this parse is not
+        // expected to fail. Its message would print a value read from the
+        // key, so it is replaced as well.
+        KeySet::from_bytes(bytes).map(Self).map_err(|_| {
+            <serde_cbor::Error as serde::de::Error>::custom(
+                "the keyset is not valid CBOR of a v1 keyset",
+            )
+        })
     }
 
     pub(crate) fn to_hex(&self) -> serde_cbor::Result<String> {
@@ -326,10 +349,105 @@ impl<'de> Deserialize<'de> for V1KeySet {
         // Discards the returned `&[u8]`: it just borrows `buffer`, which we
         // read through the `Zeroizing` guard below so it still gets wiped.
         let _ = serdect::array::deserialize_hex_or_bin(&mut *buffer, deserializer)?;
-        let keyset = KeySet::from_bytes(&*buffer).map_err(serde::de::Error::custom)?;
-
-        Ok(Self(keyset))
+        Self::from_bytes(&*buffer).map_err(serde::de::Error::custom)
     }
+}
+
+/// The fields of a v1 keyset, read a second time only to check them. It
+/// mirrors `ProxyKeySet`, whose fields are private to zerokms-keyset, so
+/// it accepts the same CBOR.
+#[derive(Deserialize)]
+struct KeySetShape {
+    p1: PermutationShape,
+    p2_from: PermutationShape,
+    p2_to: PermutationShape,
+    p3: PermutationShape,
+}
+
+/// One permutation of [`KeySetShape`]. Its entries are key material, so a
+/// fully read permutation is wiped when it is dropped. A parse that fails
+/// partway is different: serde drops the vector it was building without
+/// wiping it, and the old buffers a growing vector frees are not wiped
+/// either. `KeySet::from_bytes` in zerokms-keyset has the same gap.
+#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+struct PermutationShape {
+    permutation: Vec<u8>,
+}
+
+/// The number of bytes in a block. p1, p2_from and p2_to each permute the
+/// bytes of one block.
+const BLOCK_LEN: usize = 16;
+
+/// The number of blocks p3 permutes. zerokms-keyset generates every p3 with
+/// 33 entries (`EncryptionKeySet::generate`), and the key material ZeroKMS
+/// returns has 33 blocks. A p3 of another length cannot be used: the key
+/// material's length is checked against it only after the load-keyset round
+/// trip. protect-ffi's check uses the same number.
+const BLOCK_COUNT: usize = 33;
+
+/// Refuse a keyset whose permutations are not permutations.
+///
+/// zerokms-keyset re-encrypts by following each permutation's cycles. With
+/// a repeated entry, that loop can run forever, and an entry out of range
+/// panics. Both reach the cipher only when the first key is derived, which
+/// is after a ZeroKMS round trip. One changed character in a hex key can
+/// cause either, so the keyset is checked when it is read.
+///
+/// p1, p2_from and p2_to must each be a permutation of `0..16`. p3 permutes
+/// the blocks, and must be a permutation of `0..33`. The check does not
+/// branch on any one entry, because the entries are secret. The error is a
+/// fixed message and names no value. The rules, and which SDKs apply them,
+/// are in `docs/reference/client-key-validation.md`.
+///
+/// This check protects only code that reads a keyset through this crate:
+/// the Go SDK's guest and stack-encrypt. The TypeScript SDK reads its key
+/// through protect-ffi, which uses cipherstash-client and recipher from
+/// crates.io. recipher has the same loop, so that SDK may hang on the same
+/// key. That needs its own fix, in that path or in zerokms-keyset and
+/// recipher themselves. It is tracked in issue #1911.
+///
+/// [`ClientKey::new_v1`] does not run this check, because it takes a
+/// `ProxyKeySet` that is already built. Its caller must pass a valid one.
+fn check_permutations(bytes: &[u8]) -> serde_cbor::Result<()> {
+    // serde's own message for a parse error prints the value it read, such
+    // as `invalid type: string "…"`. Here that value is key material, so the
+    // error is replaced with a fixed message.
+    let shape: KeySetShape = serde_cbor::from_slice(bytes).map_err(|_| {
+        <serde_cbor::Error as serde::de::Error>::custom(
+            "the keyset is not valid CBOR of a v1 keyset",
+        )
+    })?;
+    let valid = is_permutation(&shape.p1.permutation, BLOCK_LEN)
+        & is_permutation(&shape.p2_from.permutation, BLOCK_LEN)
+        & is_permutation(&shape.p2_to.permutation, BLOCK_LEN)
+        & is_permutation(&shape.p3.permutation, BLOCK_COUNT);
+    if valid {
+        Ok(())
+    } else {
+        Err(<serde_cbor::Error as serde::de::Error>::custom(
+            "the keyset's permutations are not valid",
+        ))
+    }
+}
+
+/// Whether `p` is a permutation of `0..len`. `len` is at most 64, the
+/// width of the bit set below. Only the result depends on the entries; no
+/// branch does.
+fn is_permutation(p: &[u8], len: usize) -> bool {
+    debug_assert!((1..=64).contains(&len), "len is a constant from 1 to 64");
+    let n = p.len();
+    if n != len {
+        return false;
+    }
+    let mut seen = 0u64;
+    let mut out_of_range = false;
+    for &x in p {
+        out_of_range |= usize::from(x) >= n;
+        seen |= 1 << (x & 0x3f);
+    }
+    let all = if n == 64 { u64::MAX } else { (1u64 << n) - 1 };
+    // Every entry is below n, and the n entries are distinct.
+    !out_of_range & (seen == all)
 }
 
 #[cfg(test)]
@@ -427,6 +545,150 @@ mod tests {
                 !err.to_string().contains("invalid encoding"),
                 "well-encoded bytes of the wrong shape must fail at keyset decoding, got: {err}"
             );
+        }
+    }
+
+    /// A keyset whose permutations are not permutations must be refused when
+    /// it is read. Re-encryption follows each permutation's cycles, and with
+    /// a repeated entry that loop can run forever (issue #1850: one changed
+    /// character in `CS_CLIENT_KEY` hung the Go SDK at full CPU).
+    mod keyset_permutations {
+        use super::*;
+        use serde_cbor::Value;
+
+        /// A generated keyset as CBOR, with `edit` applied to the entries of
+        /// the permutation `field`.
+        fn edited(field: &str, edit: impl FnOnce(&mut Vec<Value>)) -> Vec<u8> {
+            let bytes = random_keyset().to_bytes().unwrap();
+            let mut value: Value = serde_cbor::from_slice(&bytes).unwrap();
+            let Value::Map(fields) = &mut value else {
+                panic!("a keyset is a map")
+            };
+            let Some(Value::Map(perm)) = fields.get_mut(&Value::Text(field.into())) else {
+                panic!("no {field}")
+            };
+            let Some(Value::Array(entries)) = perm.get_mut(&Value::Text("permutation".into()))
+            else {
+                panic!("no {field}.permutation")
+            };
+            edit(entries);
+            serde_cbor::to_vec(&value).unwrap()
+        }
+
+        /// The first entry set to the value of the second: a repeated entry,
+        /// with another value missing.
+        fn repeat_an_entry(entries: &mut [Value]) {
+            entries[0] = entries[1].clone();
+        }
+
+        fn all_refused(bytes: &[u8], label: &str) {
+            let id = uuid::Uuid::nil();
+            let hex = base16ct::lower::encode_string(bytes);
+            assert!(
+                ClientKey::from_bytes(id, bytes).is_err(),
+                "{label}: from_bytes"
+            );
+            assert!(
+                ClientKey::from_hex_v1(id, &hex).is_err(),
+                "{label}: from_hex_v1"
+            );
+            assert!(
+                ClientKey::from_encoded_v1(id, &hex).is_err(),
+                "{label}: from_encoded_v1"
+            );
+            let json = serde_json::to_string(&hex).unwrap();
+            assert!(
+                serde_json::from_str::<super::super::V1KeySet>(&json).is_err(),
+                "{label}: deserialize"
+            );
+        }
+
+        #[test]
+        fn refuses_a_repeated_entry_in_any_permutation() {
+            for field in ["p1", "p2_from", "p2_to", "p3"] {
+                all_refused(&edited(field, |e| repeat_an_entry(e)), field);
+            }
+        }
+
+        #[test]
+        fn refuses_an_entry_out_of_range() {
+            all_refused(
+                &edited("p3", |e| {
+                    let n = e.len();
+                    e[0] = Value::Integer(n as i128);
+                }),
+                "p3",
+            );
+        }
+
+        #[test]
+        fn refuses_a_block_permutation_of_the_wrong_length() {
+            // p1 permutes the 16 bytes of a block, so it has 16 entries.
+            all_refused(&edited("p1", |e| e.truncate(8)), "p1");
+        }
+
+        /// p3 is applied to the 33 blocks of key material ZeroKMS returns,
+        /// so a valid permutation of any other length cannot be used. It is
+        /// refused when it is read, with the same fixed message, and not
+        /// after the load-keyset round trip.
+        #[test]
+        fn refuses_a_p3_that_does_not_have_33_entries() {
+            for n in [1, 32, 34, 64] {
+                let bytes = edited("p3", |e| *e = (0..n).map(Value::Integer).collect());
+                let label = format!("p3 of length {n}");
+                all_refused(&bytes, &label);
+                let err = ClientKey::from_bytes(uuid::Uuid::nil(), &bytes).expect_err("refused");
+                assert_eq!(
+                    err.to_string(),
+                    "the keyset's permutations are not valid",
+                    "{label}: the refusal is a fixed message"
+                );
+            }
+        }
+
+        #[test]
+        fn names_no_value_in_the_refusal() {
+            let err =
+                ClientKey::from_bytes(uuid::Uuid::nil(), &edited("p3", |e| repeat_an_entry(e)))
+                    .expect_err("refused");
+            assert_eq!(
+                err.to_string(),
+                "the keyset's permutations are not valid",
+                "the refusal is a fixed message"
+            );
+        }
+
+        /// A keyset whose CBOR does not have the keyset's shape is refused
+        /// with a fixed message. serde's own message would print the value
+        /// it read, and the value is key material.
+        #[test]
+        fn names_no_value_when_the_cbor_has_the_wrong_shape() {
+            let bytes = random_keyset().to_bytes().unwrap();
+            let mut value: Value = serde_cbor::from_slice(&bytes).unwrap();
+            let Value::Map(fields) = &mut value else {
+                panic!("a keyset is a map")
+            };
+            let Some(Value::Map(perm)) = fields.get_mut(&Value::Text("p3".into())) else {
+                panic!("no p3")
+            };
+            perm.insert(
+                Value::Text("permutation".into()),
+                Value::Text("SECRET-ENTRIES".into()),
+            );
+            let bytes = serde_cbor::to_vec(&value).unwrap();
+            let err = ClientKey::from_bytes(uuid::Uuid::nil(), &bytes).expect_err("refused");
+            assert!(
+                !err.to_string().contains("SECRET"),
+                "the refusal prints a value read from the key: {err}"
+            );
+        }
+
+        #[test]
+        fn accepts_generated_keysets() {
+            for _ in 0..64 {
+                let bytes = random_keyset().to_bytes().unwrap();
+                ClientKey::from_bytes(uuid::Uuid::nil(), &bytes).expect("a generated keyset");
+            }
         }
     }
 

@@ -191,6 +191,15 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 			return nil, fmt.Errorf("encrypt: the credentials' memory: %w", lockErr)
 		}
 	}
+	// A key that is not hex or padded base64 can never decode. Refuse it
+	// here, before the crypto guest is loaded. A missing key is refused by
+	// encodeConfig. A key from CS_CLIENT_KEY, or from AccessKeyCredentials,
+	// was checked when it was read, so that its error names the variable.
+	if !resolved.ClientKey.IsZero() {
+		if err := checkKeyEncoding("the client key", guest.KeyBytes(resolved.ClientKey)); err != nil {
+			return nil, err
+		}
+	}
 	encoded, err := encodeConfig(initConfig{
 		clientID:        resolved.ClientID,
 		clientKey:       resolved.ClientKey,
@@ -233,7 +242,7 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 		return inst.call(ctx, inst.cipherInit, buf(encoded))
 	})
 	if err != nil {
-		return nil, fmt.Errorf("encrypt: cipher init: %w", err)
+		return nil, fmt.Errorf("encrypt: cipher init: %w", asClientKeyError(err))
 	}
 	if len(out) != len(KeysetID{}) {
 		return nil, fmt.Errorf("%w: cipher init returned %d bytes for the keyset id", ErrInternal, len(out))

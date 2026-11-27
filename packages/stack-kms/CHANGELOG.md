@@ -41,6 +41,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   derived, so requests overlap derivation as before. A batch holds the
   wrapped material of at most `max_concurrent_reqs` responses at a time.
 
+### Fixes
+
+- A client key whose keyset holds a permutation that is not a permutation
+  is now refused when it is read (#1850). Before this fix, `ClientKey` and
+  `V1KeySet` accepted such a key. Deriving the first key from it could then
+  loop forever, or panic. One changed character in a hex key is enough to
+  cause this. These now return an error for such a key:
+  `ClientKey::from_bytes`, `ClientKey::from_hex_v1`,
+  `ClientKey::from_encoded_v1`, `V1KeySet::from_bytes`, and deserializing a
+  `V1KeySet`. The error names no value from the key.
+- A keyset whose `p3` does not have exactly 33 entries is refused the same
+  way (#1850). ZeroKMS key material has 33 blocks, so a `p3` of another
+  length cannot be used. Before this fix, such a key failed only after the
+  load-keyset round trip to ZeroKMS.
+- A keyset whose CBOR does not parse is refused with a fixed message
+  (#1850). Before this fix, the error was serde's own message. That
+  message can print entries read from the key.
+- `ClientKey::new_v1` does not check the keyset it is given. Its doc
+  comment now says so.
+- The TypeScript SDK reads keys through `cipherstash-client` and
+  `recipher` from crates.io. Those crates have the same loop. This fix
+  does not reach them. That is tracked in #1911.
+
 ## [0.2.0] - 2026-10-27
 
 ### Breaking

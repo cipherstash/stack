@@ -370,7 +370,8 @@
 // None takes a raw token: a token is always a strategy's, since a raw one
 // cannot be refreshed when it expires. Credentials that cannot be resolved
 // fail NewClient with [ErrNoCredentials]; credentials that resolve but do
-// not work fail it too, at the one ZeroKMS round trip it makes.
+// not work fail it too, at the one ZeroKMS round trip it makes. A client key
+// that is wrong fails it with [ErrConfig], before that round trip.
 //
 // # Errors
 //
