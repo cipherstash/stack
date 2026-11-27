@@ -1,6 +1,5 @@
 //! Why a plan was refused.
 use crate::op::Op;
-use crate::refusal::Found;
 use crate::LabelError;
 
 /// Why a plan was refused: when it was parsed, or when it was run against a
@@ -103,9 +102,8 @@ pub enum PlanError {
         field: String,
     },
     /// A field is not of the type the plan declares for it, so the plan
-    /// cannot resolve how to seal, index or read it. A field that opens
-    /// as another type says what it opened as.
-    #[error("{}", field_type_text(field, expected, *found))]
+    /// cannot resolve how to seal, index or read it.
+    #[error("field {field:?} is not {article} {expected}", article = article(expected))]
     #[diagnostic(
         code(stack_encrypt::plan_field_type),
         help("Give the field a value of the type the plan declares. A row stored as another type opens only after it is re-encrypted as the declared one.")
@@ -115,9 +113,6 @@ pub enum PlanError {
         field: String,
         /// The type the plan declares.
         expected: &'static str,
-        /// What the field opened as, when it was opened: a stored row
-        /// sealed as another type than the plan now declares.
-        found: Option<Found>,
     },
     /// The plan has no field of that name.
     #[error("the plan has no field {field:?}")]
@@ -234,20 +229,10 @@ impl crate::ErrorPayload for PlanError {
             Self::DuplicateIndex { at, index } => {
                 payload([("field", at.as_str().into()), ("index", (*index).into())])
             }
-            Self::FieldType {
-                field,
-                expected,
-                found,
-            } => {
-                let mut fields = payload([
-                    ("field", field.as_str().into()),
-                    ("expected", (*expected).into()),
-                ]);
-                if let Some(found) = found {
-                    let _ = fields.insert("found".to_owned(), found.as_str().into());
-                }
-                fields
-            }
+            Self::FieldType { field, expected } => payload([
+                ("field", field.as_str().into()),
+                ("expected", (*expected).into()),
+            ]),
             Self::IndexOverlap {
                 at,
                 first,
@@ -264,16 +249,6 @@ impl crate::ErrorPayload for PlanError {
             }
             Self::EmptyIndexes | Self::BindInQuery | Self::EmptyPart => serde_json::Map::new(),
         }
-    }
-}
-
-/// `field "age" is not an int64`, or, for a field that was opened,
-/// `field "age" opened as a string, not an int64`.
-fn field_type_text(field: &str, expected: &str, found: Option<Found>) -> String {
-    let article = article(expected);
-    match found {
-        Some(found) => format!("field {field:?} opened as {found}, not {article} {expected}"),
-        None => format!("field {field:?} is not {article} {expected}"),
     }
 }
 
@@ -297,7 +272,6 @@ mod tests {
             PlanError::FieldType {
                 field: "f".to_owned(),
                 expected,
-                found: None,
             }
             .to_string()
         };

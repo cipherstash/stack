@@ -1561,7 +1561,6 @@ fn field_type(field: &str, expected: &'static str) -> crate::Error {
     PlanError::FieldType {
         field: field.to_owned(),
         expected,
-        found: None,
     }
     .into()
 }

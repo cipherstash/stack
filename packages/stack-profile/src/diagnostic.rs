@@ -58,9 +58,12 @@
 //!
 //! - Keyset IDs and names; counts and lengths; index names and kinds.
 //! - Schema field names from a plan or Go struct, rather than field values.
-//! - A value's kind, such as null, an array or a uint32, rather than the
-//!   value, and the position of a row in a batch. The kind is what a schema
-//!   declares, and a frame carries it in the clear.
+//! - The kind of a value the caller sent, such as null, an array or a
+//!   uint32, rather than the value, or the kind of a node in a stored
+//!   record's own structure (a passthrough, a sealed value, a list), which
+//!   the stored form shows without decrypting; and the position of a row in
+//!   a batch. Never the kind of a decrypted value: that is known only once
+//!   it is opened, so it is the plaintext's own metadata.
 //! - Request kinds and HTTP status codes for ZeroKMS, CipherStash's
 //!   key-management service.
 //! - Workspace IDs, workspace resource names (CRNs), and regions.

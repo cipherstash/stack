@@ -512,10 +512,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     value: `Error::found()`, the payload's `found` (`"null"`, `"array"`,
     `"string"`, `"uint32"`, `"passthrough"`, `"sealed"`, ...), and the
     message, as in `row 2 of the records to encrypt is null, not an
-    object of fields`. The new `dynamic::Found` names the kinds.
-  - A row of a batch to encrypt or decrypt is named by its position from
-    0: `Error::row()`, the payload's `row`, and the message. The message
-    also says whether the record was to encrypt or to decrypt.
+    object of fields`. The new `dynamic::Found` names the kinds. A kind is
+    named only for what the caller sent, or for the stored record's own
+    structure (a row that is a passthrough or a sealed value rather than a
+    map). An error about a decrypted value never names what it opened as.
+  - A row of a batch that is not an object is named by its position from
+    0: `Error::row()`, the payload's `row`, and the message, which also
+    says whether the record was to encrypt or to decrypt. So is the row of
+    a value that fails while it is read, or that the frame writer refuses
+    (a repeated key, a value its logical type does not admit, a value too
+    deep or too long). A field's own misfit (missing, unknown, of another
+    type) names the field and not the row. A row whose element the source
+    began and never wrote is refused as `unframeable`, naming the row,
+    rather than shifting the rows after it.
   - Bytes given as a plan that are not one transport frame (empty, cut
     short, JSON text, a repeated key, bytes after the value) have their
     own reason, `not_a_frame`. A frame that is not an object of field
@@ -524,19 +533,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A value that fails while it is read, such as a JSON document nested
     too deep, is the new `Error::SourceFailed`, with the code
     `stack_encrypt::dynamic_source_failed` and the reason `source_failed`.
-    It names the field and the row being read, and keeps the value's own
-    error as its cause. The cause is not in the message, because a host's
-    error can quote the value. Before, it was `not_an_object` with no
-    field.
-  - A typed field that opens as another type says what it opened as:
-    `PlanError::FieldType` has `found`, in its payload too, as in
-    `field "doc" opened as an array, not an object`.
+    It names the row being read, and the field while its value is being
+    written; a failure between two fields, or between two rows, names
+    neither. It keeps the value's own error as its cause. The cause is not
+    in the message, because a host's error can quote the value. Before, it
+    was `not_an_object` with no field.
 
-  `Error::Plan` has a new `found` field, `Error::Source` and
-  `Error::Record` new `row` and `found` fields, and
-  `PlanError::FieldType` a new `found` field, so a match on them that names
-  every field needs `..`. Reason codes do not change, except the two new
-  ones.
+  `Error::Plan` has a new `found` field, and `Error::Source` and
+  `Error::Record` new `row` and `found` fields, so a match on them that
+  names every field needs `..`. Reason codes do not change, except the two
+  new ones.
 
 - **A `match` query's `vars` that are not a JSON object have their own
   reason, `json_vars_not_object`, and say what they are** (#1987). Before,

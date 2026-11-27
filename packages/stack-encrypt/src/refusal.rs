@@ -65,9 +65,14 @@ use crate::target::IndexSpec;
 /// Where a plan, a record to encrypt or a stored record is not the object
 /// the operation takes, the error says what it found instead: its kind
 /// ([`Found`]), never the value. It is in the message, in
-/// [`found`](Self::found) and in the payload (`found`). A row of a batch is
-/// named by its position, from 0: in the message, in [`row`](Self::row) and
-/// in the payload (`row`).
+/// [`found`](Self::found) and in the payload (`found`). The kind is always
+/// one the caller sent, or one the stored record's own structure shows; an
+/// error about a decrypted value never names what it opened as. Where the
+/// error is about one row of a batch's shape, or about a value the source
+/// failed or the frame writer refused while the rows were read, it names
+/// the row by its position, from 0: in the message, in [`row`](Self::row)
+/// and in the payload (`row`). A field's own misfit (missing, unknown, of
+/// another type) names the field and not the row.
 ///
 /// Not every variant has a [`Reason`]. [`Context`](Error::Context),
 /// [`Plan`](Error::Plan), [`Source`](Error::Source),
@@ -176,7 +181,7 @@ pub enum Error {
         /// The source field at fault, if the fault is one field's.
         field: Option<String>,
         /// The row of a batch at fault, from 0, if the fault is one row's
-        /// shape.
+        /// shape or a value the frame writer refused as the rows were read.
         row: Option<usize>,
         /// What was wrong with the source.
         reason: Reason,
@@ -462,9 +467,10 @@ impl Error {
     }
 
     /// The row of a batch an input error is about, from 0: a row of a
-    /// record source or a stored record that is not an object, or the row
-    /// a source failed in. `None` for a single record, and for every other
-    /// error.
+    /// record source or a stored record that is not an object, the row a
+    /// source failed in, or the row of a value the frame writer refused as
+    /// the source's rows were read. `None` for a single record, and for
+    /// every other error.
     pub fn row(&self) -> Option<usize> {
         match self {
             Self::Source { row, .. }

@@ -453,8 +453,7 @@
           "code": "stack_encrypt::plan_field_type",
           "fields": {
             "field": "value",
-            "expected": "int64",
-            "found": "int32"
+            "expected": "int64"
           }
         }
       }
@@ -490,8 +489,7 @@
           "code": "stack_encrypt::plan_field_type",
           "fields": {
             "field": "value",
-            "expected": "string",
-            "found": "int32"
+            "expected": "string"
           }
         }
       }
@@ -527,8 +525,7 @@
           "code": "stack_encrypt::plan_field_type",
           "fields": {
             "field": "value",
-            "expected": "uint64",
-            "found": "int32"
+            "expected": "uint64"
           }
         }
       }
@@ -564,8 +561,7 @@
           "code": "stack_encrypt::plan_field_type",
           "fields": {
             "field": "value",
-            "expected": "int32",
-            "found": "null"
+            "expected": "int32"
           }
         }
       }

@@ -28,8 +28,9 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `"passthrough"`, `"sealed"` and so on. `Row` is the row of a batch it
   is in, from 0, and the message names it too, as in `row 2 of the
   records to decrypt is a passthrough value, not an object of stored
-  fields`. A field declared as one type that opens as another names what
-  it opened as in `Found` and in the message.
+  fields`. `Found` names only what the program sent or the stored row's
+  own structure: an error about a decrypted value never says what it
+  opened as.
 
 ### Changed
 
