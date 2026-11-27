@@ -108,9 +108,10 @@ func TestTargetFieldWiresItsTypeInsteadOfOutputs(t *testing.T) {
 	// An EQL column is a table and a column: a two-segment context leaves
 	// the target field no column, and the refusal names the field — before
 	// the guest is asked.
-	deep := &Plan{Context: []string{"app", "users"}, Fields: []Field{{Name: "email", Kind: String, Target: "TextEq"}}}
-	if err := deep.Validate(); err == nil || !strings.Contains(err.Error(), `field "email"`) || !strings.Contains(err.Error(), `"app/users" has 2 segments`) {
-		t.Fatalf("a target under app/users: %v", err)
+	// It gives the number of segments and leaves out the context's value.
+	deep := &Plan{Context: []string{"app", "marker-users"}, Fields: []Field{{Name: "email", Kind: String, Target: "TextEq"}}}
+	if err := deep.Validate(); err == nil || !strings.Contains(err.Error(), `field "email"`) || !strings.Contains(err.Error(), "has 2 segments") || strings.Contains(err.Error(), "marker-users") {
+		t.Fatalf("a target under app/marker-users: %v", err)
 	}
 	// A scope and a binding come after the column, so a target field takes
 	// both. The EQL value stores the column alone.
@@ -180,6 +181,11 @@ func TestParseContext(t *testing.T) {
 		if _, err := ParseContext(bad); err == nil {
 			t.Errorf("ParseContext(%q) accepted", bad)
 		}
+	}
+	// The refusal names the segment by its index, and leaves out the
+	// context's value.
+	if _, err := ParseContext("tenants/marker-tenant("); err == nil || !strings.Contains(err.Error(), "segment 1") || strings.Contains(err.Error(), "marker-tenant") {
+		t.Fatalf("ParseContext of a reserved character: %v", err)
 	}
 	if err := CheckSegment("x/y"); err == nil || !strings.Contains(err.Error(), "separator") {
 		t.Fatalf("CheckSegment: %v", err)

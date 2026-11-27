@@ -277,7 +277,9 @@ func ParseContext(s string) ([]string, error) {
 	segments := strings.Split(s, "/")
 	for i, seg := range segments {
 		if err := CheckSegment(seg); err != nil {
-			return nil, fmt.Errorf("context %q: segment %d %v", s, i, err)
+			// The context's value stays out of the error: it can be a
+			// tenant or customer identifier.
+			return nil, fmt.Errorf("context segment %d %v", i, err)
 		}
 	}
 	return segments, nil
@@ -449,7 +451,7 @@ func (p *Plan) Validate() error {
 			// value does not store them, so whoever reads it supplies them
 			// again.
 			if len(p.Context) != 1 {
-				return fmt.Errorf("record: field %q names the EQL type %s, and an EQL column is a table and a column: the context %q has %d segments, not one", f.Name, f.Target, strings.Join(p.Context, "/"), len(p.Context))
+				return fmt.Errorf("record: field %q names the EQL type %s, and an EQL column is a table and a column: the context has %d segments, not one", f.Name, f.Target, len(p.Context))
 			}
 			continue
 		}

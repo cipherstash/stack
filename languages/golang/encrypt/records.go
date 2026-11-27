@@ -57,9 +57,11 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 		if cph.context != "" {
 			// The cipher names the context every row is under: a value
 			// whose context field says otherwise is refused here, before
-			// anything is sent, as Open refuses a stored row.
+			// anything is sent, as Open refuses a stored row. Neither
+			// value is in the error: a context can be a tenant or
+			// customer identifier.
 			if label := row[p.ContextField]; label != cph.context {
-				return nil, fmt.Errorf("%w: row %d: the context field %q holds %q, and the cipher names %q", ErrContextMismatch, i, p.ContextField, label, cph.context)
+				return nil, fmt.Errorf("%w: row %d: the context field %q does not match the cipher's context; encrypt the row through a cipher whose Context is the value in that field", ErrContextMismatch, i, p.ContextField)
 			}
 		}
 	}
@@ -278,7 +280,7 @@ func (cph *Cipher) plan(plan *record.Plan) (*record.Plan, error) {
 		return nil, fmt.Errorf("%w: no plan", ErrEncoding)
 	}
 	if cph.context != "" && plan.ContextField == "" {
-		return nil, fmt.Errorf("%w: the cipher names the context %q, and the type has its context in its tags; Context is for a type with a context_field", ErrEncoding, cph.context)
+		return nil, fmt.Errorf("%w: the cipher names a context, and the type has its context in its tags; Context is for a type with a context_field", ErrEncoding)
 	}
 	p := *plan
 	p.Extension = append(append([]any(nil), plan.Extension...), cph.extension...)
