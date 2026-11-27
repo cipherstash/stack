@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
@@ -218,7 +219,7 @@ func TestParseQueryTermRefusesAMixedShape(t *testing.T) {
 // bad input.
 func TestAnAnswerThatDoesNotDecodeNamesTheExport(t *testing.T) {
 	for _, export := range []string{"se_query_term", "se_targets", "se_operators", "se_contexts", "se_verify", "se_target_limit"} {
-		_, err := decodeAnswer(export, []byte{0xff})
+		_, err := guest.DecodeAnswer(export, []byte{0xff})
 		if !errors.Is(err, ErrInternal) || errors.Is(err, ErrEncoding) {
 			t.Fatalf("%s: %v, want ErrInternal alone", export, err)
 		}
@@ -227,7 +228,7 @@ func TestAnAnswerThatDoesNotDecodeNamesTheExport(t *testing.T) {
 			t.Errorf("%s: %v", export, err)
 		}
 	}
-	if decoded, err := decodeAnswer("se_contexts", mustMarshal(t, "users / email")); err != nil || decoded != "users / email" {
+	if decoded, err := guest.DecodeAnswer("se_contexts", mustMarshal(t, "users / email")); err != nil || decoded != "users / email" {
 		t.Errorf("a good answer: %v, %v", decoded, err)
 	}
 }
@@ -240,7 +241,7 @@ func TestVerifyAndLimitAnswersSayWhatTheyAre(t *testing.T) {
 		want   string
 	}{
 		{"secret", 1, "se_verify does not read: it is a string, not a list"},
-		{[]any{true}, 2, "se_verify does not read: it has 1 answers for 2 values"},
+		{[]any{true}, 2, "se_verify does not read: it answers 1 of 2 values"},
 		{[]any{true, "secret"}, 2, "se_verify does not read: answer 1 is a string, not a boolean"},
 	} {
 		_, err := parseVerified(tc.answer, tc.count)
@@ -293,4 +294,22 @@ func mustMarshal(t *testing.T, v any) []byte {
 		t.Fatal(err)
 	}
 	return out
+}
+
+// A child se_json_open opened that is not what the export writes is refused
+// by position and key, never by what kind of value it found: the value is
+// plaintext.
+func TestAnOpenedChildOfTheWrongShapeNamesNoKind(t *testing.T) {
+	for _, tc := range []struct {
+		item any
+		want string
+	}{
+		{"secret", "a child is not a map of a key or an index and json"},
+		{vcvalue.Object{{Key: "key", Value: "k"}, {Key: "json", Value: int64(7)}}, `a value of another kind at "json"`},
+	} {
+		_, err := jsonChildValue(tc.item)
+		if err == nil || err.Error() != tc.want {
+			t.Errorf("%v, want %q", err, tc.want)
+		}
+	}
 }

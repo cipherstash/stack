@@ -412,7 +412,7 @@ func Opaque[T any](vals Values, out *T) error {
 	}
 	encoded, ok := v.([]byte)
 	if !ok {
-		return fmt.Errorf("gensupport: %w: the opaque value opened as %T, not bytes", encrypt.ErrEncoding, v)
+		return fmt.Errorf("gensupport: %w: the opaque value does not open as bytes", encrypt.ErrEncoding)
 	}
 	if bytes.HasPrefix(encoded, vcffi.StorageHeader[:3]) {
 		if err := vcffi.UnmarshalStorage(encoded, out); err != nil {

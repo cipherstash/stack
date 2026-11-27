@@ -3166,7 +3166,7 @@ mod compiled_match {
                 assert_eq!(
                     message,
                     format!(
-                        r#"record source does not fit the plan: match takes its vars as a JSON object, found {phrase} (field "profile")"#
+                        r#"query input does not fit the field: match takes its vars as a JSON object, found {phrase} (field "profile")"#
                     ),
                     "{vars}: the message"
                 );

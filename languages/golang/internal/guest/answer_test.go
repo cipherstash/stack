@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
@@ -85,5 +86,23 @@ func TestBadAnswerIsInternalAndNamesTheExport(t *testing.T) {
 	cause := errors.New("the decoder's error")
 	if !errors.Is(guest.BadAnswer("se_targets", cause), cause) {
 		t.Error("the problem is not wrapped")
+	}
+}
+
+// DecodeAnswer decodes an answer, and refuses bytes that do not decode as
+// an internal failure naming the export, wrapping the decoder's error.
+func TestDecodeAnswerNamesTheExport(t *testing.T) {
+	encoded, err := vcffi.Marshal("users / email")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded, err := guest.DecodeAnswer("se_contexts", encoded); err != nil || decoded != "users / email" {
+		t.Errorf("a good answer: %v, %v", decoded, err)
+	}
+	_, err = guest.DecodeAnswer("se_contexts", []byte{0xff})
+	if !errors.Is(err, guest.ErrInternal) ||
+		!strings.HasPrefix(err.Error(), "cipherstash: internal guest failure: the guest's answer to se_contexts does not read: ") ||
+		!strings.HasSuffix(err.Error(), "; this is a bug, or a guest that does not match this module's version") {
+		t.Errorf("bytes that do not decode: %v", err)
 	}
 }

@@ -32,29 +32,39 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   own structure: an error about a decrypted value never says what it
   opened as.
 
-### Changed
+### Breaking
 
 - **`Match` refuses `vars` that are not a JSON object with the reason
-  `json_vars_not_object`, not `json_input`** (#1987). `Found` says what
-  they are (`"array"`, `"uint64"`, `"null"`), `Field` names the field,
-  and the message says `match takes its vars as a JSON object, found
-  null`. A program that switches on `Reason()` for this case needs the
-  new name.
+  `json_vars_not_object`, not `json_input`** (#1987). A program that
+  switches on `Reason()` for this case needs the new name. `Found` says
+  what the vars are (`"array"`, `"uint64"`, `"null"`), `Field` names the
+  field, and the message says `query input does not fit the field: match
+  takes its vars as a JSON object, found null`.
 
-- **Errors that said "not an object" now say what they mean, in words**
-  (#1987). A map field (`map[string]V`, `Values`, `map[string]any`) whose
-  stored value opens as something else is refused as `decrypt: field
-  "tags": ... does not open as an object, and map[string]any needs one`,
-  where it said `opened as []interface {}, not an object`, and a document
-  field likewise. It no longer names what the value opened as: that is
-  known only once the value is decrypted. A guest answer this module cannot read, whether it does
-  not decode or is not the shape the export writes (from `se_query_term`,
-  `se_targets`, `se_operators`, `se_contexts`, `se_verify`,
-  `se_target_limit`, `sa_token`, `sa_secret_key`, `sa_device_identity`,
-  `sa_list_workspaces` or `sa_auth_runnable`), is still `ErrInternal`,
-  and now names the export, says what the answer is by its kind, and says
-  it is a bug or a guest that does not match this module's version, not
-  bad input.
+### Changed
+
+- **A decrypt refusal names the field and the Go type it needs, and never
+  what the value opened as** (#1987). A map field (`map[string]V`,
+  `Values`, `map[string]any`) whose stored value opens as something else
+  is refused as `decrypt: field "tags": ... does not open as an object,
+  and map[string]any needs one`, where it said `opened as []interface {},
+  not an object`. Every other opened value of another type, a null for a
+  type that holds a value, a list or an array of another length, a
+  document that is not its JSON text and an opaque value that is not
+  bytes say `does not open as` the type needed, with no Go type, kind or
+  length of the value: those are known only once it is decrypted.
+
+- **A guest answer this module cannot read is an internal failure that
+  says so** (#1987). Whether it does not decode or is not the shape the
+  export writes, an answer from `se_query_term`, `se_targets`,
+  `se_operators`, `se_contexts`, `se_verify`, `se_target_limit`,
+  `se_json_open`, `se_encrypt_record`, `se_decrypt_record`, `se_io`,
+  `sa_token`, `sa_secret_key`, `sa_device_identity`,
+  `sa_list_workspaces`, `sa_auth_runnable` or `sa_auth_io` is still
+  `ErrInternal`. It now names the export, says it is a bug or a guest
+  that does not match this module's version, not bad input, and, for an
+  answer that is not plaintext, what it is by its kind. A step the encrypt
+  guest returns that does not read is now `ErrInternal` too.
 
 - **A record field converts a number of another width or kind, as a
   query does.** A value sealed through `Cipher.Seal` for a field that

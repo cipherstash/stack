@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
@@ -74,4 +75,15 @@ func KindOf(v any) string {
 // from other source than the module that embeds it.
 func BadAnswer(export string, problem error) error {
 	return fmt.Errorf("%w: the guest's answer to %s does not read: %w; this is a bug, or a guest that does not match this module's version", ErrInternal, export, problem)
+}
+
+// DecodeAnswer decodes export's answer from the transport. Bytes that do
+// not decode are the guest's fault, not the caller's: ErrInternal, through
+// [BadAnswer], which names the export and wraps the decoder's error.
+func DecodeAnswer(export string, out []byte) (any, error) {
+	decoded, err := vcffi.Unmarshal(out)
+	if err != nil {
+		return nil, BadAnswer(export, err)
+	}
+	return decoded, nil
 }

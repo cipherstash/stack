@@ -77,7 +77,7 @@ func (k *Checker) Targets(ctx context.Context) ([]record.Target, error) {
 	if err != nil {
 		return nil, err
 	}
-	decoded, err := decodeAnswer("se_targets", out)
+	decoded, err := guest.DecodeAnswer("se_targets", out)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +104,7 @@ func (k *Checker) Operators(ctx context.Context, plan *record.Plan, field string
 	if err != nil {
 		return nil, err
 	}
-	decoded, err := decodeAnswer("se_operators", out)
+	decoded, err := guest.DecodeAnswer("se_operators", out)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func contextsOf(ctx context.Context, c *Client, plan *record.Plan) (string, erro
 	if err != nil {
 		return "", err
 	}
-	decoded, err := decodeAnswer("se_contexts", out)
+	decoded, err := guest.DecodeAnswer("se_contexts", out)
 	if err != nil {
 		return "", err
 	}
@@ -152,17 +152,6 @@ func contextsOf(ctx context.Context, c *Client, plan *record.Plan) (string, erro
 		return "", guest.BadAnswer("se_contexts", fmt.Errorf("it is %s, not a string", guest.KindOf(decoded)))
 	}
 	return text, nil
-}
-
-// decodeAnswer decodes export's answer from the transport. Bytes that do
-// not decode are the guest's fault, not the caller's: ErrInternal, through
-// [guest.BadAnswer], which names the export.
-func decodeAnswer(export string, out []byte) (any, error) {
-	decoded, err := vcffi.Unmarshal(out)
-	if err != nil {
-		return nil, guest.BadAnswer(export, err)
-	}
-	return decoded, nil
 }
 
 // parseTargets reads se_targets's decoded value: {"targets": [entry, ...]},

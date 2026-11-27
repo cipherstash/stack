@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
@@ -91,16 +92,19 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 	defer wipe(out)
 	tree, err := unmarshalCipherText(out)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInternal, err)
+		return nil, guest.BadAnswer("se_encrypt_record", err)
 	}
 	items, ok := tree.([]any)
-	if !ok || len(items) != len(rows) {
-		return nil, fmt.Errorf("%w: %d rows came back as %T", ErrInternal, len(rows), tree)
+	if !ok {
+		return nil, guest.BadAnswer("se_encrypt_record", fmt.Errorf("it is %s, not a list of rows", guest.KindOf(tree)))
+	}
+	if len(items) != len(rows) {
+		return nil, guest.BadAnswer("se_encrypt_record", fmt.Errorf("it answers %d of %d rows", len(items), len(rows)))
 	}
 	sealed := make([]record.Sealed, len(items))
 	for i, item := range items {
 		if sealed[i], err = sealedOf(p, item); err != nil {
-			return nil, fmt.Errorf("%w: row %d: %v", ErrInternal, i, err)
+			return nil, guest.BadAnswer("se_encrypt_record", fmt.Errorf("row %d: %w", i, err))
 		}
 	}
 	return sealed, nil
@@ -505,13 +509,18 @@ func (c *Client) openEncoded(ctx context.Context, call callOptions, p *record.Pl
 	}
 	// The output is plaintext: decode, then wipe the transport copy.
 	defer wipe(out)
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := guest.DecodeAnswer("se_decrypt_record", out)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInternal, err)
+		return nil, err
 	}
+	// What the guest opened is plaintext: a refusal names where in the
+	// answer it is, never what kind of value it found.
 	items, ok := decoded.([]any)
-	if !ok || len(items) != rows {
-		return nil, fmt.Errorf("%w: %d records came back as %T", ErrInternal, rows, decoded)
+	if !ok {
+		return nil, guest.BadAnswer("se_decrypt_record", errors.New("it is not a list of records"))
+	}
+	if len(items) != rows {
+		return nil, guest.BadAnswer("se_decrypt_record", fmt.Errorf("it answers %d of %d records", len(items), rows))
 	}
 	order := make([]string, 0, len(p.Fields)+1)
 	if p.ContextField != "" {
@@ -526,14 +535,14 @@ func (c *Client) openEncoded(ctx context.Context, call callOptions, p *record.Pl
 	for i, item := range items {
 		obj, ok := item.(vcvalue.Object)
 		if !ok {
-			return nil, fmt.Errorf("%w: record %d decrypted as %T", ErrInternal, i, item)
+			return nil, guest.BadAnswer("se_decrypt_record", fmt.Errorf("record %d is not a map of fields", i))
 		}
 		if len(obj) != len(order) {
-			return nil, fmt.Errorf("%w: record %d has %d fields, expected %d", ErrInternal, i, len(obj), len(order))
+			return nil, guest.BadAnswer("se_decrypt_record", fmt.Errorf("record %d has %d fields, expected %d", i, len(obj), len(order)))
 		}
 		for j, f := range obj {
 			if f.Key != order[j] {
-				return nil, fmt.Errorf("%w: record %d field %d is %q, expected %q", ErrInternal, i, j, f.Key, order[j])
+				return nil, guest.BadAnswer("se_decrypt_record", fmt.Errorf("record %d field %d is %q, expected %q", i, j, f.Key, order[j]))
 			}
 		}
 		src := make(record.Source, len(obj))
@@ -544,7 +553,7 @@ func (c *Client) openEncoded(ctx context.Context, call callOptions, p *record.Pl
 			if _, ok := src[f.Name]; !ok && f.HasCiphertext() {
 				// An index-only field has no ciphertext to open and comes
 				// back as nothing; every sealed or target field must.
-				return nil, fmt.Errorf("%w: record %d lacks field %q", ErrInternal, i, f.Name)
+				return nil, guest.BadAnswer("se_decrypt_record", fmt.Errorf("record %d lacks field %q", i, f.Name))
 			}
 		}
 		sources[i] = src

@@ -691,7 +691,7 @@ func TestAMapFieldThatOpensAsAnotherKindNamesNoKind(t *testing.T) {
 // as, or holds the value.
 func assertNamesNoKind(t *testing.T, err error) {
 	t.Helper()
-	for _, kind := range []string{"a list", "a string", "a number", "bytes", "null", "interface", "secret", "7"} {
+	for _, kind := range []string{"a list", "a string", "a number", "bytes", "null", "nothing", "interface", "elements", "secret", "7"} {
 		if strings.Contains(err.Error(), kind) {
 			t.Errorf("%q in %v", kind, err)
 		}
@@ -712,5 +712,48 @@ func TestADocumentFieldThatOpensAsAnotherKindNamesNoKind(t *testing.T) {
 	_, err := GetDocument[map[string]any](Values{"doc": []byte("{")}, "doc")
 	if err == nil || !strings.HasPrefix(err.Error(), `gensupport: decrypt: field "doc": `) {
 		t.Errorf("JSON that does not decode: %v", err)
+	}
+}
+
+// Every other refusal of an opened value names the type the field needs and
+// never what the value opened as, nor how many elements it held: a null
+// for a type that holds a value, a list or an array of another kind or
+// length, a value of another type, and an opaque value that is not bytes.
+func TestAnOpenedValueOfAnotherTypeNamesNoKind(t *testing.T) {
+	read := func(get func(Values) error, v any) error {
+		return get(Values{"f": v})
+	}
+	type flag bool
+	for _, tc := range []struct {
+		name string
+		get  func(Values) error
+		v    any
+		want string
+	}{
+		{"a null for an integer", func(vals Values) error { _, err := Get[int32](vals, "f"); return err }, nil, "does not open as int32"},
+		{"a value for a list", func(vals Values) error { _, err := Get[[]flag](vals, "f"); return err }, "secret", "does not open as []gensupport.flag"},
+		{"a longer list for an array", func(vals Values) error { _, err := Get[[2]flag](vals, "f"); return err }, []any{true, true, true, true, true, true, true}, "does not open as [2]gensupport.flag"},
+		{"a list for an array", func(vals Values) error { _, err := Get[[2]flag](vals, "f"); return err }, "secret", "does not open as [2]gensupport.flag"},
+		{"a value for a struct", func(vals Values) error { _, err := Get[struct{ A int32 }](vals, "f"); return err }, "secret", "does not open as struct { A int32 }"},
+		{"a list for a bool", func(vals Values) error { _, err := Get[bool](vals, "f"); return err }, []any{"secret"}, "does not open as bool"},
+	} {
+		err := read(tc.get, tc.v)
+		if !errors.Is(err, encrypt.ErrEncoding) {
+			t.Fatalf("%s: %v, want ErrEncoding", tc.name, err)
+		}
+		want := `gensupport: decrypt: field "f": cipherstash: malformed input: ` + tc.want
+		if err.Error() != want {
+			t.Errorf("%s:\n got %q\nwant %q", tc.name, err.Error(), want)
+		}
+		assertNamesNoKind(t, err)
+	}
+	var out struct{ A int32 }
+	err := Opaque(Values{OpaqueField: "secret"}, &out)
+	want := "gensupport: cipherstash: malformed input: the opaque value does not open as bytes"
+	if !errors.Is(err, encrypt.ErrEncoding) || err == nil || err.Error() != want {
+		t.Errorf("opaque:\n got %v\nwant %q", err, want)
+	}
+	if err != nil && (strings.Contains(err.Error(), "string") || strings.Contains(err.Error(), "secret")) {
+		t.Errorf("the opaque refusal names what it opened as: %v", err)
 	}
 }

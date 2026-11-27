@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 	"github.com/tetratelabs/wazero/api"
 )
@@ -410,9 +409,9 @@ func (s *ProfileStore) ListWorkspaces(ctx context.Context) ([]string, error) {
 
 // workspaceIDs reads sa_list_workspaces's answer: a list of workspace ids.
 func workspaceIDs(out []byte) ([]string, error) {
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := guest.DecodeAnswer("sa_list_workspaces", out)
 	if err != nil {
-		return nil, guest.BadAnswer("sa_list_workspaces", err)
+		return nil, err
 	}
 	items, ok := decoded.([]any)
 	if !ok {
@@ -537,26 +536,30 @@ func (s *ProfileStore) DeviceIdentity(ctx context.Context) (DeviceIdentity, erro
 	return d, nil
 }
 
-// fields is a decoded codec object.
-type fields vcvalue.Object
+// fields is a decoded codec object: an export's answer, which names the
+// export so every refusal of it says whose answer it was.
+type fields struct {
+	export string
+	obj    vcvalue.Object
+}
 
 // object decodes export's answer as an object. One that is not is
 // ErrInternal, saying what it is by its kind and never its value: the
 // answer can hold a key or a token.
 func object(export string, encoded []byte) (fields, error) {
-	decoded, err := vcffi.Unmarshal(encoded)
+	decoded, err := guest.DecodeAnswer(export, encoded)
 	if err != nil {
-		return nil, guest.BadAnswer(export, err)
+		return fields{}, err
 	}
 	obj, ok := decoded.(vcvalue.Object)
 	if !ok {
-		return nil, guest.BadAnswer(export, fmt.Errorf("it is %s, not an object", guest.KindOf(decoded)))
+		return fields{}, guest.BadAnswer(export, fmt.Errorf("it is %s, not an object", guest.KindOf(decoded)))
 	}
-	return fields(obj), nil
+	return fields{export: export, obj: obj}, nil
 }
 
 func (f fields) get(key string) (any, bool) {
-	for _, field := range f {
+	for _, field := range f.obj {
 		if field.Key == key {
 			return field.Value, true
 		}
@@ -564,15 +567,20 @@ func (f fields) get(key string) (any, bool) {
 	return nil, false
 }
 
+// refuse is the answer's refusal: ErrInternal, naming the export.
+func (f fields) refuse(format string, args ...any) error {
+	return guest.BadAnswer(f.export, fmt.Errorf(format, args...))
+}
+
 // text is a string field that must be present.
 func (f fields) text(key string) (string, error) {
 	v, ok := f.get(key)
 	if !ok {
-		return "", fmt.Errorf("%w: the guest's result has no %s", ErrInternal, key)
+		return "", f.refuse("it has no %s", key)
 	}
 	s, ok := v.(string)
 	if !ok {
-		return "", fmt.Errorf("%w: %s is not a string", ErrInternal, key)
+		return "", f.refuse("%s is %s, not a string", key, guest.KindOf(v))
 	}
 	return s, nil
 }
@@ -582,11 +590,11 @@ func (f fields) text(key string) (string, error) {
 func (f fields) bytes(key string) ([]byte, error) {
 	v, ok := f.get(key)
 	if !ok {
-		return nil, fmt.Errorf("%w: the guest's result has no %s", ErrInternal, key)
+		return nil, f.refuse("it has no %s", key)
 	}
 	b, ok := v.([]byte)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s is not bytes", ErrInternal, key)
+		return nil, f.refuse("%s is %s, not bytes", key, guest.KindOf(v))
 	}
 	return b, nil
 }
@@ -599,7 +607,7 @@ func (f fields) optionalText(key string) (string, error) {
 	}
 	s, ok := v.(string)
 	if !ok {
-		return "", fmt.Errorf("%w: %s is not a string", ErrInternal, key)
+		return "", f.refuse("%s is %s, not a string", key, guest.KindOf(v))
 	}
 	return s, nil
 }
@@ -608,11 +616,11 @@ func (f fields) optionalText(key string) (string, error) {
 func (f fields) uint64Field(key string) (uint64, error) {
 	v, ok := f.get(key)
 	if !ok {
-		return 0, fmt.Errorf("%w: the guest's result has no %s", ErrInternal, key)
+		return 0, f.refuse("it has no %s", key)
 	}
 	n, ok := v.(uint64)
 	if !ok {
-		return 0, fmt.Errorf("%w: %s is not an integer", ErrInternal, key)
+		return 0, f.refuse("%s is %s, not an unsigned integer", key, guest.KindOf(v))
 	}
 	return n, nil
 }

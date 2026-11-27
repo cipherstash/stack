@@ -68,7 +68,13 @@ func (s *authStep) wipe() {
 	}
 }
 
-var errMalformedStep = fmt.Errorf("%w: the guest's step is malformed", ErrInternal)
+// errStepMalformed is what is wrong with a step that does not read. A
+// refusal of a step is ErrInternal through guest.BadAnswer, naming
+// sa_auth_io, and wraps it.
+var errStepMalformed = errors.New("the step is malformed")
+
+// errMalformedStep is a step that does not read.
+var errMalformedStep = guest.BadAnswer("sa_auth_io", errStepMalformed)
 
 // decodeAuthStep reads `{"handle": u64, "parked": bool, "requests":
 // [{"method", "url", "headers", "body"}, ...]}`. Every byte slice it
@@ -76,7 +82,7 @@ var errMalformedStep = fmt.Errorf("%w: the guest's step is malformed", ErrIntern
 func decodeAuthStep(raw []byte) (*authStep, error) {
 	decoded, err := vcffi.Unmarshal(raw)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errMalformedStep, err)
+		return nil, guest.BadAnswer("sa_auth_io", fmt.Errorf("%w: %w", errStepMalformed, err))
 	}
 	return authStepFrom(decoded)
 }
@@ -167,9 +173,9 @@ func decodeAuthRequest(item any) (authRequest, bool) {
 
 // decodeRunnable reads the list of parked handles the guest may resume.
 func decodeRunnable(raw []byte) ([]uint64, error) {
-	decoded, err := vcffi.Unmarshal(raw)
+	decoded, err := guest.DecodeAnswer("sa_auth_runnable", raw)
 	if err != nil {
-		return nil, guest.BadAnswer("sa_auth_runnable", err)
+		return nil, err
 	}
 	items, ok := decoded.([]any)
 	if !ok {

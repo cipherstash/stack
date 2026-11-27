@@ -163,7 +163,7 @@ func (cph *Cipher) QueryTerm(ctx context.Context, plan *record.Plan, field, oper
 	if err != nil {
 		return QueryTerm{}, err
 	}
-	decoded, err := decodeAnswer("se_query_term", out)
+	decoded, err := guest.DecodeAnswer("se_query_term", out)
 	if err != nil {
 		return QueryTerm{}, err
 	}
@@ -318,7 +318,7 @@ func (cph *Cipher) Verify(ctx context.Context, plan *record.Plan, field, operato
 	if err != nil {
 		return nil, err
 	}
-	decoded, err := decodeAnswer("se_verify", out)
+	decoded, err := guest.DecodeAnswer("se_verify", out)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +333,7 @@ func parseVerified(decoded any, count int) ([]bool, error) {
 		return nil, guest.BadAnswer("se_verify", fmt.Errorf("it is %s, not a list", guest.KindOf(decoded)))
 	}
 	if len(list) != count {
-		return nil, guest.BadAnswer("se_verify", fmt.Errorf("it has %d answers for %d values", len(list), count))
+		return nil, guest.BadAnswer("se_verify", fmt.Errorf("it answers %d of %d values", len(list), count))
 	}
 	verified := make([]bool, len(list))
 	for i, v := range list {
@@ -370,7 +370,7 @@ func (cph *Cipher) TargetLimit(ctx context.Context, plan *record.Plan, field, op
 	if err != nil {
 		return Limit{}, err
 	}
-	decoded, err := decodeAnswer("se_target_limit", out)
+	decoded, err := guest.DecodeAnswer("se_target_limit", out)
 	if err != nil {
 		return Limit{}, err
 	}

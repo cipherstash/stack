@@ -432,6 +432,7 @@ fn answers_a_query(reason: Reason) -> bool {
             | JsonNoPredicates
             | JsonWildcardBoundZero
             | JsonUnknownPredicateOp
+            | JsonVarsNotObject
     )
 }
 

@@ -45,7 +45,7 @@ func convert(v any, out any) error {
 		case *[]byte, *[]any, *[]string, *[]int64, *[]int32, *[]uint32, *[]uint64, *[]float64, *[]bool, *[][]byte, *Values, *map[string]any, *any:
 			return nil
 		}
-		return fmt.Errorf("opened as nothing, and %T holds a value", out)
+		return fmt.Errorf("does not open as %s", reflect.TypeOf(out).Elem())
 	}
 	switch out := out.(type) {
 	case *string:
@@ -156,7 +156,7 @@ func convert(v any, out any) error {
 func convertVia(v any, out any) error {
 	target := reflect.ValueOf(out)
 	if target.Kind() != reflect.Pointer || target.IsNil() {
-		return fmt.Errorf("the opened value is a %T, which %T cannot hold", v, out)
+		return fmt.Errorf("%T is not a pointer an opened value is read into", out)
 	}
 	elem := target.Elem()
 	t := elem.Type()
@@ -183,7 +183,7 @@ func convertVia(v any, out any) error {
 		}
 		items, ok := v.([]any)
 		if !ok {
-			return fmt.Errorf("opened as %T, not %s", v, t)
+			return fmt.Errorf("does not open as %s", t)
 		}
 		result := reflect.MakeSlice(t, len(items), len(items))
 		for i, item := range items {
@@ -196,7 +196,7 @@ func convertVia(v any, out any) error {
 	case reflect.Array:
 		items, ok := v.([]any)
 		if !ok || len(items) != t.Len() {
-			return fmt.Errorf("opened as %T with %d elements, not %s", v, len(items), t)
+			return fmt.Errorf("does not open as %s", t)
 		}
 		result := reflect.New(t).Elem()
 		for i, item := range items {
@@ -225,7 +225,7 @@ func convertVia(v any, out any) error {
 		elem.Set(result)
 		return nil
 	}
-	return fmt.Errorf("the opened value is a %T, which this field's type %s cannot hold", v, t)
+	return fmt.Errorf("does not open as %s", t)
 }
 
 // underlying is the built-in type a defined scalar type is declared over.
@@ -290,8 +290,12 @@ func widenNumber(n json.Number, out any) (any, error) {
 	return n, nil
 }
 
-func mismatch(v, want any) error {
-	return fmt.Errorf("opened as %T, not %T", v, want)
+// mismatch is the refusal of an opened value that is not of the type the
+// field needs. It names the type needed and never what the value opened
+// as: that is known only once the value is decrypted, so it is the
+// plaintext's own metadata.
+func mismatch(_, want any) error {
+	return fmt.Errorf("does not open as %T", want)
 }
 
 // outOfRange names the target type and not the value, which is plaintext.
