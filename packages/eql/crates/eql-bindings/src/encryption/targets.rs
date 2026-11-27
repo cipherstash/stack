@@ -236,7 +236,10 @@ pub fn target(name: &str) -> Option<&'static Target> {
 /// are statements about the name, the context or the value. The encryption
 /// itself failing arrives through the returned [`Pending`] as a
 /// [`stack_encrypt::Error`].
-#[derive(Debug, thiserror::Error)]
+///
+/// `Debug` is written by hand so that it leaves out
+/// [`Context`](Self::Context)'s label, which is an encryption context.
+#[derive(thiserror::Error)]
 #[non_exhaustive]
 pub enum TargetError {
     /// No EQL type has this name.
@@ -281,9 +284,16 @@ pub enum TargetError {
     },
     /// The field's context is not an EQL column: an [`Identifier`] is a
     /// two-segment label, table then column, and this label is not one.
-    #[error("{label:?} is not an EQL column identifier: expected two segments, table and column")]
+    ///
+    /// The message and `Debug` leave out the label: a label is an
+    /// encryption context, and an error never shows a context's value.
+    #[error(
+        "the field's label is not an EQL column identifier: expected two segments, table and column"
+    )]
     Context {
-        /// The label, rendered.
+        /// The label, rendered. Never shown: not in the message or `Debug`.
+        /// Kept so that code which builds or matches this variant still
+        /// compiles.
         label: String,
     },
     /// The value is not of the type's plaintext kind. Nothing is converted:
@@ -331,6 +341,56 @@ pub enum TargetError {
         #[source]
         source: serde_json::Error,
     },
+}
+
+/// The derived form, except that [`TargetError::Context`]'s label is shown
+/// as `<redacted>`. A `Debug` of an error reaches logs through `unwrap` and
+/// `{:?}`, so it keeps the rule the message keeps.
+impl fmt::Debug for TargetError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unknown { name } => f.debug_struct("Unknown").field("name", name).finish(),
+            Self::Unproducible { name, reason } => f
+                .debug_struct("Unproducible")
+                .field("name", name)
+                .field("reason", reason)
+                .finish(),
+            Self::NoQuery { name } => f.debug_struct("NoQuery").field("name", name).finish(),
+            Self::DocumentQuery { name } => {
+                f.debug_struct("DocumentQuery").field("name", name).finish()
+            }
+            Self::NoIndex { name, index } => f
+                .debug_struct("NoIndex")
+                .field("name", name)
+                .field("index", index)
+                .finish(),
+            Self::Context { .. } => f
+                .debug_struct("Context")
+                .field("label", &format_args!("<redacted>"))
+                .finish(),
+            Self::Plaintext {
+                target,
+                expected,
+                found,
+            } => f
+                .debug_struct("Plaintext")
+                .field("target", target)
+                .field("expected", expected)
+                .field("found", found)
+                .finish(),
+            Self::Json { target, source } => f
+                .debug_struct("Json")
+                .field("target", target)
+                .field("source", source)
+                .finish(),
+            Self::Options { name } => f.debug_struct("Options").field("name", name).finish(),
+            Self::Stored { target, source } => f
+                .debug_struct("Stored")
+                .field("target", target)
+                .field("source", source)
+                .finish(),
+        }
+    }
 }
 
 /// Which cipher [`decrypt`] opens through: the client, which opens a value
@@ -1019,6 +1079,63 @@ mod tests {
                 "{segments:?}: {error}"
             );
         }
+    }
+
+    /// A label is an encryption context, and an error never shows a
+    /// context's value: not in the message, not in `Debug`.
+    #[test]
+    fn a_context_refusal_never_shows_the_label() {
+        let error = Identifier::from_label(&label(&["tenant-acme", "users", "email"])).unwrap_err();
+        let shown = [
+            error.to_string(),
+            format!("{error:?}"),
+            format!("{error:#?}"),
+        ];
+        for text in &shown {
+            assert!(!text.contains("tenant-acme"), "the label leaked: {text}");
+        }
+        assert_eq!(
+            error.to_string(),
+            "the field's label is not an EQL column identifier: expected two segments, table and \
+             column"
+        );
+        assert_eq!(format!("{error:?}"), "Context { label: <redacted> }");
+    }
+
+    /// The hand-written `Debug` keeps the derived form for the variants that
+    /// carry no context.
+    #[test]
+    fn debug_keeps_the_derived_form_for_the_other_variants() {
+        assert_eq!(
+            format!(
+                "{:?}",
+                TargetError::NoIndex {
+                    name: "TextEq",
+                    index: "ore"
+                }
+            ),
+            "NoIndex { name: \"TextEq\", index: \"ore\" }"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                TargetError::Plaintext {
+                    target: "TextEq",
+                    expected: ValueKind::String,
+                    found: None,
+                }
+            ),
+            "Plaintext { target: \"TextEq\", expected: String, found: None }"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                TargetError::Unknown {
+                    name: "Nope".into()
+                }
+            ),
+            "Unknown { name: \"Nope\" }"
+        );
     }
 
     #[test]

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A column refusal no longer shows the field's label** (#1999). A label
+  is an encryption context, and an error never shows the value of a
+  context. The message of `encryption::targets::TargetError::Context`
+  now starts `the field's label`, and the message of
+  `encryption::query::QueryLabelError::NotAColumn` now starts
+  `the query's label`. `Debug` shows the label of both as
+  `<redacted>`. Both variants keep their `label` field, so code that
+  builds or matches them still compiles.
 - **The by-name target entry points borrow the plaintext as a `Frame`, and
   open into an `OwnedFrame`** (#1955). `encryption::targets::encrypt`,
   `encrypt_with` and `query`, and the `v4::targets` table, take the
