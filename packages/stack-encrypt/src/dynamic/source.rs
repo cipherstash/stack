@@ -17,7 +17,7 @@
 //! * A sequence is a batch. Each element of the sequence is one record.
 //! * Anything else is not a record: a single value, a null, a passthrough
 //!   value, or a sequence inside a batch. The entry for that value is
-//!   `None`. Nothing inside the value is kept.
+//!   `None`. Nothing inside the value is copied or checked.
 //!
 //! This module does not compare the fields with the plan. The caller,
 //! `record::source_rows`, refuses a value that is not a record, a missing
@@ -189,7 +189,6 @@ impl<'f, 's> Sink for ElementSink<'f, 's> {
     fn seq(self, _: Option<usize>) -> Result<NotARecord<'s>, FrameWriteError> {
         Ok(NotARecord {
             record: self.record,
-            skipped: Buffer::new(),
         })
     }
 
@@ -204,27 +203,91 @@ impl<'f, 's> Sink for ElementSink<'f, 's> {
 }
 
 /// A batch element that is a sequence, so is not a record. The source still
-/// has to describe its elements, so they are written into a buffer that is
-/// then dropped. When the sequence ends, the batch gets `None` for it.
+/// describes its elements, and [`Discard`] reads past them without copying
+/// them. When the sequence ends, the batch gets `None` for it.
 struct NotARecord<'s> {
     record: BatchRecord<'s>,
-    skipped: Buffer,
 }
 
 impl SeqSink for NotARecord<'_> {
     type Ok = ();
     type Error = FrameWriteError;
     type Element<'e>
-        = FrameWriter<'e>
+        = Discard
     where
         Self: 'e;
 
-    fn element(&mut self) -> Result<FrameWriter<'_>, FrameWriteError> {
-        Ok(FrameWriter::new(&mut self.skipped))
+    fn element(&mut self) -> Result<Discard, FrameWriteError> {
+        Ok(Discard)
     }
 
     fn end(self) -> Result<(), FrameWriteError> {
         self.record.put(None);
+        Ok(())
+    }
+}
+
+/// A sink that keeps nothing: it reads past a value that is not a record,
+/// so none of the value's plaintext is copied.
+struct Discard;
+
+impl Sink for Discard {
+    type Ok = ();
+    type Error = FrameWriteError;
+    type Seq = Discard;
+    type Map = Discard;
+
+    fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), FrameWriteError> {
+        Ok(())
+    }
+
+    fn typed_null(self, _: FixedType) -> Result<(), FrameWriteError> {
+        Ok(())
+    }
+
+    fn seq(self, _: Option<usize>) -> Result<Discard, FrameWriteError> {
+        Ok(Discard)
+    }
+
+    fn map(self, _: Option<usize>) -> Result<Discard, FrameWriteError> {
+        Ok(Discard)
+    }
+
+    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<(), FrameWriteError> {
+        Ok(())
+    }
+}
+
+impl SeqSink for Discard {
+    type Ok = ();
+    type Error = FrameWriteError;
+    type Element<'e>
+        = Discard
+    where
+        Self: 'e;
+
+    fn element(&mut self) -> Result<Discard, FrameWriteError> {
+        Ok(Discard)
+    }
+
+    fn end(self) -> Result<(), FrameWriteError> {
+        Ok(())
+    }
+}
+
+impl MapSink for Discard {
+    type Ok = ();
+    type Error = FrameWriteError;
+    type Entry<'e>
+        = Discard
+    where
+        Self: 'e;
+
+    fn entry(&mut self, _: &str) -> Result<Discard, FrameWriteError> {
+        Ok(Discard)
+    }
+
+    fn end(self) -> Result<(), FrameWriteError> {
         Ok(())
     }
 }
@@ -278,7 +341,6 @@ impl<O: PutRecord> MapSink for RecordMap<'_, O> {
             })?;
             record.push((key, value));
         }
-        *self.open.borrow_mut() = None;
         Ok(self.out.put(Some(record)))
     }
 }
@@ -412,12 +474,16 @@ mod tests {
         assert_eq!(repeated.field.as_deref(), Some("doc"));
         assert!(matches!(repeated.error, FrameWriteError::DuplicateKey));
 
-        // A refusal after a record ends, outside any record, names no field.
-        let after = refused(&Tree::Array(vec![
+        // A batch element that is not a record is read past, not written:
+        // a value inside it that no frame could hold is not refused here.
+        // The caller refuses the element itself, as not a record.
+        let Ok(SplitSource::Batch(records)) = split_source(Tree::Array(vec![
             obj(vec![("a", Tree::Int32(1))]),
             Tree::Array(vec![bad_date]),
-        ]));
-        assert_eq!(after.field, None);
+        ])) else {
+            panic!("a batch");
+        };
+        assert!(matches!(records.as_slice(), [Some(_), None]));
 
         struct Fails;
         impl Encrypt for &Fails {
