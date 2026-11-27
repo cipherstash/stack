@@ -1,6 +1,6 @@
 // Package encrypt is the Stack Encrypt Go SDK: searchable, field-level
-// encryption under per-value ZeroKMS data keys, running the stack-encrypt
-// Rust engine unmodified inside a WASI guest under wazero (CGO_ENABLED=0).
+// encryption under per-value ZeroKMS data keys, running the Rust encryption
+// engine unmodified inside a WASI guest under wazero (CGO_ENABLED=0).
 //
 // # Use the SDK
 //
@@ -118,9 +118,8 @@
 // derived beside it, or whether it passes through as it is. stashgen reads
 // the tags and writes the encrypted type, Encrypt, Decrypt and Fields into
 // the struct's package; the generated code hands the declaration to the
-// engine as data through package gensupport, and the engine runs the same
-// plan the Rust chain and the derive run. A program never builds or names a
-// plan, and no call takes a context or an index choice of its own.
+// engine as data through package gensupport. A program never builds or names
+// a plan, and no call takes a context or an index choice of its own.
 //
 // A sealed field outside an opaque struct is one value: a string, []byte,
 // bool, an integer of any width (int8 to int64, uint8 to uint64, int, uint,
@@ -133,11 +132,11 @@
 // rows hold which value.
 //
 // Passthrough fields never cross the binding: the engine does nothing to a
-// passthrough value that a program could observe, and the FFI codec cannot
+// passthrough value that a program could observe, and the binding cannot
 // carry every Go type a program stores beside a ciphertext (a
 // driver.Valuer, a sql.NullTime). An opaque struct crosses as one storage
-// blob (vitaminc's storage profile, vcffi.MarshalStorage) and is one column;
-// a row an earlier release sealed as a JSON document still opens.
+// blob and is one column; a row an earlier release sealed as a JSON document
+// still opens.
 //
 // # Terms
 //
@@ -416,9 +415,11 @@
 //
 // Between calls the guest holds the client key and its keyset cache. Data
 // keys are per-call values, wiped when the export returns, and every buffer
-// staged for a call is wiped before the call's result is returned. One
-// exception remains: after Decrypt, one unwiped copy of each opened string
-// stays in the guest's freed heap until that memory is reused. The test
-// TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt records the gap and is
-// skipped until vitaminc wipes that copy.
+// staged for a call is wiped before the call's result is returned.
+//
+// One exception remains: after Decrypt, up to the last 15 bytes of the last
+// value it opened stay in the guest's stack. A string shorter than 16 bytes
+// stays whole. The copy stays until a later Encrypt or Decrypt overwrites
+// it, or [Client.Close] wipes the guest's memory. This gap is known and not
+// yet fixed.
 package encrypt

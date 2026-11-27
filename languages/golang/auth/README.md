@@ -12,7 +12,6 @@ OIDC federation, and automatic selection. Go supplies HTTP and holds the
 cross-process refresh lock for device sessions.
 
 [wazero]: https://wazero.io
-[ADR-0005]: ../../../packages/stack-encrypt/docs/adr/0005-a-separate-credential-guest-for-the-profile-and-auth.md
 
 ## Use
 
@@ -119,18 +118,14 @@ existing: it still has no filesystem and no environment.
 
 ## Build
 
-```
-mise run wasm:auth-guest:build   # the guest, with its import-surface gate
-mise run go:test                 # the whole Go module, both packages
-```
-
 The guest module is embedded from `wasm/`. A tagged version of the module,
-as `go get` resolves it, carries it: the release workflow commits it to the
-commit the tag names, so nothing needs building. A pseudo-version
-(`go get ...@main`, or any commit rather than a tag) does not, and neither
-does a checkout of this repository, where the guest is not committed and the
-commands above build it. Without it, `Open` returns `ErrGuestNotBuilt` and
-the tests skip.
+as `go get` resolves it, includes the guest, so nothing needs building. The
+release workflow commits the guest to the commit the tag names.
+
+A pseudo-version does not include it: that is `go get ...@main`, or any commit
+rather than a tag. A checkout of this repository does not include it either.
+Without the guest, `Open` returns `ErrGuestNotBuilt`. To build it from a
+checkout, see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Licence
 

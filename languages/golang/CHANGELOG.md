@@ -22,6 +22,24 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one. `stashgen` does not yet map a Go type to it.
 
+### Changed
+
+- The errors for a missing engine build now start with what a user can do:
+  require a tagged version of the module. A tagged version includes the
+  build. The build task for a checkout of the repository comes after that. The changed
+  errors are `encrypt.ErrGuestNotBuilt`, `encrypt.ErrEQLGuestNotBuilt`,
+  `auth.ErrGuestNotBuilt`, and the error from `encrypttest.NewClient` when a
+  test build is missing. Only the text changed: `errors.Is` matches the same
+  values as before.
+- The build steps, Rust names, and design records for people who change the
+  SDK moved from the user docs to `CONTRIBUTING.md`.
+- The package documentation now describes the plaintext that stays in the
+  guest after `Decrypt` correctly. The old text said that one copy of each
+  opened string stays in the guest's freed heap. In fact, up to the last 15
+  bytes of the last value opened stay in the guest's stack. They stay until
+  the next `Encrypt` or `Decrypt` overwrites them, or `Close` wipes the
+  memory. The behaviour did not change.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

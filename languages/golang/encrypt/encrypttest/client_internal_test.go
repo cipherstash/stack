@@ -18,12 +18,28 @@ func TestTheDefaultSeedNeverChanges(t *testing.T) {
 }
 
 // A test build missing from the module is named, with the task that builds it.
+// A user needs a tagged version, so the message says that first.
 func TestAMissingTestBuildNamesItsTask(t *testing.T) {
 	_, err := readTestBuild("wasm/not_a_build.wasm", "wasm:guest:build:deterministic")
 	if err == nil {
 		t.Fatal("a missing build was read")
 	}
-	if !strings.Contains(err.Error(), "mise run wasm:guest:build:deterministic") {
+	msg := err.Error()
+	task := strings.Index(msg, "mise run wasm:guest:build:deterministic")
+	if task < 0 {
 		t.Fatalf("the error does not name the task to run: %v", err)
+	}
+	if tagged := strings.Index(msg, "tagged version"); tagged < 0 || tagged > task {
+		t.Fatalf("the error does not name a tagged version before the task: %v", err)
+	}
+	// NewClient refuses an SDK and an encrypttest at different versions, so
+	// the advice names both modules.
+	for _, module := range []string{
+		"github.com/cipherstash/stack/languages/golang and",
+		"github.com/cipherstash/stack/languages/golang/encrypt/encrypttest at the same tagged version",
+	} {
+		if !strings.Contains(msg, module) {
+			t.Fatalf("the error does not name %q: %v", module, err)
+		}
 	}
 }

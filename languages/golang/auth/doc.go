@@ -1,6 +1,6 @@
 // Package auth is the Go binding of the developer profile: the
 // directory `stash auth login` writes (~/.cipherstash, or CS_CONFIG_PATH),
-// read through the stack-profile crate running unmodified inside a WASI
+// read through Rust profile code running unmodified inside a WASI
 // guest under wazero (CGO_ENABLED=0), so the on-disk layout is never
 // re-derived by hand in Go.
 //
@@ -13,9 +13,8 @@
 // strategies where there is no profile. The guest is given that directory
 // and nothing else: no environment, no other path, and no way out through a
 // symlink inside it, which the mount refuses to follow. Authentication HTTP
-// requests go through the Go host's transport import. Everything the napi
-// binding of stack-profile exposes is a method here, named as in Rust: the
-// current workspace ([ProfileStore.CurrentWorkspace],
+// requests go through the Go host's transport import. A store has methods for
+// the current workspace ([ProfileStore.CurrentWorkspace],
 // [ProfileStore.SetCurrentWorkspace], [ProfileStore.ClearCurrentWorkspace]),
 // the workspaces on disk ([ProfileStore.ListWorkspaces]), a store scoped to
 // one workspace ([ProfileStore.WorkspaceStore],
@@ -70,8 +69,7 @@
 // disk. Mounting the profile into it would trade that away, and it is the
 // module that handles plaintext and data keys. So the profile lives in its
 // own module with its own, smaller blast radius: one directory of
-// credentials. ADR-0005 in packages/stack-encrypt/docs/adr records the
-// decision and the alternatives.
+// credentials.
 //
 // # What the guest cannot do
 //
@@ -81,8 +79,7 @@
 // the lock and saves a rotated token before Go releases it. Creating a device
 // identity is native-only in the crate and
 // CLI territory; this package only reads one. Files the guest creates are
-// mode 0600, which is wazero's create mode rather than the crate's own
-// (skipped on wasm32), so a test pins it.
+// mode 0600.
 //
 // # Memory
 //

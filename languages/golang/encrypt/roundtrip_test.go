@@ -346,19 +346,26 @@ func TestPlaintextDoesNotRemainInGuestMemory(t *testing.T) {
 // The same check after Decrypt, which is the call that puts plaintext back
 // into the guest. It fails today, and the copy it finds is not the engine's.
 //
-// The copies that stay are stack copies, not heap ones: they sit just below
-// 1 MiB, in the wasm shadow stack, at the same addresses on every run. Each
-// is the decrypted leaf (vitaminc's STRING tag 0x0a, then the text) directly
-// after a 16-byte AES-GCM counter block (the leaf's own nonce, then the
-// big-endian block counter): the plaintext that AES-256-GCM's keystream XOR
-// produces (GCM encrypts by XORing an AES counter-mode keystream), held in
-// the stack temporaries of the RustCrypto cipher crates (cipher, inout) that
-// vitaminc-encrypt's wasm32 backend (aes-gcm 0.10) decrypts through, which
-// nothing wipes. How many survive depends on the leaf's length and on how
-// later calls reuse those frames: a reviewer saw 0, 1 and 2 copies for
-// leaves of 46, 31 and 11 characters. So the fix is in the cipher's stack
-// hygiene, in vitaminc or below it (cipherstash/vitaminc#370), not here; the
-// skip records it, and the test runs again once it is fixed there.
+// The copy that stays is on the stack, not the heap. It is the last 16-byte
+// block that AES-256-GCM decrypted. A leaf is vitaminc's STRING tag 0x0a,
+// then the text.
+//
+// A text of 15 bytes or fewer fits in one block, and stays whole, even when
+// that block is full. For a longer text, only a last block shorter than 16
+// bytes stays: the last (len+1) mod 16 bytes. Nothing stays at 31, 47, 63,
+// 79, or 95 bytes. This test's plaintext is 15 bytes, so all of it stays.
+//
+// The copy is at the same address on every run: 1041212, just below 1 MiB,
+// in the wasm shadow stack. Only the last value a call opens stays there.
+// The next Encrypt or Decrypt overwrites it.
+//
+// GCM encrypts by XORing an AES counter-mode keystream. A short last block
+// goes through a stack buffer in the RustCrypto cipher crates (cipher,
+// inout). The wasm32 backend of vitaminc-encrypt (aes-gcm 0.10) decrypts
+// through them. Nothing wipes that buffer.
+//
+// So the fix is in vitaminc or below it (cipherstash/vitaminc#370), not
+// here. The skip records the gap. Remove it once the fix is released.
 //
 // This test cannot speak for the heap: allocator metadata and reuse
 // overwrite most freed chunks before it reads memory. The heap guard is
@@ -366,10 +373,10 @@ func TestPlaintextDoesNotRemainInGuestMemory(t *testing.T) {
 // same name), whose allocator fails a test on any freed block that still
 // holds plaintext.
 func TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt(t *testing.T) {
-	t.Skip("known: copies of an opened string can remain in the guest's shadow stack after Decrypt, as the plaintext output of AES-256-GCM's keystream XOR, in the unwiped stack temporaries of the RustCrypto crates behind vitaminc-encrypt's wasm32 backend (cipherstash/vitaminc#370); the count varies with the leaf's length; run this test again when that is wiped")
+	t.Skip("known: after Decrypt, the last AES-256-GCM block of the last value opened stays in the guest's shadow stack (all of a value in one block, else a final block shorter than 16 bytes), in an unwiped stack buffer of the RustCrypto crates behind vitaminc-encrypt's wasm32 backend (cipherstash/vitaminc#370); run this test again when that is wiped")
 	c := deterministicClient(t)
 	cipher := c.DefaultKeyset()
-	const plaintext = "residency-probe-4111-b1c2d3e4f5"
+	const plaintext = "probe-4111-b1c2"
 	encrypted, err := testusers.Encrypt(t.Context(), cipher, []testusers.User{{ID: 1, Age: 34, Email: "probe@example.com", Notes: plaintext}})
 	if err != nil {
 		t.Fatal(err)
