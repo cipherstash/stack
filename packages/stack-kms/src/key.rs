@@ -284,8 +284,7 @@ impl V1KeySet {
     ///
     /// A keyset whose permutations are not permutations is refused here,
     /// because re-encrypting with it can loop forever or panic. p1, p2_from
-    /// and p2_to must each permute `0..16`, and p3 must permute `0..n` for
-    /// some `n` from 1 to 64.
+    /// and p2_to must each permute `0..16`, and p3 must permute `0..33`.
     ///
     /// Every error is a fixed message. None includes a value read from the
     /// key.
@@ -379,6 +378,13 @@ struct PermutationShape {
 /// bytes of one block.
 const BLOCK_LEN: usize = 16;
 
+/// The number of blocks p3 permutes. zerokms-keyset generates every p3 with
+/// 33 entries (`EncryptionKeySet::generate`), and the key material ZeroKMS
+/// returns has 33 blocks. A p3 of another length cannot be used: the key
+/// material's length is checked against it only after the load-keyset round
+/// trip. protect-ffi's check uses the same number.
+const BLOCK_COUNT: usize = 33;
+
 /// Refuse a keyset whose permutations are not permutations.
 ///
 /// zerokms-keyset re-encrypts by following each permutation's cycles. With
@@ -388,9 +394,10 @@ const BLOCK_LEN: usize = 16;
 /// cause either, so the keyset is checked when it is read.
 ///
 /// p1, p2_from and p2_to must each be a permutation of `0..16`. p3 permutes
-/// the blocks, and must be a permutation of `0..n` for some `n` from 1 to
-/// 64. The check does not branch on any one entry, because the entries are
-/// secret. The error is a fixed message and names no value.
+/// the blocks, and must be a permutation of `0..33`. The check does not
+/// branch on any one entry, because the entries are secret. The error is a
+/// fixed message and names no value. The rules, and which SDKs apply them,
+/// are in `docs/reference/client-key-validation.md`.
 ///
 /// This check protects only code that reads a keyset through this crate:
 /// the Go SDK's guest and stack-encrypt. The TypeScript SDK reads its key
@@ -410,10 +417,10 @@ fn check_permutations(bytes: &[u8]) -> serde_cbor::Result<()> {
             "the keyset is not valid CBOR of a v1 keyset",
         )
     })?;
-    let valid = is_permutation(&shape.p1.permutation, Some(BLOCK_LEN))
-        & is_permutation(&shape.p2_from.permutation, Some(BLOCK_LEN))
-        & is_permutation(&shape.p2_to.permutation, Some(BLOCK_LEN))
-        & is_permutation(&shape.p3.permutation, None);
+    let valid = is_permutation(&shape.p1.permutation, BLOCK_LEN)
+        & is_permutation(&shape.p2_from.permutation, BLOCK_LEN)
+        & is_permutation(&shape.p2_to.permutation, BLOCK_LEN)
+        & is_permutation(&shape.p3.permutation, BLOCK_COUNT);
     if valid {
         Ok(())
     } else {
@@ -423,12 +430,13 @@ fn check_permutations(bytes: &[u8]) -> serde_cbor::Result<()> {
     }
 }
 
-/// Whether `p` is a permutation of `0..p.len()`, with `p.len()` from 1 to
-/// 64, and equal to `len` when `len` is given. Only the result depends on
-/// the entries; no branch does.
-fn is_permutation(p: &[u8], len: Option<usize>) -> bool {
+/// Whether `p` is a permutation of `0..len`. `len` is at most 64, the
+/// width of the bit set below. Only the result depends on the entries; no
+/// branch does.
+fn is_permutation(p: &[u8], len: usize) -> bool {
+    debug_assert!((1..=64).contains(&len), "len is a constant from 1 to 64");
     let n = p.len();
-    if n == 0 || n > 64 || len.is_some_and(|len| len != n) {
+    if n != len {
         return false;
     }
     let mut seen = 0u64;
@@ -617,6 +625,25 @@ mod tests {
         fn refuses_a_block_permutation_of_the_wrong_length() {
             // p1 permutes the 16 bytes of a block, so it has 16 entries.
             all_refused(&edited("p1", |e| e.truncate(8)), "p1");
+        }
+
+        /// p3 is applied to the 33 blocks of key material ZeroKMS returns,
+        /// so a valid permutation of any other length cannot be used. It is
+        /// refused when it is read, with the same fixed message, and not
+        /// after the load-keyset round trip.
+        #[test]
+        fn refuses_a_p3_that_does_not_have_33_entries() {
+            for n in [1, 32, 34, 64] {
+                let bytes = edited("p3", |e| *e = (0..n).map(Value::Integer).collect());
+                let label = format!("p3 of length {n}");
+                all_refused(&bytes, &label);
+                let err = ClientKey::from_bytes(uuid::Uuid::nil(), &bytes).expect_err("refused");
+                assert_eq!(
+                    err.to_string(),
+                    "the keyset's permutations are not valid",
+                    "{label}: the refusal is a fixed message"
+                );
+            }
         }
 
         #[test]

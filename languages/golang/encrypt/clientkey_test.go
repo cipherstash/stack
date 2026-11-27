@@ -26,6 +26,17 @@ import (
 // looped forever in the guest, after the load-keyset round trip.
 var testKeyWithBadPermutation = strings.Replace(testClientKey, "982102", "982100", 1)
 
+// p3 is the last field of testClientKey. Its entries follow the array head
+// 0x98 0x21 (33 entries), and the entry 32 is encoded as 0x18 0x20.
+
+// testKeyWithP3Of32 is testClientKey with entry 32 taken out of p3. p3 is
+// then a valid permutation of 32 blocks, but ZeroKMS key material has 33.
+var testKeyWithP3Of32 = strings.Replace(testClientKey, "6f6e982102010c0a1820", "6f6e982002010c0a", 1)
+
+// testKeyWithP3Of34 is testClientKey with entry 33 added to the end of p3.
+// p3 is then a valid permutation of 34 blocks.
+var testKeyWithP3Of34 = strings.Replace(testClientKey, "6f6e9821", "6f6e9822", 1) + "1821"
+
 // keysetKMS answers load-keyset as ZeroKMS would, with key material of the
 // right length, so a client gets as far as deriving its index key. It counts
 // the requests it is sent.
@@ -121,21 +132,36 @@ func wantClientKeyError(t *testing.T, err error, key string) {
 // under the race detector, most of it loading the guest. Without the race
 // detector it takes about 2 seconds. The watchdog only has to tell a
 // NewClient that returns from one that never does.
+//
+// A p3 that is a valid permutation of 32 or 34 blocks is refused the same
+// way. Before p3 had to have 33 entries, such a key failed only after the
+// load-keyset round trip.
 func TestNewClientRefusesAKeyWithABadPermutation(t *testing.T) {
 	guestOrSkip(t)
-	kms := &keysetKMS{}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	start := time.Now()
-	_, err := newClientWithin(t, ctx, 120*time.Second,
-		WithCredentials(newTestCredentials(testClientID, NewClientKey([]byte(testKeyWithBadPermutation)), staticToken("t"))),
-		withZeroKMSURL("http://zerokms.invalid"), WithTransport(kms))
-	if errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("NewClient ran to its deadline (%s): %v", time.Since(start), err)
-	}
-	wantClientKeyError(t, err, testKeyWithBadPermutation)
-	if n := kms.sent.Load(); n != 0 {
-		t.Errorf("ZeroKMS was asked %d times for a key that is not valid", n)
+	for name, key := range map[string]string{
+		"a repeated entry in p3": testKeyWithBadPermutation,
+		"p3 with 32 entries":     testKeyWithP3Of32,
+		"p3 with 34 entries":     testKeyWithP3Of34,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if key == testClientKey {
+				t.Fatal("the edit did not change the key")
+			}
+			kms := &keysetKMS{}
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel()
+			start := time.Now()
+			_, err := newClientWithin(t, ctx, 120*time.Second,
+				WithCredentials(newTestCredentials(testClientID, NewClientKey([]byte(key)), staticToken("t"))),
+				withZeroKMSURL("http://zerokms.invalid"), WithTransport(kms))
+			if errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("NewClient ran to its deadline (%s): %v", time.Since(start), err)
+			}
+			wantClientKeyError(t, err, key)
+			if n := kms.sent.Load(); n != 0 {
+				t.Errorf("ZeroKMS was asked %d times for a key that is not valid", n)
+			}
+		})
 	}
 }
 

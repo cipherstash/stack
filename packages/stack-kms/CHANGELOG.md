@@ -51,6 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ClientKey::from_bytes`, `ClientKey::from_hex_v1`,
   `ClientKey::from_encoded_v1`, `V1KeySet::from_bytes`, and deserializing a
   `V1KeySet`. The error names no value from the key.
+- A keyset whose `p3` does not have exactly 33 entries is refused the same
+  way (#1850). ZeroKMS key material has 33 blocks, so a `p3` of another
+  length cannot be used. Before this fix, such a key failed only after the
+  load-keyset round trip to ZeroKMS.
 - A keyset whose CBOR does not parse is refused with a fixed message
   (#1850). Before this fix, the error was serde's own message. That
   message can print entries read from the key.

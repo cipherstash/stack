@@ -30,9 +30,12 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `NewClient` then sent its first request to ZeroKMS, and the guest looped
   forever when it used the key. The loop used a full CPU core and ignored
   the context's deadline. Now `NewClient` checks the key's encoding before
-  it loads the guest. The guest checks the key's permutations before it
-  sends anything to ZeroKMS. A key with one wrong character fails at once
-  with `encrypt.ErrConfig`.
+  it loads the guest. Before it sends anything to ZeroKMS, the guest checks
+  that each of the key's permutations is valid. `p3` must have exactly 33
+  entries, one for each block of key material ZeroKMS returns. A key
+  with one wrong character, or with a `p3` of another length, fails at once
+  with `encrypt.ErrConfig`. The rules are in
+  [client key validation](../../docs/reference/client-key-validation.md).
 
 ## [0.1.0-rc.7] - 2026-11-25
 
