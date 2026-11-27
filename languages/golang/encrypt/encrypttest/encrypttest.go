@@ -88,8 +88,9 @@ type Placeholder struct {
 	FromPlaintext bool
 }
 
-// Extension is the optional extension a plan accepts from the call that
-// runs it: "{extension?: CallerContext}".
+// Extension is the optional part a plan accepts from the call that runs
+// it: the scopes of an [encrypt.Cipher.Scope] cipher. The engine prints it
+// by its own name: "{extension?: CallerContext}".
 func Extension() Placeholder {
 	return Placeholder{Name: "extension", Type: "CallerContext", Optional: true}
 }

@@ -121,7 +121,7 @@ func (k *Checker) Operators(ctx context.Context, plan *record.Plan, field string
 // context read from a field of each record shows as a placeholder. The text
 // is the engine's, and the same as a Rust record's contexts() for the same
 // declaration, so a test that pins it agrees with Rust. A plan the engine
-// refuses is [ErrEncoding]. For the contexts a cipher's extension adds, use
+// refuses is [ErrEncoding]. For the contexts a cipher's scopes add, use
 // [Cipher.Contexts].
 func (k *Checker) Contexts(ctx context.Context, plan *record.Plan) (string, error) {
 	if err := plan.Validate(); err != nil {

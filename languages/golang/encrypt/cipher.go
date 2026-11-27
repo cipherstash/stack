@@ -8,22 +8,24 @@ import (
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
-// Cipher is a [Client] bound to one keyset, and to any extension of the
+// Cipher is a [Client] bound to one keyset, and to any scopes of the
 // context: the Go form of the Rust crate's KeysetCipher. Generated code seals
 // values, derives terms and opens records through it; a program never calls
 // the engine directly. A Cipher opens only its own keyset's ciphertexts — a
 // leaf sealed under another keyset is refused as [ErrForeignKeyset] before
 // any key is retrieved. To open ciphertexts from any keyset, pass the
 // [Client] where a [Decrypter] is taken. A Client opens only rows that a
-// cipher with no extension encrypted; rows sealed through [Cipher.Extend]
-// open only through a cipher with the same extension.
+// cipher with no scope encrypted; rows sealed through [Cipher.Scope]
+// open only through a cipher with the same scopes.
 //
 // A Cipher holds no guest state: the keyset is selected on every call, and
 // loaded by the guest on first use, so one is cheap to make per request or
 // per tenant.
 type Cipher struct {
-	client    *Client
-	keyset    KeysetSelector
+	client *Client
+	keyset KeysetSelector
+	// extension is the caller's scopes, in order, from [Cipher.Scope]: in
+	// the stored context and the query context of every field.
 	extension []any
 	// bindings is the caller's bindings, in order, after the scopes: in the
 	// stored context of every field, and in no query context.
@@ -35,8 +37,9 @@ type Cipher struct {
 	// request; nil sends none. The facts are never changed after they are
 	// made, so ciphers share them.
 	audit auditFacts
-	// err is a refused extension part, context or audit value, reported by
-	// the first call rather than by Extend, Context or Audit: a cipher is
+	// err is a refused scope or binding part, context or audit value,
+	// reported by the first call rather than by Scope, Bind, Context or
+	// Audit: a cipher is
 	// made without a request, and no call on this package panics.
 	err error
 }

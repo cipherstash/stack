@@ -13,6 +13,14 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Changed
+
+- The `encrypt` package documentation, its README, and the example teach
+  `Cipher.Scope` (#1854). Doc comments that said "extension" now say
+  "scope", such as those of `Cipher` and `encrypttest.Extension`. `Cipher.Extend` and
+  `Cipher.Extension` still work, as deprecated aliases until 0.1.0. No
+  behaviour changes.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

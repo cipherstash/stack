@@ -69,8 +69,8 @@ func TestLiveRecordsAndTerms(t *testing.T) {
 		t.Fatalf("Decrypt through the client: %v %+v", err, back)
 	}
 
-	// A context extension is part of the identity: the write, the query
-	// and the read all go through the extended cipher.
+	// A scope is part of the identity: the write, the query and the read
+	// all go through the scoped cipher.
 	tenant7, tenant8 := cipher.Extend(uint64(7)), cipher.Extend(uint64(8))
 	ext, err := testusers.Encrypt(ctx, tenant7, livePeople)
 	if err != nil {

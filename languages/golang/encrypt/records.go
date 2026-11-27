@@ -20,7 +20,7 @@ import (
 // Decrypter opens records: a *Cipher, which refuses a record sealed under
 // another keyset before any key is retrieved, or a *Client, which opens each
 // record under the keyset that sealed it. A *Client opens only records that
-// a cipher with no extension sealed, and checks no stored context field
+// a cipher with no scope sealed, and checks no stored context field
 // against a label: that is [Cipher.Context]. Generated Decrypt functions
 // take one. Its method is for generated code; a program does not call it.
 type Decrypter interface {
@@ -28,7 +28,7 @@ type Decrypter interface {
 }
 
 // Contexts shows the contexts this cipher seals and indexes the plan's
-// fields under, with the cipher's extension applied, before any key is
+// fields under, with the cipher's scopes applied, before any key is
 // requested: what [Cipher.Seal] will use for every row. The text is
 // [Checker.Contexts]'s, one line per field and one indented line with its
 // context. A plan the engine refuses is [ErrEncoding].
@@ -41,7 +41,7 @@ func (cph *Cipher) Contexts(ctx context.Context, plan *record.Plan) (string, err
 }
 
 // Seal encrypts rows under the plan, through this cipher's keyset and with
-// its extension: the sealed fields of every row, in order, with one ZeroKMS
+// its scopes: the sealed fields of every row, in order, with one ZeroKMS
 // request for each 500 sealed values. For generated code.
 func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.Source) ([]record.Sealed, error) {
 	p, err := cph.plan(plan)
@@ -82,7 +82,7 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 		return inst.call(ctx, inst.encryptRecord, buf(encodedSource), buf(encodedPlan), buf(opts))
 	})
 	if errors.Is(err, ErrTerm) {
-		// The plan as given: derive applies the extension itself.
+		// The plan as given: derive applies the scopes itself.
 		return nil, cph.locateTermFailure(ctx, plan, rows, err)
 	}
 	if err != nil {
@@ -127,7 +127,7 @@ func (cph *Cipher) Open(ctx context.Context, plan *record.Plan, records []record
 }
 
 // derive derives one index term for one value of a field, under the plan's
-// context for that field and this cipher's extension: the term the record
+// context for that field and this cipher's scopes: the term the record
 // call stores for it. It is how locateTermFailure names the field
 // behind a record's term failure; a query asks [Cipher.QueryTerm], which
 // names an operator. A plan that takes its context from a field has none of
@@ -175,7 +175,7 @@ func (cph *Cipher) derive(ctx context.Context, plan *record.Plan, field string, 
 }
 
 // queryPlan is the plan a query on field derives under: the declaration's
-// plan with this cipher's extension and, for a plan that takes its context
+// plan with this cipher's scopes and, for a plan that takes its context
 // from a field, the context named with [Cipher.Context] in that field's
 // place. A cipher that names none is refused as [ErrEncoding]: a term
 // derives under a context, and such a plan has none until a record names it.
@@ -265,7 +265,8 @@ func (c *Client) openAny(ctx context.Context, audit auditFacts, plan *record.Pla
 	return c.open(ctx, callOptions{keyset: anyKeyset{}, audit: audit}, plan, records)
 }
 
-// plan is the declaration's plan with this cipher's extension, checked. A
+// plan is the declaration's plan with this cipher's scopes and bindings,
+// checked. A
 // cipher that names a context serves a plan that takes its context from a
 // field and no other: for one with a context of its own there is nothing
 // the label could be, so it is refused as two sources, as the engine
@@ -560,7 +561,7 @@ func (c *Client) openEncoded(ctx context.Context, call callOptions, p *record.Pl
 // as the empty filter), so a term failure on a record is the scheme refusing
 // the value's kind under that index. derive asks the query path, which does
 // refuse text with no token, so that one refusal is skipped here: it cannot
-// be why the record failed. p is the plan without this cipher's extension,
+// be why the record failed. p is the plan without this cipher's scopes,
 // which derive adds.
 func (cph *Cipher) locateTermFailure(ctx context.Context, p *record.Plan, rows []record.Source, err error) error {
 	for i, row := range rows {

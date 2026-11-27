@@ -12,7 +12,8 @@
 // "float32", "float64", "decimal", "date", "timestamp", "string",
 // "bytes" and "json". A field's context is
 // its label — the plan's context segments and the field's identity — nested
-// to the left under each part the caller extends it by.
+// to the left under each scope the caller adds. The caller's bindings come
+// after the scopes, in the stored context only.
 //
 // Passthrough fields do not appear in a Plan. The Go SDK keeps them on the
 // host: the FFI codec cannot carry every Go type a program stores beside a
@@ -240,8 +241,8 @@ func (f Field) HasCiphertext() bool {
 	return false
 }
 
-// Plan is a declaration as the engine reads it: one context, any extension,
-// and the sealed fields.
+// Plan is a declaration as the engine reads it: one context, any scopes and
+// bindings, and the sealed fields.
 type Plan struct {
 	// Context is the label every field's label extends: at least one plain
 	// segment. The guest requires a field's label to have two or more
@@ -316,7 +317,7 @@ func CheckSegment(s string) error {
 // list as Rust's Label::INVISIBLE.
 const invisible = "\u00ad\u061c\u180e\u200b\u200c\u200d\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2060\u2061\u2062\u2063\u2064\u2066\u2067\u2068\u2069\ufeff"
 
-// CheckPart refuses a context extension part that is not a string, a byte
+// CheckPart refuses a scope part that is not a string, a byte
 // slice or an integer the codec carries.
 func CheckPart(part any) error {
 	switch part.(type) {
@@ -357,7 +358,7 @@ var Reserved = []string{"context_field", "bind"}
 // Validate checks what the host can check before the engine sees the plan:
 // a context, plain segments, at least one field, names and identities once,
 // outputs once and at least one, known kinds, a kind on every indexed field,
-// and extension parts the codec carries. The engine's own rules — which index a kind admits, what the
+// and scope and binding parts the codec carries. The engine's own rules — which index a kind admits, what the
 // builder refuses — are the engine's, asked through se_plan_check.
 func (p *Plan) Validate() error {
 	switch {
@@ -553,7 +554,7 @@ func (p *Plan) Wire() vcvalue.Object {
 }
 
 // FieldContext is one field's context as the guest reads it: the label as a
-// flat list of its segments, then each extension part nested to the left —
+// flat list of its segments, then each scope nested to the left —
 // [[["users", "age"], 7], "eu"] — exactly the shape se_term takes for a
 // probe of that field. Under a context field the label is the identity
 // alone: [["age"], 7].
