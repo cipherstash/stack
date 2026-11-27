@@ -414,9 +414,19 @@ the code of the error's `*Diagnostic` (see [Errors](#errors)).
 | `context_field`: a cipher from `cipher.Context(..)` encrypts a value whose field names another tenant | `ErrContextMismatch`, before anything is sent | none: the SDK refuses the value itself |
 | `context_field`: a row's stored tenant was changed after it was written | `ErrForbidden` | `stack_kms::retrieve_key_failed` |
 
-The `ErrForbidden` for a scope does not say that the scope is wrong, and
-the `Help` of its `*Diagnostic` is empty. The `*Client` gets the same error
-and code when it decrypts rows of a keyset it has no grant for.
+The `ErrForbidden` for a scope does not say that the scope is wrong.
+ZeroKMS gives the same answer for a disabled keyset, and for an access
+token that lacks the scope to retrieve keys. [Errors](#errors) says why
+ZeroKMS does not name the cause. The `Help` of the error's `*Diagnostic`
+says which cause is likely:
+
+- Through a `*Cipher`, the `Help` says that the context is the likely
+  cause, and names the keyset.
+- Through the `*Client`, the `Help` names every cause.
+
+ZeroKMS answers a missing grant with HTTP 404. So the `*Client` fails with
+`ErrNotFound` when it decrypts a row of a keyset it has no grant for. The
+code is `stack_kms::retrieve_key_failed`.
 
 Check for `ErrAuthentication` too, as the [Errors](#errors) list says. A
 decrypt with the wrong scope fails with `ErrAuthentication` when ZeroKMS
