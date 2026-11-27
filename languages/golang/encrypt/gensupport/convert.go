@@ -63,7 +63,7 @@ func convert(v any, out any) error {
 	case *[16]byte:
 		// A UUID field opens as a vcvalue.UUID. Generated code reads it as
 		// [16]byte and converts it to the field's own type (uuid.UUID, say).
-		// Any other value is read as an array, as before.
+		// Any other value is read as an array of sixteen numbers.
 		u, ok := v.(vcvalue.UUID)
 		if !ok {
 			return convertVia(v, out)
