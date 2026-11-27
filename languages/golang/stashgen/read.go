@@ -57,6 +57,7 @@ type genFile struct {
 
 	notices         []string
 	printsPlaintext bool
+	printsNotice    string // the notice for printsPlaintext, without "stashgen: "
 	unexported      []string
 	unqueried       []string // stderr notices about one field: an array with no Elements accessor
 	redact          bool
@@ -351,10 +352,11 @@ func (r *reader) build(collected *collected, typeName string, valueNamed *types.
 	if sealedCount > 0 && !f.redact && (!isStringer(valueNamed) || !isLogValuer(valueNamed)) {
 		f.printsPlaintext = true
 		if foreign {
-			f.notices = append(f.notices, fmt.Sprintf("%s prints its sealed fields in the clear, and stashgen cannot add print methods to a type from another package.", typeName))
+			f.printsNotice = fmt.Sprintf("%s prints its sealed fields in the clear, and stashgen cannot add print methods to a type from another package.", typeName)
 		} else {
-			f.notices = append(f.notices, fmt.Sprintf("%s prints its sealed fields in the clear: it has no String or LogValue method. Write them, or run stashgen with -redact.", typeName))
+			f.printsNotice = fmt.Sprintf("%s prints its sealed fields in the clear: it has no String or LogValue method. Write them, or run stashgen with -redact.", typeName)
 		}
+		f.notices = append(f.notices, f.printsNotice)
 	}
 	if conversionNotice != "" {
 		f.notices = append(f.notices, conversionNotice)

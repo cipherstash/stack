@@ -53,14 +53,34 @@ func TestNoticesPrintOnceForEachType(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("got %d notices, want 3:\n%s", len(lines), buf.String())
 	}
-	if want := `stashgen: Account: not encrypted and not stored: the unexported field "cache". Tag it ` + "`stash:\"-\"`" + ` to confirm that.`; lines[0] != want {
+	// The user's program prints these notices too, so they name the SDK
+	// (#1898).
+	if want := `encrypt: Account: not encrypted and not stored: the unexported field "cache". Tag it ` + "`stash:\"-\"`" + ` to confirm that.`; lines[0] != want {
 		t.Fatalf("line 0 = %q\nwant     %q", lines[0], want)
 	}
-	if !strings.Contains(lines[1], `fields "a" and "b". Tag each`) {
-		t.Fatalf("line 1 = %q", lines[1])
+	if want := `encrypt: Other: not encrypted and not stored: the unexported fields "a" and "b". Tag each ` + "`stash:\"-\"`" + ` to confirm that.`; lines[1] != want {
+		t.Fatalf("line 1 = %q\nwant     %q", lines[1], want)
 	}
-	if !strings.Contains(lines[2], "User prints its sealed fields in the clear") {
-		t.Fatalf("line 2 = %q", lines[2])
+	// The user's program prints this notice, not stashgen, so it names the
+	// SDK (#1898).
+	if want := "encrypt: User prints its sealed fields in the clear: it has no String or LogValue method. Write them, or run stashgen with -redact."; lines[2] != want {
+		t.Fatalf("line 2 = %q\nwant     %q", lines[2], want)
+	}
+}
+
+// A type from another package has a qualified name, and stashgen -redact
+// refuses it, so the notice does not suggest -redact for it.
+func TestNoticePrintsPlaintextForATypeFromAnotherPackage(t *testing.T) {
+	var buf bytes.Buffer
+	prev := SetNotices(&buf)
+	defer SetNotices(prev)
+	ResetNoticed()
+
+	NoticePrintsPlaintext("crm.Contact")
+
+	want := "encrypt: crm.Contact prints its sealed fields in the clear, and stashgen cannot add print methods to a type from another package.\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("notice = %q\nwant     %q", got, want)
 	}
 }
 

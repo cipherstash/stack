@@ -98,23 +98,30 @@ var (
 // NoticeUntagged prints, once for each type, that the unexported fields are
 // neither encrypted nor stored. stashgen printed the same notice when it
 // wrote the file, and the file names the fields in a comment. The tag
-// `stash:"-"` on each field stops all three.
+// `stash:"-"` on each field stops all three. Here the user's program prints
+// it, so it starts with "encrypt:", the SDK's name.
 func NoticeUntagged(typeName string, fields []string) {
 	if len(fields) == 0 {
 		return
 	}
 	notice("untagged:"+typeName, fmt.Sprintf(
-		"stashgen: %s: not encrypted and not stored: the unexported %s. Tag %s `stash:\"-\"` to confirm that.",
+		"encrypt: %s: not encrypted and not stored: the unexported %s. Tag %s `stash:\"-\"` to confirm that.",
 		typeName, fieldList(fields), itOrEach(fields)))
 }
 
 // NoticePrintsPlaintext prints, once for each type, that the type prints its
 // sealed fields in the clear because it has no String and LogValue methods.
-// stashgen printed the same notice when it wrote the file.
+// stashgen printed the same notice when it wrote the file. Here the user's
+// program prints it, so it starts with "encrypt:", the SDK's name.
+//
+// A type from another package has a qualified name, such as "crm.Contact".
+// stashgen -redact refuses such a type, so its notice does not suggest it.
 func NoticePrintsPlaintext(typeName string) {
-	notice("prints:"+typeName, fmt.Sprintf(
-		"stashgen: %s prints its sealed fields in the clear: it has no String or LogValue method. Write them, or run stashgen with -redact.",
-		typeName))
+	advice := ": it has no String or LogValue method. Write them, or run stashgen with -redact."
+	if strings.Contains(typeName, ".") {
+		advice = ", and stashgen cannot add print methods to a type from another package."
+	}
+	notice("prints:"+typeName, "encrypt: "+typeName+" prints its sealed fields in the clear"+advice)
 }
 
 func notice(key, text string) {

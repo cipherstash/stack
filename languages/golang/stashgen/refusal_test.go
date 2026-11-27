@@ -309,6 +309,42 @@ func TestAStructWithPrintMethodsGetsNoNotice(t *testing.T) {
 	}
 }
 
+// The notice for a type that prints its sealed fields suggests -redact only
+// for a type in the package, because -redact refuses a type from another
+// package.
+func TestPrintsPlaintextNoticeSuggestsRedactOnlyForATypeInThePackage(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		req  stashgen.Request
+		want string
+	}{
+		{
+			"a type in the package",
+			user(ctx + "\tEmail string `stash:\"email,encrypt\"`"),
+			stashgen.Request{Type: "User"},
+			"stashgen: User prints its sealed fields in the clear: it has no String or LogValue method. Write them, or run stashgen with -redact.",
+		},
+		{
+			"a type from another package",
+			user(ctx + "\tID int64 `stash:\"id,passthrough\"`\n\tEmail string `stash:\"email,encrypt\"`"),
+			stashgen.Request{Type: "User", For: "crm.Contact"},
+			"stashgen: crm.Contact prints its sealed fields in the clear, and stashgen cannot add print methods to a type from another package.",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			file, err := generate(t, c.src, c.req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(file.Notices) != 1 || file.Notices[0] != c.want {
+				t.Fatalf("notices = %q\nwant      [%q]", file.Notices, c.want)
+			}
+		})
+	}
+}
+
 // A method named String or LogValue with another signature is not what fmt
 // or slog calls, so the struct still prints its sealed fields.
 func TestAPrintMethodWithTheWrongSignatureStillGetsANotice(t *testing.T) {

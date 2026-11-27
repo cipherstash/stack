@@ -168,7 +168,7 @@ func (f *genFile) stderrNotices() []string {
 		out = append(out, fmt.Sprintf("stashgen: %s: not encrypted and not stored: the unexported %s. Tag %s `stash:\"-\"` to confirm that.", f.typeName, fieldList(f.unexported), itOrEach(f.unexported)))
 	}
 	if f.printsPlaintext {
-		out = append(out, fmt.Sprintf("stashgen: %s prints its sealed fields in the clear: it has no String or LogValue method. Write them, or run stashgen with -redact.", f.typeName))
+		out = append(out, "stashgen: "+f.printsNotice)
 	}
 	return append(out, f.unqueried...)
 }
