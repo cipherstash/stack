@@ -86,15 +86,24 @@ with `{"name": "Ada"}` at the path.
 ```sql
 SELECT id, profile FROM customers WHERE profile @> $1::eql_v4.query_json;
 SELECT id, profile FROM customers WHERE profile <@ $1::eql_v4.query_json;
+SELECT id, profile FROM customers WHERE $1::eql_v4.query_json <@ profile;
 ```
 
 Containment is answered by `jsonb @>` over the projection
 `eql_v4.json_tree_query(profile)`. A GIN index on that expression serves
-both operators:
+`profile @> $1::eql_v4.query_json`. The index also serves
+`$1::eql_v4.query_json <@ profile`, the same test written the other way
+round:
 
 ```sql
 CREATE INDEX ON customers USING gin ((eql_v4.json_tree_query(profile)) jsonb_path_ops);
 ```
+
+No index serves `profile <@ $1::eql_v4.query_json`, so that query reads
+every row. PostgreSQL runs it as a `jsonb @>` test with
+`eql_v4.json_tree_query(profile)` on the right. A GIN index on `jsonb`,
+with `jsonb_path_ops` or `jsonb_ops`, serves `@>` only when the indexed
+value is on the left.
 
 Two containment needles on one array can be answered by different
 elements. To test several members of one element together, use the element
