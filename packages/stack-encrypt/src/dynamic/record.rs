@@ -1127,7 +1127,7 @@ impl Plan {
     }
 
     /// The shapes of every field's leaf, run under this plan's context and
-    /// then the context the caller hands a [`Planned`](super::Planned)
+    /// then the context the caller hands a [`Planned`]
     /// record.
     pub(super) fn caller_shapes(&self) -> Result<crate::contexts::Shapes, crate::Error> {
         Ok(crate::contexts::under_declared_then_caller(

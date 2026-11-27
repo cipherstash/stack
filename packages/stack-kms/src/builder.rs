@@ -70,7 +70,7 @@ impl stack_auth::ErrorPayload for StackKmsBuilderError {
 /// A [`ClientKey`] is **required** — key generation and retrieval can't happen
 /// without one — so the terminal [`build`](Self::build) only exists once a key
 /// (via [`with_client_key`](Self::with_client_key)) or a
-/// [`KeyProvider`](crate::KeyProvider) (via
+/// [`KeyProvider`] (via
 /// [`with_key_provider`](Self::with_key_provider)) has been supplied.
 ///
 /// The ZeroKMS endpoint is resolved in this order:

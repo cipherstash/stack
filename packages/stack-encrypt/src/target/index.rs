@@ -60,6 +60,9 @@
 //! [`IndexSpec`], through [`Index::spec`]. Parameters live on the index
 //! (a [`Match`]'s tokenizer and filter size, through its [`MatchConfig`])
 //! and lower with it.
+//!
+//! [`Match`]: struct@Match
+//! [`Json`]: struct@Json
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -310,7 +313,7 @@ pub struct Ope;
 
 /// The block ORE index: ore-rs's 6-bit block ORE ciphertext of the value,
 /// under a key derived from the field's context
-/// ([`OreBlockTerm`](crate::sem::OreBlockTerm)). Defined for the same `S`
+/// ([`OreBlockTerm`]). Defined for the same `S`
 /// as [`Ore`].
 ///
 /// [`Ore`] and [`Ope`] are CLLW schemes. This is the other ORE family, the
@@ -569,7 +572,7 @@ pub trait Indexes<S> {
     /// [`CallerContext`] it is handed, settling them in one batch.
     ///
     /// Several indexes over one plaintext all read it in place, so nothing
-    /// is copied in either mode. In [`Owned`](super::Owned) mode the first
+    /// is copied in either mode. In [`Owned`] mode the first
     /// index is handed the value, once the others have read it.
     fn operations<'s, K: 'static, M>(&self) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
     where
@@ -1003,7 +1006,7 @@ mod term_tuples {
 /// [`Encrypted<Terms>`]. The bytes are exactly the hand composition's.
 ///
 /// The ciphertext and every term read the same plaintext in place, so
-/// nothing is copied in either mode. In [`Owned`](super::Owned) mode the
+/// nothing is copied in either mode. In [`Owned`] mode the
 /// terms read the value first, and then the ciphertext takes it.
 ///
 /// The type parameters are in the order [`ciphertext`]'s are, with the
