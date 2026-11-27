@@ -262,6 +262,39 @@ func TestTransportOutcomesMapToErrors(t *testing.T) {
 	})
 }
 
+// A keyset load ZeroKMS refuses or does not find names the keyset it asked
+// for, here the client's default keyset that NewClient loads, and its Help
+// says what to check, a grant among it.
+func TestAFailedKeysetLoadNamesTheKeyset(t *testing.T) {
+	guestOrSkip(t)
+	cases := []struct {
+		name          string
+		status        int
+		want          error
+		code          string
+		message, help string
+	}{
+		{"404", http.StatusNotFound, ErrNotFound, "stack_kms::keyset_not_found", "Keyset not found: the client is unknown, or has no default keyset", "exists but is not granted to this client"},
+		{"403", http.StatusForbidden, ErrForbidden, "stack_kms::load_keyset_forbidden", "the client's default keyset", "The keyset is disabled, or the access token lacks the scope"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := newStub(t, tc.status, "", "missing")
+			_, err := NewClient(context.Background(), testConfig(stub.URL)...)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("NewClient: %v, want %v", err, tc.want)
+			}
+			d := wantDiagnostic(t, err, tc.code)
+			if !strings.Contains(d.Message, tc.message) {
+				t.Errorf("Message = %q, want it to contain %q", d.Message, tc.message)
+			}
+			if !strings.Contains(d.Help, tc.help) {
+				t.Errorf("Help = %q, want it to contain %q", d.Help, tc.help)
+			}
+		})
+	}
+}
+
 func TestRoundTripperFailureIsTransport(t *testing.T) {
 	guestOrSkip(t)
 	cfg := testConfig("http://zerokms.invalid")

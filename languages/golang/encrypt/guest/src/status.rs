@@ -235,8 +235,8 @@ fn status_for_kms(error: &stack_kms::Error) -> u32 {
         },
         stack_kms::Error::LoadKeyset(e) => match e {
             LoadKeysetError::Unauthorized(_) => STATUS_KMS_UNAUTHORIZED,
-            LoadKeysetError::Forbidden(_) => STATUS_KMS_FORBIDDEN,
-            LoadKeysetError::KeysetNotFound(_) => STATUS_KMS_NOT_FOUND,
+            LoadKeysetError::Forbidden { .. } => STATUS_KMS_FORBIDDEN,
+            LoadKeysetError::KeysetNotFound { .. } => STATUS_KMS_NOT_FOUND,
             LoadKeysetError::RequestFailed(e) => status_for_kind(&e.kind),
             LoadKeysetError::InvalidKeyMaterial(_) => STATUS_KMS_OTHER,
         },

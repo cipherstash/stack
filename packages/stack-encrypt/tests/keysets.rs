@@ -158,7 +158,8 @@ impl IndexKeySource for Observed {
                     }
                     Refusal::Unreachable => (ViturRequestErrorKind::SendRequest, "no answer"),
                 };
-                Err(stack_kms::Error::from(LoadKeysetError::from(
+                Err(stack_kms::Error::from(LoadKeysetError::from_request(
+                    keyset_id.clone(),
                     ViturRequestError::new(kind, message, std::io::Error::other(message)),
                 )))
             }
@@ -411,7 +412,7 @@ async fn a_refused_name_is_zerokms_answer_and_leaves_the_keyset_cached_by_id() {
         matches!(
             error,
             Error::Kms(stack_kms::Error::LoadKeyset(
-                LoadKeysetError::KeysetNotFound(_)
+                LoadKeysetError::KeysetNotFound { .. }
             ))
         ),
         "ZeroKMS's not-found reaches the caller as it is, got {error:?}"
@@ -475,7 +476,7 @@ async fn an_answer_in_flight_does_not_rebind_a_name_zerokms_has_since_refused() 
         matches!(
             refused,
             Err(Error::Kms(stack_kms::Error::LoadKeyset(
-                LoadKeysetError::KeysetNotFound(_)
+                LoadKeysetError::KeysetNotFound { .. }
             )))
         ),
         "the later lookup was refused, got {refused:?}"

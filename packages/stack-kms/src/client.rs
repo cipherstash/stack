@@ -338,15 +338,21 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         keyset_id: Option<IdentifiedBy>,
         access_token: &str,
     ) -> Result<(Keyset, IndexKey), LoadKeysetError> {
+        // Kept for the error: a refusal and a missing keyset name the
+        // keyset the load asked for.
         let req = LoadKeysetRequest {
             client_id: client_key.key_id,
-            keyset_id,
+            keyset_id: keyset_id.clone(),
         };
 
         let LoadKeysetResponse {
             keyset,
             partial_index_key,
-        } = self.connection.send(req, access_token).await?;
+        } = self
+            .connection
+            .send(req, access_token)
+            .await
+            .map_err(|error| LoadKeysetError::from_request(keyset_id, error))?;
 
         let index_key = IndexKey::from_key_material(client_key, &partial_index_key.key_material)?;
 
@@ -1183,6 +1189,85 @@ mod tests {
                 ),
                 "expected RequestFailed(SendRequest), got: {err:?}"
             );
+        }
+
+        /// A data key ZeroKMS refuses (HTTP 403) carries a help that names
+        /// its causes, keeping its code.
+        #[tokio::test]
+        async fn retrieve_keys_gives_a_refused_data_key_its_help() {
+            use miette::Diagnostic;
+            let client_key = random_client_key();
+            let client = build_client(|builder| {
+                builder.add_failed_response::<RetrieveKeyRequest>(vitur_error(
+                    ViturRequestErrorKind::Forbidden,
+                ))
+            });
+
+            let err = client
+                .retrieve_keys(
+                    vec![RetrieveKeyPayload::new(Iv::default(), "a", &[1])],
+                    &client_key,
+                    None,
+                    "token",
+                    None,
+                )
+                .await
+                .expect_err("a refused request must surface");
+
+            assert_eq!(
+                err.code().map(|code| code.to_string()).as_deref(),
+                Some("stack_kms::retrieve_key_failed")
+            );
+            let help = err.help().map(|help| help.to_string()).unwrap_or_default();
+            assert!(help.contains("another context"), "{help}");
+            assert!(help.contains("keyset is disabled"), "{help}");
+        }
+
+        /// A keyset load ZeroKMS answers with 404 or 403 names the keyset it
+        /// asked for, by name or by id, in the message.
+        #[tokio::test]
+        async fn load_keyset_names_the_keyset_it_asked_for() {
+            let client_key = random_client_key();
+            let named = Some(IdentifiedBy::Name(zerokms_protocol::Name::new_untrusted(
+                "tenant-42",
+            )));
+            let by_id = Some(IdentifiedBy::Uuid(uuid!(
+                "11111111-1111-1111-1111-111111111111"
+            )));
+            for (kind, keyset, shown) in [
+                (
+                    ViturRequestErrorKind::NotFound,
+                    named.clone(),
+                    r#"keyset name "tenant-42""#,
+                ),
+                (
+                    ViturRequestErrorKind::NotFound,
+                    by_id,
+                    "keyset id 11111111-1111-1111-1111-111111111111",
+                ),
+                (
+                    ViturRequestErrorKind::Forbidden,
+                    named,
+                    r#"keyset name "tenant-42""#,
+                ),
+            ] {
+                let expected = format!("{kind:?}");
+                let client = build_client(|builder| {
+                    builder.add_failed_response::<LoadKeysetRequest>(vitur_error(kind))
+                });
+                let err = client
+                    .load_keyset(&client_key, keyset, "token")
+                    .await
+                    .expect_err("a failed load must surface");
+                let message = err.to_string();
+                assert!(message.contains(shown), "{expected}: {message}");
+                assert!(!message.contains("boom"), "{expected}: {message}");
+                match err {
+                    LoadKeysetError::KeysetNotFound { .. } => assert_eq!(expected, "NotFound"),
+                    LoadKeysetError::Forbidden { .. } => assert_eq!(expected, "Forbidden"),
+                    other => panic!("{expected}: {other:?}"),
+                }
+            }
         }
     }
 

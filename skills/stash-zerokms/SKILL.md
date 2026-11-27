@@ -259,7 +259,12 @@ each step's failure explains everything after it:
    check which keyset each client *defaults* to — a writer and a reader that
    both omit `config.keyset` can still be on different keysets if their
    clients were created against different ones.
-4. **Is the keyset disabled?** The 403 message says so explicitly.
+4. **Is the keyset disabled?** A refused data key (`403`) does not say
+   which cause applies, by design. A refusal that
+   named its cause would tell an attacker which part of a request to
+   change. The cause may be a disabled keyset, another context, or a token
+   without the scope to retrieve keys. To find the exact cause of a
+   refusal, contact CipherStash Support.
 5. **Only decrypt of specific values failing, for specific callers?**
    That's lock context (gate 2), not keyset access — check that the decrypt
    call carries the same lock context the value was encrypted with.

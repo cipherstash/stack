@@ -114,7 +114,7 @@ impl IndexKeySource for Failing {
     ) -> Result<(Uuid, stack_kms::IndexKey), stack_kms::Error> {
         match keyset_id {
             None => self.0.load_index_key(None).await,
-            Some(_) => Err(LoadKeysetError::KeysetNotFound(vitur(404)).into()),
+            keyset => Err(LoadKeysetError::from_request(keyset, vitur(404)).into()),
         }
     }
 }
@@ -875,11 +875,20 @@ fn a_keyset_not_found_carries_its_help_and_request_kind() {
         Some("stack_kms::keyset_not_found")
     );
     assert!(text(get(&error, "help")).is_some_and(|help| help.contains("client is unknown")));
+    assert!(text(get(&error, "help")).is_some_and(|help| help.contains("not granted")));
+    // The keyset the selection named reaches the host, in the message and
+    // the fields.
+    assert!(
+        text(get(&error, "message")).is_some_and(|message| message.contains(r#""tenant""#)),
+        "{:?}",
+        text(get(&error, "message"))
+    );
     let fields = get(&error, "fields").expect("fields");
     assert_eq!(
         text(get(fields, "request_kind")).as_deref(),
         Some("NotFound")
     );
+    assert_eq!(text(get(fields, "keyset_name")).as_deref(), Some("tenant"));
     let Some(Tree::Array(causes)) = get(&error, "causes") else {
         panic!("causes");
     };

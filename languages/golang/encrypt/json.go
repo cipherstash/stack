@@ -121,7 +121,7 @@ func (cph *Cipher) jsonOpen(ctx context.Context, plan *record.Plan, field string
 		return inst.call(ctx, inst.jsonOpen, buf(encodedRows), buf(encodedPlan), buf([]byte(field)), buf(encodedRequest), buf(opts))
 	})
 	if err != nil {
-		return nil, err
+		return nil, cph.explainRefusal(err)
 	}
 	// The output is plaintext: wiped once it is decoded into the caller's
 	// values.

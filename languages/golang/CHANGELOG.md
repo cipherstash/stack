@@ -22,6 +22,27 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one. `stashgen` does not yet map a Go type to it.
 
+### Changed
+
+- A data key that ZeroKMS refuses (`ErrForbidden`, code
+  `stack_kms::retrieve_key_failed`) now has a `Help` (#1893). Through a
+  `*Cipher`, the `Help` says that the context is the likely cause. It
+  names the cipher's keyset, and says how many scope and binding parts the
+  cipher adds. Through the `*Client`, it names every cause: another
+  context, a disabled keyset, or a token without the scope to retrieve
+  keys. Before, the `Help` was empty. Both say that ZeroKMS does not say
+  which cause applies, by design, and that CipherStash Support can find
+  the exact cause.
+- A keyset that ZeroKMS does not find (`ErrNotFound`, code
+  `stack_kms::keyset_not_found`) is named in the error's message, and in
+  its `Fields` as `keyset_name` or `keyset_id` (#1897). The message and the
+  `Help` now say that the keyset may not be granted to this client, or
+  that the client may be unknown. A keyset
+  that ZeroKMS refuses to load (`stack_kms::load_keyset_forbidden`) is
+  named in the message and the `Help` too.
+
+The error values, codes, and `errors.Is` matches are the same as before.
+
 ## [0.1.0-rc.7] - 2026-11-25
 
 ### Upgrading from rc.6

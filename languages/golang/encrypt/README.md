@@ -584,9 +584,35 @@ if errors.As(err, &d) {
 ```
 
 `Field` and `Reason` name the field and the problem (`field_missing`,
-`unknown_key`, ...) on a refused plan, record or value. An error the client
-raises itself carries no `Diagnostic`: a closed client, a guest that did not
-return, `ErrMemoryLock`, and an argument refused before it reached the engine.
+`unknown_key`, ...) on a refused plan, record, or value. An error the client
+raises itself has no `Diagnostic`. These are a closed client, a guest that
+did not return, `ErrMemoryLock`, and an argument refused before it reached
+the engine.
+
+ZeroKMS refuses a data key (`ErrForbidden`, code
+`stack_kms::retrieve_key_failed`) for one of three causes:
+
+- the value is opened under another context;
+- the keyset is disabled;
+- the access token lacks the scope to retrieve keys.
+
+ZeroKMS gives the same answer for all three, so the `Help` says which cause
+is likely where the call knows:
+
+- Through a `*Cipher`, the likely cause is the context, because the cipher
+  loaded its keyset first. The `Help` names the keyset, and says how many
+  scope and binding parts the cipher adds.
+- Through the `*Client`, the `Help` names every cause.
+
+ZeroKMS does not say which cause applies, by design. A refusal that named
+its cause would tell an attacker which part of a request to change. To find
+the exact cause of a refusal, contact CipherStash Support.
+
+A keyset that ZeroKMS does not find (`ErrNotFound`, code
+`stack_kms::keyset_not_found`) is named in the `Message`, and in `Fields` as
+`keyset_name` or `keyset_id`. ZeroKMS gives the same answer for a keyset
+that exists but is not granted to this client, and for a client it does
+not know.
 
 What an error may contain is fixed. It may carry keyset ids and names, field
 names, counts, index kinds, ZeroKMS request kinds and HTTP statuses. It never

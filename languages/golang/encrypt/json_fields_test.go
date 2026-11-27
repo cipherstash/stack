@@ -499,14 +499,28 @@ func TestACustomersDocumentReadsThroughACipherWithABinding(t *testing.T) {
 				"no binding":  scoped.cipher,
 				"another row": scoped.cipher.Bind(uint64(10)),
 			} {
-				if _, err := selectorRead(other, document); !errors.Is(err, encrypt.ErrForbidden) {
-					t.Errorf("%s: Selector opened the entry, or not as ErrForbidden: %v", whose, err)
-				}
-				if _, err := subtreeRead(other, document); !errors.Is(err, encrypt.ErrForbidden) {
-					t.Errorf("%s: Subtree opened the row, or not as ErrForbidden: %v", whose, err)
-				}
-				if _, err := childrenRead(other, document); !errors.Is(err, encrypt.ErrForbidden) {
-					t.Errorf("%s: Children opened the child, or not as ErrForbidden: %v", whose, err)
+				_, selectorErr := selectorRead(other, document)
+				_, subtreeErr := subtreeRead(other, document)
+				_, childrenErr := childrenRead(other, document)
+				for read, err := range map[string]error{
+					"Selector": selectorErr,
+					"Subtree":  subtreeErr,
+					"Children": childrenErr,
+				} {
+					if !errors.Is(err, encrypt.ErrForbidden) {
+						t.Errorf("%s: %s opened the value, or not as ErrForbidden: %v", whose, read, err)
+						continue
+					}
+					// The read went through a cipher, so the Help says how
+					// many parts it adds, as a record's open does.
+					var d *encrypt.Diagnostic
+					if !errors.As(err, &d) {
+						t.Errorf("%s: %s's error has no Diagnostic: %v", whose, read, err)
+						continue
+					}
+					if !strings.Contains(d.Help, "binding part") {
+						t.Errorf("%s: %s's Help = %q, want the cipher's parts", whose, read, d.Help)
+					}
 				}
 			}
 
