@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/tetratelabs/wazero"
+
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
 // countingBuilds is a pinnedBuilds whose compile counts its calls, waits
@@ -156,5 +158,56 @@ func TestPinnedBuildsKeepTheGuestCompiled(t *testing.T) {
 	compile(shared)
 	if again := compile(shared); again > cold/4 {
 		t.Fatalf("a compile after the pin took %v and a cold compile %v: the pinned build left the cache", again, cold)
+	}
+}
+
+// encrypttest.AssertContexts and encrypttest.Contexts make a new checker
+// on every call, and close it before they return. A checker over a test
+// build compiles that build once in a process, however many are made and
+// closed. Before, each call compiled the guest again: under the race
+// detector, 10 to 50 seconds a call.
+func TestTestCheckersCompileTheirBuildOnce(t *testing.T) {
+	if _, err := plainGuest(); errors.Is(err, ErrGuestNotBuilt) {
+		t.Skip(err)
+	}
+	var calls atomic.Int32
+	builds := &pinnedBuilds{compile: func(ctx context.Context, wasm []byte) (any, error) {
+		calls.Add(1)
+		return compileForever(ctx, wasm)
+	}}
+	ctx := context.Background()
+	plan := &record.Plan{
+		Context: []string{"users"},
+		Fields:  []record.Field{{Name: "email", Kind: record.String, Outputs: []record.Output{record.Ciphertext}}},
+	}
+	for range 3 {
+		// The same loader for both builds: whichever one selectBuild picks
+		// in this binary, it is this build.
+		checker, err := testChecker(ctx, builds, plainGuest, plainGuest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := checker.Contexts(ctx, plan); err != nil {
+			t.Fatal(err)
+		}
+		if err := checker.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("compiled %d times, want 1", got)
+	}
+}
+
+// A test build that is not there is the loader's error, and nothing is
+// compiled or kept.
+func TestATestCheckerWithoutItsBuildIsTheLoadersError(t *testing.T) {
+	builds, calls, _ := countingBuilds()
+	missing := func() ([]byte, error) { return nil, errCompile }
+	if _, err := testChecker(context.Background(), builds, missing, missing); !errors.Is(err, errCompile) {
+		t.Fatalf("%v, want the loader's error", err)
+	}
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("compiled %d times, want 0", got)
 	}
 }

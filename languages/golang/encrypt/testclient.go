@@ -27,7 +27,24 @@ func init() {
 			return nil, err
 		}
 		return seededClient(ctx, wasm, seed)
+	}, func(ctx context.Context, plain, withEQL func() ([]byte, error)) (any, error) {
+		return testChecker(ctx, &testBuilds, plain, withEQL)
 	})
+}
+
+// testChecker is a checker over the test build selectBuild picks, the one
+// a test client in this program runs. builds keeps that build compiled, so
+// that encrypttest.AssertContexts, which makes a checker on every call,
+// compiles the guest once per test binary, and not on every call.
+func testChecker(ctx context.Context, builds *pinnedBuilds, plain, withEQL func() ([]byte, error)) (*Checker, error) {
+	wasm, err := selectBuild(plain, withEQL)
+	if err != nil {
+		return nil, err
+	}
+	if err := builds.pin(ctx, wasm); err != nil {
+		return nil, err
+	}
+	return newCheckerOver(ctx, wasm)
 }
 
 // seededClient is a client over wasm, a deterministic-kms build of the
@@ -64,12 +81,13 @@ func seededClient(ctx context.Context, wasm []byte, seed [32]byte) (*Client, err
 	return c, nil
 }
 
-// testBuilds holds every test build a test client has run, compiled.
+// testBuilds holds every test build a test client or checker has run,
+// compiled.
 var testBuilds pinnedBuilds
 
 // pinnedBuilds keeps each guest build it is given compiled in the shared
-// compilation cache for the life of the process, so that test clients
-// compile the guest once per test binary.
+// compilation cache for the life of the process, so that test clients and
+// checkers compile the guest once per test binary.
 //
 // wazero counts the runtimes that use a compiled module in its in-memory
 // cache, and deletes the module when the last of them closes. A suite that

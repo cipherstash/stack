@@ -26,6 +26,7 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/gensupport"
+	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testclient"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
@@ -34,13 +35,24 @@ import (
 // context: "email\n  context: users / email\n". It needs no credentials
 // and no network. [AssertContexts] reads this text; a test that wants the
 // text itself, to print or to compare whole, calls this.
+//
+// It asks the test build of the engine that [NewClient] runs. The first
+// call, or the first client, in a test binary compiles that build, and
+// every later call reuses it.
 func Contexts(ctx context.Context, d gensupport.Declaration) (string, error) {
 	if err := versionSkew(); err != nil {
 		return "", err
 	}
-	checker, err := encrypt.NewChecker(ctx)
+	built, err := testclient.NewChecker(ctx, plainTestBuild, eqlTestBuild)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("encrypttest: %w", err)
+	}
+	checker, ok := built.(*encrypt.Checker)
+	if !ok {
+		if closer, ok := built.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+		return "", fmt.Errorf("encrypttest: the checker constructor returned %T, not *encrypt.Checker", built)
 	}
 	defer func() { _ = checker.Close() }()
 	return d.Contexts(ctx, checker)

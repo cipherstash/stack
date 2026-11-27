@@ -159,12 +159,7 @@ func PlainGuest() ([]byte, error) {
 // NewCheckerOver is NewChecker over the given guest bytes, so a test asks a
 // named build its questions.
 func NewCheckerOver(ctx context.Context, wasm []byte) (*Checker, error) {
-	t := &transport{rt: refusingTransport{}, token: noToken{}}
-	inst, err := newInstance(ctx, wasm, t, guest.BestEffort)
-	if err != nil {
-		return nil, err
-	}
-	return &Checker{c: newClient(inst, t)}, nil
+	return newCheckerOver(ctx, wasm)
 }
 
 // LiveClient is liveClient for the external tests: a client against real
