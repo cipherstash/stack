@@ -2259,11 +2259,13 @@ pub(super) fn source_rows(source: impl Encrypt, plan: &Plan) -> Result<Rows<Row>
 }
 
 /// A value refused while the source was split, as the source error that
-/// names its field: a repeated key as [`Reason::RepeatedKey`], a scalar its
-/// logical type does not admit as [`Reason::FieldType`], and anything else (too
-/// deep or too long for a frame) as [`Reason::Unframeable`]. A failure of
-/// the source's own is [`Error::SourceFailed`], with the field and the row
-/// it was reading and its error as the cause.
+/// names its field and the row of a batch it is in: a repeated key as
+/// [`Reason::RepeatedKey`], a scalar its logical type does not admit as
+/// [`Reason::FieldType`], and anything else (too deep or too long for a
+/// frame, or a value the source never wrote) as [`Reason::Unframeable`],
+/// naming no field when the source left a row of a batch unwritten. A
+/// failure of the source's own is [`Error::SourceFailed`], with the field
+/// and the row it was reading and its error as the cause.
 fn split_refusal(SplitRefusal { row, field, error }: SplitRefusal) -> Error {
     let reason = match error {
         FrameWriteError::Source(cause) => return Error::SourceFailed { field, row, cause },
@@ -2271,14 +2273,9 @@ fn split_refusal(SplitRefusal { row, field, error }: SplitRefusal) -> Error {
         FrameWriteError::Invalid => Reason::FieldType,
         _ => Reason::Unframeable,
     };
-    // Only a field's frame writer refuses a value, and the split names
-    // the field it hands one to.
-    let Some(field) = field else {
-        return Error::Internal;
-    };
     Error::Source {
-        field: Some(field),
-        row: None,
+        field,
+        row,
         reason,
         found: None,
     }
@@ -2564,11 +2561,13 @@ pub(super) fn open_record(
         // opens as a plain null, as every frame carries one.
         let null = field.null.is_some() && value.frame().is_null();
         if let Some(kind) = field.kind.filter(|_| !null) {
+            // The error names the declared type and never what the value
+            // opened as: that is known only once it is decrypted, and is
+            // the plaintext's own metadata.
             if !kind.holds(value.frame().kind()) {
                 return Err(crate::PlanError::FieldType {
                     field: field.name.clone(),
                     expected: kind.name(),
-                    found: Some(Found::of_frame(value.frame())),
                 }
                 .into());
             }
@@ -6184,14 +6183,13 @@ mod tests {
                 PlanError::FieldType {
                     field: "age".into(),
                     expected: "int64",
-                    found: Some(Found::Kind(ValueKind::UInt64)),
                 },
-                "the field, the declared type and what it opened as"
+                "the field and the declared type"
             );
             assert_eq!(
                 refused.to_string(),
-                r#"field "age" opened as a uint64, not an int64"#,
-                "the message says what the field opened as"
+                r#"field "age" is not an int64"#,
+                "the message names no kind the value opened as"
             );
 
             let sealed = seal(&keyset, obj(vec![("age", Tree::UInt64(34))]), &untyped).await;
@@ -6223,30 +6221,29 @@ mod tests {
                 PlanError::FieldType {
                     field: "age".into(),
                     expected: "uint64",
-                    found: Some(Found::Kind(ValueKind::Float64)),
                 },
-                "the row that opened as a float64"
+                "the field and the declared type"
             );
         }
 
         /// A field declared as an object that opens as a list, a single
-        /// value or a null says what it opened as, by its kind and never its
-        /// value.
+        /// value or a null is refused naming the field and the declared type,
+        /// and never what it opened as: the kind of a value is known only
+        /// once it is decrypted, so it is the plaintext's own metadata. The
+        /// payload has no `found`, and the message names no kind.
         #[tokio::test]
-        async fn decrypt_says_what_an_object_field_opened_as() {
+        async fn decrypt_never_says_what_a_field_opened_as() {
+            use crate::ErrorPayload;
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let untyped = plan(obj(vec![("doc", spec(label("doc"), &["c"]))])).expect("plan");
             let as_object =
                 plan(obj(vec![("doc", typed(label("doc"), &["c"], "object"))])).expect("plan");
-            for (stored, found, text) in [
-                (
-                    Tree::Array(vec![s("secret")]),
-                    Found::Kind(ValueKind::Array),
-                    "an array",
-                ),
-                (s("secret"), Found::Kind(ValueKind::String), "a string"),
-                (Tree::Null, Found::Null, "null"),
+            for (what, stored) in [
+                ("a list", Tree::Array(vec![s("secret")])),
+                ("a string", s("secret")),
+                ("a null", Tree::Null),
+                ("a uint32", Tree::UInt32(7)),
             ] {
                 let sealed = seal(&keyset, obj(vec![("doc", stored)]), &untyped).await;
                 let result = decrypt(&cipher, sealed, &as_object, None)
@@ -6258,17 +6255,23 @@ mod tests {
                     PlanError::FieldType {
                         field: "doc".into(),
                         expected: "object",
-                        found: Some(found),
                     },
-                    "{text}"
+                    "{what}"
+                );
+                let payload = refused.payload();
+                assert_eq!(
+                    serde_json::Value::Object(payload.clone()),
+                    serde_json::json!({ "field": "doc", "expected": "object" }),
+                    "{what}: the payload has no found"
                 );
                 let message = refused.to_string();
                 assert_eq!(
-                    message,
-                    format!(r#"field "doc" opened as {text}, not an object"#),
-                    "the message names the field and the kind"
+                    message, r#"field "doc" is not an object"#,
+                    "{what}: the message names no kind"
                 );
-                assert!(!message.contains("secret"), "no value: {message}");
+                for kind in ["list", "array", "string", "null", "uint32", "secret"] {
+                    assert!(!message.contains(kind), "{what}: {kind} in {message}");
+                }
             }
         }
 
@@ -9196,6 +9199,13 @@ mod tests {
                     error,
                 })
             };
+            let in_row = |row, error| {
+                split_refusal(SplitRefusal {
+                    row: Some(row),
+                    field: Some("age".to_owned()),
+                    error,
+                })
+            };
             let fault = |error| refusal(Some("age"), error);
             expect(
                 &fault(FrameWriteError::DuplicateKey),
@@ -9212,9 +9222,34 @@ mod tests {
             for error in [FrameWriteError::TooDeep, FrameWriteError::Unwritten] {
                 expect(&fault(error), "Source", Some("age"), Reason::Unframeable);
             }
+            // A refusal in a row of a batch names the row, in the payload
+            // and the message.
+            let error = in_row(3, FrameWriteError::DuplicateKey);
+            expect(&error, "Source", Some("age"), Reason::RepeatedKey);
+            assert_eq!(error.row(), Some(3), "the row: {error}");
+            assert_eq!(error.payload()["row"], 3, "the payload's row: {error}");
             assert!(
-                matches!(refusal(None, FrameWriteError::Invalid), Error::Internal),
-                "a value refused outside any field"
+                error.to_string().ends_with(r#" (row 3, field "age")"#),
+                "the message names the row: {error}"
+            );
+            // A row the source left unwritten names no field, and is still
+            // the caller's input, not this module's bug.
+            let unwritten = split_refusal(SplitRefusal {
+                row: Some(1),
+                field: None,
+                error: FrameWriteError::Unwritten,
+            });
+            expect(&unwritten, "Source", None, Reason::Unframeable);
+            assert_eq!(unwritten.row(), Some(1), "the row left unwritten");
+            assert!(
+                matches!(unwritten.into_crate(), crate::Error::Input(_)),
+                "an input refusal"
+            );
+            expect(
+                &refusal(None, FrameWriteError::Invalid),
+                "Source",
+                None,
+                Reason::FieldType,
             );
         }
 
@@ -9495,7 +9530,6 @@ mod tests {
                     P::FieldType {
                         field: field(),
                         expected: "int64",
-                        found: None,
                     }
                     .into(),
                     some("age"),

@@ -131,9 +131,11 @@ func (d *Diagnostic) Reason() string {
 
 // Row is the row of a batch a refusal is about, counted from 0: a record
 // to encrypt or a stored record that is not an object of fields, or the row
-// a value failed to be read in. ok is false for an error that names no row,
-// such as one about a single record, and for a row that is negative, not a
-// whole number, or past int.
+// of a value that failed to be read or could not be written as a frame. A
+// field's own refusal (missing, unknown, of another type) names the field
+// and no row. ok is false for an error that names no row, such as one about
+// a single record, and for a row that is negative, not a whole number, or
+// past int.
 func (d *Diagnostic) Row() (row int, ok bool) {
 	return nonNegativeInt(d.Fields["row"])
 }
@@ -141,10 +143,10 @@ func (d *Diagnostic) Row() (row int, ok bool) {
 // Found is what a refusal found where it expected an object, by its kind
 // and never its value: "null", "array", "string", "passthrough", "sealed"
 // (a sealed value where a stored record or row should be), another kind's
-// schema name ("uint32", "object", ...), "undefined" or "unknown". A field
-// declared as one type that opens as another names what it opened as the
-// same way. "" for an error that names none. New kinds may appear: keep a
-// fallback.
+// schema name ("uint32", "object", ...), "undefined" or "unknown". It names
+// only what the program sent or the stored row's own structure, never what
+// a decrypted value opened as. "" for an error that names none. New kinds
+// may appear: keep a fallback.
 func (d *Diagnostic) Found() string {
 	found, _ := d.Fields["found"].(string)
 	return found

@@ -103,7 +103,6 @@ impl FieldValues {
             PlanError::FieldType {
                 field: name.to_string(),
                 expected: type_name::<T>(),
-                found: None,
             }
             .into()
         })

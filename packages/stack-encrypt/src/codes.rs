@@ -184,7 +184,6 @@ mod tests {
             PlanError::FieldType { .. } => PlanError::FieldType {
                 field: field(),
                 expected: "int64",
-                found: None,
             },
             PlanError::NoSuchField { .. } => PlanError::NoSuchField { field: field() },
             PlanError::IndexOverlap { .. } => PlanError::IndexOverlap {
@@ -527,19 +526,8 @@ mod tests {
                 Box::new(PlanError::FieldType {
                     field: "age".into(),
                     expected: "int64",
-                    found: None,
                 }),
                 json!({ "field": "age", "expected": "int64" }),
-            ),
-            (
-                Box::new(PlanError::FieldType {
-                    field: "age".into(),
-                    expected: "int64",
-                    found: Some(crate::refusal::Found::Kind(
-                        vitaminc_aead::plaintext::ValueKind::String,
-                    )),
-                }),
-                json!({ "field": "age", "expected": "int64", "found": "string" }),
             ),
             (
                 Box::new(PlanError::TwoContextSources {

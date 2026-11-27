@@ -33,7 +33,7 @@
 
 use std::cell::{Cell, RefCell};
 
-use vitaminc_aead::frame::{FrameWriteError, FrameWriter, OwnedFrame};
+use vitaminc_aead::frame::{FrameMap, FrameSeq, FrameWriteError, FrameWriter, OwnedFrame};
 use vitaminc_aead::plaintext::{
     Encrypt, EncryptRef, FixedType, Logical, MapSink, Physical, SeqSink, Sink, ValueKind,
 };
@@ -76,14 +76,23 @@ pub(super) fn split_source<P: Encrypt>(source: P) -> Result<SplitSource, SplitRe
     })
 }
 
-/// Where the split is: the row of a batch it began last, and the field
-/// whose value it is writing. Shared by every sink in a split. Field names
-/// are not secret: the plan and the stored record both contain them
-/// unencrypted. So the name is not wiped.
+/// Where the split is: the row of a batch it is reading, and the field
+/// whose value it is writing. Each is set when the source begins it and
+/// cleared when the source finishes it, so a failure between two rows, or
+/// between two fields, names neither. Shared by every sink in a split.
+/// Field names are not secret: the plan and the stored record both contain
+/// them unencrypted. So the name is not wiped.
 #[derive(Default)]
 struct Place {
     row: Cell<Option<usize>>,
     field: RefCell<Option<String>>,
+}
+
+impl Place {
+    /// The field being written is finished.
+    fn field_done(&self) {
+        *self.field.borrow_mut() = None;
+    }
 }
 
 /// The place shared by every sink in a split.
@@ -106,13 +115,17 @@ impl PutRecord for TopRecord {
     }
 }
 
-/// The next record of a batch.
-struct BatchRecord<'s>(&'s mut Vec<SourceRecord>);
+/// The next record of a batch. Putting it finishes its row.
+struct BatchRecord<'s> {
+    records: &'s mut Vec<SourceRecord>,
+    open: Open<'s>,
+}
 
 impl PutRecord for BatchRecord<'_> {
     type Ok = ();
     fn put(self, record: SourceRecord) {
-        self.0.push(record);
+        self.records.push(record);
+        self.open.row.set(None);
     }
 }
 
@@ -141,6 +154,7 @@ impl<'f> Sink for TopSink<'f> {
         Ok(BatchSink {
             open: self.0,
             records: Vec::new(),
+            begun: 0,
         })
     }
 
@@ -153,10 +167,25 @@ impl<'f> Sink for TopSink<'f> {
     }
 }
 
-/// A batch: one record for each element.
+/// A batch: one record for each element. `begun` counts the elements the
+/// source began, so an element whose sink it dropped unwritten, leaving no
+/// record, is refused rather than shifting the rows after it.
 struct BatchSink<'f> {
     open: Open<'f>,
     records: Vec<SourceRecord>,
+    begun: usize,
+}
+
+impl BatchSink<'_> {
+    /// Refuse a batch whose last element begun put no record: its sink was
+    /// dropped unwritten.
+    fn check_written(&self) -> Result<(), FrameWriteError> {
+        if self.records.len() == self.begun {
+            return Ok(());
+        }
+        self.open.row.set(Some(self.records.len()));
+        Err(FrameWriteError::Unwritten)
+    }
 }
 
 impl<'f> SeqSink for BatchSink<'f> {
@@ -168,14 +197,20 @@ impl<'f> SeqSink for BatchSink<'f> {
         Self: 's;
 
     fn element(&mut self) -> Result<ElementSink<'f, '_>, FrameWriteError> {
-        self.open.row.set(Some(self.records.len()));
+        self.check_written()?;
+        self.open.row.set(Some(self.begun));
+        self.begun += 1;
         Ok(ElementSink {
             open: self.open,
-            record: BatchRecord(&mut self.records),
+            record: BatchRecord {
+                records: &mut self.records,
+                open: self.open,
+            },
         })
     }
 
     fn end(self) -> Result<SplitSource, FrameWriteError> {
+        self.check_written()?;
         Ok(SplitSource::Batch(self.records))
     }
 }
@@ -328,15 +363,15 @@ impl<'f, O> RecordMap<'f, O> {
     }
 }
 
-impl<O: PutRecord> MapSink for RecordMap<'_, O> {
+impl<'f, O: PutRecord> MapSink for RecordMap<'f, O> {
     type Ok = O::Ok;
     type Error = FrameWriteError;
     type Entry<'s>
-        = FrameWriter<'s>
+        = FieldWriter<'s, 'f>
     where
         Self: 's;
 
-    fn entry(&mut self, key: &str) -> Result<FrameWriter<'_>, FrameWriteError> {
+    fn entry(&mut self, key: &str) -> Result<FieldWriter<'_, 'f>, FrameWriteError> {
         *self.open.field.borrow_mut() = Some(key.to_owned());
         self.entries.push((key.to_owned(), Buffer::new()));
         let buffer = match self.entries.last_mut() {
@@ -344,13 +379,13 @@ impl<O: PutRecord> MapSink for RecordMap<'_, O> {
             // Pushed on the line above.
             None => unreachable!(),
         };
-        Ok(FrameWriter::new(buffer))
+        Ok(FieldWriter {
+            writer: FrameWriter::new(buffer),
+            open: self.open,
+        })
     }
 
     fn end(self) -> Result<O::Ok, FrameWriteError> {
-        // The record's values are written: a failure after this is not one
-        // of its fields'.
-        *self.open.field.borrow_mut() = None;
         let mut record = Vec::with_capacity(self.entries.len());
         for (key, buffer) in self.entries {
             // A source that dropped an entry's sink without writing to it
@@ -362,6 +397,104 @@ impl<O: PutRecord> MapSink for RecordMap<'_, O> {
             record.push((key, value));
         }
         Ok(self.out.put(Ok(record)))
+    }
+}
+
+/// One field's value, written into its own frame. It forwards to the frame
+/// writer, and once the value is complete it marks the field finished, so a
+/// source that fails after one field's value and before the next names
+/// neither.
+struct FieldWriter<'s, 'f> {
+    writer: FrameWriter<'s>,
+    open: Open<'f>,
+}
+
+impl<'s, 'f> Sink for FieldWriter<'s, 'f> {
+    type Ok = ();
+    type Error = FrameWriteError;
+    type Seq = FieldSeq<'s, 'f>;
+    type Map = FieldMap<'s, 'f>;
+
+    fn scalar(self, logical: Option<Logical>, value: Physical<'_>) -> Result<(), FrameWriteError> {
+        self.writer.scalar(logical, value)?;
+        self.open.field_done();
+        Ok(())
+    }
+
+    fn typed_null(self, ty: FixedType) -> Result<(), FrameWriteError> {
+        self.writer.typed_null(ty)?;
+        self.open.field_done();
+        Ok(())
+    }
+
+    fn seq(self, len: Option<usize>) -> Result<FieldSeq<'s, 'f>, FrameWriteError> {
+        Ok(FieldSeq {
+            inner: self.writer.seq(len)?,
+            open: self.open,
+        })
+    }
+
+    fn map(self, len: Option<usize>) -> Result<FieldMap<'s, 'f>, FrameWriteError> {
+        Ok(FieldMap {
+            inner: self.writer.map(len)?,
+            open: self.open,
+        })
+    }
+
+    fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<(), FrameWriteError> {
+        self.writer.passthrough(value)?;
+        self.open.field_done();
+        Ok(())
+    }
+}
+
+/// A field's value that is a sequence: finished when the sequence ends.
+struct FieldSeq<'s, 'f> {
+    inner: FrameSeq<'s>,
+    open: Open<'f>,
+}
+
+impl<'s> SeqSink for FieldSeq<'s, '_> {
+    type Ok = ();
+    type Error = FrameWriteError;
+    type Element<'e>
+        = FrameWriter<'e>
+    where
+        Self: 'e;
+
+    fn element(&mut self) -> Result<FrameWriter<'_>, FrameWriteError> {
+        self.inner.element()
+    }
+
+    fn end(self) -> Result<(), FrameWriteError> {
+        self.inner.end()?;
+        self.open.field_done();
+        Ok(())
+    }
+}
+
+/// A field's value that is a map: finished when the map ends.
+struct FieldMap<'s, 'f> {
+    inner: FrameMap<'s>,
+    open: Open<'f>,
+}
+
+impl<'s> MapSink for FieldMap<'s, '_> {
+    type Ok = ();
+    type Error = FrameWriteError;
+    type Entry<'e>
+        = FrameWriter<'e>
+    where
+        Self: 'e;
+
+    fn entry(&mut self, key: &str) -> Result<FrameWriter<'_>, FrameWriteError> {
+        self.inner.entry(key)
+    }
+
+    fn end(self) -> Result<(), FrameWriteError> {
+        self.inner.end()?;
+        self.open.field_done();
+        Ok(())
     }
 }
 
@@ -606,7 +739,109 @@ mod tests {
             after.error
         );
         assert_eq!(after.field, None, "no field is being read");
-        assert_eq!(after.row, Some(1), "the last row begun");
+        assert_eq!(after.row, None, "every row begun is finished");
+    }
+
+    /// Where a source fails decides what the refusal names: a field only
+    /// while its value is being written, and a row only while it is being
+    /// read. A failure between two fields, after a field's container ends,
+    /// or between two rows names neither.
+    #[test]
+    fn a_source_failure_names_only_the_field_and_row_still_open() {
+        /// Where the source fails, in a batch of records.
+        #[derive(Clone, Copy, Debug)]
+        enum At {
+            /// In row 0, after `age` is written and before `email` begins.
+            BetweenFields,
+            /// In row 0, inside `tags`, a list, after its first element.
+            InsideAList,
+            /// In row 0, after `tags`, a map, has ended.
+            AfterAMap,
+            /// After row 0 is finished and before row 1 begins.
+            BetweenRows,
+        }
+        impl Encrypt for &At {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                let fail = || {
+                    <S::Error as vitaminc_aead::plaintext::Error>::source(SourceError::msg(
+                        "getter threw",
+                    ))
+                };
+                let one = || Raw(None, Physical::Int(Int::I32(1)));
+                let mut seq = sink.seq(Some(2))?;
+                let mut map = seq.element()?.map(Some(2))?;
+                one().visit(map.entry("age")?)?;
+                match self {
+                    At::BetweenFields => Err(fail()),
+                    At::InsideAList => {
+                        let mut list = map.entry("tags")?.seq(Some(2))?;
+                        one().visit(list.element()?)?;
+                        Err(fail())
+                    }
+                    At::AfterAMap => {
+                        let mut inner = map.entry("tags")?.map(Some(1))?;
+                        one().visit(inner.entry("k")?)?;
+                        inner.end()?;
+                        Err(fail())
+                    }
+                    At::BetweenRows => {
+                        one().visit(map.entry("email")?)?;
+                        map.end()?;
+                        Err(fail())
+                    }
+                }
+            }
+        }
+        for (at, field, row) in [
+            (At::BetweenFields, None, Some(0)),
+            (At::InsideAList, Some("tags"), Some(0)),
+            (At::AfterAMap, None, Some(0)),
+            (At::BetweenRows, None, None),
+        ] {
+            let failed = split_source(&at).err().expect("refused");
+            assert!(
+                matches!(failed.error, FrameWriteError::Source(_)),
+                "{at:?}: {:?}",
+                failed.error
+            );
+            assert_eq!(failed.field.as_deref(), field, "{at:?}: the field");
+            assert_eq!(failed.row, row, "{at:?}: the row");
+        }
+    }
+
+    /// A batch element whose sink the source dropped unwritten leaves no
+    /// record: the batch is refused naming that row, before or at its end,
+    /// rather than shifting the rows after it.
+    #[test]
+    fn a_batch_element_left_unwritten_is_refused_naming_its_row() {
+        /// A batch of two rows whose row `dropped` is begun and dropped.
+        struct DropsARow {
+            dropped: usize,
+        }
+        impl Encrypt for &DropsARow {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                let mut seq = sink.seq(Some(2))?;
+                for row in 0..2 {
+                    let element = seq.element()?;
+                    if row != self.dropped {
+                        let mut map = element.map(Some(1))?;
+                        Raw(None, Physical::Int(Int::I32(1))).visit(map.entry("a")?)?;
+                        map.end()?;
+                    }
+                }
+                seq.end()
+            }
+        }
+        for dropped in [0, 1] {
+            let refused = split_source(&DropsARow { dropped }).err().expect("refused");
+            assert!(
+                matches!(refused.error, FrameWriteError::Unwritten),
+                "row {dropped}: {:?}",
+                refused.error
+            );
+            assert_eq!(refused.row, Some(dropped), "the row left unwritten");
+            assert_eq!(refused.field, None, "no field is being written");
+        }
     }
 
     /// An entry whose sink the source dropped unwritten has no frame: the

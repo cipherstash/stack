@@ -44,8 +44,7 @@
         "code": "stack_encrypt::plan_field_type",
         "fields": {
           "expected": "int64",
-          "field": "value",
-          "found": "int32"
+          "field": "value"
         }
       }
     },
@@ -62,8 +61,7 @@
         "code": "stack_encrypt::plan_field_type",
         "fields": {
           "expected": "string",
-          "field": "value",
-          "found": "int32"
+          "field": "value"
         }
       }
     },
