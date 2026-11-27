@@ -26,7 +26,9 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   the compiled engine is freed one minute after the last client closes.
   `ReleaseEngine` is safe to call more than once. A client or checker that
   is open when it is called keeps working. The compiled engine is then
-  freed when the last of them closes.
+  freed when the last of them closes. In a test binary, `ReleaseEngine`
+  does not free the test builds that `encrypttest` clients and checkers
+  run: those are kept until the test binary exits.
 
 ### Changed
 

@@ -45,7 +45,7 @@ func Contexts(ctx context.Context, d gensupport.Declaration) (string, error) {
 	if err := versionSkew(); err != nil {
 		return "", err
 	}
-	checker, err := narrow[*encrypt.Checker](testclient.NewChecker(ctx, plainTestBuild, eqlTestBuild))
+	checker, err := narrow[*encrypt.Checker](testclient.NewChecker(ctx, testBuilds))
 	if err != nil {
 		return "", fmt.Errorf("encrypttest: %w", err)
 	}

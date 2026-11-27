@@ -95,9 +95,11 @@ func compilationCache() wazero.CompilationCache {
 // guestRuntimeConfig is the runtime configuration every guest runtime
 // uses. wazero finds a compiled module in the cache by its bytes and by
 // parts of this configuration: the engine, and WithCloseOnContextDone. So
-// compileForever, which compiles a build ahead of any client, uses this
-// one too. With another, a client would miss the entry and compile the
-// build again.
+// compileShared, which compiles a build ahead of any client for engines,
+// and instantiate, which every client and checker runs, both use this one.
+// If they used different ones, every client would miss the entry and
+// compile the build again: TestInstantiateReadsTheSharedCompile checks
+// that it does not.
 func guestRuntimeConfig() wazero.RuntimeConfig {
 	return wazero.NewRuntimeConfig().
 		WithCompilationCache(compilationCache())

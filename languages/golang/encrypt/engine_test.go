@@ -2,10 +2,13 @@ package encrypt
 
 import (
 	"context"
+	goruntime "runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/tetratelabs/wazero"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 )
@@ -85,6 +88,32 @@ func (f *fakeEngines) want(t *testing.T, compiles, frees int32) {
 	if got := f.frees.Load(); got != frees {
 		t.Errorf("freed %d times, want %d", got, frees)
 	}
+}
+
+// swapEngines makes c the package's engines until the test ends. The
+// cleanup frees every build c holds, pinned ones too, and stops its idle
+// timers, before engines goes back: a lease a test releases late, such as
+// one a deferred Close ends, would otherwise start a timer that keeps its
+// build compiled after the test, for as long as c's idle period.
+func swapEngines(t *testing.T, c *engineCache) {
+	t.Helper()
+	saved := engines
+	engines = c
+	t.Cleanup(func() {
+		freeEverything(c)
+		engines = saved
+	})
+}
+
+// freeEverything frees every build c holds, the pinned ones included,
+// which releaseAll leaves, and stops their idle timers.
+func freeEverything(c *engineCache) {
+	c.mu.Lock()
+	for _, e := range c.builds {
+		e.pinned = false
+	}
+	c.mu.Unlock()
+	c.releaseAll()
 }
 
 // The compiled engine is shared by every open instance, kept while one is
@@ -274,16 +303,14 @@ func TestEngineCacheRealTimerFreesTheEngine(t *testing.T) {
 // made once every earlier one has closed compiles again.
 func TestReleaseEngineOverTheGuest(t *testing.T) {
 	wasm := guestOrSkip(t)
-	saved := engines
-	t.Cleanup(func() { engines = saved })
 	var compiles atomic.Int32
-	engines = &engineCache{
+	swapEngines(t, &engineCache{
 		idle: time.Hour,
 		compile: func(ctx context.Context, wasm []byte) (func(), error) {
 			compiles.Add(1)
 			return compileShared(ctx, wasm)
 		},
-	}
+	})
 	ctx := context.Background()
 	checker := func() *Checker {
 		t.Helper()
@@ -324,9 +351,7 @@ func TestReleaseEngineOverTheGuest(t *testing.T) {
 // A compile that fails in the engine cache leaves the instance to fail on
 // its own, with the error it always gave.
 func TestNewInstanceReportsABadModuleItself(t *testing.T) {
-	saved := engines
-	t.Cleanup(func() { engines = saved })
-	engines = &engineCache{idle: time.Hour}
+	swapEngines(t, &engineCache{idle: time.Hour})
 	tr := &transport{rt: refusingTransport{}, token: noToken{}}
 	if _, err := newInstance(context.Background(), []byte("not wasm"), tr, guest.BestEffort); err == nil {
 		t.Fatal("instantiated bytes that are not a WebAssembly module")
@@ -335,5 +360,53 @@ func TestNewInstanceReportsABadModuleItself(t *testing.T) {
 	defer engines.mu.Unlock()
 	if len(engines.builds) != 0 {
 		t.Fatal("kept a build that did not compile")
+	}
+}
+
+// An instance reads the compiled code that compileShared put in the cache,
+// so a client or checker opened while engines keeps a build compiles
+// nothing. wazero finds a cache entry by the runtime configuration as well
+// as the bytes: if instantiate's configuration differed from
+// compileShared's, every client would compile the guest again, and the
+// cache's own tests, which count calls to its compile hook, would still
+// pass.
+func TestInstantiateReadsTheSharedCompile(t *testing.T) {
+	wasm := guestOrSkip(t)
+	// wazero compiles to machine code on amd64 and arm64 only. Elsewhere
+	// it runs an interpreter, whose compile is too cheap to tell a cache
+	// hit from a miss by time.
+	if goruntime.GOARCH != "amd64" && goruntime.GOARCH != "arm64" {
+		t.Skipf("wazero has no compiler on %s, so a cache hit cannot be told from a miss by time", goruntime.GOARCH)
+	}
+	ctx := context.Background()
+	// A compile that misses the cache, on one worker, as instantiate's
+	// would.
+	runtime := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().WithCompilationCache(wazero.NewCompilationCache()))
+	start := time.Now()
+	compiled, err := runtime.CompileModule(ctx, wasm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cold := time.Since(start)
+	_ = compiled.Close(ctx)
+	_ = runtime.Close(ctx)
+
+	free, err := compileShared(ctx, wasm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer free()
+	start = time.Now()
+	inst, err := instantiate(ctx, wasm, &transport{rt: refusingTransport{}, token: noToken{}}, guest.BestEffort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warm := time.Since(start)
+	if err := inst.release(); err != nil {
+		t.Error(err)
+	}
+	t.Logf("cold compile %v, instantiate after compileShared %v", cold, warm)
+	if warm > cold/4 {
+		t.Fatalf("instantiate took %v after compileShared, and a cold compile %v: instantiate missed the shared compile", warm, cold)
 	}
 }

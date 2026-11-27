@@ -39,6 +39,11 @@ const engineIdle = time.Minute
 // them closes. A client opened after ReleaseEngine compiles the engine
 // again, unless a client opened before is still open, in which case it
 // starts from the compiled engine that client is using.
+//
+// In a test binary, ReleaseEngine leaves the test builds of the engine
+// that package encrypttest's clients and checkers run. Each of those is
+// kept until the test binary exits, so a suite that starts a client in
+// every test compiles it once.
 func ReleaseEngine() { engines.releaseAll() }
 
 // engines is the process's compiled engines, one for each build of the
@@ -56,7 +61,8 @@ var engines = &engineCache{idle: engineIdle}
 // own: a module compiled on a runtime it keeps, which it closes once the
 // build has been idle for idle, or at once on releaseAll. That module is
 // never instantiated: every instance still has its own runtime, and reads
-// the compiled code from the cache.
+// the compiled code from the cache. A build that pin is given is kept for
+// the life of the process.
 type engineCache struct {
 	// compileMu makes callers given a build that is not compiled wait for
 	// one compile, rather than each compiling it.
@@ -81,8 +87,12 @@ type sharedEngine struct {
 	key  [sha256.Size]byte
 	free func()
 	open int
-	// idle is the timer that frees the build, while no instance is open.
-	idle stopper
+	// pinned is a build that pin keeps for the life of the process. It
+	// holds a lease that is never released, so open never reaches zero.
+	pinned bool
+	// idleTimer is the timer that frees the build, while no instance is
+	// open.
+	idleTimer stopper
 	// armed counts the idle timers started, so that a timer that fires
 	// after a later acquire has stopped it does nothing.
 	armed int
@@ -128,6 +138,29 @@ func (c *engineCache) acquire(ctx context.Context, wasm []byte) *engineLease {
 	return &engineLease{cache: c, engine: e}
 }
 
+// pin keeps the compiled form of wasm in the shared cache for the life of
+// the process: the idle timer never frees it, and releaseAll leaves it.
+// Package encrypttest's clients and checkers pin the test build they run,
+// so a test binary compiles each build once, however many tests start and
+// close a client, and whatever they do with ReleaseEngine. A compile that
+// fails pins nothing: the instance that follows compiles wasm itself, and
+// reports the failure as it always has.
+func (c *engineCache) pin(ctx context.Context, wasm []byte) {
+	l := c.acquire(ctx, wasm)
+	if l == nil {
+		return
+	}
+	c.mu.Lock()
+	already := l.engine.pinned
+	l.engine.pinned = true
+	c.mu.Unlock()
+	// The first pin keeps its lease, and never releases it. Any later pin
+	// of the same build has nothing to add.
+	if already {
+		l.release()
+	}
+}
+
 // lease is a lease on the build with key, if it is compiled.
 func (c *engineCache) lease(key [sha256.Size]byte) *engineLease {
 	c.mu.Lock()
@@ -137,9 +170,9 @@ func (c *engineCache) lease(key [sha256.Size]byte) *engineLease {
 		return nil
 	}
 	e.open++
-	if e.idle != nil {
-		e.idle.Stop()
-		e.idle = nil
+	if e.idleTimer != nil {
+		e.idleTimer.Stop()
+		e.idleTimer = nil
 	}
 	return &engineLease{cache: c, engine: e}
 }
@@ -166,7 +199,7 @@ func (l *engineLease) release() {
 	if afterFunc == nil {
 		afterFunc = func(d time.Duration, f func()) stopper { return time.AfterFunc(d, f) }
 	}
-	e.idle = afterFunc(c.idle, func() { c.expire(e, armed) })
+	e.idleTimer = afterFunc(c.idle, func() { c.expire(e, armed) })
 }
 
 // expire frees e, if no instance has opened over it since the timer armed
@@ -178,20 +211,24 @@ func (c *engineCache) expire(e *sharedEngine, armed int) {
 		return
 	}
 	delete(c.builds, e.key)
-	e.idle = nil
+	e.idleTimer = nil
 	c.mu.Unlock()
 	e.free()
 }
 
-// releaseAll frees every compiled build now. An instance still open over
-// one keeps its compiled code, through its own runtime, until it closes.
+// releaseAll frees every compiled build now, except the pinned ones. An
+// instance still open over one keeps its compiled code, through its own
+// runtime, until it closes.
 func (c *engineCache) releaseAll() {
 	c.mu.Lock()
 	dropped := make([]*sharedEngine, 0, len(c.builds))
 	for key, e := range c.builds {
-		if e.idle != nil {
-			e.idle.Stop()
-			e.idle = nil
+		if e.pinned {
+			continue
+		}
+		if e.idleTimer != nil {
+			e.idleTimer.Stop()
+			e.idleTimer = nil
 		}
 		delete(c.builds, key)
 		dropped = append(dropped, e)

@@ -2,9 +2,7 @@ package encrypt
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
-	"sync"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testclient"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
@@ -18,40 +16,38 @@ import (
 // embedded for production refuse a bare seed as their config. It picks
 // between the two test builds by selectBuild, the rule embeddedGuest uses.
 func init() {
-	testclient.Register(func(ctx context.Context, plain, withEQL func() ([]byte, error), seed [32]byte) (any, error) {
-		wasm, err := selectBuild(plain, withEQL)
+	testclient.Register(func(ctx context.Context, builds testclient.Builds, seed [32]byte) (any, error) {
+		wasm, err := selectBuild(builds.Plain, builds.WithEQL)
 		if err != nil {
 			return nil, err
 		}
 		return seededClient(ctx, wasm, seed)
-	}, func(ctx context.Context, plain, withEQL func() ([]byte, error)) (any, error) {
-		return testChecker(ctx, &testBuilds, plain, withEQL)
+	}, func(ctx context.Context, builds testclient.Builds) (any, error) {
+		return testChecker(ctx, builds)
 	})
 }
 
 // testChecker is a checker over the test build selectBuild picks, the one
-// a test client in this program runs. builds keeps that build compiled, so
-// that encrypttest.AssertContexts, which makes a checker on every call,
-// compiles the guest once per test binary, and not on every call.
-func testChecker(ctx context.Context, builds *pinnedBuilds, plain, withEQL func() ([]byte, error)) (*Checker, error) {
-	wasm, err := selectBuild(plain, withEQL)
+// a test client in this program runs. It pins that build in engines, as
+// seededClient does, so that encrypttest.AssertContexts, which makes a
+// checker on every call, compiles the guest once per test binary, and not
+// on every call.
+func testChecker(ctx context.Context, builds testclient.Builds) (*Checker, error) {
+	wasm, err := selectBuild(builds.Plain, builds.WithEQL)
 	if err != nil {
 		return nil, err
 	}
-	if err := builds.pin(ctx, wasm); err != nil {
-		return nil, err
-	}
+	engines.pin(ctx, wasm)
 	return newCheckerOver(ctx, wasm)
 }
 
 // seededClient is a client over wasm, a deterministic-kms build of the
 // guest. Its config is the 32-byte seed every key derives from. It has no
 // token and a transport that refuses every request, so nothing it does can
-// reach the network.
+// reach the network. It pins wasm in engines, so the test binary compiles
+// it once, however many test clients start and close.
 func seededClient(ctx context.Context, wasm []byte, seed [32]byte) (*Client, error) {
-	if err := testBuilds.pin(ctx, wasm); err != nil {
-		return nil, err
-	}
+	engines.pin(ctx, wasm)
 	tr := &transport{rt: refusingTransport{}, token: noToken{}}
 	inst, err := newInstance(ctx, wasm, tr, guest.BestEffort)
 	if err != nil {
@@ -76,66 +72,4 @@ func seededClient(ctx context.Context, wasm []byte, seed [32]byte) (*Client, err
 	}
 	copy(c.def[:], out)
 	return c, nil
-}
-
-// testBuilds holds every test build a test client or checker has run,
-// compiled.
-var testBuilds pinnedBuilds
-
-// pinnedBuilds keeps each guest build it is given compiled in the shared
-// compilation cache for the life of the process, so that test clients and
-// checkers compile the guest once per test binary.
-//
-// wazero counts the runtimes that use a compiled module in its in-memory
-// cache, and deletes the module when the last of them closes. A suite that
-// starts a client in each test, and closes it when the test ends, would
-// compile the guest again in every test: about one second each, and about
-// ten under the race detector. Parallel tests that start clients at once
-// would each compile it too. pin compiles each build once, on a runtime it
-// never closes, so the count never reaches zero. That copy is never
-// instantiated: every client still compiles on its own runtime, and reads
-// the compiled code from the cache.
-type pinnedBuilds struct {
-	mu     sync.Mutex
-	pinned map[[sha256.Size]byte]any
-	// compile compiles wasm into the shared cache and returns what keeps
-	// it there. nil is compileForever; tests replace it.
-	compile func(ctx context.Context, wasm []byte) (any, error)
-}
-
-// pin compiles wasm into the shared cache the first time it is given, and
-// keeps it there. Callers given the same build at once wait for one
-// compile. A compile that fails is not kept, so the next caller tries again.
-func (p *pinnedBuilds) pin(ctx context.Context, wasm []byte) error {
-	key := sha256.Sum256(wasm)
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if _, ok := p.pinned[key]; ok {
-		return nil
-	}
-	compile := p.compile
-	if compile == nil {
-		compile = compileForever
-	}
-	kept, err := compile(ctx, wasm)
-	if err != nil {
-		return err
-	}
-	if p.pinned == nil {
-		p.pinned = map[[sha256.Size]byte]any{}
-	}
-	p.pinned[key] = kept
-	return nil
-}
-
-// compileForever compiles wasm into the shared cache, as compileShared
-// does, and never frees it.
-func compileForever(ctx context.Context, wasm []byte) (any, error) {
-	free, err := compileShared(ctx, wasm)
-	if err != nil {
-		return nil, fmt.Errorf("encrypt: compiling the test build: %w", err)
-	}
-	// What keeps the build compiled is the runtime free would close, which
-	// free holds.
-	return free, nil
 }

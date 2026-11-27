@@ -157,7 +157,7 @@ func NewClient(tb testing.TB, opts ...ClientOption) *encrypt.Client {
 	for _, opt := range opts {
 		opt(&o)
 	}
-	client, err := narrow[*encrypt.Client](testclient.New(context.Background(), plainTestBuild, eqlTestBuild, o.seed))
+	client, err := narrow[*encrypt.Client](testclient.New(context.Background(), testBuilds, o.seed))
 	if err != nil {
 		tb.Fatalf("encrypttest: %v", err)
 	}
@@ -227,6 +227,7 @@ var (
 	eqlTestBuild = sync.OnceValues(func() ([]byte, error) {
 		return readTestBuild(eqlGuestPath, "wasm:guest:build:eql:deterministic")
 	})
+	testBuilds = testclient.Builds{Plain: plainTestBuild, WithEQL: eqlTestBuild}
 )
 
 func readTestBuild(path, task string) ([]byte, error) {
