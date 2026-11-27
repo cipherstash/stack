@@ -425,7 +425,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}/family=m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 75
     strategy:
       fail-fast: false
