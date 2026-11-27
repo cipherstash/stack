@@ -919,13 +919,7 @@ fn a_uuid_field_round_trips_and_queries_by_equality() {
             b"eq",
         ))
         .expect("an eq query of a uuid");
-        let Tree::Object(entries) = decode(&answer) else {
-            panic!("a query term is an object");
-        };
-        let Some((_, Tree::Bytes(term))) = entries.into_iter().find(|(k, _)| k == "term") else {
-            panic!("the term is bytes");
-        };
-        term.as_slice().to_vec()
+        bytes_of(entry(&query_term_entries(&answer), "term"))
     };
     assert_eq!(query(uuid(7)), stored, "the same UUID finds the row");
     assert_ne!(query(uuid(8)), stored, "another UUID does not");

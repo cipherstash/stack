@@ -639,9 +639,11 @@ fn encode_frame(frame: OwnedFrame) -> Result<Vec<u8>, u32> {
 /// The parse is not a second check of what the engine checks. The engine's
 /// value readers take a [`Frame`], and [`Frame::parse`] is the only way to
 /// make one from bytes. It also refuses bytes that are not one well-formed
-/// frame with the same status on every path, before any key is requested
-/// and before a plan's or a context's own grammar is read, so the Go SDK
-/// reports "not a frame" for each malformed input alike.
+/// frame, before any key is requested and before that input's own grammar
+/// is read, so the Go SDK reports "not a frame" for a malformed plan,
+/// context or value alike. Query statistics, the options and the keyset
+/// selector are not read through it: their own readers refuse malformed
+/// bytes with errors of their own.
 fn parse_frame(bytes: &Bytes) -> Result<Frame<'_>, u32> {
     Frame::parse(bytes.risky_ref()).map_err(|_| not_a_frame())
 }
