@@ -214,29 +214,42 @@ jobs:
               }' "$file" > "$out/$file.md"
             done
 
+      # lychee from its release, checked against the SHA-256 of that release
+      # asset (the `digest` GitHub records for it), so the binary that runs
+      # is the one that was reviewed. To move to a new version, change both
+      # lines together.
+      - name: Install lychee
+        env:
+          LYCHEE_VERSION: v0.24.2
+          LYCHEE_SHA256: 1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/lychee"
+          mkdir -p "$dir"
+          asset=lychee-x86_64-unknown-linux-gnu.tar.gz
+          curl -sSfL -o "$dir/$asset" \
+            "https://github.com/lycheeverse/lychee/releases/download/lychee-${LYCHEE_VERSION}/${asset}"
+          echo "${LYCHEE_SHA256}  $dir/$asset" | sha256sum --check --strict
+          tar -xzf "$dir/$asset" -C "$dir" --strip-components=1 lychee-x86_64-unknown-linux-gnu/lychee
+          echo "$dir" >> "$GITHUB_PATH"
+
       # The doc comments' intra-doc links (`crate::Foo`) read as relative
       # file paths, which rustdoc checks already, so only web links are
       # checked here.
       - name: Check the web links in the doc comments
-        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
-        with:
-          args: >-
-            --config lychee.toml
-            --scheme https --scheme http
-            '${{ runner.temp }}/rust-docs/**/*.md'
-          token: ${{ github.token }}
-          jobSummary: false
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          lychee --config lychee.toml
+          --scheme https --scheme http
+          "$RUNNER_TEMP/rust-docs/**/*.md"
 
       # The crates' Markdown: READMEs (some are a crate's docs), changelogs,
       # ADRs and guides. Links to files in the repository are checked too.
       - name: Check the links in the crates' Markdown
-        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
-        with:
-          args: >-
-            --config lychee.toml
-            'packages/*/**/*.md'
-          token: ${{ github.token }}
-          jobSummary: false
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: lychee --config lychee.toml 'packages/*/**/*.md'
 
   node-bindings:
     name: node bindings, napi typings, stack-auth-wasm

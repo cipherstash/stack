@@ -12,8 +12,11 @@ max_retries = 3
 retry_wait_time = 5
 timeout = 30
 
-# 429 is a rate limit, not a broken link.
-accept = ["200..=299", "429"]
+# 429 is a rate limit, not a broken link. 502, 503 and 504 mean the server
+# failed to answer, not that the page is gone: github.com answers some
+# automated requests for a page that exists with 504. A link that has moved
+# or been deleted still fails, with a 4xx status.
+accept = ["200..=299", "429", "502..=504"]
 
 # Addresses that cannot be fetched from CI: the local machine, and the
 # reserved names a doc uses as a placeholder (RFC 2606).
@@ -24,6 +27,10 @@ exclude = [
   # npm answers an automated client with 403 at random, so its package
   # pages fail without being broken.
   '^https://www\.npmjs\.com/',
+  # Crates of this repository that are waiting for their first publish
+  # have no docs.rs or crates.io page yet. Remove an entry once its crate
+  # is published.
+  '^https://(docs\.rs|crates\.io/crates)/recipher-frame(/|$)',
 ]
 
 # Generated or captured data, not docs. EQL is a separate project in
