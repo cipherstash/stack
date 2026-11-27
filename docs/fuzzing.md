@@ -171,7 +171,28 @@ The fuzz tests never pass a pair inside memory but outside the host's own
 buffers. That breaks the host's side of the contract: an export that wipes
 its input would zero the guest's own memory.
 
-Run them with mise, after building the guests:
+## Go: fuzzing the frame codec
+
+The Go half of the frame codec, `languages/golang/internal/frame`, decodes
+bytes the guest wrote and blobs read back from a database. Its decoders
+treat that input as hostile, and three targets hold them to it. Each
+target must not panic, and anything it accepts must write back as the same
+bytes, give or take the changes a Go value cannot avoid (an `undefined`
+comes back as null, a timestamp in a coarser unit comes back in
+nanoseconds). They need no guest, and they seed themselves from the value
+corpus, `conformance/vitaminc-aead/value-conformance.json`, and the storage
+corpus, `packages/recipher-frame/testdata/storage-v1.json`.
+
+| Go fuzz target | package | what it decodes |
+|---|---|---|
+| `FuzzUnmarshal` | `internal/frame` | a value frame (`Unmarshal`) |
+| `FuzzUnmarshalCipherText` | `internal/frame` | a ciphertext tree (`UnmarshalCipherText`) |
+| `FuzzUnmarshalStorage` | `internal/frame` | a storage blob (`UnmarshalStorage`) |
+
+## Running the Go targets
+
+Run them with mise, after building the guests (the frame codec's targets
+need none):
 
 ```bash
 mise run wasm:guest:build:deterministic
