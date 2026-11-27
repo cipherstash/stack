@@ -233,7 +233,9 @@ describe('a UUID field', () => {
       name: 'sensor',
     })
     expect(result.isErr()).toBe(true)
+    expect(result.err()?.code).toBe('recipher_js::field_type')
     expect(result.err()?.field).toBe('id')
+    expect(result.err()?.record).toBe('devices')
   })
 
   it('refuses an order index when the declaration is checked', async () => {
