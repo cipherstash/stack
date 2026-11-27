@@ -1,11 +1,9 @@
-package vcffi
+package frame
 
 import (
 	"errors"
 	"fmt"
 	"slices"
-
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // A ciphertext is made of ordinary Go values — the same dynamic shape as
@@ -13,9 +11,9 @@ import (
 // what travels in the clear:
 //
 //   - a sealed-leaf marker (one of the binding's [LeafSet] types, e.g.
-//     vcvalue.Sealed): one encrypted leaf, an authenticated absent marker,
+//     Sealed): one encrypted leaf, an authenticated absent marker,
 //     or an authenticated empty-composite marker
-//   - vcvalue.Plain{V: ...}: a passthrough field, readable without the key
+//   - Plain{V: ...}: a passthrough field, readable without the key
 //   - []any: a sequence of ciphertext nodes
 //   - map[string]any: a record of named nodes. Keys travel in the clear but
 //     each is cryptographically bound to its sealed value — renaming or
@@ -25,20 +23,19 @@ import (
 //
 // There is deliberately no dedicated tree type and no conversion step: a
 // map-shaped ciphertext binds directly as database named parameters (the leaf
-// types and vcvalue.Plain implement driver.Valuer), and leaves loaded back
+// types and Plain implement driver.Valuer), and leaves loaded back
 // from columns go into a map[string]any for decryption. Only the sealed leaf
 // bytes are a frozen format; the transport encoding crossing the FFI boundary
 // is an implementation detail.
 //
 // Which concrete leaf types appear in the tree is the one thing this codec
 // does not decide: each binding supplies a [LeafSet] so its leaves stay a
-// distinct Go type. A stack-encrypt sealed leaf is not decryptable by
-// vitaminc-encrypt, and keeping the types distinct means one can never scan
-// or marshal where the other belongs.
+// distinct Go type, and a value that is not a leaf can never scan or
+// marshal where a leaf belongs.
 
 // Ciphertext node tags in the transport encoding (mirrors the Rust codec).
-// 0x02 was the absent marker, retired by ADR 0001 (a None is a null leaf):
-// never written, and refused when read like any unknown tag.
+// 0x02 is not a node: an absent value is a sealed null leaf. It is never
+// written, and it is refused when read, like any unknown tag.
 const (
 	ctSingle      byte = 0x01
 	ctSeq         byte = 0x03
@@ -69,7 +66,7 @@ const (
 //
 //   - Classify reports whether v is one of the binding's leaf values,
 //     returning its kind and bytes. The codec's structural node types
-//     ([]any, map[string]any, vcvalue.Plain) are never offered to Classify,
+//     ([]any, map[string]any, Plain) are never offered to Classify,
 //     so a LeafSet cannot claim a subtree; values Classify does not claim
 //     fall through to the bare-plaintext rejection.
 //   - Make constructs the binding's leaf value for a kind decoded off the
@@ -84,8 +81,8 @@ type LeafSet struct {
 	Make     func(kind LeafKind, bytes []byte) any
 }
 
-// VCValueLeaves returns the [LeafSet] of the vcvalue model: vcvalue.Sealed,
-// vcvalue.SealedEmptySeq and vcvalue.SealedEmptyMap.
+// VCValueLeaves returns the [LeafSet] of the vcvalue model: Sealed,
+// SealedEmptySeq and SealedEmptyMap.
 // These are the leaf types the vitaminc-encrypt binding materializes; other
 // bindings define their own set so their leaves stay a distinct Go type. A
 // function rather than an exported var, so no importer can reassign the set
@@ -97,11 +94,11 @@ func VCValueLeaves() LeafSet {
 var vcValueLeaves = LeafSet{
 	Classify: func(v any) (LeafKind, []byte, bool) {
 		switch n := v.(type) {
-		case vcvalue.Sealed:
+		case Sealed:
 			return LeafSingle, n, true
-		case vcvalue.SealedEmptySeq:
+		case SealedEmptySeq:
 			return LeafEmptySeq, n, true
-		case vcvalue.SealedEmptyMap:
+		case SealedEmptyMap:
 			return LeafEmptyMap, n, true
 		default:
 			return 0, nil, false
@@ -110,11 +107,11 @@ var vcValueLeaves = LeafSet{
 	Make: func(kind LeafKind, bytes []byte) any {
 		switch kind {
 		case LeafSingle:
-			return vcvalue.Sealed(bytes)
+			return Sealed(bytes)
 		case LeafEmptySeq:
-			return vcvalue.SealedEmptySeq(bytes)
+			return SealedEmptySeq(bytes)
 		case LeafEmptyMap:
-			return vcvalue.SealedEmptyMap(bytes)
+			return SealedEmptyMap(bytes)
 		default:
 			// An unlisted kind is rejected (nil), mirroring leafTag on the
 			// encode side — a future fourth kind must not silently mint Sealed.
@@ -127,7 +124,7 @@ var vcValueLeaves = LeafSet{
 // attributable, instead of as a nil-function panic mid-tree.
 func (l LeafSet) check() error {
 	if l.Classify == nil || l.Make == nil {
-		return errors.New("vcffi: LeafSet must define both Classify and Make")
+		return errors.New("frame: LeafSet must define both Classify and Make")
 	}
 	return nil
 }
@@ -149,7 +146,7 @@ var leafTags = [...]byte{
 // leafTag maps a classified kind to its wire tag.
 func leafTag(kind LeafKind) (byte, error) {
 	if int(kind) >= len(leafTags) || leafTags[kind] == 0 {
-		return 0, fmt.Errorf("vcffi: LeafSet classified an unknown LeafKind %d", kind)
+		return 0, fmt.Errorf("frame: LeafSet classified an unknown LeafKind %d", kind)
 	}
 	return leafTags[kind], nil
 }
@@ -169,7 +166,7 @@ func leafKind(tag byte) (LeafKind, bool) {
 
 // MarshalCipherText encodes a ciphertext value into transport bytes; leaves
 // recognizes the binding's sealed-leaf types. Bare plaintext values are
-// rejected — a passthrough must be marked with vcvalue.Plain, so a value can
+// rejected — a passthrough must be marked with Plain, so a value can
 // never end up travelling unencrypted by accident.
 func MarshalCipherText(leaves LeafSet, v any) ([]byte, error) {
 	if err := leaves.check(); err != nil {
@@ -236,7 +233,7 @@ func encodeCipherText(leaves LeafSet, out []byte, v any, depth int) ([]byte, err
 			}
 		}
 		return out, nil
-	case vcvalue.Plain:
+	case Plain:
 		// The payload node sits one level deeper; reject it here because the
 		// value encoder's scalar channels never re-check depth, and emitting
 		// bytes the decoder is guaranteed to reject (decodeValue enforces the
@@ -255,7 +252,7 @@ func encodeCipherText(leaves LeafSet, out []byte, v any, depth int) ([]byte, err
 			return nil, st.err
 		}
 		if done != 1 {
-			return nil, fmt.Errorf("vcffi: passthrough payload must complete exactly one value, completed %d", done)
+			return nil, fmt.Errorf("frame: passthrough payload must complete exactly one value, completed %d", done)
 		}
 		return st.buf, nil
 	default:
@@ -267,7 +264,7 @@ func encodeCipherText(leaves LeafSet, out []byte, v any, depth int) ([]byte, err
 			out = append(out, tag)
 			return appendChunk(out, bytes)
 		}
-		return nil, fmt.Errorf("vcffi: %T is not a ciphertext node — wrap passthrough values in vcvalue.Plain", v)
+		return nil, fmt.Errorf("frame: %T is not a ciphertext node — wrap passthrough values in Plain", v)
 	}
 }
 
@@ -295,7 +292,7 @@ func decodeCipherText(leaves LeafSet, r *reader, depth int) (any, error) {
 			// A LeafSet that does not materialize this kind is a wiring
 			// mistake in the binding, not malformed input — name it, instead
 			// of injecting a nil node the caller only trips over later.
-			return nil, fmt.Errorf("vcffi: LeafSet.Make returned no value for LeafKind %d", kind)
+			return nil, fmt.Errorf("frame: LeafSet.Make returned no value for LeafKind %d", kind)
 		}
 		return node, nil
 	}
@@ -341,7 +338,7 @@ func decodeCipherText(leaves LeafSet, r *reader, depth int) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return vcvalue.Plain{V: v}, nil
+		return Plain{V: v}, nil
 	default:
 		return nil, ErrMalformed
 	}

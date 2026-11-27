@@ -1,4 +1,4 @@
-package vcffi
+package frame
 
 import "testing"
 

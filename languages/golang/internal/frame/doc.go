@@ -1,44 +1,39 @@
-// Package vcffi is the shared FFI transport codec of the vitaminc Go
-// bindings: the wire encoding that carries a value tree into a wasm guest
-// and a ciphertext tree back out, together with the Encryptable/Encoder
-// extension point for types that control their own encoding.
+// Package frame is the Go half of the frame codec: the bytes that carry a
+// value into the Stack Encrypt guest, the bytes that carry a ciphertext tree
+// back out, and the storage profile, which writes a value as a blob that is
+// kept. The Rust half is the crate recipher-frame. The two halves share no
+// code, only bytes, so both read the same corpora: the value corpus in
+// conformance/vitaminc-aead and the storage corpus in
+// packages/recipher-frame/testdata.
 //
-// It exists as its own module so every binding that owns a wasm boundary
-// speaks the same bytes from one implementation — vcencrypt (the
-// vitaminc-encrypt reference binding) and the stack-encrypt Go SDK are the
-// intended consumers. Forking the codec per binding is exactly the failure
-// mode this module prevents: one codec, one hostile-input test suite, one
-// fuzz corpus.
+// The package also holds the value model the codec reads and writes: the
+// value types (Date, Decimal, Int128, Uint128, UUID), Object and Field for a
+// map read back in its wire order, and Plain for a value that travels in
+// the clear.
 //
 // # Transport, and one storage profile
 //
-// The transport bytes are an FFI detail with no compatibility commitment:
-// nothing [Marshal], [Encode] or [MarshalCipherText] writes should ever be
-// persisted. The one exception is the storage profile, [MarshalStorage] and
-// [UnmarshalStorage], which write and read a value as a versioned blob for
-// bytes that are kept. Its format is shared with the Rust module
-// vitaminc_aead_frame::storage, specified in packages/aead-frame/STORAGE.md,
-// frozen at version 1, and pinned by the golden corpus in
-// packages/aead-frame/testdata/storage-v1.json, which this package's tests
-// read. Use it, and only it, for bytes that outlive the process that wrote
-// them. The other frozen format is the sealed leaf inside the AEAD envelope
-// (see vcvalue.Sealed and the Rust crate vitaminc-aead's leaf codec).
+// The transport bytes have no compatibility commitment: nothing [Marshal],
+// [Encode] or [MarshalCipherText] writes is ever kept. The one exception is
+// the storage profile, [MarshalStorage] and [UnmarshalStorage], which write
+// and read a value as a versioned blob. Its format is version 1 of
+// packages/recipher-frame/STORAGE.md, shared with the Rust module
+// recipher_frame::storage, frozen, and pinned by the storage corpus, which
+// this package's tests read. Use it, and only it, for bytes that outlive
+// the process that wrote them.
 //
 // # Values and ciphertexts
 //
-// [Marshal] and [Unmarshal] carry the plaintext value model (Go natives,
-// vcvalue.Object for maps, vcvalue.Plain for passthrough): Marshal walks
-// ordinary Go values with encoding/json-style rules, consulting
-// [Encryptable] first so a user type can drive the [Encoder] channels
-// itself.
+// [Marshal] and [Unmarshal] carry a value: Go's own scalars, the value
+// types, []any for a list, [Object] for a map read back, and [Plain] for
+// passthrough. Marshal walks other Go values with encoding/json-style rules,
+// and asks [Encryptable] first, so a type can write itself through an
+// [Encoder].
 //
 // [MarshalCipherText] and [UnmarshalCipherText] carry the ciphertext tree.
-// Its structural nodes ([]any, map[string]any, vcvalue.Plain) are common to
-// every binding, but the sealed-leaf marker types are deliberately not: each
-// binding supplies a [LeafSet] mapping its own leaf types onto the framing,
-// so a leaf sealed by one cipher is a distinct Go type from a leaf sealed by
-// another and can never scan or marshal where the other belongs.
-// [VCValueLeaves] is the set for the vcvalue model types.
+// Its structural nodes ([]any, map[string]any, [Plain]) are the codec's. Its
+// sealed leaves are the caller's own types, which a [LeafSet] maps onto the
+// framing, so a leaf is a type no other value can be mistaken for.
 //
 // # Hostile input
 //
@@ -52,4 +47,4 @@
 // is partially wired, or that does not materialize a kind the buffer carries,
 // fails with its own attributable error, so errors.Is(err, [ErrMalformed]) is
 // a test for bad input rather than a total branch over decode failures.
-package vcffi
+package frame

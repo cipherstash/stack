@@ -1,4 +1,4 @@
-package vcvalue
+package frame
 
 import (
 	"errors"
@@ -8,14 +8,14 @@ import (
 )
 
 var (
-	ErrIntegerRange     = errors.New("vcvalue: integer is outside its 128-bit range")
-	ErrInvalidDate      = errors.New("vcvalue: invalid date")
-	ErrInvalidTimestamp = errors.New("vcvalue: invalid timestamp")
-	ErrInvalidDecimal   = errors.New("vcvalue: invalid or out-of-range decimal")
-	ErrNonFiniteDecimal = errors.New("vcvalue: decimal must be finite")
-	ErrInvalidUUID      = errors.New("vcvalue: invalid UUID")
-	ErrInvalidTagged    = errors.New("vcvalue: a tagged value must hold a physical scalar under an unknown logical id")
-	ErrInvalidFixedType = errors.New("vcvalue: not a fixed-width type")
+	ErrIntegerRange     = errors.New("frame: integer is outside its 128-bit range")
+	ErrInvalidDate      = errors.New("frame: invalid date")
+	ErrInvalidTimestamp = errors.New("frame: invalid timestamp")
+	ErrInvalidDecimal   = errors.New("frame: invalid or out-of-range decimal")
+	ErrNonFiniteDecimal = errors.New("frame: decimal must be finite")
+	ErrInvalidUUID      = errors.New("frame: invalid UUID")
+	ErrInvalidTagged    = errors.New("frame: a tagged value must hold a physical scalar under an unknown logical id")
+	ErrInvalidFixedType = errors.New("frame: not a fixed-width type")
 )
 
 // Int128 is a signed two's-complement integer in little-endian byte order.
@@ -72,7 +72,7 @@ func (v Int128) String() string {
 	return value.String()
 }
 
-// The wire's range is jiff's in every binding (vitaminc#626), so a value
+// The wire's range is jiff's in every binding, so a value
 // one binding seals, every binding opens: dates in years -9999 through
 // 9999, and instants from -009999-01-02T01:59:59Z through
 // 9999-12-30T22:00:00.999999999Z.
@@ -121,7 +121,7 @@ func DateFromDaysCE(days int32) (Date, error) {
 // that holds the parts rather than a time.Time. Timestamps decode to
 // time.Time; this type only encodes. A leap second (nanoseconds of one
 // billion or more) has no count since the epoch and is refused, as it is
-// everywhere in the model (ADR 0001), and so is an instant outside the
+// everywhere in the model, and so is an instant outside the
 // wire's range.
 type Timestamp struct {
 	Seconds     int64
@@ -141,7 +141,7 @@ func (t Timestamp) Validate() error {
 //
 // Another UUID type, such as github.com/google/uuid.UUID, is a plain
 // [16]byte to the codec and is written as bytes. Convert it first, with
-// vcvalue.UUID(id), so that Rust and Node read it as a UUID.
+// UUID(id), so that Rust and Node read it as a UUID.
 type UUID [16]byte
 
 // ParseUUID reads the hyphenated spelling, 8-4-4-4-12 hexadecimal digits in
@@ -213,7 +213,7 @@ type Tagged struct {
 // Coefficient is an unsigned 96-bit little-endian integer. Scale is retained,
 // including trailing zeroes, and must be at most 28 (rust_decimal's range).
 // A zero has no sign: "-0.00" parses, decodes and encodes as 0.00 with its
-// scale kept (ADR 0001).
+// scale kept.
 type Decimal struct {
 	Coefficient [12]byte
 	Scale       uint8

@@ -1,4 +1,4 @@
-package vcffi
+package frame
 
 import (
 	"bytes"
@@ -13,13 +13,11 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
-// The storage corpus is shared with Rust (packages/aead-frame), which pins
+// The storage corpus is shared with Rust (packages/recipher-frame), which pins
 // version 1 byte for byte; this file holds Go to the same rows.
-const storageCorpus = "../../../packages/aead-frame/testdata/storage-v1.json"
+const storageCorpus = "../../../../packages/recipher-frame/testdata/storage-v1.json"
 
 type storageRow struct {
 	Name     string          `json:"name"`
@@ -115,7 +113,7 @@ func storageModel(t testing.TB, raw json.RawMessage) any {
 		case "i64":
 			return signed(64)
 		case "i128":
-			n, err := vcvalue.ParseInt128(text)
+			n, err := ParseInt128(text)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -129,7 +127,7 @@ func storageModel(t testing.TB, raw json.RawMessage) any {
 		case "u64":
 			return unsigned(64)
 		case "u128":
-			n, err := vcvalue.ParseUint128(text)
+			n, err := ParseUint128(text)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -155,11 +153,11 @@ func storageModel(t testing.TB, raw json.RawMessage) any {
 			}
 			return out
 		case "object":
-			out := vcvalue.Object{}
+			out := Object{}
 			for _, p := range pairs() {
 				var key string
 				_ = json.Unmarshal(p[0], &key)
-				out = append(out, vcvalue.Field{Key: key, Value: storageModel(t, p[1])})
+				out = append(out, Field{Key: key, Value: storageModel(t, p[1])})
 			}
 			return out
 		case "map":
@@ -181,7 +179,7 @@ func storageModel(t testing.TB, raw json.RawMessage) any {
 				case "array":
 					m = []any{m}
 				case "object":
-					m = vcvalue.Object{{Key: "k", Value: m}}
+					m = Object{{Key: "k", Value: m}}
 				case "some":
 					m = Some{V: m}
 				case "map":
@@ -221,8 +219,8 @@ func sameModel(a, b any) bool {
 			}
 		}
 		return true
-	case vcvalue.Object:
-		y, ok := b.(vcvalue.Object)
+	case Object:
+		y, ok := b.(Object)
 		if !ok || len(x) != len(y) {
 			return false
 		}
@@ -491,11 +489,11 @@ type record struct {
 	Absent  **int32           `vc:"absent"`
 	Tags    []string          `vc:"tags"`
 	Raw     []byte            `vc:"raw"`
-	ID      vcvalue.UUID      `vc:"id"`
+	ID      UUID              `vc:"id"`
 	Scores  map[uint32]string `vc:"scores"`
 	When    time.Time         `vc:"when"`
 	Stamp   stamp             `vc:"stamp"`
-	Big     vcvalue.Int128    `vc:"big"`
+	Big     Int128            `vc:"big"`
 	Ratio   float32           `vc:"ratio"`
 	Skipped string            `vc:"-"`
 	Untyped any               `vc:"untyped"`
@@ -506,7 +504,7 @@ func TestStorageRecordRoundTrips(t *testing.T) {
 	n := int32(-3)
 	np := &n
 	var nilInt *int32
-	big, _ := vcvalue.ParseInt128("-170141183460469231731687303715884105728")
+	big, _ := ParseInt128("-170141183460469231731687303715884105728")
 	in := record{
 		Name:    "ada",
 		Age:     36,
@@ -515,7 +513,7 @@ func TestStorageRecordRoundTrips(t *testing.T) {
 		Absent:  &nilInt,
 		Tags:    []string{"x", "y"},
 		Raw:     []byte{1, 2},
-		ID:      vcvalue.UUID{15: 1},
+		ID:      UUID{15: 1},
 		Scores:  map[uint32]string{7: "a", 1: "b"},
 		When:    time.Date(2026, 10, 25, 1, 2, 3, 4, time.UTC),
 		Stamp:   stamp{at: "noon"},
@@ -545,7 +543,7 @@ func TestStorageRecordRoundTrips(t *testing.T) {
 	if err := UnmarshalStorage(blob, &model); err != nil {
 		t.Fatal(err)
 	}
-	fields := model.(vcvalue.Object)
+	fields := model.(Object)
 	for _, f := range fields {
 		switch f.Key {
 		case "pinned":
@@ -645,16 +643,16 @@ func TestStorageRefusesWhatHasNoStorageForm(t *testing.T) {
 		"a channel":                      make(chan int),
 		"a function":                     func() {},
 		"a complex number":               complex(1, 2),
-		"a passthrough":                  vcvalue.Plain{V: 1},
-		"a date":                         vcvalue.Date{},
-		"a decimal":                      vcvalue.Decimal{},
-		"a typed null":                   vcvalue.TypedNull{},
+		"a passthrough":                  Plain{V: 1},
+		"a date":                         Date{},
+		"a decimal":                      Decimal{},
+		"a typed null":                   TypedNull{},
 		"unexported fields":              hidden{secret: "s3cr3t"},
 		"a float key":                    map[float64]bool{1.5: true},
 		"a bool key":                     map[bool]bool{true: true},
 		"a nil key":                      StorageEntries{{Key: nil, Value: 1}},
 		"a repeated key":                 StorageEntries{{Key: uint8(1)}, {Key: int64(1)}},
-		"a repeated field":               vcvalue.Object{{Key: "k"}, {Key: "k"}},
+		"a repeated field":               Object{{Key: "k"}, {Key: "k"}},
 		"invalid UTF-8":                  string([]byte{0xff}),
 		"invalid UTF-8 key":              map[string]bool{string([]byte{0xff}): true},
 		"too deep":                       deep,
@@ -770,7 +768,7 @@ func TestStorageOptionalFields(t *testing.T) {
 	full, _ := MarshalStorage(defaulted{N: 1, M: "m", K: []int8{2}})
 	var model any
 	_ = UnmarshalStorage(full, &model)
-	if names := []string{model.(vcvalue.Object)[1].Key, model.(vcvalue.Object)[2].Key}; names[0] != "m" || names[1] != "K" {
+	if names := []string{model.(Object)[1].Key, model.(Object)[2].Key}; names[0] != "m" || names[1] != "K" {
 		t.Fatalf("a tag's options are not part of its name: %v", names)
 	}
 	// A Go pointer is written bare, so a field that is not a pointer on the
@@ -779,7 +777,7 @@ func TestStorageOptionalFields(t *testing.T) {
 	if err := UnmarshalStorage(blob, &before{}); err != nil {
 		t.Fatalf("a pointer into a plain field: %v", err)
 	}
-	blob, _ = MarshalStorage(vcvalue.Object{{Key: "n", Value: Some{V: uint32(7)}}})
+	blob, _ = MarshalStorage(Object{{Key: "n", Value: Some{V: uint32(7)}}})
 	if err := UnmarshalStorage(blob, &before{}); !errors.Is(err, ErrMismatch) {
 		t.Fatalf("a marked value into a plain field: %v, want ErrMismatch", err)
 	}
@@ -801,7 +799,7 @@ func TestTransportFieldNamesIgnoreTagOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := v.(vcvalue.Object)[0].Key; got != "age" {
+	if got := v.(Object)[0].Key; got != "age" {
 		t.Fatalf("the transport named the field %q", got)
 	}
 }

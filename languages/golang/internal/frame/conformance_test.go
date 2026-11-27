@@ -1,4 +1,4 @@
-package vcffi
+package frame
 
 import (
 	"encoding/hex"
@@ -10,9 +10,11 @@ import (
 	"strconv"
 	"testing"
 	"time"
-
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
+
+// valueCorpus is the cross-language value corpus that Rust and Node read
+// too. Its README says which sections each language checks.
+const valueCorpus = "../../../../conformance/vitaminc-aead/value-conformance.json"
 
 // isoDate and rfc3339ish match the corpus date and timestamp spellings,
 // including a negative year as a sign and six digits, which time.Parse
@@ -28,7 +30,7 @@ var (
 func expected(kind string, raw json.RawMessage) (any, error) {
 	if kind == "unknown" {
 		// A logical id this build does not know: the id, the parameter and
-		// the physical scalar, which round-trips as a vcvalue.Tagged.
+		// the physical scalar, which round-trips as a Tagged.
 		var inner struct {
 			ID, Param uint8
 			Kind      string
@@ -41,7 +43,7 @@ func expected(kind string, raw json.RawMessage) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return vcvalue.Tagged{ID: inner.ID, Param: inner.Param, V: v}, nil
+		return Tagged{ID: inner.ID, Param: inner.Param, V: v}, nil
 	}
 	var text string
 	_ = json.Unmarshal(raw, &text)
@@ -76,9 +78,9 @@ func expected(kind string, raw json.RawMessage) (any, error) {
 	case "uint64":
 		return natural(64)
 	case "int128":
-		return vcvalue.ParseInt128(text)
+		return ParseInt128(text)
 	case "uint128":
-		return vcvalue.ParseUint128(text)
+		return ParseUint128(text)
 	case "float32":
 		var v float32
 		return v, json.Unmarshal(raw, &v)
@@ -102,20 +104,20 @@ func expected(kind string, raw json.RawMessage) (any, error) {
 			}
 			n[i] = v
 		}
-		return vcvalue.Date{Year: n[0], Month: time.Month(n[1]), Day: n[2]}, nil
+		return Date{Year: n[0], Month: time.Month(n[1]), Day: n[2]}, nil
 	case "timestamp":
 		return timestamp(text)
 	case "decimal":
-		return vcvalue.ParseDecimal(text)
+		return ParseDecimal(text)
 	case "uuid":
-		return vcvalue.ParseUUID(text)
+		return ParseUUID(text)
 	case "array":
 		if string(raw) == "[]" {
 			return []any{}, nil
 		}
 	case "object":
 		if string(raw) == "{}" {
-			return vcvalue.Object{}, nil
+			return Object{}, nil
 		}
 	}
 	return nil, fmt.Errorf("teach expected() the %s vector %s", kind, raw)
@@ -150,7 +152,7 @@ func sameValue(got, want any) bool {
 }
 
 func TestSharedValueConformance(t *testing.T) {
-	data, err := os.ReadFile("../../../testdata/value-conformance.json")
+	data, err := os.ReadFile(valueCorpus)
 	if err != nil {
 		t.Fatal(err)
 	}

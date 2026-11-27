@@ -1,11 +1,11 @@
-package vcvalue
+package frame
 
 // Plain marks a value that must travel through the cipher **unencrypted and
 // unauthenticated** — the reflection-encode opt-in for passthrough. Wrap a
-// non-secret value (Plain{V: id}) and the vcencrypt
-// encoder records it via its Passthrough channel instead of sealing it. Passthrough never
-// happens implicitly: only an explicit Plain (or a direct
-// enc.Passthrough() call) produces it.
+// non-secret value (Plain{V: id}) and the encoder records it through its
+// Passthrough channel instead of sealing it. Passthrough never happens
+// implicitly: only an explicit Plain (or a direct enc.Passthrough() call)
+// produces it.
 //
 // A decoded passthrough field surfaces back as Plain{V: <decoded value>},
 // so the marking round-trips and a caller can tell which fields were in the

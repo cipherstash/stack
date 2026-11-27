@@ -1,4 +1,4 @@
-package vcffi
+package frame
 
 import (
 	"encoding"
@@ -6,8 +6,6 @@ import (
 	"math/big"
 	"reflect"
 	"strconv"
-
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // UnmarshalStorage reads a version 1 blob into the value v points at.
@@ -32,8 +30,8 @@ import (
 //     left its zero value, as Rust's #[serde(default)] reads it;
 //   - an encoding.TextUnmarshaler reads text;
 //   - an `any` reads the value as the blob holds it: nil, bool, the integer
-//     widths (vcvalue.Int128 and Uint128 for 128 bits), float32, float64,
-//     string, []byte, []any, vcvalue.Object for an object,
+//     widths (Int128 and Uint128 for 128 bits), float32, float64,
+//     string, []byte, []any, Object for an object,
 //     [StorageEntries] for a map, and [Some] for an optional value.
 //
 // A value that does not fit is [ErrMismatch]. Its message names the kind
@@ -41,7 +39,7 @@ import (
 func UnmarshalStorage(blob []byte, v any) error {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
-		return fmt.Errorf("vcffi: UnmarshalStorage needs a non-nil pointer, not %T", v)
+		return fmt.Errorf("frame: UnmarshalStorage needs a non-nil pointer, not %T", v)
 	}
 	model, err := decodeStorage(blob)
 	if err != nil {
@@ -123,7 +121,7 @@ func storageNode(r *reader, depth int) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		fields := make(vcvalue.Object, 0, eagerCap(n))
+		fields := make(Object, 0, eagerCap(n))
 		seen := make(map[string]struct{}, eagerCap(n))
 		for range n {
 			key, err := r.str()
@@ -138,7 +136,7 @@ func storageNode(r *reader, depth int) (any, error) {
 			if err != nil {
 				return nil, err
 			}
-			fields = append(fields, vcvalue.Field{Key: key, Value: value})
+			fields = append(fields, Field{Key: key, Value: value})
 		}
 		return fields, nil
 	case StorageMap:
@@ -193,7 +191,7 @@ func kindOf(m any) string {
 		return "null"
 	case bool:
 		return "a boolean"
-	case int8, int16, int32, int64, vcvalue.Int128, uint8, uint16, uint32, uint64, vcvalue.Uint128:
+	case int8, int16, int32, int64, Int128, uint8, uint16, uint32, uint64, Uint128:
 		return "an integer"
 	case float32, float64:
 		return "a float"
@@ -203,7 +201,7 @@ func kindOf(m any) string {
 		return "bytes"
 	case []any:
 		return "an array"
-	case vcvalue.Object, StorageEntries:
+	case Object, StorageEntries:
 		return "an object"
 	case Some:
 		return "an optional value"
@@ -367,11 +365,11 @@ func assignInteger(m any, rv reflect.Value, path string) error {
 	switch t := rv.Type(); {
 	case t == int128Type:
 		if fits = v.Cmp(minInt128) >= 0 && v.Cmp(maxInt128) <= 0; fits {
-			rv.Set(reflect.ValueOf(vcvalue.Int128(int128Of(v))))
+			rv.Set(reflect.ValueOf(Int128(int128Of(v))))
 		}
 	case t == uint128Type:
 		if fits = v.Sign() >= 0 && v.Cmp(maxUint128) <= 0; fits {
-			rv.Set(reflect.ValueOf(vcvalue.Uint128(int128Of(v))))
+			rv.Set(reflect.ValueOf(Uint128(int128Of(v))))
 		}
 	case rv.CanInt():
 		if fits = v.IsInt64() && !rv.OverflowInt(v.Int64()); fits {
@@ -419,7 +417,7 @@ func entriesOf(m any) (StorageEntries, bool) {
 	switch x := m.(type) {
 	case StorageEntries:
 		return x, true
-	case vcvalue.Object:
+	case Object:
 		entries := make(StorageEntries, len(x))
 		for i, f := range x {
 			entries[i] = StorageEntry{Key: f.Key, Value: f.Value}

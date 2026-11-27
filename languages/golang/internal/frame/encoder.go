@@ -1,4 +1,4 @@
-package vcffi
+package frame
 
 import (
 	"encoding/binary"
@@ -11,8 +11,6 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
-
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // Encryptable is the extension point for user types: a type implements it to
@@ -36,11 +34,11 @@ type Encryptable interface {
 //
 // FixedType is called once per type, on a pointer to a zero value, so it
 // must answer from the type alone. A type that returns an invalid FixedType
-// fails the encode with vcvalue.ErrInvalidFixedType rather than write the
+// fails the encode with ErrInvalidFixedType rather than write the
 // plain null in its place.
 type FixedWidth interface {
 	Encryptable
-	FixedType() vcvalue.FixedType
+	FixedType() FixedType
 }
 
 // encState is the buffer and first-error shared by an Encoder and every
@@ -198,7 +196,7 @@ func (e Encoder) String(s string) {
 		return
 	}
 	if !utf8.ValidString(s) {
-		e.st.fail(errors.New("vcffi: string is not valid UTF-8"))
+		e.st.fail(errors.New("frame: string is not valid UTF-8"))
 		return
 	}
 	e.push(tagString)
@@ -300,9 +298,9 @@ type SeqEncoder struct {
 // checkPrev verifies the previous element slot completed exactly once.
 func (s *SeqEncoder) checkPrev() {
 	if s.childDone > s.count {
-		s.st.fail(fmt.Errorf("vcffi: more than one value was written for sequence element %d", s.count-1))
+		s.st.fail(fmt.Errorf("frame: more than one value was written for sequence element %d", s.count-1))
 	} else if s.count > 0 && s.childDone < s.count {
-		s.st.fail(fmt.Errorf("vcffi: sequence element %d was never completed", s.count-1))
+		s.st.fail(fmt.Errorf("frame: sequence element %d was never completed", s.count-1))
 	}
 }
 
@@ -372,9 +370,9 @@ type MapEncoder struct {
 // checkPrev verifies the previous entry's value slot completed exactly once.
 func (m *MapEncoder) checkPrev() {
 	if m.childDone > m.count {
-		m.st.fail(fmt.Errorf("vcffi: more than one value was written for key %q", m.lastKey))
+		m.st.fail(fmt.Errorf("frame: more than one value was written for key %q", m.lastKey))
 	} else if m.count > 0 && m.childDone < m.count {
-		m.st.fail(fmt.Errorf("vcffi: value for key %q was never completed", m.lastKey))
+		m.st.fail(fmt.Errorf("frame: value for key %q was never completed", m.lastKey))
 	}
 }
 
@@ -387,9 +385,9 @@ func (m *MapEncoder) Field(key string) Encoder {
 	}
 	if m.st.err == nil {
 		if !utf8.ValidString(key) {
-			m.st.fail(errors.New("vcffi: object key is not valid UTF-8"))
+			m.st.fail(errors.New("frame: object key is not valid UTF-8"))
 		} else if _, dup := m.seen[key]; dup {
-			m.st.fail(fmt.Errorf("vcffi: duplicate key %q in map encoding", key))
+			m.st.fail(fmt.Errorf("frame: duplicate key %q in map encoding", key))
 		} else if buf, err := appendChunk(m.st.buf, []byte(key)); err != nil {
 			m.st.fail(err)
 		} else {
@@ -427,7 +425,7 @@ func patchLen(st *encState, off, count int) error {
 		return st.err
 	}
 	if count < 0 || uint64(count) > maxUint32 {
-		st.fail(fmt.Errorf("vcffi: item count %d out of range", count))
+		st.fail(fmt.Errorf("frame: item count %d out of range", count))
 		return st.err
 	}
 	binary.LittleEndian.PutUint32(st.buf[off:off+4], uint32(count))
@@ -446,7 +444,7 @@ func Marshal(v any) ([]byte, error) {
 	// Encryptable can leave the root empty (or an un-Ended container) or
 	// write more than once.
 	if root != 1 {
-		return nil, fmt.Errorf("vcffi: encode must complete exactly one root value, completed %d", root)
+		return nil, fmt.Errorf("frame: encode must complete exactly one root value, completed %d", root)
 	}
 	return st.buf, nil
 }
@@ -474,14 +472,14 @@ func Marshal(v any) ([]byte, error) {
 //   - pointers                   → dereferenced; a nil pointer → a typed
 //     null if its element type is fixed width (see [fixedTypeOf]), Null
 //     otherwise;
-//   - vcvalue.TypedNull          → a typed null of its type.
+//   - TypedNull          → a typed null of its type.
 //
 // Map keys are sorted because Go map iteration order is randomized;
 // sorting makes the encrypted structure deterministic. Struct fields keep
 // declaration order.
 //
 // Encode returns the first error recorded while writing enc, so it composes:
-// an Encryptable can delegate a sub-value with vcffi.Encode(m.Field(k), x).
+// an Encryptable can delegate a sub-value with Encode(m.Field(k), x).
 func Encode(enc Encoder, v any) error {
 	encodeAny(enc, v)
 	return enc.st.err
@@ -510,9 +508,9 @@ func encodeAny(enc Encoder, v any) {
 // must special-case before any reflection sees them. Returns true when v was
 // fully handled.
 //
-//   - vcvalue.Plain is the explicit passthrough opt-in; checked before Encryptable
+//   - Plain is the explicit passthrough opt-in; checked before Encryptable
 //     and the struct arm so it is never mistaken for a plain struct.
-//   - vcvalue.Object is decode-only in spirit, but a decrypt-then-re-encrypt flow
+//   - Object is decode-only in spirit, but a decrypt-then-re-encrypt flow
 //     legitimately feeds it back in; without interception the reflect slice
 //     arm would encode it as a SEQ of {Key,Value} structs, silently changing
 //     the record's structure.
@@ -542,9 +540,9 @@ func interceptMarkers(enc Encoder, v any) bool {
 	return false
 }
 
-// encodeObject re-encodes a decoded vcvalue.Object with object framing, preserving
-// its field order (vcvalue.Object exists precisely to preserve wire order).
-func encodeObject(enc Encoder, o vcvalue.Object) {
+// encodeObject re-encodes a decoded Object with object framing, preserving
+// its field order (Object exists precisely to preserve wire order).
+func encodeObject(enc Encoder, o Object) {
 	m := enc.Map()
 	for _, f := range o {
 		encodeAny(m.Field(f.Key), f.Value)
@@ -561,7 +559,7 @@ func encodeReflect(enc Encoder, rv reflect.Value) {
 		return
 	}
 	// Re-check the explicit markers for values reached through reflection
-	// (struct fields, slice elements, map values). vcvalue.Plain is itself a struct,
+	// (struct fields, slice elements, map values). Plain is itself a struct,
 	// so it must be intercepted before the reflect.Struct arm below.
 	if rv.CanInterface() && interceptMarkers(enc, rv.Interface()) {
 		return
@@ -622,7 +620,7 @@ func encodeReflect(enc Encoder, rv reflect.Value) {
 		// Same slot: the dereferenced value completes the pointer's counter.
 		encodeReflect(Encoder{st: enc.st, depth: enc.depth + 1, done: enc.done}, rv.Elem())
 	default:
-		enc.st.fail(fmt.Errorf("vcffi: cannot encode value of kind %s", rv.Kind()))
+		enc.st.fail(fmt.Errorf("frame: cannot encode value of kind %s", rv.Kind()))
 	}
 }
 
@@ -636,7 +634,7 @@ func encodeSeq(enc Encoder, rv reflect.Value) {
 
 func encodeMap(enc Encoder, rv reflect.Value) {
 	if rv.Type().Key().Kind() != reflect.String {
-		enc.st.fail(fmt.Errorf("vcffi: map keys must be strings, got %s", rv.Type().Key()))
+		enc.st.fail(fmt.Errorf("frame: map keys must be strings, got %s", rv.Type().Key()))
 		return
 	}
 	keys := rv.MapKeys()
@@ -676,7 +674,7 @@ func encodeStruct(enc Encoder, rv reflect.Value) {
 	// caller asked for the empty encoding explicitly.
 	if encoded == 0 && unexported > 0 {
 		enc.st.fail(fmt.Errorf(
-			"vcffi: struct %s has no exported fields to encode — implement Encryptable to control its sealing", t))
+			"frame: struct %s has no exported fields to encode — implement Encryptable to control its sealing", t))
 		return
 	}
 	_ = m.End()
@@ -687,14 +685,14 @@ func encodeStruct(enc Encoder, rv reflect.Value) {
 // One table for both, so a new marker type cannot be written one way and
 // padded, or not, another.
 type marker struct {
-	fixed  vcvalue.FixedType
+	fixed  FixedType
 	encode func(Encoder, any)
 }
 
 // numeric is how encodeReflect writes an int, uint or float kind, and the
 // fixed-width type of its typed null: the same one-table rule as marker.
 type numeric struct {
-	fixed  vcvalue.FixedType
+	fixed  FixedType
 	encode func(Encoder, reflect.Value)
 }
 
@@ -708,24 +706,24 @@ var (
 	markers map[reflect.Type]marker
 
 	numericKinds = map[reflect.Kind]numeric{
-		reflect.Int8:  {vcvalue.TypeInt8, func(e Encoder, rv reflect.Value) { e.Int8(int8(rv.Int())) }},
-		reflect.Int16: {vcvalue.TypeInt16, func(e Encoder, rv reflect.Value) { e.Int16(int16(rv.Int())) }},
-		reflect.Int32: {vcvalue.TypeInt32, func(e Encoder, rv reflect.Value) { e.Int32(int32(rv.Int())) }},
-		reflect.Int:   {vcvalue.TypeInt64, func(e Encoder, rv reflect.Value) { e.Int64(rv.Int()) }},
-		reflect.Int64: {vcvalue.TypeInt64, func(e Encoder, rv reflect.Value) { e.Int64(rv.Int()) }},
-		reflect.Uint8: {vcvalue.TypeUint8, func(e Encoder, rv reflect.Value) { e.UInt8(uint8(rv.Uint())) }},
-		reflect.Uint16: {vcvalue.TypeUint16, func(e Encoder, rv reflect.Value) {
+		reflect.Int8:  {TypeInt8, func(e Encoder, rv reflect.Value) { e.Int8(int8(rv.Int())) }},
+		reflect.Int16: {TypeInt16, func(e Encoder, rv reflect.Value) { e.Int16(int16(rv.Int())) }},
+		reflect.Int32: {TypeInt32, func(e Encoder, rv reflect.Value) { e.Int32(int32(rv.Int())) }},
+		reflect.Int:   {TypeInt64, func(e Encoder, rv reflect.Value) { e.Int64(rv.Int()) }},
+		reflect.Int64: {TypeInt64, func(e Encoder, rv reflect.Value) { e.Int64(rv.Int()) }},
+		reflect.Uint8: {TypeUint8, func(e Encoder, rv reflect.Value) { e.UInt8(uint8(rv.Uint())) }},
+		reflect.Uint16: {TypeUint16, func(e Encoder, rv reflect.Value) {
 			e.UInt16(uint16(rv.Uint()))
 		}},
-		reflect.Uint32: {vcvalue.TypeUint32, func(e Encoder, rv reflect.Value) {
+		reflect.Uint32: {TypeUint32, func(e Encoder, rv reflect.Value) {
 			e.UInt32(uint32(rv.Uint()))
 		}},
 		// Every unsigned word-or-wider kind keeps its unsigned identity as
 		// UInt64 (no fit-check: a bare uint always maps to UINT64).
-		reflect.Uint:    {vcvalue.TypeUint64, func(e Encoder, rv reflect.Value) { e.UInt64(rv.Uint()) }},
-		reflect.Uint64:  {vcvalue.TypeUint64, func(e Encoder, rv reflect.Value) { e.UInt64(rv.Uint()) }},
-		reflect.Uintptr: {vcvalue.TypeUint64, func(e Encoder, rv reflect.Value) { e.UInt64(rv.Uint()) }},
-		reflect.Float32: {vcvalue.TypeFloat32, func(e Encoder, rv reflect.Value) {
+		reflect.Uint:    {TypeUint64, func(e Encoder, rv reflect.Value) { e.UInt64(rv.Uint()) }},
+		reflect.Uint64:  {TypeUint64, func(e Encoder, rv reflect.Value) { e.UInt64(rv.Uint()) }},
+		reflect.Uintptr: {TypeUint64, func(e Encoder, rv reflect.Value) { e.UInt64(rv.Uint()) }},
+		reflect.Float32: {TypeFloat32, func(e Encoder, rv reflect.Value) {
 			// rv.Float() widens to float64, and the hardware widening sets
 			// the quiet bit of a signaling NaN. Converting to the built-in
 			// float32 instead copies the bits (reflect special-cases float32
@@ -738,7 +736,7 @@ var (
 				e.Float32(float32(rv.Float()))
 			}
 		}},
-		reflect.Float64: {vcvalue.TypeFloat64, func(e Encoder, rv reflect.Value) { e.Float64(rv.Float()) }},
+		reflect.Float64: {TypeFloat64, func(e Encoder, rv reflect.Value) { e.Float64(rv.Float()) }},
 	}
 
 	// fixedTypes caches fixedTypeOf by pointer type: every nil pointer of a
@@ -748,37 +746,37 @@ var (
 
 func init() {
 	markers = map[reflect.Type]marker{
-		reflect.TypeOf(vcvalue.Int128{}): {vcvalue.TypeInt128, func(e Encoder, v any) {
-			e.Int128(v.(vcvalue.Int128))
+		reflect.TypeOf(Int128{}): {TypeInt128, func(e Encoder, v any) {
+			e.Int128(v.(Int128))
 		}},
-		reflect.TypeOf(vcvalue.Uint128{}): {vcvalue.TypeUint128, func(e Encoder, v any) {
-			e.UInt128(v.(vcvalue.Uint128))
+		reflect.TypeOf(Uint128{}): {TypeUint128, func(e Encoder, v any) {
+			e.UInt128(v.(Uint128))
 		}},
-		reflect.TypeOf(vcvalue.Date{}): {vcvalue.TypeDate, func(e Encoder, v any) {
-			e.Date(v.(vcvalue.Date))
+		reflect.TypeOf(Date{}): {TypeDate, func(e Encoder, v any) {
+			e.Date(v.(Date))
 		}},
-		reflect.TypeOf(time.Time{}): {vcvalue.TypeTimestamp, func(e Encoder, v any) {
+		reflect.TypeOf(time.Time{}): {TypeTimestamp, func(e Encoder, v any) {
 			e.Timestamp(v.(time.Time))
 		}},
-		reflect.TypeOf(vcvalue.Timestamp{}): {vcvalue.TypeTimestamp, func(e Encoder, v any) {
-			e.TimestampParts(v.(vcvalue.Timestamp))
+		reflect.TypeOf(Timestamp{}): {TypeTimestamp, func(e Encoder, v any) {
+			e.TimestampParts(v.(Timestamp))
 		}},
-		reflect.TypeOf(vcvalue.Decimal{}): {vcvalue.TypeDecimal, func(e Encoder, v any) {
-			e.Decimal(v.(vcvalue.Decimal))
+		reflect.TypeOf(Decimal{}): {TypeDecimal, func(e Encoder, v any) {
+			e.Decimal(v.(Decimal))
 		}},
-		reflect.TypeOf(vcvalue.UUID{}): {vcvalue.TypeUUID, func(e Encoder, v any) {
-			e.UUID(v.(vcvalue.UUID))
+		reflect.TypeOf(UUID{}): {TypeUUID, func(e Encoder, v any) {
+			e.UUID(v.(UUID))
 		}},
 		// A tagged value's physical type is in the value, not the type.
-		reflect.TypeOf(vcvalue.Tagged{}): {0, func(e Encoder, v any) { e.Tagged(v.(vcvalue.Tagged)) }},
-		reflect.TypeOf(vcvalue.TypedNull{}): {0, func(e Encoder, v any) {
-			e.TypedNull(v.(vcvalue.TypedNull).Type)
+		reflect.TypeOf(Tagged{}): {0, func(e Encoder, v any) { e.Tagged(v.(Tagged)) }},
+		reflect.TypeOf(TypedNull{}): {0, func(e Encoder, v any) {
+			e.TypedNull(v.(TypedNull).Type)
 		}},
-		reflect.TypeOf(vcvalue.Plain{}): {0, func(e Encoder, v any) {
-			encodeAny(e.Passthrough(), v.(vcvalue.Plain).V)
+		reflect.TypeOf(Plain{}): {0, func(e Encoder, v any) {
+			encodeAny(e.Passthrough(), v.(Plain).V)
 		}},
-		reflect.TypeOf(vcvalue.Object{}): {0, func(e Encoder, v any) {
-			encodeObject(e, v.(vcvalue.Object))
+		reflect.TypeOf(Object{}): {0, func(e Encoder, v any) {
+			encodeObject(e, v.(Object))
 		}},
 	}
 }
@@ -788,7 +786,7 @@ func init() {
 // when it is invalid, so that the encode fails instead of writing the plain
 // null in its place.
 type fixedAnswer struct {
-	ft  vcvalue.FixedType
+	ft  FixedType
 	has bool
 }
 
@@ -799,7 +797,7 @@ type fixedAnswer struct {
 // marker is a struct to reflection, written field by field). A type that
 // implements Encryptable chooses its own encoding, which may not be fixed
 // width, so it has none unless it says so through FixedWidth.
-func fixedTypeOf(t reflect.Type) (vcvalue.FixedType, bool) {
+func fixedTypeOf(t reflect.Type) (FixedType, bool) {
 	if cached, ok := fixedTypes.Load(t); ok {
 		a := cached.(fixedAnswer)
 		return a.ft, a.has

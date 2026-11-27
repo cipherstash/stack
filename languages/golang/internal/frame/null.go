@@ -1,4 +1,4 @@
-package vcvalue
+package frame
 
 // FixedType names a fixed-width type: one whose every value seals to a leaf
 // of the same length. An absent value of such a type is written as a typed

@@ -1,4 +1,4 @@
-package vcvalue
+package frame
 
 import (
 	"database/sql/driver"
@@ -79,7 +79,7 @@ func scanLeafBytes(src any, into string) ([]byte, error) {
 	case []byte:
 		return append([]byte(nil), b...), nil
 	default:
-		return nil, fmt.Errorf("vcvalue: cannot scan %T into %s", src, into)
+		return nil, fmt.Errorf("frame: cannot scan %T into %s", src, into)
 	}
 }
 
@@ -111,15 +111,15 @@ func (p Plain) Value() (driver.Value, error) {
 		return float64(v), nil
 	case uint:
 		if uint64(v) > math.MaxInt64 {
-			return nil, fmt.Errorf("vcvalue: passthrough uint %d overflows the driver's int64", v)
+			return nil, fmt.Errorf("frame: passthrough uint %d overflows the driver's int64", v)
 		}
 		return int64(v), nil
 	case uint64:
 		if v > math.MaxInt64 {
-			return nil, fmt.Errorf("vcvalue: passthrough uint64 %d overflows the driver's int64", v)
+			return nil, fmt.Errorf("frame: passthrough uint64 %d overflows the driver's int64", v)
 		}
 		return int64(v), nil
 	default:
-		return nil, fmt.Errorf("vcvalue: passthrough %T has no single-column driver representation", p.V)
+		return nil, fmt.Errorf("frame: passthrough %T has no single-column driver representation", p.V)
 	}
 }

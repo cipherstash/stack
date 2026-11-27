@@ -1,4 +1,4 @@
-package vcvalue
+package frame
 
 import (
 	"errors"
@@ -38,7 +38,7 @@ func TestDecimalExactness(t *testing.T) {
 			t.Fatalf("%s: %v %s", text, err, v.String())
 		}
 	}
-	// A zero has no sign: the scale is kept and the sign is dropped (ADR 0001).
+	// A zero has no sign: the scale is kept and the sign is dropped.
 	for _, text := range []string{"-0", "-0.00", "+0.0"} {
 		v, err := ParseDecimal(text)
 		if err != nil || v.Negative || !v.IsZero() {
@@ -90,7 +90,7 @@ func TestDatesAndTimestampBounds(t *testing.T) {
 			t.Fatalf("rejected %v", ts)
 		}
 	}
-	// A leap second has no count since the epoch and is refused (ADR 0001).
+	// A leap second has no count since the epoch and is refused.
 	// So is an instant past either end of the range.
 	for _, ts := range []Timestamp{{0, 1000000000}, {59, 1123456789}, {59, 2000000000}, {first - 1, 999999999}, {last + 1, 0}, {time.Date(12000, 1, 1, 0, 0, 0, 0, time.UTC).Unix(), 0}, {1<<63 - 1, 0}} {
 		if ts.Validate() == nil {

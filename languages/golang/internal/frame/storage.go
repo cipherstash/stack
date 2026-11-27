@@ -1,4 +1,4 @@
-package vcffi
+package frame
 
 import (
 	"cmp"
@@ -11,8 +11,6 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // The storage profile, version 1: a value as one versioned blob, for bytes
@@ -48,18 +46,18 @@ var StorageHeader = [4]byte{'V', 'C', 'S', StorageVersion}
 // of its version is [ErrMalformed], as transport bytes are.
 var (
 	// ErrNotABlob: shorter than the header, or not starting with "VCS".
-	ErrNotABlob = errors.New("vcffi: not a storage blob")
+	ErrNotABlob = errors.New("frame: not a storage blob")
 	// ErrUnsupportedVersion: a blob of a version this package does not
 	// read. A later release may: the reader needs upgrading, and the blob
 	// is not corrupt.
-	ErrUnsupportedVersion = errors.New("vcffi: an unsupported storage version")
+	ErrUnsupportedVersion = errors.New("frame: an unsupported storage version")
 	// ErrMismatch: a well-formed blob whose value the destination does not
 	// take: a string where a number was expected, a missing field.
-	ErrMismatch = errors.New("vcffi: the stored value does not fit the destination")
+	ErrMismatch = errors.New("frame: the stored value does not fit the destination")
 	// ErrUnwritable: a value that cannot be written as a blob: nested too
 	// deep, a map key that is not an integer, text or bytes, a repeated
 	// key, a kind with no storage form.
-	ErrUnwritable = errors.New("vcffi: the value cannot be written as a storage blob")
+	ErrUnwritable = errors.New("frame: the value cannot be written as a storage blob")
 )
 
 // Some is a present optional value, as a blob holds it, for a value read
@@ -89,7 +87,7 @@ func unwritable(format string, args ...any) error {
 //   - bool                         → bool;
 //   - int8, int16, int32, int64    → that width; int → int64;
 //   - uint8 … uint64               → that width; uint, uintptr → uint64;
-//   - vcvalue.Int128, Uint128      → the 128-bit widths;
+//   - Int128, Uint128      → the 128-bit widths;
 //   - float32, float64             → that width, by its bits;
 //   - string                       → text (valid UTF-8 only);
 //   - []byte, [N]byte              → bytes (so a UUID is its 16 bytes);
@@ -107,10 +105,10 @@ func unwritable(format string, args ...any) error {
 //     written starting with null or [StorageSome] (a nil pointer or
 //     interface, [Some], or a pointer to one) is [StorageSome] then that
 //     value, so every level reads back;
-//   - [Some], [StorageEntries], vcvalue.Object and []any → as they read.
+//   - [Some], [StorageEntries], Object and []any → as they read.
 //
-// The transport's Encryptable, passthrough (vcvalue.Plain) and logical
-// types (vcvalue.Date, Timestamp, Decimal, Tagged, TypedNull) have no
+// The transport's Encryptable, passthrough (Plain) and logical
+// types (Date, Timestamp, Decimal, Tagged, TypedNull) have no
 // storage form, and are refused.
 func MarshalStorage(v any) ([]byte, error) {
 	w := &storageWriter{buf: append([]byte(nil), StorageHeader[:]...)}
@@ -137,17 +135,17 @@ func (w *storageWriter) any(v any, depth int) error {
 // Uint128 are [16]byte too, so [byteArray] also leaves them out, for a
 // value model cannot box and for the reader.
 var (
-	int128Type    = reflect.TypeOf(vcvalue.Int128{})
-	uint128Type   = reflect.TypeOf(vcvalue.Uint128{})
+	int128Type    = reflect.TypeOf(Int128{})
+	uint128Type   = reflect.TypeOf(Uint128{})
 	someType      = reflect.TypeOf(Some{})
-	objectType    = reflect.TypeOf(vcvalue.Object{})
+	objectType    = reflect.TypeOf(Object{})
 	entriesType   = reflect.TypeOf(StorageEntries{})
-	plainType     = reflect.TypeOf(vcvalue.Plain{})
-	dateType      = reflect.TypeOf(vcvalue.Date{})
-	timestampType = reflect.TypeOf(vcvalue.Timestamp{})
-	decimalType   = reflect.TypeOf(vcvalue.Decimal{})
-	taggedType    = reflect.TypeOf(vcvalue.Tagged{})
-	typedNullType = reflect.TypeOf(vcvalue.TypedNull{})
+	plainType     = reflect.TypeOf(Plain{})
+	dateType      = reflect.TypeOf(Date{})
+	timestampType = reflect.TypeOf(Timestamp{})
+	decimalType   = reflect.TypeOf(Decimal{})
+	taggedType    = reflect.TypeOf(Tagged{})
+	typedNullType = reflect.TypeOf(TypedNull{})
 )
 
 // model writes rv if its type is one of the model's own, which have a form
@@ -162,15 +160,15 @@ func (w *storageWriter) model(rv reflect.Value, depth int) (bool, error) {
 		w.buf = append(w.buf, StorageSome)
 		return true, w.any(rv.Interface().(Some).V, depth+1)
 	case objectType:
-		return true, w.object(rv.Interface().(vcvalue.Object), depth)
+		return true, w.object(rv.Interface().(Object), depth)
 	case entriesType:
 		return true, w.entries(rv.Interface().(StorageEntries), depth)
 	case int128Type:
-		x := rv.Interface().(vcvalue.Int128)
+		x := rv.Interface().(Int128)
 		w.buf = append(append(w.buf, tagInt128), x[:]...)
 		return true, nil
 	case uint128Type:
-		x := rv.Interface().(vcvalue.Uint128)
+		x := rv.Interface().(Uint128)
 		w.buf = append(append(w.buf, tagUint128), x[:]...)
 		return true, nil
 	case plainType, dateType, timestampType, decimalType, taggedType, typedNullType:
@@ -376,7 +374,7 @@ func (w *storageWriter) array(rv reflect.Value, depth int) error {
 	return w.close(at, rv.Len())
 }
 
-func (w *storageWriter) object(o vcvalue.Object, depth int) error {
+func (w *storageWriter) object(o Object, depth int) error {
 	at := w.open(tagObject)
 	seen := make(map[string]struct{}, len(o))
 	for _, f := range o {
@@ -477,7 +475,7 @@ func structFields(t reflect.Type) ([]storageField, error) {
 					field.defaulted = true
 				case "":
 				default:
-					return nil, fmt.Errorf("vcffi: field %s of %s has an unknown vc tag option %q", f.Name, t, option)
+					return nil, fmt.Errorf("frame: field %s of %s has an unknown vc tag option %q", f.Name, t, option)
 				}
 			}
 		}
@@ -557,9 +555,9 @@ func decodedKeyID(k any) (keyID, bool) {
 		return keyID{lo: uint64(x)}, true
 	case uint64:
 		return keyID{lo: x}, true
-	case vcvalue.Int128:
+	case Int128:
 		return wideKey(x[:], true), true
-	case vcvalue.Uint128:
+	case Uint128:
 		return wideKey(x[:], false), true
 	case string:
 		return keyID{kind: keyText, s: x}, true

@@ -1,4 +1,4 @@
-package vcvalue_test
+package frame_test
 
 import (
 	"database/sql"
@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 )
 
 // Every sealed leaf type must survive the database column round trip:
@@ -28,12 +28,12 @@ func TestSealedLeafTypesScanValueRoundTrip(t *testing.T) {
 	}
 
 	leaf := []byte{1, 2, 3}
-	var s vcvalue.Sealed
-	roundTrip(t, vcvalue.Sealed(leaf), &s, func() []byte { return []byte(s) }, leaf)
-	var es vcvalue.SealedEmptySeq
-	roundTrip(t, vcvalue.SealedEmptySeq(leaf), &es, func() []byte { return []byte(es) }, leaf)
-	var em vcvalue.SealedEmptyMap
-	roundTrip(t, vcvalue.SealedEmptyMap(leaf), &em, func() []byte { return []byte(em) }, leaf)
+	var s frame.Sealed
+	roundTrip(t, frame.Sealed(leaf), &s, func() []byte { return []byte(s) }, leaf)
+	var es frame.SealedEmptySeq
+	roundTrip(t, frame.SealedEmptySeq(leaf), &es, func() []byte { return []byte(es) }, leaf)
+	var em frame.SealedEmptyMap
+	roundTrip(t, frame.SealedEmptyMap(leaf), &em, func() []byte { return []byte(em) }, leaf)
 
 	// Non-byte sources are rejected.
 	if err := (&es).Scan("not bytes"); err == nil {
@@ -60,7 +60,7 @@ func TestPlainValueBindsEveryEncodableIntegerKind(t *testing.T) {
 		{uint64(64), int64(64)},
 	}
 	for _, c := range cases {
-		got, err := vcvalue.Plain{V: c.in}.Value()
+		got, err := frame.Plain{V: c.in}.Value()
 		if err != nil {
 			t.Fatalf("Value(%T): %v", c.in, err)
 		}
@@ -70,11 +70,11 @@ func TestPlainValueBindsEveryEncodableIntegerKind(t *testing.T) {
 	}
 
 	// The unsigned kinds that can exceed int64 must fail closed.
-	if _, err := (vcvalue.Plain{V: uint64(math.MaxInt64) + 1}).Value(); err == nil {
+	if _, err := (frame.Plain{V: uint64(math.MaxInt64) + 1}).Value(); err == nil {
 		t.Fatal("uint64 above MaxInt64 must not bind")
 	}
 	if uint64(math.MaxUint) > math.MaxInt64 { // uint is 32-bit on GOARCH=386
-		if _, err := (vcvalue.Plain{V: uint(math.MaxUint)}).Value(); err == nil {
+		if _, err := (frame.Plain{V: uint(math.MaxUint)}).Value(); err == nil {
 			t.Fatal("uint above MaxInt64 must not bind")
 		}
 	}
@@ -99,7 +99,7 @@ func TestPlainValueConversions(t *testing.T) {
 		{uint64(11), int64(11)},
 	}
 	for _, c := range cases {
-		got, err := vcvalue.Plain{V: c.in}.Value()
+		got, err := frame.Plain{V: c.in}.Value()
 		if err != nil {
 			t.Fatalf("Value(%#v): %v", c.in, err)
 		}
@@ -108,10 +108,10 @@ func TestPlainValueConversions(t *testing.T) {
 		}
 	}
 
-	if _, err := (vcvalue.Plain{V: uint64(math.MaxInt64) + 1}).Value(); err == nil {
+	if _, err := (frame.Plain{V: uint64(math.MaxInt64) + 1}).Value(); err == nil {
 		t.Fatal("uint64 above MaxInt64 must not silently truncate")
 	}
-	if _, err := (vcvalue.Plain{V: []any{int64(1)}}).Value(); err == nil {
+	if _, err := (frame.Plain{V: []any{int64(1)}}).Value(); err == nil {
 		t.Fatal("a container passthrough has no single-column form")
 	}
 }
@@ -119,7 +119,7 @@ func TestPlainValueConversions(t *testing.T) {
 // The remaining Sealed.Scan arms: nil source and the non-byte error arm
 // (the byte round trip is covered with the marker types above).
 func TestSealedScanNilAndErrorArms(t *testing.T) {
-	s := vcvalue.Sealed{1, 2, 3}
+	s := frame.Sealed{1, 2, 3}
 	if err := s.Scan(nil); err != nil {
 		t.Fatalf("Scan(nil): %v", err)
 	}

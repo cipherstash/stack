@@ -1,4 +1,4 @@
-package vcffi
+package frame
 
 import (
 	"encoding/binary"
@@ -37,7 +37,7 @@ const (
 	tagDecimal   = 0x14
 	// tagTypedNull is an absent value of a fixed-width type, padded to that
 	// type's leaf length: the tag, the header a value of the type starts
-	// with, then zeros (vitaminc#493).
+	// with, then zeros.
 	tagTypedNull = 0x15
 	tagArray     = 0xF0
 	tagObject    = 0xF1
@@ -45,7 +45,7 @@ const (
 	// (unencrypted, unauthenticated). Transport-local, like array/object.
 	tagPassthrough = 0xF2
 	// tagEnvelope carries a logical type with no shorthand tag over a
-	// physical scalar: id, parameter, then the scalar (ADR 0001). 0xF4 is
+	// physical scalar: id, parameter, then the scalar. 0xF4 is
 	// reserved for a longer envelope and is refused.
 	tagEnvelope = 0xF3
 )
@@ -60,7 +60,7 @@ const (
 	logicalDecimal   = 4
 	logicalUUID      = 5
 	// logicalLastKnown is the highest id this build knows. Any id above it
-	// is read and re-encoded unchanged as a vcvalue.Tagged.
+	// is read and re-encoded unchanged as a Tagged.
 	logicalLastKnown = logicalUUID
 )
 
@@ -115,17 +115,17 @@ func eagerCap(n int) int {
 // A misconfigured [LeafSet] is a different class of failure — the binding's
 // own wiring, not hostile bytes — and [UnmarshalCipherText] reports it with a
 // distinct, attributable error rather than folding it into ErrMalformed.
-var ErrMalformed = errors.New("vcffi: malformed transport bytes or storage blob")
+var ErrMalformed = errors.New("frame: malformed transport bytes or storage blob")
 
 // ErrTooDeep is returned by the encoders when a value or ciphertext tree
 // exceeds the recursion bound (the decoders fold over-deep input into
 // [ErrMalformed] — hostile bytes stay unspecific by design, but a too-deep
 // value handed in by the caller's own code is worth matching on).
-var ErrTooDeep = errors.New("vcffi: value is nested too deeply")
+var ErrTooDeep = errors.New("frame: value is nested too deeply")
 
 func appendLen(out []byte, n int) ([]byte, error) {
 	if n < 0 || uint64(n) > maxUint32 {
-		return nil, fmt.Errorf("vcffi: length %d out of range", n)
+		return nil, fmt.Errorf("frame: length %d out of range", n)
 	}
 	return binary.LittleEndian.AppendUint32(out, uint32(n)), nil
 }

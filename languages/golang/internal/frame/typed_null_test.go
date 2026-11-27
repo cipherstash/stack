@@ -1,4 +1,4 @@
-package vcffi
+package frame
 
 import (
 	"bytes"
@@ -8,34 +8,32 @@ import (
 	"reflect"
 	"testing"
 	"time"
-
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // typedNullAnswers pins each FixedType's typed null: the cross-language
 // bytes the Rust codec writes for the same type (vitaminc-aead's leaf
 // tests), beside a value of the type, which must be as long.
 var typedNullAnswers = []struct {
-	t       vcvalue.FixedType
+	t       FixedType
 	hex     string
 	present any
 }{
-	{vcvalue.TypeInt8, "150c", int8(-1)},
-	{vcvalue.TypeInt16, "150e00", int16(-1)},
-	{vcvalue.TypeInt32, "1504000000", int32(-1)},
-	{vcvalue.TypeInt64, "1505" + zeros(7), int64(-1)},
-	{vcvalue.TypeInt128, "1510" + zeros(15), vcvalue.Int128{1}},
-	{vcvalue.TypeUint8, "150d", uint8(1)},
-	{vcvalue.TypeUint16, "150f00", uint16(1)},
-	{vcvalue.TypeUint32, "1506000000", uint32(1)},
-	{vcvalue.TypeUint64, "1507" + zeros(7), uint64(1)},
-	{vcvalue.TypeUint128, "1511" + zeros(15), vcvalue.Uint128{1}},
-	{vcvalue.TypeFloat32, "1508000000", float32(1.5)},
-	{vcvalue.TypeFloat64, "1509" + zeros(7), 1.5},
-	{vcvalue.TypeDate, "1512000000", vcvalue.Date{Year: 1999, Month: 12, Day: 31}},
-	{vcvalue.TypeTimestamp, "1513" + zeros(11), time.Unix(1_700_000_000, 5).UTC()},
-	{vcvalue.TypeDecimal, "1514" + zeros(15), vcvalue.Decimal{Scale: 2, Coefficient: [12]byte{150}}},
-	{vcvalue.TypeUUID, "15f305000b" + zeros(15), vcvalue.UUID{0xAB}},
+	{TypeInt8, "150c", int8(-1)},
+	{TypeInt16, "150e00", int16(-1)},
+	{TypeInt32, "1504000000", int32(-1)},
+	{TypeInt64, "1505" + zeros(7), int64(-1)},
+	{TypeInt128, "1510" + zeros(15), Int128{1}},
+	{TypeUint8, "150d", uint8(1)},
+	{TypeUint16, "150f00", uint16(1)},
+	{TypeUint32, "1506000000", uint32(1)},
+	{TypeUint64, "1507" + zeros(7), uint64(1)},
+	{TypeUint128, "1511" + zeros(15), Uint128{1}},
+	{TypeFloat32, "1508000000", float32(1.5)},
+	{TypeFloat64, "1509" + zeros(7), 1.5},
+	{TypeDate, "1512000000", Date{Year: 1999, Month: 12, Day: 31}},
+	{TypeTimestamp, "1513" + zeros(11), time.Unix(1_700_000_000, 5).UTC()},
+	{TypeDecimal, "1514" + zeros(15), Decimal{Scale: 2, Coefficient: [12]byte{150}}},
+	{TypeUUID, "15f305000b" + zeros(15), UUID{0xAB}},
 }
 
 func zeros(n int) string { return hex.EncodeToString(make([]byte, n)) }
@@ -43,7 +41,7 @@ func zeros(n int) string { return hex.EncodeToString(make([]byte, n)) }
 func TestTypedNullKnownAnswers(t *testing.T) {
 	for _, row := range typedNullAnswers {
 		t.Run(fmt.Sprint(row.t), func(t *testing.T) {
-			got, err := Marshal(vcvalue.TypedNull{Type: row.t})
+			got, err := Marshal(TypedNull{Type: row.t})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -57,7 +55,7 @@ func TestTypedNullKnownAnswers(t *testing.T) {
 			// A frame gives bytes a length prefix; a typed null of a UUID
 			// has none, because its sealed leaf has none.
 			want := len(present)
-			if row.t == vcvalue.TypeUUID {
+			if row.t == TypeUUID {
 				want -= 4
 			}
 			if len(got) != want {
@@ -70,14 +68,14 @@ func TestTypedNullKnownAnswers(t *testing.T) {
 			}
 		})
 	}
-	if len(typedNullAnswers) != int(vcvalue.TypeUUID) {
-		t.Fatalf("pinned %d of %d types", len(typedNullAnswers), vcvalue.TypeUUID)
+	if len(typedNullAnswers) != int(TypeUUID) {
+		t.Fatalf("pinned %d of %d types", len(typedNullAnswers), TypeUUID)
 	}
 }
 
 func TestAnInvalidFixedTypeFailsTheEncode(t *testing.T) {
-	for _, ft := range []vcvalue.FixedType{0, vcvalue.TypeUUID + 1, 255} {
-		if _, err := Marshal(vcvalue.TypedNull{Type: ft}); !errors.Is(err, vcvalue.ErrInvalidFixedType) {
+	for _, ft := range []FixedType{0, TypeUUID + 1, 255} {
+		if _, err := Marshal(TypedNull{Type: ft}); !errors.Is(err, ErrInvalidFixedType) {
 			t.Fatalf("%v: got %v", ft, err)
 		}
 	}
@@ -126,12 +124,12 @@ func TestANilPointerIsATypedNullWhenItsTypeIsFixedWidth(t *testing.T) {
 		{"*float32", (*float32)(nil), "1508000000"},
 		{"*float64", (*float64)(nil), "1509" + zeros(7)},
 		{"*time.Time", (*time.Time)(nil), "1513" + zeros(11)},
-		{"*vcvalue.Date", (*vcvalue.Date)(nil), "1512000000"},
-		{"*vcvalue.Timestamp", (*vcvalue.Timestamp)(nil), "1513" + zeros(11)},
-		{"*vcvalue.Decimal", (*vcvalue.Decimal)(nil), "1514" + zeros(15)},
-		{"*vcvalue.UUID", (*vcvalue.UUID)(nil), "15f305000b" + zeros(15)},
-		{"*vcvalue.Int128", (*vcvalue.Int128)(nil), "1510" + zeros(15)},
-		{"*vcvalue.Uint128", (*vcvalue.Uint128)(nil), "1511" + zeros(15)},
+		{"*Date", (*Date)(nil), "1512000000"},
+		{"*Timestamp", (*Timestamp)(nil), "1513" + zeros(11)},
+		{"*Decimal", (*Decimal)(nil), "1514" + zeros(15)},
+		{"*UUID", (*UUID)(nil), "15f305000b" + zeros(15)},
+		{"*Int128", (*Int128)(nil), "1510" + zeros(15)},
+		{"*Uint128", (*Uint128)(nil), "1511" + zeros(15)},
 		{"named *age", (*age)(nil), "1504000000"},
 		{"**int32", (**int32)(nil), "1504000000"},
 		{"&(nil *int32)", &missing, "1504000000"},
@@ -173,7 +171,7 @@ func (m money) EncryptValue(enc Encoder) error {
 	return nil
 }
 
-func (money) FixedType() vcvalue.FixedType { return vcvalue.TypeInt64 }
+func (money) FixedType() FixedType { return TypeInt64 }
 
 // The same, declared on the pointer.
 type ptrMoney struct{ cents int64 }
@@ -183,7 +181,7 @@ func (m *ptrMoney) EncryptValue(enc Encoder) error {
 	return nil
 }
 
-func (*ptrMoney) FixedType() vcvalue.FixedType { return vcvalue.TypeInt64 }
+func (*ptrMoney) FixedType() FixedType { return TypeInt64 }
 
 // A FixedWidth that declares a type that is not one.
 type badWidth struct{}
@@ -193,7 +191,7 @@ func (badWidth) EncryptValue(enc Encoder) error {
 	return nil
 }
 
-func (badWidth) FixedType() vcvalue.FixedType { return 0 }
+func (badWidth) FixedType() FixedType { return 0 }
 
 func TestANilPointerToAFixedWidthEncryptableIsATypedNullOfItsType(t *testing.T) {
 	want := "1505" + zeros(7)
@@ -236,7 +234,7 @@ func TestANilPointerToAFixedWidthEncryptableIsATypedNullOfItsType(t *testing.T) 
 	// A declared type that is not a fixed-width type fails the encode, and
 	// never writes the plain null in its place. A present value is not
 	// asked.
-	if _, err := Marshal((*badWidth)(nil)); !errors.Is(err, vcvalue.ErrInvalidFixedType) {
+	if _, err := Marshal((*badWidth)(nil)); !errors.Is(err, ErrInvalidFixedType) {
 		t.Fatalf("invalid declared type: got %v", err)
 	}
 	if _, err := Marshal(badWidth{}); err != nil {
@@ -247,7 +245,7 @@ func TestANilPointerToAFixedWidthEncryptableIsATypedNullOfItsType(t *testing.T) 
 func TestAStructsNilFieldsAreTypedNulls(t *testing.T) {
 	type person struct {
 		Name string
-		Born *vcvalue.Date
+		Born *Date
 		Age  *int32
 		Tags []string
 		Any  any
@@ -260,7 +258,7 @@ func TestAStructsNilFieldsAreTypedNulls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range v.(vcvalue.Object) {
+	for _, f := range v.(Object) {
 		if (f.Key == "Born" || f.Key == "Age" || f.Key == "Any") && f.Value != nil {
 			t.Fatalf("%s decoded %#v", f.Key, f.Value)
 		}
@@ -278,7 +276,7 @@ type maybeAge struct{ v *int32 }
 
 func (m maybeAge) EncryptValue(enc Encoder) error {
 	if m.v == nil {
-		enc.TypedNull(vcvalue.TypeInt32)
+		enc.TypedNull(TypeInt32)
 	} else {
 		enc.Int32(*m.v)
 	}
@@ -296,7 +294,7 @@ func TestTheTypedNullChannel(t *testing.T) {
 	// It completes exactly one slot, like every terminal.
 	enc := func(e Encoder) error {
 		s := e.Seq()
-		s.Elem().TypedNull(vcvalue.TypeUint8)
+		s.Elem().TypedNull(TypeUint8)
 		s.Elem().Null()
 		return s.End()
 	}
@@ -351,16 +349,16 @@ func TestATypedNullIsReadStrictly(t *testing.T) {
 // not. A marker added without a sample here fails the test.
 func TestEveryFixedTypeIsWrittenWithItsTypedNullsHeader(t *testing.T) {
 	samples := map[reflect.Type]any{
-		reflect.TypeOf(vcvalue.Int128{}):    vcvalue.Int128{1},
-		reflect.TypeOf(vcvalue.Uint128{}):   vcvalue.Uint128{1},
-		reflect.TypeOf(vcvalue.Date{}):      vcvalue.Date{Year: 2000, Month: 1, Day: 1},
-		reflect.TypeOf(time.Time{}):         time.Unix(7, 0),
-		reflect.TypeOf(vcvalue.Timestamp{}): vcvalue.Timestamp{Seconds: 7},
-		reflect.TypeOf(vcvalue.Decimal{}):   vcvalue.Decimal{Scale: 1},
-		reflect.TypeOf(vcvalue.UUID{}):      vcvalue.UUID{1},
+		reflect.TypeOf(Int128{}):    Int128{1},
+		reflect.TypeOf(Uint128{}):   Uint128{1},
+		reflect.TypeOf(Date{}):      Date{Year: 2000, Month: 1, Day: 1},
+		reflect.TypeOf(time.Time{}): time.Unix(7, 0),
+		reflect.TypeOf(Timestamp{}): Timestamp{Seconds: 7},
+		reflect.TypeOf(Decimal{}):   Decimal{Scale: 1},
+		reflect.TypeOf(UUID{}):      UUID{1},
 	}
-	check := func(name string, ft vcvalue.FixedType, sample any) {
-		null, err := Marshal(vcvalue.TypedNull{Type: ft})
+	check := func(name string, ft FixedType, sample any) {
+		null, err := Marshal(TypedNull{Type: ft})
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}

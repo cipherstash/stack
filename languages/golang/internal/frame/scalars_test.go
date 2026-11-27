@@ -1,9 +1,8 @@
-package vcffi
+package frame
 
 import (
 	"encoding/hex"
 	"errors"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,19 +10,19 @@ import (
 )
 
 func TestScalarHostEncoding(t *testing.T) {
-	signed, err := vcvalue.ParseInt128("-170141183460469231731687303715884105728")
+	signed, err := ParseInt128("-170141183460469231731687303715884105728")
 	if err != nil {
 		t.Fatal(err)
 	}
-	unsigned, err := vcvalue.ParseUint128("340282366920938463463374607431768211455")
+	unsigned, err := ParseUint128("340282366920938463463374607431768211455")
 	if err != nil {
 		t.Fatal(err)
 	}
-	decimal, err := vcvalue.ParseDecimal("1.50")
+	decimal, err := ParseDecimal("1.50")
 	if err != nil {
 		t.Fatal(err)
 	}
-	uuid, err := vcvalue.ParseUUID("123e4567-e89b-12d3-a456-426614174000")
+	uuid, err := ParseUUID("123e4567-e89b-12d3-a456-426614174000")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,14 +32,14 @@ func TestScalarHostEncoding(t *testing.T) {
 	}{
 		{int8(-128), "0c80"}, {uint8(255), "0dff"}, {int16(-32768), "0e0080"}, {uint16(65535), "0fffff"},
 		{signed, "1000000000000000000000000000000080"}, {unsigned, "11ffffffffffffffffffffffffffffffff"},
-		{vcvalue.Date{Year: 1, Month: 1, Day: 1}, "1201000000"},
+		{Date{Year: 1, Month: 1, Day: 1}, "1201000000"},
 		{time.Unix(0, 123456789).UTC(), "13000000000000000015cd5b07"},
 		{decimal, "1400000200960000000000000000000000"},
 		// The 0xF3 envelope: a logical type with no shorthand tag.
 		{uuid, "f305000b10000000123e4567e89b12d3a456426614174000"},
-		{vcvalue.Tagged{ID: 200, Param: 9, V: uint32(34)}, "f3c8090622000000"},
-		{vcvalue.Tagged{ID: 255, Param: 0, V: nil}, "f3ff0000"},
-		{vcvalue.Tagged{ID: 6, Param: 1, V: "hi"}, "f306010a020000006869"},
+		{Tagged{ID: 200, Param: 9, V: uint32(34)}, "f3c8090622000000"},
+		{Tagged{ID: 255, Param: 0, V: nil}, "f3ff0000"},
+		{Tagged{ID: 6, Param: 1, V: "hi"}, "f306010a020000006869"},
 	}
 	for _, tc := range cases {
 		encoded, err := Marshal(tc.value)
@@ -67,16 +66,16 @@ func TestInvalidScalarHostEncoding(t *testing.T) {
 		value any
 		err   error
 	}{
-		{vcvalue.Date{Year: 2023, Month: 2, Day: 29}, vcvalue.ErrInvalidDate},
-		{vcvalue.Timestamp{Seconds: 0, Nanoseconds: 1000000000}, vcvalue.ErrInvalidTimestamp},
-		{time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC), vcvalue.ErrInvalidTimestamp},
-		{time.Date(-9999, 1, 1, 0, 0, 0, 0, time.UTC), vcvalue.ErrInvalidTimestamp},
-		{vcvalue.Decimal{Scale: 29}, vcvalue.ErrInvalidDecimal},
+		{Date{Year: 2023, Month: 2, Day: 29}, ErrInvalidDate},
+		{Timestamp{Seconds: 0, Nanoseconds: 1000000000}, ErrInvalidTimestamp},
+		{time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC), ErrInvalidTimestamp},
+		{time.Date(-9999, 1, 1, 0, 0, 0, 0, time.UTC), ErrInvalidTimestamp},
+		{Decimal{Scale: 29}, ErrInvalidDecimal},
 		// A tagged value must be a physical scalar under an unknown id.
-		{vcvalue.Tagged{ID: 5, V: []byte{1}}, vcvalue.ErrInvalidTagged},
-		{vcvalue.Tagged{ID: 0, V: int8(1)}, vcvalue.ErrInvalidTagged},
-		{vcvalue.Tagged{ID: 200, V: []any{int8(1)}}, vcvalue.ErrInvalidTagged},
-		{vcvalue.Tagged{ID: 200, V: time.Unix(0, 0)}, vcvalue.ErrInvalidTagged},
+		{Tagged{ID: 5, V: []byte{1}}, ErrInvalidTagged},
+		{Tagged{ID: 0, V: int8(1)}, ErrInvalidTagged},
+		{Tagged{ID: 200, V: []any{int8(1)}}, ErrInvalidTagged},
+		{Tagged{ID: 200, V: time.Unix(0, 0)}, ErrInvalidTagged},
 	}
 	for _, tc := range cases {
 		if _, err := Marshal(tc.value); !errors.Is(err, tc.err) {
@@ -137,11 +136,11 @@ func TestEnvelopeTimestampsDecodeToTime(t *testing.T) {
 
 // Every integer width is a valid count for an envelope timestamp.
 func TestEnvelopeTimestampAcceptsEveryIntegerWidth(t *testing.T) {
-	i128, err := vcvalue.ParseInt128("1")
+	i128, err := ParseInt128("1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	u128, err := vcvalue.ParseUint128("1")
+	u128, err := ParseUint128("1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,9 +154,9 @@ func TestEnvelopeTimestampAcceptsEveryIntegerWidth(t *testing.T) {
 }
 
 // A decimal negative zero built as a struct literal is written without its
-// sign: Go never writes the sign bit of a zero (ADR 0001).
+// sign: Go never writes the sign bit of a zero.
 func TestDecimalNegativeZeroIsWrittenUnsigned(t *testing.T) {
-	encoded, err := Marshal(vcvalue.Decimal{Negative: true, Scale: 2})
+	encoded, err := Marshal(Decimal{Negative: true, Scale: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,16 +168,16 @@ func TestDecimalNegativeZeroIsWrittenUnsigned(t *testing.T) {
 // Every physical scalar travels under an unknown id and reads back as the
 // same Tagged value.
 func TestTaggedRoundTripsEveryPhysicalScalar(t *testing.T) {
-	i128, err := vcvalue.ParseInt128("-1")
+	i128, err := ParseInt128("-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	u128, err := vcvalue.ParseUint128("1")
+	u128, err := ParseUint128("1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, value := range []any{nil, true, int8(-1), uint8(1), int16(-1), uint16(1), int32(-1), uint32(1), int64(-1), uint64(1), i128, u128, float32(1.5), float64(1.5), "text", []byte{1}} {
-		want := vcvalue.Tagged{ID: 200, Param: 9, V: value}
+		want := Tagged{ID: 200, Param: 9, V: value}
 		wire, err := Marshal(want)
 		if err != nil {
 			t.Fatal(err)
@@ -201,7 +200,7 @@ func TestTaggedWritesIntAndUintAtSixtyFourBits(t *testing.T) {
 		{-34, "f3c80905deffffffffffffff", int64(-34)},
 		{uint(34), "f3c809072200000000000000", uint64(34)},
 	} {
-		wire, err := Marshal(vcvalue.Tagged{ID: 200, Param: 9, V: tc.value})
+		wire, err := Marshal(Tagged{ID: 200, Param: 9, V: tc.value})
 		if err != nil {
 			t.Fatalf("%T: %v", tc.value, err)
 		}
@@ -209,7 +208,7 @@ func TestTaggedWritesIntAndUintAtSixtyFourBits(t *testing.T) {
 			t.Errorf("%T: got %s, want %s", tc.value, got, tc.wire)
 		}
 		got, err := Unmarshal(wire)
-		if want := (vcvalue.Tagged{ID: 200, Param: 9, V: tc.back}); err != nil || !reflect.DeepEqual(got, want) {
+		if want := (Tagged{ID: 200, Param: 9, V: tc.back}); err != nil || !reflect.DeepEqual(got, want) {
 			t.Errorf("%T: got %#v, err %v", tc.value, got, err)
 		}
 	}

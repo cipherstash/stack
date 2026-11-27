@@ -1,4 +1,4 @@
-package vcffi
+package frame
 
 import (
 	"bytes"
@@ -8,8 +8,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // marshalUnmarshal is the round trip every case below shares: encode v to
@@ -73,9 +71,9 @@ func TestReflectStructTags(t *testing.T) {
 		Nested  inner
 	}
 	got := marshalUnmarshal(t, outer{Name: "x", Skipped: "no", hidden: "no", Nested: inner{A: 1}})
-	want := vcvalue.Object{
+	want := Object{
 		{Key: "name", Value: "x"},
-		{Key: "Nested", Value: vcvalue.Object{{Key: "a", Value: int64(1)}}},
+		{Key: "Nested", Value: Object{{Key: "a", Value: int64(1)}}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)
@@ -86,7 +84,7 @@ func TestReflectMapSortsKeys(t *testing.T) {
 	// Map iteration is randomized; the encoder must sort keys so the
 	// structure is deterministic. Decode preserves that sorted order.
 	got := marshalUnmarshal(t, map[string]int64{"c": 3, "a": 1, "b": 2})
-	want := vcvalue.Object{
+	want := Object{
 		{Key: "a", Value: int64(1)},
 		{Key: "b", Value: int64(2)},
 		{Key: "c", Value: int64(3)},
@@ -119,7 +117,7 @@ func (p point) EncryptValue(enc Encoder) error {
 
 func TestEncryptableImpl(t *testing.T) {
 	got := marshalUnmarshal(t, point{X: 1, Y: 2})
-	want := vcvalue.Object{{Key: "x", Value: int64(1)}, {Key: "y", Value: int64(2)}}
+	want := Object{{Key: "x", Value: int64(1)}, {Key: "y", Value: int64(2)}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}
@@ -132,8 +130,8 @@ func TestEncryptableNested(t *testing.T) {
 		Origin point
 	}
 	got := marshalUnmarshal(t, shape{Origin: point{X: 3, Y: 4}})
-	want := vcvalue.Object{
-		{Key: "Origin", Value: vcvalue.Object{
+	want := Object{
+		{Key: "Origin", Value: Object{
 			{Key: "x", Value: int64(3)},
 			{Key: "y", Value: int64(4)},
 		}},
@@ -203,12 +201,12 @@ func TestUnmarshalRejectsGarbage(t *testing.T) {
 // round-trips so a caller can tell the field travelled in the clear.
 func TestPlainPassthroughRoundTrip(t *testing.T) {
 	got := marshalUnmarshal(t, map[string]any{
-		"id":    vcvalue.Plain{V: int64(42)},
+		"id":    Plain{V: int64(42)},
 		"email": "ada@example.com",
 	})
-	want := vcvalue.Object{
+	want := Object{
 		{Key: "email", Value: "ada@example.com"},
-		{Key: "id", Value: vcvalue.Plain{V: int64(42)}},
+		{Key: "id", Value: Plain{V: int64(42)}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)
@@ -217,8 +215,8 @@ func TestPlainPassthroughRoundTrip(t *testing.T) {
 
 // A Plain wrapping a whole subtree makes the entire subtree passthrough.
 func TestPlainPassthroughSubtree(t *testing.T) {
-	got := marshalUnmarshal(t, vcvalue.Plain{V: []any{int64(1), "two", true}})
-	want := vcvalue.Plain{V: []any{int64(1), "two", true}}
+	got := marshalUnmarshal(t, Plain{V: []any{int64(1), "two", true}})
+	want := Plain{V: []any{int64(1), "two", true}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}
@@ -236,7 +234,7 @@ func (passthroughBuilder) EncryptValue(enc Encoder) error {
 
 func TestEncoderPassthroughChannel(t *testing.T) {
 	got := marshalUnmarshal(t, passthroughBuilder{})
-	want := []any{vcvalue.Plain{V: int64(7)}, "sealed"}
+	want := []any{Plain{V: int64(7)}, "sealed"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}
@@ -266,8 +264,8 @@ func TestUnmarshalRejectsPassthroughDepthBomb(t *testing.T) {
 // ciphertext map or sequence on the way back in.
 func TestCipherTextPassthroughTransportRoundTrip(t *testing.T) {
 	ct := map[string]any{
-		"id":    vcvalue.Plain{V: int64(42)},
-		"email": vcvalue.Sealed{9, 9, 9},
+		"id":    Plain{V: int64(42)},
+		"email": Sealed{9, 9, 9},
 	}
 	buf, err := MarshalCipherText(VCValueLeaves(), ct)
 	if err != nil {
@@ -284,8 +282,8 @@ func TestCipherTextPassthroughTransportRoundTrip(t *testing.T) {
 
 func TestCipherTextTransportRoundTrip(t *testing.T) {
 	ct := map[string]any{
-		"a": vcvalue.Sealed{9, 9, 9},
-		"b": []any{vcvalue.Sealed{1}, vcvalue.SealedEmptySeq{2}},
+		"a": Sealed{9, 9, 9},
+		"b": []any{Sealed{1}, SealedEmptySeq{2}},
 	}
 	buf, err := MarshalCipherText(VCValueLeaves(), ct)
 	if err != nil {
@@ -337,7 +335,7 @@ func TestMarshalRejectsZeroExportedFieldStruct(t *testing.T) {
 // a decrypt-then-re-encrypt flow preserves the record's structure — both at
 // the root and nested inside other values.
 func TestObjectReencodesWithObjectFraming(t *testing.T) {
-	o := vcvalue.Object{
+	o := Object{
 		{Key: "b", Value: int64(2)},
 		{Key: "a", Value: int64(1)},
 	}
@@ -357,8 +355,8 @@ func TestObjectReencodesWithObjectFraming(t *testing.T) {
 // A Plain-wrapped Object inside a ciphertext must survive the passthrough
 // round trip shape-intact (PR review P1).
 func TestCipherTextPassthroughObjectRoundTrip(t *testing.T) {
-	o := vcvalue.Object{{Key: "id", Value: int64(42)}}
-	buf, err := MarshalCipherText(VCValueLeaves(), vcvalue.Plain{V: o})
+	o := Object{{Key: "id", Value: int64(42)}}
+	buf, err := MarshalCipherText(VCValueLeaves(), Plain{V: o})
 	if err != nil {
 		t.Fatalf("MarshalCipherText: %v", err)
 	}
@@ -366,7 +364,7 @@ func TestCipherTextPassthroughObjectRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UnmarshalCipherText: %v", err)
 	}
-	if !reflect.DeepEqual(got, vcvalue.Plain{V: o}) {
+	if !reflect.DeepEqual(got, Plain{V: o}) {
 		t.Fatalf("got %#v, want Plain{V: %#v}", got, o)
 	}
 }
@@ -382,7 +380,7 @@ func TestByteArrayEncodesAsBytes(t *testing.T) {
 		Hash [4]byte
 	}
 	got = marshalUnmarshal(t, hashed{Hash: [4]byte{9, 8, 7, 6}})
-	want := vcvalue.Object{{Key: "Hash", Value: []byte{9, 8, 7, 6}}}
+	want := Object{{Key: "Hash", Value: []byte{9, 8, 7, 6}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}
@@ -425,7 +423,7 @@ func TestMarshalRejectsPointerCycle(t *testing.T) {
 // to reject (PR review P2).
 func TestMarshalCipherTextRejectsPassthroughBeyondDepthBudget(t *testing.T) {
 	// 129 nested []any push the Plain payload past maxDepth (128).
-	var deep any = vcvalue.Plain{V: int64(1)}
+	var deep any = Plain{V: int64(1)}
 	for range 129 {
 		deep = []any{deep}
 	}
@@ -434,7 +432,7 @@ func TestMarshalCipherTextRejectsPassthroughBeyondDepthBudget(t *testing.T) {
 	}
 
 	// One level shallower still round-trips — the bound is exact.
-	var ok any = vcvalue.Plain{V: int64(1)}
+	var ok any = Plain{V: int64(1)}
 	for range 127 {
 		ok = []any{ok}
 	}
@@ -447,7 +445,7 @@ func TestMarshalCipherTextRejectsPassthroughBeyondDepthBudget(t *testing.T) {
 	}
 }
 
-// --- Malformed-input coverage for the two decoders (PR #257 review gaps).
+// --- Malformed-input coverage for the two decoders.
 // Raw transport bytes are hand-built here because no Go encoder produces
 // these shapes — that unreachability is exactly why the branches were
 // untested.
@@ -715,9 +713,9 @@ func (unclosedRoot) EncryptValue(enc Encoder) error {
 // opaque ErrMalformed.
 func TestMarshalCipherTextRejectsPayloadMiscount(t *testing.T) {
 	for _, v := range []any{
-		vcvalue.Plain{V: rootMiscount{writes: 0}},
-		vcvalue.Plain{V: rootMiscount{writes: 2}},
-		vcvalue.Plain{V: unclosedRoot{}},
+		Plain{V: rootMiscount{writes: 0}},
+		Plain{V: rootMiscount{writes: 2}},
+		Plain{V: unclosedRoot{}},
 	} {
 		if _, err := MarshalCipherText(VCValueLeaves(), v); err == nil {
 			t.Fatalf("malformed passthrough payload %#v must fail the encode", v)
@@ -841,7 +839,7 @@ func TestEndReturnsFirstEncodeErrorNotContainerScoped(t *testing.T) {
 
 // A binding-specific LeafSet round-trips its own distinct leaf types — the
 // reason the ciphertext codec is parameterised at all: a stack-encrypt leaf
-// must come back as a stack-encrypt type, never as vcvalue.Sealed.
+// must come back as a stack-encrypt type, never as Sealed.
 type otherSealed []byte
 
 var otherLeaves = LeafSet{
@@ -881,7 +879,7 @@ func TestCipherTextLeafSetKeepsBindingTypesDistinct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UnmarshalCipherText(VCValueLeaves): %v", err)
 	}
-	want := map[string]any{"email": vcvalue.Sealed{9, 9, 9}}
+	want := map[string]any{"email": Sealed{9, 9, 9}}
 	if !reflect.DeepEqual(asVC, want) {
 		t.Fatalf("got %#v, want %#v", asVC, want)
 	}
@@ -947,9 +945,9 @@ func TestCipherTextRoundTripsAllLeafKinds(t *testing.T) {
 	// unexercised: a swapped arm (an empty-map marker materialized where an
 	// empty-seq belongs) fails here rather than at some later decrypt.
 	ct := map[string]any{
-		"single":   vcvalue.Sealed{9, 9, 9},
-		"emptySeq": vcvalue.SealedEmptySeq{7},
-		"emptyMap": vcvalue.SealedEmptyMap{8},
+		"single":   Sealed{9, 9, 9},
+		"emptySeq": SealedEmptySeq{7},
+		"emptyMap": SealedEmptyMap{8},
 	}
 	buf, err := MarshalCipherText(VCValueLeaves(), ct)
 	if err != nil {
@@ -992,8 +990,8 @@ func TestFramingTags(t *testing.T) {
 		wire  []byte
 	}{
 		{[]any{}, []byte{0xF0, 0, 0, 0, 0}},
-		{vcvalue.Object{}, []byte{0xF1, 0, 0, 0, 0}},
-		{vcvalue.Plain{V: nil}, []byte{0xF2, 0}},
+		{Object{}, []byte{0xF1, 0, 0, 0, 0}},
+		{Plain{V: nil}, []byte{0xF2, 0}},
 	}
 	for _, tc := range cases {
 		got, err := Marshal(tc.value)

@@ -1,4 +1,4 @@
-package vcffi
+package frame
 
 import (
 	"bytes"
@@ -23,7 +23,7 @@ import (
 // addCorpusSeeds seeds a fuzz target with every valid and malformed vector in
 // the shared value corpus, so the fuzzer starts from each scalar tag.
 func addCorpusSeeds(f *testing.F, wrap func([]byte) []byte) {
-	data, err := os.ReadFile("../../../testdata/value-conformance.json")
+	data, err := os.ReadFile(valueCorpus)
 	if err != nil {
 		f.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func addCorpusSeeds(f *testing.F, wrap func([]byte) []byte) {
 // things may legitimately change, and nothing else: an Undefined tag (0x01)
 // comes back as Null (0x00), Go's documented projection; a typed null comes
 // back as Null too, as Rust's frame writer writes it; a decimal negative
-// zero comes back as zero with its scale kept (ADR 0001); and a timestamp in
+// zero comes back as zero with its scale kept; and a timestamp in
 // the 0xF3 envelope (seconds, milliseconds or microseconds) comes back in
 // the shorthand nanosecond form, because Go reads it as a time.Time. The
 // walker follows the transport format independently of the decoder, so a
