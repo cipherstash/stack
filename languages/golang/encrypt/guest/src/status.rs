@@ -166,9 +166,9 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
 /// A dynamic-path error as a status code.
 ///
 /// The split the library draws is the one the ABI needs: `Context`, `Term`,
-/// `Plan`, `UntypedIndex`, `Source`, `Record` and `Predicate` are each a
-/// statement about the caller's input, decided before any key is minted or
-/// retrieved, so they are
+/// `Plan`, `UntypedIndex`, `Source`, `SourceFailed`, `Record` and
+/// `Predicate` are each a statement about the caller's input, decided
+/// before any key is minted or retrieved, so they are
 /// [`STATUS_ENCODING`] — named one by one, because that verdict is the
 /// host's to act on and must be given deliberately. `Cipher` defers to
 /// [`status_for_error`]; `Internal` is the library's own invariant failing
@@ -189,6 +189,7 @@ pub fn status_for_dynamic(error: &stack_encrypt::dynamic::Error) -> u32 {
         | Error::Plan { .. }
         | Error::UntypedIndex { .. }
         | Error::Source { .. }
+        | Error::SourceFailed { .. }
         | Error::Record { .. }
         // A `match` predicate refused at an offset in its text: a construct
         // the grammar does not read or the index cannot answer, a variable
@@ -433,7 +434,9 @@ mod tests {
         use stack_encrypt::refusal::{Error, Reason};
         let refused = Error::Source {
             field: None,
+            row: None,
             reason: Reason::JsonPathNoWildcard,
+            found: None,
         };
         assert_eq!(
             status_for_error(&stack_encrypt::Error::Input(Box::new(refused))),
@@ -562,6 +565,7 @@ mod tests {
                 Error::Plan {
                     field: age(),
                     reason: Reason::DuplicateOutput,
+                    found: None,
                 },
             ),
             (
@@ -574,14 +578,26 @@ mod tests {
                 "a bad source",
                 Error::Source {
                     field: age(),
+                    row: None,
                     reason: Reason::FieldMissing,
+                    found: None,
+                },
+            ),
+            (
+                "a source that failed while it was read",
+                Error::SourceFailed {
+                    field: age(),
+                    row: Some(2),
+                    cause: stack_encrypt::dynamic::plaintext::SourceError::msg("getter threw"),
                 },
             ),
             (
                 "a bad record",
                 Error::Record {
                     field: age(),
+                    row: None,
                     reason: Reason::NoCiphertextNode,
+                    found: None,
                 },
             ),
             (

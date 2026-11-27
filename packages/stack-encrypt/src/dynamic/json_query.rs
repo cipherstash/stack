@@ -333,6 +333,8 @@ impl JsonText {
             .map_err(|error| Error::Source {
                 field: None,
                 reason: json_reason(error),
+                found: None,
+                row: None,
             })
     }
 }
@@ -408,6 +410,8 @@ fn read_frame<T: for<'de> Deserialize<'de>>(input: Frame<'_>) -> Result<T, Error
     recipher_frame::serde::from_slice(input.as_bytes()).map_err(|_| Error::Source {
         field: None,
         reason: Reason::JsonInput,
+        found: None,
+        row: None,
     })
 }
 

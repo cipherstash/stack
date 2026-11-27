@@ -428,6 +428,8 @@ fn answer<'p>(
     let not_answered = || Error::Source {
         field: Some(field.to_owned()),
         reason: Reason::OperatorNotAnswered,
+        found: None,
+        row: None,
     };
     let kind = found.field_type().ok_or_else(not_answered)?;
     let (operators, target) = answers(found, resolver)?;
@@ -451,6 +453,7 @@ pub(super) fn find<'p>(plan: &'p Plan, field: &str) -> Result<&'p FieldPlan, Err
         .ok_or_else(|| Error::Plan {
             field: Some(field.to_owned()),
             reason: Reason::NoSuchField,
+            found: None,
         })
 }
 
@@ -586,6 +589,7 @@ fn has_context(plan: &Plan, field: &str) -> Result<(), Error> {
         return Err(Error::Plan {
             field: Some(field.to_owned()),
             reason: Reason::BindInQuery,
+            found: None,
         });
     }
     names_its_context(plan, field)
@@ -603,6 +607,7 @@ fn names_its_context(plan: &Plan, field: &str) -> Result<(), Error> {
         Some(_) => Err(Error::Plan {
             field: Some(field.to_owned()),
             reason: Reason::QueryContextField,
+            found: None,
         }),
         None => Ok(()),
     }
@@ -622,6 +627,8 @@ fn read_input(answer: &Answer<'_>, operator: Op, input: impl Encrypt) -> Result<
         let input = OwnedFrame::of(input).map_err(|_| Error::Source {
             field: Some(name.to_owned()),
             reason: Reason::FieldType,
+            found: None,
+            row: None,
         })?;
         // A null is found by its equality term, which a field that seals
         // its nulls stores beside each one (#1298); nothing else has one.
@@ -632,6 +639,8 @@ fn read_input(answer: &Answer<'_>, operator: Op, input: impl Encrypt) -> Result<
                 _ => Err(Error::Source {
                     field: Some(name.to_owned()),
                     reason: Reason::NullQuery,
+                    found: None,
+                    row: None,
                 }),
             };
         }
@@ -652,6 +661,8 @@ fn not_a_range(field: &str) -> Error {
     Error::Source {
         field: Some(field.to_owned()),
         reason: Reason::NotARange,
+        found: None,
+        row: None,
     }
 }
 
@@ -863,6 +874,8 @@ fn json_input(field: &str) -> Error {
     Error::Source {
         field: Some(field.to_owned()),
         reason: Reason::JsonInput,
+        found: None,
+        row: None,
     }
 }
 
@@ -1191,6 +1204,8 @@ fn probabilistic(
         _ => Err(Error::Source {
             field: Some(field.to_owned()),
             reason: Reason::ExactOperator,
+            found: None,
+            row: None,
         }),
     }
 }
@@ -1247,6 +1262,8 @@ pub fn verify<V: Encrypt>(
                 .map_err(|_| Error::Source {
                     field: Some(field.to_owned()),
                     reason: Reason::FieldType,
+                    found: None,
+                    row: None,
                 })
         })
         .collect()
@@ -1292,6 +1309,8 @@ pub fn target_limit(
     let bits = bits.ok_or_else(|| Error::Source {
         field: Some(field.to_owned()),
         reason: Reason::NotAQueryTerm,
+        found: None,
+        row: None,
     })?;
     Ok(match_limit(bits, &options, None, want, stats))
 }

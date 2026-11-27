@@ -259,6 +259,7 @@ impl Plan {
             return Err(Error::Plan {
                 field: Some(field.to_owned()),
                 reason: Reason::BindInQuery,
+                found: None,
             });
         }
         if !scopes.is_extended() {
@@ -301,6 +302,8 @@ impl Plan {
             return Err(Error::Source {
                 field: Some(field.to_owned()),
                 reason: Reason::OperatorNotAnswered,
+                found: None,
+                row: None,
             });
         }
         Ok(QueryPlan {
@@ -958,6 +961,7 @@ impl QueryPlan {
             wrap(Error::Plan {
                 field: Some(self.field.clone()),
                 reason: Reason::NoSuchField,
+                found: None,
             })
         })
     }
@@ -1557,6 +1561,7 @@ fn field_type(field: &str, expected: &'static str) -> crate::Error {
     PlanError::FieldType {
         field: field.to_owned(),
         expected,
+        found: None,
     }
     .into()
 }
@@ -1953,7 +1958,7 @@ mod tests {
         let _ = typed.insert("age", 34u32);
         assert!(matches!(
             reason(check_values(&plan, &typed, &absent).unwrap_err()),
-            PlanError::FieldType { field, expected }
+            PlanError::FieldType { field, expected, .. }
                 if field == "age" && expected == type_name::<OwnedFrame>()
         ));
 
@@ -2020,7 +2025,7 @@ mod tests {
         let swapped = stored(Slot::new(frame(Tree::UInt32(34))));
         assert!(matches!(
             reason(check_stored(&plan, &swapped, &absent).unwrap_err()),
-            PlanError::FieldType { field, expected }
+            PlanError::FieldType { field, expected, .. }
                 if field == "age" && expected == type_name::<StackCipherText>()
         ));
         let mut extra = stored(Slot::new(ciphertext));

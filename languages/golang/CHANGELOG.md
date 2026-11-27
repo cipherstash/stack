@@ -22,6 +22,15 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one. `stashgen` does not yet map a Go type to it.
 
+- `Diagnostic.Row` and `Diagnostic.Found` (#1985). A plan, a record or a
+  stored row that is not an object now says what it is instead, by its
+  kind and never its value: `Found` is `"null"`, `"array"`, `"string"`,
+  `"passthrough"`, `"sealed"` and so on. `Row` is the row of a batch it
+  is in, from 0, and the message names it too, as in `row 2 of the
+  records to decrypt is a passthrough value, not an object of stored
+  fields`. A field declared as one type that opens as another names what
+  it opened as in `Found` and in the message.
+
 ### Changed
 
 - **A record field converts a number of another width or kind, as a

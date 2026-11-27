@@ -277,7 +277,7 @@ native engine diagnostic code and structured payload. Accepted cases may include
 `normalized`. Runners reject unknown corpus keys and contradictory outcomes.
 
 A malformed transport frame also has `boundary_error`. The native parser reports
-`stack_encrypt::dynamic_plan` with `not_an_object`; the WASI frame check reports
+`stack_encrypt::dynamic_plan` with `not_a_frame`; the WASI frame check reports
 `stack_guest_abi::malformed_input` before reaching that parser. Both runners verify
 the frame really is malformed. Valid-frame declaration errors must agree exactly
 on code and payload; Go also requires `ErrEncoding`. Error prose is not contractual.

@@ -91,12 +91,14 @@ var ErrStorageVersion = vcffi.ErrUnsupportedVersion
 // structured fields, by name) and Causes (the errors behind it, outermost
 // first). Accessors read the fields a caller branches on: ExpectedKeyset
 // and FoundKeyset on an [ErrForeignKeyset] (each a [KeysetID]'s bytes);
-// Field and Reason on a refused plan, record or value; and Construct and At
-// on a refused Match predicate, the construct in the grammar's words and
-// the byte offset in the predicate where it starts.
+// Field and Reason on a refused plan, record or value; Row and Found on a
+// plan, record or row that is not an object, the row of a batch from 0 and
+// what was there by its kind ("null", "array", "string", ...); and
+// Construct and At on a refused Match predicate, the construct in the
+// grammar's words and the byte offset in the predicate where it starts.
 //
 // What one may carry is fixed: keyset ids and names, field names, counts,
-// index kinds, ZeroKMS request kinds and HTTP statuses, and a refused
+// row positions, value kinds, index kinds, ZeroKMS request kinds and HTTP statuses, and a refused
 // predicate's construct and offset. Never plaintext, key material,
 // tokens, ciphertext or term bytes, or the values of an encryption context.
 //

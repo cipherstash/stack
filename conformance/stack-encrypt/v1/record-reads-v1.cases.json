@@ -210,14 +210,18 @@
         "error": {
           "code": "stack_encrypt::dynamic_record",
           "fields": {
-            "reason": "not_an_object"
+            "reason": "not_an_object",
+            "row": 0,
+            "found": "passthrough"
           }
         }
       },
       "check_error": {
         "code": "stack_encrypt::dynamic_record",
         "fields": {
-          "reason": "not_an_object"
+          "reason": "not_an_object",
+          "row": 0,
+          "found": "passthrough"
         }
       }
     },
@@ -449,7 +453,8 @@
           "code": "stack_encrypt::plan_field_type",
           "fields": {
             "field": "value",
-            "expected": "int64"
+            "expected": "int64",
+            "found": "int32"
           }
         }
       }
@@ -485,7 +490,8 @@
           "code": "stack_encrypt::plan_field_type",
           "fields": {
             "field": "value",
-            "expected": "string"
+            "expected": "string",
+            "found": "int32"
           }
         }
       }
@@ -521,7 +527,8 @@
           "code": "stack_encrypt::plan_field_type",
           "fields": {
             "field": "value",
-            "expected": "uint64"
+            "expected": "uint64",
+            "found": "int32"
           }
         }
       }
@@ -557,7 +564,8 @@
           "code": "stack_encrypt::plan_field_type",
           "fields": {
             "field": "value",
-            "expected": "int32"
+            "expected": "int32",
+            "found": "null"
           }
         }
       }

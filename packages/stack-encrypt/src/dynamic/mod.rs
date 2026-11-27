@@ -155,4 +155,4 @@ impl serde::Serialize for WireBytes<'_> {
     }
 }
 
-pub use crate::refusal::{Error, Reason};
+pub use crate::refusal::{Error, Found, Reason};

@@ -22,10 +22,10 @@ import (
 //	if errors.As(err, &d) { log.Print(d.Code, d.Help) }
 //
 // What it may carry is the rule written on stack-profile's ErrorPayload:
-// keyset ids and names, field names, counts, index kinds, ZeroKMS request
-// kinds and HTTP statuses, workspace ids, CRNs and regions, profile file
-// paths, and for a refused predicate the construct in the grammar's words
-// and a byte offset. Never plaintext, key material, tokens, ciphertext or
+// keyset ids and names, field names, counts, row positions, value kinds,
+// index kinds, ZeroKMS request kinds and HTTP statuses, workspace ids, CRNs
+// and regions, profile file paths, and for a refused predicate the
+// construct in the grammar's words and a byte offset. Never plaintext, key material, tokens, ciphertext or
 // term bytes, or a context's values: a stored context's length and parts
 // at most.
 //
@@ -127,6 +127,27 @@ func (d *Diagnostic) Field() string {
 func (d *Diagnostic) Reason() string {
 	reason, _ := d.Fields["reason"].(string)
 	return reason
+}
+
+// Row is the row of a batch a refusal is about, counted from 0: a record
+// to encrypt or a stored record that is not an object of fields, or the row
+// a value failed to be read in. ok is false for an error that names no row,
+// such as one about a single record, and for a row that is negative, not a
+// whole number, or past int.
+func (d *Diagnostic) Row() (row int, ok bool) {
+	return nonNegativeInt(d.Fields["row"])
+}
+
+// Found is what a refusal found where it expected an object, by its kind
+// and never its value: "null", "array", "string", "passthrough", "sealed"
+// (a sealed value where a stored record or row should be), another kind's
+// schema name ("uint32", "object", ...), "undefined" or "unknown". A field
+// declared as one type that opens as another names what it opened as the
+// same way. "" for an error that names none. New kinds may appear: keep a
+// fallback.
+func (d *Diagnostic) Found() string {
+	found, _ := d.Fields["found"].(string)
+	return found
 }
 
 // Construct is what a refused predicate (a JSONSearch field's Match) names

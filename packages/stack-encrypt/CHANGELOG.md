@@ -504,6 +504,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **A record refused as "not an object" says what it found, and where**
+  (#1985). Before, a plan, a field's spec, a record to encrypt or a stored
+  record that was not an object was refused as `not_an_object` with no
+  more detail, and most of them named no field and no row. Now:
+  - The error says what was there instead, by its kind and never its
+    value: `Error::found()`, the payload's `found` (`"null"`, `"array"`,
+    `"string"`, `"uint32"`, `"passthrough"`, `"sealed"`, ...), and the
+    message, as in `row 2 of the records to encrypt is null, not an
+    object of fields`. The new `dynamic::Found` names the kinds.
+  - A row of a batch to encrypt or decrypt is named by its position from
+    0: `Error::row()`, the payload's `row`, and the message. The message
+    also says whether the record was to encrypt or to decrypt.
+  - Bytes given as a plan that are not one transport frame (empty, cut
+    short, JSON text, a repeated key, bytes after the value) have their
+    own reason, `not_a_frame`. A frame that is not an object of field
+    specs keeps `not_an_object`, with what it is.
+  - A value that fails while it is read, such as a JSON document nested
+    too deep, is the new `Error::SourceFailed`, with the code
+    `stack_encrypt::dynamic_source_failed` and the reason `source_failed`.
+    It names the field and the row being read, and keeps the value's own
+    error as its cause. The cause is not in the message, because a host's
+    error can quote the value. Before, it was `not_an_object` with no
+    field.
+  - A typed field that opens as another type says what it opened as:
+    `PlanError::FieldType` has `found`, in its payload too, as in
+    `field "doc" opened as an array, not an object`.
+
+  `Error::Plan` has a new `found` field, `Error::Source` and
+  `Error::Record` new `row` and `found` fields, and
+  `PlanError::FieldType` a new `found` field, so a match on them that names
+  every field needs `..`. Reason codes do not change, except the two new
+  ones.
+
 - **`dynamic::ValueFrame` is removed. The engine reads a plaintext as a
   borrowed `Frame` and keeps one as vitaminc's `OwnedFrame`** (#1955).
   `dynamic::frame` re-exports both from vitaminc. A `Frame` is one value's

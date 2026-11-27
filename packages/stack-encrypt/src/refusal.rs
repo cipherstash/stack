@@ -20,7 +20,13 @@
     allow(dead_code, rustdoc::broken_intra_doc_links)
 )]
 
+use std::cell::{Cell, RefCell};
 use std::fmt;
+
+use vitaminc_aead::frame::{Frame, FrameWriteError};
+use vitaminc_aead::plaintext::{
+    Encrypt as _, EncryptRef, FixedType, Logical, MapSink, Physical, SeqSink, Sink, ValueKind,
+};
 
 use crate::target::IndexSpec;
 
@@ -56,9 +62,17 @@ use crate::target::IndexSpec;
 /// [`read`](crate::dynamic::read)); [`in_field`](Self::in_field) names it
 /// from the caller's side.
 ///
+/// Where a plan, a record to encrypt or a stored record is not the object
+/// the operation takes, the error says what it found instead: its kind
+/// ([`Found`]), never the value. It is in the message, in
+/// [`found`](Self::found) and in the payload (`found`). A row of a batch is
+/// named by its position, from 0: in the message, in [`row`](Self::row) and
+/// in the payload (`row`).
+///
 /// Not every variant has a [`Reason`]. [`Context`](Error::Context),
 /// [`Plan`](Error::Plan), [`Source`](Error::Source),
-/// [`Record`](Error::Record) and [`Predicate`](Error::Predicate) do: it is
+/// [`SourceFailed`](Error::SourceFailed), [`Record`](Error::Record) and
+/// [`Predicate`](Error::Predicate) do: it is
 /// in the message, in [`reason`](Self::reason) and in the payload
 /// (`reason`). The others carry their own payload fields instead:
 /// [`Term`](Error::Term) names the index it was asked for (`index`),
@@ -102,20 +116,26 @@ pub enum Error {
         kind: IndexSpec,
     },
 
-    /// A record plan is malformed: not an object of field specs, empty,
-    /// missing or duplicating an output, carrying a key that is not
+    /// A record plan is malformed: not one transport frame, not an object
+    /// of field specs, empty, missing or duplicating an output, carrying a key that is not
     /// `"context"`, `"outputs"`, `"target"` or `"type"`, naming a type that
     /// is not one, asking for an index its declared type is not defined
     /// for, giving a field a context that is not a label a plan can
     /// seal it under, or declaring what no plan allows (two fields
     /// under one identity, fields under different contexts).
-    #[error("record plan is malformed: {reason}{}", in_field_text(field))]
+    #[error(
+        "record plan is malformed: {}",
+        misfit_text(Subject::Plan, *reason, *found, None, field)
+    )]
     #[diagnostic(code(stack_encrypt::dynamic_plan))]
     Plan {
         /// The plan field at fault, if the fault is one field's.
         field: Option<String>,
         /// What was wrong with the plan.
         reason: Reason,
+        /// What the plan, or the field's spec, is instead of an object:
+        /// set with [`Reason::NotAnObject`].
+        found: Option<Found>,
     },
 
     /// A record plan field has a term output (`"eq"`, `"match"`, `"ore"`,
@@ -136,7 +156,7 @@ pub enum Error {
     },
 
     /// A record source does not fit its plan: not an object (or an array of
-    /// them), a field the plan does not name, a plan field the source does
+    /// them, the row then named), a field the plan does not name, a plan field the source does
     /// not carry or carries twice, or a passthrough or a repeated map key
     /// under a field the plan seals, or a value of another type than its
     /// field declares that does not convert to it exactly, or `undefined`
@@ -147,19 +167,46 @@ pub enum Error {
     /// or a term that are not what [`target_limit`](crate::dynamic::target_limit) reads — the same shape of
     /// refusal as a mistyped field, naming the field.
     #[error(
-        "record source does not fit the plan: {reason}{}",
-        in_field_text(field)
+        "record source does not fit the plan: {}",
+        misfit_text(Subject::Source, *reason, *found, *row, field)
     )]
     #[diagnostic(code(stack_encrypt::dynamic_source))]
     Source {
         /// The source field at fault, if the fault is one field's.
         field: Option<String>,
+        /// The row of a batch at fault, from 0, if the fault is one row's
+        /// shape.
+        row: Option<usize>,
         /// What was wrong with the source.
         reason: Reason,
+        /// What the source, or the row, is instead of an object of fields:
+        /// set with [`Reason::NotAnObject`].
+        found: Option<Found>,
+    },
+
+    /// A record source failed while it was read: a value reported a failure
+    /// of its own as it described itself, such as a host getter that threw,
+    /// or a JSON document nested too deep. The value's own error is the
+    /// cause ([`source`](std::error::Error::source)). It is not in the
+    /// message, because a host's error can quote the value it failed on.
+    /// Its reason is [`Reason::SourceFailed`].
+    #[error("record source failed while it was read{}", place_text(*row, field))]
+    #[diagnostic(
+        code(stack_encrypt::dynamic_source_failed),
+        help("The value's own error is this error's cause. It is left out of the message, because it can quote the value.")
+    )]
+    SourceFailed {
+        /// The field whose value was being read, if one was.
+        field: Option<String>,
+        /// The row of a batch being read, from 0, if the source is a batch.
+        row: Option<usize>,
+        /// The value's own error.
+        #[source]
+        cause: vitaminc_aead::plaintext::SourceError,
     },
 
     /// A stored record does not fit its plan: not a map (or a sequence of
-    /// them), a ciphertext-bearing field that is absent or given twice, or
+    /// them, the row then named), a ciphertext-bearing field that is absent or given twice, or
     /// has no `"c"` node or two of them, a repeated map key under `"c"`, a
     /// passthrough under `"c"` — which would hand back unauthenticated
     /// bytes as if they had been opened — or a passthrough field that is
@@ -169,15 +216,21 @@ pub enum Error {
     /// ([`PlanError::FieldType`](crate::PlanError::FieldType)): the type tag
     /// is inside the AEAD envelope.
     #[error(
-        "stored record does not fit the plan: {reason}{}",
-        in_field_text(field)
+        "stored record does not fit the plan: {}",
+        misfit_text(Subject::Record, *reason, *found, *row, field)
     )]
     #[diagnostic(code(stack_encrypt::dynamic_record))]
     Record {
         /// The stored field at fault, if the fault is one field's.
         field: Option<String>,
+        /// The row of a batch at fault, from 0, if the fault is one row's
+        /// shape.
+        row: Option<usize>,
         /// What was wrong with the stored record.
         reason: Reason,
+        /// What the stored record, or the row, is instead of an object of
+        /// stored fields: set with [`Reason::NotAnObject`].
+        found: Option<Found>,
     },
 
     /// A `match` predicate is refused at a place in its text: text the
@@ -239,6 +292,54 @@ fn in_field_text(field: &Option<String>) -> String {
         .unwrap_or_default()
 }
 
+/// ` (row 2, field "age")`, ` (row 2)`, ` (field "age")`, or nothing: the
+/// tail of an error that can name a row of a batch.
+fn place_text(row: Option<usize>, field: &Option<String>) -> String {
+    match (row, field.as_deref()) {
+        (Some(row), Some(field)) => format!(" (row {row}, field {field:?})"),
+        (Some(row), None) => format!(" (row {row})"),
+        (None, _) => in_field_text(field),
+    }
+}
+
+/// What a plan, source or stored-record error is about.
+#[derive(Clone, Copy)]
+enum Subject {
+    Plan,
+    Source,
+    Record,
+}
+
+/// The body of a plan, source or stored-record error's message. With
+/// [`Found`], a sentence that says what was there, where, and what the
+/// operation takes; without, the reason and where it was.
+fn misfit_text(
+    subject: Subject,
+    reason: Reason,
+    found: Option<Found>,
+    row: Option<usize>,
+    field: &Option<String>,
+) -> String {
+    let Some(found) = found else {
+        return format!("{reason}{}", place_text(row, field));
+    };
+    let what = match (subject, row, field) {
+        (Subject::Plan, _, None) => "the plan".to_owned(),
+        (Subject::Plan, _, Some(_)) => "the field's spec".to_owned(),
+        (Subject::Source, None, _) => "the record to encrypt".to_owned(),
+        (Subject::Source, Some(row), _) => format!("row {row} of the records to encrypt"),
+        (Subject::Record, None, _) => "the record to decrypt".to_owned(),
+        (Subject::Record, Some(row), _) => format!("row {row} of the records to decrypt"),
+    };
+    let expected = match (subject, field) {
+        (Subject::Plan, None) => "an object of field specs",
+        (Subject::Plan, Some(_)) => "an object",
+        (Subject::Source, _) => "an object of fields",
+        (Subject::Record, _) => "an object of stored fields",
+    };
+    format!("{what} is {found}, not {expected}{}", in_field_text(field))
+}
+
 impl Error {
     /// A context error with no field named yet.
     pub(crate) fn bad_context(reason: Reason) -> Self {
@@ -253,6 +354,7 @@ impl Error {
         Self::Plan {
             field: None,
             reason,
+            found: None,
         }
     }
 
@@ -260,15 +362,20 @@ impl Error {
     pub(crate) fn bad_source(reason: Reason) -> Self {
         Self::Source {
             field: None,
+            row: None,
             reason,
+            found: None,
         }
     }
 
     /// A stored-record error with no field named yet.
+    #[cfg(test)]
     pub(crate) fn bad_record(reason: Reason) -> Self {
         Self::Record {
             field: None,
+            row: None,
             reason,
+            found: None,
         }
     }
 
@@ -284,6 +391,7 @@ impl Error {
             | Self::Term { field, .. }
             | Self::Plan { field, .. }
             | Self::Source { field, .. }
+            | Self::SourceFailed { field, .. }
             | Self::Record { field, .. }
             | Self::Predicate { field, .. }
                 if field.is_none() =>
@@ -302,6 +410,7 @@ impl Error {
             | Self::Term { field, .. }
             | Self::Plan { field, .. }
             | Self::Source { field, .. }
+            | Self::SourceFailed { field, .. }
             | Self::Record { field, .. }
             | Self::Predicate { field, .. } => field.as_deref(),
             Self::UntypedIndex { field } => Some(field),
@@ -338,11 +447,37 @@ impl Error {
             | Self::Source { reason, .. }
             | Self::Record { reason, .. }
             | Self::Predicate { reason, .. } => Some(*reason),
+            Self::SourceFailed { .. } => Some(Reason::SourceFailed),
             #[cfg(feature = "dynamic")]
             Self::Target(_) => None,
             Self::Term { .. } | Self::UntypedIndex { .. } | Self::Internal | Self::Cipher(_) => {
                 None
             }
+        }
+    }
+
+    /// The row of a batch an input error is about, from 0: a row of a
+    /// record source or a stored record that is not an object, or the row
+    /// a source failed in. `None` for a single record, and for every other
+    /// error.
+    pub fn row(&self) -> Option<usize> {
+        match self {
+            Self::Source { row, .. }
+            | Self::SourceFailed { row, .. }
+            | Self::Record { row, .. } => *row,
+            _ => None,
+        }
+    }
+
+    /// What a plan, a field's spec, a record source or a stored record was
+    /// where the operation takes an object ([`Reason::NotAnObject`]).
+    /// `None` for every other error.
+    pub fn found(&self) -> Option<Found> {
+        match self {
+            Self::Plan { found, .. } | Self::Source { found, .. } | Self::Record { found, .. } => {
+                *found
+            }
+            _ => None,
         }
     }
 }
@@ -365,6 +500,12 @@ impl crate::ErrorPayload for Error {
         }
         if let Some(reason) = self.reason() {
             let _ = fields.insert("reason".to_owned(), reason.as_str().into());
+        }
+        if let Some(row) = self.row() {
+            let _ = fields.insert("row".to_owned(), (row as u64).into());
+        }
+        if let Some(found) = self.found() {
+            let _ = fields.insert("found".to_owned(), found.as_str().into());
         }
         fields
     }
@@ -418,7 +559,9 @@ reasons! {
     #[non_exhaustive]
     pub enum Reason {
         /// A plan, field spec, source or stored record is not an object (a
-        /// map), or a list of them, where one is expected.
+        /// map), or a list of them, where one is expected. The error says
+        /// what it is instead ([`Error::found`]), and which row of a batch
+        /// ([`Error::row`]).
         NotAnObject => "not_an_object", "not an object where one is expected";
         /// A context value is of a kind a context cannot hold: a boolean,
         /// float, null, object or passthrough.
@@ -640,6 +783,13 @@ reasons! {
         /// than the engine reads, or names a path with more steps than a
         /// document has levels.
         JsonPredicateTooDeep => "json_predicate_too_deep", "the predicate nests too deep";
+        /// Bytes given as a plan are not one transport frame: empty, cut
+        /// short, holding a repeated key at any depth, or with bytes after
+        /// the value. A plan sent as JSON text is refused so.
+        NotAFrame => "not_a_frame", "the bytes are not one transport frame";
+        /// A value failed while it was read, with an error of its own
+        /// ([`Error::SourceFailed`]).
+        SourceFailed => "source_failed", "a value failed while it was read";
     }
 }
 
@@ -653,5 +803,262 @@ impl Reason {
 impl fmt::Display for Reason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(Self::WORDS[*self as usize].1)
+    }
+}
+
+/// What an input error found where it expected an object: a value's kind,
+/// never the value. A binding reads [`as_str`](Self::as_str), the name in
+/// the payload's `found` field; `Display` is the phrase the message uses.
+///
+/// `#[non_exhaustive]`: a kind added later is not a break, and a binding
+/// that switches on one keeps a fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Found {
+    /// A null, plain or typed: `"null"`.
+    Null,
+    /// JavaScript's `undefined`: `"undefined"`.
+    Undefined,
+    /// A passthrough, a value that travels in the clear: `"passthrough"`.
+    Passthrough,
+    /// A sealed value where a stored record or a row of one should be: a
+    /// ciphertext leaf, or the marker of a sealed empty list or map.
+    /// `"sealed"`.
+    Sealed,
+    /// A value of this kind: its schema name, such as `"string"`,
+    /// `"uint32"` or `"array"`.
+    Kind(ValueKind),
+    /// A scalar of a logical type this build does not know: `"unknown"`.
+    Unknown,
+}
+
+impl Found {
+    /// The name a binding reports in its payload's `found` field.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Null => "null",
+            Self::Undefined => "undefined",
+            Self::Passthrough => "passthrough",
+            Self::Sealed => "sealed",
+            Self::Kind(kind) => kind.name(),
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// What a scalar is, from how it describes itself.
+    pub(crate) fn scalar(logical: Option<Logical>, value: &Physical<'_>) -> Self {
+        match (ValueKind::of(logical, value), logical, value) {
+            (Some(kind), _, _) => Self::Kind(kind),
+            (None, Some(Logical::Undefined), _) => Self::Undefined,
+            (None, None, Physical::Null) => Self::Null,
+            (None, _, _) => Self::Unknown,
+        }
+    }
+
+    /// What a frame holds, reading no more of it than its first node.
+    pub(crate) fn of_frame(frame: Frame<'_>) -> Self {
+        if let Some(kind) = frame.kind() {
+            return Self::Kind(kind);
+        }
+        if frame.is_null() {
+            return Self::Null;
+        }
+        // A passthrough, `undefined` or a logical type this build does not
+        // know: one node, which the probe reads without walking inside it.
+        let found = Cell::new(None);
+        let _ = frame.visit(Probe::noting(&found, None));
+        found.get().unwrap_or(Self::Unknown)
+    }
+
+    /// What the entry under `key` holds, for a frame that is an object with
+    /// one, and the entry's own keys, in order, when it is an object too.
+    /// `None` for a frame that is not an object or has no such key.
+    pub(crate) fn of_entry(frame: Frame<'_>, key: &str) -> Option<(Self, Vec<String>)> {
+        let found = Cell::new(None);
+        let keys = RefCell::new(Vec::new());
+        let _ = frame.visit(Lookup {
+            key,
+            found: &found,
+            keys: &keys,
+        });
+        found.get().map(|found| (found, keys.into_inner()))
+    }
+}
+
+impl fmt::Display for Found {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Null => f.write_str("null"),
+            Self::Undefined => f.write_str("undefined"),
+            Self::Passthrough => f.write_str("a passthrough value"),
+            Self::Sealed => f.write_str("a sealed value"),
+            Self::Kind(kind) => {
+                let name = kind.name();
+                write!(f, "{} {name}", crate::plan::article(name))
+            }
+            Self::Unknown => f.write_str("a value of a type this build does not know"),
+        }
+    }
+}
+
+/// A sink that reads past a value and keeps none of it: where it is given
+/// a cell, it notes what kind of value the node is, and where it is given
+/// a list, the keys of an object it is. Children are read past with
+/// neither, so nothing inside a container is noted, and no value is copied.
+struct Probe<'c> {
+    found: Option<&'c Cell<Option<Found>>>,
+    keys: Option<&'c RefCell<Vec<String>>>,
+}
+
+impl<'c> Probe<'c> {
+    /// A probe that notes the node's kind, and its keys if `keys` is given.
+    fn noting(found: &'c Cell<Option<Found>>, keys: Option<&'c RefCell<Vec<String>>>) -> Self {
+        Self {
+            found: Some(found),
+            keys,
+        }
+    }
+
+    /// A probe that reads past a node and notes nothing.
+    fn past() -> Self {
+        Self {
+            found: None,
+            keys: None,
+        }
+    }
+
+    fn note(&self, found: Found) {
+        if let Some(cell) = self.found {
+            cell.set(Some(found));
+        }
+    }
+}
+
+impl<'c> Sink for Probe<'c> {
+    type Ok = ();
+    type Error = FrameWriteError;
+    type Seq = Probe<'c>;
+    type Map = Probe<'c>;
+
+    fn scalar(self, logical: Option<Logical>, value: Physical<'_>) -> Result<(), FrameWriteError> {
+        self.note(Found::scalar(logical, &value));
+        Ok(())
+    }
+
+    fn typed_null(self, _: FixedType) -> Result<(), FrameWriteError> {
+        self.note(Found::Null);
+        Ok(())
+    }
+
+    fn seq(self, _: Option<usize>) -> Result<Probe<'c>, FrameWriteError> {
+        self.note(Found::Kind(ValueKind::Array));
+        Ok(Probe::past())
+    }
+
+    fn map(self, _: Option<usize>) -> Result<Probe<'c>, FrameWriteError> {
+        self.note(Found::Kind(ValueKind::Object));
+        // The map's entries are read with the keys list, to note their keys.
+        Ok(Probe {
+            found: None,
+            keys: self.keys,
+        })
+    }
+
+    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<(), FrameWriteError> {
+        self.note(Found::Passthrough);
+        Ok(())
+    }
+}
+
+impl<'c> SeqSink for Probe<'c> {
+    type Ok = ();
+    type Error = FrameWriteError;
+    type Element<'e>
+        = Probe<'c>
+    where
+        Self: 'e;
+
+    fn element(&mut self) -> Result<Probe<'c>, FrameWriteError> {
+        Ok(Probe::past())
+    }
+
+    fn end(self) -> Result<(), FrameWriteError> {
+        Ok(())
+    }
+}
+
+impl<'c> MapSink for Probe<'c> {
+    type Ok = ();
+    type Error = FrameWriteError;
+    type Entry<'e>
+        = Probe<'c>
+    where
+        Self: 'e;
+
+    fn entry(&mut self, key: &str) -> Result<Probe<'c>, FrameWriteError> {
+        if let Some(keys) = self.keys {
+            keys.borrow_mut().push(key.to_owned());
+        }
+        Ok(Probe::past())
+    }
+
+    fn end(self) -> Result<(), FrameWriteError> {
+        Ok(())
+    }
+}
+
+/// A sink that notes what kind of value one entry of an object is, and its
+/// keys if it is an object, and reads past everything else.
+struct Lookup<'k, 'c> {
+    key: &'k str,
+    found: &'c Cell<Option<Found>>,
+    keys: &'c RefCell<Vec<String>>,
+}
+
+impl<'k, 'c> Sink for Lookup<'k, 'c> {
+    type Ok = ();
+    type Error = FrameWriteError;
+    type Seq = Probe<'c>;
+    type Map = Lookup<'k, 'c>;
+
+    fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), FrameWriteError> {
+        Ok(())
+    }
+
+    fn typed_null(self, _: FixedType) -> Result<(), FrameWriteError> {
+        Ok(())
+    }
+
+    fn seq(self, _: Option<usize>) -> Result<Probe<'c>, FrameWriteError> {
+        Ok(Probe::past())
+    }
+
+    fn map(self, _: Option<usize>) -> Result<Self, FrameWriteError> {
+        Ok(self)
+    }
+
+    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<(), FrameWriteError> {
+        Ok(())
+    }
+}
+
+impl<'c> MapSink for Lookup<'_, 'c> {
+    type Ok = ();
+    type Error = FrameWriteError;
+    type Entry<'e>
+        = Probe<'c>
+    where
+        Self: 'e;
+
+    fn entry(&mut self, key: &str) -> Result<Probe<'c>, FrameWriteError> {
+        if key == self.key {
+            Ok(Probe::noting(self.found, Some(self.keys)))
+        } else {
+            Ok(Probe::past())
+        }
+    }
+
+    fn end(self) -> Result<(), FrameWriteError> {
+        Ok(())
     }
 }
