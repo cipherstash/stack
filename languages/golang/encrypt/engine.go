@@ -107,17 +107,37 @@ type engineLease struct {
 }
 
 // acquire keeps the compiled form of wasm in the shared cache until the
-// lease is released, compiling it first if no open instance or idle timer
-// keeps it. A compile that fails gives a nil lease: the instance that asked
-// then compiles wasm itself, and reports the failure as it always has.
+// lease is released. It compiles wasm first if nothing keeps it. A compile
+// that fails gives a nil lease. The instance that asked then compiles wasm
+// itself, and reports the failure as it always has.
 func (c *engineCache) acquire(ctx context.Context, wasm []byte) *engineLease {
+	return c.take(ctx, wasm, false)
+}
+
+// pin keeps the compiled form of wasm in the shared cache for the life of
+// the process. The idle timer never frees it, and releaseAll leaves it.
+// Package encrypttest's clients and checkers pin the test build they run.
+// So a test binary compiles each build once, whatever its tests do.
+//
+// A compile that fails pins nothing. The instance that follows compiles wasm
+// itself, and reports the failure as it always has.
+func (c *engineCache) pin(ctx context.Context, wasm []byte) {
+	// The first pin of a build takes a lease and never releases it. So
+	// open never reaches zero. A later pin takes no lease.
+	_ = c.take(ctx, wasm, true)
+}
+
+// take is acquire. With pin set, it is pin. It marks the build pinned in
+// the same critical section that finds the build or adds it. So releaseAll
+// cannot drop the build between the two.
+func (c *engineCache) take(ctx context.Context, wasm []byte, pin bool) *engineLease {
 	key := sha256.Sum256(wasm)
-	if l := c.lease(key); l != nil {
+	if l, ok := c.lease(key, pin); ok {
 		return l
 	}
 	c.compileMu.Lock()
 	defer c.compileMu.Unlock()
-	if l := c.lease(key); l != nil {
+	if l, ok := c.lease(key, pin); ok {
 		return l
 	}
 	compile := c.compile
@@ -128,7 +148,7 @@ func (c *engineCache) acquire(ctx context.Context, wasm []byte) *engineLease {
 	if err != nil {
 		return nil
 	}
-	e := &sharedEngine{key: key, free: free, open: 1}
+	e := &sharedEngine{key: key, free: free, open: 1, pinned: pin}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.builds == nil {
@@ -138,43 +158,26 @@ func (c *engineCache) acquire(ctx context.Context, wasm []byte) *engineLease {
 	return &engineLease{cache: c, engine: e}
 }
 
-// pin keeps the compiled form of wasm in the shared cache for the life of
-// the process: the idle timer never frees it, and releaseAll leaves it.
-// Package encrypttest's clients and checkers pin the test build they run,
-// so a test binary compiles each build once, however many tests start and
-// close a client, and whatever they do with ReleaseEngine. A compile that
-// fails pins nothing: the instance that follows compiles wasm itself, and
-// reports the failure as it always has.
-func (c *engineCache) pin(ctx context.Context, wasm []byte) {
-	l := c.acquire(ctx, wasm)
-	if l == nil {
-		return
-	}
-	c.mu.Lock()
-	already := l.engine.pinned
-	l.engine.pinned = true
-	c.mu.Unlock()
-	// The first pin keeps its lease, and never releases it. Any later pin
-	// of the same build has nothing to add.
-	if already {
-		l.release()
-	}
-}
-
-// lease is a lease on the build with key, if it is compiled.
-func (c *engineCache) lease(key [sha256.Size]byte) *engineLease {
+// lease returns a lease on the build with key. It also reports whether the
+// build is compiled. With pin set, it marks the build pinned. A build that
+// is already pinned gives a nil lease, because its first pin holds one.
+func (c *engineCache) lease(key [sha256.Size]byte, pin bool) (*engineLease, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.builds[key]
 	if !ok {
-		return nil
+		return nil, false
 	}
+	if pin && e.pinned {
+		return nil, true
+	}
+	e.pinned = e.pinned || pin
 	e.open++
 	if e.idleTimer != nil {
 		e.idleTimer.Stop()
 		e.idleTimer = nil
 	}
-	return &engineLease{cache: c, engine: e}
+	return &engineLease{cache: c, engine: e}, true
 }
 
 // release ends the lease. When it was the last open one on its build, the
