@@ -504,26 +504,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
-- **The engine's plaintext is vitaminc's `OwnedFrame`; `dynamic::ValueFrame`
-  is removed** (#1955). `vitaminc_aead::frame::OwnedFrame`, which
-  `dynamic::frame` re-exports as `dynamic::frame::OwnedFrame`, is the same
-  thing: one value as its transport frame, in a buffer wiped when it drops,
-  a source and a decrypt target, compared in constant time. Every API that
-  took or returned a `ValueFrame` takes or returns an `OwnedFrame`. What
-  changes for a caller:
-  - Replace `dynamic::ValueFrame` with `dynamic::frame::OwnedFrame`.
-    `of`, `from_bytes`, `kind`, `elements`, `risky_ref` and `into_inner`
-    keep their names and meaning.
-  - `ValueFrame::check` is gone: check a record source with
-    `dynamic::frame::Frame::parse(bytes.risky_ref())`, which accepts and
-    refuses the same frames.
+- **`dynamic::ValueFrame` is removed. The engine reads a plaintext as a
+  borrowed `Frame` and keeps one as vitaminc's `OwnedFrame`** (#1955).
+  `dynamic::frame` re-exports both from vitaminc. A `Frame` is one value's
+  transport frame, checked and borrowed from bytes the caller keeps. An
+  `OwnedFrame` is a buffer, wiped when it drops, that holds exactly one
+  frame: what a record or a target opens into, and a value an async call
+  holds. What changes for a caller:
+  - Replace `dynamic::ValueFrame` with `dynamic::frame::OwnedFrame` where a
+    value is kept, and read bytes a host hands over with
+    `dynamic::frame::Frame::parse(&bytes)`, which borrows them with no
+    copy. `ValueFrame::from_bytes` and `ValueFrame::check` are gone:
+    `Frame::parse` accepts and refuses the same frames, and
+    `OwnedFrame::from_buffer` keeps a `Buffer` that holds one.
+  - `OwnedFrame::of` writes any source, `frame()` lends the frame, and
+    `into_buffer()` hands back the `Buffer`. `kind`, `is_null` and
+    `elements` are on `Frame` (`owned.frame().kind()`); `elements` lends
+    each element as a `Frame` with no copy. `risky_ref` and `into_inner`
+    are gone: read the bytes with `frame().as_bytes()`.
+  - An `OwnedFrame` has no `==`. Compare `a.frame() == b.frame()`, in
+    constant time.
+  - `TargetResolver::encrypt` and `TargetResolver::query` take the
+    plaintext as `Frame<'_>`; `decrypt` still resolves to an `OwnedFrame`.
+    An implementation reads `plaintext.kind()` and walks `plaintext` as
+    before.
+  - `dynamic::read_json` takes a `Frame<'_>`. `IntoLabel` is implemented
+    for `Frame<'_>` and `&OwnedFrame`.
+  - `FieldHandle`'s operator methods take any source (`V: Encrypt`), and
+    `DynamicQuery` takes it as a third type parameter, `V`, which defaults
+    to `OwnedFrame`. A borrowed `Frame` is queried with no copy.
+  - `Planned` is a target over an `OwnedFrame` or a borrowed `Frame`: a
+    record under a plan encrypts to the stored row, and a query value to
+    its term, from either. `Planned` is `Zeroize` for those two values
+    alone: an owned frame is wiped, and a borrowed one is its owner's to
+    wipe.
   - `ValueFrame::from_bytes` returned `FromFrameError::Frame`;
-    `OwnedFrame::from_bytes` returns the `FrameError` it carried.
     `dynamic::FromFrameError` is removed.
   - `dynamic::Modeled`, `dynamic::Opening` and `dynamic::Children`, the
     sinks behind `ValueFrame`, are removed. `OwnedFrame::sink()` (from
-    `Decrypt`) is the sink a ciphertext opens into.
-  - A zeroized frame holds no bytes and walks as an error, as before.
+    `Decrypt`) is the sink a ciphertext opens into, and it writes the
+    whole value into one buffer.
+  - A zeroized `OwnedFrame` holds the plain null. It used to hold no bytes
+    and walk as an error.
   - No stored byte, frame byte or wire name changes.
 
 - **The engine no longer keeps its own list of the value types it

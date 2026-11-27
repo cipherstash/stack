@@ -8,7 +8,7 @@ JSON, so the layout does not fail it.
 
 One declaration, two authors, one engine. Typed Rust code (the engine's
 combinators, `indexed(..).under(label)` and the rest, run over fields of type
-`stack_encrypt::dynamic::frame::OwnedFrame`, the frame a binding's values arrive as)
+`stack_encrypt::dynamic::frame::OwnedFrame`, the frame each field of a binding's record is split into)
 and the data-plan lowering (`stack_encrypt::dynamic::record`, what a
 language binding calls) each sealed the same plaintext under the same
 declaration. The fixture's key for the first author is `typed_chain`: it was

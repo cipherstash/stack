@@ -15,8 +15,9 @@ out. A frame represents a value independently of the host language:
 - [`FrameWriter`] is a `Sink` that writes frame bytes, and [`to_frame`]
   walks any `Encrypt` into one. The Node binding snapshots a JavaScript
   value this way to encrypt it off the JavaScript thread.
-- [`OwnedFrame`] is one value in a frame of its own, wiped when it drops:
-  what a binding hands the engine, and what a ciphertext opens into.
+- [`OwnedFrame`] is a buffer, wiped when it drops, that holds exactly one
+  frame: what a ciphertext opens into, and a value kept past the call that
+  made it. A value read only within a call is borrowed as a [`Frame`].
 - [`PassthroughFrame`] is an owned frame: the payload a ciphertext carries
   for a passthrough subtree, in every binding and in static Rust.
 

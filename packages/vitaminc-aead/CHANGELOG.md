@@ -26,13 +26,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `ValueKind::sealed_null` says how an absent value of the kind is sealed (`SealedNull`), so that it is as long as a present one.
   `ParseValueKindError` is the error from parsing a name.
 - `leaf::sealed_null_type`, the type a typed null is sealed as.
-- `frame::OwnedFrame` (also at the crate root): one value as a frame in a buffer of its own, wiped when it drops.
-  It is a source (`Encrypt`) that walks its bytes in place, and a decrypt target (`Decrypt`, through `frame::OwnedFrameSink`) that a ciphertext opens straight into.
-  Two frames compare with `==` in constant time, and `Debug` masks the bytes.
-  `OwnedFrame::of` writes any source; `from_bytes` reads a host's bytes, refusing anything that is not one frame; `from_buffer` takes a `Buffer` a `FrameWriter` filled, without a copy.
-  `null`, `typed_null`, `kind`, `is_null`, `elements` and `has_passthrough` read or make a value without a second copy of it.
-  `zeroize` wipes the bytes and leaves none, so a zeroized frame walks as an error instead of reading as a null.
+- `frame::OwnedFrame` (also at the crate root): a `Buffer` that holds exactly one frame, wiped when it drops.
+  It is for a value kept past the call that wrote it, and for what a ciphertext opens into.
+  A value read only within a call is borrowed as a `Frame` instead.
+  `OwnedFrame::of` writes any source as `to_frame` does, `from_buffer` keeps a `Buffer` a `FrameWriter` filled once `Frame::parse` accepts it, with no copy, and `null` and `typed_null` make a null.
+  `frame` lends the frame as a `Frame`, and `into_buffer` hands the `Buffer` back.
+  It is a source (`Encrypt`) that walks its bytes in place, and a decrypt target (`Decrypt`, through `frame::OwnedFrameSink`): a ciphertext opens into one buffer, its containers' children written in place, with no copy of any child.
+  It has no `==`: compare two with `Frame`'s, which runs in constant time. `Debug` masks the bytes.
+  `zeroize` wipes the bytes and leaves the plain null, so a zeroized frame is still one frame.
   No frame or sealed byte changes: an `OwnedFrame` holds the bytes `to_frame` writes.
+- `Frame::kind`, `Frame::is_null` and `Frame::has_passthrough` read a frame in place, and `Frame::elements` lends a sequence's elements as `Frame`s, in order, through `frame::Elements`, with no copy.
+  An element keeps the bytes it has in the sequence, so a typed null stays a typed null.
+- `FrameWriter`, `FrameSeq` and `FrameMap` take a second type parameter, the error they report, which defaults to `FrameWriteError`.
+  Code that names `FrameWriter<'_>` is unchanged.
+  The decrypt sink of `OwnedFrame` writes through them, reporting `DecodeError`.
+- `DecodeError` implements `From<FrameWriteError>`: a scalar its logical type does not admit is `DecodeError::Expected`, a source's failure is `DecodeError::Source`, and any other refusal is `DecodeError::Source` with the writer's error as its source.
 
 ## [0.10.0] - 2026-11-19
 

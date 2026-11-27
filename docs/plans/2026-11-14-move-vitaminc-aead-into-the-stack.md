@@ -322,13 +322,40 @@ Done in #1955:
 
 - The frame crate is renamed `recipher-frame` first, in a commit of its own.
   No workspace patches crates.io for it any more.
+- Most uses need no owned value. A value read only within a call is a
+  `Frame` borrowed from its bytes: `Frame::parse` checks everything the old
+  `from_bytes` checked, and `Frame` is `Encrypt`. `kind`, `is_null`,
+  `has_passthrough` and `elements` are on `Frame`, and `elements` lends
+  each element as a `Frame` with no copy. The engine's readers, the
+  `TargetResolver`'s `encrypt` and `query`, and the `eql-bindings` by-name
+  entry points and generated dispatch take a `Frame<'_>`. `FieldHandle` and
+  `DynamicQuery` take any source, and `Planned` is a target over an
+  `OwnedFrame` or a `Frame`.
 - The owned value is `vitaminc_aead::frame::OwnedFrame`, re-exported by
-  `recipher-frame` and so by `stack_encrypt::dynamic::frame`. It holds the
-  bytes in vitaminc-protected's `Equatable<Protected<Vec<u8>>>`, so it is
-  wiped when it drops and `==` is constant time. It is `Encrypt` and
-  `Decrypt` (its sink is `OwnedFrameSink`), and has `kind`, `is_null`,
-  `elements` and `has_passthrough`. `Modeled`, `Opening` and `Children`
-  moved into it as private code.
+  `recipher-frame` and so by `stack_encrypt::dynamic::frame`: a newtype
+  over a `Buffer` that `Frame::parse` accepted, with `of`, `from_buffer`,
+  `null`, `typed_null`, `frame` and `into_buffer`. It is `Encrypt`,
+  `Decrypt` and `Zeroize`, and has no `==`: two frames compare through
+  `Frame`'s constant-time `==`. Two places need it: a record's field slots
+  (`plan/values.rs`), which hold an owned value, and the TypeScript addon's
+  async calls. It is not a `Buffer` with `Encrypt` added, because
+  `Protected<Vec<u8>>` already encrypts as a bytes scalar.
+- The decrypt sink writes the opened value into one buffer: the frame
+  writer is generic over a borrowed or an owned buffer and over the error
+  it reports, so a container's children are written in place, with no
+  copy per child.
+- A zeroized `OwnedFrame` holds the plain null, so it is always one frame
+  and `frame()` cannot fail.
+- `Planned` is `Zeroize` only for an `OwnedFrame`, which it wipes, and a
+  `Frame`, whose owner wipes it. `Frame` does not implement `Zeroize`:
+  wiping a view would wipe nothing, and `EncryptTarget`'s `Zeroize` bound
+  is on the `Planned`, not on the value.
+- The Go guest reads every plaintext input with `Frame::parse` on the
+  host's bytes, the page of values to verify included, and the TypeScript
+  addon keeps the bridge's buffer with `OwnedFrame::from_buffer`: one copy
+  fewer at each boundary.
+- In `eql-bindings`, a plaintext that may be absent reads any null, plain
+  or typed, as `None`, and seals it padded to its own type.
 - `ValueFrame::check` is not replaced: a caller checks a record source with
   `Frame::parse`. `FromFrameError` is replaced by `FrameError`.
 - What stays in the engine is engine logic, not a wrapper: reading a text
@@ -363,12 +390,11 @@ is today.
 
 ### 2.6 The bridges and the SDKs
 
-- **TypeScript:** the addon hands the bridge's frame to the engine with no
-  second copy. `OneValue`, `is_uuid`, and the `recipher_js::uuid` code are
-  deleted.
-- **Go:** the guest stops calling `OwnedFrame::from_bytes` and
-  `Frame::parse` (`ValueFrame::from_bytes` and `ValueFrame::check` before
-  step 2.4).
+- **TypeScript:** `OneValue`, `is_uuid`, and the `recipher_js::uuid` code
+  are deleted. (Step 2.4 already hands the bridge's buffer to the engine
+  with no second copy.)
+- **Go:** the guest stops calling `Frame::parse` itself. (Step 2.4 already
+  removed its `OwnedFrame::from_bytes` call.)
 - **EQL:** the `Plaintext` trait and the generated code use the type from
   2.2.
 

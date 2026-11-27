@@ -9,14 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **The by-name target entry points take Stack Encrypt's `OwnedFrame`**
-  (#1955). `encryption::targets::encrypt`, `query` and `decrypt`, and the
-  `v4::targets` table, exchange the plaintext as
-  `stack_encrypt::dynamic::frame::OwnedFrame` (vitaminc's owned frame),
-  where earlier unreleased builds took Stack Encrypt's `dynamic::ValueFrame`,
-  which is removed. The frame's bytes are the same, so no stored value or
-  query changes. Replace `stack_encrypt::dynamic::ValueFrame` with
-  `stack_encrypt::dynamic::frame::OwnedFrame`.
+- **The by-name target entry points borrow the plaintext as a `Frame`, and
+  open into an `OwnedFrame`** (#1955). `encryption::targets::encrypt`,
+  `encrypt_with` and `query`, and the `v4::targets` table, take the
+  plaintext as `stack_encrypt::dynamic::frame::Frame<'_>`, read only while
+  the call runs: pass `owned.frame()`, or `Frame::parse(&bytes)?` for bytes
+  a host handed over, with no copy. `decrypt` resolves to
+  `stack_encrypt::dynamic::frame::OwnedFrame` (vitaminc's owned frame).
+  Earlier unreleased builds took and returned Stack Encrypt's
+  `dynamic::ValueFrame`, which is removed. The frame's bytes are the same,
+  so no stored value or query changes.
+- **A type that may hold a null reads any null as one.** A plaintext of a
+  type whose terms a null has reads a plain null, and a typed null of any
+  type, as absent, and seals it padded to its own type's length. A typed
+  null of another type was refused before.
 
 ### Added
 
