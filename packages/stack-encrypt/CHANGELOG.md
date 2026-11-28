@@ -1798,13 +1798,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `#[aead(recursive)]`. The wire shape is the same, so every stored value
     still decrypts.
   - `#[aead(crate = "...")]` now names the path to `stack_encrypt`, such as
-    a re-export of it. A path to `vitaminc_aead` still works.
+    a re-export of it. A path to `vitaminc_aead` works only with the
+    `vitaminc-aead` source in the `cipherstash/stack` repository. That
+    source is not on crates.io yet. The code that the derives write names
+    `vitaminc_aead::__derive`, and crates.io's `vitaminc-aead` 0.10.0 has
+    no such module.
   - To migrate, import the derives from `stack_encrypt` instead of
     `vitaminc_aead`, and remove `vitaminc-aead` from your `Cargo.toml` if
     nothing else uses it.
   - The compile error for a type that nests too deeply now names the limit
-    by its path, `stack_encrypt::plaintext::depth::MAX_DEPTH`. The error
-    for a hand-written `Scalar` impl names
+    by its path, `stack_encrypt::plaintext::depth::MAX_DEPTH`. With
+    `#[aead(crate = "...")]`, the path starts at the named crate path. The
+    error for a hand-written `Scalar` impl names
     `stack_encrypt::plaintext::depth::SCALAR`. A refused trait bound now
     names `FromScalar` by its `stack_encrypt` path.
 
