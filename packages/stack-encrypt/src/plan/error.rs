@@ -255,7 +255,7 @@ impl crate::ErrorPayload for PlanError {
 /// The indefinite article for a type's name, as it is read aloud: "an" before
 /// a vowel sound (`an int8`, `an i64`, `an object`), and "a" otherwise. A name
 /// starting with `u` is read as "you" (`a uint8`, `a u32`), so it takes "a".
-fn article(name: &str) -> &'static str {
+pub(crate) fn article(name: &str) -> &'static str {
     match name.chars().next().map(|c| c.to_ascii_lowercase()) {
         Some('a' | 'e' | 'i' | 'o') => "an",
         _ => "a",

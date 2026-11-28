@@ -43,7 +43,9 @@ diagnostic.
 Within `authenticated`, two outcomes are distinguished. A leaf sealed as an
 `int32` and read as `int64` or `string` authenticates and then fails the
 declared type: `stack_encrypt::plan_field_type` naming the field and the
-expected kind, as the read profile's authenticated cases do. A leaf moved
+expected kind, as the read profile's authenticated cases do. The diagnostic
+never names the kind that the leaf decrypted to. That kind was inside the
+ciphertext, so the payload has no `found` field. A leaf moved
 into another role (the single leaf under an empty-sequence tag) fails
 authentication itself: `stack_encrypt::aead`, which Go reports as
 `ErrAuthentication` carrying that code. Both runners compare the code and

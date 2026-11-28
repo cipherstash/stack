@@ -12,6 +12,7 @@ mod label;
 #[cfg(feature = "dynamic")]
 mod values;
 
+pub(crate) use error::article;
 pub use error::PlanError;
 pub use label::IntoLabel;
 #[cfg(feature = "dynamic")]

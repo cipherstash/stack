@@ -402,7 +402,7 @@ mod a_query_plan {
         assert!(
             matches!(
                 &refused,
-                dynamic::Error::Source { field: Some(field), reason: dynamic::Reason::OperatorNotAnswered } if field == "email"
+                dynamic::Error::Source { field: Some(field), reason: dynamic::Reason::OperatorNotAnswered, .. } if field == "email"
             ),
             "{refused}"
         );

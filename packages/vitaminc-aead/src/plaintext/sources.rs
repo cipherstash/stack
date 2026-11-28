@@ -805,6 +805,38 @@ mod tests {
         assert!(SourceError::msg("plain").source().is_none());
     }
 
+    /// `Debug` prints a placeholder and none of the wrapped error's text, in
+    /// the plain form and the pretty form. A type that contains a
+    /// `SourceError` and derives `Debug` prints the placeholder in the same
+    /// place.
+    #[test]
+    fn a_source_error_prints_no_text_in_debug() {
+        #[derive(Debug)]
+        #[allow(dead_code, reason = "only `Debug` reads the fields")]
+        struct Holder {
+            row: usize,
+            cause: SourceError,
+        }
+
+        let error = SourceError::msg("the getter saw marker-value");
+        assert_eq!(format!("{error:?}"), "SourceError(..)");
+        assert_eq!(format!("{error:#?}"), "SourceError(..)");
+        assert_eq!(error.to_string(), "the getter saw marker-value");
+
+        let holder = Holder {
+            row: 2,
+            cause: error,
+        };
+        assert_eq!(
+            format!("{holder:?}"),
+            "Holder { row: 2, cause: SourceError(..) }"
+        );
+        assert_eq!(
+            format!("{holder:#?}"),
+            "Holder {\n    row: 2,\n    cause: SourceError(..),\n}"
+        );
+    }
+
     #[test]
     fn byte_strings_are_byte_leaves_not_sequences() {
         assert_eq!(

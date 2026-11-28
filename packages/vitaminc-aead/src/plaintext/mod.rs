@@ -282,9 +282,31 @@ pub trait Error: Sized {
 /// Transparent: it displays as the wrapped error, and its `source()` is the
 /// wrapped error's, so a reporter that walks the chain sees what lies behind
 /// a failed getter.
-#[derive(Debug, thiserror::Error)]
+///
+/// `Debug` prints `SourceError(..)` and none of the wrapped error. The
+/// wrapped error comes from the caller's code, and its text can include the
+/// value that failed. So an error type that contains a `SourceError` can
+/// derive `Debug`, and `{:?}`, a log line, or a panic from `unwrap` prints no
+/// value. A caller that needs the text asks for it on purpose: through
+/// `Display`, [`inner`](Self::inner), or `source()`.
+///
+/// ```
+/// use vitaminc_aead::plaintext::SourceError;
+///
+/// let error = SourceError::msg("the getter saw 4111 1111 1111 1111");
+/// assert_eq!(format!("{error:?}"), "SourceError(..)");
+/// assert_eq!(error.to_string(), "the getter saw 4111 1111 1111 1111");
+/// ```
+#[derive(thiserror::Error)]
 #[error(transparent)]
 pub struct SourceError(Box<dyn core::error::Error + Send + Sync>);
+
+/// Prints a placeholder for the wrapped error, in both `{:?}` and `{:#?}`.
+impl core::fmt::Debug for SourceError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("SourceError(..)")
+    }
+}
 
 impl SourceError {
     /// A source error from any error type.

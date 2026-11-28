@@ -504,6 +504,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **An error about input that is not an object names the kind of value
+  and the row** (#1985). The input is a plan, a field spec, a record to
+  encrypt, or a stored record. A field spec is the entry in a plan that
+  describes one field. Before, the engine refused each one with the reason
+  `not_an_object` and no more detail. Most of those errors named no field
+  and no row.
+
+  To upgrade, add `..` to a match that names every field of `Error::Plan`,
+  `Error::Source`, or `Error::Record`. `Error::Plan` has a new `found`
+  field. `Error::Source` and `Error::Record` have new `row` and `found`
+  fields. The existing reason codes keep their names. The two new codes
+  are `not_a_frame` and `source_failed`.
+
+  The changes are:
+  - The error names the kind of value that the engine got, and never
+    includes the value. The kind is in `Error::found()`, in the payload
+    field `found`, and in the message. The message is one sentence, such
+    as `row 2 of the records to encrypt is null, not an object of fields`.
+    The new `dynamic::Found` lists the kinds, such as `"null"`, `"array"`,
+    `"string"`, `"uint32"`, `"passthrough"`, and `"sealed"`. The message
+    says `an encrypted value` for the kind `"sealed"`.
+  - An error names a kind only when the engine can read the kind without
+    decrypting anything. That is the kind of a value the caller sent, or
+    the kind of a node in the unencrypted structure of a stored record.
+    An example of the second is a row that is a passthrough or an
+    encrypted value, and not a map. An error about a decrypted value never
+    names the kind that the value decrypted to.
+  - An error about a row of a batch names the row by its position, counted
+    from 0. The position is in `Error::row()`, in the payload field `row`,
+    and in the message. The message also says whether the record was to
+    encrypt or to decrypt. An error names the row in any of these cases:
+    - The row is not an object.
+    - A value in the row returns an error of its own while the engine
+      reads it.
+    - The engine cannot copy a value in the row. The cause is a value
+      that repeats a map key, does not fit its logical type, is nested too
+      deep, or is too long.
+  - An error from comparing a field with the plan names the field and not
+    the row. Examples are a missing field, a field that the plan does not
+    name, and a value of another type.
+  - A source can start a row of a batch and never write it. The engine
+    refuses that batch with the reason `unframeable`, and the error names
+    the row. The engine does not move the later rows up one position.
+  - Bytes given as a plan that are not one transport frame get the new
+    reason `not_a_frame`. A transport frame is the binary encoding of one
+    value. The bytes are empty, are cut short, are JSON text, repeat a
+    key, or continue after the value ends. A frame that is not an object
+    of field specs keeps the reason `not_an_object`, and the error names
+    the kind of value in the frame.
+  - An error about a field spec that is a typed null names the field.
+    Before, the error named no field. A typed null is a null that records
+    a type.
+  - A value that returns an error of its own while the engine reads it
+    gets the new `Error::SourceFailed`. An example is a JSON document that
+    is nested too deep. The code is `stack_encrypt::dynamic_source_failed`.
+    The reason is `source_failed`. Before, the reason was `not_an_object`,
+    and the error named no field.
+    - The error names the row that the engine was reading, and the field
+      whose value the engine was writing. An error between two fields
+      names no field. An error between two rows names no field and no row.
+    - The value's error is the cause, and `source()` returns it. The
+      message leaves the cause out, and `Debug` prints the cause as
+      `SourceError(..)`, because the text of the caller's error can
+      include the value.
+  - The message of an `Error::Source` names the input that the reason is
+    about. Before, every such message started with `record source does not
+    fit the plan`. Now the message starts with one of these:
+    - `the query input does not match the field`, when only the input of a
+      query can cause the reason. Those reasons are about an operator, a
+      range, a term, statistics, a null query, or the input of a JSON
+      operator.
+    - `the record to encrypt or the query input does not match the plan`,
+      for a value of another type and for an `undefined` value, when the
+      error names no row. A record and a query can both cause those
+      reasons.
+    - `the record to encrypt does not match the plan`, for every other
+      reason.
+  - The message of an `Error::Record` starts with `the record to decrypt
+    does not match the plan`. Before, that message started with `stored
+    record does not fit the plan`.
+  - The message of an `Error::SourceFailed` starts with `a value in the
+    record to encrypt returned an error while it was read`. The row and
+    the field follow. For an error that names no field, the message starts
+    with `the record to encrypt`.
+
 - **`dynamic::ValueFrame` is removed. The engine reads a plaintext as a
   borrowed `Frame` and keeps one as vitaminc's `OwnedFrame`** (#1955).
   `dynamic::frame` re-exports both from vitaminc. A `Frame` is one value's

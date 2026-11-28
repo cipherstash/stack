@@ -319,6 +319,31 @@ func TestConstructAndAtReadARefusedPredicate(t *testing.T) {
 	}
 }
 
+// Row and Found read the row and the kind from the decoded fields of an
+// error about a value that is not an object. For an error with neither
+// field, Row returns ok false and Found returns "".
+func TestRowAndFoundReadARefusedShape(t *testing.T) {
+	d := &guest.Diagnostic{Fields: map[string]any{"reason": "not_an_object", "row": uint64(2), "found": "null"}}
+	if row, ok := d.Row(); !ok || row != 2 {
+		t.Errorf("Row() = %d, %v; want 2", row, ok)
+	}
+	if d.Found() != "null" {
+		t.Errorf("Found() = %q; want null", d.Found())
+	}
+	if row, ok := (&guest.Diagnostic{Fields: map[string]any{"row": uint32(0)}}).Row(); !ok || row != 0 {
+		t.Errorf("row 0: %d, %v", row, ok)
+	}
+	for _, bad := range []any{nil, "2", int64(-1), float64(1.5)} {
+		if _, ok := (&guest.Diagnostic{Fields: map[string]any{"row": bad}}).Row(); ok {
+			t.Errorf("Row read %#v", bad)
+		}
+	}
+	none := &guest.Diagnostic{Fields: map[string]any{"found": 7}}
+	if _, ok := none.Row(); ok || none.Found() != "" {
+		t.Error("Row or Found answered for an error that gives none")
+	}
+}
+
 // A float offset is read only up to math.MaxInt: where int is 32 bits, a
 // whole float past 2^31-1 is refused rather than overflowing the int it
 // converts to. The bound is tested at a 32-bit limit on every platform, and

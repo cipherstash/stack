@@ -210,14 +210,18 @@
         "error": {
           "code": "stack_encrypt::dynamic_record",
           "fields": {
-            "reason": "not_an_object"
+            "reason": "not_an_object",
+            "row": 0,
+            "found": "passthrough"
           }
         }
       },
       "check_error": {
         "code": "stack_encrypt::dynamic_record",
         "fields": {
-          "reason": "not_an_object"
+          "reason": "not_an_object",
+          "row": 0,
+          "found": "passthrough"
         }
       }
     },

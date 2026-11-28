@@ -89,16 +89,28 @@ var ErrStorageVersion = vcffi.ErrUnsupportedVersion
 // "stack_kms::keyset_not_found", ...; stable), Message (what Error
 // returns after the sentinel's text), Help, URL, Severity, Fields (the
 // structured fields, by name) and Causes (the errors behind it, outermost
-// first). Accessors read the fields a caller branches on: ExpectedKeyset
-// and FoundKeyset on an [ErrForeignKeyset] (each a [KeysetID]'s bytes);
-// Field and Reason on a refused plan, record or value; and Construct and At
-// on a refused Match predicate, the construct in the grammar's words and
-// the byte offset in the predicate where it starts.
+// first). Accessors read the fields a caller branches on:
 //
-// What one may carry is fixed: keyset ids and names, field names, counts,
-// index kinds, ZeroKMS request kinds and HTTP statuses, and a refused
-// predicate's construct and offset. Never plaintext, key material,
-// tokens, ciphertext or term bytes, or the values of an encryption context.
+//   - ExpectedKeyset and FoundKeyset, on an [ErrForeignKeyset]. Each is the
+//     bytes of a [KeysetID].
+//   - Field and Reason, on a refused plan, record, or value.
+//   - Row and Found, on a plan, a record, or a row that is not an object.
+//     Row is the position of the row in a batch, counted from 0. Found is
+//     the kind of value that was there, such as "null", "array", or
+//     "string".
+//   - Construct and At, on a refused Match predicate. Construct is the
+//     construct in the grammar's words. At is the byte offset in the
+//     predicate where the construct starts.
+//
+// A Diagnostic contains only these details:
+//
+//   - keyset ids and names, field names, and counts
+//   - row positions, and the kinds of values
+//   - index kinds, ZeroKMS request kinds, and HTTP statuses
+//   - the construct and the offset of a refused predicate
+//
+// A Diagnostic never contains plaintext, key material, tokens, ciphertext
+// bytes, term bytes, or the values of an encryption context.
 //
 // Errors the client raises itself carry none: a closed client ([ErrState]),
 // a guest that did not return, [ErrMemoryLock], and an argument refused

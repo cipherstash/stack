@@ -2326,7 +2326,7 @@
       "accepted": false,
       "expected_error": {
         "code": "stack_encrypt::dynamic_plan",
-        "fields": { "reason": "not_an_object" }
+        "fields": { "reason": "not_an_object", "found": "null" }
       }
     },
     {
@@ -2335,7 +2335,7 @@
       "accepted": false,
       "expected_error": {
         "code": "stack_encrypt::dynamic_plan",
-        "fields": { "reason": "not_an_object" }
+        "fields": { "reason": "not_an_object", "found": "array" }
       }
     },
     {
@@ -2353,7 +2353,11 @@
       "accepted": false,
       "expected_error": {
         "code": "stack_encrypt::dynamic_plan",
-        "fields": { "reason": "not_an_object", "field": "value" }
+        "fields": {
+          "reason": "not_an_object",
+          "field": "value",
+          "found": "string"
+        }
       }
     },
     {
@@ -2362,7 +2366,11 @@
       "accepted": false,
       "expected_error": {
         "code": "stack_encrypt::dynamic_plan",
-        "fields": { "reason": "not_an_object", "field": "value" }
+        "fields": {
+          "reason": "not_an_object",
+          "field": "value",
+          "found": "null"
+        }
       }
     },
     {
@@ -3364,7 +3372,7 @@
       "accepted": false,
       "expected_error": {
         "code": "stack_encrypt::dynamic_plan",
-        "fields": { "reason": "not_an_object" }
+        "fields": { "reason": "not_a_frame" }
       },
       "boundary_error": {
         "code": "stack_guest_abi::malformed_input",
@@ -3377,7 +3385,7 @@
       "accepted": false,
       "expected_error": {
         "code": "stack_encrypt::dynamic_plan",
-        "fields": { "reason": "not_an_object" }
+        "fields": { "reason": "not_a_frame" }
       },
       "boundary_error": {
         "code": "stack_guest_abi::malformed_input",
@@ -3390,7 +3398,7 @@
       "accepted": false,
       "expected_error": {
         "code": "stack_encrypt::dynamic_plan",
-        "fields": { "reason": "not_an_object" }
+        "fields": { "reason": "not_a_frame" }
       },
       "boundary_error": {
         "code": "stack_guest_abi::malformed_input",
@@ -3405,7 +3413,7 @@
       "accepted": false,
       "expected_error": {
         "code": "stack_encrypt::dynamic_plan",
-        "fields": { "reason": "not_an_object" }
+        "fields": { "reason": "not_a_frame" }
       },
       "boundary_error": {
         "code": "stack_guest_abi::malformed_input",
@@ -3420,11 +3428,26 @@
       "accepted": false,
       "expected_error": {
         "code": "stack_encrypt::dynamic_plan",
-        "fields": { "reason": "not_an_object" }
+        "fields": { "reason": "not_a_frame" }
       },
       "boundary_error": {
         "code": "stack_guest_abi::malformed_input",
         "fields": {}
+      }
+    },
+    {
+      "id": "frame-typed-null-spec",
+      "input": {
+        "frame_hex": "f1010000000500000076616c75651506000000"
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": {
+          "reason": "not_an_object",
+          "field": "value",
+          "found": "null"
+        }
       }
     },
     {

@@ -21,13 +21,20 @@ import (
 //	var d *encrypt.Diagnostic
 //	if errors.As(err, &d) { log.Print(d.Code, d.Help) }
 //
-// What it may carry is the rule written on stack-profile's ErrorPayload:
-// keyset ids and names, field names, counts, index kinds, ZeroKMS request
-// kinds and HTTP statuses, workspace ids, CRNs and regions, profile file
-// paths, and for a refused predicate the construct in the grammar's words
-// and a byte offset. Never plaintext, key material, tokens, ciphertext or
-// term bytes, or a context's values: a stored context's length and parts
-// at most.
+// A Diagnostic contains only the details that the rule on stack-profile's
+// ErrorPayload allows:
+//
+//   - keyset ids and names, field names, and counts
+//   - row positions, and the kinds of values
+//   - index kinds, ZeroKMS request kinds, and HTTP statuses
+//   - workspace ids, CRNs, and regions
+//   - profile file paths
+//   - for a refused predicate, the construct in the grammar's words and a
+//     byte offset
+//
+// A Diagnostic never contains plaintext, key material, tokens, ciphertext
+// bytes, term bytes, or the values of a context. For a stored context, a
+// Diagnostic contains at most its length and its number of parts.
 //
 // A guest built before se_last_error, or one whose error does not decode,
 // returns the bare sentinel instead: the detail is never allowed to hide
@@ -127,6 +134,45 @@ func (d *Diagnostic) Field() string {
 func (d *Diagnostic) Reason() string {
 	reason, _ := d.Fields["reason"].(string)
 	return reason
+}
+
+// Row is the position of the row in a batch that the error is about,
+// counted from 0. An error names a row in any of these cases:
+//
+//   - A record to encrypt, or a stored record, is not an object of fields.
+//   - A value in the row returned an error while the engine read it.
+//   - The engine could not encode a value in the row.
+//
+// An error about one field of a record names the field and no row. Examples
+// are a missing field, an unknown field, and a value of another type.
+//
+// Row returns ok as false when the error names no row, such as an error
+// about a single record. Row also returns ok as false for a row that is
+// negative, is not a whole number, or is too large for an int.
+func (d *Diagnostic) Row() (row int, ok bool) {
+	return nonNegativeInt(d.Fields["row"])
+}
+
+// Found is the kind of value that the engine got where it takes an object.
+// Found names the kind and never contains the value. The kinds are:
+//
+//   - "null", "array", "string", or the schema name of another kind, such
+//     as "uint32" or "object"
+//   - "passthrough", for a value stored without encryption
+//   - "sealed", for an encrypted value in the place of a stored record or
+//     of a row
+//   - "undefined", for JavaScript's undefined
+//   - "unknown", for a value of a type that this build does not define
+//
+// Found names a kind only for a value that the program sent, or for a node
+// in the unencrypted structure of a stored row. Found never names the kind
+// that a value decrypted to.
+//
+// Found is "" when the error names no kind. A later version can add a kind,
+// so keep a fallback case.
+func (d *Diagnostic) Found() string {
+	found, _ := d.Fields["found"].(string)
+	return found
 }
 
 // Construct is what a refused predicate (a JSONSearch field's Match) names

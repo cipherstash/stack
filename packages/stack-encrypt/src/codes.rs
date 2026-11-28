@@ -219,6 +219,11 @@ mod tests {
             Error::Plan { .. } => Error::bad_plan(Reason::NoFields),
             Error::UntypedIndex { .. } => Error::UntypedIndex { field: name() },
             Error::Source { .. } => Error::bad_source(Reason::FieldMissing),
+            Error::SourceFailed { .. } => Error::SourceFailed {
+                field: Some(name()),
+                row: None,
+                cause: vitaminc_aead::plaintext::SourceError::msg("getter threw"),
+            },
             Error::Record { .. } => Error::bad_record(Reason::NoCiphertextNode),
             Error::Predicate { .. } => Error::Predicate {
                 field: Some(name()),
@@ -586,6 +591,23 @@ mod tests {
             (
                 Box::new(Error::bad_record(Reason::NoCiphertextNode)),
                 json!({ "reason": "no_ciphertext_node" }),
+            ),
+            (
+                Box::new(Error::Record {
+                    field: None,
+                    row: Some(2),
+                    reason: Reason::NotAnObject,
+                    found: Some(crate::dynamic::Found::Sealed),
+                }),
+                json!({ "reason": "not_an_object", "row": 2, "found": "sealed" }),
+            ),
+            (
+                Box::new(Error::SourceFailed {
+                    field: Some(name()),
+                    row: Some(0),
+                    cause: vitaminc_aead::plaintext::SourceError::msg("getter threw"),
+                }),
+                json!({ "field": "email", "reason": "source_failed", "row": 0 }),
             ),
             (
                 Box::new(Error::UntypedIndex { field: name() }),

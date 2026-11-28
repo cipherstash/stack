@@ -428,7 +428,9 @@ fn parse_query<'f>(
         .ok_or_else(|| {
             fail_dynamic(&dynamic::Error::Source {
                 field: Some(field.to_owned()),
+                row: None,
                 reason: dynamic::Reason::UnknownOperator,
+                found: None,
             })
         })?;
     Ok((plan, field, operator))

@@ -153,17 +153,18 @@ exclude_re = [
   # the empty list (`dynamic::target::NoTargets`), which a test asserts on
   # and `resolve` turns into `TargetError::NoTargets`; `vec![]` is the body.
   'stack-encrypt/src/dynamic/target\.rs:\d+:\d+: replace <impl TargetResolver for NoTargets>::targets -> Vec<TargetDescriptor> with vec!\[\]$',
-  # A serde visitor's `expecting` writes only the "expected ..." half of a
-  # serde error's message, and no caller of these three reads that message:
-  # a context, statistics and a plan's root are each refused with one fixed
-  # `Reason` (`ContextKind`, `NotStats`, `NotAnObject`), and the plan's
-  # field-level reasons are read from the error's path, so writing nothing
-  # refuses the same input with the same error.
+  # A serde visitor's `expecting` writes only the "expected ..." part of
+  # the message of a serde error. No caller of these three visitors reads
+  # that message:
+  # - A context is refused with the fixed `Reason` `ContextKind`.
+  # - Statistics are refused with the fixed `Reason` `NotStats`.
+  # - The root of a plan is refused with `NotAFrame`, or with `NotAnObject`
+  #   and the kind of value in the frame.
+  # - The reasons for one field of a plan are read from the path of the
+  #   error.
+  # So a mutant that writes nothing refuses the same input with the same
+  # error.
   'stack-encrypt/src/dynamic/(context|query|record)\.rs:\d+:\d+: replace <impl (Visitor<\x27de> for ContextVisitor|serde::Deserialize<\x27de> for Confidence>::deserialize::<impl serde::de::Visitor<\x27_> for V|Deserialize<\x27de> for PlanWire>::deserialize::<impl Visitor<\x27de> for V)>::expecting -> fmt::Result with Ok\(Default::default\(\)\)$',
-  # The same for the visitor that reads a refused plan's keys back
-  # (`entry_key`): its error is discarded (`.ok()`), so its message is never
-  # read at all.
-  'stack-encrypt/src/dynamic/record\.rs:\d+:\d+: replace entry_key::<impl Deserialize<\x27de> for Keys>::deserialize::<impl Visitor<\x27de> for V>::expecting -> fmt::Result with Ok\(Default::default\(\)\)$',
   # The JSON index. `unhex` joins a high nibble shifted into the top four
   # bits with a low nibble below 16: the bits never overlap, so `^` is `|`.
   'stack-encrypt/src/json/mod\.rs:\d+:\d+: replace \| with \^ in unhex$',

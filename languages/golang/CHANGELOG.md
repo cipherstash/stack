@@ -22,6 +22,19 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
   one. `stashgen` does not yet map a Go type to it.
 
+- `Diagnostic.Row` and `Diagnostic.Found` (#1985). The two accessors give
+  more detail for an error about a plan, a record, or a stored row that is
+  not an object:
+  - `Found` is the kind of value that the engine got, such as `"null"`,
+    `"array"`, `"string"`, `"passthrough"`, or `"sealed"`. `Found` never
+    contains the value.
+  - `Row` is the position of the row in a batch, counted from 0. The
+    message names the row too, as in `row 2 of the records to decrypt is
+    a passthrough value, not an object of stored fields`.
+  - `Found` names a kind only for a value that the program sent, or for a
+    node in the unencrypted structure of a stored row. An error about a
+    decrypted value never names the kind that the value decrypted to.
+
 ### Changed
 
 - **A record field converts a number of another width or kind, as a

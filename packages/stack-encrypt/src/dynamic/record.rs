@@ -160,7 +160,9 @@ use vitaminc_protected::{Controlled, Protected};
 
 use super::kind::convert;
 use super::planned::{check_stored, check_values, compose, opening_base, Planned};
-use super::{not_admitted, Error, NoTargets, Reason, TargetError, TargetResolver, TermBytes};
+use super::{
+    not_admitted, Error, Found, NoTargets, Reason, TargetError, TargetResolver, TermBytes,
+};
 use crate::plan::FieldValues;
 use crate::target::{CallerContext, DeclaredContext, Encrypted, IndexSpec};
 use crate::{
@@ -236,9 +238,11 @@ pub enum NullMode {
     /// opens as a null. An equality index stores a null's term beside it,
     /// the one term every null of the field shares, so an `eq` query of a
     /// null finds the absent rows; no other index has a term for a null.
-    /// Only for a field of a declared type of fixed width (a boolean, a
-    /// number, a date, a timestamp or a decimal) whose indexes are equality
-    /// alone; a target field takes it when its EQL type's are.
+    /// A field can use this mode only when it declares a type of fixed
+    /// width. Those types are a boolean, a number, a date, a timestamp, a
+    /// decimal, and a UUID. Equality must also be the only index of the
+    /// field. For a target field, equality must be the only index of its
+    /// EQL type.
     Sealed,
     /// `"sql"`: a null, or a row with no entry for the field, produces
     /// nothing: the stored record has no entry for the field, so the host
@@ -310,10 +314,7 @@ impl FieldPlan {
         outputs: Vec<Output>,
     ) -> Result<Self, Error> {
         let name = name.into();
-        let refuse = |reason| Error::Plan {
-            field: Some(name.clone()),
-            reason,
-        };
+        let refuse = |reason| Error::bad_plan(reason).in_field(&name);
         if outputs.is_empty() {
             return Err(refuse(Reason::NoOutputs));
         }
@@ -373,10 +374,7 @@ impl FieldPlan {
         let name = name.into();
         let target = target.into();
         if target.is_empty() {
-            return Err(Error::Plan {
-                field: Some(name),
-                reason: Reason::InvalidTarget,
-            });
+            return Err(Error::bad_plan(Reason::InvalidTarget).in_field(&name));
         }
         let (label, extension) = field_context(&name, context.get())?;
         Ok(Self {
@@ -425,10 +423,7 @@ impl FieldPlan {
         for output in &self.outputs {
             if let Output::Term(index) = output {
                 if let Some(reason) = not_admitted(field_type, index) {
-                    return Err(Error::Plan {
-                        field: Some(self.name.clone()),
-                        reason,
-                    });
+                    return Err(Error::bad_plan(reason).in_field(&self.name));
                 }
             }
         }
@@ -538,10 +533,8 @@ impl FieldPlan {
         let Some((_, prefix)) = segments.split_last() else {
             return Err(Error::Internal);
         };
-        Label::new(prefix).map_err(|_| Error::Plan {
-            field: Some(self.name.clone()),
-            reason: Reason::ContextNotLabel,
-        })
+        Label::new(prefix)
+            .map_err(|_| Error::bad_plan(Reason::ContextNotLabel).in_field(&self.name))
     }
 
     /// What the output adapters need of the field: no context, which is the
@@ -643,10 +636,7 @@ fn field_context(
     name: &str,
     piece: &ContextPiece<'_>,
 ) -> Result<(Label, Vec<ContextPiece<'static>>), Error> {
-    split_context(piece).ok_or_else(|| Error::Plan {
-        field: Some(name.to_owned()),
-        reason: Reason::ContextNotLabel,
-    })
+    split_context(piece).ok_or_else(|| Error::bad_plan(Reason::ContextNotLabel).in_field(name))
 }
 
 /// A refusal of the lowering or the engine's own check, as the field it
@@ -752,10 +742,7 @@ impl Plan {
             // `prefix` refuses a one-segment label, which has nothing to
             // sit under; a longer one must sit under the first field's.
             if field.prefix()? != context {
-                return Err(Error::Plan {
-                    field: Some(field.name.clone()),
-                    reason: Reason::MixedContexts,
-                });
+                return Err(Error::bad_plan(Reason::MixedContexts).in_field(&field.name));
             }
         }
         for field in fields.iter_mut().filter(|field| field.is_target()) {
@@ -799,17 +786,13 @@ impl Plan {
                 (None, false) => None,
                 (None, true) => Some(TargetOptions::Json(Default::default())),
                 (Some(TargetOptions::Json(options)), true) => {
-                    options.check().map_err(|_| Error::Plan {
-                        field: Some(field.name.clone()),
-                        reason: Reason::InvalidTarget,
+                    options.check().map_err(|_| {
+                        Error::bad_plan(Reason::InvalidTarget).in_field(&field.name)
                     })?;
                     Some(TargetOptions::Json(options))
                 }
                 (Some(_), false) => {
-                    return Err(Error::Plan {
-                        field: Some(field.name.clone()),
-                        reason: Reason::TargetOptions,
-                    })
+                    return Err(Error::bad_plan(Reason::TargetOptions).in_field(&field.name))
                 }
             };
             // A null has an equality term and no other, so a sealed null
@@ -820,10 +803,7 @@ impl Plan {
                     .iter()
                     .any(|index| index != IndexSpec::Equality.key())
             {
-                return Err(Error::Plan {
-                    field: Some(field.name.clone()),
-                    reason: Reason::SealedNullIndex,
-                });
+                return Err(Error::bad_plan(Reason::SealedNullIndex).in_field(&field.name));
             }
         }
         Self::build(Context::Label(context), fields)
@@ -854,10 +834,7 @@ impl Plan {
         fields: Vec<FieldPlan>,
     ) -> Result<Self, Error> {
         let context_field = context_field.into();
-        let refuse = |reason| Error::Plan {
-            field: Some(context_field.clone()),
-            reason,
-        };
+        let refuse = |reason| Error::bad_plan(reason).in_field(&context_field);
         let Some(field) = fields.iter().find(|field| field.name == context_field) else {
             return Err(refuse(Reason::NoSuchField));
         };
@@ -872,10 +849,7 @@ impl Plan {
             .iter()
             .find(|field| field.label.segments().count() != 1)
         {
-            return Err(Error::Plan {
-                field: Some(field.name.clone()),
-                reason: Reason::ContextNotLabel,
-            });
+            return Err(Error::bad_plan(Reason::ContextNotLabel).in_field(&field.name));
         }
         // A target field's label must be a column, `<table>/<column>`,
         // which a context field's one-segment identity is not: the table
@@ -912,10 +886,7 @@ impl Plan {
         };
         let extension = first.extension.clone();
         for (at, field) in fields.iter().enumerate() {
-            let refuse = |reason| Error::Plan {
-                field: Some(field.name.clone()),
-                reason,
-            };
+            let refuse = |reason| Error::bad_plan(reason).in_field(&field.name);
             if fields[..at].iter().any(|prior| prior.name == field.name) {
                 return Err(refuse(Reason::DuplicateField));
             }
@@ -1273,10 +1244,10 @@ pub fn plan(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Plan, E
 /// have the field, and a typed field refuses a null. `"sealed"` seals a
 /// null as a typed null as long as a value, so the stored record does not
 /// show it, and beside an equality index stores a null's equality term, the
-/// one every null of the field shares, which an `eq` query of a null finds;
-/// the field must declare a type of fixed width (a bool, a number, a date, a
-/// timestamp or a decimal) and have no index but equality, on the field or,
-/// for a target field, on its EQL type. `"sql"` stores nothing for a null
+/// one every null of the field shares, which an `eq` query of a null finds.
+/// The field must declare a type of fixed width: a bool, a number, a date, a
+/// timestamp, a decimal, or a UUID. Equality must be the only index of the
+/// field, or of a target field's EQL type. `"sql"` stores nothing for a null
 /// or a missing field, so the host's columns hold SQL `NULL`; any field but
 /// a passthrough takes it.
 ///
@@ -1343,10 +1314,8 @@ pub fn plan_with(
         recipher_frame::serde::from_slice(frame).map_err(|e| plan_refusal(&e, frame))?;
     let mut fields: Vec<FieldPlan> = Vec::with_capacity(wire.fields.len());
     for (name, spec) in wire.fields {
-        let spec = FieldSpec::try_from(spec).map_err(|reason| Error::Plan {
-            field: Some(name.clone()),
-            reason,
-        })?;
+        let spec =
+            FieldSpec::try_from(spec).map_err(|reason| Error::bad_plan(reason).in_field(&name))?;
         let context = super::context::non_empty(spec.context.0).map_err(|e| e.in_field(&name))?;
         let field = match spec.what {
             What::Outputs(outputs) => FieldPlan::new(name, context, outputs)?,
@@ -1436,54 +1405,12 @@ impl<'de> Deserialize<'de> for PlanWire {
 /// The key of the `position`th entry of the object `frame` holds, or `None`
 /// when it is not an object of that many entries.
 fn entry_key(frame: &[u8], position: usize) -> Option<String> {
-    struct Keys(Vec<String>);
-    impl<'de> Deserialize<'de> for Keys {
-        fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-            struct V;
-            impl<'de> Visitor<'de> for V {
-                type Value = Keys;
-                fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                    f.write_str("an object")
-                }
-                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Keys, A::Error> {
-                    let mut keys = Vec::new();
-                    while let Some(key) = map.next_key::<&'de str>()? {
-                        let _: serde::de::IgnoredAny = map.next_value()?;
-                        keys.push(key.to_owned());
-                    }
-                    Ok(Keys(keys))
-                }
-            }
-            d.deserialize_map(V)
-        }
-    }
-    recipher_frame::serde::from_slice::<Keys>(frame)
-        .ok()?
-        .0
-        .into_iter()
-        .nth(position)
+    let root = Frame::parse(frame).ok()?;
+    super::found::object_keys(root)?.into_iter().nth(position)
 }
 
 /// The keys a field's spec reads ([`FieldSpecWire`]).
 const SPEC_KEYS: [&str; 5] = ["context", "outputs", "target", "type", "null"];
-
-/// The keys of the spec `field` holds in the plan `frame`, or `None` when
-/// that spec is not an object (or the plan is not one frame of unique keys).
-fn spec_keys(frame: &[u8], field: &str) -> Option<Vec<String>> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Spec {
-        Object(std::collections::BTreeMap<String, serde::de::IgnoredAny>),
-        Other(serde::de::IgnoredAny),
-    }
-    match recipher_frame::serde::from_slice::<std::collections::BTreeMap<String, Spec>>(frame)
-        .ok()?
-        .remove(field)?
-    {
-        Spec::Object(keys) => Some(keys.into_keys().collect()),
-        Spec::Other(_) => None,
-    }
-}
 
 /// The plan-level key naming the field a plan takes its context from.
 const CONTEXT_FIELD: &str = "context_field";
@@ -1654,8 +1581,16 @@ fn plan_refusal(error: &recipher_frame::serde::Error, frame: &[u8]) -> Error {
         _ => None,
     };
     let Some(field) = field else {
-        // The root: not an object, or not one frame.
-        return Error::bad_plan(Reason::NotAnObject);
+        // The error is at the root of the plan. Either the bytes are not
+        // one frame, or the frame is not an object.
+        return match Frame::parse(frame) {
+            Err(_) => Error::bad_plan(Reason::NotAFrame),
+            Ok(root) => Error::Plan {
+                field: None,
+                reason: Reason::NotAnObject,
+                found: Some(Found::of_frame(root)),
+            },
+        };
     };
     let field = &field;
     if field == CONTEXT_FIELD {
@@ -1676,24 +1611,40 @@ fn plan_refusal(error: &recipher_frame::serde::Error, frame: &[u8]) -> Error {
         // key an error inside a spec's value is placed under (an unknown
         // key is never on the path).
         Some(_) => Reason::UnknownType,
-        // The spec itself: a key it does not know, a missing context, or not
-        // an object at all. Read from the spec's own keys, not the error's
-        // wording, so a reworded message cannot change the reason. An object
-        // of known keys refused at its own level lacks its context: a value
-        // under a key is refused under that key, a repeated key is not an
-        // object, and the outputs-or-target rule is checked after parsing.
-        None => match spec_keys(frame, field) {
-            Some(keys) if keys.iter().any(|key| !SPEC_KEYS.contains(&key.as_str())) => {
-                Reason::UnknownKey
+        // The error is at the field spec itself. There are three possible
+        // causes: the spec is not an object, the spec has a key that a spec
+        // does not take, or the spec has no context. The code decides
+        // between them from the kind of the spec and from its keys. The
+        // code does not read the text of the error, so a change to that
+        // text cannot change the reason.
+        //
+        // An object with only known keys must lack its context, because
+        // nothing else fails at this level:
+        // - An error in the value under a key is reported under that key.
+        // - A frame never contains a repeated key.
+        // - The rule that a spec has outputs or a target is checked after
+        //   parsing.
+        None => match Frame::parse(frame)
+            .ok()
+            .and_then(|root| Found::of_entry(root, field))
+        {
+            Some((Found::Kind(ValueKind::Object), keys)) => {
+                if keys.iter().any(|key| !SPEC_KEYS.contains(&key.as_str())) {
+                    Reason::UnknownKey
+                } else {
+                    Reason::MissingContext
+                }
             }
-            Some(_) => Reason::MissingContext,
-            None => Reason::NotAnObject,
+            found => {
+                return Error::Plan {
+                    field: Some(field.clone()),
+                    reason: Reason::NotAnObject,
+                    found: found.map(|(found, _)| found),
+                }
+            }
         },
     };
-    Error::Plan {
-        field: Some(field.clone()),
-        reason,
-    }
+    Error::bad_plan(reason).in_field(field)
 }
 
 /// Encrypt a record — or a batch of records — per a plan.
@@ -1832,26 +1783,17 @@ pub fn query<'a, K: 'static>(
         .fields
         .iter()
         .find(|candidate| candidate.name == field)
-        .ok_or_else(|| Error::Plan {
-            field: Some(field.to_owned()),
-            reason: Reason::NoSuchField,
-        })?;
-    let name = field.target().ok_or_else(|| Error::Plan {
-        field: Some(field.name.clone()),
-        reason: Reason::NotATarget,
-    })?;
-    let value = OwnedFrame::of(value).map_err(|_| Error::Source {
-        field: Some(field.name.clone()),
-        reason: Reason::FieldType,
-    })?;
+        .ok_or_else(|| Error::bad_plan(Reason::NoSuchField).in_field(field))?;
+    let name = field
+        .target()
+        .ok_or_else(|| Error::bad_plan(Reason::NotATarget).in_field(&field.name))?;
+    let value = OwnedFrame::of(value)
+        .map_err(|_| Error::bad_source(Reason::FieldType).in_field(&field.name))?;
     // A null is queried by the term a field that seals its nulls stores
     // beside each (#1298), through the type's equality index alone.
     let value = if value.frame().is_null() {
         if field.null != Some(NullMode::Sealed) || *index != IndexSpec::Equality {
-            return Err(Error::Source {
-                field: Some(field.name.clone()),
-                reason: Reason::NullQuery,
-            });
+            return Err(Error::bad_source(Reason::NullQuery).in_field(&field.name));
         }
         value
     } else {
@@ -2008,7 +1950,12 @@ pub fn check_source(source: impl Encrypt, plan: &Plan) -> Result<(), Error> {
     let check = |row: &Row| {
         check_values(plan, &row.values, &row.absent).map_err(|error| {
             let (field, reason) = refusal(error);
-            Error::Source { field, reason }
+            Error::Source {
+                field,
+                reason,
+                found: None,
+                row: None,
+            }
         })
     };
     match &rows {
@@ -2048,7 +1995,12 @@ pub fn check_record(
                 mismatch @ crate::Error::ContextMismatch { .. } => Error::Cipher(mismatch),
                 error => {
                     let (field, reason) = refusal(error);
-                    Error::Record { field, reason }
+                    Error::Record {
+                        field,
+                        reason,
+                        found: None,
+                        row: None,
+                    }
                 }
             })
     };
@@ -2088,10 +2040,7 @@ enum Children<'a, T> {
 
 impl RecordTree for StackCipherText {
     fn misfit(field: &str, reason: Reason) -> Error {
-        Error::Record {
-            field: Some(field.to_owned()),
-            reason,
-        }
+        Error::bad_record(reason).in_field(field)
     }
 
     fn is_passthrough(&self) -> bool {
@@ -2226,41 +2175,70 @@ fn check_tree<T: RecordTree>(tree: &T, field: &str) -> Result<(), Error> {
 /// is copied. A value the frame cannot carry, or that holds a repeated key,
 /// is refused naming its field.
 pub(super) fn source_rows(source: impl Encrypt, plan: &Plan) -> Result<Rows<Row>, Error> {
-    let not_an_object = || Error::bad_source(Reason::NotAnObject);
-    let row = |row: SourceRecord| source_row(row.ok_or_else(not_an_object)?, plan);
+    let row = |at: Option<usize>, record: SourceRecord| match record {
+        Ok(fields) => source_row(fields, plan),
+        Err(found) => Err(Error::Source {
+            field: None,
+            row: at,
+            reason: Reason::NotAnObject,
+            found: Some(found),
+        }),
+    };
     match split_source(source).map_err(split_refusal)? {
-        SplitSource::One(one) => Ok(Rows::One(row(one)?)),
+        SplitSource::One(one) => Ok(Rows::One(row(None, one)?)),
         SplitSource::Batch(rows) => Ok(Rows::Batch(
-            rows.into_iter().map(row).collect::<Result<Vec<_>, _>>()?,
+            rows.into_iter()
+                .enumerate()
+                .map(|(at, record)| row(Some(at), record))
+                .collect::<Result<Vec<_>, _>>()?,
         )),
     }
 }
 
-/// A value refused while the source was split, as the source error that
-/// names its field: a repeated key as [`Reason::RepeatedKey`], a scalar its
-/// logical type does not admit as [`Reason::FieldType`], and anything else (too
-/// deep or too long for a frame) as [`Reason::Unframeable`]. A refusal that
-/// names no field is the source's shape, [`Reason::NotAnObject`].
-fn split_refusal(SplitRefusal { field, error }: SplitRefusal) -> Error {
-    let Some(field) = field else {
-        return Error::bad_source(Reason::NotAnObject);
+/// Converts the error from [`split_source`] into the [`Error`] that the
+/// caller gets. The result keeps the field and the row that the split
+/// names.
+///
+/// An error that the source returned becomes [`Error::SourceFailed`], with
+/// the source's error as its cause.
+///
+/// An error from the frame writer becomes [`Error::Source`]. When the
+/// split names a field, the reason is:
+///
+/// - [`Reason::RepeatedKey`] for a map that repeats a key.
+/// - [`Reason::FieldType`] for a scalar that its logical type does not
+///   allow.
+/// - [`Reason::Unframeable`] for anything else. Examples are a value that
+///   is nested too deep or is too long for a frame, and a value that the
+///   source never wrote.
+///
+/// When the split names no field, the reason is always
+/// [`Reason::Unframeable`], with the row, because the error cannot name
+/// the value at fault. That happens in two cases:
+///
+/// - The source started a row and never wrote it.
+/// - The source kept an error from the frame writer and returned it after
+///   the field ended.
+fn split_refusal(SplitRefusal { row, field, error }: SplitRefusal) -> Error {
+    let error = match error {
+        FrameWriteError::Source(cause) => return Error::SourceFailed { field, row, cause },
+        error => error,
     };
-    let reason = match error {
-        FrameWriteError::DuplicateKey => Reason::RepeatedKey,
-        FrameWriteError::Invalid => Reason::FieldType,
+    let reason = match (error, field.is_some()) {
+        (FrameWriteError::DuplicateKey, true) => Reason::RepeatedKey,
+        (FrameWriteError::Invalid, true) => Reason::FieldType,
         _ => Reason::Unframeable,
     };
     Error::Source {
-        field: Some(field),
+        field,
+        row,
         reason,
+        found: None,
     }
 }
 
 fn source_row(mut row: Vec<(String, OwnedFrame)>, plan: &Plan) -> Result<Row, Error> {
-    let misfit = |field: &str, reason| Error::Source {
-        field: Some(field.to_owned()),
-        reason,
-    };
+    let misfit = |field: &str, reason| Error::bad_source(reason).in_field(field);
     let mut values = FieldValues::new();
     let mut targets = Vec::new();
     let mut absent = Absent::new();
@@ -2328,10 +2306,7 @@ fn source_row(mut row: Vec<(String, OwnedFrame)>, plan: &Plan) -> Result<Row, Er
 /// too. What comes back is what is sealed: a value already of the type,
 /// as it came, or the converted one, with the value it came as wiped.
 fn check_field(value: OwnedFrame, field: &FieldPlan) -> Result<OwnedFrame, Error> {
-    let misfit = |reason| Error::Source {
-        field: Some(field.name.clone()),
-        reason,
-    };
+    let misfit = |reason| Error::bad_source(reason).in_field(&field.name);
     let value = match field.field_type {
         Some(declared) => convert(declared, value.frame())
             .map_err(|error| error.in_field(&field.name))?
@@ -2532,6 +2507,9 @@ pub(super) fn open_record(
         // opens as a plain null, as every frame carries one.
         let null = field.null.is_some() && value.frame().is_null();
         if let Some(kind) = field.kind.filter(|_| !null) {
+            // The error names the type that the field declares. The error
+            // never names the kind that the value decrypted to. That kind
+            // was inside the ciphertext, so it is part of the plaintext.
             if !kind.holds(value.frame().kind()) {
                 return Err(crate::PlanError::FieldType {
                     field: field.name.clone(),
@@ -2596,18 +2574,38 @@ pub(super) fn write_record(
 /// `"passthrough"` node carrying a value of the field's kind. Terms, and
 /// entries the plan does not open, are ignored: comparands, not ciphertext.
 pub(super) fn record_rows(tree: StackCipherText, plan: &Plan) -> Result<Rows<StoredRow>, Error> {
+    let not_an_object = |row, tree: &StackCipherText| Error::Record {
+        field: None,
+        row,
+        reason: Reason::NotAnObject,
+        found: Some(stored_kind(tree)),
+    };
     match tree {
         CipherText::Map(row) => Ok(Rows::One(record_row(row, plan)?)),
         CipherText::Sequence(items) => Ok(Rows::Batch(
             items
                 .into_iter()
-                .map(|item| match item {
+                .enumerate()
+                .map(|(at, item)| match item {
                     CipherText::Map(row) => record_row(row, plan),
-                    _ => Err(Error::bad_record(Reason::NotAnObject)),
+                    other => Err(not_an_object(Some(at), &other)),
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         )),
-        _ => Err(Error::bad_record(Reason::NotAnObject)),
+        other => Err(not_an_object(None, &other)),
+    }
+}
+
+/// The kind of a stored node, for the error about a node that is not a map
+/// of fields.
+fn stored_kind(tree: &StackCipherText) -> Found {
+    match tree {
+        CipherText::Sequence(_) => Found::Kind(ValueKind::Array),
+        CipherText::Passthrough(_) => Found::Passthrough,
+        CipherText::Map(_) => Found::Kind(ValueKind::Object),
+        CipherText::Single(_) | CipherText::EmptySequence(_) | CipherText::EmptyMap(_) => {
+            Found::Sealed
+        }
     }
 }
 
@@ -3066,6 +3064,11 @@ mod tests {
                 let error = plan(obj(vec![("age", spec)])).expect_err("refused");
                 assert_eq!(error.field(), Some("age"), "{error}");
                 assert_eq!(error.reason(), Some(Reason::NotAnObject), "{error}");
+                assert_eq!(
+                    error.found(),
+                    Some(Found::Kind(ValueKind::Array)),
+                    "{error}"
+                );
             }
             let positional = obj(vec![(
                 "match",
@@ -3236,7 +3239,7 @@ mod tests {
             assert!(
                 matches!(
                     &parsed,
-                    Err(Error::Plan { field: Some(field), reason: Reason::SharedIdentity })
+                    Err(Error::Plan { field: Some(field), reason: Reason::SharedIdentity, .. })
                         if field == "mail2"
                 ),
                 "the later field is named: {parsed:?}"
@@ -3262,7 +3265,7 @@ mod tests {
             assert!(
                 matches!(
                     &parsed,
-                    Err(Error::Plan { field: Some(field), reason: Reason::SharedIdentity })
+                    Err(Error::Plan { field: Some(field), reason: Reason::SharedIdentity, .. })
                         if field == "mail_eq"
                 ),
                 "{parsed:?}"
@@ -4269,7 +4272,7 @@ mod tests {
                 assert!(
                     matches!(
                         &refused,
-                        Error::Plan { field: Some(field), reason: Reason::OverlappingOutputs } if field == "age"
+                        Error::Plan { field: Some(field), reason: Reason::OverlappingOutputs, .. } if field == "age"
                     ),
                     "{outputs:?}: {refused:?}"
                 );
@@ -4297,7 +4300,8 @@ mod tests {
                         &refused,
                         Error::Plan {
                             field: None,
-                            reason: Reason::EmptyBinding
+                            reason: Reason::EmptyBinding,
+                            ..
                         }
                     ),
                     "{refused:?}"
@@ -4320,7 +4324,8 @@ mod tests {
                     &refused,
                     Error::Plan {
                         field: None,
-                        reason: Reason::Bind
+                        reason: Reason::Bind,
+                        ..
                     }
                 ),
                 "{refused:?}"
@@ -4349,7 +4354,8 @@ mod tests {
                     &refused,
                     Error::Plan {
                         field: None,
-                        reason: Reason::EmptyBinding
+                        reason: Reason::EmptyBinding,
+                        ..
                     }
                 ),
                 "{refused:?}"
@@ -4371,7 +4377,8 @@ mod tests {
                     &refused,
                     Error::Plan {
                         field: None,
-                        reason: Reason::Bind
+                        reason: Reason::Bind,
+                        ..
                     }
                 ),
                 "{refused:?}"
@@ -5664,7 +5671,7 @@ mod tests {
                 assert!(
                     matches!(
                         &refused,
-                        Some(Error::Plan { field: Some(f), reason: r }) if f == "f" && *r == reason
+                        Some(Error::Plan { field: Some(f), reason: r, .. }) if f == "f" && *r == reason
                     ),
                     "{what}: {refused:?}"
                 );
@@ -5835,7 +5842,7 @@ mod tests {
             for (field, op) in [("rank", Op::Eq), ("rank", Op::Lt)] {
                 let refused = query(field, op).err();
                 assert!(
-                    matches!(&refused, Some(Error::Source { field: Some(f), reason: Reason::NullQuery }) if f == field),
+                    matches!(&refused, Some(Error::Source { field: Some(f), reason: Reason::NullQuery, .. }) if f == field),
                     "{field} {op}: {refused:?}"
                 );
             }
@@ -6054,7 +6061,7 @@ mod tests {
             ] {
                 let result = encrypt(&keyset, obj(vec![("age", value)]), &u64_plan).err();
                 assert!(
-                    matches!(&result, Some(Error::Source { field: Some(field), reason: Reason::FieldType }) if field == "age"),
+                    matches!(&result, Some(Error::Source { field: Some(field), reason: Reason::FieldType, .. }) if field == "age"),
                     "{label_}: {result:?}"
                 );
             }
@@ -6116,12 +6123,19 @@ mod tests {
             let result = decrypt(&cipher, sealed, &as_int64, None)
                 .expect("the shape fits")
                 .await;
+            let refused = plan_error(result.expect_err("refused"));
             assert_eq!(
-                plan_error(result.expect_err("refused")),
+                refused,
                 PlanError::FieldType {
                     field: "age".into(),
                     expected: "int64",
-                }
+                },
+                "the field and the declared type"
+            );
+            assert_eq!(
+                refused.to_string(),
+                r#"field "age" is not an int64"#,
+                "the message names no kind the value opened as"
             );
 
             let sealed = seal(&keyset, obj(vec![("age", Tree::UInt64(34))]), &untyped).await;
@@ -6153,8 +6167,59 @@ mod tests {
                 PlanError::FieldType {
                     field: "age".into(),
                     expected: "uint64",
-                }
+                },
+                "the field and the declared type"
             );
+        }
+
+        /// A field is declared as an object, and its stored value decrypts
+        /// to a list, a scalar, or a null. The error names the field and the
+        /// declared type. The error never names the kind that the value
+        /// decrypted to. That kind was inside the ciphertext, so it is part
+        /// of the plaintext. The payload has no `found`, and the message
+        /// names no kind.
+        #[tokio::test]
+        async fn decrypt_never_says_what_a_field_opened_as() {
+            use crate::ErrorPayload;
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let untyped = plan(obj(vec![("doc", spec(label("doc"), &["c"]))])).expect("plan");
+            let as_object =
+                plan(obj(vec![("doc", typed(label("doc"), &["c"], "object"))])).expect("plan");
+            for (what, stored) in [
+                ("a list", Tree::Array(vec![s("secret")])),
+                ("a string", s("secret")),
+                ("a null", Tree::Null),
+                ("a uint32", Tree::UInt32(7)),
+            ] {
+                let sealed = seal(&keyset, obj(vec![("doc", stored)]), &untyped).await;
+                let result = decrypt(&cipher, sealed, &as_object, None)
+                    .expect("the shape fits")
+                    .await;
+                let refused = plan_error(result.expect_err("refused"));
+                assert_eq!(
+                    refused,
+                    PlanError::FieldType {
+                        field: "doc".into(),
+                        expected: "object",
+                    },
+                    "{what}"
+                );
+                let payload = refused.payload();
+                assert_eq!(
+                    serde_json::Value::Object(payload.clone()),
+                    serde_json::json!({ "field": "doc", "expected": "object" }),
+                    "{what}: the payload has no found"
+                );
+                let message = refused.to_string();
+                assert_eq!(
+                    message, r#"field "doc" is not an object"#,
+                    "{what}: the message names no kind"
+                );
+                for kind in ["list", "array", "string", "null", "uint32", "secret"] {
+                    assert!(!message.contains(kind), "{what}: {kind} in {message}");
+                }
+            }
         }
 
         /// The migration path the CHANGELOG gives for rows stored as
@@ -6683,7 +6748,7 @@ mod tests {
                 let plan = plan_of(ty, &["c"]);
                 let result = encrypt(&keyset, obj(vec![("v", sent.clone())]), &plan).err();
                 assert!(
-                    matches!(&result, Some(Error::Source { field: Some(field), reason: Reason::FieldType }) if field == "v"),
+                    matches!(&result, Some(Error::Source { field: Some(field), reason: Reason::FieldType, .. }) if field == "v"),
                     "{ty} from {sent:?}: {result:?}"
                 );
                 let checked = check_source(obj(vec![("v", sent.clone())]), &plan);
@@ -6738,7 +6803,7 @@ mod tests {
                 let plan = plan_of(kind.name(), &["c"]);
                 let result = encrypt(&keyset, obj(vec![("v", Tree::Undefined)]), &plan).err();
                 assert!(
-                    matches!(&result, Some(Error::Source { field: Some(field), reason: Reason::Undefined }) if field == "v"),
+                    matches!(&result, Some(Error::Source { field: Some(field), reason: Reason::Undefined, .. }) if field == "v"),
                     "{kind}: {result:?}"
                 );
                 let checked = check_source(obj(vec![("v", Tree::Undefined)]), &plan);
@@ -7656,7 +7721,7 @@ mod tests {
             let null_query = |plan: &Plan, index: IndexSpec| {
                 query(&keyset, plan, "f", &index, &Tree::Null, &FakeEql).err()
             };
-            let refused = |error: &Option<Error>| matches!(error, Some(Error::Source { field: Some(f), reason: Reason::NullQuery }) if f == "f");
+            let refused = |error: &Option<Error>| matches!(error, Some(Error::Source { field: Some(f), reason: Reason::NullQuery, .. }) if f == "f");
             let through = null_query(&sealed, IndexSpec::Equality);
             assert!(
                 !refused(&through),
@@ -7706,7 +7771,7 @@ mod tests {
             ] {
                 for error in [queried(value.clone()), written(value.clone())] {
                     assert!(
-                        matches!(&error, Some(Error::Source { field: Some(f), reason: r }) if f == "f" && *r == reason),
+                        matches!(&error, Some(Error::Source { field: Some(f), reason: r, .. }) if f == "f" && *r == reason),
                         "{value:?}: {error:?}"
                     );
                 }
@@ -7732,7 +7797,7 @@ mod tests {
             assert!(
                 matches!(
                     &refused("IntegerOrd"),
-                    Some(Error::Plan { field: Some(f), reason: Reason::SealedNullIndex }) if f == "f"
+                    Some(Error::Plan { field: Some(f), reason: Reason::SealedNullIndex, .. }) if f == "f"
                 ),
                 "an order term has no null: {:?}",
                 refused("IntegerOrd")
@@ -7740,7 +7805,7 @@ mod tests {
             assert!(
                 matches!(
                     &refused(TEXT_EQ),
-                    Some(Error::Plan { field: Some(f), reason: Reason::SealedNullType }) if f == "f"
+                    Some(Error::Plan { field: Some(f), reason: Reason::SealedNullType, .. }) if f == "f"
                 ),
                 "text has no fixed width: {:?}",
                 refused(TEXT_EQ)
@@ -8779,16 +8844,131 @@ mod tests {
             }
         }
 
-        /// Bytes that are not one frame are not a plan.
+        /// Checks an error about a value that is not the object that the
+        /// operation takes. The checks cover the variant, the field, the row
+        /// of a batch and the kind of the value. The row and the kind are
+        /// checked in the accessors, the payload, and the message.
+        fn expect_shape(
+            error: &Error,
+            variant: &str,
+            field: Option<&str>,
+            row: Option<usize>,
+            found: Found,
+        ) {
+            expect(error, variant, field, Reason::NotAnObject);
+            assert_eq!(error.row(), row, "the row: {error}");
+            assert_eq!(error.found(), Some(found), "what was found: {error}");
+            let fields = error.payload();
+            assert_eq!(
+                fields.get("row").and_then(serde_json::Value::as_u64),
+                row.map(|row| row as u64),
+                "the payload's row: {error}"
+            );
+            assert_eq!(
+                fields["found"],
+                found.as_str(),
+                "the payload's found: {error}"
+            );
+            let message = error.to_string();
+            assert!(
+                message.contains(&format!(" is {found}, not an object")),
+                "the message says what was found: {message}"
+            );
+            if let Some(row) = row {
+                assert!(
+                    message.contains(&format!("row {row} of the records")),
+                    "the message names the row: {message}"
+                );
+            }
+        }
+
+        /// Bytes that are not one frame are not a plan. The cases are empty
+        /// bytes, bytes that are cut short, JSON text, and bytes whose field
+        /// spec repeats a key. A frame never contains a repeated key.
         #[test]
         fn bytes_that_are_not_a_frame_are_not_a_plan() {
-            for bytes in [&[][..], &[0xff, 1, 2]] {
+            let mut repeated = vec![vitaminc_aead::frame::OBJECT, 1, 0, 0, 0];
+            repeated.extend_from_slice(&3u32.to_le_bytes());
+            repeated.extend_from_slice(b"age");
+            repeated.extend_from_slice(&[vitaminc_aead::frame::OBJECT, 2, 0, 0, 0]);
+            for _ in 0..2 {
+                repeated.extend_from_slice(&4u32.to_le_bytes());
+                repeated.extend_from_slice(b"type");
+                repeated.extend_from_slice(
+                    crate::dynamic::test_frame::frame_of(&s("uint32")).risky_ref(),
+                );
+            }
+            let json = br#"{"age": {"context": ["users", "age"], "outputs": ["c"]}}"#;
+            for bytes in [&[][..], &[0xff, 1, 2], &json[..], &repeated] {
                 let error = super::super::plan(
                     Protected::new(bytes.to_vec()).as_protected_ref().as_deref(),
                 )
                 .expect_err("refused");
-                expect(&error, "Plan", None, Reason::NotAnObject);
+                expect(&error, "Plan", None, Reason::NotAFrame);
+                assert_eq!(error.found(), None, "no kind for bytes: {error}");
+                assert_eq!(
+                    error.to_string(),
+                    "record plan is malformed: the plan bytes are not one transport frame, the binary encoding of one value",
+                    "the message"
+                );
             }
+        }
+
+        /// When a plan or a field spec is a frame and not an object, the
+        /// error names the kind of value that it is.
+        #[test]
+        fn a_plan_or_spec_that_is_not_an_object_says_what_it_is() {
+            for (value, found) in [
+                (Tree::Null, Found::Null),
+                (Tree::Array(vec![]), Found::Kind(ValueKind::Array)),
+                (s("{}"), Found::Kind(ValueKind::String)),
+                (Tree::UInt32(1), Found::Kind(ValueKind::UInt32)),
+                (Tree::Passthrough(Box::new(obj(vec![]))), Found::Passthrough),
+            ] {
+                let error = plan(value.clone()).expect_err("not an object");
+                expect_shape(&error, "Plan", None, None, found);
+                assert_eq!(
+                    error.to_string(),
+                    format!("the plan is {found}, not an object of field specs"),
+                    "the message"
+                );
+
+                let error = plan(obj(vec![("age", value)])).expect_err("a spec not an object");
+                expect_shape(&error, "Plan", Some("age"), None, found);
+                assert_eq!(
+                    error.to_string(),
+                    format!(r#"the field's spec is {found}, not an object (field "age")"#),
+                    "the message"
+                );
+            }
+            // A field spec that is a typed null is reported as a null too.
+            let ty = vitaminc_aead::plaintext::FixedType::new(
+                Some(vitaminc_aead::plaintext::Logical::Date),
+                vitaminc_aead::plaintext::Width::I32,
+            )
+            .expect("fixed");
+            let mut typed_null = vec![vitaminc_aead::frame::OBJECT, 1, 0, 0, 0];
+            typed_null.extend_from_slice(&3u32.to_le_bytes());
+            typed_null.extend_from_slice(b"age");
+            vitaminc_aead::leaf::write_typed_null(ty, &mut typed_null);
+            let error =
+                super::super::plan(Protected::new(typed_null).as_protected_ref().as_deref())
+                    .expect_err("a typed null spec");
+            expect_shape(&error, "Plan", Some("age"), None, Found::Null);
+            // A field spec can be an object with a key that a spec does not
+            // take. The reason is then the one for an unknown key, and not
+            // `NotAnObject`. That is so even when the frame contains a
+            // passthrough. The frame reader does not read a passthrough.
+            let error = plan(obj(vec![(
+                "age",
+                obj(vec![
+                    ("context", label("age")),
+                    ("bogus", Tree::Passthrough(Box::new(s("x")))),
+                ]),
+            )]))
+            .expect_err("an unknown key");
+            expect(&error, "Plan", Some("age"), Reason::UnknownKey);
+            assert_eq!(error.found(), None, "an object: {error}");
         }
 
         /// A plan or context refusal names its field in the message as well
@@ -8837,18 +9017,37 @@ mod tests {
         fn a_source_is_split_into_one_frame_per_field() {
             use Reason::*;
             let plan = the_plan();
-            for (what, element) in [
-                ("a sequence", Tree::Array(vec![s("x")])),
-                ("a passthrough", Tree::Passthrough(Box::new(s("x")))),
-                ("a null", Tree::Null),
+            for (what, element, found) in [
+                (
+                    "a sequence",
+                    Tree::Array(vec![s("x")]),
+                    Found::Kind(ValueKind::Array),
+                ),
+                (
+                    "a passthrough",
+                    Tree::Passthrough(Box::new(s("x"))),
+                    Found::Passthrough,
+                ),
+                ("a null", Tree::Null, Found::Null),
+                ("a string", s("x"), Found::Kind(ValueKind::String)),
             ] {
-                let batch = Tree::Array(vec![row(34), element]);
+                let batch = Tree::Array(vec![row(34), row(35), element]);
                 let error = check_source(batch, &plan).expect_err(what);
-                expect(&error, "Source", None, NotAnObject);
+                expect_shape(&error, "Source", None, Some(2), found);
+                assert_eq!(
+                    error.to_string(),
+                    format!("row 2 of the records to encrypt is {found}, not an object of fields"),
+                    "the message"
+                );
             }
             let error = check_source(Tree::Passthrough(Box::new(row(34))), &plan)
                 .expect_err("a passthrough at the top");
-            expect(&error, "Source", None, NotAnObject);
+            expect_shape(&error, "Source", None, None, Found::Passthrough);
+            assert_eq!(
+                error.to_string(),
+                "the record to encrypt is a passthrough value, not an object of fields",
+                "the message"
+            );
             // A value that is not of its field's declared type is refused
             // naming the field: a UUID or a logical type this build does
             // not know, in a `uint32` field.
@@ -8932,13 +9131,25 @@ mod tests {
             check_source(Tree::Object(distinct), &plan).expect("distinct keys in a passthrough");
         }
 
-        /// A refusal from the split that names no field is the source's
-        /// shape; one that names a field is that field's, by its cause.
+        /// An error from the split that names a field gets its reason from
+        /// its cause. An error that names no field is also an error in the
+        /// caller's input, with the reason `unframeable` and the row. There
+        /// are two causes. The source left a row unwritten. Or the source
+        /// kept an error from the frame writer and returned it after the
+        /// field ended.
         #[test]
         fn a_split_refusal_names_its_field_and_cause() {
             let refusal = |field: Option<&str>, error| {
                 split_refusal(SplitRefusal {
+                    row: None,
                     field: field.map(str::to_owned),
+                    error,
+                })
+            };
+            let in_row = |row, error| {
+                split_refusal(SplitRefusal {
+                    row: Some(row),
+                    field: Some("age".to_owned()),
                     error,
                 })
             };
@@ -8958,12 +9169,185 @@ mod tests {
             for error in [FrameWriteError::TooDeep, FrameWriteError::Unwritten] {
                 expect(&fault(error), "Source", Some("age"), Reason::Unframeable);
             }
-            expect(
-                &refusal(None, FrameWriteError::Invalid),
-                "Source",
-                None,
-                Reason::NotAnObject,
+            // An error in a row of a batch names the row, in the payload
+            // and in the message.
+            let error = in_row(3, FrameWriteError::DuplicateKey);
+            expect(&error, "Source", Some("age"), Reason::RepeatedKey);
+            assert_eq!(error.row(), Some(3), "the row: {error}");
+            assert_eq!(error.payload()["row"], 3, "the payload's row: {error}");
+            assert!(
+                error.to_string().ends_with(r#" (row 3, field "age")"#),
+                "the message names the row: {error}"
             );
+            // An error for a row that the source left unwritten names no
+            // field. The error is still about the caller's input. The error
+            // is not a bug in this module.
+            let unwritten = split_refusal(SplitRefusal {
+                row: Some(1),
+                field: None,
+                error: FrameWriteError::Unwritten,
+            });
+            expect(&unwritten, "Source", None, Reason::Unframeable);
+            assert_eq!(unwritten.row(), Some(1), "the row left unwritten");
+            assert!(
+                matches!(unwritten.into_crate(), crate::Error::Input(_)),
+                "an input refusal"
+            );
+            for error in [
+                FrameWriteError::Invalid,
+                FrameWriteError::DuplicateKey,
+                FrameWriteError::TooDeep,
+            ] {
+                expect(&refusal(None, error), "Source", None, Reason::Unframeable);
+            }
+        }
+
+        /// When a source returns an error of its own, the caller gets
+        /// [`Error::SourceFailed`]. The error names the field and the row
+        /// that the engine was reading. The source's error is the cause.
+        /// The message leaves the cause out.
+        #[test]
+        fn a_source_that_fails_names_its_field_and_row_and_keeps_its_cause() {
+            use vitaminc_aead::plaintext::SourceError;
+            const SECRET: &str = "the getter saw marker-value";
+            /// A batch of two records. The source returns an error inside
+            /// `email` in the second record.
+            struct Fails;
+            impl Encrypt for &Fails {
+                fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                    let mut seq = sink.seq(Some(2))?;
+                    row(34).visit(seq.element()?)?;
+                    let mut map = seq.element()?.map(Some(4))?;
+                    Tree::UInt32(35).visit(map.entry("age")?)?;
+                    let _ = map.entry("email")?;
+                    Err(<S::Error as vitaminc_aead::plaintext::Error>::source(
+                        SourceError::msg(SECRET),
+                    ))
+                }
+            }
+            let error = check_source(&Fails, &the_plan()).expect_err("the source failed");
+            assert!(
+                matches!(&error, Error::SourceFailed { .. }),
+                "a failure of the source's own: {error:?}"
+            );
+            assert_eq!(error.field(), Some("email"), "the field being read");
+            assert_eq!(error.row(), Some(1), "the row being read");
+            assert_eq!(error.reason(), Some(Reason::SourceFailed), "the reason");
+            assert_eq!(error.found(), None, "nothing was found");
+            let message = error.to_string();
+            assert_eq!(
+                message,
+                r#"a value in the record to encrypt returned an error while it was read (row 1, field "email")"#,
+                "the message"
+            );
+            let cause = std::error::Error::source(&error).expect("a cause");
+            assert_eq!(
+                cause.to_string(),
+                SECRET,
+                "the source's own error is the cause"
+            );
+            let fields = error.payload();
+            assert_eq!(
+                serde_json::Value::Object(fields.clone()),
+                serde_json::json!({ "field": "email", "row": 1, "reason": "source_failed" }),
+                "the payload"
+            );
+            let shown = format!("{message} {fields:?}");
+            assert!(!shown.contains("marker-value"), "no cause text: {shown}");
+            // The plain form and the pretty form of `Debug` both print the
+            // field and the row. Neither form prints the text of the cause.
+            // So a log line or a panic message does not leak that text.
+            for debug in [format!("{error:?}"), format!("{error:#?}")] {
+                assert!(
+                    !debug.contains("marker-value"),
+                    "no cause text in Debug: {debug}"
+                );
+                for part in ["SourceFailed", "\"email\"", "SourceError(..)"] {
+                    assert!(debug.contains(part), "{part} in Debug: {debug}");
+                }
+            }
+            assert_eq!(
+                format!("{error:?}"),
+                r#"SourceFailed { field: Some("email"), row: Some(1), cause: SourceError(..) }"#,
+                "Debug"
+            );
+            assert!(
+                matches!(error.into_crate(), crate::Error::Input(_)),
+                "an input error"
+            );
+        }
+
+        /// The message of an [`Error::SourceFailed`] says "a value in the
+        /// record to encrypt" only when the error names a field. The help
+        /// text says why the message leaves the cause out. Neither text
+        /// includes the text of the cause.
+        #[test]
+        fn a_source_failure_says_where_it_happened() {
+            use miette::Diagnostic;
+            use vitaminc_aead::plaintext::SourceError;
+            let failed = |row, field: Option<&str>| Error::SourceFailed {
+                field: field.map(str::to_owned),
+                row,
+                cause: SourceError::msg("the getter saw marker-value"),
+            };
+            for (row, field, message) in [
+                (
+                    Some(1),
+                    Some("email"),
+                    r#"a value in the record to encrypt returned an error while it was read (row 1, field "email")"#,
+                ),
+                (
+                    None,
+                    Some("email"),
+                    r#"a value in the record to encrypt returned an error while it was read (field "email")"#,
+                ),
+                (
+                    Some(1),
+                    None,
+                    "the record to encrypt returned an error while it was read (row 1)",
+                ),
+                (
+                    None,
+                    None,
+                    "the record to encrypt returned an error while it was read",
+                ),
+            ] {
+                let error = failed(row, field);
+                assert_eq!(error.to_string(), message, "{row:?} {field:?}");
+                let help = error.help().expect("help").to_string();
+                assert_eq!(
+                    help,
+                    "The error that the value returned is the cause of this error. The message leaves the cause out, because the text of the cause can include the value.",
+                    "the help"
+                );
+                assert!(!help.contains("marker-value"), "no cause text: {help}");
+            }
+            assert_eq!(
+                Reason::SourceFailed.to_string(),
+                "a value returned an error while it was read",
+                "the reason"
+            );
+        }
+
+        /// The phrase that a message uses for each kind of value. The
+        /// phrase for an encrypted value does not use the name `sealed`
+        /// that the payload has.
+        #[test]
+        fn a_found_is_written_as_a_phrase() {
+            for (found, phrase) in [
+                (Found::Null, "null"),
+                (Found::Undefined, "undefined"),
+                (Found::Passthrough, "a passthrough value"),
+                (Found::Sealed, "an encrypted value"),
+                (Found::Kind(ValueKind::Array), "an array"),
+                (Found::Kind(ValueKind::UInt32), "a uint32"),
+                (
+                    Found::Unknown,
+                    "a value of a type this build does not define",
+                ),
+            ] {
+                assert_eq!(found.to_string(), phrase, "{found:?}");
+            }
         }
 
         /// The source shapes the shared runtime corpus cannot build: its
@@ -8995,7 +9379,6 @@ mod tests {
                 ]),
             ));
             let cases: Vec<(&str, Tree, Option<&str>, Reason)> = vec![
-                ("not an object", s("x"), None, NotAnObject),
                 (
                     "a passthrough deeper than a frame carries",
                     Tree::Object(deep_id),
@@ -9007,12 +9390,6 @@ mod tests {
                     Tree::Object(repeated_id),
                     Some("id"),
                     RepeatedKey,
-                ),
-                (
-                    "a batch row that is not an object",
-                    Tree::Array(vec![s("x")]),
-                    None,
-                    NotAnObject,
                 ),
                 (
                     "a field given twice",
@@ -9030,7 +9407,20 @@ mod tests {
             for (what, source, field, reason) in cases {
                 let error = check_source(source, &plan).expect_err(what);
                 expect(&error, "Source", field, reason);
+                assert_eq!(error.row(), None, "{what}: no row");
+                assert_eq!(error.found(), None, "{what}: nothing found");
             }
+            let error = check_source(s("x"), &plan).expect_err("not an object");
+            expect_shape(&error, "Source", None, None, Found::Kind(ValueKind::String));
+            let error = check_source(Tree::Array(vec![s("x")]), &plan)
+                .expect_err("a batch row that is not an object");
+            expect_shape(
+                &error,
+                "Source",
+                None,
+                Some(0),
+                Found::Kind(ValueKind::String),
+            );
         }
 
         /// A stored field given twice is refused as repeated by the engine's
@@ -9059,7 +9449,46 @@ mod tests {
             let mut age = map(node(&mut fields, "age"));
             let error = check_record(node(&mut age, "c"), &plan, None)
                 .expect_err("a record that is a leaf");
-            expect(&error, "Record", None, Reason::NotAnObject);
+            expect_shape(&error, "Record", None, None, Found::Sealed);
+            assert_eq!(
+                error.to_string(),
+                "the record to decrypt is an encrypted value, not an object of stored fields",
+                "the message"
+            );
+            for (what, stored, found) in [
+                ("a passthrough", forged(Tree::UInt32(1)), Found::Passthrough),
+                (
+                    "a list",
+                    CipherText::Sequence(vec![]),
+                    Found::Kind(ValueKind::Array),
+                ),
+            ] {
+                let batch = CipherText::Sequence(vec![seal(&keyset, row(34), &plan).await, stored]);
+                let error = check_record(batch, &plan, None).expect_err(what);
+                expect_shape(&error, "Record", None, Some(1), found);
+                assert_eq!(
+                    error.to_string(),
+                    format!(
+                        "row 1 of the records to decrypt is {found}, not an object of stored fields"
+                    ),
+                    "{what}: the message"
+                );
+            }
+            let error =
+                check_record(forged(Tree::Null), &plan, None).expect_err("a passthrough record");
+            expect_shape(&error, "Record", None, None, Found::Passthrough);
+            let leaf = |tree: StackCipherText| match tree {
+                CipherText::Single(leaf) => leaf,
+                _ => panic!("a leaf"),
+            };
+            let mut fields = map(seal(&keyset, row(35), &plan).await);
+            let one = leaf(node(&mut map(node(&mut fields, "age")), "c"));
+            let mut fields = map(seal(&keyset, row(36), &plan).await);
+            let two = leaf(node(&mut map(node(&mut fields, "age")), "c"));
+            for marker in [CipherText::EmptySequence(one), CipherText::EmptyMap(two)] {
+                let error = check_record(marker, &plan, None).expect_err("a sealed marker");
+                expect_shape(&error, "Record", None, None, Found::Sealed);
+            }
         }
 
         /// A binding switches on `as_str`, so no two reasons share a name.
@@ -9179,6 +9608,112 @@ mod tests {
                 let shown = format!("{error:?}");
                 assert_eq!(refusal(error), (field, reason), "{shown}");
             }
+        }
+
+        /// The start of the message of an [`Error::Source`] names the input
+        /// that the reason is about:
+        ///
+        /// - The query input, when only the input of a query can cause the
+        ///   reason.
+        /// - The record to encrypt, when only a record can cause the reason.
+        /// - Both, when a query and a record can both cause the reason and
+        ///   the error names no row. Those reasons are a value of another
+        ///   type and an `undefined` value. With a row, the message names
+        ///   the record, because only a record has rows.
+        #[test]
+        fn a_query_refusal_names_the_query_input() {
+            use Reason::*;
+            for reason in [
+                UnknownOperator,
+                OperatorNotAnswered,
+                NotARange,
+                ExactOperator,
+                NotAQueryTerm,
+                NotStats,
+                NullQuery,
+                JsonInput,
+                JsonSyntax,
+                JsonDuplicateKey,
+                JsonIntegerRange,
+                JsonPathPosition,
+                JsonPathWildcard,
+                JsonPathNoWildcard,
+                JsonNoPredicates,
+                JsonWildcardBoundZero,
+                JsonUnknownPredicateOp,
+            ] {
+                let error = Error::bad_source(reason).in_field("age");
+                assert_eq!(
+                    error.to_string(),
+                    format!(r#"the query input does not match the field: {reason} (field "age")"#),
+                    "{reason:?}"
+                );
+            }
+            for reason in [
+                FieldMissing,
+                FieldRepeated,
+                UnknownField,
+                RepeatedKey,
+                Passthrough,
+                Unframeable,
+            ] {
+                let error = Error::bad_source(reason).in_field("age");
+                assert_eq!(
+                    error.to_string(),
+                    format!(
+                        r#"the record to encrypt does not match the plan: {reason} (field "age")"#
+                    ),
+                    "{reason:?}"
+                );
+            }
+            for reason in [FieldType, Undefined] {
+                let error = Error::bad_source(reason).in_field("age");
+                assert_eq!(
+                    error.to_string(),
+                    format!(
+                        r#"the record to encrypt or the query input does not match the plan: {reason} (field "age")"#
+                    ),
+                    "{reason:?}"
+                );
+                let in_a_row = Error::Source {
+                    field: Some("age".to_owned()),
+                    row: Some(2),
+                    reason,
+                    found: None,
+                };
+                assert_eq!(
+                    in_a_row.to_string(),
+                    format!(
+                        r#"the record to encrypt does not match the plan: {reason} (row 2, field "age")"#
+                    ),
+                    "{reason:?} in a row"
+                );
+            }
+            // A reason that only a record can cause names the record with or
+            // without a row.
+            let unwritten = Error::Source {
+                field: None,
+                row: Some(1),
+                reason: Unframeable,
+                found: None,
+            };
+            assert_eq!(
+                unwritten.to_string(),
+                format!("the record to encrypt does not match the plan: {Unframeable} (row 1)"),
+                "a row that the source never wrote"
+            );
+            assert_eq!(
+                Error::bad_record(NoCiphertextNode)
+                    .in_field("email")
+                    .to_string(),
+                r#"the record to decrypt does not match the plan: no "c" node (field "email")"#,
+                "a stored record"
+            );
+            assert_eq!(
+                Error::bad_plan(NoFields).to_string(),
+                "record plan is malformed: the plan has no fields",
+                "a plan"
+            );
         }
 
         /// `in_field` names the field only where none is named yet.
