@@ -213,6 +213,48 @@ describe('an array of values', () => {
     expect((await c.decrypt(sealed)).unwrap()).toEqual([])
   })
 
+  it('is refused when it has a hole, to encrypt or to decrypt', async () => {
+    const c = await cipher()
+    const keyset = c.defaultKeyset()
+    // biome-ignore lint/suspicious/noSparseArray: a hole is the case.
+    const holed = await keyset.encrypt(['a', , 'b'] as string[])
+    expect(holed.err()?.code).toBe('recipher_js::sparse_array')
+    const empty = await keyset.encrypt(new Array<string>(3))
+    expect(empty.err()?.code).toBe('recipher_js::sparse_array')
+
+    const sealed = (await keyset.encrypt('a')).unwrap()
+    // biome-ignore lint/suspicious/noSparseArray: a hole is the case.
+    const opened = await c.decrypt([sealed, , sealed] as (typeof sealed)[])
+    expect(opened.err()?.code).toBe('recipher_js::sparse_array')
+  })
+
+  it('never reads a hole through a polluted Array.prototype', async () => {
+    const c = await cipher()
+    const keyset = c.defaultKeyset()
+    const other = (await keyset.encrypt('not passed')).unwrap()
+    const sealed = (await keyset.encrypt('a')).unwrap()
+    try {
+      Object.defineProperty(Array.prototype, '1', {
+        value: 'injected',
+        configurable: true,
+      })
+      // biome-ignore lint/suspicious/noSparseArray: a hole is the case.
+      const holed = await keyset.encrypt(['a', , 'b'] as string[])
+      expect(holed.err()?.code).toBe('recipher_js::sparse_array')
+
+      // A ciphertext the caller never passed is not decrypted.
+      Object.defineProperty(Array.prototype, '1', {
+        value: other,
+        configurable: true,
+      })
+      // biome-ignore lint/suspicious/noSparseArray: a hole is the case.
+      const opened = await c.decrypt([sealed, , sealed] as (typeof sealed)[])
+      expect(opened.err()?.code).toBe('recipher_js::sparse_array')
+    } finally {
+      Reflect.deleteProperty(Array.prototype, '1')
+    }
+  })
+
   it('is refused whole when one element is refused', async () => {
     const keyset = (await cipher()).defaultKeyset()
     // @ts-expect-error: an array inside an array is not a value.

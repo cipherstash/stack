@@ -90,9 +90,11 @@ pub fn read_json(
 ///
 /// # Errors
 ///
-/// Returns the bridge's refusal, or `recipher_js::threw`, when an element
-/// cannot be read. For example, an element behind a getter that throws
-/// cannot be read.
+/// Returns one of these errors:
+///
+/// - `recipher_js::sparse_array` for an array with a hole;
+/// - `recipher_js::threw` when reading an element threw, as a getter can;
+/// - `recipher_js::value` when Node-API failed to read the array.
 pub fn elements<'e>(
     env: &Env,
     value: Unknown<'e>,
@@ -101,13 +103,34 @@ pub fn elements<'e>(
         return None;
     }
     let array = Object::from_unknown(value).ok()?;
-    let read = || -> napi::Result<Vec<Unknown<'e>>> {
-        let len = array.get_array_length()?;
-        (0..len)
-            .map(|at| array.get_element::<Unknown<'e>>(at))
-            .collect()
-    };
-    Some(read().map_err(|error| refused(env, &error.into())))
+    Some(own_elements(env, &array))
+}
+
+/// Returns the elements of `array`, each read as an own property.
+///
+/// A hole is an index with no own property. Reading one would read the
+/// prototype chain, so a polluted `Array.prototype` could supply a value
+/// that the caller never passed. The bridge refuses a hole inside a value
+/// for the same reason, and this function refuses one in the array given
+/// to `encrypt` or `decrypt`.
+///
+/// The array's length comes from JavaScript, and `new Array(2 ** 32 - 1)`
+/// costs nothing to make. So nothing is allocated for the length: the
+/// result grows as elements are read, and the first hole stops the read.
+fn own_elements<'e>(
+    env: &Env,
+    array: &Object<'e>,
+) -> Result<Vec<Unknown<'e>>, RecipherErrorFields> {
+    let failed = |error: napi::Error| refused(env, &error.into());
+    let len = array.get_array_length().map_err(failed)?;
+    let mut elements = Vec::new();
+    for at in 0..len {
+        if !array.has_own_property(&at.to_string()).map_err(failed)? {
+            return Err(RecipherErrorFields::diagnostic(&Refusal::SparseArray, None));
+        }
+        elements.push(array.get_element::<Unknown<'e>>(at).map_err(failed)?);
+    }
+    Ok(elements)
 }
 
 /// Builds the JavaScript value of a decrypted frame.
