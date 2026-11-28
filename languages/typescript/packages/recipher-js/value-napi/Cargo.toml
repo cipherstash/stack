@@ -19,14 +19,16 @@ jiff = { version = "1.0.0", default-features = false }
 vitaminc-aead = { version = "0.10.0", features = ["jiff", "rust_decimal"] }
 vitaminc-protected = "0.10.0"
 
-# napi5 (Node ≥ 12) is needed for Date detection; napi6 (implies napi5) for
-# BigInt and for `napi_get_all_property_names` — the only own-property
-# enumeration Node-API offers. Every supported Node release is far beyond
-# both levels. `serde-json` converts a `serde_json::Number` to a JavaScript
-# `number` or `bigint`, for a decrypted JSON document.
+# Date detection needs napi5, and Node 12 and later provide napi5. BigInt
+# needs napi6, and napi6 implies napi5. `napi_get_all_property_names` needs
+# napi6 too, and is the only own-property enumeration that Node-API offers.
+# Every supported Node release is far beyond both levels.
+#
+# `serde-json` converts a `serde_json::Number` to a JavaScript `number` or
+# `bigint`, for a decrypted JSON document.
 napi = { version = "3", default-features = false, features = ["napi6", "serde-json"] }
-# A JSON document: `serde_json` writes each scalar of its text, and a
-# decrypted document arrives as a `serde_json::Value`. `serde` is named for
+# For a JSON document. `serde_json` writes each scalar of the document's text.
+# A decrypted document arrives as a `serde_json::Value`. `serde` is listed for
 # the `Serialize` bound of the function that writes a scalar.
 serde = "1"
 serde_json = "1"

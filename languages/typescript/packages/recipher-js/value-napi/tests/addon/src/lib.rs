@@ -112,10 +112,10 @@ pub fn json_value<'e>(env: &'e Env, text: String) -> Result<Object<'e>> {
     json_built(env, &document)
 }
 
-/// `levels` JSON containers of one `wrap` kind ("array" or "object")
-/// around `true`, built here and then built as a JavaScript value. A
-/// parser would refuse the deepest of these documents, so the build's own
-/// depth limit is what applies.
+/// Nest `true` inside `levels` JSON containers, then build the document as a
+/// JavaScript value. `wrap` names the kind of container: "array" or "object".
+/// A parser would refuse the deepest of these documents, so the build's own
+/// depth limit applies.
 #[napi(ts_return_type = "{ value: unknown } | { code: string; message: string }")]
 pub fn json_nested_value<'e>(env: &'e Env, levels: u32, wrap: String) -> Result<Object<'e>> {
     let mut document = serde_json::Value::Bool(true);

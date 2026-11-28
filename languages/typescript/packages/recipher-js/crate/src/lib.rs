@@ -1,13 +1,13 @@
 //! The Node addon of `@cipherstash/recipher`.
 //!
 //! The addon defines the classes the package exports: [`Cipher`],
-//! [`Keyset`], [`Ciphertext`] and [`Json`]. Every operation runs through the
+//! [`Keyset`], [`Ciphertext`], and [`Json`]. Every operation runs through the
 //! Stack Encrypt engine, the `stack-encrypt` crate. The engine encrypts and
 //! decrypts values with keys from ZeroKMS, CipherStash's key service.
 //!
 //! napi-rs generates the classes' TypeScript declarations (`native.d.ts`)
 //! from this crate. The crate reads and builds JavaScript values only
-//! through the `recipher-value-napi` crate (see [`js`]).
+//! through the `recipher-value-napi` crate. The `js` module does that.
 //!
 //! # Results
 //!
@@ -25,13 +25,14 @@
 //! in `stored.map(cipher.decrypt)`. The JavaScript engine checks the object
 //! and throws a `TypeError` before any of the addon's code runs.
 //!
-//! The wrapper classes are the value bridge's JavaScript. Their
-//! constructors throw a `TypeError` for an argument that is not a string.
+//! The wrapper classes are `RcDate`, `RcTimestamp`, `RcDecimal`, and
+//! `RcUuid`. The value bridge defines them in JavaScript. A wrapper class's
+//! constructor throws a `TypeError` for an argument that is not a string.
 //!
-//! The `ts_type`, `ts_args_type` and `ts_return_type` attributes give each
-//! method the signature the package exports. napi-rs writes them to
-//! `native.d.ts`, with the header in `native-header.d.ts`, and that file is
-//! the package's public type.
+//! The `ts_type`, `ts_args_type`, and `ts_return_type` attributes give each
+//! method the signature that the package exports. The build writes the
+//! signatures to `native.d.ts`, after the header in `native-header.d.ts`.
+//! `native.d.ts` is the package's public type.
 //!
 //! # The interface number
 //!
@@ -39,7 +40,7 @@
 //! version of the interface that the package's TypeScript calls. The
 //! TypeScript refuses an addon build that returns another number. No build
 //! has been released, so the number is 1. After the first release, the
-//! number changes whenever a class, a method or a returned value changes
+//! number changes whenever a class, a method, or a returned value changes
 //! shape.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![warn(clippy::mem_forget)]
@@ -91,9 +92,10 @@ pub fn binding_interface() -> u32 {
 }
 
 /// Exports the value bridge's wrapper classes: `RcDate`, `RcTimestamp`,
-/// `RcDecimal` and `RcUuid`. Each class stands for a type that JavaScript
-/// does not have. The addon exports them so JavaScript can construct them,
-/// and so decrypted values are instances of them.
+/// `RcDecimal`, and `RcUuid`. Each class represents a type that JavaScript
+/// does not have. The addon exports the classes so that JavaScript can
+/// construct them. A decrypted value is then an instance of the same
+/// classes.
 // napi's module registration calls this function. `clippy --all-targets`
 // also builds the crate as a test, where nothing calls it.
 #[cfg_attr(test, allow(dead_code))]

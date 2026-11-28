@@ -1,35 +1,46 @@
-//! JSON documents: a JavaScript value as the text of one, and a document
-//! as a JavaScript value.
+//! JSON documents: a JavaScript value written as the text of a document, and
+//! a document built as a JavaScript value.
 //!
 //! # Encrypting: a JavaScript value to JSON text
 //!
-//! [`JsRef::to_json`] reads a JavaScript value and writes the text of a
-//! JSON document. The walk is the one every value goes through, so the
-//! same safety rules apply: only plain objects are read, by their own
-//! enumerable string keys, and a hole, a getter that throws, an unpaired
-//! surrogate and a reserved property name are refused. The
-//! [`js_ref`](crate::js_ref) module lists what a document holds.
+//! [`JsRef::to_json`] reads a JavaScript value and writes the text of a JSON
+//! document. A walk is one pass over a value and every value nested in it.
+//! `to_json` uses the same walk as every other value, so the same safety
+//! rules apply:
 //!
-//! The text is written straight into a [`Buffer`], which wipes each
-//! allocation it outgrows and wipes itself when it is dropped. No tree of
-//! the document is built on the way, so no copy of it is left behind.
+//! - The walk reads only plain objects, by their own enumerable string keys.
+//! - The walk refuses a hole in an array, a getter that throws, an unpaired
+//!   surrogate, and a reserved property name.
+//!
+//! The [`js_ref`](crate::js_ref) module lists the values a document can
+//! contain.
+//!
+//! `to_json` writes the text straight into a [`Buffer`]. A `Buffer` wipes
+//! each allocation it outgrows. A `Buffer` also wipes itself when it is
+//! dropped. `to_json` builds no tree of the document, so no other copy of the
+//! document stays in memory.
 //!
 //! # Decrypting: a document to a JavaScript value
 //!
 //! [`JsBuilder::build_json`] builds the JavaScript value of a
-//! `serde_json::Value`. Each scalar is converted by napi-rs's own
-//! conversion for its type. For a number that is:
+//! `serde_json::Value`. napi-rs has a conversion for each scalar type, and
+//! `build_json` uses it. That conversion turns a number into:
 //!
-//! - an integer within 2^53 - 1 of zero: a `number`;
-//! - any other integer: a `bigint`, so no digit is lost;
-//! - a float: a `number`.
+//! - a `number`, for an integer within 2^53 - 1 of zero;
+//! - a `bigint`, for any other integer, so no digit is lost;
+//! - a `number`, for a float.
 //!
-//! An array and an object are written here, not by napi-rs. napi-rs assigns
-//! each element and member (`object[key] = value`). An assignment runs a
-//! setter that a polluted prototype defines, which would receive the
-//! decrypted value. It also gives a member named `__proto__` to the object
-//! as its prototype. So this module defines each element and member as an
-//! own data property, and refuses the three reserved property names, as
+//! This module writes each array and object itself. napi-rs's conversion of
+//! an array or an object assigns each element and member
+//! (`object[key] = value`). An assignment has two effects that this module
+//! must prevent:
+//!
+//! - An assignment runs a setter that a polluted prototype defines. The
+//!   setter would receive the decrypted value.
+//! - An assignment to a member named `__proto__` sets the object's prototype.
+//!
+//! So this module defines each element and member as an own data property.
+//! This module also refuses the three reserved property names, as
 //! [`JsBuilder`] does for every other value.
 
 use std::io;
@@ -48,22 +59,27 @@ use crate::js::{
 use crate::{JsBuilder, JsRef};
 
 impl JsRef<'_> {
-    /// Write the value as the text of a JSON document, on the JavaScript
-    /// thread. The text is plaintext, and comes back in a buffer that is
-    /// wiped when it is dropped.
+    /// Write the value as the text of a JSON document. Call this method on
+    /// the JavaScript thread. The text is plaintext. The method returns the
+    /// text in a buffer that is wiped when it is dropped.
     ///
-    /// `max_depth` is the most levels of arrays and objects the document
-    /// may nest: the limit of whatever will read the text. `[1]` is one
-    /// level. The walk's own limit, [`MAX_DEPTH`], applies too.
+    /// `max_depth` is the largest number of levels of arrays and objects that
+    /// the document may nest. Pass the limit of the code that will read the
+    /// text. `[1]` is one level. The walk's own limit, [`MAX_DEPTH`], applies
+    /// too.
     ///
-    /// An object's members are written in the order JavaScript lists them.
+    /// The method writes an object's members in the order JavaScript lists
+    /// them.
     ///
     /// # Errors
     ///
-    /// A [`JsFault`]: its [`refusal`](JsFault::refusal) names the rule a
-    /// refused value broke. A value with no JSON form is
-    /// [`Refusal::NotJson`], and a document nested past `max_depth` is
-    /// [`Refusal::TooDeep`]. No error holds any part of the value.
+    /// Returns a [`JsFault`]. For a value the walk refused,
+    /// [`JsFault::refusal`] names the rule that the value broke:
+    ///
+    /// - [`Refusal::NotJson`], for a value with no JSON form;
+    /// - [`Refusal::TooDeep`], for a document nested past `max_depth`.
+    ///
+    /// No error contains any part of the value.
     ///
     /// [`Refusal::NotJson`]: crate::Refusal::NotJson
     /// [`Refusal::TooDeep`]: crate::Refusal::TooDeep
@@ -77,18 +93,23 @@ impl JsRef<'_> {
 impl<'e> JsBuilder<'e> {
     /// The JavaScript value of a JSON document.
     ///
-    /// An integer within 2^53 - 1 of zero is a `number`, any other integer
-    /// is a `bigint`, and a float is a `number`. An array and an object are
-    /// built from own data properties.
+    /// The function builds each part of the document by these rules:
     ///
-    /// This function copies nothing out of `document`: the caller still
-    /// owns it, and wipes it.
+    /// - An integer within 2^53 - 1 of zero becomes a `number`.
+    /// - Any other integer becomes a `bigint`.
+    /// - A float becomes a `number`.
+    /// - An array or an object is built from own data properties.
+    ///
+    /// This function copies nothing out of `document`. `document` still
+    /// belongs to the caller, and the caller wipes it.
     ///
     /// # Errors
     ///
-    /// A [`JsFault`]. [`Refusal::ReservedKey`] is an object with a member
-    /// named `__proto__`, `constructor` or `prototype`, and
-    /// [`Refusal::TooDeep`] is a document nested past [`MAX_DEPTH`].
+    /// Returns a [`JsFault`]. Two refusals apply to a document:
+    ///
+    /// - [`Refusal::ReservedKey`], for an object with a member named
+    ///   `__proto__`, `constructor`, or `prototype`;
+    /// - [`Refusal::TooDeep`], for a document nested past [`MAX_DEPTH`].
     ///
     /// [`Refusal::ReservedKey`]: crate::Refusal::ReservedKey
     /// [`Refusal::TooDeep`]: crate::Refusal::TooDeep
@@ -97,7 +118,7 @@ impl<'e> JsBuilder<'e> {
     }
 }
 
-/// The JavaScript value of `value`, which sits `depth` levels down in its
+/// The JavaScript value of `value`. `value` is `depth` levels down in its
 /// document.
 fn json_to_js<'e>(env: &'e Env, value: &Value, depth: usize) -> Result<Unknown<'e>, JsFault> {
     if depth > MAX_DEPTH {
@@ -106,8 +127,8 @@ fn json_to_js<'e>(env: &'e Env, value: &Value, depth: usize) -> Result<Unknown<'
     match value {
         Value::Null => Ok(Null.into_unknown(env)?),
         Value::Bool(flag) => Ok((*flag).into_unknown(env)?),
-        // napi-rs's conversion of a `serde_json::Number`: see the module
-        // docs for which numbers become a `bigint`.
+        // napi-rs converts a `serde_json::Number`. The module docs say which
+        // numbers become a `bigint`.
         Value::Number(number) => Ok(number.into_unknown(env)?),
         Value::String(text) => Ok(text.as_str().into_unknown(env)?),
         Value::Array(items) => {
@@ -144,13 +165,13 @@ fn json_to_js<'e>(env: &'e Env, value: &Value, depth: usize) -> Result<Unknown<'
 
 /// A sink that writes one value as JSON text.
 ///
-/// It writes what a JSON document holds: a null, a boolean, an integer, a
-/// finite float, text, a sequence and a map. It refuses anything else. An
-/// integer is written with its digits at any width. The reader of the text
-/// decides which integers it takes.
+/// The sink writes the values a JSON document can contain: a null, a boolean,
+/// an integer, a finite float, text, a sequence, and a map. The sink refuses
+/// anything else. The sink writes an integer of any width with its digits.
+/// The code that reads the text decides which integers it accepts.
 ///
-/// A walk that fails part way leaves the text written so far in the
-/// buffer. The buffer is the caller's, and is wiped when it is dropped.
+/// If a walk fails part way, the buffer keeps the text written so far. The
+/// buffer belongs to the caller, and is wiped when it is dropped.
 pub(crate) struct JsonText<'b> {
     out: &'b mut Buffer,
     /// How many more levels of sequences and maps may open here.
@@ -193,12 +214,16 @@ impl io::Write for Append<'_> {
     }
 }
 
-/// Writes one scalar as `serde_json` writes it: text with its escapes, an
-/// integer as its digits, and a float in the shortest form that reads back
-/// as the same float. `serde_json` writes each straight into `out`.
+/// Writes one scalar as `serde_json` writes it:
+///
+/// - text with its escapes;
+/// - an integer as its digits;
+/// - a float in the shortest form that reads back as the same float.
+///
+/// `serde_json` writes each one straight into `out`.
 fn write_scalar<T: serde::Serialize + ?Sized>(out: &mut Buffer, value: &T) -> Result<(), JsFault> {
-    // The only failure is the writer's, and this writer does not fail. The
-    // error's text is dropped, so nothing of the value can leave in it.
+    // Only the writer can fail here, and this writer never fails. This code
+    // drops the error's text, so the error contains no part of the value.
     serde_json::to_writer(Append(out), value)
         .map_err(|_| JsFault::new(Status::GenericFailure, "JSON text could not be written"))
 }
@@ -218,7 +243,7 @@ impl<'b> Sink for JsonText<'b> {
             (None, Physical::Bool(flag)) => write_scalar(self.out, &flag),
             (None, Physical::Int(int)) => match int.to_i128() {
                 Some(signed) => write_scalar(self.out, &signed),
-                // Only a `u128` above `i128::MAX` has no `i128`.
+                // Only a `u128` above `i128::MAX` does not fit an `i128`.
                 None => write_scalar(self.out, &int.to_u128().unwrap_or(u128::MAX)),
             },
             (None, Physical::Float(float)) => {
@@ -411,7 +436,8 @@ mod tests {
         assert_eq!(text(5_000_000_000i64), "5000000000");
         assert_eq!(text(i64::MIN), "-9223372036854775808");
         assert_eq!(text(u64::MAX), "18446744073709551615");
-        // The sink writes every width. The reader decides what it takes.
+        // The sink writes every width. The reader decides which widths it
+        // accepts.
         assert_eq!(
             text(Scalar(None, Physical::Int(Int::U128(u128::MAX)))),
             u128::MAX.to_string()
@@ -438,7 +464,7 @@ mod tests {
             -0.0,
         ] {
             let written = text(float);
-            // A fraction or an exponent: a reader takes it as a float, never
+            // A fraction or an exponent: a reader reads it as a float, never
             // as an integer out of range.
             assert!(written.contains(['.', 'e']), "{written}");
             let read: f64 = serde_json::from_str(&written).unwrap();
@@ -529,7 +555,7 @@ mod tests {
             let fault = text_within(Nested(limit + 1), limit).expect_err("past the limit");
             assert_eq!(fault.refusal(), Some(Refusal::TooDeep { limit }));
         }
-        // A scalar is no level, so it is a document at any limit.
+        // A scalar adds no level, so a scalar is a document at any limit.
         assert_eq!(text_within(5i64, 0).unwrap(), "5");
         assert!(text_within(Nested(1), 0).is_err());
         // A map is a level, as an array is.

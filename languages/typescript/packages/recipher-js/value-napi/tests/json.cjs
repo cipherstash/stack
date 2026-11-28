@@ -1,9 +1,11 @@
-// JSON documents at the N-API boundary: a JavaScript value written as the
-// text of a document (`JsRef::to_json`), and a document built as a
-// JavaScript value (`JsBuilder::build_json`). The last section pins what
-// napi-rs's own `serde_json` conversion does, which is why the bridge reads
-// a value itself and writes arrays and objects itself. Run by tests/node.rs
-// with the test addon's path.
+// JSON documents at the N-API boundary. `JsRef::to_json` writes a JavaScript
+// value as the text of a document. `JsBuilder::build_json` builds a document
+// as a JavaScript value.
+//
+// The last section pins what napi-rs's own `serde_json` conversion does.
+// That conversion is the reason the bridge reads a value itself, and writes
+// arrays and objects itself. `tests/node.rs` runs this file with the test
+// addon's path.
 const assert = require('node:assert/strict')
 const path = require('node:path')
 const addon = require(path.resolve(process.argv[2]))
@@ -36,7 +38,7 @@ const built = (json) => {
 
 // --- Writing a value as JSON text ---
 
-// An object, an array, a string, a boolean and null stay as they are. The
+// An object, an array, a string, a boolean, and null stay as they are. The
 // members keep the order JavaScript lists them in.
 assert.equal(
   text({ b: 'text', a: [true, false, null], nested: { deep: [] } }),
@@ -86,7 +88,7 @@ for (const float of [
 ]) {
   const written = text(float)
   assert.equal(JSON.parse(written), float, written)
-  // A fraction or an exponent, so no reader takes it as an integer.
+  // A fraction or an exponent, so no reader reads it as an integer.
   assert.match(written, /[.e]/, written)
 }
 
@@ -104,12 +106,12 @@ for (const unsafe of [
   const refused = refusal({ n: unsafe })
   assert.equal(refused.code, NOT_JSON, String(unsafe))
   assert.match(refused.message, /bigint/)
-  // No message holds any part of the value.
+  // No message contains any part of the value.
   assert.ok(!/\d{6}/.test(refused.message), refused.message)
 }
 
-// NaN and the infinities have no JSON form. JSON.stringify writes them as
-// null, which would decrypt as another value.
+// NaN and the infinities have no JSON form. JSON.stringify writes each one as
+// null. A null would decrypt as a different value.
 for (const number of [
   Number.NaN,
   Number.POSITIVE_INFINITY,
@@ -146,7 +148,7 @@ for (const wide of [
   assert.ok(!/\d{6}/.test(refused.message), refused.message)
 }
 
-// A value with no JSON form is refused, at the top, in an array and as a
+// A value with no JSON form is refused, at the top, in an array, and as a
 // member. JSON.stringify would drop it, or write something else.
 const RcDate = addon.RcDate
 const noJsonForm = [
@@ -179,7 +181,7 @@ for (const [value, message] of noJsonForm) {
   }
 }
 
-// A function and a symbol are no value at all.
+// A function and a symbol are not values at all.
 for (const value of [() => 1, function named() {}, Symbol('s'), class {}]) {
   assert.equal(refusal(value).code, 'recipher_js::not_a_value')
   assert.equal(refusal({ member: value }).code, 'recipher_js::not_a_value')
@@ -229,7 +231,8 @@ try {
 } finally {
   delete Array.prototype[1]
 }
-// A getter that throws surfaces as the error it threw, and is no refusal.
+// When a getter throws, the caller receives the error the getter threw. That
+// error is not a refusal.
 const thrown = new Error('the getter threw')
 assert.throws(
   () =>
@@ -326,7 +329,7 @@ assert.strictEqual(built('9223372036854775807'), 2n ** 63n - 1n)
 assert.strictEqual(built('9223372036854775808'), 2n ** 63n)
 assert.strictEqual(built('-9223372036854775808'), -(2n ** 63n))
 assert.strictEqual(built('18446744073709551615'), 2n ** 64n - 1n)
-// A float is a number, whole or not.
+// A float is a number, even when the float is whole.
 assert.strictEqual(built('1.5'), 1.5)
 assert.strictEqual(built('5.0'), 5)
 assert.strictEqual(built('1e20'), 1e20)
@@ -352,8 +355,8 @@ assert.deepEqual(
   },
 )
 
-// An array and an object are ordinary ones, of own data properties that
-// are writable, enumerable and configurable.
+// An array and an object are ordinary ones, of own data properties that are
+// writable, enumerable, and configurable.
 const made = built('{"k":[7]}')
 assert.equal(Object.getPrototypeOf(made), Object.prototype)
 assert.ok(Array.isArray(made.k))
@@ -400,7 +403,7 @@ try {
   delete Array.prototype[0]
 }
 
-// A member with a reserved name is refused, at any depth: it is never
+// A member with a reserved name is refused, at any depth. The member is never
 // assigned, so it never becomes the object's prototype.
 for (const reserved of ['__proto__', 'constructor', 'prototype']) {
   for (const json of [
@@ -434,20 +437,20 @@ for (const wrap of ['array', 'object']) {
 // --- What napi-rs's own conversion does ---
 //
 // The bridge uses napi-rs's conversion for a document's scalars only. These
-// cases pin why. If one of them fails after a napi-rs update, read the
-// change and decide again.
+// cases pin the behaviour that is the reason. If one of them fails after a
+// napi-rs update, read the change and decide again.
 
 // Reading a value. A whole number above 2^32, or below -2^31, becomes a
-// float. Rust's serde_json and Go's encoding/json refuse `5000000000.0` for
-// an integer field.
+// float. Rust's `serde_json` and Go's `encoding/json` refuse `5000000000.0`
+// for an integer field.
 assert.equal(addon.napiJsonText(4294967295), '4294967295')
 assert.equal(addon.napiJsonText(5000000000), '5000000000.0')
 assert.equal(addon.napiJsonText(-5000000000), '-5000000000.0')
 assert.equal(addon.napiJsonText(2 ** 53), '9007199254740992.0')
 // A bigint outside 64 bits becomes a string of its digits.
 assert.equal(addon.napiJsonText(2n ** 64n), '"18446744073709551616"')
-// A member that is undefined is dropped, and a Date, a Map and a wrapper
-// class instance are read as objects.
+// A member that is undefined is dropped. A Date, a Map, and a wrapper class
+// instance are read as objects.
 assert.equal(addon.napiJsonText({ a: undefined, b: 1 }), '{"b":1}')
 assert.equal(addon.napiJsonText(new Date(0)), '{}')
 assert.equal(addon.napiJsonText(new Map([[1, 2]])), '{}')
@@ -455,14 +458,14 @@ assert.equal(
   addon.napiJsonText(new RcDate('2026-11-23')),
   '{"value":"2026-11-23"}',
 )
-// An inherited property is read, and an unpaired surrogate is replaced.
+// An inherited property is read. An unpaired surrogate is replaced.
 assert.equal(
   addon.napiJsonText(Object.create({ inherited: 1 })),
   '{"inherited":1}',
 )
 assert.equal(addon.napiJsonText('\uD800'), '"�"')
 
-// Building a value. The number rule is the one the bridge documents, and
+// Building a value. The number rule is the rule that the bridge documents and
 // uses.
 assert.deepEqual(
   addon.napiJsonValue(
@@ -483,8 +486,8 @@ assert.deepEqual(
 const assigned = addon.napiJsonValue('{"__proto__":{"inherited":1},"own":2}')
 assert.deepEqual(Object.keys(assigned), ['own'])
 assert.equal(assigned.inherited, 1)
-// Members and elements are assigned, so a setter on a polluted prototype
-// receives the value, and the result has no such property of its own.
+// Members and elements are assigned. So a setter on a polluted prototype
+// receives the value. The result has no such property of its own.
 captured = 'untouched'
 Object.defineProperty(Object.prototype, 'leak', {
   set(value) {

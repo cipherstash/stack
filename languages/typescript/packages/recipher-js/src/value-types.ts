@@ -1,10 +1,10 @@
 /**
  * The types of the values the SDK encrypts, and of what they decrypt to.
  *
- * This module holds types only, and imports nothing. The addon's generated
- * declarations (`native.d.ts`) name these types in their signatures, so a
- * module here that loaded the addon would make the declarations import
- * themselves.
+ * This module contains types only, and imports nothing. The addon's
+ * generated declarations (`native.d.ts`) name these types in their
+ * signatures. If a module here loaded the addon, the declarations would
+ * import themselves.
  */
 
 declare const wrapper: unique symbol
@@ -59,13 +59,15 @@ export type Scalar =
   | null
 
 /**
- * A JSON value. An integer outside the safe range of a `number` is a
- * `bigint`, within the 64-bit range (`-(2n ** 63n)` to `2n ** 64n - 1n`).
- * The safe range is 2^53 - 1 either side of zero.
+ * A JSON value.
  *
- * A whole `number` in the safe range is stored as an integer, and any other
- * `number` as a float. `encrypt` refuses a whole `number` whose absolute
- * value is at least 2^53 but less than 2^64, because it may not keep the
+ * The safe range of a `number` is 2^53 - 1 either side of zero. Write an
+ * integer outside the safe range as a `bigint`. The `bigint` must be in the
+ * 64-bit range, from `-(2n ** 63n)` to `2n ** 64n - 1n`.
+ *
+ * `encrypt` stores a whole `number` in the safe range as an integer, and any
+ * other `number` as a float. `encrypt` refuses a whole `number` from 2^53 up
+ * to 2^64, either side of zero. A `number` that large may not keep the
  * digits that were written. `encrypt` also refuses `NaN` and the infinities.
  */
 export type JsonValue =
@@ -78,9 +80,10 @@ export type JsonValue =
   | { readonly [key: string]: JsonValue }
 
 /**
- * A JSON document as it decrypts. An integer is a `number` when it is in
- * the safe range of a `number`, and a `bigint` otherwise. The members of an
- * object are sorted by key.
+ * A JSON document as it decrypts. An integer is a `number` when it is in the
+ * safe range of a `number`, and a `bigint` otherwise. The safe range is 2^53
+ * - 1 either side of zero. A decrypted object lists its members sorted by
+ * key.
  */
 export type OpenedJson =
   | null
@@ -94,9 +97,9 @@ export type OpenedJson =
 declare const document: unique symbol
 
 /**
- * What marks a `Json`, the native addon's class for a JSON document, so
- * that no other object type-checks as one. The marker never exists at run
- * time.
+ * The marker of a `Json`. `Json` is the native addon's class for a JSON
+ * document. The marker stops any other object type-checking as a `Json`. The
+ * marker never exists at run time.
  */
 export interface JsonMarker {
   readonly [document]: true

@@ -1,5 +1,5 @@
 /**
- * The stand-in wrapper classes, which take the place of the addon's classes
+ * The stand-in wrapper classes. The stand-ins replace the addon's classes
  * when the addon did not load. None of these tests needs the addon.
  */
 import { inspect } from 'node:util'

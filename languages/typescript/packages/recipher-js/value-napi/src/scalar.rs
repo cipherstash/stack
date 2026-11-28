@@ -118,24 +118,24 @@ fn unsigned(value: u128) -> Int {
     }
 }
 
-/// The largest whole number a JavaScript `number` holds exactly: 2^53 - 1,
-/// `Number.MAX_SAFE_INTEGER`.
+/// The largest whole number that a JavaScript `number` stores exactly: 2^53 -
+/// 1, `Number.MAX_SAFE_INTEGER`.
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
 /// 2^64: the least magnitude above every 64-bit integer.
 const TWO_TO_64: f64 = 18_446_744_073_709_551_616.0;
 
-/// A JavaScript `number` as a JSON document holds it.
+/// A JavaScript `number` as a JSON document stores it.
 ///
-/// A whole number within the safe range (2^53 - 1 either side of zero) is
-/// an integer, as `JSON.stringify` writes it: `5`, not `5.0`. So a reader
-/// in another language can read it into an integer field. `-0` is the
-/// integer `0`.
+/// The safe range is 2^53 - 1 either side of zero. A whole number within the
+/// safe range is an integer, as `JSON.stringify` writes it: `5`, not `5.0`.
+/// So a reader in another language can read it into an integer field. `-0` is
+/// the integer `0`.
 ///
-/// A whole number from 2^53 up to 2^64 is refused. A `number` that large
-/// may not have the digits that were written, and an integer was probably
-/// meant, which a `bigint` holds exactly. Any other finite number is a
-/// float: one with a fraction, or one of 2^64 or more.
+/// A whole number from 2^53 up to 2^64 is refused. A `number` that large may
+/// not have the digits that were written. An integer was probably meant, and
+/// a `bigint` stores an integer exactly. Any other finite number is a float:
+/// a number with a fraction, or a number of 2^64 or more.
 pub(crate) fn json_number(value: f64) -> Result<Physical<'static>, NoJsonForm> {
     if !value.is_finite() {
         return Err(NoJsonForm::NonFinite);
@@ -151,9 +151,9 @@ pub(crate) fn json_number(value: f64) -> Result<Physical<'static>, NoJsonForm> {
     Ok(Physical::Float(Float::F64(value)))
 }
 
-/// A JavaScript `bigint` as a JSON document holds it: a signed or an
-/// unsigned 64-bit integer. A JSON parser in Rust or Go reads no wider, so
-/// a `bigint` outside that range is refused, whatever its size.
+/// A JavaScript `bigint` as a JSON document stores it: a signed or an
+/// unsigned 64-bit integer. A JSON parser in Rust or Go reads no wider
+/// integer. So a `bigint` outside that range is refused, whatever its size.
 pub(crate) fn json_bigint(negative: bool, words: &[u64]) -> Result<Int, NoJsonForm> {
     if words
         .get(1..)
@@ -163,7 +163,8 @@ pub(crate) fn json_bigint(negative: bool, words: &[u64]) -> Result<Int, NoJsonFo
     }
     let magnitude = words.first().copied().unwrap_or(0);
     if negative && magnitude != 0 {
-        // -2^63 is the least `i64`, and 2^63 is no `i64`: negate as `i128`.
+        // -2^63 is the least `i64`. 2^63 does not fit an `i64`, so negate as
+        // an `i128`.
         return i64::try_from(-i128::from(magnitude))
             .map(Int::I64)
             .map_err(|_| NoJsonForm::BigIntRange);
@@ -425,8 +426,8 @@ mod tests {
 
     #[test]
     fn a_whole_number_from_2_53_up_to_2_64_is_refused() {
-        // 2^53 and the next number a `number` can hold, the largest below
-        // 2^64, and the same below zero.
+        // 2^53, the next number a `number` can store, the largest `number`
+        // below 2^64, and the same three below zero.
         for number in [
             9_007_199_254_740_992.0,
             9_007_199_254_740_994.0,
@@ -451,7 +452,8 @@ mod tests {
             5e-324,
             // The largest `number` below 2^53 that is not whole.
             4_503_599_627_370_495.5,
-            // 2^64 and above: no integer the document's readers take.
+            // 2^64 and above: not an integer that the document's readers
+            // accept.
             TWO_TO_64,
             -TWO_TO_64,
             1e20,

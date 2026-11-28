@@ -29,7 +29,8 @@ pub enum Refusal {
     #[error("the value is nested deeper than {limit} levels")]
     #[diagnostic(code(recipher_js::too_deep))]
     TooDeep {
-        /// The most levels of arrays and objects the value may nest.
+        /// The largest number of levels of arrays and objects that the value
+        /// may nest.
         limit: usize,
     },
     /// An array with a hole.
@@ -59,7 +60,7 @@ pub enum Refusal {
     )]
     #[diagnostic(code(recipher_js::unpaired_surrogate))]
     UnpairedSurrogate,
-    /// A value that a JSON document cannot hold.
+    /// A value that a JSON document cannot contain.
     #[error("a JSON document cannot hold {0}")]
     #[diagnostic(code(recipher_js::not_json))]
     NotJson(NoJsonForm),
@@ -70,15 +71,15 @@ pub enum Refusal {
     Scalar(#[from] ConversionError),
 }
 
-/// A value that has no form in a JSON document. Each variant displays as
-/// what the value is, and never as the value.
+/// A value that has no form in a JSON document. Each variant's display text
+/// names the kind of value, and never the value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum NoJsonForm {
     /// `undefined`.
     #[error("`undefined`")]
     Undefined,
-    /// `NaN`, `Infinity` or `-Infinity`.
+    /// `NaN`, `Infinity`, or `-Infinity`.
     #[error("a number that is not finite")]
     NonFinite,
     /// A whole `number` from 2^53 up to 2^64, either side of zero. A
@@ -91,7 +92,7 @@ pub enum NoJsonForm {
     /// A `bigint` below -2^63 or above 2^64 - 1.
     #[error("a `bigint` outside the 64-bit range (below -2^63 or above 2^64 - 1)")]
     BigIntRange,
-    /// A `Buffer`, a typed array or a `DataView`.
+    /// A `Buffer`, a typed array, or a `DataView`.
     #[error("bytes")]
     Bytes,
     /// A `Date` or a wrapper class instance.

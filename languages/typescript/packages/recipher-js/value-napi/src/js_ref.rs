@@ -1,8 +1,10 @@
 //! [`JsRef`]: a live JavaScript value as an [`Encrypt`] source.
 //!
-//! The walk runs on the JavaScript thread, reading each value as it goes:
-//! no tree is built, and a scalar leaves the engine only to go straight to
-//! the sink. Values map to sink calls as follows:
+//! A walk is one pass over a value and every value nested in it. The walk
+//! runs on the JavaScript thread, and reads each value when it reaches that
+//! value. The walk builds no tree. The walk copies a scalar out of the
+//! JavaScript engine only to pass it straight to the sink. The walk makes one
+//! sink call for each value:
 //!
 //! | JavaScript             | `Sink` call                                     |
 //! | ---------------------- | ----------------------------------------------- |
@@ -17,31 +19,41 @@
 //! | `Array`                | `seq`, then `element()` per index               |
 //! | plain object           | `map`, then `entry(key)` per own property       |
 //!
-//! The wrapper classes carry the scalars JavaScript has no type for:
-//! `RcDate` is `Date` over the day count, `RcTimestamp` is
-//! `Timestamp(Nanos)` over the nanosecond count, `RcDecimal` is `Decimal`
-//! over the mantissa and `RcUuid` is `Uuid` over sixteen bytes.
+//! The wrapper classes represent the scalars that JavaScript has no type for:
 //!
-//! A getter that throws, a string with an unpaired surrogate, a BigInt out
-//! of range or a `Date` outside the wire's range stops the walk through
-//! [`Error::source`](vitaminc_aead::plaintext::Error::source), and comes
-//! back to JavaScript as that error: see [`JsFault`].
+//! | Class         | Scalar                                       |
+//! | ------------- | -------------------------------------------- |
+//! | `RcDate`      | `Date` over the day count                    |
+//! | `RcTimestamp` | `Timestamp(Nanos)` over the nanosecond count |
+//! | `RcDecimal`   | `Decimal` over the mantissa                  |
+//! | `RcUuid`      | `Uuid` over sixteen bytes                    |
+//!
+//! Four faults stop the walk:
+//!
+//! - a getter that throws;
+//! - a string with an unpaired surrogate;
+//! - a BigInt out of range;
+//! - a `Date` outside the range of the wire format.
+//!
+//! The walk reports each fault through
+//! [`Error::source`](vitaminc_aead::plaintext::Error::source). JavaScript
+//! receives the fault as that error: see [`JsFault`].
 //!
 //! # A JSON document
 //!
-//! [`JsRef::to_json`] walks a value as a JSON document. The walk is the
-//! same one, with the same safety rules, but it reads only what a JSON
-//! document holds:
+//! [`JsRef::to_json`] walks a value as a JSON document. `to_json` uses the
+//! same walk, with the same safety rules. For a document, the walk reads only
+//! the values a JSON document can contain:
 //!
-//! | JavaScript                           | In the document                 |
-//! | ------------------------------------ | ------------------------------- |
-//! | `null`, `boolean`, `string`          | the same                        |
-//! | `Array`, plain object                | an array, an object             |
-//! | whole `number` within 2^53 - 1       | an integer                      |
-//! | whole `number` from 2^53 up to 2^64  | refused                         |
-//! | any other finite `number`            | a float                         |
-//! | `bigint` within 64 bits              | an integer, with its digits     |
-//! | anything else                        | refused                         |
+//! | JavaScript                                | In the document             |
+//! | ----------------------------------------- | --------------------------- |
+//! | `null`, `boolean`, `string`               | the same                    |
+//! | `Array`, plain object                     | an array, an object         |
+//! | whole `number` within 2^53 - 1 of zero    | an integer                  |
+//! | whole `number` from 2^53 up to 2^64       | refused                     |
+//! | any other finite `number`                 | a float                     |
+//! | `bigint` within 64 bits                   | an integer, with its digits |
+//! | anything else                             | refused                     |
 
 use napi::bindgen_prelude::{
     Array, BigInt, FromNapiValue, JsObjectValue, JsValue, Object, Uint8ArraySlice, Unknown,
@@ -73,7 +85,8 @@ pub struct JsRef<'e> {
 pub(crate) enum Model {
     /// Every value in the module's first table.
     Value,
-    /// Only what a JSON document holds: the module's second table.
+    /// Only the values a JSON document can contain: the module's second
+    /// table.
     Json,
 }
 
@@ -89,9 +102,9 @@ impl<'e> JsRef<'e> {
         Self { value, depth }
     }
 
-    /// Walk the value into `sink` as a JSON document: the sink receives
-    /// only nulls, booleans, 64-bit integers, finite floats, text, sequences
-    /// and maps.
+    /// Walk the value into `sink` as a JSON document. The sink receives only
+    /// nulls, booleans, 64-bit integers, finite floats, text, sequences, and
+    /// maps.
     pub(crate) fn visit_json<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         js_walk(self.value, self.depth, Model::Json, sink)
     }
@@ -144,12 +157,15 @@ fn no_json_form<S: Sink>(form: NoJsonForm) -> S::Error {
     js_fault::<S>(not_json_error(form))
 }
 
-/// Walk one value. This function, [`js_object`], [`js_array`] and
-/// [`js_map`] are the walk's recursion: a nested level costs one frame of
-/// each. So they hold as little as they can, and everything that reads a
-/// scalar or builds a refusal is in a helper whose frame is gone before a
-/// container recurses. A document at the depth limit then walks in a debug
-/// build too.
+/// Walk one value.
+///
+/// This function, [`js_object`], [`js_array`], and [`js_map`] call each other
+/// recursively. Each nested level uses one stack frame of each function. So
+/// these functions keep as little on the stack as they can.
+///
+/// The code that reads a scalar or builds a refusal is in helper functions. A
+/// helper's stack frame is gone before the walk enters a nested container. As
+/// a result, a debug build can also walk a document at the depth limit.
 fn js_walk<S: Sink>(
     value: Unknown<'_>,
     depth: usize,
@@ -165,7 +181,7 @@ fn js_walk<S: Sink>(
     }
 }
 
-/// A value of type `ty`, which is not an object.
+/// A value of type `ty`. The value is not an object.
 fn js_primitive<S: Sink>(
     value: Unknown<'_>,
     ty: ValueType,
@@ -215,7 +231,7 @@ fn js_primitive<S: Sink>(
     }
 }
 
-/// What an object is, to the walk.
+/// The kind of object, as the walk classifies it.
 enum Shape {
     /// A `Buffer` or a typed array.
     Bytes,
@@ -229,11 +245,11 @@ enum Shape {
     Map,
 }
 
-/// What `value` is, or the refusal of an object the walk does not read.
+/// The shape of `value`, or the refusal of an object the walk does not read.
 ///
-/// A JSON document holds none of the scalar shapes: bytes, a `Date` and a
-/// wrapper class instance. Each is refused here by what it is, before it
-/// is read.
+/// A JSON document cannot contain the scalar shapes: bytes, a `Date`, and a
+/// wrapper class instance. This function refuses each one by its shape,
+/// before the walk reads it.
 fn js_shape(value: Unknown<'_>, model: Model) -> Result<Shape, JsFault> {
     let json = model == Model::Json;
     // Typed arrays before anything else: `napi_is_buffer` is true for every
