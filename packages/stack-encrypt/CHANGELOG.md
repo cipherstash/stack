@@ -520,10 +520,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The changes are:
   - The error names the kind of value that the engine got, and never
     includes the value. The kind is in `Error::found()`, in the payload
-    field `found`, and in the message. An example of the message is
-    `row 2 of the records to encrypt is null, not an object of fields`.
+    field `found`, and in the message. The message is one sentence, such
+    as `row 2 of the records to encrypt is null, not an object of fields`.
     The new `dynamic::Found` lists the kinds, such as `"null"`, `"array"`,
-    `"string"`, `"uint32"`, `"passthrough"`, and `"sealed"`.
+    `"string"`, `"uint32"`, `"passthrough"`, and `"sealed"`. The message
+    says `an encrypted value` for the kind `"sealed"`.
   - An error names a kind only when the engine can read the kind without
     decrypting anything. That is the kind of a value the caller sent, or
     the kind of a node in the unencrypted structure of a stored record.
@@ -567,11 +568,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       message leaves the cause out, and `Debug` prints the cause as
       `SourceError(..)`, because the text of the caller's error can
       include the value.
-  - The message of an `Error::Source` starts with `query input does not
-    fit the field` when only the input of a query can cause the reason.
-    Before, that message started with `record source does not fit the
-    plan`. Those reasons are about an operator, a range, a term,
-    statistics, a null query, or the input of a JSON operator.
+  - The message of an `Error::Source` names the input that the reason is
+    about. Before, every such message started with `record source does not
+    fit the plan`. Now the message starts with one of these:
+    - `the query input does not match the field`, when only the input of a
+      query can cause the reason. Those reasons are about an operator, a
+      range, a term, statistics, a null query, or the input of a JSON
+      operator.
+    - `the record to encrypt or the query input does not match the plan`,
+      for a value of another type and for an `undefined` value, when the
+      error names no row. A record and a query can both cause those
+      reasons.
+    - `the record to encrypt does not match the plan`, for every other
+      reason.
+  - The message of an `Error::Record` starts with `the record to decrypt
+    does not match the plan`. Before, that message started with `stored
+    record does not fit the plan`.
+  - The message of an `Error::SourceFailed` starts with `a value in the
+    record to encrypt returned an error while it was read`. The row and
+    the field follow. For an error that names no field, the message starts
+    with `the record to encrypt`.
 
 - **`dynamic::ValueFrame` is removed. The engine reads a plaintext as a
   borrowed `Frame` and keeps one as vitaminc's `OwnedFrame`** (#1955).

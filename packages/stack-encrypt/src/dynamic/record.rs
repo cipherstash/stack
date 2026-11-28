@@ -8908,7 +8908,7 @@ mod tests {
                 assert_eq!(error.found(), None, "no kind for bytes: {error}");
                 assert_eq!(
                     error.to_string(),
-                    "record plan is malformed: the bytes are not one transport frame",
+                    "record plan is malformed: the plan bytes are not one transport frame, the binary encoding of one value",
                     "the message"
                 );
             }
@@ -8929,9 +8929,7 @@ mod tests {
                 expect_shape(&error, "Plan", None, None, found);
                 assert_eq!(
                     error.to_string(),
-                    format!(
-                        "record plan is malformed: the plan is {found}, not an object of field specs"
-                    ),
+                    format!("the plan is {found}, not an object of field specs"),
                     "the message"
                 );
 
@@ -8939,9 +8937,7 @@ mod tests {
                 expect_shape(&error, "Plan", Some("age"), None, found);
                 assert_eq!(
                     error.to_string(),
-                    format!(
-                        r#"record plan is malformed: the field's spec is {found}, not an object (field "age")"#
-                    ),
+                    format!(r#"the field's spec is {found}, not an object (field "age")"#),
                     "the message"
                 );
             }
@@ -9040,9 +9036,7 @@ mod tests {
                 expect_shape(&error, "Source", None, Some(2), found);
                 assert_eq!(
                     error.to_string(),
-                    format!(
-                        "record source does not fit the plan: row 2 of the records to encrypt is {found}, not an object of fields"
-                    ),
+                    format!("row 2 of the records to encrypt is {found}, not an object of fields"),
                     "the message"
                 );
             }
@@ -9051,7 +9045,7 @@ mod tests {
             expect_shape(&error, "Source", None, None, Found::Passthrough);
             assert_eq!(
                 error.to_string(),
-                "record source does not fit the plan: the record to encrypt is a passthrough value, not an object of fields",
+                "the record to encrypt is a passthrough value, not an object of fields",
                 "the message"
             );
             // A value that is not of its field's declared type is refused
@@ -9242,7 +9236,8 @@ mod tests {
             assert_eq!(error.found(), None, "nothing was found");
             let message = error.to_string();
             assert_eq!(
-                message, r#"record source failed while it was read (row 1, field "email")"#,
+                message,
+                r#"a value in the record to encrypt returned an error while it was read (row 1, field "email")"#,
                 "the message"
             );
             let cause = std::error::Error::source(&error).expect("a cause");
@@ -9280,6 +9275,79 @@ mod tests {
                 matches!(error.into_crate(), crate::Error::Input(_)),
                 "an input error"
             );
+        }
+
+        /// The message of an [`Error::SourceFailed`] says "a value in the
+        /// record to encrypt" only when the error names a field. The help
+        /// text says why the message leaves the cause out. Neither text
+        /// includes the text of the cause.
+        #[test]
+        fn a_source_failure_says_where_it_happened() {
+            use miette::Diagnostic;
+            use vitaminc_aead::plaintext::SourceError;
+            let failed = |row, field: Option<&str>| Error::SourceFailed {
+                field: field.map(str::to_owned),
+                row,
+                cause: SourceError::msg("the getter saw marker-value"),
+            };
+            for (row, field, message) in [
+                (
+                    Some(1),
+                    Some("email"),
+                    r#"a value in the record to encrypt returned an error while it was read (row 1, field "email")"#,
+                ),
+                (
+                    None,
+                    Some("email"),
+                    r#"a value in the record to encrypt returned an error while it was read (field "email")"#,
+                ),
+                (
+                    Some(1),
+                    None,
+                    "the record to encrypt returned an error while it was read (row 1)",
+                ),
+                (
+                    None,
+                    None,
+                    "the record to encrypt returned an error while it was read",
+                ),
+            ] {
+                let error = failed(row, field);
+                assert_eq!(error.to_string(), message, "{row:?} {field:?}");
+                let help = error.help().expect("help").to_string();
+                assert_eq!(
+                    help,
+                    "The error that the value returned is the cause of this error. The message leaves the cause out, because the text of the cause can include the value.",
+                    "the help"
+                );
+                assert!(!help.contains("marker-value"), "no cause text: {help}");
+            }
+            assert_eq!(
+                Reason::SourceFailed.to_string(),
+                "a value returned an error while it was read",
+                "the reason"
+            );
+        }
+
+        /// The phrase that a message uses for each kind of value. The
+        /// phrase for an encrypted value does not use the name `sealed`
+        /// that the payload has.
+        #[test]
+        fn a_found_is_written_as_a_phrase() {
+            for (found, phrase) in [
+                (Found::Null, "null"),
+                (Found::Undefined, "undefined"),
+                (Found::Passthrough, "a passthrough value"),
+                (Found::Sealed, "an encrypted value"),
+                (Found::Kind(ValueKind::Array), "an array"),
+                (Found::Kind(ValueKind::UInt32), "a uint32"),
+                (
+                    Found::Unknown,
+                    "a value of a type this build does not define",
+                ),
+            ] {
+                assert_eq!(found.to_string(), phrase, "{found:?}");
+            }
         }
 
         /// The source shapes the shared runtime corpus cannot build: its
@@ -9384,7 +9452,7 @@ mod tests {
             expect_shape(&error, "Record", None, None, Found::Sealed);
             assert_eq!(
                 error.to_string(),
-                "stored record does not fit the plan: the record to decrypt is a sealed value, not an object of stored fields",
+                "the record to decrypt is an encrypted value, not an object of stored fields",
                 "the message"
             );
             for (what, stored, found) in [
@@ -9401,7 +9469,7 @@ mod tests {
                 assert_eq!(
                     error.to_string(),
                     format!(
-                        "stored record does not fit the plan: row 1 of the records to decrypt is {found}, not an object of stored fields"
+                        "row 1 of the records to decrypt is {found}, not an object of stored fields"
                     ),
                     "{what}: the message"
                 );
@@ -9542,11 +9610,16 @@ mod tests {
             }
         }
 
-        /// When only the input of a query can cause the reason, the message
-        /// says that the query input does not fit the field. For a reason
-        /// that a record source can cause, the message says that the record
-        /// source does not fit the plan. That includes a value of another
-        /// type. A query and a record can both cause that reason.
+        /// The start of the message of an [`Error::Source`] names the input
+        /// that the reason is about:
+        ///
+        /// - The query input, when only the input of a query can cause the
+        ///   reason.
+        /// - The record to encrypt, when only a record can cause the reason.
+        /// - Both, when a query and a record can both cause the reason and
+        ///   the error names no row. Those reasons are a value of another
+        ///   type and an `undefined` value. With a row, the message names
+        ///   the record, because only a record has rows.
         #[test]
         fn a_query_refusal_names_the_query_input() {
             use Reason::*;
@@ -9572,24 +9645,75 @@ mod tests {
                 let error = Error::bad_source(reason).in_field("age");
                 assert_eq!(
                     error.to_string(),
-                    format!(r#"query input does not fit the field: {reason} (field "age")"#),
+                    format!(r#"the query input does not match the field: {reason} (field "age")"#),
                     "{reason:?}"
                 );
             }
             for reason in [
                 FieldMissing,
+                FieldRepeated,
                 UnknownField,
-                FieldType,
+                RepeatedKey,
                 Passthrough,
                 Unframeable,
             ] {
                 let error = Error::bad_source(reason).in_field("age");
                 assert_eq!(
                     error.to_string(),
-                    format!(r#"record source does not fit the plan: {reason} (field "age")"#),
+                    format!(
+                        r#"the record to encrypt does not match the plan: {reason} (field "age")"#
+                    ),
                     "{reason:?}"
                 );
             }
+            for reason in [FieldType, Undefined] {
+                let error = Error::bad_source(reason).in_field("age");
+                assert_eq!(
+                    error.to_string(),
+                    format!(
+                        r#"the record to encrypt or the query input does not match the plan: {reason} (field "age")"#
+                    ),
+                    "{reason:?}"
+                );
+                let in_a_row = Error::Source {
+                    field: Some("age".to_owned()),
+                    row: Some(2),
+                    reason,
+                    found: None,
+                };
+                assert_eq!(
+                    in_a_row.to_string(),
+                    format!(
+                        r#"the record to encrypt does not match the plan: {reason} (row 2, field "age")"#
+                    ),
+                    "{reason:?} in a row"
+                );
+            }
+            // A reason that only a record can cause names the record with or
+            // without a row.
+            let unwritten = Error::Source {
+                field: None,
+                row: Some(1),
+                reason: Unframeable,
+                found: None,
+            };
+            assert_eq!(
+                unwritten.to_string(),
+                format!("the record to encrypt does not match the plan: {Unframeable} (row 1)"),
+                "a row that the source never wrote"
+            );
+            assert_eq!(
+                Error::bad_record(NoCiphertextNode)
+                    .in_field("email")
+                    .to_string(),
+                r#"the record to decrypt does not match the plan: no "c" node (field "email")"#,
+                "a stored record"
+            );
+            assert_eq!(
+                Error::bad_plan(NoFields).to_string(),
+                "record plan is malformed: the plan has no fields",
+                "a plan"
+            );
         }
 
         /// `in_field` names the field only where none is named yet.

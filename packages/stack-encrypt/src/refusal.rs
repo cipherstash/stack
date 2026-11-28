@@ -162,8 +162,8 @@ pub enum Error {
     /// - The plan declares two fields under one identity, or fields under
     ///   different contexts. No plan allows either.
     #[error(
-        "record plan is malformed: {}",
-        misfit_text(Subject::Plan, *reason, *found, None, field)
+        "{}",
+        misfit_text("record plan is malformed", Subject::Plan, *reason, *found, None, field)
     )]
     #[diagnostic(code(stack_encrypt::dynamic_plan))]
     Plan {
@@ -250,10 +250,10 @@ pub enum Error {
     /// The message and `Debug` leave the cause out, because the text of the
     /// caller's error can include the value. `Debug` prints the cause as
     /// `SourceError(..)`. The reason is [`Reason::SourceFailed`].
-    #[error("record source failed while it was read{}", place_text(*row, field))]
+    #[error("{}", source_failed_text(*row, field))]
     #[diagnostic(
         code(stack_encrypt::dynamic_source_failed),
-        help("The value's own error is this error's cause. It is left out of the message, because it can quote the value.")
+        help("The error that the value returned is the cause of this error. The message leaves the cause out, because the text of the cause can include the value.")
     )]
     SourceFailed {
         /// The field whose value the engine was reading. `None` when the
@@ -289,8 +289,15 @@ pub enum Error {
     /// fails with [`PlanError::FieldType`](crate::PlanError::FieldType)
     /// instead.
     #[error(
-        "stored record does not fit the plan: {}",
-        misfit_text(Subject::Record, *reason, *found, *row, field)
+        "{}",
+        misfit_text(
+            "the record to decrypt does not match the plan",
+            Subject::Record,
+            *reason,
+            *found,
+            *row,
+            field
+        )
     )]
     #[diagnostic(code(stack_encrypt::dynamic_record))]
     Record {
@@ -458,12 +465,40 @@ fn place_text(row: Option<usize>, field: &Option<String>) -> String {
     }
 }
 
+/// The message of an [`Error::SourceFailed`].
+///
+/// With a field, the message starts with "a value in the record to
+/// encrypt". Without a field, the error happened outside the value of any
+/// field, so the message starts with "the record to encrypt".
+fn source_failed_text(row: Option<usize>, field: &Option<String>) -> String {
+    let what = match field {
+        Some(_) => "a value in the record to encrypt",
+        None => "the record to encrypt",
+    };
+    format!(
+        "{what} returned an error while it was read{}",
+        place_text(row, field)
+    )
+}
+
 /// The message of an [`Error::Source`].
 ///
-/// The message starts with "query input does not fit the field" when only
-/// the input of a query can cause the reason ([`answers_a_query`]). For
-/// every other reason, the message starts with "record source does not fit
-/// the plan".
+/// The start of the message names the input that the reason is about.
+/// There are three cases:
+///
+/// - Only the input of a query can cause the reason
+///   ([`answers_a_query`]). The message starts with "the query input does
+///   not match the field".
+/// - A record and a query can both cause the reason
+///   ([`either_input_can_cause`]), and the error names no row. The message
+///   starts with "the record to encrypt or the query input does not match
+///   the plan".
+/// - Every other error is about a record. That includes an error that
+///   names a row, because only a record has rows. The message starts with
+///   "the record to encrypt does not match the plan".
+///
+/// The message of an error with a [`Found`] has no such start. That message
+/// is the sentence that [`misfit_text`] writes.
 fn source_text(
     reason: Reason,
     found: Option<Found>,
@@ -471,14 +506,22 @@ fn source_text(
     field: &Option<String>,
 ) -> String {
     let what = if answers_a_query(reason) {
-        "query input does not fit the field"
+        "the query input does not match the field"
+    } else if row.is_none() && either_input_can_cause(reason) {
+        "the record to encrypt or the query input does not match the plan"
     } else {
-        "record source does not fit the plan"
+        "the record to encrypt does not match the plan"
     };
-    format!(
-        "{what}: {}",
-        misfit_text(Subject::Source, reason, found, row, field)
-    )
+    misfit_text(what, Subject::Source, reason, found, row, field)
+}
+
+/// Returns `true` when a record and a query can both cause `reason`.
+///
+/// Those reasons are the ones in an error from
+/// [`read`](crate::dynamic::read). A record and a query both call `read` to
+/// convert a value to the type of its field.
+fn either_input_can_cause(reason: Reason) -> bool {
+    matches!(reason, Reason::FieldType | Reason::Undefined)
 }
 
 /// Returns `true` when only the input of a query can cause `reason`.
@@ -486,9 +529,9 @@ fn source_text(
 /// Those reasons are about an operator, a range, a term, statistics, a
 /// null query, or the input of a JSON operator.
 ///
-/// [`Reason::FieldType`] returns `false`. A query and a record both get
-/// that reason for a value that cannot be read as the field's type. So the
-/// message for that reason keeps the wording for a record.
+/// [`Reason::FieldType`] and [`Reason::Undefined`] return `false`. A query
+/// and a record both get those reasons for a value that cannot be read as
+/// the field's type ([`either_input_can_cause`]).
 fn answers_a_query(reason: Reason) -> bool {
     use Reason::*;
     matches!(
@@ -522,15 +565,21 @@ enum Subject {
     Record,
 }
 
-/// The main part of the message of an error about a plan, a record
-/// source, or a stored record.
+/// The message of an error about a plan, a record source, or a stored
+/// record.
 ///
-/// With a [`Found`], the text is a sentence that names the input, the kind
-/// of value the input is, and the kind the operation takes. An example is
-/// `row 2 of the records to encrypt is null, not an object of fields`.
-/// Without a [`Found`], the text is the reason, then the row and the field
-/// if the error names them.
+/// With a [`Found`], the message is one sentence that names the input, the
+/// kind of value the input is, and the kind the operation takes. An example
+/// is `row 2 of the records to encrypt is null, not an object of fields`.
+/// The sentence says everything that `what` would, so the message leaves
+/// `what` out.
+///
+/// Without a [`Found`], the message is `what`, then the reason, then the
+/// row and the field if the error names them. An example is
+/// `the record to encrypt does not match the plan: a field is given twice
+/// (field "age")`.
 fn misfit_text(
+    what: &str,
     subject: Subject,
     reason: Reason,
     found: Option<Found>,
@@ -538,9 +587,9 @@ fn misfit_text(
     field: &Option<String>,
 ) -> String {
     let Some(found) = found else {
-        return format!("{reason}{}", place_text(row, field));
+        return format!("{what}: {reason}{}", place_text(row, field));
     };
-    let what = match (subject, row, field) {
+    let input = match (subject, row, field) {
         (Subject::Plan, _, None) => "the plan".to_owned(),
         (Subject::Plan, _, Some(_)) => "the field's spec".to_owned(),
         (Subject::Source, None, _) => "the record to encrypt".to_owned(),
@@ -554,7 +603,7 @@ fn misfit_text(
         (Subject::Source, _) => "an object of fields",
         (Subject::Record, _) => "an object of stored fields",
     };
-    format!("{what} is {found}, not {expected}{}", in_field_text(field))
+    format!("{input} is {found}, not {expected}{}", in_field_text(field))
 }
 
 impl Error {
@@ -1014,10 +1063,10 @@ reasons! {
         /// transport frame is the binary encoding of one value. The bytes
         /// are empty, end early, repeat a key at any depth, or continue
         /// after the value ends. A plan sent as JSON text gets this reason.
-        NotAFrame => "not_a_frame", "the bytes are not one transport frame";
+        NotAFrame => "not_a_frame", "the plan bytes are not one transport frame, the binary encoding of one value";
         /// A value returned an error of its own while the engine read it
         /// ([`Error::SourceFailed`]).
-        SourceFailed => "source_failed", "a value failed while it was read";
+        SourceFailed => "source_failed", "a value returned an error while it was read";
     }
 }
 
@@ -1087,12 +1136,12 @@ impl fmt::Display for Found {
             Self::Null => f.write_str("null"),
             Self::Undefined => f.write_str("undefined"),
             Self::Passthrough => f.write_str("a passthrough value"),
-            Self::Sealed => f.write_str("a sealed value"),
+            Self::Sealed => f.write_str("an encrypted value"),
             Self::Kind(kind) => {
                 let name = kind.name();
                 write!(f, "{} {name}", crate::plan::article(name))
             }
-            Self::Unknown => f.write_str("a value of a type this build does not know"),
+            Self::Unknown => f.write_str("a value of a type this build does not define"),
         }
     }
 }
