@@ -1787,7 +1787,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     such a newtype when the program compiles. `keyset.encrypt` also
     refuses a struct with named fields.
   - `keyset.encrypt` also encrypts a fieldless enum that derives
-    `Encrypt`, as one `u32` value.
+    `Encrypt`, as one `u32` value. But `#[derive(Zeroize)]` does not wipe a
+    fieldless enum: its `zeroize` does nothing. So `keyset.encrypt` cannot
+    wipe the variant from memory after it encrypts it. To have the variant
+    wiped, give the enum a `#[default]` variant and implement
+    `zeroize::DefaultIsZeroes` for it, as the `OpaqueEncode` docs show.
   - The compile error for a refused type now says that the type cannot be
     encrypted into one `Ciphertext`. The error says what `keyset.encrypt`
     needs, and what to use instead:

@@ -100,6 +100,36 @@ pub(crate) mod sealed {
 /// `struct Tags(Vec<String>)`, still derives `Encrypt`. So it can be a field
 /// of a struct. `keyset.encrypt` refuses it, as it refuses a `Vec<String>`.
 ///
+/// A fieldless enum that derives `Encrypt` encrypts as one `u32`, so it is
+/// one value too. But `#[derive(Zeroize)]` does not wipe a fieldless enum:
+/// its `zeroize` does nothing. So `keyset.encrypt` cannot wipe the variant
+/// from memory after it encrypts it. To have the variant wiped, give the
+/// enum a `#[default]` variant and implement `zeroize::DefaultIsZeroes` for
+/// it. Its `zeroize` then overwrites the value with the default variant.
+///
+/// ```
+/// use stack_encrypt::{Encrypt, KeysetCipher};
+/// use zeroize::Zeroize;
+///
+/// #[derive(Encrypt, Clone, Copy, Default, Debug, PartialEq)]
+/// enum Status {
+///     #[default]
+///     Active,
+///     Suspended = 7,
+/// }
+///
+/// impl zeroize::DefaultIsZeroes for Status {}
+///
+/// fn encrypt<K: 'static>(keyset: &KeysetCipher<'_, K>) {
+///     let _ = keyset.encrypt(Status::Suspended);
+/// }
+///
+/// let mut status = Status::Suspended;
+/// status.zeroize();
+/// assert_eq!(status, Status::Active, "zeroize writes the default variant");
+/// # let _ = encrypt::<stack_encrypt::kms::FakeDataKeySource>;
+/// ```
+///
 /// You can also write the `Encrypt` impl of a type yourself. Such a type is
 /// an `OpaqueEncode` type when you implement `Scalar` for its borrow.
 ///

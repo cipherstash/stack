@@ -74,6 +74,31 @@
 //! A fieldless enum is a `Scalar`, by value and by reference, because it
 //! is one leaf.
 //!
+//! `#[derive(Zeroize)]` from the `zeroize` crate does not wipe a fieldless
+//! enum: its `zeroize` does nothing. So a caller that wipes the value after
+//! it encrypts it leaves the variant in memory. To have the variant wiped,
+//! give the enum a `#[default]` variant and implement
+//! `zeroize::DefaultIsZeroes` for it. Its `zeroize` then overwrites the
+//! value with the default variant.
+//!
+//! ```rust
+//! use vitaminc_aead::Encrypt;
+//! use zeroize::Zeroize;
+//!
+//! #[derive(Encrypt, Clone, Copy, Default, Debug, PartialEq)]
+//! enum Status {
+//!     #[default]
+//!     Active,
+//!     Suspended = 7,
+//! }
+//!
+//! impl zeroize::DefaultIsZeroes for Status {}
+//!
+//! let mut status = Status::Suspended;
+//! status.zeroize();
+//! assert_eq!(status, Status::Active, "zeroize writes the default variant");
+//! ```
+//!
 //! Enums with fields are not supported. Their payload has no agreed layout
 //! (internally or externally tagged, per-variant AAD), so model the choice
 //! explicitly, as a struct with a fieldless discriminant and `Option`
