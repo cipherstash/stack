@@ -76,7 +76,7 @@ expectType<Value>(plainObject)
 // What `json(..)` returns is both.
 expectType<Json>(json({ a: 1 }))
 expectType<Value>(json({ a: 1 }))
-// A UUID is not in the engine's value model yet.
+// This version of the SDK does not encrypt a UUID yet.
 declare const uuid: RcUuid
 // @ts-expect-error: a UUID is not a value.
 void keyset.encrypt(uuid)

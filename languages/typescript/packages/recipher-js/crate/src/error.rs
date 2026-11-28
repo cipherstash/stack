@@ -40,9 +40,9 @@ pub(crate) enum Error {
         help("Use `null` for a value that is not there.")
     )]
     Undefined,
-    /// An `RcUuid`. The engine's value model, the set of value types the
-    /// engine reads, has no UUID type.
-    #[error("a UUID cannot be encrypted yet, because the engine has no UUID type")]
+    /// An `RcUuid`. The engine accepts a UUID, but this version of the SDK
+    /// has no kind and no TypeScript type for one, so it refuses an `RcUuid`.
+    #[error("this version of the SDK does not encrypt a UUID yet")]
     #[diagnostic(code(recipher_js::uuid), help("Encrypt the UUID as a string instead."))]
     Uuid,
     /// A value outside the engine's value model, or a value that Node-API
