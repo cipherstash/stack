@@ -333,7 +333,7 @@ func parseVerified(decoded any, count int) ([]bool, error) {
 		return nil, guest.BadAnswer("se_verify", fmt.Errorf("it is %s, not a list", guest.KindOf(decoded)))
 	}
 	if len(list) != count {
-		return nil, guest.BadAnswer("se_verify", fmt.Errorf("it answers %d of %d values", len(list), count))
+		return nil, guest.BadAnswer("se_verify", countMismatch("values", len(list), count))
 	}
 	verified := make([]bool, len(list))
 	for i, v := range list {

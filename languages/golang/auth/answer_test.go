@@ -30,7 +30,7 @@ func TestAnAnswerThatIsNotAnObjectNamesTheExportAndItsKind(t *testing.T) {
 		if !errors.Is(err, ErrInternal) {
 			t.Fatalf("%s: %v, want ErrInternal", tc.kind, err)
 		}
-		want := "cipherstash: internal guest failure: the guest's answer to sa_token does not read: it is " + tc.kind + ", not an object; this is a bug, or a guest that does not match this module's version"
+		want := "cipherstash: internal guest failure: cannot read the guest's answer from sa_token: it is " + tc.kind + ", not an object. The cause is a bug, or a guest that does not match the version of this module"
 		if err.Error() != want {
 			t.Errorf("message:\n got %q\nwant %q", err.Error(), want)
 		}
@@ -46,8 +46,8 @@ func TestAnAnswerThatIsNotAnObjectNamesTheExportAndItsKind(t *testing.T) {
 		t.Fatalf("an object: %v, %v", fields, err)
 	}
 	if _, err := object("sa_token", []byte{0xff}); !errors.Is(err, ErrInternal) ||
-		!strings.Contains(err.Error(), "the guest's answer to sa_token does not read") ||
-		!strings.Contains(err.Error(), "does not match this module's version") {
+		!strings.Contains(err.Error(), "cannot read the guest's answer from sa_token") ||
+		!strings.Contains(err.Error(), "does not match the version of this module") {
 		t.Errorf("bytes that do not decode: %v", err)
 	}
 }
@@ -69,12 +69,12 @@ func TestListAnswersNameTheExportAndTheirKind(t *testing.T) {
 		answer []byte
 		want   string
 	}{
-		{func(b []byte) error { _, err := workspaceIDs(b); return err }, []byte{0xff}, "the guest's answer to sa_list_workspaces does not read: "},
-		{func(b []byte) error { _, err := workspaceIDs(b); return err }, marshal("secret"), "sa_list_workspaces does not read: it is a string, not a list"},
-		{func(b []byte) error { _, err := workspaceIDs(b); return err }, marshal([]any{"ws", int64(1)}), "sa_list_workspaces does not read: workspace id 1 is a number, not a string"},
-		{func(b []byte) error { _, err := decodeRunnable(b); return err }, []byte{0xff}, "the guest's answer to sa_auth_runnable does not read: "},
-		{func(b []byte) error { _, err := decodeRunnable(b); return err }, marshal("secret"), "sa_auth_runnable does not read: it is a string, not a list"},
-		{func(b []byte) error { _, err := decodeRunnable(b); return err }, marshal([]any{uint64(1), "secret"}), "sa_auth_runnable does not read: operation 1 is a string, not a handle"},
+		{func(b []byte) error { _, err := workspaceIDs(b); return err }, []byte{0xff}, "cannot read the guest's answer from sa_list_workspaces: "},
+		{func(b []byte) error { _, err := workspaceIDs(b); return err }, marshal("secret"), "from sa_list_workspaces: it is a string, not a list"},
+		{func(b []byte) error { _, err := workspaceIDs(b); return err }, marshal([]any{"ws", int64(1)}), "from sa_list_workspaces: workspace id 1 is a number, not a string"},
+		{func(b []byte) error { _, err := decodeRunnable(b); return err }, []byte{0xff}, "cannot read the guest's answer from sa_auth_runnable: "},
+		{func(b []byte) error { _, err := decodeRunnable(b); return err }, marshal("secret"), "from sa_auth_runnable: it is a string, not a list"},
+		{func(b []byte) error { _, err := decodeRunnable(b); return err }, marshal([]any{uint64(1), "secret"}), "from sa_auth_runnable: operation 1 is a string, not a handle"},
 	} {
 		err := tc.read(tc.answer)
 		if !errors.Is(err, ErrInternal) || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "secret") {
@@ -114,7 +114,7 @@ func TestAnAnswersFieldsNameTheExport(t *testing.T) {
 		{func() error { _, err := answer.uint64Field("expires_at"); return err }, "expires_at is a string, not an unsigned integer"},
 	} {
 		err := tc.read()
-		want := "cipherstash: internal guest failure: the guest's answer to sa_token does not read: " + tc.want + "; this is a bug, or a guest that does not match this module's version"
+		want := "cipherstash: internal guest failure: cannot read the guest's answer from sa_token: " + tc.want + ". The cause is a bug, or a guest that does not match the version of this module"
 		if !errors.Is(err, ErrInternal) || err == nil || err.Error() != want {
 			t.Errorf("message:\n got %v\nwant %q", err, want)
 		}
@@ -129,7 +129,7 @@ func TestAStepThatDoesNotReadNamesTheExport(t *testing.T) {
 	for _, raw := range [][]byte{{0xff}, mustMarshalAuth(t, "secret")} {
 		_, err := decodeAuthStep(raw)
 		if !errors.Is(err, ErrInternal) || !errors.Is(err, errStepMalformed) ||
-			!strings.Contains(err.Error(), "the guest's answer to sa_auth_io does not read: the step is malformed") ||
+			!strings.Contains(err.Error(), "cannot read the guest's answer from sa_auth_io: the step is malformed") ||
 			strings.Contains(err.Error(), "secret") {
 			t.Errorf("%x: %v", raw, err)
 		}

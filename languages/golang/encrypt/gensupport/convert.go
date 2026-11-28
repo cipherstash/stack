@@ -45,7 +45,7 @@ func convert(v any, out any) error {
 		case *[]byte, *[]any, *[]string, *[]int64, *[]int32, *[]uint32, *[]uint64, *[]float64, *[]bool, *[][]byte, *Values, *map[string]any, *any:
 			return nil
 		}
-		return fmt.Errorf("does not open as %s", reflect.TypeOf(out).Elem())
+		return notOfType(reflect.TypeOf(out).Elem())
 	}
 	switch out := out.(type) {
 	case *string:
@@ -156,7 +156,7 @@ func convert(v any, out any) error {
 func convertVia(v any, out any) error {
 	target := reflect.ValueOf(out)
 	if target.Kind() != reflect.Pointer || target.IsNil() {
-		return fmt.Errorf("%T is not a pointer an opened value is read into", out)
+		return fmt.Errorf("cannot read a decrypted value into %T, because the target must be a pointer that is not nil", out)
 	}
 	elem := target.Elem()
 	t := elem.Type()
@@ -183,7 +183,7 @@ func convertVia(v any, out any) error {
 		}
 		items, ok := v.([]any)
 		if !ok {
-			return fmt.Errorf("does not open as %s", t)
+			return notOfType(t)
 		}
 		result := reflect.MakeSlice(t, len(items), len(items))
 		for i, item := range items {
@@ -196,7 +196,7 @@ func convertVia(v any, out any) error {
 	case reflect.Array:
 		items, ok := v.([]any)
 		if !ok || len(items) != t.Len() {
-			return fmt.Errorf("does not open as %s", t)
+			return notOfType(t)
 		}
 		result := reflect.New(t).Elem()
 		for i, item := range items {
@@ -225,7 +225,7 @@ func convertVia(v any, out any) error {
 		elem.Set(result)
 		return nil
 	}
-	return fmt.Errorf("does not open as %s", t)
+	return notOfType(t)
 }
 
 // underlying is the built-in type a defined scalar type is declared over.
@@ -291,11 +291,17 @@ func widenNumber(n json.Number, out any) (any, error) {
 }
 
 // mismatch returns the error for a decrypted value that is not of the type
-// that the field needs. The error names that type. The error never names
-// the kind that the value decrypted to. That kind was inside the
-// ciphertext, so it is part of the plaintext.
+// that the field needs. want is a value of that type. See [notOfType].
 func mismatch(_, want any) error {
-	return fmt.Errorf("does not open as %T", want)
+	return fmt.Errorf("the decrypted value is not of type %T", want)
+}
+
+// notOfType returns the error for a decrypted value that is not of the Go
+// type that the field needs. The error names that type. The error never
+// names the kind that the value decrypted to. That kind was inside the
+// ciphertext, so it is part of the plaintext.
+func notOfType(want reflect.Type) error {
+	return fmt.Errorf("the decrypted value is not of type %s", want)
 }
 
 // outOfRange names the target type and not the value, which is plaintext.
@@ -423,5 +429,5 @@ func valuesOf(v any, want string) (Values, error) {
 	}
 	// The error does not name the kind that the value decrypted to. That
 	// kind was inside the ciphertext, so it is part of the plaintext.
-	return nil, fmt.Errorf("does not open as an object, and %s needs one", want)
+	return nil, fmt.Errorf("the decrypted value is not an object, and %s needs an object", want)
 }

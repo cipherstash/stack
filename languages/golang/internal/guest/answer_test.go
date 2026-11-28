@@ -44,11 +44,11 @@ func TestKindOfNamesAValueByItsKind(t *testing.T) {
 		{vcvalue.Timestamp{}, "a timestamp"},
 		{vcvalue.Decimal{}, "a decimal"},
 		{vcvalue.UUID{}, "a UUID"},
-		{vcvalue.Sealed("secret"), "a sealed value"},
-		{vcvalue.SealedEmptySeq("secret"), "a sealed empty list"},
-		{vcvalue.SealedEmptyMap("secret"), "a sealed empty map"},
+		{vcvalue.Sealed("secret"), "an encrypted value"},
+		{vcvalue.SealedEmptySeq("secret"), "an encrypted empty list"},
+		{vcvalue.SealedEmptyMap("secret"), "an encrypted empty map"},
 		{vcvalue.Plain{V: "secret"}, "a passthrough value"},
-		{vcvalue.Tagged{ID: 200, V: "secret"}, "a value of a type this build does not know"},
+		{vcvalue.Tagged{ID: 200, V: "secret"}, "a value of a type this build does not define"},
 		{int(1), "a number"},
 		{uint(1), "a number"},
 		{uintptr(1), "a number"},
@@ -60,8 +60,8 @@ func TestKindOfNamesAValueByItsKind(t *testing.T) {
 		{map[string]int64{"secret": 1}, "a map"},
 		{struct{ secret string }{"secret"}, "a struct"},
 		{new(int), "a pointer"},
-		{func() {}, "a single value"},
-		{make(chan int), "a single value"},
+		{func() {}, "a value of another kind"},
+		{make(chan int), "a value of another kind"},
 	} {
 		if got := guest.KindOf(tc.value); got != tc.want {
 			t.Errorf("KindOf(%T) = %q, want %q", tc.value, got, tc.want)
@@ -77,7 +77,7 @@ func TestBadAnswerIsInternalAndNamesTheExport(t *testing.T) {
 	if !errors.Is(err, guest.ErrInternal) {
 		t.Fatalf("%v is not ErrInternal", err)
 	}
-	want := "cipherstash: internal guest failure: the guest's answer to se_query_term does not read: it is a list, not an object; this is a bug, or a guest that does not match this module's version"
+	want := "cipherstash: internal guest failure: cannot read the guest's answer from se_query_term: it is a list, not an object. The cause is a bug, or a guest that does not match the version of this module"
 	if err.Error() != want {
 		t.Errorf("message:\n got %q\nwant %q", err.Error(), want)
 	}
@@ -105,8 +105,8 @@ func TestDecodeAnswerNamesTheExport(t *testing.T) {
 	}
 	_, err = guest.DecodeAnswer("se_contexts", []byte{0xff})
 	if !errors.Is(err, guest.ErrInternal) ||
-		!strings.HasPrefix(err.Error(), "cipherstash: internal guest failure: the guest's answer to se_contexts does not read: ") ||
-		!strings.HasSuffix(err.Error(), "; this is a bug, or a guest that does not match this module's version") {
+		!strings.HasPrefix(err.Error(), "cipherstash: internal guest failure: cannot read the guest's answer from se_contexts: ") ||
+		!strings.HasSuffix(err.Error(), ". The cause is a bug, or a guest that does not match the version of this module") {
 		t.Errorf("bytes that do not decode: %v", err)
 	}
 }

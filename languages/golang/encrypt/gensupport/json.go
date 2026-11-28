@@ -120,7 +120,7 @@ func GetDocument[T any](vals Values, name string) (T, error) {
 	if !ok {
 		// The error does not name the kind that the value decrypted to,
 		// because that kind was inside the ciphertext.
-		return out, fmt.Errorf("gensupport: decrypt: field %q: %w: does not open as its JSON text", name, encrypt.ErrEncoding)
+		return out, fmt.Errorf("gensupport: decrypt: field %q: %w: the decrypted value is not JSON text", name, encrypt.ErrEncoding)
 	}
 	out, err := encrypt.DecodeJSON[T](text)
 	if err != nil {

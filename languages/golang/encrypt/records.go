@@ -99,7 +99,7 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 		return nil, guest.BadAnswer("se_encrypt_record", fmt.Errorf("it is %s, not a list of rows", guest.KindOf(tree)))
 	}
 	if len(items) != len(rows) {
-		return nil, guest.BadAnswer("se_encrypt_record", fmt.Errorf("it answers %d of %d rows", len(items), len(rows)))
+		return nil, guest.BadAnswer("se_encrypt_record", countMismatch("rows", len(items), len(rows)))
 	}
 	sealed := make([]record.Sealed, len(items))
 	for i, item := range items {
@@ -520,7 +520,7 @@ func (c *Client) openEncoded(ctx context.Context, call callOptions, p *record.Pl
 		return nil, guest.BadAnswer("se_decrypt_record", errors.New("it is not a list of records"))
 	}
 	if len(items) != rows {
-		return nil, guest.BadAnswer("se_decrypt_record", fmt.Errorf("it answers %d of %d records", len(items), rows))
+		return nil, guest.BadAnswer("se_decrypt_record", countMismatch("records", len(items), rows))
 	}
 	order := make([]string, 0, len(p.Fields)+1)
 	if p.ContextField != "" {
@@ -618,4 +618,12 @@ func indexWord(o record.Output) string {
 func sourceDiagnostic(reason, field, message string) error {
 	return &Diagnostic{Code: "stack_encrypt::dynamic_source", Message: message,
 		Fields: map[string]any{"reason": reason, "field": field}}
+}
+
+// countMismatch returns the problem with an answer that has the wrong
+// number of items. The parameter what is the plural name of the items,
+// such as "rows". The answer has got items, and the caller sent want
+// items. The caller passes the problem to guest.BadAnswer.
+func countMismatch(what string, got, want int) error {
+	return fmt.Errorf("the number of %s is %d, not the %d that were sent", what, got, want)
 }

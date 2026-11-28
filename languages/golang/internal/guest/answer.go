@@ -26,15 +26,15 @@ func KindOf(v any) string {
 	case vcvalue.Object:
 		return "an object"
 	case vcvalue.Sealed:
-		return "a sealed value"
+		return "an encrypted value"
 	case vcvalue.SealedEmptySeq:
-		return "a sealed empty list"
+		return "an encrypted empty list"
 	case vcvalue.SealedEmptyMap:
-		return "a sealed empty map"
+		return "an encrypted empty map"
 	case vcvalue.Plain:
 		return "a passthrough value"
 	case vcvalue.Tagged:
-		return "a value of a type this build does not know"
+		return "a value of a type this build does not define"
 	case vcvalue.Int128, vcvalue.Uint128:
 		return "a number"
 	case vcvalue.Date:
@@ -68,7 +68,7 @@ func KindOf(v any) string {
 	case reflect.Pointer:
 		return "a pointer"
 	default:
-		return "a single value"
+		return "a value of another kind"
 	}
 }
 
@@ -82,7 +82,7 @@ func KindOf(v any) string {
 // guest that does not match the version of this module. An example is a
 // guest built from other source than the module that embeds it.
 func BadAnswer(export string, problem error) error {
-	return fmt.Errorf("%w: the guest's answer to %s does not read: %w; this is a bug, or a guest that does not match this module's version", ErrInternal, export, problem)
+	return fmt.Errorf("%w: cannot read the guest's answer from %s: %w. The cause is a bug, or a guest that does not match the version of this module", ErrInternal, export, problem)
 }
 
 // DecodeAnswer decodes the answer of export from its transport bytes.

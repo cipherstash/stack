@@ -681,7 +681,7 @@ func TestAMapFieldThatOpensAsAnotherKindNamesNoKind(t *testing.T) {
 		if !errors.Is(err, encrypt.ErrEncoding) {
 			t.Fatalf("%T for %s: %v, want ErrEncoding", tc.value, tc.want, err)
 		}
-		want := fmt.Sprintf(`gensupport: decrypt: field "tags": cipherstash: malformed input: does not open as an object, and %s needs one`, tc.want)
+		want := fmt.Sprintf(`gensupport: decrypt: field "tags": cipherstash: malformed input: the decrypted value is not an object, and %s needs an object`, tc.want)
 		if err.Error() != want {
 			t.Errorf("message:\n got %q\nwant %q", err.Error(), want)
 		}
@@ -706,7 +706,7 @@ func assertNamesNoKind(t *testing.T, err error) {
 func TestADocumentFieldThatOpensAsAnotherKindNamesNoKind(t *testing.T) {
 	for _, v := range []any{"secret", int64(7), []any{"secret"}} {
 		_, err := GetDocument[map[string]any](Values{"doc": v}, "doc")
-		want := `gensupport: decrypt: field "doc": cipherstash: malformed input: does not open as its JSON text`
+		want := `gensupport: decrypt: field "doc": cipherstash: malformed input: the decrypted value is not JSON text`
 		if !errors.Is(err, encrypt.ErrEncoding) || err.Error() != want {
 			t.Errorf("%T: message:\n got %v\nwant %q", v, err, want)
 		}
@@ -737,12 +737,12 @@ func TestAnOpenedValueOfAnotherTypeNamesNoKind(t *testing.T) {
 		v    any
 		want string
 	}{
-		{"a null for an integer", func(vals Values) error { _, err := Get[int32](vals, "f"); return err }, nil, "does not open as int32"},
-		{"a value for a list", func(vals Values) error { _, err := Get[[]flag](vals, "f"); return err }, "secret", "does not open as []gensupport.flag"},
-		{"a longer list for an array", func(vals Values) error { _, err := Get[[2]flag](vals, "f"); return err }, []any{true, true, true, true, true, true, true}, "does not open as [2]gensupport.flag"},
-		{"a list for an array", func(vals Values) error { _, err := Get[[2]flag](vals, "f"); return err }, "secret", "does not open as [2]gensupport.flag"},
-		{"a value for a struct", func(vals Values) error { _, err := Get[struct{ A int32 }](vals, "f"); return err }, "secret", "does not open as struct { A int32 }"},
-		{"a list for a bool", func(vals Values) error { _, err := Get[bool](vals, "f"); return err }, []any{"secret"}, "does not open as bool"},
+		{"a null for an integer", func(vals Values) error { _, err := Get[int32](vals, "f"); return err }, nil, "the decrypted value is not of type int32"},
+		{"a value for a list", func(vals Values) error { _, err := Get[[]flag](vals, "f"); return err }, "secret", "the decrypted value is not of type []gensupport.flag"},
+		{"a longer list for an array", func(vals Values) error { _, err := Get[[2]flag](vals, "f"); return err }, []any{true, true, true, true, true, true, true}, "the decrypted value is not of type [2]gensupport.flag"},
+		{"a list for an array", func(vals Values) error { _, err := Get[[2]flag](vals, "f"); return err }, "secret", "the decrypted value is not of type [2]gensupport.flag"},
+		{"a value for a struct", func(vals Values) error { _, err := Get[struct{ A int32 }](vals, "f"); return err }, "secret", "the decrypted value is not of type struct { A int32 }"},
+		{"a list for a bool", func(vals Values) error { _, err := Get[bool](vals, "f"); return err }, []any{"secret"}, "the decrypted value is not of type bool"},
 	} {
 		err := read(tc.get, tc.v)
 		if !errors.Is(err, encrypt.ErrEncoding) {
@@ -756,7 +756,7 @@ func TestAnOpenedValueOfAnotherTypeNamesNoKind(t *testing.T) {
 	}
 	var out struct{ A int32 }
 	err := Opaque(Values{OpaqueField: "secret"}, &out)
-	want := "gensupport: cipherstash: malformed input: the opaque value does not open as bytes"
+	want := "gensupport: cipherstash: malformed input: the decrypted opaque value is not bytes"
 	if !errors.Is(err, encrypt.ErrEncoding) || err == nil || err.Error() != want {
 		t.Errorf("opaque:\n got %v\nwant %q", err, want)
 	}

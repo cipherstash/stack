@@ -138,7 +138,7 @@ func (cph *Cipher) jsonOpen(ctx context.Context, plan *record.Plan, field string
 		return nil, guest.BadAnswer("se_json_open", errors.New("it is not a list of groups"))
 	}
 	if len(list) != len(rows) {
-		return nil, guest.BadAnswer("se_json_open", fmt.Errorf("it answers %d of %d groups", len(list), len(rows)))
+		return nil, guest.BadAnswer("se_json_open", countMismatch("groups", len(list), len(rows)))
 	}
 	return list, nil
 }
@@ -413,7 +413,7 @@ func (s JSONSelection[E]) Open(ctx context.Context, rows []*E) ([]JSONValue, err
 		case 1:
 			out[i] = JSONValue{Found: true, JSON: values[0]}
 		default:
-			return nil, guest.BadAnswer("se_json_open", fmt.Errorf("it opened %d values for row %d of a selector read", len(values), i))
+			return nil, guest.BadAnswer("se_json_open", fmt.Errorf("row %d of a selector read has %d decrypted values, not 0 or 1", i, len(values)))
 		}
 	}
 	return out, nil
@@ -637,7 +637,7 @@ func (c JSONChildren[E]) Open(ctx context.Context, entries []E) ([]JSONChildValu
 	for i, item := range list {
 		children, ok := item.([]any)
 		if !ok || len(children) != 1 {
-			return nil, guest.BadAnswer("se_json_open", fmt.Errorf("child %d is not one opened entry", i))
+			return nil, guest.BadAnswer("se_json_open", fmt.Errorf("child %d is not one decrypted entry", i))
 		}
 		if out[i], err = jsonChildValue(children[0]); err != nil {
 			return nil, guest.BadAnswer("se_json_open", fmt.Errorf("child %d: %w", i, err))
@@ -707,7 +707,7 @@ func (v JSONChildValue) LogValue() slog.Value { return slog.StringValue(redacted
 func jsonChildValue(item any) (JSONChildValue, error) {
 	fields, ok := item.(vcvalue.Object)
 	if !ok || len(fields) != 2 {
-		return JSONChildValue{}, errors.New("a child is not a map of a key or an index and json")
+		return JSONChildValue{}, errors.New(`it is not an object with "json" and either "key" or "index"`)
 	}
 	var child JSONChildValue
 	for _, field := range fields {
@@ -728,7 +728,7 @@ func jsonChildValue(item any) (JSONChildValue, error) {
 			}
 			child.JSON = value
 		default:
-			return JSONChildValue{}, fmt.Errorf("a value of another kind at %q", field.Key)
+			return JSONChildValue{}, fmt.Errorf("the value at %q is not text, an integer, or bytes", field.Key)
 		}
 	}
 	if child.label == noLabel || child.JSON == nil {

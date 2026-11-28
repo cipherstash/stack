@@ -90,7 +90,7 @@ func TestParseTargetsReadsEachEntry(t *testing.T) {
 		if !errors.Is(err, ErrInternal) {
 			t.Errorf("%s: %v, want ErrInternal", name, err)
 		}
-		if err != nil && !strings.Contains(err.Error(), "the guest's answer to se_targets does not read") {
+		if err != nil && !strings.Contains(err.Error(), "cannot read the guest's answer from se_targets") {
 			t.Errorf("%s: %v does not name the export", name, err)
 		}
 	}
@@ -225,8 +225,8 @@ func TestAnAnswerThatDoesNotDecodeNamesTheExport(t *testing.T) {
 		if !errors.Is(err, ErrInternal) || errors.Is(err, ErrEncoding) {
 			t.Fatalf("%s: %v, want ErrInternal alone", export, err)
 		}
-		want := "cipherstash: internal guest failure: the guest's answer to " + export + " does not read: "
-		if !strings.HasPrefix(err.Error(), want) || !strings.Contains(err.Error(), "does not match this module's version") {
+		want := "cipherstash: internal guest failure: cannot read the guest's answer from " + export + ": "
+		if !strings.HasPrefix(err.Error(), want) || !strings.Contains(err.Error(), "does not match the version of this module") {
 			t.Errorf("%s: %v", export, err)
 		}
 	}
@@ -243,9 +243,9 @@ func TestVerifyAndLimitAnswersSayWhatTheyAre(t *testing.T) {
 		count  int
 		want   string
 	}{
-		{"secret", 1, "se_verify does not read: it is a string, not a list"},
-		{[]any{true}, 2, "se_verify does not read: it answers 1 of 2 values"},
-		{[]any{true, "secret"}, 2, "se_verify does not read: answer 1 is a string, not a boolean"},
+		{"secret", 1, "from se_verify: it is a string, not a list"},
+		{[]any{true}, 2, "from se_verify: the number of values is 1, not the 2 that were sent"},
+		{[]any{true, "secret"}, 2, "from se_verify: answer 1 is a string, not a boolean"},
 	} {
 		_, err := parseVerified(tc.answer, tc.count)
 		if !errors.Is(err, ErrInternal) || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "secret") {
@@ -256,7 +256,7 @@ func TestVerifyAndLimitAnswersSayWhatTheyAre(t *testing.T) {
 		t.Errorf("a good answer: %v, %v", got, err)
 	}
 	_, err := parseLimit("secret")
-	if !errors.Is(err, ErrInternal) || !strings.Contains(err.Error(), "se_target_limit does not read: it is a string, not a row count or null") {
+	if !errors.Is(err, ErrInternal) || !strings.Contains(err.Error(), "from se_target_limit: it is a string, not a row count or null") {
 		t.Errorf("limit: %v", err)
 	}
 	if limit, err := parseLimit(nil); err != nil || limit != (Limit{}) {
@@ -308,8 +308,8 @@ func TestAnOpenedChildOfTheWrongShapeNamesNoKind(t *testing.T) {
 		item any
 		want string
 	}{
-		{"secret", "a child is not a map of a key or an index and json"},
-		{vcvalue.Object{{Key: "key", Value: "k"}, {Key: "json", Value: int64(7)}}, `a value of another kind at "json"`},
+		{"secret", `it is not an object with "json" and either "key" or "index"`},
+		{vcvalue.Object{{Key: "key", Value: "k"}, {Key: "json", Value: int64(7)}}, `the value at "json" is not text, an integer, or bytes`},
 	} {
 		_, err := jsonChildValue(tc.item)
 		if err == nil || err.Error() != tc.want {

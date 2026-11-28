@@ -56,11 +56,11 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   - A map field has the type `map[string]V`, `Values`, or
     `map[string]any`. The stored value of a map field can decrypt to
     something that is not an object. The message is then `decrypt: field
-    "tags": ... does not open as an object, and map[string]any needs
-    one`. Before, the message said `opened as []interface {}, not an
-    object`.
-  - The message for every other mismatch says `does not open as`, then
-    the type that the field needs. Those mismatches are:
+    "tags": ... the decrypted value is not an object, and map[string]any
+    needs an object`. Before, the message said `opened as []interface {},
+    not an object`.
+  - The message for every other mismatch says `the decrypted value is not
+    of type`, then the type that the field needs. Those mismatches are:
     - a value of another type
     - a null for a type that does not take a null
     - a list or an array of another length
@@ -74,7 +74,8 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   or that does not have the format that the function writes. The error for
   such an answer is still `ErrInternal`. The message of the error now has
   more detail:
-  - The message names the exported function.
+  - The message names the exported function, as in `cannot read the
+    guest's answer from se_query_term`.
   - The message says that the cause is a bug, or a guest that does not
     match the version of this module. The cause is not the program's
     input.

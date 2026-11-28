@@ -318,8 +318,8 @@ func TestAMalformedStepIsRefused(t *testing.T) {
 			t.Errorf("decodeStep(%x): %v, want ErrInternal for a malformed step", raw, err)
 			continue
 		}
-		if !strings.Contains(err.Error(), "the guest's answer to se_io does not read: the step is malformed") ||
-			!strings.Contains(err.Error(), "does not match this module's version") {
+		if !strings.Contains(err.Error(), "cannot read the guest's answer from se_io: the step is malformed") ||
+			!strings.Contains(err.Error(), "does not match the version of this module") {
 			t.Errorf("decodeStep(%x): %v", raw, err)
 		}
 	}
