@@ -2,20 +2,22 @@ error[E0277]: `u8` cannot be encrypted into one `Ciphertext`
   --> tests/ui/owned_collection_elements.rs:11:26
    |
 11 |     let _ = vec![1u8, 2].encrypt_into::<Vec<Ciphertext>, _>(keyset);
-   |                          ^^^^^^^^^^^^ `keyset.encrypt` encrypts one owned value
+   |                          ^^^^^^^^^^^^ this must be one owned value that can be wiped
    |
-   = help: the trait `OpaqueEncode` is not implemented for `u8`
-   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or an integer other than `u8`. A newtype that derives `Encrypt` over one of these is one value too.
-   = note: a borrow, such as a `&str`, is not owned. Pass an owned value, such as a `String`.
-   = note: the type must implement `Zeroize`, so that the value can be wiped after it is encrypted.
-   = note: to encrypt each element of a `Vec` into its own `Ciphertext`, use `EncryptInto`.
-   = note: to encrypt an `Option`, or a struct that derives `Encrypt`, use `keyset.encrypt_tree`. The result is a tree of ciphertexts.
-   = note: to encrypt a whole `Serialize` value as one `Ciphertext`, wrap the value in `OpaqueBlob`.
-help: the trait `OpaqueEncode` is implemented for `OpaqueBlob<T>`
-  --> src/blob.rs
+   = help: the trait `stack_encrypt::scalar::sealed::OneValue` is not implemented for `u8`
+   = note: to be encrypted into one `Ciphertext`, a type must meet three conditions.
+   = note: first, its value must be one scalar, such as a `String`, a `bool`, a float, a `Vec<u8>`, or a fixed-width integer other than `u8`. A newtype that derives `Encrypt` over a scalar is a scalar too.
+   = note: second, the value must be owned. A borrow, such as a `&str`, is not owned.
+   = note: third, the type must implement `Zeroize`, so that the value can be wiped after it is encrypted.
+   = note: a value that is not one scalar needs another call. `EncryptInto` encrypts each element of a `Vec` into its own `Ciphertext`. `keyset.encrypt_tree` encrypts an `Option` or a struct into a tree of ciphertexts. `OpaqueBlob` encrypts a whole `Serialize` value into one `Ciphertext`.
+help: the trait `EncryptTarget<Vec<S>>` is implemented for `Vec<T>`
+  --> src/target/collections.rs
    |
-   | impl<T: Serialize + Zeroize + Send + 'static> OpaqueEncode for OpaqueBlob<T> {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | / impl<S: Zeroize, T: EncryptTarget<S>> EncryptTarget<Vec<S>> for Vec<T>
+   | | where
+   | |     T::ContextInput: Clone + MaybeSend + 'static,
+   | |_________________________________________________^
+   = note: required for `u8` to implement `OpaqueEncode`
    = note: required for `stack_encrypt::Ciphertext` to implement `EncryptTarget<u8>`
    = note: 1 redundant requirement hidden
    = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `EncryptTarget<Vec<u8>>`
@@ -24,20 +26,22 @@ error[E0277]: `Option<i32>` cannot be encrypted into one `Ciphertext`
   --> tests/ui/owned_collection_elements.rs:12:36
    |
 12 |     let _ = vec![Some(1i32), None].encrypt_into::<Vec<Ciphertext>, _>(keyset);
-   |                                    ^^^^^^^^^^^^ `keyset.encrypt` encrypts one owned value
+   |                                    ^^^^^^^^^^^^ this must be one owned value that can be wiped
    |
-   = help: the trait `OpaqueEncode` is not implemented for `Option<i32>`
-   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or an integer other than `u8`. A newtype that derives `Encrypt` over one of these is one value too.
-   = note: a borrow, such as a `&str`, is not owned. Pass an owned value, such as a `String`.
-   = note: the type must implement `Zeroize`, so that the value can be wiped after it is encrypted.
-   = note: to encrypt each element of a `Vec` into its own `Ciphertext`, use `EncryptInto`.
-   = note: to encrypt an `Option`, or a struct that derives `Encrypt`, use `keyset.encrypt_tree`. The result is a tree of ciphertexts.
-   = note: to encrypt a whole `Serialize` value as one `Ciphertext`, wrap the value in `OpaqueBlob`.
-help: the trait `OpaqueEncode` is implemented for `OpaqueBlob<T>`
-  --> src/blob.rs
+   = help: the trait `stack_encrypt::scalar::sealed::OneValue` is not implemented for `Option<i32>`
+   = note: to be encrypted into one `Ciphertext`, a type must meet three conditions.
+   = note: first, its value must be one scalar, such as a `String`, a `bool`, a float, a `Vec<u8>`, or a fixed-width integer other than `u8`. A newtype that derives `Encrypt` over a scalar is a scalar too.
+   = note: second, the value must be owned. A borrow, such as a `&str`, is not owned.
+   = note: third, the type must implement `Zeroize`, so that the value can be wiped after it is encrypted.
+   = note: a value that is not one scalar needs another call. `EncryptInto` encrypts each element of a `Vec` into its own `Ciphertext`. `keyset.encrypt_tree` encrypts an `Option` or a struct into a tree of ciphertexts. `OpaqueBlob` encrypts a whole `Serialize` value into one `Ciphertext`.
+help: the trait `EncryptTarget<Vec<S>>` is implemented for `Vec<T>`
+  --> src/target/collections.rs
    |
-   | impl<T: Serialize + Zeroize + Send + 'static> OpaqueEncode for OpaqueBlob<T> {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | / impl<S: Zeroize, T: EncryptTarget<S>> EncryptTarget<Vec<S>> for Vec<T>
+   | | where
+   | |     T::ContextInput: Clone + MaybeSend + 'static,
+   | |_________________________________________________^
+   = note: required for `Option<i32>` to implement `OpaqueEncode`
    = note: required for `stack_encrypt::Ciphertext` to implement `EncryptTarget<Option<i32>>`
    = note: 1 redundant requirement hidden
    = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `EncryptTarget<Vec<Option<i32>>>`
@@ -65,20 +69,20 @@ error[E0277]: `Vec<i32>` cannot be encrypted into one `Ciphertext`
   --> tests/ui/owned_collection_elements.rs:14:27
    |
 14 |     let _ = vec![1i32, 2].encrypt_into::<Ciphertext, _>(keyset);
-   |                           ^^^^^^^^^^^^ `keyset.encrypt` encrypts one owned value
+   |                           ^^^^^^^^^^^^ this must be one owned value that can be wiped
    |
-   = help: the trait `OpaqueEncode` is not implemented for `Vec<i32>`
-   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or an integer other than `u8`. A newtype that derives `Encrypt` over one of these is one value too.
-   = note: a borrow, such as a `&str`, is not owned. Pass an owned value, such as a `String`.
-   = note: the type must implement `Zeroize`, so that the value can be wiped after it is encrypted.
-   = note: to encrypt each element of a `Vec` into its own `Ciphertext`, use `EncryptInto`.
-   = note: to encrypt an `Option`, or a struct that derives `Encrypt`, use `keyset.encrypt_tree`. The result is a tree of ciphertexts.
-   = note: to encrypt a whole `Serialize` value as one `Ciphertext`, wrap the value in `OpaqueBlob`.
-help: the trait `OpaqueEncode` is implemented for `OpaqueBlob<T>`
-  --> src/blob.rs
+   = help: the trait `stack_encrypt::scalar::sealed::OneValue` is not implemented for `Vec<i32>`
+   = note: to be encrypted into one `Ciphertext`, a type must meet three conditions.
+   = note: first, its value must be one scalar, such as a `String`, a `bool`, a float, a `Vec<u8>`, or a fixed-width integer other than `u8`. A newtype that derives `Encrypt` over a scalar is a scalar too.
+   = note: second, the value must be owned. A borrow, such as a `&str`, is not owned.
+   = note: third, the type must implement `Zeroize`, so that the value can be wiped after it is encrypted.
+   = note: a value that is not one scalar needs another call. `EncryptInto` encrypts each element of a `Vec` into its own `Ciphertext`. `keyset.encrypt_tree` encrypts an `Option` or a struct into a tree of ciphertexts. `OpaqueBlob` encrypts a whole `Serialize` value into one `Ciphertext`.
+help: the trait `EncryptTarget<S>` is implemented for `stack_encrypt::Ciphertext`
+  --> src/scalar.rs
    |
-   | impl<T: Serialize + Zeroize + Send + 'static> OpaqueEncode for OpaqueBlob<T> {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | impl<S: OpaqueEncode> EncryptTarget<S> for Ciphertext {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `Vec<i32>` to implement `OpaqueEncode`
    = note: required for `stack_encrypt::Ciphertext` to implement `EncryptTarget<Vec<i32>>`
 
 error[E0277]: the trait bound `u8: vitaminc_aead::typed::FromScalar` is not satisfied

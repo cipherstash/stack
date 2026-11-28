@@ -279,6 +279,13 @@ impl<T: ?Sized + EncryptRef> Encrypt for &Lent<'_, T> {
 /// seals_one_leaf(Blob(vec![7]));
 /// ```
 ///
+/// A hand-written leaf must set `const DEPTH: Option<usize> =
+/// depth::SCALAR;` in each `Encrypt` impl that is marked `Scalar`, as
+/// `Blob` does. The default `DEPTH` is `None`. `None` means that the depth
+/// depends on the value. A `Scalar` impl contradicts that default. So a
+/// caller that checks `DEPTH`, as `seals_one_leaf` does, refuses the type
+/// when the program is built.
+///
 /// `Vec<u8>` is the one exception to the rule that a `Vec` is a sequence:
 /// it is a byte string, sealed as a single bytes leaf. The same goes for
 /// `[u8; N]` and `&[u8]`. So `vec![1u8, 2, 3]` is a `Scalar`, while a
