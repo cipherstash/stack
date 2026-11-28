@@ -1296,12 +1296,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A `Scalar` type that you write by hand must set its `DEPTH`** (#2012).
   `keyset.encrypt` now checks, when the program is built, that the borrow
-  of the type encrypts as one value. So the `Encrypt` impl of the borrow
-  must contain `const DEPTH: Option<usize> = depth::SCALAR;`. `depth` is
-  `vitaminc_aead::plaintext::depth`. An impl that leaves `DEPTH` at its
-  default `None` compiled before. Now `cargo build` fails with `E0080`,
-  and the message names the line to add. `cargo check` does not run this
-  check.
+  of the type encrypts as one value. So the `Encrypt` impl that you wrote
+  for the borrow must contain `const DEPTH: Option<usize> = depth::SCALAR;`.
+  `depth` is `vitaminc_aead::plaintext::depth`.
+  - An impl that leaves `DEPTH` at its default `None` compiled before. Now
+    `cargo build` fails with `E0080`, and the message names the line to
+    add. `cargo check` does not run this check.
+  - A newtype that derives `Encrypt` copies the `DEPTH` of the type it
+    wraps. So when the newtype fails this check, fix the type it wraps.
+    That is the innermost type whose `Encrypt` impl you wrote by hand.
 
 ### Added
 

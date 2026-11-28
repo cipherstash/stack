@@ -145,6 +145,10 @@ pub(crate) mod sealed {
 /// checks the `DEPTH` when your program is built. A `Scalar` type whose
 /// borrow has any other `DEPTH` fails the build.
 ///
+/// A newtype that derives `Encrypt` copies the `DEPTH` of the type it wraps.
+/// So when a derived newtype fails this check, fix the type it wraps. That
+/// is the innermost type whose `Encrypt` impl you wrote by hand.
+///
 /// [`OpaqueBlob<T>`](crate::OpaqueBlob) is an `OpaqueEncode` type too. It
 /// encodes a whole `Serialize` value as one storage blob first.
 ///
@@ -332,8 +336,9 @@ where
             assert!(
                 vitaminc_aead::plaintext::depth::is_scalar(<S as crate::EncryptRef>::REF_DEPTH),
                 "a type marked `Scalar` must encrypt as one value. Set \
-                 `const DEPTH: Option<usize> = depth::SCALAR;` in the `Encrypt` impl of its \
-                 borrow.",
+                 `const DEPTH: Option<usize> = depth::SCALAR;` in the `Encrypt` impl that you \
+                 wrote for its borrow. For a newtype that derives `Encrypt`, set it on the \
+                 innermost type whose `Encrypt` impl you wrote by hand.",
             )
         };
         crate::target::core::encrypt_opaque(self.lend(), cipher, context)
