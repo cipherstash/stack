@@ -113,6 +113,7 @@ jobs:
               - '!packages/stack-guest-abi/**'
               - '!packages/vitaminc-aead/**'
               - '!packages/recipher-frame/**'
+              - '!packages/stack-encrypt-downstream/**'
               - '!packages/stack-auth/fuzz/**'
               # The TypeScript SDK on Stack Encrypt. Nothing these jobs build
               # depends on it, and tests-recipher-js.yml runs its tests.

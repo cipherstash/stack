@@ -13,6 +13,8 @@ members = [
   "packages/stack-kms",
   "packages/stack-encrypt",
   "packages/stack-encrypt-derive",
+  # A crate that depends on stack-encrypt alone, as an application does.
+  "packages/stack-encrypt-downstream",
   "packages/stack-encrypt-jsonpath",
   "packages/stack-guest-abi",
   # The AEAD crates moved from cipherstash/vitaminc. vitaminc-aead keeps

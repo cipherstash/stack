@@ -3688,6 +3688,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "stack-encrypt-downstream"
+version = "0.0.0"
+dependencies = [
+ "stack-encrypt",
+ "tokio",
+ "trybuild",
+]
+
+[[package]]
 name = "stack-encrypt-jsonpath"
 version = "0.3.0"
 dependencies = [

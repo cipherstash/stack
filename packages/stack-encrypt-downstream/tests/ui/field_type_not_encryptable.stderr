@@ -1,0 +1,214 @@
+error[E0277]: the trait bound `Opaque: FromScalar` is not satisfied
+ --> tests/ui/field_type_not_encryptable.rs:7:19
+  |
+7 | #[derive(Encrypt, Decrypt)]
+  |                   ^^^^^^^ unsatisfied trait bound
+  |
+help: the trait `FromScalar` is not implemented for `Opaque`
+ --> tests/ui/field_type_not_encryptable.rs:5:1
+  |
+5 | struct Opaque;
+  | ^^^^^^^^^^^^^
+  = help: the following other types implement trait `FromScalar`:
+            JsonPlaintext
+            Vec<u8>
+            [u8; N]
+            bool
+            f32
+            f64
+            i128
+            i16
+          and $N others
+  = note: required for `Opaque` to implement `Decrypt`
+  = note: required for `Forward<Opaque, Slot<'__s, Opaque>>` to implement `stack_encrypt::plaintext::Sink`
+  = note: 1 redundant requirement hidden
+  = note: required for `Either<Forward<std::string::String, Slot<'__s, std::string::String>>, Forward<Opaque, Slot<'__s, Opaque>>>` to implement `stack_encrypt::plaintext::Sink`
+note: required by a bound in `stack_encrypt::plaintext::MapSink::Entry`
+ --> $WORKSPACE/packages/vitaminc-aead/src/plaintext/mod.rs
+  |
+  |     type Entry<'s>: Sink<Error = Self::Error>
+  |                          ^^^^^^^^^^^^^^^^^^^ required by this bound in `MapSink::Entry`
+  = note: this error originates in the derive macro `Decrypt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `Opaque: FromScalar` is not satisfied
+ --> tests/ui/field_type_not_encryptable.rs:7:19
+  |
+7 | #[derive(Encrypt, Decrypt)]
+  |                   ^^^^^^^ unsatisfied trait bound
+  |
+help: the trait `FromScalar` is not implemented for `Opaque`
+ --> tests/ui/field_type_not_encryptable.rs:5:1
+  |
+5 | struct Opaque;
+  | ^^^^^^^^^^^^^
+  = help: the following other types implement trait `FromScalar`:
+            JsonPlaintext
+            Vec<u8>
+            [u8; N]
+            bool
+            f32
+            f64
+            i128
+            i16
+          and $N others
+  = note: required for `Opaque` to implement `Decrypt`
+note: required by a bound in `Forward`
+ --> $WORKSPACE/packages/vitaminc-aead/src/typed.rs
+  |
+  | pub struct Forward<T: Decrypt, O>(pub T::Sink, pub O);
+  |                       ^^^^^^^ required by this bound in `Forward`
+  = note: this error originates in the derive macro `Decrypt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `Opaque: Encrypt` is not satisfied
+  --> tests/ui/field_type_not_encryptable.rs:10:13
+   |
+10 |     secret: Opaque,
+   |             ^^^^^^ unsatisfied trait bound
+   |
+help: the trait `Encrypt` is not implemented for `Opaque`
+  --> tests/ui/field_type_not_encryptable.rs:5:1
+   |
+ 5 | struct Opaque;
+   | ^^^^^^^^^^^^^
+note: there are multiple different versions of crate `vitaminc_aead` in the dependency graph
+  --> $WORKSPACE/packages/vitaminc-aead/src/plaintext/mod.rs
+   |
+   | pub trait Encrypt {
+   | ^^^^^^^^^^^^^^^^^ this is the expected trait
+   |
+  ::: $CARGO/vitaminc-aead-$VERSION/src/encrypt/mod.rs
+   |
+   | pub trait Encrypt {
+   | ----------------- this is the trait that was imported
+   = help: you can use `cargo tree` to explore your dependency tree
+   = help: the following other types implement trait `Encrypt`:
+             &&T
+             &'__r Record
+             &BTreeMap<K, V>
+             &HashMap<K, V>
+             &JsonPlaintext
+             &Option<T>
+             &PassthroughFrame
+             &Protected<T>
+           and $N others
+
+error[E0277]: the trait bound `Opaque: Encrypt` is not satisfied
+ --> tests/ui/field_type_not_encryptable.rs:7:10
+  |
+7 | #[derive(Encrypt, Decrypt)]
+  |          ^^^^^^^ unsatisfied trait bound
+  |
+help: the trait `Encrypt` is not implemented for `Opaque`
+ --> tests/ui/field_type_not_encryptable.rs:5:1
+  |
+5 | struct Opaque;
+  | ^^^^^^^^^^^^^
+note: there are multiple different versions of crate `vitaminc_aead` in the dependency graph
+ --> $WORKSPACE/packages/vitaminc-aead/src/plaintext/mod.rs
+  |
+  | pub trait Encrypt {
+  | ^^^^^^^^^^^^^^^^^ this is the expected trait
+  |
+ ::: $CARGO/vitaminc-aead-$VERSION/src/encrypt/mod.rs
+  |
+  | pub trait Encrypt {
+  | ----------------- this is the trait that was imported
+  = help: you can use `cargo tree` to explore your dependency tree
+  = help: the following other types implement trait `Encrypt`:
+            &&T
+            &'__r Record
+            &BTreeMap<K, V>
+            &HashMap<K, V>
+            &JsonPlaintext
+            &Option<T>
+            &PassthroughFrame
+            &Protected<T>
+          and $N others
+note: required by a bound in `discard_one`
+ --> $WORKSPACE/packages/vitaminc-aead/src/plaintext/sources.rs
+  |
+  | pub fn discard_one<P: Encrypt>(value: P) {
+  |                       ^^^^^^^ required by this bound in `discard_one`
+  = note: this error originates in the derive macro `Encrypt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `for<'a> &'a Opaque: Encrypt` is not satisfied
+  --> tests/ui/field_type_not_encryptable.rs:10:13
+   |
+10 |     secret: Opaque,
+   |             ^^^^^^ the trait `for<'a> Encrypt` is not implemented for `&'a Opaque`
+   |
+note: there are multiple different versions of crate `vitaminc_aead` in the dependency graph
+  --> $WORKSPACE/packages/vitaminc-aead/src/plaintext/mod.rs
+   |
+   | pub trait Encrypt {
+   | ^^^^^^^^^^^^^^^^^ this is the expected trait
+   |
+  ::: $CARGO/vitaminc-aead-$VERSION/src/encrypt/mod.rs
+   |
+   | pub trait Encrypt {
+   | ----------------- this is the found trait
+   = help: you can use `cargo tree` to explore your dependency tree
+   = help: the following other types implement trait `Encrypt`:
+             &&T
+             &'__r Record
+             &BTreeMap<K, V>
+             &HashMap<K, V>
+             &JsonPlaintext
+             &Option<T>
+             &PassthroughFrame
+             &Protected<T>
+           and $N others
+   = note: required for `Opaque` to implement `EncryptRef`
+
+error[E0277]: the trait bound `for<'a> &'a Opaque: Encrypt` is not satisfied
+ --> tests/ui/field_type_not_encryptable.rs:7:10
+  |
+7 | #[derive(Encrypt, Decrypt)]
+  |          ^^^^^^^ the trait `for<'a> Encrypt` is not implemented for `&'a Opaque`
+  |
+note: there are multiple different versions of crate `vitaminc_aead` in the dependency graph
+ --> $WORKSPACE/packages/vitaminc-aead/src/plaintext/mod.rs
+  |
+  | pub trait Encrypt {
+  | ^^^^^^^^^^^^^^^^^ this is the expected trait
+  |
+ ::: $CARGO/vitaminc-aead-$VERSION/src/encrypt/mod.rs
+  |
+  | pub trait Encrypt {
+  | ----------------- this is the found trait
+  = help: you can use `cargo tree` to explore your dependency tree
+  = help: the following other types implement trait `Encrypt`:
+            &&T
+            &'__r Record
+            &BTreeMap<K, V>
+            &HashMap<K, V>
+            &JsonPlaintext
+            &Option<T>
+            &PassthroughFrame
+            &Protected<T>
+          and $N others
+  = note: required for `Opaque` to implement `EncryptRef`
+  = note: this error originates in the derive macro `Encrypt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `Opaque: FromScalar` is not satisfied
+  --> tests/ui/field_type_not_encryptable.rs:10:13
+   |
+10 |     secret: Opaque,
+   |             ^^^^^^ unsatisfied trait bound
+   |
+help: the trait `FromScalar` is not implemented for `Opaque`
+  --> tests/ui/field_type_not_encryptable.rs:5:1
+   |
+ 5 | struct Opaque;
+   | ^^^^^^^^^^^^^
+   = help: the following other types implement trait `FromScalar`:
+             JsonPlaintext
+             Vec<u8>
+             [u8; N]
+             bool
+             f32
+             f64
+             i128
+             i16
+           and $N others
+   = note: required for `Opaque` to implement `Decrypt`

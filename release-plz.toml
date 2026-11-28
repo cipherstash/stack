@@ -69,6 +69,11 @@ release = false
 publish = false
 
 [[package]]
+name = "stack-encrypt-downstream"
+release = false
+publish = false
+
+[[package]]
 name = "stack-auth-node"
 release = false
 publish = false
