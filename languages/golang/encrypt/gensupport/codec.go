@@ -289,6 +289,10 @@ func Passthrough[T any](rec Record, name string) (T, error) {
 // another type is an error and never a silent zero. A defined type over a
 // scalar (type Email string) is read at its underlying type and converted by
 // the generated code.
+//
+// Get reads a UUID field in the same way, as [16]byte. The generated code
+// then converts the value to the field's type, such as
+// github.com/google/uuid.UUID.
 func Get[T any](vals Values, name string) (T, error) {
 	var out T
 	v, ok := vals[name]

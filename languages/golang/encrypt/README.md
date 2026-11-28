@@ -380,11 +380,29 @@ or a type defined over one (`type Email string`):
 | `encrypt.Decimal` | a decimal: a 96-bit coefficient and a scale up to 28 | `equality` | `Eq` |
 | `encrypt.Date` | a calendar date | `equality` | `Eq` |
 | `time.Time` | a timestamp, to the nanosecond, in UTC | `equality` | `Eq` |
+| `[16]byte`, a type declared as `[16]byte`, `github.com/google/uuid.UUID`, or `vcvalue.UUID` | a UUID | `equality` | `Eq` |
 
 Each query method needs its index declared. A field of bytes takes no `ore`
 or `ope` index: the engine answers no ordering over bytes, so the term
 would be stored and never queried, and `stashgen` refuses the declaration
 (see [Queries](#queries)).
+
+A UUID has its own rule for a type defined over another type. A type whose
+declaration writes out an array of 16 bytes, such as `type ID [16]byte`, is a
+UUID. A type declared over another type, such as `type MyID uuid.UUID`, is not
+a UUID, and `stashgen` refuses it. The reason is that `encrypt.Int128` is also
+an array of 16 bytes. Only the declaration shows whether a type is a UUID or an
+integer.
+
+A UUID takes an `equality` index and no other. A UUID opens as the field's own
+type, such as `github.com/google/uuid.UUID`. "UUID fields" in the `stashgen`
+README lists every rule.
+
+A sealed field declared over a pointer, such as `*encrypt.Date`, is optional.
+The field's `null=` option says whether `nil` is stored as a sealed null or as
+SQL `NULL`. A sealed null is `nil` encrypted in the same way as a value, so the
+stored column does not show that the value is absent. "Optional fields" in the
+`stashgen` README describes both.
 
 `encrypt.Date`, `Int128`, `Uint128` and `Decimal` are vitaminc's `vcvalue`
 types; build them with `encrypt.DateOf`, `ParseInt128`, `ParseUint128` and
@@ -393,8 +411,7 @@ UTC: compare it with `Equal`, not `==`. A decimal opens at the scale it was
 sealed with, but a zero has no sign: `-0.00` opens as `0.00`. The zero
 `encrypt.Date` is not a date, and `Encrypt` or a query refuses it with
 `ErrEncoding`, naming the field; so is a decimal or a `time.Time` outside
-vitaminc's range. A sealed field cannot be a pointer, so an optional date has
-no sealed form yet: keep it in an opaque struct, or use a sentinel date. Each integer type seals at its own
+vitaminc's range. Each integer type seals at its own
 width, and each width is passed to the order scheme as itself, so an `int16`
 field's terms are an `int16`'s. An `int8` or `uint8` field has no order
 index: with 256 values, an order term would rank every row among 256, which

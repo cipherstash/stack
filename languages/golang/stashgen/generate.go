@@ -90,7 +90,7 @@ func FromTags(ctx context.Context, engine Engine, req Request) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &reader{pkg: pkg, req: req, eql: eqlTypes, imports: newImportSet()}
+	r := &reader{pkg: pkg, req: req, eql: eqlTypes, imports: newImportSet(), ctx: ctx, dir: dir}
 	gf, err := r.read()
 	if err != nil {
 		return nil, err

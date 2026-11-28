@@ -168,7 +168,7 @@ func generateFor(ctx context.Context, cfg generateConfig, source policy.Source, 
 		}
 	}
 
-	r := &reader{pkg: msgPkg, req: Request{Type: typeName, Name: cfg.name}, eql: eqlTypes, imports: newImportSet(), outPkgName: outName, outPkgPath: outPath}
+	r := &reader{pkg: msgPkg, req: Request{Type: typeName, Name: cfg.name}, eql: eqlTypes, imports: newImportSet(), outPkgName: outName, outPkgPath: outPath, ctx: ctx, dir: outDir}
 	gf, err := r.build(collected, display, named, st, true, nil)
 	if err != nil {
 		return err

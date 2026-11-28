@@ -221,12 +221,19 @@ func (w *writer) shapeStruct(name string, fields []shapeField) {
 	w.p("}")
 }
 
-// kindExpr is the gensupport kind of a Go type: the wire type the field
-// seals as. Each integer type has the kind of its own width (int8 is Int8,
-// int and int64 are Int64, uint8 and byte Uint8, uint, uint64 and uintptr
-// Uint64), []byte is Bytes, time.Time is Timestamp, and encrypt's Date,
-// Int128, Uint128 and Decimal have their own kinds. A composite is untyped
-// and seals as one self-describing value.
+// kindExpr returns the Go expression for the gensupport kind of a Go type.
+// The kind is the wire type the field seals as:
+//
+//   - Each integer type has the kind of its own width. For example, int8 is
+//     Int8. Both int and int64 are Int64. Both uint8 and byte are Uint8. The
+//     types uint, uint64, and uintptr are Uint64.
+//   - []byte is Bytes.
+//   - time.Time is Timestamp.
+//   - encrypt's Date, Int128, Uint128, and Decimal each have a kind of their
+//     own.
+//   - Every UUID type is UUID: [16]byte, a type declared as [16]byte,
+//     github.com/google/uuid.UUID, and vcvalue.UUID.
+//   - A composite is untyped, and seals as one self-describing value.
 func kindExpr(t GoType) string {
 	return "gensupport." + kindConst(wireKind(t))
 }

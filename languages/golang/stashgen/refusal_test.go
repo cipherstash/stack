@@ -64,9 +64,9 @@ func TestRefusals(t *testing.T) {
 	}{
 		{"an exported field with no stash tag", user(ctx + "\tEmail string"), stashgen.Request{Type: "User"}, "Email", "no stash tag"},
 		// Optional fields (#1298): a pointer to one scalar, and how it stores nil.
-		{"a sealed pointer to a pointer", user(ctx + "\tAge **int32 `stash:\"age,encrypt\"`"), stashgen.Request{Type: "User"}, "Age", "a sealed field is one scalar"},
-		{"a sealed pointer to a struct", user(ctx + "\tAddr *crm.Contact `stash:\"addr,encrypt\"`"), stashgen.Request{Type: "User"}, "Addr", "a sealed field is one scalar"},
-		{"a sealed pointer to a slice", user(ctx + "\tTags *[]string `stash:\"tags,encrypt\"`"), stashgen.Request{Type: "User"}, "Tags", "a sealed field is one scalar"},
+		{"a sealed pointer to a pointer", user(ctx + "\tAge **int32 `stash:\"age,encrypt\"`"), stashgen.Request{Type: "User"}, "Age", "a sealed field must be one scalar"},
+		{"a sealed pointer to a struct", user(ctx + "\tAddr *crm.Contact `stash:\"addr,encrypt\"`"), stashgen.Request{Type: "User"}, "Addr", "a sealed field must be one scalar"},
+		{"a sealed pointer to a slice", user(ctx + "\tTags *[]string `stash:\"tags,encrypt\"`"), stashgen.Request{Type: "User"}, "Tags", "a sealed field must be one scalar"},
 		{"null= on a field that is not a pointer", user(ctx + "\tAge int32 `stash:\"age,encrypt,null=sql\"`"), stashgen.Request{Type: "User"}, "Age", "a field of type int32 is never nil"},
 		{"null= on a passthrough", user(ctx + "\tAge *int32 `stash:\"age,passthrough,null=sql\"`"), stashgen.Request{Type: "User"}, "Age", "keeps nil as nil"},
 		{"an unknown null mode", user(ctx + "\tAge *int32 `stash:\"age,encrypt,null=zero\"`"), stashgen.Request{Type: "User"}, "Age", "null= is sealed or sql"},
@@ -96,11 +96,27 @@ func TestRefusals(t *testing.T) {
 		{"an EQL type that does not apply to the field type", user(ctx + "\tAge int64 `stash:\"age,encrypt_into=TextEq\"`"), stashgen.Request{Type: "User"}, "Age", "TextEq seals a string, and int64 is int"},
 		{"a 128-bit integer into a narrower EQL type", user(ctx + "\tAge encrypt.Int128 `stash:\"age,encrypt_into=Integer\"`"), stashgen.Request{Type: "User"}, "Age", "Integer seals int32, and an encrypt.Int128 is not converted to it"},
 		{"a float of another width", user(ctx + "\tScore float64 `stash:\"score,encrypt_into=Real\"`"), stashgen.Request{Type: "User"}, "Score", "Real seals float32, and float64 seals as float64"},
-		{"a field type the engine cannot seal", user(ctx + "\tDone chan int `stash:\"done,encrypt\"`"), stashgen.Request{Type: "User"}, "Done", "seals only as part of an opaque struct"},
-		{"a composite sealed outside an opaque struct", user(ctx + "\tAt time.Location `stash:\"at,encrypt\"`"), stashgen.Request{Type: "User"}, "At", "a time.Location seals only as part of an opaque struct"},
-		{"a slice sealed outside an opaque struct", user(ctx + "\tTags []string `stash:\"tags,encrypt\"`"), stashgen.Request{Type: "User"}, "Tags", "seals only as part of an opaque struct"},
-		{"a map sealed outside an opaque struct", user(ctx + "\tCounts map[string]int64 `stash:\"counts,encrypt\"`"), stashgen.Request{Type: "User"}, "Counts", "seals only as part of an opaque struct"},
-		{"a slice of ints sealed outside an opaque struct", user(ctx + "\tNs []int64 `stash:\"ns,encrypt\"`"), stashgen.Request{Type: "User"}, "Ns", "seals only as part of an opaque struct"},
+		{"a field type the engine cannot seal", user(ctx + "\tDone chan int `stash:\"done,encrypt\"`"), stashgen.Request{Type: "User"}, "Done", "can be encrypted only inside an opaque struct"},
+		{"a composite sealed outside an opaque struct", user(ctx + "\tAt time.Location `stash:\"at,encrypt\"`"), stashgen.Request{Type: "User"}, "At", "A time.Location can be encrypted only inside an opaque struct"},
+		{"a slice sealed outside an opaque struct", user(ctx + "\tTags []string `stash:\"tags,encrypt\"`"), stashgen.Request{Type: "User"}, "Tags", "can be encrypted only inside an opaque struct"},
+		{"a map sealed outside an opaque struct", user(ctx + "\tCounts map[string]int64 `stash:\"counts,encrypt\"`"), stashgen.Request{Type: "User"}, "Counts", "can be encrypted only inside an opaque struct"},
+		{"a slice of ints sealed outside an opaque struct", user(ctx + "\tNs []int64 `stash:\"ns,encrypt\"`"), stashgen.Request{Type: "User"}, "Ns", "can be encrypted only inside an opaque struct"},
+		// A UUID is [16]byte, or a type declared as [16]byte. An array of
+		// another length is not a UUID. Neither is an array of a type
+		// defined over byte.
+		{"an array of eight bytes sealed outside an opaque struct", user(ctx + "\tCode [8]byte `stash:\"code,encrypt\"`"), stashgen.Request{Type: "User"}, "Code", "can be encrypted only inside an opaque struct"},
+		{"an array of sixteen defined bytes sealed outside an opaque struct", user(ctx+"\tCode [16]octet `stash:\"code,encrypt\"`") + "\ntype octet byte\n", stashgen.Request{Type: "User"}, "Code", "can be encrypted only inside an opaque struct"},
+		{"match on a UUID", user(ctx + "\tID [16]byte `stash:\"id,encrypt,index=match\"`"), stashgen.Request{Type: "User"}, "ID", "match applies to a string"},
+		{"order on a UUID", user(ctx+"\tID id `stash:\"id,encrypt,index=equality;ore\"`") + "\ntype id [16]byte\n", stashgen.Request{Type: "User"}, "ID", "ore does not apply to id"},
+		{"ope on a UUID", user(ctx + "\tID [16]byte `stash:\"id,index=ope\"`"), stashgen.Request{Type: "User"}, "ID", "ope does not apply to [16]byte"},
+		// The underlying type of encrypt.Int128 and encrypt.Uint128 is
+		// [16]byte. A type declared over either is not a UUID. Only a type
+		// whose declaration writes out the array is a UUID.
+		{"a type declared over encrypt.Int128", user(ctx+"\tBalance balance `stash:\"balance,encrypt,index=equality\"`") + "\ntype balance encrypt.Int128\n", stashgen.Request{Type: "User"}, "Balance", "balance is declared over another type"},
+		{"a type declared over encrypt.Uint128", user(ctx+"\tCount count `stash:\"count,encrypt\"`") + "\ntype count encrypt.Uint128\n", stashgen.Request{Type: "User"}, "Count", "count is declared over another type"},
+		{"an alias of a type declared over encrypt.Int128", user(ctx+"\tBalance owed `stash:\"balance,encrypt\"`") + "\ntype balance encrypt.Int128\n\ntype owed = balance\n", stashgen.Request{Type: "User"}, "Balance", "declared over another type"},
+		{"a pointer to a type declared over encrypt.Int128", user(ctx+"\tBalance *balance `stash:\"balance,encrypt\"`") + "\ntype balance encrypt.Int128\n", stashgen.Request{Type: "User"}, "Balance", "balance is declared over another type"},
+		{"a type declared over a UUID type", user(ctx+"\tID ownID `stash:\"id,encrypt\"`") + "\ntype id [16]byte\n\ntype ownID id\n", stashgen.Request{Type: "User"}, "ID", "ownID is declared over another type"},
 		{"an opaque struct with a channel", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tDone chan int"), stashgen.Request{Type: "User"}, "Done", "is not a type JSON carries"},
 		{"an opaque struct with an interface", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tAny any"), stashgen.Request{Type: "User"}, "Any", "is not a type JSON carries"},
 		{"an opaque struct with a struct JSON would truncate", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tTx hidden") + "\ntype hidden struct {\n\tA int\n\tb int\n}\n", stashgen.Request{Type: "User"}, "Tx", "JSON would drop"},
@@ -113,7 +129,7 @@ func TestRefusals(t *testing.T) {
 		{"an opaque struct with a JSON-only type keyed by a struct", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tE ev") + "\ntype k struct{ A int }\n\ntype ev struct{ M map[k]int }\n\nfunc (e ev) MarshalJSON() ([]byte, error) { return nil, nil }\n\nfunc (e *ev) UnmarshalJSON([]byte) error { return nil }\n", stashgen.Request{Type: "User"}, "E", "map key that is not an integer, a string, bytes or text"},
 		{"an opaque struct with a map keyed by a struct", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tM map[hidden]int") + "\ntype hidden struct{ A int }\n", stashgen.Request{Type: "User"}, "M", "map key that is not a string or an integer"},
 		{"an EQL type the engine cannot produce yet", user(ctx + "\tAge int64 `stash:\"age,encrypt_into=BigintOrdOre\"`"), stashgen.Request{Type: "User"}, "Age", "has no EQL type BigintOrdOre"},
-		{"an index on a composite", user(ctx + "\tAttrs map[string]string `stash:\"attrs,encrypt,index=equality\"`"), stashgen.Request{Type: "User"}, "Attrs", "seals only as part of an opaque struct"},
+		{"an index on a composite", user(ctx + "\tAttrs map[string]string `stash:\"attrs,encrypt,index=equality\"`"), stashgen.Request{Type: "User"}, "Attrs", "can be encrypted only inside an opaque struct"},
 		{"the json index as an output", user(ctx + "\tAttrs string `stash:\"attrs,index=json\"`"), stashgen.Request{Type: "User"}, "Attrs", "encrypt_into=JsonSearch"},
 		{"an index option a query term cannot use", user(ctx + "\tEmail string `stash:\"email,encrypt,index=match(k=3)\"`"), stashgen.Request{Type: "User"}, "Email", "a query term uses only the default index options"},
 		{"a passthrough field that has an index", user(ctx + "\tID int64 `stash:\"id,passthrough,index=equality\"`"), stashgen.Request{Type: "User"}, "ID", "passthrough field has no index"},
@@ -341,11 +357,11 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 	}
 	defer engine.(io.Closer).Close()
 	for _, c := range []struct{ name, field, line, want string }{
-		{"time.Location", "At", "\tAt time.Location `stash:\"at,encrypt\"`", "seals only as part of an opaque struct"},
-		{"a channel", "Done", "\tDone chan int `stash:\"done,encrypt\"`", "seals only as part of an opaque struct"},
-		{"equality on a map", "Attrs", "\tAttrs map[string]string `stash:\"attrs,encrypt,index=equality\"`", "seals only as part of an opaque struct"},
-		{"a sealed []string", "Tags", "\tTags []string `stash:\"tags,encrypt\"`", "seals only as part of an opaque struct"},
-		{"a sealed map[string]int64", "Counts", "\tCounts map[string]int64 `stash:\"counts,encrypt\"`", "seals only as part of an opaque struct"},
+		{"time.Location", "At", "\tAt time.Location `stash:\"at,encrypt\"`", "can be encrypted only inside an opaque struct"},
+		{"a channel", "Done", "\tDone chan int `stash:\"done,encrypt\"`", "can be encrypted only inside an opaque struct"},
+		{"equality on a map", "Attrs", "\tAttrs map[string]string `stash:\"attrs,encrypt,index=equality\"`", "can be encrypted only inside an opaque struct"},
+		{"a sealed []string", "Tags", "\tTags []string `stash:\"tags,encrypt\"`", "can be encrypted only inside an opaque struct"},
+		{"a sealed map[string]int64", "Counts", "\tCounts map[string]int64 `stash:\"counts,encrypt\"`", "can be encrypted only inside an opaque struct"},
 		{"equality on a bool", "Done", "\tDone bool `stash:\"done,encrypt,index=equality\"`", "the engine refuses the declaration"},
 		{"order on a bool", "Done", "\tDone bool `stash:\"done,encrypt,index=ore\"`", "the engine refuses the declaration"},
 		{"ope on a bool", "Done", "\tDone bool `stash:\"done,encrypt,index=ope\"`", "the engine refuses the declaration"},
@@ -355,6 +371,9 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 		{"match on an integer", "Age", "\tAge int32 `stash:\"age,encrypt,index=match\"`", "the engine refuses the declaration"},
 		{"two order indexes on one field", "Score", "\tScore int64 `stash:\"score,encrypt,index=equality;ore;ope\"`", "the engine refuses the declaration"},
 		{"encrypt_into, no EQL type in this build", "Email", "\tEmail string `stash:\"email,encrypt_into=TextEq\"`", "EQL types are not available yet"},
+		{"match on a UUID", "ID", "\tID [16]byte `stash:\"id,encrypt,index=match\"`", "the engine refuses the declaration"},
+		{"order on a UUID", "ID", "\tID [16]byte `stash:\"id,encrypt,index=equality;ore\"`", "the engine refuses the declaration"},
+		{"ope on a UUID", "ID", "\tID [16]byte `stash:\"id,index=ope\"`", "the engine refuses the declaration"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := writeModule(t, map[string]string{"model.go": user(ctx + c.line), "crm/contact.go": crmPackage})
@@ -386,6 +405,11 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 		{"ore on bytes", "\tBlob []byte `stash:\"blob,encrypt,index=equality;ore\"`"},
 		{"ope on bytes", "\tBlob []byte `stash:\"blob,index=ope\"`"},
 		{"a match query on an index-only field", "\tName string `stash:\"name,index=match\"`"},
+		{"equality on a UUID", "\tID [16]byte `stash:\"id,encrypt,index=equality\"`"},
+		{"a UUID that may be nil", "\tID *[16]byte `stash:\"id,encrypt,index=equality\"`\n\tRef *[16]byte `stash:\"ref,encrypt,null=sql\"`"},
+		{"match on a UUID", "\tID [16]byte `stash:\"id,encrypt,index=match\"`"},
+		{"order on a UUID", "\tID [16]byte `stash:\"id,encrypt,index=equality;ore\"`"},
+		{"ope on a UUID", "\tID [16]byte `stash:\"id,index=ope\"`"},
 	} {
 		dir := writeModule(t, map[string]string{"model.go": user(ctx + c.line), "crm/contact.go": crmPackage})
 		realFile, real := stashgen.FromTags(context.Background(), engine, stashgen.Request{Dir: dir, Type: "User"})

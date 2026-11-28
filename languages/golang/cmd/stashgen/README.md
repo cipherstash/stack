@@ -352,7 +352,13 @@ A sealed field declared over a pointer to one scalar (`*encrypt.Date`, `*int32`,
 | `sealed` | a sealed null, as long as a sealed value of the field's type, and beside an equality index the one term every null of the field shares | nothing in the ciphertext; in an equality column, that the absent rows are one group, as rows holding one repeated value are |
 | `sql` | nothing: the field's columns are `NULL`, and its member in the generated type is `nil` | which rows have no value |
 
-A sealed null hides that the value is absent only where its length matches a value's and no index beside it shows it, so it is the default for a field whose type has a fixed width (a `bool`, a number, `encrypt.Date`, `time.Time`, `encrypt.Decimal`, `encrypt.Int128` and `encrypt.Uint128`) and whose only index, if it has one, is `equality`: sealed with `encrypt`, `encrypt,index=equality`, or into an EQL type with no index or with equality alone (`Date`, `DateEq`, `Integer`, `IntegerEq`, ...).
+A sealed null does not always hide that the value is absent.
+The null must be as long as a sealed value, and no index beside the null can show the absence.
+`null=sealed` is therefore the default for a field that meets both of these conditions:
+
+- The field's type has a fixed width: a `bool`, a number, `encrypt.Date`, `time.Time`, `encrypt.Decimal`, `encrypt.Int128`, `encrypt.Uint128`, or a UUID.
+- The field's only index, if it has one, is `equality`. Such a field is sealed with `encrypt`, with `encrypt,index=equality`, or into an EQL type that has no index or equality alone. `Date`, `DateEq`, `Integer`, and `IntegerEq` are examples.
+
 A null has an equality term, so its rows are one equality group and a query finds them: the generated `EqNull` derives the `eq` query of `nil`, which matches every row whose value is absent.
 A `null=sealed` field's entry in the generated `Fields` value also has `EncryptNull`, which seals `nil` for an update of that one column: a sealed null is a value, so set the column to what it returns, not to SQL `NULL`.
 A null has no order or match term, so a field with any other index, and a field of text or bytes, has to write `null=sql`: an order or match column would show which values are absent, and text shows its length, and `stashgen` will not choose a visible `NULL` for you.
@@ -522,11 +528,64 @@ The generated shape struct tags each field `vc:"name,default"`, so a field added
 A float in an opaque struct may be NaN or an infinity: the blob writes a float by its bits.
 A nil slice or map in an opaque struct comes back empty, not nil, from a blob; from an earlier release's JSON document it comes back nil.
 A sealed field outside an opaque struct is one scalar, a type defined over one, or a pointer to either (see "Optional fields"); a struct, slice or map field seals only inside an opaque struct.
-The scalars are `string`, `[]byte`, `bool`, every integer type (each sealed at its own width, `int` and `uint` as 64-bit), `encrypt.Int128` and `encrypt.Uint128`, `float32`, `float64`, `encrypt.Decimal`, `encrypt.Date` and `time.Time` (a timestamp). The wire type `stashgen` writes for each is the field's own: `int8` is `gensupport.Int8`, `time.Time` is `gensupport.Timestamp`, and so on.
+The scalars are these types:
+
+- `string`, `[]byte`, and `bool`
+- every integer type. Each is sealed at its own width. `int` and `uint` are sealed as 64-bit.
+- `encrypt.Int128` and `encrypt.Uint128`
+- `float32` and `float64`
+- `encrypt.Decimal` and `encrypt.Date`
+- `time.Time`, sealed as a timestamp
+- a UUID type, such as `[16]byte`. "UUID fields" below lists the UUID types.
+
+The wire type `stashgen` writes for each is the field's own: `int8` is `gensupport.Int8`, `time.Time` is `gensupport.Timestamp`, and so on.
 A decimal orders by value, so `1.5` ties `1.50`; a `time.Time` orders by the microsecond, so instants within one microsecond tie.
 The zero `encrypt.Date` is not a date: a date field must be set, and `Encrypt` refuses a zero one with `encrypt.ErrEncoding`, naming the field. An optional date is a `*encrypt.Date` field (see "Optional fields").
 A nil `[]byte` in a sealed field, or a nil slice of a type defined over `[]byte`, comes back from `Decrypt` as an empty, non-nil slice; inside an opaque struct it comes back empty from a blob too, and nil only from an earlier release's JSON document.
 A protobuf message with a `oneof` cannot be generated from a policy: protoc-gen-go puts its members in wrapper types, not in the message struct, and `Generate` refuses it.
+
+### UUID fields
+
+A sealed field is a UUID when its type is one of these:
+
+- `[16]byte`
+- a type whose declaration writes out an array of 16 bytes, such as `type ID [16]byte`
+- `github.com/google/uuid.UUID`, whose declaration has that form
+- vitaminc's `vcvalue.UUID`
+- an alias of any of those types
+
+A type's declaration is the `type` line in its source code.
+An alias is a second name for a type, declared with `=`, such as `type SessionID = uuid.UUID`.
+
+These types are not a UUID:
+
+- a type declared over another type, such as `type Balance encrypt.Int128` or `type MyID uuid.UUID`
+- an array of another length, such as `[8]byte`
+- an array of a type defined over `byte`, such as `[16]octet` where `octet` is `type octet byte`
+
+`stashgen` refuses a sealed field of one of these types.
+Such a type seals only inside an opaque struct.
+
+A type declared over another type is not a UUID, even when its underlying type is `[16]byte`.
+The underlying type is the type that all of a type's declarations reduce to.
+`encrypt.Int128` is a 128-bit integer whose underlying type is also `[16]byte`.
+So `type Balance encrypt.Int128` and `type ID [16]byte` have the same underlying type, and only their declarations differ.
+
+`stashgen` therefore accepts a type as a UUID only when its declaration writes out the array.
+To make `MyID` a UUID, declare it as `type MyID [16]byte`, or use `uuid.UUID` itself.
+
+`stashgen` reads each declaration from source code, because Go's type information does not record which type a declaration names.
+For a type of the package being generated, `stashgen` reads that package's files.
+For a type of another package, `stashgen` lists that package's source files with `go list`, and reads them.
+If `stashgen` cannot read the declaration, it refuses the field and gives that reason.
+One cause is that the package's source is missing.
+
+A UUID field has these properties:
+
+- `stashgen` seals it as `gensupport.UUID`, so Rust and TypeScript read the value as a UUID and not as bytes.
+- A UUID field takes `index=equality`. `stashgen` refuses an order index or a match index on it.
+- `Decrypt` returns the value as the field's own type.
+- A pointer to a UUID type is an optional field. By default, a field with an equality index or no index stores `nil` as a sealed null. With `null=sql`, the field stores `nil` as SQL `NULL`. "Optional fields" above describes both.
 
 ## Status
 

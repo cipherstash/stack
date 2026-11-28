@@ -20,7 +20,40 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   takes an equality index and no order or match index. Its value is a
   `vcvalue.UUID`, or a value of any type whose underlying type is
   `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
-  one. `stashgen` does not yet map a Go type to it.
+  one.
+- **`stashgen` accepts a UUID field.** `stashgen` gives a sealed field the
+  `uuid` kind when the field's Go type is a UUID type. The kind is the type
+  the engine seals the value as. The UUID types are:
+  - `[16]byte`
+  - a type whose declaration writes out an array of 16 bytes, such as
+    `type ID [16]byte`
+  - `github.com/google/uuid.UUID`, whose declaration has that form
+  - `vcvalue.UUID`
+  - an alias of any of those types, such as `type SessionID = uuid.UUID`
+
+  A type's declaration is the `type` line in its source code. `stashgen`
+  reads that line to decide. If `stashgen` cannot read the declaration, it
+  refuses the field.
+
+  These types are not UUID types, and `stashgen` refuses a sealed field of
+  one:
+  - a type declared over another type, such as `type Balance encrypt.Int128`
+    or `type MyID uuid.UUID`. `stashgen` refuses such a type even when its
+    underlying type is `[16]byte`.
+  - an array of another length
+  - an array of a type defined over `byte`, such as `[16]octet` where
+    `octet` is `type octet byte`
+
+  A UUID field takes `index=equality`. `stashgen` refuses `index=ore`,
+  `index=ope`, and `index=match` on a UUID field. The generated `Eq` method
+  takes a value of the field's own type. `Decrypt` returns the value as the
+  field's own type.
+
+  A pointer to a UUID type can be nil. By default, a field with an equality
+  index or no index stores nil as a sealed null (`null=sealed`). A sealed
+  null is nil encrypted in the same way as a value. With an equality index,
+  the generated `EqNull` finds the rows that store one. With `null=sql`, the
+  field stores nil as SQL `NULL`.
 
 ### Changed
 

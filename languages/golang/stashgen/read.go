@@ -1,7 +1,9 @@
 package stashgen
 
 import (
+	"context"
 	"fmt"
+	"go/ast"
 	"go/types"
 	"reflect"
 	"strings"
@@ -206,6 +208,15 @@ type reader struct {
 	// path writes into a package of the user's own.
 	outPkgName string
 	outPkgPath string
+	// ctx and dir are the context and the directory that the package was
+	// loaded with. The reader uses both to load the source of an imported
+	// package.
+	ctx context.Context
+	dir string
+	// declFiles maps an import path to the parsed source files of that
+	// imported package. typeSpec searches them for a type's declaration. The
+	// entry is nil for a package whose source could not be loaded.
+	declFiles map[string][]*ast.File
 }
 
 func (r *reader) qualifier(p *types.Package) string {
@@ -796,9 +807,19 @@ func (r *reader) buildFields(c *collected) error {
 			g.valueExpr = field.GoType.Name
 		}
 		if g.Sealed() && !g.GoType.Kind.Scalar() {
+			if sixteen := sixteenBytes(cf.typ); sixteen != nil {
+				// The type is not a UUID, although its underlying type is
+				// [16]byte. The refusal gives the reason.
+				switch r.uuidVerdict(sixteen) {
+				case declaredOver:
+					return fieldErr(typeName, cf.goName, "%[1]s is declared over another type, so it is not a UUID type. %[2]s. Declare %[1]s as [16]byte for a UUID, use encrypt.Int128 or encrypt.Uint128 for an integer, or put the field in an opaque struct", r.typeExpr(sixteen), uuidTypes)
+				case unreadDeclaration:
+					return fieldErr(typeName, cf.goName, "stashgen could not read the declaration of %s, so it cannot decide whether the type is a UUID. Either the source files of the type's package could not be loaded or parsed, or the type is not declared at package level. A package's source cannot be loaded when its module is not in the module cache, or when a vendor directory does not contain the package", r.typeExpr(sixteen))
+				}
+			}
 			// The engine seals a composite as a tree of leaves, and a column
 			// holds one leaf; only an opaque struct seals a whole value.
-			return fieldErr(typeName, cf.goName, "a sealed field is one scalar (a string, number, bool, []byte, time.Time, encrypt.Date, encrypt.Decimal, encrypt.Int128 or encrypt.Uint128, or a type defined over a string, number, bool or []byte); a %s seals only as part of an opaque struct, or as a JSON document with encrypt_into=JsonSearch or encrypt_into=Json", g.typeExpr)
+			return fieldErr(typeName, cf.goName, "a sealed field must be one scalar. A scalar is a string, number, bool, []byte, time.Time, encrypt.Date, encrypt.Decimal, encrypt.Int128, encrypt.Uint128, UUID, or a type defined over a string, number, bool, or []byte. A %s can be encrypted only inside an opaque struct, or as a JSON document with encrypt_into=JsonSearch or encrypt_into=Json", g.typeExpr)
 		}
 		switch field.Verb {
 		case VerbPassthrough, VerbContextField:
@@ -918,10 +939,13 @@ func (r *reader) embeddedTags(fieldName string) string {
 
 // goType classifies a Go type for the engine.
 func (r *reader) goType(t types.Type) GoType {
-	return classify(t, r.typeExpr, map[types.Type]bool{})
+	return classify(t, r.typeExpr, r.isUUID, map[types.Type]bool{})
 }
 
-func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Type]bool) GoType {
+// classify returns the GoType that describes t, including its [Kind]. For a
+// type whose underlying type is [16]byte, classify calls isUUID to decide
+// whether the type is a UUID. The reader passes [reader.isUUID].
+func classify(t types.Type, typeExpr func(types.Type) string, isUUID func(types.Type) bool, seen map[types.Type]bool) GoType {
 	g := GoType{Name: typeExpr(t), Kind: KindOther}
 	if seen[t] {
 		return g
@@ -951,17 +975,21 @@ func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Typ
 		if b, ok := u.Elem().Underlying().(*types.Basic); ok && b.Kind() == types.Byte {
 			g.Kind, g.Basic = KindBytes, "[]byte"
 		} else {
-			elem := classify(u.Elem(), typeExpr, seen)
+			elem := classify(u.Elem(), typeExpr, isUUID, seen)
 			g.Kind, g.Elem = KindSlice, &elem
 		}
 	case *types.Array:
-		elem := classify(u.Elem(), typeExpr, seen)
+		if isUUID(t) {
+			g.Kind, g.Basic = KindUUID, "[16]byte"
+			break
+		}
+		elem := classify(u.Elem(), typeExpr, isUUID, seen)
 		g.Kind, g.Elem = KindSlice, &elem
 	case *types.Map:
-		elem := classify(u.Elem(), typeExpr, seen)
+		elem := classify(u.Elem(), typeExpr, isUUID, seen)
 		g.Kind, g.Elem = KindMap, &elem
 	case *types.Pointer:
-		elem := classify(u.Elem(), typeExpr, seen)
+		elem := classify(u.Elem(), typeExpr, isUUID, seen)
 		g.Kind, g.Elem = KindPointer, &elem
 	case *types.Struct:
 		if hasUnexported(u) {
@@ -969,7 +997,7 @@ func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Typ
 		}
 		g.Kind = KindStruct
 		for i := range u.NumFields() {
-			g.Fields = append(g.Fields, classify(u.Field(i).Type(), typeExpr, seen))
+			g.Fields = append(g.Fields, classify(u.Field(i).Type(), typeExpr, isUUID, seen))
 		}
 	}
 	return g

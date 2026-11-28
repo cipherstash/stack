@@ -245,20 +245,29 @@ func eightBit(t stashgen.GoType) bool {
 	return false
 }
 
-// indexApplies mirrors dynamic::admits in stack-encrypt: equality over
-// every kind vitaminc gives an equality domain (integers of every width,
-// floats, decimals, dates, timestamps, text and bytes; a boolean has none),
-// match over text alone, ORE and OPE over integers of 16 bits and wider,
-// floats, text, decimals, dates and timestamps. Not over a boolean or an
-// 8-bit integer, whose order term would reveal which rows are true, or
-// each row's rank among 256 values. Not over bytes: no ordering operator
-// accepts bytes, so no query could use the stored term.
+// indexApplies returns nil if the index applies to the type, and an error if
+// it does not. The rules are the same as those of dynamic::admits in
+// stack-encrypt:
+//
+//   - Equality applies to every kind that vitaminc gives an equality domain:
+//     integers of every width, floats, decimals, dates, timestamps, UUIDs,
+//     text, and bytes. A boolean has no equality domain.
+//   - Match applies to text alone.
+//   - ORE and OPE apply to integers of 16 bits and wider, floats, text,
+//     decimals, dates, and timestamps.
+//   - ORE and OPE do not apply to a boolean or an 8-bit integer. A boolean's
+//     order term would reveal which rows are true. An 8-bit integer's order
+//     term would reveal each row's rank among 256 values.
+//   - ORE and OPE do not apply to bytes. No ordering operator accepts bytes,
+//     so no query could use the stored term.
+//   - A UUID takes equality alone.
+//
 // The JSON index is not in the engine yet.
 func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 	switch name {
 	case stashgen.IndexEquality:
 		switch t.Kind {
-		case stashgen.KindString, stashgen.KindBytes, stashgen.KindFloat, stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp:
+		case stashgen.KindString, stashgen.KindBytes, stashgen.KindFloat, stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp, stashgen.KindUUID:
 			return nil
 		}
 		if integer(t) {
@@ -289,7 +298,7 @@ func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 func sealable(t stashgen.GoType) bool {
 	switch t.Kind {
 	case stashgen.KindString, stashgen.KindBool, stashgen.KindInt, stashgen.KindUint, stashgen.KindFloat, stashgen.KindBytes,
-		stashgen.KindInt128, stashgen.KindUint128, stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp:
+		stashgen.KindInt128, stashgen.KindUint128, stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp, stashgen.KindUUID:
 		return true
 	case stashgen.KindSlice, stashgen.KindPointer:
 		return t.Elem != nil && sealable(*t.Elem)

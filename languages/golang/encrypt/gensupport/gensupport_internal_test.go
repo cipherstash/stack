@@ -589,6 +589,35 @@ func TestAsKindMakesASixteenByteArrayAUUID(t *testing.T) {
 	}
 }
 
+// A UUID field opens as a vcvalue.UUID. Generated code reads the value as
+// [16]byte and converts it to the field's own type. Get therefore reads a
+// vcvalue.UUID as [16]byte. Get reads any other value as an array of sixteen
+// numbers. Get accepts a list of sixteen numbers, and refuses bytes.
+func TestGetReadsAUUIDAsSixteenBytes(t *testing.T) {
+	id := [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	got, err := Get[[16]byte](Values{"id": vcvalue.UUID(id)}, "id")
+	if err != nil || got != id {
+		t.Errorf("Get[[16]byte] of a vcvalue.UUID = %v, %v; want %v", got, err, id)
+	}
+	ptr, err := GetPtr[[16]byte](Values{"id": vcvalue.UUID(id)}, "id")
+	if err != nil || ptr == nil || *ptr != id {
+		t.Errorf("GetPtr[[16]byte] of a vcvalue.UUID = %v, %v; want %v", ptr, err, id)
+	}
+	if ptr, err := GetPtr[[16]byte](Values{"id": nil}, "id"); err != nil || ptr != nil {
+		t.Errorf("GetPtr[[16]byte] of nil = %v, %v; want nil", ptr, err)
+	}
+	numbers := make([]any, 16)
+	for i := range numbers {
+		numbers[i] = int64(i + 1)
+	}
+	if got, err := Get[[16]byte](Values{"id": numbers}, "id"); err != nil || got != id {
+		t.Errorf("Get[[16]byte] of sixteen numbers = %v, %v; want %v", got, err, id)
+	}
+	if _, err := Get[[16]byte](Values{"id": id[:]}, "id"); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Errorf("Get[[16]byte] of bytes = %v; want ErrEncoding", err)
+	}
+}
+
 // EncryptNull seals nil only for a field that stores it as a sealed null.
 // Under null=sql nil is SQL NULL, and a field of no null mode has no nil,
 // so both are refused before any cipher is used.

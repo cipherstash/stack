@@ -11,16 +11,31 @@ import (
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
-// convert writes an opened sealed value into out, a pointer to the Go type
-// the struct declares. The engine returns a value at the field's declared
-// kind — an integer of its own width (int8 to uint64, or vcvalue.Int128 and
-// vcvalue.Uint128), float32, float64, string, []byte, bool, time.Time for a
-// timestamp, vcvalue.Date, vcvalue.Decimal, or a vcvalue.Object for a
-// composite — and the struct's type is that type, or in the same family and
-// narrower at most (an EQL type's int32 opening into the int16 field it was
-// widened from). A value outside the target's range, or of another family,
-// is an error. A time, date, decimal or 128-bit integer is read only into
-// its own type, which Get matches before it calls this.
+// convert writes an opened sealed value into out. The out argument is a
+// pointer to the Go type the struct declares.
+//
+// The engine returns each value as the Go type of the field's kind. The kind
+// is the wire type that the field's declaration names, such as Int16 or
+// UUID. The Go types are:
+//
+//   - an integer of the kind's width: int8 to uint64, vcvalue.Int128, or
+//     vcvalue.Uint128
+//   - float32 or float64
+//   - string, []byte, or bool
+//   - time.Time for a timestamp
+//   - vcvalue.Date or vcvalue.Decimal
+//   - vcvalue.UUID for a UUID
+//   - vcvalue.Object for a composite
+//
+// The struct's type must be that type, or a narrower type in the same
+// family. For example, an EQL type's int32 opens into the int16 field it was
+// widened from. A value outside the range of the struct's type is an error.
+// So is a value of another family.
+//
+// A time, a date, a decimal, and a 128-bit integer are each read only into
+// their own type. Get matches those types before it calls convert. A UUID
+// opens as a vcvalue.UUID, and convert reads it into [16]byte. Generated
+// code then converts the [16]byte to the field's own type.
 //
 // An error names types and positions, never the value: the value is
 // decrypted plaintext, and an error is what a program logs.
@@ -60,6 +75,16 @@ func convert(v any, out any) error {
 			return mismatch(v, *out)
 		}
 		*out = append([]byte(nil), b...)
+	case *[16]byte:
+		// A UUID field opens as a vcvalue.UUID. Generated code reads the
+		// value as [16]byte, then converts it to the field's own type, such
+		// as uuid.UUID. For any other value, convertVia reads an array of
+		// sixteen numbers.
+		u, ok := v.(vcvalue.UUID)
+		if !ok {
+			return convertVia(v, out)
+		}
+		*out = u
 	case *bool:
 		b, ok := v.(bool)
 		if !ok {
