@@ -10,63 +10,80 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-// uuidArray reports whether an array is [16]byte, the underlying type of a
-// UUID. The element is byte itself, not a type defined over it, so a value of
-// the array converts to [16]byte and back.
+// uuidArray reports whether a is [16]byte, the array type of a UUID. The
+// element type must be byte itself, so that a value of the array converts to
+// [16]byte and back. An array of a type defined over byte does not convert.
 func uuidArray(a *types.Array) bool {
 	return a.Len() == 16 && types.Identical(a.Elem(), types.Typ[types.Byte])
 }
 
-// knownUUIDs are UUID types the generator knows by name, so a field of one
-// is a UUID without reading its package's source. They are kept apart from
-// valueKind's types: those are types the codec writes by their exact type,
-// which the other checks (a JSON document, a storage blob) treat as one
-// value. A UUID type is written as its bytes and converted by gensupport.
+// knownUUIDs lists the UUID types the generator recognises by package path
+// and type name. A field of one of these types is a UUID. The generator does
+// not read the type's declaration to decide.
+//
+// valueKind recognises other types by name, and no UUID type is one of them.
+// The codec writes a valueKind type as that exact type. The checks for a
+// JSON document and for a storage blob treat a valueKind type as one value.
+// A UUID type is different: gensupport converts the value to a vcvalue.UUID
+// before the codec writes it.
 var knownUUIDs = map[[2]string]bool{
 	{"github.com/google/uuid", "UUID"}: true,
 	{vcvaluePath, "UUID"}:              true,
 }
 
-// uuidTypes names the types a UUID field takes, for the generator's
-// messages.
+// uuidTypes lists the types a UUID field can have. The generator's refusal
+// messages start with it.
 const uuidTypes = "a UUID field is [16]byte, a type whose declaration is an array of 16 bytes (type ID [16]byte), github.com/google/uuid.UUID or vcvalue.UUID"
 
-// uuidVerdict is whether a type whose underlying type is [16]byte is a
-// UUID, and why not.
+// uuidVerdict is the generator's decision on whether a type is a UUID. When
+// the type is not a UUID, the verdict gives the reason. [reader.uuidVerdict]
+// makes the decision and defines the terms used here.
 type uuidVerdict uint8
 
 const (
-	// notUUID is a type that is not [16]byte underneath.
+	// notUUID means the underlying type is not [16]byte.
 	notUUID uuidVerdict = iota
-	// uuidType is a UUID.
+	// uuidType means the type is a UUID.
 	uuidType
-	// declaredOver is a type declared over another named type, such as
-	// type Balance encrypt.Int128.
+	// declaredOver means the type's declaration names another type, as
+	// type Balance encrypt.Int128 does. The type is not a UUID.
 	declaredOver
-	// unreadDeclaration is a type whose declaration the generator could
-	// not read.
+	// unreadDeclaration means the generator could not read the type's
+	// declaration, so it cannot decide.
 	unreadDeclaration
 )
 
-// isUUID reports whether t is a UUID; see [reader.uuidVerdict].
+// isUUID reports whether t is a UUID. [reader.uuidVerdict] gives the rules.
 func (r *reader) isUUID(t types.Type) bool { return r.uuidVerdict(t) == uuidType }
 
-// uuidVerdict decides whether t, or the type an alias of it stands for, is a
-// UUID:
+// uuidVerdict decides whether t is a UUID. The rules use four of Go's terms:
 //
-//   - [16]byte itself;
-//   - a type whose declaration writes the array type, such as
-//     type ID [16]byte or type UUID [Size]byte with Size 16;
-//   - github.com/google/uuid.UUID or vcvalue.UUID.
+//   - A type declaration is the source line that creates a type, such as
+//     type ID [16]byte.
+//   - A defined type is the type that a declaration creates.
+//   - An alias is a second name for a type, declared as type A = T.
+//   - The underlying type of a defined type is the type that all of its
+//     declarations reduce to. Given type ID [16]byte and type Ref ID, the
+//     underlying type of both ID and Ref is [16]byte.
 //
-// A type declared over another named type is not a UUID, even when its
-// underlying type is [16]byte. encrypt.Int128 and encrypt.Uint128 are
-// [16]byte underneath, so type Balance encrypt.Int128 has the same
-// underlying type as type ID [16]byte, and only the declaration tells them
-// apart. go/types does not record what a defined type was declared over, so
-// the generator reads the declaration from source. When it cannot read it,
-// the type is not a UUID: the field is refused rather than sealed as the
-// wrong kind.
+// uuidVerdict first replaces an alias with the type it names. That type is a
+// UUID in three cases:
+//
+//   - The type is [16]byte itself.
+//   - The type's declaration writes out the array type, such as
+//     type ID [16]byte, or type UUID [Size]byte where Size is 16.
+//   - The type is github.com/google/uuid.UUID or vcvalue.UUID.
+//
+// A type whose declaration names another type is not a UUID, even when the
+// underlying type is [16]byte. The underlying type of encrypt.Int128 and
+// encrypt.Uint128 is [16]byte. So type Balance encrypt.Int128 and
+// type ID [16]byte have the same underlying type, and only the two
+// declarations differ.
+//
+// go/types does not record which type a declaration names, so the generator
+// reads the declaration from source. If the generator cannot read the
+// declaration, uuidVerdict returns unreadDeclaration. The generator then
+// refuses the field, because a guess could seal the value as the wrong kind.
 func (r *reader) uuidVerdict(t types.Type) uuidVerdict {
 	switch t := types.Unalias(t).(type) {
 	case *types.Array:
@@ -97,14 +114,20 @@ func (r *reader) uuidVerdict(t types.Type) uuidVerdict {
 	return notUUID
 }
 
-// typeSpec finds the declaration of a package-level type: in the loaded
-// package's syntax for a type of that package, and otherwise in the source
-// files of the type's package, which it loads by import path from the
-// directory the package was loaded from. It does not use the position
-// recorded for an imported type: under -trimpath, or after a //line
-// directive, that names no file on disk. It returns nil when the package's
-// source cannot be loaded or parsed, or holds no package-level declaration
-// of the type.
+// typeSpec returns the declaration of the package-level type obj. The result
+// is nil if the source of obj's package cannot be loaded or parsed, or if
+// that source has no package-level declaration of obj.
+//
+// Where typeSpec searches depends on the package that declares obj:
+//
+//   - For a type of r.pkg, the package the generator loaded, typeSpec
+//     searches the syntax trees in r.pkg.Syntax.
+//   - For a type of any other package, typeSpec searches that package's
+//     source files. packageSource loads them by import path.
+//
+// typeSpec does not use the position that the type information records for
+// an imported type. Under -trimpath, or after a //line directive, that
+// position names no file on disk.
 func (r *reader) typeSpec(obj *types.TypeName) *ast.TypeSpec {
 	if obj.Pkg().Path() == r.pkg.PkgPath && len(r.pkg.Syntax) > 0 {
 		for _, file := range r.pkg.Syntax {
@@ -122,9 +145,10 @@ func (r *reader) typeSpec(obj *types.TypeName) *ast.TypeSpec {
 	return nil
 }
 
-// packageSource is the parsed source of an imported package, loaded by its
-// import path once per reader, or nil when it cannot be loaded or a file
-// does not parse.
+// packageSource returns the parsed source files of the imported package pkg.
+// The result is nil if the package cannot be loaded or if one of its files
+// does not parse. The reader loads each package by its import path, once,
+// and keeps the result.
 func (r *reader) packageSource(pkg *types.Package) []*ast.File {
 	if files, ok := r.declFiles[pkg.Path()]; ok {
 		return files
@@ -137,8 +161,10 @@ func (r *reader) packageSource(pkg *types.Package) []*ast.File {
 	return files
 }
 
-// loadSource lists an imported package's Go files with go/packages, from
-// dir, as the package itself was loaded, and parses them.
+// loadSource returns the parsed Go files of the imported package pkg, or nil
+// if any step fails. The list of files comes from go/packages, and
+// loadSource parses each file. The load runs from dir, the directory the
+// generator loaded its own package from.
 func loadSource(ctx context.Context, dir string, pkg *types.Package) []*ast.File {
 	if ctx == nil {
 		ctx = context.Background()
@@ -162,8 +188,8 @@ func loadSource(ctx context.Context, dir string, pkg *types.Package) []*ast.File
 	return files
 }
 
-// findTypeSpec is the package-level declaration of the type named in file,
-// or nil.
+// findTypeSpec returns the package-level declaration of the type called name
+// in file, or nil if file has none.
 func findTypeSpec(file *ast.File, name string) *ast.TypeSpec {
 	for _, decl := range file.Decls {
 		gen, ok := decl.(*ast.GenDecl)
@@ -179,9 +205,10 @@ func findTypeSpec(file *ast.File, name string) *ast.TypeSpec {
 	return nil
 }
 
-// sixteenBytes is t, or the type t points to, when its underlying type is
-// [16]byte; nil otherwise. It names the type in the refusal of a field that
-// is [16]byte underneath and is not a UUID.
+// sixteenBytes returns the type to name when the generator refuses a field
+// that is not a UUID. If t is a pointer, sixteenBytes examines the type t
+// points to. The result is that type when the underlying type is [16]byte,
+// and nil otherwise.
 func sixteenBytes(t types.Type) types.Type {
 	if p, ok := types.Unalias(t).Underlying().(*types.Pointer); ok {
 		t = p.Elem()

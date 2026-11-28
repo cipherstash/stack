@@ -208,13 +208,14 @@ type reader struct {
 	// path writes into a package of the user's own.
 	outPkgName string
 	outPkgPath string
-	// ctx and dir are the context and directory the package was loaded
-	// with, for loading the source of an imported package (isUUID).
+	// ctx and dir are the context and the directory that the package was
+	// loaded with. The reader uses both to load the source of an imported
+	// package.
 	ctx context.Context
 	dir string
-	// declFiles are the parsed source files of imported packages, by import
-	// path, read to find a type's declaration (isUUID); nil for a package
-	// whose source could not be loaded.
+	// declFiles maps an import path to the parsed source files of that
+	// imported package. typeSpec searches them for a type's declaration. The
+	// entry is nil for a package whose source could not be loaded.
 	declFiles map[string][]*ast.File
 }
 
@@ -807,7 +808,8 @@ func (r *reader) buildFields(c *collected) error {
 		}
 		if g.Sealed() && !g.GoType.Kind.Scalar() {
 			if sixteen := sixteenBytes(cf.typ); sixteen != nil {
-				// [16]byte underneath, and not a UUID.
+				// The type is not a UUID, although its underlying type is
+				// [16]byte. The refusal gives the reason.
 				switch r.uuidVerdict(sixteen) {
 				case declaredOver:
 					return fieldErr(typeName, cf.goName, "%s; %s is declared over another type (as type Balance encrypt.Int128 is), so it is not a UUID, and seals only as part of an opaque struct", uuidTypes, r.typeExpr(sixteen))
@@ -940,8 +942,9 @@ func (r *reader) goType(t types.Type) GoType {
 	return classify(t, r.typeExpr, r.isUUID, map[types.Type]bool{})
 }
 
-// classify is a Go type's kind. isUUID decides whether a type whose
-// underlying type is [16]byte is a UUID; see [reader.isUUID].
+// classify returns the GoType that describes t, including its [Kind]. For a
+// type whose underlying type is [16]byte, classify calls isUUID to decide
+// whether the type is a UUID. The reader passes [reader.isUUID].
 func classify(t types.Type, typeExpr func(types.Type) string, isUUID func(types.Type) bool, seen map[types.Type]bool) GoType {
 	g := GoType{Name: typeExpr(t), Kind: KindOther}
 	if seen[t] {

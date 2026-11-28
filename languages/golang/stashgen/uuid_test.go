@@ -10,8 +10,9 @@ import (
 	"github.com/cipherstash/stack/languages/golang/stashgen/enginetest"
 )
 
-// crmIDs are types of a package the struct imports, which the generator
-// reads from export data: their declarations are read from source.
+// crmIDs is the source of two types in a package that the struct imports.
+// The generator reads the types of an imported package from export data, so
+// it reads these two declarations from the package's source.
 const crmIDs = `package crm
 
 import "github.com/cipherstash/stack/languages/golang/encrypt"
@@ -23,9 +24,10 @@ type Ref [16]byte
 type Amount encrypt.Int128
 `
 
-// A UUID is [16]byte, a type whose declaration is an array of 16 bytes, in
-// the struct's package or another, or an alias of either. Each is generated
-// with the uuid kind.
+// A UUID is [16]byte, or a type whose declaration writes out an array of 16
+// bytes. That type can be in the struct's package or in another package. An
+// alias of either is a UUID too. The generator gives each of them the uuid
+// kind.
 func TestUUIDTypes(t *testing.T) {
 	for _, c := range []struct{ name, field, decls string }{
 		{"[16]byte", "\tID [16]byte `stash:\"id,encrypt,index=equality\"`", ""},
@@ -47,8 +49,8 @@ func TestUUIDTypes(t *testing.T) {
 			}
 		})
 	}
-	// A type of another package declared over encrypt.Int128 is refused,
-	// as one of the struct's own package is.
+	// The generator refuses a type of another package that is declared over
+	// encrypt.Int128, as it refuses one of the struct's own package.
 	refusesAmount(t)
 }
 
@@ -62,11 +64,11 @@ func refusesAmount(t *testing.T) {
 	}
 }
 
-// Under -trimpath the position go/packages records for an imported type
-// names a module path, not a file on disk. The declaration of a type in
-// another package is still read, from that package's source files, so a
-// UUID type there is accepted and one declared over encrypt.Int128 is
-// refused.
+// Under -trimpath, the position that go/packages records for an imported
+// type names a module path, not a file on disk. The generator still reads
+// the declaration of a type in another package, from that package's source
+// files. The generator accepts a UUID type there, and refuses a type
+// declared over encrypt.Int128.
 func TestUUIDTypesOfAnotherPackageUnderTrimpath(t *testing.T) {
 	t.Setenv("GOFLAGS", "-trimpath")
 	dir := writeModule(t, map[string]string{"model.go": user(ctx + "\tID crm.Ref `stash:\"id,encrypt,index=equality\"`"), "crm/contact.go": crmPackage, "crm/ids.go": crmIDs})

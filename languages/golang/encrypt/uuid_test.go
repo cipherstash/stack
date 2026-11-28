@@ -8,10 +8,11 @@ import (
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
 )
 
-// A UUID field of generated code is stored as a UUID, queried by equality,
-// and read back as the field's own type: a type declared as [16]byte (as
-// github.com/google/uuid.UUID is), or [16]byte itself. A pointer to one is
-// nil when the value is absent, whether nil is sealed or stored as SQL NULL.
+// Generated code stores a UUID field as a UUID, queries it by equality, and
+// reads it back as the field's own type. That type is [16]byte itself, or a
+// type declared as [16]byte, as github.com/google/uuid.UUID is. A pointer to
+// a UUID type reads back as nil when the value is absent. The pointer is nil
+// whether the field stores nil as a sealed null or as SQL NULL.
 func TestGeneratedCodeStoresQueriesAndReadsAUUID(t *testing.T) {
 	c := deterministicClient(t)
 	ctx := context.Background()
@@ -33,7 +34,8 @@ func TestGeneratedCodeStoresQueriesAndReadsAUUID(t *testing.T) {
 		if len(e.ID.Ciphertext) == 0 || len(e.ID.Equality) == 0 || len(e.Serial.Ciphertext) == 0 || len(e.Serial.Equality) == 0 {
 			t.Fatalf("row %d: outputs missing: %+v", i, e)
 		}
-		// A nil owner is sealed like a value; a nil parent stores nothing.
+		// A nil owner is sealed in the same way as a value. A nil parent
+		// stores nothing.
 		if len(e.Owner.Ciphertext) == 0 || len(e.Owner.Equality) == 0 {
 			t.Errorf("row %d: the owner is not sealed", i)
 		}
@@ -42,7 +44,7 @@ func TestGeneratedCodeStoresQueriesAndReadsAUUID(t *testing.T) {
 		}
 	}
 
-	// Equal UUIDs give equal terms, and different ones do not.
+	// Equal UUIDs give equal terms. Different UUIDs give different terms.
 	if !encrypted[0].ID.Equality.Equal(encrypted[2].ID.Equality) || encrypted[0].ID.Equality.Equal(encrypted[1].ID.Equality) {
 		t.Error("the id's equality terms do not follow the UUID")
 	}
@@ -50,7 +52,8 @@ func TestGeneratedCodeStoresQueriesAndReadsAUUID(t *testing.T) {
 		t.Error("the serial's equality terms do not follow the UUID")
 	}
 
-	// A query by equality finds the rows that hold the UUID, and no other.
+	// A query by equality finds the rows that contain the UUID, and no other
+	// rows.
 	fields := testusers.DeviceFields
 	probe, err := fields.ID.Eq(ctx, cipher, devices[0].ID)
 	if err != nil {
@@ -99,7 +102,8 @@ func TestGeneratedCodeStoresQueriesAndReadsAUUID(t *testing.T) {
 		t.Fatalf("DecryptDevice = %+v, want %+v", back, devices)
 	}
 
-	// A column update: one field's ciphertext opens in a row.
+	// A column update replaces one field's ciphertext, and the row still
+	// opens.
 	encrypted[0].ID = testusers.EncryptedDeviceID(one)
 	again, err := testusers.DecryptDevice(ctx, cipher, encrypted[:1])
 	if err != nil || again[0].ID != devices[1].ID {

@@ -66,10 +66,11 @@ const (
 	NotNull Null = ""
 	// NullSealed seals nil like a value, as long as one, so the stored
 	// field does not show that the value is absent. Its equality term is the
-	// one every nil shares, and the generated EqNull queries it. The default
-	// for a field whose only index, if any, is equality and whose type has a
-	// fixed width: a bool, a number, encrypt.Date, time.Time,
-	// encrypt.Decimal, encrypt.Int128, encrypt.Uint128 or a UUID.
+	// one every nil shares, and the generated EqNull queries it. NullSealed
+	// is the default for a field that meets two conditions. The field's only
+	// index, if it has one, is equality. The field's type has a fixed width:
+	// a bool, a number, encrypt.Date, time.Time, encrypt.Decimal,
+	// encrypt.Int128, encrypt.Uint128, or a UUID.
 	NullSealed Null = "sealed"
 	// NullSQL stores nothing for nil: the field's columns hold SQL NULL,
 	// which shows that the value is absent. A field with an index other than
@@ -232,11 +233,12 @@ type GoType struct {
 	Name string
 	// Kind is the type's underlying kind.
 	Kind Kind
-	// Basic is the underlying basic type's name for a scalar kind — "uint8",
-	// "int", "string", and "[16]byte" for a UUID — which decides the wire
-	// type the field seals as. It is "" for a value type the generator knows
-	// by name (time.Time, encrypt.Date, encrypt.Int128, encrypt.Uint128,
-	// encrypt.Decimal), whose kind says all there is.
+	// Basic names the underlying type of a scalar kind, such as "uint8",
+	// "int", or "string". For a UUID, Basic is "[16]byte". The generator
+	// chooses the wire type the field seals as from Basic. Basic is "" for a
+	// value type the generator recognises by name: time.Time, encrypt.Date,
+	// encrypt.Int128, encrypt.Uint128, and encrypt.Decimal. For those types,
+	// Kind alone decides the wire type.
 	Basic string
 	// Elem is the element type of a slice, map or pointer, and nil otherwise.
 	Elem *GoType
@@ -283,11 +285,18 @@ const (
 	// it back. A field is classified so only where it names such an EQL
 	// type; anywhere else the type keeps its own kind.
 	KindJSONValue
-	// KindUUID is a UUID: [16]byte, a type whose declaration is an array
-	// of 16 bytes (type ID [16]byte), github.com/google/uuid.UUID or
-	// vcvalue.UUID (see reader.uuidVerdict). A type declared over another
-	// type, such as one over encrypt.Int128, is not one, nor is an array of
-	// another length or of another element type.
+	// KindUUID is a UUID. These types are a UUID:
+	//
+	//   - [16]byte
+	//   - a type whose declaration writes out an array of 16 bytes, such as
+	//     type ID [16]byte
+	//   - github.com/google/uuid.UUID
+	//   - vcvalue.UUID
+	//
+	// A type whose declaration names another type, such as
+	// type Balance encrypt.Int128, is not a UUID. Neither is an array of
+	// another length, or an array of another element type.
+	// reader.uuidVerdict applies these rules.
 	KindUUID
 )
 

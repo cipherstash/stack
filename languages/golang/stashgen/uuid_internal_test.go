@@ -10,10 +10,11 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-// vcvalue's Int128, Uint128 and UUID are each declared as [16]byte. Int128
-// and Uint128 are integers, and a type declared over either is not a UUID;
-// vcvalue.UUID is one, known by name. The types are built here, so the test
-// does not depend on where vcvalue lives.
+// vcvalue declares Int128, Uint128, and UUID each as [16]byte. Int128 and
+// Uint128 are integers, so a type declared over either is not a UUID. The
+// generator recognises vcvalue.UUID as a UUID by name. The test builds the
+// three types itself, so it does not depend on the location of vcvalue's
+// source.
 func TestVcvalueIntegersAreNotUUIDs(t *testing.T) {
 	fset := token.NewFileSet()
 	src := "package app\n\nimport \"" + vcvaluePath + "\"\n\ntype Balance vcvalue.Int128\n\ntype Count vcvalue.Uint128\n\ntype ID [16]byte\n"
@@ -55,9 +56,11 @@ func TestVcvalueIntegersAreNotUUIDs(t *testing.T) {
 	}
 }
 
-// A type of a package whose source cannot be loaded has a declaration the
-// generator cannot read, which it reports apart from a type declared over
-// another type. vcvalue.UUID, known by name, needs no source.
+// The generator cannot read the declaration of a type when the source of the
+// type's package cannot be loaded. The generator reports that case with its
+// own verdict, unreadDeclaration, and not as a type declared over another
+// type. The generator recognises vcvalue.UUID by name, so that type needs no
+// source.
 func TestAnUnreadDeclarationIsNotAUUID(t *testing.T) {
 	array := types.NewArray(types.Typ[types.Byte], 16)
 	missing := types.NewPackage("example.com/missing", "missing")
