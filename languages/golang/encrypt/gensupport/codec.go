@@ -8,8 +8,8 @@ import (
 	"sync"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
 // Values is a struct's field values by declared name: what Source gives and
@@ -378,19 +378,23 @@ func (c *RecordsCodec[P, R]) Decrypt(ctx context.Context, d encrypt.Decrypter, r
 	return c.decrypt(ctx, d, rows)
 }
 
-// opaqueBytes is an opaque struct's fields as the one value the engine
-// seals: a storage blob (vitaminc's storage profile, version 1, written by
-// vcffi.MarshalStorage) of the generated shape struct, so the struct is one
-// column and every field comes back at the Go type the struct declares. The
-// storage profile is the format for bytes that are kept: unlike the
-// transport, its version 1 is a compatibility commitment shared with Rust,
-// and it carries every float, NaN and the infinities included.
+// opaqueBytes returns the fields of an opaque struct as the one value that
+// the engine seals. That value is a storage blob of the generated shape
+// struct. frame.MarshalStorage writes the blob, in version 1 of the storage
+// profile. The struct is therefore one column, and every field opens as the
+// Go type that the struct declares.
+//
+// The storage profile is the format for bytes that a program stores. Version
+// 1 never changes, and Rust reads and writes the same format. The transport
+// bytes have no such rule. The storage profile can store every float,
+// including NaN and the infinities.
 func opaqueBytes(fields any) ([]byte, error) {
-	encoded, err := vcffi.MarshalStorage(fields)
+	encoded, err := frame.MarshalStorage(fields)
 	if err != nil {
-		// vcffi's error names a type or a kind (no storage form, a string
-		// that is not UTF-8, a repeated key, nesting too deep), never a
-		// value, so it is wrapped: errors.Is reads vcffi.ErrUnwritable.
+		// The codec's error names a type or a kind, never a value, so it is
+		// safe to wrap. The cause is one of four: a type with no storage
+		// form, a string with invalid UTF-8, a repeated key, or nesting too
+		// deep. With the wrap, errors.Is matches frame.ErrUnwritable.
 		return nil, fmt.Errorf("%w: the opaque value cannot be written as a storage blob: %w", encrypt.ErrEncoding, err)
 	}
 	return encoded, nil
@@ -414,12 +418,13 @@ func Opaque[T any](vals Values, out *T) error {
 	if !ok {
 		return fmt.Errorf("gensupport: %w: the opaque value opened as %T, not bytes", encrypt.ErrEncoding, v)
 	}
-	if bytes.HasPrefix(encoded, vcffi.StorageHeader[:3]) {
-		if err := vcffi.UnmarshalStorage(encoded, out); err != nil {
-			// The vcffi error names the kind found and where, never the
-			// value; it is wrapped so errors.Is reads its class
-			// (encrypt.ErrStorageVersion for a blob a later release
-			// wrote, say).
+	if bytes.HasPrefix(encoded, frame.StorageHeader[:3]) {
+		if err := frame.UnmarshalStorage(encoded, out); err != nil {
+			// The codec's error names the kind of value found and its
+			// position, never the value. The error is wrapped so that
+			// errors.Is matches its class. One class is
+			// encrypt.ErrStorageVersion, for a blob that a later release
+			// wrote.
 			return fmt.Errorf("gensupport: %w: the opaque value does not read into a %T: %w", encrypt.ErrEncoding, *out, err)
 		}
 		return nil

@@ -5,8 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 )
 
 func users() *Plan {
@@ -23,18 +22,18 @@ func TestWireIsTheFixturesPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	wire := p.Wire()
-	want := vcvalue.Object{
-		{Key: "age", Value: vcvalue.Object{
+	want := frame.Object{
+		{Key: "age", Value: frame.Object{
 			{Key: "context", Value: []any{"users", "age"}},
 			{Key: "outputs", Value: []any{"c", "eq", "ore"}},
 			{Key: "type", Value: "uint32"},
 		}},
-		{Key: "email", Value: vcvalue.Object{
+		{Key: "email", Value: frame.Object{
 			{Key: "context", Value: []any{"users", "email"}},
 			{Key: "outputs", Value: []any{"c", "eq", "match"}},
 			{Key: "type", Value: "string"},
 		}},
-		{Key: "notes", Value: vcvalue.Object{
+		{Key: "notes", Value: frame.Object{
 			{Key: "context", Value: []any{"users", "notes"}},
 			{Key: "outputs", Value: []any{"c"}},
 			{Key: "type", Value: "string"},
@@ -43,7 +42,7 @@ func TestWireIsTheFixturesPlan(t *testing.T) {
 	if !reflect.DeepEqual(wire, want) {
 		t.Fatalf("Wire = %#v", wire)
 	}
-	if _, err := vcffi.Marshal(wire); err != nil {
+	if _, err := frame.Marshal(wire); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -62,7 +61,7 @@ func TestExtensionNestsToTheLeftAndIdentityReplacesTheName(t *testing.T) {
 		t.Fatalf("Descriptor = %q", p.Descriptor(p.Fields[0]))
 	}
 	// An untyped field carries no "type" key.
-	if spec := p.Wire()[0].Value.(vcvalue.Object); len(spec) != 2 {
+	if spec := p.Wire()[0].Value.(frame.Object); len(spec) != 2 {
 		t.Fatalf("untyped field spec = %#v", spec)
 	}
 	// A byte part is copied.
@@ -86,13 +85,13 @@ func TestTargetFieldWiresItsTypeInsteadOfOutputs(t *testing.T) {
 	if !p.Fields[0].IsTarget() || !p.Fields[0].HasCiphertext() || p.Fields[1].IsTarget() {
 		t.Fatal("a target field is one, and is opened; a sealed field is not a target")
 	}
-	want := vcvalue.Object{
-		{Key: "email", Value: vcvalue.Object{
+	want := frame.Object{
+		{Key: "email", Value: frame.Object{
 			{Key: "context", Value: []any{"users", "email"}},
 			{Key: "target", Value: "TextEq"},
 			{Key: "type", Value: "string"},
 		}},
-		{Key: "notes", Value: vcvalue.Object{
+		{Key: "notes", Value: frame.Object{
 			{Key: "context", Value: []any{"users", "notes"}},
 			{Key: "outputs", Value: []any{"c"}},
 			{Key: "type", Value: "string"},
@@ -199,20 +198,20 @@ func TestWireGivesATargetItsOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	wire := p.Wire()
-	target := func(i int) any { return wire[i].Value.(vcvalue.Object)[1].Value }
-	want := vcvalue.Object{{Key: "name", Value: "JsonSearch"}, {Key: "options", Value: vcvalue.Object{
+	target := func(i int) any { return wire[i].Value.(frame.Object)[1].Value }
+	want := frame.Object{{Key: "name", Value: "JsonSearch"}, {Key: "options", Value: frame.Object{
 		{Key: "sealed_root", Value: false}, {Key: "ordered", Value: []any{"$.age"}},
 	}}}
 	if !reflect.DeepEqual(target(0), want) {
 		t.Fatalf("target = %#v", target(0))
 	}
-	if !reflect.DeepEqual(target(1), vcvalue.Object{{Key: "name", Value: "JsonSearch"}, {Key: "options", Value: vcvalue.Object{}}}) {
+	if !reflect.DeepEqual(target(1), frame.Object{{Key: "name", Value: "JsonSearch"}, {Key: "options", Value: frame.Object{}}}) {
 		t.Fatalf("empty options = %#v", target(1))
 	}
 	if target(2) != "JsonSearch" {
 		t.Fatalf("no options = %#v", target(2))
 	}
-	if typ := wire[0].Value.(vcvalue.Object)[2]; typ.Key != "type" || typ.Value != "json" {
+	if typ := wire[0].Value.(frame.Object)[2]; typ.Key != "type" || typ.Value != "json" {
 		t.Fatalf("type = %#v", typ)
 	}
 	bad := &Plan{Context: []string{"users"}, Fields: []Field{{Name: "a", Kind: String, Outputs: []Output{Ciphertext}, TargetOptions: &TargetOptions{}}}}

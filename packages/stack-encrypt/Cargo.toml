@@ -67,11 +67,15 @@ rand = { version = "0.10.1", default-features = false }
 # credential loads the default keyset, so callers arriving together make
 # one load between them.
 futures = { version = "0.3.25", default-features = false, features = ["std"] }
-# Two things: the storage profile (`storage`, behind `serde`) that
-# `OpaqueBlob<T>` encodes a whole value with before sealing it as one leaf,
-# the same versioned bytes the Go SDK writes through `vcffi.MarshalStorage`;
-# and, for `dynamic`, serde over the transport frame, which reads a binding's
-# control data (statistics, options, a plan) into typed messages.
+# This crate uses recipher-frame for two things:
+#
+# - The storage profile, `storage`, behind the `serde` feature. `OpaqueBlob<T>`
+#   encodes a whole value with it, then seals the value as one leaf. The frame
+#   codec of the Go SDK writes the same versioned bytes for an opaque struct.
+#   That codec is in `languages/golang/internal/frame`.
+# - For the `dynamic` feature, serde over the transport frame. That code reads
+#   the control data of a binding into typed messages. Control data is
+#   statistics, options, or a plan.
 recipher-frame = { workspace = true, features = ["serde"] }
 serde = { workspace = true }
 # `deserialize_in_place`: `#[derive(Deserialize)]` also writes

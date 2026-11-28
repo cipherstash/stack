@@ -15,7 +15,7 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 )
 
 // The value-kinds fixture is the cross-language proof for the kinds #1144
@@ -127,11 +127,11 @@ func TestGeneratedCodeOpensTheRustValueKindsFixture(t *testing.T) {
 	for _, v := range f.Values {
 		value := parseKind(t, v.Field, v.Text)
 		values[v.Field] = value
-		frame, err := vcffi.Marshal(value)
+		encoded, err := frame.Marshal(value)
 		if err != nil {
 			t.Fatalf("%s: %v", v.Field, err)
 		}
-		if got := hex.EncodeToString(frame); got != v.Frame {
+		if got := hex.EncodeToString(encoded); got != v.Frame {
 			t.Errorf("%s (%s): Go writes the frame %s, Rust wrote %s", v.Field, v.Type, got, v.Frame)
 		}
 	}
@@ -233,9 +233,9 @@ func TestGeneratedCodeOpensTheRustValueKindsFixture(t *testing.T) {
 			t.Fatalf("the fixture has a %s query the test does not know", q.Operator)
 		}
 		value := parseKind(t, q.Field, q.Text)
-		frame, err := vcffi.Marshal(value)
-		if err != nil || hex.EncodeToString(frame) != q.Frame {
-			t.Errorf("%s query %q: Go writes the frame %x (%v), Rust wrote %s", q.Field, q.Text, frame, err, q.Frame)
+		encoded, err := frame.Marshal(value)
+		if err != nil || hex.EncodeToString(encoded) != q.Frame {
+			t.Errorf("%s query %q: Go writes the frame %x (%v), Rust wrote %s", q.Field, q.Text, encoded, err, q.Frame)
 		}
 		var term encrypt.EqualityTerm
 		var order []byte

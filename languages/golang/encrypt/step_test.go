@@ -16,9 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // The step loop, driven hermetically: the guest's init pauses on its
@@ -322,14 +321,14 @@ func TestARefusedRequestIsWiped(t *testing.T) {
 	for _, missing := range []string{"method", "url"} {
 		headers := []byte("authorization: Bearer stub-token")
 		body := []byte("wrapped key")
-		var obj vcvalue.Object
+		var obj frame.Object
 		if missing != "method" {
-			obj = append(obj, vcvalue.Field{Key: "method", Value: "POST"})
+			obj = append(obj, frame.Field{Key: "method", Value: "POST"})
 		}
 		if missing != "url" {
-			obj = append(obj, vcvalue.Field{Key: "url", Value: "https://zerokms.example/keys"})
+			obj = append(obj, frame.Field{Key: "url", Value: "https://zerokms.example/keys"})
 		}
-		obj = append(obj, vcvalue.Field{Key: "headers", Value: headers}, vcvalue.Field{Key: "body", Value: body})
+		obj = append(obj, frame.Field{Key: "headers", Value: headers}, frame.Field{Key: "body", Value: body})
 		if _, ok := decodeRequest(obj); ok {
 			t.Fatalf("a request with no %s was accepted", missing)
 		}
@@ -343,7 +342,7 @@ func TestARefusedRequestIsWiped(t *testing.T) {
 
 func marshalStep(t *testing.T, v any) []byte {
 	t.Helper()
-	b, err := vcffi.Marshal(v)
+	b, err := frame.Marshal(v)
 	if err != nil {
 		t.Fatal(err)
 	}

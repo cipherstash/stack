@@ -14,7 +14,7 @@ import (
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/eql"
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 )
 
 // The compiled predicate of a document field (match): the generated Match
@@ -370,7 +370,7 @@ func TestMatchRefusalsNameTheConstructAndItsOffset(t *testing.T) {
 
 	// A bound of 0 is the engine's default through Match, so the engine's
 	// own refusal of 0 is reached through QueryTerm alone.
-	input := vcvalue.Object{{Key: "predicate", Value: `exists($.a)`}, {Key: "wildcard_bound", Value: uint32(0)}}
+	input := frame.Object{{Key: "predicate", Value: `exists($.a)`}, {Key: "wildcard_bound", Value: uint32(0)}}
 	_, err := cipher.QueryTerm(ctx, contactsPlan(), "custom", "match", input)
 	var d *encrypt.Diagnostic
 	if !errors.Is(err, encrypt.ErrEncoding) || !errors.As(err, &d) || d.Reason() != "json_wildcard_bound_zero" {

@@ -5,24 +5,28 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
-// A typed nil pointer on the two raw paths. Generated code passes a nil
-// pointer through gensupport.Deref, which gives an untyped nil; the two
-// paths that take a caller's value as it is are Cipher.Seal with a
-// hand-built record.Source and Cipher.QueryTerm's input. There a
-// (*int64)(nil) is not == nil, so it is sent, and vcffi, from vitaminc
-// e9c3837b on (on main, in no Go tag yet), writes it as a typed null,
-// padded to the width of an int64, where it wrote a one-byte null. These
-// tests pin what the engine does with it: a typed null is a null to the
-// engine, so each path answers a typed nil as it answers an untyped one, on
-// a field of every null mode.
+// These tests cover a typed nil pointer on the two paths that take a
+// caller's value unchanged. Generated code passes a nil pointer through
+// gensupport.Deref, and Deref returns an untyped nil. The two other paths
+// are Cipher.Seal with a record.Source built by hand, and the input of
+// Cipher.QueryTerm.
+//
+// On those two paths, a (*int64)(nil) is not equal to nil, so it is sent.
+// The codec writes it as a typed null, padded to the width of an int64. An
+// untyped nil is written as the null of one byte.
+//
+// The tests check what the engine does with a typed null. The engine treats
+// a typed null as a null. Each path therefore handles a typed nil as it
+// handles an untyped nil, for a field of every null mode.
 
 // typedNilPlan has one int64 field in each null mode and a timestamp field
 // that seals its nulls, so both encodings meet every answer the engine has.
@@ -33,12 +37,14 @@ var typedNilPlan = &record.Plan{Context: []string{"typed_nil"}, Fields: []record
 	{Name: "when", Kind: record.Timestamp, Outputs: []record.Output{record.Ciphertext, record.Equality}, Null: record.SealedNull},
 }}
 
-// The pinned vcffi behaviour itself, so the engine tests below are read
-// against the bytes that reach it: a nil pointer to a fixed-width type is a
-// typed null (tag 0x15, then the type, padded to the type's width), not the
-// one-byte null an untyped nil is, and it decodes as nil like every null.
+// This test checks the codec itself, so that the engine tests below can be
+// read with the bytes that reach the engine in mind. A nil pointer to a
+// fixed-width type is written as a typed null. The bytes are the tag 0x15,
+// then the type, then padding to the width of the type. An untyped nil is
+// written as the null of one byte. A typed null decodes as nil, as every
+// null does.
 func TestANilFixedWidthPointerMarshalsAsATypedNull(t *testing.T) {
-	untyped, err := vcffi.Marshal(nil)
+	untyped, err := frame.Marshal(nil)
 	if err != nil || !bytes.Equal(untyped, []byte{0x00}) {
 		t.Fatalf("an untyped nil marshals as %x, %v; want the one-byte null", untyped, err)
 	}
@@ -50,21 +56,21 @@ func TestANilFixedWidthPointerMarshalsAsATypedNull(t *testing.T) {
 		"*float64":   {(*float64)(nil), 1.5},
 		"*time.Time": {(*time.Time)(nil), time.Unix(1_700_000_000, 0).UTC()},
 	} {
-		got, err := vcffi.Marshal(tc.nilPointer)
+		got, err := frame.Marshal(tc.nilPointer)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 		if bytes.Equal(got, untyped) || got[0] != 0x15 {
 			t.Fatalf("%s: a nil pointer marshals as %x; want a typed null (tag 0x15)", name, got)
 		}
-		value, err := vcffi.Marshal(tc.present)
+		value, err := frame.Marshal(tc.present)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(got) != len(value) {
 			t.Fatalf("%s: the typed null is %d bytes, a value %d; want them as long", name, len(got), len(value))
 		}
-		back, err := vcffi.Unmarshal(got)
+		back, err := frame.Unmarshal(got)
 		if err != nil || back != nil {
 			t.Fatalf("%s: the typed null decodes as %#v, %v; want nil", name, back, err)
 		}
@@ -202,5 +208,63 @@ func TestQueryTermReadsATypedNilAsANull(t *testing.T) {
 		if !errors.Is(err, encrypt.ErrEncoding) || !errors.As(err, &d) || d.Field() != tc.field || d.Reason() != "null_query" {
 			t.Fatalf("%s: %v; want ErrEncoding naming %q with reason null_query", name, err, tc.field)
 		}
+	}
+}
+
+// cents writes itself as an int64 count of cents: a value nine bytes long.
+type cents int64
+
+func (c cents) EncryptValue(enc encrypt.Encoder) error {
+	enc.Int64(int64(c))
+	return nil
+}
+
+// A nil pointer to an Encryptable is written as the null of one byte. A
+// field with no declared type gives the engine no width to pad that null to.
+// Seal therefore refuses a nil Encryptable for such a field, before anything
+// is sent. Otherwise the stored null would be shorter than every value.
+//
+// Seal does not refuse the three other cases:
+//
+//   - A field that declares its type pads the null.
+//   - A nil pointer to a built-in fixed-width type is written as a typed
+//     null.
+//   - A value that is present is written as itself.
+func TestSealRefusesANilEncryptableOnAFieldWithNoType(t *testing.T) {
+	c := deterministicClient(t)
+	ctx := context.Background()
+	cipher := c.DefaultKeyset()
+	untyped := &record.Plan{Context: []string{"typed_nil"}, Fields: []record.Field{
+		{Name: "v", Outputs: []record.Output{record.Ciphertext}},
+	}}
+	for name, v := range map[string]any{
+		"*cents":  (*cents)(nil),
+		"**cents": (**cents)(nil),
+		"&nil":    func() any { var p *cents; return &p }(),
+	} {
+		_, err := cipher.Seal(ctx, untyped, []record.Source{{"v": v}})
+		if !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "no declared type") {
+			t.Errorf("%s: Seal returned %v; want ErrEncoding for a nil Encryptable with no type", name, err)
+		}
+	}
+	for name, v := range map[string]any{
+		"a value":          cents(150),
+		"a pointer to one": func() any { c := cents(150); return &c }(),
+		"a nil *int64":     (*int64)(nil),
+		"nil":              nil,
+	} {
+		if _, err := cipher.Seal(ctx, untyped, []record.Source{{"v": v}}); err != nil && strings.Contains(err.Error(), "no declared type") {
+			t.Errorf("%s: refused as a nil Encryptable: %v", name, err)
+		}
+	}
+	typed := &record.Plan{Context: []string{"typed_nil"}, Fields: []record.Field{
+		{Name: "v", Kind: record.Int64, Outputs: []record.Output{record.Ciphertext}, Null: record.SealedNull},
+	}}
+	sealed, err := cipher.Seal(ctx, typed, []record.Source{{"v": (*cents)(nil)}, {"v": cents(150)}})
+	if err != nil {
+		t.Fatalf("a nil Encryptable on a typed field: %v", err)
+	}
+	if len(sealed[0]["v"].Ciphertext) != len(sealed[1]["v"].Ciphertext) {
+		t.Fatalf("on a typed field a nil Encryptable seals to %d bytes, a value to %d", len(sealed[0]["v"].Ciphertext), len(sealed[1]["v"].Ciphertext))
 	}
 }

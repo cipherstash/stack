@@ -15,8 +15,8 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -243,11 +243,11 @@ func TestElementMatchEngineRefusalsAreTypedErrors(t *testing.T) {
 	c := deterministicEQLClient(t)
 	ctx := context.Background()
 	cipher := c.DefaultKeyset()
-	type obj = vcvalue.Object
-	pred := func(member, op string, kv ...vcvalue.Field) obj {
+	type obj = frame.Object
+	pred := func(member, op string, kv ...frame.Field) obj {
 		return append(obj{{Key: "member", Value: member}, {Key: "op", Value: op}}, kv...)
 	}
-	eq := func(member, v string) obj { return pred(member, "eq", vcvalue.Field{Key: "json", Value: []byte(v)}) }
+	eq := func(member, v string) obj { return pred(member, "eq", frame.Field{Key: "json", Value: []byte(v)}) }
 	input := func(path string, preds ...any) obj {
 		return obj{{Key: "path", Value: path}, {Key: "predicates", Value: preds}}
 	}
@@ -260,10 +260,10 @@ func TestElementMatchEngineRefusalsAreTypedErrors(t *testing.T) {
 		code   string // or the index's code
 	}{
 		{"a path with no wildcard", input("$.extra", eq("relationship", `"secret"`)), encrypt.ErrEncoding, "json_path_no_wildcard", ""},
-		{"a bound of 0", append(input(emergencyContacts, eq("relationship", `"secret"`)), vcvalue.Field{Key: "wildcard_bound", Value: uint32(0)}), encrypt.ErrEncoding, "json_wildcard_bound_zero", ""},
+		{"a bound of 0", append(input(emergencyContacts, eq("relationship", `"secret"`)), frame.Field{Key: "wildcard_bound", Value: uint32(0)}), encrypt.ErrEncoding, "json_wildcard_bound_zero", ""},
 		{"no predicates", input(emergencyContacts), encrypt.ErrEncoding, "json_no_predicates", ""},
-		{"an unknown op", input(emergencyContacts, pred("age", "ne", vcvalue.Field{Key: "json", Value: []byte(`1`)})), encrypt.ErrEncoding, "json_unknown_predicate_op", ""},
-		{"keys that do not fit the op", input(emergencyContacts, pred("age", "eq", vcvalue.Field{Key: "low", Value: []byte(`1`)}, vcvalue.Field{Key: "high", Value: []byte(`2`)})), encrypt.ErrEncoding, "json_input", ""},
+		{"an unknown op", input(emergencyContacts, pred("age", "ne", frame.Field{Key: "json", Value: []byte(`1`)})), encrypt.ErrEncoding, "json_unknown_predicate_op", ""},
+		{"keys that do not fit the op", input(emergencyContacts, pred("age", "eq", frame.Field{Key: "low", Value: []byte(`1`)}, frame.Field{Key: "high", Value: []byte(`2`)})), encrypt.ErrEncoding, "json_input", ""},
 		{"a wildcard in a member", input(emergencyContacts, eq("calls[*].at", `1`)), encrypt.ErrEncoding, "json_path_wildcard", ""},
 		{"a position in the path", input("$.extra.emergency_contacts[*].x[2].y[*]", eq("age", `1`)), encrypt.ErrTerm, "", "stack_encrypt::json_ordering_at_position"},
 		{"an unordered member", input(emergencyContacts, eq("name", `"secret"`)), encrypt.ErrTerm, "", "stack_encrypt::json_path_not_ordered"},

@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
 // This runner tests the record interface used by generated SDK code. Generated
@@ -248,7 +248,7 @@ func TestStackConformance(t *testing.T) {
 				t.Fatal("unexpected equality operand metadata")
 			}
 			want := native.Cases[c.ID]
-			encoded, err := vcffi.Marshal(input)
+			encoded, err := frame.Marshal(input)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -13,9 +13,8 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 type contextCase struct {
@@ -144,12 +143,12 @@ func TestContextConformance(t *testing.T) {
 			if len(sentPlans) != 1 {
 				t.Fatalf("expected one encrypt call, got %d", len(sentPlans))
 			}
-			decoded, e := vcffi.Unmarshal(sentPlans[0])
+			decoded, e := frame.Unmarshal(sentPlans[0])
 			if e != nil {
 				t.Fatal(e)
 			}
 			field := contextObjectField(t, contextObjectField(t, decoded, "text"), "context")
-			framed, e := vcffi.Marshal(field)
+			framed, e := frame.Marshal(field)
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -296,7 +295,7 @@ func TestContextBoundaries(t *testing.T) {
 			}
 			tree := make([]any, len(sealed))
 			for i, row := range sealed {
-				tree[i] = map[string]any{"tenant": map[string]any{"passthrough": vcvalue.Plain{V: row["tenant"].Context}}, "text": map[string]any{"c": encrypt.Ciphertext(row["text"].Ciphertext), "eq": vcvalue.Plain{V: row["text"].Terms[record.Equality]}}}
+				tree[i] = map[string]any{"tenant": map[string]any{"passthrough": frame.Plain{V: row["tenant"].Context}}, "text": map[string]any{"c": encrypt.Ciphertext(row["text"].Ciphertext), "eq": frame.Plain{V: row["text"].Terms[record.Equality]}}}
 			}
 			switch c.Mutation {
 			case "none":
@@ -318,7 +317,7 @@ func TestContextBoundaries(t *testing.T) {
 					if c.Mutation == "tamper" {
 						tenant = "tenants/globex"
 					}
-					row["tenant"] = map[string]any{"passthrough": vcvalue.Plain{V: tenant}}
+					row["tenant"] = map[string]any{"passthrough": frame.Plain{V: tenant}}
 				}
 			default:
 				t.Fatal("unknown mutation")
@@ -347,7 +346,7 @@ func TestContextBoundaries(t *testing.T) {
 				generated := make([]testusers.EncryptedNote, len(tree))
 				for i, row := range tree {
 					fields := row.(map[string]any)
-					tenant := fields["tenant"].(map[string]any)["passthrough"].(vcvalue.Plain).V.(string)
+					tenant := fields["tenant"].(map[string]any)["passthrough"].(frame.Plain).V.(string)
 					ciphertext := fields["text"].(map[string]any)["c"].(encrypt.Ciphertext)
 					generated[i] = testusers.EncryptedNote{Tenant: tenant, Text: testusers.EncryptedNoteText{Ciphertext: ciphertext}}
 				}
@@ -474,7 +473,7 @@ func (c *contextBoundary) UnmarshalJSON(data []byte) error {
 
 func contextObjectField(t *testing.T, value any, name string) any {
 	t.Helper()
-	object, ok := value.(vcvalue.Object)
+	object, ok := value.(frame.Object)
 	if !ok {
 		t.Fatalf("expected object, got %T", value)
 	}

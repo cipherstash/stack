@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testclient"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
 // Package encrypttest builds its clients through this constructor. It is
@@ -36,7 +36,7 @@ func seededClient(ctx context.Context, wasm []byte, seed [32]byte) (*Client, err
 		return nil, err
 	}
 	c := newClient(inst, tr)
-	encoded, err := vcffi.Marshal(seed[:])
+	encoded, err := frame.Marshal(seed[:])
 	if err != nil {
 		_ = c.Close()
 		return nil, err

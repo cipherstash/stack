@@ -6,8 +6,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/tetratelabs/wazero/api"
 )
 
@@ -284,11 +283,11 @@ func LastErrorExport(m api.Module) api.Function {
 // help, url, severity, fields and causes. An error with no message is not
 // one: ok is false, and the caller falls back to the sentinel.
 func decodeDiagnostic(raw []byte) (*Diagnostic, bool) {
-	value, err := vcffi.Unmarshal(raw)
+	value, err := frame.Unmarshal(raw)
 	if err != nil {
 		return nil, false
 	}
-	object, ok := value.(vcvalue.Object)
+	object, ok := value.(frame.Object)
 	if !ok {
 		return nil, false
 	}
@@ -309,7 +308,7 @@ func decodeDiagnostic(raw []byte) (*Diagnostic, bool) {
 		}
 		switch entry.Key {
 		case "fields":
-			if fields, isObject := entry.Value.(vcvalue.Object); isObject {
+			if fields, isObject := entry.Value.(frame.Object); isObject {
 				d.Fields = objectMap(fields)
 			}
 		case "causes":
@@ -327,7 +326,7 @@ func causes(value any) []Cause {
 	items, _ := value.([]any)
 	var out []Cause
 	for _, item := range items {
-		entry, ok := item.(vcvalue.Object)
+		entry, ok := item.(frame.Object)
 		if !ok {
 			continue
 		}
@@ -341,7 +340,7 @@ func causes(value any) []Cause {
 
 // objectMap turns a decoded object into a map, and every object or list
 // inside it likewise, so Fields holds only plain Go values.
-func objectMap(object vcvalue.Object) map[string]any {
+func objectMap(object frame.Object) map[string]any {
 	out := make(map[string]any, len(object))
 	for _, entry := range object {
 		out[entry.Key] = plain(entry.Value)
@@ -351,7 +350,7 @@ func objectMap(object vcvalue.Object) map[string]any {
 
 func plain(value any) any {
 	switch v := value.(type) {
-	case vcvalue.Object:
+	case frame.Object:
 		return objectMap(v)
 	case []any:
 		out := make([]any, len(v))

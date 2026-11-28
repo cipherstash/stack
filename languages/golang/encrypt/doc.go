@@ -132,12 +132,14 @@
 // order index, since over so few values its ordering terms would show which
 // rows hold which value.
 //
-// Passthrough fields never cross the binding: the engine does nothing to a
-// passthrough value that a program could observe, and the FFI codec cannot
-// carry every Go type a program stores beside a ciphertext (a
-// driver.Valuer, a sql.NullTime). An opaque struct crosses as one storage
-// blob (vitaminc's storage profile, vcffi.MarshalStorage) and is one column;
-// a row an earlier release sealed as a JSON document still opens.
+// A passthrough field never crosses from Go to the engine. The engine does
+// nothing to a passthrough value that a program could observe. The codec
+// also cannot encode every Go type that a program stores beside a
+// ciphertext, such as a driver.Valuer or a sql.NullTime.
+//
+// An opaque struct crosses to the engine as one storage blob, in version 1
+// of the storage profile. The struct is one column. A row that an earlier
+// release sealed as a JSON document still opens.
 //
 // # Terms
 //

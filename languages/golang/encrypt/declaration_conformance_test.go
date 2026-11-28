@@ -13,9 +13,8 @@ import (
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 type declarationCase struct {
@@ -49,9 +48,9 @@ func declarationValue(t *testing.T, value any) any {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
-		object := make(vcvalue.Object, 0, len(keys))
+		object := make(frame.Object, 0, len(keys))
 		for _, key := range keys {
-			object = append(object, vcvalue.Field{Key: key, Value: declarationValue(t, v[key])})
+			object = append(object, frame.Field{Key: key, Value: declarationValue(t, v[key])})
 		}
 		return object
 	case []any:
@@ -141,10 +140,10 @@ func checkDeclarationCases(t *testing.T, checker *encrypt.Checker, cases []decla
 			if (len(c.Input.JSON) == 0) == (c.Input.FrameHex == nil) {
 				t.Fatal("expected exactly one input representation")
 			}
-			var frame []byte
+			var raw []byte
 			var err error
 			if c.Input.FrameHex != nil {
-				frame, err = hex.DecodeString(*c.Input.FrameHex)
+				raw, err = hex.DecodeString(*c.Input.FrameHex)
 			} else {
 				decoder := json.NewDecoder(bytes.NewReader(c.Input.JSON))
 				decoder.UseNumber()
@@ -152,7 +151,7 @@ func checkDeclarationCases(t *testing.T, checker *encrypt.Checker, cases []decla
 				if err := decoder.Decode(&value); err != nil {
 					t.Fatal(err)
 				}
-				frame, err = vcffi.Marshal(declarationValue(t, value))
+				raw, err = frame.Marshal(declarationValue(t, value))
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -166,13 +165,13 @@ func checkDeclarationCases(t *testing.T, checker *encrypt.Checker, cases []decla
 					t.Fatalf("host Check: expected ErrEncoding, got %v", hostErr)
 				}
 			}
-			err = checker.CheckFrameForTest(ctx, frame)
+			err = checker.CheckFrameForTest(ctx, raw)
 			expected := c.ExpectedError
 			if c.BoundaryError != nil {
 				if accepted || c.Input.FrameHex == nil {
 					t.Fatal("boundary refusal requires a rejected raw frame")
 				}
-				if _, decodeErr := vcffi.Unmarshal(frame); decodeErr == nil {
+				if _, decodeErr := frame.Unmarshal(raw); decodeErr == nil {
 					t.Fatal("boundary refusal requires a malformed frame")
 				}
 				expected = c.BoundaryError

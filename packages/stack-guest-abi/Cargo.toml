@@ -9,8 +9,8 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 license-file = "LICENSE"
-# Internal plumbing for the guests under bindings/go, never a release of its
-# own; also keeps release-plz from picking it up.
+# This crate is internal to the guests under languages/golang, so it is never
+# published. The setting also stops release-plz from releasing it.
 publish = false
 
 [dependencies]

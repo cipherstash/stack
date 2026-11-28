@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 )
 
 // wantDiagnostic asserts that err carries a *Diagnostic with code and a
@@ -44,7 +44,7 @@ func TestGuestRefusalsCarryTheirDiagnostic(t *testing.T) {
 	}
 	wantCode(t, err, "stack_guest_abi::malformed_input")
 
-	selector, err := vcffi.Marshal(KeysetName("tenant-b").selector())
+	selector, err := frame.Marshal(KeysetName("tenant-b").selector())
 	if err != nil {
 		t.Fatal(err)
 	}

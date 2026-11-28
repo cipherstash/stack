@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // The record path: what generated code calls through encrypt/gensupport.
@@ -63,14 +63,14 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 			}
 		}
 	}
-	encodedSource, err := vcffi.Marshal(source)
+	encodedSource, err := frame.Marshal(source)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
 	// The source is plaintext: its transport copy is wiped once it is in
 	// the guest, and the guest wipes its own copy before it returns.
 	defer wipe(encodedSource)
-	encodedPlan, err := vcffi.Marshal(p.Wire())
+	encodedPlan, err := frame.Marshal(p.Wire())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
@@ -154,14 +154,14 @@ func (cph *Cipher) derive(ctx context.Context, plan *record.Plan, field string, 
 	if !declared {
 		return nil, fmt.Errorf("%w: field %q declares no %q index", ErrEncoding, field, output)
 	}
-	encodedValue, err := vcffi.Marshal(value)
+	encodedValue, err := frame.Marshal(value)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
 	// The probe value is plaintext: its transport copy is wiped once it is
 	// in the guest.
 	defer wipe(encodedValue)
-	encodedContext, err := vcffi.Marshal(p.FieldContext(*f))
+	encodedContext, err := frame.Marshal(p.FieldContext(*f))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
@@ -293,7 +293,7 @@ func (cph *Cipher) plan(plan *record.Plan) (*record.Plan, error) {
 // the plan has one, then the plan's fields, in plan order, each with its
 // value. Unknown fields and missing required values are refused before anything
 // is sent; SQL-null fields may be omitted.
-func sourceRow(p *record.Plan, row record.Source) (vcvalue.Object, error) {
+func sourceRow(p *record.Plan, row record.Source) (frame.Object, error) {
 	expected := len(p.Fields)
 	if p.ContextField != "" {
 		expected++
@@ -304,7 +304,7 @@ func sourceRow(p *record.Plan, row record.Source) (vcvalue.Object, error) {
 			return nil, sourceDiagnostic("unknown_field", name, fmt.Sprintf("the plan has no field %q", name))
 		}
 	}
-	out := make(vcvalue.Object, 0, expected)
+	out := make(frame.Object, 0, expected)
 	if p.ContextField != "" {
 		v, ok := row[p.ContextField]
 		if !ok {
@@ -313,7 +313,7 @@ func sourceRow(p *record.Plan, row record.Source) (vcvalue.Object, error) {
 		if _, isString := v.(string); !isString {
 			return nil, fmt.Errorf("the context field %q holds a %T, not a string", p.ContextField, v)
 		}
-		out = append(out, vcvalue.Field{Key: p.ContextField, Value: v})
+		out = append(out, frame.Field{Key: p.ContextField, Value: v})
 	}
 	for _, f := range p.Fields {
 		v, ok := row[f.Name]
@@ -324,9 +324,45 @@ func sourceRow(p *record.Plan, row record.Source) (vcvalue.Object, error) {
 		if !ok {
 			return nil, sourceDiagnostic("field_missing", f.Name, fmt.Sprintf("no value for field %q", f.Name))
 		}
-		out = append(out, vcvalue.Field{Key: f.Name, Value: v})
+		if f.Kind == record.Untyped && nilEncryptable(v) {
+			// The codec writes a nil Encryptable as the null of one byte.
+			// The field declares no type, so the engine has no width to pad
+			// the null to. The length of the stored value would then show
+			// that it is a null.
+			return nil, sourceDiagnostic("field_type", f.Name, fmt.Sprintf("field %q has no declared type, so a nil %T would be stored shorter than a value; declare the field's type", f.Name, v))
+		}
+		out = append(out, frame.Field{Key: f.Name, Value: v})
 	}
 	return out, nil
+}
+
+// encryptableType is Encryptable's reflect.Type.
+var encryptableType = reflect.TypeFor[Encryptable]()
+
+// nilEncryptable reports whether v is a nil pointer to a type that
+// implements Encryptable, through any number of pointers. The codec writes
+// such a pointer as the null of one byte, whatever the type writes for a
+// value.
+func nilEncryptable(v any) bool {
+	rv := reflect.ValueOf(v)
+	for depth := 0; rv.IsValid() && rv.Kind() == reflect.Pointer && depth < 128; depth++ {
+		if !rv.IsNil() {
+			rv = rv.Elem()
+			continue
+		}
+		t := rv.Type()
+		for range 128 {
+			if t.Implements(encryptableType) {
+				return true
+			}
+			if t.Kind() != reflect.Pointer {
+				return false
+			}
+			t = t.Elem()
+		}
+		return false
+	}
+	return false
 }
 
 // sealedOf lifts one decoded record node into the per-field outputs.
@@ -351,7 +387,7 @@ func sealedOf(p *record.Plan, node any) (record.Sealed, error) {
 			if len(om) != 1 {
 				return nil, fmt.Errorf("the context field %q came back with %d outputs", name, len(om))
 			}
-			plain, ok := om[string(record.Passthrough)].(vcvalue.Plain)
+			plain, ok := om[string(record.Passthrough)].(frame.Plain)
 			if !ok {
 				return nil, fmt.Errorf("the context field %q did not come back as a passthrough", name)
 			}
@@ -407,7 +443,7 @@ func sealedOf(p *record.Plan, node any) (record.Sealed, error) {
 
 // termBytes unwraps a term node: a passthrough carrying the term's bytes.
 func termBytes(node any) ([]byte, error) {
-	plain, ok := node.(vcvalue.Plain)
+	plain, ok := node.(frame.Plain)
 	if !ok {
 		return nil, fmt.Errorf("term node is %T, not a passthrough", node)
 	}
@@ -443,7 +479,7 @@ func (c *Client) open(ctx context.Context, opts callOptions, p *record.Plan, rec
 			if !ok || outputs.Context == "" {
 				return nil, fmt.Errorf("%w: row %d, field %q", errNoContext, i, p.ContextField)
 			}
-			tree[p.ContextField] = map[string]any{string(record.Passthrough): vcvalue.Plain{V: outputs.Context}}
+			tree[p.ContextField] = map[string]any{string(record.Passthrough): frame.Plain{V: outputs.Context}}
 		}
 		for _, f := range p.Fields {
 			if !f.HasCiphertext() {
@@ -462,7 +498,7 @@ func (c *Client) open(ctx context.Context, opts callOptions, p *record.Plan, rec
 				// The EQL value rides as a passthrough byte node, the shape
 				// the engine stored it in; opening it runs the EQL type's own
 				// decryption on the ciphertext inside the JSON.
-				tree[f.Name] = map[string]any{record.EQLKey: vcvalue.Plain{V: append([]byte(nil), outputs.EQL...)}}
+				tree[f.Name] = map[string]any{record.EQLKey: frame.Plain{V: append([]byte(nil), outputs.EQL...)}}
 				continue
 			}
 			if !ok || outputs.Ciphertext == nil {
@@ -489,7 +525,7 @@ func (c *Client) openTree(ctx context.Context, opts callOptions, p *record.Plan,
 // encoder refuses a repeated key, so a test that needs one feeds this
 // directly, and the guest's decoder is what refuses it.
 func (c *Client) openEncoded(ctx context.Context, call callOptions, p *record.Plan, encodedTree []byte, rows int) ([]record.Source, error) {
-	encodedPlan, err := vcffi.Marshal(p.Wire())
+	encodedPlan, err := frame.Marshal(p.Wire())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
@@ -505,7 +541,7 @@ func (c *Client) openEncoded(ctx context.Context, call callOptions, p *record.Pl
 	}
 	// The output is plaintext: decode, then wipe the transport copy.
 	defer wipe(out)
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := frame.Unmarshal(out)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInternal, err)
 	}
@@ -524,7 +560,7 @@ func (c *Client) openEncoded(ctx context.Context, call callOptions, p *record.Pl
 	}
 	sources := make([]record.Source, len(items))
 	for i, item := range items {
-		obj, ok := item.(vcvalue.Object)
+		obj, ok := item.(frame.Object)
 		if !ok {
 			return nil, fmt.Errorf("%w: record %d decrypted as %T", ErrInternal, i, item)
 		}

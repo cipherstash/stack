@@ -63,10 +63,11 @@ if [[ -n "${STACK_CONFORMANCE_OUTPUT:-}" ]]; then
 fi
 CGO_ENABLED=0 go test "$@" ./...
 
-# The transport codec's u32-bound guards are load-bearing where int is 32
-# bits (vitaminc's vcffi runs this sweep too); the binding's own reflection
-# and buffer arithmetic must hold there as well. Linux hosts execute 386
-# natively; elsewhere the binary cannot run, so only vet.
+# The frame codec in internal/frame checks that each length and count fits 32
+# bits. Those checks are needed where an int is 32 bits. The reflection and
+# the buffer arithmetic of the Go module must be correct there too. A Linux
+# host runs a 386 binary natively, so the tests run. On any other host the
+# binary cannot run, so only vet runs.
 if [ "$(uname -s)" = "Linux" ]; then
   CGO_ENABLED=0 GOOS=linux GOARCH=386 go test "$@" ./...
 else

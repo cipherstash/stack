@@ -15,14 +15,81 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ### Added
 
-- `gensupport.UUID`, the kind `"uuid"`: a field the engine seals and
-  opens as a UUID, sixteen bytes under vitaminc's UUID logical type. It
-  takes an equality index and no order or match index. Its value is a
-  `vcvalue.UUID`, or a value of any type whose underlying type is
-  `[16]byte` (`github.com/google/uuid.UUID`, say), which is converted to
-  one. `stashgen` does not yet map a Go type to it.
+- `gensupport.UUID`, the kind `"uuid"`: a field that the engine seals and
+  opens as a UUID. A UUID is sixteen bytes with the logical type UUID. The
+  field takes an equality index, and no order or match index. The value of
+  the field is an `encrypt.UUID`. A value of any other type whose
+  underlying type is `[16]byte`, such as `github.com/google/uuid.UUID`, is
+  converted to an `encrypt.UUID`. `stashgen` does not yet map a Go type to
+  this kind.
+- `encrypt.UUID`, with `ParseUUID` and `String`: sixteen bytes that are
+  sealed as a UUID. An opened UUID has this type.
+- `encrypt.Encryptable` and `encrypt.Encoder`, for a type that writes its
+  own value. Give the type a method `EncryptValue(enc encrypt.Encoder)
+  error`. A field of that type is sealed as the one value that the method
+  writes. The method writes the value with one of the Encoder's methods,
+  such as `Int64`, `String`, or `Date`. The Encoder has one method for each
+  kind of scalar. `Encoder.Err` returns the first error of the encode.
+
+  The zero Encoder keeps nothing and does not panic. The `Err` method of
+  the zero Encoder returns an error that says so. A unit test of your type
+  can therefore pass the zero Encoder to `EncryptValue`.
+
+### Breaking
+
+- **`encrypt.Date`, `Decimal`, `Int128`, and `Uint128` are now types of
+  this package.** Each was an alias of a Go value type of vitaminc, in
+  `github.com/cipherstash/vitaminc/bindings/go/vcvalue`. The stored format
+  is unchanged: every value has the same ciphertext and the same terms as
+  before.
+
+  These things stay the same:
+
+  - The types have the same fields, and the same methods except the two
+    that are removed.
+  - `ParseInt128`, `ParseUint128`, and `ParseDecimal` accept the same text
+    and refuse the same text.
+  - `errors.Is(err, encrypt.ErrNonFiniteDecimal)` matches as before.
+
+  These things change for every program:
+
+  - `Date.DaysFromCE` and `Decimal.Normalized` are removed.
+  - The text of an error from a parse function or from `Validate` now
+    starts with "encrypt: ".
+  - `ErrNonFiniteDecimal` is a new error value of this package.
+
+  These things change only for code that names a `vcvalue` or `vcffi`
+  type:
+
+  - Replace `vcvalue.Date`, `Decimal`, `Int128`, `Uint128`, or `UUID` with
+    the `encrypt` type of the same name.
+  - Change a method `EncryptValue(enc vcffi.Encoder) error` to take an
+    `encrypt.Encoder`. The unsigned methods of an `encrypt.Encoder` are
+    named `Uint8` to `Uint128`, not `UInt8`. An `encrypt.Encoder` writes
+    scalars only.
+  - Remove `vcffi.FixedWidth`. That interface no longer exists. A nil
+    pointer to an `Encryptable` is written as a null. The engine pads a
+    sealed null to the width of the type that the field declares, as it
+    does for every null.
+
+    A field that declares no type has no width to pad to. The length of
+    the stored null would then show that it is a null. `Cipher.Seal`
+    therefore refuses a nil `Encryptable` for such a field, with
+    `ErrEncoding`. Generated code always declares a type.
 
 ### Changed
+
+- **The module no longer depends on vitaminc's Go packages.** The module
+  used two things from vitaminc's `vcffi` and `vcvalue` packages. The
+  first is the frame codec, the code that encodes a value to send it to
+  the engine. The second is the storage profile, the format in which an
+  opaque struct is stored. Both are now in this module, in
+  `internal/frame`.
+
+  `go.mod` therefore names no vitaminc module, so a final version of the
+  module can be released. The codec writes the same bytes as before. The
+  tests of the codec read the same value corpus and storage corpus as the
+  Rust codec, from this repository.
 
 - **A record field converts a number of another width or kind, as a
   query does.** A value sealed through `Cipher.Seal` for a field that

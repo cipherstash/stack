@@ -8,19 +8,30 @@ import (
 	"reflect"
 	"strconv"
 
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 )
 
-// convert writes an opened sealed value into out, a pointer to the Go type
-// the struct declares. The engine returns a value at the field's declared
-// kind — an integer of its own width (int8 to uint64, or vcvalue.Int128 and
-// vcvalue.Uint128), float32, float64, string, []byte, bool, time.Time for a
-// timestamp, vcvalue.Date, vcvalue.Decimal, or a vcvalue.Object for a
-// composite — and the struct's type is that type, or in the same family and
-// narrower at most (an EQL type's int32 opening into the int16 field it was
-// widened from). A value outside the target's range, or of another family,
-// is an error. A time, date, decimal or 128-bit integer is read only into
-// its own type, which Get matches before it calls this.
+// convert writes an opened sealed value into out. The out argument is a
+// pointer to the Go type that the struct declares.
+//
+// The engine returns a value of the kind that the field declares. That value
+// is one of these:
+//
+//   - an integer of its own width: int8 to uint64, encrypt.Int128, or
+//     encrypt.Uint128
+//   - a float32 or a float64
+//   - a string, a []byte, or a bool
+//   - a time.Time, for a timestamp
+//   - an encrypt.Date, an encrypt.Decimal, or an encrypt.UUID
+//   - a frame.Object, for a composite
+//
+// The type in the struct is that type, or a narrower type of the same
+// family. An example is an int16 field that was widened to the int32 of an
+// EQL type, and opens from that int32. The function returns an error for a
+// value outside the range of the target, and for a value of another family.
+//
+// A time, a date, a decimal, or a 128-bit integer is read only into its own
+// type. Get matches those types before it calls convert.
 //
 // An error names types and positions, never the value: the value is
 // decrypted plaintext, and an error is what a program logs.
@@ -395,10 +406,10 @@ func setSlice[E any](v any, out *[]E) error {
 // valuesOf reads an opened composite as Values, nested objects included.
 func valuesOf(v any) (Values, error) {
 	switch obj := v.(type) {
-	case vcvalue.Object:
+	case frame.Object:
 		vals := make(Values, len(obj))
 		for _, f := range obj {
-			if inner, ok := f.Value.(vcvalue.Object); ok {
+			if inner, ok := f.Value.(frame.Object); ok {
 				nested, err := valuesOf(inner)
 				if err != nil {
 					return nil, err

@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/tetratelabs/wazero/api"
 )
 
@@ -98,7 +98,7 @@ func newFuzzClient(tb testing.TB) *fuzzClient {
 	// takes and decodes the answer before it looks at the handle, so the
 	// fuzzed pair is read in full, and then answers STATUS_STATE: handle 1
 	// names no paused step.
-	seed, err := vcffi.Marshal(fuzzSeed[:])
+	seed, err := frame.Marshal(fuzzSeed[:])
 	if err != nil {
 		_ = c.Close()
 		tb.Fatal(err)
@@ -162,7 +162,7 @@ func (fc *fuzzClient) call(in guest.FuzzInput, which uint8) error {
 // plaintext and wiped first (se_term, se_encrypt_record, se_resume).
 func FuzzGuestExportPairs(f *testing.F) {
 	fc := keepFuzzClient(f)
-	plan, err := vcffi.Marshal(fc.plan.Wire())
+	plan, err := frame.Marshal(fc.plan.Wire())
 	if err != nil {
 		f.Fatal(err)
 	}

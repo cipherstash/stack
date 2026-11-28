@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 type readDeclaration struct {
@@ -55,10 +55,10 @@ func readTree(stored []record.Sealed, contextField bool, contextName string) []a
 	for i, row := range stored {
 		fields := map[string]any{}
 		if contextField {
-			fields[contextName] = map[string]any{"passthrough": vcvalue.Plain{V: row[contextName].Context}}
+			fields[contextName] = map[string]any{"passthrough": frame.Plain{V: row[contextName].Context}}
 		}
 		if field, ok := row["value"]; ok {
-			fields["value"] = map[string]any{"c": encrypt.Ciphertext(field.Ciphertext), "eq": vcvalue.Plain{V: field.Terms[record.Equality]}}
+			fields["value"] = map[string]any{"c": encrypt.Ciphertext(field.Ciphertext), "eq": frame.Plain{V: field.Terms[record.Equality]}}
 		}
 		batch[i] = fields
 	}
@@ -80,7 +80,7 @@ func mutateRead(t *testing.T, batch []any, c readCase) {
 	if i < 0 || i >= len(batch) {
 		t.Fatal("mutation row out of range")
 	}
-	plain := vcvalue.Plain{V: int32(34)}
+	plain := frame.Plain{V: int32(34)}
 	if c.Mutation.Kind == "row_plain" {
 		batch[i] = plain
 		return

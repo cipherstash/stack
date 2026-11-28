@@ -399,7 +399,7 @@ description = "Format check, vet and test the Go module (languages/golang: encry
 run = "scripts/go-binding-test.sh languages/golang"
 
 [tasks."go:fuzz"]
-description = "Fuzz the guests' ABI from Go: run every Fuzz* target in languages/golang for GO_FUZZTIME each (default 60s), or only the target GO_FUZZ names; needs `wasm:guest:build:deterministic` and `wasm:auth-guest:build` first"
+description = "Fuzz the guests' ABI and the frame codec from Go: run every Fuzz* target in languages/golang for GO_FUZZTIME each (default 60s), or only the target GO_FUZZ names; the encrypt and auth targets need `wasm:guest:build:deterministic` and `wasm:auth-guest:build` first, and the frame codec's need no guest"
 dir = "languages/golang"
 shell = "bash -c"
 # `go test -fuzz` takes one target in one package at a time, so the targets

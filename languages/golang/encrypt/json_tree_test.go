@@ -14,8 +14,8 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/eql"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // An encrypted JSON document (the EQL type JsonSearch) through the guest
@@ -151,7 +151,7 @@ func TestJSONOperatorsDeriveTaggedTerms(t *testing.T) {
 	if !reflect.DeepEqual(inputs, want) {
 		t.Fatalf("operators = %v", inputs)
 	}
-	type obj = vcvalue.Object
+	type obj = frame.Object
 	for _, tc := range []struct {
 		op, encoding, domain string
 		input                obj
@@ -198,7 +198,7 @@ func TestJSONSelectorReadsOpenAgainstTheirRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	selector := func(path string) string {
-		term, err := cipher.QueryTerm(ctx, jsonPlan(), "profile", "selector", vcvalue.Object{{Key: "path", Value: path}})
+		term, err := cipher.QueryTerm(ctx, jsonPlan(), "profile", "selector", frame.Object{{Key: "path", Value: path}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -227,7 +227,7 @@ func TestJSONSelectorReadsOpenAgainstTheirRequest(t *testing.T) {
 		return nil
 	}
 	name := extract(selector("$.name"))
-	opened, err := cipher.JSONOpen(ctx, jsonPlan(), "profile", vcvalue.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.name"}}, [][][]byte{{name}, {}})
+	opened, err := cipher.JSONOpen(ctx, jsonPlan(), "profile", frame.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.name"}}, [][][]byte{{name}, {}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestJSONSelectorReadsOpenAgainstTheirRequest(t *testing.T) {
 	// A read through a cipher that has audit metadata opens the same rows:
 	// a read asks for data keys, so the guest takes the metadata there.
 	audited := cipher.Audit(encrypt.NewAuditMetadata().Text("purpose", "read a profile"))
-	opened, err = audited.JSONOpen(ctx, jsonPlan(), "profile", vcvalue.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.name"}}, [][][]byte{{name}, {}})
+	opened, err = audited.JSONOpen(ctx, jsonPlan(), "profile", frame.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.name"}}, [][][]byte{{name}, {}})
 	if err != nil || len(opened) != 2 || len(opened[0]) != 1 || string(opened[0][0]) != `"Alice"` {
 		t.Fatalf("opened through an audited cipher: %q, %v", opened, err)
 	}
@@ -246,11 +246,11 @@ func TestJSONSelectorReadsOpenAgainstTheirRequest(t *testing.T) {
 	// holds one fails. A read that sent no metadata would succeed. The
 	// builder has no method for such an integer, so the test puts it there.
 	refused := cipher.AuditUncheckedForTest(map[string]any{"fact": uint64(math.MaxUint64)})
-	_, err = refused.JSONOpen(ctx, jsonPlan(), "profile", vcvalue.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.name"}}, [][][]byte{{name}})
+	_, err = refused.JSONOpen(ctx, jsonPlan(), "profile", frame.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.name"}}, [][][]byte{{name}})
 	if !errors.Is(err, encrypt.ErrEncoding) {
 		t.Fatalf("a read through a cipher with metadata the engine refuses: %v, want ErrEncoding", err)
 	}
-	_, err = cipher.JSONOpen(ctx, jsonPlan(), "profile", vcvalue.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.age"}}, [][][]byte{{name}})
+	_, err = cipher.JSONOpen(ctx, jsonPlan(), "profile", frame.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.age"}}, [][][]byte{{name}})
 	if !errors.Is(err, encrypt.ErrEncoding) {
 		t.Fatalf("another path's entry: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestJSONSelectorReadsOpenAgainstTheirRequest(t *testing.T) {
 	// the refusal is ErrEncoding (a container or an altered entry, the
 	// client cannot tell which), never ErrAuthentication.
 	visits := extract(selector("$.visits"))
-	_, err = cipher.JSONOpen(ctx, jsonPlan(), "profile", vcvalue.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.visits"}}, [][][]byte{{visits}})
+	_, err = cipher.JSONOpen(ctx, jsonPlan(), "profile", frame.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.visits"}}, [][][]byte{{visits}})
 	var d *encrypt.Diagnostic
 	if !errors.Is(err, encrypt.ErrEncoding) || errors.Is(err, encrypt.ErrAuthentication) || !errors.As(err, &d) || d.Code != "stack_encrypt::json_not_a_leaf" {
 		t.Fatalf("a container through ->: %v", err)
@@ -270,12 +270,12 @@ func TestJSONSelectorReadsOpenAgainstTheirRequest(t *testing.T) {
 	// be refused as ErrEncoding. (A read past the bound is refused as
 	// ErrEncoding too; TestJSONDocumentsQueryAndReadInPostgres reads one
 	// from PostgreSQL's own rows.)
-	bounded := vcvalue.Object{{Key: "operation", Value: "subtree"}, {Key: "path", Value: "$.visits[*].at"}, {Key: "wildcard_bound", Value: uint32(1)}}
+	bounded := frame.Object{{Key: "operation", Value: "subtree"}, {Key: "path", Value: "$.visits[*].at"}, {Key: "wildcard_bound", Value: uint32(1)}}
 	opened, err = cipher.JSONOpen(ctx, jsonPlan(), "profile", bounded, [][][]byte{{}})
 	if err != nil || len(opened) != 1 || len(opened[0]) != 0 {
 		t.Fatalf("a bounded subtree read of no rows: %q %v", opened, err)
 	}
-	unreadable := vcvalue.Object{{Key: "operation", Value: "subtree"}, {Key: "path", Value: "$.visits[*].at"}, {Key: "wildcard_bound", Value: "1"}}
+	unreadable := frame.Object{{Key: "operation", Value: "subtree"}, {Key: "path", Value: "$.visits[*].at"}, {Key: "wildcard_bound", Value: "1"}}
 	if _, err := cipher.JSONOpen(ctx, jsonPlan(), "profile", unreadable, [][][]byte{{}}); !errors.Is(err, encrypt.ErrEncoding) {
 		t.Fatalf("a bound that is not an integer: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestJSONChildrenOpenAgainstTheirParent(t *testing.T) {
 	document := sealed[0]["profile"].EQL
 	term := func(operator, path string) string {
 		t.Helper()
-		term, err := cipher.QueryTerm(ctx, jsonPlan(), "profile", operator, vcvalue.Object{{Key: "path", Value: path}})
+		term, err := cipher.QueryTerm(ctx, jsonPlan(), "profile", operator, frame.Object{{Key: "path", Value: path}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -376,7 +376,7 @@ func TestJSONChildrenOpenAgainstTheirParent(t *testing.T) {
 	if !errors.Is(err, encrypt.ErrEncoding) || !errors.As(err, &d) || d.Reason() != "json_path_wildcard" || d.Field() != "profile" {
 		t.Fatalf("a parent path with a wildcard: %v", err)
 	}
-	request := vcvalue.Object{{Key: "operation", Value: record.JSONChildren}, {Key: "path", Value: "$.tags"}}
+	request := frame.Object{{Key: "operation", Value: record.JSONChildren}, {Key: "path", Value: "$.tags"}}
 	if _, err := cipher.JSONOpen(ctx, jsonPlan(), "profile", request, [][][]byte{{[]byte(entries("$.tags[*]", 2)[0])}}); !errors.Is(err, encrypt.ErrEncoding) || errors.As(err, &d) {
 		t.Fatalf("JSONOpen of a children read: %v, want ErrEncoding before the guest", err)
 	}
@@ -488,10 +488,10 @@ func TestAJSONDocumentIsFoundAndReadUnderItsScopeAndBinding(t *testing.T) {
 	tenant := plain.Scope(uint64(7))
 	bound := tenant.Bind(uint64(9))
 	source := []record.Source{{"profile": []byte(`{"name":"Alice","age":34}`)}}
-	request := vcvalue.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.name"}}
+	request := frame.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.name"}}
 	selector := func(cipher *encrypt.Cipher) string {
 		t.Helper()
-		term, err := cipher.QueryTerm(ctx, jsonPlan(), "profile", "selector", vcvalue.Object{{Key: "path", Value: "$.name"}})
+		term, err := cipher.QueryTerm(ctx, jsonPlan(), "profile", "selector", frame.Object{{Key: "path", Value: "$.name"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -572,7 +572,7 @@ func TestAJSONDocumentIsFoundAndReadUnderItsScopeAndBinding(t *testing.T) {
 		t.Errorf("a selector through a cipher with a binding is not the tenant's")
 	}
 	subtree := func(cipher *encrypt.Cipher) ([]string, error) {
-		term, err := cipher.QueryTerm(ctx, jsonPlan(), "profile", "subtree", vcvalue.Object{{Key: "path", Value: "$.name"}})
+		term, err := cipher.QueryTerm(ctx, jsonPlan(), "profile", "subtree", frame.Object{{Key: "path", Value: "$.name"}})
 		return term.Text, err
 	}
 	boundTokens, err := subtree(bound)
@@ -583,7 +583,7 @@ func TestAJSONDocumentIsFoundAndReadUnderItsScopeAndBinding(t *testing.T) {
 		t.Errorf("a subtree read's tokens through a cipher with a binding are not the tenant's: %v", err)
 	}
 	children := func(cipher *encrypt.Cipher) ([]string, error) {
-		term, err := cipher.QueryTerm(ctx, jsonPlan(), "profile", "children", vcvalue.Object{{Key: "path", Value: "$.name"}})
+		term, err := cipher.QueryTerm(ctx, jsonPlan(), "profile", "children", frame.Object{{Key: "path", Value: "$.name"}})
 		return term.Text, err
 	}
 	boundToken, err := children(bound)
@@ -594,9 +594,9 @@ func TestAJSONDocumentIsFoundAndReadUnderItsScopeAndBinding(t *testing.T) {
 		t.Errorf("a children read's token through a cipher with a binding is not the tenant's: %v", err)
 	}
 	for _, operator := range []string{"child_count", "eq_at"} {
-		input := vcvalue.Object{{Key: "path", Value: "$.name"}}
+		input := frame.Object{{Key: "path", Value: "$.name"}}
 		if operator == "eq_at" {
-			input = append(input, vcvalue.Field{Key: "json", Value: []byte(`"Alice"`)})
+			input = append(input, frame.Field{Key: "json", Value: []byte(`"Alice"`)})
 		}
 		if _, err := bound.QueryTerm(ctx, jsonPlan(), "profile", operator, input); !errors.Is(err, encrypt.ErrEncoding) {
 			t.Errorf("%s through a cipher with a binding: %v, want ErrEncoding", operator, err)

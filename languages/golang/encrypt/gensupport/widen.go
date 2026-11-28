@@ -1,14 +1,14 @@
 package gensupport
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
 	"time"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
+	"github.com/cipherstash/stack/languages/golang/internal/frame"
 )
 
 // asKind is a sealed field's value as the Go type of its declared kind, the
@@ -21,17 +21,21 @@ import (
 // with encrypt.ErrEncoding: a Go type wider than the kind is accepted by
 // stashgen and range checked here, value by value.
 //
-// A value whose type writes itself (vcffi.Encryptable) crosses as it is too:
-// converting it to a built-in integer would drop its EncryptValue, and the
-// engine holds what it writes to the field's kind. A write and a query of one
-// field both convert here ([Field.Encrypt], [Field.Term]), so they agree.
+// A value whose type implements encrypt.Encryptable also crosses unchanged.
+// A conversion to a built-in integer would remove its EncryptValue method.
+// The engine checks that the value it writes is of the kind that the field
+// declares. Both a write and a query of a field convert their values here,
+// in [Field.Encrypt] and [Field.Term], so the two agree.
 //
-// A UUID field's value crosses as a vcvalue.UUID, which vcffi writes under
-// the uuid logical type. A value of another type whose underlying type is
-// [16]byte (github.com/google/uuid.UUID, say) is converted to it here, since
-// vcffi writes such a value as plain bytes and the engine refuses bytes in a
-// UUID field. vcvalue.Int128 and Uint128 are integers, not UUIDs, and are not
-// converted.
+// The value of a UUID field crosses as an encrypt.UUID. The codec writes an
+// encrypt.UUID with the logical type uuid. A value of another type whose
+// underlying type is [16]byte is converted to an encrypt.UUID here. One such
+// type is github.com/google/uuid.UUID. Without the conversion, the codec
+// would write the value as plain bytes, and the engine refuses bytes in a
+// UUID field.
+//
+// An encrypt.Int128 and an encrypt.Uint128 are integers, not UUIDs, so they
+// are not converted.
 //
 // The error names the kind and not the value, which is plaintext.
 func asKind(kind Kind, v any) (any, error) {
@@ -51,7 +55,7 @@ func asKind(kind Kind, v any) (any, error) {
 		return v, nil
 	}
 	switch v.(type) {
-	case vcvalue.Int128, vcvalue.Uint128, vcffi.Encryptable:
+	case encrypt.Int128, encrypt.Uint128, encrypt.Encryptable:
 		return v, nil
 	}
 	rv := reflect.ValueOf(v)
@@ -77,15 +81,19 @@ func asKind(kind Kind, v any) (any, error) {
 	return out, nil
 }
 
-// uuidType is vcvalue.UUID's reflect.Type.
-var uuidType = reflect.TypeFor[vcvalue.UUID]()
+// uuidType is encrypt.UUID's reflect.Type.
+var uuidType = reflect.TypeFor[encrypt.UUID]()
 
-// asUUID is v as a vcvalue.UUID when its underlying type is [16]byte, and v
-// unchanged otherwise: a vcvalue.UUID already, a value that writes itself, a
-// 128-bit integer, or a value of another shape, which the engine refuses.
+// asUUID converts v to an encrypt.UUID when the underlying type of v is
+// [16]byte. The function returns v unchanged in four cases:
+//
+//   - v is already an encrypt.UUID.
+//   - v implements encrypt.Encryptable.
+//   - v is a 128-bit integer.
+//   - v is a value of any other kind. The engine refuses such a value.
 func asUUID(v any) any {
 	switch v.(type) {
-	case vcvalue.UUID, vcvalue.Int128, vcvalue.Uint128, vcffi.Encryptable:
+	case encrypt.UUID, encrypt.Int128, encrypt.Uint128, encrypt.Encryptable:
 		return v
 	}
 	rv := reflect.ValueOf(v)
@@ -95,20 +103,28 @@ func asUUID(v any) any {
 	return v
 }
 
-// checkValue refuses a date, decimal or timestamp the codec cannot write, before
-// it reaches the codec, so the caller can name the field: the codec's own
-// refusal names neither. A zero encrypt.Date (year 0, month 0, day 0) is not
-// a date and is refused here. The error is vitaminc's, which names the type
-// and not the value.
+// errInvalidTimestamp is the error for an instant outside the years -9999 to
+// 9999.
+var errInvalidTimestamp = errors.New("encrypt: the timestamp is outside the years -9999 to 9999")
+
+// checkValue refuses a date, a decimal, or a timestamp that the codec cannot
+// write. The check runs before the value reaches the codec, so that the
+// caller can name the field. The codec's own error does not name the field.
+//
+// A zero encrypt.Date has year 0, month 0, and day 0. A zero date is not a
+// date, so the function refuses it. The error names the type and not the
+// value.
 func checkValue(v any) error {
 	var err error
 	switch v := v.(type) {
-	case vcvalue.Date:
+	case encrypt.Date:
 		err = v.Validate()
-	case vcvalue.Decimal:
+	case encrypt.Decimal:
 		err = v.Validate()
 	case time.Time:
-		err = vcvalue.Timestamp{Seconds: v.Unix(), Nanoseconds: uint32(v.Nanosecond())}.Validate() //nolint:gosec // Nanosecond is in [0, 1e9)
+		if (frame.Timestamp{Seconds: v.Unix(), Nanoseconds: uint32(v.Nanosecond())}).Validate() != nil { //nolint:gosec // Nanosecond is in [0, 1e9)
+			err = errInvalidTimestamp
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("%w: %w", encrypt.ErrEncoding, err)
