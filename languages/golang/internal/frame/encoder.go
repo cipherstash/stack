@@ -13,11 +13,11 @@ import (
 	"unicode/utf8"
 )
 
-// encState is the buffer and first-error shared by an Encoder and every
-// sub-encoder it hands out. Errors accumulate: once one is recorded, further
-// channel calls are no-ops, so consumer code can chain writes without
-// checking after every call and still surface the first failure from
-// End/Marshal.
+// encState is the buffer and the first error of one encode. An Encoder
+// shares it with every Encoder made from it. After the first error is
+// recorded, every later write does nothing. Code that writes a value can
+// therefore make several writes without a check after each one. End and
+// Marshal return the first error.
 type encState struct {
 	buf []byte
 	err error
@@ -29,30 +29,43 @@ func (s *encState) fail(err error) {
 	}
 }
 
-// Encoder records a single value in transport form. It mirrors the Rust
-// Cipher channels — it is a recorder that writes the transport bytes, not a
-// live cipher handle. Exactly one channel must be used per Encoder: a
-// terminal (Null, Undefined, Bool, String, Bytes, or one of the scalar
-// methods in this file and scalars.go: the integer and float widths, Date,
-// Timestamp, TimestampParts, Decimal, UUID and Tagged) or a container (Seq,
-// Map).
+// Encoder records one value as transport bytes. The methods of an Encoder
+// match the methods of the Rust Cipher. An Encoder only writes bytes. An
+// Encoder does not encrypt.
 //
-// Encoder is passed and stored by value; all instances handed out for one
-// encode share the same underlying buffer and first-error via a pointer, so
-// copying an Encoder is cheap and safe. The zero Encoder is not usable and
-// its methods panic: usable Encoders are only the one the codec hands to a
-// published Encryptable (see [PublishEncryptable]) and those returned by
-// Passthrough, Elem and Field. [Encoder.Usable] tells the two apart.
+// Call exactly one method on an Encoder. That method is one of these:
+//
+//   - A method that writes a scalar: Null, Undefined, Bool, String, Bytes,
+//     Date, Timestamp, TimestampParts, Decimal, UUID, Tagged, or one of the
+//     integer and float methods. The scalar methods are in this file and in
+//     scalars.go.
+//   - A method that starts a container: Seq or Map.
+//
+// Pass and store an Encoder by value. Every Encoder of one encode points at
+// the same buffer and the same first error, so a copy is cheap and safe.
+//
+// The zero Encoder is not usable, and its methods panic. A usable Encoder
+// comes from one of two places:
+//
+//   - The codec gives one to a published Encryptable. See
+//     [PublishEncryptable].
+//   - Passthrough, Elem, and Field each return one.
+//
+// [Encoder.Usable] reports whether an Encoder is usable.
 type Encoder struct {
 	st    *encState
 	depth int
-	// done points at the completion counter for the slot this Encoder writes
-	// into (a container's current element/entry, or the root). Terminals and
-	// container Ends increment it; the slot's owner then verifies exactly one
-	// completion. This is per-slot on purpose: a global counter would let a
-	// completed *descendant* (e.g. a terminal inside an un-Ended nested
-	// container) stand in for the slot's own value, shifting the wire and
-	// surfacing only as an opaque ErrMalformed at decode.
+	// done points at the counter for the slot that this Encoder writes into.
+	// A slot is the place for one value: the root, one element of a
+	// sequence, or the value of one map entry. A scalar method adds one to
+	// the counter. The End of a container adds one too. The owner of the
+	// slot then checks that the counter is exactly one.
+	//
+	// Each slot has a counter of its own. With one counter for the whole
+	// encode, a value completed deeper in the tree could count as the value
+	// of the slot. An example is a scalar inside a nested container that was
+	// never ended. A decoder would then read the bytes that follow as the
+	// wrong values. The only sign would be ErrMalformed at decode.
 	done *int
 }
 
@@ -60,14 +73,16 @@ func (e Encoder) push(b ...byte) {
 	e.st.buf = append(e.st.buf, b...)
 }
 
-// complete records that this Encoder's slot received one full value.
+// complete records that the slot of this Encoder received one complete
+// value.
 func (e Encoder) complete() {
 	if e.done != nil {
 		*e.done++
 	}
 }
 
-// Null records the cross-language null (Go nil, JS null, Python None).
+// Null records a null. A null is nil in Go, null in JavaScript, and None in
+// Python.
 func (e Encoder) Null() {
 	if e.st.err == nil {
 		e.push(tagNull)
@@ -75,9 +90,10 @@ func (e Encoder) Null() {
 	}
 }
 
-// Undefined records JavaScript's undefined. Go has no analog, so Go code
-// rarely writes it; the channel exists so a value round-tripped from JS can
-// be re-encoded. On decode, Undefined collapses to nil like Null.
+// Undefined records the JavaScript value undefined. Go has no such value, so
+// Go code rarely calls this method. The method exists so that a value
+// decoded from JavaScript can be encoded again. An undefined decodes as nil,
+// as a null does.
 func (e Encoder) Undefined() {
 	if e.st.err == nil {
 		e.push(tagUndefined)
@@ -98,9 +114,9 @@ func (e Encoder) Bool(b bool) {
 	e.complete()
 }
 
-// Float64 records an IEEE-754 double. Distinct from the integer channels: it
-// round-trips as a 64-bit float in every language. Round-trips by raw bit
-// pattern, so NaN payloads and -0.0 survive.
+// Float64 records a 64-bit IEEE 754 float. The value decodes as a 64-bit
+// float in every language, never as an integer. Float64 writes the bits of f
+// unchanged, so a NaN keeps its payload and -0.0 keeps its sign.
 func (e Encoder) Float64(f float64) {
 	if e.st.err != nil {
 		return
@@ -110,8 +126,9 @@ func (e Encoder) Float64(f float64) {
 	e.complete()
 }
 
-// Float32 records an IEEE-754 single. For schema fidelity with float4 at the
-// EQL layer; round-trips by raw bit pattern.
+// Float32 records a 32-bit IEEE 754 float. To match the float4 type of EQL,
+// the encoding keeps the 32-bit width. Float32 writes the bits of f
+// unchanged.
 func (e Encoder) Float32(f float32) {
 	if e.st.err != nil {
 		return
@@ -121,8 +138,8 @@ func (e Encoder) Float32(f float32) {
 	e.complete()
 }
 
-// Int32 records a signed 32-bit integer. For schema fidelity with int4 at
-// the EQL layer; kept distinct from Int64.
+// Int32 records a signed 32-bit integer. To match the int4 type of EQL, the
+// encoding keeps an Int32 distinct from an Int64.
 func (e Encoder) Int32(i int32) {
 	if e.st.err != nil {
 		return
@@ -132,8 +149,9 @@ func (e Encoder) Int32(i int32) {
 	e.complete()
 }
 
-// Int64 records a signed 64-bit integer. Kept distinct from Float64 so
-// integer-typed languages round-trip integers as integers.
+// Int64 records a signed 64-bit integer. The encoding keeps an Int64
+// distinct from a Float64. A language that has integer types therefore
+// decodes an integer as an integer.
 func (e Encoder) Int64(i int64) {
 	if e.st.err != nil {
 		return
@@ -143,8 +161,8 @@ func (e Encoder) Int64(i int64) {
 	e.complete()
 }
 
-// Uint32 records an unsigned 32-bit integer. For schema fidelity with the
-// EQL layer.
+// Uint32 records an unsigned 32-bit integer. To match the types of an EQL
+// schema, the encoding keeps the 32-bit width.
 func (e Encoder) Uint32(u uint32) {
 	if e.st.err != nil {
 		return
@@ -164,7 +182,7 @@ func (e Encoder) Uint64(u uint64) {
 	e.complete()
 }
 
-// String records a UTF-8 string. Invalid UTF-8 fails the encode.
+// String records a string. The encode fails if s is not valid UTF-8.
 func (e Encoder) String(s string) {
 	if e.st.err != nil {
 		return
@@ -182,7 +200,7 @@ func (e Encoder) String(s string) {
 	}
 }
 
-// Bytes records raw binary data.
+// Bytes records binary data.
 func (e Encoder) Bytes(b []byte) {
 	if e.st.err != nil {
 		return
@@ -196,16 +214,18 @@ func (e Encoder) Bytes(b []byte) {
 	}
 }
 
-// Passthrough marks the next value as passthrough (unencrypted,
-// unauthenticated) and returns an Encoder for it — the same channel set, so
-// the wrapped value is written exactly as any other:
+// Passthrough marks the next value as passthrough, and returns an Encoder
+// for that value. A passthrough value is neither encrypted nor
+// authenticated, so use Passthrough only for data that is not secret.
+//
+// The returned Encoder has the same methods as any other Encoder:
 //
 //	m.Field("id").Passthrough().Int64(42)   // a passthrough map entry
 //	enc.Passthrough().String("v")           // a passthrough root value
 //	s.Elem().Passthrough().Bool(true)       // a passthrough sequence element
 //
-// Write exactly one value (terminal or container) through the returned
-// Encoder. Non-sensitive data only — the wrapped value is not sealed.
+// Write exactly one value through the returned Encoder: a scalar or a
+// container.
 func (e Encoder) Passthrough() Encoder {
 	if e.st.err == nil {
 		if e.depth+1 > maxDepth {
@@ -214,12 +234,12 @@ func (e Encoder) Passthrough() Encoder {
 			e.push(tagPassthrough)
 		}
 	}
-	// The passthrough marker and its wrapped value form ONE value in this
-	// Encoder's slot, so the wrapped value completes the same counter.
+	// The passthrough tag and the value after it are one value in the slot
+	// of this Encoder. The returned Encoder therefore uses the same counter.
 	return Encoder{st: e.st, depth: e.depth + 1, done: e.done}
 }
 
-// Seq begins a sequence. Call Elem once per element and End when done.
+// Seq starts a sequence. Call Elem once for each element, then call End.
 func (e Encoder) Seq() *SeqEncoder {
 	s := &SeqEncoder{st: e.st, depth: e.depth + 1, done: e.done}
 	if e.st.err != nil {
@@ -231,12 +251,13 @@ func (e Encoder) Seq() *SeqEncoder {
 	}
 	e.push(tagArray)
 	s.lenOff = len(e.st.buf)
-	e.push(0, 0, 0, 0) // length back-patched by End
+	e.push(0, 0, 0, 0) // End writes the count here
 	return s
 }
 
-// Map begins a string-keyed map. Call Field once per entry and End when
-// done. Keys preserve insertion order and are UTF-8 validated.
+// Map starts a map with string keys. Call Field once for each entry, then
+// call End. The entries are encoded in the order of the Field calls. Each
+// key must be valid UTF-8.
 func (e Encoder) Map() *MapEncoder {
 	m := &MapEncoder{st: e.st, depth: e.depth + 1, done: e.done}
 	if e.st.err != nil {
@@ -248,28 +269,31 @@ func (e Encoder) Map() *MapEncoder {
 	}
 	e.push(tagObject)
 	m.lenOff = len(e.st.buf)
-	e.push(0, 0, 0, 0) // length back-patched by End
+	e.push(0, 0, 0, 0) // End writes the count here
 	return m
 }
 
-// SeqEncoder records the elements of a sequence. The element count is
-// back-patched into the reserved length slot at End.
+// SeqEncoder records the elements of a sequence. Seq reserves four bytes for
+// the element count, and End writes the count into them.
 type SeqEncoder struct {
 	st     *encState
 	depth  int
 	lenOff int
 	count  int
-	// done is the enclosing slot's completion counter (see Encoder.done);
-	// End increments it — the sequence is one value in its parent's slot.
+	// done is the counter of the slot that the sequence is written into. See
+	// Encoder.done. End adds one to the counter, because the sequence is one
+	// value in that slot.
 	done *int
-	// childDone counts completions of this sequence's own element slots.
-	// Elem and End verify childDone == count, so a skipped element, an
-	// un-Ended nested container, or a doubly-written element fails here at
-	// encode time instead of as ErrMalformed at decode.
+	// childDone counts the elements of this sequence that are complete. Elem
+	// and End check that childDone equals count. The encode therefore fails
+	// for an element that was skipped, an element written twice, or a nested
+	// container that was never ended. Without the check, those mistakes
+	// would appear only as ErrMalformed at decode.
 	childDone int
 }
 
-// checkPrev verifies the previous element slot completed exactly once.
+// checkPrev checks that exactly one value was written for the previous
+// element.
 func (s *SeqEncoder) checkPrev() {
 	if s.childDone > s.count {
 		s.st.fail(fmt.Errorf("frame: more than one value was written for sequence element %d", s.count-1))
@@ -278,8 +302,9 @@ func (s *SeqEncoder) checkPrev() {
 	}
 }
 
-// Elem returns an Encoder for the next element. Write the element fully
-// (one channel, containers Ended) before calling Elem again.
+// Elem returns an Encoder for the next element. Write the whole element
+// before the next call to Elem: call one method, and end any container that
+// it starts.
 func (s *SeqEncoder) Elem() Encoder {
 	if s.st.err == nil {
 		s.checkPrev()
@@ -290,22 +315,25 @@ func (s *SeqEncoder) Elem() Encoder {
 	return Encoder{st: s.st, depth: s.depth, done: &s.childDone}
 }
 
-// End finalizes the sequence, writing its element count.
+// End completes the sequence and writes its element count.
 //
-// Error contract (deliberate, frozen): End returns the first error recorded
-// anywhere in the whole encode so far — not one scoped to this sequence. A
-// nested container's End can therefore surface an error caused elsewhere in
-// the tree. Errors are sticky (later channel calls no-op), so an
-// EncryptValue implementation may chain writes without checking and return
-// the outermost End; inspecting intermediate errors for *which* slot failed
-// is not part of the contract — the error text names the slot instead.
+// End returns the first error of the whole encode so far. The error is not
+// limited to this sequence, so the End of a nested container can return an
+// error from another part of the tree. This rule is deliberate. A later
+// release will not change it.
+//
+// After the first error, every later write does nothing. An EncryptValue
+// method can therefore make its writes without a check after each one, and
+// return the result of the outermost End. Do not use the error of an inner
+// End to find which value failed. The text of the error names that value.
 func (s *SeqEncoder) End() error {
 	if s.st.err == nil {
 		s.checkPrev()
 	}
 	err := patchLen(s.st, s.lenOff, s.count)
 	if err == nil {
-		// The sequence itself is one completed value in the enclosing slot.
+		// The sequence is one complete value in the slot it was written
+		// into.
 		if s.done != nil {
 			*s.done++
 		}
@@ -313,35 +341,44 @@ func (s *SeqEncoder) End() error {
 	return err
 }
 
-// MapEncoder records the entries of a map. The entry count is back-patched
-// into the reserved length slot at End.
+// MapEncoder records the entries of a map. Map reserves four bytes for the
+// entry count, and End writes the count into them.
 type MapEncoder struct {
 	st     *encState
 	depth  int
 	lenOff int
 	count  int
-	// done is the enclosing slot's completion counter (see Encoder.done);
-	// End increments it — the map is one value in its parent's slot.
+	// done is the counter of the slot that the map is written into. See
+	// Encoder.done. End adds one to the counter, because the map is one
+	// value in that slot.
 	done *int
-	// childDone mirrors SeqEncoder.childDone: completions of this map's own
-	// entry slots. Field and End verify childDone == count, so a key whose
-	// value was skipped, left as an un-Ended container, or written twice
-	// fails at encode time — otherwise the wire shifts and the next key
-	// parses as the missing value, surfacing only as ErrMalformed at decode.
+	// childDone counts the entries of this map whose values are complete, as
+	// SeqEncoder.childDone does for elements. Field and End check that
+	// childDone equals count. The encode therefore fails for a key whose
+	// value was skipped, written twice, or left as a container that was
+	// never ended. Without the check, a decoder would read the next key as
+	// the missing value. The only sign would be ErrMalformed at decode.
 	childDone int
-	// lastKey is the most recent Field key, kept so contract violations name
-	// the key whose value slot misbehaved.
+	// lastKey is the key of the most recent Field call. An error about a
+	// value that was skipped or written twice names this key.
 	lastKey string
-	// seen rejects duplicate keys at encode time. Reflection over a Go map
-	// cannot produce duplicates, but encodeStruct can (a vc tag colliding
-	// with another field's effective name) and a hand-written Encryptable
-	// can; without this check the collision only surfaces after the
-	// plaintext has crossed the FFI boundary, as the ciphertext decoder's
-	// opaque ErrMalformed naming neither the struct nor the key.
+	// seen is the set of keys written so far. Field uses it to refuse a
+	// duplicate key. A Go map never has a duplicate key. Two other sources
+	// can produce one:
+	//
+	//   - encodeStruct, when the vc tag of one field is the name of another
+	//     field
+	//   - an Encryptable written by hand
+	//
+	// Without this check, the duplicate would be found only after the
+	// plaintext has crossed into the guest. The ciphertext decoder would
+	// then return ErrMalformed. That error names neither the struct nor the
+	// key.
 	seen map[string]struct{}
 }
 
-// checkPrev verifies the previous entry's value slot completed exactly once.
+// checkPrev checks that exactly one value was written for the previous
+// entry.
 func (m *MapEncoder) checkPrev() {
 	if m.childDone > m.count {
 		m.st.fail(fmt.Errorf("frame: more than one value was written for key %q", m.lastKey))
@@ -350,9 +387,11 @@ func (m *MapEncoder) checkPrev() {
 	}
 }
 
-// Field writes an entry key and returns an Encoder for its value. Write the
-// value fully (one channel, containers Ended) before calling Field again.
-// Keys are UTF-8 validated; insertion order is preserved on the wire.
+// Field writes the key of an entry and returns an Encoder for its value.
+// Write the whole value before the next call to Field: call one method, and
+// end any container that it starts. The key must be valid UTF-8. A key that
+// repeats an earlier key fails the encode. The entries are encoded in the
+// order of the Field calls.
 func (m *MapEncoder) Field(key string) Encoder {
 	if m.st.err == nil {
 		m.checkPrev()
@@ -377,16 +416,16 @@ func (m *MapEncoder) Field(key string) Encoder {
 	return Encoder{st: m.st, depth: m.depth, done: &m.childDone}
 }
 
-// End finalizes the map, writing its entry count. Same error contract as
-// SeqEncoder.End: the first error of the whole encode, not one scoped to
-// this map.
+// End completes the map and writes its entry count. End returns the first
+// error of the whole encode, as [SeqEncoder.End] does. The error is not
+// limited to this map.
 func (m *MapEncoder) End() error {
 	if m.st.err == nil {
 		m.checkPrev()
 	}
 	err := patchLen(m.st, m.lenOff, m.count)
 	if err == nil {
-		// The map itself is one completed value in the enclosing slot.
+		// The map is one complete value in the slot it was written into.
 		if m.done != nil {
 			*m.done++
 		}
@@ -406,53 +445,56 @@ func patchLen(st *encState, off, count int) error {
 	return nil
 }
 
-// Marshal encodes v into the value transport form a wasm guest expects: the
-// encode counterpart of [Unmarshal], and the path a binding's Encrypt takes.
+// Marshal encodes v as the transport bytes of a value. A guest reads a value
+// in that form, and [Unmarshal] decodes it.
 func Marshal(v any) ([]byte, error) {
 	st := &encState{}
 	var root int
 	if err := Encode(Encoder{st: st, done: &root}, v); err != nil {
 		return nil, err
 	}
-	// The reflection paths always write exactly one value; only an
-	// Encryptable can leave the root empty (or an un-Ended container) or
-	// write more than once.
+	// The reflection code always writes exactly one value. Only an
+	// Encryptable can write no value, leave a container without its End, or
+	// write more than one value.
 	if root != 1 {
 		return nil, fmt.Errorf("frame: encode must complete exactly one root value, completed %d", root)
 	}
 	return st.buf, nil
 }
 
-// Encode records v into enc following encoding/json-style rules, but
-// consulting the published Encryptable first:
+// Encode records v into enc. Encode first checks whether v implements the
+// published Encryptable interface. If v does, Encode calls its EncryptValue
+// method. Otherwise Encode chooses a method by the type of v, with rules
+// like those of encoding/json:
 //
-//   - a value implementing the published Encryptable uses its EncryptValue;
-//   - nil                        → Null;
-//   - bool                       → Bool;
-//   - int8/int16/int32           → Int8/Int16/Int32;
-//   - int/int64                  → Int64;
-//   - uint8/uint16/uint32        → Uint8/Uint16/Uint32;
-//   - uint/uint64/uintptr        → Uint64;
-//   - float32                    → Float32;
-//   - float64                    → Float64;
-//   - string                     → String;
-//   - []byte                     → Bytes;
-//   - slices/arrays              → Seq;
-//   - map[string]T               → Map, keys SORTED for determinism;
-//   - structs                    → Map by field name, honoring `vc:"name"`
-//     tags (`vc:"-"` skips a field; options after a comma, such as the
-//     storage profile's `,default`, do not change the name), in
-//     declaration order;
-//   - pointers                   → dereferenced; a nil pointer → a typed
-//     null if its element type is fixed width (see [typedNullOf]), Null
-//     otherwise.
+//   - nil is written with Null.
+//   - A bool is written with Bool.
+//   - An int8, int16, or int32 is written with Int8, Int16, or Int32.
+//   - An int or int64 is written with Int64.
+//   - A uint8, uint16, or uint32 is written with Uint8, Uint16, or Uint32.
+//   - A uint, uint64, or uintptr is written with Uint64.
+//   - A float32 is written with Float32.
+//   - A float64 is written with Float64.
+//   - A string is written with String.
+//   - A []byte is written with Bytes.
+//   - A slice or an array is written with Seq.
+//   - A map[string]T is written with Map, with its keys in sorted order.
+//   - A struct is written with Map, with one entry for each field, in the
+//     order the struct declares them. The key is the field name, or the name
+//     in a `vc:"name"` tag. A `vc:"-"` tag skips the field. Options after a
+//     comma do not change the name. One such option is `,default` of the
+//     storage profile.
+//   - A pointer is written as the value it points at. A nil pointer is
+//     written as a typed null if its element type has a fixed width, and
+//     with Null otherwise. See [typedNullOf].
 //
-// Map keys are sorted because Go map iteration order is randomized;
-// sorting makes the encrypted structure deterministic. Struct fields keep
-// declaration order.
+// Encode sorts the keys of a map because Go iterates over a map in a random
+// order. Sorted keys give equal maps the same encrypted structure. The
+// fields of a struct stay in the order the struct declares them.
 //
-// Encode returns the first error recorded while writing enc, so it composes:
-// an Encryptable can delegate a sub-value with Encode(m.Field(k), x).
+// Encode returns the first error recorded while it wrote to enc. An
+// Encryptable can therefore pass part of its value to Encode, as in
+// Encode(m.Field(k), x).
 func Encode(enc Encoder, v any) error {
 	encodeAny(enc, v)
 	return enc.st.err
@@ -476,22 +518,28 @@ func encodeAny(enc Encoder, v any) {
 	encodeReflect(enc, reflect.ValueOf(v))
 }
 
-// interceptMarkers handles the marker types both dispatchers (encodeAny for
-// interface values, encodeReflect for values reached through reflection)
-// must special-case before any reflection sees them. Returns true when v was
-// fully handled.
+// interceptMarkers writes v if the codec handles its type before reflection,
+// and reports whether it wrote v. Both encodeAny and encodeReflect call it:
+// the first for an interface value, the second for a value reached through
+// reflection.
 //
-//   - Plain is the explicit passthrough opt-in; checked before Encryptable
-//     and the struct arm so it is never mistaken for a plain struct.
-//   - Object is decode-only in spirit, but a decrypt-then-re-encrypt flow
-//     legitimately feeds it back in; without interception the reflect slice
-//     arm would encode it as a SEQ of {Key,Value} structs, silently changing
-//     the record's structure.
-//   - A published type is read as the value type it stands for.
-//   - Encryptable hands control to the user type — except a typed nil
-//     pointer, which still satisfies the assertion but would dereference nil
-//     in typical implementations; it encodes as Null like every other nil
-//     whose type has no fixed width.
+// The function handles these types:
+//
+//   - Plain marks a passthrough value. The function checks for Plain before
+//     Encryptable and before the struct case, so a Plain is never encoded as
+//     an ordinary struct.
+//   - Object is what a map decodes as. A program that decrypts a record and
+//     encrypts it again passes an Object back in. Without this case,
+//     reflection would encode the Object as a sequence of structs with Key
+//     and Value fields. The structure of the record would change, with no
+//     error.
+//   - A published type is encoded as the value type that it is published
+//     for.
+//   - A type that implements Encryptable writes itself. A nil pointer of
+//     such a type is the exception. The pointer implements the interface,
+//     but most EncryptValue methods would dereference it. The function
+//     writes it with Null, as for any other nil whose type has no fixed
+//     width.
 func interceptMarkers(enc Encoder, v any) bool {
 	v = internal(v)
 	if m, ok := markers[reflect.TypeOf(v)]; ok {
@@ -511,8 +559,8 @@ func interceptMarkers(enc Encoder, v any) bool {
 	return false
 }
 
-// encodeObject re-encodes a decoded Object with object framing, preserving
-// its field order (Object exists precisely to preserve wire order).
+// encodeObject writes a decoded Object as a map, with its fields in the
+// order the Object lists them. Object exists to keep that order.
 func encodeObject(enc Encoder, o Object) {
 	m := enc.Map()
 	for _, f := range o {
@@ -529,9 +577,10 @@ func encodeReflect(enc Encoder, rv reflect.Value) {
 		enc.Null()
 		return
 	}
-	// Re-check the explicit markers for values reached through reflection
-	// (struct fields, slice elements, map values). Plain is itself a struct,
-	// so it must be intercepted before the reflect.Struct arm below.
+	// A value reached through reflection can have one of the types that
+	// interceptMarkers handles. Such a value is a struct field, a slice
+	// element, or a map value. Plain is a struct, so this check must come
+	// before the reflect.Struct case below.
 	if rv.CanInterface() && interceptMarkers(enc, rv.Interface()) {
 		return
 	}
@@ -553,10 +602,10 @@ func encodeReflect(enc Encoder, rv reflect.Value) {
 		encodeSeq(enc, rv)
 	case reflect.Array:
 		if rv.Type().Elem().Kind() == reflect.Uint8 {
-			// Byte arrays are one Bytes leaf, matching the slice arm above
-			// and Rust's single-leaf [u8; N] — element-wise encoding would
-			// seal N separate leaves and produce a ciphertext shape no other
-			// producer emits.
+			// A byte array is written as one Bytes value, as a byte slice is
+			// above. Rust writes a [u8; N] as one leaf too. Writing each
+			// byte as an element would seal N leaves. No other encoder
+			// produces a ciphertext of that structure.
 			b := make([]byte, rv.Len())
 			reflect.Copy(reflect.ValueOf(b), rv)
 			enc.Bytes(b)
@@ -569,9 +618,10 @@ func encodeReflect(enc Encoder, rv reflect.Value) {
 		encodeStruct(enc, rv)
 	case reflect.Pointer, reflect.Interface:
 		if rv.IsNil() {
-			// A nil pointer still has its element type, so an absent
-			// fixed-width value is padded like Rust's Option<T>. A nil
-			// interface has no type to go by.
+			// A nil pointer still has an element type. If that type has a
+			// fixed width, the absent value is written as a typed null, as
+			// Rust writes an Option<T>. A nil interface has no type, so it
+			// is written with Null.
 			if rv.Kind() != reflect.Pointer {
 				enc.Null()
 			} else if null := typedNullOf(rv.Type()); null != nil {
@@ -581,14 +631,16 @@ func encodeReflect(enc Encoder, rv reflect.Value) {
 			}
 			return
 		}
-		// Charge the dereference against the shared depth budget: it writes
-		// no container framing, so without this a pointer cycle (x = &x)
-		// would recurse to stack overflow instead of failing cleanly.
+		// Count the dereference as one level of depth. A dereference writes
+		// no bytes, so nothing else would limit a pointer cycle such as x =
+		// &x. Without this check, a cycle would overflow the stack and
+		// return no error.
 		if enc.depth+1 > maxDepth {
 			enc.st.fail(ErrTooDeep)
 			return
 		}
-		// Same slot: the dereferenced value completes the pointer's counter.
+		// The value the pointer points at is written into the same slot, so
+		// it uses the same counter.
 		encodeReflect(Encoder{st: enc.st, depth: enc.depth + 1, done: enc.done}, rv.Elem())
 	default:
 		enc.st.fail(fmt.Errorf("frame: cannot encode value of kind %s", rv.Kind()))
@@ -609,8 +661,8 @@ func encodeMap(enc Encoder, rv reflect.Value) {
 		return
 	}
 	keys := rv.MapKeys()
-	// Sort keys: Go map iteration is randomized; sorting makes the encrypted
-	// structure deterministic across encodes of an equal map.
+	// Sort the keys. Go iterates over a map in a random order. Sorted keys
+	// give equal maps the same encrypted structure.
 	slices.SortFunc(keys, func(a, b reflect.Value) int { return strings.Compare(a.String(), b.String()) })
 	m := enc.Map()
 	for _, k := range keys {
@@ -621,8 +673,9 @@ func encodeMap(enc Encoder, rv reflect.Value) {
 
 func encodeStruct(enc Encoder, rv reflect.Value) {
 	t := rv.Type()
-	// Named as the storage profile names them: `vc:"name"`, options after
-	// a comma, `vc:"-"` skipped, an unknown option refused.
+	// The fields are named as the storage profile names them. A `vc:"name"`
+	// tag sets the name, and options follow a comma. A `vc:"-"` tag skips
+	// the field. An unknown option is refused.
 	fields, err := structFields(t)
 	if err != nil {
 		enc.st.fail(err)
@@ -638,11 +691,12 @@ func encodeStruct(enc Encoder, rv reflect.Value) {
 		encodeReflect(m.Field(f.name), rv.Field(f.index))
 		encoded++
 	}
-	// A struct whose every field is unexported (time.Time is the canonical
-	// case) would seal as an empty map and the payload would be gone with no
-	// error at either end — the exact hazard the NAPI layer's
-	// ensure_plain_object guards. An all-`vc:"-"` struct is left alone: the
-	// caller asked for the empty encoding explicitly.
+	// Refuse a struct whose fields are all unexported. time.Time is the
+	// usual example. Such a struct would be sealed as an empty map. The
+	// value would be lost, with no error at encode or at decode. The Node
+	// binding of vitaminc has the same check, in ensure_plain_object. A
+	// struct whose fields all have a `vc:"-"` tag is accepted, because the
+	// caller asked for the empty encoding.
 	if encoded == 0 && unexported > 0 {
 		enc.st.fail(fmt.Errorf(
 			"frame: struct %s has no exported fields to encode — implement Encryptable to control its sealing", t))
@@ -651,18 +705,21 @@ func encodeStruct(enc Encoder, rv reflect.Value) {
 	_ = m.End()
 }
 
-// marker is how interceptMarkers writes a type it handles by exact type,
-// and the typed null of the type, if it is fixed width (nil if not). One
-// table for both, so a new marker type cannot be written one way and
-// padded, or not, another. A typed null is built from the tag a value of
-// the type is written with, so the tag table is the only list of types.
+// marker is one entry of the markers table. The encode function writes a
+// value of a type that interceptMarkers matches exactly. The null field is
+// the typed null of that type, or nil if the type has no fixed width.
+//
+// One table has both, so a new type cannot be written in one way and padded
+// in another. A typed null is built from the tag that a value of the type is
+// written with. The tag table is therefore the only list of types.
 type marker struct {
 	null   []byte
 	encode func(Encoder, any)
 }
 
-// numeric is how encodeReflect writes an int, uint or float kind, and the
-// typed null of the kind: the same one-table rule as marker.
+// numeric is one entry of the numericKinds table. The encode function writes
+// a value of an int, uint, or float kind for encodeReflect. The null field
+// is the typed null of that kind. One table has both, as for marker.
 type numeric struct {
 	null   []byte
 	encode func(Encoder, reflect.Value)
@@ -671,8 +728,8 @@ type numeric struct {
 var (
 	float32Type = reflect.TypeOf(float32(0))
 
-	// markers is filled in init: Plain and Object encode by calling back
-	// into encodeAny, which reads the table.
+	// markers is filled in init because the entries for Plain and Object
+	// call encodeAny, and encodeAny reads this table.
 	markers map[reflect.Type]marker
 
 	numericKinds = map[reflect.Kind]numeric{
@@ -688,18 +745,21 @@ var (
 		reflect.Uint32: {nullOf(tagUint32), func(e Encoder, rv reflect.Value) {
 			e.Uint32(uint32(rv.Uint()))
 		}},
-		// Every unsigned word-or-wider kind keeps its unsigned identity as
-		// Uint64 (no fit-check: a bare uint always maps to UINT64).
+		// A uint, uint64, or uintptr is always written as a Uint64. The
+		// codec never checks whether the value would fit a narrower or a
+		// signed type.
 		reflect.Uint:    {nullOf(tagUint64), func(e Encoder, rv reflect.Value) { e.Uint64(rv.Uint()) }},
 		reflect.Uint64:  {nullOf(tagUint64), func(e Encoder, rv reflect.Value) { e.Uint64(rv.Uint()) }},
 		reflect.Uintptr: {nullOf(tagUint64), func(e Encoder, rv reflect.Value) { e.Uint64(rv.Uint()) }},
 		reflect.Float32: {nullOf(tagFloat32), func(e Encoder, rv reflect.Value) {
-			// rv.Float() widens to float64, and the hardware widening sets
-			// the quiet bit of a signaling NaN. Converting to the built-in
-			// float32 instead copies the bits (reflect special-cases float32
-			// to float32, Go issue 36400), so a named float32 type keeps
-			// them too. Only a value that cannot be read as an interface
-			// falls back to widening.
+			// rv.Float() widens the value to float64. On the hardware,
+			// widening sets the quiet bit of a signaling NaN. A conversion
+			// to the built-in float32 copies the bits unchanged, because
+			// reflect treats a conversion from float32 to float32 as a copy.
+			// See Go issue 36400. A named float32 type therefore keeps its
+			// bits too.
+			//
+			// Only a value that cannot be read as an interface is widened.
 			if f, ok := interfaceOf(rv.Convert(float32Type)).(float32); ok {
 				e.Float32(f)
 			} else {
@@ -709,8 +769,9 @@ var (
 		reflect.Float64: {nullOf(tagFloat64), func(e Encoder, rv reflect.Value) { e.Float64(rv.Float()) }},
 	}
 
-	// typedNulls caches typedNullOf by pointer type: every nil pointer of a
-	// record type would otherwise pay its reflection again.
+	// typedNulls caches the result of typedNullOf for each pointer type.
+	// Without the cache, every nil pointer in a record would repeat the
+	// reflection.
 	typedNulls sync.Map
 )
 
@@ -737,7 +798,8 @@ func init() {
 		reflect.TypeOf(UUID{}): {uuidNull, func(e Encoder, v any) {
 			e.UUID(v.(UUID))
 		}},
-		// A tagged value's physical type is in the value, not the type.
+		// The scalar type of a Tagged is known only from its value, so
+		// Tagged has no typed null.
 		reflect.TypeOf(Tagged{}): {nil, func(e Encoder, v any) { e.Tagged(v.(Tagged)) }},
 		reflect.TypeOf(Plain{}): {nil, func(e Encoder, v any) {
 			encodeAny(e.Passthrough(), v.(Plain).V)
@@ -748,22 +810,30 @@ func init() {
 	}
 }
 
-// typedNullOf is the typed null of the type a pointer of type t points at,
-// through any number of pointers, when encodeReflect writes every value of
-// it with one fixed-width tag: the int, uint and float kinds (a named type
-// over one included) and the fixed-width marker types, exactly (a named
-// type over a marker is a struct to reflection, written field by field).
-// It is nil for any other type. A type that implements Encryptable chooses
-// its own encoding, which may not be fixed width, so it has none.
+// typedNullOf returns the typed null for a nil pointer of type t. The
+// function follows t through any number of pointers to the type at the end.
+// That type has a typed null when encodeReflect writes every value of it
+// with one fixed-width tag. Two groups of types qualify:
+//
+//   - The int, uint, and float kinds. A named type over one of these kinds
+//     qualifies too.
+//   - The fixed-width types in the markers table, matched exactly. A named
+//     type over one of them does not qualify. Reflection reads such a type
+//     as a struct, and writes it field by field.
+//
+// The result is nil for any other type. A type that implements Encryptable
+// has no typed null either. Such a type chooses its own encoding, and that
+// encoding might not have a fixed width.
 func typedNullOf(t reflect.Type) []byte {
 	if cached, ok := typedNulls.Load(t); ok {
 		return cached.([]byte)
 	}
 	var null []byte
 	elem := t
-	// A pointer type that points at itself (type P *P) never reaches a
-	// non-pointer, so the walk is bounded by the same depth budget that
-	// bounds a value cycle. Past it the type has no fixed width.
+	// A pointer type can point at itself, as in type P *P. Such a type never
+	// leads to a type that is not a pointer. The loop therefore stops after
+	// maxDepth steps, the same limit as for a cycle of values. A type beyond
+	// that limit has no fixed width.
 	for depth := 0; elem.Kind() == reflect.Pointer && !implementsEncryptable(elem); depth++ {
 		if depth == maxDepth {
 			typedNulls.Store(t, null)
@@ -782,8 +852,8 @@ func typedNullOf(t reflect.Type) []byte {
 	return null
 }
 
-// interfaceOf is rv.Interface(), or nil where reflection forbids it
-// (values reached through unexported fields).
+// interfaceOf returns rv.Interface(). The result is nil when reflection does
+// not allow the call, as for a value reached through an unexported field.
 func interfaceOf(rv reflect.Value) any {
 	if !rv.CanInterface() {
 		return nil

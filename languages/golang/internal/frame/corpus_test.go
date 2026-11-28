@@ -7,18 +7,21 @@ import (
 	"testing"
 )
 
-// The corpora these tests read are files of the repository, outside this Go
-// module, so the module a program downloads does not carry them. There a
-// missing corpus is not a failure: readCorpus reports it, and the caller
-// skips a test, or seeds a fuzz target from its testdata alone. In the
-// repository, or with STACK_CONFORMANCE_REQUIRED=1, a missing corpus fails.
+// The corpora that these tests read are files of the repository, outside
+// this Go module. A module that a program downloads therefore does not
+// include them. In a downloaded module, a missing corpus is not a failure.
+// The function readCorpus reports that the corpus is missing. The caller
+// then skips its test, or seeds its fuzz target from testdata alone.
+//
+// A missing corpus fails the test in the repository. A missing corpus also
+// fails where STACK_CONFORMANCE_REQUIRED=1 is set.
 
 // repositoryMarker is the repository's .git, a directory in a clone and a
 // file in a worktree. A downloaded module has neither.
 const repositoryMarker = "../../../../.git"
 
-// readCorpus is the corpus at path, and false when it is missing outside
-// the repository.
+// readCorpus returns the corpus at path. The second result is false when the
+// corpus is missing outside the repository.
 func readCorpus(tb testing.TB, path string) ([]byte, bool) {
 	tb.Helper()
 	data, err := os.ReadFile(path)
@@ -33,8 +36,9 @@ func readCorpus(tb testing.TB, path string) ([]byte, bool) {
 	return nil, false
 }
 
-// corpusRequired reports whether a missing corpus fails: in the repository,
-// or when STACK_CONFORMANCE_REQUIRED=1 asks for every corpus.
+// corpusRequired reports whether a missing corpus is a failure. A missing
+// corpus is a failure in the repository, and where
+// STACK_CONFORMANCE_REQUIRED=1 is set.
 func corpusRequired() bool {
 	if os.Getenv("STACK_CONFORMANCE_REQUIRED") == "1" {
 		return true

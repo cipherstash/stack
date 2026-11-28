@@ -7,36 +7,41 @@ import (
 	"time"
 )
 
-// Unmarshal decodes value transport bytes into Go natives:
+// Unmarshal decodes the transport bytes of a value into Go values:
 //
-//   - Null and Undefined → nil (Go has no undefined analog);
-//   - a typed null       → nil: an absent value is absent whatever its type
-//     once it is out of the seal, so it re-encodes as the plain null;
-//   - Bool               → bool;
-//   - Int32              → int32;
-//   - Int64              → int64;
-//   - Uint32             → uint32;
-//   - Uint64             → uint64;
-//   - Float32            → float32;
-//   - Float64            → float64;
-//   - String             → string;
-//   - Bytes              → []byte;
-//   - Array              → []any;
-//   - Object             → Object (ordered []Field);
-//   - Passthrough        → Plain{V: <decoded value>} (the clear-field marker);
-//   - the 0xF3 envelope  → time.Time for a timestamp in seconds, milliseconds
-//     or microseconds, UUID for a UUID, and Tagged for a
-//     logical id this build does not know, which re-encodes unchanged;
-//   - the 8-, 16- and 128-bit integers, Date, Timestamp and Decimal → int8,
-//     uint8, int16, uint16, Int128, Uint128, Date, time.Time and Decimal.
+//   - Null and Undefined decode as nil. Go has no undefined value.
+//   - A typed null decodes as nil. The type of an absent value matters only
+//     while the value is sealed. The nil therefore encodes again as the
+//     plain null.
+//   - Bool decodes as bool.
+//   - Int32 decodes as int32.
+//   - Int64 decodes as int64.
+//   - Uint32 decodes as uint32.
+//   - Uint64 decodes as uint64.
+//   - Float32 decodes as float32.
+//   - Float64 decodes as float64.
+//   - String decodes as string.
+//   - Bytes decodes as []byte.
+//   - Array decodes as []any.
+//   - Object decodes as [Object], an ordered []Field.
+//   - Passthrough decodes as Plain{V: v}, where v is the decoded value.
+//     Plain marks a value that was not encrypted.
+//   - An envelope starts with the tag 0xF3, and decodes by its logical type.
+//     A timestamp in seconds, milliseconds, or microseconds decodes as
+//     time.Time. A UUID decodes as UUID. A logical type id that this version
+//     does not know decodes as [Tagged]. A Tagged encodes as the same bytes.
+//   - The 8-bit, 16-bit, and 128-bit integers decode as int8, uint8, int16,
+//     uint16, Int128, and Uint128.
+//   - Date decodes as Date, Timestamp as time.Time, and Decimal as Decimal.
 //
-// A value type that is published (see [Publish]) decodes as the type it is
-// published as: Date as encrypt.Date, say, in a program that links package
-// encrypt.
+// A value type that is published decodes as the type it is published as. For
+// example, Date decodes as encrypt.Date in a program that links package
+// encrypt. See [Publish].
 //
-// Go maps exactly in both directions — the 32-bit tags decode to int32 /
-// uint32 / float32, not widened to 64-bit. JavaScript decodes integer tags
-// as BigInt and widens Float32 to a number.
+// Go has a type for every tag, so Unmarshal never widens a value. The 32-bit
+// tags decode as int32, uint32, and float32, never as 64-bit types.
+// JavaScript differs: it decodes every integer tag as a BigInt, and widens
+// Float32 to a number.
 func Unmarshal(buf []byte) (any, error) {
 	r := &reader{buf: buf}
 	v, err := decodeValue(r, 0)
@@ -60,7 +65,8 @@ func decodeValue(r *reader, depth int) (any, error) {
 	return decodeTagged(r, tag, depth)
 }
 
-// decodeTagged decodes the node whose tag has just been read.
+// decodeTagged decodes a node. The caller has already read the tag of the
+// node.
 func decodeTagged(r *reader, tag byte, depth int) (any, error) {
 	switch tag {
 	case tagInt8, tagUint8, tagInt16, tagUint16, tagInt128, tagUint128, tagDate, tagTimestamp, tagDecimal:
@@ -141,9 +147,10 @@ func decodeTagged(r *reader, tag byte, depth int) (any, error) {
 			return nil, err
 		}
 		fields := make(Object, 0, eagerCap(n))
-		// Duplicate keys are rejected as on the ciphertext decode path (and
-		// both Rust decoders): an Object with duplicates cannot survive a
-		// re-encode through a Go map without silently dropping an entry.
+		// A duplicate key is refused. The ciphertext decoder and both Rust
+		// decoders refuse one too. If an Object with a duplicate key were
+		// encoded again through a Go map, one entry would be lost with no
+		// error.
 		seen := make(map[string]struct{}, eagerCap(n))
 		for range n {
 			key, err := r.str()
@@ -162,9 +169,10 @@ func decodeTagged(r *reader, tag byte, depth int) (any, error) {
 		}
 		return fields, nil
 	case tagPassthrough:
-		// A passthrough value surfaces as Plain{V: <decoded value>}, the
-		// mirror of the Encoder's Plain opt-in, so a caller can tell the
-		// field travelled in the clear.
+		// A passthrough value decodes as Plain{V: v}, where v is the decoded
+		// value. Plain is also how a caller asks the Encoder for
+		// passthrough. The caller can therefore tell that the value was not
+		// encrypted.
 		inner, err := decodeValue(r, depth+1)
 		if err != nil {
 			return nil, err
@@ -179,9 +187,10 @@ func decodeTagged(r *reader, tag byte, depth int) (any, error) {
 	}
 }
 
-// physicalTag reports whether tag is a physical scalar: one the envelope
-// may carry. The logical shorthand tags (Undefined, Date, Timestamp,
-// Decimal) and the containers are not.
+// physicalTag reports whether tag is the tag of a physical scalar. Only a
+// physical scalar can follow the header of an envelope. The tags of the
+// logical types Undefined, Date, Timestamp, and Decimal are not physical.
+// The container tags are not physical either.
 func physicalTag(tag byte) bool {
 	switch tag {
 	case tagNull, tagFalse, tagTrue, tagInt32, tagInt64, tagUint32, tagUint64, tagFloat32, tagFloat64,
@@ -191,10 +200,13 @@ func physicalTag(tag byte) bool {
 	return false
 }
 
-// decodeEnvelope reads the 0xF3 envelope after its tag: a logical id, a
-// parameter, and a physical scalar. There is one encoding per value, so an
-// envelope over a type with a shorthand tag, an id of zero, or a known id
-// with a parameter it cannot take is malformed.
+// decodeEnvelope reads an envelope, after its tag 0xF3. An envelope is the
+// id of a logical type, a parameter, and a physical scalar. Every value has
+// exactly one encoding, so three kinds of envelope are malformed:
+//
+//   - one for a logical type that has a tag of its own
+//   - one with an id of zero
+//   - one with a known id and a parameter that the type does not accept
 func decodeEnvelope(r *reader) (any, error) {
 	id, err := r.byteTag()
 	if err != nil {
@@ -233,10 +245,11 @@ func decodeEnvelope(r *reader) (any, error) {
 	}
 }
 
-// envelopeTimestamp is a count of seconds, milliseconds or microseconds
-// since the epoch as a time.Time, in the wire's range (jiff's, about years
-// -9999 to 9999; see Timestamp). The nanosecond unit has
-// the shorthand Timestamp tag and is refused in the envelope.
+// envelopeTimestamp converts a count of seconds, milliseconds, or
+// microseconds since the epoch to a time.Time. The instant must be in the
+// range that the encoding accepts, about the years -9999 to 9999. See
+// [Timestamp]. The function refuses the nanosecond unit, because a timestamp
+// in nanoseconds uses tagTimestamp.
 func envelopeTimestamp(unit byte, physical any) (any, error) {
 	var per int64
 	switch unit {
@@ -251,9 +264,10 @@ func envelopeTimestamp(unit byte, physical any) (any, error) {
 	}
 	var t Timestamp
 	if count, ok := smallIntegerOf(physical); ok {
-		// Most counts fit an int64, among them every Date that Node writes,
-		// so they skip math/big. The count splits into whole seconds and a
-		// remainder that is never negative, as DivMod does below.
+		// Most counts fit an int64, including every Date that Node writes.
+		// Those counts are converted without math/big. The count is split
+		// into whole seconds and a remainder. The remainder is never
+		// negative, as with DivMod below.
 		perSecond := 1_000_000_000 / per
 		seconds, rem := count/perSecond, count%perSecond
 		if rem < 0 {
@@ -278,7 +292,8 @@ func envelopeTimestamp(unit byte, physical any) (any, error) {
 	return time.Unix(t.Seconds, int64(t.Nanoseconds)).UTC(), nil
 }
 
-// smallIntegerOf is the value of a decoded int that fits an int64.
+// smallIntegerOf returns the value of a decoded integer that fits an int64.
+// The second result is false for any other value.
 func smallIntegerOf(v any) (int64, bool) {
 	switch x := v.(type) {
 	case int8:
@@ -301,8 +316,8 @@ func smallIntegerOf(v any) (int64, bool) {
 	return 0, false
 }
 
-// wideIntegerOf is the value of a decoded int that smallIntegerOf does not
-// take: a uint64 above math.MaxInt64, an Int128 or a Uint128.
+// wideIntegerOf returns the value of a decoded integer that smallIntegerOf
+// does not accept: a uint64 above math.MaxInt64, an Int128, or a Uint128.
 func wideIntegerOf(v any) (*big.Int, bool) {
 	switch x := internal(v).(type) {
 	case uint64:

@@ -1,50 +1,91 @@
-// Package frame is the Go half of the frame codec: the bytes that carry a
-// value into the Stack Encrypt guest, the bytes that carry a ciphertext tree
-// back out, and the storage profile, which writes a value as a blob that is
-// kept. The Rust half is the crate recipher-frame. The two halves share no
-// code, only bytes, so both read the same corpora: the value corpus in
-// conformance/vitaminc-aead and the storage corpus in
-// packages/recipher-frame/testdata.
+// Package frame encodes and decodes the bytes that the Go module exchanges
+// with its guests. A guest is a WebAssembly module that the Go module runs.
+// The Stack Encrypt guest is the guest that encrypts and decrypts.
 //
-// The package also holds the value model the codec reads and writes: the
-// value types (Date, Decimal, Int128, Uint128, UUID), Object and Field for a
-// map read back in its wire order, and Plain for a value that travels in
-// the clear.
+// A frame is the bytes that encode one value. The package has three
+// encodings:
 //
-// # Transport, and one storage profile
+//   - The value encoding is for a value that crosses between Go and a guest.
+//     [Marshal] writes it and [Unmarshal] reads it.
+//   - The ciphertext encoding is for a ciphertext tree that crosses between
+//     Go and the Stack Encrypt guest. [MarshalCipherText] writes it and
+//     [UnmarshalCipherText] reads it.
+//   - The storage profile is for a value that a program stores, as a blob.
+//     [MarshalStorage] writes it and [UnmarshalStorage] reads it.
 //
-// The transport bytes have no compatibility commitment: nothing [Marshal],
-// [Encode] or [MarshalCipherText] writes is ever kept. The one exception is
-// the storage profile, [MarshalStorage] and [UnmarshalStorage], which write
-// and read a value as a versioned blob. Its format is version 1 of
-// packages/recipher-frame/STORAGE.md, shared with the Rust module
-// recipher_frame::storage, frozen, and pinned by the storage corpus, which
-// this package's tests read. Use it, and only it, for bytes that outlive
-// the process that wrote them.
+// The Rust crate recipher-frame implements the same encodings. The Go code
+// and the Rust code share nothing. The tests of both read the same two files
+// of expected bytes: the value corpus in conformance/vitaminc-aead, and the
+// storage corpus in packages/recipher-frame/testdata.
+//
+// The package also declares the types that the codec reads and writes:
+//
+//   - The value types [Date], [Decimal], [Int128], [Uint128], and [UUID].
+//   - [Object] and [Field], for a decoded map. The fields are in the order
+//     they were encoded.
+//   - [Plain], for a passthrough value. A passthrough value is neither
+//     encrypted nor authenticated.
+//
+// # Transport bytes and the storage profile
+//
+// Never store the bytes that [Marshal], [Encode], or [MarshalCipherText]
+// writes. Those are transport bytes. Transport bytes exist only while a call
+// crosses into or out of a guest. A later release can change their encoding.
+//
+// Store only the bytes of the storage profile. [MarshalStorage] writes a
+// value as a versioned blob, and [UnmarshalStorage] reads one. The format is
+// version 1 of packages/recipher-frame/STORAGE.md, and that version never
+// changes. The Rust module recipher_frame::storage reads and writes the same
+// format. The tests of this package check the format against the storage
+// corpus.
 //
 // # Values and ciphertexts
 //
-// [Marshal] and [Unmarshal] carry a value: Go's own scalars, the value
-// types, []any for a list, [Object] for a map read back, and [Plain] for
-// passthrough. Marshal walks other Go values with encoding/json-style rules,
-// and asks the published Encryptable first (see [PublishEncryptable]), so a
-// type can write itself through an [Encoder].
+// [Marshal] and [Unmarshal] encode and decode a value. A value is one of
+// these:
 //
-// [MarshalCipherText] and [UnmarshalCipherText] carry the ciphertext tree.
-// Its structural nodes ([]any, map[string]any, [Plain]) are the codec's. Its
-// sealed leaves are the caller's own types, which a [LeafSet] maps onto the
-// framing, so a leaf is a type no other value can be mistaken for.
+//   - a Go scalar
+//   - a value type
+//   - a []any, for a list
+//   - an [Object], for a decoded map
+//   - a [Plain], for a passthrough value
+//
+// Marshal encodes any other Go value by reflection, with rules like those of
+// encoding/json. Before Marshal uses reflection, it checks whether the value
+// implements the published Encryptable interface. A type that implements
+// Encryptable writes itself through an [Encoder]. See [PublishEncryptable].
+//
+// [MarshalCipherText] and [UnmarshalCipherText] encode and decode a
+// ciphertext tree. The codec defines the structural nodes of the tree:
+// []any, map[string]any, and [Plain]. The caller defines the types of the
+// sealed leaves. A sealed leaf is one encrypted value in the tree.
+//
+// The caller gives the codec a [LeafSet]. The LeafSet converts between the
+// caller's leaf types and the encoded leaves. A leaf therefore has a Go type
+// of its own. No other value can be used in place of a leaf.
 //
 // # Hostile input
 //
-// The decoders treat their input as untrusted: recursion depth, length
-// prefixes and item counts are bounded, strings are UTF-8 validated,
-// duplicate map keys are rejected, and every malformed input fails with
-// [ErrMalformed] rather than panicking or over-allocating. The fuzz targets
-// in this package pin that contract.
+// The decoders treat their input as untrusted. Every decoder applies these
+// rules:
 //
-// [ErrMalformed] covers hostile bytes, not caller mistakes: a [LeafSet] that
-// is partially wired, or that does not materialize a kind the buffer carries,
-// fails with its own attributable error, so errors.Is(err, [ErrMalformed]) is
-// a test for bad input rather than a total branch over decode failures.
+//   - The nesting depth, every length prefix, and every item count have a
+//     limit.
+//   - Every string must be valid UTF-8.
+//   - A map must not have a duplicate key.
+//
+// A decoder returns [ErrMalformed] for every malformed input. A decoder
+// never panics, and never allocates more memory than its input can fill. The
+// fuzz targets in this package test these rules.
+//
+// [ErrMalformed] means that the bytes are bad. A mistake by the caller fails
+// with a different error. That error names the mistake. There are two such
+// mistakes:
+//
+//   - A [LeafSet] has a nil function.
+//   - The Make function of a LeafSet returns nil for a kind of leaf that the
+//     input contains.
+//
+// So errors.Is(err, [ErrMalformed]) tests for bad input. That test is not
+// true for every decode failure.
 package frame

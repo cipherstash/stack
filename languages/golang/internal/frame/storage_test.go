@@ -14,8 +14,9 @@ import (
 	"time"
 )
 
-// The storage corpus is shared with Rust (packages/recipher-frame), which pins
-// version 1 byte for byte; this file holds Go to the same rows.
+// Go and Rust share the storage corpus. The Rust crate in
+// packages/recipher-frame tests every byte of version 1 against it. This
+// file tests Go against the same rows.
 const storageCorpus = "../../../../packages/recipher-frame/testdata/storage-v1.json"
 
 type storageRow struct {
@@ -36,8 +37,9 @@ type storageCorpusFile struct {
 	Reads   []storageRow `json:"reads"`
 }
 
-// loadStorageCorpus is the storage corpus. When it is missing outside the
-// repository, a test skips and a fuzz target gets no rows to seed from.
+// loadStorageCorpus returns the storage corpus. Outside the repository the
+// corpus file is missing. A test then skips, and a fuzz target gets no seed
+// rows from the corpus.
 func loadStorageCorpus(t testing.TB) storageCorpusFile {
 	t.Helper()
 	data, ok := readCorpus(t, storageCorpus)
@@ -51,8 +53,8 @@ func loadStorageCorpus(t testing.TB) storageCorpusFile {
 	if err := json.Unmarshal(data, &c); err != nil {
 		t.Fatal(err)
 	}
-	// reads_as is null for a row that reads as null, so its presence is
-	// told apart from a refusal by the refusal field.
+	// A row that reads as null has a reads_as of null. The refusal field is
+	// therefore what tells a refused row from a row that reads.
 	for i := range c.Reads {
 		c.Reads[i].HasReads = c.Reads[i].Refusal == ""
 	}
@@ -68,8 +70,9 @@ func mustHex(t testing.TB, s string) []byte {
 	return b
 }
 
-// storageModel builds the Go value a corpus value describes, without the
-// storage reader, so a reader and writer wrong in the same way cannot pass.
+// storageModel builds the Go value that a corpus value describes, without
+// the storage reader. A reader and a writer that are wrong in the same way
+// therefore cannot pass the test.
 func storageModel(t testing.TB, raw json.RawMessage) any {
 	t.Helper()
 	if len(raw) == 0 || string(raw) == "null" {
@@ -200,7 +203,8 @@ func storageModel(t testing.TB, raw json.RawMessage) any {
 	return nil
 }
 
-// sameModel compares two models, floats by their bits so NaNs compare.
+// sameModel reports whether two decoded values are equal. The function
+// compares floats by their bits, so two NaNs with the same bits are equal.
 func sameModel(a, b any) bool {
 	switch x := a.(type) {
 	case float32:
@@ -298,7 +302,8 @@ func TestStorageCorpusVectors(t *testing.T) {
 	}
 }
 
-// Every refused row is refused by its class, whatever it is read into.
+// Every refused row fails with the error of its class, whatever type it is
+// read into.
 func TestStorageCorpusRefused(t *testing.T) {
 	c := loadStorageCorpus(t)
 	if len(c.Refused) == 0 {
@@ -318,8 +323,9 @@ func TestStorageCorpusRefused(t *testing.T) {
 	}
 }
 
-// goType is the Go type a corpus type describes, or why Go has none: Go has
-// no enums and no unit type, and a []byte cannot be a map key.
+// goType returns the Go type that a corpus type describes, or the reason Go
+// has no such type. Go has no enums and no unit type. A []byte cannot be a
+// map key.
 func goType(t testing.TB, raw json.RawMessage) (reflect.Type, string) {
 	t.Helper()
 	var name string
@@ -376,8 +382,9 @@ func goType(t testing.TB, raw json.RawMessage) (reflect.Type, string) {
 				return nil, why
 			}
 			return reflect.MapOf(key, value), ""
-		// UnmarshalStorage ignores unknown fields: a struct that denies them
-		// reads as one that does not, and its refusals are skipped below.
+		// UnmarshalStorage ignores unknown fields. A struct that denies
+		// unknown fields therefore reads as a struct that allows them. The
+		// rows that refuse such a struct are skipped below.
 		case "unit_struct":
 			return nil, "Go has no unit type"
 		case "struct", "struct_deny_unknown":
@@ -406,12 +413,14 @@ func goType(t testing.TB, raw json.RawMessage) (reflect.Type, string) {
 	return nil, ""
 }
 
-// deniesUnknown reports whether a row's type is itself a struct that
-// denies unknown keys. UnmarshalStorage has no way to deny them, so a
-// refused row of such a type that Go reads anyway is skipped. A row of
-// that type that Go refuses is still checked for its error class. A
-// struct that denies them nested in another type is not looked for: a row
-// refused for that would fail below, rather than be skipped.
+// deniesUnknown reports whether the type of a row is a struct that denies
+// unknown keys. UnmarshalStorage cannot deny unknown keys. A refused row of
+// such a type is therefore skipped when Go reads it. When Go refuses the
+// row, the test still checks the class of the error.
+//
+// The function does not look for such a struct nested inside another type. A
+// row that is refused for that reason would fail below. The test would not
+// skip it.
 func deniesUnknown(raw json.RawMessage) bool {
 	var kind map[string]json.RawMessage
 	if json.Unmarshal(raw, &kind) != nil {
@@ -421,8 +430,9 @@ func deniesUnknown(raw json.RawMessage) bool {
 	return ok
 }
 
-// Every reads row Go can express reads as it says, or is refused as a
-// mismatch. What it reads as is compared as the blob it writes back to.
+// Every `reads` row that Go can express reads as the row says, or fails as a
+// mismatch. The test compares the result by the blob that it is written back
+// as.
 func TestStorageCorpusReads(t *testing.T) {
 	c := loadStorageCorpus(t)
 	expressed := 0
@@ -450,8 +460,8 @@ func TestStorageCorpusReads(t *testing.T) {
 			t.Errorf("%s: %v", row.Name, err)
 			continue
 		}
-		// What the row reads as, written canonically, read by the same
-		// type: the Go value both blobs must read as.
+		// The blob for the value that the row reads as, read into the same
+		// type. Both blobs must read as this Go value.
 		canonical, err := MarshalStorage(storageModel(t, row.ReadsAs))
 		if err != nil {
 			t.Fatal(err)
@@ -464,8 +474,9 @@ func TestStorageCorpusReads(t *testing.T) {
 			t.Errorf("%s: read as %#v, want %#v", row.Name, into.Elem().Interface(), want.Elem().Interface())
 		}
 	}
-	// Most rows are expressible; a new row Go cannot express is logged
-	// above, and this guards against a typo skipping them all.
+	// Go can express most rows, and a new row that Go cannot express is
+	// logged above. This check fails if a typo makes the test skip every
+	// row.
 	if expressed < len(c.Reads)/2 {
 		t.Fatalf("only %d of %d reads rows are expressed in Go", expressed, len(c.Reads))
 	}
@@ -477,7 +488,8 @@ func TestStorageCorpusReads(t *testing.T) {
 
 type stamp struct{ at string }
 
-// folded writes itself in lower case, so two keys can write as one.
+// folded writes itself as text in lower case, so two different keys can be
+// written as the same key.
 type folded string
 
 func (f folded) MarshalText() ([]byte, error) { return []byte(strings.ToLower(string(f))), nil }
@@ -542,7 +554,7 @@ func TestStorageRecordRoundTrips(t *testing.T) {
 	if !reflect.DeepEqual(out, in) {
 		t.Fatalf("read %+v, want %+v", out, in)
 	}
-	// The pieces whose bytes Rust must agree on.
+	// Rust must write the same bytes for each of these values.
 	var model any
 	if err := UnmarshalStorage(blob, &model); err != nil {
 		t.Fatal(err)
@@ -589,8 +601,9 @@ func TestStorageRecordRoundTrips(t *testing.T) {
 	}
 }
 
-// Integer keys sort by value, as a Rust BTreeMap orders them, so the same
-// map writes the same bytes in both languages.
+// Integer keys are written in order of value, as a Rust BTreeMap orders
+// them. The same map is therefore written as the same bytes in both
+// languages.
 func TestStorageMapKeysSortLikeRust(t *testing.T) {
 	cases := []struct {
 		in   any
@@ -689,8 +702,8 @@ func (s *sealedSecret) EncryptValue(enc Encoder) error {
 	return nil
 }
 
-// A bytes key read into an interface key would be a []byte, which a Go map
-// cannot hold: it is a mismatch, not a panic.
+// A bytes key that is read into an interface key would be a []byte. A Go map
+// cannot hash a []byte. The read must fail as a mismatch, with no panic.
 func TestStorageBytesKeyIntoAnyKeyIsAMismatch(t *testing.T) {
 	blob, err := MarshalStorage(map[[1]byte]int{{1}: 42})
 	if err != nil {
@@ -735,8 +748,9 @@ func TestStorageMismatchNamesWhereAndNotWhat(t *testing.T) {
 	}
 }
 
-// A field that became a pointer reads its old value; a missing pointer
-// field is nil, and any other missing field is refused.
+// A field that is now a pointer reads a value that was written before the
+// change. A missing pointer field reads as nil. Any other missing field is
+// refused.
 func TestStorageOptionalFields(t *testing.T) {
 	type before struct {
 		N uint32 `vc:"n"`
@@ -757,8 +771,9 @@ func TestStorageOptionalFields(t *testing.T) {
 	if err := UnmarshalStorage(blob, &stricter{}); !errors.Is(err, ErrMismatch) {
 		t.Fatalf("a missing field: %v, want ErrMismatch", err)
 	}
-	// A tagged default reads a missing field as its zero value, and keeps
-	// its name, or the field's own with an empty name.
+	// A field with the `default` option reads as its zero value when the
+	// blob does not have it. The field has the name in its tag, or its own
+	// name when the tag has no name.
 	type defaulted struct {
 		N uint32 `vc:"n"`
 		M string `vc:"m,default"`
@@ -774,8 +789,9 @@ func TestStorageOptionalFields(t *testing.T) {
 	if names := []string{model.(Object)[1].Key, model.(Object)[2].Key}; names[0] != "m" || names[1] != "K" {
 		t.Fatalf("a tag's options are not part of its name: %v", names)
 	}
-	// A Go pointer is written bare, so a field that is not a pointer on the
-	// reading side reads it; Rust's marked Some reads only into a pointer.
+	// A Go pointer is written with no [StorageSome] tag, so a field that is
+	// not a pointer can read it. A Rust Some is written with the tag, and
+	// reads only into a pointer.
 	blob, _ = MarshalStorage(after{N: a.N})
 	if err := UnmarshalStorage(blob, &before{}); err != nil {
 		t.Fatalf("a pointer into a plain field: %v", err)
@@ -789,7 +805,8 @@ func TestStorageOptionalFields(t *testing.T) {
 	}
 }
 
-// The transport names a struct's fields by the same tags, options and all.
+// The transport encoding names the fields of a struct by the same tags,
+// including the options.
 func TestTransportFieldNamesIgnoreTagOptions(t *testing.T) {
 	type tagged struct {
 		Age uint8 `vc:"age,default"`
@@ -820,9 +837,12 @@ func addStorageSeeds(f *testing.F) {
 	}
 }
 
-// FuzzUnmarshalStorage holds the reader to its contract on hostile bytes:
-// it never panics, a blob it reads writes back as exactly the same bytes
-// (one encoding per value), and reading into a struct never panics either.
+// FuzzUnmarshalStorage checks three rules of the reader on hostile bytes:
+//
+//   - The reader never panics.
+//   - A blob that the reader accepts is written back as exactly the same
+//     bytes, because every value has one encoding.
+//   - The reader never panics when it reads into a struct.
 func FuzzUnmarshalStorage(f *testing.F) {
 	addStorageSeeds(f)
 	f.Fuzz(func(t *testing.T, blob []byte) {
@@ -841,9 +861,10 @@ func FuzzUnmarshalStorage(f *testing.F) {
 	})
 }
 
-// Every level of a pointer to a pointer reads back: a pointer to a value
-// that is itself written as null or marked present is marked, so its
-// reader never takes the inner level's null or marker for its own.
+// Every level of a pointer to a pointer reads back. A pointer is written
+// with the StorageSome tag when its value is itself written as null or with
+// the tag. A reader therefore never treats the null or the tag of an inner
+// level as that of the outer pointer.
 func TestStoragePointerLevelsReadBack(t *testing.T) {
 	five := 5
 	var leaf *int
@@ -870,7 +891,7 @@ func TestStoragePointerLevelsReadBack(t *testing.T) {
 		}
 	}
 
-	// The blob Codex found: the innermost nil is two markers, then null.
+	// The innermost nil is written as two StorageSome tags, then null.
 	blob, err := MarshalStorage(&middle)
 	if err != nil {
 		t.Fatal(err)
@@ -879,7 +900,8 @@ func TestStoragePointerLevelsReadBack(t *testing.T) {
 		t.Errorf("%x, want %x", blob, want)
 	}
 
-	// A pointer to [Some] is marked too, so the Some keeps its own marker.
+	// A pointer to a [Some] is written with the tag too, so the Some keeps
+	// its own tag.
 	some := Some{V: int64(1)}
 	blob, err = MarshalStorage(&some)
 	if err != nil {
@@ -890,8 +912,9 @@ func TestStoragePointerLevelsReadBack(t *testing.T) {
 	}
 }
 
-// A nil pointer is no map key. It is refused, never handed to its type's
-// MarshalText, which would be called on nil.
+// A nil pointer cannot be a map key. The writer refuses it. The writer never
+// calls the MarshalText method of its type, because the receiver would be
+// nil.
 func TestStorageRefusesANilPointerKey(t *testing.T) {
 	for name, v := range map[string]any{
 		"a map":            map[*time.Time]int{nil: 1},
@@ -904,8 +927,9 @@ func TestStorageRefusesANilPointerKey(t *testing.T) {
 	}
 }
 
-// A `vc` tag option other than `default` is refused where a struct is
-// written or read, in a blob or the transport, rather than ignored.
+// A `vc` tag option other than `default` is refused, not ignored. The rule
+// applies wherever a struct is written or read, in a blob and in the
+// transport encoding.
 func TestUnknownTagOptionsAreRefused(t *testing.T) {
 	type misspelt struct {
 		Email string `vc:"email,defualt"`
@@ -931,8 +955,8 @@ func TestUnknownTagOptionsAreRefused(t *testing.T) {
 	}
 }
 
-// A pointer that writes no node of its own costs no depth, so a linked
-// list is as deep in Go as its blob is; a pointer cycle is still refused.
+// A pointer that writes no node of its own adds no depth. A linked list is
+// therefore as deep in Go as its blob is. A pointer cycle is still refused.
 func TestStoragePointersCostOnlyTheDepthTheyWrite(t *testing.T) {
 	type node struct {
 		Next *node `vc:"next"`

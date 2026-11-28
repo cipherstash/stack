@@ -33,7 +33,8 @@ func (e Encoder) Date(v Date) {
 	e.scalar(tagDate, binary.LittleEndian.AppendUint32(nil, uint32(days)))
 }
 
-// Timestamp keeps the instant and nanoseconds, discarding location and monotonic metadata.
+// Timestamp records the instant of v, to the nanosecond. Timestamp does not
+// record the location of v or its monotonic clock reading.
 func (e Encoder) Timestamp(v time.Time) {
 	e.TimestampParts(Timestamp{Seconds: v.Unix(), Nanoseconds: uint32(v.Nanosecond())})
 }
@@ -50,8 +51,8 @@ func (e Encoder) TimestampParts(v Timestamp) {
 	e.scalar(tagTimestamp, b)
 }
 
-// Decimal records a finite decimal. A zero is written without a sign,
-// whatever the sign of the value given.
+// Decimal records a finite decimal. Decimal writes a zero with no sign,
+// whatever the sign of v.
 func (e Encoder) Decimal(v Decimal) {
 	if e.st.err != nil {
 		return
@@ -70,8 +71,9 @@ func (e Encoder) Decimal(v Decimal) {
 	e.scalar(tagDecimal, b)
 }
 
-// UUID records sixteen bytes under the Uuid logical type, in the 0xF3
-// envelope over a bytes scalar.
+// UUID records the sixteen bytes of u with the logical type Uuid. The bytes
+// are an envelope around a bytes scalar. The envelope starts with the tag
+// 0xF3.
 func (e Encoder) UUID(u UUID) {
 	if e.st.err != nil {
 		return
@@ -80,14 +82,18 @@ func (e Encoder) UUID(u UUID) {
 	e.Bytes(u[:])
 }
 
-// uuidEnvelope is the envelope header a UUID starts with, and the header of
-// a UUID's typed null: the Uuid logical type, no parameter, over bytes.
+// uuidEnvelope is the envelope header that starts an encoded UUID. The typed
+// null of a UUID uses the same header. The header is the envelope tag, the
+// id of the logical type Uuid, and a parameter of zero.
 var uuidEnvelope = [3]byte{tagEnvelope, logicalUUID, 0}
 
-// Tagged records a physical scalar under a logical id this build does not
-// know, in the 0xF3 envelope: what Unmarshal produced for such a value, so
-// it goes back out unchanged. An id this build knows, or a value that is
-// not a physical scalar, is refused.
+// Tagged records a physical scalar with a logical type id that this version
+// of the codec does not know. The bytes are an envelope, as for any logical
+// type with no tag of its own. [Unmarshal] returns a Tagged for such a
+// value, and Tagged writes the same bytes back.
+//
+// Tagged refuses an id that this version knows. Tagged also refuses a V that
+// is not a physical scalar.
 func (e Encoder) Tagged(t Tagged) {
 	if e.st.err != nil {
 		return
@@ -102,8 +108,8 @@ func (e Encoder) Tagged(t Tagged) {
 	}
 }
 
-// physical writes v through its scalar channel, for the kinds the envelope
-// may carry, and reports whether v was one of them.
+// physical writes v with the scalar method for its type, when an envelope
+// can contain that kind of scalar. The function reports whether it wrote v.
 func (e Encoder) physical(v any) bool {
 	switch x := internal(v).(type) {
 	case nil:
@@ -127,7 +133,7 @@ func (e Encoder) physical(v any) bool {
 	case uint64:
 		e.Uint64(x)
 	case int:
-		// As Encode writes int and uint everywhere else.
+		// Encode writes an int and a uint the same way.
 		e.Int64(int64(x))
 	case uint:
 		e.Uint64(uint64(x))
@@ -174,8 +180,8 @@ func decodeScalar(r *reader, tag byte) (any, error) {
 		}
 		return public(d), nil
 	case tagTimestamp:
-		// A leap second (nanoseconds of one billion or more) has no count
-		// since the epoch and is refused by Validate.
+		// Validate refuses nanoseconds of one billion or more. Such a value
+		// is a leap second. A leap second has no count since the epoch.
 		t := Timestamp{Seconds: int64(binary.LittleEndian.Uint64(b)), Nanoseconds: binary.LittleEndian.Uint32(b[8:])}
 		if t.Validate() != nil {
 			return nil, ErrMalformed
@@ -198,8 +204,9 @@ func decodeScalar(r *reader, tag byte) (any, error) {
 	}
 }
 
-// fixedWidth is the payload width of a fixed-width scalar tag, or zero for
-// a tag whose payload is not fixed (or that has none).
+// fixedWidth returns the number of payload bytes that follow a fixed-width
+// scalar tag. The result is zero for a tag whose payload varies in length,
+// and for a tag with no payload.
 func fixedWidth(tag byte) int {
 	switch tag {
 	case tagInt8, tagUint8:
@@ -218,8 +225,10 @@ func fixedWidth(tag byte) int {
 	return 0
 }
 
-// numericTag reports whether tag is a plain int or float: what a typed null
-// in the envelope may ride on under a timestamp unit or an unknown id.
+// numericTag reports whether tag is an integer tag, or a float tag when
+// floats is true. A typed null in an envelope must name such a tag as its
+// scalar. Under a timestamp unit the scalar must be an integer. Under an id
+// that this version does not know, the scalar can be an integer or a float.
 func numericTag(tag byte, floats bool) bool {
 	switch tag {
 	case tagInt8, tagUint8, tagInt16, tagUint16, tagInt32, tagUint32, tagInt64, tagUint64,
@@ -231,17 +240,18 @@ func numericTag(tag byte, floats bool) bool {
 	return false
 }
 
-// nullOf is the typed null of a type whose values are written with the
-// scalar tag: tagTypedNull, the tag, then zeros to the length of a value,
-// so the two seal to the same length. One byte of that length goes to
-// tagTypedNull.
+// nullOf returns the typed null of a type whose values are written with the
+// scalar tag. The bytes are tagTypedNull, then tag, then zeros. The typed
+// null is as long as an encoded value of the type, so both seal to the same
+// length. The first byte, tagTypedNull, counts towards that length. The
+// zeros are therefore one byte shorter than the payload.
 func nullOf(tag byte) []byte {
 	return typedNull([]byte{tag}, fixedWidth(tag))
 }
 
-// uuidNull is the typed null of a UUID: its header is the UUID envelope over
-// bytes, and a value's sealed leaf has no length prefix, so its padding is
-// the UUID's sixteen bytes.
+// uuidNull is the typed null of a UUID. The header is the UUID envelope,
+// then the bytes tag. The sealed leaf of a UUID has no length prefix. The
+// padding is therefore sized for the sixteen bytes of the UUID alone.
 var uuidNull = typedNull(append(uuidEnvelope[:], tagBytes), len(UUID{}))
 
 func typedNull(header []byte, payload int) []byte {
@@ -249,9 +259,9 @@ func typedNull(header []byte, payload int) []byte {
 	return append(out, make([]byte, payload-1)...)
 }
 
-// typedNull records an absent value of a fixed-width type, as nullOf or
-// uuidNull built it. Encode writes one for a nil pointer to a fixed-width
-// type.
+// typedNull records an absent value of a fixed-width type. null is the bytes
+// that nullOf or uuidNull built. Encode calls typedNull for a nil pointer to
+// a fixed-width type.
 func (e Encoder) typedNull(null []byte) {
 	if e.st.err != nil {
 		return
@@ -260,12 +270,18 @@ func (e Encoder) typedNull(null []byte) {
 	e.complete()
 }
 
-// decodeTypedNull reads a typed null after its tag, as strictly as the Rust
-// codec does, so every absence has one encoding: a header a value of some
-// fixed-width type starts with, then exactly the zero padding to that
-// value's length. It decodes as nil. A frame is never sealed, so the padding
-// means nothing once the value is out, and Rust's frame writer writes the
-// plain null for it too.
+// decodeTypedNull reads a typed null, after its tag. A typed null has two
+// parts:
+//
+//   - the header that starts a value of some fixed-width type
+//   - exactly the zeros that pad the typed null to the length of that value
+//
+// The function refuses anything else, as the Rust codec does. Every absent
+// value therefore has one encoding.
+//
+// A typed null decodes as nil. The padding matters only when a value is
+// sealed. A frame is never sealed. The frame writer in Rust therefore writes
+// the plain null for an absent value too.
 func decodeTypedNull(r *reader) (any, error) {
 	tag, err := r.byteTag()
 	if err != nil {
@@ -281,7 +297,8 @@ func decodeTypedNull(r *reader) (any, error) {
 		id, param, physical := h[0], h[1], h[2]
 		switch id {
 		case logicalTimestamp:
-			// The nanosecond unit has the shorthand Timestamp tag.
+			// A timestamp in nanoseconds uses tagTimestamp, so an envelope
+			// must not name that unit.
 			if param > unitMicros || !numericTag(physical, false) {
 				return nil, ErrMalformed
 			}
@@ -294,7 +311,8 @@ func decodeTypedNull(r *reader) (any, error) {
 		case 0, logicalUndefined, logicalDate, logicalDecimal:
 			return nil, ErrMalformed
 		default:
-			// A logical id this build does not know, over an int or float.
+			// An id that this version does not know. The scalar must be an
+			// integer or a float.
 			if !numericTag(physical, true) {
 				return nil, ErrMalformed
 			}

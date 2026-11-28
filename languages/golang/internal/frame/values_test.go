@@ -38,7 +38,7 @@ func TestDecimalExactness(t *testing.T) {
 			t.Fatalf("%s: %v %s", text, err, v.String())
 		}
 	}
-	// A zero has no sign: the scale is kept and the sign is dropped.
+	// A zero has no sign. The parser keeps the scale and drops the sign.
 	for _, text := range []string{"-0", "-0.00", "+0.0"} {
 		v, err := ParseDecimal(text)
 		if err != nil || v.Negative || !v.IsZero() {
@@ -82,7 +82,8 @@ func TestDatesAndTimestampBounds(t *testing.T) {
 			t.Fatalf("accepted %v", d)
 		}
 	}
-	// The ends of the wire's range, which is jiff's.
+	// The two ends of the range that the encoding accepts. The range is that
+	// of jiff.
 	first := time.Date(-9999, 1, 2, 1, 59, 59, 0, time.UTC).Unix()
 	last := time.Date(9999, 12, 30, 22, 0, 0, 0, time.UTC).Unix()
 	for _, ts := range []Timestamp{{0, 0}, {-1, 999999999}, {59, 123456789}, {first, 0}, {last, 999999999}} {
@@ -90,8 +91,8 @@ func TestDatesAndTimestampBounds(t *testing.T) {
 			t.Fatalf("rejected %v", ts)
 		}
 	}
-	// A leap second has no count since the epoch and is refused.
-	// So is an instant past either end of the range.
+	// A leap second has no count since the epoch, so Validate refuses it.
+	// Validate also refuses an instant outside either end of the range.
 	for _, ts := range []Timestamp{{0, 1000000000}, {59, 1123456789}, {59, 2000000000}, {first - 1, 999999999}, {last + 1, 0}, {time.Date(12000, 1, 1, 0, 0, 0, 0, time.UTC).Unix(), 0}, {1<<63 - 1, 0}} {
 		if ts.Validate() == nil {
 			t.Fatalf("accepted %v", ts)

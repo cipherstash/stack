@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// Types of a caller's own over the value types here, as package encrypt
-// declares its value types.
+// A caller's own types, each over a value type of this package. Package
+// encrypt declares its value types in the same way.
 type (
 	pubDate struct {
 		Year  int
@@ -47,8 +47,9 @@ func publishForTest(t *testing.T) {
 	t.Cleanup(func() {
 		published, publicOf, external = savedPublished, savedPublic, savedExternal
 	})
-	// One Encryptable is published at a time: these tests' own stands in
-	// for encrypt's, which takes an Encoder of its own.
+	// Only one Encryptable is published at a time. The one in these tests
+	// takes the place of the one in package encrypt. That interface takes an
+	// Encoder type of its own.
 	external.iface, external.call = nil, nil
 	Publish[pubDate, Date]()
 	Publish[pubInt128, Int128]()
@@ -177,11 +178,12 @@ func TestThePublishedEncryptableWritesItself(t *testing.T) {
 	if want := mustMarshal(t, int64(300)); !bytes.Equal(got, want) {
 		t.Fatalf("got %x, want %x", got, want)
 	}
-	// A nil pointer to one is the plain null, and its method is not called.
+	// A nil pointer to one is written as the plain null. The encoder does
+	// not call its method.
 	if got := mustMarshal(t, (*cents)(nil)); !bytes.Equal(got, []byte{tagNull}) {
 		t.Fatalf("a nil pointer writes %x", got)
 	}
-	// It has no storage form, as an Encryptable has none.
+	// The type has no storage form, because no Encryptable has one.
 	if _, err := MarshalStorage(struct{ C cents }{}); !errors.Is(err, ErrUnwritable) {
 		t.Fatalf("storage: %v", err)
 	}

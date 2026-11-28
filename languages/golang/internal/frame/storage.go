@@ -13,62 +13,82 @@ import (
 	"unicode/utf8"
 )
 
-// The storage profile, version 1: a value as one versioned blob, for bytes
-// that are kept. It is the Go side of the Rust module
-// vitaminc_aead_frame::storage, specified in
-// packages/aead-frame/STORAGE.md and pinned by the golden corpus in
-// packages/aead-frame/testdata/storage-v1.json. Unlike the rest of this
-// package, which is transport, the bytes [MarshalStorage] writes and
-// [UnmarshalStorage] reads are a compatibility commitment, shared with Rust.
+// This file is the storage profile, version 1. The storage profile writes a
+// value as one versioned blob, for bytes that a program stores. The Rust
+// module recipher_frame::storage implements the same format. The file
+// packages/recipher-frame/STORAGE.md specifies the format. The tests check
+// it against the expected blobs in
+// packages/recipher-frame/testdata/storage-v1.json.
+//
+// The rest of this package writes transport bytes, and a later release can
+// change those. A later release never changes the bytes that
+// [MarshalStorage] writes and [UnmarshalStorage] reads. Go and Rust both
+// read and write them.
 
-// StorageVersion is the version this package writes, and the only one it
-// reads.
+// StorageVersion is the version that this package writes. No other version
+// is read.
 const StorageVersion = 1
 
-// StorageSome marks a present optional value: StorageSome, then the value.
-// Rust writes it for every Some. Go writes it only for a pointer whose
-// target is itself written as null, where leaving it out would read back as
-// nil: a bare value reads as present into a pointer or a Rust Option, and as
-// itself into a plain field, so a Go pointer is read alike in both
-// languages, whatever the other side declares.
+// StorageSome is the tag of an optional value that is present. The bytes are
+// StorageSome, then the value. Rust writes the tag for every Some.
+//
+// Go writes the tag only for a pointer to a value that is itself written
+// starting with null or StorageSome. Without the tag, such a pointer would
+// read back as nil. In every other case Go writes the value with no tag.
+//
+// A reader accepts a value with no tag as a present value, for a Go pointer
+// and for a Rust Option. A reader also accepts it for a field that is not
+// optional. Both languages therefore read what a Go pointer wrote, whatever
+// type the reader declares.
 const StorageSome = 0xF5
 
-// StorageMap starts a map whose keys are nodes: StorageMap, a u32 count,
-// then a key and a value for each entry. A Go map is one; a struct is an
-// object.
+// StorageMap is the tag of a map whose keys are nodes. The bytes are
+// StorageMap, a 32-bit count, then a key and a value for each entry. A Go
+// map is written as such a map. A struct is written as an object.
 const StorageMap = 0xF6
 
-// StorageHeader starts every blob: "VCS", then [StorageVersion].
+// StorageHeader is the four bytes that start every blob: "VCS", then
+// [StorageVersion].
 var StorageHeader = [4]byte{'V', 'C', 'S', StorageVersion}
 
-// The classes of a storage refusal, the Go side of Rust's
-// storage::ErrorKind. Match them with errors.Is. A blob that breaks a rule
-// of its version is [ErrMalformed], as transport bytes are.
+// The kinds of error that the storage profile returns. The kinds correspond
+// to storage::ErrorKind in Rust. Match them with errors.Is. A blob that
+// breaks a rule of its version fails with [ErrMalformed], as malformed
+// transport bytes do.
 var (
-	// ErrNotABlob: shorter than the header, or not starting with "VCS".
+	// ErrNotABlob means that the bytes are shorter than the header, or do
+	// not start with "VCS".
 	ErrNotABlob = errors.New("frame: not a storage blob")
-	// ErrUnsupportedVersion: a blob of a version this package does not
-	// read. A later release may: the reader needs upgrading, and the blob
-	// is not corrupt.
+	// ErrUnsupportedVersion means that the blob has a version that this
+	// package does not read. The blob is not corrupt. A later release of
+	// this package might read it, so upgrade the reader.
 	ErrUnsupportedVersion = errors.New("frame: an unsupported storage version")
-	// ErrMismatch: a well-formed blob whose value the destination does not
-	// take: a string where a number was expected, a missing field.
+	// ErrMismatch means that a well-formed blob contains a value that does
+	// not fit the destination. Examples are a string where a number is
+	// expected, and a missing field.
 	ErrMismatch = errors.New("frame: the stored value does not fit the destination")
-	// ErrUnwritable: a value that cannot be written as a blob: nested too
-	// deep, a map key that is not an integer, text or bytes, a repeated
-	// key, a kind with no storage form.
+	// ErrUnwritable means that the value cannot be written as a blob. The
+	// causes are these:
+	//
+	//   - The value is nested too deep.
+	//   - A map key is not an integer, text, or bytes.
+	//   - A key is repeated.
+	//   - The value is of a kind that has no storage form.
 	ErrUnwritable = errors.New("frame: the value cannot be written as a storage blob")
 )
 
-// Some is a present optional value, as a blob holds it, for a value read
-// into an `any`. A pointer is the usual way to write one.
+// Some is an optional value that is present, as a blob stores it.
+// UnmarshalStorage returns a Some when it reads such a value into an `any`.
+// To write an optional value, the usual way is a pointer.
 type Some struct {
 	V any
 }
 
-// StorageEntries is a map as a blob holds it, for a value read into an
-// `any`: its entries in the order they were written, each key an integer,
-// a string or []byte. Written, it is a map in that order.
+// StorageEntries is a map as a blob stores it: the entries, in the order
+// they were written. UnmarshalStorage returns a StorageEntries when it reads
+// a map into an `any`. Each key is an integer, a string, or a []byte.
+// MarshalStorage writes a StorageEntries as a map, with the entries in the
+// same order.
 type StorageEntries []StorageEntry
 
 // StorageEntry is one entry of [StorageEntries].
@@ -81,35 +101,46 @@ func unwritable(format string, args ...any) error {
 	return fmt.Errorf("%w: "+format, append([]any{ErrUnwritable}, args...)...)
 }
 
-// MarshalStorage writes v as a version 1 blob:
+// MarshalStorage writes v as a version 1 blob. The type of v decides how it
+// is written:
 //
-//   - nil, a nil interface         → null;
-//   - bool                         → bool;
-//   - int8, int16, int32, int64    → that width; int → int64;
-//   - uint8 … uint64               → that width; uint, uintptr → uint64;
-//   - Int128, Uint128      → the 128-bit widths;
-//   - float32, float64             → that width, by its bits;
-//   - string                       → text (valid UTF-8 only);
-//   - []byte, [N]byte              → bytes (so a UUID is its 16 bytes);
-//   - an encoding.TextMarshaler    → text (time.Time as RFC 3339);
-//   - slices, arrays               → array; a nil slice is an empty one;
-//   - map[K]V                      → map, keys sorted: integers by value,
-//     text and bytes by their bytes, as a Rust BTreeMap orders them; K is
-//     an integer, a string, a byte array or a TextMarshaler;
-//   - structs                      → object, by field name, honoring
-//     `vc:"name"` tags (`vc:"-"` skips a field), in declaration order; a
-//     `vc:"name,default"` field reads as its zero value when a blob does
-//     not have it;
-//   - pointers                     → nil is null, and a non-nil pointer is
-//     what it points at, as encoding/json writes it; a pointer to a value
-//     written starting with null or [StorageSome] (a nil pointer or
-//     interface, [Some], or a pointer to one) is [StorageSome] then that
-//     value, so every level reads back;
-//   - [Some], [StorageEntries], Object and []any → as they read.
+//   - nil and a nil interface are written as null.
+//   - A bool is written as a bool.
+//   - An int8, int16, int32, or int64 is written at its own width. An int is
+//     written as an int64.
+//   - A uint8, uint16, uint32, or uint64 is written at its own width. A uint
+//     or uintptr is written as a uint64.
+//   - An Int128 or Uint128 is written as a 128-bit integer.
+//   - A float32 or float64 is written at its own width, with its bits
+//     unchanged.
+//   - A string is written as text. The string must be valid UTF-8.
+//   - A []byte or [N]byte is written as bytes. A UUID is therefore written
+//     as its 16 bytes.
+//   - A type that implements encoding.TextMarshaler is written as text. A
+//     time.Time is therefore written in RFC 3339 form.
+//   - A slice or an array is written as an array. A nil slice is written as
+//     an empty array.
+//   - A map[K]V is written as a map, with its keys in sorted order. The
+//     order of integer keys is by value. The order of text keys and of bytes
+//     keys is by their bytes. A Rust BTreeMap has the same order. K must be
+//     an integer, a string, a byte array, or a TextMarshaler.
+//   - A struct is written as an object, with one entry for each field, in
+//     the order the struct declares them. The key is the field name, or the
+//     name in a `vc:"name"` tag. A `vc:"-"` tag skips the field. A field
+//     tagged `vc:"name,default"` reads as its zero value from a blob that
+//     does not have it.
+//   - A nil pointer is written as null. Any other pointer is written as the
+//     value it points at, as encoding/json does. One case differs: a pointer
+//     to a value whose bytes start with null or [StorageSome]. Such a value
+//     is a nil pointer, a nil interface, a [Some], or a pointer to one of
+//     those. The pointer is then written as [StorageSome] followed by the
+//     value, so every level of pointer reads back.
+//   - A [Some], a [StorageEntries], an Object, and a []any are each written
+//     as the node they are read from.
 //
-// The transport's Encryptable, passthrough (Plain) and logical
-// types (Date, Timestamp, Decimal, Tagged) have no storage form, and are
-// refused.
+// Some types of the transport encoding have no storage form. MarshalStorage
+// refuses them: an Encryptable, the passthrough type Plain, and the logical
+// types Date, Timestamp, Decimal, and Tagged.
 func MarshalStorage(v any) ([]byte, error) {
 	w := &storageWriter{buf: append([]byte(nil), StorageHeader[:]...)}
 	if err := w.any(v, 0); err != nil {
@@ -131,9 +162,10 @@ func (w *storageWriter) any(v any, depth int) error {
 	return w.reflect(reflect.ValueOf(v), depth)
 }
 
-// The model's own types, which [storageWriter.model] writes. Int128 and
-// Uint128 are [16]byte too, so [byteArray] also leaves them out, for a
-// value model cannot box and for the reader.
+// The types of this package that [storageWriter.model] writes. Int128 and
+// Uint128 are [16]byte types, so [byteArray] excludes them too. That second
+// check covers a value that model cannot read as an interface. The reader
+// relies on it as well.
 var (
 	int128Type    = reflect.TypeOf(Int128{})
 	uint128Type   = reflect.TypeOf(Uint128{})
@@ -147,15 +179,16 @@ var (
 	taggedType    = reflect.TypeOf(Tagged{})
 )
 
-// model writes rv if its type is one of the model's own, which have a form
-// of their own rather than the one reflection would give them, and reports
-// whether it was. Only those types are boxed to be written.
+// model writes rv if its type is one of the types declared in this package,
+// and reports whether it wrote rv. Each of those types has a storage form of
+// its own, different from the form reflection would give it. Only a value of
+// those types is converted to an interface to be written.
 func (w *storageWriter) model(rv reflect.Value, depth int) (bool, error) {
 	if !rv.CanInterface() {
 		return false, nil
 	}
-	// A published type is written as the value type it stands for, and a
-	// refusal names the type the program used.
+	// A published type is written as the value type that it is published
+	// for. An error names the type that the program used.
 	given := rv.Type()
 	rv = internalValue(rv)
 	switch rv.Type() {
@@ -188,8 +221,9 @@ func (w *storageWriter) reflect(rv reflect.Value, depth int) error {
 		w.buf = append(w.buf, tagNull)
 		return nil
 	}
-	// Checked by type, before a nil pointer is written as null, so a field
-	// of an Encryptable type is refused whether or not it is set.
+	// This check is by type, and comes before a nil pointer is written as
+	// null. A field of an Encryptable type is therefore refused even when it
+	// is nil.
 	if encryptable(rv.Type()) {
 		return unwritable("%s implements Encryptable, which has no storage form", rv.Type())
 	}
@@ -210,8 +244,9 @@ func (w *storageWriter) reflect(rv reflect.Value, depth int) error {
 		return w.text(text)
 	}
 	if k, ok := numericKinds[rv.Kind()]; ok {
-		// The transport's numeric table writes each kind at the same width
-		// a blob does: only the framing differs, and there is none here.
+		// The numeric table of the transport encoding writes each kind as a
+		// blob does: the same tag and the same width. The two encodings
+		// differ only in the bytes around a value, and a number has none.
 		st := &encState{buf: w.buf}
 		k.encode(Encoder{st: st}, rv)
 		w.buf = st.buf
@@ -242,13 +277,16 @@ func (w *storageWriter) reflect(rv reflect.Value, depth int) error {
 	return unwritable("a value of kind %s has no storage form", rv.Kind())
 }
 
-// indirect writes what the pointer or interface rv holds: null if it is
-// nil, and otherwise what it points at, marked if that starts with null or
-// a marker (see [startsOptional]). The marker is a node, and costs a level
-// of depth as a reader counts it; a pointer or interface that writes
-// nothing of its own costs none, since the blob is no deeper for it. A run
-// of those is bounded on its own, so a cycle (p = &p) is refused rather
-// than followed forever.
+// indirect writes the value that the pointer or interface rv refers to. A
+// nil rv is written as null. Otherwise the value is written, after
+// [StorageSome] if the value starts with null or StorageSome. See
+// [startsOptional].
+//
+// StorageSome is a node, so it counts as one level of depth, as a reader
+// counts it. A pointer or an interface that writes no bytes of its own adds
+// no depth, because the blob is no deeper for it. A chain of those has a
+// separate limit. A cycle such as p = &p is therefore refused, and the loop
+// ends.
 func (w *storageWriter) indirect(rv reflect.Value, depth int) error {
 	for hops := 0; ; hops++ {
 		if hops > maxDepth {
@@ -273,13 +311,16 @@ func (w *storageWriter) indirect(rv reflect.Value, depth int) error {
 	}
 }
 
-// startsOptional reports whether rv is written starting with null or
-// [StorageSome]: a nil pointer or interface, [Some], or a pointer or
-// interface to one of those. A pointer to such a value is marked, or a
-// reader would take that null or marker for the pointer's own, and the
-// value would read back one level shorter. A run of pointers longer than a
-// blob may nest, a cycle say, is refused when it is written, so it is not
-// followed further here.
+// startsOptional reports whether the bytes written for rv start with null or
+// [StorageSome]. Such a value is a nil pointer, a nil interface, a [Some],
+// or a pointer or interface to one of those. A pointer to such a value is
+// written with StorageSome first. Otherwise a reader would treat the null or
+// the tag as belonging to the outer pointer. The value would then read back
+// with one level of pointer missing.
+//
+// The loop stops after maxDepth+2 steps. A chain of pointers longer than a
+// blob can nest, such as a cycle, is refused when it is written. This
+// function therefore does not follow such a chain further.
 func startsOptional(rv reflect.Value) bool {
 	for range maxDepth + 2 {
 		switch rv.Kind() {
@@ -295,8 +336,9 @@ func startsOptional(rv reflect.Value) bool {
 	return false
 }
 
-// byteArray reports whether t is [N]byte, a UUID say, written as bytes.
-// Int128 and Uint128 are [16]byte too, and are integers.
+// byteArray reports whether t is a [N]byte type that is written as bytes. A
+// UUID is one. Int128 and Uint128 are [16]byte types too. The codec writes
+// those two as integers, so the result for them is false.
 func byteArray(t reflect.Type) bool {
 	t = internalType(t)
 	return t.Kind() == reflect.Array && t.Elem().Kind() == reflect.Uint8 && t != int128Type && t != uint128Type
@@ -308,15 +350,16 @@ func arrayBytes(rv reflect.Value) []byte {
 	return b
 }
 
-// encryptable reports whether t, or a pointer to it, implements
-// Encryptable: its fields are not its value, so reflection must not write
+// encryptable reports whether t, or a pointer to t, implements Encryptable.
+// The fields of such a type are not its value, so reflection must not write
 // them.
 func encryptable(t reflect.Type) bool {
 	return implementsEncryptable(t) || implementsEncryptable(reflect.PointerTo(t))
 }
 
-// marshalText is rv's MarshalText, if its type has one, through a pointer
-// to a copy when the method needs one.
+// marshalText calls the MarshalText method of rv, if the type of rv has one.
+// The second result reports whether the type has one. When the method has a
+// pointer receiver, marshalText calls it on a pointer to a copy of rv.
 func marshalText(rv reflect.Value) ([]byte, bool, error) {
 	if rv.Type().Implements(textMarshalerType) && rv.CanInterface() {
 		text, err := rv.Interface().(encoding.TextMarshaler).MarshalText()
@@ -354,7 +397,9 @@ func (w *storageWriter) bytes(b []byte) error {
 	return nil
 }
 
-// open writes a container's tag and a count to be patched by close.
+// open writes the tag of a container and four zero bytes for its count. The
+// function returns the position of those bytes, and close writes the count
+// there.
 func (w *storageWriter) open(tag byte) int {
 	w.buf = append(w.buf, tag, 0, 0, 0, 0)
 	return len(w.buf) - 4
@@ -392,7 +437,8 @@ func (w *storageWriter) object(o Object, depth int) error {
 	return w.close(at, len(o))
 }
 
-// field writes an object's key, refusing one already written.
+// field writes one key of an object. The function refuses a key that the
+// object already has.
 func (w *storageWriter) field(key string, seen map[string]struct{}) error {
 	if _, dup := seen[key]; dup {
 		return unwritable("a key is repeated")
@@ -430,30 +476,36 @@ func (w *storageWriter) goStruct(rv reflect.Value, depth int) error {
 		}
 		written++
 	}
-	// As in the transport: a struct of only unexported fields (time.Time
-	// without its MarshalText, say) would be stored as an empty object, and
-	// its value lost with no error at either end.
+	// The transport encoding has the same rule. A struct with only
+	// unexported fields would be stored as an empty object. An example is
+	// time.Time, if it had no MarshalText. The value would be lost, with no
+	// error when it is written or read.
 	if written == 0 && unexported > 0 {
 		return unwritable("struct %s has no exported fields", rv.Type())
 	}
 	return w.close(at, written)
 }
 
-// storageField is a struct field as a blob names it.
+// storageField describes one field of a struct, with the name that a blob
+// uses for it.
 type storageField struct {
 	name       string
 	index      int
 	unexported bool
-	// defaulted fields read as their zero value when a blob lacks them.
+	// defaulted is true for a field that reads as its zero value when a blob
+	// does not have it.
 	defaulted bool
 }
 
-// structFields are t's fields in declaration order, named by their `vc`
-// tags, without the ones a `vc:"-"` tag skips. A tag is a name, then
-// options after commas: `vc:"age,default"`, or `vc:",default"` to keep the
-// field's own name. `default` is the only option; any other is refused, so
-// a misspelt one is not quietly ignored. The transport names fields the
-// same way.
+// structFields returns the fields of t, in the order t declares them. Each
+// field has the name from its `vc` tag, or its own name. A field with a
+// `vc:"-"` tag is left out.
+//
+// A tag is a name, then options after commas, as in `vc:"age,default"`.
+// Write `vc:",default"` to keep the field's own name. The only option is
+// `default`. Any other option is refused, so a misspelt option is not
+// ignored without an error. The transport encoding names fields in the same
+// way.
 func structFields(t reflect.Type) ([]storageField, error) {
 	fields := make([]storageField, 0, t.NumField())
 	for i := range t.NumField() {
@@ -488,18 +540,25 @@ func structFields(t reflect.Type) ([]storageField, error) {
 	return fields, nil
 }
 
-// mapKey is a map key written as a node, and what makes two keys the same:
-// integers of equal value, whatever their widths, so 1 as a uint8 and 1 as
-// an int64 are one key; text and bytes by their bytes, never equal to each
-// other or to an integer. Its order is the one keys are written in: by
-// kind, integers by value, text and bytes by their bytes.
+// mapKey is a map key: the node that is written for it, and an id that
+// decides which keys are equal:
+//
+//   - Two integers are the same key when their values are equal, whatever
+//     their widths. So 1 as a uint8 and 1 as an int64 are one key.
+//   - Two text keys are the same when their bytes are equal. The same rule
+//     applies to two bytes keys.
+//   - A text key never equals a bytes key or an integer.
+//
+// The id also gives the order in which keys are written. Integers come
+// first, then text, then bytes. The order of integers is by value. The order
+// of text and of bytes is by their bytes.
 type mapKey struct {
 	node []byte
 	id   keyID
 }
 
-// keyKind is a map key's kind, in the order keys of different kinds are
-// written in.
+// keyKind is the kind of a map key. The constants are in the order that keys
+// of different kinds are written in.
 type keyKind byte
 
 const (
@@ -510,10 +569,10 @@ const (
 
 type keyID struct {
 	kind keyKind
-	// An integer as its sign and its two's-complement 128-bit word.
+	// For an integer: the sign, and the 128-bit word in two's complement.
 	negative bool
 	hi, lo   uint64
-	// Text or bytes.
+	// For text or bytes: the bytes.
 	s string
 }
 
@@ -530,7 +589,8 @@ func compareKeys(a, b keyID) int {
 	return cmp.Or(cmp.Compare(a.hi, b.hi), cmp.Compare(a.lo, b.lo), cmp.Compare(a.s, b.s))
 }
 
-// wideKey is the keyID of a 128-bit integer, from its little-endian word.
+// wideKey returns the keyID of a 128-bit integer. The word argument is the
+// integer in little-endian byte order.
 func wideKey(word []byte, signed bool) keyID {
 	return keyID{
 		lo:       binary.LittleEndian.Uint64(word),
@@ -539,8 +599,8 @@ func wideKey(word []byte, signed bool) keyID {
 	}
 }
 
-// decodedKeyID is the keyID of a key as the reader decodes it: a Go
-// integer, Int128 or Uint128, a string, or bytes.
+// decodedKeyID returns the keyID of a key that the reader decoded. Such a
+// key is a Go integer, an Int128, a Uint128, a string, or bytes.
 func decodedKeyID(k any) (keyID, bool) {
 	switch x := internal(k).(type) {
 	case int8:
@@ -579,14 +639,14 @@ func signedKey(v int64) keyID {
 	return id
 }
 
-// keyOf writes a map key as its node.
+// keyOf returns the node and the id for the map key k.
 func keyOf(k any) (mapKey, error) {
 	rv := reflect.ValueOf(k)
 	if !rv.IsValid() {
 		return mapKey{}, unwritable("a map key must be an integer, text or bytes")
 	}
-	// A nil pointer has no value to write; its type's MarshalText, if it
-	// has one, would be called on nil.
+	// A nil pointer has no value to write. If its type has a MarshalText
+	// method, that method would be called on nil.
 	if (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface) && rv.IsNil() {
 		return mapKey{}, unwritable("a map key must be an integer, text or bytes, not a nil %s", rv.Type())
 	}
@@ -651,14 +711,15 @@ func (w *storageWriter) goMap(rv reflect.Value, depth int) error {
 			return err
 		}
 		if _, dup := values[key.id]; dup {
-			// Two Go keys that write the same key: two texts a
-			// TextMarshaler spells alike, say.
+			// Two Go keys can be written as the same key. An example is two
+			// values that a TextMarshaler writes as the same text.
 			return unwritable("a key is repeated")
 		}
 		keys = append(keys, key)
 		values[key.id] = it.Value()
 	}
-	// Go map iteration is randomized; sorting makes equal maps equal blobs.
+	// Go iterates over a map in a random order. Sorted keys give equal maps
+	// equal blobs.
 	slices.SortFunc(keys, func(a, b mapKey) int { return compareKeys(a.id, b.id) })
 	at := w.open(StorageMap)
 	for _, key := range keys {

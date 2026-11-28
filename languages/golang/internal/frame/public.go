@@ -6,34 +6,41 @@ import (
 	"reflect"
 )
 
-// The SDK's value types and its Encryptable are declared in package encrypt,
-// where a program names them, and encrypt imports this package, so the codec
-// cannot name them. Each SDK value type is a type of its own over the same
-// underlying type as one of the value types here. Publish tells the codec
-// about it: the codec writes a value of the SDK's type as the value type
-// here, and decodes that value type as the SDK's. PublishEncryptable does the
-// same for the SDK's Encryptable.
+// Package encrypt declares the SDK's value types and its Encryptable
+// interface, because a program names them there. Package encrypt imports
+// this package, so this package cannot name those types. The functions below
+// register those types with the codec.
 //
-// The codec has no Encryptable of its own: the published one is the only
-// interface a type writes itself through.
+// Each value type of the SDK is a distinct type with the same underlying
+// type as a value type of this package. [Publish] registers one such pair.
+// The codec then encodes a value of the SDK's type as the value type of this
+// package. The codec decodes that value type as the SDK's type.
 //
-// Both are called from package encrypt's init function, before any value of
-// an SDK type can exist, and never after. The tables are read without a lock.
+// [PublishEncryptable] registers the SDK's Encryptable interface. The codec
+// declares no Encryptable interface. A type can write itself only through
+// the published one.
+//
+// The init function of package encrypt calls both functions. No value of an
+// SDK type can exist before that. Nothing calls them later, so the codec
+// reads the tables without a lock.
 
 var (
-	// published maps a published type to the value type here it stands for.
+	// published maps each published type to the value type of this package
+	// that the codec encodes it as.
 	published = map[reflect.Type]reflect.Type{}
-	// publicOf maps a value type here to the type it is published as.
+	// publicOf maps a value type of this package to the type it is published
+	// as.
 	publicOf = map[reflect.Type]reflect.Type{}
-	// external is the SDK's Encryptable, and how to call its method with
-	// an Encoder; iface is nil until it is published.
+	// external is the published Encryptable interface, and a function that
+	// calls its method with an Encoder. iface is nil until
+	// [PublishEncryptable] sets it.
 	external struct {
 		iface reflect.Type
 		call  func(v any, enc Encoder) error
 	}
 )
 
-// publishable are the value types the SDK may publish a type of its own for.
+// publishable is the set of value types that [Publish] accepts as V.
 var publishable = map[reflect.Type]bool{
 	reflect.TypeFor[Date]():    true,
 	reflect.TypeFor[Decimal](): true,
@@ -42,11 +49,17 @@ var publishable = map[reflect.Type]bool{
 	reflect.TypeFor[UUID]():    true,
 }
 
-// Publish makes P the type the codec reads as V and decodes V as. P must be
-// a type of its own over V's underlying type. It panics if V cannot be
-// published, if P is not convertible to V, or if either is already
-// published as something else: each is a mistake in the module, which a
-// test of package encrypt finds.
+// Publish registers P as the public form of the value type V. The codec then
+// encodes a P as a V, and decodes a V as a P. P must be a distinct type with
+// the same underlying type as V.
+//
+// Publish panics in three cases:
+//
+//   - V is not a value type that can be published.
+//   - P is V itself, or cannot be converted to V.
+//   - P or V is already published with a different partner.
+//
+// Each case is a mistake in this module. A test of package encrypt finds it.
 func Publish[P, V any]() {
 	p, v := reflect.TypeFor[P](), reflect.TypeFor[V]()
 	switch {
@@ -65,10 +78,11 @@ func Publish[P, V any]() {
 	publicOf[v] = p
 }
 
-// PublishEncryptable makes I, an interface, the Encryptable: the codec asks a
-// value that implements I to write itself with call, before it falls back to
-// reflection. It panics if I is not an interface, or if another interface
-// is already published.
+// PublishEncryptable registers the interface I as the Encryptable interface.
+// When a value implements I, the codec calls call, and the value writes
+// itself. The codec uses reflection only for a value that does not implement
+// I. PublishEncryptable panics if I is not an interface. PublishEncryptable
+// also panics if a different interface is already published.
 func PublishEncryptable[I any](call func(v I, enc Encoder) error) {
 	iface := reflect.TypeFor[I]()
 	if iface.Kind() != reflect.Interface {
@@ -81,8 +95,8 @@ func PublishEncryptable[I any](call func(v I, enc Encoder) error) {
 	external.call = func(v any, enc Encoder) error { return call(v.(I), enc) }
 }
 
-// internal is v as the value type here when v's type is a published one,
-// and v unchanged otherwise.
+// internal converts v to the value type of this package when the type of v
+// is a published one. Otherwise internal returns v unchanged.
 func internal(v any) any {
 	if v == nil {
 		return nil
@@ -93,8 +107,8 @@ func internal(v any) any {
 	return v
 }
 
-// internalValue is rv converted to the value type here when its type is a
-// published one, and rv unchanged otherwise.
+// internalValue converts rv to the value type of this package when the type
+// of rv is a published one. Otherwise internalValue returns rv unchanged.
 func internalValue(rv reflect.Value) reflect.Value {
 	if !rv.IsValid() {
 		return rv
@@ -105,7 +119,8 @@ func internalValue(rv reflect.Value) reflect.Value {
 	return rv
 }
 
-// internalType is the value type here that t stands for, or t.
+// internalType returns the value type of this package that t is published
+// for. For any other t, internalType returns t.
 func internalType(t reflect.Type) reflect.Type {
 	if v, ok := published[t]; ok {
 		return v
@@ -113,8 +128,9 @@ func internalType(t reflect.Type) reflect.Type {
 	return t
 }
 
-// public is v, a value type here, as the type it is published as, or v
-// unchanged when it is not published.
+// public converts v, a value type of this package, to the type it is
+// published as. The function returns v unchanged when the type of v is not
+// published.
 func public(v any) any {
 	if t, ok := publicOf[reflect.TypeOf(v)]; ok {
 		return reflect.ValueOf(v).Convert(t).Interface()
@@ -122,8 +138,9 @@ func public(v any) any {
 	return v
 }
 
-// encryptableOf is how v writes itself: its EncryptValue, when v
-// implements the published Encryptable.
+// encryptableOf returns a function that makes v write itself, when v
+// implements the published Encryptable interface. The function calls the
+// EncryptValue method of v.
 func encryptableOf(v any) (func(Encoder) error, bool) {
 	if external.iface != nil && v != nil && reflect.TypeOf(v).Implements(external.iface) {
 		return func(enc Encoder) error { return external.call(v, enc) }, true
@@ -132,13 +149,14 @@ func encryptableOf(v any) (func(Encoder) error, bool) {
 }
 
 // implementsEncryptable reports whether t implements the published
-// Encryptable.
+// Encryptable interface.
 func implementsEncryptable(t reflect.Type) bool {
 	return external.iface != nil && t.Implements(external.iface)
 }
 
-// Unpublished is every value type that may be published and is not: a
-// program that links package encrypt has none.
+// Unpublished returns the value types that [Publish] accepts and that no
+// call has published. The result is empty in a program that links package
+// encrypt.
 func Unpublished() []reflect.Type {
 	var out []reflect.Type
 	for t := range publishable {
@@ -149,12 +167,12 @@ func Unpublished() []reflect.Type {
 	return out
 }
 
-// Usable reports whether e is an Encoder the codec handed out, which
-// records what is written to it. The zero Encoder is not.
+// Usable reports whether e came from the codec. Only such an Encoder records
+// what is written to it. The zero Encoder is not usable.
 func (e Encoder) Usable() bool { return e.st != nil }
 
-// Err is the first error of the encode e writes to, or an error saying e is
-// the zero Encoder.
+// Err returns the first error of the encode that e belongs to. For the zero
+// Encoder, Err returns an error that says so.
 func (e Encoder) Err() error {
 	if e.st == nil {
 		return errZeroEncoder

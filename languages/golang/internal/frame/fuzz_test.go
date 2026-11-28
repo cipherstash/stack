@@ -11,20 +11,30 @@ import (
 	"testing"
 )
 
-// Unmarshal and UnmarshalCipherText are the package's entire hostile-input
-// surface: arbitrary bytes from the wasm boundary or a database column. The
-// fuzz targets assert the decoders never panic, and that anything they accept
-// re-encodes to the same bytes (see requireCanonical) — errors are fine,
-// crashes and drift are not. Run in CI as ordinary tests over the seed corpus,
-// nightly as real fuzzing (.github/workflows/fuzz.yml), and with
-// `go test -fuzz` locally for exploration.
+// Unmarshal and UnmarshalCipherText decode input that can be hostile: any
+// bytes from the guest or from a database column. The fuzz targets check two
+// things:
+//
+//   - A decoder never panics.
+//   - Any input that a decoder accepts encodes again as the same bytes. See
+//     requireCanonical.
+//
+// An error is an acceptable result.
+//
+// The targets run in three ways:
+//
+//   - CI runs them as ordinary tests over the seed corpus.
+//   - The nightly workflow .github/workflows/fuzz.yml fuzzes them.
+//   - A developer can fuzz them locally with `go test -fuzz`.
 
-// addCorpusSeeds seeds a fuzz target with every valid and malformed vector in
-// the shared value corpus, so the fuzzer starts from each scalar tag.
+// addCorpusSeeds adds every valid and every malformed vector of the shared
+// value corpus to a fuzz target as a seed. The fuzzer therefore starts with
+// an input for each scalar tag.
 func addCorpusSeeds(f *testing.F, wrap func([]byte) []byte) {
 	data, ok := readCorpus(f, valueCorpus)
 	if !ok {
-		// The fuzz target still runs, from its testdata.
+		// The fuzz target still runs, with the seeds in its testdata
+		// directory.
 		return
 	}
 	var corpus struct {
@@ -42,9 +52,9 @@ func addCorpusSeeds(f *testing.F, wrap func([]byte) []byte) {
 		}
 		f.Add(wrap(raw))
 	}
-	// The malformed ciphertext transports are seeds as they are: the
-	// ciphertext targets must refuse them, and the value targets must not
-	// read them as a value either.
+	// The malformed ciphertext vectors are added as seeds unchanged. The
+	// ciphertext targets must refuse them. The value targets must not read
+	// them as a value.
 	for _, row := range corpus.CiphertextMalformed {
 		raw, err := hex.DecodeString(row.Transport)
 		if err != nil {
@@ -54,16 +64,20 @@ func addCorpusSeeds(f *testing.F, wrap func([]byte) []byte) {
 	}
 }
 
-// canonicalForm is what an accepted value encoding re-encodes as. Four
-// things may legitimately change, and nothing else: an Undefined tag (0x01)
-// comes back as Null (0x00), Go's documented projection; a typed null comes
-// back as Null too, as Rust's frame writer writes it; a decimal negative
-// zero comes back as zero with its scale kept; and a timestamp in
-// the 0xF3 envelope (seconds, milliseconds or microseconds) comes back in
-// the shorthand nanosecond form, because Go reads it as a time.Time. The
-// walker follows the transport format independently of the decoder, so a
-// walk that falls out of step with it produces the wrong bytes and fails
-// requireCanonical rather than passing.
+// canonicalForm returns the bytes that an accepted value encoding encodes
+// again as. Only four things can change:
+//
+//   - An Undefined tag (0x01) becomes Null (0x00). Go documents that it
+//     decodes undefined as nil.
+//   - A typed null becomes Null too, as the frame writer in Rust writes it.
+//   - A decimal negative zero becomes zero, with its scale kept.
+//   - A timestamp in an envelope, in seconds, milliseconds, or microseconds,
+//     becomes the nanosecond form with tagTimestamp. Go reads it as a
+//     time.Time.
+//
+// canonicalForm reads the transport format with its own code, not with the
+// decoder. If that code and the decoder disagree, canonicalForm returns the
+// wrong bytes and requireCanonical fails.
 func canonicalForm(data []byte) []byte {
 	r := &reader{buf: data}
 	var out []byte
@@ -86,8 +100,9 @@ func canonicalValue(r *reader, out *[]byte) {
 	case tagDecimal:
 		b, _ := r.take(16)
 		b = bytes.Clone(b)
-		// flags(4) then the coefficient(12): a set sign bit over a zero
-		// coefficient is a negative zero, read back as zero.
+		// Four bytes of flags, then twelve bytes of coefficient. A sign bit
+		// that is set with a zero coefficient is a negative zero. A negative
+		// zero reads back as zero.
 		if len(b) == 16 && bytes.Equal(b[4:], make([]byte, 12)) {
 			b[3] &^= 0x80
 		}
@@ -134,8 +149,8 @@ func canonicalValue(r *reader, out *[]byte) {
 		*out = append(*out, tag)
 		canonicalValue(r, out)
 	case tagTypedNull:
-		// The header names the type, which fixes the padding; it all comes
-		// back as the plain null.
+		// The header names the type, and the type decides the length of the
+		// padding. The whole typed null comes back as the plain null.
 		header, _ := r.byteTag()
 		width := fixedWidth(header)
 		if header == tagEnvelope {
@@ -150,15 +165,16 @@ func canonicalValue(r *reader, out *[]byte) {
 		_, _ = r.take(width - 1)
 		*out = append(*out, tagNull)
 	default:
-		// Null, booleans and the fixed-width extended scalars.
+		// Null, the booleans, and the fixed-width extended scalars.
 		b, _ := r.take(fixedWidth(tag))
 		*out = append(append(*out, tag), b...)
 	}
 }
 
-// shorthandTimestamp reads the int the envelope carries and writes the
-// instant as the shorthand Timestamp tag: i64 seconds then u32 nanoseconds.
-// Follows the int encodings by width rather than the decoder.
+// shorthandTimestamp reads the integer in an envelope and writes the instant
+// with tagTimestamp. The bytes are the seconds as a signed 64-bit integer,
+// then the nanoseconds as an unsigned 32-bit integer. The function reads
+// each integer encoding by its width, and does not use the decoder.
 func shorthandTimestamp(r *reader, unit byte) ([]byte, bool) {
 	tag, _ := r.byteTag()
 	var count *big.Int
@@ -205,13 +221,15 @@ func signedLittle(b []byte) *big.Int {
 	return v
 }
 
-// cipherCanonicalForm is canonicalForm for an accepted ciphertext tree,
-// where a value can only appear inside passthrough nodes. One more thing
-// may change here: the entries of a map come back sorted by key. Rust
-// writes a map's entries in the order it holds them (a struct's field
-// order, say), while Go reads a map into map[string]any, which keeps no
-// order, and writes it back with the keys sorted. Entry order is not
-// authenticated, so the decoder accepts either and the walker sorts.
+// cipherCanonicalForm is canonicalForm for an accepted ciphertext tree. In a
+// ciphertext tree, a value appears only inside a passthrough node. One more
+// thing can change here: the entries of a map come back sorted by key.
+//
+// Rust writes the entries of a map in the order it has them, such as the
+// order of the fields of a struct. Go reads a map into a map[string]any.
+// That type has no order, so Go writes the map with its keys sorted. The
+// order of the entries is not authenticated, so the decoder accepts either
+// order. The function therefore sorts the entries.
 func cipherCanonicalForm(data []byte) []byte {
 	r := &reader{buf: data}
 	var out []byte
@@ -237,8 +255,9 @@ func cipherCanonicalForm(data []byte) []byte {
 			start := r.pos
 			n, _ := r.count()
 			out = append(append(out, tag), r.buf[start:r.pos]...)
-			// Each entry is walked onto out, then cut back off and kept
-			// aside, so the entries can be written in key order.
+			// Each entry is first written to the end of out. The bytes of
+			// the entry are then removed from out and kept, so that the
+			// entries can be written in key order.
 			type entry struct {
 				key   string
 				bytes []byte
@@ -253,7 +272,8 @@ func cipherCanonicalForm(data []byte) []byte {
 				entries = append(entries, entry{key, bytes.Clone(out[mark:])})
 				out = out[:mark]
 			}
-			// The same order as encodeCipherText's slices.Sort over the keys.
+			// The order is the one that slices.Sort gives the keys in
+			// encodeCipherText.
 			slices.SortFunc(entries, func(a, b entry) int { return cmp.Compare(a.key, b.key) })
 			for _, e := range entries {
 				out = append(out, e.bytes...)
@@ -268,7 +288,7 @@ func cipherCanonicalForm(data []byte) []byte {
 }
 
 func FuzzUnmarshal(f *testing.F) {
-	// Seeds: one of each node kind, plus known-hostile shapes.
+	// The seeds: one input for each kind of node, and some hostile inputs.
 	f.Add([]byte{0x00})                                    // Null
 	f.Add([]byte{0x04, 7, 0, 0, 0})                        // Int32
 	f.Add([]byte{0x0A, 2, 0, 0, 0, 'h', 'i'})              // String
@@ -292,7 +312,8 @@ func FuzzUnmarshal(f *testing.F) {
 			t.Fatalf("accepted decode failed to re-encode: %v (value %#v)", err, v)
 		}
 		requireCanonical(t, data, out, canonicalForm(data))
-		// The re-encoding is canonical, so it must be a fixed point.
+		// The bytes are in canonical form. A second decode and encode must
+		// therefore give the same bytes.
 		again, err := Unmarshal(out)
 		if err != nil {
 			t.Fatalf("re-encoding %x does not decode: %v", out, err)
@@ -305,14 +326,14 @@ func FuzzUnmarshal(f *testing.F) {
 
 func FuzzUnmarshalCipherText(f *testing.F) {
 	f.Add([]byte{0x01, 1, 0, 0, 0, 0xAB})                                    // ctSingle leaf
-	f.Add([]byte{0x02, 1, 0, 0, 0, 0xAB})                                    // the retired ctNone: malformed
+	f.Add([]byte{0x02, 1, 0, 0, 0, 0xAB})                                    // 0x02 is not a tag: malformed
 	f.Add([]byte{0x03, 1, 0, 0, 0, 0x01, 1, 0, 0, 0, 0xAB})                  // ctSeq[leaf]
 	f.Add([]byte{0x04, 1, 0, 0, 0, 1, 0, 0, 0, 'a', 0x01, 1, 0, 0, 0, 0xAB}) // ctMap{a: leaf}
 	f.Add([]byte{0x06, 1, 0, 0, 0, 0xAB})                                    // ctEmptySeq
 	f.Add([]byte{0x07, 1, 0, 0, 0, 0xAB})                                    // ctEmptyMap
 	f.Add([]byte{0x05, 0x00})                                                // ctPassthrough(Null)
 	f.Add([]byte{0x03, 0xFF, 0xFF, 0xFF, 0xFF})                              // hostile count
-	// Extended scalars as clear passthrough nodes inside a ciphertext.
+	// Extended scalars as passthrough nodes inside a ciphertext.
 	addCorpusSeeds(f, func(raw []byte) []byte { return append([]byte{0x05}, raw...) })
 
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -328,9 +349,13 @@ func FuzzUnmarshalCipherText(f *testing.F) {
 	})
 }
 
-// The walkers decide what may legitimately change, so pin that they rewrite
-// nested Undefined tags, negative-zero signs, envelope timestamps and
-// ciphertext map entry order and nothing else.
+// canonicalForm and cipherCanonicalForm decide what can change. This test
+// checks that they change only these things:
+//
+//   - a nested Undefined tag
+//   - the sign of a negative zero
+//   - a timestamp in an envelope
+//   - the order of the entries of a ciphertext map
 func TestCanonicalWalkers(t *testing.T) {
 	negativeZero := []byte{0x14, 0, 0, 2, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 	zero := []byte{0x14, 0, 0, 2, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}

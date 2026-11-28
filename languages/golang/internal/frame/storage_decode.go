@@ -8,34 +8,42 @@ import (
 	"strconv"
 )
 
-// UnmarshalStorage reads a version 1 blob into the value v points at.
+// UnmarshalStorage reads a version 1 blob into the value that v points at.
 //
-// The whole blob is checked first, so a blob of another version, bytes
-// that are not a blob, or a malformed body is refused before anything is
-// set: [ErrNotABlob], [ErrUnsupportedVersion] or [ErrMalformed]. Then the
-// value is read into v by its type, as Rust's serde reads it, which the
-// corpus's `reads` rows pin:
+// UnmarshalStorage checks the whole blob before it sets anything. The
+// function returns one of three errors for a blob it cannot read:
 //
-//   - an integer reads into any integer type it fits; a float type reads a
-//     float or an integer; an integer type never reads a float;
-//   - a pointer reads null as nil, and any other value, marked present or
-//     not, as a pointer to that value: a Rust Some and a Go pointer alike;
-//   - a string reads only text, []byte and [N]byte only bytes (of length
-//     N), a slice or an array only an array;
-//   - a map reads a map or an object, each key read as a value of the key
-//     type would be;
-//   - a struct reads an object, or a map whose keys are all text; unknown
-//     keys are ignored, and a missing field is refused unless it is a
-//     pointer, which is left nil, or tagged `vc:"name,default"`, which is
-//     left its zero value, as Rust's #[serde(default)] reads it;
-//   - an encoding.TextUnmarshaler reads text;
-//   - an `any` reads the value as the blob holds it: nil, bool, the integer
-//     widths (Int128 and Uint128 for 128 bits), float32, float64,
-//     string, []byte, []any, Object for an object,
-//     [StorageEntries] for a map, and [Some] for an optional value.
+//   - [ErrNotABlob] for bytes that are not a blob
+//   - [ErrUnsupportedVersion] for a blob of another version
+//   - [ErrMalformed] for a blob with a malformed body
 //
-// A value that does not fit is [ErrMismatch]. Its message names the kind
-// found and where, never the value.
+// UnmarshalStorage then reads the value into v, by the type of v, as serde
+// reads it in Rust. The `reads` rows of the storage corpus test these rules:
+//
+//   - An integer type reads any integer that fits it. A float type reads a
+//     float or an integer. An integer type never reads a float.
+//   - A pointer reads null as nil. A pointer reads any other value as a
+//     pointer to that value. The value can have the [StorageSome] tag or
+//     not. A Rust Some and a Go pointer therefore read the same way.
+//   - A string reads only text. A []byte reads only bytes. A [N]byte reads
+//     only bytes of length N. A slice or an array reads only an array.
+//   - A map reads a map or an object. Each key is read as a value of the key
+//     type would be.
+//   - A struct reads an object, or a map whose keys are all text. Unknown
+//     keys are ignored. A missing field is refused, with two exceptions. A
+//     missing pointer field is left nil. A missing field tagged
+//     `vc:"name,default"` is left as its zero value, as #[serde(default)]
+//     does in Rust.
+//   - A type that implements encoding.TextUnmarshaler reads text.
+//   - An `any` reads the value as the blob stores it. A scalar reads as nil,
+//     a bool, an integer of the stored width, a float32, a float64, a
+//     string, or a []byte. A 128-bit integer reads as an Int128 or a
+//     Uint128. An array reads as a []any, an object as an Object, a map as a
+//     [StorageEntries], and an optional value as a [Some].
+//
+// UnmarshalStorage returns [ErrMismatch] for a value that does not fit. The
+// message names the kind of value found and its position, and never the
+// value itself.
 func UnmarshalStorage(blob []byte, v any) error {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
@@ -48,8 +56,8 @@ func UnmarshalStorage(blob []byte, v any) error {
 	return assign(model, rv.Elem(), "")
 }
 
-// decodeStorage reads a whole blob as the value it holds, refusing any blob
-// a version 1 reader refuses.
+// decodeStorage reads a whole blob and returns the value in it. The function
+// refuses every blob that a version 1 reader must refuse.
 func decodeStorage(blob []byte) (any, error) {
 	if len(blob) < len(StorageHeader) || string(blob[:3]) != "VCS" {
 		return nil, ErrNotABlob
@@ -77,7 +85,7 @@ func storageScalar(tag byte) bool {
 	return storageKeyTag(tag)
 }
 
-// storageKeyTag reports whether tag may start a map's key.
+// storageKeyTag reports whether tag can start the key of a map.
 func storageKeyTag(tag byte) bool {
 	switch tag {
 	case tagInt8, tagInt16, tagInt32, tagInt64, tagInt128,
@@ -184,7 +192,8 @@ func storageNode(r *reader, depth int) (any, error) {
 // Reading into a Go value
 // =============================================================================
 
-// kindOf names what a model value is, for a refusal: never the value.
+// kindOf returns the name of the kind of m, for an error message. The name
+// never contains the value.
 func kindOf(m any) string {
 	switch internal(m).(type) {
 	case nil:
@@ -213,7 +222,7 @@ func mismatch(path, want string, found any) error {
 	return fmt.Errorf("%w: %s: expected %s, found %s", ErrMismatch, orRoot(path), want, kindOf(found))
 }
 
-// integerOf is a model integer's value.
+// integerOf returns the value of m, when m is a decoded integer.
 func integerOf(m any) (*big.Int, bool) {
 	if small, ok := smallIntegerOf(m); ok {
 		return big.NewInt(small), true
@@ -221,7 +230,8 @@ func integerOf(m any) (*big.Int, bool) {
 	return wideIntegerOf(m)
 }
 
-// int128Of is v as the 16 little-endian bytes of a two's-complement word.
+// int128Of returns v as a 128-bit word in two's complement: 16 bytes in
+// little-endian order.
 func int128Of(v *big.Int) [16]byte {
 	word := new(big.Int).Set(v)
 	if word.Sign() < 0 {
@@ -389,8 +399,9 @@ func assignInteger(m any, rv reflect.Value, path string) error {
 func assignFloat(m any, rv reflect.Value, path string) error {
 	switch x := m.(type) {
 	case float32:
-		// Converted rather than widened, so a float32 keeps its bits
-		// (reflect copies float32 to float32, Go issue 36400).
+		// The value is converted, not widened, so a float32 keeps its bits.
+		// The reflect package copies a float32 to a float32. See Go issue
+		// 36400.
 		rv.Set(reflect.ValueOf(x).Convert(rv.Type()))
 		return nil
 	case float64:
@@ -401,7 +412,8 @@ func assignFloat(m any, rv reflect.Value, path string) error {
 	if !ok {
 		return mismatch(path, "a float", m)
 	}
-	// Rounded once, to the destination's width, as Rust's `as` rounds.
+	// The integer is rounded once, to the width of the destination, as the
+	// `as` operator rounds in Rust.
 	if rv.Kind() == reflect.Float32 {
 		f, _ := new(big.Float).SetInt(v).Float32()
 		rv.SetFloat(float64(f))
@@ -412,7 +424,7 @@ func assignFloat(m any, rv reflect.Value, path string) error {
 	return nil
 }
 
-// entriesOf is an object's or a map's entries, whichever m is.
+// entriesOf returns the entries of m, when m is an object or a map.
 func entriesOf(m any) (StorageEntries, bool) {
 	switch x := m.(type) {
 	case StorageEntries:
@@ -439,8 +451,8 @@ func assignMap(m any, rv reflect.Value, path string) error {
 		if err := assign(e.Key, key, at); err != nil {
 			return err
 		}
-		// A bytes key read into an interface key is a []byte, which a Go
-		// map cannot hash: SetMapIndex would panic.
+		// A bytes key that is read into an interface key is a []byte. A Go
+		// map cannot hash a []byte, so SetMapIndex would panic.
 		if !key.Comparable() {
 			return mismatch(at, "a key a Go map can hold", e.Key)
 		}

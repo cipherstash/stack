@@ -11,25 +11,27 @@ import (
 	"time"
 )
 
-// valueCorpus is the cross-language value corpus that Rust and Node read
-// too. Its README says which sections each language checks.
+// valueCorpus is the path of the value corpus. Go, Rust, and Node all read
+// that file. The README beside the corpus says which sections each language
+// checks.
 const valueCorpus = "../../../../conformance/vitaminc-aead/value-conformance.json"
 
-// isoDate and rfc3339ish match the corpus date and timestamp spellings,
-// including a negative year as a sign and six digits, which time.Parse
-// cannot read.
+// isoDate and rfc3339ish match the date and timestamp forms in the corpus.
+// Those forms include a negative year, written as a sign and six digits. The
+// function time.Parse cannot read such a year.
 var (
 	isoDate    = regexp.MustCompile(`^([+-]\d{6}|\d{4})-(\d{2})-(\d{2})$`)
 	rfc3339ish = regexp.MustCompile(`^([+-]\d{6}|\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?Z$`)
 )
 
-// expected builds the Go value a vector's kind and value fields describe,
-// without the transport decoder, so a bug that decodes and encodes
-// symmetrically wrong cannot pass.
+// expected builds the Go value that the kind and value fields of a vector
+// describe, without the transport decoder. A bug that makes the decoder and
+// the encoder wrong in the same way therefore cannot pass.
 func expected(kind string, raw json.RawMessage) (any, error) {
 	if kind == "unknown" {
-		// A logical id this build does not know: the id, the parameter and
-		// the physical scalar, which round-trips as a Tagged.
+		// A logical id that this version does not know. The vector has the
+		// id, the parameter, and the physical scalar. The value decodes as a
+		// Tagged and encodes as the same bytes.
 		var inner struct {
 			ID, Param uint8
 			Kind      string

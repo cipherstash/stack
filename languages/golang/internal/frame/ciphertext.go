@@ -6,33 +6,37 @@ import (
 	"slices"
 )
 
-// A ciphertext is made of ordinary Go values — the same dynamic shape as
-// decoded plaintext — with marker types distinguishing what is sealed from
-// what travels in the clear:
+// A ciphertext is a tree of ordinary Go values, with the same structure as a
+// decoded plaintext. Marker types show which parts are sealed and which are
+// passthrough. A node is one of these:
 //
-//   - a sealed-leaf marker (one of the caller's [LeafSet] types): one
-//     encrypted leaf, an authenticated absent marker, or an authenticated
-//     empty-composite marker
-//   - Plain{V: ...}: a passthrough field, readable without the key
-//   - []any: a sequence of ciphertext nodes
-//   - map[string]any: a record of named nodes. Keys travel in the clear but
-//     each is cryptographically bound to its sealed value — renaming or
-//     swapping keys fails decryption. Entry order is not authenticated
-//     (encoding sorts keys for determinism), and there is no whole-map seal:
-//     any subset of entries decrypts independently.
+//   - A sealed leaf, of one of the caller's [LeafSet] types. A sealed leaf
+//     is one encrypted value, an authenticated marker for an absent value,
+//     or an authenticated marker for an empty sequence or map.
+//   - Plain{V: ...}, a passthrough value. Anyone can read it without the
+//     key.
+//   - []any, a sequence of ciphertext nodes.
+//   - map[string]any, a record of named nodes.
 //
-// There is deliberately no dedicated tree type. Only the sealed leaf bytes
-// are a frozen format; the transport encoding crossing the FFI boundary is
-// an implementation detail.
+// The keys of a map are not encrypted. Each key is cryptographically bound
+// to its sealed value, so decryption fails if a key is renamed or two keys
+// are swapped. The order of the entries is not authenticated. The encoder
+// writes the keys in sorted order, so equal maps have equal bytes. The map
+// as a whole is not sealed: any subset of its entries decrypts without the
+// rest.
 //
-// Which concrete leaf types appear in the tree is the one thing this codec
-// does not decide: each binding supplies a [LeafSet] so its leaves stay a
-// distinct Go type, and a value that is not a leaf can never scan or
-// marshal where a leaf belongs.
+// The package deliberately has no type for the tree. Only the bytes of a
+// sealed leaf are a format that never changes. The transport bytes that
+// cross into and out of the guest are an implementation detail.
+//
+// The codec does not decide which Go types are leaves. The caller supplies a
+// [LeafSet], so that a leaf has a distinct Go type. A value that is not a
+// leaf therefore cannot be scanned or marshaled in the place of a leaf.
 
-// Ciphertext node tags in the transport encoding (mirrors the Rust codec).
-// 0x02 is not a node: an absent value is a sealed null leaf. It is never
-// written, and it is refused when read, like any unknown tag.
+// The tags of the nodes in the ciphertext encoding. The Rust codec uses the
+// same values. The value 0x02 is not a tag, because an absent value is a
+// sealed null leaf. The encoder never writes 0x02. The decoder refuses it,
+// as it refuses any unknown tag.
 const (
 	ctSingle      byte = 0x01
 	ctSeq         byte = 0x03
@@ -42,9 +46,11 @@ const (
 	ctEmptyMap    byte = 0x07
 )
 
-// LeafKind names the three sealed-leaf node kinds of the ciphertext framing.
-// The stored bytes do not record the kind — it is authenticated through
-// domain-separated AAD — so the framing carries it on the wire.
+// LeafKind is one of the three kinds of sealed leaf in the ciphertext
+// encoding. The stored bytes of a leaf do not record its kind. The kind is
+// authenticated through the additional authenticated data (AAD) of the leaf.
+// Each kind has a different AAD. The ciphertext encoding therefore records
+// the kind in the tag.
 type LeafKind byte
 
 const (
@@ -56,28 +62,31 @@ const (
 	LeafEmptyMap
 )
 
-// LeafSet maps a binding's sealed-leaf marker types onto the ciphertext
-// framing, in both directions. Each binding defines its own leaf types (so a
-// leaf sealed by one cipher can never be mistaken for another's) and hands
-// the codec this pair of translations:
+// LeafSet converts between the caller's sealed-leaf types and the leaves of
+// the ciphertext encoding, in both directions. The caller defines its own
+// leaf types, so a leaf that one cipher sealed is never used as the leaf of
+// another. The caller gives the codec two functions:
 //
-//   - Classify reports whether v is one of the binding's leaf values,
-//     returning its kind and bytes. The codec's structural node types
-//     ([]any, map[string]any, Plain) are never offered to Classify,
-//     so a LeafSet cannot claim a subtree; values Classify does not claim
-//     fall through to the bare-plaintext rejection.
-//   - Make constructs the binding's leaf value for a kind decoded off the
-//     wire. The bytes slice is freshly allocated and owned by the callee.
-//     Returning nil rejects the kind: the decoder turns it into an error, so
-//     a LeafSet that materializes only some kinds fails loudly instead of
-//     injecting nil nodes into the decoded tree.
+//   - Classify reports whether v is one of the caller's leaf values. If v is
+//     one, Classify returns its kind and its bytes. The codec never passes
+//     one of its own node types to Classify: []any, map[string]any, or
+//     Plain. A LeafSet therefore cannot treat a subtree as one leaf. The
+//     encoder refuses a value that Classify does not accept, as plaintext
+//     that is not marked.
+//   - Make builds the caller's leaf value for a kind that the decoder read.
+//     The byte slice is newly allocated, and Make owns it. Make returns nil
+//     to refuse the kind. The decoder then returns an error. A LeafSet that
+//     builds only some kinds therefore fails with an error, and never puts a
+//     nil node into the decoded tree.
 type LeafSet struct {
 	Classify func(v any) (LeafKind, []byte, bool)
 	Make     func(kind LeafKind, bytes []byte) any
 }
 
-// check rejects a partially wired LeafSet up front, where the mistake is
-// attributable, instead of as a nil-function panic mid-tree.
+// check refuses a LeafSet that has a nil function. The check runs before the
+// codec encodes or decodes anything. The error then names the mistake.
+// Without check, the mistake would be a nil-function panic part of the way
+// through a tree.
 func (l LeafSet) check() error {
 	if l.Classify == nil || l.Make == nil {
 		return errors.New("frame: LeafSet must define both Classify and Make")
@@ -85,21 +94,23 @@ func (l LeafSet) check() error {
 	return nil
 }
 
-// leafTags is the single source of truth for the LeafKind ↔ wire-tag
-// correspondence; leafTag and leafKind are its two directions, so a new leaf
-// kind cannot be wired into one direction and missed in the other.
+// leafTags is the only table that pairs a LeafKind with its tag. The
+// functions leafTag and leafKind read it, one in each direction. A new kind
+// of leaf therefore cannot be added to one direction and left out of the
+// other.
 //
-// No ciphertext tag is 0x00, so a zero entry means "this kind is not wired to
-// the wire format" — a hole left by a LeafKind constant that skips a value,
-// or an index past the end. Both directions refuse it, so a kind can never
-// round-trip inside Go under a tag the Rust codec has never heard of.
+// No ciphertext tag is 0x00, so a zero entry means that the kind has no tag.
+// A zero entry appears when the LeafKind constants skip a value. An index
+// past the end of the table has no tag either. Both leafTag and leafKind
+// refuse such a kind. Go therefore never encodes and decodes a kind with a
+// tag that the Rust codec does not know.
 var leafTags = [...]byte{
 	LeafSingle:   ctSingle,
 	LeafEmptySeq: ctEmptySeq,
 	LeafEmptyMap: ctEmptyMap,
 }
 
-// leafTag maps a classified kind to its wire tag.
+// leafTag returns the tag for a kind that Classify returned.
 func leafTag(kind LeafKind) (byte, error) {
 	if int(kind) >= len(leafTags) || leafTags[kind] == 0 {
 		return 0, fmt.Errorf("frame: LeafSet classified an unknown LeafKind %d", kind)
@@ -107,7 +118,7 @@ func leafTag(kind LeafKind) (byte, error) {
 	return leafTags[kind], nil
 }
 
-// leafKind maps a wire tag back to its leaf kind — the decode direction.
+// leafKind returns the kind of leaf for a tag. The decoder uses it.
 func leafKind(tag byte) (LeafKind, bool) {
 	if tag == 0 {
 		return 0, false
@@ -120,10 +131,10 @@ func leafKind(tag byte) (LeafKind, bool) {
 	return 0, false
 }
 
-// MarshalCipherText encodes a ciphertext value into transport bytes; leaves
-// recognizes the binding's sealed-leaf types. Bare plaintext values are
-// rejected — a passthrough must be marked with Plain, so a value can
-// never end up travelling unencrypted by accident.
+// MarshalCipherText encodes a ciphertext tree as transport bytes. The leaves
+// argument identifies the caller's sealed-leaf types. MarshalCipherText
+// refuses a plaintext value that is not marked. A passthrough value must be
+// wrapped in Plain, so no value is left unencrypted by accident.
 func MarshalCipherText(leaves LeafSet, v any) ([]byte, error) {
 	if err := leaves.check(); err != nil {
 		return nil, err
@@ -131,9 +142,10 @@ func MarshalCipherText(leaves LeafSet, v any) ([]byte, error) {
 	return encodeCipherText(leaves, nil, v, 0)
 }
 
-// UnmarshalCipherText decodes a transport-encoded ciphertext into the dynamic
-// shape above — leaf nodes constructed through leaves — requiring the whole
-// buffer to be consumed.
+// UnmarshalCipherText decodes the transport bytes of a ciphertext into the
+// tree of Go values described above. The Make function of leaves builds each
+// leaf node. UnmarshalCipherText returns ErrMalformed if any bytes are left
+// after the tree.
 func UnmarshalCipherText(leaves LeafSet, buf []byte) (any, error) {
 	if err := leaves.check(); err != nil {
 		return nil, err
@@ -153,9 +165,9 @@ func encodeCipherText(leaves LeafSet, out []byte, v any, depth int) ([]byte, err
 	if depth > maxDepth {
 		return nil, ErrTooDeep
 	}
-	// The structural arms come first: the codec's own node types are never
-	// offered to Classify, so a LeafSet cannot claim a whole subtree as one
-	// leaf chunk — only non-structural values reach it (in the default arm).
+	// The cases for the codec's own node types come first, so Classify never
+	// receives one of them. A LeafSet therefore cannot treat a whole subtree
+	// as one leaf. Only the default case calls Classify.
 	switch n := v.(type) {
 	case []any:
 		out = append(out, ctSeq)
@@ -190,17 +202,18 @@ func encodeCipherText(leaves LeafSet, out []byte, v any, depth int) ([]byte, err
 		}
 		return out, nil
 	case Plain:
-		// The payload node sits one level deeper; reject it here because the
-		// value encoder's scalar channels never re-check depth, and emitting
-		// bytes the decoder is guaranteed to reject (decodeValue enforces the
-		// same bound) would be an asymmetric round trip.
+		// The value inside a Plain is one level deeper. Refuse it here if
+		// that level is too deep, because the scalar methods of the value
+		// encoder do not check the depth. The decoder applies the same limit
+		// in decodeValue. Without this check, the encoder would write bytes
+		// that the decoder always refuses.
 		if depth+1 > maxDepth {
 			return nil, ErrTooDeep
 		}
 		out = append(out, ctPassthrough)
-		// Encode the plaintext payload as one value node, sharing the
-		// recursion budget with the surrounding ciphertext (depth+1),
-		// mirroring the Rust CT_PASSTHROUGH framing.
+		// Encode the plaintext value as one value node. The node counts
+		// against the same depth limit as the ciphertext around it, at
+		// depth+1. The Rust codec encodes CT_PASSTHROUGH the same way.
 		st := &encState{buf: out}
 		var done int
 		encodeAny(Encoder{st: st, depth: depth + 1, done: &done}, n.V)
@@ -245,9 +258,10 @@ func decodeCipherText(leaves LeafSet, r *reader, depth int) (any, error) {
 		copy(leaf, s)
 		node := leaves.Make(kind, leaf)
 		if node == nil {
-			// A LeafSet that does not materialize this kind is a wiring
-			// mistake in the binding, not malformed input — name it, instead
-			// of injecting a nil node the caller only trips over later.
+			// A LeafSet that builds no value for this kind is a mistake in
+			// the caller. The input is not malformed, so the error names the
+			// mistake. A nil node in the tree would fail only later,
+			// somewhere in the caller's code.
 			return nil, fmt.Errorf("frame: LeafSet.Make returned no value for LeafKind %d", kind)
 		}
 		return node, nil
@@ -289,7 +303,8 @@ func decodeCipherText(leaves LeafSet, r *reader, depth int) (any, error) {
 		}
 		return fields, nil
 	case ctPassthrough:
-		// One embedded plaintext value node, decoded one level deeper.
+		// A passthrough node contains one plaintext value node. The value is
+		// decoded one level deeper.
 		v, err := decodeValue(r, depth+1)
 		if err != nil {
 			return nil, err

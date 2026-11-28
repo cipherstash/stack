@@ -17,10 +17,11 @@ var (
 	ErrInvalidTagged    = errors.New("frame: a tagged value must hold a physical scalar under an unknown logical id")
 )
 
-// Int128 is a signed two's-complement integer in little-endian byte order.
+// Int128 is a signed 128-bit integer in two's complement, in little-endian
+// byte order.
 type Int128 [16]byte
 
-// Uint128 is an unsigned integer in little-endian byte order.
+// Uint128 is an unsigned 128-bit integer in little-endian byte order.
 type Uint128 [16]byte
 
 func littleInteger(value *big.Int) [16]byte {
@@ -71,10 +72,16 @@ func (v Int128) String() string {
 	return value.String()
 }
 
-// The wire's range is jiff's in every binding, so a value
-// one binding seals, every binding opens: dates in years -9999 through
-// 9999, and instants from -009999-01-02T01:59:59Z through
-// 9999-12-30T22:00:00.999999999Z.
+// These constants are the range of dates and instants that the encoding
+// accepts:
+//
+//   - A date has a year from -9999 through 9999.
+//   - An instant is from -009999-01-02T01:59:59Z through
+//     9999-12-30T22:00:00.999999999Z.
+//
+// The range is the one that jiff accepts. jiff is the date and time library
+// that the Rust code uses. Every language uses the same range. A value that
+// one language seals can therefore be opened in every other language.
 const (
 	minDateYear         = -9999
 	maxDateYear         = 9999
@@ -82,9 +89,9 @@ const (
 	maxTimestampSeconds = 253402207200  // 9999-12-30T22:00:00Z
 )
 
-// Date is a proleptic Gregorian calendar date, without time or timezone.
-// Its range is the wire's, years -9999 through 9999, including year zero
-// and BCE dates.
+// Date is a date in the proleptic Gregorian calendar, with no time and no
+// time zone. The year is from -9999 through 9999. Year zero and the years
+// before it are valid.
 type Date struct {
 	Year  int
 	Month time.Month
@@ -102,7 +109,8 @@ func (d Date) Validate() error {
 	return nil
 }
 
-// DaysFromCE returns the frozen wire day count (0001-01-01 is day 1).
+// DaysFromCE returns the day number that the encoding stores for d. Day 1 is
+// 1 January of year 1. The numbering never changes.
 func (d Date) DaysFromCE() (int32, error) {
 	if err := d.Validate(); err != nil {
 		return 0, err
@@ -116,12 +124,16 @@ func DateFromDaysCE(days int32) (Date, error) {
 	return d, d.Validate()
 }
 
-// Timestamp is an instant as Unix seconds and nanoseconds, for a caller
-// that holds the parts rather than a time.Time. Timestamps decode to
-// time.Time; this type only encodes. A leap second (nanoseconds of one
-// billion or more) has no count since the epoch and is refused, as it is
-// everywhere in the model, and so is an instant outside the
-// wire's range.
+// Timestamp is an instant, as seconds and nanoseconds since the Unix epoch.
+// Use it when the caller has those two numbers and no time.Time. The codec
+// only encodes a Timestamp. A timestamp decodes as a time.Time.
+//
+// Validate refuses two kinds of Timestamp:
+//
+//   - One whose Nanoseconds is one billion or more. Such a value is a leap
+//     second. A leap second has no count since the epoch. The rest of the
+//     codec refuses a leap second too.
+//   - An instant outside the range that the encoding accepts.
 type Timestamp struct {
 	Seconds     int64
 	Nanoseconds uint32
@@ -134,17 +146,22 @@ func (t Timestamp) Validate() error {
 	return nil
 }
 
-// UUID is sixteen bytes under the Uuid logical type: it travels in the
-// 0xF3 envelope, since the type has no shorthand tag. ParseUUID reads the
-// hyphenated hexadecimal spelling and String writes it in lower case.
+// UUID is the sixteen bytes of a UUID. [ParseUUID] reads the hyphenated
+// hexadecimal form. [UUID.String] writes that form in lower case.
 //
-// Another UUID type, such as github.com/google/uuid.UUID, is a plain
-// [16]byte to the codec and is written as bytes. Convert it first, with
-// UUID(id), so that Rust and Node read it as a UUID.
+// The codec writes a UUID as bytes with the logical type Uuid. A logical
+// type is a meaning that the encoding records for a scalar. Uuid has no tag
+// byte of its own. The codec therefore writes a UUID in the envelope. The
+// envelope starts with the tag byte 0xF3.
+//
+// To the codec, any other UUID type is a [16]byte, so the codec writes it as
+// bytes. One such type is github.com/google/uuid.UUID. Convert a value of
+// that type first, with UUID(id). Rust and Node then read it as a UUID.
 type UUID [16]byte
 
-// ParseUUID reads the hyphenated spelling, 8-4-4-4-12 hexadecimal digits in
-// either case, and returns ErrInvalidUUID for anything else.
+// ParseUUID reads a UUID in its hyphenated form: groups of 8, 4, 4, 4, and
+// 12 hexadecimal digits. The digits can be in upper or lower case. ParseUUID
+// returns [ErrInvalidUUID] for any other text.
 func ParseUUID(s string) (UUID, error) {
 	var u UUID
 	if len(s) != 36 || s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
@@ -177,7 +194,7 @@ func hexDigit(c byte) (byte, bool) {
 	return 0, false
 }
 
-// String is the hyphenated spelling in lower case.
+// String returns u in its hyphenated form, in lower case.
 func (u UUID) String() string {
 	const digits = "0123456789abcdef"
 	var out [36]byte
@@ -194,25 +211,41 @@ func (u UUID) String() string {
 	return string(out[:])
 }
 
-// Tagged carries a scalar under a logical type this build does not know:
-// the envelope's id and parameter, and the physical value as the Go native
-// of its kind. A value from a newer client is read and re-encoded unchanged
-// rather than dropped or mistaken for its bare physical value. V must be a
-// physical scalar (nil, bool, an integer or float width, Int128, Uint128,
-// string or []byte); ID must be above the ids this build knows. An int or
-// uint is written as Int64 or Uint64, as everywhere else in the codec, so
-// it reads back as int64 or uint64.
+// Tagged is a scalar with a logical type that this version of the codec does
+// not know. A newer client can write such a value. The codec decodes it as a
+// Tagged, and encodes a Tagged as the same bytes. So the codec neither loses
+// the value nor treats it as a plain scalar.
+//
+// ID and Param are the id and the parameter of the logical type, as the
+// envelope records them. ID must be greater than every id this version
+// knows. V is the scalar, as the Go type that the codec decodes it as. V
+// must be one of these:
+//
+//   - nil
+//   - a bool
+//   - an integer or a float of any width
+//   - an Int128 or a Uint128
+//   - a string
+//   - a []byte
+//
+// The codec writes an int as an Int64 and a uint as a Uint64, as it does for
+// every value. A V of type int therefore decodes as an int64, and a V of
+// type uint decodes as a uint64.
 type Tagged struct {
 	ID    uint8
 	Param uint8
 	V     any
 }
 
-// Decimal is a finite base-10 value: sign * Coefficient * 10^-Scale.
-// Coefficient is an unsigned 96-bit little-endian integer. Scale is retained,
-// including trailing zeroes, and must be at most 28 (rust_decimal's range).
-// A zero has no sign: "-0.00" parses, decodes and encodes as 0.00 with its
-// scale kept.
+// Decimal is a finite base-10 number. The value is Coefficient times 10 to
+// the power of -Scale. The value is negative when Negative is set.
+//
+// Coefficient is an unsigned 96-bit integer in little-endian byte order.
+// Scale is at most 28. That is the limit of the Rust crate rust_decimal. The
+// codec keeps Scale as given, so it keeps trailing zeroes.
+//
+// A zero has no sign. The text "-0.00" parses as 0.00, and a negative zero
+// encodes and decodes as zero. Each of these keeps the scale.
 type Decimal struct {
 	Coefficient [12]byte
 	Scale       uint8
@@ -226,8 +259,12 @@ func (d Decimal) Validate() error {
 	return nil
 }
 
-// ParseDecimal accepts exact fixed-point decimal text without rounding.
-// NaN and infinities have their own error so callers can reject them by type.
+// ParseDecimal reads a number written in fixed-point decimal form, and never
+// rounds. ParseDecimal returns [ErrInvalidDecimal] for text that is not such
+// a number. ParseDecimal returns the same error for a number that a Decimal
+// cannot represent exactly. ParseDecimal returns [ErrNonFiniteDecimal] for
+// NaN and for an infinity. A caller can therefore tell those two cases apart
+// from other bad text.
 func ParseDecimal(s string) (Decimal, error) {
 	switch strings.ToLower(s) {
 	case "nan", "+nan", "-nan", "inf", "+inf", "-inf", "infinity", "+infinity", "-infinity":
@@ -276,7 +313,7 @@ func (d Decimal) IsZero() bool {
 	return d.Coefficient == [12]byte{}
 }
 
-// Normalized is the decimal with the sign dropped from a zero.
+// Normalized returns d, with Negative cleared when d is zero.
 func (d Decimal) Normalized() Decimal {
 	if d.IsZero() {
 		d.Negative = false

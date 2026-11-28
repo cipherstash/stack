@@ -7,12 +7,17 @@ import (
 	"unicode/utf8"
 )
 
-// Transport framing tags. The scalar tags mirror vitaminc-aead's frozen
-// sealed-leaf tag table so the two tables can't drift apart on
-// meaning; the ARRAY/OBJECT container tags are transport-local (the sealed
-// format has no container tags — container shape rides on the ciphertext
-// tree). See the package doc: this transport encoding is NOT a storage
-// format.
+// The tags of the value encoding. A tag is the first byte of an encoded
+// node. The tag says what kind of node follows.
+//
+// Each scalar tag has the same value as the tag of a sealed leaf in
+// vitaminc-aead, so one byte means one type in both encodings. The
+// sealed-leaf tags never change. The tags for an array and an object exist
+// only in the transport bytes. The sealed format has no tags for containers,
+// because the ciphertext tree has a node for each container.
+//
+// The transport bytes are not a storage format. See the package
+// documentation.
 const (
 	tagNull      = 0x00
 	tagUndefined = 0x01
@@ -35,37 +40,46 @@ const (
 	tagDate      = 0x12
 	tagTimestamp = 0x13
 	tagDecimal   = 0x14
-	// tagTypedNull is an absent value of a fixed-width type, padded to that
-	// type's leaf length: the tag, the header a value of the type starts
-	// with, then zeros.
+	// tagTypedNull starts a typed null. A typed null is an absent value of a
+	// fixed-width type. The bytes are tagTypedNull, then the header that a
+	// value of the type starts with, then zeros. A typed null is as long as
+	// an encoded value of the type.
 	tagTypedNull = 0x15
 	tagArray     = 0xF0
 	tagObject    = 0xF1
-	// tagPassthrough wraps one value node that travels in the clear
-	// (unencrypted, unauthenticated). Transport-local, like array/object.
+	// tagPassthrough starts a passthrough value: the tag, then one value
+	// node. A passthrough value is neither encrypted nor authenticated. This
+	// tag exists only in the transport bytes, as the array and object tags
+	// do.
 	tagPassthrough = 0xF2
-	// tagEnvelope carries a logical type with no shorthand tag over a
-	// physical scalar: id, parameter, then the scalar. 0xF4 is
-	// reserved for a longer envelope and is refused.
+	// tagEnvelope starts an envelope. An envelope records a logical type
+	// that has no tag of its own. The bytes are the tag, the id of the
+	// logical type, a parameter, then a physical scalar. A physical scalar
+	// is a scalar that the encoding stores as it is, such as an integer or
+	// bytes. The tag 0xF4 is reserved for a longer envelope, and the
+	// decoders refuse it.
 	tagEnvelope = 0xF3
 )
 
-// Logical type ids, as the envelope spells them. Undefined, Date, Decimal
-// and nanosecond Timestamp have shorthand tags of their own, so the
-// envelope never carries them: there is one encoding per value.
+// The ids of the logical types, as an envelope records them. Undefined,
+// Date, Decimal, and a Timestamp in nanoseconds each have a tag of their
+// own. An envelope is never used for those four, so every value has exactly
+// one encoding.
 const (
 	logicalUndefined = 1
 	logicalDate      = 2
 	logicalTimestamp = 3
 	logicalDecimal   = 4
 	logicalUUID      = 5
-	// logicalLastKnown is the highest id this build knows. Any id above it
-	// is read and re-encoded unchanged as a Tagged.
+	// logicalLastKnown is the highest id that this version of the codec
+	// knows. A value with a higher id decodes as a [Tagged]. A Tagged
+	// encodes as the same bytes.
 	logicalLastKnown = logicalUUID
 )
 
-// Timestamp units, as the envelope's parameter spells them. Nanoseconds is
-// the shorthand Timestamp tag, so only the coarser units use the envelope.
+// The units of a timestamp, as the parameter of an envelope records them. A
+// timestamp in nanoseconds uses tagTimestamp. Only a timestamp in seconds,
+// milliseconds, or microseconds uses an envelope.
 const (
 	unitSeconds = 0
 	unitMillis  = 1
@@ -73,54 +87,73 @@ const (
 	unitNanos   = 3
 )
 
-// maxUint32 bounds every length/count written or read (all are u32 LE).
-// Typed uint64, not an untyped constant: an untyped 1<<32-1 compared against
-// an int fails to compile on 32-bit GOARCH (constant overflows int), and the
-// guard is load-bearing there — an oversized count coerced to a negative int
-// would slip past the remaining-bytes check and panic in make instead of
-// returning ErrMalformed. Comparisons convert the int operand to uint64
-// (always lossless for non-negative values, which the n < 0 guards ensure).
+// maxUint32 is the largest length or count that the codec writes or reads.
+// Every length and count is an unsigned 32-bit integer in little-endian byte
+// order.
+//
+// The constant has the type uint64. An untyped 1<<32-1 does not compile when
+// it is compared with an int on a 32-bit GOARCH, because the constant
+// overflows int.
+//
+// The check is needed on those platforms. There, a count that is too large
+// converts to a negative int. A negative count would pass the check against
+// the bytes remaining. The call to make would then panic. The decoder must
+// return ErrMalformed instead.
+//
+// Each comparison converts its int operand to uint64. That conversion loses
+// nothing for a value that is not negative. The n < 0 checks refuse a
+// negative value first.
 const maxUint32 = uint64(1<<32 - 1)
 
-// maxDepth mirrors the Rust transport codec's recursion bound, keeping a
-// hostile nesting depth from overflowing the stack.
+// maxDepth is the deepest nesting that the codec accepts. The Rust codec has
+// the same limit. The limit stops hostile input from overflowing the stack.
 const maxDepth = 128
 
-// maxEagerCapacity clamps the up-front reservation of a count-driven
-// allocation. The reader's count guard bounds a single reservation against
-// the bytes remaining, but not the sum of live reservations: a container
-// nesting level costs 5-9 wire bytes while a reserved slot costs many times
-// that, and up to maxDepth ancestor reservations are live at once — so ~1 MB
-// of hostile bytes could otherwise pin gigabytes. Mirrors the Rust codecs'
-// MAX_EAGER_CAPACITY. Slices still grow past the clamp on append; only the
-// initial reservation is bounded.
+// maxEagerCapacity is the largest capacity that a decoder reserves before it
+// reads the items of a container. The Rust codecs have the same limit,
+// MAX_EAGER_CAPACITY.
+//
+// The reader already checks one count against the bytes remaining. That
+// check does not limit the total that nested containers reserve. One level
+// of nesting takes 5 to 9 encoded bytes, but a reserved item takes many
+// times that. Up to maxDepth containers can each have a reservation at the
+// same time. Without this limit, about 1 MB of hostile bytes could reserve
+// gigabytes of memory.
+//
+// A slice still grows past the limit as items are appended. Only the first
+// reservation is limited.
 const maxEagerCapacity = 1024
 
 func eagerCap(n int) int {
-	// n < 0 is unreachable on 64-bit (u32 counts are non-negative in a 64-bit
-	// int) but load-bearing on 32-bit GOARCH, where a hostile prefix >= 2^31
-	// coerces negative and min() would pass it through to make().
+	// On a 64-bit platform n is never negative, because a 32-bit count fits
+	// an int. On a 32-bit GOARCH, a hostile count of 2^31 or more converts
+	// to a negative int. Without this check, min would pass the negative
+	// value to make.
 	if n < 0 {
 		return 0
 	}
 	return min(n, maxEagerCapacity)
 }
 
-// ErrMalformed is returned by the decoders for any transport buffer or
-// storage blob that does not parse: truncated, over-deep, hostile counts,
-// duplicate keys, unknown tags. Deliberately unspecific — the decoders treat their input as
-// hostile and do not distinguish *how* it is malformed. It is returned bare,
-// never wrapped, so errors.Is and == are equivalent today; prefer errors.Is.
+// ErrMalformed is the error the decoders return for transport bytes or a
+// storage blob that they cannot parse. Examples are truncated input, input
+// that is nested too deep, a hostile count, a duplicate key, and an unknown
+// tag. The error does not say which. The decoders treat their input as
+// hostile, so they report no detail about it.
 //
-// A misconfigured [LeafSet] is a different class of failure — the binding's
-// own wiring, not hostile bytes — and [UnmarshalCipherText] reports it with a
-// distinct, attributable error rather than folding it into ErrMalformed.
+// The decoders return ErrMalformed itself, never wrapped. errors.Is and ==
+// therefore give the same answer today. Use errors.Is.
+//
+// A [LeafSet] that is set up wrongly is a different failure. The caller made
+// that mistake, so the bytes are not at fault. [UnmarshalCipherText] reports
+// it with a different error that names the mistake.
 var ErrMalformed = errors.New("frame: malformed transport bytes or storage blob")
 
-// ErrTooDeep is returned by the encoders when a value or ciphertext tree
-// exceeds the recursion bound (the decoders fold over-deep input into
-// [ErrMalformed] — hostile bytes stay unspecific by design, but a too-deep
-// value handed in by the caller's own code is worth matching on).
+// ErrTooDeep is the error the encoders return for a value or a ciphertext
+// tree that is nested deeper than maxDepth. The caller's own code built that
+// value, so the caller can match on this error. The decoders return
+// [ErrMalformed] for input that is nested too deep, as they do for all bad
+// input.
 var ErrTooDeep = errors.New("frame: value is nested too deeply")
 
 func appendLen(out []byte, n int) ([]byte, error) {
@@ -138,8 +171,8 @@ func appendChunk(out, chunk []byte) ([]byte, error) {
 	return append(out, chunk...), nil
 }
 
-// reader is a cursor over a transport buffer, tracking bytes consumed so a
-// decode can insist the whole buffer was used.
+// reader reads a buffer from start to end, and records how many bytes it has
+// read. A decoder uses that number to check that it read the whole buffer.
 type reader struct {
 	buf []byte
 	pos int
@@ -171,11 +204,15 @@ func (r *reader) u32() (int, error) {
 	return int(binary.LittleEndian.Uint32(s)), nil
 }
 
-// count reads a u32 item count, rejecting counts that exceed the bytes
-// remaining (every item costs at least one byte) so hostile input cannot
-// drive a huge preallocation. The n < 0 guard matches take/appendLen: on
-// 32-bit GOARCH a prefix >= 2^31 coerces to a negative int, which would slip
-// past the remaining-bytes check and panic in make.
+// count reads a 32-bit item count. The function refuses a count that is
+// greater than the number of bytes remaining, because every item takes at
+// least one byte. Hostile input therefore cannot make a decoder reserve much
+// memory.
+//
+// The function also refuses a negative n, as take and appendLen do. On a
+// 32-bit GOARCH, a count of 2^31 or more converts to a negative int. A
+// negative count would pass the check against the bytes remaining. The call
+// to make would then panic.
 func (r *reader) count() (int, error) {
 	n, err := r.u32()
 	if err != nil {
@@ -191,7 +228,8 @@ func (r *reader) finished() bool {
 	return r.pos == len(r.buf)
 }
 
-// str reads a length-prefixed, UTF-8-validated string.
+// str reads a string: a length, then that many bytes. The bytes must be
+// valid UTF-8.
 func (r *reader) str() (string, error) {
 	n, err := r.count()
 	if err != nil {

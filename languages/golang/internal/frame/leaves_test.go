@@ -1,8 +1,9 @@
 package frame
 
-// The leaf types and leaf set of these tests. The codec has no leaf types of
-// its own: each caller brings a LeafSet, and the SDK's is in package
-// encrypt. These three stand for a caller's, one type for each LeafKind.
+// The leaf types and the LeafSet of these tests. The codec has no leaf types
+// of its own, so each caller supplies a LeafSet. The LeafSet of the SDK is
+// in package encrypt. The three types here take the place of a caller's
+// types, with one type for each LeafKind.
 type (
 	sealed         []byte
 	sealedEmptySeq []byte
@@ -32,16 +33,16 @@ func testLeaves() LeafSet {
 			case LeafEmptyMap:
 				return sealedEmptyMap(bytes)
 			default:
-				// An unlisted kind is rejected (nil), as leafTag refuses
-				// one on the encode side.
+				// A kind that is not listed is refused with nil, as leafTag
+				// refuses one when it encodes.
 				return nil
 			}
 		},
 	}
 }
 
-// testEncryptable is the Encryptable these tests publish, as package encrypt
-// publishes its own: the codec has none of its own.
+// testEncryptable is the Encryptable interface that these tests publish, as
+// package encrypt publishes its own. The codec declares none.
 type testEncryptable interface {
 	EncryptValue(enc Encoder) error
 }

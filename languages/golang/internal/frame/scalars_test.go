@@ -53,7 +53,7 @@ func TestScalarHostEncoding(t *testing.T) {
 		if err != nil || !reflect.DeepEqual(decoded, tc.value) {
 			t.Fatalf("%T: got %#v: %v", tc.value, decoded, err)
 		}
-		// The intercept also applies through pointers, fields and interfaces.
+		// The same rule applies through pointers, fields, and interfaces.
 		nested := struct{ Value any }{Value: &tc.value}
 		if _, err := Marshal(nested); err != nil {
 			t.Fatal(err)
@@ -84,9 +84,10 @@ func TestInvalidScalarHostEncoding(t *testing.T) {
 	}
 }
 
-// The envelope's timestamp units decode to time.Time; the nanosecond unit
-// has the shorthand tag and is refused in the envelope, as is every other
-// envelope the corpus does not already pin.
+// A timestamp in an envelope decodes as a time.Time, for each unit. The
+// nanosecond unit uses tagTimestamp, so the decoder refuses it in an
+// envelope. The decoder also refuses the other bad envelopes below. The
+// corpus does not cover those.
 func TestEnvelopeTimestampsDecodeToTime(t *testing.T) {
 	for _, tc := range []struct {
 		wire string
@@ -96,8 +97,8 @@ func TestEnvelopeTimestampsDecodeToTime(t *testing.T) {
 		{"f3030205c8ff ffffffffffff", time.Unix(0, -56_000).UTC()},                             // -56 µs, as an i64
 		{"f303000c0a", time.Unix(10, 0).UTC()},                                                 // 10 s, as an i8
 		{"f3030210" + "00f1" + "ffffffffffffffffffffffffffff", time.Unix(0, -3_840_000).UTC()}, // -3840 µs, as an i128
-		{"f3030005e0d3f2ff3a000000", time.Unix(253402207200, 0).UTC()},                         // the last second the wire admits, as an i64
-		{"f30300051fb9060fa8ffffff", time.Unix(-377705023201, 0).UTC()},                        // the first second the wire admits
+		{"f3030005e0d3f2ff3a000000", time.Unix(253402207200, 0).UTC()},                         // the last second in the accepted range, as an i64
+		{"f30300051fb9060fa8ffffff", time.Unix(-377705023201, 0).UTC()},                        // the first second in the accepted range
 	} {
 		t.Run(tc.wire, func(t *testing.T) {
 			raw, err := hex.DecodeString(strings.ReplaceAll(tc.wire, " ", ""))
@@ -117,8 +118,8 @@ func TestEnvelopeTimestampsDecodeToTime(t *testing.T) {
 		"f3030305" + "0000000000000000",                 // nanoseconds: the shorthand tag exists
 		"f3030405" + "0000000000000000",                 // no such unit
 		"f303010a" + "00000000",                         // a count that is not an int
-		"f3030010" + "0000000000000000000000000000ff7f", // out of the wire's range
-		"f3030005" + "e1d3f2ff3a000000",                 // one second past the wire's range, as an i64
+		"f3030010" + "0000000000000000000000000000ff7f", // outside the accepted range
+		"f3030005" + "e1d3f2ff3a000000",                 // one second after the accepted range, as an i64
 		"f3030005" + "1eb9060fa8ffffff",                 // one second before it
 		"f3030107" + "18fcffffffffffff",                 // 2^64 - 1000 ms, a u64 above the i64 range
 	} {
@@ -165,8 +166,8 @@ func TestDecimalNegativeZeroIsWrittenUnsigned(t *testing.T) {
 	}
 }
 
-// Every physical scalar travels under an unknown id and reads back as the
-// same Tagged value.
+// Every physical scalar can be written with an unknown id. Each one reads
+// back as the same Tagged value.
 func TestTaggedRoundTripsEveryPhysicalScalar(t *testing.T) {
 	i128, err := ParseInt128("-1")
 	if err != nil {
@@ -189,8 +190,8 @@ func TestTaggedRoundTripsEveryPhysicalScalar(t *testing.T) {
 	}
 }
 
-// A Go int or uint in a Tagged value is written as Int64 or Uint64, as Encode
-// writes it everywhere else, and reads back at that width.
+// A Go int or uint in a Tagged value is written as an Int64 or a Uint64, as
+// Encode writes it for every value. The value reads back at that width.
 func TestTaggedWritesIntAndUintAtSixtyFourBits(t *testing.T) {
 	for _, tc := range []struct {
 		value any

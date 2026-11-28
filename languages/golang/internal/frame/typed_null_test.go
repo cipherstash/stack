@@ -8,10 +8,11 @@ import (
 	"time"
 )
 
-// typedNullAnswers pins the typed null of each fixed-width type, written
-// for a nil pointer to it: the cross-language bytes the Rust codec writes
-// for the same type (vitaminc-aead's leaf tests), beside a value of the
-// type, which must be as long.
+// typedNullAnswers lists the typed null of each fixed-width type. The
+// encoder writes a typed null for a nil pointer to the type. The Rust codec
+// writes the same bytes for the same type, and the leaf tests of
+// vitaminc-aead check them. Each row also has a value of the type. The typed
+// null must be as long as the encoded value.
 var typedNullAnswers = []struct {
 	name    string
 	nilPtr  any
@@ -52,8 +53,9 @@ func TestTypedNullKnownAnswers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// A frame gives bytes a length prefix; a typed null of a UUID
-			// has none, because its sealed leaf has none.
+			// A frame writes bytes with a length prefix. The typed null of a
+			// UUID has no length prefix, because the sealed leaf of a UUID
+			// has none.
 			want := len(present)
 			if row.name == "uuid" {
 				want -= 4
@@ -61,7 +63,8 @@ func TestTypedNullKnownAnswers(t *testing.T) {
 			if len(got) != want {
 				t.Fatalf("typed null is %d bytes, a value %d", len(got), want)
 			}
-			// It reads back as nil, like every null, and writes back as one.
+			// The typed null reads back as nil, as every null does. The nil
+			// is then written as a plain null.
 			v, err := Unmarshal(got)
 			if err != nil || v != nil {
 				t.Fatalf("decoded %#v, %v", v, err)
@@ -88,10 +91,10 @@ func (p *ptrEncoded) EncryptValue(enc Encoder) error {
 // A pointer type that points at itself never reaches a non-pointer.
 type selfPointer *selfPointer
 
-// A nil pointer to a fixed-width type is a typed null, the Go side of
-// Rust's Option<T>; a nil with no fixed-width type to go by is the plain
-// null. Each case is encoded twice, since the second encode reads the
-// per-type cache.
+// A nil pointer to a fixed-width type is written as a typed null, as Rust
+// writes an Option<T>. A nil whose type has no fixed width is written as the
+// plain null. Each case is encoded twice, because the second encode reads
+// the cache for the type.
 func TestANilPointerIsATypedNullWhenItsTypeIsFixedWidth(t *testing.T) {
 	type age int32
 	var missing *int32
@@ -172,16 +175,17 @@ func TestAStructsNilFieldsAreTypedNulls(t *testing.T) {
 			t.Fatalf("%s decoded %#v", f.Key, f.Value)
 		}
 	}
-	// Born and Age carry their padding; Any has no type to go by, and a nil
-	// slice is an empty sequence, as it always was.
+	// Born and Age are written as typed nulls, with their padding. Any has
+	// no type, so it is written as the plain null. A nil slice is written as
+	// an empty sequence.
 	if !bytes.Contains(got, []byte{tagTypedNull, tagDate, 0, 0, 0}) ||
 		!bytes.Contains(got, []byte{tagTypedNull, tagInt32, 0, 0, 0}) {
 		t.Fatalf("no typed nulls in %x", got)
 	}
 }
 
-// The channel Encode writes a typed null through, from an Encryptable in
-// this package.
+// An Encryptable in this package calls the method that Encode uses to write
+// a typed null.
 type maybeAge struct{ v *int32 }
 
 func (m maybeAge) EncryptValue(enc Encoder) error {
@@ -201,7 +205,8 @@ func TestTheTypedNullChannel(t *testing.T) {
 	if hex.EncodeToString(got) != "1504000000" {
 		t.Fatalf("got %x", got)
 	}
-	// It completes exactly one slot, like every terminal.
+	// The typed null counts as exactly one value in its slot, as every
+	// scalar does.
 	enc := func(e Encoder) error {
 		s := e.Seq()
 		s.Elem().typedNull(nullOf(tagUint8))
@@ -221,9 +226,9 @@ type encryptableFunc func(Encoder) error
 
 func (f encryptableFunc) EncryptValue(e Encoder) error { return f(e) }
 
-// Every absence has one encoding: the decoder refuses anything a writer
-// does not write. The shared corpus pins the same refusals for every
-// language; these are the Go-specific edges around them.
+// Every absent value has one encoding, so the decoder refuses any bytes that
+// no encoder writes. The shared corpus tests the same refusals in every
+// language. The cases below are specific to Go.
 func TestATypedNullIsReadStrictly(t *testing.T) {
 	refused := []string{
 		"15", "1504", "15040000", "1504000001", "150400000000",
@@ -254,9 +259,10 @@ func TestATypedNullIsReadStrictly(t *testing.T) {
 	}
 }
 
-// Every fixed-width marker and kind writes its values with the header its
-// typed null carries, so the one table cannot pad a type as something it is
-// not. A marker added without a sample here fails the test.
+// For every fixed-width type in the markers table and every numeric kind, a
+// value starts with the header that its typed null has. The table therefore
+// cannot pad a type as if it were a different type. The test fails for a
+// type that is added to the markers table with no sample here.
 func TestEveryFixedTypeIsWrittenWithItsTypedNullsHeader(t *testing.T) {
 	samples := map[reflect.Type]any{
 		reflect.TypeOf(Int128{}):    Int128{1},
@@ -272,7 +278,8 @@ func TestEveryFixedTypeIsWrittenWithItsTypedNullsHeader(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		// The typed null's header (after its tag) begins the value's.
+		// The header of the typed null, after its tag, starts the encoded
+		// value.
 		header := null[1:]
 		for len(header) > 0 && header[len(header)-1] == 0 {
 			header = header[:len(header)-1]
@@ -281,8 +288,9 @@ func TestEveryFixedTypeIsWrittenWithItsTypedNullsHeader(t *testing.T) {
 			t.Fatalf("%s: value %x does not start with its typed null's header %x", name, value, header)
 		}
 	}
-	// Every sample is of a fixed-width marker, so a marker that loses its
-	// fixed type is caught, not skipped.
+	// Every sample is of a fixed-width type in the markers table. The test
+	// therefore fails for a type that stops being fixed width, and does not
+	// skip it.
 	for typ := range samples {
 		if markers[typ].null == nil {
 			t.Fatalf("%v has a sample but no typed null", typ)

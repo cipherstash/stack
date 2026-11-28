@@ -2,12 +2,19 @@ package frame
 
 import "testing"
 
-// White-box pin for eagerCap, mirroring the Rust transport codec's
-// eager_capacity test: the clamp is a capacity hint invisible to round-trip
-// tests, so assert the function directly — identity below the threshold,
-// flat at maxEagerCapacity above it, and zero for negative counts (a u32
-// prefix >= 2^31 coerced to int on 32-bit GOARCH, which must not reach
-// make()). The constant itself is pinned so a silent bump shows up here.
+// This test calls eagerCap directly, as the eager_capacity test of the Rust
+// transport codec does. The limit only changes the capacity that the decoder
+// reserves. A test that encodes a value and decodes it again cannot observe
+// the limit. The test checks three cases:
+//
+//   - A count below maxEagerCapacity is returned unchanged.
+//   - A count above maxEagerCapacity returns maxEagerCapacity.
+//   - A negative count returns zero. On a 32-bit GOARCH, a 32-bit count of
+//     2^31 or more converts to a negative int. Such a count must never reach
+//     make.
+//
+// The test also checks the value of the constant, so a change to the
+// constant fails here.
 func TestEagerCapClampsOnlyAboveThreshold(t *testing.T) {
 	if maxEagerCapacity != 1024 {
 		t.Fatalf("maxEagerCapacity: got %d, want 1024", maxEagerCapacity)
