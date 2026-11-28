@@ -108,6 +108,49 @@ fn an_empty_text_or_byte_value_is_still_one_leaf() {
     one_leaf(Protected::new([0u8; 0]).as_protected_ref());
 }
 
+/// A derived newtype encrypts as its inner value does. So the derive
+/// implements `Scalar` for it, by value and by reference, when the inner
+/// type is a `Scalar`. A fieldless enum is one `u32` leaf, so the derive
+/// implements `Scalar` for it too. These types have no `Scalar` impl
+/// written by hand.
+#[derive(Encrypt, zeroize::Zeroize)]
+struct Email(String);
+
+#[derive(Encrypt, zeroize::Zeroize)]
+struct Contact(Email);
+
+#[derive(Encrypt)]
+struct Wrapper<T>(T);
+
+#[derive(Encrypt)]
+struct Name<'a>(&'a str);
+
+#[derive(Encrypt)]
+enum Status {
+    Active,
+}
+
+const _: () = assert!(depth::is_scalar(<Email as Encrypt>::DEPTH));
+const _: () = assert!(depth::is_scalar(<&Email as Encrypt>::DEPTH));
+const _: () = assert!(depth::is_scalar(<Wrapper<i64> as Encrypt>::DEPTH));
+const _: () = assert!(depth::is_scalar(<&Wrapper<i64> as Encrypt>::DEPTH));
+
+#[test]
+fn a_derived_newtype_over_a_scalar_is_a_scalar() {
+    one_leaf(Email("ada@example.com".into()));
+    one_leaf(&Email("ada@example.com".into()));
+    one_leaf(Contact(Email("ada@example.com".into())));
+    one_leaf(&Contact(Email("ada@example.com".into())));
+    one_leaf(Wrapper(42i64));
+    one_leaf(&Wrapper(vec![1u8, 2]));
+    one_leaf(Name("ada"));
+    one_leaf(&Name("ada"));
+    one_leaf(Protected::new(Email("ada@example.com".into())));
+    one_leaf(&Protected::new(Email("ada@example.com".into())));
+    one_leaf(Status::Active);
+    one_leaf(&Status::Active);
+}
+
 #[test]
 fn a_borrow_of_a_scalar_borrow_is_a_scalar() {
     one_leaf(&&42i32);

@@ -1278,6 +1278,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it needs a `_` arm. To migrate code that names `recipher`, see the
   stack-kms CHANGELOG.
 
+- **A `Scalar` impl you wrote for a derived newtype or a fieldless enum no
+  longer compiles** (#2012). `#[derive(Encrypt)]` now implements Vitamin
+  C's `Scalar` marker for these types. So an `impl Scalar for &Email {}` of
+  your own conflicts with it. The compiler reports `E0119`, conflicting
+  implementations. The compiler reports it even when the inner type is not
+  a `Scalar`. What to do depends on the inner type.
+  - For a fieldless enum, or for a newtype whose inner type is one value,
+    such as a `String`, delete your impl. `keyset.encrypt` still encrypts
+    the type.
+  - When the inner type is not a `Scalar`, but you know that its value is
+    one leaf, stop deriving `Encrypt` for the type. Write `Encrypt` for the
+    type and for its borrow by hand, with
+    `const DEPTH: Option<usize> = depth::SCALAR;`. Then keep your `Scalar`
+    impl. An example is a newtype over a frame that you check holds one
+    value.
+
+- **A `Scalar` type that you write by hand must set its `DEPTH`** (#2012).
+  `keyset.encrypt` now checks, when the program is built, that the borrow
+  of the type encrypts as one value. So the `Encrypt` impl that you wrote
+  for the borrow must contain `const DEPTH: Option<usize> = depth::SCALAR;`.
+  `depth` is `vitaminc_aead::plaintext::depth`.
+  - An impl that leaves `DEPTH` at its default `None` compiled before. Now
+    `cargo build` fails with `E0080`, and the message names the line to
+    add. `cargo check` does not run this check.
+  - A newtype that derives `Encrypt` copies the `DEPTH` of the type it
+    wraps. So when the newtype fails this check, fix the type it wraps.
+    That is the innermost type whose `Encrypt` impl you wrote by hand.
+
 ### Added
 
 - **A declaration and a call show the context they use, before any key is
@@ -1745,6 +1773,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not published with the crates.
 
 ### Fixed
+
+- **`keyset.encrypt` encrypts a newtype that derives `Encrypt` over one
+  value** (#2012). A newtype is a struct with exactly one unnamed field.
+  `struct Email(String)` with `#[derive(Encrypt, Zeroize)]` now encrypts
+  with `keyset.encrypt(Email(..))`. You no longer write
+  `impl Scalar for &Email {}` by hand. Your crate still needs
+  `vitaminc-aead` as a dependency to use the derive, because the derived
+  code names `vitaminc_aead` (#2013).
+  - The newtype encrypts exactly as its inner value does. The leaf has the
+    same plaintext and the same length. So `keyset.decrypt::<String>` opens
+    what `Email` encrypted.
+  - A newtype over a type that contains more than one value still derives
+    `Encrypt`, for use as a field. Examples are `struct Tags(Vec<String>)`
+    and `struct Nickname(Option<String>)`. `keyset.encrypt` still refuses
+    such a newtype when the program compiles. `keyset.encrypt` also
+    refuses a struct with named fields.
+  - `keyset.encrypt` also encrypts a fieldless enum that derives
+    `Encrypt`, as one `u32` value. But `#[derive(Zeroize)]` does not wipe a
+    fieldless enum: its `zeroize` does nothing. So `keyset.encrypt` cannot
+    wipe the variant from memory after it encrypts it. To have the variant
+    wiped, give the enum a `#[default]` variant and implement
+    `zeroize::DefaultIsZeroes` for it, as the `OpaqueEncode` docs show (see
+    #2015).
+  - The compile error for a refused type now says that the type cannot be
+    encrypted into one `Ciphertext`. The error says what `keyset.encrypt`
+    needs, and what to use instead:
+    - `EncryptInto`, for each element of a `Vec`
+    - `keyset.encrypt_tree`, for an `Option` or a struct
+    - `OpaqueBlob`, for a whole `Serialize` value
+
+    The error no longer names Vitamin C's `Scalar` trait. When the only
+    missing condition is `Zeroize`, the error still says so.
 
 - **A query on an EQL type whose twin carries every term is refused for
   what any of its indexes refuses, before any key is requested** (#1668).

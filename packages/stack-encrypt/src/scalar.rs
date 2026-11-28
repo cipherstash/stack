@@ -33,6 +33,15 @@ pub(crate) mod sealed {
             context: ContextPiece<'static>,
         ) -> Pending<'a, Self, K>;
     }
+
+    /// A type whose borrow encrypts as one value. It is implemented for
+    /// every type whose borrow is a Vitamin C `Scalar`.
+    ///
+    /// The trait is a separate bound of [`OpaqueEncode`](super::OpaqueEncode)
+    /// so that a refusal reports each condition on its own. Its impl has
+    /// `do_not_recommend`, so the compiler reports a missing `Scalar` as a
+    /// missing `OneValue`. A missing `Zeroize` is still reported by name.
+    pub trait OneValue: crate::EncryptRef {}
 }
 
 /// A plaintext type that encrypts as one opaque [`Ciphertext`].
@@ -53,8 +62,92 @@ pub(crate) mod sealed {
 /// - [`JsonPlaintext`](crate::json::JsonPlaintext), a JSON document, which
 ///   is sealed as its JSON text
 ///
-/// A type of your own meets them if its borrow implements `Scalar` and the
-/// type implements `Zeroize`.
+/// A newtype is a struct with exactly one unnamed field, such as
+/// `struct Email(String)`. A newtype that derives
+/// [`Encrypt`](crate::Encrypt) over one of the types above meets both
+/// conditions once it implements `Zeroize`. You write no other code: the
+/// derive marks the newtype `Scalar` when its inner type is a `Scalar`.
+///
+/// The newtype encrypts exactly as its inner value does. So
+/// `keyset.decrypt::<String>` opens what an `Email` encrypted. The derive
+/// comes from Vitamin C, so your crate needs `vitaminc-aead` as a
+/// dependency to use it.
+///
+/// ```
+/// # async fn example() -> Result<(), stack_encrypt::Error> {
+/// use stack_encrypt::{Encrypt, StackCipher};
+/// use zeroize::Zeroize;
+///
+/// #[derive(Encrypt, Zeroize)]
+/// struct Email(String);
+///
+/// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+/// // the environment, or from the profile that `npx stash auth login` writes.
+/// let cipher = StackCipher::builder()
+/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+///     .init()
+///     .await?;
+/// let keyset = cipher.default_keyset();
+/// let stored = keyset.encrypt(Email("ada@example.com".into())).await?;
+/// let email: String = keyset.decrypt(stored).await?;
+/// assert_eq!(email, "ada@example.com");
+/// # Ok(())
+/// # }
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+/// ```
+///
+/// A newtype over a type that contains more than one value, such as
+/// `struct Tags(Vec<String>)`, still derives `Encrypt`. So it can be a field
+/// of a struct. `keyset.encrypt` refuses it, as it refuses a `Vec<String>`.
+///
+/// A fieldless enum that derives `Encrypt` encrypts as one `u32`, so it is
+/// one value too. But `#[derive(Zeroize)]` does not wipe a fieldless enum:
+/// its `zeroize` does nothing. So `keyset.encrypt` cannot wipe the variant
+/// from memory after it encrypts it. To have the variant wiped, give the
+/// enum a `#[default]` variant and implement `zeroize::DefaultIsZeroes` for
+/// it. Its `zeroize` then overwrites the value with the default variant.
+///
+/// ```
+/// use stack_encrypt::{Encrypt, KeysetCipher};
+/// use zeroize::Zeroize;
+///
+/// #[derive(Encrypt, Clone, Copy, Default, Debug, PartialEq)]
+/// enum Status {
+///     #[default]
+///     Active,
+///     Suspended = 7,
+/// }
+///
+/// impl zeroize::DefaultIsZeroes for Status {}
+///
+/// fn encrypt<K: 'static>(keyset: &KeysetCipher<'_, K>) {
+///     let _ = keyset.encrypt(Status::Suspended);
+/// }
+///
+/// let mut status = Status::Suspended;
+/// status.zeroize();
+/// assert_eq!(status, Status::Active, "zeroize writes the default variant");
+/// # let _ = encrypt::<stack_encrypt::kms::FakeDataKeySource>;
+/// ```
+///
+/// You can also write the `Encrypt` impl of a type yourself. Such a type is
+/// an `OpaqueEncode` type when you implement `Scalar` for its borrow.
+///
+/// A `Scalar` impl states that the borrow encrypts as one value. So the
+/// borrow's `Encrypt` impl must set its [`DEPTH`](crate::Encrypt::DEPTH):
+///
+/// ```text
+/// const DEPTH: Option<usize> = depth::SCALAR;
+/// ```
+///
+/// `depth` is `vitaminc_aead::plaintext::depth`. The default `DEPTH` is
+/// `None`. `None` means that the depth depends on the value. `keyset.encrypt`
+/// checks the `DEPTH` when your program is built. A `Scalar` type whose
+/// borrow has any other `DEPTH` fails the build.
+///
+/// A newtype that derives `Encrypt` copies the `DEPTH` of the type it wraps.
+/// So when a derived newtype fails this check, fix the type it wraps. That
+/// is the innermost type whose `Encrypt` impl you wrote by hand.
 ///
 /// [`OpaqueBlob<T>`](crate::OpaqueBlob) is an `OpaqueEncode` type too. It
 /// encodes a whole `Serialize` value as one storage blob first.
@@ -107,6 +200,22 @@ pub(crate) mod sealed {
 /// # }
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 /// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be encrypted into one `Ciphertext`",
+    label = "this must be one owned value that can be wiped",
+    note = "to be encrypted into one `Ciphertext`, a value must meet three conditions.",
+    note = "first, the value must be one scalar or an `OpaqueBlob<T>`. A scalar is a value such \
+            as a `String`, a `bool`, a float, a `Vec<u8>`, or a fixed-width integer other than \
+            `u8`. A newtype that derives `Encrypt` over a scalar is a scalar too.",
+    note = "second, the value must be owned. A borrow, such as a `&str`, is not owned.",
+    note = "third, the type must implement `Zeroize`, so that the value can be wiped after it \
+            is encrypted. For an `OpaqueBlob<T>`, `T` must implement `Zeroize` and \
+            `Serialize`.",
+    note = "these calls encrypt a value that is not one scalar. `EncryptInto` encrypts each \
+            element of a `Vec` into its own `Ciphertext`. `keyset.encrypt_tree` encrypts an \
+            `Option` or a struct into a tree of ciphertexts. `OpaqueBlob` encrypts a whole \
+            `Serialize` value into one `Ciphertext`."
+)]
 pub trait OpaqueEncode: sealed::Encode + Zeroize + Send + 'static {}
 
 /// A plaintext type that one opaque [`Ciphertext`] decrypts to.
@@ -127,28 +236,122 @@ pub trait OpaqueEncode: sealed::Encode + Zeroize + Send + 'static {}
 /// [`Error::OpenedType`].
 pub trait OpaqueDecode: sealed::Decode + Zeroize + Send + 'static {}
 
-// An owned `S` is sealed through a borrow of it. `&S` is one of Vitamin C's
-// scalars, so the borrow is walked as it is: nothing is copied out of the
-// caller's value, and the fixed width of the type is the borrow's own, which
-// is what pads an absent value to a present one's length.
+// `do_not_recommend` stops the compiler from reporting the `Scalar` bound
+// below. A type that is not one value is then reported as a missing
+// `OneValue`, under the message of `OpaqueEncode`.
+#[diagnostic::do_not_recommend]
+impl<S: crate::EncryptRef> sealed::OneValue for S where for<'a> &'a S: Scalar {}
+
+// An owned `S` is sealed through a borrow of it. `EncryptRef::lend` makes
+// the borrow. The borrow of a `OneValue` type is one of Vitamin C's
+// scalars, so it is walked as it is. Nothing is copied out of the caller's
+// value.
+//
+// The fixed width of the type is the borrow's own. That width pads an
+// absent value to the length of a present one.
+//
+// Anyone can implement `Scalar`. The compiler does not compare an impl with
+// the type's `DEPTH`. So `seal` checks that the borrow's `DEPTH` is
+// `depth::SCALAR`.
+//
+// The check is an inline `const`. The compiler evaluates it when it builds
+// `seal` for a concrete `S`. So a false `Scalar` impl fails the build, not
+// a call.
+
+/// The `Scalar` impl of a type must agree with the `DEPTH` of its borrow.
+///
+/// The first example compiles. Its type sets `DEPTH` to `depth::SCALAR`, and
+/// it encrypts as one value.
+///
+/// ```
+/// use stack_encrypt::kms::FakeDataKeySource;
+/// use stack_encrypt::{Encrypt, EncryptRef, KeysetCipher};
+/// use vitaminc_aead::plaintext::{depth, Sink};
+/// use vitaminc_aead::Scalar;
+/// use zeroize::Zeroize;
+///
+/// // A type whose borrow encrypts as its one `String`.
+/// #[derive(Zeroize)]
+/// struct Profile(String);
+///
+/// impl Encrypt for &Profile {
+///     const DEPTH: Option<usize> = depth::SCALAR;
+///     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+///         self.0.visit_ref(sink)
+///     }
+/// }
+/// impl Scalar for &Profile {}
+///
+/// fn encrypt(keyset: &KeysetCipher<'_, FakeDataKeySource>) {
+///     let _ = keyset.encrypt(Profile("ada".into()));
+/// }
+///
+/// fn main() {
+///     let encrypt: fn(&KeysetCipher<'_, FakeDataKeySource>) = encrypt;
+///     let _ = encrypt;
+/// }
+/// ```
+///
+/// The second example is the same, except for its `DEPTH`. The type states
+/// that its borrow encrypts as a map, but it is marked `Scalar`. So the
+/// build fails. `cargo build` runs the check, and `cargo check` does not.
+///
+/// ```compile_fail,E0080
+/// use stack_encrypt::kms::FakeDataKeySource;
+/// use stack_encrypt::{Encrypt, EncryptRef, KeysetCipher};
+/// use vitaminc_aead::plaintext::{depth, Sink};
+/// use vitaminc_aead::Scalar;
+/// use zeroize::Zeroize;
+///
+/// // A type whose borrow encrypts as its one `String`.
+/// #[derive(Zeroize)]
+/// struct Profile(String);
+///
+/// impl Encrypt for &Profile {
+///     const DEPTH: Option<usize> = depth::container(depth::SCALAR);
+///     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+///         self.0.visit_ref(sink)
+///     }
+/// }
+/// impl Scalar for &Profile {}
+///
+/// fn encrypt(keyset: &KeysetCipher<'_, FakeDataKeySource>) {
+///     let _ = keyset.encrypt(Profile("ada".into()));
+/// }
+///
+/// fn main() {
+///     let encrypt: fn(&KeysetCipher<'_, FakeDataKeySource>) = encrypt;
+///     let _ = encrypt;
+/// }
+/// ```
 impl<S> sealed::Encode for S
 where
-    S: Zeroize + Send + 'static,
-    for<'a> &'a S: Scalar,
+    S: sealed::OneValue + Zeroize + Send + 'static,
 {
     fn seal<'a, K: 'static>(
         &self,
         cipher: &'a KeysetCipher<'_, K>,
         context: ContextPiece<'static>,
     ) -> Pending<'a, Ciphertext, K> {
-        crate::target::core::encrypt_opaque(self, cipher, context).try_map(Ciphertext::from_tree)
+        const {
+            assert!(
+                vitaminc_aead::plaintext::depth::is_scalar(<S as crate::EncryptRef>::REF_DEPTH),
+                "a type marked `Scalar` must encrypt as one value. Set \
+                 `const DEPTH: Option<usize> = depth::SCALAR;` in the `Encrypt` impl that you \
+                 wrote for its borrow. For a newtype that derives `Encrypt`, set it on the \
+                 innermost type whose `Encrypt` impl you wrote by hand.",
+            )
+        };
+        crate::target::core::encrypt_opaque(self.lend(), cipher, context)
+            .try_map(Ciphertext::from_tree)
     }
 }
 impl<S> OpaqueEncode for S
 where
-    S: Zeroize + Send + 'static,
-    for<'a> &'a S: Scalar,
+    S: sealed::OneValue + Zeroize + Send + 'static,
 {
+    // The `Scalar` bound is in `OneValue`, so that the compiler reports a
+    // missing `Zeroize` by name.
 }
 impl<P: Decrypt + Zeroize + Send + 'static> sealed::Decode for P {
     fn open<'a, K: 'static>(

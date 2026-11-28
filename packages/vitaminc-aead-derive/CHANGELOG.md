@@ -1,3 +1,28 @@
+## [Unreleased]
+
+### Breaking
+
+- **Breaking:** `#[derive(Encrypt)]` now implements `Scalar` for a newtype and for a fieldless enum.
+  A `Scalar` impl you wrote for such a type no longer compiles.
+  The compiler reports `E0119`, conflicting implementations, even when the inner type is not a `Scalar`.
+  - For a fieldless enum, or for a newtype whose inner type is a `Scalar`, delete your impl, because the derived impl replaces it.
+  - When the inner type is not a `Scalar`, but you know that its value is one leaf, stop deriving `Encrypt`.
+    Write `Encrypt` for the type and for its borrow by hand, with `const DEPTH: Option<usize> = depth::SCALAR;`, and keep your `Scalar` impl.
+
+### Features
+
+- `#[derive(Encrypt)]` implements `Scalar`, by value and by reference, for a type that encrypts as one leaf.
+  A newtype is a struct with exactly one unnamed field.
+  A newtype is a `Scalar` when its inner type is one.
+  So `struct Email(String)` is a `Scalar`.
+  A generic `Wrapper<T>` is a `Scalar` when `T` is one.
+  `struct Tags(Vec<String>)` still derives `Encrypt`, but it is not a `Scalar`.
+  Neither is `struct Nickname(Option<String>)`.
+  A fieldless enum is always a `Scalar`, because it is one `u32` leaf.
+  That is true even when the enum is marked `#[aead(recursive)]`.
+  Its `DEPTH` is now `depth::SCALAR` in that case too, where it was `None`.
+  A struct with fields is not a `Scalar`.
+  A recursive newtype is not a `Scalar` either.
 
 ## [0.10.0] - 2026-11-19
 

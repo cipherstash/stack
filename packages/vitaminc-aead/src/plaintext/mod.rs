@@ -216,6 +216,32 @@ impl<T: ?Sized + EncryptRef> Encrypt for &Lent<'_, T> {
 /// that bounds on `Scalar` asks for a value that is present, and decides
 /// for itself how to seal an absent one.
 ///
+/// `#[derive(Encrypt)]` implements `Scalar`, by value and by reference, for
+/// a derived type that encrypts as one leaf. So you write no impl for such
+/// a type.
+///
+/// - A newtype is a struct with exactly one unnamed field. A newtype is a
+///   `Scalar` when its inner type is one. So `struct Email(String)` is a
+///   `Scalar`.
+/// - `struct Tags(Vec<String>)` is not a `Scalar`. Nor is
+///   `struct Nickname(Option<String>)`. Both still derive `Encrypt`.
+/// - A fieldless enum is always a `Scalar`, because it is one `u32` leaf.
+/// - A struct with fields is a map, so it is never a `Scalar`.
+///
+/// ```
+/// use vitaminc_aead::{Encrypt, Scalar};
+///
+/// #[derive(Encrypt)]
+/// struct Email(String);
+///
+/// fn seals_one_leaf<S: Scalar>(value: S) -> S {
+///     value
+/// }
+///
+/// seals_one_leaf(Email("ada@example.com".into()));
+/// seals_one_leaf(&Email("ada@example.com".into()));
+/// ```
+///
 /// `DEPTH` says the same thing, but stable Rust cannot bound a generic on
 /// a constant, so a caller that must produce one sealed leaf from any source
 /// bounds on this trait instead. The trait is open: a hand-written leaf,
@@ -252,6 +278,13 @@ impl<T: ?Sized + EncryptRef> Encrypt for &Lent<'_, T> {
 /// seals_one_leaf(vec![1u8, 2, 3]);
 /// seals_one_leaf(Blob(vec![7]));
 /// ```
+///
+/// A hand-written leaf must set `const DEPTH: Option<usize> =
+/// depth::SCALAR;` in each `Encrypt` impl that is marked `Scalar`, as
+/// `Blob` does. The default `DEPTH` is `None`. `None` means that the depth
+/// depends on the value. A `Scalar` impl contradicts that default. So a
+/// caller that checks `DEPTH`, as `seals_one_leaf` does, refuses the type
+/// when the program is built.
 ///
 /// `Vec<u8>` is the one exception to the rule that a `Vec` is a sequence:
 /// it is a byte string, sealed as a single bytes leaf. The same goes for

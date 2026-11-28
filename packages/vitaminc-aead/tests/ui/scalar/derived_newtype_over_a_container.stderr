@@ -1,0 +1,146 @@
+error[E0277]: the trait bound `Vec<std::string::String>: vitaminc_aead::Scalar` is not satisfied
+  --> tests/ui/scalar/derived_newtype_over_a_container.rs:20:20
+   |
+20 |     seals_one_leaf(Tags(vec![]));
+   |     -------------- ^^^^^^^^^^^^ the trait `vitaminc_aead::Scalar` is not implemented for `Vec<std::string::String>`
+   |     |
+   |     required by a bound introduced by this call
+   |
+help: the following other types implement trait `vitaminc_aead::Scalar`
+  --> src/plaintext/sources.rs
+   |
+   |               impl Scalar for $ty {}
+   |               ^^^^^^^^^^^^^^^^^^^
+   |               |
+   |               `&Vec<u8>`
+   |               `Vec<u8>`
+...
+   | / scalar! {
+   | |     bool, &bool, f32, &f32, f64, &f64,
+   | |     i8, &i8, i16, &i16, i32, &i32, i64, &i64, i128, &i128,
+   | |     u16, &u16, u32, &u32, u64, &u64, u128, &u128,
+...  |
+   | |     Bytes<'_>, &Bytes<'_>, Raw<'_>, &Raw<'_>,
+   | | }
+   | |_- in this macro invocation
+note: required for `Tags` to implement `vitaminc_aead::Scalar`
+  --> tests/ui/scalar/derived_newtype_over_a_container.rs:8:10
+   |
+ 8 | #[derive(Encrypt)]
+   |          ^^^^^^^ unsatisfied trait bound introduced in this `derive` macro
+ 9 | struct Tags(Vec<String>);
+   |        ^^^^
+note: required by a bound in `seals_one_leaf`
+  --> tests/ui/scalar/derived_newtype_over_a_container.rs:17:22
+   |
+17 | fn seals_one_leaf<S: Scalar>(_: S) {}
+   |                      ^^^^^^ required by this bound in `seals_one_leaf`
+   = note: this error originates in the macro `scalar` which comes from the expansion of the derive macro `Encrypt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `&Vec<std::string::String>: vitaminc_aead::Scalar` is not satisfied
+  --> tests/ui/scalar/derived_newtype_over_a_container.rs:21:21
+   |
+21 |     seals_one_leaf(&Tags(vec![]));
+   |     --------------  ^^^^^^^^^^^^ the trait `vitaminc_aead::Scalar` is not implemented for `&Vec<std::string::String>`
+   |     |
+   |     required by a bound introduced by this call
+   |
+help: the following other types implement trait `vitaminc_aead::Scalar`
+  --> src/plaintext/sources.rs
+   |
+   |               impl Scalar for $ty {}
+   |               ^^^^^^^^^^^^^^^^^^^
+   |               |
+   |               `&Vec<u8>`
+   |               `Vec<u8>`
+...
+   | / scalar! {
+   | |     bool, &bool, f32, &f32, f64, &f64,
+   | |     i8, &i8, i16, &i16, i32, &i32, i64, &i64, i128, &i128,
+   | |     u16, &u16, u32, &u32, u64, &u64, u128, &u128,
+...  |
+   | |     Bytes<'_>, &Bytes<'_>, Raw<'_>, &Raw<'_>,
+   | | }
+   | |_- in this macro invocation
+note: required for `&Tags` to implement `vitaminc_aead::Scalar`
+  --> tests/ui/scalar/derived_newtype_over_a_container.rs:8:10
+   |
+ 8 | #[derive(Encrypt)]
+   |          ^^^^^^^ unsatisfied trait bound introduced in this `derive` macro
+note: required by a bound in `seals_one_leaf`
+  --> tests/ui/scalar/derived_newtype_over_a_container.rs:17:22
+   |
+17 | fn seals_one_leaf<S: Scalar>(_: S) {}
+   |                      ^^^^^^ required by this bound in `seals_one_leaf`
+   = note: this error originates in the macro `scalar` which comes from the expansion of the derive macro `Encrypt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `Option<std::string::String>: vitaminc_aead::Scalar` is not satisfied
+  --> tests/ui/scalar/derived_newtype_over_a_container.rs:22:20
+   |
+22 |     seals_one_leaf(Nickname(None));
+   |     -------------- ^^^^^^^^^^^^^^ the trait `vitaminc_aead::Scalar` is not implemented for `Option<std::string::String>`
+   |     |
+   |     required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `vitaminc_aead::Scalar`:
+             &&'b T
+             &'__r Nickname
+             &'__r Tags
+             &'__r Wrapper<T>
+             &'a vitaminc_protected::protected::Protected<T>
+             &Raw<'_>
+             &Vec<u8>
+             &[u8; N]
+           and $N others
+note: required for `Nickname` to implement `vitaminc_aead::Scalar`
+  --> tests/ui/scalar/derived_newtype_over_a_container.rs:11:10
+   |
+11 | #[derive(Encrypt)]
+   |          ^^^^^^^ unsatisfied trait bound introduced in this `derive` macro
+12 | struct Nickname(Option<String>);
+   |        ^^^^^^^^
+note: required by a bound in `seals_one_leaf`
+  --> tests/ui/scalar/derived_newtype_over_a_container.rs:17:22
+   |
+17 | fn seals_one_leaf<S: Scalar>(_: S) {}
+   |                      ^^^^^^ required by this bound in `seals_one_leaf`
+   = note: this error originates in the derive macro `Encrypt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `Vec<i32>: vitaminc_aead::Scalar` is not satisfied
+  --> tests/ui/scalar/derived_newtype_over_a_container.rs:23:28
+   |
+23 |     seals_one_leaf(Wrapper(vec![1i32]));
+   |     --------------         ^^^^^^^^^^ the trait `vitaminc_aead::Scalar` is not implemented for `Vec<i32>`
+   |     |
+   |     required by a bound introduced by this call
+   |
+help: the following other types implement trait `vitaminc_aead::Scalar`
+  --> src/plaintext/sources.rs
+   |
+   |               impl Scalar for $ty {}
+   |               ^^^^^^^^^^^^^^^^^^^
+   |               |
+   |               `&Vec<u8>`
+   |               `Vec<u8>`
+...
+   | / scalar! {
+   | |     bool, &bool, f32, &f32, f64, &f64,
+   | |     i8, &i8, i16, &i16, i32, &i32, i64, &i64, i128, &i128,
+   | |     u16, &u16, u32, &u32, u64, &u64, u128, &u128,
+...  |
+   | |     Bytes<'_>, &Bytes<'_>, Raw<'_>, &Raw<'_>,
+   | | }
+   | |_- in this macro invocation
+note: required for `Wrapper<Vec<i32>>` to implement `vitaminc_aead::Scalar`
+  --> tests/ui/scalar/derived_newtype_over_a_container.rs:14:10
+   |
+14 | #[derive(Encrypt)]
+   |          ^^^^^^^ unsatisfied trait bound introduced in this `derive` macro
+15 | struct Wrapper<T>(T);
+   |        ^^^^^^^^^^
+note: required by a bound in `seals_one_leaf`
+  --> tests/ui/scalar/derived_newtype_over_a_container.rs:17:22
+   |
+17 | fn seals_one_leaf<S: Scalar>(_: S) {}
+   |                      ^^^^^^ required by this bound in `seals_one_leaf`
+   = note: this error originates in the macro `scalar` which comes from the expansion of the derive macro `Encrypt` (in Nightly builds, run with -Z macro-backtrace for more info)
