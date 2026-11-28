@@ -252,75 +252,75 @@
     "Date -1": {
       "frame": "f3030105ffffffffffffffff"
     },
-    "VcDate 1970-01-01": {
+    "RcDate 1970-01-01": {
       "frame": "123bf90a00",
       "corpus_case": "record-values-v1/date-epoch",
       "same_as_corpus": true
     },
-    "VcDate 1969-12-31": {
+    "RcDate 1969-12-31": {
       "frame": "123af90a00",
       "corpus_case": "record-values-v1/date-before-epoch",
       "same_as_corpus": true
     },
-    "VcDate 0001-01-01": {
+    "RcDate 0001-01-01": {
       "frame": "1201000000",
       "corpus_case": "record-values-v1/date-year-one",
       "same_as_corpus": true
     },
-    "VcDate 9999-12-31": {
+    "RcDate 9999-12-31": {
       "frame": "12dbb93700",
       "corpus_case": "record-values-v1/date-year-9999",
       "same_as_corpus": true
     },
-    "VcTimestamp epoch": {
+    "RcTimestamp epoch": {
       "frame": "13000000000000000000000000",
       "corpus_case": "record-values-v1/timestamp-epoch",
       "same_as_corpus": true
     },
-    "VcTimestamp one nanosecond": {
+    "RcTimestamp one nanosecond": {
       "frame": "130bc9d26a0000000001000000",
       "corpus_case": "record-values-v1/timestamp-nanosecond",
       "same_as_corpus": true
     },
-    "VcTimestamp before epoch": {
+    "RcTimestamp before epoch": {
       "frame": "13ffffffffffffffffffc99a3b",
       "corpus_case": "record-values-v1/timestamp-before-epoch",
       "same_as_corpus": true
     },
-    "VcTimestamp nanoseconds": {
+    "RcTimestamp nanoseconds": {
       "frame": "130bc9d26a0000000015cd5b07",
       "corpus_case": "record-values-v1/timestamp-microsecond-query",
       "same_as_corpus": true
     },
-    "VcTimestamp year 9999": {
+    "RcTimestamp year 9999": {
       "frame": "13e0d3f2ff3a000000ffc99a3b",
       "corpus_case": "record-values-v1/timestamp-year-9999",
       "same_as_corpus": true
     },
-    "VcDecimal 42": {
+    "RcDecimal 42": {
       "frame": "14000000002a0000000000000000000000",
       "corpus_case": "record-values-v1/decimal-scale-0",
       "same_as_corpus": true
     },
-    "VcDecimal scale 28": {
+    "RcDecimal scale 28": {
       "frame": "1400001c00010000000000000000000000",
       "corpus_case": "record-values-v1/decimal-scale-28",
       "same_as_corpus": true
     },
-    "VcDecimal -1234.5600": {
+    "RcDecimal -1234.5600": {
       "frame": "14000004800061bc000000000000000000",
       "corpus_case": "record-values-v1/decimal-trailing-zeros",
       "same_as_corpus": true
     },
-    "VcDecimal max mantissa": {
+    "RcDecimal max mantissa": {
       "frame": "1400000000ffffffffffffffffffffffff",
       "corpus_case": "record-values-v1/decimal-max-mantissa",
       "same_as_corpus": true
     },
-    "VcDecimal -0.00": {
+    "RcDecimal -0.00": {
       "frame": "1400000200000000000000000000000000"
     },
-    "VcUuid": {
+    "RcUuid": {
       "frame": "f305000b10000000123e4567e89b12d3a456426614174000"
     },
     "array empty": {

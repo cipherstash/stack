@@ -5,12 +5,12 @@ import type {
   Keyset,
   OpenedJson,
   OpenedScalar,
+  RcDate,
+  RcDecimal,
+  RcTimestamp,
+  RcUuid,
   RecipherError,
   Result,
-  VcDate,
-  VcDecimal,
-  VcTimestamp,
-  VcUuid,
 } from '../src/index'
 import { Ciphertext, json, kinds } from '../src/index'
 
@@ -32,17 +32,17 @@ const bytes = await keyset.encrypt(new Uint8Array(1))
 check<Exact<typeof bytes, Result<Ciphertext<Uint8Array>, RecipherError>>>()
 const when = await keyset.encrypt(new Date())
 check<Exact<typeof when, Result<Ciphertext<Date>, RecipherError>>>()
-declare const instant: VcTimestamp
+declare const instant: RcTimestamp
 const fine = await keyset.encrypt(instant)
 check<
-  Exact<typeof fine, Result<Ciphertext<Date | VcTimestamp>, RecipherError>>
+  Exact<typeof fine, Result<Ciphertext<Date | RcTimestamp>, RecipherError>>
 >()
-declare const day: VcDate
+declare const day: RcDate
 const dated = await keyset.encrypt(day)
-check<Exact<typeof dated, Result<Ciphertext<VcDate>, RecipherError>>>()
-declare const price: VcDecimal
+check<Exact<typeof dated, Result<Ciphertext<RcDate>, RecipherError>>>()
+declare const price: RcDecimal
 const priced = await keyset.encrypt(price)
-check<Exact<typeof priced, Result<Ciphertext<VcDecimal>, RecipherError>>>()
+check<Exact<typeof priced, Result<Ciphertext<RcDecimal>, RecipherError>>>()
 const document = await keyset.encrypt(json({ a: [1, 2n, null] }))
 check<Exact<typeof document, Result<Ciphertext<OpenedJson>, RecipherError>>>()
 
@@ -64,7 +64,7 @@ if (many.isOk()) {
 // @ts-expect-error: a plain object is not a value.
 void keyset.encrypt({ name: 'Ada' })
 // A UUID is not in the engine's value model yet.
-declare const uuid: VcUuid
+declare const uuid: RcUuid
 // @ts-expect-error: a UUID is not a value.
 void keyset.encrypt(uuid)
 // @ts-expect-error: undefined is not a value.
@@ -76,8 +76,8 @@ void json({ b: new Uint8Array(1) })
 // @ts-expect-error: a date has no JSON form.
 void json({ d: new Date() })
 // The wrapper types are distinct.
-// @ts-expect-error: a VcDate is not a VcDecimal.
-expectType<VcDecimal>(day)
+// @ts-expect-error: an RcDate is not an RcDecimal.
+expectType<RcDecimal>(day)
 
 // A ciphertext read from stored bytes is typed by the kind named, and as
 // any scalar when none is.

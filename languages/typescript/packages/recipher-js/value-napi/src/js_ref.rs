@@ -18,9 +18,9 @@
 //! | plain object           | `map`, then `entry(key)` per own property       |
 //!
 //! The wrapper classes carry the scalars JavaScript has no type for:
-//! `VcDate` is `Date` over the day count, `VcTimestamp` is
-//! `Timestamp(Nanos)` over the nanosecond count, `VcDecimal` is `Decimal`
-//! over the mantissa and `VcUuid` is `Uuid` over sixteen bytes.
+//! `RcDate` is `Date` over the day count, `RcTimestamp` is
+//! `Timestamp(Nanos)` over the nanosecond count, `RcDecimal` is `Decimal`
+//! over the mantissa and `RcUuid` is `Uuid` over sixteen bytes.
 //!
 //! A getter that throws, a string with an unpaired surrogate, a BigInt out
 //! of range or a `Date` outside the wire's range stops the walk through

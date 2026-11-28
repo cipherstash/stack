@@ -9,40 +9,40 @@
 
 declare const wrapper: unique symbol
 
-/** A calendar date, such as `new VcDate('2026-11-23')`. The class comes from vitaminc. */
-export interface VcDate {
+/** A calendar date, such as `new RcDate('2026-11-23')`. The class comes from vitaminc. */
+export interface RcDate {
   /** The date as `YYYY-MM-DD`. */
   readonly value: string
   toJSON(): string
-  readonly [wrapper]: 'VcDate'
+  readonly [wrapper]: 'RcDate'
 }
 
 /** A UTC instant, to the nanosecond. The class comes from vitaminc. */
-export interface VcTimestamp {
+export interface RcTimestamp {
   /** The instant as RFC 3339 text, with nanoseconds. */
   readonly value: string
   toJSON(): string
-  readonly [wrapper]: 'VcTimestamp'
+  readonly [wrapper]: 'RcTimestamp'
 }
 
-/** A decimal with its scale, such as `new VcDecimal('1.50')`. The class comes from vitaminc. */
-export interface VcDecimal {
+/** A decimal with its scale, such as `new RcDecimal('1.50')`. The class comes from vitaminc. */
+export interface RcDecimal {
   /** The decimal as text, with its scale. */
   readonly value: string
   toJSON(): string
-  readonly [wrapper]: 'VcDecimal'
+  readonly [wrapper]: 'RcDecimal'
 }
 
 /**
  * A universally unique identifier (UUID). The class comes from vitaminc.
- * The engine has no plaintext type for a UUID yet. Encrypting a `VcUuid` is
- * an `Err` with the code `recipher_js::uuid`. `VcUuid` is not a `Scalar`.
+ * The engine has no plaintext type for a UUID yet. Encrypting an `RcUuid` is
+ * an `Err` with the code `recipher_js::uuid`. `RcUuid` is not a `Scalar`.
  */
-export interface VcUuid {
+export interface RcUuid {
   /** The UUID as hyphenated hex. */
   readonly value: string
   toJSON(): string
-  readonly [wrapper]: 'VcUuid'
+  readonly [wrapper]: 'RcUuid'
 }
 
 /** A value that is one scalar: a single value, not a JSON document. */
@@ -53,9 +53,9 @@ export type Scalar =
   | bigint
   | Uint8Array
   | Date
-  | VcTimestamp
-  | VcDate
-  | VcDecimal
+  | RcTimestamp
+  | RcDate
+  | RcDecimal
   | null
 
 /**
@@ -111,12 +111,12 @@ export type Opened<V> = V extends string
           ? Uint8Array
           : V extends Date
             ? Date
-            : V extends VcTimestamp
-              ? Date | VcTimestamp
-              : V extends VcDate
-                ? VcDate
-                : V extends VcDecimal
-                  ? VcDecimal
+            : V extends RcTimestamp
+              ? Date | RcTimestamp
+              : V extends RcDate
+                ? RcDate
+                : V extends RcDecimal
+                  ? RcDecimal
                   : V extends null
                     ? null
                     : V extends JsonMarker

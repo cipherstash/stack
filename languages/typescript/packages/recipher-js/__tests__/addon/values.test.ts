@@ -4,10 +4,10 @@ import {
   Ciphertext,
   json,
   kinds,
-  VcDate,
-  VcDecimal,
-  VcTimestamp,
-  VcUuid,
+  RcDate,
+  RcDecimal,
+  RcTimestamp,
+  RcUuid,
 } from '../../src/index'
 import { testCipher } from '../../src/testing'
 
@@ -32,9 +32,9 @@ async function encryptOne(
     | bigint
     | Uint8Array
     | Date
-    | VcDate
-    | VcTimestamp
-    | VcDecimal
+    | RcDate
+    | RcTimestamp
+    | RcDecimal
     | null,
 ) {
   return (await c.defaultKeyset().encrypt(value)).unwrap()
@@ -85,23 +85,23 @@ describe('every value in the mapping round-trips', () => {
   })
 
   it("vitaminc's wrapper classes", async () => {
-    const day = await roundTrip(new VcDate('2026-11-23'))
-    expect(day).toBeInstanceOf(VcDate)
-    expect((day as VcDate).value).toBe('2026-11-23')
+    const day = await roundTrip(new RcDate('2026-11-23'))
+    expect(day).toBeInstanceOf(RcDate)
+    expect((day as RcDate).value).toBe('2026-11-23')
 
     const fine = await roundTrip(
-      new VcTimestamp('2026-11-23T01:02:03.000000001Z'),
+      new RcTimestamp('2026-11-23T01:02:03.000000001Z'),
     )
-    expect(fine).toBeInstanceOf(VcTimestamp)
-    expect((fine as VcTimestamp).value).toBe('2026-11-23T01:02:03.000000001Z')
+    expect(fine).toBeInstanceOf(RcTimestamp)
+    expect((fine as RcTimestamp).value).toBe('2026-11-23T01:02:03.000000001Z')
 
     // A timestamp of whole milliseconds opens as a Date.
-    const whole = await roundTrip(new VcTimestamp('2026-11-23T01:02:03.000Z'))
+    const whole = await roundTrip(new RcTimestamp('2026-11-23T01:02:03.000Z'))
     expect(whole).toBeInstanceOf(Date)
 
-    const price = await roundTrip(new VcDecimal('1.50'))
-    expect(price).toBeInstanceOf(VcDecimal)
-    expect((price as VcDecimal).value).toBe('1.50')
+    const price = await roundTrip(new RcDecimal('1.50'))
+    expect(price).toBeInstanceOf(RcDecimal)
+    expect((price as RcDecimal).value).toBe('1.50')
   })
 
   it('null', async () => {
@@ -297,7 +297,7 @@ describe('a ciphertext read back with a kind', () => {
 describe('refusals', () => {
   it('a UUID, which the engine does not hold yet', async () => {
     const keyset = (await cipher()).defaultKeyset()
-    const uuid = new VcUuid('123e4567-e89b-12d3-a456-426614174000')
+    const uuid = new RcUuid('123e4567-e89b-12d3-a456-426614174000')
     // @ts-expect-error: a UUID is not a scalar of the engine's value model.
     const result = await keyset.encrypt(uuid)
     expect(result.err()?.code).toBe('recipher_js::uuid')

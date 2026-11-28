@@ -262,7 +262,7 @@ pub(crate) fn timestamp_js_millis(unit: TimeUnit, count: Int) -> Option<f64> {
 }
 
 /// A stored timestamp as RFC 3339 text with nanoseconds, for the
-/// `VcTimestamp` wrapper.
+/// `RcTimestamp` wrapper.
 pub(crate) fn timestamp_text(unit: TimeUnit, count: Int) -> Option<String> {
     kinds_jiff::timestamp(unit, count).map(|instant| format!("{instant:.9}"))
 }
@@ -296,7 +296,7 @@ pub(crate) fn decimal(text: &str) -> Result<(u8, Int), ConversionError> {
     Ok((scale, Int::I128(mantissa)))
 }
 
-/// A stored decimal as fixed-point text with its scale, for the `VcDecimal`
+/// A stored decimal as fixed-point text with its scale, for the `RcDecimal`
 /// wrapper.
 pub(crate) fn decimal_text(scale: u8, mantissa: Int) -> Option<String> {
     kinds_decimal::decimal(scale, mantissa).map(|value| value.to_string())

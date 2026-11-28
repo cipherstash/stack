@@ -84,7 +84,7 @@ pub fn binding_interface() -> u32 {
 }
 
 /// Exports the wrapper classes of vitaminc, CipherStash's cryptography
-/// library: `VcDate`, `VcTimestamp`, `VcDecimal` and `VcUuid`. Each class
+/// library: `RcDate`, `RcTimestamp`, `RcDecimal` and `RcUuid`. Each class
 /// stands for a type that JavaScript does not have. The addon exports them
 /// so JavaScript can construct them, and so decrypted values are instances
 /// of them.

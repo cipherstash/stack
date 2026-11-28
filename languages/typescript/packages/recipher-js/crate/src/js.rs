@@ -35,7 +35,7 @@ use crate::error::{Error, RecipherErrorFields};
 /// Returns one of these errors:
 ///
 /// - `recipher_js::undefined` for `undefined`;
-/// - `recipher_js::uuid` for a `VcUuid`;
+/// - `recipher_js::uuid` for an `RcUuid`;
 /// - `recipher_js::value` when the bridge's bytes are not one well-formed
 ///   frame the engine reads (`FrameError`);
 /// - `recipher_js::threw` when reading the value threw;
@@ -102,7 +102,7 @@ fn not_built(env: &Env, fault: &JsFault) -> RecipherErrorFields {
     }
 }
 
-/// Returns whether `value` is a vitaminc `VcUuid`.
+/// Returns whether `value` is a vitaminc `RcUuid`.
 fn is_uuid(env: &Env, value: &Unknown<'_>) -> bool {
     Wrappers::get(env)
         .and_then(|wrappers| wrappers.classify(value))

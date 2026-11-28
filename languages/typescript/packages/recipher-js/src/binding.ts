@@ -48,10 +48,10 @@ const EXPORTS = [
   'createTesting',
   'installResult',
   'json',
-  'VcDate',
-  'VcTimestamp',
-  'VcDecimal',
-  'VcUuid',
+  'RcDate',
+  'RcTimestamp',
+  'RcDecimal',
+  'RcUuid',
 ] as const
 
 /**

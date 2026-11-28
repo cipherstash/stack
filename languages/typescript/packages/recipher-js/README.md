@@ -59,9 +59,9 @@ The `recipher-value-napi` crate, in `value-napi/`, converts JavaScript values by
 | `bigint` | an integer, at the narrowest width that holds it | `bigint` |
 | `Uint8Array`, `Buffer` | bytes | `Uint8Array` |
 | `Date` | a timestamp | `Date` |
-| `new VcTimestamp('2026-11-23T01:02:03.000000001Z')` | a timestamp, in nanoseconds | `Date` when it is whole milliseconds, else `VcTimestamp` |
-| `new VcDate('2026-11-23')` | a calendar date | `VcDate` |
-| `new VcDecimal('1.50')` | a decimal, with its scale | `VcDecimal` |
+| `new RcTimestamp('2026-11-23T01:02:03.000000001Z')` | a timestamp, in nanoseconds | `Date` when it is whole milliseconds, else `RcTimestamp` |
+| `new RcDate('2026-11-23')` | a calendar date | `RcDate` |
+| `new RcDecimal('1.50')` | a decimal, with its scale | `RcDecimal` |
 | `null` | null | `null` |
 | `json(value)` | a JSON document, as its JSON text | the document, from the `Ciphertext` that `encrypt` returned or one read with `kinds.json` |
 
@@ -70,9 +70,9 @@ The `recipher-value-napi` crate, in `value-napi/`, converts JavaScript values by
   The `number` `5` does not equal the integer `5n`.
 - A plain object is refused.
   Wrap it in `json(..)`.
-- The package exports `VcUuid`, for a universally unique identifier (UUID).
+- The package exports `RcUuid`, for a universally unique identifier (UUID).
   The engine has no plaintext type for a UUID yet.
-  Encrypting a `VcUuid` is an `Err` with the code `recipher_js::uuid`.
+  Encrypting an `RcUuid` is an `Err` with the code `recipher_js::uuid`.
 - vitaminc's rules refuse each of these values, with an error code for each:
   - a `Map` or a `Set`;
   - a class instance;

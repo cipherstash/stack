@@ -13,16 +13,16 @@
  * | `bigint` | an integer, at the narrowest width that holds it | `bigint` |
  * | `Uint8Array`, `Buffer` | bytes | `Uint8Array` |
  * | `Date` | a timestamp | `Date` |
- * | `VcTimestamp` | a timestamp, in nanoseconds | `Date` when it is whole milliseconds, else `VcTimestamp` |
- * | `VcDate` | a calendar date | `VcDate` |
- * | `VcDecimal` | a decimal, with its scale | `VcDecimal` |
+ * | `RcTimestamp` | a timestamp, in nanoseconds | `Date` when it is whole milliseconds, else `RcTimestamp` |
+ * | `RcDate` | a calendar date | `RcDate` |
+ * | `RcDecimal` | a decimal, with its scale | `RcDecimal` |
  * | `null` | null | `null` |
  * | `json(value)` | a JSON document, as its text | the document |
  *
  * Integers are a `bigint`. A `number` is a float. The `number` `5` does not
  * equal the integer `5n`. A plain object is refused. Wrap it in `json(..)`.
  *
- * The wrapper classes (`VcDate`, `VcTimestamp`, `VcDecimal`, and `VcUuid`)
+ * The wrapper classes (`RcDate`, `RcTimestamp`, `RcDecimal`, and `RcUuid`)
  * and `json` come from the native addon. When the addon did not load,
  * stand-ins take their place. Each stand-in constructs as the class does.
  * `encrypt` then resolves to the `Err` that says why the addon did not load.
@@ -30,10 +30,10 @@
 import type * as Native from '../native'
 import { type Binding, binding } from './binding'
 import type {
-  VcDate as VcDateValue,
-  VcDecimal as VcDecimalValue,
-  VcTimestamp as VcTimestampValue,
-  VcUuid as VcUuidValue,
+  RcDate as RcDateValue,
+  RcDecimal as RcDecimalValue,
+  RcTimestamp as RcTimestampValue,
+  RcUuid as RcUuidValue,
 } from './value-types'
 
 export type {
@@ -45,18 +45,18 @@ export type {
   Value,
 } from './value-types'
 
-/** A calendar date, such as `new VcDate('2026-11-23')`. The class comes from vitaminc. */
-export type VcDate = VcDateValue
+/** A calendar date, such as `new RcDate('2026-11-23')`. The class comes from vitaminc. */
+export type RcDate = RcDateValue
 /** A UTC instant, to the nanosecond. The class comes from vitaminc. */
-export type VcTimestamp = VcTimestampValue
-/** A decimal with its scale, such as `new VcDecimal('1.50')`. The class comes from vitaminc. */
-export type VcDecimal = VcDecimalValue
+export type RcTimestamp = RcTimestampValue
+/** A decimal with its scale, such as `new RcDecimal('1.50')`. The class comes from vitaminc. */
+export type RcDecimal = RcDecimalValue
 /**
  * A universally unique identifier (UUID). The class comes from vitaminc.
- * The engine has no plaintext type for a UUID yet. Encrypting a `VcUuid` is
- * an `Err` with the code `recipher_js::uuid`. `VcUuid` is not a `Scalar`.
+ * The engine has no plaintext type for a UUID yet. Encrypting an `RcUuid` is
+ * an `Err` with the code `recipher_js::uuid`. `RcUuid` is not a `Scalar`.
  */
-export type VcUuid = VcUuidValue
+export type RcUuid = RcUuidValue
 
 /** The constructor of one of vitaminc's wrapper classes. */
 export interface WrapperConstructor<W> {
@@ -64,7 +64,7 @@ export interface WrapperConstructor<W> {
   readonly prototype: W
 }
 
-type WrapperName = 'VcDate' | 'VcTimestamp' | 'VcDecimal' | 'VcUuid'
+type WrapperName = 'RcDate' | 'RcTimestamp' | 'RcDecimal' | 'RcUuid'
 
 /**
  * The class that the native addon defines. When the addon did not load, a
@@ -93,15 +93,15 @@ function wrapperClass<W>(name: WrapperName): WrapperConstructor<W> {
 }
 
 /** A calendar date. */
-export const VcDate: WrapperConstructor<VcDate> = wrapperClass('VcDate')
+export const RcDate: WrapperConstructor<RcDate> = wrapperClass('RcDate')
 /** A UTC instant to the nanosecond. */
-export const VcTimestamp: WrapperConstructor<VcTimestamp> =
-  wrapperClass('VcTimestamp')
+export const RcTimestamp: WrapperConstructor<RcTimestamp> =
+  wrapperClass('RcTimestamp')
 /** A decimal with its scale. */
-export const VcDecimal: WrapperConstructor<VcDecimal> =
-  wrapperClass('VcDecimal')
+export const RcDecimal: WrapperConstructor<RcDecimal> =
+  wrapperClass('RcDecimal')
 /** A UUID. */
-export const VcUuid: WrapperConstructor<VcUuid> = wrapperClass('VcUuid')
+export const RcUuid: WrapperConstructor<RcUuid> = wrapperClass('RcUuid')
 
 /**
  * A JSON document to encrypt as one ciphertext, as its JSON text. Make one

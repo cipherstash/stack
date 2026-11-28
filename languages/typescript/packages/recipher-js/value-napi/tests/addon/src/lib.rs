@@ -20,7 +20,7 @@ use vitaminc_protected::{Controlled, Protected};
 #[napi(module_exports)]
 fn init(mut exports: Object<'_>, env: Env) -> Result<()> {
     let wrappers = Wrappers::exports(&env)?;
-    for name in ["VcDate", "VcTimestamp", "VcDecimal", "VcUuid"] {
+    for name in ["RcDate", "RcTimestamp", "RcDecimal", "RcUuid"] {
         exports.set_named_property(name, wrappers.get_named_property::<Unknown>(name)?)?;
     }
     Ok(())

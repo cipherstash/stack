@@ -40,7 +40,7 @@ pub(crate) enum Error {
         help("Use `null` for a value that is not there.")
     )]
     Undefined,
-    /// A `VcUuid`. The engine's value model, the set of value types the
+    /// A `RcUuid`. The engine's value model, the set of value types the
     /// engine reads, has no UUID type.
     #[error("a UUID cannot be encrypted yet: the engine's value model does not hold one")]
     #[diagnostic(code(recipher_js::uuid), help("Encrypt its text instead."))]

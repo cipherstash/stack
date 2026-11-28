@@ -7,6 +7,8 @@ The `recipher-js` addon reads and builds every value through it.
 This crate is a copy of `vitaminc-aead-napi` 0.10.0, from
 [`cipherstash/vitaminc`](https://github.com/cipherstash/vitaminc) at commit
 `b3f69b12c1fde38faff2becec04f9e633dbd4f1c`, renamed. It is not published.
+Its wrapper classes are `RcDate`, `RcTimestamp`, `RcDecimal` and `RcUuid`.
+vitaminc names them `VcDate` and so on.
 `tests/testdata/value-conformance.json` is a copy of
 `conformance/vitaminc-aead/value-conformance.json`: the vectors the Rust,
 Node and Go bindings all check. The bridge's tests read the copy, so a run
@@ -34,8 +36,8 @@ the outgoing value. This crate supplies both sides of that conversion:
   passthrough payload `P` converts through `NapiPassthrough`, implemented
   for `PassthroughFrame` (the sink-based tree's payload) and `()`, which
   applies the tree's nesting limit to the payload too.
-- **`Wrappers`** — the wrapper classes `VcDate`, `VcTimestamp`,
-  `VcDecimal` and `VcUuid`, defined once per environment and exported by an
+- **`Wrappers`** — the wrapper classes `RcDate`, `RcTimestamp`,
+  `RcDecimal` and `RcUuid`, defined once per environment and exported by an
   addon with `Wrappers::exports`. The crate keeps them in its own registry,
   keyed by the environment and released by an environment cleanup hook; the
   addon's instance data is untouched.
@@ -89,16 +91,16 @@ for integer values, as shown by `42n`; JavaScript `number` values are floats.
 | `string`                            | text                                     |
 | `Buffer`, `Uint8Array`              | bytes (any other view is refused)        |
 | `Date`                              | `Timestamp(Millis)` over the `i64` count |
-| `VcDate("YYYY-MM-DD")`              | `Date` over the day count                |
-| `VcTimestamp("RFC 3339, ns")`       | `Timestamp(Nanos)` over the count        |
-| `VcDecimal("1.50")`                 | `Decimal { scale }` over the mantissa    |
-| `VcUuid("hyphenated hex")`          | `Uuid` over sixteen bytes                |
+| `RcDate("YYYY-MM-DD")`              | `Date` over the day count                |
+| `RcTimestamp("RFC 3339, ns")`       | `Timestamp(Nanos)` over the count        |
+| `RcDecimal("1.50")`                 | `Decimal { scale }` over the mantissa    |
+| `RcUuid("hyphenated hex")`          | `Uuid` over sixteen bytes                |
 | `Array`                             | sequence                                 |
 | plain object                        | map, over own enumerable string keys     |
 
 And back: every int width is a `BigInt`; both float widths are a `number`
 (`f32` widens exactly); a timestamp in any unit is a `Date` when it is
-whole milliseconds and a `VcTimestamp` otherwise, so no precision is
+whole milliseconds and an `RcTimestamp` otherwise, so no precision is
 discarded; a calendar date, a decimal and a UUID are their wrapper. A
 `Date` is stored as its millisecond count and read back as the same
 count, never converted through seconds and nanoseconds. A logical type
@@ -118,7 +120,7 @@ on an `int64` field.
 
 JavaScript has no type of its own for a calendar date, a timestamp finer
 than a millisecond, a decimal or a UUID, so each is an instance of a small
-class holding its text: `new VcDecimal("1.50")`. The constructor takes a
+class holding its text: `new RcDecimal("1.50")`. The constructor takes a
 string and nothing else; the text is checked, and the scalar built from
 it, when the value is encrypted, so one rule applies however the instance
 was made. `value` is an own, read-only, enumerable property, so
