@@ -598,7 +598,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The payload field `found` is the kind of value that the vars are,
     such as `"array"`, `"uint64"`, or `"null"`.
   - The message for vars that are null is
-    `match takes its vars as a JSON object, found null`.
+    `the vars of the match are null, not a JSON object`. The field
+    follows.
   - The engine refuses the vars before it reads the predicate.
   - Only the dynamic path can get vars that are not an object. A field
     reference always builds an object.

@@ -3131,8 +3131,8 @@ mod compiled_match {
 
         /// The engine refuses vars that are not a JSON object. The error
         /// names the field and the kind of value that the vars are, and
-        /// never contains the value. The message says that a match takes an
-        /// object.
+        /// never contains the value. The message says that the vars are of
+        /// that kind, and not a JSON object.
         #[test]
         fn refuses_vars_that_are_not_an_object_saying_what_they_are() {
             for (vars, found, phrase) in [
@@ -3167,7 +3167,7 @@ mod compiled_match {
                 assert_eq!(
                     message,
                     format!(
-                        r#"the query input does not match the field: match takes its vars as a JSON object, found {phrase} (field "profile")"#
+                        r#"the vars of the match are {phrase}, not a JSON object (field "profile")"#
                     ),
                     "{vars}: the message"
                 );

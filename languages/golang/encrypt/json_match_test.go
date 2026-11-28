@@ -331,8 +331,8 @@ func TestMatchRefusalsNameTheConstructAndItsOffset(t *testing.T) {
 			if d.Field() != "custom_field_values" {
 				t.Errorf("%s: field %q, want custom_field_values", tc.name, d.Field())
 			}
-			if !strings.Contains(err.Error(), "match takes its vars as a JSON object, found ") {
-				t.Errorf("%s: %v does not say what match takes", tc.name, err)
+			if !strings.Contains(err.Error(), "the vars of the match are ") || !strings.Contains(err.Error(), ", not a JSON object") {
+				t.Errorf("%s: %v does not say that the vars are not a JSON object", tc.name, err)
 			}
 		}
 		if strings.Contains(err.Error(), "secret") {

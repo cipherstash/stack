@@ -44,8 +44,8 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   - `Found` is the kind of value that the vars are, such as `"array"`,
     `"uint64"`, or `"null"`.
   - `Field` names the field.
-  - The message for vars that are null is `query input does not fit the
-    field: match takes its vars as a JSON object, found null`.
+  - The message for vars that are null is `the vars of the match are
+    null, not a JSON object`. The field follows.
 
 ### Changed
 
