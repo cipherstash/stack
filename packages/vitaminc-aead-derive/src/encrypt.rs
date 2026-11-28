@@ -27,9 +27,13 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let krate = &attrs.krate;
     let shape = Shape::parse(&input)?;
     let name = &input.ident;
-    // A fieldless enum has no fields, so it cannot contain itself. It is one
-    // `u32` leaf, with a fixed depth, even when it is marked `recursive`.
-    let recursive = attrs.recursive && !matches!(shape, Shape::Enum(_));
+    // Whether the type has a fixed depth. A type that contains itself has
+    // none, because its depth depends on the value. The derive detects a type
+    // that names itself in a field. `#[aead(recursive)]` marks recursion
+    // through another type. A fieldless enum has no fields, so it
+    // cannot contain itself, even when it is marked `recursive`.
+    let fixed_depth =
+        matches!(shape, Shape::Enum(_)) || !(attrs.recursive || names_itself(name, &shape));
 
     // Bound every type parameter, serde-style: a field of type `Vec<T>` then
     // picks up `Vec<T>: Encrypt` from the blanket impl in `vitaminc_aead`.
@@ -94,9 +98,9 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         by_ref: ref_depth,
         item_check,
         visit_check,
-    } = depth(krate, &input, &shape, recursive);
-    let (fixed, ref_fixed) = fixed(krate, &input, &shape, recursive);
-    let scalar = scalar(krate, &input, &shape, recursive, &generics, &ref_generics);
+    } = depth(krate, &input, &shape, fixed_depth);
+    let (fixed, ref_fixed) = fixed(krate, &shape, fixed_depth);
+    let scalar = scalar(krate, &input, &shape, fixed_depth, &generics, &ref_generics);
 
     Ok(quote! {
         #[automatically_derived]
@@ -152,29 +156,29 @@ fn scalar(
     krate: &syn::Path,
     input: &DeriveInput,
     shape: &Shape,
-    recursive: bool,
+    fixed_depth: bool,
     generics: &syn::Generics,
     ref_generics: &syn::Generics,
 ) -> TokenStream {
     let name = &input.ident;
-    let mut owned = generics.clone();
-    let mut by_ref = ref_generics.clone();
-    match shape {
-        Shape::Newtype(_) if recursive || names_itself(name, shape) => return TokenStream::new(),
-        Shape::Newtype(field) => {
+    let (owned, by_ref) = match shape {
+        Shape::Newtype(field) if fixed_depth => {
             let ty = &field.ty;
+            let mut owned = generics.clone();
             owned
                 .make_where_clause()
                 .predicates
                 .push(parse_quote!(for<'__s> #ty: #krate::Scalar));
+            let mut by_ref = ref_generics.clone();
             by_ref
                 .make_where_clause()
                 .predicates
                 .push(parse_quote!(&'__r #ty: #krate::Scalar));
+            (owned, by_ref)
         }
-        Shape::Enum(_) => {}
-        Shape::Map(_) | Shape::Empty => return TokenStream::new(),
-    }
+        Shape::Enum(_) => (generics.clone(), ref_generics.clone()),
+        Shape::Newtype(_) | Shape::Map(_) | Shape::Empty => return TokenStream::new(),
+    };
     let (impl_generics, ty_generics, where_clause) = owned.split_for_impl();
     let (ref_impl_generics, _, ref_where_clause) = by_ref.split_for_impl();
     quote! {
@@ -205,16 +209,15 @@ struct Depth {
 /// sink counts nesting. A recursive type has no fixed depth, and naming its
 /// own `DEPTH` would be a cycle, so it keeps the default `None` and the
 /// walk checks each value instead.
-fn depth(krate: &syn::Path, input: &DeriveInput, shape: &Shape, recursive: bool) -> Depth {
+fn depth(krate: &syn::Path, input: &DeriveInput, shape: &Shape, fixed_depth: bool) -> Depth {
     let name = &input.ident;
-    let none = Depth {
-        owned: TokenStream::new(),
-        by_ref: TokenStream::new(),
-        item_check: TokenStream::new(),
-        visit_check: TokenStream::new(),
-    };
-    if recursive || names_itself(name, shape) {
-        return none;
+    if !fixed_depth {
+        return Depth {
+            owned: TokenStream::new(),
+            by_ref: TokenStream::new(),
+            item_check: TokenStream::new(),
+            visit_check: TokenStream::new(),
+        };
     }
 
     let depth = quote!(#krate::plaintext::depth);
@@ -299,18 +302,10 @@ fn depth(krate: &syn::Path, input: &DeriveInput, shape: &Shape, recursive: bool)
 /// value and by reference, as `DEPTH` does). A fieldless enum is always a
 /// `u32` leaf. A struct is a map, which has none, and a recursive newtype
 /// keeps the default rather than name its own constant in a cycle.
-fn fixed(
-    krate: &syn::Path,
-    input: &DeriveInput,
-    shape: &Shape,
-    recursive: bool,
-) -> (TokenStream, TokenStream) {
+fn fixed(krate: &syn::Path, shape: &Shape, fixed_depth: bool) -> (TokenStream, TokenStream) {
     let decl = |value: TokenStream| quote!(const FIXED: ::core::option::Option<#krate::FixedType> = #value;);
     match shape {
-        Shape::Newtype(_) if recursive || names_itself(&input.ident, shape) => {
-            (TokenStream::new(), TokenStream::new())
-        }
-        Shape::Newtype(field) => {
+        Shape::Newtype(field) if fixed_depth => {
             let ty = &field.ty;
             (
                 decl(quote!(<#ty as #krate::Encrypt>::FIXED)),
@@ -321,7 +316,9 @@ fn fixed(
             let u32 = decl(quote!(#krate::FixedType::plain(#krate::Width::U32)));
             (u32.clone(), u32)
         }
-        Shape::Map(_) | Shape::Empty => (TokenStream::new(), TokenStream::new()),
+        Shape::Newtype(_) | Shape::Map(_) | Shape::Empty => {
+            (TokenStream::new(), TokenStream::new())
+        }
     }
 }
 
