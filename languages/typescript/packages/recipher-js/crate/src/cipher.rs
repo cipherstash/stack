@@ -18,7 +18,7 @@ use napi::Env;
 use napi_derive::napi;
 use stack_encrypt::dynamic::{frame::OwnedFrame, value, ValueKind};
 use stack_encrypt::kms::{DataKeySource, IndexKeySource, StackKms};
-use stack_encrypt::{CipherRef, KeysetCipher, StackCipher};
+use stack_encrypt::{CipherRef, DecryptFrom, KeysetCipher, Pending, StackCipher};
 use vitaminc_protected::OpaqueDebug;
 
 use crate::ciphertext::Ciphertext;
@@ -317,8 +317,8 @@ pub(crate) fn a_string(value: OwnedFrame) -> Outcome<OwnedFrame> {
 /// Encrypts strings under `keyset`, through the engine's run-time
 /// single-value encrypt. Each value becomes one ciphertext with its own
 /// data key. Rust's `keyset.encrypt(value)` returns the same ciphertext for
-/// the same value. All the values use one key request, however many there
-/// are.
+/// the same value. The calls are merged, so all the values use one key
+/// request, however many there are.
 ///
 /// The engine checks each value again: a value that is not one string is
 /// refused with the engine's own error, before any key request.
@@ -329,16 +329,15 @@ pub(crate) async fn seal<K>(
 where
     K: DataKeySource + IndexKeySource + Sync + 'static,
 {
-    let pending = value::encrypt_all(
-        keyset,
-        values.iter().map(OwnedFrame::frame),
-        Some(ValueKind::String),
-    )
-    .map_err(|error| RecipherErrorFields::engine(&error))?;
+    let calls = values
+        .iter()
+        .map(|value| value::encrypt(keyset, value.frame(), Some(ValueKind::String)))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| RecipherErrorFields::engine(&error))?;
     // The engine has read every value. Dropping the frames wipes them, so
     // no value waits in a frame for the key request.
     drop(values);
-    pending
+    Pending::all(keyset, calls)
         .await
         .map_err(|error| RecipherErrorFields::engine(&error))
 }
@@ -347,9 +346,10 @@ where
 /// The function makes one key request for each keyset the ciphertexts
 /// were made under.
 ///
-/// It declares no kind, so each value comes back as it was encrypted. A
-/// call has no type to declare at run time: the type of a `Ciphertext<T>`
-/// is known to TypeScript alone.
+/// Each value comes back as it was encrypted, in a frame. A call has no
+/// kind to check at run time: the type of a `Ciphertext<T>` is known to
+/// TypeScript alone. So this is the engine's typed decrypt into frames,
+/// which checks no kind.
 pub(crate) async fn unseal<'c, K>(
     cipher: impl Into<CipherRef<'c, K>>,
     sealed: Vec<stack_encrypt::Ciphertext>,
@@ -357,7 +357,7 @@ pub(crate) async fn unseal<'c, K>(
 where
     K: DataKeySource + IndexKeySource + Sync + 'static,
 {
-    value::decrypt_all(cipher, sealed, None)
+    Vec::<OwnedFrame>::decrypt_from(sealed, cipher)
         .await
         .map_err(|error| RecipherErrorFields::engine(&error))
 }
