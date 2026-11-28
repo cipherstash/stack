@@ -114,22 +114,22 @@ pub(crate) enum Error {
     )]
     NoTesting,
     /// A declaration that `record(..)` did not make.
-    #[error("the value is not a record")]
+    #[error("the value given as a record is not a record declaration")]
     #[diagnostic(
         code(recipher_js::not_a_record),
-        help("Declare a record with record(..).")
+        help("Declare a record with `record(..)`.")
     )]
     NotARecord,
     /// A field declared with something other than `encrypt(..)` or
     /// `passthrough()`.
-    #[error("a field is declared with encrypt(..) or passthrough()")]
+    #[error("the field is not declared with `encrypt(..)` or `passthrough()`")]
     #[diagnostic(code(recipher_js::declaration))]
     Declaration,
     /// A field whose name the engine reserves.
-    #[error("the field's name is one the engine reserves")]
+    #[error("the field's name is one that the engine reserves")]
     #[diagnostic(
         code(recipher_js::reserved_field),
-        help("Name the field something else.")
+        help("Give the field another name.")
     )]
     ReservedField,
     /// A field's kind that is not one of `kinds`.
@@ -150,32 +150,32 @@ pub(crate) enum Error {
     /// A context is a value that a ciphertext is bound to, and decrypting
     /// needs the same context. A field's context is its field path: the
     /// record's name, then the field's name.
-    #[error("the field path could not be written")]
+    #[error("the record's name and the field's name could not be written as a field path")]
     #[diagnostic(code(recipher_js::context))]
     Context,
     /// A record name the engine refuses as a segment of a field path.
-    #[error("the record name is not a plain segment of a field path")]
+    #[error("the engine refuses the record name as the first part of a field path")]
     #[diagnostic(
         code(recipher_js::record_name),
-        help("Use a record name that is not empty and holds no character the engine refuses in a field path, such as `/`.")
+        help("Use a record name that is not empty and contains no character that the engine refuses in a field path, such as `/`.")
     )]
     RecordName,
     /// A field name that the record does not encrypt. The record does not
     /// declare the name, the name is a passthrough field's, or the name is
     /// not a string. A passthrough field is stored as given, without
     /// encryption.
-    #[error("the record declares no sealed field of that name")]
+    #[error("the record declares no encrypted field of that name")]
     #[diagnostic(
         code(recipher_js::no_field),
-        help("Name a field the record declares with encrypt(..). A passthrough field has no ciphertext.")
+        help("Name a field that the record declares with `encrypt(..)`. A passthrough field has no ciphertext.")
     )]
     NoField,
     /// A row that is not an object of the record's fields.
-    #[error("a row is an object of the record's fields")]
+    #[error("the row is not an object with the record's fields")]
     #[diagnostic(code(recipher_js::not_a_row))]
     NotARow,
     /// A row's value that is not of its field's kind.
-    #[error("the value is not of the field's kind, {kind}, or does not fit it")]
+    #[error("the value is not of the field's kind, `{kind}`, or does not fit that kind")]
     #[diagnostic(code(recipher_js::field_type))]
     FieldType { kind: ValueKind },
     /// A stored row that does not have the record's shape. A stored row is
@@ -184,7 +184,7 @@ pub(crate) enum Error {
     #[diagnostic(code(recipher_js::not_a_stored_row))]
     NotAStoredRow { what: &'static str },
     /// A stored row from the engine that the SDK cannot read.
-    #[error("the engine's stored row does not have the shape the SDK reads: {what}")]
+    #[error("the engine's stored row does not have the shape that the SDK reads: {what}")]
     #[diagnostic(
         code(recipher_js::engine_result),
         help("Report this as a bug in @cipherstash/recipher.")
@@ -702,14 +702,14 @@ mod tests {
             Error::NoTesting => {
                 Some("Build it with `pnpm --filter @cipherstash/recipher build:debug`.")
             }
-            Error::NotARecord => Some("Declare a record with record(..)."),
-            Error::ReservedField => Some("Name the field something else."),
+            Error::NotARecord => Some("Declare a record with `record(..)`."),
+            Error::ReservedField => Some("Give the field another name."),
             Error::Null { .. } => Some("A null mode is `sealed` or `sql`."),
             Error::RecordName => Some(
-                "Use a record name that is not empty and holds no character the engine refuses in a field path, such as `/`.",
+                "Use a record name that is not empty and contains no character that the engine refuses in a field path, such as `/`.",
             ),
             Error::NoField => Some(
-                "Name a field the record declares with encrypt(..). A passthrough field has no ciphertext.",
+                "Name a field that the record declares with `encrypt(..)`. A passthrough field has no ciphertext.",
             ),
             Error::EngineResult { .. } | Error::NoResult | Error::BuildValue => {
                 Some("Report this as a bug in @cipherstash/recipher.")
