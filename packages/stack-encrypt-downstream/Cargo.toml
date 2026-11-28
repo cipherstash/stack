@@ -23,7 +23,9 @@ stack-encrypt = { path = "../stack-encrypt" }
 stack-encrypt = { path = "../stack-encrypt", features = ["test-support"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
 # The compile-fail tests in `tests/ui`. They pin the errors that a user of
-# stack-encrypt reads when a derive is refused.
+# stack-encrypt reads when a derive is refused. This crate has no
+# `[features]`, so the errors are the same under every feature set
+# (`tests/ui.rs` says why).
 trybuild = "1"
 # `tests/manifest.rs` parses this manifest, so that it reads every form of
 # dependency table.

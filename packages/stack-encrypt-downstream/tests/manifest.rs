@@ -167,6 +167,19 @@ fn no_table_names_a_vitaminc_crate() {
 }
 
 #[test]
+fn the_crate_has_no_features() {
+    // trybuild builds `tests/ui` with this crate's features. A feature that
+    // turned on a stack-encrypt feature could add implementors to the lists
+    // that rustc prints, and so change the errors recorded there.
+    let manifest: Table = MANIFEST.parse().expect("the manifest is not valid TOML");
+    assert!(
+        !manifest.contains_key("features"),
+        "this crate must have no features, or the errors recorded in `tests/ui` can depend on \
+         which features are on"
+    );
+}
+
+#[test]
 fn the_reader_sees_every_dependency_table() {
     // A reader that missed a table would pass the test above on a manifest
     // it had not read.
