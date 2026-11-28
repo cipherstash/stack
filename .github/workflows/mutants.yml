@@ -2,9 +2,10 @@ name: Mutants
 
 # Gates pull requests on mutation testing of the lines they change in
 # stack-auth, stack-encrypt, stack-encrypt-jsonpath (the path grammar, moved
-# out of stack-encrypt), and vitaminc-aead, recipher-frame and
-# vitaminc-aead-derive (imported from cipherstash/vitaminc, which gated them
-# the same way). Ported from cipherstash-suite's `mutants.yml`.
+# out of stack-encrypt), stack-encrypt-derive (its `Encrypt` and `Decrypt`
+# derives; .cargo/mutants.toml leaves out the record derives), and
+# vitaminc-aead and recipher-frame (imported from cipherstash/vitaminc, which
+# gated them the same way). Ported from cipherstash-suite's `mutants.yml`.
 #
 # cargo-mutants rewrites small pieces of logic (flip `<` to `<=`, replace a
 # body with `Default::default()`) and reruns the tests; a mutant that survives
@@ -33,9 +34,9 @@ on:
       - packages/stack-auth/**
       - packages/stack-encrypt/**
       - packages/stack-encrypt-jsonpath/**
+      - packages/stack-encrypt-derive/**
       - packages/vitaminc-aead/**
       - packages/recipher-frame/**
-      - packages/vitaminc-aead-derive/**
       - Cargo.toml
       - Cargo.lock
       - mise.toml
@@ -88,7 +89,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        crate: ${{ fromJSON(github.event_name == 'pull_request' && '["all"]' || '["stack-auth","stack-encrypt","stack-encrypt-jsonpath","vitaminc-aead","recipher-frame","vitaminc-aead-derive"]') }}
+        crate: ${{ fromJSON(github.event_name == 'pull_request' && '["all"]' || '["stack-auth","stack-encrypt","stack-encrypt-jsonpath","stack-encrypt-derive","vitaminc-aead","recipher-frame"]') }}
     permissions:
       contents: read
       # Posts and updates the report comment on the PR.
@@ -158,7 +159,7 @@ jobs:
           CRATE: ${{ matrix.crate }}
         run: |
           set +e
-          crates=(-p stack-auth -p stack-encrypt -p stack-encrypt-jsonpath -p vitaminc-aead -p recipher-frame -p vitaminc-aead-derive)
+          crates=(-p stack-auth -p stack-encrypt -p stack-encrypt-jsonpath -p stack-encrypt-derive -p vitaminc-aead -p recipher-frame)
           if [ "$CRATE" = "all" ]; then
             cargo mutants --no-shuffle -vV "${crates[@]}" --in-diff pr.diff
           else
@@ -179,7 +180,7 @@ jobs:
           timeout=$(count timeout.txt)
           {
             echo '<!-- cargo-mutants-report -->'
-            echo "## Mutation testing (cargo-mutants, \`--in-diff\`, stack-auth, stack-encrypt, stack-encrypt-jsonpath, vitaminc-aead, recipher-frame, vitaminc-aead-derive)"
+            echo "## Mutation testing (cargo-mutants, \`--in-diff\`, stack-auth, stack-encrypt, stack-encrypt-jsonpath, stack-encrypt-derive, vitaminc-aead, recipher-frame)"
             echo
             if [ ! -d "$out" ]; then
               # No output dir: either nothing to mutate (exit 0) or the run

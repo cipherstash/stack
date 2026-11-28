@@ -34,6 +34,11 @@ audit-as-crates-io = false
 
 [policy.stack-encrypt-derive]
 audit-as-crates-io = false
+criteria = "safe-to-deploy"
+dev-criteria = []
+
+[policy.stack-encrypt-jsonpath]
+dependency-criteria = { miette = [] }
 
 [policy.stack-kms]
 audit-as-crates-io = false
@@ -43,10 +48,6 @@ audit-as-crates-io = false
 
 [policy.temp-env]
 audit-as-crates-io = false
-
-[policy."vitaminc-aead-derive:0.10.0"]
-audit-as-crates-io = false
-criteria = "safe-to-deploy"
 
 [policy."vitaminc-aead:0.10.0"]
 audit-as-crates-io = false
@@ -433,7 +434,15 @@ version = "1.0.2"
 criteria = "safe-to-run"
 
 [[exemptions.thiserror]]
+version = "1.0.69"
+criteria = "safe-to-deploy"
+
+[[exemptions.thiserror]]
 version = "2.0.18"
+criteria = "safe-to-deploy"
+
+[[exemptions.thiserror-impl]]
+version = "1.0.69"
 criteria = "safe-to-deploy"
 
 [[exemptions.thiserror-impl]]

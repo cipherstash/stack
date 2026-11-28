@@ -17,14 +17,14 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{parse_quote, DeriveInput, Result};
 
-use crate::{
+use super::{
     attrs::ContainerAttrs,
     shape::{FieldInfo, Shape, VariantInfo},
 };
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let attrs = ContainerAttrs::parse(&input.attrs)?;
-    let krate = &attrs.krate;
+    let aead = &attrs.aead;
     let shape = Shape::parse(&input)?;
     let name = &input.ident;
     // Whether the type has a fixed depth. A type that contains itself has
@@ -36,7 +36,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         matches!(shape, Shape::Enum(_)) || !(attrs.recursive || names_itself(name, &shape));
 
     // Bound every type parameter, serde-style: a field of type `Vec<T>` then
-    // picks up `Vec<T>: Encrypt` from the blanket impl in `vitaminc_aead`.
+    // picks up `Vec<T>: Encrypt` from the blanket impl in the AEAD crate.
     // A passthrough field is lent to the sink, never moved, so a parameter
     // it names is bounded on `EncryptRef`; one named only there is not
     // bounded on `Encrypt` at all.
@@ -44,10 +44,10 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     for param in generics.type_params_mut() {
         let usage = Usage::of(&param.ident, &shape);
         if usage.walked || !usage.lent {
-            param.bounds.push(parse_quote!(#krate::Encrypt));
+            param.bounds.push(parse_quote!(#aead::Encrypt));
         }
         if usage.lent {
-            param.bounds.push(parse_quote!(#krate::EncryptRef));
+            param.bounds.push(parse_quote!(#aead::EncryptRef));
         }
     }
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
@@ -64,7 +64,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         .type_params()
         .map(|param| {
             let ident = &param.ident;
-            parse_quote!(#ident: #krate::EncryptRef)
+            parse_quote!(#ident: #aead::EncryptRef)
         })
         .collect();
     ref_generics
@@ -84,11 +84,11 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     };
 
     let (body, ref_body) = match &shape {
-        Shape::Newtype(field) => (newtype_body(krate, field), newtype_ref_body(krate, field)),
-        Shape::Map(fields) => (map_body(krate, fields), map_ref_body(krate, fields)),
-        Shape::Empty => (empty_body(krate), empty_body(krate)),
+        Shape::Newtype(field) => (newtype_body(aead, field), newtype_ref_body(aead, field)),
+        Shape::Map(fields) => (map_body(aead, fields), map_ref_body(aead, fields)),
+        Shape::Empty => (empty_body(aead), empty_body(aead)),
         Shape::Enum(variants) => {
-            let body = enum_body(krate, name, variants);
+            let body = enum_body(aead, name, variants);
             (body.clone(), body)
         }
     };
@@ -98,19 +98,19 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         by_ref: ref_depth,
         item_check,
         visit_check,
-    } = depth(krate, &input, &shape, fixed_depth);
-    let (fixed, ref_fixed) = fixed(krate, &shape, fixed_depth);
-    let scalar = scalar(krate, &input, &shape, fixed_depth, &generics, &ref_generics);
+    } = depth(aead, &input, &shape, fixed_depth);
+    let (fixed, ref_fixed) = fixed(aead, &shape, fixed_depth);
+    let scalar = scalar(aead, &input, &shape, fixed_depth, &generics, &ref_generics);
 
     Ok(quote! {
         #[automatically_derived]
-        impl #impl_generics #krate::Encrypt for #name #ty_generics #where_clause {
+        impl #impl_generics #aead::Encrypt for #name #ty_generics #where_clause {
             #depth
             #fixed
 
             fn visit<__S>(#receiver, __sink: __S) -> ::core::result::Result<__S::Ok, __S::Error>
             where
-                __S: #krate::Sink,
+                __S: #aead::Sink,
             {
                 #visit_check
                 #body
@@ -118,13 +118,13 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         }
 
         #[automatically_derived]
-        impl #ref_impl_generics #krate::Encrypt for &'__r #name #ty_generics #ref_where_clause {
+        impl #ref_impl_generics #aead::Encrypt for &'__r #name #ty_generics #ref_where_clause {
             #ref_depth
             #ref_fixed
 
             fn visit<__S>(self, __sink: __S) -> ::core::result::Result<__S::Ok, __S::Error>
             where
-                __S: #krate::Sink,
+                __S: #aead::Sink,
             {
                 #visit_check
                 #ref_body
@@ -153,7 +153,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
 /// impl's bound is inside a `for<'__s>` binder. The compiler then checks
 /// each bound only where code asks for the `Scalar` impl.
 fn scalar(
-    krate: &syn::Path,
+    aead: &syn::Path,
     input: &DeriveInput,
     shape: &Shape,
     fixed_depth: bool,
@@ -168,12 +168,12 @@ fn scalar(
             owned
                 .make_where_clause()
                 .predicates
-                .push(parse_quote!(for<'__s> #ty: #krate::Scalar));
+                .push(parse_quote!(for<'__s> #ty: #aead::Scalar));
             let mut by_ref = ref_generics.clone();
             by_ref
                 .make_where_clause()
                 .predicates
-                .push(parse_quote!(&'__r #ty: #krate::Scalar));
+                .push(parse_quote!(&'__r #ty: #aead::Scalar));
             (owned, by_ref)
         }
         Shape::Enum(_) => (generics.clone(), ref_generics.clone()),
@@ -183,10 +183,10 @@ fn scalar(
     let (ref_impl_generics, _, ref_where_clause) = by_ref.split_for_impl();
     quote! {
         #[automatically_derived]
-        impl #impl_generics #krate::Scalar for #name #ty_generics #where_clause {}
+        impl #impl_generics #aead::Scalar for #name #ty_generics #where_clause {}
 
         #[automatically_derived]
-        impl #ref_impl_generics #krate::Scalar for &'__r #name #ty_generics #ref_where_clause {}
+        impl #ref_impl_generics #aead::Scalar for &'__r #name #ty_generics #ref_where_clause {}
     }
 }
 
@@ -205,11 +205,26 @@ struct Depth {
     visit_check: TokenStream,
 }
 
+/// The path to `MAX_DEPTH` for the too-deep message, as text. The text
+/// starts at the crate path that the expansion names every item through, so
+/// it follows `#[aead(crate = "...")]`. `aead` is that crate path followed
+/// by `__derive`.
+fn max_depth_path(aead: &syn::Path) -> String {
+    let krate = aead
+        .segments
+        .iter()
+        .take(aead.segments.len().saturating_sub(1))
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::");
+    format!("{krate}::plaintext::depth::MAX_DEPTH")
+}
+
 /// Work out the type's depth from its fields' depths, the way the encrypting
 /// sink counts nesting. A recursive type has no fixed depth, and naming its
 /// own `DEPTH` would be a cycle, so it keeps the default `None` and the
 /// walk checks each value instead.
-fn depth(krate: &syn::Path, input: &DeriveInput, shape: &Shape, fixed_depth: bool) -> Depth {
+fn depth(aead: &syn::Path, input: &DeriveInput, shape: &Shape, fixed_depth: bool) -> Depth {
     let name = &input.ident;
     if !fixed_depth {
         return Depth {
@@ -220,13 +235,13 @@ fn depth(krate: &syn::Path, input: &DeriveInput, shape: &Shape, fixed_depth: boo
         };
     }
 
-    let depth = quote!(#krate::plaintext::depth);
+    let depth = quote!(#aead::depth);
     let expr = |by_ref: bool| -> TokenStream {
         let of = |ty: &syn::Type, by_ref: bool| {
             if by_ref {
-                quote!(<#ty as #krate::EncryptRef>::REF_DEPTH)
+                quote!(<#ty as #aead::EncryptRef>::REF_DEPTH)
             } else {
-                quote!(<#ty as #krate::Encrypt>::DEPTH)
+                quote!(<#ty as #aead::Encrypt>::DEPTH)
             }
         };
         match shape {
@@ -257,12 +272,13 @@ fn depth(krate: &syn::Path, input: &DeriveInput, shape: &Shape, fixed_depth: boo
     let owned = expr(false);
     let by_ref = expr(true);
 
+    let limit = max_depth_path(aead);
     let message = format!(
-        "`{name}` nests deeper than `MAX_DEPTH` levels, so the encrypting sink would refuse \
-         its fully populated values"
+        "`{name}` nests deeper than `{limit}` levels. Stack Encrypt refuses to encrypt a value \
+         nested that deeply, so it would refuse every full value of this type"
     );
     let check = |ty: TokenStream| {
-        quote!(::core::assert!(#depth::within_limit(<#ty as #krate::Encrypt>::DEPTH), #message))
+        quote!(::core::assert!(#depth::within_limit(<#ty as #aead::Encrypt>::DEPTH), #message))
     };
     // A type with no type or const parameters is checked where it is
     // defined, so `cargo check` sees the error. Each lifetime becomes
@@ -302,18 +318,18 @@ fn depth(krate: &syn::Path, input: &DeriveInput, shape: &Shape, fixed_depth: boo
 /// value and by reference, as `DEPTH` does). A fieldless enum is always a
 /// `u32` leaf. A struct is a map, which has none, and a recursive newtype
 /// keeps the default rather than name its own constant in a cycle.
-fn fixed(krate: &syn::Path, shape: &Shape, fixed_depth: bool) -> (TokenStream, TokenStream) {
-    let decl = |value: TokenStream| quote!(const FIXED: ::core::option::Option<#krate::FixedType> = #value;);
+fn fixed(aead: &syn::Path, shape: &Shape, fixed_depth: bool) -> (TokenStream, TokenStream) {
+    let decl = |value: TokenStream| quote!(const FIXED: ::core::option::Option<#aead::FixedType> = #value;);
     match shape {
         Shape::Newtype(field) if fixed_depth => {
             let ty = &field.ty;
             (
-                decl(quote!(<#ty as #krate::Encrypt>::FIXED)),
-                decl(quote!(<#ty as #krate::EncryptRef>::REF_FIXED)),
+                decl(quote!(<#ty as #aead::Encrypt>::FIXED)),
+                decl(quote!(<#ty as #aead::EncryptRef>::REF_FIXED)),
             )
         }
         Shape::Enum(_) => {
-            let u32 = decl(quote!(#krate::FixedType::plain(#krate::Width::U32)));
+            let u32 = decl(quote!(#aead::FixedType::plain(#aead::Width::U32)));
             (u32.clone(), u32)
         }
         Shape::Newtype(_) | Shape::Map(_) | Shape::Empty => {
@@ -415,17 +431,17 @@ fn value(field: &FieldInfo) -> TokenStream {
 
 /// A newtype adds nothing to the ciphertext — it describes itself exactly
 /// as its inner value, so wrapping a type is not a wire-breaking change.
-fn newtype_body(krate: &syn::Path, field: &FieldInfo) -> TokenStream {
+fn newtype_body(aead: &syn::Path, field: &FieldInfo) -> TokenStream {
     let value = value(field);
     quote! {
-        #krate::Encrypt::visit(#value, __sink)
+        #aead::Encrypt::visit(#value, __sink)
     }
 }
 
-fn newtype_ref_body(krate: &syn::Path, field: &FieldInfo) -> TokenStream {
+fn newtype_ref_body(aead: &syn::Path, field: &FieldInfo) -> TokenStream {
     let member = &field.member;
     quote! {
-        #krate::EncryptRef::visit_ref(&self.#member, __sink)
+        #aead::EncryptRef::visit_ref(&self.#member, __sink)
     }
 }
 
@@ -433,7 +449,7 @@ fn newtype_ref_body(krate: &syn::Path, field: &FieldInfo) -> TokenStream {
 /// arrives; if the sink refuses at any point, the fields not yet moved are
 /// discarded through their own walk first, which wipes each owned leaf,
 /// rather than dropped bare with `self`.
-fn map_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
+fn map_body(aead: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
     let stored: Vec<&FieldInfo> = fields.iter().filter(|field| field.stored()).collect();
     let len = stored.len();
     // The fields from `from` on, discarded. A passthrough field is
@@ -445,7 +461,7 @@ fn map_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
             .filter(|field| !field.passthrough)
             .map(|field| {
                 let value = value(field);
-                quote!(#krate::plaintext::__private::discard_one(#value);)
+                quote!(#aead::discard_one(#value);)
             });
         quote!(#(#rest)*)
     };
@@ -462,13 +478,13 @@ fn map_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
             // the encrypted ones. It is lent in place, so it needs neither a
             // move nor `take`, even on a type that implements `Drop`.
             let member = &field.member;
-            quote!(#krate::Sink::passthrough(__entry, &self.#member))
+            quote!(#aead::Sink::passthrough(__entry, &self.#member))
         } else {
             let value = value(field);
-            quote!(#krate::Encrypt::visit(#value, __entry))
+            quote!(#aead::Encrypt::visit(#value, __entry))
         };
         quote! {
-            let __entry = match #krate::MapSink::entry(&mut __map, #key) {
+            let __entry = match #aead::MapSink::entry(&mut __map, #key) {
                 ::core::result::Result::Ok(__entry) => __entry,
                 ::core::result::Result::Err(__err) => {
                     #on_entry_failure
@@ -486,7 +502,7 @@ fn map_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
         // The encrypting sink binds each field's key into the AAD its value
         // is sealed against (`Context::for_map_entry`), so a stored field
         // cannot be renamed or moved to another key undetected.
-        let mut __map = match #krate::Sink::map(__sink, ::core::option::Option::Some(#len)) {
+        let mut __map = match #aead::Sink::map(__sink, ::core::option::Option::Some(#len)) {
             ::core::result::Result::Ok(__map) => __map,
             ::core::result::Result::Err(__err) => {
                 #open
@@ -494,12 +510,12 @@ fn map_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
             }
         };
         #(#entries)*
-        #krate::MapSink::end(__map)
+        #aead::MapSink::end(__map)
     }
 }
 
 /// The by-reference walk: nothing is moved, so nothing needs discarding.
-fn map_ref_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
+fn map_ref_body(aead: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
     let stored: Vec<&FieldInfo> = fields.iter().filter(|field| field.stored()).collect();
     let len = stored.len();
     let entries = stored.iter().map(|field| {
@@ -507,27 +523,27 @@ fn map_ref_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
         let member = &field.member;
         if field.passthrough {
             quote! {
-                #krate::Sink::passthrough(#krate::MapSink::entry(&mut __map, #key)?, &self.#member)?;
+                #aead::Sink::passthrough(#aead::MapSink::entry(&mut __map, #key)?, &self.#member)?;
             }
         } else {
             quote! {
-                #krate::EncryptRef::visit_ref(&self.#member, #krate::MapSink::entry(&mut __map, #key)?)?;
+                #aead::EncryptRef::visit_ref(&self.#member, #aead::MapSink::entry(&mut __map, #key)?)?;
             }
         }
     });
     quote! {
-        let mut __map = #krate::Sink::map(__sink, ::core::option::Option::Some(#len))?;
+        let mut __map = #aead::Sink::map(__sink, ::core::option::Option::Some(#len))?;
         #(#entries)*
-        #krate::MapSink::end(__map)
+        #aead::MapSink::end(__map)
     }
 }
 
 /// No fields: an empty map, which the encrypting sink seals as the
 /// authenticated empty-map marker, so even a field-less struct binds its
 /// AAD.
-fn empty_body(krate: &syn::Path) -> TokenStream {
+fn empty_body(aead: &syn::Path) -> TokenStream {
     quote! {
-        #krate::MapSink::end(#krate::Sink::map(__sink, ::core::option::Option::Some(0))?)
+        #aead::MapSink::end(#aead::Sink::map(__sink, ::core::option::Option::Some(0))?)
     }
 }
 
@@ -535,15 +551,15 @@ fn empty_body(krate: &syn::Path) -> TokenStream {
 /// `u32`. Fixed width, so every variant seals to a leaf of the same length
 /// and the ciphertext's size gives nothing away. It is sealed and
 /// authenticated like any other leaf.
-fn enum_body(krate: &syn::Path, name: &syn::Ident, variants: &[VariantInfo]) -> TokenStream {
+fn enum_body(aead: &syn::Path, name: &syn::Ident, variants: &[VariantInfo]) -> TokenStream {
     let arms = variants.iter().map(|variant| {
         let ident = &variant.ident;
         let discriminant = variant.discriminant;
         quote! {
-            #name::#ident => #krate::Sink::scalar(
+            #name::#ident => #aead::Sink::scalar(
                 __sink,
                 ::core::option::Option::None,
-                #krate::Physical::Int(#krate::Int::U32(#discriminant)),
+                #aead::Physical::Int(#aead::Int::U32(#discriminant)),
             ),
         }
     });
@@ -557,7 +573,7 @@ fn enum_body(krate: &syn::Path, name: &syn::Ident, variants: &[VariantInfo]) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{assert_contains, assert_lacks};
+    use crate::value::test_support::{assert_contains, assert_lacks};
 
     fn expand(input: DeriveInput) -> String {
         derive(input).expect("expansion should succeed").to_string()
@@ -577,28 +593,32 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Sink::map(
+            quote!(::stack_encrypt::__derive::Sink::map(
                 __sink,
                 ::core::option::Option::Some(2usize)
             )),
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::MapSink::entry(&mut __map, "name")),
+            quote!(::stack_encrypt::__derive::MapSink::entry(
+                &mut __map, "name"
+            )),
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Encrypt::visit(self.name, __entry)),
+            quote!(::stack_encrypt::__derive::Encrypt::visit(
+                self.name, __entry
+            )),
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::MapSink::entry(&mut __map, "age")),
+            quote!(::stack_encrypt::__derive::MapSink::entry(&mut __map, "age")),
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Encrypt::visit(self.age, __entry)),
+            quote!(::stack_encrypt::__derive::Encrypt::visit(self.age, __entry)),
         );
-        assert_contains(&out, quote!(::vitaminc_aead::MapSink::end(__map)));
+        assert_contains(&out, quote!(::stack_encrypt::__derive::MapSink::end(__map)));
     }
 
     /// When the sink refuses part way, the fields not yet walked are
@@ -614,7 +634,7 @@ mod tests {
             }
         });
 
-        let discard = |field: TokenStream| quote!(::vitaminc_aead::plaintext::__private::discard_one(#field););
+        let discard = |field: TokenStream| quote!(::stack_encrypt::__derive::discard_one(#field););
         let name = discard(quote!(self.name));
         let age = discard(quote!(self.age));
         // Map refused: both. Entry for `name` refused: both. `name` refused:
@@ -624,7 +644,7 @@ mod tests {
         assert_contains(
             &out,
             quote!(if let ::core::result::Result::Err(__err) =
-                ::vitaminc_aead::Encrypt::visit(self.age, __entry)
+                ::stack_encrypt::__derive::Encrypt::visit(self.age, __entry)
             {
                 return ::core::result::Result::Err(__err);
             }),
@@ -645,19 +665,19 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(impl<'__r> ::vitaminc_aead::Encrypt for &'__r Row),
+            quote!(impl<'__r> ::stack_encrypt::__derive::Encrypt for &'__r Row),
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::EncryptRef::visit_ref(
+            quote!(::stack_encrypt::__derive::EncryptRef::visit_ref(
                 &self.name,
-                ::vitaminc_aead::MapSink::entry(&mut __map, "name")?
+                ::stack_encrypt::__derive::MapSink::entry(&mut __map, "name")?
             )),
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Sink::passthrough(
-                ::vitaminc_aead::MapSink::entry(&mut __map, "tenant")?,
+            quote!(::stack_encrypt::__derive::Sink::passthrough(
+                ::stack_encrypt::__derive::MapSink::entry(&mut __map, "tenant")?,
                 &self.tenant
             )),
         );
@@ -666,7 +686,9 @@ mod tests {
         ));
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::EncryptRef::visit_ref(&self.0, __sink)),
+            quote!(::stack_encrypt::__derive::EncryptRef::visit_ref(
+                &self.0, __sink
+            )),
         );
     }
 
@@ -683,7 +705,7 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::MapSink::entry(&mut __map, "yrs")),
+            quote!(::stack_encrypt::__derive::MapSink::entry(&mut __map, "yrs")),
         );
         assert_lacks(&out, quote!("age"));
     }
@@ -696,11 +718,11 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::MapSink::entry(&mut __map, "0")),
+            quote!(::stack_encrypt::__derive::MapSink::entry(&mut __map, "0")),
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::MapSink::entry(&mut __map, "1")),
+            quote!(::stack_encrypt::__derive::MapSink::entry(&mut __map, "1")),
         );
     }
 
@@ -718,11 +740,14 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Sink::passthrough(__entry, &self.tenant)),
+            quote!(::stack_encrypt::__derive::Sink::passthrough(
+                __entry,
+                &self.tenant
+            )),
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Encrypt::visit(self.ssn, __entry)),
+            quote!(::stack_encrypt::__derive::Encrypt::visit(self.ssn, __entry)),
         );
     }
 
@@ -740,7 +765,10 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Sink::passthrough(__entry, &self.tenant)),
+            quote!(::stack_encrypt::__derive::Sink::passthrough(
+                __entry,
+                &self.tenant
+            )),
         );
         assert_lacks(&out, quote!(::core::mem::take));
         assert_lacks(&out, quote!(mut self));
@@ -763,7 +791,7 @@ mod tests {
         assert_lacks(&out, quote!(self.id));
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Sink::map(
+            quote!(::stack_encrypt::__derive::Sink::map(
                 __sink,
                 ::core::option::Option::Some(1usize)
             )),
@@ -785,16 +813,16 @@ mod tests {
         assert_contains(&out, quote!(mut self, __sink: __S));
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Encrypt::visit(
+            quote!(::stack_encrypt::__derive::Encrypt::visit(
                 ::core::mem::take(&mut self.token),
                 __entry
             )),
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::plaintext::__private::discard_one(
-                ::core::mem::take(&mut self.token)
-            )),
+            quote!(::stack_encrypt::__derive::discard_one(::core::mem::take(
+                &mut self.token
+            ))),
         );
     }
 
@@ -818,16 +846,16 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Encrypt::visit(self.0, __sink)),
+            quote!(::stack_encrypt::__derive::Encrypt::visit(self.0, __sink)),
         );
-        assert_lacks(&out, quote!(::vitaminc_aead::Sink::map));
+        assert_lacks(&out, quote!(::stack_encrypt::__derive::Sink::map));
 
         let out = expand(parse_quote!(
             struct Token(#[aead(take)] String);
         ));
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Encrypt::visit(
+            quote!(::stack_encrypt::__derive::Encrypt::visit(
                 ::core::mem::take(&mut self.0),
                 __sink
             )),
@@ -844,12 +872,11 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::MapSink::end(::vitaminc_aead::Sink::map(
-                __sink,
-                ::core::option::Option::Some(0)
-            )?)),
+            quote!(::stack_encrypt::__derive::MapSink::end(
+                ::stack_encrypt::__derive::Sink::map(__sink, ::core::option::Option::Some(0))?
+            )),
         );
-        assert_lacks(&out, quote!(::vitaminc_aead::MapSink::entry));
+        assert_lacks(&out, quote!(::stack_encrypt::__derive::MapSink::entry));
     }
 
     /// A fieldless enum is one fixed-width int leaf holding the
@@ -865,19 +892,19 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(Status::Active => ::vitaminc_aead::Sink::scalar(
+            quote!(Status::Active => ::stack_encrypt::__derive::Sink::scalar(
                 __sink,
                 ::core::option::Option::None,
-                ::vitaminc_aead::Physical::Int(::vitaminc_aead::Int::U32(0u32)),
+                ::stack_encrypt::__derive::Physical::Int(::stack_encrypt::__derive::Int::U32(0u32)),
             )),
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Physical::Int(::vitaminc_aead::Int::U32(
-                7u32
-            ))),
+            quote!(::stack_encrypt::__derive::Physical::Int(
+                ::stack_encrypt::__derive::Int::U32(7u32)
+            )),
         );
-        assert_lacks(&out, quote!(::vitaminc_aead::Physical::Text));
+        assert_lacks(&out, quote!(::stack_encrypt::__derive::Physical::Text));
     }
 
     /// What an absent value of the type is sealed as: a newtype's inner
@@ -885,21 +912,22 @@ mod tests {
     /// enum; nothing for a struct, which is a map.
     #[test]
     fn fixed_follows_the_shape() {
+        let aead = quote!(::stack_encrypt::__derive);
         let out = expand(parse_quote!(
             struct Age(u32);
         ));
         assert_contains(
             &out,
             quote!(
-                const FIXED: ::core::option::Option<::vitaminc_aead::FixedType> =
-                    <u32 as ::vitaminc_aead::Encrypt>::FIXED;
+                const FIXED: ::core::option::Option<::stack_encrypt::__derive::FixedType> =
+                    <u32 as ::stack_encrypt::__derive::Encrypt>::FIXED;
             ),
         );
         assert_contains(
             &out,
             quote!(
-                const FIXED: ::core::option::Option<::vitaminc_aead::FixedType> =
-                    <u32 as ::vitaminc_aead::EncryptRef>::REF_FIXED;
+                const FIXED: ::core::option::Option<::stack_encrypt::__derive::FixedType> =
+                    <u32 as ::stack_encrypt::__derive::EncryptRef>::REF_FIXED;
             ),
         );
 
@@ -911,8 +939,8 @@ mod tests {
         assert_contains(
             &out,
             quote!(
-                const FIXED: ::core::option::Option<::vitaminc_aead::FixedType> =
-                    ::vitaminc_aead::FixedType::plain(::vitaminc_aead::Width::U32);
+                const FIXED: ::core::option::Option<#aead::FixedType> =
+                    #aead::FixedType::plain(#aead::Width::U32);
             ),
         );
 
@@ -955,10 +983,13 @@ mod tests {
             }
         });
 
-        assert_contains(&out, quote!(impl<'a, T: ::vitaminc_aead::Encrypt>));
+        assert_contains(
+            &out,
+            quote!(impl<'a, T: ::stack_encrypt::__derive::Encrypt>),
+        );
         assert_contains(&out, quote!(for Holder<'a, T>));
         assert_contains(&out, quote!(impl<'__r, 'a, T>));
-        assert_contains(&out, quote!(T: ::vitaminc_aead::EncryptRef));
+        assert_contains(&out, quote!(T: ::stack_encrypt::__derive::EncryptRef));
         assert_lacks(&out, quote!('a: '__r));
         assert_contains(&out, quote!(for &'__r Holder<'a, T>));
     }
@@ -984,11 +1015,11 @@ mod tests {
         assert_contains(
             &out,
             quote!(impl<
-                P: ::vitaminc_aead::EncryptRef,
-                B: ::vitaminc_aead::Encrypt + ::vitaminc_aead::EncryptRef,
-                W: ::vitaminc_aead::Encrypt,
-                S: ::vitaminc_aead::Encrypt
-            > ::vitaminc_aead::Encrypt for Row<P, B, W, S>),
+                P: ::stack_encrypt::__derive::EncryptRef,
+                B: ::stack_encrypt::__derive::Encrypt + ::stack_encrypt::__derive::EncryptRef,
+                W: ::stack_encrypt::__derive::Encrypt,
+                S: ::stack_encrypt::__derive::Encrypt
+            > ::stack_encrypt::__derive::Encrypt for Row<P, B, W, S>),
         );
     }
 
@@ -1006,13 +1037,11 @@ mod tests {
 
         assert_lacks(
             &out,
-            quote!(::vitaminc_aead::plaintext::__private::discard_one(
-                self.tenant
-            )),
+            quote!(::stack_encrypt::__derive::discard_one(self.tenant)),
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::plaintext::__private::discard_one(self.ssn)),
+            quote!(::stack_encrypt::__derive::discard_one(self.ssn)),
         );
     }
 
@@ -1021,20 +1050,17 @@ mod tests {
     #[test]
     fn crate_attribute_redirects_every_path() {
         let out = expand(parse_quote! {
-            #[aead(crate = "::vitaminc::aead")]
+            #[aead(crate = "::app::encryption")]
             struct User {
                 name: String,
             }
         });
 
-        assert_contains(&out, quote!(::vitaminc::aead::Encrypt for User));
-        assert_contains(&out, quote!(::vitaminc::aead::MapSink::entry));
-        assert_contains(
-            &out,
-            quote!(::vitaminc::aead::plaintext::__private::discard_one),
-        );
+        assert_contains(&out, quote!(::app::encryption::__derive::Encrypt for User));
+        assert_contains(&out, quote!(::app::encryption::__derive::MapSink::entry));
+        assert_contains(&out, quote!(::app::encryption::__derive::discard_one));
         assert!(
-            !out.contains("vitaminc_aead"),
+            !out.contains(":: stack_encrypt ::"),
             "expansion still references the default crate path:\n{out}"
         );
     }
@@ -1054,28 +1080,28 @@ mod tests {
             }
         });
 
-        let depth = quote!(::vitaminc_aead::plaintext::depth);
+        let depth = quote!(::stack_encrypt::__derive::depth);
         assert_contains(
             &out,
             quote!(const DEPTH: ::core::option::Option<usize> = #depth::container(
                 #depth::max(
-                    #depth::max(#depth::SCALAR, <String as ::vitaminc_aead::Encrypt>::DEPTH),
-                    #depth::passthrough(<Vec<u32> as ::vitaminc_aead::EncryptRef>::REF_DEPTH)
+                    #depth::max(#depth::SCALAR, <String as ::stack_encrypt::__derive::Encrypt>::DEPTH),
+                    #depth::passthrough(<Vec<u32> as ::stack_encrypt::__derive::EncryptRef>::REF_DEPTH)
                 )
             );),
         );
         assert_contains(
             &out,
-            quote!(<String as ::vitaminc_aead::EncryptRef>::REF_DEPTH),
+            quote!(<String as ::stack_encrypt::__derive::EncryptRef>::REF_DEPTH),
         );
         assert_lacks(&out, quote!(Vec<Vec<u32>>));
         assert_contains(
             &out,
-            quote!(#depth::within_limit(<User as ::vitaminc_aead::Encrypt>::DEPTH)),
+            quote!(#depth::within_limit(<User as ::stack_encrypt::__derive::Encrypt>::DEPTH)),
         );
         assert_contains(
             &out,
-            quote!(#depth::within_limit(<&'static User as ::vitaminc_aead::Encrypt>::DEPTH)),
+            quote!(#depth::within_limit(<&'static User as ::stack_encrypt::__derive::Encrypt>::DEPTH)),
         );
         assert!(
             out.contains("const _ : () = { :: core :: assert !"),
@@ -1093,13 +1119,53 @@ mod tests {
         });
         assert_contains(
             &out,
-            quote!(#depth::within_limit(<Row<'static, 'static> as ::vitaminc_aead::Encrypt>::DEPTH)),
+            quote!(#depth::within_limit(<Row<'static, 'static> as ::stack_encrypt::__derive::Encrypt>::DEPTH)),
         );
         assert_contains(
             &out,
-            quote!(#depth::within_limit(<&'static Row<'static, 'static> as ::vitaminc_aead::Encrypt>::DEPTH)),
+            quote!(#depth::within_limit(<&'static Row<'static, 'static> as ::stack_encrypt::__derive::Encrypt>::DEPTH)),
         );
         assert!(!out.contains("const {"), "{out}");
+    }
+
+    /// The too-deep message names `MAX_DEPTH` through the crate path the
+    /// expansion uses, so the path in the message resolves in the deriving
+    /// crate.
+    #[test]
+    fn the_too_deep_message_follows_the_crate_path() {
+        let message = |krate: &str| {
+            format!(
+                "`User` nests deeper than `{krate}::plaintext::depth::MAX_DEPTH` levels. Stack \
+                 Encrypt refuses to encrypt a value nested that deeply, so it would refuse every \
+                 full value of this type"
+            )
+        };
+        let quoted = |text: String| quote!(#text).to_string();
+
+        let out = expand(parse_quote! {
+            struct User {
+                name: String,
+            }
+        });
+        assert!(
+            out.contains(&quoted(message("stack_encrypt"))),
+            "the default message does not name `stack_encrypt`'s `MAX_DEPTH`:\n{out}"
+        );
+
+        let out = expand(parse_quote! {
+            #[aead(crate = "::vitaminc_aead")]
+            struct User {
+                name: String,
+            }
+        });
+        assert!(
+            out.contains(&quoted(message("vitaminc_aead"))),
+            "the message does not follow `crate = \"::vitaminc_aead\"`:\n{out}"
+        );
+        assert!(
+            !out.contains("stack_encrypt"),
+            "the message still names the default crate path:\n{out}"
+        );
     }
 
     /// A generic type's depth is known only at a concrete type, so it is
@@ -1115,8 +1181,8 @@ mod tests {
         assert!(out.contains("const {"), "{out}");
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::plaintext::depth::within_limit(
-                <Self as ::vitaminc_aead::Encrypt>::DEPTH
+            quote!(::stack_encrypt::__derive::depth::within_limit(
+                <Self as ::stack_encrypt::__derive::Encrypt>::DEPTH
             )),
         );
         assert_lacks(&out, quote!(const _: ()));
@@ -1175,7 +1241,7 @@ mod tests {
         });
         assert_contains(
             &out,
-            quote!(<legacy::User as ::vitaminc_aead::Encrypt>::DEPTH),
+            quote!(<legacy::User as ::stack_encrypt::__derive::Encrypt>::DEPTH),
         );
         assert_contains(&out, quote!(within_limit));
 
@@ -1206,13 +1272,16 @@ mod tests {
         ));
         assert_contains(
             &out,
-            quote!(impl ::vitaminc_aead::Scalar for Email
-                where for<'__s> String: ::vitaminc_aead::Scalar {}),
+            quote!(impl ::stack_encrypt::__derive::Scalar for Email
+                where for<'__s> String: ::stack_encrypt::__derive::Scalar {}),
         );
         assert_contains(
             &out,
             quote!(
-                impl<'__r> ::vitaminc_aead::Scalar for &'__r Email where &'__r String: ::vitaminc_aead::Scalar {}
+                impl<'__r> ::stack_encrypt::__derive::Scalar for &'__r Email where
+                    &'__r String: ::stack_encrypt::__derive::Scalar
+                {
+                }
             ),
         );
 
@@ -1221,13 +1290,16 @@ mod tests {
         ));
         assert_contains(
             &out,
-            quote!(impl ::vitaminc_aead::Scalar for Tags
-                where for<'__s> Vec<String>: ::vitaminc_aead::Scalar {}),
+            quote!(impl ::stack_encrypt::__derive::Scalar for Tags
+                where for<'__s> Vec<String>: ::stack_encrypt::__derive::Scalar {}),
         );
         assert_contains(
             &out,
             quote!(
-                impl<'__r> ::vitaminc_aead::Scalar for &'__r Tags where &'__r Vec<String>: ::vitaminc_aead::Scalar {}
+                impl<'__r> ::stack_encrypt::__derive::Scalar for &'__r Tags where
+                    &'__r Vec<String>: ::stack_encrypt::__derive::Scalar
+                {
+                }
             ),
         );
     }
@@ -1243,8 +1315,8 @@ mod tests {
         assert_contains(
             &out,
             quote!(
-                impl<T: ::vitaminc_aead::Encrypt> ::vitaminc_aead::Scalar for Wrapper<T> where
-                    for<'__s> T: ::vitaminc_aead::Scalar
+                impl<T: ::stack_encrypt::__derive::Encrypt> ::stack_encrypt::__derive::Scalar for Wrapper<T> where
+                    for<'__s> T: ::stack_encrypt::__derive::Scalar
                 {
                 }
             ),
@@ -1252,10 +1324,10 @@ mod tests {
         assert_contains(
             &out,
             quote!(
-                impl<'__r, T> ::vitaminc_aead::Scalar for &'__r Wrapper<T>
+                impl<'__r, T> ::stack_encrypt::__derive::Scalar for &'__r Wrapper<T>
                 where
-                    T: ::vitaminc_aead::EncryptRef,
-                    &'__r T: ::vitaminc_aead::Scalar
+                    T: ::stack_encrypt::__derive::EncryptRef,
+                    &'__r T: ::stack_encrypt::__derive::Scalar
                 {
                 }
             ),
@@ -1271,11 +1343,14 @@ mod tests {
                 Active,
             }
         });
-        assert_contains(&out, quote!(impl ::vitaminc_aead::Scalar for Status {}));
+        assert_contains(
+            &out,
+            quote!(impl ::stack_encrypt::__derive::Scalar for Status {}),
+        );
         assert_contains(
             &out,
             quote!(
-                impl<'__r> ::vitaminc_aead::Scalar for &'__r Status {}
+                impl<'__r> ::stack_encrypt::__derive::Scalar for &'__r Status {}
             ),
         );
     }
@@ -1283,8 +1358,12 @@ mod tests {
     /// A fieldless enum cannot contain itself, so `recursive` changes
     /// nothing. The enum still declares a scalar depth and a `u32` fixed
     /// type, and it is still a `Scalar`.
+    // rustfmt would add a trailing comma inside `plain(..)`, which changes
+    // the tokens the fragment is compared as.
+    #[rustfmt::skip]
     #[test]
     fn a_recursive_fieldless_enum_is_still_one_leaf() {
+        let aead = quote!(::stack_encrypt::__derive);
         let out = expand(parse_quote! {
             #[aead(recursive)]
             enum Status {
@@ -1295,21 +1374,24 @@ mod tests {
             &out,
             quote!(
                 const DEPTH: ::core::option::Option<usize> =
-                    ::vitaminc_aead::plaintext::depth::SCALAR;
+                    ::stack_encrypt::__derive::depth::SCALAR;
             ),
         );
         assert_contains(
             &out,
             quote!(
-                const FIXED: ::core::option::Option<::vitaminc_aead::FixedType> =
-                    ::vitaminc_aead::FixedType::plain(::vitaminc_aead::Width::U32);
+                const FIXED: ::core::option::Option<#aead::FixedType> =
+                    #aead::FixedType::plain(#aead::Width::U32);
             ),
         );
-        assert_contains(&out, quote!(impl ::vitaminc_aead::Scalar for Status {}));
+        assert_contains(
+            &out,
+            quote!(impl ::stack_encrypt::__derive::Scalar for Status {}),
+        );
         assert_contains(
             &out,
             quote!(
-                impl<'__r> ::vitaminc_aead::Scalar for &'__r Status {}
+                impl<'__r> ::stack_encrypt::__derive::Scalar for &'__r Status {}
             ),
         );
     }
@@ -1338,7 +1420,7 @@ mod tests {
                 struct Even(Option<Box<Odd>>);
             ),
         ] {
-            assert_lacks(&expand(input), quote!(::vitaminc_aead::Scalar));
+            assert_lacks(&expand(input), quote!(::stack_encrypt::__derive::Scalar));
         }
     }
 
@@ -1347,12 +1429,12 @@ mod tests {
     #[test]
     fn the_marker_follows_the_crate_attribute() {
         let out = expand(parse_quote! {
-            #[aead(crate = "::vitaminc::aead")]
+            #[aead(crate = "::app::encryption")]
             struct Email(String);
         });
-        assert_contains(&out, quote!(::vitaminc::aead::Scalar for Email));
+        assert_contains(&out, quote!(::app::encryption::__derive::Scalar for Email));
         assert!(
-            !out.contains("vitaminc_aead"),
+            !out.contains(":: stack_encrypt ::"),
             "expansion still references the default crate path:\n{out}"
         );
     }

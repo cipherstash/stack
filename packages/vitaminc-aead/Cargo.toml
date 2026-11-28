@@ -22,7 +22,6 @@ features = ["jiff", "rust_decimal", "uuid", "hlist"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-vitaminc-aead-derive = { version = "0.10.0", path = "../vitaminc-aead-derive" }
 vitaminc-context = "0.10.0"
 vitaminc-protected = "0.10.0"
 vitaminc-random = "0.10.0"
@@ -84,6 +83,11 @@ vitaminc-prf = "0.10.0"
 vitaminc-context = { version = "0.10.0", features = ["arbitrary"] }
 quickcheck = "1.1.0"
 quickcheck_macros = "1.2.0"
+# Stack Encrypt's `#[derive(Encrypt)]` and `#[derive(Decrypt)]`. The tests
+# derive both for types of their own. stack-encrypt depends on this crate,
+# so the tests cannot depend on stack-encrypt. Each derive in the tests
+# names this crate instead, with `#[aead(crate = "::vitaminc_aead")]`.
+stack-encrypt-derive = { path = "../stack-encrypt-derive" }
 # Compile-fail tests for the derive macros' guards — see tests/derive_ui.rs.
 trybuild = "1.0.118"
 futures-executor = "0.3.31"

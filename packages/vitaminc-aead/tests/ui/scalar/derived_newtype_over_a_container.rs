@@ -3,15 +3,21 @@
 //! can be absent. So neither newtype is a `Scalar`, by value or by
 //! reference. Both still derive `Encrypt`.
 
-use vitaminc_aead::{Encrypt, Scalar};
+// Stack Encrypt's derives. stack-encrypt depends on this crate, so each
+// derive here names this crate with `#[aead(crate = "::vitaminc_aead")]`.
+use stack_encrypt_derive::Encrypt;
+use vitaminc_aead::Scalar;
 
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Tags(Vec<String>);
 
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Nickname(Option<String>);
 
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Wrapper<T>(T);
 
 fn seals_one_leaf<S: Scalar>(_: S) {}

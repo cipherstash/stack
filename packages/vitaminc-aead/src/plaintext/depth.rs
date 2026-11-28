@@ -9,13 +9,19 @@
 //! These are `const fn`s so a type's depth is worked out at compile time,
 //! from its fields' depths.
 //!
+//! Stack Encrypt's `#[derive(Encrypt)]` writes a type's depth with these,
+//! and fails to compile a type that nests too deeply. The examples below
+//! use that derive. `stack-encrypt` depends on this crate, so they point
+//! the derive at this crate with `#[aead(crate = "::vitaminc_aead")]`.
+//!
 //! A generic type is checked where it is used at a concrete type, when that
 //! use is built (`cargo build`, not `cargo check`). `Holder<V128<u32>>` nests
 //! one level deeper than `MAX_DEPTH`, so building a use of it fails:
 //!
 //! ```compile_fail,E0080
 //! #![recursion_limit = "512"]
-//! use vitaminc_aead::{plan, Encrypt};
+//! use stack_encrypt_derive::Encrypt;
+//! use vitaminc_aead::plan;
 //!
 //! type V2<T> = Vec<Vec<T>>;
 //! type V4<T> = V2<V2<T>>;
@@ -26,6 +32,7 @@
 //! type V128<T> = V64<V64<T>>;
 //!
 //! #[derive(Encrypt)]
+//! #[aead(crate = "::vitaminc_aead")]
 //! struct Holder<T> {
 //!     value: T,
 //! }
@@ -37,7 +44,8 @@
 //!
 //! ```
 //! #![recursion_limit = "512"]
-//! use vitaminc_aead::{plan, Encrypt};
+//! use stack_encrypt_derive::Encrypt;
+//! use vitaminc_aead::plan;
 //!
 //! type V2<T> = Vec<Vec<T>>;
 //! type V4<T> = V2<V2<T>>;
@@ -48,6 +56,7 @@
 //! type V127<T> = V64<V32<V16<V8<V4<V2<Vec<T>>>>>>>;
 //!
 //! #[derive(Encrypt)]
+//! #[aead(crate = "::vitaminc_aead")]
 //! struct Holder<T> {
 //!     value: T,
 //! }
@@ -60,7 +69,7 @@
 //!
 //! ```compile_fail,E0080
 //! #![recursion_limit = "512"]
-//! use vitaminc_aead::Encrypt;
+//! use stack_encrypt_derive::Encrypt;
 //!
 //! type V2<T> = Vec<Vec<T>>;
 //! type V4<T> = V2<V2<T>>;
@@ -71,6 +80,7 @@
 //! type V128<T> = V64<V64<T>>;
 //!
 //! #[derive(Encrypt)]
+//! #[aead(crate = "::vitaminc_aead")]
 //! struct Row<'a> {
 //!     name: &'a str,
 //!     deep: V128<u32>,
@@ -82,7 +92,7 @@
 //!
 //! ```compile_fail,E0080
 //! #![recursion_limit = "512"]
-//! use vitaminc_aead::Encrypt;
+//! use stack_encrypt_derive::Encrypt;
 //!
 //! type V2<T> = Vec<Vec<T>>;
 //! type V4<T> = V2<V2<T>>;
@@ -96,6 +106,7 @@
 //! }
 //!
 //! #[derive(Encrypt)]
+//! #[aead(crate = "::vitaminc_aead")]
 //! struct User {
 //!     id: u32,
 //!     inner: legacy::User,
@@ -103,7 +114,9 @@
 //! # fn main() {}
 //! ```
 
-use crate::frame::MAX_DEPTH;
+// Also reachable here, so the too-deep message of a type derived with
+// `#[aead(crate = "::vitaminc_aead")]` names a path that resolves.
+pub use crate::frame::MAX_DEPTH;
 
 /// A scalar: nothing below it.
 pub const SCALAR: Option<usize> = Some(0);

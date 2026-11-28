@@ -264,13 +264,13 @@ describe('the scan sees every task mise sees', () => {
       [
         'packages/stack-auth/tasks.toml',
         'packages/stack-encrypt/tasks.toml',
+        'packages/stack-encrypt-derive/tasks.toml',
         'packages/stack-encrypt-jsonpath/tasks.toml',
         'packages/stack-guest-abi/tasks.toml',
         'packages/stack-kms/tasks.toml',
         'packages/stack-profile/tasks.toml',
         'packages/vitaminc-aead/tasks.toml',
         'packages/recipher-frame/tasks.toml',
-        'packages/vitaminc-aead-derive/tasks.toml',
       ].sort(),
     )
   })
@@ -317,12 +317,12 @@ describe('the scan sees every task mise sees', () => {
       [
         'doc:stack-auth',
         'doc:stack-encrypt',
+        'doc:stack-encrypt-derive',
         'doc:stack-encrypt-jsonpath',
         'doc:stack-guest-abi',
         'doc:stack-kms',
         'doc:stack-profile',
         'doc:vitaminc-aead',
-        'doc:vitaminc-aead-derive',
         'doc:recipher-frame',
       ].sort(),
     )

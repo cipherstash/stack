@@ -1,13 +1,17 @@
-//! Parsing of the `#[aead(...)]` container and field attributes.
+//! Parsing of the `#[aead(...)]` container and field attributes of
+//! `#[derive(Encrypt)]` and `#[derive(Decrypt)]`.
 
 use syn::{Attribute, Path, Result};
 
 /// Container-level options, from `#[aead(...)]` on the struct itself.
 pub(crate) struct ContainerAttrs {
-    /// Path to the `vitaminc_aead` crate in the generated code. Defaults to
-    /// `::vitaminc_aead`; overridden by `#[aead(crate = "...")]` so the macros
-    /// work through a re-export such as `::vitaminc::aead`.
-    pub(crate) krate: Path,
+    /// The module the generated code names every item through:
+    /// `<crate>::__derive`. `<crate>` is `::stack_encrypt` unless
+    /// `#[aead(crate = "...")]` names another path to it, such as a
+    /// re-export. Every path the expansion writes starts here, so the
+    /// deriving crate needs no dependency other than the one `<crate>`
+    /// names.
+    pub(crate) aead: Path,
     /// The type is recursive, from `#[aead(recursive)]`: its depth depends on
     /// the value, so it is checked by the walk rather than at compile time.
     /// Needed only for mutual recursion; a type that names itself in a field
@@ -37,10 +41,9 @@ impl ContainerAttrs {
             })?;
         }
 
-        Ok(Self {
-            krate: krate.unwrap_or_else(|| syn::parse_quote!(::vitaminc_aead)),
-            recursive,
-        })
+        let mut aead = krate.unwrap_or_else(|| syn::parse_quote!(::stack_encrypt));
+        aead.segments.push(syn::parse_quote!(__derive));
+        Ok(Self { aead, recursive })
     }
 }
 

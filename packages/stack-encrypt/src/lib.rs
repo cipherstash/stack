@@ -31,9 +31,12 @@
 //! has its own ZeroKMS data key and independently auditable retrieval.
 //!
 //! Structural encryption, searchable targets and derives use the existing
-//! plan/target engine. Its [`StackCipherText`] nodes and Vitamin C
+//! plan/target engine. Its [`StackCipherText`] nodes and the
 //! [`Encrypt`]/[`Decrypt`] visitors remain available through the low-level
-//! API while the owned Rust interface is extended beyond scalars.
+//! API while the owned Rust interface is extended beyond scalars. Derive
+//! `Encrypt` and `Decrypt` for a type of your own with
+//! `#[derive(stack_encrypt::Encrypt, stack_encrypt::Decrypt)]`, or write
+//! them by hand with the items in [`plaintext`].
 //!
 //! # Quick start
 //!
@@ -729,6 +732,7 @@ pub mod field_reference;
 pub mod json;
 pub mod keyset;
 pub mod op;
+pub mod plaintext;
 pub mod plan;
 pub mod refusal;
 pub mod sem;
@@ -770,16 +774,28 @@ pub use target::{
     Match, Ope, Ore, OreBlock, Pending, PendingFuture, Request, Responses, TermSet,
 };
 
-// Re-export the vitaminc AEAD surface callers need to drive the cipher, so they
-// don't have to depend on `vitaminc-aead` directly for the common path: a
-// value describes itself once (`Encrypt`) and names the sink that reads it
-// back (`Decrypt`). A context type of your own implements `IntoContext` once;
-// `IntoAad` and `IntoPrfContext` are vitaminc's blankets over it, so both
-// derivations see the same bytes.
+// The data model of a plaintext, so that a caller needs no dependency on
+// `vitaminc-aead`. A value describes itself once (`Encrypt`). It names the
+// sink that reads it back (`Decrypt`).
+//
+// `Scalar` marks a type that encrypts as one value. `FromScalar` builds a
+// type from one scalar. The items that the body of a hand-written impl names
+// are in `plaintext`.
+//
+// A context type of your own implements `IntoContext` once; `IntoAad` and
+// `IntoPrfContext` are vitaminc's blankets over it, so both derivations see
+// the same bytes.
 pub use vitaminc_aead::{
     CipherText, Context, ContextPiece, ContextTag, DecodeError, Decrypt, Encrypt, EncryptRef,
-    IntoAad, IntoContext, Node, PassthroughFrame, Unspecified,
+    FromScalar, IntoAad, IntoContext, Node, PassthroughFrame, Scalar, Unspecified,
 };
+// The derives of the two traits above. Each name is both the trait and its
+// derive, as serde's `Serialize` is.
+pub use stack_encrypt_derive::{Decrypt, Encrypt};
+// The code that `#[derive(Encrypt)]` and `#[derive(Decrypt)]` write names
+// each item through `::stack_encrypt::__derive`. Not an API.
+#[doc(hidden)]
+pub use vitaminc_aead::__derive;
 /// A type with an order target of its own: what an order index
 /// ([`Ore`], [`Ope`], [`OreBlock`]), an order term ([`sem::OreTerm`],
 /// [`sem::OpeTerm`], [`sem::OreBlockTerm`]) and the ordering operators

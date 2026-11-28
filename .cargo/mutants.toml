@@ -29,20 +29,27 @@ additional_cargo_args = ["--all-features"]
 test_tool = "nextest"
 additional_cargo_test_args = ["-E", "not binary(ui) & not test(stress_tests)"]
 
-# Skip the derive crate: its logic runs inside `#[proc_macro_derive]` entry
-# points at compile time, not in the instrumented test binary, so every
-# mutant there survives spuriously. Its behaviour is pinned by stack-encrypt's
-# `tests/derive.rs` and the trybuild UI suite instead.
+# Skip the record derives of stack-encrypt-derive (`EncryptTarget`,
+# `DecryptSource`, `predicate!`): their logic runs inside the
+# `#[proc_macro_derive]` entry points at compile time, not in the
+# instrumented test binary, so every mutant there survives spuriously. Their
+# behaviour is pinned by stack-encrypt's `tests/derive.rs` and the trybuild UI
+# suite instead.
 #
-# vitaminc-aead-derive is mutated: only its `#[proc_macro_derive]` shims in
-# lib.rs run at compile time, and the expansion they delegate to is in
-# modules its unit tests call directly.
+# Its `Encrypt` and `Decrypt` derives, in `src/value/`, are mutated: only
+# their `#[proc_macro_derive]` shims in lib.rs run at compile time, and the
+# expansion they delegate to is in modules its unit tests call directly.
 #
 # recipher-frame's Kani harnesses build only under `cfg(kani)`, so no
 # test binary contains them. kani.yml checks them.
 exclude_globs = [
-  "packages/stack-encrypt-derive/**",
-  "packages/vitaminc-aead-derive/src/lib.rs",
+  "packages/stack-encrypt-derive/src/lib.rs",
+  "packages/stack-encrypt-derive/src/attrs.rs",
+  "packages/stack-encrypt-derive/src/json_paths.rs",
+  "packages/stack-encrypt-derive/src/owned_decrypt.rs",
+  "packages/stack-encrypt-derive/src/owned_encrypt.rs",
+  "packages/stack-encrypt-derive/src/predicate.rs",
+  "packages/stack-encrypt-derive/src/shape.rs",
   "packages/recipher-frame/src/storage/proofs.rs",
 ]
 

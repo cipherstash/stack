@@ -1,0 +1,32 @@
+[package]
+name = "stack-encrypt-downstream"
+description = "A crate that depends on stack-encrypt alone, as an application does: it derives and hand-writes Encrypt and Decrypt"
+version = "0.0.0"
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license-file = "../stack-encrypt/LICENSE"
+# A test of how another crate uses stack-encrypt, never a release of its own.
+publish = false
+
+# stack-encrypt is the only dependency. `tests/manifest.rs` fails if a
+# dependency table other than `[dev-dependencies]` lists another crate. That
+# includes `[build-dependencies]` and the tables under `[target.<cfg>]`. The
+# test also fails if any table here names one of the AEAD crates that
+# stack-encrypt is built on.
+[dependencies]
+stack-encrypt = { path = "../stack-encrypt" }
+
+[dev-dependencies]
+# The in-memory key source the tests encrypt with.
+stack-encrypt = { path = "../stack-encrypt", features = ["test-support"] }
+tokio = { workspace = true, features = ["rt", "macros"] }
+# The compile-fail tests in `tests/ui`. They pin the errors that a user of
+# stack-encrypt reads when a derive is refused. This crate has no
+# `[features]`, so the errors are the same under every feature set
+# (`tests/ui.rs` says why).
+trybuild = "1"
+# `tests/manifest.rs` parses this manifest, so that it reads every form of
+# dependency table.
+toml = "1"

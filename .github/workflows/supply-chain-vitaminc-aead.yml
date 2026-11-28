@@ -1,8 +1,9 @@
 name: Supply chain (vitaminc-aead)
 
-# cargo deny and cargo vet over vitaminc-aead, recipher-frame and
-# vitaminc-aead-derive and their dependency graph ONLY. Their config is
-# supply-chain/vitaminc-aead/ (see its README.md). The rest of the root
+# cargo deny and cargo vet over three crates and their dependency graph
+# ONLY: vitaminc-aead, recipher-frame, and stack-encrypt-derive. The derive
+# is here because it writes every derived `Encrypt` and `Decrypt` impl. Their
+# config is supply-chain/vitaminc-aead/ (see its README.md). The rest of the root
 # workspace is not checked by either tool; that is #1842.
 #
 # Neither tool compiles anything: both read `cargo metadata` and Cargo.lock,
@@ -21,7 +22,7 @@ on:
     paths:
       - packages/vitaminc-aead/**
       - packages/recipher-frame/**
-      - packages/vitaminc-aead-derive/**
+      - packages/stack-encrypt-derive/**
       - supply-chain/vitaminc-aead/**
       - Cargo.toml
       - Cargo.lock
@@ -73,16 +74,25 @@ jobs:
 
       # `--manifest-path` on a workspace member checks that package's graph,
       # not the workspace's. `--locked` refuses to touch Cargo.lock, so the
-      # graph checked is the one the pull request ships.
+      # graph checked is the one the pull request ships. The derive's
+      # dev-dependencies reach the rest of the workspace. So the derive's
+      # check leaves out dev-dependencies (`--exclude-dev`). The tests of the
+      # other two crates use the derive, so their checks leave the derive
+      # out. See deny.toml.
       - name: cargo deny check, one crate at a time
         run: |
           status=0
-          for crate in vitaminc-aead recipher-frame vitaminc-aead-derive; do
+          check() {
+            local crate=$1
+            shift
             echo "::group::$crate"
-            cargo deny --locked --config supply-chain/vitaminc-aead/deny.toml \
+            cargo deny --locked "$@" --config supply-chain/vitaminc-aead/deny.toml \
               --manifest-path "packages/$crate/Cargo.toml" check || status=1
             echo "::endgroup::"
-          done
+          }
+          check vitaminc-aead --exclude stack-encrypt-derive
+          check recipher-frame --exclude stack-encrypt-derive
+          check stack-encrypt-derive --exclude-dev
           exit "$status"
 
   vet:
@@ -106,7 +116,8 @@ jobs:
           cache_key_prefix: mise-v1-ubuntu-2404
 
       # The filter drops every other root workspace member, so the graph
-      # vetted is the three crates and their dependencies. `--locked` reads
+      # vetted is the three crates, stack-encrypt-jsonpath (the derive's
+      # path grammar), and their dependencies. `--locked` reads
       # imports.lock as committed rather than fetching the registries.
       - name: cargo vet
         id: vet

@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: `TooDeep` nests deeper than `stack_encrypt::plaintext::depth::MAX_DEPTH` levels. Stack Encrypt refuses to encrypt a value nested that deeply, so it would refuse every full value of this type
+  --> tests/ui/too_deep.rs:14:10
+   |
+14 | #[derive(Encrypt)]
+   |          ^^^^^^^ evaluation of `_` failed here

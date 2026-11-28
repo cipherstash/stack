@@ -22,6 +22,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - For a fieldless enum, or for a newtype whose inner type is a `Scalar`, delete your impl.
   - When the inner type is not a `Scalar`, but you know that its value is one leaf, stop deriving `Encrypt`.
     Write `Encrypt` for the type and for its borrow by hand, with `const DEPTH: Option<usize> = depth::SCALAR;`, and keep your `Scalar` impl.
+- This crate no longer has derives of its own (#2013).
+  `#[derive(Encrypt)]` and `#[derive(Decrypt)]` are Stack Encrypt's.
+  `vitaminc_aead::Encrypt` and `vitaminc_aead::Decrypt` are now the traits alone.
+  Import the derives from `stack_encrypt` instead, as `stack_encrypt::{Decrypt, Encrypt}`.
+  The attributes and the wire shape are the same.
+  A crate that cannot depend on `stack-encrypt` can use `stack-encrypt-derive` with `#[aead(crate = "::vitaminc_aead")]` on each derived type, as this crate's own tests do.
+- The hidden `plaintext::__private` module is gone.
+  The items that the derived code names are in the hidden `__derive` module.
+  `stack_encrypt::__derive` re-exports that module.
+  Neither module is an API.
 
 ### Added
 

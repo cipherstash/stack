@@ -1,5 +1,5 @@
-error[E0080]: evaluation panicked: `TooDeep` nests deeper than `MAX_DEPTH` levels, so the encrypting sink would refuse its fully populated values
-  --> tests/ui/derive/sink_too_deep.rs:19:10
+error[E0080]: evaluation panicked: `TooDeep` nests deeper than `vitaminc_aead::plaintext::depth::MAX_DEPTH` levels. Stack Encrypt refuses to encrypt a value nested that deeply, so it would refuse every full value of this type
+  --> tests/ui/derive/sink_too_deep.rs:21:10
    |
-19 | #[derive(Encrypt)]
+21 | #[derive(Encrypt)]
    |          ^^^^^^^ evaluation of `_` failed here

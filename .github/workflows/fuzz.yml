@@ -31,7 +31,7 @@ on:
       - packages/stack-encrypt/**
       - packages/vitaminc-aead/**
       - packages/recipher-frame/**
-      - packages/vitaminc-aead-derive/**
+      - packages/stack-encrypt-derive/**
       - Cargo.toml
       - Cargo.lock
       - mise.toml

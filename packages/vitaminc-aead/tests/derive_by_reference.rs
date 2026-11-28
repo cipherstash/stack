@@ -6,6 +6,9 @@
 
 use std::collections::BTreeMap;
 
+// Stack Encrypt's derives. stack-encrypt depends on this crate, so each
+// derive here names this crate with `#[aead(crate = "::vitaminc_aead")]`.
+use stack_encrypt_derive::Encrypt;
 use vitaminc_aead::{to_frame, Encrypt, EncryptRef};
 use vitaminc_protected::Controlled;
 
@@ -19,6 +22,7 @@ fn lent<T: ?Sized + EncryptRef>(value: &T) -> Vec<u8> {
 }
 
 #[derive(Clone, Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Bag<T> {
     items: Vec<T>,
     maybe: Option<T>,
@@ -39,11 +43,13 @@ fn a_generic_struct_walks_by_reference_with_its_parameter_in_containers() {
 }
 
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Named<'a> {
     name: &'a str,
 }
 
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Roster<'a> {
     items: Vec<Named<'a>>,
     maybe: Option<Named<'a>>,
@@ -87,6 +93,7 @@ impl Encrypt for &Label {
 }
 
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Labelled {
     #[aead(passthrough)]
     label: Label,
@@ -94,6 +101,7 @@ struct Labelled {
 }
 
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Tagged<T> {
     #[aead(passthrough)]
     tag: T,
@@ -132,6 +140,7 @@ fn a_passthrough_field_need_only_be_a_source_by_reference() {
 }
 
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Borrowing<'a> {
     name: vitaminc_aead::Lent<'a, String>,
 }
@@ -141,6 +150,7 @@ struct Borrowing<'a> {
 #[test]
 fn a_lent_field_walks_as_what_it_lends() {
     #[derive(Encrypt)]
+    #[aead(crate = "::vitaminc_aead")]
     struct Owning {
         name: String,
     }

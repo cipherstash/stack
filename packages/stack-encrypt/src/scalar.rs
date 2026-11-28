@@ -49,8 +49,8 @@ pub(crate) mod sealed {
 /// `OpaqueEncode` is implemented for every owned type `S` that meets two
 /// conditions:
 ///
-/// - `&S` implements Vitamin C's [`Scalar`] marker, so Vitamin C encrypts it
-///   as a single value.
+/// - `&S` implements the [`Scalar`] marker, so it encrypts as
+///   a single value.
 /// - `S` implements [`Zeroize`], so it can be wiped.
 ///
 /// These built-in types meet both conditions:
@@ -69,9 +69,9 @@ pub(crate) mod sealed {
 /// derive marks the newtype `Scalar` when its inner type is a `Scalar`.
 ///
 /// The newtype encrypts exactly as its inner value does. So
-/// `keyset.decrypt::<String>` opens what an `Email` encrypted. The derive
-/// comes from Vitamin C, so your crate needs `vitaminc-aead` as a
-/// dependency to use it.
+/// `keyset.decrypt::<String>` opens what an `Email` encrypted. The derive is
+/// Stack Encrypt's, so your crate needs no dependency other than
+/// `stack-encrypt` to use it.
 ///
 /// ```
 /// # async fn example() -> Result<(), stack_encrypt::Error> {
@@ -130,8 +130,9 @@ pub(crate) mod sealed {
 /// # let _ = encrypt::<stack_encrypt::kms::FakeDataKeySource>;
 /// ```
 ///
-/// You can also write the `Encrypt` impl of a type yourself. Such a type is
-/// an `OpaqueEncode` type when you implement `Scalar` for its borrow.
+/// You can also write the `Encrypt` impl of a type yourself, with the items
+/// in [`plaintext`](crate::plaintext). Such a type is an `OpaqueEncode` type
+/// when you implement `Scalar` for its borrow.
 ///
 /// A `Scalar` impl states that the borrow encrypts as one value. So the
 /// borrow's `Encrypt` impl must set its [`DEPTH`](crate::Encrypt::DEPTH):
@@ -140,7 +141,7 @@ pub(crate) mod sealed {
 /// const DEPTH: Option<usize> = depth::SCALAR;
 /// ```
 ///
-/// `depth` is `vitaminc_aead::plaintext::depth`. The default `DEPTH` is
+/// `depth` is [`plaintext::depth`](crate::plaintext::depth). The default `DEPTH` is
 /// `None`. `None` means that the depth depends on the value. `keyset.encrypt`
 /// checks the `DEPTH` when your program is built. A `Scalar` type whose
 /// borrow has any other `DEPTH` fails the build.
@@ -160,7 +161,7 @@ pub(crate) mod sealed {
 /// into one `Ciphertext`. A `Vec` of any other `OpaqueEncode` type encrypts
 /// element by element into a `Vec<Ciphertext>`, through [`EncryptInto`]. The
 /// [crate docs on collections](crate#collections) explain how. `u8` is not an `OpaqueEncode` type,
-/// because Vitamin C encrypts a `Vec<u8>` as one byte string, not as a
+/// because a `Vec<u8>` encrypts as one byte string, not as a
 /// collection of bytes.
 ///
 /// # Nullable values
@@ -266,8 +267,8 @@ impl<S: crate::EncryptRef> sealed::OneValue for S where for<'a> &'a S: Scalar {}
 /// ```
 /// use stack_encrypt::kms::FakeDataKeySource;
 /// use stack_encrypt::{Encrypt, EncryptRef, KeysetCipher};
-/// use vitaminc_aead::plaintext::{depth, Sink};
-/// use vitaminc_aead::Scalar;
+/// use stack_encrypt::plaintext::{depth, Sink};
+/// use stack_encrypt::Scalar;
 /// use zeroize::Zeroize;
 ///
 /// // A type whose borrow encrypts as its one `String`.
@@ -299,8 +300,8 @@ impl<S: crate::EncryptRef> sealed::OneValue for S where for<'a> &'a S: Scalar {}
 /// ```compile_fail,E0080
 /// use stack_encrypt::kms::FakeDataKeySource;
 /// use stack_encrypt::{Encrypt, EncryptRef, KeysetCipher};
-/// use vitaminc_aead::plaintext::{depth, Sink};
-/// use vitaminc_aead::Scalar;
+/// use stack_encrypt::plaintext::{depth, Sink};
+/// use stack_encrypt::Scalar;
 /// use zeroize::Zeroize;
 ///
 /// // A type whose borrow encrypts as its one `String`.
@@ -337,9 +338,9 @@ where
             assert!(
                 vitaminc_aead::plaintext::depth::is_scalar(<S as crate::EncryptRef>::REF_DEPTH),
                 "a type marked `Scalar` must encrypt as one value. Set \
-                 `const DEPTH: Option<usize> = depth::SCALAR;` in the `Encrypt` impl that you \
-                 wrote for its borrow. For a newtype that derives `Encrypt`, set it on the \
-                 innermost type whose `Encrypt` impl you wrote by hand.",
+                 `const DEPTH: Option<usize> = stack_encrypt::plaintext::depth::SCALAR;` in the \
+                 `Encrypt` impl that you wrote for its borrow. For a newtype that derives \
+                 `Encrypt`, set it on the innermost type whose `Encrypt` impl you wrote by hand.",
             )
         };
         crate::target::core::encrypt_opaque(self.lend(), cipher, context)

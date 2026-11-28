@@ -6,7 +6,7 @@ option is one the author believes is in effect.
 
 | Attribute | Applies to | Effect |
 |---|---|---|
-| `crate = "path"` | container | Name the path to `vitaminc_aead` in the generated code |
+| `crate = "path"` | container | Name the path to `stack_encrypt` in the generated code |
 | `recursive` | container | Mark a mutually recursive type, whose depth the derive cannot work out |
 | `rename = "name"` | field | Store the field under `name` instead of its own name |
 | `passthrough` | field | Store the field **in the clear**, unencrypted and unauthenticated |
@@ -17,30 +17,45 @@ Enum variants take no attributes.
 
 ## `#[aead(crate = "...")]`
 
-Points the generated code at a re-export of `vitaminc_aead`, for callers who
-depend on it through an umbrella crate rather than directly:
+Names the path to `stack_encrypt` in the generated code. Use it in a crate
+that reaches `stack_encrypt` through a re-export of another crate:
 
 ```rust
-use vitaminc::aead::{Decrypt, Encrypt};
+mod platform {
+    // A crate of your own that re-exports Stack Encrypt.
+    pub use stack_encrypt;
+}
+
+use platform::stack_encrypt::{Decrypt, Encrypt};
 
 #[derive(Encrypt, Decrypt)]
-#[aead(crate = "::vitaminc::aead")]
+#[aead(crate = "crate::platform::stack_encrypt")]
 struct User {
     name: String,
 }
-# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
-#     use vitaminc::protected::Controlled;
-#     use vitaminc_aead::Encrypt;
-#     let bytes = vitaminc_aead::to_frame(value).unwrap();
-#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
-#     frame.visit(T::sink()).unwrap()
+# fn round_trip<T: stack_encrypt::Encrypt + stack_encrypt::Decrypt>(value: T) -> T {
+#     round_trip_as(value)
 # }
+# fn round_trip_as<T: stack_encrypt::Encrypt, U: stack_encrypt::Decrypt>(value: T) -> U {
+#     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+#         let cipher = stack_encrypt::StackCipher::builder()
+#             .kms(stack_encrypt::kms::FakeDataKeySource::new())
+#             .init()
+#             .await
+#             .unwrap();
+#         let keyset = cipher.default_keyset();
+#         let stored = keyset.encrypt_tree(value, ("docs", "example")).await.unwrap();
+#         keyset.decrypt_tree(stored, ("docs", "example")).await.unwrap()
+#     })
+# }
+# fn main() {
 # let user = round_trip(User { name: "Ada".into() });
 # assert_eq!(user.name, "Ada");
+# }
 ```
 
-Every path the expansion emits is redirected, so the deriving crate needs no
-direct dependency on `vitaminc_aead` at all.
+Every path the generated code writes starts at that path, so the deriving
+crate needs no direct dependency on `stack_encrypt`.
 
 ## `#[aead(recursive)]`
 
@@ -49,9 +64,14 @@ fails to compile a type deeper than `MAX_DEPTH`, whose fully populated values
 the encrypting sink would always refuse:
 
 ```text
-error[E0080]: evaluation panicked: `TooDeep` nests deeper than `MAX_DEPTH` levels, so
-              the encrypting sink would refuse its fully populated values
+error[E0080]: evaluation panicked: `TooDeep` nests deeper than
+              `stack_encrypt::plaintext::depth::MAX_DEPTH` levels. Stack Encrypt refuses
+              to encrypt a value nested that deeply, so it would refuse every full value
+              of this type
 ```
+
+The path in the message starts at the `crate` path, when the type names
+one.
 
 A recursive type has no fixed depth: a tree can be as deep as its data. For a
 type that names itself in a field, directly or as `Self`, the derive sees this
@@ -59,7 +79,7 @@ and leaves the check to the walk, which refuses a value that is too deep when
 it is encrypted:
 
 ```rust
-use vitaminc_aead::{Decrypt, Encrypt};
+use stack_encrypt::{Decrypt, Encrypt};
 
 #[derive(Encrypt, Decrypt)]
 struct Tree {
@@ -68,13 +88,19 @@ struct Tree {
 }
 # assert_eq!(Tree::DEPTH, None);
 # let tree = Tree { label: "root".into(), children: vec![Tree { label: "child".into(), children: vec![] }] };
-# let bytes = vitaminc_aead::to_frame(tree).unwrap();
-# use vitaminc::protected::Controlled;
-# assert!(vitaminc_aead::Frame::parse(bytes.risky_ref()).is_ok());
+# tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+#     let cipher = stack_encrypt::StackCipher::builder()
+#         .kms(stack_encrypt::kms::FakeDataKeySource::new())
+#         .init()
+#         .await
+#         .unwrap();
+#     let keyset = cipher.default_keyset();
+#     assert!(keyset.encrypt_tree(tree, ("docs", "tree")).await.is_ok());
+# });
 ```
 
-This example checks recursive encoding. Decoding this `Tree` with
-`Frame::visit(Tree::sink())` currently hits a compiler recursion limit.
+This example checks that a recursive `Tree` encrypts. Decrypting this
+`Tree` hits a compiler recursion limit.
 
 The derive looks for the type's bare name. A field that names the type
 through a path, such as `crate::models::Tree`, is read as another type with the
@@ -85,7 +111,7 @@ derive, and fails to compile with `error[E0391]: cycle detected when simplifying
 each type's `DEPTH`. Mark every type in the cycle `recursive`:
 
 ```rust
-use vitaminc_aead::{Decrypt, Encrypt};
+use stack_encrypt::{Decrypt, Encrypt};
 
 #[derive(Encrypt, Decrypt)]
 #[aead(recursive)]
@@ -98,12 +124,20 @@ struct Even {
 struct Odd {
     next: Vec<Even>,
 }
-# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
-#     use vitaminc::protected::Controlled;
-#     use vitaminc_aead::Encrypt;
-#     let bytes = vitaminc_aead::to_frame(value).unwrap();
-#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
-#     frame.visit(T::sink()).unwrap()
+# fn round_trip<T: stack_encrypt::Encrypt + stack_encrypt::Decrypt>(value: T) -> T {
+#     round_trip_as(value)
+# }
+# fn round_trip_as<T: stack_encrypt::Encrypt, U: stack_encrypt::Decrypt>(value: T) -> U {
+#     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+#         let cipher = stack_encrypt::StackCipher::builder()
+#             .kms(stack_encrypt::kms::FakeDataKeySource::new())
+#             .init()
+#             .await
+#             .unwrap();
+#         let keyset = cipher.default_keyset();
+#         let stored = keyset.encrypt_tree(value, ("docs", "example")).await.unwrap();
+#         keyset.decrypt_tree(stored, ("docs", "example")).await.unwrap()
+#     })
 # }
 # let even = round_trip(Even { next: vec![Odd { next: vec![] }] });
 # assert_eq!(even.next.len(), 1);
@@ -122,7 +156,7 @@ concrete type, under `cargo build` rather than `cargo check`.
 Changes the map key a field is stored under:
 
 ```rust
-use vitaminc_aead::{Decrypt, Encrypt};
+use stack_encrypt::{Decrypt, Encrypt};
 
 #[derive(Encrypt, Decrypt)]
 struct User {
@@ -130,18 +164,26 @@ struct User {
     name: String,
 }
 // ciphertext: Map { "n": … }
-# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
-#     use vitaminc::protected::Controlled;
-#     use vitaminc_aead::Encrypt;
-#     let bytes = vitaminc_aead::to_frame(value).unwrap();
-#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
-#     frame.visit(T::sink()).unwrap()
+# fn round_trip<T: stack_encrypt::Encrypt + stack_encrypt::Decrypt>(value: T) -> T {
+#     round_trip_as(value)
+# }
+# fn round_trip_as<T: stack_encrypt::Encrypt, U: stack_encrypt::Decrypt>(value: T) -> U {
+#     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+#         let cipher = stack_encrypt::StackCipher::builder()
+#             .kms(stack_encrypt::kms::FakeDataKeySource::new())
+#             .init()
+#             .await
+#             .unwrap();
+#         let keyset = cipher.default_keyset();
+#         let stored = keyset.encrypt_tree(value, ("docs", "example")).await.unwrap();
+#         keyset.decrypt_tree(stored, ("docs", "example")).await.unwrap()
+#     })
 # }
 # let user = round_trip(User { name: "Ada".into() });
 # assert_eq!(user.name, "Ada");
-# let plan = vitaminc_aead::plan::<_, std::convert::Infallible, _>(user, ()).unwrap();
-# let vitaminc_aead::CipherText::Map(entries) = plan else { panic!("expected a map") };
-# assert_eq!(entries[0].0, "n");
+# // The stored map has the key `n`, so it decrypts into a map with that key.
+# let renamed: std::collections::HashMap<String, String> = round_trip_as(User { name: "Ada".into() });
+# assert_eq!(renamed.get("n").map(String::as_str), Some("Ada"));
 ```
 
 Field names are part of the ciphertext contract — each key is bound into the
@@ -160,7 +202,7 @@ Stores a field as a cleartext map entry, so it can be an ordinary database
 column that other queries select, filter, and update without holding the key:
 
 ```rust
-use vitaminc_aead::{Decrypt, Encrypt};
+use stack_encrypt::{Decrypt, Encrypt};
 
 #[derive(Encrypt, Decrypt)]
 struct Row {
@@ -168,12 +210,20 @@ struct Row {
     tenant: String,   // a plain column
     ssn: String,      // encrypted
 }
-# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
-#     use vitaminc::protected::Controlled;
-#     use vitaminc_aead::Encrypt;
-#     let bytes = vitaminc_aead::to_frame(value).unwrap();
-#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
-#     frame.visit(T::sink()).unwrap()
+# fn round_trip<T: stack_encrypt::Encrypt + stack_encrypt::Decrypt>(value: T) -> T {
+#     round_trip_as(value)
+# }
+# fn round_trip_as<T: stack_encrypt::Encrypt, U: stack_encrypt::Decrypt>(value: T) -> U {
+#     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+#         let cipher = stack_encrypt::StackCipher::builder()
+#             .kms(stack_encrypt::kms::FakeDataKeySource::new())
+#             .init()
+#             .await
+#             .unwrap();
+#         let keyset = cipher.default_keyset();
+#         let stored = keyset.encrypt_tree(value, ("docs", "example")).await.unwrap();
+#         keyset.decrypt_tree(stored, ("docs", "example")).await.unwrap()
+#     })
 # }
 # let row = round_trip(Row { tenant: "acme".into(), ssn: "example-only".into() });
 # assert_eq!(row.tenant, "acme");
@@ -232,7 +282,7 @@ somewhere else, such as an ordinary column alongside the ciphertext, or a
 value derived from the others:
 
 ```rust
-use vitaminc_aead::{Decrypt, Encrypt};
+use stack_encrypt::{Decrypt, Encrypt};
 
 #[derive(Encrypt, Decrypt)]
 struct User {
@@ -240,12 +290,20 @@ struct User {
     id: u64,          // not in the ciphertext at all
     password: String, // encrypted
 }
-# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
-#     use vitaminc::protected::Controlled;
-#     use vitaminc_aead::Encrypt;
-#     let bytes = vitaminc_aead::to_frame(value).unwrap();
-#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
-#     frame.visit(T::sink()).unwrap()
+# fn round_trip<T: stack_encrypt::Encrypt + stack_encrypt::Decrypt>(value: T) -> T {
+#     round_trip_as(value)
+# }
+# fn round_trip_as<T: stack_encrypt::Encrypt, U: stack_encrypt::Decrypt>(value: T) -> U {
+#     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+#         let cipher = stack_encrypt::StackCipher::builder()
+#             .kms(stack_encrypt::kms::FakeDataKeySource::new())
+#             .init()
+#             .await
+#             .unwrap();
+#         let keyset = cipher.default_keyset();
+#         let stored = keyset.encrypt_tree(value, ("docs", "example")).await.unwrap();
+#         keyset.decrypt_tree(stored, ("docs", "example")).await.unwrap()
+#     })
 # }
 # let user = round_trip(User { id: 42, password: "example-only".into() });
 # assert_eq!(user.id, 0);
@@ -272,17 +330,25 @@ swaps the field for its default with `core::mem::take` instead, and the empty
 value left behind is dropped, and wiped, with `self`:
 
 ```rust
-use vitaminc_aead::{Decrypt, Encrypt};
+use stack_encrypt::{Decrypt, Encrypt};
 use zeroize::ZeroizeOnDrop;
 
 #[derive(Encrypt, Decrypt, ZeroizeOnDrop)]
 struct SecretToken(#[aead(take)] String);
-# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
-#     use vitaminc::protected::Controlled;
-#     use vitaminc_aead::Encrypt;
-#     let bytes = vitaminc_aead::to_frame(value).unwrap();
-#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
-#     frame.visit(T::sink()).unwrap()
+# fn round_trip<T: stack_encrypt::Encrypt + stack_encrypt::Decrypt>(value: T) -> T {
+#     round_trip_as(value)
+# }
+# fn round_trip_as<T: stack_encrypt::Encrypt, U: stack_encrypt::Decrypt>(value: T) -> U {
+#     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+#         let cipher = stack_encrypt::StackCipher::builder()
+#             .kms(stack_encrypt::kms::FakeDataKeySource::new())
+#             .init()
+#             .await
+#             .unwrap();
+#         let keyset = cipher.default_keyset();
+#         let stored = keyset.encrypt_tree(value, ("docs", "example")).await.unwrap();
+#         keyset.decrypt_tree(stored, ("docs", "example")).await.unwrap()
+#     })
 # }
 # let token = round_trip(SecretToken("example-only".into()));
 # assert_eq!(token.0, "example-only");

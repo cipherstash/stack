@@ -2289,7 +2289,7 @@ checksum = "62cacd4dae485e98cfe5407e919187a8468dd933ea4234be5115b7d13a30f3c6"
 dependencies = [
  "bytes",
  "serde",
- "vitaminc-aead-derive 0.5.1",
+ "vitaminc-aead-derive",
  "vitaminc-context 0.5.1",
  "vitaminc-protected 0.5.1",
  "vitaminc-random 0.5.1",
@@ -2304,7 +2304,6 @@ dependencies = [
  "futures-util",
  "serde",
  "thiserror 2.0.20",
- "vitaminc-aead-derive 0.10.0",
  "vitaminc-context 0.10.0",
  "vitaminc-protected 0.10.0",
  "vitaminc-random 0.10.0",
@@ -2316,15 +2315,6 @@ name = "vitaminc-aead-derive"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ff34056b70a8417ad3bf9db73b2bd3be97f448794566c6de2080bd8a7cd9b6b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.6",
-]
-
-[[package]]
-name = "vitaminc-aead-derive"
-version = "0.10.0"
 dependencies = [
  "proc-macro2",
  "quote",

@@ -16,14 +16,14 @@ use quote::{format_ident, quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{parse_quote, DeriveInput, Result};
 
-use crate::{
+use super::{
     attrs::ContainerAttrs,
     shape::{FieldInfo, Shape, VariantInfo},
 };
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let attrs = ContainerAttrs::parse(&input.attrs)?;
-    let krate = &attrs.krate;
+    let aead = &attrs.aead;
     let shape = Shape::parse(&input)?;
     let name = &input.ident;
     let vis = &input.vis;
@@ -32,7 +32,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     // of type `Vec<T>` picks up `Vec<T>: Decrypt` from the blanket impl.
     let mut generics = input.generics.clone();
     for param in generics.type_params_mut() {
-        param.bounds.push(parse_quote!(#krate::typed::Decrypt));
+        param.bounds.push(parse_quote!(#aead::Decrypt));
     }
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     // The generated items are declared with the struct's own generics, and
@@ -44,7 +44,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let marker = quote!(::core::marker::PhantomData<fn() -> #name #ty_generics>);
 
     let expanded = match &shape {
-        Shape::Enum(variants) => enum_target(krate, &input, variants),
+        Shape::Enum(variants) => enum_target(aead, &input, variants),
         Shape::Newtype(field) => {
             let inner = &field.ty;
             let wrap = format_ident!("__{name}DecryptWrap");
@@ -53,9 +53,9 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                 #vis struct #wrap #decl_generics (#marker) #decl_where;
 
                 #[automatically_derived]
-                impl #impl_generics #krate::typed::Rewrap<#inner> for #wrap #ty_generics #where_clause {
+                impl #impl_generics #aead::Rewrap<#inner> for #wrap #ty_generics #where_clause {
                     type Output = #name #ty_generics;
-                    fn rewrap(__value: #inner) -> ::core::result::Result<Self::Output, #krate::DecodeError> {
+                    fn rewrap(__value: #inner) -> ::core::result::Result<Self::Output, #aead::DecodeError> {
                         ::core::result::Result::Ok(#name(__value))
                     }
                 }
@@ -63,29 +63,29 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                 // Transparent, mirroring the `Encrypt` side: the inner
                 // type's sink, with its result rewrapped.
                 #[automatically_derived]
-                impl #impl_generics #krate::typed::Decrypt for #name #ty_generics #where_clause {
-                    type Sink = #krate::typed::Wrapped<
-                        <#inner as #krate::typed::Decrypt>::Sink,
+                impl #impl_generics #aead::Decrypt for #name #ty_generics #where_clause {
+                    type Sink = #aead::Wrapped<
+                        <#inner as #aead::Decrypt>::Sink,
                         #wrap #ty_generics,
                     >;
-                    fn reads_null(__ty: #krate::FixedType) -> bool {
-                        <#inner as #krate::typed::Decrypt>::reads_null(__ty)
+                    fn reads_null(__ty: #aead::FixedType) -> bool {
+                        <#inner as #aead::Decrypt>::reads_null(__ty)
                     }
                     fn sink() -> Self::Sink {
-                        #krate::typed::Wrapped::new(<#inner as #krate::typed::Decrypt>::sink())
+                        #aead::Wrapped::new(<#inner as #aead::Decrypt>::sink())
                     }
                 }
             }
         }
-        Shape::Map(fields) => map_target(krate, &input, fields, &marker),
-        Shape::Empty => map_target(krate, &input, &[], &marker),
+        Shape::Map(fields) => map_target(aead, &input, fields, &marker),
+        Shape::Empty => map_target(aead, &input, &[], &marker),
     };
 
     Ok(expanded)
 }
 
 fn map_target(
-    krate: &syn::Path,
+    aead: &syn::Path,
     input: &DeriveInput,
     fields: &[FieldInfo],
     marker: &TokenStream,
@@ -95,7 +95,7 @@ fn map_target(
     let expected = name.to_string();
     let mut generics = input.generics.clone();
     for param in generics.type_params_mut() {
-        param.bounds.push(parse_quote!(#krate::typed::Decrypt));
+        param.bounds.push(parse_quote!(#aead::Decrypt));
     }
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let (decl_generics, _, decl_where) = input.generics.split_for_impl();
@@ -120,21 +120,21 @@ fn map_target(
     let field_sink = |field: &FieldInfo| {
         let ty = &field.ty;
         if field.passthrough {
-            quote!(#krate::typed::Clear<#ty, #krate::typed::Slot<'__s, #ty>>)
+            quote!(#aead::Clear<#ty, #aead::Slot<'__s, #ty>>)
         } else {
-            quote!(#krate::typed::Forward<#ty, #krate::typed::Slot<'__s, #ty>>)
+            quote!(#aead::Forward<#ty, #aead::Slot<'__s, #ty>>)
         }
     };
     let entry_ty = stored.iter().rev().fold(None, |tail, field| {
         let head = field_sink(field);
         Some(match tail {
             None => head,
-            Some(tail) => quote!(#krate::typed::Either<#head, #tail>),
+            Some(tail) => quote!(#aead::Either<#head, #tail>),
         })
     });
     // An empty struct hands out no entry sink at all; the type still has to
     // be named.
-    let entry_ty = entry_ty.unwrap_or_else(|| quote!(#krate::typed::Nothing));
+    let entry_ty = entry_ty.unwrap_or_else(|| quote!(#aead::Nothing));
 
     let arms = stored.iter().enumerate().map(|(index, field)| {
         let key = &field.key;
@@ -144,14 +144,14 @@ fn map_target(
             // Nothing here is verified — no tag covers a passthrough entry
             // and nothing binds its key — so what comes back is untrusted
             // input, exactly as the column it came from is.
-            quote!(#krate::typed::Clear::new(#krate::typed::Slot(&mut self.#local)))
+            quote!(#aead::Clear::new(#aead::Slot(&mut self.#local)))
         } else {
             // Spanned to the field's type, so "`Foo` does not implement
             // `Decrypt`" points at the field rather than at the derive.
-            let sink = quote_spanned!(ty.span()=> <#ty as #krate::typed::Decrypt>::sink());
-            quote!(#krate::typed::Forward(
+            let sink = quote_spanned!(ty.span()=> <#ty as #aead::Decrypt>::sink());
+            quote!(#aead::Forward(
                 #sink,
-                #krate::typed::Slot(&mut self.#local),
+                #aead::Slot(&mut self.#local),
             ))
         };
         let last = index + 1 == stored.len();
@@ -159,9 +159,9 @@ fn map_target(
             if last {
                 build
             } else {
-                quote!(#krate::typed::Either::Left(#build))
+                quote!(#aead::Either::Left(#build))
             },
-            |inner, _| quote!(#krate::typed::Either::Right(#inner)),
+            |inner, _| quote!(#aead::Either::Right(#inner)),
         );
         // The walk refuses a repeated key before any leaf is opened; this
         // catches a source that does not, rather than let last-wins
@@ -169,7 +169,7 @@ fn map_target(
         quote! {
             #key => {
                 if self.#local.is_some() {
-                    return ::core::result::Result::Err(#krate::DecodeError::duplicate_key(__key));
+                    return ::core::result::Result::Err(#aead::DecodeError::duplicate_key(__key));
                 }
                 ::core::result::Result::Ok(#wrapped)
             }
@@ -185,7 +185,7 @@ fn map_target(
         } else {
             // A missing field is a refusal, not a default: an absent entry
             // is an unauthenticated one.
-            quote!(#member: self.#local.ok_or(#krate::DecodeError::MissingField(#key))?,)
+            quote!(#member: self.#local.ok_or(#aead::DecodeError::MissingField(#key))?,)
         }
     });
 
@@ -200,32 +200,32 @@ fn map_target(
         }
 
         #[automatically_derived]
-        impl #impl_generics #krate::Sink for #sink #ty_generics #where_clause {
+        impl #impl_generics #aead::Sink for #sink #ty_generics #where_clause {
             type Ok = #name #ty_generics;
-            type Error = #krate::DecodeError;
-            type Seq = #krate::typed::Never<#name #ty_generics>;
+            type Error = #aead::DecodeError;
+            type Seq = #aead::Never<#name #ty_generics>;
             type Map = #map #ty_generics;
 
             fn scalar(
                 self,
-                _: ::core::option::Option<#krate::Logical>,
-                _: #krate::Physical<'_>,
+                _: ::core::option::Option<#aead::Logical>,
+                _: #aead::Physical<'_>,
             ) -> ::core::result::Result<Self::Ok, Self::Error> {
-                ::core::result::Result::Err(#krate::DecodeError::Expected(#expected))
+                ::core::result::Result::Err(#aead::DecodeError::Expected(#expected))
             }
 
             fn typed_null(
                 self,
-                _: #krate::FixedType,
+                _: #aead::FixedType,
             ) -> ::core::result::Result<Self::Ok, Self::Error> {
-                ::core::result::Result::Err(#krate::DecodeError::Expected(#expected))
+                ::core::result::Result::Err(#aead::DecodeError::Expected(#expected))
             }
 
             fn seq(
                 self,
                 _: ::core::option::Option<usize>,
             ) -> ::core::result::Result<Self::Seq, Self::Error> {
-                ::core::result::Result::Err(#krate::DecodeError::Expected(#expected))
+                ::core::result::Result::Err(#aead::DecodeError::Expected(#expected))
             }
 
             fn map(
@@ -242,17 +242,17 @@ fn map_target(
             // for a sealed struct.
             fn passthrough<__P>(self, _: &__P) -> ::core::result::Result<Self::Ok, Self::Error>
             where
-                __P: ?::core::marker::Sized + #krate::EncryptRef,
+                __P: ?::core::marker::Sized + #aead::EncryptRef,
             {
-                ::core::result::Result::Err(#krate::DecodeError::Expected(#expected))
+                ::core::result::Result::Err(#aead::DecodeError::Expected(#expected))
             }
         }
 
         #[automatically_derived]
         #[allow(clippy::type_complexity)]
-        impl #impl_generics #krate::MapSink for #map #ty_generics #where_clause {
+        impl #impl_generics #aead::MapSink for #map #ty_generics #where_clause {
             type Ok = #name #ty_generics;
-            type Error = #krate::DecodeError;
+            type Error = #aead::DecodeError;
             type Entry<'__s>
                 = #entry_ty
             where
@@ -269,7 +269,7 @@ fn map_target(
                     #(#arms)*
                     // Unknown keys are refused rather than skipped: a
                     // skipped value is one nobody checked.
-                    _ => ::core::result::Result::Err(#krate::DecodeError::unknown_key(__key)),
+                    _ => ::core::result::Result::Err(#aead::DecodeError::unknown_key(__key)),
                 }
             }
 
@@ -279,7 +279,7 @@ fn map_target(
         }
 
         #[automatically_derived]
-        impl #impl_generics #krate::typed::Decrypt for #name #ty_generics #where_clause {
+        impl #impl_generics #aead::Decrypt for #name #ty_generics #where_clause {
             type Sink = #sink #ty_generics;
             fn sink() -> Self::Sink {
                 #sink(::core::marker::PhantomData)
@@ -293,7 +293,7 @@ fn map_target(
 /// a value that is no variant's included, is refused by the enum's name.
 /// Going through `FromScalar` gives the enum its `Decrypt` through the
 /// blanket impl.
-fn enum_target(krate: &syn::Path, input: &DeriveInput, variants: &[VariantInfo]) -> TokenStream {
+fn enum_target(aead: &syn::Path, input: &DeriveInput, variants: &[VariantInfo]) -> TokenStream {
     let name = &input.ident;
     let expected = name.to_string();
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
@@ -306,19 +306,19 @@ fn enum_target(krate: &syn::Path, input: &DeriveInput, variants: &[VariantInfo])
     });
     quote! {
         #[automatically_derived]
-        impl #impl_generics #krate::FromScalar for #name #ty_generics #where_clause {
+        impl #impl_generics #aead::FromScalar for #name #ty_generics #where_clause {
             const EXPECTED: &'static str = #expected;
             // Its own `None`, even with no variant at zero to read.
-            const FIXED: ::core::option::Option<#krate::FixedType> =
-                #krate::FixedType::plain(#krate::Width::U32);
+            const FIXED: ::core::option::Option<#aead::FixedType> =
+                #aead::FixedType::plain(#aead::Width::U32);
 
             fn from_scalar(
-                __ty: ::core::option::Option<#krate::Logical>,
-                __value: #krate::Physical<'_>,
+                __ty: ::core::option::Option<#aead::Logical>,
+                __value: #aead::Physical<'_>,
             ) -> ::core::option::Option<Self> {
                 match (__ty, __value) {
-                    (::core::option::Option::None, #krate::Physical::Int(__int)) => {
-                        match #krate::Int::to_u128(__int) {
+                    (::core::option::Option::None, #aead::Physical::Int(__int)) => {
+                        match #aead::Int::to_u128(__int) {
                             #(#arms)*
                             _ => ::core::option::Option::None,
                         }
@@ -333,7 +333,7 @@ fn enum_target(krate: &syn::Path, input: &DeriveInput, variants: &[VariantInfo])
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{assert_contains, assert_lacks};
+    use crate::value::test_support::{assert_contains, assert_lacks};
 
     fn expand(input: DeriveInput) -> String {
         derive(input).expect("expansion should succeed").to_string()
@@ -356,30 +356,30 @@ mod tests {
         assert_contains(&out, quote!("age" =>));
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::typed::Either::Left(
-                ::vitaminc_aead::typed::Forward(
-                    <String as ::vitaminc_aead::typed::Decrypt>::sink(),
-                    ::vitaminc_aead::typed::Slot(&mut self.__field_0),
+            quote!(::stack_encrypt::__derive::Either::Left(
+                ::stack_encrypt::__derive::Forward(
+                    <String as ::stack_encrypt::__derive::Decrypt>::sink(),
+                    ::stack_encrypt::__derive::Slot(&mut self.__field_0),
                 )
             )),
         );
         // The last field is the chain's tail.
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::typed::Either::Right(
-                ::vitaminc_aead::typed::Forward(
-                    <u32 as ::vitaminc_aead::typed::Decrypt>::sink(),
-                    ::vitaminc_aead::typed::Slot(&mut self.__field_1),
+            quote!(::stack_encrypt::__derive::Either::Right(
+                ::stack_encrypt::__derive::Forward(
+                    <u32 as ::stack_encrypt::__derive::Decrypt>::sink(),
+                    ::stack_encrypt::__derive::Slot(&mut self.__field_1),
                 )
             )),
         );
         assert_contains(
             &out,
-            quote!(type Entry<'__s> = ::vitaminc_aead::typed::Either<),
+            quote!(type Entry<'__s> = ::stack_encrypt::__derive::Either<),
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::typed::Forward<String, ::vitaminc_aead::typed::Slot<'__s, String>>,),
+            quote!(::stack_encrypt::__derive::Forward<String, ::stack_encrypt::__derive::Slot<'__s, String>>,),
         );
     }
 
@@ -397,7 +397,7 @@ mod tests {
             &out,
             quote!(name: self
                 .__field_0
-                .ok_or(::vitaminc_aead::DecodeError::MissingField("name"))?),
+                .ok_or(::stack_encrypt::__derive::DecodeError::MissingField("name"))?),
         );
     }
 
@@ -414,7 +414,7 @@ mod tests {
         assert_contains(&out, quote!(if self.__field_0.is_some()));
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::DecodeError::duplicate_key(__key)),
+            quote!(::stack_encrypt::__derive::DecodeError::duplicate_key(__key)),
         );
     }
 
@@ -430,7 +430,7 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::DecodeError::unknown_key(__key)),
+            quote!(::stack_encrypt::__derive::DecodeError::unknown_key(__key)),
         );
     }
 
@@ -448,15 +448,15 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::typed::Clear::new(
-                ::vitaminc_aead::typed::Slot(&mut self.__field_0)
+            quote!(::stack_encrypt::__derive::Clear::new(
+                ::stack_encrypt::__derive::Slot(&mut self.__field_0)
             )),
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::typed::Forward(
-                <String as ::vitaminc_aead::typed::Decrypt>::sink(),
-                ::vitaminc_aead::typed::Slot(&mut self.__field_1),
+            quote!(::stack_encrypt::__derive::Forward(
+                <String as ::stack_encrypt::__derive::Decrypt>::sink(),
+                ::stack_encrypt::__derive::Slot(&mut self.__field_1),
             )),
         );
     }
@@ -488,8 +488,8 @@ mod tests {
         assert_contains(&out, quote!(struct __WrapperDecryptWrap));
         assert_contains(
             &out,
-            quote!(type Sink = ::vitaminc_aead::typed::Wrapped<
-                <String as ::vitaminc_aead::typed::Decrypt>::Sink,
+            quote!(type Sink = ::stack_encrypt::__derive::Wrapped<
+                <String as ::stack_encrypt::__derive::Decrypt>::Sink,
                 __WrapperDecryptWrap,
             >),
         );
@@ -507,11 +507,11 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(type Entry<'__s> = ::vitaminc_aead::typed::Nothing),
+            quote!(type Entry<'__s> = ::stack_encrypt::__derive::Nothing),
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::DecodeError::unknown_key(__key)),
+            quote!(::stack_encrypt::__derive::DecodeError::unknown_key(__key)),
         );
         assert_contains(&out, quote!(::core::result::Result::Ok(Marker {})));
     }
@@ -527,9 +527,12 @@ mod tests {
             }
         });
 
-        assert_contains(&out, quote!(::vitaminc_aead::FromScalar for Status));
+        assert_contains(
+            &out,
+            quote!(::stack_encrypt::__derive::FromScalar for Status),
+        );
         assert_contains(&out, quote!(const EXPECTED: &'static str = "Status"));
-        assert_contains(&out, quote!(::vitaminc_aead::Int::to_u128(__int)));
+        assert_contains(&out, quote!(::stack_encrypt::__derive::Int::to_u128(__int)));
         assert_contains(
             &out,
             quote!(::core::option::Option::Some(0u128) => ::core::option::Option::Some(Status::Active)),
@@ -538,7 +541,7 @@ mod tests {
             &out,
             quote!(::core::option::Option::Some(7u128) => ::core::option::Option::Some(Status::Suspended)),
         );
-        assert_lacks(&out, quote!(typed::Decrypt for Status));
+        assert_lacks(&out, quote!(__derive::Decrypt for Status));
     }
 
     /// Every type parameter must itself be a target, and the generated
@@ -555,7 +558,7 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(impl<'a, T: ::vitaminc_aead::typed::Decrypt, const N: usize>),
+            quote!(impl<'a, T: ::stack_encrypt::__derive::Decrypt, const N: usize>),
         );
         assert_contains(&out, quote!(fn() -> Holder<'a, T, N>));
         assert_contains(
@@ -581,15 +584,15 @@ mod tests {
     #[test]
     fn crate_attribute_redirects_every_path() {
         let out = expand(parse_quote! {
-            #[aead(crate = "::vitaminc::aead")]
+            #[aead(crate = "::app::encryption")]
             struct User {
                 name: String,
             }
         });
 
-        assert_contains(&out, quote!(::vitaminc::aead::typed::Decrypt for User));
+        assert_contains(&out, quote!(::app::encryption::__derive::Decrypt for User));
         assert!(
-            !out.contains("vitaminc_aead"),
+            !out.contains(":: stack_encrypt ::"),
             "expansion still references the default crate path:\n{out}"
         );
     }

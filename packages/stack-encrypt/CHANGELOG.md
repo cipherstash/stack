@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Write `Encrypt` and `Decrypt` by hand with no dependency other than
+  `stack-encrypt`** (#2013). The new `plaintext` module contains the items
+  that the body of a hand-written impl names:
+  - the sink traits `Sink`, `SeqSink`, and `MapSink`;
+  - the `depth` constants, with `depth::MAX_DEPTH`;
+  - the types of a scalar, such as `Physical`, `Logical`, and `FixedType`.
+
+  Two traits are re-exported at the crate root. `Scalar` marks a type that
+  encrypts as one value. `FromScalar` builds a type from one scalar. The
+  docs of `plaintext` show a complete example.
+
 - **Encrypt a UUID as a UUID** (#1833). `value::Uuid` is vitaminc's
   wipeable UUID, built from the uuid crate's `Uuid` with `Uuid::new`. It
   seals as one leaf, and an `Option<Uuid>`'s `None` seals as a null as long
@@ -1279,8 +1290,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stack-kms CHANGELOG.
 
 - **A `Scalar` impl you wrote for a derived newtype or a fieldless enum no
-  longer compiles** (#2012). `#[derive(Encrypt)]` now implements Vitamin
-  C's `Scalar` marker for these types. So an `impl Scalar for &Email {}` of
+  longer compiles** (#2012). `#[derive(Encrypt)]` now implements the
+  `Scalar` marker for these types. So an `impl Scalar for &Email {}` of
   your own conflicts with it. The compiler reports `E0119`, conflicting
   implementations. The compiler reports it even when the inner type is not
   a `Scalar`. What to do depends on the inner type.
@@ -1298,7 +1309,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `keyset.encrypt` now checks, when the program is built, that the borrow
   of the type encrypts as one value. So the `Encrypt` impl that you wrote
   for the borrow must contain `const DEPTH: Option<usize> = depth::SCALAR;`.
-  `depth` is `vitaminc_aead::plaintext::depth`.
+  `depth` is `stack_encrypt::plaintext::depth`.
   - An impl that leaves `DEPTH` at its default `None` compiled before. Now
     `cargo build` fails with `E0080`, and the message names the line to
     add. `cargo check` does not run this check.
@@ -1774,13 +1785,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`#[derive(Encrypt)]` and `#[derive(Decrypt)]` compile in a crate that
+  depends only on `stack-encrypt`** (#2013). The derives are now Stack
+  Encrypt's own, in `stack-encrypt-derive`, and `stack_encrypt::Encrypt` and
+  `stack_encrypt::Decrypt` re-export them. Before this change, they were
+  vitaminc-aead's derives. Their code named the crate `vitaminc_aead`, so a
+  crate that used them had to depend on `vitaminc-aead` too.
+  - The code that the derives write names every item through
+    `stack_encrypt`. `vitaminc-aead` has no derives of its own any more.
+  - The attributes are the same: `#[aead(rename = "...")]`,
+    `#[aead(passthrough)]`, `#[aead(skip)]`, `#[aead(take)]`, and
+    `#[aead(recursive)]`. The wire shape is the same, so every stored value
+    still decrypts.
+  - `#[aead(crate = "...")]` now names the path to `stack_encrypt`, such as
+    a re-export of it. A path to `vitaminc_aead` works only with the
+    `vitaminc-aead` source in the `cipherstash/stack` repository. That
+    source is not on crates.io yet. The code that the derives write names
+    `vitaminc_aead::__derive`, and crates.io's `vitaminc-aead` 0.10.0 has
+    no such module.
+  - To migrate, import the derives from `stack_encrypt` instead of
+    `vitaminc_aead`, and remove `vitaminc-aead` from your `Cargo.toml` if
+    nothing else uses it.
+  - The compile error for a type that nests too deeply now names the limit
+    by its path, `stack_encrypt::plaintext::depth::MAX_DEPTH`. With
+    `#[aead(crate = "...")]`, the path starts at the named crate path. The
+    error for a hand-written `Scalar` impl names
+    `stack_encrypt::plaintext::depth::SCALAR`. A refused trait bound now
+    names `FromScalar` by its `stack_encrypt` path.
+
 - **`keyset.encrypt` encrypts a newtype that derives `Encrypt` over one
   value** (#2012). A newtype is a struct with exactly one unnamed field.
   `struct Email(String)` with `#[derive(Encrypt, Zeroize)]` now encrypts
   with `keyset.encrypt(Email(..))`. You no longer write
-  `impl Scalar for &Email {}` by hand. Your crate still needs
-  `vitaminc-aead` as a dependency to use the derive, because the derived
-  code names `vitaminc_aead` (#2013).
+  `impl Scalar for &Email {}` by hand. Your crate needs no dependency
+  other than `stack-encrypt` to use the derive (#2013).
   - The newtype encrypts exactly as its inner value does. The leaf has the
     same plaintext and the same length. So `keyset.decrypt::<String>` opens
     what `Email` encrypted.

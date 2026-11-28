@@ -24,11 +24,11 @@ on:
       - conformance/stack-encrypt/**
       - conformance/vitaminc-aead/**
       - packages/stack-encrypt-derive/**
+      - packages/stack-encrypt-downstream/**
       - packages/stack-encrypt-jsonpath/**
       - packages/stack-guest-abi/**
       - packages/vitaminc-aead/**
       - packages/recipher-frame/**
-      - packages/vitaminc-aead-derive/**
       - languages/typescript/packages/auth/**
       - languages/typescript/packages/profile/**
       - languages/typescript/packages/stack-auth-wasm/**
@@ -54,11 +54,11 @@ on:
       - conformance/stack-encrypt/**
       - conformance/vitaminc-aead/**
       - packages/stack-encrypt-derive/**
+      - packages/stack-encrypt-downstream/**
       - packages/stack-encrypt-jsonpath/**
       - packages/stack-guest-abi/**
       - packages/vitaminc-aead/**
       - packages/recipher-frame/**
-      - packages/vitaminc-aead-derive/**
       - languages/typescript/packages/auth/**
       - languages/typescript/packages/profile/**
       - languages/typescript/packages/stack-auth-wasm/**

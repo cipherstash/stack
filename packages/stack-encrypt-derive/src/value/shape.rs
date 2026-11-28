@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use proc_macro2::Span;
 use syn::{Data, DeriveInput, Fields, Ident, Member, Result, Type};
 
-use crate::attrs::FieldAttrs;
+use super::attrs::FieldAttrs;
 
 /// One field of a struct.
 #[cfg_attr(test, derive(Debug))]
