@@ -64,16 +64,6 @@ pub(crate) enum Error {
     #[error("an object is not a value")]
     #[diagnostic(code(recipher_js::plain_object), help("Wrap it in json(..)."))]
     PlainObject,
-    /// A value that the engine cannot encrypt as a JSON document.
-    #[error("the value is not a JSON document the engine seals: {what}")]
-    #[diagnostic(code(recipher_js::not_json))]
-    NotJson { what: &'static str },
-    /// A JSON document nested deeper than the engine's JSON parser reads.
-    #[error(
-        "the value is not a JSON document the engine seals: it is nested deeper than 127 levels of arrays and objects"
-    )]
-    #[diagnostic(code(recipher_js::too_deep))]
-    JsonTooDeep,
     /// The engine refused to encrypt a value in the form it was given.
     #[error("the engine could not seal the value as given")]
     #[diagnostic(code(recipher_js::not_sealed))]
@@ -519,8 +509,6 @@ mod tests {
             Error::Threw,
             Error::NotAScalar,
             Error::PlainObject,
-            Error::NotJson { what: "bytes" },
-            Error::JsonTooDeep,
             Error::NotSealed,
             Error::NotACiphertext,
             Error::NotBytes,
@@ -542,8 +530,6 @@ mod tests {
                 | Error::Threw
                 | Error::NotAScalar
                 | Error::PlainObject
-                | Error::NotJson { .. }
-                | Error::JsonTooDeep
                 | Error::NotSealed
                 | Error::NotACiphertext
                 | Error::NotBytes

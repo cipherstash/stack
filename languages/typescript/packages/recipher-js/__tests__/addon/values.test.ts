@@ -246,10 +246,145 @@ describe('a JSON document', () => {
     })
   })
 
-  it('refuses a number that is an integer outside the safe range', async () => {
+  /** The JSON text a document is stored as: what another SDK reads. */
+  async function storedText(document: Parameters<typeof json>[0]) {
+    const c = await cipher()
+    const sealed = (await c.defaultKeyset().encrypt(json(document))).unwrap()
+    // With no kind named, the stored bytes decrypt as their text.
+    const untyped = Ciphertext.fromBytes(sealed.toBytes()).unwrap()
+    return (await c.decrypt(untyped)).unwrap()
+  }
+
+  /** The code and message of the `Err` that encrypting `document` gives. */
+  async function refusal(document: unknown) {
     const keyset = (await cipher()).defaultKeyset()
-    const result = await keyset.encrypt(json({ n: 2 ** 60 }))
-    expect(result.err()?.code).toBe('recipher_js::not_json')
+    const result = await keyset.encrypt(json(document as never))
+    expect(result.isErr()).toBe(true)
+    return { code: result.err()?.code, message: result.err()?.message ?? '' }
+  }
+
+  it('stores a whole number as an integer, at every size', async () => {
+    // A reader in Go or Rust takes `5000000000`, and refuses
+    // `5000000000.0`, for an integer field.
+    expect(await storedText({ n: 5000000000 })).toBe('{"n":5000000000}')
+    const now = Date.now()
+    expect(await storedText({ t: now })).toBe(`{"t":${now}}`)
+    expect(
+      await storedText([
+        5,
+        -5,
+        4294967296,
+        -5000000000,
+        Number.MAX_SAFE_INTEGER,
+        Number.MIN_SAFE_INTEGER,
+        -0,
+      ]),
+    ).toBe('[5,-5,4294967296,-5000000000,9007199254740991,-9007199254740991,0]')
+  })
+
+  it('stores any other number as a float', async () => {
+    const text = await storedText([1.5, 2 ** 64, 1e20])
+    expect(JSON.parse(text as string)).toEqual([1.5, 2 ** 64, 1e20])
+    // Each has a fraction or an exponent, so no reader takes an integer.
+    for (const number of (text as string).slice(1, -1).split(',')) {
+      expect(number).toMatch(/[.e]/)
+    }
+  })
+
+  it('stores a bigint as its digits, within 64 bits', async () => {
+    expect(
+      await storedText([
+        5n,
+        2n ** 53n,
+        -(2n ** 63n),
+        2n ** 63n,
+        2n ** 64n - 1n,
+      ]),
+    ).toBe(
+      '[5,9007199254740992,-9223372036854775808,9223372036854775808,18446744073709551615]',
+    )
+  })
+
+  it('stores the members of an object sorted by key', async () => {
+    expect(await storedText({ b: 1, a: 2, c: { z: 1, y: 2 } })).toBe(
+      '{"a":2,"b":1,"c":{"y":2,"z":1}}',
+    )
+    const c = await cipher()
+    const sealed = (
+      await c.defaultKeyset().encrypt(json({ b: 1, a: 2 }))
+    ).unwrap()
+    const opened = (await c.decrypt(sealed)).unwrap()
+    expect(Object.keys(opened as object)).toEqual(['a', 'b'])
+  })
+
+  it('opens an integer as a number in the safe range, and as a bigint outside it', async () => {
+    const c = await cipher()
+    const document = {
+      safe: 9007199254740991n,
+      negative: -9007199254740991n,
+      edge: 2n ** 53n,
+      least: -(2n ** 63n),
+      most: 2n ** 64n - 1n,
+      float: 1.5,
+      whole: 5000000000,
+      nested: [{ deep: 2n ** 60n, small: 7n }],
+    }
+    const sealed = (await c.defaultKeyset().encrypt(json(document))).unwrap()
+    expect((await c.decrypt(sealed)).unwrap()).toStrictEqual({
+      edge: 9007199254740992n,
+      float: 1.5,
+      least: -9223372036854775808n,
+      most: 18446744073709551615n,
+      negative: -9007199254740991,
+      nested: [{ deep: 1152921504606846976n, small: 7 }],
+      safe: 9007199254740991,
+      whole: 5000000000,
+    })
+  })
+
+  it('opens a document another SDK wrote, whatever its numbers', async () => {
+    const c = await cipher()
+    const keyset = c.defaultKeyset()
+    // Sealed as the engine seals a document: as its JSON text.
+    const sealed = (
+      await keyset.encrypt(
+        '{"float":5.0,"big":1e20,"id":18446744073709551615,"n":-3}',
+      )
+    ).unwrap()
+    const stored = Ciphertext.fromBytes(sealed.toBytes(), kinds.json).unwrap()
+    expect((await c.decrypt(stored)).unwrap()).toStrictEqual({
+      big: 1e20,
+      float: 5,
+      id: 18446744073709551615n,
+      n: -3,
+    })
+  })
+
+  it('refuses a whole number from 2^53 up to 2^64, and asks for a bigint', async () => {
+    for (const unsafe of [2 ** 53, 2 ** 60, 2 ** 64 - 2048, -(2 ** 53)]) {
+      const refused = await refusal({ n: unsafe })
+      expect(refused.code).toBe('recipher_js::not_json')
+      expect(refused.message).toContain('bigint')
+      // The message holds no part of the value.
+      expect(refused.message).not.toMatch(/\d{6}/)
+    }
+  })
+
+  it('refuses a number that is not finite', async () => {
+    for (const number of [Number.NaN, Infinity, -Infinity]) {
+      const refused = await refusal([number])
+      expect(refused.code).toBe('recipher_js::not_json')
+      expect(refused.message).toContain('not finite')
+    }
+  })
+
+  it('refuses a bigint outside 64 bits, at every size', async () => {
+    for (const wide of [2n ** 64n, -(2n ** 63n) - 1n, 2n ** 200n]) {
+      const refused = await refusal({ id: wide })
+      expect(refused.code).toBe('recipher_js::not_json')
+      expect(refused.message).toContain('64-bit')
+      expect(refused.message).not.toMatch(/\d{6}/)
+    }
   })
 
   it('refuses a value with no JSON form', async () => {
@@ -257,6 +392,91 @@ describe('a JSON document', () => {
     // @ts-expect-error: bytes are not JSON.
     const result = await keyset.encrypt(json({ b: new Uint8Array([1]) }))
     expect(result.err()?.code).toBe('recipher_js::not_json')
+    for (const value of [
+      undefined,
+      Buffer.from('4111 1111'),
+      new Uint16Array(2),
+      new Date('2031-04-01T00:00:00Z'),
+      new RcDate('2031-04-01'),
+      new RcTimestamp('2031-04-01T00:00:00.000000001Z'),
+      new RcDecimal('4111.1111'),
+      new RcUuid('123e4567-e89b-12d3-a456-426614174000'),
+    ]) {
+      for (const document of [value, [value], { member: value }]) {
+        const refused = await refusal(document)
+        expect(refused.code).toBe('recipher_js::not_json')
+        expect(refused.message).not.toMatch(/4111|2031|123e4567/)
+      }
+    }
+  })
+
+  it('refuses a function and a symbol', async () => {
+    for (const value of [() => 1, Symbol('s')]) {
+      expect((await refusal({ member: value })).code).toBe(
+        'recipher_js::not_a_value',
+      )
+    }
+  })
+
+  it('reads a document by the rules for any value', async () => {
+    const cases: [unknown, string][] = [
+      [new Map([['k', 1]]), 'recipher_js::not_plain'],
+      [new (class Card {})(), 'recipher_js::not_plain'],
+      // biome-ignore lint/suspicious/noSparseArray: a hole is the case.
+      [[1, , 3], 'recipher_js::sparse_array'],
+      [{ text: '\uD800' }, 'recipher_js::unpaired_surrogate'],
+      [JSON.parse('{"__proto__":1}'), 'recipher_js::reserved_key'],
+    ]
+    for (const [document, code] of cases) {
+      expect((await refusal(document)).code).toBe(code)
+    }
+    const cycle: unknown[] = []
+    cycle.push(cycle)
+    expect((await refusal(cycle)).code).toBe('recipher_js::too_deep')
+  })
+
+  it('encrypts one Json more than once', async () => {
+    const c = await cipher()
+    const keyset = c.defaultKeyset()
+    const wrapped = json({ id: 2n ** 64n - 1n })
+    const sealed = (await keyset.encrypt([wrapped, wrapped])).unwrap()
+    expect((await c.decrypt(sealed)).unwrap()).toEqual([
+      { id: 18446744073709551615n },
+      { id: 18446744073709551615n },
+    ])
+    expect(
+      (await c.decrypt((await keyset.encrypt(wrapped)).unwrap())).unwrap(),
+    ).toEqual({ id: 18446744073709551615n })
+  })
+
+  it('builds a decrypted document from own properties, past a polluted prototype', async () => {
+    const c = await cipher()
+    const sealed = (
+      await c
+        .defaultKeyset()
+        .encrypt(json({ leak: 'secret', list: ['secret'] }))
+    ).unwrap()
+    let captured = 'untouched'
+    const capture = {
+      set(value: string) {
+        captured = value
+      },
+      configurable: true,
+    }
+    Object.defineProperty(Object.prototype, 'leak', capture)
+    Object.defineProperty(Array.prototype, '0', capture)
+    try {
+      const opened = (await c.decrypt(sealed)).unwrap() as {
+        leak: string
+        list: string[]
+      }
+      expect(captured).toBe('untouched')
+      expect(Object.hasOwn(opened, 'leak')).toBe(true)
+      expect(opened.list[0]).toBe('secret')
+    } finally {
+      Reflect.deleteProperty(Object.prototype, 'leak')
+      Reflect.deleteProperty(Array.prototype, '0')
+    }
   })
 
   it('read back from stored bytes with kinds.json, opens as the document', async () => {
@@ -286,6 +506,7 @@ describe('a JSON document', () => {
     // biome-ignore lint/suspicious/noExplicitAny: a nested array of any depth.
     const deep = await keyset.encrypt(json(nested(128) as any))
     expect(deep.err()?.code).toBe('recipher_js::too_deep')
+    expect(deep.err()?.message).toContain('127 levels')
   })
 
   it('writes a large float as a float, so a document read back encrypts again', async () => {
@@ -307,7 +528,11 @@ describe('a JSON document', () => {
   it('refuses a reserved property name, naming the rule, both ways', async () => {
     const c = await cipher()
     const keyset = c.defaultKeyset()
-    for (const text of ['{"constructor":1}', '{"prototype":1}']) {
+    for (const text of [
+      '{"constructor":1}',
+      '{"prototype":1}',
+      '{"__proto__":{"inherited":1}}',
+    ]) {
       const refused = await keyset.encrypt(json(JSON.parse(text)))
       expect(refused.err()?.code).toBe('recipher_js::reserved_key')
       // A document another SDK wrote, sealed as the engine seals one: as its

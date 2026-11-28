@@ -7,9 +7,14 @@
 //! `JsRef::to_frame` reads a JavaScript value, on the JavaScript thread,
 //! into a buffer, which becomes the engine's [`OwnedFrame`] without a copy.
 //! A frame is a byte buffer that contains one value. The buffer is wiped
-//! when it drops. A worker thread then encrypts the frame, with no access to JavaScript. `JsBuilder::build`
-//! builds a decrypted frame back into a JavaScript value. This module does
-//! not convert any value itself.
+//! when it drops. A worker thread then encrypts the frame, with no access
+//! to JavaScript. `JsBuilder::build` builds a decrypted frame back into a
+//! JavaScript value.
+//!
+//! A JSON document goes through the bridge too. `JsRef::to_json` reads a
+//! JavaScript value as the document's JSON text, and
+//! `JsBuilder::build_json` builds the JavaScript value of a decrypted
+//! document. This module does not convert any value itself.
 //!
 //! When the bridge refuses a value, it says which rule the value broke. A
 //! scalar is a value that is not an array or an object. For a scalar, the
@@ -25,7 +30,9 @@ use napi::bindgen_prelude::{FromNapiValue, JsObjectValue, JsValue, Object, Unkno
 use napi::{Env, Status, ValueType};
 use recipher_value_napi::{JsBuilder, JsFault, JsRef, Refusal, Wrapper, Wrappers};
 use stack_encrypt::dynamic::frame::OwnedFrame;
+use vitaminc_protected::Buffer;
 
+use crate::ciphertext::Opened;
 use crate::error::{Error, RecipherErrorFields};
 
 /// Reads a JavaScript value into a frame of the engine's value model.
@@ -52,6 +59,30 @@ pub fn read(env: &Env, value: Unknown<'_>) -> Result<OwnedFrame, RecipherErrorFi
         .map_err(|error| refused(env, &error))?;
     // The bridge's buffer becomes the frame: checked, and kept as written.
     OwnedFrame::from_buffer(frame).map_err(|_| Error::Value.into())
+}
+
+/// Reads a JavaScript value as the JSON text of a document, nested at most
+/// `max_depth` levels of arrays and objects. The text is plaintext, in a
+/// buffer that is wiped when it drops.
+///
+/// # Errors
+///
+/// Returns one of these errors:
+///
+/// - `recipher_js::not_json` for a value with no JSON form, such as
+///   `undefined`, bytes, a `Date`, or a whole `number` from 2^53 up to
+///   2^64;
+/// - `recipher_js::too_deep` for a document nested past `max_depth`;
+/// - `recipher_js::threw` when reading the value threw;
+/// - the bridge's code, for any other value the bridge refused.
+pub fn read_json(
+    env: &Env,
+    value: Unknown<'_>,
+    max_depth: usize,
+) -> Result<Buffer, RecipherErrorFields> {
+    JsRef::new(value)
+        .to_json(max_depth)
+        .map_err(|error| refused(env, &error))
 }
 
 /// Returns the elements of `value` when it is an array, or `None` when it
@@ -89,6 +120,23 @@ pub fn elements<'e>(
 /// Returns `recipher_js::build_value` for any other failure.
 pub fn build(env: &Env, value: OwnedFrame) -> Result<Unknown<'_>, RecipherErrorFields> {
     JsBuilder::build(env, value.frame()).map_err(|error| not_built(env, &error))
+}
+
+/// Builds the JavaScript value of a decrypted value: a frame, or a JSON
+/// document.
+///
+/// # Errors
+///
+/// Returns the errors of [`build`]. A document with a member named
+/// `__proto__`, `constructor` or `prototype` is `recipher_js::reserved_key`.
+pub fn build_opened(env: &Env, opened: Opened) -> Result<Unknown<'_>, RecipherErrorFields> {
+    match opened {
+        Opened::Value(value) => build(env, value),
+        // The document is wiped when it drops, at the end of this arm.
+        Opened::Document(document) => {
+            JsBuilder::build_json(env, document.value()).map_err(|error| not_built(env, &error))
+        }
+    }
 }
 
 /// Returns the failure for a value that `JsBuilder` did not build.

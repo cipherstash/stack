@@ -350,7 +350,7 @@ fn open<'e>(
         move |env, opened| {
             let mut values = opened
                 .into_iter()
-                .map(|value| js::build(env, value))
+                .map(|value| js::build_opened(env, value))
                 .collect::<Outcome<Vec<_>>>()?;
             if many {
                 return values.into_unknown(env).map_err(not_made);

@@ -12,6 +12,7 @@ use napi_derive::napi;
 use serde::Deserialize;
 use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::dynamic::{read, ValueKind};
+use stack_encrypt::json::JsonPlaintext;
 use vitaminc_protected::OpaqueDebug;
 
 use crate::error::{Error, RecipherErrorFields};
@@ -34,6 +35,16 @@ use crate::outcome::{failed, not_made, settle, Outcome};
 pub struct Ciphertext {
     sealed: stack_encrypt::Ciphertext,
     opens_as: Option<ValueKind>,
+}
+
+/// A decrypted value, before the addon builds it in JavaScript. Both forms
+/// are plaintext, and both are wiped when they drop.
+#[derive(OpaqueDebug)]
+pub(crate) enum Opened {
+    /// A value of the engine's value model, in a frame.
+    Value(OwnedFrame),
+    /// A JSON document.
+    Document(JsonPlaintext),
 }
 
 impl Ciphertext {
@@ -66,11 +77,11 @@ impl Ciphertext {
     /// Returns `recipher_js::opened_type` for a value encrypted as another
     /// type. Returns `recipher_js::not_a_document` when the kind is JSON but
     /// the value is not a JSON document.
-    pub(crate) fn opened(&self, value: OwnedFrame) -> Outcome<OwnedFrame> {
+    pub(crate) fn opened(&self, value: OwnedFrame) -> Outcome<Opened> {
         match self.opens_as {
-            None => Ok(value),
-            Some(ValueKind::Json) => crate::json::opened(&value),
-            Some(kind) => as_kind(kind, value),
+            None => Ok(Opened::Value(value)),
+            Some(ValueKind::Json) => crate::json::opened(&value).map(Opened::Document),
+            Some(kind) => as_kind(kind, value).map(Opened::Value),
         }
     }
 }
