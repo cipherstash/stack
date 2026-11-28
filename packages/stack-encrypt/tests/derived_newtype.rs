@@ -1,5 +1,6 @@
 //! `keyset.encrypt` encrypts a newtype that derives `Encrypt` exactly as it
-//! encrypts the newtype's inner value.
+//! encrypts the newtype's inner value. It encrypts a fieldless enum that
+//! derives `Encrypt` exactly as it encrypts the `u32` of the variant.
 //!
 //! A leaf is one sealed value. Each leaf has a random nonce, a number used
 //! once. So two ciphertexts of one value never have the same bytes. These
@@ -36,6 +37,22 @@ struct Email(String);
 
 #[derive(Encrypt, Zeroize)]
 struct Age(i64);
+
+#[derive(Encrypt, Zeroize)]
+enum Status {
+    Active,
+    Suspended = 7,
+}
+
+// A fieldless enum cannot contain itself, so `recursive` changes nothing.
+// This test file is built, not only checked, so it runs the build-time
+// `DEPTH` check of `keyset.encrypt` on this type.
+#[derive(Encrypt, Zeroize)]
+#[aead(recursive)]
+enum Level {
+    Low,
+    High = 3,
+}
 
 const SEED: [u8; 32] = *b"stack-encrypt derived newtype v1";
 
@@ -245,4 +262,71 @@ async fn a_newtype_over_an_integer_seals_the_leaf_an_integer_seals() {
         reveal(&keys, bare, context),
         "the newtype's leaf holds the plaintext its inner value's leaf holds"
     );
+}
+
+#[tokio::test]
+async fn a_fieldless_enum_seals_the_leaf_its_u32_seals() {
+    let (cipher, keys) = kept_cipher().await;
+    let keyset = cipher.default_keyset();
+
+    for (variant, discriminant) in [(Status::Active, 0u32), (Status::Suspended, 7)] {
+        let wrapped = keyset
+            .encrypt(variant)
+            .await
+            .expect("a fieldless enum encrypts");
+        let bare = keyset
+            .encrypt(discriminant)
+            .await
+            .expect("a `u32` encrypts");
+
+        assert_eq!(
+            wrapped.to_bytes().len(),
+            bare.to_bytes().len(),
+            "the enum's ciphertext is as long as its `u32`'s"
+        );
+        let opened: u32 = keyset
+            .decrypt(wrapped.clone())
+            .await
+            .expect("the enum's ciphertext decrypts into a `u32`");
+        assert_eq!(
+            opened, discriminant,
+            "the enum's ciphertext decrypts to the variant's discriminant"
+        );
+        assert_eq!(
+            reveal(&keys, wrapped, ()),
+            reveal(&keys, bare, ()),
+            "the enum's leaf holds the plaintext its `u32`'s leaf holds"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_fieldless_enum_marked_recursive_is_still_one_value() {
+    let (cipher, keys) = kept_cipher().await;
+    let keyset = cipher.default_keyset();
+
+    for (variant, discriminant) in [(Level::Low, 0u32), (Level::High, 3)] {
+        let wrapped = keyset
+            .encrypt(variant)
+            .await
+            .expect("a fieldless enum marked `recursive` encrypts");
+        let bare = keyset
+            .encrypt(discriminant)
+            .await
+            .expect("a `u32` encrypts");
+
+        let opened: u32 = keyset
+            .decrypt(wrapped.clone())
+            .await
+            .expect("the enum's ciphertext decrypts into a `u32`");
+        assert_eq!(
+            opened, discriminant,
+            "the enum's ciphertext decrypts to the variant's discriminant"
+        );
+        assert_eq!(
+            reveal(&keys, wrapped, ()),
+            reveal(&keys, bare, ()),
+            "the enum's leaf holds the plaintext its `u32`'s leaf holds"
+        );
+    }
 }

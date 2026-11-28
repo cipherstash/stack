@@ -5,6 +5,8 @@
 //! - `keyset.encrypt` encrypts it inside a `Protected`, and inside another
 //!   such newtype.
 //! - A `Vec` of the newtype encrypts one element at a time.
+//! - `keyset.encrypt` encrypts a fieldless enum that derives `Encrypt`, with
+//!   or without `#[aead(recursive)]`.
 //!
 //! `tests/ui/scalar_derived_not_one_value.rs` lists the derived types that
 //! `keyset.encrypt` refuses.
@@ -25,6 +27,18 @@ struct Contact(Email);
 #[derive(Encrypt, Zeroize)]
 struct Wrapper<T: Zeroize>(T);
 
+#[derive(Encrypt, Zeroize)]
+enum Status {
+    Active,
+    Suspended = 7,
+}
+
+#[derive(Encrypt, Zeroize)]
+#[aead(recursive)]
+enum Level {
+    Low,
+}
+
 async fn encrypt(keyset: &KeysetCipher<'_, FakeDataKeySource>) {
     let _: Ciphertext = keyset.encrypt(Email("ada@example.com".into())).await.unwrap();
     let _: Ciphertext = keyset.encrypt(Age(37)).await.unwrap();
@@ -41,6 +55,9 @@ async fn encrypt(keyset: &KeysetCipher<'_, FakeDataKeySource>) {
         .await
         .unwrap();
     let _: Ciphertext = keyset.encrypt(Wrapper(37i64)).await.unwrap();
+    let _: Ciphertext = keyset.encrypt(Status::Active).await.unwrap();
+    let _: Ciphertext = keyset.encrypt(Status::Suspended).await.unwrap();
+    let _: Ciphertext = keyset.encrypt(Level::Low).await.unwrap();
     let _: Vec<Ciphertext> = vec![Email("ada@example.com".into()), Email("grace@example.com".into())]
         .encrypt_into(keyset)
         .await
