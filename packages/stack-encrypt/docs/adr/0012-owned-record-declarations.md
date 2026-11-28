@@ -2,6 +2,7 @@
 status: accepted
 date: 2026-11-03
 revised: 2026-11-11
+amended: 2026-11-28
 extends: ADR-0003, ADR-0004
 ---
 
@@ -180,6 +181,20 @@ as for the other stored types. So a target that is not a scalar, such as
 case needs a trait for "a scalar, or a `Protected` of one". Rust allows
 that trait to be implemented for both only in Vitamin C, the crate that
 defines `FromScalar`.
+
+> **Amended 2026-11-28 (#2011).** Vitamin C now has that trait,
+> `ScalarTarget`: a decrypt target that one scalar builds. It is
+> implemented for every `FromScalar` type, for an `Option` or a `Protected`
+> of one, and for `OwnedFrame`.
+>
+> The bound of a single `Ciphertext`'s target is now
+> `ScalarTarget + Zeroize`, and no longer `Decrypt + Zeroize`. So a target
+> that is not a scalar, such as `Vec<String>`, does not compile.
+> `keyset.decrypt::<Protected<String>>(ct)` compiles as before. The other
+> stored types keep the bound `Decrypt + Zeroize`.
+>
+> A newtype that derives `Decrypt` over a scalar does not carry the marker.
+> Its author adds `impl ScalarTarget` by hand.
 
 ### 5. The structural traits are a bridge
 
