@@ -107,9 +107,9 @@ async fn the_sdk_opens_what_the_engine_sealed_of_every_type() {
     }
 }
 
-/// The engine opens a UUID the SDK sealed, read back from its stored
-/// bytes, as the engine's own UUID type. The other direction is a case of
-/// the test above.
+/// The engine decrypts a UUID that the SDK encrypted. The ciphertext is
+/// read back from its stored bytes. The engine decrypts it as the engine's
+/// own UUID type. The other direction is a case of the test above.
 #[tokio::test]
 async fn the_engine_opens_a_uuid_the_sdk_sealed_from_its_stored_bytes() {
     let id = Uuid::from_u128(0x123e_4567_e89b_12d3_a456_4266_1417_4000);

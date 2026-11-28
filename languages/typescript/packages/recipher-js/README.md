@@ -63,7 +63,7 @@ The value bridge converts JavaScript values in both directions:
 | `new RcTimestamp('2026-11-23T01:02:03.000000001Z')` | a timestamp, in nanoseconds | `Date` when it is whole milliseconds, else `RcTimestamp` |
 | `new RcDate('2026-11-23')` | a calendar date | `RcDate` |
 | `new RcDecimal('1.50')` | a decimal, with its scale | `RcDecimal` |
-| `new RcUuid('123e4567-e89b-12d3-a456-426614174000')` | a UUID | `RcUuid` |
+| `new RcUuid('123e4567-e89b-12d3-a456-426614174000')` | a universally unique identifier (UUID) | `RcUuid` |
 | `null` | null | `null` |
 | `json(value)` | a JSON document, as its JSON text | the document, from the `Ciphertext` that `encrypt` returned or one read with `kinds.json` |
 
@@ -78,10 +78,10 @@ The value bridge converts JavaScript values in both directions:
   `json(..)` encrypts the object as a JSON document.
   `opaque(..)`, for a whole object in the engine's own format, is not built yet.
 - A UUID is an `RcUuid`, not a string.
-  A string that holds a UUID is encrypted as text.
-  An `RcUuid` takes hyphenated hex, in either case.
-  Other text, such as text in braces, is an `Err` with the code `ERR_INVALID_UUID` when it is encrypted.
-  A decrypted `RcUuid` holds lowercase hyphenated hex, whatever case it was built with.
+  A string that contains a UUID is encrypted as text.
+  The text of an `RcUuid` must be hyphenated hex, in upper or lower case.
+  Encrypting an `RcUuid` with other text, such as text in braces, is an `Err` with the code `ERR_INVALID_UUID`.
+  A decrypted `RcUuid` contains lowercase hyphenated hex, whatever case it was built with.
 - The value bridge refuses each of these values, with an error code for each:
   - a `Map` or a `Set`;
   - a class instance;
@@ -208,9 +208,10 @@ const opened = await cipher.decrypt(user, stored.unwrap())
   `equality` finds exact matches.
   `match` finds text matches.
   `ore` and `ope` compare order.
-  A field's kind decides which indexes it takes.
-  For example, a `kinds.uuid` field takes `equality` only.
-  When it checks the declaration, the engine refuses any other index on it, with the reason `index_not_admitted` in `error.fields`.
+  A field's kind decides which indexes the field accepts.
+  For example, a `kinds.uuid` field accepts `equality` only.
+  When the engine checks the declaration, it refuses any other index on that field.
+  The refusal has the reason `index_not_admitted` in `error.fields`.
 - The stored row has one object for each encrypted field.
   The object has a `ciphertext` property.
   The object also has one property for each index the field declares: `equality`, `match`, `ore`, or `ope`.

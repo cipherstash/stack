@@ -291,8 +291,8 @@ async fn a_uuid_field_is_stored_found_by_equality_and_read_back() {
         ["ciphertext", "equality"]
     );
 
-    // A query for the same UUID derives the stored term, and another UUID
-    // does not.
+    // A query for the same UUID derives the stored term. A query for
+    // another UUID does not.
     let field = devices().field("id").unwrap();
     let query = |id: Uuid| {
         let value = OwnedFrame::of(stack_encrypt::value::Uuid::new(id)).unwrap();

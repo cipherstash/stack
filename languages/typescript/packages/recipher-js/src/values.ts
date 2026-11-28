@@ -138,10 +138,16 @@ export type RcDecimal = Types.RcDecimal
  * A universally unique identifier (UUID), such as
  * `new RcUuid('123e4567-e89b-12d3-a456-426614174000')`.
  *
- * The text is hyphenated hex, in either case. Encrypting other text, such
- * as text in braces, of the wrong length, or with a digit that is not hex,
- * is an `Err` with the code `ERR_INVALID_UUID`. A decrypted `RcUuid` holds
- * lowercase hyphenated hex, whatever case it was built with.
+ * The text must be hyphenated hex, in upper or lower case. Encrypting other
+ * text is an `Err` with the code `ERR_INVALID_UUID`. Examples of other text
+ * are:
+ *
+ * - text in braces;
+ * - text of the wrong length;
+ * - text with a digit that is not hex.
+ *
+ * A decrypted `RcUuid` contains lowercase hyphenated hex, whatever case it
+ * was built with.
  */
 export const RcUuid: WrapperConstructor<RcUuid> = wrapperClass('RcUuid')
 export type RcUuid = Types.RcUuid

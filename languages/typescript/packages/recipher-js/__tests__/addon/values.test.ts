@@ -686,8 +686,8 @@ describe('refusals', () => {
       '123e4567-e89b-12d3-a456-42661417400g',
     ]) {
       const pending = keyset.encrypt(new RcUuid(text))
-      // A synchronous throw would fail the line above. This line catches
-      // `encrypt` returning a settled `Result` instead of a promise: `await`
+      // A synchronous throw would fail the line above. This line fails if
+      // `encrypt` returns a settled `Result` instead of a promise. `await`
       // passes a value that is not a promise through unchanged, so the
       // assertions below would still pass.
       expect(pending, text).toBeInstanceOf(Promise)

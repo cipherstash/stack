@@ -143,8 +143,8 @@ describe('a UUID field', () => {
     const stored = (await keyset.encrypt(device, row)).unwrap()
     expect(Object.keys(stored.id).sort()).toEqual(['ciphertext', 'equality'])
 
-    // A query term for the same UUID matches the stored term, and a query
-    // term for another UUID does not.
+    // A query term for the same UUID matches the stored term. A query term
+    // for another UUID does not.
     const same = (
       await keyset.encryptField(device, 'id', new RcUuid(text))
     ).unwrap()
@@ -213,8 +213,8 @@ describe('a UUID field', () => {
     expect(opened.sql).toBeNull()
     expect(opened.required.value).toBe(text)
 
-    // A field with the default null setting takes no null.
-    // @ts-expect-error: `required` has no null setting, so it takes no null.
+    // A field with the default null setting accepts no null.
+    // @ts-expect-error: `required` has no null setting, so it accepts no null.
     const refused = await keyset.encrypt(nullable, {
       sealed: id,
       sql: id,
@@ -228,7 +228,7 @@ describe('a UUID field', () => {
   it('refuses the UUID as a string', async () => {
     const keyset = (await cipher()).defaultKeyset()
     const result = await keyset.encrypt(device, {
-      // @ts-expect-error: a UUID field takes an RcUuid, not its text.
+      // @ts-expect-error: a UUID field accepts an RcUuid, not its text.
       id: text,
       name: 'sensor',
     })
