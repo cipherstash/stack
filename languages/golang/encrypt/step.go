@@ -54,12 +54,13 @@ func (s *ioStep) wipe() {
 	}
 }
 
-// errStepMalformed is what is wrong with a step that does not read. A
-// refusal of a step is ErrInternal through guest.BadAnswer, naming se_io,
-// and wraps it.
+// errStepMalformed describes the problem with a step that this package
+// cannot read. The error for such a step wraps errStepMalformed.
+// guest.BadAnswer builds that error. The error is ErrInternal, and it
+// names se_io, the export that returns the step.
 var errStepMalformed = errors.New("the step is malformed")
 
-// errMalformedStep is a step that does not read.
+// errMalformedStep is the error for a step that this package cannot read.
 var errMalformedStep = guest.BadAnswer("se_io", errStepMalformed)
 
 // takeIO takes the step a paused export left (se_io), once.

@@ -10,11 +10,12 @@ import (
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
-// named is a Go type of its own over a string.
+// named is a defined Go type whose underlying type is string.
 type named string
 
-// KindOf names a decoded value by its kind, never its value: the vcvalue
-// types by what they are, and any other Go value by its reflect.Kind.
+// KindOf names the kind of a decoded value, and never the value. KindOf
+// names a vcvalue type by what the type is, and any other Go value by its
+// reflect.Kind.
 func TestKindOfNamesAValueByItsKind(t *testing.T) {
 	for _, tc := range []struct {
 		value any
@@ -68,8 +69,9 @@ func TestKindOfNamesAValueByItsKind(t *testing.T) {
 	}
 }
 
-// A guest answer this module cannot read is an internal failure that names
-// the export and what was wrong, and says it is not the caller's input.
+// For a guest answer that this module cannot read, the error is
+// ErrInternal. The error names the export and the problem, and says that
+// the cause is not the caller's input.
 func TestBadAnswerIsInternalAndNamesTheExport(t *testing.T) {
 	err := guest.BadAnswer("se_query_term", errors.New("it is a list, not an object"))
 	if !errors.Is(err, guest.ErrInternal) {
@@ -82,15 +84,17 @@ func TestBadAnswerIsInternalAndNamesTheExport(t *testing.T) {
 	if strings.Contains(err.Error(), "malformed input") {
 		t.Errorf("reads as bad input: %v", err)
 	}
-	// The problem is wrapped, so a caller can still match what is behind it.
+	// The error wraps the problem, so a caller can still match the wrapped
+	// error.
 	cause := errors.New("the decoder's error")
 	if !errors.Is(guest.BadAnswer("se_targets", cause), cause) {
 		t.Error("the problem is not wrapped")
 	}
 }
 
-// DecodeAnswer decodes an answer, and refuses bytes that do not decode as
-// an internal failure naming the export, wrapping the decoder's error.
+// DecodeAnswer decodes an answer. For bytes that do not decode,
+// DecodeAnswer returns an ErrInternal error that names the export and wraps
+// the error from the decoder.
 func TestDecodeAnswerNamesTheExport(t *testing.T) {
 	encoded, err := vcffi.Marshal("users / email")
 	if err != nil {

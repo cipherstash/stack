@@ -8,12 +8,17 @@ import (
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
-// KindOf names what a decoded value is, by its kind and never its value:
-// "null", "an object", "a list", "a string", "a number", and so on. It is
-// what an error says it found where it expected something else, so the
-// error can be logged without leaking the value. The vcvalue types are
-// named first, so a sealed value is not taken for bytes; any other Go
-// value is named by its reflect.Kind.
+// KindOf returns a phrase that names the kind of a decoded value, such as
+// "null", "an object", "a list", "a string", or "a number". The phrase
+// never contains the value.
+//
+// An error uses the phrase to name the kind of value that it got in place
+// of the kind that it takes. So a program can log the error without
+// leaking the value.
+//
+// KindOf checks the vcvalue types first, so that it does not report a
+// sealed value as bytes. KindOf names any other Go value by its
+// reflect.Kind.
 func KindOf(v any) string {
 	switch v.(type) {
 	case nil, vcvalue.TypedNull:
@@ -67,19 +72,25 @@ func KindOf(v any) string {
 	}
 }
 
-// BadAnswer is the error for a guest export's answer this module cannot
-// read: ErrInternal, naming the export and what was wrong with the answer,
-// which it wraps. The caller's input is not at fault. The answer's shape is
-// a contract between the guest and this module, so a bad one is a bug, or a
-// guest that does not match this module's version, such as a guest built
-// from other source than the module that embeds it.
+// BadAnswer returns the error for an answer that this module cannot read.
+// An answer is the value that a guest export returns. The error is
+// ErrInternal. The message of the error names the export and the problem.
+// The error wraps problem.
+//
+// The cause is never the caller's input. The guest and this module agree
+// on the format of each answer. So an unreadable answer means a bug, or a
+// guest that does not match the version of this module. An example is a
+// guest built from other source than the module that embeds it.
 func BadAnswer(export string, problem error) error {
 	return fmt.Errorf("%w: the guest's answer to %s does not read: %w; this is a bug, or a guest that does not match this module's version", ErrInternal, export, problem)
 }
 
-// DecodeAnswer decodes export's answer from the transport. Bytes that do
-// not decode are the guest's fault, not the caller's: ErrInternal, through
-// [BadAnswer], which names the export and wraps the decoder's error.
+// DecodeAnswer decodes the answer of export from its transport bytes.
+//
+// When the bytes do not decode, the fault is in the guest, and not in the
+// caller's input. DecodeAnswer then returns the ErrInternal error from
+// [BadAnswer]. That error names the export and wraps the error from the
+// decoder.
 func DecodeAnswer(export string, out []byte) (any, error) {
 	decoded, err := vcffi.Unmarshal(out)
 	if err != nil {

@@ -656,11 +656,13 @@ func TestOpaqueReadsARustWrittenBlob(t *testing.T) {
 	}
 }
 
-// A field of map type whose stored value opens as something else, a row
-// written by another SDK or an older struct, is refused as decrypt's
-// malformed input naming the field and the Go type that needs an object,
-// and never what the value opened as: that is known only once it is
-// decrypted, so it is the plaintext's own metadata.
+// A field of map type can have a stored value that decrypts to something
+// that is not an object. An example is a row written by another SDK, or by
+// an older struct. Decrypt refuses that value as malformed input. The error
+// names the field and the Go type that needs an object.
+//
+// The error never names the kind that the value decrypted to. That kind was
+// inside the ciphertext, so it is part of the plaintext.
 func TestAMapFieldThatOpensAsAnotherKindNamesNoKind(t *testing.T) {
 	asAny := func(vals Values, name string) error { _, err := Get[map[string]any](vals, name); return err }
 	asValues := func(vals Values, name string) error { _, err := Get[Values](vals, name); return err }
@@ -687,8 +689,8 @@ func TestAMapFieldThatOpensAsAnotherKindNamesNoKind(t *testing.T) {
 	}
 }
 
-// assertNamesNoKind fails if a decrypt error names what the value opened
-// as, or holds the value.
+// assertNamesNoKind fails the test if a decrypt error names the kind that
+// the value decrypted to, or contains the value.
 func assertNamesNoKind(t *testing.T, err error) {
 	t.Helper()
 	for _, kind := range []string{"a list", "a string", "a number", "bytes", "null", "nothing", "interface", "elements", "secret", "7"} {
@@ -698,8 +700,9 @@ func assertNamesNoKind(t *testing.T, err error) {
 	}
 }
 
-// A document field that opens as something other than its JSON text is a
-// decrypt refusal naming the field, and never what it opened as.
+// When a document field decrypts to something that is not its JSON text,
+// the decrypt error names the field. The error never names the kind that
+// the value decrypted to.
 func TestADocumentFieldThatOpensAsAnotherKindNamesNoKind(t *testing.T) {
 	for _, v := range []any{"secret", int64(7), []any{"secret"}} {
 		_, err := GetDocument[map[string]any](Values{"doc": v}, "doc")
@@ -715,10 +718,14 @@ func TestADocumentFieldThatOpensAsAnotherKindNamesNoKind(t *testing.T) {
 	}
 }
 
-// Every other refusal of an opened value names the type the field needs and
-// never what the value opened as, nor how many elements it held: a null
-// for a type that holds a value, a list or an array of another kind or
-// length, a value of another type, and an opaque value that is not bytes.
+// Every other error about a decrypted value names the type that the field
+// needs. The error never names the kind that the value decrypted to, or the
+// number of elements in the value. The cases are:
+//
+//   - a null for a type that does not take a null
+//   - a list or an array of another kind or length
+//   - a value of another type
+//   - an opaque value that is not bytes
 func TestAnOpenedValueOfAnotherTypeNamesNoKind(t *testing.T) {
 	read := func(get func(Values) error, v any) error {
 		return get(Values{"f": v})

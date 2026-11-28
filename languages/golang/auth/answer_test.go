@@ -9,9 +9,10 @@ import (
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
-// An auth guest's answer that is not an object is an internal failure that
-// names the export and says what the answer is, by its kind: never its
-// value, which can be a key or a token.
+// When the answer of an auth guest is not an object, the error is
+// ErrInternal. The error names the export and the kind of value that the
+// answer is. The error never contains the value, because the value can be a
+// key or a token.
 func TestAnAnswerThatIsNotAnObjectNamesTheExportAndItsKind(t *testing.T) {
 	for _, tc := range []struct {
 		answer any
@@ -51,9 +52,10 @@ func TestAnAnswerThatIsNotAnObjectNamesTheExportAndItsKind(t *testing.T) {
 	}
 }
 
-// The workspace list and the runnable operations are read the same way: an
-// answer that does not decode, or is not what the export writes, names the
-// export and what it is, by kind.
+// The workspace list and the runnable operations are read the same way.
+// For an answer that does not decode, or that is not what the export
+// writes, the error names the export. The error also names the kind of
+// value that the answer is.
 func TestListAnswersNameTheExportAndTheirKind(t *testing.T) {
 	marshal := func(v any) []byte {
 		out, err := vcffi.Marshal(v)
@@ -87,9 +89,11 @@ func TestListAnswersNameTheExportAndTheirKind(t *testing.T) {
 	}
 }
 
-// A field of an answer that is missing or of the wrong kind is ErrInternal
-// naming the export and the field, with the version hint, and never the
-// field's value: it can be a token or a key.
+// When a field of an answer is missing or is of the wrong kind, the error
+// is ErrInternal. The error names the export and the field. The error says
+// that the cause is a bug, or a guest of another version. The error never
+// contains the value of the field, because the value can be a token or a
+// key.
 func TestAnAnswersFieldsNameTheExport(t *testing.T) {
 	answer := fields{export: "sa_token", obj: vcvalue.Object{
 		{Key: "access_token", Value: int64(7)},
@@ -120,7 +124,7 @@ func TestAnAnswersFieldsNameTheExport(t *testing.T) {
 	}
 }
 
-// A step that does not read names sa_auth_io.
+// The error for a step that this package cannot read names sa_auth_io.
 func TestAStepThatDoesNotReadNamesTheExport(t *testing.T) {
 	for _, raw := range [][]byte{{0xff}, mustMarshalAuth(t, "secret")} {
 		_, err := decodeAuthStep(raw)

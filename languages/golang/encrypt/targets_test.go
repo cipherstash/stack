@@ -94,8 +94,9 @@ func TestParseTargetsReadsEachEntry(t *testing.T) {
 			t.Errorf("%s: %v does not name the export", name, err)
 		}
 	}
-	// What was found is named by its kind, never its value: the answer
-	// itself, its list, an entry, and an operator of an entry.
+	// Each error names the kind of the value that is wrong, and never the
+	// value. The value is the answer itself, its list, an entry, or an
+	// operator of an entry.
 	for _, tc := range []struct {
 		answer any
 		want   string
@@ -149,7 +150,8 @@ func TestParseQueryTermTakesOnlyWhatTheEngineWrites(t *testing.T) {
 			t.Errorf("catalog %s: %v", name, err)
 		}
 	}
-	// An answer that is not an object says what it is, by its kind.
+	// For an answer that is not an object, the error names the kind of
+	// value that the answer is.
 	for _, tc := range []struct {
 		answer any
 		want   string
@@ -214,9 +216,9 @@ func TestParseQueryTermRefusesAMixedShape(t *testing.T) {
 	}
 }
 
-// Every export's answer is decoded through one path: bytes that do not
-// decode are ErrInternal naming the export, with the version hint, never
-// bad input.
+// The same code decodes the answer of every export. For bytes that do not
+// decode, the error is ErrInternal and names the export. The error says
+// that the cause is a bug or a guest of another version, and not bad input.
 func TestAnAnswerThatDoesNotDecodeNamesTheExport(t *testing.T) {
 	for _, export := range []string{"se_query_term", "se_targets", "se_operators", "se_contexts", "se_verify", "se_target_limit"} {
 		_, err := guest.DecodeAnswer(export, []byte{0xff})
@@ -233,7 +235,8 @@ func TestAnAnswerThatDoesNotDecodeNamesTheExport(t *testing.T) {
 	}
 }
 
-// se_verify's and se_target_limit's answers say what they are, by kind.
+// For an answer of se_verify or se_target_limit that is of the wrong kind,
+// the error names the kind of value that the answer is.
 func TestVerifyAndLimitAnswersSayWhatTheyAre(t *testing.T) {
 	for _, tc := range []struct {
 		answer any
@@ -264,7 +267,8 @@ func TestVerifyAndLimitAnswersSayWhatTheyAre(t *testing.T) {
 	}
 }
 
-// An index, a producible flag or a name of the wrong kind says what it is.
+// For an index, a producible flag, or a name of the wrong kind, the error
+// names the kind of value that it is.
 func TestATargetFieldOfTheWrongKindSaysWhatItIs(t *testing.T) {
 	entry := func(fields ...vcvalue.Field) vcvalue.Object {
 		return vcvalue.Object{{Key: "targets", Value: []any{vcvalue.Object(fields)}}}
@@ -286,7 +290,7 @@ func TestATargetFieldOfTheWrongKindSaysWhatItIs(t *testing.T) {
 	}
 }
 
-// mustMarshal is v in the transport.
+// mustMarshal returns v as transport bytes.
 func mustMarshal(t *testing.T, v any) []byte {
 	t.Helper()
 	out, err := vcffi.Marshal(v)
@@ -296,9 +300,9 @@ func mustMarshal(t *testing.T, v any) []byte {
 	return out
 }
 
-// A child se_json_open opened that is not what the export writes is refused
-// by position and key, never by what kind of value it found: the value is
-// plaintext.
+// se_json_open can return a child that is not what the export writes. The
+// error names the position and the key of the child. The error never names
+// the kind of the value, because the value is decrypted plaintext.
 func TestAnOpenedChildOfTheWrongShapeNamesNoKind(t *testing.T) {
 	for _, tc := range []struct {
 		item any

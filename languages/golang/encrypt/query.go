@@ -325,8 +325,8 @@ func (cph *Cipher) Verify(ctx context.Context, plan *record.Plan, field, operato
 	return parseVerified(decoded, len(values))
 }
 
-// parseVerified reads se_verify's answer: one boolean for each of the
-// count values sent.
+// parseVerified reads the answer of se_verify. The answer has one boolean
+// for each of the count values that the caller sent.
 func parseVerified(decoded any, count int) ([]bool, error) {
 	list, ok := decoded.([]any)
 	if !ok {
@@ -377,8 +377,8 @@ func (cph *Cipher) TargetLimit(ctx context.Context, plan *record.Plan, field, op
 	return parseLimit(decoded)
 }
 
-// parseLimit reads se_target_limit's answer: null for no bound, or the row
-// count.
+// parseLimit reads the answer of se_target_limit. The answer is null when
+// there is no bound, or the number of rows.
 func parseLimit(decoded any) (Limit, error) {
 	switch v := decoded.(type) {
 	case nil:

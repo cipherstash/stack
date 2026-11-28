@@ -407,7 +407,8 @@ func (s *ProfileStore) ListWorkspaces(ctx context.Context) ([]string, error) {
 	return workspaceIDs(out)
 }
 
-// workspaceIDs reads sa_list_workspaces's answer: a list of workspace ids.
+// workspaceIDs reads the answer of sa_list_workspaces. The answer is a
+// list of workspace ids.
 func workspaceIDs(out []byte) ([]string, error) {
 	decoded, err := guest.DecodeAnswer("sa_list_workspaces", out)
 	if err != nil {
@@ -536,16 +537,17 @@ func (s *ProfileStore) DeviceIdentity(ctx context.Context) (DeviceIdentity, erro
 	return d, nil
 }
 
-// fields is a decoded codec object: an export's answer, which names the
-// export so every refusal of it says whose answer it was.
+// fields is the decoded answer of one export: an object, and the name of
+// the export. Every error about the answer names that export.
 type fields struct {
 	export string
 	obj    vcvalue.Object
 }
 
-// object decodes export's answer as an object. One that is not is
-// ErrInternal, saying what it is by its kind and never its value: the
-// answer can hold a key or a token.
+// object decodes the answer of export as an object. For an answer that is
+// not an object, object returns an ErrInternal error. The error names the
+// kind of value that the answer is. The error never contains the value,
+// because an answer can contain a key or a token.
 func object(export string, encoded []byte) (fields, error) {
 	decoded, err := guest.DecodeAnswer(export, encoded)
 	if err != nil {
@@ -567,7 +569,8 @@ func (f fields) get(key string) (any, bool) {
 	return nil, false
 }
 
-// refuse is the answer's refusal: ErrInternal, naming the export.
+// refuse returns the error for an answer that this package cannot read.
+// The error is ErrInternal, and it names the export.
 func (f fields) refuse(format string, args ...any) error {
 	return guest.BadAnswer(f.export, fmt.Errorf(format, args...))
 }

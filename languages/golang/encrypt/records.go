@@ -513,8 +513,8 @@ func (c *Client) openEncoded(ctx context.Context, call callOptions, p *record.Pl
 	if err != nil {
 		return nil, err
 	}
-	// What the guest opened is plaintext: a refusal names where in the
-	// answer it is, never what kind of value it found.
+	// The answer is decrypted plaintext. So an error names the position of
+	// a value in the answer, and never the kind of the value.
 	items, ok := decoded.([]any)
 	if !ok {
 		return nil, guest.BadAnswer("se_decrypt_record", errors.New("it is not a list of records"))

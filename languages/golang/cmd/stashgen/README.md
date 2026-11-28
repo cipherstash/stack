@@ -308,7 +308,7 @@ Anything else is refused before any term is derived, as an `*encrypt.Diagnostic`
 - `json_path_no_wildcard`: a filter on a path with no `[*]`.
 - `json_path_wildcard`: a `[*]` in a filter's member.
 - `json_syntax`: JSON text that does not parse, a literal in the predicate (`1e999`) or `vars` (`{`, or an empty or whitespace-only `json.RawMessage`); with `At()` for a literal, without it for `vars`.
-- `json_vars_not_object`: `vars` that are not a JSON object (`[1]`, `1`, `null`), with `Found()` naming what they are (`"array"`, `"uint64"`, `"null"`).
+- `json_vars_not_object`: `vars` that are not a JSON object (`[1]`, `1`, `null`). `Found()` returns the kind of value that the vars are (`"array"`, `"uint64"`, `"null"`).
 
 An ordering at a path the tag does not order is `encrypt.ErrTerm` with the code `stack_encrypt::json_path_not_ordered`.
 

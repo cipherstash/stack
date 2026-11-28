@@ -299,9 +299,9 @@ func TestMatchRefusalsNameTheConstructAndItsOffset(t *testing.T) {
 		}
 	}
 
-	// The input itself: vars that are not an object, or not JSON. Vars that
-	// are not an object say what they are, by kind and never value, and
-	// name the field.
+	// The input itself: vars that are not an object, or not JSON. For vars
+	// that are not an object, the error names the field and the kind of
+	// value that the vars are. The error never contains the value.
 	for _, tc := range []struct {
 		name   string
 		vars   any

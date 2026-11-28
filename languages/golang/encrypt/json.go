@@ -70,8 +70,8 @@ func (cph *Cipher) JSONOpen(ctx context.Context, plan *record.Plan, field string
 	}
 	opened := make([][][]byte, len(list))
 	for i, item := range list {
-		// What the guest opened is plaintext: a refusal names where in the
-		// answer it is, never what kind of value it found.
+		// The answer is decrypted plaintext. So an error names the position
+		// of a value in the answer, and never the kind of the value.
 		values, ok := item.([]any)
 		if !ok {
 			return nil, guest.BadAnswer("se_json_open", fmt.Errorf("group %d is not a list", i))

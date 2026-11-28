@@ -308,8 +308,9 @@ func TestAYieldStepDecodesWithNoRequests(t *testing.T) {
 	}
 }
 
-// A step the host cannot decode is refused, never performed: an internal
-// failure naming se_io, with the version hint.
+// A step the host cannot decode is refused, never performed. The error is
+// ErrInternal. The error names se_io, and says that the cause is a bug or a
+// guest of another version.
 func TestAMalformedStepIsRefused(t *testing.T) {
 	for _, raw := range [][]byte{nil, {0xff}, marshalStep(t, map[string]any{"handle": uint64(1)})} {
 		_, err := decodeStep(raw)

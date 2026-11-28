@@ -290,10 +290,10 @@ func widenNumber(n json.Number, out any) (any, error) {
 	return n, nil
 }
 
-// mismatch is the refusal of an opened value that is not of the type the
-// field needs. It names the type needed and never what the value opened
-// as: that is known only once the value is decrypted, so it is the
-// plaintext's own metadata.
+// mismatch returns the error for a decrypted value that is not of the type
+// that the field needs. The error names that type. The error never names
+// the kind that the value decrypted to. That kind was inside the
+// ciphertext, so it is part of the plaintext.
 func mismatch(_, want any) error {
 	return fmt.Errorf("does not open as %T", want)
 }
@@ -397,8 +397,9 @@ func setSlice[E any](v any, out *[]E) error {
 }
 
 // valuesOf reads an opened composite as Values, nested objects included.
-// want is the Go type the field needs, which a refusal names. It never
-// names what the value opened as, which only decryption shows.
+// want is the Go type that the field needs, and an error names it. An
+// error never names the kind that the value decrypted to, because that
+// kind was inside the ciphertext.
 func valuesOf(v any, want string) (Values, error) {
 	switch obj := v.(type) {
 	case vcvalue.Object:
@@ -420,7 +421,7 @@ func valuesOf(v any, want string) (Values, error) {
 	case map[string]any:
 		return Values(obj), nil
 	}
-	// What the value opened as is not named: it is known only once the
-	// value is decrypted, so it is the plaintext's own metadata.
+	// The error does not name the kind that the value decrypted to. That
+	// kind was inside the ciphertext, so it is part of the plaintext.
 	return nil, fmt.Errorf("does not open as an object, and %s needs one", want)
 }
