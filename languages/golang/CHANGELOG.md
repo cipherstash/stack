@@ -54,10 +54,11 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   type, the kind, and the length of a decrypted value were inside the
   ciphertext, so an error message leaves them out.
   - A map field has the type `map[string]V`, `Values`, or
-    `map[string]any`. Its stored value can decrypt to something that is
-    not an object. The message is then `decrypt: field "tags": ... does
-    not open as an object, and map[string]any needs one`. Before, the
-    message said `opened as []interface {}, not an object`.
+    `map[string]any`. The stored value of a map field can decrypt to
+    something that is not an object. The message is then `decrypt: field
+    "tags": ... does not open as an object, and map[string]any needs
+    one`. Before, the message said `opened as []interface {}, not an
+    object`.
   - The message for every other mismatch says `does not open as`, then
     the type that the field needs. Those mismatches are:
     - a value of another type
