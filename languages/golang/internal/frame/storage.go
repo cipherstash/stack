@@ -239,7 +239,7 @@ func (w *storageWriter) reflect(rv reflect.Value, depth int) error {
 	}
 	if text, ok, err := marshalText(rv); ok {
 		if err != nil {
-			return unwritable("%s refused to write itself as text", rv.Type())
+			return unwritable("the MarshalText method of %s returned an error", rv.Type())
 		}
 		return w.text(text)
 	}
@@ -407,7 +407,7 @@ func (w *storageWriter) open(tag byte) int {
 
 func (w *storageWriter) close(at, count int) error {
 	if uint64(count) > maxUint32 {
-		return unwritable("a container holds too many entries")
+		return unwritable("a container has too many entries")
 	}
 	binary.LittleEndian.PutUint32(w.buf[at:], uint32(count))
 	return nil
@@ -673,7 +673,7 @@ func keyOf(k any) (mapKey, error) {
 	default:
 		if text, ok, err := marshalText(rv); ok {
 			if err != nil {
-				return mapKey{}, unwritable("a map key of type %s refused to write itself as text", t)
+				return mapKey{}, unwritable("the MarshalText method of the map key type %s returned an error", t)
 			}
 			id = keyID{kind: keyText, s: string(text)}
 			if err := w.text(text); err != nil {

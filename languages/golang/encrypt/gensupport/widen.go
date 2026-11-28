@@ -105,7 +105,7 @@ func asUUID(v any) any {
 
 // errInvalidTimestamp is the error for an instant outside the years -9999 to
 // 9999.
-var errInvalidTimestamp = errors.New("encrypt: invalid timestamp: outside years -9999 to 9999")
+var errInvalidTimestamp = errors.New("encrypt: the timestamp is outside the years -9999 to 9999")
 
 // checkValue refuses a date, a decimal, or a timestamp that the codec cannot
 // write. The check runs before the value reaches the codec, so that the

@@ -297,7 +297,7 @@ func assign(m any, rv reflect.Value, path string) error {
 			return mismatch(path, "text", m)
 		}
 		if err := rv.Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(text)); err != nil {
-			return fmt.Errorf("%w: %s: text %s does not take", ErrMismatch, orRoot(path), t)
+			return fmt.Errorf("%w: %s: the UnmarshalText method of %s returned an error", ErrMismatch, orRoot(path), t)
 		}
 		return nil
 	}
@@ -391,7 +391,7 @@ func assignInteger(m any, rv reflect.Value, path string) error {
 		}
 	}
 	if !fits {
-		return fmt.Errorf("%w: %s: an integer that does not fit %s", ErrMismatch, orRoot(path), rv.Type())
+		return fmt.Errorf("%w: %s: the integer is outside the range of %s", ErrMismatch, orRoot(path), rv.Type())
 	}
 	return nil
 }
@@ -454,7 +454,7 @@ func assignMap(m any, rv reflect.Value, path string) error {
 		// A bytes key that is read into an interface key is a []byte. A Go
 		// map cannot hash a []byte, so SetMapIndex would panic.
 		if !key.Comparable() {
-			return mismatch(at, "a key a Go map can hold", e.Key)
+			return mismatch(at, "a key of a comparable type", e.Key)
 		}
 		value := reflect.New(rv.Type().Elem()).Elem()
 		if err := assign(e.Value, value, at); err != nil {

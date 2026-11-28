@@ -113,7 +113,7 @@ var leafTags = [...]byte{
 // leafTag returns the tag for a kind that Classify returned.
 func leafTag(kind LeafKind) (byte, error) {
 	if int(kind) >= len(leafTags) || leafTags[kind] == 0 {
-		return 0, fmt.Errorf("frame: LeafSet classified an unknown LeafKind %d", kind)
+		return 0, fmt.Errorf("frame: LeafSet.Classify returned an unknown LeafKind %d", kind)
 	}
 	return leafTags[kind], nil
 }
@@ -221,7 +221,7 @@ func encodeCipherText(leaves LeafSet, out []byte, v any, depth int) ([]byte, err
 			return nil, st.err
 		}
 		if done != 1 {
-			return nil, fmt.Errorf("frame: passthrough payload must complete exactly one value, completed %d", done)
+			return nil, fmt.Errorf("frame: EncryptValue must write exactly one complete passthrough value, and wrote %d", done)
 		}
 		return st.buf, nil
 	default:
@@ -233,7 +233,7 @@ func encodeCipherText(leaves LeafSet, out []byte, v any, depth int) ([]byte, err
 			out = append(out, tag)
 			return appendChunk(out, bytes)
 		}
-		return nil, fmt.Errorf("frame: %T is not a ciphertext node — wrap passthrough values in Plain", v)
+		return nil, fmt.Errorf("frame: %T is not a ciphertext node; wrap a passthrough value in Plain", v)
 	}
 }
 

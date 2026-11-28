@@ -40,7 +40,7 @@ type Encoder struct {
 // Encoder keeps nothing that is written to it.
 func (e Encoder) Err() error {
 	if !e.enc.Usable() {
-		return fmt.Errorf("%w: the zero Encoder keeps nothing; write to the Encoder EncryptValue is given", ErrEncoding)
+		return fmt.Errorf("%w: the zero Encoder records nothing; use the Encoder that EncryptValue is given", ErrEncoding)
 	}
 	if err := e.enc.Err(); err != nil {
 		return fmt.Errorf("%w: %w", ErrEncoding, err)

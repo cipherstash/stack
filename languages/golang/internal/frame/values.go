@@ -14,7 +14,7 @@ var (
 	ErrInvalidDecimal   = errors.New("frame: invalid or out-of-range decimal")
 	ErrNonFiniteDecimal = errors.New("frame: decimal must be finite")
 	ErrInvalidUUID      = errors.New("frame: invalid UUID")
-	ErrInvalidTagged    = errors.New("frame: a tagged value must hold a physical scalar under an unknown logical id")
+	ErrInvalidTagged    = errors.New("frame: a tagged value must be a physical scalar with a logical id that this version does not know")
 )
 
 // Int128 is a signed 128-bit integer in two's complement, in little-endian

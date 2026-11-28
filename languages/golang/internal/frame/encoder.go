@@ -298,7 +298,7 @@ func (s *SeqEncoder) checkPrev() {
 	if s.childDone > s.count {
 		s.st.fail(fmt.Errorf("frame: more than one value was written for sequence element %d", s.count-1))
 	} else if s.count > 0 && s.childDone < s.count {
-		s.st.fail(fmt.Errorf("frame: sequence element %d was never completed", s.count-1))
+		s.st.fail(fmt.Errorf("frame: no complete value was written for sequence element %d", s.count-1))
 	}
 }
 
@@ -383,7 +383,7 @@ func (m *MapEncoder) checkPrev() {
 	if m.childDone > m.count {
 		m.st.fail(fmt.Errorf("frame: more than one value was written for key %q", m.lastKey))
 	} else if m.count > 0 && m.childDone < m.count {
-		m.st.fail(fmt.Errorf("frame: value for key %q was never completed", m.lastKey))
+		m.st.fail(fmt.Errorf("frame: no complete value was written for key %q", m.lastKey))
 	}
 }
 
@@ -400,7 +400,7 @@ func (m *MapEncoder) Field(key string) Encoder {
 		if !utf8.ValidString(key) {
 			m.st.fail(errors.New("frame: object key is not valid UTF-8"))
 		} else if _, dup := m.seen[key]; dup {
-			m.st.fail(fmt.Errorf("frame: duplicate key %q in map encoding", key))
+			m.st.fail(fmt.Errorf("frame: key %q is repeated", key))
 		} else if buf, err := appendChunk(m.st.buf, []byte(key)); err != nil {
 			m.st.fail(err)
 		} else {
@@ -457,7 +457,7 @@ func Marshal(v any) ([]byte, error) {
 	// Encryptable can write no value, leave a container without its End, or
 	// write more than one value.
 	if root != 1 {
-		return nil, fmt.Errorf("frame: encode must complete exactly one root value, completed %d", root)
+		return nil, fmt.Errorf("frame: EncryptValue must write exactly one complete root value, and wrote %d", root)
 	}
 	return st.buf, nil
 }
@@ -699,7 +699,7 @@ func encodeStruct(enc Encoder, rv reflect.Value) {
 	// caller asked for the empty encoding.
 	if encoded == 0 && unexported > 0 {
 		enc.st.fail(fmt.Errorf(
-			"frame: struct %s has no exported fields to encode — implement Encryptable to control its sealing", t))
+			"frame: struct %s has no exported fields to encode; implement encrypt.Encryptable so that the type writes its own value", t))
 		return
 	}
 	_ = m.End()

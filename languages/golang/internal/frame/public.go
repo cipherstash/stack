@@ -66,7 +66,7 @@ func Publish[P, V any]() {
 	case !publishable[v]:
 		panic(fmt.Sprintf("frame: %s cannot be published", v))
 	case p == v || p.Kind() != v.Kind() || !p.ConvertibleTo(v) || !v.ConvertibleTo(p):
-		panic(fmt.Sprintf("frame: %s is not a type of its own over %s's underlying type", p, v))
+		panic(fmt.Sprintf("frame: %s must be a distinct type with the same underlying type as %s", p, v))
 	}
 	if old, ok := published[p]; ok && old != v {
 		panic(fmt.Sprintf("frame: %s is already published as %s", p, old))
@@ -180,4 +180,4 @@ func (e Encoder) Err() error {
 	return e.st.err
 }
 
-var errZeroEncoder = errors.New("frame: the zero Encoder writes nothing; use the one EncryptValue is given")
+var errZeroEncoder = errors.New("frame: the zero Encoder records nothing; use the Encoder that EncryptValue is given")
