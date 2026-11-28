@@ -14,10 +14,11 @@ name: Fuzz
 #     cache, so coverage compounds; it is minimised with `cargo fuzz cmin`, and
 #     any crash reproducer is uploaded as an artifact.
 #
-#   * go-fuzz-campaign (schedule and manual, never on PRs): the same for the
-#     Go fuzz targets in languages/golang, which fuzz the WASI guests' ABI
-#     from the host side and the frame codec's decoders (`mise run go:fuzz`).
-#     Their regression replay is plain `go test`, in tests-golang.yml.
+#   * go-fuzz-campaign (schedule and manual, never on PRs): the same run for
+#     the Go fuzz targets in languages/golang (`mise run go:fuzz`). Those
+#     targets fuzz the ABI of the WASI guests from the host side, and the
+#     decoders of the frame codec. Their regression replay is plain
+#     `go test`, in tests-golang.yml.
 #
 # cargo-fuzz needs nightly; the tasks run `cargo +nightly fuzz`. Pull requests
 # are the only filtered event, so `push` has no filter to mirror; recorded in
@@ -258,8 +259,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `guest` is the build the target's package runs. The frame codec's
-        # targets (internal/frame) run no guest.
+        # `guest` is the guest build that the package of the target runs. The
+        # targets of the frame codec, in internal/frame, run no guest.
         include:
           - { target: FuzzGuestExportPairs,     slug: encrypt-export-pairs,    guest: "wasm:guest:build:deterministic" }
           - { target: FuzzGuestBufferRegistry,  slug: encrypt-buffer-registry, guest: "wasm:guest:build:deterministic" }

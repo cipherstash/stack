@@ -1,6 +1,6 @@
-//! The guest-owned buffer registry behind `se_alloc` / `se_dealloc`.
-//! Shared by every guest under `languages/golang`, so the registry
-//! discipline is written once:
+//! The registry of buffers that the guest owns, used by `se_alloc` and
+//! `se_dealloc`. Every guest under `languages/golang` shares this module, so
+//! the rules of the registry are written once:
 //!
 //! - Every buffer the guest hands out — from [`alloc`] and from packed
 //!   results — is recorded here keyed by start address, holding the true

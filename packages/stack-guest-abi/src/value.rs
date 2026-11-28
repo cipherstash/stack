@@ -1,14 +1,16 @@
 //! [`HostValue`]: a value a guest hands its host, and how it crosses the
 //! boundary.
 //!
-//! Every structured output a guest returns (a list of workspace ids, the
-//! fields of a token, the last error) crosses as one transport frame, the
-//! encoding `recipher-frame`'s `Frame` and `FrameWriter` define and the Go
-//! module reads with its frame codec (`languages/golang/internal/frame`). A
-//! `HostValue` describes itself to `vitaminc-aead`'s [`Encrypt`] model, so
-//! [`encode`](HostValue::encode) is `recipher-frame`'s own frame writer,
-//! and [`decode`](HostValue::decode) reads a frame back through a
-//! [`Sink`], for the tests that check what a host is given.
+//! Every structured output that a guest returns crosses to the host as one
+//! transport frame. Examples are a list of workspace ids, the fields of a
+//! token, and the last error. `Frame` and `FrameWriter` in `recipher-frame`
+//! define the encoding. The Go module reads it with its frame codec, in
+//! `languages/golang/internal/frame`.
+//!
+//! A `HostValue` implements the [`Encrypt`] model of `vitaminc-aead`.
+//! [`encode`](HostValue::encode) therefore uses the frame writer of
+//! `recipher-frame`. [`decode`](HostValue::decode) reads a frame back
+//! through a [`Sink`]. The tests use `decode` to check what a host is given.
 
 use recipher_frame::{to_frame, Frame, FrameError, FrameWriteError};
 use vitaminc_aead::plaintext::{

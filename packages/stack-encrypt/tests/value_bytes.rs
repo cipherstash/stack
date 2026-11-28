@@ -677,9 +677,9 @@ async fn host_section(
     Json::Object(out)
 }
 
-/// A typed null a host sends (Go writes one for a nil pointer to a
-/// fixed-width type), against each null policy of a typed field, an
-/// untyped field, and inside an untyped value.
+/// Checks a typed null that a host sends, for each null policy of a typed
+/// field, for an untyped field, and inside an untyped value. Go writes a
+/// typed null for a nil pointer to a fixed-width type.
 async fn typed_null_section(
     cipher: &StackCipher<KeptKeys>,
     keys: &Mutex<HashMap<Vec<u8>, [u8; 32]>>,

@@ -263,13 +263,14 @@ impl Zeroize for WitnessThenMore {
 /// reads the same hex: Rust writes, Go reads.
 const RUST_BLOB: &str = "56435301f104000000040000006e616d650a0c000000416461204c6f76656c6163650300000061676506240000000400000074616773f0020000000a050000006d617468730a07000000656e67696e6573080000006e69636b6e616d65f50a03000000616461";
 
-/// `ada()` as the Go SDK writes it, through its frame codec's storage
-/// profile (`languages/golang/internal/frame`), from a
-/// struct with the tags `vc:"name"`, `vc:"age"`, `vc:"tags"` and
-/// `vc:"nickname"`, where the nickname is a non-nil `*string`. Go writes a
-/// non-nil pointer as the bare value, and Rust writes `Some` with a marker
-/// byte, so this is one byte shorter than [`RUST_BLOB`]. The Go test
-/// `TestOpaqueReadsARustWrittenBlob` pins the same hex.
+/// The blob that the Go SDK writes for `ada()`, with the storage profile of
+/// its frame codec in `languages/golang/internal/frame`. The Go struct has
+/// the tags `vc:"name"`, `vc:"age"`, `vc:"tags"`, and `vc:"nickname"`. The
+/// nickname is a non-nil `*string`.
+///
+/// Go writes a non-nil pointer as the value alone. Rust writes `Some` with a
+/// marker byte, so this blob is one byte shorter than [`RUST_BLOB`]. The Go
+/// test `TestOpaqueReadsARustWrittenBlob` checks the same hex.
 const GO_BLOB_SOME: &str = "56435301f104000000040000006e616d650a0c000000416461204c6f76656c6163650300000061676506240000000400000074616773f0020000000a050000006d617468730a07000000656e67696e6573080000006e69636b6e616d650a03000000616461";
 
 /// [`GO_BLOB_SOME`] with the nickname a nil pointer, which Go writes as null.

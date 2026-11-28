@@ -97,12 +97,12 @@
 //! - map keys that keep their kind
 //! - a promise that a version's bytes never change meaning
 //!
-//! The specification is `STORAGE.md` in the `recipher-frame` crate.
-//! Every implementation must pass its golden corpus of test vectors. The Go
-//! SDK writes and reads the same profile with its frame codec
-//! (`languages/golang/internal/frame`), so a Go opaque struct and a Rust
-//! `OpaqueBlob<T>` are one stored format. See [Go](#go)
-//! for the type rules.
+//! The specification is `STORAGE.md` in the `recipher-frame` crate. Every
+//! implementation must pass its golden corpus of test vectors. The Go SDK
+//! writes and reads the same profile with its frame codec, in
+//! `languages/golang/internal/frame`. A Go opaque struct and a Rust
+//! `OpaqueBlob<T>` therefore have one stored format. See [Go](#go) for the
+//! type rules.
 //!
 //! Every blob starts with [`HEADER`]: the ASCII bytes `VCS`, then the
 //! version byte, [`VERSION`]. The header is part of the plaintext, so it is

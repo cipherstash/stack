@@ -25,12 +25,15 @@ name: Release (Go)
 #
 #   gh workflow run release-golang.yml -f version=0.1.0-alpha.1 --ref <branch>
 #
-# The ref must carry the EQL v4 bundle (packages/eql's v4 build), or the
-# build job stops at "Build the EQL SQL bundles". Its
-# languages/golang/CHANGELOG.md must have a `## [<version>]` section, which
-# becomes the release notes, or the run stops at the `notes` job. A version with a pre-release
-# suffix may be cut from any branch and is published as a GitHub pre-release;
-# a final version is cut from main only.
+# The ref must have the EQL v4 bundle (the v4 build of packages/eql). Without
+# it, the build job stops at "Build the EQL SQL bundles". The file
+# languages/golang/CHANGELOG.md at the ref must have a `## [<version>]` section.
+# That section becomes the release notes. Without it, the run stops at the
+# `notes` job.
+#
+# A version with a pre-release suffix can be released from any branch. The
+# workflow publishes it as a GitHub pre-release. A final version can be released
+# only from main.
 #
 # Four jobs, split by what they may touch:
 #
