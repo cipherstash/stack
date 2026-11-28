@@ -187,7 +187,8 @@ The [single-value contract](single-value-contract.md) defines
 one ciphertext through the engine's run-time interface, and decrypted from
 one. The cases give a value, the kind declared for it and a context. They
 cover every scalar kind, the exact conversions a declared kind makes, JSON
-documents, the one stored form a string and a document share, batches, and
+documents, the one stored form a string and a document share, batches of
+single-value calls merged into one key request, and
 the refusals of an array, an object, a passthrough, a null, `undefined` and a
 value of another kind.
 `v1/single-value-v1.expected.rust-native.json` freezes each input's frame, the

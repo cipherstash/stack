@@ -14,10 +14,18 @@
 //! - [`decrypt`] opens a ciphertext into an [`OwnedFrame`] that holds one
 //!   scalar.
 //!
-//! Each has a form that takes a context ([`encrypt_with_context`],
-//! [`decrypt_with_context`]) and a form that takes many values and makes
-//! one key request ([`encrypt_all`], [`decrypt_all`], and the two
-//! `_all_with_context` forms).
+//! Each has a form that takes a context: [`encrypt_with_context`] and
+//! [`decrypt_with_context`].
+//!
+//! # Many values in one key request
+//!
+//! Each call returns a [`Pending`], which holds its key request and has
+//! not sent it. To encrypt or decrypt many values, make one call for each
+//! value and merge the results with [`Pending::all`]. Awaiting the merged
+//! call makes one key request for all of them, and the values come back
+//! in order. Each value keeps its own declared kind and its own context,
+//! so one batch can hold values of different kinds. The examples on
+//! [`encrypt`] and [`decrypt`] show how.
 //!
 //! # The declared kind
 //!
@@ -144,6 +152,54 @@ use crate::{Ciphertext, ContextPiece, DecryptFrom, KeysetCipher};
 /// # }).unwrap();
 /// ```
 ///
+/// # Many values in one key request
+///
+/// Call `encrypt` for each value, then merge the pending calls with
+/// [`Pending::all`]. Nothing is requested until the merged call is
+/// awaited, and it makes one key request for every value. Each value has
+/// its own data key and is authenticated on its own. The ciphertexts come
+/// back in the order of the calls.
+///
+/// Each call takes its own declared kind, so one batch can hold values of
+/// different kinds. A value that is refused is an `Err` here, before any
+/// call is merged. So a batch with a refused value requests no key.
+///
+/// ```
+/// use stack_encrypt::dynamic::{frame::OwnedFrame, value, ValueKind};
+/// use stack_encrypt::{Pending, StackCipher};
+///
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+/// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+/// // the environment, or from the profile that `npx stash auth login` writes.
+/// let cipher = StackCipher::builder()
+/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+///     .init()
+///     .await?;
+/// let keyset = cipher.default_keyset();
+///
+/// // Three values, each with the kind the caller declares for it.
+/// let values = [
+///     (OwnedFrame::of(34.0f64)?, Some(ValueKind::UInt64)),
+///     (OwnedFrame::of("ada@example.com")?, Some(ValueKind::String)),
+///     (OwnedFrame::of(true)?, None),
+/// ];
+///
+/// // One call for each value. A refused value stops here, with no request.
+/// let mut calls = Vec::new();
+/// for (frame, kind) in &values {
+///     calls.push(value::encrypt(&keyset, frame.frame(), *kind)?);
+/// }
+///
+/// // One key request for all three.
+/// let stored = Pending::all(&keyset, calls).await?;
+/// assert_eq!(stored.len(), 3);
+///
+/// let age: u64 = keyset.decrypt(stored[0].clone()).await?;
+/// assert_eq!(age, 34);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// # }).unwrap();
+/// ```
+///
 /// # Errors
 ///
 /// [`Error::Source`], decided here, before any key is requested:
@@ -216,73 +272,6 @@ pub fn encrypt_with_context<'a, 'c, K: 'static>(
     seal(keyset, value, kind, context.into_context().into_owned())
 }
 
-/// Encrypt each of `values` as a [`Ciphertext`] of its own, with the empty
-/// context, in one key request.
-///
-/// The ciphertexts come back in the order of the values. Each value has
-/// its own data key and is authenticated on its own, as the elements of a
-/// `Vec` are when the typed call encrypts one into a `Vec<Ciphertext>`.
-/// `kind` is declared for every value. No values make no key request.
-///
-/// To encrypt values of different declared kinds in one key request, call
-/// [`encrypt`] for each and merge the results with
-/// [`Pending::all`](crate::Pending::all).
-///
-/// ```
-/// use stack_encrypt::dynamic::{frame::OwnedFrame, value, ValueKind};
-/// use stack_encrypt::StackCipher;
-///
-/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-/// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
-/// // the environment, or from the profile that `npx stash auth login` writes.
-/// let cipher = StackCipher::builder()
-/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
-///     .init()
-///     .await?;
-/// let keyset = cipher.default_keyset();
-///
-/// let emails = [OwnedFrame::of("ada@example.com")?, OwnedFrame::of("grace@example.com")?];
-/// let stored = value::encrypt_all(
-///     &keyset,
-///     emails.iter().map(OwnedFrame::frame),
-///     Some(ValueKind::String),
-/// )?
-/// .await?;
-/// assert_eq!(stored.len(), 2);
-///
-/// let opened = value::decrypt_all(&keyset, stored, Some(ValueKind::String)).await?;
-/// assert_eq!(opened[1].frame(), emails[1].frame());
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// # }).unwrap();
-/// ```
-///
-/// # Errors
-///
-/// As [`encrypt`], for the first value that is refused. Nothing is
-/// requested for the values before it.
-pub fn encrypt_all<'a, 'f, K: 'static>(
-    keyset: &'a KeysetCipher<'_, K>,
-    values: impl IntoIterator<Item = Frame<'f>>,
-    kind: Option<ValueKind>,
-) -> Result<Pending<'a, Vec<Ciphertext>, K>, Error> {
-    seal_all(keyset, values, kind, ().into_context())
-}
-
-/// [`encrypt_all`], authenticating `context` for every value.
-///
-/// # Errors
-///
-/// As [`encrypt_all`]. A context that cannot be used fails the pending
-/// request.
-pub fn encrypt_all_with_context<'a, 'f, 'c, K: 'static>(
-    keyset: &'a KeysetCipher<'_, K>,
-    values: impl IntoIterator<Item = Frame<'f>>,
-    kind: Option<ValueKind>,
-    context: impl IntoContext<'c>,
-) -> Result<Pending<'a, Vec<Ciphertext>, K>, Error> {
-    seal_all(keyset, values, kind, context.into_context().into_owned())
-}
-
 /// Decrypt a [`Ciphertext`] that was sealed with the empty context, into a
 /// frame that holds its one scalar.
 ///
@@ -334,6 +323,51 @@ pub fn encrypt_all_with_context<'a, 'f, 'c, K: 'static>(
 /// # }).unwrap();
 /// ```
 ///
+/// # Many values in one key request
+///
+/// Call `decrypt` for each ciphertext, then merge the pending calls with
+/// [`Pending::all`]. Awaiting the merged call makes one key request for
+/// each keyset the ciphertexts were sealed under. The frames come back in
+/// the order of the calls. Each call takes its own declared kind.
+///
+/// Pass the same cipher or keyset to `Pending::all` as to each `decrypt`.
+/// If one value fails, the merged call fails with that value's error, and
+/// the frames opened before it are dropped. A frame wipes its buffer when
+/// it drops.
+///
+/// ```
+/// use stack_encrypt::dynamic::{frame::OwnedFrame, value, ValueKind};
+/// use stack_encrypt::{Pending, StackCipher};
+///
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+/// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+/// // the environment, or from the profile that `npx stash auth login` writes.
+/// let cipher = StackCipher::builder()
+/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+///     .init()
+///     .await?;
+/// let keyset = cipher.default_keyset();
+///
+/// // Two ciphertexts of different kinds, as a database returns them.
+/// let stored = [
+///     (keyset.encrypt(34u64).await?, Some(ValueKind::UInt64)),
+///     (keyset.encrypt(String::from("ada@example.com")).await?, Some(ValueKind::String)),
+/// ];
+///
+/// // One call for each ciphertext, with the kind it must open as.
+/// let calls: Vec<_> = stored
+///     .into_iter()
+///     .map(|(ciphertext, kind)| value::decrypt(&keyset, ciphertext, kind))
+///     .collect();
+///
+/// // One key request for both.
+/// let opened = Pending::all(&keyset, calls).await?;
+/// assert_eq!(opened[0].frame(), OwnedFrame::of(34u64)?.frame());
+/// assert_eq!(opened[1].frame(), OwnedFrame::of("ada@example.com")?.frame());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// # }).unwrap();
+/// ```
+///
 /// # Errors
 ///
 /// The pending request fails with the engine's [`Error`](crate::Error), as
@@ -378,43 +412,6 @@ pub fn decrypt_with_context<'a, 'c, K: 'static>(
     open(
         cipher_ref.into(),
         ciphertext,
-        kind,
-        context.into_context().into_owned(),
-    )
-}
-
-/// Decrypt each of `ciphertexts` that was sealed with the empty context,
-/// in one key request for each keyset they were sealed under.
-///
-/// The frames come back in the order of the ciphertexts. `kind` is the
-/// kind every value must open as. No ciphertexts make no key request.
-///
-/// # Errors
-///
-/// As [`decrypt`], for the first ciphertext that fails. The values opened
-/// before it are wiped.
-pub fn decrypt_all<'a, K: 'static>(
-    cipher_ref: impl Into<CipherRef<'a, K>>,
-    ciphertexts: Vec<Ciphertext>,
-    kind: Option<ValueKind>,
-) -> Pending<'a, Vec<OwnedFrame>, K> {
-    open_all(cipher_ref.into(), ciphertexts, kind, ().into_context())
-}
-
-/// [`decrypt_all`], under the context every value was encrypted with.
-///
-/// # Errors
-///
-/// As [`decrypt_all`].
-pub fn decrypt_all_with_context<'a, 'c, K: 'static>(
-    cipher_ref: impl Into<CipherRef<'a, K>>,
-    ciphertexts: Vec<Ciphertext>,
-    kind: Option<ValueKind>,
-    context: impl IntoContext<'c>,
-) -> Pending<'a, Vec<OwnedFrame>, K> {
-    open_all(
-        cipher_ref.into(),
-        ciphertexts,
         kind,
         context.into_context().into_owned(),
     )
@@ -481,22 +478,6 @@ fn seal<'a, K: 'static>(
     Ok(sealed.try_map(Ciphertext::from_tree))
 }
 
-/// [`seal`] for each value, merged into one request.
-fn seal_all<'a, 'f, K: 'static>(
-    keyset: &'a KeysetCipher<'_, K>,
-    values: impl IntoIterator<Item = Frame<'f>>,
-    kind: Option<ValueKind>,
-    context: ContextPiece<'static>,
-) -> Result<Pending<'a, Vec<Ciphertext>, K>, Error> {
-    // A refused value returns here. The pending requests of the values
-    // before it are dropped, and each wipes the plaintext it planned.
-    let sealed = values
-        .into_iter()
-        .map(|value| seal(keyset, value, kind, context.clone()))
-        .collect::<Result<Vec<_>, Error>>()?;
-    Ok(Pending::all(keyset, sealed))
-}
-
 /// The refusal of a value that is not a document under the `json` kind.
 fn not_a_document(error: JsonValueError) -> Error {
     Error::bad_source(match error {
@@ -535,34 +516,6 @@ fn open<'a, K: 'static>(
     match kind {
         None => opened,
         Some(kind) => opened.try_map(move |value| opened_as(kind, value)),
-    }
-}
-
-/// [`open`] for each ciphertext, merged into one request.
-fn open_all<'a, K: 'static>(
-    cipher_ref: CipherRef<'a, K>,
-    ciphertexts: Vec<Ciphertext>,
-    kind: Option<ValueKind>,
-    context: ContextPiece<'static>,
-) -> Pending<'a, Vec<OwnedFrame>, K> {
-    if let Some(kind) = kind.filter(|kind| !is_scalar_kind(*kind)) {
-        return Pending::failed(cipher_ref, not_opened_as(kind));
-    }
-    let opened = Vec::<OwnedFrame>::decrypt_from_with_context(
-        ciphertexts,
-        cipher_ref,
-        ScalarContext::from(context),
-    );
-    match kind {
-        None => opened,
-        // A value that fails here drops the frames around it, and each
-        // frame wipes its buffer when it drops.
-        Some(kind) => opened.try_map(move |values| {
-            values
-                .into_iter()
-                .map(|value| opened_as(kind, value))
-                .collect()
-        }),
     }
 }
 

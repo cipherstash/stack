@@ -735,91 +735,98 @@ mod encrypt_with_a_context {
     }
 }
 
-mod encrypt_all {
+/// The run-time interface has no batch call. A binding makes one call for
+/// each value and merges them with `Pending::all`, which sends one key
+/// request.
+mod many_values_merged_with_pending_all {
     use super::*;
 
     #[tokio::test]
-    async fn seals_every_value_in_one_key_request_and_keeps_their_order() {
+    async fn seal_and_open_in_one_key_request_each_and_keep_their_order() {
         let (cipher, generates, retrieves) = common::counting_cipher().await;
         let keyset = cipher.default_keyset();
-        let values = [frame(1.0f64), frame(2i64), frame(3u16)];
-        let sealed = value::encrypt_all(
-            &keyset,
-            values.iter().map(OwnedFrame::frame),
+        // Each value has its own declared kind, and the last its own context.
+        let values = [frame(1.0f64), frame("two"), frame(true), frame(4i64)];
+        let kinds = [
             Some(ValueKind::UInt32),
-        )
-        .expect("three scalars")
-        .await
-        .expect("they seal");
-        assert_eq!(sealed.len(), 3, "one ciphertext for each value");
+            Some(ValueKind::String),
+            None,
+            Some(ValueKind::Int64),
+        ];
+        let mut calls = Vec::new();
+        for (value, kind) in values.iter().zip(kinds).take(3) {
+            calls.push(value::encrypt(&keyset, value.frame(), kind).expect("one scalar"));
+        }
+        calls.push(
+            value::encrypt_with_context(&keyset, values[3].frame(), kinds[3], ("users", "n"))
+                .expect("one scalar"),
+        );
+        assert_eq!(
+            generates.load(Ordering::SeqCst),
+            0,
+            "a call requests no key until it is awaited"
+        );
+        let sealed = stack_encrypt::Pending::all(&keyset, calls)
+            .await
+            .expect("the merged call seals");
+        assert_eq!(sealed.len(), 4, "one ciphertext for each value");
         assert_eq!(
             generates.load(Ordering::SeqCst),
             1,
-            "one key request for the batch"
-        );
-
-        let mut opened = Vec::new();
-        for ciphertext in sealed.clone() {
-            opened.push(keyset.decrypt::<u32>(ciphertext).await.expect("a u32"));
-        }
-        assert_eq!(
-            opened,
-            [1, 2, 3],
-            "the ciphertexts are in the values' order"
+            "one key request seals the batch"
         );
 
         retrieves.store(0, Ordering::SeqCst);
-        let frames = value::decrypt_all(&keyset, sealed, Some(ValueKind::UInt32))
+        let mut calls = Vec::new();
+        for (ciphertext, kind) in sealed.iter().cloned().zip(kinds).take(3) {
+            calls.push(value::decrypt(&keyset, ciphertext, kind));
+        }
+        calls.push(value::decrypt_with_context(
+            &keyset,
+            sealed[3].clone(),
+            kinds[3],
+            ("users", "n"),
+        ));
+        let opened = stack_encrypt::Pending::all(&keyset, calls)
             .await
-            .expect("they open");
+            .expect("the merged call opens");
         assert_eq!(
             retrieves.load(Ordering::SeqCst),
             1,
             "one key request opens the batch"
         );
-        for (opened, expected) in frames.iter().zip([1u32, 2, 3]) {
+        let expected = [frame(1u32), frame("two"), frame(true), frame(4i64)];
+        assert_eq!(
+            opened.len(),
+            expected.len(),
+            "one frame for each ciphertext"
+        );
+        for (position, (opened, expected)) in opened.iter().zip(&expected).enumerate() {
             assert_eq!(
                 opened.frame(),
-                frame(expected).frame(),
-                "the frames are in the ciphertexts' order"
+                expected.frame(),
+                "the value at position {position} is in its call's place"
             );
         }
-    }
 
-    #[tokio::test]
-    async fn binds_every_value_to_the_context() {
-        let cipher = common::stack_cipher().await;
-        let keyset = cipher.default_keyset();
-        let values = [frame("a"), frame("b")];
-        let sealed = value::encrypt_all_with_context(
-            &keyset,
-            values.iter().map(OwnedFrame::frame),
-            None,
-            ("users", "name"),
-        )
-        .expect("two scalars")
-        .await
-        .expect("they seal");
-
-        let without = value::decrypt_all(&keyset, sealed.clone(), None).await;
+        // The value sealed under a context opens only under it.
+        let without = value::decrypt(&keyset, sealed[3].clone(), kinds[3]).await;
         assert!(
             matches!(without, Err(Error::Aead)),
-            "the empty context must not open the batch, got: {without:?}"
+            "the empty context must not open a value sealed under one, got: {without:?}"
         );
-        let opened = value::decrypt_all_with_context(&keyset, sealed, None, ("users", "name"))
-            .await
-            .expect("the same context opens the batch");
-        assert_eq!(opened.len(), 2, "one frame for each ciphertext");
-        assert_eq!(opened[0].frame(), frame("a").frame(), "the first value");
-        assert_eq!(opened[1].frame(), frame("b").frame(), "the second value");
     }
 
     #[tokio::test]
-    async fn refuses_the_batch_for_one_refused_value_with_no_key_request() {
+    async fn a_refused_value_stops_the_batch_before_any_key_request() {
         let (cipher, generates, _) = common::counting_cipher().await;
         let keyset = cipher.default_keyset();
         let values = [frame("a"), OwnedFrame::null(), frame(vec!["b"])];
-        let error = match value::encrypt_all(&keyset, values.iter().map(OwnedFrame::frame), None) {
+        let calls: Result<Vec<_>, dynamic::Error> = values
+            .iter()
+            .map(|value| value::encrypt(&keyset, value.frame(), None))
+            .collect();
+        let error = match calls {
             Err(error) => error,
             Ok(_) => panic!("a batch holding a null was taken"),
         };
@@ -827,30 +834,46 @@ mod encrypt_all {
         assert_eq!(
             generates.load(Ordering::SeqCst),
             0,
-            "a refused batch requests no data key"
+            "a batch with a refused value requests no data key"
         );
     }
 
     #[tokio::test]
-    async fn makes_no_key_request_for_no_values() {
-        let (cipher, generates, retrieves) = common::counting_cipher().await;
+    async fn a_value_of_another_kind_fails_the_merged_decrypt() {
+        let cipher = common::stack_cipher().await;
         let keyset = cipher.default_keyset();
-        let sealed = value::encrypt_all(&keyset, std::iter::empty(), None)
-            .expect("no values")
+        let sealed = [
+            keyset.encrypt(1i64).await.expect("it seals"),
+            keyset.encrypt(String::from("two")).await.expect("it seals"),
+            keyset.encrypt(3i64).await.expect("it seals"),
+        ];
+        let open_all = |kind: Option<ValueKind>| {
+            let calls = sealed
+                .iter()
+                .cloned()
+                .map(|ciphertext| value::decrypt(&keyset, ciphertext, kind))
+                .collect();
+            stack_encrypt::Pending::all(&keyset, calls)
+        };
+        let opened = open_all(Some(ValueKind::Int64)).await;
+        assert!(
+            matches!(opened, Err(Error::OpenedType { expected: "int64" })),
+            "a batch holding text must not open as int64, got: {opened:?}"
+        );
+        let opened = open_all(None)
             .await
-            .expect("nothing to seal");
-        assert!(sealed.is_empty(), "no ciphertexts for no values");
-        let opened = value::decrypt_all(&keyset, sealed, None)
-            .await
-            .expect("nothing to open");
-        assert!(opened.is_empty(), "no frames for no ciphertexts");
+            .expect("with no declared kind each value opens as it was sealed");
         assert_eq!(
-            (
-                generates.load(Ordering::SeqCst),
-                retrieves.load(Ordering::SeqCst)
-            ),
-            (0, 0),
-            "an empty batch makes no key request"
+            opened
+                .iter()
+                .map(|value| value.frame().kind())
+                .collect::<Vec<_>>(),
+            [
+                Some(ValueKind::Int64),
+                Some(ValueKind::String),
+                Some(ValueKind::Int64)
+            ],
+            "each value keeps its own kind"
         );
     }
 }
@@ -926,11 +949,6 @@ mod decrypt {
                 matches!(one, Err(Error::OpenedType { expected }) if expected == name),
                 "a ciphertext must not open as {name}, got: {one:?}"
             );
-            let many = value::decrypt_all(&keyset, vec![sealed.clone()], Some(kind)).await;
-            assert!(
-                matches!(many, Err(Error::OpenedType { expected }) if expected == name),
-                "a batch must not open as {name}, got: {many:?}"
-            );
         }
         assert_eq!(
             retrieves.load(Ordering::SeqCst),
@@ -984,11 +1002,6 @@ mod decrypt {
             matches!(foreign, Err(Error::ForeignKeyset { .. })),
             "a keyset must not open another keyset's ciphertext, got: {foreign:?}"
         );
-        let foreign = value::decrypt_all(&keyset, vec![sealed.clone()], None).await;
-        assert!(
-            matches!(foreign, Err(Error::ForeignKeyset { .. })),
-            "a keyset must not open a batch of another keyset's, got: {foreign:?}"
-        );
         assert_eq!(
             retrieves.load(Ordering::SeqCst),
             0,
@@ -999,37 +1012,6 @@ mod decrypt {
             .await
             .expect("the cipher opens a ciphertext of any of its keysets");
         assert_eq!(opened.frame(), frame("elsewhere").frame(), "the value");
-    }
-
-    #[tokio::test]
-    async fn refuses_a_batch_when_one_value_is_of_another_kind() {
-        let cipher = common::stack_cipher().await;
-        let keyset = cipher.default_keyset();
-        let sealed = vec![
-            keyset.encrypt(1i64).await.expect("it seals"),
-            keyset.encrypt(String::from("two")).await.expect("it seals"),
-            keyset.encrypt(3i64).await.expect("it seals"),
-        ];
-        let opened = value::decrypt_all(&keyset, sealed.clone(), Some(ValueKind::Int64)).await;
-        assert!(
-            matches!(opened, Err(Error::OpenedType { expected: "int64" })),
-            "a batch holding text must not open as int64, got: {opened:?}"
-        );
-        let opened = value::decrypt_all(&keyset, sealed, None)
-            .await
-            .expect("with no declared kind each value opens as it was sealed");
-        assert_eq!(
-            opened
-                .iter()
-                .map(|value| value.frame().kind())
-                .collect::<Vec<_>>(),
-            [
-                Some(ValueKind::Int64),
-                Some(ValueKind::String),
-                Some(ValueKind::Int64)
-            ],
-            "each value keeps its own kind"
-        );
     }
 }
 
@@ -1125,15 +1107,10 @@ mod decrypt_a_json_document {
         ];
         for (what, sealed) in not_documents {
             let sealed = sealed.expect("it seals");
-            let opened = value::decrypt(&keyset, sealed.clone(), Some(ValueKind::Json)).await;
+            let opened = value::decrypt(&keyset, sealed, Some(ValueKind::Json)).await;
             assert!(
                 matches!(opened, Err(Error::OpenedType { expected: "json" })),
                 "{what} must not open as json, got: {opened:?}"
-            );
-            let many = value::decrypt_all(&keyset, vec![sealed], Some(ValueKind::Json)).await;
-            assert!(
-                matches!(many, Err(Error::OpenedType { expected: "json" })),
-                "a batch holding {what} must not open as json, got: {many:?}"
             );
         }
     }
@@ -1196,32 +1173,5 @@ mod decrypt_a_json_document {
             frame(r#"{"n":[1.5,-2],"name":"Ada"}"#).frame(),
             "the frame holds the JSON text that was sealed, in a text leaf"
         );
-    }
-
-    #[tokio::test]
-    async fn opens_a_batch_of_documents_in_order() {
-        let cipher = common::stack_cipher().await;
-        let keyset = cipher.default_keyset();
-        let texts = [r#"{"a":1}"#, "null", r#"["x"]"#];
-        let crossing: Vec<OwnedFrame> = texts.iter().map(|text| frame(*text)).collect();
-        let sealed = value::encrypt_all(
-            &keyset,
-            crossing.iter().map(OwnedFrame::frame),
-            Some(ValueKind::Json),
-        )
-        .expect("three documents")
-        .await
-        .expect("they seal");
-        let opened = value::decrypt_all(&keyset, sealed, Some(ValueKind::Json))
-            .await
-            .expect("they open");
-        assert_eq!(opened.len(), texts.len(), "one frame for each document");
-        for (opened, text) in opened.iter().zip(texts) {
-            assert_eq!(
-                opened.frame(),
-                document(text).frame(),
-                "the document {text}"
-            );
-        }
     }
 }

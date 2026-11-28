@@ -81,7 +81,9 @@ struct OpensAs {
 #[serde(deny_unknown_fields)]
 struct Batch {
     id: String,
-    kind: String,
+    /// The kind declared for each input, in order: a name, or empty for
+    /// none.
+    kinds: Vec<String>,
     context: Vec<String>,
     inputs: Vec<Input>,
     /// The values the ciphertexts hold, where they are not the inputs.
@@ -178,18 +180,21 @@ fn seal<'a, K: 'static>(
     }
 }
 
+/// A batch, as a binding seals one: one single-value call for each value,
+/// each with its own declared kind, merged into one key request. A refused
+/// value is the batch's refusal, and nothing is merged.
 fn seal_all<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     values: &[OwnedFrame],
-    kind: Option<ValueKind>,
+    kinds: &[Option<ValueKind>],
     context: &[String],
 ) -> Result<Pending<'a, Vec<Ciphertext>, K>, dynamic::Error> {
-    let frames = values.iter().map(OwnedFrame::frame);
-    if context.is_empty() {
-        single::encrypt_all(keyset, frames, kind)
-    } else {
-        single::encrypt_all_with_context(keyset, frames, kind, piece(context))
-    }
+    let calls = values
+        .iter()
+        .zip(kinds)
+        .map(|(value, kind)| seal(keyset, value.frame(), *kind, context))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Pending::all(keyset, calls))
 }
 
 fn open<'a, K: 'static>(
@@ -205,17 +210,20 @@ fn open<'a, K: 'static>(
     }
 }
 
+/// A batch, as a binding opens one: one single-value call for each
+/// ciphertext, each with its own declared kind, merged into one key request.
 fn open_all<'a, K: 'static>(
-    cipher: impl Into<CipherRef<'a, K>>,
+    keyset: &'a KeysetCipher<'_, K>,
     ciphertexts: Vec<Ciphertext>,
-    kind: Option<ValueKind>,
+    kinds: &[Option<ValueKind>],
     context: &[String],
 ) -> Pending<'a, Vec<OwnedFrame>, K> {
-    if context.is_empty() {
-        single::decrypt_all(cipher, ciphertexts, kind)
-    } else {
-        single::decrypt_all_with_context(cipher, ciphertexts, kind, piece(context))
-    }
+    let calls = ciphertexts
+        .into_iter()
+        .zip(kinds)
+        .map(|(ciphertext, kind)| open(keyset, ciphertext, *kind, context))
+        .collect();
+    Pending::all(keyset, calls)
 }
 
 /// The context `ciphertext`'s leaf is sealed under, for opening the leaf
@@ -627,12 +635,17 @@ async fn shared_single_value_profile() {
     for batch in &corpus.batches {
         eprintln!("single value: {}", batch.id);
         let id = &batch.id;
-        let kind = declared(&batch.kind);
+        let kinds: Vec<Option<ValueKind>> = batch.kinds.iter().map(|kind| declared(kind)).collect();
         let values: Vec<OwnedFrame> = batch.inputs.iter().map(input).collect();
+        assert_eq!(
+            kinds.len(),
+            values.len(),
+            "{id}: one declared kind for each input"
+        );
         let (cipher, generates, retrieves) = counting(seed).await;
         let keyset = cipher.default_keyset();
         let sealed = match (
-            seal_all(&keyset, &values, kind, &batch.context),
+            seal_all(&keyset, &values, &kinds, &batch.context),
             &batch.expected_error,
         ) {
             (Err(error), Some(expected)) => {
@@ -661,7 +674,7 @@ async fn shared_single_value_profile() {
             requests,
             "{id}: the batch seals in one key request"
         );
-        let opened = open_all(&keyset, sealed, kind, &batch.context)
+        let opened = open_all(&keyset, sealed, &kinds, &batch.context)
             .await
             .unwrap_or_else(|error| panic!("{id}: the batch does not open: {error}"));
         assert_eq!(

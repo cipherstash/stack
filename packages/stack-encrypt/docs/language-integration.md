@@ -184,10 +184,14 @@ does the same through [`crate::dynamic::value`]:
 - [`crate::dynamic::value::decrypt`] takes a ciphertext and an optional
   kind the value must open as. It settles to the value's frame.
 
-Each has a form that takes a context, and a form that takes many values and
-makes one key request. A declared kind reads the value by the rules a
-record's typed field uses, so a binding passes a language's own number. The
-kind `json` takes a document as its JSON text.
+Each has a form that takes a context. A declared kind reads the value by
+the rules a record's typed field uses, so a binding passes a language's own
+number. The kind `json` takes a document as its JSON text.
+
+There is no batch call. Each call returns a [`crate::Pending`], so a binding
+makes one call for each value and merges them with [`crate::Pending::all`].
+Awaiting the merged call makes one key request, and each value keeps its own
+declared kind.
 
 A ciphertext holds one scalar. An array, an object, a passthrough and a null
 are refused before any key is requested, with a reason that says which was

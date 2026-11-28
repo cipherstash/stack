@@ -853,7 +853,7 @@
   "batches": [
     {
       "id": "batch-strings",
-      "kind": "string",
+      "kinds": ["string", "string", "string"],
       "context": ["conformance", "value"],
       "inputs": [
         {
@@ -872,7 +872,7 @@
     },
     {
       "id": "batch-converted",
-      "kind": "uint32",
+      "kinds": ["uint32", "uint32", "uint32"],
       "context": [],
       "inputs": [
         {
@@ -905,7 +905,7 @@
     },
     {
       "id": "batch-mixed-no-kind",
-      "kind": "",
+      "kinds": ["", "", ""],
       "context": [],
       "inputs": [
         {
@@ -923,14 +923,47 @@
       ]
     },
     {
+      "id": "batch-mixed-kinds",
+      "kinds": ["uint64", "string", ""],
+      "context": ["conformance", "value"],
+      "inputs": [
+        {
+          "type": "float64",
+          "text": "34"
+        },
+        {
+          "type": "string",
+          "text": "ada"
+        },
+        {
+          "type": "bool",
+          "text": "true"
+        }
+      ],
+      "stored": [
+        {
+          "type": "uint64",
+          "text": "34"
+        },
+        {
+          "type": "string",
+          "text": "ada"
+        },
+        {
+          "type": "bool",
+          "text": "true"
+        }
+      ]
+    },
+    {
       "id": "batch-empty",
-      "kind": "",
+      "kinds": [],
       "context": [],
       "inputs": []
     },
     {
       "id": "batch-with-null",
-      "kind": "",
+      "kinds": ["", "", ""],
       "context": ["conformance", "value"],
       "inputs": [
         {
@@ -953,7 +986,7 @@
     },
     {
       "id": "batch-with-mismatch",
-      "kind": "int64",
+      "kinds": ["int64", "int64"],
       "context": [],
       "inputs": [
         {

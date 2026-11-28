@@ -142,11 +142,20 @@ checks their shape and skips them.
 
 ## Batches
 
-Each entry of `batches` has a `kind`, a `context` and a list of `inputs`. An
-accepted batch seals in one key request and opens in one, and the values come
-back in the order of the inputs: `stored` where the batch has one, the inputs
-otherwise. An empty batch makes no key request. A batch with `expected_error`
-is refused whole, before any key request, for its first refused value.
+The run-time interface has no batch call. A binding encrypts many values by
+making one single-value call for each value, and merging the pending calls
+into one key request. In Rust the merge is `Pending::all`. It decrypts many
+ciphertexts the same way. Each call has its own declared kind, so one batch
+can hold values of different kinds.
+
+Each entry of `batches` has a list of `inputs`, a list of `kinds` with the
+kind declared for each input (empty for none), and a `context` for all of
+them. A runner seals and opens each entry as a binding does. An accepted
+batch seals in one key request and opens in one, and the values come back in
+the order of the inputs: `stored` where the batch has one, the inputs
+otherwise. An empty batch makes no key request. In a batch with
+`expected_error`, the single-value call refuses one of the values with that
+`code` and `reason`, and the batch makes no key request.
 
 The key-request counts are native observations: the Rust runner counts them
 on its key source.

@@ -24,10 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     into an `OwnedFrame` that holds one scalar. Pass `&keyset` to open only
     that keyset's ciphertexts, or `&cipher` to open a ciphertext of any
     keyset.
-  - Each has a form with a context (`encrypt_with_context`,
-    `decrypt_with_context`) and a form for many values that makes one key
-    request (`encrypt_all`, `decrypt_all`, and the two `_all_with_context`
-    forms).
+  - Each has a form with a context: `encrypt_with_context` and
+    `decrypt_with_context`.
+  - There is no batch call. Each call returns a `Pending`, which has not
+    sent its key request. To encrypt or decrypt many values, make one call
+    for each value and merge them with `Pending::all`: awaiting the merged
+    call makes one key request, and the results come back in order. Each
+    value keeps its own declared kind, so one batch can hold values of
+    different kinds.
   - On encrypt, a declared kind converts a number of another width or kind
     when the conversion is exact, by the rules a record's typed field uses.
     With no declared kind, the scalar is sealed as it arrived.
