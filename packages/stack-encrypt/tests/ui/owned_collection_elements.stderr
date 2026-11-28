@@ -85,13 +85,13 @@ help: the trait `EncryptTarget<S>` is implemented for `stack_encrypt::Ciphertext
    = note: required for `Vec<i32>` to implement `OpaqueEncode`
    = note: required for `stack_encrypt::Ciphertext` to implement `EncryptTarget<Vec<i32>>`
 
-error[E0277]: the trait bound `u8: vitaminc_aead::typed::FromScalar` is not satisfied
+error[E0277]: the trait bound `u8: FromScalar` is not satisfied
   --> tests/ui/owned_collection_elements.rs:15:13
    |
 15 |     let _ = Vec::<u8>::decrypt_from(column, keyset);
-   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `vitaminc_aead::typed::FromScalar` is not implemented for `u8`
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `FromScalar` is not implemented for `u8`
    |
-   = help: the following other types implement trait `vitaminc_aead::typed::FromScalar`:
+   = help: the following other types implement trait `FromScalar`:
              f32
              f64
              i128
