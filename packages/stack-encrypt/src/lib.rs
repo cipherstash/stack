@@ -372,6 +372,9 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //!
 //! The scalar API accepts owned [`OpaqueEncode`] values. It wipes the owned source
 //! before returning the pending request, including on planning failure. A
+//! ciphertext decrypts into an [`OpaqueDecode`] type: a type that one scalar
+//! builds. A target that needs a container, such as a `Vec<String>`, does
+//! not compile. A
 //! successful decrypt returns an ordinary owned value: the caller is then
 //! responsible for its cleanup. A whole value decrypted as an
 //! [`OpaqueBlob<T>`](crate::OpaqueBlob) is wiped on drop. Copy types may still have copies held by the
@@ -778,7 +781,7 @@ pub use target::{
 // derivations see the same bytes.
 pub use vitaminc_aead::{
     CipherText, Context, ContextPiece, ContextTag, DecodeError, Decrypt, Encrypt, EncryptRef,
-    IntoAad, IntoContext, Node, PassthroughFrame, Unspecified,
+    IntoAad, IntoContext, Node, PassthroughFrame, ScalarTarget, Unspecified,
 };
 /// A type with an order target of its own: what an order index
 /// ([`Ore`], [`Ope`], [`OreBlock`]), an order term ([`sem::OreTerm`],

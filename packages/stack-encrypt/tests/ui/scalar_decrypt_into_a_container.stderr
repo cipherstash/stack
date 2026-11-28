@@ -1,0 +1,190 @@
+error[E0277]: the trait bound `Vec<std::string::String>: OpaqueDecode` is not satisfied
+  --> tests/ui/scalar_decrypt_into_a_container.rs:15:30
+   |
+15 |     let _ = keyset.decrypt::<Vec<String>>(ciphertext.clone());
+   |                    -------   ^^^^^^^^^^^ the trait `FromScalar` is not implemented for `Vec<std::string::String>`
+   |                    |
+   |                    required by a bound introduced by this call
+   |
+help: the trait `FromScalar` is implemented for `Vec<u8>`
+  --> $WORKSPACE/packages/vitaminc-aead/src/typed.rs
+   |
+   | impl FromScalar for Vec<u8> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `Vec<std::string::String>` to implement `ScalarTarget`
+   = note: required for `Vec<std::string::String>` to implement `OpaqueDecode`
+note: required by a bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt`
+  --> src/scalar.rs
+   |
+   |     pub fn decrypt<P: OpaqueDecode>(&self, ciphertext: Ciphertext) -> Pending<'_, P, K> {
+   |                       ^^^^^^^^^^^^ required by this bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt`
+
+error[E0277]: the trait bound `BTreeMap<std::string::String, i64>: OpaqueDecode` is not satisfied
+  --> tests/ui/scalar_decrypt_into_a_container.rs:16:30
+   |
+16 |     let _ = keyset.decrypt::<BTreeMap<String, i64>>(ciphertext.clone());
+   |                    -------   ^^^^^^^^^^^^^^^^^^^^^ the trait `FromScalar` is not implemented for `BTreeMap<std::string::String, i64>`
+   |                    |
+   |                    required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `FromScalar`:
+             JsonPlaintext
+             Vec<u8>
+             [u8; N]
+             bool
+             f32
+             f64
+             i128
+             i16
+           and $N others
+   = note: required for `BTreeMap<std::string::String, i64>` to implement `ScalarTarget`
+   = note: required for `BTreeMap<std::string::String, i64>` to implement `OpaqueDecode`
+note: required by a bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt`
+  --> src/scalar.rs
+   |
+   |     pub fn decrypt<P: OpaqueDecode>(&self, ciphertext: Ciphertext) -> Pending<'_, P, K> {
+   |                       ^^^^^^^^^^^^ required by this bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt`
+
+error[E0277]: the trait bound `BTreeMap<std::string::String, i64>: OpaqueDecode` is not satisfied
+  --> tests/ui/scalar_decrypt_into_a_container.rs:16:30
+   |
+16 |     let _ = keyset.decrypt::<BTreeMap<String, i64>>(ciphertext.clone());
+   |                    -------   ^^^^^^^^^^^^^^^^^^^^^ the trait `DefaultIsZeroes` is not implemented for `BTreeMap<std::string::String, i64>`
+   |                    |
+   |                    required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `DefaultIsZeroes`:
+             ()
+             PhantomPinned
+             bool
+             char
+             f32
+             f64
+             i128
+             i16
+           and $N others
+   = note: required for `BTreeMap<std::string::String, i64>` to implement `Zeroize`
+   = note: required for `BTreeMap<std::string::String, i64>` to implement `OpaqueDecode`
+note: required by a bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt`
+  --> src/scalar.rs
+   |
+   |     pub fn decrypt<P: OpaqueDecode>(&self, ciphertext: Ciphertext) -> Pending<'_, P, K> {
+   |                       ^^^^^^^^^^^^ required by this bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt`
+
+error[E0277]: the trait bound `Account: OpaqueDecode` is not satisfied
+  --> tests/ui/scalar_decrypt_into_a_container.rs:17:30
+   |
+17 |     let _ = keyset.decrypt::<Account>(ciphertext.clone());
+   |                    -------   ^^^^^^^ unsatisfied trait bound
+   |                    |
+   |                    required by a bound introduced by this call
+   |
+help: the trait `FromScalar` is not implemented for `Account`
+  --> tests/ui/scalar_decrypt_into_a_container.rs:10:1
+   |
+10 | struct Account {
+   | ^^^^^^^^^^^^^^
+   = help: the following other types implement trait `FromScalar`:
+             JsonPlaintext
+             Vec<u8>
+             [u8; N]
+             bool
+             f32
+             f64
+             i128
+             i16
+           and $N others
+   = note: required for `Account` to implement `ScalarTarget`
+   = note: required for `Account` to implement `OpaqueDecode`
+note: required by a bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt`
+  --> src/scalar.rs
+   |
+   |     pub fn decrypt<P: OpaqueDecode>(&self, ciphertext: Ciphertext) -> Pending<'_, P, K> {
+   |                       ^^^^^^^^^^^^ required by this bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt`
+
+error[E0277]: the trait bound `Protected<Vec<i64>>: OpaqueDecode` is not satisfied
+  --> tests/ui/scalar_decrypt_into_a_container.rs:18:30
+   |
+18 |     let _ = keyset.decrypt::<Protected<Vec<i64>>>(ciphertext.clone());
+   |                    -------   ^^^^^^^^^^^^^^^^^^^ the trait `ScalarTarget` is not implemented for `Protected<Vec<i64>>`
+   |                    |
+   |                    required by a bound introduced by this call
+   |
+help: the trait `ScalarTarget` is implemented for `Protected<T>`
+  --> $WORKSPACE/packages/vitaminc-aead/src/typed.rs
+   |
+   | impl<T: DecryptProtected + ScalarTarget> ScalarTarget for Protected<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `Protected<Vec<i64>>` to implement `OpaqueDecode`
+note: required by a bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt`
+  --> src/scalar.rs
+   |
+   |     pub fn decrypt<P: OpaqueDecode>(&self, ciphertext: Ciphertext) -> Pending<'_, P, K> {
+   |                       ^^^^^^^^^^^^ required by this bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt`
+
+error[E0277]: the trait bound `HashMap<std::string::String, std::string::String>: OpaqueDecode` is not satisfied
+  --> tests/ui/scalar_decrypt_into_a_container.rs:19:43
+   |
+19 |     let _ = keyset.decrypt_with_context::<HashMap<String, String>>(ciphertext.clone(), "users/tags");
+   |                    --------------------   ^^^^^^^^^^^^^^^^^^^^^^^ the trait `FromScalar` is not implemented for `HashMap<std::string::String, std::string::String>`
+   |                    |
+   |                    required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `FromScalar`:
+             JsonPlaintext
+             Vec<u8>
+             [u8; N]
+             bool
+             f32
+             f64
+             i128
+             i16
+           and $N others
+   = note: required for `HashMap<std::string::String, std::string::String>` to implement `ScalarTarget`
+   = note: required for `HashMap<std::string::String, std::string::String>` to implement `OpaqueDecode`
+note: required by a bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt_with_context`
+  --> src/scalar.rs
+   |
+   |     pub fn decrypt_with_context<'c, P: OpaqueDecode>(
+   |                                        ^^^^^^^^^^^^ required by this bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt_with_context`
+
+error[E0277]: the trait bound `HashMap<std::string::String, std::string::String>: OpaqueDecode` is not satisfied
+  --> tests/ui/scalar_decrypt_into_a_container.rs:19:43
+   |
+19 |     let _ = keyset.decrypt_with_context::<HashMap<String, String>>(ciphertext.clone(), "users/tags");
+   |                    --------------------   ^^^^^^^^^^^^^^^^^^^^^^^ the trait `DefaultIsZeroes` is not implemented for `HashMap<std::string::String, std::string::String>`
+   |                    |
+   |                    required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `DefaultIsZeroes`:
+             ()
+             PhantomPinned
+             bool
+             char
+             f32
+             f64
+             i128
+             i16
+           and $N others
+   = note: required for `HashMap<std::string::String, std::string::String>` to implement `Zeroize`
+   = note: required for `HashMap<std::string::String, std::string::String>` to implement `OpaqueDecode`
+note: required by a bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt_with_context`
+  --> src/scalar.rs
+   |
+   |     pub fn decrypt_with_context<'c, P: OpaqueDecode>(
+   |                                        ^^^^^^^^^^^^ required by this bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt_with_context`
+
+error[E0277]: the trait bound `Vec<i64>: FromScalar` is not satisfied
+  --> tests/ui/scalar_decrypt_into_a_container.rs:20:13
+   |
+20 |     let _ = Vec::<i64>::decrypt_from(ciphertext, keyset);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `FromScalar` is not implemented for `Vec<i64>`
+   |
+help: the trait `FromScalar` is implemented for `Vec<u8>`
+  --> $WORKSPACE/packages/vitaminc-aead/src/typed.rs
+   |
+   | impl FromScalar for Vec<u8> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `Vec<i64>` to implement `ScalarTarget`
+   = note: required for `Vec<i64>` to implement `OpaqueDecode`
+   = note: required for `stack_encrypt::Ciphertext` to implement `DecryptSource<Vec<i64>>`

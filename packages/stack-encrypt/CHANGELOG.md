@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     sealed leaf has a random nonce. The two interfaces agree on every
     other part: the keyset, the data key, the length, and the plaintext of
     the leaf. `tests/single_value.rs` holds them to that for every kind.
+  - `ScalarTarget` is re-exported from Vitamin C at the crate root.
 
 - **Encrypt a UUID as a UUID** (#1833). `value::Uuid` is vitaminc's
   wipeable UUID, built from the uuid crate's `Uuid` with `Uuid::new`. It
@@ -545,6 +546,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   apply when the pending is awaited, not when the term is described.
 
 ### Breaking
+
+- **A `Ciphertext` decrypts only into a type that one scalar builds**
+  (#2009). `OpaqueDecode` was implemented for every `Decrypt` type that is
+  `Zeroize`. So `keyset.decrypt::<Vec<String>>(ciphertext)` compiled,
+  requested a key, decrypted, and only then failed with
+  `Error::OpenedType`. It could never succeed, because a ciphertext holds
+  one scalar. `OpaqueDecode` is now bounded on Vitamin C's `ScalarTarget`,
+  so such a call does not compile. This applies to `keyset.decrypt`,
+  `keyset.decrypt_with_context`, `T::decrypt_from(ciphertext, ..)` and a
+  `Ciphertext` field of a derived record.
+  - Still accepted: every scalar (`bool`, the integers, the floats,
+    `String`, `Vec<u8>`, `[u8; N]`, `value::Date`, `value::Timestamp`,
+    `value::Decimal`, `value::Uuid`), `JsonPlaintext`, a `Protected` or an
+    `Option` of one, `OwnedFrame`, and any type of your own that
+    implements `FromScalar`. `OpaqueBlob<T>` keeps its own way in.
+  - No longer accepted: a `Vec` of anything but bytes, a `HashMap` or a
+    `BTreeMap`, a struct that derives `Decrypt`, and a `Protected` or an
+    `Option` of one of those.
+  - A sequence, a map or a struct is a tree of leaves, which is a
+    `StackCipherText`. Decrypt one with `keyset.decrypt_tree`. A column of
+    ciphertexts is a `Vec<Ciphertext>`, which still decrypts into a `Vec`
+    with `Vec::<T>::decrypt_from`.
+  - A newtype that derives `Decrypt` over a scalar, such as
+    `struct Email(String)`, decrypted from one ciphertext before. Add
+    `impl stack_encrypt::ScalarTarget for Email {}` to keep it.
+  - No stored byte changes. Every ciphertext that decrypted before still
+    decrypts into the same type.
 
 - **`dynamic::ValueFrame` is removed. The engine reads a plaintext as a
   borrowed `Frame` and keeps one as vitaminc's `OwnedFrame`** (#1955).

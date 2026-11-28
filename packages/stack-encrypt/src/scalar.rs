@@ -4,8 +4,9 @@ use crate::target::{
     DecryptFrom, DecryptSource, Decryption, EncryptInto, EncryptTarget, Encryption,
     OptionalContext, Pending, ScalarContext,
 };
-use crate::{CipherText, ContextPiece, Decrypt, Error, KeysetCipher, LeafBytesError, SealedValue};
+use crate::{CipherText, ContextPiece, Error, KeysetCipher, LeafBytesError, SealedValue};
 use vitaminc_aead::plaintext::Scalar;
+use vitaminc_aead::ScalarTarget;
 use vitaminc_protected::OpaqueDebug;
 use zeroize::Zeroize;
 
@@ -111,20 +112,64 @@ pub trait OpaqueEncode: sealed::Encode + Zeroize + Send + 'static {}
 
 /// A plaintext type that one opaque [`Ciphertext`] decrypts to.
 ///
-/// `OpaqueDecode` is implemented for every [`Decrypt`] type that also
-/// implements [`Zeroize`], and for [`OpaqueBlob<T>`](crate::OpaqueBlob).
-/// The `Decrypt` types include each scalar, such as `String`, and a
-/// [`Protected`](vitaminc_protected::Protected) of one, such as
-/// `Protected<String>`. The trait is sealed, as `OpaqueEncode` is.
+/// A `Ciphertext` holds one scalar. So `OpaqueDecode` is implemented for
+/// every type that one scalar builds, Vitamin C's [`ScalarTarget`], that
+/// also implements [`Zeroize`]:
+///
+/// - each scalar: `bool`, the integers, the floats, `String`, `Vec<u8>` and
+///   `[u8; N]`, and the date, timestamp, decimal and UUID
+///   [values](crate::value)
+/// - [`JsonPlaintext`](crate::json::JsonPlaintext), a JSON document
+/// - a [`Protected`](vitaminc_protected::Protected) of one, such as
+///   `Protected<String>`
+/// - an `Option` of one, such as `Option<i64>`, which reads a sealed null
+///   as `None`
+/// - an `OwnedFrame`, the value as a frame, for a caller that learns the
+///   value's kind only when the code runs
+///
+/// [`OpaqueBlob<T>`](crate::OpaqueBlob) is an `OpaqueDecode` type too. The
+/// trait is sealed, as `OpaqueEncode` is.
+///
+/// A target that needs a container does not compile: a `Vec` of anything
+/// but bytes, a map, or a struct that derives `Decrypt`. Each of them reads
+/// a tree of leaves, which is a
+/// [`StackCipherText`](crate::StackCipherText). Decrypt one with
+/// [`KeysetCipher::decrypt_tree`]. A column of ciphertexts is a
+/// `Vec<Ciphertext>`, which decrypts into a `Vec` through
+/// [`DecryptFrom`]. The [crate docs on collections](crate#collections)
+/// explain how.
+///
+/// ```compile_fail,E0277
+/// # fn example<K: 'static>(keyset: &stack_encrypt::KeysetCipher<'_, K>, ciphertext: stack_encrypt::Ciphertext) {
+/// // A ciphertext holds one scalar, never a sequence.
+/// let _ = keyset.decrypt::<Vec<String>>(ciphertext);
+/// # }
+/// ```
+///
+/// A type of your own is an `OpaqueDecode` type if it implements
+/// `ScalarTarget` and `Zeroize`. A type that implements Vitamin C's
+/// `FromScalar` is a `ScalarTarget` already. A newtype that derives
+/// [`Decrypt`](crate::Decrypt) over a scalar is not, until you add the
+/// marker. The derive is Vitamin C's, so your crate needs `vitaminc-aead`
+/// as a dependency to use it.
+///
+/// ```
+/// use stack_encrypt::{Decrypt, ScalarTarget};
+/// use zeroize::Zeroize;
+///
+/// #[derive(Decrypt, Zeroize)]
+/// struct Email(String);
+///
+/// impl ScalarTarget for Email {}
+///
+/// fn decrypts_from_one_ciphertext<P: stack_encrypt::OpaqueDecode>() {}
+/// decrypts_from_one_ciphertext::<Email>();
+/// ```
 ///
 /// A scalar decrypted into a bare type, such as `String`, is an ordinary
 /// owned value, and nothing wipes it when it is dropped: `Zeroize` is the
 /// bound, not a drop guard. Decrypt into a `Protected` to have it wiped on
 /// drop. A decrypted `OpaqueBlob<T>` also wipes its value on drop.
-///
-/// A `Ciphertext` holds one scalar. A target that is not a scalar, such as
-/// `Vec<String>`, compiles, but decryption refuses it with
-/// [`Error::OpenedType`].
 pub trait OpaqueDecode: sealed::Decode + Zeroize + Send + 'static {}
 
 // An owned `S` is sealed through a borrow of it. `&S` is one of Vitamin C's
@@ -150,7 +195,7 @@ where
     for<'a> &'a S: Scalar,
 {
 }
-impl<P: Decrypt + Zeroize + Send + 'static> sealed::Decode for P {
+impl<P: ScalarTarget + Zeroize + Send + 'static> sealed::Decode for P {
     fn open<'a, K: 'static>(
         leaf: SealedValue,
         cipher: &'a crate::StackCipher<K>,
@@ -159,7 +204,7 @@ impl<P: Decrypt + Zeroize + Send + 'static> sealed::Decode for P {
         crate::target::core::open_opaque(CipherText::Single(leaf), cipher, context)
     }
 }
-impl<P: Decrypt + Zeroize + Send + 'static> OpaqueDecode for P {}
+impl<P: ScalarTarget + Zeroize + Send + 'static> OpaqueDecode for P {}
 
 /// One opaque ciphertext, with no exposed structural node variants.
 ///

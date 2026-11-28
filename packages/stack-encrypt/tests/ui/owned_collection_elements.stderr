@@ -102,7 +102,7 @@ error[E0277]: the trait bound `u8: vitaminc_aead::typed::FromScalar` is not sati
              i8
              u128
            and $N others
-   = note: required for `u8` to implement `Decrypt`
+   = note: required for `u8` to implement `ScalarTarget`
    = note: required for `u8` to implement `OpaqueDecode`
    = note: required for `stack_encrypt::Ciphertext` to implement `DecryptSource<u8>`
    = note: 1 redundant requirement hidden
