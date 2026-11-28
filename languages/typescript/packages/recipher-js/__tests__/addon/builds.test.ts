@@ -1,10 +1,14 @@
 /**
- * The ESM and the CommonJS builds in one process: an application that
- * imports the package and a dependency that requires it. Both load the one
- * addon, so they share its classes, and a ciphertext from either opens in
- * the other. And the package with no native build at all. Each runs the
- * built `dist/`, in a Node process of its own; `test:addon` builds it
- * first.
+ * Two cases:
+ *
+ * - The ECMAScript module (ESM) build and the CommonJS build in one process.
+ *   An application imports the package, and a dependency requires it. Both
+ *   builds load the same addon, so they share its classes. A ciphertext from
+ *   either build decrypts in the other.
+ * - The package with no native build at all.
+ *
+ * Each case runs the built `dist/` in a Node process of its own.
+ * `test:addon` builds `dist/` first.
  */
 import { execFileSync } from 'node:child_process'
 import { cpSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'

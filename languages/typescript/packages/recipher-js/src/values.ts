@@ -10,7 +10,7 @@
  * | `string` | text | `string` |
  * | `boolean` | a boolean | `boolean` |
  * | `number` | a 64-bit float | `number` |
- * | `bigint` | an integer, at the narrowest width that holds it | `bigint` |
+ * | `bigint` | an integer, at the narrowest width that fits it | `bigint` |
  * | `Uint8Array`, `Buffer` | bytes | `Uint8Array` |
  * | `Date` | a timestamp | `Date` |
  * | `RcTimestamp` | a timestamp, in nanoseconds | `Date` when it is whole milliseconds, else `RcTimestamp` |
@@ -23,16 +23,20 @@
  * equal the integer `5n`.
  *
  * A plain object is refused, because an object has no single stored form.
- * `json(..)` encrypts it as a JSON document. `opaque(..)` will encrypt a
- * whole object in the engine's own format, and is not built yet.
+ * `json(..)` encrypts it as a JSON document. `opaque(..)`, for a whole
+ * object in the engine's own format, is not built yet. The engine is Stack
+ * Encrypt, CipherStash's encryption engine.
  *
- * The wrapper classes (`RcDate`, `RcTimestamp`, `RcDecimal`, and `RcUuid`)
- * and `json` come from the native addon. When the addon did not load,
- * stand-ins take their place. Each stand-in constructs as the class does.
- * `encrypt` then resolves to the `Err` that says why the addon did not load.
+ * The native addon defines `json` and the wrapper classes: `RcDate`,
+ * `RcTimestamp`, `RcDecimal`, and `RcUuid`. A wrapper class represents a
+ * type that JavaScript does not have. When the addon did not load, this
+ * module exports stand-ins instead. A stand-in's constructor accepts and
+ * refuses the same arguments as the class's constructor. `encrypt` then
+ * resolves to the `Err` that says why the addon did not load.
  *
- * A wrapper class's constructor takes a string. It throws a `TypeError` for
- * any other argument. The text is checked when the value is encrypted.
+ * A wrapper class's constructor takes a string. The constructor throws a
+ * `TypeError` for any other argument. The text is checked later, when the
+ * value is encrypted.
  */
 import type * as Native from '../native'
 import { type Binding, binding } from './binding'
@@ -56,11 +60,15 @@ export interface WrapperConstructor<W> {
 type WrapperName = 'RcDate' | 'RcTimestamp' | 'RcDecimal' | 'RcUuid'
 
 /**
- * A stand-in for the wrapper class `name`, for when the native addon did
- * not load. It constructs as the addon's class does: it takes a string and
- * throws a `TypeError` for anything else, keeps the text in a read-only
- * `value`, is frozen, and gives the same text to `String`, `JSON.stringify`
- * and Node's `inspect`.
+ * A stand-in for the wrapper class `name`, for when the native addon did not
+ * load. The stand-in matches the addon's class in these ways:
+ *
+ * - The constructor takes a string, and throws a `TypeError` for anything
+ *   else.
+ * - A read-only `value` contains the text.
+ * - The class, its prototype, and each instance are frozen.
+ * - `String`, `JSON.stringify`, and Node's `inspect` get the same text as
+ *   from the addon's class.
  */
 export function standInWrapper<W>(name: WrapperName): WrapperConstructor<W> {
   const StandIn = class {
@@ -84,7 +92,7 @@ export function standInWrapper<W>(name: WrapperName): WrapperConstructor<W> {
   }
   Object.defineProperty(StandIn, 'name', { value: name })
   Object.freeze(StandIn.prototype)
-  // biome-ignore lint/plugin: a stand-in for the class, which constructs as it does.
+  // biome-ignore lint/plugin: a stand-in with the constructor behaviour of the class.
   return Object.freeze(StandIn) as unknown as WrapperConstructor<W>
 }
 
@@ -101,10 +109,10 @@ function wrapperClass<W>(name: WrapperName): WrapperConstructor<W> {
   return standInWrapper(name)
 }
 
-// A class is a constant and a type of one name. `./value-types` declares the
-// types, because the addon's declarations name them, and a module cannot
-// export a type from another module and a constant under the same name. So
-// each constant here has its type beside it.
+// A class is a constant and a type of one name. The addon's declarations
+// name the types, so `./value-types` declares them. A module cannot export a
+// type from another module and a constant under the same name. So each
+// constant here has its type beside it.
 
 /** A calendar date, such as `new RcDate('2026-11-23')`. */
 export const RcDate: WrapperConstructor<RcDate> = wrapperClass('RcDate')
@@ -139,13 +147,16 @@ export type RcUuid = Types.RcUuid
  */
 export type Json = Native.Json
 
-/** The type of `json`, which makes a JSON document to encrypt as one ciphertext. */
+/**
+ * The type of `json`. `json` makes a JSON document to encrypt as one
+ * ciphertext.
+ */
 export type JsonFunction = Binding['json']
 
 /**
- * A JSON document, to encrypt as one ciphertext. `json` reads the document
- * immediately, so a later change to the object does not change what is
- * encrypted.
+ * Makes a JSON document, to encrypt as one ciphertext. `json` reads the
+ * document immediately, so a later change to the object does not change what
+ * is encrypted.
  *
  * ```ts
  * const sealed = await keyset.encrypt(json({ name: 'Ada', visits: 3 }))
@@ -153,15 +164,15 @@ export type JsonFunction = Binding['json']
  *
  * A whole `number` within 2^53 - 1 of zero is stored as an integer, and any
  * other `number` as a float. A whole `number` from 2^53 up to 2^64 is
- * refused: give it as a `bigint`. A `bigint` is stored as its exact digits,
- * within 64 bits.
+ * refused. Pass a `bigint` instead. A `bigint` is stored as its exact
+ * digits, within 64 bits.
  *
  * A decrypted integer is a `number` when it is within 2^53 - 1 of zero, and
  * a `bigint` otherwise. So `json({ a: 5n })` decrypts as `{ a: 5 }`. A
  * decrypted object lists its members sorted by key.
  *
  * `json` never throws. A document that cannot be encrypted is an `Err` from
- * `encrypt`. Examples are a document that contains `undefined`, bytes or a
+ * `encrypt`. Examples are a document that contains `undefined`, bytes, or a
  * `Date`, and a document nested deeper than 127 levels.
  */
 export const json: JsonFunction = binding.isOk()
@@ -170,6 +181,6 @@ export const json: JsonFunction = binding.isOk()
 
 /** The stand-in for `json` when the native addon did not load. */
 function standInJson(): Json {
-  // biome-ignore lint/plugin: a stand-in `Json`, which `encrypt` refuses with the load error.
+  // biome-ignore lint/plugin: a stand-in `Json`. `encrypt` refuses it with the load error.
   return Object.freeze({ toString: () => 'Json(***)' }) as unknown as Json
 }

@@ -16,7 +16,7 @@ use crate::error::{Error, RecipherErrorFields};
 ///
 /// The value model is the set of value types the engine reads. A scalar is
 /// a value of the model that is not an array or a map, such as text, a
-/// number or bytes.
+/// number, or bytes.
 ///
 /// The engine encrypts the value through its opaque scalar path. That path
 /// encrypts a whole value as one leaf. Rust's `keyset.encrypt(value)` uses

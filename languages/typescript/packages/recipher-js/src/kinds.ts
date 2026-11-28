@@ -1,11 +1,12 @@
 /**
- * Kinds: the types of value, by the engine's names for them. A kind says
- * what type a stored ciphertext decrypts to, as in
- * `Ciphertext.fromBytes(bytes, kinds.string)`.
+ * Kinds. A kind names the type that a stored ciphertext decrypts to, as in
+ * `Ciphertext.fromBytes(bytes, kinds.string)`. Each kind has the name that
+ * the engine uses for the type. The engine is Stack Encrypt, CipherStash's
+ * encryption engine.
  *
- * A kind is plain data, `{ name }`, that contains the engine's name for the
- * type. The kind's TypeScript type records the type of the kind's values.
- * An integer kind's values are a `bigint` at every width.
+ * A kind is plain data: `{ name }`. `name` is the engine's name for the
+ * type. The kind's TypeScript type records the type of the kind's values. An
+ * integer kind's values are a `bigint` at every width.
  */
 import type { OpenedJson, RcDate, RcDecimal, RcTimestamp } from './value-types'
 
@@ -13,7 +14,7 @@ import type { OpenedJson, RcDate, RcDecimal, RcTimestamp } from './value-types'
 export interface Kind<Name extends string = string, T = unknown> {
   /** The engine's name for the kind, such as `int32`. */
   readonly name: Name
-  /** Carries `T` for the type checker. The property never exists at run time. */
+  /** Stores `T` for the type checker. The property never exists at run time. */
   readonly __value?: T
 }
 

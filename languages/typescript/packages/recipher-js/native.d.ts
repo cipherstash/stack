@@ -21,9 +21,12 @@ declare const opens: unique symbol
 
 /**
  * `T` is the type the ciphertext decrypts to. For example,
- * `keyset.encrypt('..')` returns a `Ciphertext<string>`. A ciphertext read
- * from stored bytes with no kind named decrypts to whatever type was
- * encrypted, so its type allows any scalar.
+ * `keyset.encrypt('..')` returns a `Ciphertext<string>`.
+ *
+ * A kind names the type that a stored ciphertext decrypts to, such as
+ * `kinds.string`. A ciphertext read from stored bytes with no kind decrypts
+ * to whatever type was encrypted. So its type allows any scalar. A scalar is
+ * a single value, not a JSON document.
  */
 export interface Ciphertext<T = OpenedScalar> {
   /** Stores `T` for the type checker. The property never exists at run time. */
@@ -98,21 +101,25 @@ export declare class Cipher {
  */
 export declare class Ciphertext {
   /**
-   * Reads a ciphertext from stored bytes, a `Uint8Array` or a `Buffer`.
-   * This method checks only the shape of the bytes. Decrypting is what
-   * checks that they are authentic. A failure does not quote the bytes.
+   * Reads a ciphertext from stored bytes. The bytes are a `Uint8Array`
+   * or a `Buffer`. This method checks only the format of the bytes.
+   * Decrypting checks that the bytes are authentic. A failure does not
+   * quote the bytes.
    *
-   * Give a kind, such as `kinds.string`, to decrypt the value as that
-   * kind. Decrypting then refuses a value encrypted as another type.
+   * A kind names the type that a ciphertext decrypts to. To decrypt the
+   * value as one kind, pass that kind, such as `kinds.string`. `decrypt`
+   * then refuses a value that was encrypted as another type.
    * `kinds.json` decrypts a JSON document.
    *
    * With no kind, the value decrypts as the type it was encrypted as. A
    * JSON document then decrypts as its JSON text. `JSON.parse` of that
    * text loses the digits of an integer outside a `number`'s safe range.
    *
-   * Returns an `Err` with the code `recipher_js::not_bytes` when the
-   * bytes are not a `Uint8Array`, and `recipher_js::not_a_kind` when the
-   * kind is not one of `kinds`. Does not throw.
+   * This method does not throw. The method returns an `Err` with one of
+   * two codes:
+   *
+   * - `recipher_js::not_bytes`, when the bytes are not a `Uint8Array`;
+   * - `recipher_js::not_a_kind`, when the kind is not one of `kinds`.
    */
   static fromBytes<K extends Kind>(bytes: Uint8Array, kind: K): Result<Ciphertext<ValueOf<K>>, RecipherError>
   static fromBytes(bytes: Uint8Array): Result<Ciphertext, RecipherError>
@@ -246,14 +253,15 @@ export declare function installResult(classes: { Ok: typeof Ok; Err: typeof Err;
  * ```
  *
  * The document is a plain object, an array, text, a number, a `bigint`, a
- * boolean or `null`. It nests at most 127 levels of arrays and objects.
+ * boolean, or `null`. A document nests at most 127 levels of arrays and
+ * objects.
  *
- * A number is stored by these rules:
+ * These rules decide how a number is stored:
  *
  * - A whole `number` within 2^53 - 1 of zero is an integer, as
  *   `JSON.stringify` writes it. `5000000000` is stored as `5000000000`.
- * - A whole `number` from 2^53 up to 2^64 is refused. Its digits may not
- *   be the ones you wrote. Give it as a `bigint`.
+ * - A whole `number` from 2^53 up to 2^64 is refused. A `number` that
+ *   large may not keep the digits you wrote. Pass a `bigint` instead.
  * - Any other `number` is a float. `NaN` and the infinities are refused.
  * - A `bigint` is its exact digits, from `-(2n ** 63n)` to
  *   `2n ** 64n - 1n`. A `bigint` outside that range is refused.
@@ -265,11 +273,11 @@ export declare function installResult(classes: { Ok: typeof Ok; Err: typeof Err;
  * The engine stores an object's members sorted by key. A decrypted object
  * lists its members in that order, not in the order you wrote them.
  *
- * `undefined`, bytes, a `Date` and the wrapper classes have no JSON form,
- * and are refused.
+ * `undefined`, bytes, a `Date`, and the wrapper classes have no JSON form.
+ * Each one is refused.
  *
- * `json(..)` reads the document now. `json(..)` never throws: `encrypt`
- * returns an `Err` for a document that cannot be encrypted.
+ * `json(..)` reads the document when you call it. `json(..)` never throws.
+ * For a document that cannot be encrypted, `encrypt` returns an `Err`.
  */
 export declare function json(document: JsonValue): Json
 

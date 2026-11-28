@@ -97,7 +97,7 @@ describe('every value in the mapping round-trips', () => {
     expect(fine).toBeInstanceOf(RcTimestamp)
     expect((fine as RcTimestamp).value).toBe('2026-11-23T01:02:03.000000001Z')
 
-    // A timestamp of whole milliseconds opens as a Date.
+    // A timestamp of whole milliseconds decrypts as a Date.
     const whole = await roundTrip(new RcTimestamp('2026-11-23T01:02:03.000Z'))
     expect(whole).toBeInstanceOf(Date)
 
@@ -281,7 +281,8 @@ describe('a JSON document', () => {
     const c = await cipher()
     const document = { big: 18446744073709551615n, small: 5n }
     const sealed = (await c.defaultKeyset().encrypt(json(document))).unwrap()
-    // The safe integer comes back as a number; the big one as a bigint.
+    // The safe integer comes back as a number. The big one comes back as a
+    // bigint.
     expect((await c.decrypt(sealed)).unwrap()).toEqual({
       big: 18446744073709551615n,
       small: 5,
@@ -306,8 +307,8 @@ describe('a JSON document', () => {
   }
 
   it('stores a whole number as an integer, at every size', async () => {
-    // A reader in Go or Rust takes `5000000000`, and refuses
-    // `5000000000.0`, for an integer field.
+    // For an integer field, a reader in Go or Rust accepts `5000000000`, and
+    // refuses `5000000000.0`.
     expect(await storedText({ n: 5000000000 })).toBe('{"n":5000000000}')
     const now = Date.now()
     expect(await storedText({ t: now })).toBe(`{"t":${now}}`)
@@ -327,7 +328,7 @@ describe('a JSON document', () => {
   it('stores any other number as a float', async () => {
     const text = await storedText([1.5, 2 ** 64, 1e20])
     expect(JSON.parse(text as string)).toEqual([1.5, 2 ** 64, 1e20])
-    // Each has a fraction or an exponent, so no reader takes an integer.
+    // Each has a fraction or an exponent, so no reader reads an integer.
     for (const number of (text as string).slice(1, -1).split(',')) {
       expect(number).toMatch(/[.e]/)
     }
@@ -387,7 +388,7 @@ describe('a JSON document', () => {
   it('opens a document another SDK wrote, whatever its numbers', async () => {
     const c = await cipher()
     const keyset = c.defaultKeyset()
-    // Sealed as the engine seals a document: as its JSON text.
+    // Encrypted as the engine encrypts a document: as its JSON text.
     const sealed = (
       await keyset.encrypt(
         '{"float":5.0,"big":1e20,"id":18446744073709551615,"n":-3}',
@@ -407,7 +408,7 @@ describe('a JSON document', () => {
       const refused = await refusal({ n: unsafe })
       expect(refused.code).toBe('recipher_js::not_json')
       expect(refused.message).toContain('bigint')
-      // The message holds no part of the value.
+      // The message contains no part of the value.
       expect(refused.message).not.toMatch(/\d{6}/)
     }
   })
@@ -577,8 +578,8 @@ describe('a JSON document', () => {
     ]) {
       const refused = await keyset.encrypt(json(JSON.parse(text)))
       expect(refused.err()?.code).toBe('recipher_js::reserved_key')
-      // A document another SDK wrote, sealed as the engine seals one: as its
-      // JSON text.
+      // A document another SDK wrote, encrypted as the engine encrypts one:
+      // as its JSON text.
       const sealed = (await keyset.encrypt(text)).unwrap()
       const stored = Ciphertext.fromBytes(sealed.toBytes(), kinds.json).unwrap()
       const opened = await c.decrypt(stored)
@@ -616,7 +617,7 @@ describe('a ciphertext read back with a kind', () => {
 
   it('refuses something that is not a kind', () => {
     const bytes = new Uint8Array(4)
-    // A kind is plain data, so this compiles; the build checks the name.
+    // A kind is plain data, so this compiles. The addon checks the name.
     const result = Ciphertext.fromBytes(bytes, { name: 'nothing' })
     expect(result.err()?.code).toBe('recipher_js::not_a_kind')
   })

@@ -265,8 +265,8 @@ assert.deepEqual(
   addon.decode(addon.encode(new Date('-009999-01-02T01:59:59Z'))),
   new Date('-009999-01-02T01:59:59Z'),
 )
-// A whole-millisecond timestamp written by another binding is a Date here;
-// a finer one is an RcTimestamp, so no precision is discarded.
+// A whole-millisecond timestamp written by another binding is a Date here. A
+// finer timestamp is an RcTimestamp, so no precision is discarded.
 assert.deepEqual(
   addon.decode(Buffer.from('130000000000000000c0d45407', 'hex')),
   new Date(123),

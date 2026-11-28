@@ -21,7 +21,8 @@ type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
 function expectType<T>(_: T): void {}
 function check<_ extends true>(): void {}
 
-// One value is one ciphertext, typed by what it opens as. A literal widens.
+// One value gives one ciphertext. The type of the ciphertext is the type the
+// value decrypts to. A literal widens.
 const text = await keyset.encrypt('a secret')
 check<Exact<typeof text, Result<Ciphertext<string>, RecipherError>>>()
 const count = await keyset.encrypt(5n)
@@ -50,7 +51,7 @@ check<Exact<typeof document, Result<Ciphertext<OpenedJson>, RecipherError>>>()
 const many = await keyset.encrypt(['a', 'b'])
 check<Exact<typeof many, Result<Ciphertext<string>[], RecipherError>>>()
 
-// Decrypting gives the type back, one or many.
+// Decrypting gives the type back, for one ciphertext or for an array.
 if (text.isOk()) {
   const opened = await cipher.decrypt(text.value)
   check<Exact<typeof opened, Result<string, RecipherError>>>()
@@ -79,8 +80,8 @@ void json({ d: new Date() })
 // @ts-expect-error: an RcDate is not an RcDecimal.
 expectType<RcDecimal>(day)
 
-// A ciphertext read from stored bytes is typed by the kind named, and as
-// any scalar when none is.
+// A ciphertext read from stored bytes has the type of the kind named. With
+// no kind, its type is any scalar.
 declare const stored: Uint8Array
 const typed = Ciphertext.fromBytes(stored, kinds.int64)
 check<Exact<typeof typed, Result<Ciphertext<bigint>, RecipherError>>>()

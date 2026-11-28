@@ -4,17 +4,18 @@
 //! The engine is the Stack Encrypt engine, the `stack-encrypt` crate. The
 //! engine's value model is the set of value types it reads.
 //!
-//! `JsRef::to_frame` reads a JavaScript value, on the JavaScript thread,
-//! into a buffer, which becomes the engine's [`OwnedFrame`] without a copy.
-//! A frame is a byte buffer that contains one value. The buffer is wiped
-//! when it drops. A worker thread then encrypts the frame, with no access
-//! to JavaScript. `JsBuilder::build` builds a decrypted frame back into a
-//! JavaScript value.
+//! `JsRef::to_frame` reads a JavaScript value into a buffer, on the
+//! JavaScript thread. The buffer becomes the engine's [`OwnedFrame`] without
+//! a copy. A frame is a byte buffer that contains one value. The buffer is
+//! wiped when it drops.
 //!
-//! A JSON document goes through the bridge too. `JsRef::to_json` reads a
-//! JavaScript value as the document's JSON text, and
-//! `JsBuilder::build_json` builds the JavaScript value of a decrypted
-//! document. This module does not convert any value itself.
+//! A worker thread then encrypts the frame, with no access to JavaScript.
+//! `JsBuilder::build` builds a decrypted frame back into a JavaScript value.
+//!
+//! The bridge converts a JSON document too. `JsRef::to_json` reads a
+//! JavaScript value as the document's JSON text. `JsBuilder::build_json`
+//! builds the JavaScript value of a decrypted document. This module does
+//! not convert any value itself.
 //!
 //! When the bridge refuses a value, it says which rule the value broke. A
 //! scalar is a value that is not an array or an object. For a scalar, the
@@ -151,7 +152,8 @@ pub fn build(env: &Env, value: OwnedFrame) -> Result<Unknown<'_>, RecipherErrorF
 /// # Errors
 ///
 /// Returns the errors of [`build`]. A document with a member named
-/// `__proto__`, `constructor` or `prototype` is `recipher_js::reserved_key`.
+/// `__proto__`, `constructor`, or `prototype` is
+/// `recipher_js::reserved_key`.
 pub fn build_opened(env: &Env, opened: Opened) -> Result<Unknown<'_>, RecipherErrorFields> {
     match opened {
         Opened::Value(value) => build(env, value),

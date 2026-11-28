@@ -21,9 +21,12 @@ declare const opens: unique symbol
 
 /**
  * `T` is the type the ciphertext decrypts to. For example,
- * `keyset.encrypt('..')` returns a `Ciphertext<string>`. A ciphertext read
- * from stored bytes with no kind named decrypts to whatever type was
- * encrypted, so its type allows any scalar.
+ * `keyset.encrypt('..')` returns a `Ciphertext<string>`.
+ *
+ * A kind names the type that a stored ciphertext decrypts to, such as
+ * `kinds.string`. A ciphertext read from stored bytes with no kind decrypts
+ * to whatever type was encrypted. So its type allows any scalar. A scalar is
+ * a single value, not a JSON document.
  */
 export interface Ciphertext<T = OpenedScalar> {
   /** Stores `T` for the type checker. The property never exists at run time. */

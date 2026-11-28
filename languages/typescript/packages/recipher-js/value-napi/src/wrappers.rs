@@ -1,19 +1,29 @@
-//! The wrapper classes: `RcDate`, `RcTimestamp`, `RcDecimal` and `RcUuid`.
+//! The wrapper classes: `RcDate`, `RcTimestamp`, `RcDecimal`, and `RcUuid`.
 //!
-//! JavaScript has no type of its own for a calendar date, a timestamp finer
-//! than a millisecond, a decimal or a UUID, so the binding represents each
-//! as an instance of a small class holding its text. A class instance is
-//! not a plain object, so it can never be confused with data another
-//! language wrote as an ordinary one-key object (#382).
+//! JavaScript has no type of its own for four kinds of value:
 //!
-//! The classes are defined by the JavaScript in `wrappers.js`, evaluated
-//! once per environment. The object it returns (the classes and the
-//! plain-object check, frozen) is kept in a registry keyed by the
-//! environment and released by an environment cleanup hook, so the
-//! addon's own instance data (`napi_set_instance_data`) is never touched.
-//! An addon exports the classes with [`Wrappers::exports`] so applications
-//! can construct them; the walk recognises instances with `instanceof`,
-//! and the build constructs them.
+//! - a calendar date;
+//! - a timestamp finer than a millisecond;
+//! - a decimal;
+//! - a universally unique identifier (UUID).
+//!
+//! This crate represents each one as an instance of a small class. The
+//! instance stores the value's text. A class instance is not a plain object.
+//! So no code can confuse an instance with a plain one-key object that
+//! another language wrote.
+//!
+//! The JavaScript in `wrappers.js` defines the classes. This crate evaluates
+//! that JavaScript once for each environment. The JavaScript returns a frozen
+//! object that contains the classes and the plain-object check.
+//!
+//! This crate keeps the object in a registry keyed by the environment. An
+//! environment cleanup hook releases the object. So this crate never reads
+//! or changes the addon's own instance data (`napi_set_instance_data`).
+//!
+//! An addon exports the classes with [`Wrappers::exports`], so that
+//! applications can construct them. The walk in the `js_ref` module
+//! recognises an instance with `instanceof`. `JsBuilder` constructs
+//! instances.
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -113,8 +123,8 @@ impl<'e> Wrappers<'e> {
         Ok(Self { classes })
     }
 
-    /// An object holding every class under its name, for an addon to
-    /// re-export: `RcDate`, `RcTimestamp`, `RcDecimal` and `RcUuid`.
+    /// An object with every class under its name, for an addon to re-export:
+    /// `RcDate`, `RcTimestamp`, `RcDecimal`, and `RcUuid`.
     pub fn exports(env: &'e Env) -> Result<Object<'e>> {
         let wrappers = Self::get(env)?;
         let mut exports = Object::new(env)?;
