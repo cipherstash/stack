@@ -310,7 +310,13 @@ where
             .try_map(Ciphertext::from_tree)
     }
 }
-impl<S> OpaqueEncode for S where S: sealed::OneValue + Zeroize + Send + 'static {}
+impl<S> OpaqueEncode for S
+where
+    S: sealed::OneValue + Zeroize + Send + 'static,
+{
+    // The `Scalar` bound is in `OneValue`, so that the compiler reports a
+    // missing `Zeroize` by name.
+}
 impl<P: Decrypt + Zeroize + Send + 'static> sealed::Decode for P {
     fn open<'a, K: 'static>(
         leaf: SealedValue,
