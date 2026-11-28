@@ -18,6 +18,8 @@ import type { RecipherError } from './error'
 import { err, type Result } from './result'
 import type { OpenedScalar } from './value-types'
 
+export type { CipherOptions } from './record-types'
+
 /**
  * One encrypted value: opaque bytes, encrypted with a data key of its own.
  *

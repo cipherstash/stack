@@ -6,13 +6,20 @@
 // biome-ignore-start lint/correctness/noUnusedImports: the generated signatures after this header use these imports.
 import type { RecipherError } from './src/error'
 import type { Kind, ValueOf } from './src/kinds'
+import type {
+  CipherOptions,
+  Plaintext,
+  RecordDeclaration,
+  SealedFieldName,
+  Stored,
+} from './src/record-types'
 import type { Err, Ok, Result } from './src/result'
 import type {
   JsonMarker,
   JsonValue,
   Opened,
   OpenedScalar,
-  Value,
+  Scalar,
 } from './src/value-types'
 
 // biome-ignore-end lint/correctness/noUnusedImports: the generated signatures after this header use these imports.
@@ -35,3 +42,10 @@ export interface Ciphertext<T = OpenedScalar> {
 
 /** The marker stops any other object type-checking as a `Json`. */
 export interface Json extends JsonMarker {}
+
+/**
+ * A value that `encrypt` accepts: one scalar, or a `Json` document from
+ * `json(..)`. The type is declared here, beside the `Json` class, so a type
+ * error names `Json` and `Value`.
+ */
+export type Value = Scalar | Json

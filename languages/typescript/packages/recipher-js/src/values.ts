@@ -48,8 +48,10 @@ export type {
   OpenedJson,
   OpenedScalar,
   Scalar,
-  Value,
 } from './value-types'
+
+/** A value that `encrypt` accepts: one scalar, or a `Json` document. */
+export type Value = Native.Value
 
 /** The constructor of a wrapper class. */
 export interface WrapperConstructor<W> {

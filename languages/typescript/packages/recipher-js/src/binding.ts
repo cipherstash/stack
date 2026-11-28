@@ -49,6 +49,7 @@ const EXPORTS = [
   'Ciphertext',
   'Json',
   'bindingInterface',
+  'checkDeclarations',
   'createTesting',
   'installResult',
   'json',

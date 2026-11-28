@@ -105,9 +105,6 @@ export interface JsonMarker {
   readonly [document]: true
 }
 
-/** A value that `encrypt` accepts. */
-export type Value = Scalar | JsonMarker
-
 /** The type that a value of type `V` decrypts to. */
 export type Opened<V> = V extends string
   ? string

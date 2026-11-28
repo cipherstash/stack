@@ -113,6 +113,83 @@ pub(crate) enum Error {
         help("Build it with `pnpm --filter @cipherstash/recipher build:debug`.")
     )]
     NoTesting,
+    /// A declaration that `record(..)` did not make.
+    #[error("the value given as a record is not a record declaration")]
+    #[diagnostic(
+        code(recipher_js::not_a_record),
+        help("Declare a record with `record(..)`.")
+    )]
+    NotARecord,
+    /// A field declared with something other than `encrypt(..)` or
+    /// `passthrough()`.
+    #[error("the field is not declared with `encrypt(..)` or `passthrough()`")]
+    #[diagnostic(code(recipher_js::declaration))]
+    Declaration,
+    /// A field whose name the engine reserves.
+    #[error("the field's name is one that the engine reserves")]
+    #[diagnostic(
+        code(recipher_js::reserved_field),
+        help("Give the field another name.")
+    )]
+    ReservedField,
+    /// A field's kind that is not one of `kinds`.
+    #[error("`{name}` is not one of `kinds`")]
+    #[diagnostic(code(recipher_js::kind))]
+    Kind { name: String },
+    /// A field's index that is not one of the indexes the SDK names.
+    #[error("`{name}` is not an index")]
+    #[diagnostic(code(recipher_js::index))]
+    Index { name: String },
+    /// A field's null mode that the engine does not have. A null mode says
+    /// how the engine stores a field's null.
+    #[error("`{mode}` is not a null mode")]
+    #[diagnostic(code(recipher_js::null), help("A null mode is `sealed` or `sql`."))]
+    Null { mode: String },
+    /// A field path that could not be written as a context.
+    ///
+    /// A context is a value that a ciphertext is bound to, and decrypting
+    /// needs the same context. A field's context is its field path: the
+    /// record's name, then the field's name.
+    #[error("the record's name and the field's name could not be written as a field path")]
+    #[diagnostic(code(recipher_js::context))]
+    Context,
+    /// A record name the engine refuses as a segment of a field path.
+    #[error("the engine refuses the record name as the first part of a field path")]
+    #[diagnostic(
+        code(recipher_js::record_name),
+        help("Use a record name that is not empty and contains no character that the engine refuses in a field path, such as `/`.")
+    )]
+    RecordName,
+    /// A field name that the record does not encrypt. The record does not
+    /// declare the name, the name is a passthrough field's, or the name is
+    /// not a string. A passthrough field is stored as given, without
+    /// encryption.
+    #[error("the record declares no encrypted field of that name")]
+    #[diagnostic(
+        code(recipher_js::no_field),
+        help("Name a field that the record declares with `encrypt(..)`. A passthrough field has no ciphertext.")
+    )]
+    NoField,
+    /// A row that is not an object of the record's fields.
+    #[error("the row is not an object with the record's fields")]
+    #[diagnostic(code(recipher_js::not_a_row))]
+    NotARow,
+    /// A row's value that is not of its field's kind.
+    #[error("the value is not of the field's kind, `{kind}`, or does not fit that kind")]
+    #[diagnostic(code(recipher_js::field_type))]
+    FieldType { kind: ValueKind },
+    /// A stored row that does not have the record's shape. A stored row is
+    /// what encrypting a row returns.
+    #[error("the stored row does not have the record's shape: {what}")]
+    #[diagnostic(code(recipher_js::not_a_stored_row))]
+    NotAStoredRow { what: &'static str },
+    /// A stored row from the engine that the SDK cannot read.
+    #[error("the engine's stored row does not have the shape that the SDK reads: {what}")]
+    #[diagnostic(
+        code(recipher_js::engine_result),
+        help("Report this as a bug in @cipherstash/recipher.")
+    )]
+    EngineResult { what: &'static str },
     /// A call whose engine work returned no result.
     #[error("the engine returned no result")]
     #[diagnostic(
@@ -173,8 +250,9 @@ pub struct RecipherErrorFields {
     /// diagnostic states another one.
     pub severity: Severity,
     /// The error's structured fields, keyed by `snake_case` name. For
-    /// example, a ZeroKMS failure has `request_kind`. The map is empty when
-    /// the error has no fields.
+    /// example, a refused plan has `field` and `reason`. A ZeroKMS failure
+    /// has `request_kind`. A plan is the engine's rules for encrypting a
+    /// record. The map is empty when the error has no fields.
     #[napi(ts_type = "Record<string, unknown>")]
     pub fields: serde_json::Map<String, serde_json::Value>,
     /// The errors that caused this one, outermost first.
@@ -315,6 +393,27 @@ impl RecipherErrorFields {
     /// Returns the failure for an engine error, with its structured fields.
     pub(crate) fn engine<E: ErrorPayload>(error: &E) -> Self {
         Self::diagnostic(error, Some(error.payload()))
+    }
+
+    /// Returns this failure, with the name of the record at fault.
+    pub(crate) fn in_record(mut self, record: &str) -> Self {
+        self.record = Some(record.to_owned());
+        self
+    }
+
+    /// Returns this failure, with the name of the field at fault, or with
+    /// no field.
+    pub(crate) fn at_field(mut self, field: Option<&str>) -> Self {
+        self.field = field.map(str::to_owned);
+        self
+    }
+
+    /// Returns the engine's `reason` field, such as `no_fields`, when the
+    /// error's fields include one.
+    pub(crate) fn reason(&self) -> Option<&str> {
+        self.fields
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
     }
 }
 
@@ -511,6 +610,7 @@ mod tests {
     /// Returns one of each variant of [`Error`]. The match has no wildcard,
     /// so the crate does not compile when a new variant has no entry here.
     fn every_error() -> Vec<Error> {
+        let name = || "x".to_owned();
         let all = vec![
             Error::Undefined,
             Error::Uuid,
@@ -528,6 +628,21 @@ mod tests {
             Error::NotADocument,
             Error::TestingSeed,
             Error::NoTesting,
+            Error::NotARecord,
+            Error::Declaration,
+            Error::ReservedField,
+            Error::Kind { name: name() },
+            Error::Index { name: name() },
+            Error::Null { mode: name() },
+            Error::Context,
+            Error::RecordName,
+            Error::NoField,
+            Error::NotARow,
+            Error::FieldType {
+                kind: ValueKind::Int8,
+            },
+            Error::NotAStoredRow { what: "x" },
+            Error::EngineResult { what: "x" },
             Error::NoResult,
             Error::BuildValue,
         ];
@@ -547,6 +662,19 @@ mod tests {
                 | Error::NotADocument
                 | Error::TestingSeed
                 | Error::NoTesting
+                | Error::NotARecord
+                | Error::Declaration
+                | Error::ReservedField
+                | Error::Kind { .. }
+                | Error::Index { .. }
+                | Error::Null { .. }
+                | Error::Context
+                | Error::RecordName
+                | Error::NoField
+                | Error::NotARow
+                | Error::FieldType { .. }
+                | Error::NotAStoredRow { .. }
+                | Error::EngineResult { .. }
                 | Error::NoResult
                 | Error::BuildValue => {}
             }
@@ -574,7 +702,16 @@ mod tests {
             Error::NoTesting => {
                 Some("Build it with `pnpm --filter @cipherstash/recipher build:debug`.")
             }
-            Error::NoResult | Error::BuildValue => {
+            Error::NotARecord => Some("Declare a record with `record(..)`."),
+            Error::ReservedField => Some("Give the field another name."),
+            Error::Null { .. } => Some("A null mode is `sealed` or `sql`."),
+            Error::RecordName => Some(
+                "Use a record name that is not empty and contains no character that the engine refuses in a field path, such as `/`.",
+            ),
+            Error::NoField => Some(
+                "Name a field that the record declares with `encrypt(..)`. A passthrough field has no ciphertext.",
+            ),
+            Error::EngineResult { .. } | Error::NoResult | Error::BuildValue => {
                 Some("Report this as a bug in @cipherstash/recipher.")
             }
             Error::Value
@@ -583,7 +720,14 @@ mod tests {
             | Error::NotBytes
             | Error::OpenedType { .. }
             | Error::NotADocument
-            | Error::TestingSeed => None,
+            | Error::TestingSeed
+            | Error::Declaration
+            | Error::Kind { .. }
+            | Error::Index { .. }
+            | Error::Context
+            | Error::NotARow
+            | Error::FieldType { .. }
+            | Error::NotAStoredRow { .. } => None,
         }
     }
 

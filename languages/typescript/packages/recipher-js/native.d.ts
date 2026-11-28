@@ -6,13 +6,20 @@
 // biome-ignore-start lint/correctness/noUnusedImports: the generated signatures after this header use these imports.
 import type { RecipherError } from './src/error'
 import type { Kind, ValueOf } from './src/kinds'
+import type {
+  CipherOptions,
+  Plaintext,
+  RecordDeclaration,
+  SealedFieldName,
+  Stored,
+} from './src/record-types'
 import type { Err, Ok, Result } from './src/result'
 import type {
   JsonMarker,
   JsonValue,
   Opened,
   OpenedScalar,
-  Value,
+  Scalar,
 } from './src/value-types'
 
 // biome-ignore-end lint/correctness/noUnusedImports: the generated signatures after this header use these imports.
@@ -35,6 +42,13 @@ export interface Ciphertext<T = OpenedScalar> {
 
 /** The marker stops any other object type-checking as a `Json`. */
 export interface Json extends JsonMarker {}
+
+/**
+ * A value that `encrypt` accepts: one scalar, or a `Json` document from
+ * `json(..)`. The type is declared here, beside the `Json` class, so a type
+ * error names `Json` and `Value`.
+ */
+export type Value = Scalar | Json
 
 /**
  * A cipher: the engine, and the keysets it can use. A keyset is a group
@@ -60,9 +74,14 @@ export declare class Cipher {
    * - the credentials are refused;
    * - ZeroKMS refuses to load the default keyset.
    *
+   * `options.records` lists record declarations to check now, before the
+   * engine looks for credentials. A record declaration lists a record's
+   * fields and how to store each one. If the engine refuses a
+   * declaration, the promise resolves to an `Err` that names the record.
+   *
    * The promise does not reject.
    */
-  static create(): Promise<Result<Cipher, RecipherError>>
+  static create(options?: CipherOptions): Promise<Result<Cipher, RecipherError>>
   /**
    * Returns the client's default keyset: the keyset that a ZeroKMS
    * administrator set for this client. Encrypting needs a keyset.
@@ -74,14 +93,29 @@ export declare class Cipher {
    *
    * An array of ciphertexts returns an array of values, in the same
    * order. The cipher makes one key request for each keyset the
-   * ciphertexts were made under.
+   * ciphertexts were made under. A key request is one request to ZeroKMS
+   * for data keys.
    *
-   * Resolves to an `Err` with the code `recipher_js::not_a_ciphertext`
-   * when the argument, or an element of the array, is not a
-   * `Ciphertext`. The promise does not reject.
+   * With a record declaration as the first argument, `decrypt` decrypts
+   * a stored row of that record, or an array of stored rows. A stored
+   * row is what `keyset.encrypt` returns for a row. Node's `inspect`
+   * shows a decrypted row's field names and hides their values.
+   *
+   * The promise resolves to an `Err` with the code
+   * `recipher_js::not_a_ciphertext` when the argument, or an element of
+   * the array, is not a `Ciphertext`. The promise does not reject.
    */
   decrypt<T>(ciphertext: Ciphertext<T>): Promise<Result<T, RecipherError>>
   decrypt<T>(ciphertexts: readonly Ciphertext<T>[]): Promise<Result<T[], RecipherError>>
+  decrypt<R extends RecordDeclaration>(record: R, row: Stored<R>): Promise<Result<Plaintext<R>, RecipherError>>
+  decrypt<R extends RecordDeclaration>(record: R, rows: readonly Stored<R>[]): Promise<Result<Plaintext<R>[], RecipherError>>
+  /**
+   * Decrypts one field of a record's stored row, as `encryptField` or
+   * `encrypt` stored it. An array of stored fields decrypts in one key
+   * request. The promise does not reject.
+   */
+  decryptField<R extends RecordDeclaration, const F extends SealedFieldName<R>>(record: R, field: F, stored: NoInfer<Stored<R>[F]>): Promise<Result<Plaintext<R>[F], RecipherError>>
+  decryptField<R extends RecordDeclaration, const F extends SealedFieldName<R>>(record: R, field: F, stored: readonly NoInfer<Stored<R>[F]>[]): Promise<Result<Plaintext<R>[F][], RecipherError>>
   /** Returns the type's name. */
   toString(): string
 }
@@ -167,27 +201,58 @@ export declare class Keyset {
    *
    * An array of values returns an array of ciphertexts, in the same
    * order. The keyset makes one key request for the whole array, however
-   * long it is. A key request is one request to ZeroKMS for data keys. If
-   * any value is refused, the whole array fails, before any request.
+   * long it is. A key request is one request to ZeroKMS for data keys.
+   * If any value is refused, the whole array fails, before any request.
    *
    * A value's type sets how it is encrypted. The package's README lists
    * the mapping of JavaScript types. A `Json` from `json(..)` is
    * encrypted as a JSON document.
    *
-   * A value that cannot be encrypted resolves to an `Err`. For example, a
-   * plain object is an `Err` with the code `recipher_js::plain_object`.
+   * A value that cannot be encrypted resolves to an `Err`. For example,
+   * a plain object is an `Err` with the code
+   * `recipher_js::plain_object`.
+   *
+   * With a record declaration as the first argument, `encrypt` encrypts
+   * a row of that record, or an array of rows in one key request. Each
+   * field is encrypted under its field path: the record's name, then the
+   * field's name. For each encrypted field, the stored row has the
+   * field's ciphertext and its index terms.
+   *
    * The promise does not reject.
    */
   encrypt<V extends Value>(value: V): Promise<Result<Ciphertext<Opened<V>>, RecipherError>>
   encrypt<V extends Value>(values: readonly V[]): Promise<Result<Ciphertext<Opened<V>>[], RecipherError>>
+  encrypt<R extends RecordDeclaration>(record: R, row: Plaintext<R>): Promise<Result<Stored<R>, RecipherError>>
+  encrypt<R extends RecordDeclaration>(record: R, rows: readonly Plaintext<R>[]): Promise<Result<Stored<R>[], RecipherError>>
   /**
    * Decrypts a ciphertext made under this keyset, or an array of them. A
    * ciphertext of another keyset fails with the code
-   * `stack_encrypt::foreign_keyset`, before any key is requested. The
-   * promise does not reject.
+   * `stack_encrypt::foreign_keyset`, before any key is requested.
+   *
+   * With a record declaration as the first argument, `decrypt` decrypts
+   * a stored row of that record, or an array of stored rows.
+   *
+   * The promise does not reject.
    */
   decrypt<T>(ciphertext: Ciphertext<T>): Promise<Result<T, RecipherError>>
   decrypt<T>(ciphertexts: readonly Ciphertext<T>[]): Promise<Result<T[], RecipherError>>
+  decrypt<R extends RecordDeclaration>(record: R, row: Stored<R>): Promise<Result<Plaintext<R>, RecipherError>>
+  decrypt<R extends RecordDeclaration>(record: R, rows: readonly Stored<R>[]): Promise<Result<Plaintext<R>[], RecipherError>>
+  /**
+   * Encrypts one field of a record, to update that field alone. The
+   * result is the field's stored form, the same form as in a whole stored
+   * row. An array of values returns an array of stored fields, in one key
+   * request. The promise does not reject.
+   */
+  encryptField<R extends RecordDeclaration, const F extends SealedFieldName<R>>(record: R, field: F, value: NoInfer<Plaintext<R>[F]>): Promise<Result<Stored<R>[F], RecipherError>>
+  encryptField<R extends RecordDeclaration, const F extends SealedFieldName<R>>(record: R, field: F, values: readonly NoInfer<Plaintext<R>[F]>[]): Promise<Result<Stored<R>[F][], RecipherError>>
+  /**
+   * Decrypts one field of a record's stored row made under this keyset.
+   * An array of stored fields decrypts in one key request. The promise
+   * does not reject.
+   */
+  decryptField<R extends RecordDeclaration, const F extends SealedFieldName<R>>(record: R, field: F, stored: NoInfer<Stored<R>[F]>): Promise<Result<Plaintext<R>[F], RecipherError>>
+  decryptField<R extends RecordDeclaration, const F extends SealedFieldName<R>>(record: R, field: F, stored: readonly NoInfer<Stored<R>[F]>[]): Promise<Result<Plaintext<R>[F][], RecipherError>>
   /** Returns the type's name. */
   toString(): string
 }
@@ -198,6 +263,14 @@ export declare class Keyset {
  * another version.
  */
 export declare function bindingInterface(): number
+
+/**
+ * Checks record declarations with the engine, without credentials and
+ * without any request. Use it in a test or a continuous integration (CI)
+ * step. The `Err` is the engine's first refusal. The error names the
+ * record and, where there is one, the field. This function does not throw.
+ */
+export declare function checkDeclarations(declarations: readonly RecordDeclaration[]): Result<void, RecipherError>
 
 /**
  * Makes a cipher over the engine's deterministic test keys, from a 32-byte
@@ -306,8 +379,9 @@ export interface RecipherErrorFields {
   severity: Severity
   /**
    * The error's structured fields, keyed by `snake_case` name. For
-   * example, a ZeroKMS failure has `request_kind`. The map is empty when
-   * the error has no fields.
+   * example, a refused plan has `field` and `reason`. A ZeroKMS failure
+   * has `request_kind`. A plan is the engine's rules for encrypting a
+   * record. The map is empty when the error has no fields.
    */
   fields: Record<string, unknown>
   /** The errors that caused this one, outermost first. */

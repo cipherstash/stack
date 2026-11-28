@@ -2,6 +2,7 @@
 // runs it. Each `@ts-expect-error` is a line that must not compile.
 import type {
   Cipher,
+  Json,
   Keyset,
   OpenedJson,
   OpenedScalar,
@@ -11,6 +12,7 @@ import type {
   RcUuid,
   RecipherError,
   Result,
+  Value,
 } from '../src/index'
 import { Ciphertext, json, kinds } from '../src/index'
 
@@ -64,6 +66,16 @@ if (many.isOk()) {
 // A plain object needs json(..).
 // @ts-expect-error: a plain object is not a value.
 void keyset.encrypt({ name: 'Ada' })
+// @ts-expect-error: a plain object is not a value.
+void keyset.encrypt({ a: 1 })
+const plainObject = { a: 1 }
+// @ts-expect-error: a plain object is not a `Json`, though it has a `toString`.
+expectType<Json>(plainObject)
+// @ts-expect-error: a plain object is not a `Value`.
+expectType<Value>(plainObject)
+// What `json(..)` returns is both.
+expectType<Json>(json({ a: 1 }))
+expectType<Value>(json({ a: 1 }))
 // This version of the SDK does not encrypt a UUID yet.
 declare const uuid: RcUuid
 // @ts-expect-error: a UUID is not a value.

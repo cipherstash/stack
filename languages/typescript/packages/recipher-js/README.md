@@ -165,6 +165,84 @@ The ciphertext's TypeScript type allows any scalar: any type in the table above 
 Decrypting it refuses a value that was encrypted as another type.
 An integer kind accepts an integer encrypted at any width, if the value fits the kind.
 
+## Records
+
+A record declares each field of a row once.
+A field is encrypted, encrypted with indexes, or passed through unencrypted.
+
+```ts
+import { encrypt, kinds, passthrough, record } from '@cipherstash/recipher'
+
+export const user = record('users', {
+  id: passthrough<bigint>(),
+  email: encrypt(kinds.string, { index: ['equality'] }),
+  name: encrypt(kinds.string, { index: ['match'] }),
+  age: encrypt(kinds.int32, { index: ['equality'], null: 'sealed' }),
+  notes: encrypt(kinds.string, { null: 'sql' }),
+})
+
+// One row, or an array of rows in one key request.
+const stored = await keyset.encrypt(user, row)
+const opened = await cipher.decrypt(user, stored.unwrap())
+```
+
+- `keyset.encrypt(user, row)` returns a stored row.
+  A stored row is the encrypted form of a row.
+- A declaration is a plain, frozen object: `{ type: 'record', name, fields }`.
+  A library can read the record's name, its fields, and each field's declaration from it.
+- The package has an ECMAScript module (ESM) build and a CommonJS build.
+  A declaration made by either build works with a cipher from the other.
+- Each encrypted field names its kind, by the engine's name for it.
+  The kinds are `kinds.string`, `kinds.boolean`, `kinds.int8` to `kinds.int128`, `kinds.uint8` to `kinds.uint128`, `kinds.float32`, `kinds.float64`, `kinds.decimal`, `kinds.date`, `kinds.timestamp`, and `kinds.bytes`.
+- An integer field accepts a `bigint` at every width.
+  The field refuses a `bigint` outside its range.
+- A context is data that a ciphertext is bound to.
+  The ciphertext decrypts only under the same context.
+  A field's context is its field path: the record's name, then the field's name.
+  The engine's typed Rust API decrypts the stored `email` field's ciphertext under `("users", "email")`.
+- An index stores extra bytes, called index terms, beside a field's ciphertext.
+  A search can compare index terms without decrypting the field.
+  `equality` finds exact matches.
+  `match` finds text matches.
+  `ore` and `ope` compare order.
+- The stored row has one object for each encrypted field.
+  The object has a `ciphertext` property.
+  The object also has one property for each index the field declares: `equality`, `match`, `ore`, or `ope`.
+  Each property is opaque bytes.
+- A passthrough field keeps its value in the stored row.
+- A field with `null: 'sealed'` encrypts a missing value like any other value.
+  A field with `null: 'sql'` is `null` in the stored row when the value is missing.
+- `Plaintext<typeof user>` is the type of a row.
+  `Stored<typeof user>` is the type of a stored row.
+  A row of another shape does not compile.
+  `stored.notes.equality` does not compile either, because `notes` declares no index.
+- A passthrough field is **not encrypted and not authenticated.**
+  Anyone with the stored row can read it, change it, or remove it.
+  Use a passthrough field only for values that are not secret.
+  Treat the value read back as untrusted.
+- The engine checks a declaration the first time a cipher uses it.
+  The engine then keeps the plan it built from the declaration.
+- `Cipher.create({ records })` checks the declarations before it looks for credentials.
+  `checkDeclarations(records)` checks them with no credentials.
+  A refusal names the record in `error.record`.
+  Where there is a field at fault, the refusal names it in `error.field`.
+- Node's `inspect` shows a decrypted row's field names and hides their values.
+  `console.log` uses `inspect`, so it hides the values too.
+  The values are ordinary properties.
+  `JSON.stringify` or a spread still shows them.
+
+To update one field of a stored row, encrypt that field on its own.
+An array of values gives an array of stored fields, with one key request:
+
+```ts
+const email = await keyset.encryptField(user, 'email', 'ada@example.com')
+const value = await cipher.decryptField(user, 'email', email.unwrap())
+
+const emails = await keyset.encryptField(user, 'email', ['a@example.com', 'b@example.com'])
+```
+
+The stored field has the same form as that field in a whole stored row.
+
 ## Results, not exceptions
 
 Every call returns, or resolves to, a `Result`.
@@ -222,7 +300,7 @@ if (opened.isErr()) {
 | `help` | What to do about the failure, when the error has that advice. |
 | `url` | A documentation page for the error, where it has one. |
 | `severity` | `error`, unless the engine's report states `warning` or `advice`. |
-| `fields` | The error's structured fields, by `snake_case` name. An example is a ZeroKMS failure's `request_kind`. |
+| `fields` | The error's structured fields, by `snake_case` name. Examples are a refused declaration's `reason` and a ZeroKMS failure's `request_kind`. |
 | `field` | The field at fault, where one is known. |
 | `record` | The record at fault, where there is one. |
 | `causes` | The errors behind this one, outermost first. Each cause has a `message`, and an engine error also has a `code`. A cause from another library has a fixed message, never that library's own text. |
@@ -293,7 +371,7 @@ The ECMAScript module (ESM) build and the CommonJS build load the same addon, so
 These features are not built yet:
 
 - `opaque(..)`, for a whole object;
-- records;
+- a `json` record field: this field needs `JsonSearch` from the Encrypt Query Language (EQL) extension for PostgreSQL;
 - search terms;
 - credentials passed in code;
 - named keysets;
