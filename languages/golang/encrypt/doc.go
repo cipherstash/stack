@@ -122,18 +122,42 @@
 // plan the Rust chain and the derive run. A program never builds or names a
 // plan, and no call takes a context or an index choice of its own.
 //
-// A sealed field outside an opaque struct is one value: a string, []byte,
-// bool, an integer of any width (int8 to int64, uint8 to uint64, int, uint,
-// or [Int128] and [Uint128]), a float32 or float64, a [Decimal], a [Date], a
-// time.Time (a timestamp), a UUID ([16]byte, a type declared as [16]byte,
-// github.com/google/uuid.UUID or vcvalue.UUID), or a type defined over one
-// of the built-in types. A UUID takes an equality index and no other.
-// Each integer seals at its own width. Equality applies to every one but a
-// bool. ORE and OPE apply to integers of 16 bits or more, floats, text,
-// decimals, dates and timestamps. A bool or an 8-bit integer takes no order
-// index, since over so few values its ordering terms would show which rows
-// hold which value. Bytes and a UUID take no order index either: no
-// ordering of them is meaningful.
+// A sealed field outside an opaque struct is one value. The value has one of
+// these types, or a type defined over one of the built-in types, such as
+// type Email string:
+//
+//   - string, []byte, or bool
+//   - an integer of any width: int8 to int64, uint8 to uint64, int, uint,
+//     [Int128], or [Uint128]. Each integer seals at its own width.
+//   - float32 or float64
+//   - a [Decimal] or a [Date]
+//   - time.Time, sealed as a timestamp
+//   - a UUID type
+//
+// A UUID type is [16]byte, github.com/google/uuid.UUID, or vcvalue.UUID. A
+// type whose declaration writes out an array of 16 bytes, such as
+// type ID [16]byte, is a UUID type too. A type declared over another type,
+// such as type MyID uuid.UUID, is not a UUID type, and stashgen refuses it.
+// The reason is that an [Int128] or a [Uint128] is also an array of 16
+// bytes. Only the declaration shows whether a type is a UUID or an integer.
+//
+// A pointer to one of these types is an optional field, whose value can be
+// nil. By default, a pointer to a UUID type with an equality index or no
+// index stores nil as a sealed null. A sealed null is nil encrypted in the
+// same way as a value, so the stored row does not show that the value is
+// absent. With the tag option null=sql, the field stores nil as SQL NULL.
+//
+// Each index applies to some of these types:
+//
+//   - Equality applies to every type except bool.
+//   - ORE and OPE are the two order indexes. Both apply to integers of 16
+//     bits or more, floats, text, decimals, dates, and timestamps.
+//   - A bool or an 8-bit integer takes no order index. Such a type has so
+//     few values that its ordering terms would show which value each row
+//     has.
+//   - Bytes and a UUID take no order index either, because no ordering of
+//     them is meaningful.
+//   - A UUID takes an equality index and no other.
 //
 // Passthrough fields never cross the binding: the engine does nothing to a
 // passthrough value that a program could observe, and the FFI codec cannot
