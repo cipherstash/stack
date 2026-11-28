@@ -38,10 +38,14 @@
 //!
 //! [`binding_interface`] returns [`BINDING_INTERFACE`]. That number is the
 //! version of the interface that the package's TypeScript calls. The
-//! TypeScript refuses an addon build that returns another number. No build
-//! has been released, so the number is 1. After the first release, the
-//! number changes whenever a class, a method, or a returned value changes
-//! shape.
+//! TypeScript states the same number, as `BINDING_INTERFACE` in
+//! `src/binding.ts`, and refuses an addon build that returns another one.
+//! So an addon built from older or newer code fails when it loads, with the
+//! code `recipher_js::binding_interface`. The build does not fail later, on
+//! a call whose arguments or result changed shape.
+//!
+//! Add 1 to the number in both places whenever a class, a method, or a
+//! returned value changes shape.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![warn(clippy::mem_forget)]
 #![warn(clippy::print_stdout)]
@@ -81,7 +85,7 @@ use napi_derive::napi;
 
 /// The version of the interface between the package's TypeScript and this
 /// addon build.
-pub const BINDING_INTERFACE: u32 = 1;
+pub const BINDING_INTERFACE: u32 = 2;
 
 /// Returns the version of the interface between the package's TypeScript
 /// and this addon build. The TypeScript refuses a build that returns
