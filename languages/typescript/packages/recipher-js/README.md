@@ -68,8 +68,10 @@ It converts JavaScript values in both directions:
 - Integers are a `bigint`.
   A `number` is a float.
   The `number` `5` does not equal the integer `5n`.
-- A plain object is refused.
-  Wrap it in `json(..)`.
+- A plain object is refused, because an object has no single stored form.
+  You choose the form.
+  `json(..)` encrypts the object as a JSON document.
+  `opaque(..)` will encrypt a whole object in the engine's own format, and is not built yet.
 - The package exports `RcUuid`, for a universally unique identifier (UUID).
   The engine has no plaintext type for a UUID yet.
   Encrypting an `RcUuid` is an `Err` with the code `recipher_js::uuid`.

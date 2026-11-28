@@ -20,7 +20,11 @@
  * | `json(value)` | a JSON document, as its text | the document |
  *
  * Integers are a `bigint`. A `number` is a float. The `number` `5` does not
- * equal the integer `5n`. A plain object is refused. Wrap it in `json(..)`.
+ * equal the integer `5n`.
+ *
+ * A plain object is refused, because an object has no single stored form.
+ * `json(..)` encrypts it as a JSON document. `opaque(..)` will encrypt a
+ * whole object in the engine's own format, and is not built yet.
  *
  * The wrapper classes (`RcDate`, `RcTimestamp`, `RcDecimal`, and `RcUuid`)
  * and `json` come from the native addon. When the addon did not load,
