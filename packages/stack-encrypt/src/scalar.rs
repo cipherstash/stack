@@ -124,6 +124,8 @@ pub trait OpaqueEncode: sealed::Encode + Zeroize + Send + 'static {}
 ///   `Protected<String>`
 /// - an `Option` of one, such as `Option<i64>`, which reads a sealed null
 ///   as `None`
+/// - a newtype that derives [`Decrypt`](crate::Decrypt) over one, such as
+///   `struct Email(String)`
 /// - an `OwnedFrame`, the value as a frame, for a caller that learns the
 ///   value's kind only when the code runs
 ///
@@ -146,24 +148,35 @@ pub trait OpaqueEncode: sealed::Encode + Zeroize + Send + 'static {}
 /// # }
 /// ```
 ///
-/// A type of your own is an `OpaqueDecode` type if it implements
-/// `ScalarTarget` and `Zeroize`. A type that implements Vitamin C's
-/// `FromScalar` is a `ScalarTarget` already. A newtype that derives
-/// [`Decrypt`](crate::Decrypt) over a scalar is not, until you add the
-/// marker. The derive is Vitamin C's, so your crate needs `vitaminc-aead`
-/// as a dependency to use it.
+/// A type of your own is an `OpaqueDecode` type when one scalar builds it
+/// and it implements `Zeroize`. You write no marker for that, and you
+/// cannot: `ScalarTarget` follows from how the type decrypts. A newtype
+/// that derives `Decrypt` over a scalar works as it is, and so does a type
+/// that implements Vitamin C's `FromScalar`. The derive is Vitamin C's, so
+/// your crate needs `vitaminc-aead` as a dependency to use it.
 ///
 /// ```
-/// use stack_encrypt::{Decrypt, ScalarTarget};
+/// # async fn example() -> Result<(), stack_encrypt::Error> {
+/// use stack_encrypt::{Decrypt, StackCipher};
 /// use zeroize::Zeroize;
 ///
 /// #[derive(Decrypt, Zeroize)]
 /// struct Email(String);
 ///
-/// impl ScalarTarget for Email {}
+/// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+/// // the environment, or from the profile that `npx stash auth login` writes.
+/// let cipher = StackCipher::builder()
+/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+///     .init()
+///     .await?;
+/// let keyset = cipher.default_keyset();
+/// let stored = keyset.encrypt(String::from("ada@example.com")).await?;
 ///
-/// fn decrypts_from_one_ciphertext<P: stack_encrypt::OpaqueDecode>() {}
-/// decrypts_from_one_ciphertext::<Email>();
+/// let email: Email = keyset.decrypt(stored).await?;
+/// assert_eq!(email.0, "ada@example.com");
+/// # Ok(())
+/// # }
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 /// ```
 ///
 /// A scalar decrypted into a bare type, such as `String`, is an ordinary

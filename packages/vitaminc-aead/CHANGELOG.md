@@ -19,11 +19,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `ScalarTarget` (also `typed::ScalarTarget`): a marker for a decrypt target that one scalar builds.
   It is the decrypt-side counterpart of `Scalar`.
   A caller that opens exactly one leaf bounds its target on it, so a target that needs a sequence or a map does not compile.
-  It is implemented for every `FromScalar` type, for an `Option` of a `ScalarTarget`, for a `Protected` of a `ScalarTarget` that is `DecryptProtected`, and for `OwnedFrame`.
-  A `Vec<T>` other than `Vec<u8>`, a map and a derived struct with named fields do not implement it.
-  A derived fieldless enum implements it, because the derive gives it `FromScalar`.
-  A derived newtype does not: add an empty `impl ScalarTarget` for a newtype of a scalar target.
-  The trait is open, and nothing in this crate bounds on it, so no existing code changes.
+  No one implements it by hand, and no one can: a target is a `ScalarTarget` when its sink is marked `TakesScalar`.
+  So every `FromScalar` type is one, and so are an `Option` of one, a `Protected` of a scalar or of an `Option` of one, `OwnedFrame`, a fieldless enum that derives `Decrypt`, and a newtype that derives `Decrypt` over one.
+  A `Vec<T>` other than `Vec<u8>`, a map, a derived struct with named fields, and a newtype of one of those are not.
+  Its `#[diagnostic::on_unimplemented]` message says that one ciphertext holds one value, and what to decrypt instead.
+  Nothing in this crate bounds on it, so no existing code changes.
+- `TakesScalar` (also `typed::TakesScalar`): a marker for a sink that one scalar satisfies.
+  It is implemented for `ScalarSink`, `ScalarProtected` and `OwnedFrameSink`, and for `Optional`, `ProtectedOptional`, `Wrapped` and `Wrap` over a sink that carries it.
+  A sink written by hand opts in with an empty impl, which makes its target a `ScalarTarget`.
 - `plaintext::ValueKind`: what a value is, without the value, with the text name a schema spells it with (`"int32"`, `"timestamp"`, `"object"`, `"json"`, …).
   It covers every scalar, an array, an object and a JSON document.
   `ValueKind::Uuid` (`"uuid"`) is a UUID: `Logical::Uuid` over sixteen bytes. Its zero is sixteen zero bytes, its null is a typed null as long as a UUID leaf, and it holds only a UUID.

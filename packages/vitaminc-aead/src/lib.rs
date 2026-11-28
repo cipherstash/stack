@@ -79,6 +79,7 @@ pub use shape::{Refusal, Unencryptable};
 #[doc(inline)]
 pub use typed::{
     decrypt, decrypt_async, DecodeError, Decrypt, DecryptProtected, FromScalar, ScalarTarget,
+    TakesScalar,
 };
 #[doc(inline)]
 pub use walk::{decrypt_into, decrypt_into_async, decrypt_to_frame, walk, DecryptError};

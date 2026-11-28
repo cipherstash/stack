@@ -1,19 +1,21 @@
-error[E0277]: the trait bound `HashMap<std::string::String, i64>: ScalarTarget` is not satisfied
+error[E0277]: one ciphertext holds one value, and this decrypt target is not built from one value
   --> tests/ui/scalar_target/map_needs_a_map.rs:11:22
    |
 11 |     opens_one_leaf::<HashMap<String, i64>>();
-   |                      ^^^^^^^^^^^^^^^^^^^^ the trait `FromScalar` is not implemented for `HashMap<std::string::String, i64>`
+   |                      ^^^^^^^^^^^^^^^^^^^^ this target cannot be decrypted from one ciphertext
    |
-   = help: the following other types implement trait `FromScalar`:
-             Vec<u8>
-             [u8; N]
-             bool
-             f32
-             f64
-             i128
-             i16
-             i32
-           and $N others
+   = help: the trait `TakesScalar` is not implemented for `Dict<HashMap<std::string::String, i64>>`
+   = note: `Dict<HashMap<std::string::String, i64>>` is the target's sink, and it does not read a single scalar
+   = note: a single ciphertext decrypts into a scalar such as `String`, `i64` or `Vec<u8>`, an `Option` or a `Protected` of one, or a newtype that derives `Decrypt` over one
+   = note: to decrypt many values, decrypt a `Vec<Ciphertext>`, which opens each ciphertext into one element; to decrypt a sequence, a map or a struct that was encrypted as a tree, use `decrypt_tree`
+   = help: the following other types implement trait `TakesScalar`:
+             Optional<T>
+             OwnedFrameSink
+             ProtectedOptional<T>
+             ScalarProtected<T>
+             ScalarSink<T>
+             Wrap<S>
+             Wrapped<S, W>
    = note: required for `HashMap<std::string::String, i64>` to implement `ScalarTarget`
 note: required by a bound in `opens_one_leaf`
   --> tests/ui/scalar_target/map_needs_a_map.rs:8:22
@@ -21,22 +23,24 @@ note: required by a bound in `opens_one_leaf`
  8 | fn opens_one_leaf<T: ScalarTarget>() {}
    |                      ^^^^^^^^^^^^ required by this bound in `opens_one_leaf`
 
-error[E0277]: the trait bound `BTreeMap<std::string::String, i64>: ScalarTarget` is not satisfied
+error[E0277]: one ciphertext holds one value, and this decrypt target is not built from one value
   --> tests/ui/scalar_target/map_needs_a_map.rs:12:22
    |
 12 |     opens_one_leaf::<BTreeMap<String, i64>>();
-   |                      ^^^^^^^^^^^^^^^^^^^^^ the trait `FromScalar` is not implemented for `BTreeMap<std::string::String, i64>`
+   |                      ^^^^^^^^^^^^^^^^^^^^^ this target cannot be decrypted from one ciphertext
    |
-   = help: the following other types implement trait `FromScalar`:
-             Vec<u8>
-             [u8; N]
-             bool
-             f32
-             f64
-             i128
-             i16
-             i32
-           and $N others
+   = help: the trait `TakesScalar` is not implemented for `Dict<BTreeMap<std::string::String, i64>>`
+   = note: `Dict<BTreeMap<std::string::String, i64>>` is the target's sink, and it does not read a single scalar
+   = note: a single ciphertext decrypts into a scalar such as `String`, `i64` or `Vec<u8>`, an `Option` or a `Protected` of one, or a newtype that derives `Decrypt` over one
+   = note: to decrypt many values, decrypt a `Vec<Ciphertext>`, which opens each ciphertext into one element; to decrypt a sequence, a map or a struct that was encrypted as a tree, use `decrypt_tree`
+   = help: the following other types implement trait `TakesScalar`:
+             Optional<T>
+             OwnedFrameSink
+             ProtectedOptional<T>
+             ScalarProtected<T>
+             ScalarSink<T>
+             Wrap<S>
+             Wrapped<S, W>
    = note: required for `BTreeMap<std::string::String, i64>` to implement `ScalarTarget`
 note: required by a bound in `opens_one_leaf`
   --> tests/ui/scalar_target/map_needs_a_map.rs:8:22

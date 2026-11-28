@@ -1,0 +1,10 @@
+error[E0119]: conflicting implementations of trait `ScalarTarget` for type `Tags`
+  --> tests/ui/scalar_target/hand_written_impl_for_a_newtype.rs:10:1
+   |
+10 | impl ScalarTarget for Tags {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: conflicting implementation in crate `vitaminc_aead`:
+           - impl<T> ScalarTarget for T
+             where T: Decrypt, <T as Decrypt>::Sink: TakesScalar, <T as Decrypt>::Sink: ?Sized;
+   = note: upstream crates may add a new impl of trait `vitaminc_aead::TakesScalar` for type `<Tags as vitaminc_aead::Decrypt>::Sink` in future versions

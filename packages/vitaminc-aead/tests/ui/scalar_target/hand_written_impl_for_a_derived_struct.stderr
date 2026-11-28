@@ -1,0 +1,32 @@
+error[E0277]: one ciphertext holds one value, and this decrypt target is not built from one value
+  --> tests/ui/scalar_target/hand_written_impl_for_a_derived_struct.rs:12:23
+   |
+12 | impl ScalarTarget for Account {}
+   |                       ^^^^^^^ this target cannot be decrypted from one ciphertext
+   |
+help: the trait `TakesScalar` is not implemented for `__AccountDecryptSink`
+  --> tests/ui/scalar_target/hand_written_impl_for_a_derived_struct.rs:7:10
+   |
+ 7 | #[derive(Decrypt)]
+   |          ^^^^^^^
+   = note: `__AccountDecryptSink` is the target's sink, and it does not read a single scalar
+   = note: a single ciphertext decrypts into a scalar such as `String`, `i64` or `Vec<u8>`, an `Option` or a `Protected` of one, or a newtype that derives `Decrypt` over one
+   = note: to decrypt many values, decrypt a `Vec<Ciphertext>`, which opens each ciphertext into one element; to decrypt a sequence, a map or a struct that was encrypted as a tree, use `decrypt_tree`
+   = help: the following other types implement trait `TakesScalar`:
+             Optional<T>
+             OwnedFrameSink
+             ProtectedOptional<T>
+             ScalarProtected<T>
+             ScalarSink<T>
+             Wrap<S>
+             Wrapped<S, W>
+   = note: required for `Account` to implement `typed::sealed::SinkTakesScalar`
+note: required by a bound in `ScalarTarget`
+  --> src/typed.rs
+   |
+   | pub trait ScalarTarget: Decrypt + sealed::SinkTakesScalar {}
+   |                                   ^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `ScalarTarget`
+   = note: `ScalarTarget` is a "sealed trait", because to implement it you also need to implement `vitaminc_aead::typed::sealed::SinkTakesScalar`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
+   = help: the following type implements the trait:
+             T
+   = note: this error originates in the derive macro `Decrypt` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -573,18 +573,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Still accepted: every scalar (`bool`, the integers, the floats,
     `String`, `Vec<u8>`, `[u8; N]`, `value::Date`, `value::Timestamp`,
     `value::Decimal`, `value::Uuid`), `JsonPlaintext`, a `Protected` or an
-    `Option` of one, `OwnedFrame`, and any type of your own that
+    `Option` of one, `OwnedFrame`, a newtype that derives `Decrypt` over
+    one, such as `struct Email(String)`, and any type of your own that
     implements `FromScalar`. `OpaqueBlob<T>` keeps its own way in.
   - No longer accepted: a `Vec` of anything but bytes, a `HashMap` or a
-    `BTreeMap`, a struct that derives `Decrypt`, and a `Protected` or an
-    `Option` of one of those.
+    `BTreeMap`, a struct that derives `Decrypt` with named fields, and a
+    newtype, a `Protected` or an `Option` of one of those.
+  - You write nothing to make a type of your own a target, and you
+    cannot: no one implements `ScalarTarget` by hand. A type is one when
+    one scalar builds it, which the compiler works out from how the type
+    decrypts.
+  - The compile error says that one ciphertext holds one value, and what
+    to decrypt instead.
   - A sequence, a map or a struct is a tree of leaves, which is a
     `StackCipherText`. Decrypt one with `keyset.decrypt_tree`. A column of
     ciphertexts is a `Vec<Ciphertext>`, which still decrypts into a `Vec`
     with `Vec::<T>::decrypt_from`.
-  - A newtype that derives `Decrypt` over a scalar, such as
-    `struct Email(String)`, decrypted from one ciphertext before. Add
-    `impl stack_encrypt::ScalarTarget for Email {}` to keep it.
   - No stored byte changes. Every ciphertext that decrypted before still
     decrypts into the same type.
 

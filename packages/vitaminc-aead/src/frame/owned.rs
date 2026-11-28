@@ -9,7 +9,7 @@ use crate::plaintext::{
     Encrypt, EncryptRef, FixedType, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
 };
 use crate::tags;
-use crate::typed::{DecodeError, Decrypt, ScalarTarget};
+use crate::typed::{DecodeError, Decrypt, TakesScalar};
 
 /// One value as a transport frame, in a [`Buffer`] of its own: a value
 /// kept past the call that wrote it, and what a ciphertext opens into.
@@ -136,10 +136,6 @@ impl Decrypt for OwnedFrame {
     }
 }
 
-/// One leaf always builds a frame: the frame of the one scalar, or of the
-/// null, that the leaf holds.
-impl ScalarTarget for OwnedFrame {}
-
 /// Wipes the bytes and leaves the plain null, the frame a buffer of no
 /// value holds: an `OwnedFrame` always holds one frame, so a zeroized one
 /// reads, walks and seals as a null.
@@ -173,6 +169,10 @@ impl From<FrameWriteError> for DecodeError {
 /// same buffer as they are opened, so nothing is copied after it is
 /// written.
 pub struct OwnedFrameSink(());
+
+/// One scalar always builds a frame: the frame of that scalar, or of the
+/// null. So an [`OwnedFrame`] is a target one leaf builds.
+impl TakesScalar for OwnedFrameSink {}
 
 /// A container an [`OwnedFrameSink`] is opening: a sequence or a map
 /// written in place into the frame's buffer, which it owns until it ends.

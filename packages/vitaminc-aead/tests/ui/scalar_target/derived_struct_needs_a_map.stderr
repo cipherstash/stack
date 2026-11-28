@@ -1,27 +1,29 @@
-error[E0277]: the trait bound `Account: ScalarTarget` is not satisfied
+error[E0277]: one ciphertext holds one value, and this decrypt target is not built from one value
   --> tests/ui/scalar_target/derived_struct_needs_a_map.rs:14:22
    |
 14 |     opens_one_leaf::<Account>();
-   |                      ^^^^^^^ unsatisfied trait bound
+   |                      ^^^^^^^ this target cannot be decrypted from one ciphertext
    |
-help: the trait `FromScalar` is not implemented for `Account`
-  --> tests/ui/scalar_target/derived_struct_needs_a_map.rs:7:1
+help: the trait `TakesScalar` is not implemented for `__AccountDecryptSink`
+  --> tests/ui/scalar_target/derived_struct_needs_a_map.rs:6:10
    |
- 7 | struct Account {
-   | ^^^^^^^^^^^^^^
-   = help: the following other types implement trait `FromScalar`:
-             Vec<u8>
-             [u8; N]
-             bool
-             f32
-             f64
-             i128
-             i16
-             i32
-           and $N others
+ 6 | #[derive(Decrypt)]
+   |          ^^^^^^^
+   = note: `__AccountDecryptSink` is the target's sink, and it does not read a single scalar
+   = note: a single ciphertext decrypts into a scalar such as `String`, `i64` or `Vec<u8>`, an `Option` or a `Protected` of one, or a newtype that derives `Decrypt` over one
+   = note: to decrypt many values, decrypt a `Vec<Ciphertext>`, which opens each ciphertext into one element; to decrypt a sequence, a map or a struct that was encrypted as a tree, use `decrypt_tree`
+   = help: the following other types implement trait `TakesScalar`:
+             Optional<T>
+             OwnedFrameSink
+             ProtectedOptional<T>
+             ScalarProtected<T>
+             ScalarSink<T>
+             Wrap<S>
+             Wrapped<S, W>
    = note: required for `Account` to implement `ScalarTarget`
 note: required by a bound in `opens_one_leaf`
   --> tests/ui/scalar_target/derived_struct_needs_a_map.rs:11:22
    |
 11 | fn opens_one_leaf<T: ScalarTarget>() {}
    |                      ^^^^^^^^^^^^ required by this bound in `opens_one_leaf`
+   = note: this error originates in the derive macro `Decrypt` (in Nightly builds, run with -Z macro-backtrace for more info)

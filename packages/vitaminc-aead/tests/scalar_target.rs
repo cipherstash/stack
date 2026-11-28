@@ -1,11 +1,14 @@
 //! `ScalarTarget`, the decrypt-side marker for a target that one scalar
 //! builds: the counterpart of `Scalar`.
 //!
-//! The marker is only worth having if it agrees with the sinks. So for every
-//! kind of target that carries it, these tests walk one scalar into the
-//! target's sink and check what it builds. The compile-fail half lives in
-//! `tests/ui/scalar_target/`: a sequence, a map, a derived struct and a
-//! protected sequence do not carry the marker.
+//! No target implements the marker itself: a target carries it when its
+//! sink is one a scalar satisfies (`TakesScalar`). The marker is only worth
+//! having if it agrees with the sinks. So for every kind of target that
+//! carries it, these tests walk one scalar into the target's sink and check
+//! what it builds. The compile-fail half lives in `tests/ui/scalar_target/`:
+//! a sequence, a map, a derived struct, a newtype of a sequence and a
+//! protected sequence do not carry the marker, and no one can give it to
+//! them by hand.
 
 use vitaminc_aead::plaintext::Raw;
 use vitaminc_aead::{
@@ -141,17 +144,120 @@ fn a_hand_written_scalar_target_carries_the_marker() {
     );
 }
 
-/// A derived newtype reads what its inner type reads. The derive does not
-/// add the marker, so the newtype's author does.
+/// A derived newtype reads what its inner type reads. Its sink wraps the
+/// inner type's sink, so it is a scalar target with no code of its own.
 #[test]
-fn a_derived_newtype_takes_the_marker_by_hand() {
+fn a_derived_newtype_of_a_scalar_target_is_one_as_it_is() {
     #[derive(Decrypt, Debug, PartialEq)]
     struct Email(String);
-    impl ScalarTarget for Email {}
     assert_eq!(
         built_by_one_scalar::<Email>("ada@example.com"),
         Email(String::from("ada@example.com")),
-        "a derived newtype of a scalar target"
+        "a derived newtype of a string"
+    );
+
+    #[derive(Decrypt, Debug, PartialEq)]
+    struct UserId(u64);
+    assert_eq!(
+        built_by_one_scalar::<UserId>(42u64),
+        UserId(42),
+        "a derived newtype of an integer"
+    );
+
+    // A newtype of a newtype, and a nullable newtype.
+    #[derive(Decrypt, Debug, PartialEq)]
+    struct Primary(Email);
+    assert_eq!(
+        built_by_one_scalar::<Primary>("ada@example.com"),
+        Primary(Email(String::from("ada@example.com"))),
+        "a derived newtype of a derived newtype"
+    );
+    assert_eq!(
+        built_by_one_scalar::<Option<UserId>>(null()),
+        None,
+        "an Option of a derived newtype reads a null"
+    );
+
+    #[derive(Decrypt, Debug, PartialEq)]
+    struct MaybeId(Option<u64>);
+    assert_eq!(
+        built_by_one_scalar::<MaybeId>(null()),
+        MaybeId(None),
+        "a derived newtype of an Option reads a null"
+    );
+}
+
+/// A newtype decrypts into `Protected` once its author says how. `Wrap`
+/// moves what the newtype's own sink builds into the wrapper, and a scalar
+/// satisfies it when it satisfies that sink.
+#[test]
+fn a_protected_newtype_is_a_scalar_target_through_wrap() {
+    use vitaminc_aead::typed::Wrap;
+    use vitaminc_aead::DecryptProtected;
+    use zeroize::Zeroize;
+
+    #[derive(Decrypt, Zeroize)]
+    struct Email(String);
+    impl DecryptProtected for Email {
+        type ProtectedSink = Wrap<<Email as Decrypt>::Sink>;
+        fn protected_sink() -> Self::ProtectedSink {
+            Wrap(Email::sink())
+        }
+    }
+    let email = built_by_one_scalar::<Protected<Email>>("ada@example.com");
+    assert_eq!(
+        email.risky_ref().0,
+        "ada@example.com",
+        "a protected derived newtype"
+    );
+}
+
+/// A target with a sink of its own is a scalar target once that sink is
+/// marked as one a scalar satisfies.
+#[test]
+fn a_hand_written_sink_opts_in_by_its_marker() {
+    use vitaminc_aead::typed::{Never, TakesScalar};
+    use vitaminc_aead::{DecodeError, EncryptRef, Sink};
+
+    #[derive(Debug, PartialEq)]
+    struct Flag(bool);
+    struct FlagSink;
+    impl Sink for FlagSink {
+        type Ok = Flag;
+        type Error = DecodeError;
+        type Seq = Never<Flag>;
+        type Map = Never<Flag>;
+        fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<Flag, DecodeError> {
+            match (ty, value) {
+                (None, Physical::Text("yes")) => Ok(Flag(true)),
+                (None, Physical::Text("no")) => Ok(Flag(false)),
+                _ => Err(DecodeError::Expected("flag")),
+            }
+        }
+        fn typed_null(self, _: FixedType) -> Result<Flag, DecodeError> {
+            Err(DecodeError::Expected("flag"))
+        }
+        fn seq(self, _: Option<usize>) -> Result<Never<Flag>, DecodeError> {
+            Err(DecodeError::Expected("flag"))
+        }
+        fn map(self, _: Option<usize>) -> Result<Never<Flag>, DecodeError> {
+            Err(DecodeError::Expected("flag"))
+        }
+        fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<Flag, DecodeError> {
+            Err(DecodeError::Expected("flag"))
+        }
+    }
+    impl Decrypt for Flag {
+        type Sink = FlagSink;
+        fn sink() -> FlagSink {
+            FlagSink
+        }
+    }
+    impl TakesScalar for FlagSink {}
+    assert_eq!(
+        built_by_one_scalar::<Flag>("no"),
+        Flag(false),
+        "a target whose own sink is marked"
     );
 }
 
