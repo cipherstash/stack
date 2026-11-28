@@ -512,7 +512,8 @@ No warning, error or log line holds a plaintext value.
 Generated code sends the engine every sealed field with its value, under the declaration lowered to data: each field's label (`<context>/<name>`), its outputs and its wire type (`int64`, `string`, `bytes`, ...), which `stashgen` chose from the field's Go type.
 A passthrough field stays on the host: the engine does nothing to it a program could observe, and the FFI codec cannot carry every Go type a program stores beside a ciphertext (a `driver.Valuer`, a `sql.NullTime`).
 An `opaque` struct crosses as one storage blob and is one column, read back into the exact Go types the struct declares.
-The blob is the storage profile, version 1 (`packages/recipher-frame/STORAGE.md`), a format that stays readable across releases and languages.
+The blob uses version 1 of the storage profile, specified in `packages/recipher-frame/STORAGE.md`.
+That format stays readable across releases and languages.
 A field may be any type that both the storage profile and `encoding/json` carry both ways: a scalar or a type defined over one, `[]byte`, slices, maps with string or integer keys, pointers, structs whose fields are all exported, and types with both `MarshalText` and `UnmarshalText`, such as `time.Time`.
 `encrypt.Decimal` and `encrypt.Date` have no storage form and are refused in an opaque struct: store them as text, or by their parts.
 A row an earlier release sealed with one of them in an opaque struct does not decrypt under this release, because no generated file can name the field: decrypt such rows with the earlier release, change the field's type, and encrypt them again before upgrading.

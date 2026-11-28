@@ -115,9 +115,9 @@ Stable, and covered by this specification:
   and `storage::MAP`;
 - `storage::ErrorKind`, the class of a refusal.
 
-The Go SDK's frame codec (`languages/golang/internal/frame`) implements
-the same format (`MarshalStorage`, `UnmarshalStorage`), and its tests read
-the same corpus.
+The frame codec of the Go SDK, in `languages/golang/internal/frame`,
+implements the same format with `MarshalStorage` and `UnmarshalStorage`.
+The tests of that codec read the same corpus.
 
 Not stable, and not covered: everything else in `recipher-frame`.
 The transport frame (`Frame`, `FrameWriter`, `to_frame`), the transport
@@ -328,7 +328,7 @@ reader accepts the extra forms listed above. Compare values, not blobs,
 unless the type is one whose bytes are fixed.
 
 Writers in other languages make the same choice. The Go codec writes a
-non-nil pointer as its value, unmarked, as `encoding/json` does, where Rust
+non-nil pointer as its value, with no marker, as `encoding/json` does. Rust
 writes `Some(x)` as `some`, then `x`. So `&int32(5)` in Go and
 `Some(5i32)` in Rust are different blobs. Both readers read both forms, as
 the same value.

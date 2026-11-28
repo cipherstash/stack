@@ -515,28 +515,32 @@ The work:
 
 Items 1 to 4 are done, on the branch `refactor/go-frame-codec-in-module`:
 
-- Both packages are one internal package, `languages/golang/internal/frame`:
-  the codec, the storage profile and the value model, copied from vitaminc
-  `f1fc9ae74` with their tests and fuzz targets. The tests read the value
+- The two packages are now one internal package,
+  `languages/golang/internal/frame`. The package has the codec, the storage
+  profile, and the value model. All three were copied from vitaminc commit
+  `f1fc9ae74`, with their tests and fuzz targets. The tests read the value
   corpus (`conformance/vitaminc-aead`) and the storage corpus
   (`packages/recipher-frame/testdata`) from this repository.
-- `encrypt.Date`, `Decimal`, `Int128` and `Uint128` are types of their own,
-  and `encrypt.UUID`, `Encryptable` and `Encoder` are new. Each value type
-  is a type over the same underlying type as the codec's, which
-  `frame.Publish` tells the codec about, so the codec reads it and decodes
-  to it.
-- The sealed leaf family, `VCValueLeaves`, `TypedNull`, `FixedWidth` and
-  `FixedType` are gone. A nil pointer's typed null is built from the tag
-  table, so the codec holds no list of types, and `record.Kind` is the only
-  list of type names.
-- `go.mod` in the module and its two nested modules names no vitaminc
-  module, and `scripts/go-release-version.mjs` no longer refuses a final
-  version over a vitaminc pin.
-- `fuzz.yml`'s Go campaign fuzzes the three decoders nightly.
+- `encrypt.Date`, `Decimal`, `Int128`, and `Uint128` are now types of
+  package `encrypt`. `encrypt.UUID`, `Encryptable`, and `Encoder` are new.
+  Each value type has the same underlying type as the matching type of the
+  codec. `frame.Publish` registers each pair with the codec. The codec then
+  encodes the `encrypt` type, and decodes to it.
+- The sealed leaf family, `VCValueLeaves`, `TypedNull`, `FixedWidth`, and
+  `FixedType` are removed. The typed null for a nil pointer is built from
+  the tag table, so the codec has no list of types. `record.Kind` is the
+  only list of type names.
+- No `go.mod` names a vitaminc module: not the one of the module, and not
+  those of its two nested modules. `scripts/go-release-version.mjs` no
+  longer refuses a final version because of a vitaminc pin.
+- The Go campaign in `fuzz.yml` fuzzes the three decoders every night.
 
-Still to do: item 5, in vitaminc, and the differential fuzzers that compared
-the Go codec with a Rust guest in vitaminc's `vcencrypt`. They could run
-against `languages/golang/encrypt/guest`.
+Two things are still to do:
+
+- Item 5, in vitaminc.
+- The differential fuzzers that compared the Go codec with a Rust guest, in
+  vitaminc's `vcencrypt`. Those fuzzers could run against
+  `languages/golang/encrypt/guest`.
 
 ## What waits on this plan
 

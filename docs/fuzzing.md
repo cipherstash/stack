@@ -173,15 +173,21 @@ its input would zero the guest's own memory.
 
 ## Go: fuzzing the frame codec
 
-The Go half of the frame codec, `languages/golang/internal/frame`, decodes
-bytes the guest wrote and blobs read back from a database. Its decoders
-treat that input as hostile, and three targets hold them to it. Each
-target must not panic, and anything it accepts must write back as the same
-bytes, give or take the changes a Go value cannot avoid (an `undefined`
-comes back as null, a timestamp in a coarser unit comes back in
-nanoseconds). They need no guest, and they seed themselves from the value
-corpus, `conformance/vitaminc-aead/value-conformance.json`, and the storage
-corpus, `packages/recipher-frame/testdata/storage-v1.json`.
+The Go frame codec, `languages/golang/internal/frame`, decodes bytes that
+the guest wrote and blobs read from a database. The decoders treat that
+input as hostile. Three fuzz targets check two rules for each decoder:
+
+- The decoder must not panic.
+- Any input that the decoder accepts must be written back as the same
+  bytes.
+
+Some changes to the bytes are allowed, because a Go value cannot avoid
+them. For example, an `undefined` comes back as null. A timestamp in
+seconds, milliseconds, or microseconds comes back in nanoseconds.
+
+The targets need no guest. The seeds come from two files: the value corpus,
+`conformance/vitaminc-aead/value-conformance.json`, and the storage corpus,
+`packages/recipher-frame/testdata/storage-v1.json`.
 
 | Go fuzz target | package | what it decodes |
 |---|---|---|
@@ -191,8 +197,8 @@ corpus, `packages/recipher-frame/testdata/storage-v1.json`.
 
 ## Running the Go targets
 
-Run them with mise, after building the guests (the frame codec's targets
-need none):
+Run them with mise. Build the guests first for the targets that call a
+guest. The targets of the frame codec need no guest.
 
 ```bash
 mise run wasm:guest:build:deterministic
