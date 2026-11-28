@@ -164,9 +164,32 @@ fn kind_of(env: &Env, value: Option<Unknown<'_>>) -> Outcome<Option<ValueKind>> 
         .name
         .parse::<ValueKind>()
         .ok()
-        .filter(|kind| !matches!(kind, ValueKind::Array | ValueKind::Object))
+        .filter(|kind| readable(*kind))
         .ok_or(Error::NotAKind)?;
     Ok(Some(kind))
+}
+
+/// Returns whether a stored ciphertext can be read as `kind`: whether
+/// `kind` is one of the package's `kinds`.
+///
+/// The engine has names for more kinds than the package exports. The list
+/// here is the kinds a ciphertext decrypts as, so a kind the engine adds is
+/// refused until the package has it. A suite that loads the addon checks
+/// the list against `kinds`.
+fn readable(kind: ValueKind) -> bool {
+    integer(kind)
+        || matches!(
+            kind,
+            ValueKind::String
+                | ValueKind::Bool
+                | ValueKind::Float32
+                | ValueKind::Float64
+                | ValueKind::Decimal
+                | ValueKind::Date
+                | ValueKind::Timestamp
+                | ValueKind::Bytes
+                | ValueKind::Json
+        )
 }
 
 /// Returns whether `kind` is an integer kind.
@@ -224,9 +247,40 @@ pub(crate) fn bytes_of(value: Unknown<'_>) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::as_kind;
+    use super::{as_kind, readable};
     use stack_encrypt::dynamic::frame::OwnedFrame;
     use stack_encrypt::dynamic::ValueKind;
+
+    #[test]
+    fn a_ciphertext_is_read_as_a_kind_the_package_exports_and_no_other() {
+        for name in [
+            "string",
+            "bool",
+            "int8",
+            "int16",
+            "int32",
+            "int64",
+            "int128",
+            "uint8",
+            "uint16",
+            "uint32",
+            "uint64",
+            "uint128",
+            "float32",
+            "float64",
+            "decimal",
+            "date",
+            "timestamp",
+            "bytes",
+            "json",
+        ] {
+            assert!(readable(name.parse::<ValueKind>().unwrap()), "{name}");
+        }
+        // The engine names these kinds, and no ciphertext decrypts as one.
+        for kind in [ValueKind::Uuid, ValueKind::Array, ValueKind::Object] {
+            assert!(!readable(kind), "{kind}");
+        }
+    }
 
     #[test]
     fn an_integer_opens_at_any_width_that_holds_it() {

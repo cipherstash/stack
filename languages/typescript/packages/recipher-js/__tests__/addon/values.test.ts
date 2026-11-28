@@ -620,6 +620,23 @@ describe('a ciphertext read back with a kind', () => {
     const result = Ciphertext.fromBytes(bytes, { name: 'nothing' })
     expect(result.err()?.code).toBe('recipher_js::not_a_kind')
   })
+
+  it('takes each of `kinds`, and no other name the engine has', async () => {
+    const c = await cipher()
+    const bytes = (await c.defaultKeyset().encrypt('text')).unwrap().toBytes()
+    for (const kind of Object.values(kinds)) {
+      expect(Ciphertext.fromBytes(bytes, kind).isOk(), kind.name).toBe(true)
+    }
+    // The engine has these names too. No ciphertext decrypts as one, so
+    // the package has no kind for it.
+    const named = new Set<string>(Object.values(kinds).map((kind) => kind.name))
+    for (const name of ['uuid', 'array', 'object']) {
+      if (named.has(name)) continue
+      const result = Ciphertext.fromBytes(bytes, { name })
+      expect(result.err()?.code, name).toBe('recipher_js::not_a_kind')
+    }
+    expect(named.has('array') || named.has('object')).toBe(false)
+  })
 })
 
 describe('refusals', () => {
