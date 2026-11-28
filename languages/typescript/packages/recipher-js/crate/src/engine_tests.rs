@@ -18,7 +18,7 @@ use stack_encrypt::{Encrypt, StackCipher};
 use uuid::Uuid;
 
 use crate::cipher::{open_in, seal, unseal, Confined, Engine};
-use crate::ciphertext::Ciphertext;
+use crate::ciphertext::{Ciphertext, Opened};
 use crate::value::OneValue;
 
 const SEED: [u8; 32] = [7; 32];
@@ -57,8 +57,8 @@ async fn the_engine_opens_what_the_sdk_sealed() {
     let sealed = sdk_seal(vec![one("from the sdk"), one(42i8), one(1.5f64)]).await;
     let mut sealed = sealed.into_iter();
     let text: String = keyset.decrypt(sealed.next().unwrap()).await.unwrap();
-    // vitaminc reads a `bigint` at its narrowest width. The engine decrypts
-    // it at any width that fits it.
+    // The value bridge reads a `bigint` at its narrowest width. The engine
+    // decrypts it at any width that fits it.
     let int: i64 = keyset.decrypt(sealed.next().unwrap()).await.unwrap();
     let float: f64 = keyset.decrypt(sealed.next().unwrap()).await.unwrap();
     assert_eq!((text.as_str(), int, float), ("from the sdk", 42, 1.5));
@@ -125,7 +125,7 @@ async fn the_engine_opens_a_uuid_the_sdk_sealed_from_its_stored_bytes() {
 }
 
 #[tokio::test]
-async fn a_json_document_the_engine_sealed_opens_as_json_with_its_big_integer() {
+async fn a_json_document_the_engine_sealed_opens_as_that_document() {
     let document = JsonPlaintext::from(serde_json::json!({"id": u64::MAX, "n": 5}));
     let sealed = engine()
         .await
@@ -134,40 +134,23 @@ async fn a_json_document_the_engine_sealed_opens_as_json_with_its_big_integer() 
         .await
         .unwrap();
     let ciphertext = Ciphertext::new(sealed.clone(), Some(ValueKind::Json));
-    let opened = ciphertext.opened(sdk_open(sealed).await).unwrap();
-    // A safe integer decrypts as a float, for a JavaScript `number`. An
-    // integer outside the safe range decrypts as an integer, for a
-    // JavaScript `bigint`.
-    let expected = crate::json::document(&opened).unwrap();
-    assert_eq!(
-        expected.value(),
-        &serde_json::json!({"id": u64::MAX, "n": 5})
-    );
-    assert_eq!(
-        opened.frame(),
-        OwnedFrame::of(&OpenedDocument).unwrap().frame(),
-        "the opened frame holds `n` as a float and `id` as an integer"
-    );
+    let Opened::Document(opened) = ciphertext.opened(sdk_open(sealed).await).unwrap() else {
+        panic!("a ciphertext read as JSON opens as a document");
+    };
+    assert_eq!(opened.value(), &serde_json::json!({"id": u64::MAX, "n": 5}));
 }
 
-/// `{"id": u64::MAX, "n": 5.0}`, as the crate decrypts the document above.
-struct OpenedDocument;
-
-impl Encrypt for &OpenedDocument {
-    fn visit<S: stack_encrypt::dynamic::plaintext::Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        use stack_encrypt::dynamic::plaintext::MapSink;
-        let mut map = sink.map(Some(2))?;
-        let _ = u64::MAX.visit(map.entry("id")?)?;
-        let _ = 5.0f64.visit(map.entry("n")?)?;
-        map.end()
-    }
+/// Encrypts the document that `text` is the JSON text of, through the
+/// crate, as `keyset.encrypt(json(..))` does once the bridge has written
+/// the text.
+async fn sdk_seal_json(text: &str) -> stack_encrypt::Ciphertext {
+    let document = crate::json::plaintext(text.as_bytes()).unwrap();
+    sdk_seal(vec![OneValue::json(document)]).await.remove(0)
 }
 
 #[tokio::test]
 async fn a_json_document_the_sdk_sealed_is_the_engines_json_plaintext() {
-    let frame = OwnedFrame::of(&Document).unwrap();
-    let document = crate::json::document(&frame).unwrap();
-    let sealed = sdk_seal(vec![OneValue::json(document)]).await.remove(0);
+    let sealed = sdk_seal_json(r#"{"name":"Ada","age":36,"big":18446744073709551615}"#).await;
     let opened: JsonPlaintext = engine()
         .await
         .default_keyset()
@@ -180,20 +163,19 @@ async fn a_json_document_the_sdk_sealed_is_the_engines_json_plaintext() {
     );
 }
 
-/// `{"name": "Ada", "age": 36.0, "big": u64::MAX}`, in the form a
-/// JavaScript caller passes it: a number is a float, and a `bigint` is an
-/// integer.
-struct Document;
-
-impl Encrypt for &Document {
-    fn visit<S: stack_encrypt::dynamic::plaintext::Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        use stack_encrypt::dynamic::plaintext::MapSink;
-        let mut map = sink.map(Some(3))?;
-        let _ = "Ada".visit(map.entry("name")?)?;
-        let _ = 36.0f64.visit(map.entry("age")?)?;
-        let _ = u64::MAX.visit(map.entry("big")?)?;
-        map.end()
-    }
+#[tokio::test]
+async fn a_json_document_is_stored_as_text_with_integers_and_sorted_members() {
+    // The text the bridge writes for `json({ n: 5000000000, a: 1.5 })`.
+    let sealed = sdk_seal_json(r#"{"n":5000000000,"a":1.5}"#).await;
+    // The stored text is what a Go or a Rust reader parses. The integer
+    // has no fraction, and the engine wrote the members in key order.
+    let stored: String = engine()
+        .await
+        .default_keyset()
+        .decrypt(sealed)
+        .await
+        .unwrap();
+    assert_eq!(stored, r#"{"a":1.5,"n":5000000000}"#);
 }
 
 #[tokio::test]

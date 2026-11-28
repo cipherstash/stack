@@ -5,7 +5,7 @@
 const assert = require('node:assert/strict')
 const path = require('node:path')
 const addon = require(path.resolve(process.argv[2]))
-const { VcDate, VcTimestamp, VcDecimal, VcUuid } = addon
+const { RcDate, RcTimestamp, RcDecimal, RcUuid } = addon
 assert.deepStrictEqual(addon.kindInventory(), {
   null: null,
   undefined: undefined,
@@ -24,13 +24,13 @@ assert.deepStrictEqual(addon.kindInventory(), {
   float64: 2.5,
   string: 'hello',
   bytes: Buffer.from([0, 255]),
-  date: new VcDate('2024-02-29'),
+  date: new RcDate('2024-02-29'),
   timestamp: new Date(0),
   timestampMillis: new Date(-1),
-  timestampMicros: new VcTimestamp('1970-01-01T00:00:00.000001000Z'),
-  timestampNanos: new VcTimestamp('1969-12-31T23:59:59.999999999Z'),
-  decimal: new VcDecimal('1.50'),
-  uuid: new VcUuid('123e4567-e89b-12d3-a456-426614174000'),
+  timestampMicros: new RcTimestamp('1970-01-01T00:00:00.000001000Z'),
+  timestampNanos: new RcTimestamp('1969-12-31T23:59:59.999999999Z'),
+  decimal: new RcDecimal('1.50'),
+  uuid: new RcUuid('123e4567-e89b-12d3-a456-426614174000'),
   array: [true],
   object: { k: true },
   passthrough: true,

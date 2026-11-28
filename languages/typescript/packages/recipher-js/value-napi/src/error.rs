@@ -24,10 +24,14 @@ pub enum Refusal {
     #[error("an object has a property named `__proto__`, `constructor` or `prototype`, which is refused in both directions")]
     #[diagnostic(code(recipher_js::reserved_key))]
     ReservedKey,
-    /// A value nested past [`MAX_DEPTH`](crate::MAX_DEPTH).
-    #[error("the value is nested deeper than 128 levels")]
+    /// A value nested past the limit: [`MAX_DEPTH`](crate::MAX_DEPTH), or
+    /// the limit given for a JSON document.
+    #[error("the value is nested deeper than {limit} levels")]
     #[diagnostic(code(recipher_js::too_deep))]
-    TooDeep,
+    TooDeep {
+        /// The most levels of arrays and objects the value may nest.
+        limit: usize,
+    },
     /// An array with a hole.
     #[error("an array has a hole")]
     #[diagnostic(
@@ -55,11 +59,44 @@ pub enum Refusal {
     )]
     #[diagnostic(code(recipher_js::unpaired_surrogate))]
     UnpairedSurrogate,
+    /// A value that a JSON document cannot hold.
+    #[error("a JSON document cannot hold {0}")]
+    #[diagnostic(code(recipher_js::not_json))]
+    NotJson(NoJsonForm),
     /// A scalar outside what its type holds. A `TypeError` with the same
     /// code is pending in JavaScript.
     #[error(transparent)]
     #[diagnostic(transparent)]
     Scalar(#[from] ConversionError),
+}
+
+/// A value that has no form in a JSON document. Each variant displays as
+/// what the value is, and never as the value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum NoJsonForm {
+    /// `undefined`.
+    #[error("`undefined`")]
+    Undefined,
+    /// `NaN`, `Infinity` or `-Infinity`.
+    #[error("a number that is not finite")]
+    NonFinite,
+    /// A whole `number` from 2^53 up to 2^64, either side of zero. A
+    /// `number` that large may not have the digits that were written.
+    #[error(
+        "a whole number from 2^53 up to 2^64 held as a `number`, whose digits may not be the \
+         ones written; give it as a `bigint`"
+    )]
+    UnsafeInteger,
+    /// A `bigint` below -2^63 or above 2^64 - 1.
+    #[error("a `bigint` outside the 64-bit range (below -2^63 or above 2^64 - 1)")]
+    BigIntRange,
+    /// A `Buffer`, a typed array or a `DataView`.
+    #[error("bytes")]
+    Bytes,
+    /// A `Date` or a wrapper class instance.
+    #[error("a date, a timestamp, a decimal or a UUID; write it as text")]
+    Typed,
 }
 
 /// A failure on the JavaScript side of a walk or a build: a getter threw, a
@@ -222,12 +259,13 @@ mod tests {
         let all = vec![
             Refusal::NotPlain,
             Refusal::ReservedKey,
-            Refusal::TooDeep,
+            Refusal::TooDeep { limit: 128 },
             Refusal::SparseArray,
             Refusal::NotBytes,
             Refusal::NotAValue,
             Refusal::ChangedWhileRead,
             Refusal::UnpairedSurrogate,
+            Refusal::NotJson(NoJsonForm::Undefined),
             Refusal::Scalar(C::IntegerRange),
             Refusal::Scalar(C::InvalidDate),
             Refusal::Scalar(C::InvalidTimestamp),
@@ -239,12 +277,13 @@ mod tests {
             match refusal {
                 Refusal::NotPlain
                 | Refusal::ReservedKey
-                | Refusal::TooDeep
+                | Refusal::TooDeep { .. }
                 | Refusal::SparseArray
                 | Refusal::NotBytes
                 | Refusal::NotAValue
                 | Refusal::ChangedWhileRead
-                | Refusal::UnpairedSurrogate => {}
+                | Refusal::UnpairedSurrogate
+                | Refusal::NotJson(_) => {}
                 Refusal::Scalar(scalar) => match scalar {
                     C::IntegerRange
                     | C::InvalidDate

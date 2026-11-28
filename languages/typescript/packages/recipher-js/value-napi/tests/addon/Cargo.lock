@@ -620,6 +620,8 @@ dependencies = [
  "napi-sys",
  "nohash-hasher",
  "rustc-hash",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -869,6 +871,8 @@ dependencies = [
  "mutants",
  "napi",
  "rust_decimal",
+ "serde",
+ "serde_json",
  "thiserror",
  "vitaminc-aead",
  "vitaminc-protected",
@@ -879,10 +883,12 @@ dependencies = [
 name = "recipher-value-napi-test-addon"
 version = "0.0.0"
 dependencies = [
+ "miette",
  "napi",
  "napi-build",
  "napi-derive",
  "recipher-value-napi",
+ "serde_json",
  "vitaminc-aead",
  "vitaminc-encrypt",
  "vitaminc-protected",

@@ -1,9 +1,9 @@
 /**
  * The values the SDK encrypts, and the types they decrypt to.
  *
- * A value's type decides how it is encrypted. The mapping is vitaminc's
- * mapping for JavaScript. vitaminc is the CipherStash Rust library that the
- * engine's plaintext types come from.
+ * A value's type decides how it is encrypted. The value bridge defines the
+ * mapping. The value bridge is the part of the native addon that converts
+ * JavaScript values.
  *
  * | Value | Encrypted as | Decrypts as |
  * |---|---|---|
@@ -13,29 +13,31 @@
  * | `bigint` | an integer, at the narrowest width that holds it | `bigint` |
  * | `Uint8Array`, `Buffer` | bytes | `Uint8Array` |
  * | `Date` | a timestamp | `Date` |
- * | `VcTimestamp` | a timestamp, in nanoseconds | `Date` when it is whole milliseconds, else `VcTimestamp` |
- * | `VcDate` | a calendar date | `VcDate` |
- * | `VcDecimal` | a decimal, with its scale | `VcDecimal` |
- * | `VcUuid` | a UUID | `VcUuid` |
+ * | `RcTimestamp` | a timestamp, in nanoseconds | `Date` when it is whole milliseconds, else `RcTimestamp` |
+ * | `RcDate` | a calendar date | `RcDate` |
+ * | `RcDecimal` | a decimal, with its scale | `RcDecimal` |
+ * | `RcUuid` | a UUID | `RcUuid` |
  * | `null` | null | `null` |
  * | `json(value)` | a JSON document, as its text | the document |
  *
  * Integers are a `bigint`. A `number` is a float. The `number` `5` does not
- * equal the integer `5n`. A plain object is refused. Wrap it in `json(..)`.
+ * equal the integer `5n`.
  *
- * The wrapper classes (`VcDate`, `VcTimestamp`, `VcDecimal`, and `VcUuid`)
+ * A plain object is refused, because an object has no single stored form.
+ * `json(..)` encrypts it as a JSON document. `opaque(..)` will encrypt a
+ * whole object in the engine's own format, and is not built yet.
+ *
+ * The wrapper classes (`RcDate`, `RcTimestamp`, `RcDecimal`, and `RcUuid`)
  * and `json` come from the native addon. When the addon did not load,
  * stand-ins take their place. Each stand-in constructs as the class does.
  * `encrypt` then resolves to the `Err` that says why the addon did not load.
+ *
+ * A wrapper class's constructor takes a string. It throws a `TypeError` for
+ * any other argument. The text is checked when the value is encrypted.
  */
 import type * as Native from '../native'
 import { type Binding, binding } from './binding'
-import type {
-  VcDate as VcDateValue,
-  VcDecimal as VcDecimalValue,
-  VcTimestamp as VcTimestampValue,
-  VcUuid as VcUuidValue,
-} from './value-types'
+import type * as Types from './value-types'
 
 export type {
   JsonValue,
@@ -48,36 +50,50 @@ export type {
 /** A value that `encrypt` takes: one scalar, or a `Json` document. */
 export type Value = Native.Value
 
-/** A calendar date, such as `new VcDate('2026-11-23')`. The class comes from vitaminc. */
-export type VcDate = VcDateValue
-/** A UTC instant, to the nanosecond. The class comes from vitaminc. */
-export type VcTimestamp = VcTimestampValue
-/** A decimal with its scale, such as `new VcDecimal('1.50')`. The class comes from vitaminc. */
-export type VcDecimal = VcDecimalValue
-/**
- * A universally unique identifier (UUID), such as
- * `new VcUuid('123e4567-e89b-12d3-a456-426614174000')`. The class comes from
- * vitaminc.
- *
- * The text is hyphenated hex, in either case. Encrypting other text, such
- * as text in braces, of the wrong length, or with a digit that is not hex,
- * is an `Err` with the code `ERR_INVALID_UUID`. A decrypted `VcUuid` holds
- * lowercase hyphenated hex, whatever case it was built with.
- */
-export type VcUuid = VcUuidValue
-
-/** The constructor of one of vitaminc's wrapper classes. */
+/** The constructor of a wrapper class. */
 export interface WrapperConstructor<W> {
   new (text: string): W
   readonly prototype: W
 }
 
-type WrapperName = 'VcDate' | 'VcTimestamp' | 'VcDecimal' | 'VcUuid'
+type WrapperName = 'RcDate' | 'RcTimestamp' | 'RcDecimal' | 'RcUuid'
+
+/**
+ * A stand-in for the wrapper class `name`, for when the native addon did
+ * not load. It constructs as the addon's class does: it takes a string and
+ * throws a `TypeError` for anything else, keeps the text in a read-only
+ * `value`, is frozen, and gives the same text to `String`, `JSON.stringify`
+ * and Node's `inspect`.
+ */
+export function standInWrapper<W>(name: WrapperName): WrapperConstructor<W> {
+  const StandIn = class {
+    readonly value: string
+    constructor(text: string) {
+      if (typeof text !== 'string') {
+        throw new TypeError(`${name} takes a string`)
+      }
+      this.value = text
+      Object.freeze(this)
+    }
+    toJSON(): string {
+      return this.value
+    }
+    toString(): string {
+      return this.value
+    }
+    [Symbol.for('nodejs.util.inspect.custom')](): string {
+      return `${name}(${this.value})`
+    }
+  }
+  Object.defineProperty(StandIn, 'name', { value: name })
+  Object.freeze(StandIn.prototype)
+  // biome-ignore lint/plugin: a stand-in for the class, which constructs as it does.
+  return Object.freeze(StandIn) as unknown as WrapperConstructor<W>
+}
 
 /**
  * The class that the native addon defines. When the addon did not load, a
- * stand-in class instead. The stand-in keeps its text, is frozen, and
- * serialises to JSON as vitaminc's class does.
+ * stand-in class instead.
  */
 function wrapperClass<W>(name: WrapperName): WrapperConstructor<W> {
   if (binding.isOk()) {
@@ -85,31 +101,42 @@ function wrapperClass<W>(name: WrapperName): WrapperConstructor<W> {
     // napi-rs does not declare these classes, so this code gives them types.
     return Reflect.get(binding.value, name) as WrapperConstructor<W>
   }
-  const StandIn = class {
-    readonly value: string
-    constructor(text: string) {
-      this.value = String(text)
-      Object.freeze(this)
-    }
-    toJSON(): string {
-      return this.value
-    }
-  }
-  Object.defineProperty(StandIn, 'name', { value: name })
-  // biome-ignore lint/plugin: a stand-in for the class, which constructs as it does.
-  return Object.freeze(StandIn) as unknown as WrapperConstructor<W>
+  return standInWrapper(name)
 }
 
-/** A calendar date. */
-export const VcDate: WrapperConstructor<VcDate> = wrapperClass('VcDate')
-/** A UTC instant to the nanosecond. */
-export const VcTimestamp: WrapperConstructor<VcTimestamp> =
-  wrapperClass('VcTimestamp')
-/** A decimal with its scale. */
-export const VcDecimal: WrapperConstructor<VcDecimal> =
-  wrapperClass('VcDecimal')
-/** A UUID. */
-export const VcUuid: WrapperConstructor<VcUuid> = wrapperClass('VcUuid')
+// A class is a constant and a type of one name. `./value-types` declares the
+// types, because the addon's declarations name them, and a module cannot
+// export a type from another module and a constant under the same name. So
+// each constant here has its type beside it.
+
+/** A calendar date, such as `new RcDate('2026-11-23')`. */
+export const RcDate: WrapperConstructor<RcDate> = wrapperClass('RcDate')
+export type RcDate = Types.RcDate
+
+/**
+ * A UTC instant, to the nanosecond, such as
+ * `new RcTimestamp('2026-11-23T01:02:03.000000001Z')`.
+ */
+export const RcTimestamp: WrapperConstructor<RcTimestamp> =
+  wrapperClass('RcTimestamp')
+export type RcTimestamp = Types.RcTimestamp
+
+/** A decimal with its scale, such as `new RcDecimal('1.50')`. */
+export const RcDecimal: WrapperConstructor<RcDecimal> =
+  wrapperClass('RcDecimal')
+export type RcDecimal = Types.RcDecimal
+
+/**
+ * A universally unique identifier (UUID), such as
+ * `new RcUuid('123e4567-e89b-12d3-a456-426614174000')`.
+ *
+ * The text is hyphenated hex, in either case. Encrypting other text, such
+ * as text in braces, of the wrong length, or with a digit that is not hex,
+ * is an `Err` with the code `ERR_INVALID_UUID`. A decrypted `RcUuid` holds
+ * lowercase hyphenated hex, whatever case it was built with.
+ */
+export const RcUuid: WrapperConstructor<RcUuid> = wrapperClass('RcUuid')
+export type RcUuid = Types.RcUuid
 
 /**
  * A JSON document to encrypt as one ciphertext, as its JSON text. Make one
@@ -127,9 +154,22 @@ export type JsonFunction = Binding['json']
  * immediately, so a later change to the object does not change what is
  * encrypted.
  *
+ * ```ts
+ * const sealed = await keyset.encrypt(json({ name: 'Ada', visits: 3 }))
+ * ```
+ *
+ * A whole `number` within 2^53 - 1 of zero is stored as an integer, and any
+ * other `number` as a float. A whole `number` from 2^53 up to 2^64 is
+ * refused: give it as a `bigint`. A `bigint` is stored as its exact digits,
+ * within 64 bits.
+ *
+ * A decrypted integer is a `number` when it is within 2^53 - 1 of zero, and
+ * a `bigint` otherwise. So `json({ a: 5n })` decrypts as `{ a: 5 }`. A
+ * decrypted object lists its members sorted by key.
+ *
  * `json` never throws. A document that cannot be encrypted is an `Err` from
- * `encrypt`. Examples are a document that contains bytes or a `Date`, and a
- * document nested deeper than 127 levels.
+ * `encrypt`. Examples are a document that contains `undefined`, bytes or a
+ * `Date`, and a document nested deeper than 127 levels.
  */
 export const json: JsonFunction = binding.isOk()
   ? binding.value.json

@@ -28,9 +28,9 @@ stack-encrypt = { path = "../../../../../packages/stack-encrypt", default-featur
 stack-auth = { path = "../../../../../packages/stack-auth", default-features = false, features = ["http"] }
 # napi-rs 3, as `recipher-value-napi` is. Its default features load Node-API
 # by name at run time (`dyn-symbols`), so the crate's own tests link without
-# Node. `napi6` for BigInt and property enumeration, which vitaminc's walk
-# needs, and `napi9` (Node 18.17 and later) for `Symbol.for`, which keys a
-# decrypted row's `inspect`; `tokio_rt` runs the engine's futures on napi's
+# Node. `napi6` for BigInt and property enumeration, which the value bridge's
+# walk needs, and `napi9` (Node 18.17 and later) for `Symbol.for`, which keys
+# a decrypted row's `inspect`; `tokio_rt` runs the engine's futures on napi's
 # runtime.
 napi = { version = "3", features = ["napi9", "tokio_rt", "serde-json"] }
 napi-derive = "3"
@@ -53,7 +53,7 @@ serde_json = "1"
 # engine resolves.
 zeroize = "1"
 # A kind named to `Ciphertext.fromBytes`, and a record's declaration, read
-# from their frames through vitaminc's frame serde.
+# from their frames through the frame's serde.
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]

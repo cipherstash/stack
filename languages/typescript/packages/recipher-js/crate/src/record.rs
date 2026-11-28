@@ -33,9 +33,8 @@
 //! contains one value. A row's frame contains a map of the record's fields.
 //!
 //! Before the engine reads a value, the engine's [`read`] reads it as its
-//! field's kind. That step is needed because vitaminc, CipherStash's
-//! cryptography library, reads a JavaScript `bigint` at the narrowest width
-//! that fits it.
+//! field's kind. That step is needed because the value bridge reads a
+//! JavaScript `bigint` at the narrowest width that fits it.
 //!
 //! A stored row is what encrypting a row returns. The stored row also
 //! passes as one frame, with one entry for each field:

@@ -142,12 +142,12 @@ for (const view of [
 // The binding keeps the wrapper classes in its own registry, so an addon
 // that uses the environment's instance data for itself loses nothing.
 addon.claimInstanceData()
-assert.equal(roundTrip(new addon.VcDecimal('2.50')).value, '2.50')
+assert.equal(roundTrip(new addon.RcDecimal('2.50')).value, '2.50')
 assert.deepEqual(roundTrip({ k: 'v' }), { k: 'v' })
 
 // A wrapper instance is built by its constructor, so it is a real instance.
-const date = roundTrip(new addon.VcDate('2026-10-09'))
-assert.ok(date instanceof addon.VcDate)
+const date = roundTrip(new addon.RcDate('2026-10-09'))
+assert.ok(date instanceof addon.RcDate)
 assert.equal(date.value, '2026-10-09')
 // The classes, their prototypes and their instances are frozen, and the
 // constructor uses what it captured when the classes were defined, so
@@ -155,14 +155,14 @@ assert.equal(date.value, '2026-10-09')
 // `value` writable, break construction, hide extra state in an instance,
 // or turn a plain `{ value }` object back into a wrapper.
 assert.ok(
-  Object.isFrozen(addon.VcUuid) &&
-    Object.isFrozen(addon.VcUuid.prototype) &&
+  Object.isFrozen(addon.RcUuid) &&
+    Object.isFrozen(addon.RcUuid.prototype) &&
     Object.isFrozen(date),
 )
 Object.prototype.writable = true
 Object.prototype.get = () => 'polluted'
 try {
-  const decimal = new addon.VcDecimal('1.50')
+  const decimal = new addon.RcDecimal('1.50')
   assert.throws(() => {
     'use strict'
     decimal.value = '999.99'
@@ -175,7 +175,7 @@ try {
 }
 assert.throws(
   () =>
-    Object.defineProperty(addon.VcUuid, Symbol.hasInstance, {
+    Object.defineProperty(addon.RcUuid, Symbol.hasInstance, {
       value: () => true,
     }),
   TypeError,
@@ -200,7 +200,7 @@ const ct = {
       v: [
         { t: 'eseq', v: leaf },
         { t: 'pt', v: 5n },
-        { t: 'pt', v: { a: [new addon.VcDecimal('1.50')] } },
+        { t: 'pt', v: { a: [new addon.RcDecimal('1.50')] } },
       ],
     },
     e: { t: 'eseq', v: leaf },
@@ -280,7 +280,7 @@ for (const wrap of [
 // A leap second has no count since the epoch, so it is refused rather than
 // shown as a Date (ADR 0001 section 3).
 assert.throws(
-  () => addon.encode(new addon.VcTimestamp('2016-12-31T23:59:60Z')),
+  () => addon.encode(new addon.RcTimestamp('2016-12-31T23:59:60Z')),
   { code: 'ERR_INVALID_TIMESTAMP' },
 )
 
@@ -562,8 +562,8 @@ assert.throws(() => addon.ciphertextWithPayload(60, HUGE), /nested too deeply/)
   const { Worker } = require('node:worker_threads')
   const script = `
     const addon = require(${JSON.stringify(path.resolve(process.argv[2]))});
-    const date = addon.decode(addon.encode(new addon.VcDate('2024-02-29')));
-    require('node:worker_threads').parentPort.postMessage(date instanceof addon.VcDate ? date.value : 'not a wrapper');
+    const date = addon.decode(addon.encode(new addon.RcDate('2024-02-29')));
+    require('node:worker_threads').parentPort.postMessage(date instanceof addon.RcDate ? date.value : 'not a wrapper');
   `
   const reply = await new Promise((resolve, reject) => {
     const worker = new Worker(script, { eval: true })
@@ -575,7 +575,7 @@ assert.throws(() => addon.ciphertextWithPayload(60, HUGE), /nested too deeply/)
     )
   })
   assert.equal(reply, '2024-02-29')
-  assert.equal(roundTrip(new addon.VcDate('2024-02-29')).value, '2024-02-29')
+  assert.equal(roundTrip(new addon.RcDate('2024-02-29')).value, '2024-02-29')
 
   // A value the binding refuses is not kept alive by the refusal: once
   // nothing in JavaScript holds it, a collection frees it.

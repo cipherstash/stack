@@ -10,7 +10,7 @@ use napi::bindgen_prelude::{
 use napi::{check_status, sys, Env, Error, Property, Result, Status, ValueType};
 use zeroize::Zeroizing;
 
-use crate::error::{JsFault, Refusal};
+use crate::error::{JsFault, NoJsonForm, Refusal};
 
 /// Maximum nesting depth, in both directions: walking a JavaScript value
 /// and building one. Bounds recursion so a deeply nested input cannot
@@ -27,7 +27,18 @@ pub(crate) fn forbidden_key(key: &str) -> bool {
 }
 
 pub(crate) fn depth_error() -> JsFault {
-    JsFault::refused(Refusal::TooDeep, "value is nested too deeply")
+    too_deep(MAX_DEPTH)
+}
+
+/// The refusal of a value that a JSON document cannot hold.
+pub(crate) fn not_json_error(form: NoJsonForm) -> JsFault {
+    let refusal = Refusal::NotJson(form);
+    JsFault::refused(refusal, refusal.to_string())
+}
+
+/// The refusal of a value nested past `limit` levels.
+pub(crate) fn too_deep(limit: usize) -> JsFault {
+    JsFault::refused(Refusal::TooDeep { limit }, "value is nested too deeply")
 }
 
 pub(crate) fn forbidden_key_error(key: &str) -> JsFault {

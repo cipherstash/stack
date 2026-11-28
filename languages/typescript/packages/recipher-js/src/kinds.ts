@@ -9,10 +9,10 @@
  */
 import type {
   OpenedJson,
-  VcDate,
-  VcDecimal,
-  VcTimestamp,
-  VcUuid,
+  RcDate,
+  RcDecimal,
+  RcTimestamp,
+  RcUuid,
 } from './value-types'
 
 /** A kind: the type of a value, by the engine's name for it. */
@@ -50,10 +50,10 @@ export const kinds = Object.freeze({
   uint128: kind<'uint128', bigint>('uint128'),
   float32: kind<'float32', number>('float32'),
   float64: kind<'float64', number>('float64'),
-  decimal: kind<'decimal', VcDecimal>('decimal'),
-  date: kind<'date', VcDate>('date'),
-  timestamp: kind<'timestamp', Date | VcTimestamp>('timestamp'),
+  decimal: kind<'decimal', RcDecimal>('decimal'),
+  date: kind<'date', RcDate>('date'),
+  timestamp: kind<'timestamp', Date | RcTimestamp>('timestamp'),
   bytes: kind<'bytes', Uint8Array>('bytes'),
-  uuid: kind<'uuid', VcUuid>('uuid'),
+  uuid: kind<'uuid', RcUuid>('uuid'),
   json: kind<'json', OpenedJson>('json'),
 })

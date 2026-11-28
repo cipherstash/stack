@@ -59,16 +59,6 @@ pub(crate) enum Error {
     #[error("an object is not a value")]
     #[diagnostic(code(recipher_js::plain_object), help("Wrap it in json(..)."))]
     PlainObject,
-    /// A value that the engine cannot encrypt as a JSON document.
-    #[error("the value is not a JSON document the engine seals: {what}")]
-    #[diagnostic(code(recipher_js::not_json))]
-    NotJson { what: &'static str },
-    /// A JSON document nested deeper than the engine's JSON parser reads.
-    #[error(
-        "the value is not a JSON document the engine seals: it is nested deeper than 127 levels of arrays and objects"
-    )]
-    #[diagnostic(code(recipher_js::too_deep))]
-    JsonTooDeep,
     /// The engine refused to encrypt a value in the form it was given.
     #[error("the engine could not seal the value as given")]
     #[diagnostic(code(recipher_js::not_sealed))]
@@ -232,8 +222,8 @@ pub struct RecipherErrorFields {
     /// The code is one of three kinds:
     ///
     /// - a diagnostic's code, such as the engine's `stack_encrypt::aead`;
-    /// - the code of vitaminc, CipherStash's cryptography library, for a
-    ///   value it refused, such as `ERR_INTEGER_RANGE`;
+    /// - the value bridge's code for a scalar it refused, such as
+    ///   `ERR_INTEGER_RANGE`;
     /// - the SDK's own code, such as `recipher_js::not_a_ciphertext`.
     pub code: String,
     /// What went wrong, in one line.
@@ -613,8 +603,6 @@ mod tests {
             Error::Threw,
             Error::NotAScalar,
             Error::PlainObject,
-            Error::NotJson { what: "bytes" },
-            Error::JsonTooDeep,
             Error::NotSealed,
             Error::NotACiphertext,
             Error::NotBytes,
@@ -650,8 +638,6 @@ mod tests {
                 | Error::Threw
                 | Error::NotAScalar
                 | Error::PlainObject
-                | Error::NotJson { .. }
-                | Error::JsonTooDeep
                 | Error::NotSealed
                 | Error::NotACiphertext
                 | Error::NotBytes
@@ -678,6 +664,56 @@ mod tests {
             }
         }
         all
+    }
+
+    /// Returns the help that `error` states, or `None` for an error that
+    /// leaves nothing for the caller to do. The match has no wildcard, so a
+    /// new variant needs an entry here.
+    fn help_of(error: &Error) -> Option<&'static str> {
+        match error {
+            Error::Undefined => Some("Use `null` for a value that is not there."),
+            Error::NotAScalar | Error::PlainObject => Some("Wrap it in json(..)."),
+            Error::NotACiphertext => Some("Read stored bytes with Ciphertext.fromBytes."),
+            Error::NoTesting => {
+                Some("Build it with `pnpm --filter @cipherstash/recipher build:debug`.")
+            }
+            Error::NotARecord => Some("Declare a record with record(..)."),
+            Error::ReservedField => Some("Name the field something else."),
+            Error::Null { .. } => Some("A null mode is `sealed` or `sql`."),
+            Error::RecordName => Some(
+                "Use a record name that is not empty and holds no character the engine refuses in a field path, such as `/`.",
+            ),
+            Error::NoField => Some(
+                "Name a field the record declares with encrypt(..). A passthrough field has no ciphertext.",
+            ),
+            Error::EngineResult { .. } | Error::NoResult | Error::BuildValue => {
+                Some("Report this as a bug in @cipherstash/recipher.")
+            }
+            Error::Value
+            | Error::Threw
+            | Error::NotSealed
+            | Error::NotBytes
+            | Error::NotAKind
+            | Error::OpenedType { .. }
+            | Error::NotADocument
+            | Error::TestingSeed
+            | Error::Declaration
+            | Error::Kind { .. }
+            | Error::Index { .. }
+            | Error::Context
+            | Error::NotARow
+            | Error::FieldType { .. }
+            | Error::NotAStoredRow { .. } => None,
+        }
+    }
+
+    #[test]
+    fn every_error_states_its_help_and_no_other() {
+        for error in every_error() {
+            let help = help_of(&error);
+            let fields = RecipherErrorFields::from(error);
+            assert_eq!(fields.help.as_deref(), help, "{}", fields.code);
+        }
     }
 
     #[test]

@@ -7,10 +7,10 @@ import {
   kinds,
   type Plaintext,
   passthrough,
+  RcDate,
+  RcDecimal,
+  RcUuid,
   record,
-  VcDate,
-  VcDecimal,
-  VcUuid,
 } from '../../src/index'
 import { testCipher } from '../../src/testing'
 
@@ -107,8 +107,8 @@ describe('a record', () => {
       small: 255n,
       big: -(2n ** 100n),
       real: 1.5,
-      price: new VcDecimal('1.50'),
-      day: new VcDate('2026-11-23'),
+      price: new RcDecimal('1.50'),
+      day: new RcDate('2026-11-23'),
       at: new Date('2026-11-23T01:02:03.456Z'),
       blob: new Uint8Array([1, 2, 3]),
     }
@@ -120,8 +120,8 @@ describe('a record', () => {
     expect(opened.small).toBe(255n)
     expect(opened.big).toBe(-(2n ** 100n))
     expect(opened.real).toBe(1.5)
-    expect((opened.price as VcDecimal).value).toBe('1.50')
-    expect((opened.day as VcDate).value).toBe('2026-11-23')
+    expect((opened.price as RcDecimal).value).toBe('1.50')
+    expect((opened.day as RcDate).value).toBe('2026-11-23')
     expect((opened.at as Date).getTime()).toBe(
       row.at instanceof Date ? row.at.getTime() : 0,
     )
@@ -136,23 +136,23 @@ describe('a UUID field', () => {
   })
   const text = '123e4567-e89b-12d3-a456-426614174000'
 
-  it('is stored, found by equality, and read back as a VcUuid', async () => {
+  it('is stored, found by equality, and read back as an RcUuid', async () => {
     const c = await cipher()
     const keyset = c.defaultKeyset()
-    const row = { id: new VcUuid(text), name: 'sensor' }
+    const row = { id: new RcUuid(text), name: 'sensor' }
     const stored = (await keyset.encrypt(device, row)).unwrap()
     expect(Object.keys(stored.id).sort()).toEqual(['ciphertext', 'equality'])
 
     // A query term for the same UUID matches the stored term, and a query
     // term for another UUID does not.
     const same = (
-      await keyset.encryptField(device, 'id', new VcUuid(text))
+      await keyset.encryptField(device, 'id', new RcUuid(text))
     ).unwrap()
     const other = (
       await keyset.encryptField(
         device,
         'id',
-        new VcUuid('123e4567-e89b-12d3-a456-426614174001'),
+        new RcUuid('123e4567-e89b-12d3-a456-426614174001'),
       )
     ).unwrap()
     expect(Buffer.from(same.equality)).toEqual(Buffer.from(stored.id.equality))
@@ -161,7 +161,7 @@ describe('a UUID field', () => {
     )
 
     const opened = (await c.decrypt(device, stored)).unwrap()
-    expect(opened.id).toBeInstanceOf(VcUuid)
+    expect(opened.id).toBeInstanceOf(RcUuid)
     expect(opened.id.value).toBe(text)
     expect(opened.name).toBe('sensor')
   })
@@ -174,7 +174,7 @@ describe('a UUID field', () => {
       '123e4567-e89b-12d3-a456-42661417400g',
     ]) {
       const result = await keyset.encrypt(device, {
-        id: new VcUuid(bad),
+        id: new RcUuid(bad),
         name: 'sensor',
       })
       expect(result.isErr(), bad).toBe(true)
@@ -192,7 +192,7 @@ describe('a UUID field', () => {
     })
     const c = await cipher()
     const keyset = c.defaultKeyset()
-    const id = new VcUuid(text)
+    const id = new RcUuid(text)
 
     const empty = { sealed: null, sql: null, required: id }
     const stored = (await keyset.encrypt(nullable, empty)).unwrap()
@@ -228,7 +228,7 @@ describe('a UUID field', () => {
   it('refuses the UUID as a string', async () => {
     const keyset = (await cipher()).defaultKeyset()
     const result = await keyset.encrypt(device, {
-      // @ts-expect-error: a UUID field takes a VcUuid, not its text.
+      // @ts-expect-error: a UUID field takes an RcUuid, not its text.
       id: text,
       name: 'sensor',
     })
