@@ -573,14 +573,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     plan`. Those reasons are about an operator, a range, a term,
     statistics, a null query, or the input of a JSON operator.
 
-- **A `match` query's `vars` that are not a JSON object have their own
-  reason, `json_vars_not_object`, and say what they are** (#1987). Before,
-  they were `json_input`, the reason for any input a JSON operator does
-  not take, with nothing more. Now the error names the field, gives
-  `found` (`"array"`, `"uint64"`, `"null"`, ...), and says
-  `match takes its vars as a JSON object, found null`. They are refused
-  before the predicate is read. Only the dynamic path can receive vars
-  that are not an object: a field reference always builds an object.
+- **The `vars` of a `match` query that are not a JSON object get the new
+  reason `json_vars_not_object`** (#1987). Before, the reason was
+  `json_input`. The error had no more detail. `json_input` is the reason
+  for any input that a JSON operator does not take. To upgrade, change
+  code that compares the reason with `json_input` for this case.
+  - The error names the field.
+  - The payload field `found` is the kind of value that the vars are,
+    such as `"array"`, `"uint64"`, or `"null"`.
+  - The message for vars that are null is
+    `match takes its vars as a JSON object, found null`.
+  - The engine refuses the vars before it reads the predicate.
+  - Only the dynamic path can get vars that are not an object. A field
+    reference always builds an object.
 
 - **`dynamic::ValueFrame` is removed. The engine reads a plaintext as a
   borrowed `Frame` and keeps one as vitaminc's `OwnedFrame`** (#1955).

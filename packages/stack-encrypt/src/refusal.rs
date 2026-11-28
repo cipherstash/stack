@@ -528,11 +528,18 @@ enum Subject {
 /// The main part of the message of an error about a plan, a record
 /// source, or a stored record.
 ///
-/// With a [`Found`], the text is a sentence that names the input, the kind
-/// of value the input is, and the kind the operation takes. An example is
-/// `row 2 of the records to encrypt is null, not an object of fields`.
-/// Without a [`Found`], the text is the reason, then the row and the field
-/// if the error names them.
+/// The text depends on the reason and on whether there is a [`Found`]:
+///
+/// - With a [`Found`] and [`Reason::NotAnObject`], the text is one
+///   sentence. The sentence names the input, the kind of value the input
+///   is, and the kind the operation takes. An example is
+///   `row 2 of the records to encrypt is null, not an object of fields`.
+/// - With a [`Found`] and any other reason, the text starts with the
+///   reason and the kind of value. The row and the field follow, if the
+///   error names them. An example is
+///   `match takes its vars as a JSON object, found null`.
+/// - Without a [`Found`], the text is the reason, then the row and the
+///   field if the error names them.
 fn misfit_text(
     subject: Subject,
     reason: Reason,
@@ -1025,9 +1032,9 @@ reasons! {
         /// A value returned an error of its own while the engine read it
         /// ([`Error::SourceFailed`]).
         SourceFailed => "source_failed", "a value failed while it was read";
-        /// A `match` query's `vars` are not a JSON object: a list, a
-        /// number, a string, a boolean or the JSON `null`. The error says
-        /// which ([`Error::found`]).
+        /// The `vars` of a `match` query are not a JSON object. The vars
+        /// are a list, a number, a string, a boolean, or the JSON `null`.
+        /// [`Error::found`] returns the kind.
         JsonVarsNotObject => "json_vars_not_object", "match takes its vars as a JSON object";
     }
 }

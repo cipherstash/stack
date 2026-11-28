@@ -216,8 +216,13 @@ impl Input {
     }
 }
 
-/// `match`'s vars, which must be a JSON object: one that is not is refused
-/// as [`Reason::JsonVarsNotObject`], saying what it is by its kind.
+/// Checks that the vars of a `match` are a JSON object.
+///
+/// # Errors
+///
+/// Returns [`Error::Source`] with [`Reason::JsonVarsNotObject`] when the
+/// vars are not an object. The error names the kind of value that the vars
+/// are.
 pub(crate) fn vars_object(vars: &Value) -> Result<(), Error> {
     if vars.is_object() {
         return Ok(());
@@ -230,9 +235,11 @@ pub(crate) fn vars_object(vars: &Value) -> Result<(), Error> {
     })
 }
 
-/// What a JSON value is, for a refusal that says what it found: its kind,
-/// never the value. A number is the kind the engine reads it as: an
-/// unsigned or a signed 64-bit integer, or a float.
+/// The kind of a JSON value, for an error that names the kind and never
+/// contains the value.
+///
+/// A number has the kind that the engine reads it as: an unsigned 64-bit
+/// integer, a signed 64-bit integer, or a float.
 fn json_kind(value: &Value) -> Found {
     use vitaminc_aead::plaintext::ValueKind;
     Found::Kind(match value {

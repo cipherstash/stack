@@ -3129,9 +3129,10 @@ mod compiled_match {
             );
         }
 
-        /// Vars that are not a JSON object are refused for the field,
-        /// saying what they are by kind and never the value, and that a
-        /// match takes an object.
+        /// The engine refuses vars that are not a JSON object. The error
+        /// names the field and the kind of value that the vars are, and
+        /// never contains the value. The message says that a match takes an
+        /// object.
         #[test]
         fn refuses_vars_that_are_not_an_object_saying_what_they_are() {
             for (vars, found, phrase) in [
@@ -3174,12 +3175,13 @@ mod compiled_match {
             }
         }
 
-        /// Vars that are not an object are refused before the predicate is
-        /// read: a predicate that is not UTF-8 beside vars `[]` is refused
-        /// for its vars.
+        /// The engine refuses vars that are not an object before it reads
+        /// the predicate. The input here has a predicate that is not UTF-8,
+        /// and the vars `[]`. The error is about the vars.
         #[test]
         fn refuses_vars_before_reading_the_predicate() {
-            /// A match input whose predicate is bytes, as a binding may send it.
+            /// The input of a match whose predicate is bytes. A binding can
+            /// send the predicate as bytes.
             struct Input<'a> {
                 predicate: &'a [u8],
                 vars: &'a str,
