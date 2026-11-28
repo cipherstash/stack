@@ -1278,6 +1278,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it needs a `_` arm. To migrate code that names `recipher`, see the
   stack-kms CHANGELOG.
 
+- **Delete a `Scalar` impl you wrote for a derived newtype or a fieldless
+  enum** (#2012). `#[derive(Encrypt)]` now implements Vitamin C's `Scalar`
+  marker for these types. So an `impl Scalar for &Email {}` of your own no
+  longer compiles. The compiler reports `E0119`, conflicting
+  implementations. After you delete the impl, `keyset.encrypt` still
+  encrypts the type.
+
 ### Added
 
 - **A declaration and a call show the context they use, before any key is
@@ -1745,6 +1752,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not published with the crates.
 
 ### Fixed
+
+- **`keyset.encrypt` encrypts a newtype that derives `Encrypt` over one
+  value** (#2012). A newtype is a struct with exactly one unnamed field.
+  `struct Email(String)` with `#[derive(Encrypt, Zeroize)]` now encrypts
+  with `keyset.encrypt(Email(..))`, with no other code. Before this
+  change, the newtype needed a hand-written `impl Scalar for &Email {}`.
+  That impl needed a dependency on the `Scalar` trait of `vitaminc-aead`.
+  - The newtype encrypts exactly as its inner value does. The leaf has the
+    same plaintext and the same length. So `keyset.decrypt::<String>` opens
+    what `Email` encrypted.
+  - A newtype over a type that contains more than one value still derives
+    `Encrypt`, for use as a field. Examples are `struct Tags(Vec<String>)`
+    and `struct Nickname(Option<String>)`. `keyset.encrypt` still refuses
+    such a newtype when the program compiles. `keyset.encrypt` also
+    refuses a struct with named fields.
+  - `keyset.encrypt` also encrypts a fieldless enum that derives
+    `Encrypt`, as one `u32` value.
+  - The compile error for a refused type now says that the type cannot be
+    encrypted into one `Ciphertext`. The error says what `keyset.encrypt`
+    encrypts, and what to use instead:
+    - `EncryptInto`, for each element of a `Vec`
+    - `keyset.encrypt_tree`, for an `Option` or a struct
+    - `OpaqueBlob`, for a whole `Serialize` value
+
+    The error no longer names the `Scalar` or `Zeroize` bound that the type
+    did not meet.
+  - `keyset.encrypt` now checks, when the program is built, a `Scalar`
+    impl written by hand. If the type's borrow encrypts as a container,
+    the build fails with `E0080`. `cargo check` does not run this check.
 
 - **A query on an EQL type whose twin carries every term is refused for
   what any of its indexes refuses, before any key is requested** (#1668).

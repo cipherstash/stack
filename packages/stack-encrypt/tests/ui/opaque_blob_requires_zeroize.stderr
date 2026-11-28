@@ -54,14 +54,21 @@ note: required by a bound in `OpaqueBlob`
    | pub struct OpaqueBlob<T: Zeroize>(Zeroizing<T>);
    |                          ^^^^^^^ required by this bound in `OpaqueBlob`
 
-error[E0277]: the trait bound `OpaqueBlob<Unwiped>: OpaqueEncode` is not satisfied
+error[E0277]: `OpaqueBlob<Unwiped>` cannot be encrypted into one `Ciphertext`
   --> tests/ui/opaque_blob_requires_zeroize.rs:14:35
    |
 14 |     let _refused = keyset.encrypt(OpaqueBlob::new(value)).await.unwrap();
-   |                           ------- ^^^^^^^^^^^^^^^^^^^^^^ the trait `OpaqueEncode` is not implemented for `OpaqueBlob<Unwiped>`
+   |                           ------- ^^^^^^^^^^^^^^^^^^^^^^ `keyset.encrypt` encrypts one owned value
    |                           |
    |                           required by a bound introduced by this call
    |
+   = help: the trait `OpaqueEncode` is not implemented for `OpaqueBlob<Unwiped>`
+   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or an integer other than `u8`. A newtype that derives `Encrypt` over one of these is one value too.
+   = note: a borrow, such as a `&str`, is not owned. Pass an owned value, such as a `String`.
+   = note: the type must implement `Zeroize`, so that the value can be wiped after it is encrypted.
+   = note: to encrypt each element of a `Vec` into its own `Ciphertext`, use `EncryptInto`.
+   = note: to encrypt an `Option`, or a struct that derives `Encrypt`, use `keyset.encrypt_tree`. The result is a tree of ciphertexts.
+   = note: to encrypt a whole `Serialize` value as one `Ciphertext`, wrap the value in `OpaqueBlob`.
 help: the trait `OpaqueEncode` is implemented for `OpaqueBlob<T>`
   --> src/blob.rs
    |
