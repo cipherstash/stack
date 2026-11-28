@@ -26,6 +26,9 @@
  * and `json` come from the native addon. When the addon did not load,
  * stand-ins take their place. Each stand-in constructs as the class does.
  * `encrypt` then resolves to the `Err` that says why the addon did not load.
+ *
+ * A wrapper class's constructor takes a string. It throws a `TypeError` for
+ * any other argument. The text is checked when the value is encrypted.
  */
 import type * as Native from '../native'
 import { type Binding, binding } from './binding'
@@ -49,9 +52,41 @@ export interface WrapperConstructor<W> {
 type WrapperName = 'RcDate' | 'RcTimestamp' | 'RcDecimal' | 'RcUuid'
 
 /**
+ * A stand-in for the wrapper class `name`, for when the native addon did
+ * not load. It constructs as the addon's class does: it takes a string and
+ * throws a `TypeError` for anything else, keeps the text in a read-only
+ * `value`, is frozen, and gives the same text to `String`, `JSON.stringify`
+ * and Node's `inspect`.
+ */
+export function standInWrapper<W>(name: WrapperName): WrapperConstructor<W> {
+  const StandIn = class {
+    readonly value: string
+    constructor(text: string) {
+      if (typeof text !== 'string') {
+        throw new TypeError(`${name} takes a string`)
+      }
+      this.value = text
+      Object.freeze(this)
+    }
+    toJSON(): string {
+      return this.value
+    }
+    toString(): string {
+      return this.value
+    }
+    [Symbol.for('nodejs.util.inspect.custom')](): string {
+      return `${name}(${this.value})`
+    }
+  }
+  Object.defineProperty(StandIn, 'name', { value: name })
+  Object.freeze(StandIn.prototype)
+  // biome-ignore lint/plugin: a stand-in for the class, which constructs as it does.
+  return Object.freeze(StandIn) as unknown as WrapperConstructor<W>
+}
+
+/**
  * The class that the native addon defines. When the addon did not load, a
- * stand-in class instead. The stand-in keeps its text, is frozen, and
- * serialises to JSON as the class does.
+ * stand-in class instead.
  */
 function wrapperClass<W>(name: WrapperName): WrapperConstructor<W> {
   if (binding.isOk()) {
@@ -59,19 +94,7 @@ function wrapperClass<W>(name: WrapperName): WrapperConstructor<W> {
     // napi-rs does not declare these classes, so this code gives them types.
     return Reflect.get(binding.value, name) as WrapperConstructor<W>
   }
-  const StandIn = class {
-    readonly value: string
-    constructor(text: string) {
-      this.value = String(text)
-      Object.freeze(this)
-    }
-    toJSON(): string {
-      return this.value
-    }
-  }
-  Object.defineProperty(StandIn, 'name', { value: name })
-  // biome-ignore lint/plugin: a stand-in for the class, which constructs as it does.
-  return Object.freeze(StandIn) as unknown as WrapperConstructor<W>
+  return standInWrapper(name)
 }
 
 // A class is a constant and a type of one name. `./value-types` declares the

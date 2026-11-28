@@ -156,6 +156,11 @@ const opened = await Promise.all(
 
 A static method, such as `Ciphertext.fromBytes`, works on its own.
 
+A wrapper class's constructor throws too.
+The constructor takes a string, so `new RcDate(20261123)` throws a `TypeError`.
+The constructor does not check the text.
+`encrypt` returns an `Err` for text that is not a date.
+
 A `RecipherError` is an error report that a call returns as a value.
 Most errors come from the engine.
 The SDK's own errors have a code that starts with `recipher_js::`.

@@ -21,9 +21,12 @@
 //! checks it. So a value of the wrong type gives an `Err`, not an
 //! exception.
 //!
-//! The one call that throws is a method called without its object, as in
-//! `stored.map(cipher.decrypt)`. The JavaScript engine checks the object
+//! One call of the addon's throws: a method called without its object, as
+//! in `stored.map(cipher.decrypt)`. The JavaScript engine checks the object
 //! and throws a `TypeError` before any of the addon's code runs.
+//!
+//! The wrapper classes are the value bridge's JavaScript. Their
+//! constructors throw a `TypeError` for an argument that is not a string.
 //!
 //! The `ts_type`, `ts_args_type` and `ts_return_type` attributes give each
 //! method the signature the package exports. napi-rs writes them to

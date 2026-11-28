@@ -1,3 +1,4 @@
+import { inspect } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import {
   type Cipher,
@@ -10,6 +11,7 @@ import {
   RcUuid,
 } from '../../src/index'
 import { testCipher } from '../../src/testing'
+import { standInWrapper } from '../../src/values'
 
 async function cipher(): Promise<Cipher> {
   return (await testCipher()).unwrap()
@@ -106,6 +108,65 @@ describe('every value in the mapping round-trips', () => {
 
   it('null', async () => {
     expect(await roundTrip(null)).toBeNull()
+  })
+})
+
+describe('a wrapper class', () => {
+  const classes = { RcDate, RcTimestamp, RcDecimal, RcUuid }
+  const texts = {
+    RcDate: '2026-11-23',
+    RcTimestamp: '2026-11-23T01:02:03.000000001Z',
+    RcDecimal: '1.50',
+    RcUuid: '123e4567-e89b-12d3-a456-426614174000',
+  }
+  const names = ['RcDate', 'RcTimestamp', 'RcDecimal', 'RcUuid'] as const
+
+  /** What a caller can observe of a class and one instance of it. */
+  function observed(
+    cls: new (text: string) => object,
+    text: string,
+  ): Record<string, unknown> {
+    const instance = new cls(text)
+    let thrown: unknown
+    try {
+      // @ts-expect-error: the constructor takes a string.
+      new cls(20261123)
+    } catch (error) {
+      thrown = error
+    }
+    return {
+      name: cls.name,
+      value: Object.getOwnPropertyDescriptor(instance, 'value'),
+      keys: Object.keys(instance),
+      string: String(instance),
+      json: JSON.stringify(instance),
+      inspected: inspect(instance),
+      frozen: [
+        Object.isFrozen(instance),
+        Object.isFrozen(cls),
+        Object.isFrozen(cls.prototype),
+      ],
+      thrown: [
+        thrown instanceof TypeError,
+        thrown instanceof Error ? thrown.message : thrown,
+      ],
+    }
+  }
+
+  it('takes a string, and throws a TypeError for anything else', () => {
+    for (const name of names) {
+      // @ts-expect-error: the constructor takes a string.
+      expect(() => new classes[name](20261123)).toThrow(TypeError)
+      expect(new classes[name](texts[name]).value).toBe(texts[name])
+    }
+  })
+
+  it('has a stand-in that constructs as it does', () => {
+    for (const name of names) {
+      expect(observed(standInWrapper(name), texts[name])).toEqual(
+        observed(classes[name], texts[name]),
+      )
+    }
   })
 })
 
