@@ -7,34 +7,37 @@ import (
 	"github.com/cipherstash/stack/languages/golang/internal/frame"
 )
 
-// Encryptable is a type that writes its own value. A field of such a type is
-// sealed as the one value its EncryptValue writes, where the SDK would
-// otherwise write the field by its Go type: a money type that writes its
-// cents with Int64, say. The value must be of the field's declared kind; the
-// engine refuses any other.
+// Encryptable is the interface of a type that writes its own value. Without
+// it, the SDK writes a field by its Go type. With it, the field is sealed as
+// the one value that EncryptValue writes. An example is a money type that
+// writes its cents with Int64.
 //
-// A nil pointer to an Encryptable is written as a null, and EncryptValue is
-// not called.
+// The value must be of the kind that the field declares. The engine refuses
+// a value of any other kind.
+//
+// The SDK writes a nil pointer to an Encryptable as a null. EncryptValue is
+// not called for a nil pointer.
 type Encryptable interface {
-	// EncryptValue writes exactly one value to enc, through one of its
-	// methods. A second value, or none, fails the encode, as does a
-	// returned error.
+	// EncryptValue writes exactly one value to enc, with one of the methods
+	// of enc. The encode fails if EncryptValue writes no value, writes a
+	// second value, or returns an error.
 	EncryptValue(enc Encoder) error
 }
 
-// Encoder takes the one value an Encryptable writes. Only the Encoder handed
-// to EncryptValue records what is written to it. The zero Encoder records
-// nothing, and its Err says so.
+// Encoder receives the one value that an Encryptable writes. Use only the
+// Encoder that EncryptValue is given. The zero Encoder records nothing, and
+// its Err method returns an error that says so.
 //
-// An error, such as a string that is not UTF-8 or a date that does not
-// exist, fails the whole encode with ErrEncoding. Methods called after an
-// error do nothing.
+// An error fails the whole encode with ErrEncoding. One example is a string
+// that is not valid UTF-8. Another is a date that does not exist. A method
+// called after an error does nothing.
 type Encoder struct {
 	enc frame.Encoder
 }
 
-// Err is the first error of the encode so far, as an ErrEncoding, or nil.
-// On the zero Encoder it is an error, since nothing written to it is kept.
+// Err returns the first error of the encode so far, wrapped in ErrEncoding,
+// or nil. On the zero Encoder, Err always returns an error, because the zero
+// Encoder keeps nothing that is written to it.
 func (e Encoder) Err() error {
 	if !e.enc.Usable() {
 		return fmt.Errorf("%w: the zero Encoder keeps nothing; write to the Encoder EncryptValue is given", ErrEncoding)
@@ -129,21 +132,21 @@ func (e Encoder) Uint128(v Uint128) {
 	}
 }
 
-// Float32 writes a float32, bit for bit.
+// Float32 writes a float32, with its bits unchanged.
 func (e Encoder) Float32(v float32) {
 	if e.enc.Usable() {
 		e.enc.Float32(v)
 	}
 }
 
-// Float64 writes a float64, bit for bit.
+// Float64 writes a float64, with its bits unchanged.
 func (e Encoder) Float64(v float64) {
 	if e.enc.Usable() {
 		e.enc.Float64(v)
 	}
 }
 
-// String writes a string, which must be valid UTF-8.
+// String writes a string. The string must be valid UTF-8.
 func (e Encoder) String(v string) {
 	if e.enc.Usable() {
 		e.enc.String(v)
@@ -157,15 +160,15 @@ func (e Encoder) Bytes(v []byte) {
 	}
 }
 
-// Date writes a date, which must exist.
+// Date writes a date. The date must exist.
 func (e Encoder) Date(v Date) {
 	if e.enc.Usable() {
 		e.enc.Date(frame.Date(v))
 	}
 }
 
-// Timestamp writes an instant, to the nanosecond. Its location and monotonic
-// reading are not written.
+// Timestamp writes an instant, to the nanosecond. The location of v and its
+// monotonic clock reading are not written.
 func (e Encoder) Timestamp(v time.Time) {
 	if e.enc.Usable() {
 		e.enc.Timestamp(v)

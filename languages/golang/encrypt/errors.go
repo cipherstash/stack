@@ -69,10 +69,11 @@ var (
 	ErrMemoryLock = guest.ErrMemoryLock
 )
 
-// ErrStorageVersion is an opaque struct sealed as a storage blob of a
-// version this release does not read: a later release wrote it. Its error
-// wraps [ErrEncoding] too. It is the codec's own error, named here so a
-// program can check for it with errors.Is.
+// ErrStorageVersion means that an opaque struct was sealed as a storage blob
+// of a version that this release does not read. A later release wrote the
+// blob. The error that the SDK returns wraps [ErrEncoding] too.
+// ErrStorageVersion is an error value of the SDK's codec. The value is
+// exported here so that a program can check for it with errors.Is.
 var ErrStorageVersion = frame.ErrUnsupportedVersion
 
 // Diagnostic is the full error behind a failure the guest reports, beside

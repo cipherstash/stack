@@ -49,10 +49,11 @@ const (
 	Timestamp Kind = "timestamp"
 	String    Kind = "string"
 	Bytes     Kind = "bytes"
-	// UUID is a UUID: sixteen bytes under the uuid logical type. Its
-	// value is an encrypt.UUID, or a value of any type whose underlying
-	// type is [16]byte (github.com/google/uuid.UUID, say), which is
-	// converted to one.
+	// UUID is the kind of a UUID field: sixteen bytes with the logical type
+	// uuid. The value of the field is an encrypt.UUID. The field also
+	// accepts a value of any type whose underlying type is [16]byte, such as
+	// github.com/google/uuid.UUID. Such a value is converted to an
+	// encrypt.UUID.
 	UUID Kind = "uuid"
 	// JSON is a field stored as a JSON document (the EQL types JSONSearch
 	// and JSON): it crosses as its JSON text, which the engine parses. A json.RawMessage is that
@@ -61,13 +62,17 @@ const (
 	JSON Kind = "json"
 )
 
-// OpaqueField is the one field of an opaque declaration: the whole struct,
-// sealed as one value under <context>/value. The struct crosses the binding
-// as one storage blob (the storage profile, version 1) — the engine
-// seals a composite value as a tree of leaves, and an opaque struct is one
-// column. A field of a struct, map or slice type that names an EQL type
-// holding a JSON document is the other way one is stored as one column. A value an earlier release sealed is a JSON document, which
-// [Opaque] still reads.
+// OpaqueField is the name of the one field of an opaque declaration. That
+// field is the whole struct, sealed as one value under <context>/value.
+//
+// The struct crosses to the engine as one storage blob, in version 1 of the
+// storage profile. The engine seals a composite value as a tree of leaves,
+// but an opaque struct must be one column. A struct, map, or slice can be
+// stored as one column in one other way. That way is a field that names an
+// EQL type for a JSON document.
+//
+// A value that an earlier release sealed is a JSON document. [Opaque] still
+// reads such a value.
 const OpaqueField = "value"
 
 type verb uint8

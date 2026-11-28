@@ -325,9 +325,10 @@ func sourceRow(p *record.Plan, row record.Source) (frame.Object, error) {
 			return nil, sourceDiagnostic("field_missing", f.Name, fmt.Sprintf("no value for field %q", f.Name))
 		}
 		if f.Kind == record.Untyped && nilEncryptable(v) {
-			// The codec writes a nil Encryptable as the one-byte null, and
-			// a field with no declared type gives the engine no width to
-			// pad it to, so its length would show it is a null.
+			// The codec writes a nil Encryptable as the null of one byte.
+			// The field declares no type, so the engine has no width to pad
+			// the null to. The length of the stored value would then show
+			// that it is a null.
 			return nil, sourceDiagnostic("field_type", f.Name, fmt.Sprintf("field %q has no declared type, so a nil %T would be stored shorter than a value; declare the field's type", f.Name, v))
 		}
 		out = append(out, frame.Field{Key: f.Name, Value: v})
@@ -338,9 +339,10 @@ func sourceRow(p *record.Plan, row record.Source) (frame.Object, error) {
 // encryptableType is Encryptable's reflect.Type.
 var encryptableType = reflect.TypeFor[Encryptable]()
 
-// nilEncryptable reports whether v is a nil pointer, through any number of
-// pointers, to a type the codec writes through its EncryptValue: what the
-// codec writes as the one-byte null whatever the type writes for a value.
+// nilEncryptable reports whether v is a nil pointer to a type that
+// implements Encryptable, through any number of pointers. The codec writes
+// such a pointer as the null of one byte, whatever the type writes for a
+// value.
 func nilEncryptable(v any) bool {
 	rv := reflect.ValueOf(v)
 	for depth := 0; rv.IsValid() && rv.Kind() == reflect.Pointer && depth < 128; depth++ {

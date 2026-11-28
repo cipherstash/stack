@@ -63,7 +63,7 @@ type otherLeaf struct {
 	bytes []byte
 }
 
-// leaves is the frame.LeafSet of this binding's leaf types.
+// leaves is the frame.LeafSet for the leaf types of this package.
 var leaves = frame.LeafSet{
 	Classify: func(v any) (frame.LeafKind, []byte, bool) {
 		switch n := v.(type) {

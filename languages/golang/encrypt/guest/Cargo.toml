@@ -51,10 +51,10 @@ stack-auth = { path = "../../../../packages/stack-auth", default-features = fals
 # `dynamic`: the runtime value model this guest speaks — contexts, index
 # terms and record plans read from frames, shared with every other binding.
 stack-encrypt = { path = "../../../../packages/stack-encrypt", default-features = false, features = ["dynamic"] }
-# The guest ABI every guest under languages/golang shares: the allocator and
-# buffer registry (and with them the `se_alloc`/`se_dealloc` exports), the
-# packed-result helpers, the status table and the step loop.
-# This crate defines only the exports that are its own.
+# The guest ABI that every guest under languages/golang shares. The ABI has the
+# allocator and the buffer registry, with their `se_alloc` and `se_dealloc`
+# exports. The ABI also has the packed-result helpers, the status table, and the
+# step loop. This crate defines only the exports that are its own.
 stack-guest-abi = { path = "../../../../packages/stack-guest-abi" }
 # `wasm-simd`: re-encrypts key material with wasm SIMD, the costly part of
 # deriving a data key. The module then holds SIMD instructions, which wazero

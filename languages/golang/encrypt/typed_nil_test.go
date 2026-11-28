@@ -14,15 +14,19 @@ import (
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
-// A typed nil pointer on the two raw paths. Generated code passes a nil
-// pointer through gensupport.Deref, which gives an untyped nil; the two
-// paths that take a caller's value as it is are Cipher.Seal with a
-// hand-built record.Source and Cipher.QueryTerm's input. There a
-// (*int64)(nil) is not == nil, so it is sent, and the codec writes it as a
-// typed null, padded to the width of an int64, not as the one-byte null an
-// untyped nil is. These tests pin what the engine does with it: a typed null is a null to the
-// engine, so each path answers a typed nil as it answers an untyped one, on
-// a field of every null mode.
+// These tests cover a typed nil pointer on the two paths that take a
+// caller's value unchanged. Generated code passes a nil pointer through
+// gensupport.Deref, and Deref returns an untyped nil. The two other paths
+// are Cipher.Seal with a record.Source built by hand, and the input of
+// Cipher.QueryTerm.
+//
+// On those two paths, a (*int64)(nil) is not equal to nil, so it is sent.
+// The codec writes it as a typed null, padded to the width of an int64. An
+// untyped nil is written as the null of one byte.
+//
+// The tests check what the engine does with a typed null. The engine treats
+// a typed null as a null. Each path therefore handles a typed nil as it
+// handles an untyped nil, for a field of every null mode.
 
 // typedNilPlan has one int64 field in each null mode and a timestamp field
 // that seals its nulls, so both encodings meet every answer the engine has.
@@ -33,10 +37,12 @@ var typedNilPlan = &record.Plan{Context: []string{"typed_nil"}, Fields: []record
 	{Name: "when", Kind: record.Timestamp, Outputs: []record.Output{record.Ciphertext, record.Equality}, Null: record.SealedNull},
 }}
 
-// The codec's behaviour itself, so the engine tests below are read
-// against the bytes that reach it: a nil pointer to a fixed-width type is a
-// typed null (tag 0x15, then the type, padded to the type's width), not the
-// one-byte null an untyped nil is, and it decodes as nil like every null.
+// This test checks the codec itself, so that the engine tests below can be
+// read with the bytes that reach the engine in mind. A nil pointer to a
+// fixed-width type is written as a typed null. The bytes are the tag 0x15,
+// then the type, then padding to the width of the type. An untyped nil is
+// written as the null of one byte. A typed null decodes as nil, as every
+// null does.
 func TestANilFixedWidthPointerMarshalsAsATypedNull(t *testing.T) {
 	untyped, err := frame.Marshal(nil)
 	if err != nil || !bytes.Equal(untyped, []byte{0x00}) {
@@ -213,12 +219,17 @@ func (c cents) EncryptValue(enc encrypt.Encoder) error {
 	return nil
 }
 
-// A nil pointer to an Encryptable is written as the one-byte null, and a
-// field with no declared type gives the engine no width to pad it to. So
-// Seal refuses one there, before anything is sent, rather than store a
-// null shorter than every value. A field that declares its type pads it, a
-// nil pointer to a built-in fixed-width type is a typed null, and a present
-// value is written as itself, so none of those is refused.
+// A nil pointer to an Encryptable is written as the null of one byte. A
+// field with no declared type gives the engine no width to pad that null to.
+// Seal therefore refuses a nil Encryptable for such a field, before anything
+// is sent. Otherwise the stored null would be shorter than every value.
+//
+// Seal does not refuse the three other cases:
+//
+//   - A field that declares its type pads the null.
+//   - A nil pointer to a built-in fixed-width type is written as a typed
+//     null.
+//   - A value that is present is written as itself.
 func TestSealRefusesANilEncryptableOnAFieldWithNoType(t *testing.T) {
 	c := deterministicClient(t)
 	ctx := context.Background()

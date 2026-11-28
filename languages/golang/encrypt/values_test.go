@@ -12,9 +12,9 @@ import (
 	"github.com/cipherstash/stack/languages/golang/internal/frame"
 )
 
-// Each value type is written as the codec's value type of the same kind,
-// byte for byte, and a decoded value comes back as the encrypt type, so a
-// field of one needs no conversion either way.
+// Each value type is written with exactly the bytes of the codec's value
+// type of the same kind. A decoded value has the encrypt type. A field of
+// one of these types therefore needs no conversion in either direction.
 func TestTheValueTypesCrossTheCodecAsThemselves(t *testing.T) {
 	id, err := encrypt.ParseUUID("0190c6d2-3a4b-7c5d-8e9f-a0b1c2d3e4f5")
 	if err != nil {
@@ -149,8 +149,8 @@ func TestEachEncoderMethodWritesItsType(t *testing.T) {
 			t.Errorf("%T: the Encoder writes %x, the value %x", c.want, got, want)
 		}
 	}
-	// One value, exactly: none, or two, fails the encode, and so does a
-	// value the codec refuses.
+	// EncryptValue must write exactly one value. The encode fails for no
+	// value, for two values, and for a value that the codec refuses.
 	for name, write := range map[string]writesWith{
 		"no value":   func(encrypt.Encoder) {},
 		"two values": func(e encrypt.Encoder) { e.Bool(true); e.Bool(false) },
@@ -161,14 +161,15 @@ func TestEachEncoderMethodWritesItsType(t *testing.T) {
 			t.Errorf("%s: the encode succeeded", name)
 		}
 	}
-	// A nil pointer to an Encryptable is a null, and its method is not run.
+	// A nil pointer to an Encryptable is written as a null. The codec does
+	// not call its method.
 	if got, err := frame.Marshal((*writesWith)(nil)); err != nil || !bytes.Equal(got, []byte{0}) {
 		t.Errorf("a nil Encryptable writes %x, %v", got, err)
 	}
 }
 
-// A date or a decimal has no storage form, and the refusal names the type
-// the program used, not the codec's.
+// A date or a decimal has no storage form. The error names the type that the
+// program used, not the codec's type.
 func TestAStorageRefusalNamesTheEncryptType(t *testing.T) {
 	for _, c := range []struct {
 		v    any
@@ -187,8 +188,9 @@ func TestAStorageRefusalNamesTheEncryptType(t *testing.T) {
 	}
 }
 
-// Every value type the codec can publish is published by this package, so
-// none is written by reflection or decoded as the codec's own type.
+// This package publishes every value type that the codec accepts for
+// publishing. No value type is therefore written by reflection, or decoded
+// as the codec's own type.
 func TestEveryPublishableValueTypeIsPublished(t *testing.T) {
 	if left := frame.Unpublished(); len(left) != 0 {
 		t.Fatalf("not published: %v", left)

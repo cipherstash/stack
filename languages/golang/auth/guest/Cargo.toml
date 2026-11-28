@@ -31,10 +31,10 @@ url = "2"
 # Strategies and `Token`, the typed shape of `auth.json`, with default
 # features off: no reqwest, no native TLS.
 stack-auth = { path = "../../../../packages/stack-auth", default-features = false }
-# The ABI every guest under languages/golang shares: the allocator and buffer
-# registry (and with them the `se_alloc`/`se_dealloc` exports), the
-# packed-result helpers and the status table. This crate defines only the
-# exports that are its own.
+# The ABI that every guest under languages/golang shares. The ABI has the
+# allocator and the buffer registry, with their `se_alloc` and `se_dealloc`
+# exports. The ABI also has the packed-result helpers and the status table. This
+# crate defines only the exports that are its own.
 stack-guest-abi = { path = "../../../../packages/stack-guest-abi" }
 # The profile directory's API. It builds for wasm32-wasip1 (CIP-4114): the
 # hostname and the process id are native-only there, and creating a device

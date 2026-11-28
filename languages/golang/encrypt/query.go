@@ -115,19 +115,31 @@ func (l Limit) FetchOr(page uint64) uint64 {
 	return min(page, math.MaxInt64)
 }
 
-// QueryTerm derives the query term for one field of the plan, an operator
-// and its input under this cipher's keyset: one value for every operator
-// but between, whose input is a two-element slice, low then high, and a
-// document's operators (contains, eq_at, selector, ...), whose input is the
-// operator's named inputs, in order, with JSON values as JSON text, as
-// generated code builds them. The
-// engine reads the input as the field's declared type, finds the index
-// that answers the operator, and derives that index's term under the
-// field's context; for a field that names an EQL type it runs the type's
-// query. An operator the field does not answer, or one the engine does not
-// know, is [ErrEncoding] naming the field, as a mistyped value is; match
-// text that cuts no token is [ErrTerm]. A range the wrong way round is not
-// refused: it matches no row, as SQL's BETWEEN does.
+// QueryTerm derives the query term for one field of the plan, from an
+// operator and its input, under the keyset of this cipher. The form of the
+// input depends on the operator:
+//
+//   - For between, the input is a slice of two elements: the low value, then
+//     the high value.
+//   - For an operator on a document, such as contains, eq_at, or selector,
+//     the input is the named inputs of the operator, in order. A JSON value
+//     is given as JSON text. Generated code builds this input.
+//   - For every other operator, the input is one value.
+//
+// The engine reads the input as the declared type of the field. The engine
+// then finds the index that supports the operator, and derives the term of
+// that index under the context of the field. For a field that names an EQL
+// type, the engine runs the query of that type.
+//
+// QueryTerm returns [ErrEncoding], naming the field, in three cases:
+//
+//   - The field does not support the operator.
+//   - The engine does not know the operator.
+//   - The value has the wrong type.
+//
+// QueryTerm returns [ErrTerm] for match text that produces no token. A range
+// whose low value is above its high value is not refused. Such a range
+// matches no row, as BETWEEN does in SQL.
 //
 // A query through a cipher with a binding is refused as [ErrEncoding]: a
 // binding is in no query context. Three operators prepare a read of a

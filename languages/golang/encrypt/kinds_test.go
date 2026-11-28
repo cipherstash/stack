@@ -326,10 +326,11 @@ func TestARedactedStructPrintsNoSealedField(t *testing.T) {
 	}
 }
 
-// A value with no storage form (here a string that is not UTF-8, which the
-// JSON document of earlier releases wrote as U+FFFD) refuses the batch as
-// ErrEncoding naming the value, with the codec's class wrapped and no byte of
-// the value in the error.
+// A value with no storage form fails the whole batch with ErrEncoding. The
+// value here is a string that is not valid UTF-8. The JSON document of
+// earlier releases wrote such a string with U+FFFD. The error says which
+// value failed, wraps the codec's error class, and contains no byte of the
+// value.
 func TestAnOpaqueStructWithNoStorageFormIsErrEncoding(t *testing.T) {
 	c := deterministicClient(t)
 	in := []testusers.Everything{{S: "fine"}, {S: "secret-4242\xff"}}

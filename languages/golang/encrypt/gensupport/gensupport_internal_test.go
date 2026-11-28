@@ -330,8 +330,9 @@ func TestDecryptErrorsHoldNoPlaintext(t *testing.T) {
 	if err := Opaque(Values{OpaqueField: old}, &grown); err != nil || grown.N != 7 || grown.New != "" {
 		t.Fatalf("a grown struct read %+v, %v", grown, err)
 	}
-	// A blob of a later storage version is encrypt.ErrStorageVersion, which
-	// a program checks with errors.Is.
+	// A blob of a later storage version fails with
+	// encrypt.ErrStorageVersion. A program checks for that error with
+	// errors.Is.
 	later := append([]byte(nil), old...)
 	later[3]++
 	if err := Opaque(Values{OpaqueField: later}, &grown); !errors.Is(err, encrypt.ErrStorageVersion) || !errors.Is(err, encrypt.ErrEncoding) {
@@ -564,10 +565,13 @@ func TestAsKindLeavesAValueThatWritesItself(t *testing.T) {
 // say: sixteen bytes and no EncryptValue.
 type googleUUID [16]byte
 
-// A UUID field's value crosses as an encrypt.UUID, which the codec writes
-// under the uuid logical type: any other type whose underlying type is
-// [16]byte is converted, since the codec writes that as plain bytes and the engine would refuse
-// it. A value of another shape is left for the engine to refuse.
+// The value of a UUID field crosses to the engine as an encrypt.UUID. The
+// codec writes an encrypt.UUID with the logical type uuid. A value of any
+// other type whose underlying type is [16]byte is converted first. Without
+// the conversion, the codec would write such a value as plain bytes. The
+// engine would refuse those bytes.
+//
+// A value of any other kind is not converted, and the engine refuses it.
 func TestAsKindMakesASixteenByteArrayAUUID(t *testing.T) {
 	id := [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
 	for _, in := range []any{id, googleUUID(id), encrypt.UUID(id)} {

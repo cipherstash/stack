@@ -975,11 +975,14 @@ func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Typ
 	return g
 }
 
-// valueKind is the kind of a value type the generator knows by name:
-// time.Time, json.RawMessage, and encrypt's Date, Int128, Uint128 and
-// Decimal, or an alias of any of them. A type defined over one of
-// them is not one: the codec writes these by their exact type, so it is
-// classified by its underlying type and refused as a struct or array.
+// valueKind returns the kind of a value type that the generator recognises
+// by name. Those types are time.Time, json.RawMessage, and the Date, Int128,
+// Uint128, and Decimal of package encrypt. An alias of any of them is
+// recognised too.
+//
+// A type defined over one of them is not a value type, because the codec
+// matches these types exactly. The generator classifies such a type by its
+// underlying type, and refuses it as a struct or an array.
 func valueKind(t types.Type) (Kind, bool) {
 	named := func(t types.Type) (string, string, bool) {
 		switch t := t.(type) {
@@ -1151,28 +1154,50 @@ func itOrEach(fields []string) string {
 	return "each"
 }
 
-// notCarried says why an opaque struct's field type cannot be carried both
-// ways by the two codecs every such field must satisfy, as a reason from
-// each, or "" from one that carries it. encoding/json: a row an earlier
-// release sealed holds the struct as one JSON document, which comes back
-// by decoding it into the generated shape struct. The storage profile
-// (frame.MarshalStorage and UnmarshalStorage): the struct is sealed as a
-// storage blob now. One walk asks both rules of every type it reaches, so
-// a case one rule covers and the other does not cannot fall between two
-// walkers; byJSON and byStorage say which rules still apply, and each stops
-// below a type that carries itself (a MarshalJSON and UnmarshalJSON pair
-// for JSON, a MarshalText and UnmarshalText pair for storage).
+// notCarried reports why the field type of an opaque struct cannot be
+// encoded and decoded by both codecs that every such field must work with.
+// The function returns one reason for each codec, or "" for a codec that
+// accepts the type. The two codecs are these:
 //
-// The JSON rule: a scalar, a slice or array of a carried type, a map with
-// string or integer keys, a pointer, or a struct whose every field is
-// exported and carried; a struct with an unexported field would come back
-// without it, an interface or a channel not at all. The storage rule,
-// the codec's own: a scalar by its kind; a slice, array or pointer by its
-// element; a map whose key is an integer, a string, bytes or text, by its
-// value; a struct by its exported fields; no logical value type
-// (encrypt.Decimal, encrypt.Date, which have no storage form); and no type
-// with only half of the text pair. It knows nothing of MarshalJSON, so a
-// type that carries itself through JSON alone is walked like any other.
+//   - encoding/json. A row that an earlier release sealed has the struct as
+//     one JSON document. That document is decoded into the generated shape
+//     struct.
+//   - The storage profile, frame.MarshalStorage and frame.UnmarshalStorage.
+//     A struct that this release seals is a storage blob.
+//
+// One traversal applies both rules to every type that it reaches. With two
+// separate traversals, a case that one rule covers and the other does not
+// could be missed. The arguments byJSON and byStorage say which rules still
+// apply.
+//
+// Each rule stops below a type that encodes itself. For JSON, that is a type
+// with MarshalJSON and UnmarshalJSON. For storage, that is a type with
+// MarshalText and UnmarshalText.
+//
+// The JSON rule accepts these types:
+//
+//   - a scalar
+//   - a slice or an array of an accepted type
+//   - a map with string or integer keys
+//   - a pointer
+//   - a struct whose fields are all exported and accepted
+//
+// A struct with an unexported field would come back without that field. An
+// interface or a channel would not come back at all.
+//
+// The storage rule is the rule of the codec:
+//
+//   - For a scalar, the rule checks its kind.
+//   - For a slice, an array, or a pointer, the rule checks its element.
+//   - For a map, the rule checks its value. The key must be an integer, a
+//     string, bytes, or text.
+//   - For a struct, the rule checks its exported fields.
+//   - The logical value types encrypt.Decimal and encrypt.Date are refused,
+//     because they have no storage form.
+//   - A type with only one method of the text pair is refused.
+//
+// The storage rule ignores MarshalJSON. A type that encodes itself only
+// through JSON is therefore checked like any other type.
 func notCarried(t types.Type, seen map[types.Type]bool, byJSON, byStorage bool) (asJSON, asBlob string) {
 	if seen[t] || (!byJSON && !byStorage) {
 		return "", ""
@@ -1223,10 +1248,10 @@ func notCarried(t types.Type, seen map[types.Type]bool, byJSON, byStorage bool) 
 		}
 		return notCarried(u.Elem(), seen, byJSON, byStorage)
 	case *types.Struct:
-		// Both write a struct by its exported fields and drop the rest:
-		// the codec refuses a struct that has unexported fields only, and a
-		// struct with none at all (struct{}) is an empty object to both,
-		// read back as itself.
+		// Both codecs write a struct by its exported fields and leave out
+		// the other fields. The storage codec refuses a struct that has only
+		// unexported fields. Both codecs write a struct with no fields,
+		// struct{}, as an empty object, and read it back as itself.
 		for i := range u.NumFields() {
 			fld := u.Field(i)
 			if !fld.Exported() {
@@ -1469,10 +1494,11 @@ func methodOf(t types.Type, name string) (*types.Selection, bool) {
 	return nil, false
 }
 
-// noStorageForm refuses the logical value types, which the transport
-// carries and the storage profile does not: encrypt.Date and
-// encrypt.Decimal. The 128-bit integers have a storage form, and so does
-// encrypt.UUID, which is its sixteen bytes.
+// noStorageForm returns the reason that t has no storage form, when t is a
+// logical value type: encrypt.Date or encrypt.Decimal. The transport
+// encoding has a form for those types. The storage profile has none. The
+// 128-bit integers have a storage form. So does encrypt.UUID, as its sixteen
+// bytes.
 func noStorageForm(t types.Type) string {
 	switch kind, _ := valueKind(t); kind {
 	case KindDate:
@@ -1508,10 +1534,14 @@ func textForm(t types.Type) (bool, string) {
 	return false, ""
 }
 
-// notStorableKey says why a map key has no storage form: the codec takes an
-// integer, a string, bytes (a byte array, a 128-bit integer; a slice is
-// not comparable, so Go never keys a map by one) or a type with MarshalText
-// and UnmarshalText.
+// notStorableKey returns the reason that the map key type k has no storage
+// form, or "" when k has one. The codec accepts four kinds of key:
+//
+//   - an integer
+//   - a string
+//   - a byte array, including a 128-bit integer. A byte slice is not
+//     comparable, so Go never uses one as a map key.
+//   - a type with both MarshalText and UnmarshalText
 func notStorableKey(k types.Type) string {
 	if kind, _ := valueKind(k); kind == KindInt128 || kind == KindUint128 {
 		return ""

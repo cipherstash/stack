@@ -381,9 +381,9 @@ func TestStrategyAndProfileCloseInAnyOrderReturn(t *testing.T) {
 	}
 }
 
-// A device session's token read is refused unless it holds both fields,
-// with their types, and nothing else. (The codec refuses a duplicate key
-// before decodeDeviceToken sees the frame.)
+// A token read for a device session is refused unless the frame has both
+// fields, with the right types, and nothing else. The codec refuses a
+// duplicate key before decodeDeviceToken receives the frame.
 func TestDecodeDeviceTokenRefusesAnyOtherShape(t *testing.T) {
 	type f = frame.Field
 	encode := func(t *testing.T, v any) []byte {
