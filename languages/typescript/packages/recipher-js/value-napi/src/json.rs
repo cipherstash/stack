@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(fault.refusal(), Some(Refusal::TooDeep { limit: 0 }));
         assert!(!fault.reason().contains("secret"));
         let fault = text_within(Scalar(None, Physical::Bytes(b"a secret")), 1).expect_err("bytes");
-        assert_eq!(fault.reason(), "a JSON document cannot hold bytes");
+        assert_eq!(fault.reason(), "a JSON document cannot contain bytes");
         assert_eq!(fault.status(), Status::InvalidArg);
     }
 

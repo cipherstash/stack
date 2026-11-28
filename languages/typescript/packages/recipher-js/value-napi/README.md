@@ -185,7 +185,7 @@ Some rules below mention a polluted prototype. A polluted prototype is a
 built-in prototype, such as `Object.prototype`, that other code has added
 properties to.
 
-- **The constructor takes a string and nothing else.** This crate checks the
+- **The constructor accepts only a string.** This crate checks the
   text, and builds the scalar from it, when the value is encrypted. So one
   rule applies however the instance was made.
 - **`value` is an own, read-only, enumerable property.** So
