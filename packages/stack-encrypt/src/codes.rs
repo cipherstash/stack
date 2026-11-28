@@ -219,6 +219,7 @@ mod tests {
             Error::Plan { .. } => Error::bad_plan(Reason::NoFields),
             Error::UntypedIndex { .. } => Error::UntypedIndex { field: name() },
             Error::Source { .. } => Error::bad_source(Reason::FieldMissing),
+            Error::Value { .. } => Error::bad_value(Reason::Null),
             Error::Record { .. } => Error::bad_record(Reason::NoCiphertextNode),
             Error::Predicate { .. } => Error::Predicate {
                 field: Some(name()),

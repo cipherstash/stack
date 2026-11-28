@@ -455,7 +455,7 @@
         "text": "array"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "array"
       }
     },
@@ -468,7 +468,7 @@
         "text": "array"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "array"
       }
     },
@@ -481,7 +481,7 @@
         "text": "array"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "array"
       }
     },
@@ -494,7 +494,7 @@
         "text": "empty_array"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "array"
       }
     },
@@ -507,7 +507,7 @@
         "text": "object"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "object"
       }
     },
@@ -520,7 +520,7 @@
         "text": "object"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "object"
       }
     },
@@ -533,7 +533,7 @@
         "text": "object"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "object"
       }
     },
@@ -546,7 +546,7 @@
         "text": "passthrough"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "passthrough"
       }
     },
@@ -559,7 +559,7 @@
         "text": "passthrough"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "passthrough"
       }
     },
@@ -572,7 +572,7 @@
         "text": ""
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "null"
       }
     },
@@ -585,7 +585,7 @@
         "text": ""
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "null"
       }
     },
@@ -598,7 +598,7 @@
         "text": ""
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "null"
       }
     },
@@ -611,7 +611,7 @@
         "text": ""
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "null"
       }
     },
@@ -624,7 +624,7 @@
         "text": "typed_null"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "null"
       }
     },
@@ -637,7 +637,7 @@
         "text": "typed_null"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "null"
       }
     },
@@ -650,7 +650,7 @@
         "text": ""
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "undefined"
       }
     },
@@ -663,7 +663,7 @@
         "text": ""
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "undefined"
       }
     },
@@ -676,7 +676,7 @@
         "text": ""
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "undefined"
       }
     },
@@ -689,7 +689,7 @@
         "text": "34"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "field_type"
       }
     },
@@ -702,7 +702,7 @@
         "text": "34.5"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "field_type"
       }
     },
@@ -715,7 +715,7 @@
         "text": "300"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "field_type"
       }
     },
@@ -728,7 +728,7 @@
         "text": "0"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "field_type"
       }
     },
@@ -741,7 +741,7 @@
         "text": "1.5"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "field_type"
       }
     },
@@ -754,7 +754,7 @@
         "text": "34"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "field_type"
       }
     },
@@ -767,7 +767,7 @@
         "text": ""
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "field_type"
       }
     },
@@ -780,7 +780,7 @@
         "text": "a"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "field_type"
       }
     },
@@ -793,7 +793,7 @@
         "text": "1"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "field_type"
       }
     },
@@ -806,7 +806,7 @@
         "text": "1"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "field_type"
       }
     },
@@ -819,7 +819,7 @@
         "text": "{\"a\": "
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "json_syntax"
       }
     },
@@ -832,7 +832,7 @@
         "text": "{\"a\":1,\"a\":2}"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "json_duplicate_key"
       }
     },
@@ -845,7 +845,7 @@
         "text": "3138343436373434303733373039353531363136"
       },
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "json_integer_range"
       }
     }
@@ -980,7 +980,7 @@
         }
       ],
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "null"
       }
     },
@@ -999,7 +999,7 @@
         }
       ],
       "expected_error": {
-        "code": "stack_encrypt::dynamic_source",
+        "code": "stack_encrypt::dynamic_value",
         "reason": "field_type"
       }
     }

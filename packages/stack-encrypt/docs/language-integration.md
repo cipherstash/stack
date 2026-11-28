@@ -194,8 +194,10 @@ Awaiting the merged call makes one key request, and each value keeps its own
 declared kind.
 
 A ciphertext holds one scalar. An array, an object, a passthrough and a null
-are refused before any key is requested, with a reason that says which was
-found (`array`, `object`, `passthrough`, `null`). An SDK stores an absent
+are refused before any key is requested. The refusal is
+[`crate::dynamic::Error::Value`], with the code
+`stack_encrypt::dynamic_value` and a reason that says which was found
+(`array`, `object`, `passthrough`, `null`). An SDK stores an absent
 value as a database `NULL`. JavaScript's `undefined` is refused too
 (`undefined`), whatever kind is declared.
 

@@ -50,9 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     parses and returns it as the engine writes the document.
   - A ciphertext holds one scalar. `encrypt` refuses an array, an object, a
     passthrough and a null, plain or typed, before any key is requested.
-    The refusal is `dynamic::Error::Source` with one of three new reasons,
-    `Reason::Array`, `Reason::Object` and `Reason::Null`, or with
-    `Reason::Passthrough`. JavaScript's `undefined` is refused with
+    The refusal is a new variant, `dynamic::Error::Value`, with the code
+    `stack_encrypt::dynamic_value`. It names no field, and its message is
+    about one value. It carries one of three new reasons, `Reason::Array`,
+    `Reason::Object` and `Reason::Null`, or `Reason::Passthrough`. JavaScript's `undefined` is refused with
     `Reason::Undefined`, with a declared kind and with none: it is most
     often a property name spelt wrong, and no typed call could read it
     back. A value of another kind is `Reason::FieldType`.

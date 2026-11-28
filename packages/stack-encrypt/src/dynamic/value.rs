@@ -202,7 +202,7 @@ use crate::{Ciphertext, ContextPiece, DecryptFrom, KeysetCipher};
 ///
 /// # Errors
 ///
-/// [`Error::Source`], decided here, before any key is requested:
+/// [`Error::Value`], decided here, before any key is requested:
 ///
 /// - [`Reason::Array`], [`Reason::Object`], [`Reason::Passthrough`] or
 ///   [`Reason::Null`] for a value that is not one scalar. A typed null is a
@@ -421,7 +421,7 @@ pub fn decrypt_with_context<'a, 'c, K: 'static>(
 ///
 /// # Errors
 ///
-/// [`Error::Source`] with the reason that names what was found: an array,
+/// [`Error::Value`] with the reason that names what was found: an array,
 /// an object, a null, a passthrough or `undefined`.
 fn one_scalar(value: Frame<'_>) -> Result<(), Error> {
     let found = match value.kind() {
@@ -438,7 +438,7 @@ fn one_scalar(value: Frame<'_>) -> Result<(), Error> {
         // scalar, and it seals as it arrived.
         None => return Ok(()),
     };
-    Err(Error::bad_source(found))
+    Err(Error::bad_value(found))
 }
 
 /// Whether `value` is JavaScript's `undefined`.
@@ -470,7 +470,7 @@ fn seal<'a, K: 'static>(
         }
         // The conversion also refuses a value that is not of the declared
         // kind. A converted value is wiped when it drops.
-        Some(kind) => match convert(kind, value)? {
+        Some(kind) => match convert(kind, value).map_err(of_one_value)? {
             Some(converted) => encrypt_opaque(converted.frame(), keyset, context),
             None => encrypt_opaque(value, keyset, context),
         },
@@ -478,9 +478,18 @@ fn seal<'a, K: 'static>(
     Ok(sealed.try_map(Ciphertext::from_tree))
 }
 
+/// A refusal that the shared conversion made as a record field's, as the
+/// refusal of one value: the same reason, with no field to name.
+fn of_one_value(error: Error) -> Error {
+    match error.reason() {
+        Some(reason) => Error::bad_value(reason),
+        None => error,
+    }
+}
+
 /// The refusal of a value that is not a document under the `json` kind.
 fn not_a_document(error: JsonValueError) -> Error {
-    Error::bad_source(match error {
+    Error::bad_value(match error {
         JsonValueError::NotText => Reason::FieldType,
         JsonValueError::Text(error) => json_reason(error),
     })

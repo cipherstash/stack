@@ -124,8 +124,9 @@ Three cases pin what follows from that:
   refused as `json`.
 
 For a case with `expected_error`, the run-time encrypt refuses the value
-before any key request, with the diagnostic `code` and `reason`. The refusal
-names no field. The cases cover:
+before any key request, with the diagnostic `code` and `reason`. The code of
+every such refusal is `stack_encrypt::dynamic_value`: a single value has its
+own refusal, with no record, plan or field in it. The cases cover:
 
 - an array, an object, a passthrough, a plain null and a typed null, each with
   no declared kind and with one: the reason says what was found (`array`,

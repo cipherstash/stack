@@ -58,7 +58,8 @@ use crate::target::IndexSpec;
 ///
 /// Not every variant has a [`Reason`]. [`Context`](Error::Context),
 /// [`Plan`](Error::Plan), [`Source`](Error::Source),
-/// [`Record`](Error::Record) and [`Predicate`](Error::Predicate) do: it is
+/// [`Record`](Error::Record), [`Predicate`](Error::Predicate) and
+/// [`Value`](Error::Value) do: it is
 /// in the message, in [`reason`](Self::reason) and in the payload
 /// (`reason`). The others carry their own payload fields instead:
 /// [`Term`](Error::Term) names the index it was asked for (`index`),
@@ -140,10 +141,7 @@ pub enum Error {
     /// not carry or carries twice, or a passthrough or a repeated map key
     /// under a field the plan seals, or a value of another type than its
     /// field declares that does not convert to it exactly, or `undefined`
-    /// for a field that declares a type. Also one value that a single
-    /// ciphertext cannot hold ([`value::encrypt`](crate::dynamic::value::encrypt)):
-    /// an array, an object, a passthrough or a null, or a value that is not
-    /// of the kind declared for it. Also a query its field does not answer: an operator
+    /// for a field that declares a type. Also a query its field does not answer: an operator
     /// the field's type does not answer, an input that cannot be read as the
     /// field's type ([`read`](crate::dynamic::read)) or is not the pair a range takes, a page of
     /// values to verify that holds a value of another type, or statistics
@@ -210,6 +208,24 @@ pub enum Error {
         at: usize,
     },
 
+    /// One value cannot be encrypted on its own, as a single ciphertext
+    /// ([`value::encrypt`](crate::dynamic::value::encrypt)). The value is
+    /// an array, an object, a passthrough, a null or `undefined`. Or it is
+    /// not of the kind declared for it. Or, under the `json` kind, its text
+    /// is not a JSON document.
+    ///
+    /// The refusal names no field, because there is no record. It says
+    /// which kind of value was found, and never the value.
+    #[error("the value cannot be encrypted as one ciphertext: {}", value_text(*reason))]
+    #[diagnostic(
+        code(stack_encrypt::dynamic_value),
+        help("One ciphertext holds one value that is present: text, a number, a boolean, bytes, a date, a timestamp, a decimal, a UUID or a JSON document. Encrypt a list one value at a time, and store an absent value as a database NULL.")
+    )]
+    Value {
+        /// What was wrong with the value.
+        reason: Reason,
+    },
+
     /// An invariant this module maintains did not hold — a slot count that
     /// did not line up, a re-proof that should not have been able to fail.
     /// Always a bug here, never a statement about the caller's data.
@@ -242,7 +258,29 @@ fn in_field_text(field: &Option<String>) -> String {
         .unwrap_or_default()
 }
 
+/// What a single-value refusal says for `reason`.
+///
+/// Two reasons have phrases written for a record's field: a value of
+/// another type, and `undefined`. A single value has no field, so each is
+/// reworded here. Every other reason says what was found, and reads the
+/// same for one value.
+fn value_text(reason: Reason) -> String {
+    match reason {
+        Reason::FieldType => {
+            "it is not of the kind declared for it, and does not convert to that kind exactly"
+                .to_owned()
+        }
+        Reason::Undefined => "it is undefined".to_owned(),
+        found => found.to_string(),
+    }
+}
+
 impl Error {
+    /// A single-value refusal.
+    pub(crate) fn bad_value(reason: Reason) -> Self {
+        Self::Value { reason }
+    }
+
     /// A context error with no field named yet.
     pub(crate) fn bad_context(reason: Reason) -> Self {
         Self::Context {
@@ -310,7 +348,7 @@ impl Error {
             Self::UntypedIndex { field } => Some(field),
             #[cfg(feature = "dynamic")]
             Self::Target(_) => None,
-            Self::Internal | Self::Cipher(_) => None,
+            Self::Value { .. } | Self::Internal | Self::Cipher(_) => None,
         }
     }
 
@@ -332,15 +370,16 @@ impl Error {
         }
     }
 
-    /// What was wrong, for a context, plan, source, record or predicate
-    /// error.
+    /// What was wrong, for a context, plan, source, record, predicate or
+    /// single-value error.
     pub fn reason(&self) -> Option<Reason> {
         match self {
             Self::Context { reason, .. }
             | Self::Plan { reason, .. }
             | Self::Source { reason, .. }
             | Self::Record { reason, .. }
-            | Self::Predicate { reason, .. } => Some(*reason),
+            | Self::Predicate { reason, .. }
+            | Self::Value { reason } => Some(*reason),
             #[cfg(feature = "dynamic")]
             Self::Target(_) => None,
             Self::Term { .. } | Self::UntypedIndex { .. } | Self::Internal | Self::Cipher(_) => {

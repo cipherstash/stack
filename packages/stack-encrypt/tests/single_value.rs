@@ -428,17 +428,51 @@ async fn refused(value: &OwnedFrame, kind: Option<ValueKind>) -> dynamic::Error 
     single
 }
 
-fn assert_source_refusal(error: &dynamic::Error, reason: Reason, what: &str) {
+/// A single-value refusal: its own variant and code, the reason, and a
+/// message about one value, with no record, plan or field in it.
+fn assert_value_refusal(error: &dynamic::Error, reason: Reason, what: &str) {
+    use stack_encrypt::ErrorPayload as _;
     assert!(
-        matches!(error, dynamic::Error::Source { field: None, .. }),
-        "{what}: expected a source refusal naming no field, got: {error:?}"
+        matches!(error, dynamic::Error::Value { .. }),
+        "{what}: expected a single-value refusal, got: {error:?}"
     );
     assert_eq!(error.reason(), Some(reason), "{what}: the reason");
+    assert_eq!(error.field(), None, "{what}: one value names no field");
     assert_eq!(
         error.code().map(|code| code.to_string()).as_deref(),
-        Some("stack_encrypt::dynamic_source"),
+        Some("stack_encrypt::dynamic_value"),
         "{what}: the diagnostic code"
     );
+    assert_eq!(
+        error
+            .payload()
+            .get("reason")
+            .and_then(|value| value.as_str()),
+        Some(reason.as_str()),
+        "{what}: the payload carries the reason"
+    );
+    // Two reasons have phrases written for a record's field. One value has
+    // no field, so its refusal words them for a value.
+    let found = match reason {
+        Reason::FieldType => {
+            "it is not of the kind declared for it, and does not convert to that kind exactly"
+                .to_owned()
+        }
+        Reason::Undefined => "it is undefined".to_owned(),
+        found => found.to_string(),
+    };
+    let message = error.to_string();
+    assert_eq!(
+        message,
+        format!("the value cannot be encrypted as one ciphertext: {found}"),
+        "{what}: the message is about one value"
+    );
+    for word in ["field", "record", "plan"] {
+        assert!(
+            !message.contains(word),
+            "{what}: the message speaks of a {word}, and one value has none: {message}"
+        );
+    }
 }
 
 mod encrypt_refuses_before_any_key_request {
@@ -469,7 +503,7 @@ mod encrypt_refuses_before_any_key_request {
                 Some(ValueKind::Json),
             ] {
                 let error = refused(value, kind).await;
-                assert_source_refusal(&error, *reason, &format!("{what} under {kind:?}"));
+                assert_value_refusal(&error, *reason, &format!("{what} under {kind:?}"));
             }
         }
     }
@@ -487,7 +521,7 @@ mod encrypt_refuses_before_any_key_request {
             Some(ValueKind::Array),
         ] {
             let error = refused(&undefined(), kind).await;
-            assert_source_refusal(
+            assert_value_refusal(
                 &error,
                 Reason::Undefined,
                 &format!("undefined under {kind:?}"),
@@ -510,7 +544,7 @@ mod encrypt_refuses_before_any_key_request {
         ];
         for (what, value, kind) in &cases {
             let error = refused(value, Some(*kind)).await;
-            assert_source_refusal(&error, Reason::FieldType, what);
+            assert_value_refusal(&error, Reason::FieldType, what);
         }
     }
 
@@ -532,7 +566,7 @@ mod encrypt_refuses_before_any_key_request {
         for (what, text, reason) in cases {
             for crossing in [frame(text), frame(text.as_bytes().to_vec())] {
                 let error = refused(&crossing, Some(ValueKind::Json)).await;
-                assert_source_refusal(&error, reason, what);
+                assert_value_refusal(&error, reason, what);
             }
         }
     }
@@ -612,7 +646,7 @@ mod encrypt_with_no_declared_kind {
     async fn refuses_an_unknown_logical_type_under_a_declared_kind() {
         for kind in [ValueKind::Int32, ValueKind::Date, ValueKind::Json] {
             let error = refused(&unknown_logical(), Some(kind)).await;
-            assert_source_refusal(
+            assert_value_refusal(
                 &error,
                 Reason::FieldType,
                 &format!("an unknown logical type as {kind}"),
@@ -830,7 +864,7 @@ mod many_values_merged_with_pending_all {
             Err(error) => error,
             Ok(_) => panic!("a batch holding a null was taken"),
         };
-        assert_source_refusal(&error, Reason::Null, "the first refused value");
+        assert_value_refusal(&error, Reason::Null, "the first refused value");
         assert_eq!(
             generates.load(Ordering::SeqCst),
             0,
