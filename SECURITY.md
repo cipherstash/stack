@@ -41,18 +41,20 @@ by `.github/workflows/release-golang.yml` as `languages/golang/vX.Y.Z` and
 `languages/golang/encrypt/encrypttest/vX.Y.Z` tags. All of these are in scope
 for security reports on the same terms as the npm packages above.
 
-It also carries the source of three Rust crates moved from
-`cipherstash/vitaminc`: **`vitaminc-aead`**, **`recipher-frame`** and
-**`vitaminc-aead-derive`** (`packages/vitaminc-aead`,
-`packages/recipher-frame`, `packages/vitaminc-aead-derive`). They define
-the value types Stack Encrypt seals, how each is encoded, and how a value is
-sealed. Their crates.io releases up to 0.10.0 were published from
+It also contains the source of two Rust crates moved from
+`cipherstash/vitaminc`: **`vitaminc-aead`** and **`recipher-frame`**
+(`packages/vitaminc-aead`, `packages/recipher-frame`). They define the value
+types Stack Encrypt seals, how each is encoded, and how a value is sealed.
+Their crates.io releases up to 0.10.0 were published from
 `cipherstash/vitaminc`, the frame crate's under its old name
 `vitaminc-aead-frame`, and they are not published from this repository yet.
 Every build that uses `vitaminc-aead` 0.10 uses the copies here; the 0.5.1
-and 0.2.0-pre that some builds still reach come from crates.io. The three
+and 0.2.0-pre that some builds still reach come from crates.io. The two
 crates are licensed under MIT, and are in scope for security reports on the
-same terms as the npm packages above.
+same terms as the npm packages above. A third crate moved with them,
+`vitaminc-aead-derive`, is no longer in this repository: its derives are
+now `stack-encrypt-derive`'s `Encrypt` and `Decrypt`. Its crates.io
+releases up to 0.10.0 were published from `cipherstash/vitaminc`.
 
 The `encrypttest` module ships test builds of the
 engine whose keys derive from a published seed. Those keys are not secret by
