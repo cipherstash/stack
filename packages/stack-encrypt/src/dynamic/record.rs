@@ -238,9 +238,11 @@ pub enum NullMode {
     /// opens as a null. An equality index stores a null's term beside it,
     /// the one term every null of the field shares, so an `eq` query of a
     /// null finds the absent rows; no other index has a term for a null.
-    /// Only for a field of a declared type of fixed width (a boolean, a
-    /// number, a date, a timestamp, a decimal or a UUID) whose indexes are
-    /// equality alone; a target field takes it when its EQL type's are.
+    /// A field can use this mode only when it declares a type of fixed
+    /// width. Those types are a boolean, a number, a date, a timestamp, a
+    /// decimal, and a UUID. Equality must also be the only index of the
+    /// field. For a target field, equality must be the only index of its
+    /// EQL type.
     Sealed,
     /// `"sql"`: a null, or a row with no entry for the field, produces
     /// nothing: the stored record has no entry for the field, so the host
@@ -1242,10 +1244,10 @@ pub fn plan(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Plan, E
 /// have the field, and a typed field refuses a null. `"sealed"` seals a
 /// null as a typed null as long as a value, so the stored record does not
 /// show it, and beside an equality index stores a null's equality term, the
-/// one every null of the field shares, which an `eq` query of a null finds;
-/// the field must declare a type of fixed width (a bool, a number, a date, a
-/// timestamp, a decimal or a UUID) and have no index but equality, on the field or,
-/// for a target field, on its EQL type. `"sql"` stores nothing for a null
+/// one every null of the field shares, which an `eq` query of a null finds.
+/// The field must declare a type of fixed width: a bool, a number, a date, a
+/// timestamp, a decimal, or a UUID. Equality must be the only index of the
+/// field, or of a target field's EQL type. `"sql"` stores nothing for a null
 /// or a missing field, so the host's columns hold SQL `NULL`; any field but
 /// a passthrough takes it.
 ///
@@ -1579,7 +1581,8 @@ fn plan_refusal(error: &recipher_frame::serde::Error, frame: &[u8]) -> Error {
         _ => None,
     };
     let Some(field) = field else {
-        // The root: not one frame, or a frame that is not an object.
+        // The error is at the root of the plan. Either the bytes are not
+        // one frame, or the frame is not an object.
         return match Frame::parse(frame) {
             Err(_) => Error::bad_plan(Reason::NotAFrame),
             Ok(root) => Error::Plan {
@@ -1608,13 +1611,19 @@ fn plan_refusal(error: &recipher_frame::serde::Error, frame: &[u8]) -> Error {
         // key an error inside a spec's value is placed under (an unknown
         // key is never on the path).
         Some(_) => Reason::UnknownType,
-        // The spec itself: not an object at all, a key it does not know, or
-        // a missing context. Read from the spec's kind and its own keys, not
-        // the error's wording, so a reworded message cannot change the
-        // reason. An object of known keys refused at its own level lacks
-        // its context: a value under a key is refused under that key, a
-        // frame never holds a repeated key, and the outputs-or-target rule
-        // is checked after parsing.
+        // The error is at the field spec itself. There are three possible
+        // causes: the spec is not an object, the spec has a key that a spec
+        // does not take, or the spec has no context. The code decides
+        // between them from the kind of the spec and from its keys. The
+        // code does not read the text of the error, so a change to that
+        // text cannot change the reason.
+        //
+        // An object with only known keys must lack its context, because
+        // nothing else fails at this level:
+        // - An error in the value under a key is reported under that key.
+        // - A frame never contains a repeated key.
+        // - The rule that a spec has outputs or a target is checked after
+        //   parsing.
         None => match Frame::parse(frame)
             .ok()
             .and_then(|root| Found::of_entry(root, field))
@@ -2186,16 +2195,30 @@ pub(super) fn source_rows(source: impl Encrypt, plan: &Plan) -> Result<Rows<Row>
     }
 }
 
-/// A value refused while the source was split, as the source error that
-/// names its field and the row of a batch it is in: a repeated key as
-/// [`Reason::RepeatedKey`], a scalar its logical type does not admit as
-/// [`Reason::FieldType`], and anything else (too deep or too long for a
-/// frame, or a value the source never wrote) as [`Reason::Unframeable`].
-/// A refusal that names no field (a row the source left unwritten, or a
-/// writer's refusal the source kept and returned after the field ended)
-/// cannot say whose value it was, so it is [`Reason::Unframeable`] with the
-/// row. A failure of the source's own is [`Error::SourceFailed`], with the
-/// field and the row it was reading and its error as the cause.
+/// Converts the error from [`split_source`] into the [`Error`] that the
+/// caller gets. The result keeps the field and the row that the split
+/// names.
+///
+/// An error that the source returned becomes [`Error::SourceFailed`], with
+/// the source's error as its cause.
+///
+/// An error from the frame writer becomes [`Error::Source`]. When the
+/// split names a field, the reason is:
+///
+/// - [`Reason::RepeatedKey`] for a map that repeats a key.
+/// - [`Reason::FieldType`] for a scalar that its logical type does not
+///   allow.
+/// - [`Reason::Unframeable`] for anything else. Examples are a value that
+///   is nested too deep or is too long for a frame, and a value that the
+///   source never wrote.
+///
+/// When the split names no field, the reason is always
+/// [`Reason::Unframeable`], with the row, because the error cannot name
+/// the value at fault. That happens in two cases:
+///
+/// - The source started a row and never wrote it.
+/// - The source kept an error from the frame writer and returned it after
+///   the field ended.
 fn split_refusal(SplitRefusal { row, field, error }: SplitRefusal) -> Error {
     let error = match error {
         FrameWriteError::Source(cause) => return Error::SourceFailed { field, row, cause },
@@ -2484,9 +2507,9 @@ pub(super) fn open_record(
         // opens as a plain null, as every frame carries one.
         let null = field.null.is_some() && value.frame().is_null();
         if let Some(kind) = field.kind.filter(|_| !null) {
-            // The error names the declared type and never what the value
-            // opened as: that is known only once it is decrypted, and is
-            // the plaintext's own metadata.
+            // The error names the type that the field declares. The error
+            // never names the kind that the value decrypted to. That kind
+            // was inside the ciphertext, so it is part of the plaintext.
             if !kind.holds(value.frame().kind()) {
                 return Err(crate::PlanError::FieldType {
                     field: field.name.clone(),
@@ -2573,8 +2596,8 @@ pub(super) fn record_rows(tree: StackCipherText, plan: &Plan) -> Result<Rows<Sto
     }
 }
 
-/// What a stored node that is not a map of fields is, for the error that
-/// refuses it.
+/// The kind of a stored node, for the error about a node that is not a map
+/// of fields.
 fn stored_kind(tree: &StackCipherText) -> Found {
     match tree {
         CipherText::Sequence(_) => Found::Kind(ValueKind::Array),
@@ -6149,11 +6172,12 @@ mod tests {
             );
         }
 
-        /// A field declared as an object that opens as a list, a single
-        /// value or a null is refused naming the field and the declared type,
-        /// and never what it opened as: the kind of a value is known only
-        /// once it is decrypted, so it is the plaintext's own metadata. The
-        /// payload has no `found`, and the message names no kind.
+        /// A field is declared as an object, and its stored value decrypts
+        /// to a list, a scalar, or a null. The error names the field and the
+        /// declared type. The error never names the kind that the value
+        /// decrypted to. That kind was inside the ciphertext, so it is part
+        /// of the plaintext. The payload has no `found`, and the message
+        /// names no kind.
         #[tokio::test]
         async fn decrypt_never_says_what_a_field_opened_as() {
             use crate::ErrorPayload;
@@ -8820,9 +8844,10 @@ mod tests {
             }
         }
 
-        /// A refusal of a value that is not the object the operation takes:
-        /// the variant, the field, the row of a batch and what was found, in
-        /// the accessors, the payload and the message.
+        /// Checks an error about a value that is not the object that the
+        /// operation takes. The checks cover the variant, the field, the row
+        /// of a batch and the kind of the value. The row and the kind are
+        /// checked in the accessors, the payload, and the message.
         fn expect_shape(
             error: &Error,
             variant: &str,
@@ -8857,9 +8882,9 @@ mod tests {
             }
         }
 
-        /// Bytes that are not one frame are not a plan: empty, cut short,
-        /// JSON text, or a frame whose spec repeats a key, which no frame
-        /// holds.
+        /// Bytes that are not one frame are not a plan. The cases are empty
+        /// bytes, bytes that are cut short, JSON text, and bytes whose field
+        /// spec repeats a key. A frame never contains a repeated key.
         #[test]
         fn bytes_that_are_not_a_frame_are_not_a_plan() {
             let mut repeated = vec![vitaminc_aead::frame::OBJECT, 1, 0, 0, 0];
@@ -8889,8 +8914,8 @@ mod tests {
             }
         }
 
-        /// A plan, or a field's spec, that is a frame but not an object
-        /// says what it is instead.
+        /// When a plan or a field spec is a frame and not an object, the
+        /// error names the kind of value that it is.
         #[test]
         fn a_plan_or_spec_that_is_not_an_object_says_what_it_is() {
             for (value, found) in [
@@ -8920,7 +8945,7 @@ mod tests {
                     "the message"
                 );
             }
-            // A spec that is a typed null is a null too.
+            // A field spec that is a typed null is reported as a null too.
             let ty = vitaminc_aead::plaintext::FixedType::new(
                 Some(vitaminc_aead::plaintext::Logical::Date),
                 vitaminc_aead::plaintext::Width::I32,
@@ -8934,9 +8959,10 @@ mod tests {
                 super::super::plan(Protected::new(typed_null).as_protected_ref().as_deref())
                     .expect_err("a typed null spec");
             expect_shape(&error, "Plan", Some("age"), None, Found::Null);
-            // A spec that is an object of keys the spec does not take is not
-            // refused as not an object, even where the frame holds a
-            // passthrough the reader does not read.
+            // A field spec can be an object with a key that a spec does not
+            // take. The reason is then the one for an unknown key, and not
+            // `NotAnObject`. That is so even when the frame contains a
+            // passthrough. The frame reader does not read a passthrough.
             let error = plan(obj(vec![(
                 "age",
                 obj(vec![
@@ -9111,10 +9137,12 @@ mod tests {
             check_source(Tree::Object(distinct), &plan).expect("distinct keys in a passthrough");
         }
 
-        /// A refusal from the split names its field, by its cause. One that
-        /// names no field (a row left unwritten, or a source that kept a
-        /// writer's refusal and returned it after the field) is the
-        /// caller's input too: `unframeable`, with the row.
+        /// An error from the split that names a field gets its reason from
+        /// its cause. An error that names no field is also an error in the
+        /// caller's input, with the reason `unframeable` and the row. There
+        /// are two causes. The source left a row unwritten. Or the source
+        /// kept an error from the frame writer and returned it after the
+        /// field ended.
         #[test]
         fn a_split_refusal_names_its_field_and_cause() {
             let refusal = |field: Option<&str>, error| {
@@ -9147,8 +9175,8 @@ mod tests {
             for error in [FrameWriteError::TooDeep, FrameWriteError::Unwritten] {
                 expect(&fault(error), "Source", Some("age"), Reason::Unframeable);
             }
-            // A refusal in a row of a batch names the row, in the payload
-            // and the message.
+            // An error in a row of a batch names the row, in the payload
+            // and in the message.
             let error = in_row(3, FrameWriteError::DuplicateKey);
             expect(&error, "Source", Some("age"), Reason::RepeatedKey);
             assert_eq!(error.row(), Some(3), "the row: {error}");
@@ -9157,8 +9185,9 @@ mod tests {
                 error.to_string().ends_with(r#" (row 3, field "age")"#),
                 "the message names the row: {error}"
             );
-            // A row the source left unwritten names no field, and is still
-            // the caller's input, not this module's bug.
+            // An error for a row that the source left unwritten names no
+            // field. The error is still about the caller's input. The error
+            // is not a bug in this module.
             let unwritten = split_refusal(SplitRefusal {
                 row: Some(1),
                 field: None,
@@ -9179,14 +9208,16 @@ mod tests {
             }
         }
 
-        /// A source that fails as it is read is refused as
-        /// [`Error::SourceFailed`], naming the field and the row it was
-        /// reading, with its own error as the cause and not in the message.
+        /// When a source returns an error of its own, the caller gets
+        /// [`Error::SourceFailed`]. The error names the field and the row
+        /// that the engine was reading. The source's error is the cause.
+        /// The message leaves the cause out.
         #[test]
         fn a_source_that_fails_names_its_field_and_row_and_keeps_its_cause() {
             use vitaminc_aead::plaintext::SourceError;
             const SECRET: &str = "the getter saw marker-value";
-            /// A batch of two records whose second fails in its `email`.
+            /// A batch of two records. The source returns an error inside
+            /// `email` in the second record.
             struct Fails;
             impl Encrypt for &Fails {
                 fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
@@ -9228,8 +9259,9 @@ mod tests {
             );
             let shown = format!("{message} {fields:?}");
             assert!(!shown.contains("marker-value"), "no cause text: {shown}");
-            // `Debug`, plain and pretty, shows the field and the row and
-            // not the cause's text: a log line or a panic does not leak it.
+            // The plain form and the pretty form of `Debug` both print the
+            // field and the row. Neither form prints the text of the cause.
+            // So a log line or a panic message does not leak that text.
             for debug in [format!("{error:?}"), format!("{error:#?}")] {
                 assert!(
                     !debug.contains("marker-value"),
@@ -9510,9 +9542,11 @@ mod tests {
             }
         }
 
-        /// A refusal only a query's input meets says so; one a record source
-        /// meets, or a value of another type in either, says it is the
-        /// record source that does not fit.
+        /// When only the input of a query can cause the reason, the message
+        /// says that the query input does not fit the field. For a reason
+        /// that a record source can cause, the message says that the record
+        /// source does not fit the plan. That includes a value of another
+        /// type. A query and a record can both cause that reason.
         #[test]
         fn a_query_refusal_names_the_query_input() {
             use Reason::*;
