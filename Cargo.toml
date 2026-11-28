@@ -2,7 +2,7 @@
 resolver = "2"
 
 # The stack-* crates imported from cipherstash-suite, the three node bindings
-# that wrap them, and the three AEAD crates moved from cipherstash/vitaminc.
+# that wrap them, and the two AEAD crates moved from cipherstash/vitaminc.
 # The root is one of three Cargo workspaces in this repository: EQL and
 # protect-ffi keep their own (see `exclude`). EQL patches vitaminc-aead to the
 # copies here, as this workspace does; protect-ffi resolves no vitaminc-aead

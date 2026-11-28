@@ -814,7 +814,7 @@ which the plan schedules before the next `stack-encrypt` release.
   bundle built from the tree — `mise run go:test:postgres` locally, which also
   runs the Rust and Go EQL/JSON conformance lane and so needs `psql` and the
   `MISE_ENV=test` cargo tools — and the live tests), `crap-crates.yml`,
-  `mutants.yml`, `fuzz.yml`, `miri.yml`, `udeps.yml`, and for the three
+  `mutants.yml`, `fuzz.yml`, `miri.yml`, `udeps.yml`, and for the two
   AEAD crates `kani.yml`, `supply-chain-vitaminc-aead.yml` and
   `storage-corpus.yml`.
   `scripts/__tests__/crates-ci.test.mjs` fails when a mise task in the root
@@ -875,7 +875,7 @@ transport's response reclaim). Its hostile-input behaviour is pinned from the
 Go side (`mise run go:test`). Keep new pointer handling in
 `stack-guest-abi`, where Miri reaches it, not in a guest.
 
-Miri and the sanitizers do not run on the AEAD crates. All three
+Miri and the sanitizers do not run on the AEAD crates. Both
 `#![deny(unsafe_code)]`, and vitaminc ran neither on them: it ran both on
 `vitaminc-protected`, which has the `unsafe` and stays in vitaminc. A crate
 that adds `unsafe` needs both.
