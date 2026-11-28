@@ -32,6 +32,10 @@
 //! * [`frame::OwnedFrame`] — the engine's plaintext for a value whose type
 //!   is known only at run time: vitaminc's, re-exported with the rest of the
 //!   frame.
+//! * [`value`] — one value as one [`Ciphertext`](crate::Ciphertext), and
+//!   back: what [`KeysetCipher::encrypt`](crate::KeysetCipher::encrypt) and
+//!   [`KeysetCipher::decrypt`](crate::KeysetCipher::decrypt) do for a value
+//!   of a Rust type, for a value in a frame.
 //! * [`term`](term()) — one index term for a value, derived at the one
 //!   scalar it is walked to.
 //! * [`record`] — a record's declaration as data, *lowered* into the
@@ -59,10 +63,11 @@
 //!
 //! # What is not here
 //!
-//! Encrypting a whole value is not: an [`OwnedFrame`](frame::OwnedFrame),
-//! like any source,
+//! Encrypting a whole value as a tree of leaves is not: an
+//! [`OwnedFrame`](frame::OwnedFrame), like any source,
 //! implements `Encrypt` already, so `keyset.encrypt_tree(value, aad)` is the whole
-//! of it and needs nothing from this module. Nor is a second executor: nothing here calls
+//! of it and needs nothing from this module. ([`value`] encrypts one scalar
+//! as one opaque ciphertext, which is a different stored form.) Nor is a second executor: nothing here calls
 //! the term functions or the seal path to produce a record. A capability a
 //! data plan needs and the combinators lack is added to the combinators,
 //! once.
@@ -112,6 +117,7 @@ mod target;
 mod term;
 #[cfg(test)]
 mod test_frame;
+pub mod value;
 
 /// The document a `json` field's value holds, as [`read_json`] returns it:
 /// [`crate::json::JsonPlaintext`], named here for a binding that reaches

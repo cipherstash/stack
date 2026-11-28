@@ -140,7 +140,10 @@ pub enum Error {
     /// not carry or carries twice, or a passthrough or a repeated map key
     /// under a field the plan seals, or a value of another type than its
     /// field declares that does not convert to it exactly, or `undefined`
-    /// for a field that declares a type. Also a query its field does not answer: an operator
+    /// for a field that declares a type. Also one value that a single
+    /// ciphertext cannot hold ([`value::encrypt`](crate::dynamic::value::encrypt)):
+    /// an array, an object, a passthrough or a null, or a value that is not
+    /// of the kind declared for it. Also a query its field does not answer: an operator
     /// the field's type does not answer, an input that cannot be read as the
     /// field's type ([`read`](crate::dynamic::read)) or is not the pair a range takes, a page of
     /// values to verify that holds a value of another type, or statistics
@@ -531,6 +534,15 @@ reasons! {
         /// A passthrough value cannot be stored as a frame: it nests deeper,
         /// or holds text, bytes or a key longer, than a frame carries.
         Unframeable => "unframeable", "a passthrough value nests deeper, or holds a longer value, than a frame carries";
+        /// An array sits where one value must be: a single ciphertext holds
+        /// one scalar ([`value::encrypt`](crate::dynamic::value::encrypt)).
+        Array => "array", "an array where one value must be";
+        /// An object sits where one value must be: a single ciphertext
+        /// holds one scalar.
+        Object => "object", "an object where one value must be";
+        /// A null, plain or typed, sits where one value must be: a single
+        /// ciphertext holds a value that is present.
+        Null => "null", "a null where one value must be";
         /// A stored field is not a map of outputs.
         OutputsNotMap => "outputs_not_map", "a stored field is not a map of outputs";
         /// A stored sealed field has no `"c"` node.

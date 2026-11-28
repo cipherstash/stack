@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Encrypt and decrypt one value whose type is known only at run time**
+  (#2009). `dynamic::value` does for a value in a frame what
+  `keyset.encrypt` and `keyset.decrypt` do for a value of a Rust type. A
+  language SDK holds a value as a frame, and knows the value's kind only
+  when the code runs.
+  - `dynamic::value::encrypt(&keyset, frame, kind)` takes a borrowed
+    `Frame` and an optional declared `ValueKind`. It returns the
+    `Ciphertext` that `keyset.encrypt` returns for the same value: the same
+    leaf, under the same key request and the same context. So
+    `keyset.decrypt::<T>` opens it, and each language opens what another
+    wrote.
+  - `dynamic::value::decrypt(cipher, ciphertext, kind)` opens a ciphertext
+    into an `OwnedFrame` that holds one scalar. Pass `&keyset` to open only
+    that keyset's ciphertexts, or `&cipher` to open a ciphertext of any
+    keyset.
+  - Each has a form with a context (`encrypt_with_context`,
+    `decrypt_with_context`) and a form for many values that makes one key
+    request (`encrypt_all`, `decrypt_all`, and the two `_all_with_context`
+    forms).
+  - On encrypt, a declared kind converts a number of another width or kind
+    when the conversion is exact, by the rules a record's typed field uses.
+    With no declared kind, the scalar is sealed as it arrived.
+  - On decrypt, a declared kind is the kind the value must open as.
+    Nothing is converted. A value of another kind is `Error::OpenedType`,
+    which names the kind that was expected and never says what the value
+    opened as.
+  - The kind `json` takes a document as its JSON text, in a text leaf or a
+    bytes leaf. The engine checks the text and seals the document as
+    `JsonPlaintext` is sealed. On decrypt, `json` returns the document's
+    text in a bytes leaf, as a record's `json` field opens.
+  - A ciphertext holds one scalar. `encrypt` refuses an array, an object, a
+    passthrough and a null, plain or typed, before any key is requested.
+    The refusal is `dynamic::Error::Source` with one of three new reasons,
+    `Reason::Array`, `Reason::Object` and `Reason::Null`, or with
+    `Reason::Passthrough`. `undefined` under a declared kind is
+    `Reason::Undefined`, and a value of another kind is
+    `Reason::FieldType`.
+  - Two ciphertexts of one value never have the same bytes, because each
+    sealed leaf has a random nonce. The two interfaces agree on every
+    other part: the keyset, the data key, the length, and the plaintext of
+    the leaf. `tests/single_value.rs` holds them to that for every kind.
+
 - **Encrypt a UUID as a UUID** (#1833). `value::Uuid` is vitaminc's
   wipeable UUID, built from the uuid crate's `Uuid` with `Uuid::new`. It
   seals as one leaf, and an `Option<Uuid>`'s `None` seals as a null as long
