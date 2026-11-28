@@ -68,6 +68,12 @@ includes the optional `stack-encrypt` feature of the MIT-licensed
 `eql-bindings` crate, which depends on `stack-encrypt` and so is usable only
 under the same terms.
 
+The `stack-encrypt-downstream` Rust crate
+(`packages/stack-encrypt-downstream`) is an unpublished test crate. It
+depends on `stack-encrypt` alone, as an application does, and its tests
+check that such a crate can derive and implement `Encrypt` and `Decrypt`.
+It adds no published package or production service.
+
 The `eql-encryption-tests` Rust crate (`packages/eql/tests/encryption`) is
 an unpublished test harness for these bindings. It uses real encryption with
 a fake key source, executes the Rustdoc text encryption example, and provides
