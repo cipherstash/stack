@@ -37,7 +37,7 @@ func TestGeneratedCodeStoresQueriesAndReadsAUUID(t *testing.T) {
 		// A nil owner is sealed in the same way as a value. A nil parent
 		// stores nothing.
 		if len(e.Owner.Ciphertext) == 0 || len(e.Owner.Equality) == 0 {
-			t.Errorf("row %d: the owner is not sealed", i)
+			t.Errorf("row %d: the owner has no ciphertext or no equality term", i)
 		}
 		if (e.Parent == nil) != (devices[i].Parent == nil) {
 			t.Errorf("row %d: parent stored %v for %v", i, e.Parent, devices[i].Parent)
@@ -46,10 +46,10 @@ func TestGeneratedCodeStoresQueriesAndReadsAUUID(t *testing.T) {
 
 	// Equal UUIDs give equal terms. Different UUIDs give different terms.
 	if !encrypted[0].ID.Equality.Equal(encrypted[2].ID.Equality) || encrypted[0].ID.Equality.Equal(encrypted[1].ID.Equality) {
-		t.Error("the id's equality terms do not follow the UUID")
+		t.Error("the id's equality terms are not equal for equal UUIDs and different for different UUIDs")
 	}
 	if !encrypted[0].Serial.Equality.Equal(encrypted[2].Serial.Equality) || encrypted[0].Serial.Equality.Equal(encrypted[1].Serial.Equality) {
-		t.Error("the serial's equality terms do not follow the UUID")
+		t.Error("the serial's equality terms are not equal for equal UUIDs and different for different UUIDs")
 	}
 
 	// A query by equality finds the rows that contain the UUID, and no other
@@ -60,28 +60,28 @@ func TestGeneratedCodeStoresQueriesAndReadsAUUID(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !probe.Equal(encrypted[0].ID.Equality) || !probe.Equal(encrypted[2].ID.Equality) || probe.Equal(encrypted[1].ID.Equality) {
-		t.Error("the id query does not single out its rows")
+		t.Error("the id query does not match only its rows")
 	}
 	serial, err := fields.Serial.Eq(ctx, cipher, devices[1].Serial)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !serial.Equal(encrypted[1].Serial.Equality) || serial.Equal(encrypted[0].Serial.Equality) {
-		t.Error("the serial query does not single out its row")
+		t.Error("the serial query does not match only its row")
 	}
 	byOwner, err := fields.Owner.Eq(ctx, cipher, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !byOwner.Equal(encrypted[0].Owner.Equality) || !byOwner.Equal(encrypted[2].Owner.Equality) || byOwner.Equal(encrypted[1].Owner.Equality) {
-		t.Error("the owner query does not single out its rows")
+		t.Error("the owner query does not match only its rows")
 	}
 	noOwner, err := fields.Owner.EqNull(ctx, cipher)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !noOwner.Equal(encrypted[1].Owner.Equality) || noOwner.Equal(encrypted[0].Owner.Equality) {
-		t.Error("the query for a nil owner does not single out its row")
+		t.Error("the query for a nil owner does not match only its row")
 	}
 
 	// A field's own Encrypt derives the term the record stored.
@@ -90,7 +90,7 @@ func TestGeneratedCodeStoresQueriesAndReadsAUUID(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !one.Equality.Equal(encrypted[1].ID.Equality) {
-		t.Error("a field's own Encrypt derives another term than the record's")
+		t.Error("a field's own Encrypt derives a different term from the one the record stored")
 	}
 
 	// Each UUID reads back as the field's own type.

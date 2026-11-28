@@ -31,9 +31,9 @@ var knownUUIDs = map[[2]string]bool{
 	{vcvaluePath, "UUID"}:              true,
 }
 
-// uuidTypes lists the types a UUID field can have. The generator's refusal
-// messages start with it.
-const uuidTypes = "a UUID field is [16]byte, a type whose declaration is an array of 16 bytes (type ID [16]byte), github.com/google/uuid.UUID or vcvalue.UUID"
+// uuidTypes is the sentence that lists the UUID types. The generator's
+// refusal of a type declared over another type contains it.
+const uuidTypes = "A UUID type is [16]byte, github.com/google/uuid.UUID, vcvalue.UUID, or a type declared as an array of 16 bytes, such as type ID [16]byte"
 
 // uuidVerdict is the generator's decision on whether a type is a UUID. When
 // the type is not a UUID, the verdict gives the reason. [reader.uuidVerdict]

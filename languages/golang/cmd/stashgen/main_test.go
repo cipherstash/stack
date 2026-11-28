@@ -431,7 +431,7 @@ func TestRunGeneratesTypedJSONDocuments(t *testing.T) {
 		{"a pointer to a pointer", "\tProfile **Profile `stash:\"profile,encrypt_into=JsonSearch,null=sql\"`", "a pointer to a pointer"},
 		{"a nil document that does not say null=sql", "\tPrefs *Prefs `stash:\"prefs,encrypt_into=JsonSearch\"`", "null=sql"},
 		{"a sealed null", "\tPrefs *Prefs `stash:\"prefs,encrypt_into=JsonSearch,null=sealed\"`", "Customer.Prefs"},
-		{"a struct sealed another way", "\tProfile Profile `stash:\"profile,encrypt\"`", "a sealed field is one scalar"},
+		{"a struct sealed another way", "\tProfile Profile `stash:\"profile,encrypt\"`", "a sealed field must be one scalar"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			written, stderr, code := generate(c.fields)

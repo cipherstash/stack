@@ -812,14 +812,14 @@ func (r *reader) buildFields(c *collected) error {
 				// [16]byte. The refusal gives the reason.
 				switch r.uuidVerdict(sixteen) {
 				case declaredOver:
-					return fieldErr(typeName, cf.goName, "%s; %s is declared over another type (as type Balance encrypt.Int128 is), so it is not a UUID, and seals only as part of an opaque struct", uuidTypes, r.typeExpr(sixteen))
+					return fieldErr(typeName, cf.goName, "%[1]s is declared over another type, so it is not a UUID type. %[2]s. Declare %[1]s as [16]byte for a UUID, use encrypt.Int128 or encrypt.Uint128 for an integer, or put the field in an opaque struct", r.typeExpr(sixteen), uuidTypes)
 				case unreadDeclaration:
-					return fieldErr(typeName, cf.goName, "%s; stashgen could not read the declaration of %s, so it cannot tell whether it is a UUID. Its package's source files could not be loaded or parsed (a module missing from the module cache, or a vendor directory without it), or the type is not declared at package level", uuidTypes, r.typeExpr(sixteen))
+					return fieldErr(typeName, cf.goName, "stashgen could not read the declaration of %s, so it cannot decide whether the type is a UUID. Either the source files of the type's package could not be loaded or parsed, or the type is not declared at package level. A package's source cannot be loaded when its module is not in the module cache, or when a vendor directory does not contain the package", r.typeExpr(sixteen))
 				}
 			}
 			// The engine seals a composite as a tree of leaves, and a column
 			// holds one leaf; only an opaque struct seals a whole value.
-			return fieldErr(typeName, cf.goName, "a sealed field is one scalar (a string, number, bool, []byte, time.Time, encrypt.Date, encrypt.Decimal, encrypt.Int128, encrypt.Uint128 or a UUID, or a type defined over a string, number, bool or []byte); a %s seals only as part of an opaque struct, or as a JSON document with encrypt_into=JsonSearch or encrypt_into=Json", g.typeExpr)
+			return fieldErr(typeName, cf.goName, "a sealed field must be one scalar. A scalar is a string, number, bool, []byte, time.Time, encrypt.Date, encrypt.Decimal, encrypt.Int128, encrypt.Uint128, UUID, or a type defined over a string, number, bool, or []byte. A %s can be encrypted only inside an opaque struct, or as a JSON document with encrypt_into=JsonSearch or encrypt_into=Json", g.typeExpr)
 		}
 		switch field.Verb {
 		case VerbPassthrough, VerbContextField:
