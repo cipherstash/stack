@@ -203,14 +203,15 @@ pub(crate) mod sealed {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be encrypted into one `Ciphertext`",
     label = "this must be one owned value that can be wiped",
-    note = "to be encrypted into one `Ciphertext`, a type must meet three conditions.",
-    note = "first, its value must be one scalar, such as a `String`, a `bool`, a float, a \
-            `Vec<u8>`, or a fixed-width integer other than `u8`. A newtype that derives \
-            `Encrypt` over a scalar is a scalar too.",
+    note = "to be encrypted into one `Ciphertext`, a value must meet three conditions.",
+    note = "first, the value must be one scalar or an `OpaqueBlob<T>`. A scalar is a value such \
+            as a `String`, a `bool`, a float, a `Vec<u8>`, or a fixed-width integer other than \
+            `u8`. A newtype that derives `Encrypt` over a scalar is a scalar too.",
     note = "second, the value must be owned. A borrow, such as a `&str`, is not owned.",
     note = "third, the type must implement `Zeroize`, so that the value can be wiped after it \
-            is encrypted.",
-    note = "a value that is not one scalar needs another call. `EncryptInto` encrypts each \
+            is encrypted. For an `OpaqueBlob<T>`, `T` must implement `Zeroize` and \
+            `Serialize`.",
+    note = "these calls encrypt a value that is not one scalar. `EncryptInto` encrypts each \
             element of a `Vec` into its own `Ciphertext`. `keyset.encrypt_tree` encrypts an \
             `Option` or a struct into a tree of ciphertexts. `OpaqueBlob` encrypts a whole \
             `Serialize` value into one `Ciphertext`."
