@@ -1,0 +1,17 @@
+error[E0277]: the trait bound `Vec<std::string::String>: ScalarTarget` is not satisfied
+  --> tests/ui/scalar_target/vec_needs_a_sequence.rs:11:22
+   |
+11 |     opens_one_leaf::<Vec<String>>();
+   |                      ^^^^^^^^^^^ the trait `FromScalar` is not implemented for `Vec<std::string::String>`
+   |
+help: the trait `FromScalar` is implemented for `Vec<u8>`
+  --> src/typed.rs
+   |
+   | impl FromScalar for Vec<u8> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `Vec<std::string::String>` to implement `ScalarTarget`
+note: required by a bound in `opens_one_leaf`
+  --> tests/ui/scalar_target/vec_needs_a_sequence.rs:7:22
+   |
+ 7 | fn opens_one_leaf<T: ScalarTarget>() {}
+   |                      ^^^^^^^^^^^^ required by this bound in `opens_one_leaf`

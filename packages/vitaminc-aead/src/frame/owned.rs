@@ -9,7 +9,7 @@ use crate::plaintext::{
     Encrypt, EncryptRef, FixedType, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
 };
 use crate::tags;
-use crate::typed::{DecodeError, Decrypt};
+use crate::typed::{DecodeError, Decrypt, ScalarTarget};
 
 /// One value as a transport frame, in a [`Buffer`] of its own: a value
 /// kept past the call that wrote it, and what a ciphertext opens into.
@@ -135,6 +135,10 @@ impl Decrypt for OwnedFrame {
         OwnedFrameSink(())
     }
 }
+
+/// One leaf always builds a frame: the frame of the one scalar, or of the
+/// null, that the leaf holds.
+impl ScalarTarget for OwnedFrame {}
 
 /// Wipes the bytes and leaves the plain null, the frame a buffer of no
 /// value holds: an `OwnedFrame` always holds one frame, so a zeroized one

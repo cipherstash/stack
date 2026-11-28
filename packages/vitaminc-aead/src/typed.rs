@@ -15,6 +15,11 @@
 //! kind, and never reads it as a zero. `HashMap<String, T>` and `BTreeMap<String, T>`
 //! read a map, each value through `T`'s sink.
 //!
+//! [`ScalarTarget`] marks a target that one scalar builds: the scalar
+//! targets, an `Option` or a `Protected` of one, and an
+//! [`OwnedFrame`](crate::OwnedFrame). A caller that opens exactly one leaf
+//! bounds on it, so a target that needs a container does not compile.
+//!
 //! `Protected<T>` is a target for every `T` that implements
 //! [`DecryptProtected`]: any scalar target that can be wiped, and a
 //! `Vec<T>` or `Option<T>` of such targets, nested to any depth. A
@@ -264,6 +269,84 @@ impl<T: FromScalar> Decrypt for T {
             || T::from_scalar(ty.logical(), ty.width().zero()).is_some()
     }
 }
+
+/// A target that one scalar builds.
+///
+/// The decrypt-side counterpart of [`Scalar`](crate::Scalar). A sealed leaf
+/// holds one scalar or one null, and never a sequence or a map. A caller
+/// that opens exactly one leaf bounds its target on this trait. A target
+/// that only a container builds then fails to compile, where a bound on
+/// [`Decrypt`] alone would let it open the leaf and refuse it afterwards.
+///
+/// These targets implement it:
+///
+/// - Every [`FromScalar`] type: `bool`, the integers (except `u8`), the
+///   floats, `String`, `Vec<u8>`, `[u8; N]`, this crate's date, timestamp,
+///   decimal and UUID values, the jiff, `rust_decimal` and uuid types behind
+///   their features, and any type of your own that implements `FromScalar`.
+/// - `Option<T>` of a `ScalarTarget`. A null leaf builds `None`.
+/// - `Protected<T>` of a `ScalarTarget` that also implements
+///   [`DecryptProtected`].
+/// - [`OwnedFrame`](crate::OwnedFrame). One leaf always builds a frame that
+///   holds one scalar.
+///
+/// These targets do not, because each needs a container: a `Vec<T>` other
+/// than `Vec<u8>`, a `HashMap` or a `BTreeMap`, and a struct that derives
+/// `Decrypt` with named fields.
+///
+/// ```
+/// use vitaminc_aead::{Decrypt, OwnedFrame, ScalarTarget};
+/// use vitaminc_protected::Protected;
+///
+/// /// Opens exactly one leaf.
+/// fn opens_one_leaf<T: ScalarTarget>() -> T::Sink {
+///     T::sink()
+/// }
+///
+/// let _ = opens_one_leaf::<i64>();
+/// let _ = opens_one_leaf::<Vec<u8>>();
+/// let _ = opens_one_leaf::<Option<String>>();
+/// let _ = opens_one_leaf::<Protected<String>>();
+/// let _ = opens_one_leaf::<OwnedFrame>();
+/// ```
+///
+/// A `Vec<String>` needs a sequence, so it does not compile:
+///
+/// ```compile_fail,E0277
+/// use vitaminc_aead::ScalarTarget;
+/// fn opens_one_leaf<T: ScalarTarget>() {}
+/// opens_one_leaf::<Vec<String>>();
+/// ```
+///
+/// The trait is open, as `Scalar` is. A hand-written target whose sink
+/// reads a scalar implements it with an empty impl. So does a newtype that
+/// derives `Decrypt` over a scalar target: the derive does not implement
+/// the marker.
+///
+/// ```
+/// use vitaminc_aead::{Decrypt, Encrypt, ScalarTarget};
+///
+/// #[derive(Decrypt, Debug, PartialEq)]
+/// struct Email(String);
+///
+/// impl ScalarTarget for Email {}
+///
+/// fn opens_one_leaf<T: ScalarTarget>() -> T::Sink {
+///     T::sink()
+/// }
+///
+/// let email = "ada@example.com".visit(opens_one_leaf::<Email>())?;
+/// assert_eq!(email, Email(String::from("ada@example.com")));
+/// # Ok::<(), vitaminc_aead::DecodeError>(())
+/// ```
+///
+/// Implement it only for a target that a scalar can build. The marker is a
+/// promise the compiler does not check: a target that carries it and reads
+/// only a container compiles, and then refuses every leaf it is given.
+pub trait ScalarTarget: Decrypt {}
+
+/// Every type that decodes from one scalar is built by one scalar.
+impl<T: FromScalar> ScalarTarget for T {}
 
 /// A sink nothing is ever walked into: the element and entry type of a
 /// container sink that hands out none, such as [`Never`] and the map sink
@@ -1064,6 +1147,10 @@ impl<T: Decrypt> Decrypt for Option<T> {
     }
 }
 
+/// A null leaf builds `None`, and any other scalar builds `Some` of what
+/// `T` builds.
+impl<T: ScalarTarget> ScalarTarget for Option<T> {}
+
 /// A type that can be decrypted straight into `Protected<Self>`: it names
 /// the sink that builds the wrapped value.
 ///
@@ -1090,6 +1177,11 @@ impl<T: DecryptProtected> Decrypt for Protected<T> {
         T::reads_null(ty)
     }
 }
+
+/// What one scalar builds, it also builds inside the wrapper. A
+/// `Protected<Vec<T>>` of anything but bytes is not covered, because
+/// `Vec<T>` is not a `ScalarTarget`.
+impl<T: DecryptProtected + ScalarTarget> ScalarTarget for Protected<T> {}
 
 /// Any scalar target that can be wiped, read into `Protected`. A heap
 /// type (`String`, `Vec<u8>`) is copied once, into the wrapper's buffer.
