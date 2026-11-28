@@ -9,6 +9,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Encrypt and decrypt one value whose type is known only at run time**
+  (#2009). `dynamic::value` has two functions for a value in a frame. The
+  two functions are the run-time counterparts of the typed `keyset.encrypt`
+  and `keyset.decrypt`. A frame is one value written as bytes. A language
+  SDK has each value as a frame. The kind of the value is only known when
+  the code runs.
+  - `dynamic::value::encrypt(&keyset, frame, kind)` takes a borrowed
+    `Frame` and an optional declared `ValueKind`. The call returns a
+    `Ciphertext` that `keyset.decrypt::<T>` decrypts. So each language can
+    decrypt what another language encrypted.
+  - `dynamic::value::decrypt(cipher, ciphertext, kind)` decrypts a
+    ciphertext into an `OwnedFrame` of one scalar. Pass `&keyset` to
+    decrypt only the ciphertexts of that keyset. Pass `&cipher` to decrypt
+    a ciphertext of any keyset.
+  - Each function has a form with a context: `encrypt_with_context` and
+    `decrypt_with_context`.
+  - There is no batch call. Each call returns a `Pending`. A `Pending` does
+    not send its key request until it is awaited. To encrypt or decrypt
+    many values, make one call for each value. Then merge the calls with
+    `Pending::all`. Awaiting the merged call makes one key request, and
+    returns the results in order.
+  - Each value keeps its own declared kind, so one merged call can contain
+    values of different kinds.
+  - On encrypt, a declared kind converts a number of another width or kind
+    when the conversion is exact. The rules are those of a typed field of a
+    record. With no declared kind, the scalar is stored as it arrived.
+  - On decrypt, a declared kind is the kind that the value must have been
+    stored as. Nothing is converted. A value of another kind is
+    `Error::OpenedType`. That error names the kind that was expected, and
+    never says what kind the value had.
+  - The kind `json` takes a document as its JSON text, as a text value or a
+    bytes value. The engine checks the text, and stores the document as it
+    stores a `JsonPlaintext`. On decrypt, `json` returns the text of the
+    document as a bytes value. A `json` field of a record decrypts to the
+    same form.
+  - `json` is a declared kind and not a stored kind. The engine stores a
+    document as text, as it stores a string. So a check of the stored kind
+    cannot distinguish them. An encrypted document decrypts as `string`. An
+    encrypted string whose text is a JSON document decrypts as `json`.
+  - Decrypt as `json` checks that the text parses, and returns the document
+    as the engine writes it.
+  - A ciphertext contains one scalar. `encrypt` refuses an array, an
+    object, a passthrough, and a null before it requests any key. The null
+    can be plain or typed.
+  - The refusal is a new variant, `dynamic::Error::Value`, with the code
+    `stack_encrypt::dynamic_value`. The error names no field, and its
+    message is about one value. The reason is `Reason::Passthrough`, or one
+    of three new reasons: `Reason::Array`, `Reason::Object`, and
+    `Reason::Null`.
+  - `encrypt` refuses JavaScript's `undefined` with `Reason::Undefined`,
+    with a declared kind and with none. An `undefined` value is most often
+    a misspelt property name. No typed call could read it back. A value of
+    another kind is `Reason::FieldType`.
+  - Two ciphertexts of one value never have the same bytes, because each
+    encrypted scalar has a random nonce. The two interfaces agree on every
+    other part: the keyset, the data key, the length, and the plaintext of
+    the encrypted scalar. `tests/single_value.rs` tests that for every
+    kind.
+  - The conformance profile `single-value-v1` has the shared cases. The
+    contract of the profile is
+    `conformance/stack-encrypt/single-value-contract.md`.
+  - `ScalarTarget` is re-exported from Vitamin C at the crate root.
+
 - **Encrypt a UUID as a UUID** (#1833). `value::Uuid` is vitaminc's
   wipeable UUID, built from the uuid crate's `Uuid` with `Uuid::new`. It
   seals as one leaf, and an `Option<Uuid>`'s `None` seals as a null as long
@@ -503,6 +566,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   apply when the pending is awaited, not when the term is described.
 
 ### Breaking
+
+- **A `Ciphertext` decrypts only into a type that is built from one scalar**
+  (#2009). `OpaqueDecode` was implemented for every `Decrypt` type that is
+  `Zeroize`. So `keyset.decrypt::<Vec<String>>(ciphertext)` compiled,
+  requested a key, decrypted, and only then failed with
+  `Error::OpenedType`. That call could never succeed, because a ciphertext
+  contains one scalar. `OpaqueDecode` is now bounded on Vitamin C's
+  `ScalarTarget`, so such a call does not compile.
+  - The bound applies to `keyset.decrypt`, `keyset.decrypt_with_context`,
+    `T::decrypt_from(ciphertext, ..)`, and a `Ciphertext` field of a derived
+    record.
+  - Still accepted:
+    - every scalar: `bool`, the fixed-width integers other than `u8`, the
+      floats, `String`, `Vec<u8>`, `[u8; N]`, `value::Date`,
+      `value::Timestamp`, `value::Decimal`, and `value::Uuid`
+    - `JsonPlaintext`
+    - a `Protected` or an `Option` of a scalar
+    - `OwnedFrame`
+    - a newtype that derives `Decrypt` over a scalar, such as
+      `struct Email(String)`
+    - any type of your own that implements `FromScalar`
+    - `OpaqueBlob<T>`, through its own impl
+  - No longer accepted:
+    - a `Vec` of anything but bytes
+    - a `HashMap` or a `BTreeMap`
+    - a struct that derives `Decrypt` with named fields
+    - a newtype, a `Protected`, or an `Option` of one of those
+  - A type of your own is accepted when it is built from one scalar. The
+    type must also implement `Zeroize` and `Send`, and be `'static`. A
+    `'static` type borrows no data.
+  - You cannot implement `ScalarTarget` directly. A type is a
+    `ScalarTarget` when it is built from one scalar. The compiler derives
+    that from how the type decrypts.
+  - The compile error names the type that you wrote, such as
+    `Vec<String>`. The error says what one `Ciphertext` decrypts into, and
+    what to use for the other types.
+  - A sequence, a map, or a struct is stored as a tree of encrypted
+    scalars: a `StackCipherText`. Decrypt one with `keyset.decrypt_tree`.
+  - A column of ciphertexts is a `Vec<Ciphertext>`. A `Vec<Ciphertext>`
+    still decrypts into a `Vec` with `Vec::<T>::decrypt_from`.
+  - No stored byte changes. Every ciphertext that decrypted before still
+    decrypts into the same type.
 
 - **`dynamic::ValueFrame` is removed. The engine reads a plaintext as a
   borrowed `Frame` and keeps one as vitaminc's `OwnedFrame`** (#1955).

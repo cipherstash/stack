@@ -56,15 +56,22 @@ use crate::target::IndexSpec;
 /// [`read`](crate::dynamic::read)); [`in_field`](Self::in_field) names it
 /// from the caller's side.
 ///
-/// Not every variant has a [`Reason`]. [`Context`](Error::Context),
-/// [`Plan`](Error::Plan), [`Source`](Error::Source),
-/// [`Record`](Error::Record) and [`Predicate`](Error::Predicate) do: it is
-/// in the message, in [`reason`](Self::reason) and in the payload
-/// (`reason`). The others carry their own payload fields instead:
-/// [`Term`](Error::Term) names the index it was asked for (`index`),
-/// [`UntypedIndex`](Error::UntypedIndex) the field (`field`), `Target` and
-/// `Cipher` carry the payload of the error they hold, and `Internal` carries
-/// none. A binding reads `reason` when it is there, and does not require it.
+/// Not every variant has a [`Reason`]. These variants have one:
+/// [`Context`](Error::Context), [`Plan`](Error::Plan),
+/// [`Source`](Error::Source), [`Record`](Error::Record),
+/// [`Predicate`](Error::Predicate), and [`Value`](Error::Value). The reason
+/// is in the message, in [`reason`](Self::reason), and in the payload
+/// (`reason`).
+///
+/// The other variants have payload fields of their own:
+///
+/// - [`Term`](Error::Term) names the index that was asked for (`index`).
+/// - [`UntypedIndex`](Error::UntypedIndex) names the field (`field`).
+/// - `Target` and `Cipher` have the payload of the error they wrap.
+/// - `Internal` has no payload.
+///
+/// A binding reads `reason` when it is present. A binding must not require
+/// it.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum Error {
@@ -207,6 +214,30 @@ pub enum Error {
         at: usize,
     },
 
+    /// One value cannot be encrypted as a single ciphertext. Only
+    /// [`value::encrypt`](crate::dynamic::value::encrypt) and
+    /// [`value::encrypt_with_context`](crate::dynamic::value::encrypt_with_context)
+    /// return this error. The cause is one of these:
+    ///
+    /// - The value is an array, an object, a passthrough, a null, or
+    ///   `undefined`.
+    /// - The value is of another kind than the declared kind, with no exact
+    ///   conversion to the declared kind.
+    /// - The text of the value is not a JSON document, when the declared
+    ///   kind is `json`.
+    ///
+    /// The error names no field, because there is no record. The reason names
+    /// the kind of value that was found. The error never contains the value.
+    #[error("the value cannot be encrypted as one ciphertext: {}", value_text(*reason))]
+    #[diagnostic(
+        code(stack_encrypt::dynamic_value),
+        help("One ciphertext contains one value that is present. That value is text, a number, a boolean, bytes, a date, a timestamp, a decimal, a UUID, or a JSON document. To encrypt a list, encrypt each value separately. Store an absent value as a database NULL.")
+    )]
+    Value {
+        /// What was wrong with the value.
+        reason: Reason,
+    },
+
     /// An invariant this module maintains did not hold — a slot count that
     /// did not line up, a re-proof that should not have been able to fail.
     /// Always a bug here, never a statement about the caller's data.
@@ -239,7 +270,26 @@ fn in_field_text(field: &Option<String>) -> String {
         .unwrap_or_default()
 }
 
+/// The text for `reason` in the message of [`Error::Value`].
+///
+/// The display text of two reasons mentions a field of a record: a value of
+/// another type, and `undefined`. A single value has no field, so this
+/// function has its own text for those two reasons. The display text of
+/// every other reason names what was found, and suits one value as it is.
+fn value_text(reason: Reason) -> String {
+    match reason {
+        Reason::FieldType => "it does not convert exactly to the declared kind".to_owned(),
+        Reason::Undefined => "it is undefined".to_owned(),
+        found => found.to_string(),
+    }
+}
+
 impl Error {
+    /// An error for one value that cannot be encrypted as a single ciphertext.
+    pub(crate) fn bad_value(reason: Reason) -> Self {
+        Self::Value { reason }
+    }
+
     /// A context error with no field named yet.
     pub(crate) fn bad_context(reason: Reason) -> Self {
         Self::Context {
@@ -307,7 +357,7 @@ impl Error {
             Self::UntypedIndex { field } => Some(field),
             #[cfg(feature = "dynamic")]
             Self::Target(_) => None,
-            Self::Internal | Self::Cipher(_) => None,
+            Self::Value { .. } | Self::Internal | Self::Cipher(_) => None,
         }
     }
 
@@ -329,15 +379,16 @@ impl Error {
         }
     }
 
-    /// What was wrong, for a context, plan, source, record or predicate
-    /// error.
+    /// What was wrong, for a context, plan, source, record, predicate, or
+    /// single-value error.
     pub fn reason(&self) -> Option<Reason> {
         match self {
             Self::Context { reason, .. }
             | Self::Plan { reason, .. }
             | Self::Source { reason, .. }
             | Self::Record { reason, .. }
-            | Self::Predicate { reason, .. } => Some(*reason),
+            | Self::Predicate { reason, .. }
+            | Self::Value { reason } => Some(*reason),
             #[cfg(feature = "dynamic")]
             Self::Target(_) => None,
             Self::Term { .. } | Self::UntypedIndex { .. } | Self::Internal | Self::Cipher(_) => {
@@ -531,6 +582,16 @@ reasons! {
         /// A passthrough value cannot be stored as a frame: it nests deeper,
         /// or holds text, bytes or a key longer, than a frame carries.
         Unframeable => "unframeable", "a passthrough value nests deeper, or holds a longer value, than a frame carries";
+        /// An array was given where one value is required. A single ciphertext
+        /// contains one scalar
+        /// ([`value::encrypt`](crate::dynamic::value::encrypt)).
+        Array => "array", "an array where one value must be";
+        /// An object was given where one value is required. A single ciphertext
+        /// contains one scalar.
+        Object => "object", "an object where one value must be";
+        /// A null was given where one value is required. The null can be plain
+        /// or typed. A single ciphertext contains a value that is present.
+        Null => "null", "a null where one value must be";
         /// A stored field is not a map of outputs.
         OutputsNotMap => "outputs_not_map", "a stored field is not a map of outputs";
         /// A stored sealed field has no `"c"` node.

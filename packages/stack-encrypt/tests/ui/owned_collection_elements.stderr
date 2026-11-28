@@ -86,24 +86,26 @@ help: the following other types implement trait `Scalar`
    = note: required for `stack_encrypt::Ciphertext` to implement `EncryptTarget<Vec<i32>>`
    = note: this error originates in the macro `scalar` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error[E0277]: the trait bound `u8: vitaminc_aead::typed::FromScalar` is not satisfied
+error[E0277]: `u8` cannot be decrypted from one `Ciphertext`
   --> tests/ui/owned_collection_elements.rs:15:13
    |
 15 |     let _ = Vec::<u8>::decrypt_from(column, keyset);
-   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `vitaminc_aead::typed::FromScalar` is not implemented for `u8`
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ one `Ciphertext` decrypts into one owned value
    |
-   = help: the following other types implement trait `vitaminc_aead::typed::FromScalar`:
-             f32
-             f64
-             i128
-             i16
-             i32
-             i64
-             i8
-             u128
-           and $N others
-   = note: required for `u8` to implement `Decrypt`
-   = note: required for `u8` to implement `OpaqueDecode`
+   = help: the trait `OpaqueDecode` is not implemented for `u8`
+   = note: one value is a scalar, such as a `String`, a `bool`, a float, a `Vec<u8>`, or a fixed-width integer other than `u8`. The docs of `OpaqueDecode` list every type that is accepted.
+   = note: an `Option` or a `Protected` of a scalar is one value too. So is a newtype that derives `Decrypt` over a scalar.
+   = note: for a date, a timestamp, a decimal, or a UUID, use `value::Date`, `value::Timestamp`, `value::Decimal`, or `value::Uuid`. A `uuid::Uuid`, a `rust_decimal::Decimal`, and the jiff types do not implement `Zeroize`.
+   = note: the type must also implement `Zeroize`, so that a decrypted value can be wiped when a later decrypt in the same call fails.
+   = note: the type must also be `Send` and `'static`. A `'static` type borrows no data.
+   = note: to decrypt a `Vec<Ciphertext>` into a `Vec`, with one element from each `Ciphertext`, use `DecryptFrom`.
+   = note: to decrypt a sequence, a map, or a struct that derives `Decrypt`, use `keyset.decrypt_tree`. `keyset.encrypt_tree` makes the tree of ciphertexts that it reads.
+   = note: to decrypt a whole `Deserialize` value from one `Ciphertext`, decrypt into `OpaqueBlob<T>`. `T` must also implement `Default` and `Zeroize`.
+help: the trait `OpaqueDecode` is implemented for `OpaqueBlob<T>`
+  --> src/blob.rs
+   |
+   | impl<T: DeserializeOwned + Default + Zeroize + Send + 'static> OpaqueDecode for OpaqueBlob<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = note: required for `stack_encrypt::Ciphertext` to implement `DecryptSource<u8>`
    = note: 1 redundant requirement hidden
    = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `DecryptSource<Vec<u8>>`

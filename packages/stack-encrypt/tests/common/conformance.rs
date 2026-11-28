@@ -50,6 +50,7 @@ pub fn value(input: &Input) -> OwnedFrame {
                 Physical::Int(Int::I128(mantissa)),
             ))
         }
+        "uuid" => frame(Raw(Some(Logical::Uuid), Physical::Bytes(&parse_uuid(text)))),
         "null" => {
             assert!(input.text.is_empty());
             frame(Raw(None, Physical::Null))
@@ -199,6 +200,24 @@ fn parse_timestamp(text: &str) -> i128 {
     let (hour, minute, second) = (i128::from(hour), i128::from(minute), i128::from(second));
     let days = i128::from(parse_date(date));
     ((days * 86_400 + hour * 3_600 + minute * 60 + second) * 1_000_000_000) + nanos
+}
+
+/// The sixteen bytes of a UUID, from its canonical text. The canonical text
+/// is lowercase hex in groups of 8, 4, 4, 4, and 12 digits, with `-` between
+/// the groups. Any other spelling is a corpus error: uppercase, braces, or
+/// no hyphens.
+fn parse_uuid(text: &str) -> [u8; 16] {
+    let groups: Vec<&str> = text.split('-').collect();
+    let lengths: Vec<usize> = groups.iter().map(|group| group.len()).collect();
+    let digits = groups.concat();
+    assert!(
+        lengths == [8, 4, 4, 4, 12]
+            && digits
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "{text}: not a canonical lowercase UUID"
+    );
+    super::unhex(&digits).try_into().expect("sixteen bytes")
 }
 
 /// A decimal's mantissa and scale from fixed-point text, keeping every

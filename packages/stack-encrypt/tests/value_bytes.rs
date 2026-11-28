@@ -28,34 +28,24 @@
 
 mod common;
 
-use std::borrow::Cow;
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use common::conformance::{value, Input};
 use common::frames::{frame, object};
-use common::{hex, DeterministicSource};
+use common::hex;
+use common::leaves::{kept_cipher, reveal, Kept, KeptKeys};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::{self, frame::OwnedFrame, record};
 use stack_encrypt::json::JsonPlaintext;
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{equality, Borrowed, CallerContext};
 use stack_encrypt::value::{Date, Decimal, Timestamp, Uuid as UuidValue};
-use stack_encrypt::{AsProtectedRef as _, CipherText, SealedValue, StackCipher, StackCipherText};
-use stack_kms::{
-    DataKey, DataKeySource, DataKeyWithTag, GenerateKeyPayload, IdentifiedBy, IndexKey,
-    IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
-};
+use stack_encrypt::{AsProtectedRef as _, CipherText, StackCipher};
 use uuid::Uuid;
 use vitaminc_aead::plaintext::{FixedType, Float, Int, Logical, Physical, Raw, TimeUnit, Width};
-use vitaminc_aead::seal::Cipher;
-use vitaminc_aead::{
-    Context, Encrypt, Frame, FrameWriter, IntoContext, LocalCipherText, Unspecified,
-};
-use vitaminc_encrypt::{Aes256Cipher, Key as AesKey};
-use vitaminc_protected::{Buffer, Controlled as _, Protected};
+use vitaminc_aead::{Encrypt, Frame};
+use vitaminc_protected::{Buffer, Controlled as _};
 
 const SEED: [u8; 32] = *b"stack-encrypt value bytes v1    ";
 
@@ -66,142 +56,9 @@ fn fixture_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/value_bytes_v1.json")
 }
 
-// =============================================================================
-// Opening a sealed leaf to the plaintext sealed in it
-// =============================================================================
-
-/// [`DeterministicSource`], keeping each data key it generates by its IV,
-/// so a test can open the leaves sealed under them without the engine.
-struct KeptKeys {
-    inner: DeterministicSource,
-    keys: Arc<Mutex<HashMap<Vec<u8>, [u8; 32]>>>,
-}
-
-impl stack_kms::KeySourceKind for KeptKeys {
-    type Kind = stack_kms::OwnIdentity;
-}
-
-impl DataKeySource for KeptKeys {
-    async fn generate_keys(
-        &self,
-        payloads: Vec<GenerateKeyPayload<'_>>,
-        keyset_id: Option<Uuid>,
-        unverified_context: Option<Cow<'_, UnverifiedContext>>,
-    ) -> Result<Vec<DataKeyWithTag>, stack_kms::Error> {
-        let keys = self
-            .inner
-            .generate_keys(payloads, keyset_id, unverified_context)
-            .await?;
-        let mut kept = self.keys.lock().unwrap();
-        for key in &keys {
-            let _ = kept.insert(key.key.iv.to_vec(), *key.key.key());
-        }
-        Ok(keys)
-    }
-
-    async fn retrieve_keys(
-        &self,
-        payloads: Vec<RetrieveKeyPayload<'_>>,
-        keyset_id: Option<Uuid>,
-        unverified_context: Option<&UnverifiedContext>,
-    ) -> Result<Vec<DataKey>, stack_kms::Error> {
-        self.inner
-            .retrieve_keys(payloads, keyset_id, unverified_context)
-            .await
-    }
-}
-
-impl IndexKeySource for KeptKeys {
-    async fn load_index_key(
-        &self,
-        keyset_id: Option<IdentifiedBy>,
-    ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
-        self.inner.load_index_key(keyset_id).await
-    }
-}
-
-/// A cipher over the kept keys, and the keys.
-async fn cipher() -> (
-    StackCipher<KeptKeys>,
-    Arc<Mutex<HashMap<Vec<u8>, [u8; 32]>>>,
-) {
-    let keys = Arc::default();
-    let cipher = StackCipher::builder()
-        .kms(KeptKeys {
-            inner: DeterministicSource::new(SEED),
-            keys: Arc::clone(&keys),
-        })
-        .init()
-        .await
-        .expect("build cipher");
-    (cipher, keys)
-}
-
-/// A vitaminc cipher that opens a stored leaf with its kept key, under the
-/// AAD the engine binds a leaf to (`stack-encrypt/leaf`, the format version,
-/// the keyset, the AAD of the leaf's place and the key tag, as a PAE), and
-/// keeps each plaintext it opened, in walk order.
-struct Reveal<'k> {
-    keys: &'k HashMap<Vec<u8>, [u8; 32]>,
-    opened: RefCell<Vec<String>>,
-}
-
-impl Cipher for Reveal<'_> {
-    type Leaf = SealedValue;
-    type Error = Unspecified;
-
-    fn seal(&self, _: Protected<Vec<u8>>, _: &Context<'_>) -> Result<SealedValue, Unspecified> {
-        Err(Unspecified)
-    }
-
-    fn open(
-        &self,
-        leaf: SealedValue,
-        aad: &Context<'_>,
-    ) -> Result<Protected<Vec<u8>>, Unspecified> {
-        let (keyset_id, iv, tag, ciphertext) = leaf.into_parts();
-        let key = self.keys.get(iv.as_slice()).ok_or(Unspecified)?;
-        let aad = Context::pae(&[
-            b"stack-encrypt/leaf",
-            &[SealedValue::FORMAT_VERSION],
-            keyset_id.as_bytes(),
-            aad.as_bytes(),
-            &tag,
-        ]);
-        let cipher = Aes256Cipher::new(&AesKey::from(*key))?;
-        let plaintext = cipher.open(LocalCipherText::from(ciphertext), &aad)?;
-        self.opened.borrow_mut().push(hex(plaintext.risky_ref()));
-        Ok(plaintext)
-    }
-}
-
-/// The plaintext of every leaf of `tree`, sealed under `context`, in walk
-/// order: a scalar's tagged bytes, a typed null's padded bytes, and an empty
-/// container's marker as the empty string.
-fn reveal<'c>(
-    keys: &Mutex<HashMap<Vec<u8>, [u8; 32]>>,
-    tree: StackCipherText,
-    context: impl IntoContext<'c>,
-) -> Vec<String> {
-    let keys = keys.lock().unwrap();
-    let reveal = Reveal {
-        keys: &keys,
-        opened: RefCell::default(),
-    };
-    let mut out = Buffer::default();
-    vitaminc_aead::decrypt_into(
-        &reveal,
-        tree,
-        context.into_context(),
-        FrameWriter::new(&mut out),
-    )
-    .unwrap_or_else(|_| {
-        panic!(
-            "the leaves open under their kept keys: if every case fails here, \
-             the AAD `Reveal` builds no longer mirrors `leaf_aad` in src/cipher.rs"
-        )
-    });
-    reveal.opened.into_inner()
+/// A cipher over the kept keys of [`SEED`], and the keys.
+async fn cipher() -> (StackCipher<KeptKeys>, Arc<Kept>) {
+    kept_cipher(SEED).await
 }
 
 fn context_label() -> String {
@@ -216,7 +73,7 @@ fn context_label() -> String {
 /// the leaf `encrypt_tree` seals it as.
 async fn typed<T: Encrypt>(
     cipher: &StackCipher<KeptKeys>,
-    keys: &Mutex<HashMap<Vec<u8>, [u8; 32]>>,
+    keys: &Kept,
     frame_of: T,
     sealed: T,
 ) -> Json {
@@ -290,10 +147,7 @@ fn document() -> JsonPlaintext {
     JsonPlaintext::from(json!({"a": [1, "x"], "b": null}))
 }
 
-async fn typed_section(
-    cipher: &StackCipher<KeptKeys>,
-    keys: &Mutex<HashMap<Vec<u8>, [u8; 32]>>,
-) -> Json {
+async fn typed_section(cipher: &StackCipher<KeptKeys>, keys: &Kept) -> Json {
     let mut out = Map::new();
     macro_rules! pin {
         ($name:literal, $value:expr) => {
@@ -368,7 +222,7 @@ fn plan(spec: &Json) -> Result<record::Plan, dynamic::Error> {
 /// refusal's code and reason.
 async fn seal_row(
     cipher: &StackCipher<KeptKeys>,
-    keys: &Mutex<HashMap<Vec<u8>, [u8; 32]>>,
+    keys: &Kept,
     spec: Json,
     row: impl Encrypt,
 ) -> Json {
@@ -440,10 +294,7 @@ const KINDS: &[(&str, &str)] = &[
     ("bytes", "00ff10"),
 ];
 
-async fn dynamic_section(
-    cipher: &StackCipher<KeptKeys>,
-    keys: &Mutex<HashMap<Vec<u8>, [u8; 32]>>,
-) -> Json {
+async fn dynamic_section(cipher: &StackCipher<KeptKeys>, keys: &Kept) -> Json {
     let mut out = Map::new();
     for (kind, text) in KINDS {
         let value = value(&input(kind, text));
@@ -540,7 +391,7 @@ fn typed_null(ty: FixedType) -> Vec<u8> {
 
 async fn host_row_outcome(
     cipher: &StackCipher<KeptKeys>,
-    keys: &Mutex<HashMap<Vec<u8>, [u8; 32]>>,
+    keys: &Kept,
     spec: Json,
     field_frame: &[u8],
 ) -> Json {
@@ -581,10 +432,7 @@ fn envelope(logical: u8, parameter: u8, int64: &[u8; 8]) -> Vec<u8> {
     out
 }
 
-async fn host_section(
-    cipher: &StackCipher<KeptKeys>,
-    keys: &Mutex<HashMap<Vec<u8>, [u8; 32]>>,
-) -> Json {
+async fn host_section(cipher: &StackCipher<KeptKeys>, keys: &Kept) -> Json {
     let to = |raw: Raw<'_>| {
         vitaminc_aead::to_frame(raw)
             .expect("a host frame")
@@ -680,10 +528,7 @@ async fn host_section(
 /// A typed null a host sends (Go's `vcvalue.TypedNull`, or a nil pointer to
 /// a fixed-width type), against each null policy of a typed field, an
 /// untyped field, and inside an untyped value.
-async fn typed_null_section(
-    cipher: &StackCipher<KeptKeys>,
-    keys: &Mutex<HashMap<Vec<u8>, [u8; 32]>>,
-) -> Json {
+async fn typed_null_section(cipher: &StackCipher<KeptKeys>, keys: &Kept) -> Json {
     let int32 = typed_null(FixedType::new(None, Width::I32).expect("a fixed type"));
     let int64 = typed_null(FixedType::new(None, Width::I64).expect("a fixed type"));
     let mut out = Map::new();
@@ -745,10 +590,7 @@ async fn typed_null_section(
 // A JSON document
 // =============================================================================
 
-async fn json_section(
-    cipher: &StackCipher<KeptKeys>,
-    keys: &Mutex<HashMap<Vec<u8>, [u8; 32]>>,
-) -> Json {
+async fn json_section(cipher: &StackCipher<KeptKeys>, keys: &Kept) -> Json {
     let text = r#"{"a":[1,"x"],"b":null}"#;
     let opened = dynamic::json_frame(&json!({"a": [1, "x"], "b": null})).expect("a document");
     let as_text = frame(String::from(text));

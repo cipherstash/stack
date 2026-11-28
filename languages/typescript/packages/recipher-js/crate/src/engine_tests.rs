@@ -7,7 +7,6 @@ use stack_encrypt::kms::DeterministicSource;
 use stack_encrypt::StackCipher;
 
 use crate::cipher::{open_in, seal, unseal, Confined, Engine};
-use crate::value::OneValue;
 
 const SEED: [u8; 32] = [7; 32];
 
@@ -19,12 +18,12 @@ async fn engine() -> StackCipher<DeterministicSource> {
         .unwrap()
 }
 
-fn one(text: &str) -> OneValue {
-    OneValue::new(OwnedFrame::of(text).unwrap()).unwrap()
+fn one(text: &str) -> OwnedFrame {
+    OwnedFrame::of(text).unwrap()
 }
 
 /// Encrypts `values` through the crate, with the test keys.
-async fn sdk_seal(values: Vec<OneValue>) -> Vec<stack_encrypt::Ciphertext> {
+async fn sdk_seal(values: Vec<OwnedFrame>) -> Vec<stack_encrypt::Ciphertext> {
     seal(&engine().await.default_keyset(), values)
         .await
         .unwrap()

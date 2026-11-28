@@ -77,7 +77,10 @@ pub use seal::{AsyncCipher, Cipher, Node, Opened, Pending};
 pub use shape::{Refusal, Unencryptable};
 // Decryption: typed targets, and sinks of any kind.
 #[doc(inline)]
-pub use typed::{decrypt, decrypt_async, DecodeError, Decrypt, DecryptProtected, FromScalar};
+pub use typed::{
+    decrypt, decrypt_async, DecodeError, Decrypt, DecryptProtected, FromScalar, ScalarTarget,
+    TakesScalar,
+};
 #[doc(inline)]
 pub use walk::{decrypt_into, decrypt_into_async, decrypt_to_frame, walk, DecryptError};
 // The frame: a value as transport bytes, and back.

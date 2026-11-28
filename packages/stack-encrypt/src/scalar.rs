@@ -4,8 +4,9 @@ use crate::target::{
     DecryptFrom, DecryptSource, Decryption, EncryptInto, EncryptTarget, Encryption,
     OptionalContext, Pending, ScalarContext,
 };
-use crate::{CipherText, ContextPiece, Decrypt, Error, KeysetCipher, LeafBytesError, SealedValue};
+use crate::{CipherText, ContextPiece, Error, KeysetCipher, LeafBytesError, SealedValue};
 use vitaminc_aead::plaintext::Scalar;
+use vitaminc_aead::ScalarTarget;
 use vitaminc_protected::OpaqueDebug;
 use zeroize::Zeroize;
 
@@ -111,20 +112,117 @@ pub trait OpaqueEncode: sealed::Encode + Zeroize + Send + 'static {}
 
 /// A plaintext type that one opaque [`Ciphertext`] decrypts to.
 ///
-/// `OpaqueDecode` is implemented for every [`Decrypt`] type that also
-/// implements [`Zeroize`], and for [`OpaqueBlob<T>`](crate::OpaqueBlob).
-/// The `Decrypt` types include each scalar, such as `String`, and a
-/// [`Protected`](vitaminc_protected::Protected) of one, such as
-/// `Protected<String>`. The trait is sealed, as `OpaqueEncode` is.
+/// A `Ciphertext` contains one scalar. So `OpaqueDecode` is implemented for
+/// every type that meets two conditions:
+///
+/// - The type is built from one scalar. Vitamin C names such a type a
+///   [`ScalarTarget`].
+/// - The type implements [`Zeroize`] and `Send`, and is `'static`. A
+///   `'static` type borrows no data.
+///
+/// The `OpaqueDecode` types are:
+///
+/// - each scalar: `bool`, the fixed-width integers other than `u8`, the
+///   floats, `String`, `Vec<u8>`, and `[u8; N]`
+/// - the date, timestamp, decimal, and UUID [values](crate::value)
+/// - [`JsonPlaintext`](crate::json::JsonPlaintext), a JSON document
+/// - a [`Protected`](vitaminc_protected::Protected) of one, such as
+///   `Protected<String>`
+/// - an `Option` of one, such as `Option<i64>`. An encrypted null decrypts
+///   as `None`.
+/// - a newtype that derives [`Decrypt`](crate::Decrypt) over one, such as
+///   `struct Email(String)`
+/// - an `OwnedFrame`: the value written as bytes, for a caller that only
+///   learns the kind of the value when the code runs
+///
+/// [`OpaqueBlob<T>`](crate::OpaqueBlob) is an `OpaqueDecode` type too. The
+/// trait is sealed, as `OpaqueEncode` is.
+///
+/// A target that needs a container does not compile:
+///
+/// - a `Vec` of anything but bytes
+/// - a map
+/// - a struct that derives `Decrypt` with named fields
+///
+/// Each of those targets reads a tree of leaves. A leaf is one encrypted
+/// scalar. A tree of leaves is a
+/// [`StackCipherText`](crate::StackCipherText), and
+/// [`KeysetCipher::decrypt_tree`] decrypts it.
+///
+/// A column of ciphertexts is a `Vec<Ciphertext>`. A `Vec<Ciphertext>`
+/// decrypts into a `Vec` through [`DecryptFrom`]. The
+/// [crate docs on collections](crate#collections) explain how.
+///
+/// ```compile_fail,E0277
+/// # fn example<K: 'static>(keyset: &stack_encrypt::KeysetCipher<'_, K>, ciphertext: stack_encrypt::Ciphertext) {
+/// // A ciphertext contains one scalar, never a sequence.
+/// let _ = keyset.decrypt::<Vec<String>>(ciphertext);
+/// # }
+/// ```
+///
+/// A type of your own is an `OpaqueDecode` type when it meets the same two
+/// conditions. You cannot implement `ScalarTarget` for it: a type is a
+/// `ScalarTarget` because of how it decrypts. A newtype that derives
+/// `Decrypt` over a scalar meets the first condition with no extra code. So
+/// does a type that implements Vitamin C's `FromScalar`.
+///
+/// For the second condition, derive or implement `Zeroize`. A type that
+/// borrows data is not `'static`, so it is refused.
+///
+/// The derive is Vitamin C's, so your crate needs `vitaminc-aead` as a
+/// dependency to use it.
+///
+/// ```
+/// # async fn example() -> Result<(), stack_encrypt::Error> {
+/// use stack_encrypt::{Decrypt, StackCipher};
+/// use zeroize::Zeroize;
+///
+/// #[derive(Decrypt, Zeroize)]
+/// struct Email(String);
+///
+/// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+/// // the environment, or from the profile that `npx stash auth login` writes.
+/// let cipher = StackCipher::builder()
+/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+///     .init()
+///     .await?;
+/// let keyset = cipher.default_keyset();
+/// let stored = keyset.encrypt(String::from("ada@example.com")).await?;
+///
+/// let email: Email = keyset.decrypt(stored).await?;
+/// assert_eq!(email.0, "ada@example.com");
+/// # Ok(())
+/// # }
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+/// ```
 ///
 /// A scalar decrypted into a bare type, such as `String`, is an ordinary
 /// owned value, and nothing wipes it when it is dropped: `Zeroize` is the
 /// bound, not a drop guard. Decrypt into a `Protected` to have it wiped on
 /// drop. A decrypted `OpaqueBlob<T>` also wipes its value on drop.
-///
-/// A `Ciphertext` holds one scalar. A target that is not a scalar, such as
-/// `Vec<String>`, compiles, but decryption refuses it with
-/// [`Error::OpenedType`].
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be decrypted from one `Ciphertext`",
+    label = "one `Ciphertext` decrypts into one owned value",
+    note = "one value is a scalar, such as a `String`, a `bool`, a float, a `Vec<u8>`, or a \
+            fixed-width integer other than `u8`. The docs of `OpaqueDecode` list every type \
+            that is accepted.",
+    note = "an `Option` or a `Protected` of a scalar is one value too. So is a newtype that \
+            derives `Decrypt` over a scalar.",
+    note = "for a date, a timestamp, a decimal, or a UUID, use `value::Date`, \
+            `value::Timestamp`, `value::Decimal`, or `value::Uuid`. A `uuid::Uuid`, a \
+            `rust_decimal::Decimal`, and the jiff types do not implement `Zeroize`.",
+    note = "the type must also implement `Zeroize`, so that a decrypted value can be wiped when \
+            a later decrypt in the same call fails.",
+    note = "the type must also be `Send` and `'static`. A `'static` type borrows no \
+            data.",
+    note = "to decrypt a `Vec<Ciphertext>` into a `Vec`, with one element from each \
+            `Ciphertext`, use `DecryptFrom`.",
+    note = "to decrypt a sequence, a map, or a struct that derives `Decrypt`, use \
+            `keyset.decrypt_tree`. `keyset.encrypt_tree` makes the tree of ciphertexts that it \
+            reads.",
+    note = "to decrypt a whole `Deserialize` value from one `Ciphertext`, decrypt into \
+            `OpaqueBlob<T>`. `T` must also implement `Default` and `Zeroize`."
+)]
 pub trait OpaqueDecode: sealed::Decode + Zeroize + Send + 'static {}
 
 // An owned `S` is sealed through a borrow of it. `&S` is one of Vitamin C's
@@ -150,7 +248,7 @@ where
     for<'a> &'a S: Scalar,
 {
 }
-impl<P: Decrypt + Zeroize + Send + 'static> sealed::Decode for P {
+impl<P: ScalarTarget + Zeroize + Send + 'static> sealed::Decode for P {
     fn open<'a, K: 'static>(
         leaf: SealedValue,
         cipher: &'a crate::StackCipher<K>,
@@ -159,7 +257,12 @@ impl<P: Decrypt + Zeroize + Send + 'static> sealed::Decode for P {
         crate::target::core::open_opaque(CipherText::Single(leaf), cipher, context)
     }
 }
-impl<P: Decrypt + Zeroize + Send + 'static> OpaqueDecode for P {}
+// `do_not_recommend` makes the compiler report a refused type against
+// `OpaqueDecode`. The message of `OpaqueDecode` says what one `Ciphertext`
+// decrypts into, and what to use instead. Without the attribute, the
+// compiler reports the bound below that failed, in Vitamin C's terms.
+#[diagnostic::do_not_recommend]
+impl<P: ScalarTarget + Zeroize + Send + 'static> OpaqueDecode for P {}
 
 /// One opaque ciphertext, with no exposed structural node variants.
 ///

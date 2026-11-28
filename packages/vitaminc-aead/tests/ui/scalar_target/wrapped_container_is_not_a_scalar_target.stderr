@@ -1,0 +1,47 @@
+error[E0277]: `Option<Vec<i32>>` is not built from one scalar
+  --> tests/ui/scalar_target/wrapped_container_is_not_a_scalar_target.rs:12:22
+   |
+12 |     opens_one_leaf::<Option<Vec<i32>>>();
+   |                      ^^^^^^^^^^^^^^^^ this decrypt target is not a `ScalarTarget`
+   |
+   = help: the trait `ScalarTarget` is not implemented for `Option<Vec<i32>>`
+   = note: a scalar target is a `FromScalar` type, such as `String`, `i64`, or `Vec<u8>`. An `Option` or a `Protected` of one is a scalar target too. So is a newtype that derives `Decrypt` over one.
+   = note: a sequence, a map, and a struct with named fields each need a container. So none of them is a scalar target.
+   = note: a target with a hand-written sink is a scalar target when that sink implements `TakesScalar`.
+note: required by a bound in `opens_one_leaf`
+  --> tests/ui/scalar_target/wrapped_container_is_not_a_scalar_target.rs:9:22
+   |
+ 9 | fn opens_one_leaf<T: ScalarTarget>() {}
+   |                      ^^^^^^^^^^^^ required by this bound in `opens_one_leaf`
+
+error[E0277]: `Protected<Vec<i32>>` is not built from one scalar
+  --> tests/ui/scalar_target/wrapped_container_is_not_a_scalar_target.rs:13:22
+   |
+13 |     opens_one_leaf::<Protected<Vec<i32>>>();
+   |                      ^^^^^^^^^^^^^^^^^^^ this decrypt target is not a `ScalarTarget`
+   |
+   = help: the trait `ScalarTarget` is not implemented for `Protected<Vec<i32>>`
+   = note: a scalar target is a `FromScalar` type, such as `String`, `i64`, or `Vec<u8>`. An `Option` or a `Protected` of one is a scalar target too. So is a newtype that derives `Decrypt` over one.
+   = note: a sequence, a map, and a struct with named fields each need a container. So none of them is a scalar target.
+   = note: a target with a hand-written sink is a scalar target when that sink implements `TakesScalar`.
+note: required by a bound in `opens_one_leaf`
+  --> tests/ui/scalar_target/wrapped_container_is_not_a_scalar_target.rs:9:22
+   |
+ 9 | fn opens_one_leaf<T: ScalarTarget>() {}
+   |                      ^^^^^^^^^^^^ required by this bound in `opens_one_leaf`
+
+error[E0277]: `Protected<Option<Vec<i32>>>` is not built from one scalar
+  --> tests/ui/scalar_target/wrapped_container_is_not_a_scalar_target.rs:14:22
+   |
+14 |     opens_one_leaf::<Protected<Option<Vec<i32>>>>();
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^ this decrypt target is not a `ScalarTarget`
+   |
+   = help: the trait `ScalarTarget` is not implemented for `Protected<Option<Vec<i32>>>`
+   = note: a scalar target is a `FromScalar` type, such as `String`, `i64`, or `Vec<u8>`. An `Option` or a `Protected` of one is a scalar target too. So is a newtype that derives `Decrypt` over one.
+   = note: a sequence, a map, and a struct with named fields each need a container. So none of them is a scalar target.
+   = note: a target with a hand-written sink is a scalar target when that sink implements `TakesScalar`.
+note: required by a bound in `opens_one_leaf`
+  --> tests/ui/scalar_target/wrapped_container_is_not_a_scalar_target.rs:9:22
+   |
+ 9 | fn opens_one_leaf<T: ScalarTarget>() {}
+   |                      ^^^^^^^^^^^^ required by this bound in `opens_one_leaf`

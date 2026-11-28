@@ -370,12 +370,19 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! human-readable format such as JSON, raw bytes in a binary one. Parsing
 //! does not authenticate a value; decryption does.
 //!
-//! The scalar API accepts owned [`OpaqueEncode`] values. It wipes the owned source
-//! before returning the pending request, including on planning failure. A
-//! successful decrypt returns an ordinary owned value: the caller is then
+//! The scalar API accepts owned [`OpaqueEncode`] values. The API wipes the
+//! owned source before it returns the pending request, including when
+//! planning fails.
+//!
+//! A ciphertext decrypts into an [`OpaqueDecode`] type: a type that is built
+//! from one scalar. A target that needs a container, such as a
+//! `Vec<String>`, does not compile.
+//!
+//! A successful decrypt returns an ordinary owned value. The caller is then
 //! responsible for its cleanup. A whole value decrypted as an
-//! [`OpaqueBlob<T>`](crate::OpaqueBlob) is wiped on drop. Copy types may still have copies held by the
-//! caller, and this is not a guarantee about every compiler-generated copy.
+//! [`OpaqueBlob<T>`](crate::OpaqueBlob) is wiped on drop. The caller can
+//! still have copies of a `Copy` type. This crate makes no guarantee about
+//! the copies that the compiler generates.
 //!
 //! For target-directed conversion, import [`EncryptInto`] and [`DecryptFrom`]:
 //!
@@ -672,6 +679,11 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! module (feature `dynamic`). The guide to building such a binding, with
 //! the Go SDK as the reference, is `dynamic::guide`.
 //!
+//! A binding has each value as a frame: one value written as bytes. The kind
+//! of the value is only known when the code runs. `dynamic::value` encrypts
+//! such a value as one [`Ciphertext`], and decrypts a ciphertext into a
+//! frame. The typed [`KeysetCipher::decrypt`] decrypts the same ciphertext.
+//!
 //! # Relationship to vitaminc
 //!
 //! A `KeysetCipher` seals through a vitaminc `Cipher`; everything vitaminc
@@ -778,7 +790,7 @@ pub use target::{
 // derivations see the same bytes.
 pub use vitaminc_aead::{
     CipherText, Context, ContextPiece, ContextTag, DecodeError, Decrypt, Encrypt, EncryptRef,
-    IntoAad, IntoContext, Node, PassthroughFrame, Unspecified,
+    IntoAad, IntoContext, Node, PassthroughFrame, ScalarTarget, Unspecified,
 };
 /// A type with an order target of its own: what an order index
 /// ([`Ore`], [`Ope`], [`OreBlock`]), an order term ([`sem::OreTerm`],

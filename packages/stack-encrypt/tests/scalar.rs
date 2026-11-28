@@ -112,22 +112,33 @@ async fn a_scalar_decrypts_straight_into_a_protected() {
 }
 
 #[tokio::test]
-async fn a_ciphertext_opens_only_as_a_scalar_whatever_the_target() {
-    // A `Ciphertext` holds one scalar. The bound is `Decrypt`, so a target
-    // that is not a scalar compiles. Opening refuses a sequence, and reads a
-    // nullable target as present.
+async fn a_ciphertext_opens_as_a_nullable_target() {
+    // A `Ciphertext` contains one scalar, so its target must be built from one
+    // scalar. A sequence does not compile
+    // (`tests/ui/scalar_decrypt_into_a_container.rs`). A nullable target
+    // compiles. That target reads a value as present, and an encrypted null
+    // as absent.
     let cipher = common::stack_cipher().await;
     let keyset = cipher.default_keyset();
-    let ct = keyset
-        .encrypt("alice@example.com".to_owned())
-        .await
-        .unwrap();
-    assert!(matches!(
-        keyset.decrypt::<Vec<String>>(ct).await,
-        Err(Error::OpenedType { .. })
-    ));
     let ct = keyset.encrypt(42i32).await.unwrap();
-    assert_eq!(keyset.decrypt::<Option<i32>>(ct).await.unwrap(), Some(42));
+    assert_eq!(
+        keyset.decrypt::<Option<i32>>(ct).await.unwrap(),
+        Some(42),
+        "a value opens as present"
+    );
+
+    let node = keyset.encrypt_tree(None::<i32>, "users/age").await.unwrap();
+    let stack_encrypt::CipherText::Single(leaf) = node else {
+        panic!("a null seals as one leaf")
+    };
+    assert_eq!(
+        keyset
+            .decrypt_with_context::<Option<i32>>(Ciphertext::from(leaf), "users/age")
+            .await
+            .unwrap(),
+        None,
+        "a sealed null opens as absent"
+    );
 }
 
 #[tokio::test]

@@ -16,6 +16,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `ScalarTarget` (also `typed::ScalarTarget`): a trait for a decrypt target that is built from one scalar.
+  `ScalarTarget` is the decrypt-side counterpart of `Scalar`.
+  Code that decrypts exactly one leaf bounds its target on `ScalarTarget`, so a target that needs a sequence or a map does not compile.
+  No one can implement `ScalarTarget` directly: a target has it when its sink implements `TakesScalar`.
+  So every `FromScalar` type is a `ScalarTarget`, and a fieldless enum that derives `Decrypt` is one too.
+  An `Option` of a `ScalarTarget`, a newtype that derives `Decrypt` over one, and `OwnedFrame` are also `ScalarTarget`s.
+  So is a `Protected` of a scalar, or of an `Option` of a scalar.
+  A `Vec<T>` other than `Vec<u8>`, a map, a derived struct with named fields, and a newtype of one of those are not `ScalarTarget`s.
+  The compile error for a target that is not a `ScalarTarget` names the target, and says what a scalar target is.
+  Nothing in this crate bounds on `ScalarTarget`, so no existing code changes.
+- `TakesScalar` (also `typed::TakesScalar`): a trait for a sink that builds its value from one scalar.
+  `ScalarSink`, `ScalarProtected`, and `OwnedFrameSink` implement it.
+  `Optional`, `ProtectedOptional`, `Wrapped`, and `Wrap` implement it over a sink that implements it.
+  A hand-written sink opts in with an empty impl.
+  That impl makes the target of the sink a `ScalarTarget`.
 - `plaintext::ValueKind`: what a value is, without the value, with the text name a schema spells it with (`"int32"`, `"timestamp"`, `"object"`, `"json"`, …).
   It covers every scalar, an array, an object and a JSON document.
   `ValueKind::Uuid` (`"uuid"`) is a UUID: `Logical::Uuid` over sixteen bytes. Its zero is sixteen zero bytes, its null is a typed null as long as a UUID leaf, and it holds only a UUID.

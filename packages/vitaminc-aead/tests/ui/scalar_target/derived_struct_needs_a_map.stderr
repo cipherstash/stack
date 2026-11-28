@@ -1,0 +1,19 @@
+error[E0277]: `Account` is not built from one scalar
+  --> tests/ui/scalar_target/derived_struct_needs_a_map.rs:14:22
+   |
+14 |     opens_one_leaf::<Account>();
+   |                      ^^^^^^^ this decrypt target is not a `ScalarTarget`
+   |
+help: the trait `ScalarTarget` is not implemented for `Account`
+  --> tests/ui/scalar_target/derived_struct_needs_a_map.rs:7:1
+   |
+ 7 | struct Account {
+   | ^^^^^^^^^^^^^^
+   = note: a scalar target is a `FromScalar` type, such as `String`, `i64`, or `Vec<u8>`. An `Option` or a `Protected` of one is a scalar target too. So is a newtype that derives `Decrypt` over one.
+   = note: a sequence, a map, and a struct with named fields each need a container. So none of them is a scalar target.
+   = note: a target with a hand-written sink is a scalar target when that sink implements `TakesScalar`.
+note: required by a bound in `opens_one_leaf`
+  --> tests/ui/scalar_target/derived_struct_needs_a_map.rs:11:22
+   |
+11 | fn opens_one_leaf<T: ScalarTarget>() {}
+   |                      ^^^^^^^^^^^^ required by this bound in `opens_one_leaf`
