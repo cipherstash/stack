@@ -655,3 +655,112 @@ func TestOpaqueReadsARustWrittenBlob(t *testing.T) {
 		t.Fatalf("Opaque of the Go-written blob: %v %+v", err, back)
 	}
 }
+
+// A field of map type can have a stored value that decrypts to something
+// that is not an object. An example is a row written by another SDK, or by
+// an older struct. Decrypt refuses that value as malformed input. The error
+// names the field and the Go type that needs an object.
+//
+// The error never names the kind that the value decrypted to. That kind was
+// inside the ciphertext, so it is part of the plaintext.
+func TestAMapFieldThatOpensAsAnotherKindNamesNoKind(t *testing.T) {
+	asAny := func(vals Values, name string) error { _, err := Get[map[string]any](vals, name); return err }
+	asValues := func(vals Values, name string) error { _, err := Get[Values](vals, name); return err }
+	asInts := func(vals Values, name string) error { _, err := Get[map[string]int64](vals, name); return err }
+	for _, tc := range []struct {
+		read  func(Values, string) error
+		value any
+		want  string
+	}{
+		{asAny, []any{"secret"}, "map[string]any"},
+		{asAny, "secret", "map[string]any"},
+		{asValues, int64(7), "gensupport.Values"},
+		{asInts, []any{"secret"}, "map[string]int64"},
+	} {
+		err := tc.read(Values{"tags": tc.value}, "tags")
+		if !errors.Is(err, encrypt.ErrEncoding) {
+			t.Fatalf("%T for %s: %v, want ErrEncoding", tc.value, tc.want, err)
+		}
+		want := fmt.Sprintf(`gensupport: decrypt: field "tags": cipherstash: malformed input: the decrypted value is not an object, and %s needs an object`, tc.want)
+		if err.Error() != want {
+			t.Errorf("message:\n got %q\nwant %q", err.Error(), want)
+		}
+		assertNamesNoKind(t, err)
+	}
+}
+
+// assertNamesNoKind fails the test if a decrypt error names the kind that
+// the value decrypted to, or contains the value.
+func assertNamesNoKind(t *testing.T, err error) {
+	t.Helper()
+	for _, kind := range []string{"a list", "a string", "a number", "bytes", "null", "nothing", "interface", "elements", "secret", "7"} {
+		if strings.Contains(err.Error(), kind) {
+			t.Errorf("%q in %v", kind, err)
+		}
+	}
+}
+
+// When a document field decrypts to something that is not its JSON text,
+// the decrypt error names the field. The error never names the kind that
+// the value decrypted to.
+func TestADocumentFieldThatOpensAsAnotherKindNamesNoKind(t *testing.T) {
+	for _, v := range []any{"secret", int64(7), []any{"secret"}} {
+		_, err := GetDocument[map[string]any](Values{"doc": v}, "doc")
+		want := `gensupport: decrypt: field "doc": cipherstash: malformed input: the decrypted value is not JSON text`
+		if !errors.Is(err, encrypt.ErrEncoding) || err.Error() != want {
+			t.Errorf("%T: message:\n got %v\nwant %q", v, err, want)
+		}
+		assertNamesNoKind(t, err)
+	}
+	_, err := GetDocument[map[string]any](Values{"doc": []byte("{")}, "doc")
+	if err == nil || !strings.HasPrefix(err.Error(), `gensupport: decrypt: field "doc": `) {
+		t.Errorf("JSON that does not decode: %v", err)
+	}
+}
+
+// Every other error about a decrypted value names the type that the field
+// needs. The error never names the kind that the value decrypted to, or the
+// number of elements in the value. The cases are:
+//
+//   - a null for a type that does not take a null
+//   - a list or an array of another kind or length
+//   - a value of another type
+//   - an opaque value that is not bytes
+func TestAnOpenedValueOfAnotherTypeNamesNoKind(t *testing.T) {
+	read := func(get func(Values) error, v any) error {
+		return get(Values{"f": v})
+	}
+	type flag bool
+	for _, tc := range []struct {
+		name string
+		get  func(Values) error
+		v    any
+		want string
+	}{
+		{"a null for an integer", func(vals Values) error { _, err := Get[int32](vals, "f"); return err }, nil, "the decrypted value is not of type int32"},
+		{"a value for a list", func(vals Values) error { _, err := Get[[]flag](vals, "f"); return err }, "secret", "the decrypted value is not of type []gensupport.flag"},
+		{"a longer list for an array", func(vals Values) error { _, err := Get[[2]flag](vals, "f"); return err }, []any{true, true, true, true, true, true, true}, "the decrypted value is not of type [2]gensupport.flag"},
+		{"a list for an array", func(vals Values) error { _, err := Get[[2]flag](vals, "f"); return err }, "secret", "the decrypted value is not of type [2]gensupport.flag"},
+		{"a value for a struct", func(vals Values) error { _, err := Get[struct{ A int32 }](vals, "f"); return err }, "secret", "the decrypted value is not of type struct { A int32 }"},
+		{"a list for a bool", func(vals Values) error { _, err := Get[bool](vals, "f"); return err }, []any{"secret"}, "the decrypted value is not of type bool"},
+	} {
+		err := read(tc.get, tc.v)
+		if !errors.Is(err, encrypt.ErrEncoding) {
+			t.Fatalf("%s: %v, want ErrEncoding", tc.name, err)
+		}
+		want := `gensupport: decrypt: field "f": cipherstash: malformed input: ` + tc.want
+		if err.Error() != want {
+			t.Errorf("%s:\n got %q\nwant %q", tc.name, err.Error(), want)
+		}
+		assertNamesNoKind(t, err)
+	}
+	var out struct{ A int32 }
+	err := Opaque(Values{OpaqueField: "secret"}, &out)
+	want := "gensupport: cipherstash: malformed input: the decrypted opaque value is not bytes"
+	if !errors.Is(err, encrypt.ErrEncoding) || err == nil || err.Error() != want {
+		t.Errorf("opaque:\n got %v\nwant %q", err, want)
+	}
+	if err != nil && (strings.Contains(err.Error(), "string") || strings.Contains(err.Error(), "secret")) {
+		t.Errorf("the opaque refusal names what it opened as: %v", err)
+	}
+}

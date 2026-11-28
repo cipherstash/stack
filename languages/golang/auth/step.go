@@ -68,7 +68,14 @@ func (s *authStep) wipe() {
 	}
 }
 
-var errMalformedStep = fmt.Errorf("%w: the guest's step is malformed", ErrInternal)
+// errStepMalformed describes the problem with a step that this package
+// cannot read. The error for such a step wraps errStepMalformed.
+// guest.BadAnswer builds that error. The error is ErrInternal, and it
+// names sa_auth_io, the export that returns the step.
+var errStepMalformed = errors.New("the step is malformed")
+
+// errMalformedStep is the error for a step that this package cannot read.
+var errMalformedStep = guest.BadAnswer("sa_auth_io", errStepMalformed)
 
 // decodeAuthStep reads `{"handle": u64, "parked": bool, "requests":
 // [{"method", "url", "headers", "body"}, ...]}`. Every byte slice it
@@ -76,7 +83,7 @@ var errMalformedStep = fmt.Errorf("%w: the guest's step is malformed", ErrIntern
 func decodeAuthStep(raw []byte) (*authStep, error) {
 	decoded, err := vcffi.Unmarshal(raw)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errMalformedStep, err)
+		return nil, guest.BadAnswer("sa_auth_io", fmt.Errorf("%w: %w", errStepMalformed, err))
 	}
 	return authStepFrom(decoded)
 }
@@ -167,19 +174,19 @@ func decodeAuthRequest(item any) (authRequest, bool) {
 
 // decodeRunnable reads the list of parked handles the guest may resume.
 func decodeRunnable(raw []byte) ([]uint64, error) {
-	decoded, err := vcffi.Unmarshal(raw)
+	decoded, err := guest.DecodeAnswer("sa_auth_runnable", raw)
 	if err != nil {
-		return nil, fmt.Errorf("%w: the runnable operations: %w", ErrInternal, err)
+		return nil, err
 	}
 	items, ok := decoded.([]any)
 	if !ok {
-		return nil, fmt.Errorf("%w: the runnable operations are not a list", ErrInternal)
+		return nil, guest.BadAnswer("sa_auth_runnable", fmt.Errorf("it is %s, not a list", guest.KindOf(decoded)))
 	}
 	handles := make([]uint64, 0, len(items))
-	for _, item := range items {
+	for i, item := range items {
 		h, ok := item.(uint64)
 		if !ok {
-			return nil, fmt.Errorf("%w: a runnable operation is not a handle", ErrInternal)
+			return nil, guest.BadAnswer("sa_auth_runnable", fmt.Errorf("operation %d is %s, not a handle", i, guest.KindOf(item)))
 		}
 		handles = append(handles, h)
 	}

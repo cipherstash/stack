@@ -54,7 +54,14 @@ func (s *ioStep) wipe() {
 	}
 }
 
-var errMalformedStep = errors.New("encrypt: the guest's step is malformed")
+// errStepMalformed describes the problem with a step that this package
+// cannot read. The error for such a step wraps errStepMalformed.
+// guest.BadAnswer builds that error. The error is ErrInternal, and it
+// names se_io, the export that returns the step.
+var errStepMalformed = errors.New("the step is malformed")
+
+// errMalformedStep is the error for a step that this package cannot read.
+var errMalformedStep = guest.BadAnswer("se_io", errStepMalformed)
 
 // takeIO takes the step a paused export left (se_io), once.
 func (inst *instance) takeIO(ctx context.Context) (*ioStep, error) {
@@ -87,7 +94,7 @@ func (inst *instance) takeIO(ctx context.Context) (*ioStep, error) {
 func decodeStep(raw []byte) (*ioStep, error) {
 	decoded, err := vcffi.Unmarshal(raw)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errMalformedStep, err)
+		return nil, guest.BadAnswer("se_io", fmt.Errorf("%w: %w", errStepMalformed, err))
 	}
 	obj, ok := decoded.(vcvalue.Object)
 	if !ok {

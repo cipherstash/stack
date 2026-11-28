@@ -77,9 +77,9 @@ func (k *Checker) Targets(ctx context.Context) ([]record.Target, error) {
 	if err != nil {
 		return nil, err
 	}
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := guest.DecodeAnswer("se_targets", out)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInternal, err)
+		return nil, err
 	}
 	return parseTargets(decoded)
 }
@@ -104,13 +104,13 @@ func (k *Checker) Operators(ctx context.Context, plan *record.Plan, field string
 	if err != nil {
 		return nil, err
 	}
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := guest.DecodeAnswer("se_operators", out)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInternal, err)
+		return nil, err
 	}
 	operators, err := parseOperators(decoded)
 	if err != nil {
-		return nil, fmt.Errorf("%w: se_operators: %v", ErrInternal, err)
+		return nil, guest.BadAnswer("se_operators", err)
 	}
 	return operators, nil
 }
@@ -143,13 +143,13 @@ func contextsOf(ctx context.Context, c *Client, plan *record.Plan) (string, erro
 	if err != nil {
 		return "", err
 	}
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := guest.DecodeAnswer("se_contexts", out)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrInternal, err)
+		return "", err
 	}
 	text, ok := decoded.(string)
 	if !ok {
-		return "", fmt.Errorf("%w: se_contexts returned %T, not a string", ErrInternal, decoded)
+		return "", guest.BadAnswer("se_contexts", fmt.Errorf("it is %s, not a string", guest.KindOf(decoded)))
 	}
 	return text, nil
 }
@@ -162,22 +162,25 @@ func contextsOf(ctx context.Context, c *Client, plan *record.Plan) (string, erro
 // encrypt_into on a type with no kind or no indexes.
 func parseTargets(decoded any) ([]record.Target, error) {
 	obj, ok := decoded.(vcvalue.Object)
-	if !ok || len(obj) != 1 || obj[0].Key != "targets" {
-		return nil, fmt.Errorf("%w: se_targets returned %T, not {\"targets\": [...]}", ErrInternal, decoded)
+	if !ok {
+		return nil, guest.BadAnswer("se_targets", fmt.Errorf("it is %s, not an object", guest.KindOf(decoded)))
+	}
+	if len(obj) != 1 || obj[0].Key != "targets" {
+		return nil, guest.BadAnswer("se_targets", errors.New(`it is not {"targets": [...]}`))
 	}
 	items, ok := obj[0].Value.([]any)
 	if !ok {
-		return nil, fmt.Errorf("%w: se_targets returned %T for the list", ErrInternal, obj[0].Value)
+		return nil, guest.BadAnswer("se_targets", fmt.Errorf("targets is %s, not a list", guest.KindOf(obj[0].Value)))
 	}
 	targets := make([]record.Target, 0, len(items))
 	for i, item := range items {
 		entry, ok := item.(vcvalue.Object)
 		if !ok {
-			return nil, fmt.Errorf("%w: target %d came back as %T", ErrInternal, i, item)
+			return nil, guest.BadAnswer("se_targets", fmt.Errorf("target %d is %s, not an object", i, guest.KindOf(item)))
 		}
 		t, err := parseTarget(entry)
 		if err != nil {
-			return nil, fmt.Errorf("%w: target %d: %v", ErrInternal, i, err)
+			return nil, guest.BadAnswer("se_targets", fmt.Errorf("target %d: %v", i, err))
 		}
 		targets = append(targets, t)
 	}
@@ -212,12 +215,12 @@ func parseTarget(entry vcvalue.Object) (record.Target, error) {
 		case "indexes":
 			list, ok := f.Value.([]any)
 			if !ok {
-				return t, fmt.Errorf("indexes is %T, not a list", f.Value)
+				return t, fmt.Errorf("indexes is %s, not a list", guest.KindOf(f.Value))
 			}
 			for _, item := range list {
 				s, ok := item.(string)
 				if !ok {
-					return t, fmt.Errorf("an index is %T, not a string", item)
+					return t, fmt.Errorf("an index is %s, not a string", guest.KindOf(item))
 				}
 				switch o := record.Output(s); o {
 				// "json" is the JSON index a document type carries, which no plan output
@@ -235,7 +238,7 @@ func parseTarget(entry vcvalue.Object) (record.Target, error) {
 		case "producible":
 			b, ok := f.Value.(bool)
 			if !ok {
-				return t, fmt.Errorf("producible is %T, not a bool", f.Value)
+				return t, fmt.Errorf("producible is %s, not a bool", guest.KindOf(f.Value))
 			}
 			t.Producible = b
 		case "reason":
@@ -266,13 +269,13 @@ func parseTarget(entry vcvalue.Object) (record.Target, error) {
 func parseOperators(value any) ([]record.Operator, error) {
 	list, ok := value.([]any)
 	if !ok {
-		return nil, fmt.Errorf("operators is %T, not a list", value)
+		return nil, fmt.Errorf("operators is %s, not a list", guest.KindOf(value))
 	}
 	operators := make([]record.Operator, 0, len(list))
 	for i, item := range list {
 		entry, ok := item.(vcvalue.Object)
 		if !ok {
-			return nil, fmt.Errorf("operator %d is %T, not an object", i, item)
+			return nil, fmt.Errorf("operator %d is %s, not an object", i, guest.KindOf(item))
 		}
 		var op record.Operator
 		seen := map[string]bool{}
@@ -361,7 +364,7 @@ func parseOperatorIndex(s string) (record.Output, error) {
 func targetString(f vcvalue.Field) (string, error) {
 	s, ok := f.Value.(string)
 	if !ok {
-		return "", fmt.Errorf("%s is %T, not a string", f.Key, f.Value)
+		return "", fmt.Errorf("%s is %s, not a string", f.Key, guest.KindOf(f.Value))
 	}
 	return s, nil
 }

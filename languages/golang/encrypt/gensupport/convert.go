@@ -45,7 +45,7 @@ func convert(v any, out any) error {
 		case *[]byte, *[]any, *[]string, *[]int64, *[]int32, *[]uint32, *[]uint64, *[]float64, *[]bool, *[][]byte, *Values, *map[string]any, *any:
 			return nil
 		}
-		return fmt.Errorf("opened as nothing, and %T holds a value", out)
+		return notOfType(reflect.TypeOf(out).Elem())
 	}
 	switch out := out.(type) {
 	case *string:
@@ -108,13 +108,13 @@ func convert(v any, out any) error {
 			return mismatch(v, *out)
 		}
 	case *Values:
-		vals, err := valuesOf(v)
+		vals, err := valuesOf(v, "gensupport.Values")
 		if err != nil {
 			return err
 		}
 		*out = vals
 	case *map[string]any:
-		vals, err := valuesOf(v)
+		vals, err := valuesOf(v, "map[string]any")
 		if err != nil {
 			return err
 		}
@@ -156,7 +156,7 @@ func convert(v any, out any) error {
 func convertVia(v any, out any) error {
 	target := reflect.ValueOf(out)
 	if target.Kind() != reflect.Pointer || target.IsNil() {
-		return fmt.Errorf("the opened value is a %T, which %T cannot hold", v, out)
+		return fmt.Errorf("cannot read a decrypted value into %T, because the target must be a pointer that is not nil", out)
 	}
 	elem := target.Elem()
 	t := elem.Type()
@@ -183,7 +183,7 @@ func convertVia(v any, out any) error {
 		}
 		items, ok := v.([]any)
 		if !ok {
-			return fmt.Errorf("opened as %T, not %s", v, t)
+			return notOfType(t)
 		}
 		result := reflect.MakeSlice(t, len(items), len(items))
 		for i, item := range items {
@@ -196,7 +196,7 @@ func convertVia(v any, out any) error {
 	case reflect.Array:
 		items, ok := v.([]any)
 		if !ok || len(items) != t.Len() {
-			return fmt.Errorf("opened as %T with %d elements, not %s", v, len(items), t)
+			return notOfType(t)
 		}
 		result := reflect.New(t).Elem()
 		for i, item := range items {
@@ -210,7 +210,7 @@ func convertVia(v any, out any) error {
 		if t.Key().Kind() != reflect.String {
 			return fmt.Errorf("%s has a key that is not a string", t)
 		}
-		vals, err := valuesOf(v)
+		vals, err := valuesOf(v, t.String())
 		if err != nil {
 			return err
 		}
@@ -225,7 +225,7 @@ func convertVia(v any, out any) error {
 		elem.Set(result)
 		return nil
 	}
-	return fmt.Errorf("the opened value is a %T, which this field's type %s cannot hold", v, t)
+	return notOfType(t)
 }
 
 // underlying is the built-in type a defined scalar type is declared over.
@@ -290,8 +290,18 @@ func widenNumber(n json.Number, out any) (any, error) {
 	return n, nil
 }
 
-func mismatch(v, want any) error {
-	return fmt.Errorf("opened as %T, not %T", v, want)
+// mismatch returns the error for a decrypted value that is not of the type
+// that the field needs. want is a value of that type. See [notOfType].
+func mismatch(_, want any) error {
+	return fmt.Errorf("the decrypted value is not of type %T", want)
+}
+
+// notOfType returns the error for a decrypted value that is not of the Go
+// type that the field needs. The error names that type. The error never
+// names the kind that the value decrypted to. That kind was inside the
+// ciphertext, so it is part of the plaintext.
+func notOfType(want reflect.Type) error {
+	return fmt.Errorf("the decrypted value is not of type %s", want)
 }
 
 // outOfRange names the target type and not the value, which is plaintext.
@@ -393,13 +403,16 @@ func setSlice[E any](v any, out *[]E) error {
 }
 
 // valuesOf reads an opened composite as Values, nested objects included.
-func valuesOf(v any) (Values, error) {
+// want is the Go type that the field needs, and an error names it. An
+// error never names the kind that the value decrypted to, because that
+// kind was inside the ciphertext.
+func valuesOf(v any, want string) (Values, error) {
 	switch obj := v.(type) {
 	case vcvalue.Object:
 		vals := make(Values, len(obj))
 		for _, f := range obj {
 			if inner, ok := f.Value.(vcvalue.Object); ok {
-				nested, err := valuesOf(inner)
+				nested, err := valuesOf(inner, want)
 				if err != nil {
 					return nil, err
 				}
@@ -414,5 +427,7 @@ func valuesOf(v any) (Values, error) {
 	case map[string]any:
 		return Values(obj), nil
 	}
-	return nil, fmt.Errorf("opened as %T, not an object", v)
+	// The error does not name the kind that the value decrypted to. That
+	// kind was inside the ciphertext, so it is part of the plaintext.
+	return nil, fmt.Errorf("the decrypted value is not an object, and %s needs an object", want)
 }

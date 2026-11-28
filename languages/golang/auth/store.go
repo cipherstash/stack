@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 	"github.com/tetratelabs/wazero/api"
 )
@@ -405,19 +404,25 @@ func (s *ProfileStore) ListWorkspaces(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	decoded, err := vcffi.Unmarshal(out)
+	return workspaceIDs(out)
+}
+
+// workspaceIDs reads the answer of sa_list_workspaces. The answer is a
+// list of workspace ids.
+func workspaceIDs(out []byte) ([]string, error) {
+	decoded, err := guest.DecodeAnswer("sa_list_workspaces", out)
 	if err != nil {
-		return nil, fmt.Errorf("%w: decoding the workspace list: %w", ErrInternal, err)
+		return nil, err
 	}
 	items, ok := decoded.([]any)
 	if !ok {
-		return nil, fmt.Errorf("%w: the workspace list is not a list", ErrInternal)
+		return nil, guest.BadAnswer("sa_list_workspaces", fmt.Errorf("it is %s, not a list", guest.KindOf(decoded)))
 	}
 	ids := make([]string, 0, len(items))
-	for _, item := range items {
+	for i, item := range items {
 		id, ok := item.(string)
 		if !ok {
-			return nil, fmt.Errorf("%w: a workspace id is not a string", ErrInternal)
+			return nil, guest.BadAnswer("sa_list_workspaces", fmt.Errorf("workspace id %d is %s, not a string", i, guest.KindOf(item)))
 		}
 		ids = append(ids, id)
 	}
@@ -484,7 +489,7 @@ func (s *ProfileStore) SecretKey(ctx context.Context) (clientID string, key *Cli
 		return "", nil, err
 	}
 	defer guest.Wipe(out)
-	fields, err := object(out)
+	fields, err := object("sa_secret_key", out)
 	if err != nil {
 		return "", nil, err
 	}
@@ -518,7 +523,7 @@ func (s *ProfileStore) DeviceIdentity(ctx context.Context) (DeviceIdentity, erro
 	if err != nil {
 		return DeviceIdentity{}, err
 	}
-	fields, err := object(out)
+	fields, err := object("sa_device_identity", out)
 	if err != nil {
 		return DeviceIdentity{}, err
 	}
@@ -532,23 +537,31 @@ func (s *ProfileStore) DeviceIdentity(ctx context.Context) (DeviceIdentity, erro
 	return d, nil
 }
 
-// fields is a decoded codec object.
-type fields vcvalue.Object
+// fields is the decoded answer of one export: an object, and the name of
+// the export. Every error about the answer names that export.
+type fields struct {
+	export string
+	obj    vcvalue.Object
+}
 
-func object(encoded []byte) (fields, error) {
-	decoded, err := vcffi.Unmarshal(encoded)
+// object decodes the answer of export as an object. For an answer that is
+// not an object, object returns an ErrInternal error. The error names the
+// kind of value that the answer is. The error never contains the value,
+// because an answer can contain a key or a token.
+func object(export string, encoded []byte) (fields, error) {
+	decoded, err := guest.DecodeAnswer(export, encoded)
 	if err != nil {
-		return nil, fmt.Errorf("%w: decoding the guest's result: %w", ErrInternal, err)
+		return fields{}, err
 	}
 	obj, ok := decoded.(vcvalue.Object)
 	if !ok {
-		return nil, fmt.Errorf("%w: the guest's result is not an object", ErrInternal)
+		return fields{}, guest.BadAnswer(export, fmt.Errorf("it is %s, not an object", guest.KindOf(decoded)))
 	}
-	return fields(obj), nil
+	return fields{export: export, obj: obj}, nil
 }
 
 func (f fields) get(key string) (any, bool) {
-	for _, field := range f {
+	for _, field := range f.obj {
 		if field.Key == key {
 			return field.Value, true
 		}
@@ -556,15 +569,21 @@ func (f fields) get(key string) (any, bool) {
 	return nil, false
 }
 
+// refuse returns the error for an answer that this package cannot read.
+// The error is ErrInternal, and it names the export.
+func (f fields) refuse(format string, args ...any) error {
+	return guest.BadAnswer(f.export, fmt.Errorf(format, args...))
+}
+
 // text is a string field that must be present.
 func (f fields) text(key string) (string, error) {
 	v, ok := f.get(key)
 	if !ok {
-		return "", fmt.Errorf("%w: the guest's result has no %s", ErrInternal, key)
+		return "", f.refuse("it has no %s", key)
 	}
 	s, ok := v.(string)
 	if !ok {
-		return "", fmt.Errorf("%w: %s is not a string", ErrInternal, key)
+		return "", f.refuse("%s is %s, not a string", key, guest.KindOf(v))
 	}
 	return s, nil
 }
@@ -574,11 +593,11 @@ func (f fields) text(key string) (string, error) {
 func (f fields) bytes(key string) ([]byte, error) {
 	v, ok := f.get(key)
 	if !ok {
-		return nil, fmt.Errorf("%w: the guest's result has no %s", ErrInternal, key)
+		return nil, f.refuse("it has no %s", key)
 	}
 	b, ok := v.([]byte)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s is not bytes", ErrInternal, key)
+		return nil, f.refuse("%s is %s, not bytes", key, guest.KindOf(v))
 	}
 	return b, nil
 }
@@ -591,7 +610,7 @@ func (f fields) optionalText(key string) (string, error) {
 	}
 	s, ok := v.(string)
 	if !ok {
-		return "", fmt.Errorf("%w: %s is not a string", ErrInternal, key)
+		return "", f.refuse("%s is %s, not a string", key, guest.KindOf(v))
 	}
 	return s, nil
 }
@@ -600,11 +619,11 @@ func (f fields) optionalText(key string) (string, error) {
 func (f fields) uint64Field(key string) (uint64, error) {
 	v, ok := f.get(key)
 	if !ok {
-		return 0, fmt.Errorf("%w: the guest's result has no %s", ErrInternal, key)
+		return 0, f.refuse("it has no %s", key)
 	}
 	n, ok := v.(uint64)
 	if !ok {
-		return 0, fmt.Errorf("%w: %s is not an integer", ErrInternal, key)
+		return 0, f.refuse("%s is %s, not an unsigned integer", key, guest.KindOf(v))
 	}
 	return n, nil
 }

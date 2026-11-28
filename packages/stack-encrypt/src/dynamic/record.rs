@@ -9641,6 +9641,7 @@ mod tests {
                 JsonNoPredicates,
                 JsonWildcardBoundZero,
                 JsonUnknownPredicateOp,
+                JsonVarsNotObject,
             ] {
                 let error = Error::bad_source(reason).in_field("age");
                 assert_eq!(

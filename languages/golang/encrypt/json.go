@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
@@ -69,15 +70,17 @@ func (cph *Cipher) JSONOpen(ctx context.Context, plan *record.Plan, field string
 	}
 	opened := make([][][]byte, len(list))
 	for i, item := range list {
+		// The answer is decrypted plaintext. So an error names the position
+		// of a value in the answer, and never the kind of the value.
 		values, ok := item.([]any)
 		if !ok {
-			return nil, fmt.Errorf("%w: se_json_open group %d is %T", ErrInternal, i, item)
+			return nil, guest.BadAnswer("se_json_open", fmt.Errorf("group %d is not a list", i))
 		}
 		opened[i] = make([][]byte, len(values))
 		for j, v := range values {
 			text, ok := v.([]byte)
 			if !ok {
-				return nil, fmt.Errorf("%w: se_json_open value %d.%d is %T", ErrInternal, i, j, v)
+				return nil, guest.BadAnswer("se_json_open", fmt.Errorf("value %d.%d is not JSON text", i, j))
 			}
 			opened[i][j] = text
 		}
@@ -126,13 +129,16 @@ func (cph *Cipher) jsonOpen(ctx context.Context, plan *record.Plan, field string
 	// The output is plaintext: wiped once it is decoded into the caller's
 	// values.
 	defer wipe(out)
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := guest.DecodeAnswer("se_json_open", out)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInternal, err)
+		return nil, err
 	}
 	list, ok := decoded.([]any)
-	if !ok || len(list) != len(rows) {
-		return nil, fmt.Errorf("%w: se_json_open returned %T for %d groups", ErrInternal, decoded, len(rows))
+	if !ok {
+		return nil, guest.BadAnswer("se_json_open", errors.New("it is not a list of groups"))
+	}
+	if len(list) != len(rows) {
+		return nil, guest.BadAnswer("se_json_open", countMismatch("groups", len(list), len(rows)))
 	}
 	return list, nil
 }
@@ -407,7 +413,7 @@ func (s JSONSelection[E]) Open(ctx context.Context, rows []*E) ([]JSONValue, err
 		case 1:
 			out[i] = JSONValue{Found: true, JSON: values[0]}
 		default:
-			return nil, fmt.Errorf("%w: se_json_open opened %d values for row %d of a selector read", ErrInternal, len(values), i)
+			return nil, guest.BadAnswer("se_json_open", fmt.Errorf("row %d of a selector read has %d decrypted values, not 0 or 1", i, len(values)))
 		}
 	}
 	return out, nil
@@ -631,10 +637,10 @@ func (c JSONChildren[E]) Open(ctx context.Context, entries []E) ([]JSONChildValu
 	for i, item := range list {
 		children, ok := item.([]any)
 		if !ok || len(children) != 1 {
-			return nil, fmt.Errorf("%w: se_json_open opened %T for child %d", ErrInternal, item, i)
+			return nil, guest.BadAnswer("se_json_open", fmt.Errorf("child %d is not one decrypted entry", i))
 		}
 		if out[i], err = jsonChildValue(children[0]); err != nil {
-			return nil, fmt.Errorf("%w: se_json_open child %d: %v", ErrInternal, i, err)
+			return nil, guest.BadAnswer("se_json_open", fmt.Errorf("child %d: %w", i, err))
 		}
 	}
 	return out, nil
@@ -701,7 +707,7 @@ func (v JSONChildValue) LogValue() slog.Value { return slog.StringValue(redacted
 func jsonChildValue(item any) (JSONChildValue, error) {
 	fields, ok := item.(vcvalue.Object)
 	if !ok || len(fields) != 2 {
-		return JSONChildValue{}, fmt.Errorf("a child is %T, not a map of a key or an index and json", item)
+		return JSONChildValue{}, errors.New(`it is not an object with "json" and either "key" or "index"`)
 	}
 	var child JSONChildValue
 	for _, field := range fields {
@@ -722,7 +728,7 @@ func jsonChildValue(item any) (JSONChildValue, error) {
 			}
 			child.JSON = value
 		default:
-			return JSONChildValue{}, fmt.Errorf("a %T at %q", value, field.Key)
+			return JSONChildValue{}, fmt.Errorf("the value at %q is not text, an integer, or bytes", field.Key)
 		}
 	}
 	if child.label == noLabel || child.JSON == nil {

@@ -3,9 +3,12 @@ package encrypt
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
@@ -83,8 +86,29 @@ func TestParseTargetsReadsEachEntry(t *testing.T) {
 		"op key twice":        withOperators([]any{append(operator("eq", "exact", "one", "eq"), vcvalue.Field{Key: "index", Value: "eq"})}),
 		"op value not text":   withOperators([]any{vcvalue.Object{{Key: "operator", Value: int64(1)}, {Key: "fidelity", Value: "exact"}, {Key: "arity", Value: "one"}, {Key: "index", Value: "eq"}, {Key: "input", Value: "value"}}}),
 	} {
-		if _, err := parseTargets(bad); !errors.Is(err, ErrInternal) {
+		_, err := parseTargets(bad)
+		if !errors.Is(err, ErrInternal) {
 			t.Errorf("%s: %v, want ErrInternal", name, err)
+		}
+		if err != nil && !strings.Contains(err.Error(), "cannot read the guest's answer from se_targets") {
+			t.Errorf("%s: %v does not name the export", name, err)
+		}
+	}
+	// Each error names the kind of the value that is wrong, and never the
+	// value. The value is the answer itself, its list, an entry, or an
+	// operator of an entry.
+	for _, tc := range []struct {
+		answer any
+		want   string
+	}{
+		{"secret", "it is a string, not an object"},
+		{vcvalue.Object{{Key: "targets", Value: "secret"}}, "targets is a string, not a list"},
+		{vcvalue.Object{{Key: "targets", Value: []any{"secret"}}}, "target 0 is a string, not an object"},
+		{withOperators([]any{"secret"}), "target 0: operator 0 is a string, not an object"},
+	} {
+		_, err := parseTargets(tc.answer)
+		if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "secret") {
+			t.Errorf("%v, want it to say %q and hold no value", err, tc.want)
 		}
 	}
 }
@@ -124,6 +148,21 @@ func TestParseQueryTermTakesOnlyWhatTheEngineWrites(t *testing.T) {
 		}
 		if _, err := parseTargets(withOperators([]any{operator(name, "exact", "one", "ore")})); err != nil {
 			t.Errorf("catalog %s: %v", name, err)
+		}
+	}
+	// For an answer that is not an object, the error names the kind of
+	// value that the answer is.
+	for _, tc := range []struct {
+		answer any
+		want   string
+	}{
+		{[]any{"secret"}, "it is a list, not an object"},
+		{nil, "it is null, not an object"},
+		{"secret", "it is a string, not an object"},
+	} {
+		_, err := parseQueryTerm(tc.answer)
+		if err == nil || err.Error() != tc.want {
+			t.Errorf("parseQueryTerm(%T) = %v, want %q", tc.answer, err, tc.want)
 		}
 	}
 	for name, bad := range map[string]vcvalue.Object{
@@ -173,6 +212,108 @@ func TestParseQueryTermRefusesAMixedShape(t *testing.T) {
 	} {
 		if _, err := parseQueryTerm(bad); err == nil {
 			t.Errorf("%s: read, want refused", name)
+		}
+	}
+}
+
+// The same code decodes the answer of every export. For bytes that do not
+// decode, the error is ErrInternal and names the export. The error says
+// that the cause is a bug or a guest of another version, and not bad input.
+func TestAnAnswerThatDoesNotDecodeNamesTheExport(t *testing.T) {
+	for _, export := range []string{"se_query_term", "se_targets", "se_operators", "se_contexts", "se_verify", "se_target_limit"} {
+		_, err := guest.DecodeAnswer(export, []byte{0xff})
+		if !errors.Is(err, ErrInternal) || errors.Is(err, ErrEncoding) {
+			t.Fatalf("%s: %v, want ErrInternal alone", export, err)
+		}
+		want := "cipherstash: internal guest failure: cannot read the guest's answer from " + export + ": "
+		if !strings.HasPrefix(err.Error(), want) || !strings.Contains(err.Error(), "does not match the version of this module") {
+			t.Errorf("%s: %v", export, err)
+		}
+	}
+	if decoded, err := guest.DecodeAnswer("se_contexts", mustMarshal(t, "users / email")); err != nil || decoded != "users / email" {
+		t.Errorf("a good answer: %v, %v", decoded, err)
+	}
+}
+
+// For an answer of se_verify or se_target_limit that is of the wrong kind,
+// the error names the kind of value that the answer is.
+func TestVerifyAndLimitAnswersSayWhatTheyAre(t *testing.T) {
+	for _, tc := range []struct {
+		answer any
+		count  int
+		want   string
+	}{
+		{"secret", 1, "from se_verify: it is a string, not a list"},
+		{[]any{true}, 2, "from se_verify: the number of values is 1, not the 2 that were sent"},
+		{[]any{true, "secret"}, 2, "from se_verify: answer 1 is a string, not a boolean"},
+	} {
+		_, err := parseVerified(tc.answer, tc.count)
+		if !errors.Is(err, ErrInternal) || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "secret") {
+			t.Errorf("%v, want %q", err, tc.want)
+		}
+	}
+	if got, err := parseVerified([]any{true, false}, 2); err != nil || !reflect.DeepEqual(got, []bool{true, false}) {
+		t.Errorf("a good answer: %v, %v", got, err)
+	}
+	_, err := parseLimit("secret")
+	if !errors.Is(err, ErrInternal) || !strings.Contains(err.Error(), "from se_target_limit: it is a string, not a row count or null") {
+		t.Errorf("limit: %v", err)
+	}
+	if limit, err := parseLimit(nil); err != nil || limit != (Limit{}) {
+		t.Errorf("no bound: %+v, %v", limit, err)
+	}
+	if limit, err := parseLimit(uint64(7)); err != nil || limit != (Limit{rows: 7, bounded: true}) {
+		t.Errorf("a bound: %+v, %v", limit, err)
+	}
+}
+
+// For an index, a producible flag, or a name of the wrong kind, the error
+// names the kind of value that it is.
+func TestATargetFieldOfTheWrongKindSaysWhatItIs(t *testing.T) {
+	entry := func(fields ...vcvalue.Field) vcvalue.Object {
+		return vcvalue.Object{{Key: "targets", Value: []any{vcvalue.Object(fields)}}}
+	}
+	name := vcvalue.Field{Key: "name", Value: "TextEq"}
+	for _, tc := range []struct {
+		answer vcvalue.Object
+		want   string
+	}{
+		{entry(name, vcvalue.Field{Key: "indexes", Value: "secret"}, vcvalue.Field{Key: "producible", Value: true}), "indexes is a string, not a list"},
+		{entry(name, vcvalue.Field{Key: "indexes", Value: []any{int64(1)}}, vcvalue.Field{Key: "producible", Value: true}), "an index is a number, not a string"},
+		{entry(name, vcvalue.Field{Key: "indexes", Value: []any{}}, vcvalue.Field{Key: "producible", Value: "secret"}), "producible is a string, not a bool"},
+		{entry(vcvalue.Field{Key: "name", Value: int64(1)}), "name is a number, not a string"},
+	} {
+		_, err := parseTargets(tc.answer)
+		if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "secret") {
+			t.Errorf("%v, want %q", err, tc.want)
+		}
+	}
+}
+
+// mustMarshal returns v as transport bytes.
+func mustMarshal(t *testing.T, v any) []byte {
+	t.Helper()
+	out, err := vcffi.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// se_json_open can return a child that is not what the export writes. The
+// error names the position and the key of the child. The error never names
+// the kind of the value, because the value is decrypted plaintext.
+func TestAnOpenedChildOfTheWrongShapeNamesNoKind(t *testing.T) {
+	for _, tc := range []struct {
+		item any
+		want string
+	}{
+		{"secret", `it is not an object with "json" and either "key" or "index"`},
+		{vcvalue.Object{{Key: "key", Value: "k"}, {Key: "json", Value: int64(7)}}, `the value at "json" is not text, an integer, or bytes`},
+	} {
+		_, err := jsonChildValue(tc.item)
+		if err == nil || err.Error() != tc.want {
+			t.Errorf("%v, want %q", err, tc.want)
 		}
 	}
 }

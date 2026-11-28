@@ -24,7 +24,7 @@ use super::{
     wipe_value, IndexPath, JsonElementsMember, JsonElementsQuery, JsonLeafQuery, JsonOptions,
     JsonPath, JsonPredicateQuery, JsonQuery, JsonSelector, JsonSubtreeKey,
 };
-use crate::refusal::{Error, Reason};
+use crate::refusal::{Error, Found, Reason};
 use crate::sem::TermError;
 use crate::target::{AeadContext, CallerContext, DeclaredContext, Owned};
 use crate::{ContextPiece, KeysetCipher, Label, NonEmpty, Pending};
@@ -209,13 +209,49 @@ impl Input {
         bound: Option<u32>,
     ) -> Result<Self, Error> {
         let bound = wildcard_bound(bound)?;
-        if !vars.is_object() {
-            return Err(Error::bad_source(Reason::JsonInput));
-        }
+        vars_object(vars)?;
         Ok(Self::Predicate(Box::new(super::predicate::compile(
             text, vars, options, bound,
         )?)))
     }
+}
+
+/// Checks that the vars of a `match` are a JSON object.
+///
+/// # Errors
+///
+/// Returns [`Error::Source`] with [`Reason::JsonVarsNotObject`] when the
+/// vars are not an object. The error names the kind of value that the vars
+/// are.
+pub(crate) fn vars_object(vars: &Value) -> Result<(), Error> {
+    if vars.is_object() {
+        return Ok(());
+    }
+    Err(Error::Source {
+        field: None,
+        row: None,
+        reason: Reason::JsonVarsNotObject,
+        found: Some(json_kind(vars)),
+    })
+}
+
+/// The kind of a JSON value, for an error that names the kind and never
+/// contains the value.
+///
+/// A number has the kind that the engine reads it as: an unsigned 64-bit
+/// integer, a signed 64-bit integer, or a float.
+fn json_kind(value: &Value) -> Found {
+    use vitaminc_aead::plaintext::ValueKind;
+    Found::Kind(match value {
+        Value::Null => return Found::Null,
+        Value::Bool(_) => ValueKind::Bool,
+        Value::Number(n) if n.is_u64() => ValueKind::UInt64,
+        Value::Number(n) if n.is_i64() => ValueKind::Int64,
+        Value::Number(_) => ValueKind::Float64,
+        Value::String(_) => ValueKind::String,
+        Value::Array(_) => ValueKind::Array,
+        Value::Object(_) => ValueKind::Object,
+    })
 }
 
 /// The path of an array's elements that `element_match` reads: a path with

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -307,11 +308,19 @@ func TestAYieldStepDecodesWithNoRequests(t *testing.T) {
 	}
 }
 
-// A step the host cannot decode is refused, never performed.
+// A step the host cannot decode is refused, never performed. The error is
+// ErrInternal. The error names se_io, and says that the cause is a bug or a
+// guest of another version.
 func TestAMalformedStepIsRefused(t *testing.T) {
 	for _, raw := range [][]byte{nil, {0xff}, marshalStep(t, map[string]any{"handle": uint64(1)})} {
-		if _, err := decodeStep(raw); !errors.Is(err, errMalformedStep) {
-			t.Errorf("decodeStep(%x): %v, want errMalformedStep", raw, err)
+		_, err := decodeStep(raw)
+		if !errors.Is(err, errStepMalformed) || !errors.Is(err, ErrInternal) {
+			t.Errorf("decodeStep(%x): %v, want ErrInternal for a malformed step", raw, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "cannot read the guest's answer from se_io: the step is malformed") ||
+			!strings.Contains(err.Error(), "does not match the version of this module") {
+			t.Errorf("decodeStep(%x): %v", raw, err)
 		}
 	}
 }

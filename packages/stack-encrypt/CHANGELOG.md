@@ -589,6 +589,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the field follow. For an error that names no field, the message starts
     with `the record to encrypt`.
 
+- **The `vars` of a `match` query that are not a JSON object get the new
+  reason `json_vars_not_object`** (#1987). Before, the reason was
+  `json_input`. The error had no more detail. `json_input` is the reason
+  for any input that a JSON operator does not take. To upgrade, change
+  code that compares the reason with `json_input` for this case.
+  - The error names the field.
+  - The payload field `found` is the kind of value that the vars are,
+    such as `"array"`, `"uint64"`, or `"null"`.
+  - The message for vars that are null is
+    `the vars of the match are null, not a JSON object`. The field
+    follows.
+  - The engine refuses the vars before it reads the predicate.
+  - Only the dynamic path can get vars that are not an object. A field
+    reference always builds an object.
+
 - **`dynamic::ValueFrame` is removed. The engine reads a plaintext as a
   borrowed `Frame` and keeps one as vitaminc's `OwnedFrame`** (#1955).
   `dynamic::frame` re-exports both from vitaminc. A `Frame` is one value's

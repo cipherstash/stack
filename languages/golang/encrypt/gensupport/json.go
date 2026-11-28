@@ -118,11 +118,13 @@ func GetDocument[T any](vals Values, name string) (T, error) {
 	}
 	text, ok := v.([]byte)
 	if !ok {
-		return out, fmt.Errorf("gensupport: field %q: %w: the document opened as %T, not its JSON text", name, encrypt.ErrEncoding, v)
+		// The error does not name the kind that the value decrypted to,
+		// because that kind was inside the ciphertext.
+		return out, fmt.Errorf("gensupport: decrypt: field %q: %w: the decrypted value is not JSON text", name, encrypt.ErrEncoding)
 	}
 	out, err := encrypt.DecodeJSON[T](text)
 	if err != nil {
-		return out, fmt.Errorf("gensupport: field %q: %w", name, err)
+		return out, fmt.Errorf("gensupport: decrypt: field %q: %w", name, err)
 	}
 	return out, nil
 }
@@ -339,9 +341,10 @@ func JSONElementMatch[Q ~[]byte, T, E any](ctx context.Context, f Field[T], c *e
 //     json_tree_match are NULL for every row too. The predicate is still
 //     compiled, so text the grammar does not read is still refused; a
 //     variable it names is not, as plaintext does not look for one.
-//   - A value that writes the JSON null (a json.RawMessage of null, or a
-//     pointer to a nil map) is refused as not an object, as plaintext
-//     refuses "vars" that are not an object.
+//   - A value that writes the JSON null is refused as not an object, with
+//     the reason json_vars_not_object. Examples are a json.RawMessage of
+//     null, and a pointer to a nil map. jsonb_path_match over plaintext
+//     refuses "vars" that are not an object too.
 //   - Any other json.RawMessage crosses as it is, so an empty or
 //     whitespace-only one is refused by the engine as not JSON, as "{" is.
 //

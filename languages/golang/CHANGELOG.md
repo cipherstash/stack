@@ -35,7 +35,61 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
     node in the unencrypted structure of a stored row. An error about a
     decrypted value never names the kind that the value decrypted to.
 
+### Breaking
+
+- **`Match` refuses `vars` that are not a JSON object with the reason
+  `json_vars_not_object`, not `json_input`** (#1987). If your program
+  compares `Reason()` with `json_input` for this case, change it to the
+  new name. The error also has more detail:
+  - `Found` is the kind of value that the vars are, such as `"array"`,
+    `"uint64"`, or `"null"`.
+  - `Field` names the field.
+  - The message for vars that are null is `the vars of the match are
+    null, not a JSON object`. The field follows.
+
 ### Changed
+
+- **A decrypt error names the field and the Go type that the field
+  needs, and never the kind that the value decrypted to** (#1987). The Go
+  type, the kind, and the length of a decrypted value were inside the
+  ciphertext, so an error message leaves them out.
+  - A map field has the type `map[string]V`, `Values`, or
+    `map[string]any`. The stored value of a map field can decrypt to
+    something that is not an object. The message is then `decrypt: field
+    "tags": ... the decrypted value is not an object, and map[string]any
+    needs an object`. Before, the message said `opened as []interface {},
+    not an object`.
+  - The message for every other mismatch says `the decrypted value is not
+    of type`, then the type that the field needs. Those mismatches are:
+    - a value of another type
+    - a null for a type that does not take a null
+    - a list or an array of another length
+    - a document that is not its JSON text
+    - an opaque value that is not bytes
+
+- **An error about a guest answer that this module cannot read says that
+  the fault is internal** (#1987). A guest is a WebAssembly module that
+  this module embeds. An answer is the value that an exported function of
+  a guest returns. This module cannot read an answer that does not decode,
+  or that does not have the format that the function writes. The error for
+  such an answer is still `ErrInternal`. The message of the error now has
+  more detail:
+  - The message names the exported function, as in `cannot read the
+    guest's answer from se_query_term`.
+  - The message says that the cause is a bug, or a guest that does not
+    match the version of this module. The cause is not the program's
+    input.
+  - When the answer is not plaintext, the message names the kind of value
+    that the answer is.
+
+  The change covers the answers of `se_query_term`, `se_targets`,
+  `se_operators`, `se_contexts`, `se_verify`, `se_target_limit`,
+  `se_json_open`, `se_encrypt_record`, `se_decrypt_record`, `se_io`,
+  `sa_token`, `sa_secret_key`, `sa_device_identity`,
+  `sa_list_workspaces`, `sa_auth_runnable`, and `sa_auth_io`. The encrypt
+  guest also returns steps. A step is a request for the host to do I/O.
+  The error for a step that this module cannot read is now `ErrInternal`
+  too.
 
 - **A record field converts a number of another width or kind, as a
   query does.** A value sealed through `Cipher.Seal` for a field that

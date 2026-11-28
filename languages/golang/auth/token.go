@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"time"
 
@@ -43,7 +42,7 @@ func (s *ProfileStore) Token(ctx context.Context) (Token, error) {
 		return Token{}, err
 	}
 	defer guest.Wipe(out)
-	fields, err := object(out)
+	fields, err := object("sa_token", out)
 	if err != nil {
 		return Token{}, err
 	}
@@ -59,7 +58,7 @@ func (s *ProfileStore) Token(ctx context.Context) (Token, error) {
 		return Token{}, err
 	}
 	if expiresAt > math.MaxInt64 {
-		return Token{}, fmt.Errorf("%w: expires_at %d is out of range", ErrInternal, expiresAt)
+		return Token{}, fields.refuse("expires_at is too large for a time")
 	}
 	t.ExpiresAt = time.Unix(int64(expiresAt), 0)
 	if t.Region, err = fields.optionalText("region"); err != nil {

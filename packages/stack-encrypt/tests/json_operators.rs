@@ -3098,7 +3098,10 @@ mod compiled_match {
                 assert!(payload["construct"].is_string(), "{predicate}: {payload:?}");
             }
             for (input, reason) in [
-                (json!({"predicate": "$.a == 1", "vars": "[]"}), "json_input"),
+                (
+                    json!({"predicate": "$.a == 1", "vars": "[]"}),
+                    "json_vars_not_object",
+                ),
                 (json!({"predicate": "$.a == 1", "vars": "{"}), "json_syntax"),
                 (
                     json!({"predicate": "$.a == 1", "wildcard_bound": 0}),
@@ -3123,6 +3126,110 @@ mod compiled_match {
             assert!(
                 check(&json!({"predicate": "$.a == 1"})).is_ok(),
                 "vars may be absent"
+            );
+        }
+
+        /// The engine refuses vars that are not a JSON object. The error
+        /// names the field and the kind of value that the vars are, and
+        /// never contains the value. The message says that the vars are of
+        /// that kind, and not a JSON object.
+        #[test]
+        fn refuses_vars_that_are_not_an_object_saying_what_they_are() {
+            for (vars, found, phrase) in [
+                (r#"["secret"]"#, "array", "an array"),
+                ("null", "null", "null"),
+                (r#""secret""#, "string", "a string"),
+                ("7", "uint64", "a uint64"),
+                ("-7", "int64", "an int64"),
+                ("1.5", "float64", "a float64"),
+                ("true", "bool", "a bool"),
+            ] {
+                let request = json!({"predicate": "$.a == $v", "vars": vars});
+                let error = check(&request).unwrap_err();
+                assert_eq!(
+                    error.reason().map(Reason::as_str),
+                    Some("json_vars_not_object"),
+                    "{vars}: the reason"
+                );
+                assert_eq!(error.field(), Some("profile"), "{vars}: the field");
+                assert_eq!(
+                    error.found().map(|found| found.as_str()),
+                    Some(found),
+                    "{vars}: what was found"
+                );
+                let payload = stack_encrypt::ErrorPayload::payload(&error);
+                assert_eq!(
+                    Value::Object(payload.clone()),
+                    json!({"field": "profile", "reason": "json_vars_not_object", "found": found}),
+                    "{vars}: the payload"
+                );
+                let message = error.to_string();
+                assert_eq!(
+                    message,
+                    format!(
+                        r#"the vars of the match are {phrase}, not a JSON object (field "profile")"#
+                    ),
+                    "{vars}: the message"
+                );
+                assert!(!message.contains("secret"), "{vars}: no value: {message}");
+            }
+        }
+
+        /// The engine refuses vars that are not an object before it reads
+        /// the predicate. The input here has a predicate that is not UTF-8,
+        /// and the vars `[]`. The error is about the vars.
+        #[test]
+        fn refuses_vars_before_reading_the_predicate() {
+            /// The input of a match whose predicate is bytes. A binding can
+            /// send the predicate as bytes.
+            struct Input<'a> {
+                predicate: &'a [u8],
+                vars: &'a str,
+            }
+            struct Bytes<'a>(&'a [u8]);
+            impl serde::Serialize for Bytes<'_> {
+                fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                    s.serialize_bytes(self.0)
+                }
+            }
+            impl serde::Serialize for Input<'_> {
+                fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                    use serde::ser::SerializeMap;
+                    let mut map = s.serialize_map(Some(2))?;
+                    map.serialize_entry("predicate", &Bytes(self.predicate))?;
+                    map.serialize_entry("vars", self.vars)?;
+                    map.end()
+                }
+            }
+            let request = |vars| {
+                OwnedFrame::from_buffer(
+                    dynamic::frame::serde::to_vec(&Input {
+                        predicate: &[0xff, 0xfe],
+                        vars,
+                    })
+                    .unwrap(),
+                )
+                .unwrap()
+            };
+            let check = |vars| {
+                dynamic::check_query(&people(), "profile", Op::Match, request(vars), &Documents)
+                    .unwrap_err()
+            };
+            let error = check("[]");
+            assert_eq!(
+                error.reason().map(Reason::as_str),
+                Some("json_vars_not_object"),
+                "the vars are refused first"
+            );
+            assert_eq!(
+                error.found().map(|found| found.as_str()),
+                Some("array"),
+                "what the vars are"
+            );
+            assert_eq!(
+                check("{}").reason().map(Reason::as_str),
+                Some("json_input"),
+                "with object vars, the predicate that is not UTF-8 is refused"
             );
         }
     }

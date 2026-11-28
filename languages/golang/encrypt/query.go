@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
@@ -162,13 +163,13 @@ func (cph *Cipher) QueryTerm(ctx context.Context, plan *record.Plan, field, oper
 	if err != nil {
 		return QueryTerm{}, err
 	}
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := guest.DecodeAnswer("se_query_term", out)
 	if err != nil {
-		return QueryTerm{}, fmt.Errorf("%w: %v", ErrInternal, err)
+		return QueryTerm{}, err
 	}
 	term, err := parseQueryTerm(decoded)
 	if err != nil {
-		return QueryTerm{}, fmt.Errorf("%w: se_query_term: %v", ErrInternal, err)
+		return QueryTerm{}, guest.BadAnswer("se_query_term", err)
 	}
 	return term, nil
 }
@@ -183,7 +184,7 @@ func (cph *Cipher) QueryTerm(ctx context.Context, plan *record.Plan, field, oper
 func parseQueryTerm(decoded any) (QueryTerm, error) {
 	obj, ok := decoded.(vcvalue.Object)
 	if !ok {
-		return QueryTerm{}, fmt.Errorf("came back as %T, not an object", decoded)
+		return QueryTerm{}, fmt.Errorf("it is %s, not an object", guest.KindOf(decoded))
 	}
 	var t QueryTerm
 	var shape string
@@ -239,7 +240,7 @@ func parseQueryTerm(decoded any) (QueryTerm, error) {
 					case string:
 						t.Text = append(t.Text, x)
 					default:
-						return QueryTerm{}, fmt.Errorf("a term part is %T", item)
+						return QueryTerm{}, fmt.Errorf("a term part is %s", guest.KindOf(item))
 					}
 				}
 				if t.Terms != nil && (len(t.Terms) != 2 || t.Text != nil) {
@@ -250,7 +251,7 @@ func parseQueryTerm(decoded any) (QueryTerm, error) {
 					t.Text = []string{}
 				}
 			default:
-				return QueryTerm{}, fmt.Errorf("term is %T", f.Value)
+				return QueryTerm{}, fmt.Errorf("term is %s", guest.KindOf(f.Value))
 			}
 		default:
 			return QueryTerm{}, fmt.Errorf("unknown key %q", f.Key)
@@ -317,19 +318,28 @@ func (cph *Cipher) Verify(ctx context.Context, plan *record.Plan, field, operato
 	if err != nil {
 		return nil, err
 	}
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := guest.DecodeAnswer("se_verify", out)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInternal, err)
+		return nil, err
 	}
+	return parseVerified(decoded, len(values))
+}
+
+// parseVerified reads the answer of se_verify. The answer has one boolean
+// for each of the count values that the caller sent.
+func parseVerified(decoded any, count int) ([]bool, error) {
 	list, ok := decoded.([]any)
-	if !ok || len(list) != len(values) {
-		return nil, fmt.Errorf("%w: se_verify returned %T for %d values", ErrInternal, decoded, len(values))
+	if !ok {
+		return nil, guest.BadAnswer("se_verify", fmt.Errorf("it is %s, not a list", guest.KindOf(decoded)))
+	}
+	if len(list) != count {
+		return nil, guest.BadAnswer("se_verify", countMismatch("values", len(list), count))
 	}
 	verified := make([]bool, len(list))
 	for i, v := range list {
 		b, ok := v.(bool)
 		if !ok {
-			return nil, fmt.Errorf("%w: se_verify returned %T for value %d", ErrInternal, v, i)
+			return nil, guest.BadAnswer("se_verify", fmt.Errorf("answer %d is %s, not a boolean", i, guest.KindOf(v)))
 		}
 		verified[i] = b
 	}
@@ -360,17 +370,23 @@ func (cph *Cipher) TargetLimit(ctx context.Context, plan *record.Plan, field, op
 	if err != nil {
 		return Limit{}, err
 	}
-	decoded, err := vcffi.Unmarshal(out)
+	decoded, err := guest.DecodeAnswer("se_target_limit", out)
 	if err != nil {
-		return Limit{}, fmt.Errorf("%w: %v", ErrInternal, err)
+		return Limit{}, err
 	}
+	return parseLimit(decoded)
+}
+
+// parseLimit reads the answer of se_target_limit. The answer is null when
+// there is no bound, or the number of rows.
+func parseLimit(decoded any) (Limit, error) {
 	switch v := decoded.(type) {
 	case nil:
 		return Limit{}, nil
 	case uint64:
 		return Limit{rows: v, bounded: true}, nil
 	default:
-		return Limit{}, fmt.Errorf("%w: se_target_limit returned %T", ErrInternal, decoded)
+		return Limit{}, guest.BadAnswer("se_target_limit", fmt.Errorf("it is %s, not a row count or null", guest.KindOf(decoded)))
 	}
 }
 

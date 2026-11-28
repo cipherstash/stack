@@ -234,8 +234,10 @@ pub enum Error {
         /// What was wrong with the source.
         reason: Reason,
         /// The kind of value that the source or the row is, when it is not
-        /// an object of fields. `Some` only when `reason` is
-        /// [`Reason::NotAnObject`].
+        /// an object of fields. Also the kind of value that the vars of a
+        /// `match` are, when they are not a JSON object. `Some` only when
+        /// `reason` is [`Reason::NotAnObject`] or
+        /// [`Reason::JsonVarsNotObject`].
         found: Option<Found>,
     },
 
@@ -473,6 +475,7 @@ fn answers_a_query(reason: Reason) -> bool {
             | JsonNoPredicates
             | JsonWildcardBoundZero
             | JsonUnknownPredicateOp
+            | JsonVarsNotObject
     )
 }
 
@@ -489,10 +492,15 @@ enum Subject {
 /// record.
 ///
 /// With a [`Found`], the message is one sentence that names the input, the
-/// kind of value the input is, and the kind the operation takes. An example
-/// is `row 2 of the records to encrypt is null, not an object of fields`.
-/// The sentence says everything that `what` would, so the message leaves
-/// `what` out.
+/// kind of value the input is, and the kind the operation takes. The
+/// sentence says everything that `what` would, so the message leaves `what`
+/// out. There are two forms:
+///
+/// - For [`Reason::JsonVarsNotObject`], the input is the vars of a `match`.
+///   An example is `the vars of the match are null, not a JSON object`.
+/// - For [`Reason::NotAnObject`], the input is a plan, a field spec, a
+///   record, or a row. An example is
+///   `row 2 of the records to encrypt is null, not an object of fields`.
 ///
 /// Without a [`Found`], the message is `what`, then the reason, then the
 /// row and the field if the error names them. An example is
@@ -509,6 +517,12 @@ fn misfit_text(
     let Some(found) = found else {
         return format!("{what}: {reason}{}", place_text(row, field));
     };
+    if reason == Reason::JsonVarsNotObject {
+        return format!(
+            "the vars of the match are {found}, not a JSON object{}",
+            place_text(row, field)
+        );
+    }
     let input = match (subject, row, field) {
         (Subject::Plan, _, None) => "the plan".to_owned(),
         (Subject::Plan, _, Some(_)) => "the field's spec".to_owned(),
@@ -665,9 +679,10 @@ impl Error {
     /// The kind of value that the caller passed where the operation takes
     /// an object.
     ///
-    /// The value is a plan, a field spec, a record source, a stored record,
-    /// or a row of a batch. `Some` only for an error whose reason is
-    /// [`Reason::NotAnObject`]. `None` for every other error.
+    /// For [`Reason::NotAnObject`], the value is a plan, a field spec, a
+    /// record source, a stored record, or a row of a batch. For
+    /// [`Reason::JsonVarsNotObject`], the value is the vars of a `match`
+    /// query. `None` for every other error.
     pub fn found(&self) -> Option<Found> {
         match self {
             Self::Plan { found, .. } | Self::Source { found, .. } | Self::Record { found, .. } => {
@@ -987,6 +1002,10 @@ reasons! {
         /// A value returned an error of its own while the engine read it
         /// ([`Error::SourceFailed`]).
         SourceFailed => "source_failed", "a value returned an error while it was read";
+        /// The `vars` of a `match` query are not a JSON object. The vars
+        /// are a list, a number, a string, a boolean, or the JSON `null`.
+        /// [`Error::found`] returns the kind.
+        JsonVarsNotObject => "json_vars_not_object", "the vars of a match must be a JSON object";
     }
 }
 
