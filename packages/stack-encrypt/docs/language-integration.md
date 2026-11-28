@@ -170,6 +170,30 @@ says which cipher opens ([`crate::CipherRef`]):
 A record encrypted with a scope or a binding is decrypted with the same
 ones, through `decrypt_from_with_context`.
 
+### One value as one ciphertext
+
+A record is not the only stored form. Rust's `keyset.encrypt(value)`
+encrypts one value into one [`crate::Ciphertext`], with no plan. A binding
+does the same through [`crate::dynamic::value`]:
+
+- [`crate::dynamic::value::encrypt`] takes the value as a
+  [`crate::dynamic::frame::Frame`] and an optional declared kind
+  ([`crate::dynamic::ValueKind`]). It settles to the ciphertext the typed
+  Rust call makes for the same value, so every language reads what any
+  language wrote.
+- [`crate::dynamic::value::decrypt`] takes a ciphertext and an optional
+  kind the value must open as. It settles to the value's frame.
+
+Each has a form that takes a context, and a form that takes many values and
+makes one key request. A declared kind reads the value by the rules a
+record's typed field uses, so a binding passes a language's own number. The
+kind `json` takes a document as its JSON text.
+
+A ciphertext holds one scalar. An array, an object, a passthrough and a null
+are refused before any key is requested, with a reason that says which was
+found (`array`, `object`, `passthrough`, `null`). An SDK stores an absent
+value as a database `NULL`.
+
 ### Scopes and bindings
 
 A field is sealed under its label, `["profiles", "age"]`. A caller adds to
@@ -833,8 +857,8 @@ done:
    each profile in `conformance/stack-encrypt/v1`, as
    `languages/golang/encrypt/*conformance_test.go` does for Go: scalar
    records, declarations, reads, runtime and nulls, contexts and bindings,
-   value boundaries, query refusals, raw frames and, if your binding links
-   the EQL types, EQL and JSON. Read the frozen expectations; never
+   value boundaries, query refusals, raw frames, single values and, if your
+   binding links the EQL types, EQL and JSON. Read the frozen expectations; never
    regenerate them to pass. A profile you have not run is not a pass.
 2. **Fresh artifacts cross both ways.** The exchange profile
    (`conformance/stack-encrypt/exchange-contract.md`) has your binding open

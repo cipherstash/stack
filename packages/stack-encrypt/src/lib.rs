@@ -675,6 +675,11 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! module (feature `dynamic`). The guide to building such a binding, with
 //! the Go SDK as the reference, is `dynamic::guide`.
 //!
+//! A binding holds a value as a frame, and learns its kind only when the
+//! code runs. `dynamic::value` encrypts such a value as the one
+//! [`Ciphertext`] that [`KeysetCipher::encrypt`] returns for it, and decrypts
+//! one into a frame.
+//!
 //! # Relationship to vitaminc
 //!
 //! A `KeysetCipher` seals through a vitaminc `Cipher`; everything vitaminc
