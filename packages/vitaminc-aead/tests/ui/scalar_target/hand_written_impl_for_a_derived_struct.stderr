@@ -1,27 +1,15 @@
-error[E0277]: this target cannot be decrypted from one ciphertext
+error[E0277]: `ScalarTarget` cannot be implemented for `Account`
   --> tests/ui/scalar_target/hand_written_impl_for_a_derived_struct.rs:13:23
    |
 13 | impl ScalarTarget for Account {}
-   |                       ^^^^^^^ one ciphertext contains one value, and this target needs more
+   |                       ^^^^^^^ the sink of this target does not implement `TakesScalar`
    |
-help: the trait `TakesScalar` is not implemented for `__AccountDecryptSink`
-  --> tests/ui/scalar_target/hand_written_impl_for_a_derived_struct.rs:8:10
+help: the trait `typed::sealed::SinkTakesScalar` is not implemented for `Account`
+  --> tests/ui/scalar_target/hand_written_impl_for_a_derived_struct.rs:9:1
    |
- 8 | #[derive(Decrypt)]
-   |          ^^^^^^^
-   = note: `__AccountDecryptSink` is the sink that builds this target, and that sink does not build its value from one scalar
-   = note: one ciphertext decrypts into a scalar such as `String`, `i64`, or `Vec<u8>`, or into an `Option`, a `Protected`, or a derived newtype of a scalar
-   = note: to decrypt many values, decrypt a `Vec<Ciphertext>`: each ciphertext becomes one element
-   = note: to decrypt a sequence, a map, or a struct that was encrypted as a tree, use `decrypt_tree`
-   = help: the following other types implement trait `TakesScalar`:
-             Optional<T>
-             OwnedFrameSink
-             ProtectedOptional<T>
-             ScalarProtected<T>
-             ScalarSink<T>
-             Wrap<S>
-             Wrapped<S, W>
-   = note: required for `Account` to implement `typed::sealed::SinkTakesScalar`
+ 9 | struct Account {
+   | ^^^^^^^^^^^^^^
+   = note: a target is a `ScalarTarget` when its sink, `Decrypt::Sink`, implements `TakesScalar`. No other impl is accepted.
 note: required by a bound in `ScalarTarget`
   --> src/typed.rs
    |
@@ -30,4 +18,3 @@ note: required by a bound in `ScalarTarget`
    = note: `ScalarTarget` is a "sealed trait", because to implement it you also need to implement `vitaminc_aead::typed::sealed::SinkTakesScalar`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
    = help: the following type implements the trait:
              T
-   = note: this error originates in the derive macro `Decrypt` (in Nightly builds, run with -Z macro-backtrace for more info)

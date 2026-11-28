@@ -24,7 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   An `Option` of a `ScalarTarget`, a newtype that derives `Decrypt` over one, and `OwnedFrame` are also `ScalarTarget`s.
   So is a `Protected` of a scalar, or of an `Option` of a scalar.
   A `Vec<T>` other than `Vec<u8>`, a map, a derived struct with named fields, and a newtype of one of those are not `ScalarTarget`s.
-  The `#[diagnostic::on_unimplemented]` message of the trait says that one ciphertext contains one value, and names what to decrypt instead.
+  The compile error for a target that is not a `ScalarTarget` names the target, and says what a scalar target is.
   Nothing in this crate bounds on `ScalarTarget`, so no existing code changes.
 - `TakesScalar` (also `typed::TakesScalar`): a trait for a sink that builds its value from one scalar.
   `ScalarSink`, `ScalarProtected`, and `OwnedFrameSink` implement it.

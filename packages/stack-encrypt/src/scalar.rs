@@ -192,6 +192,24 @@ pub trait OpaqueEncode: sealed::Encode + Zeroize + Send + 'static {}
 /// owned value, and nothing wipes it when it is dropped: `Zeroize` is the
 /// bound, not a drop guard. Decrypt into a `Protected` to have it wiped on
 /// drop. A decrypted `OpaqueBlob<T>` also wipes its value on drop.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be decrypted from one `Ciphertext`",
+    label = "one `Ciphertext` decrypts into one owned value",
+    note = "one value is a `String`, a `bool`, a float, a `Vec<u8>`, or an integer other than \
+            `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype \
+            that derives `Decrypt` over one of these.",
+    note = "the type must also implement `Zeroize`, so that a decrypted value can be wiped when \
+            a later decrypt in the same call fails.",
+    note = "the type must also be `Send` and `'static`. A type that borrows data is not \
+            `'static`.",
+    note = "to decrypt a `Vec<Ciphertext>` into a `Vec`, with one element from each \
+            `Ciphertext`, use `DecryptFrom`.",
+    note = "to decrypt a sequence, a map, or a struct that derives `Decrypt`, use \
+            `keyset.decrypt_tree`. `keyset.encrypt_tree` makes the tree of ciphertexts that it \
+            reads.",
+    note = "to decrypt a whole `Deserialize` value from one `Ciphertext`, decrypt into \
+            `OpaqueBlob<T>`. `T` must also implement `Default` and `Zeroize`."
+)]
 pub trait OpaqueDecode: sealed::Decode + Zeroize + Send + 'static {}
 
 // An owned `S` is sealed through a borrow of it. `&S` is one of Vitamin C's
@@ -226,6 +244,11 @@ impl<P: ScalarTarget + Zeroize + Send + 'static> sealed::Decode for P {
         crate::target::core::open_opaque(CipherText::Single(leaf), cipher, context)
     }
 }
+// `do_not_recommend` makes the compiler report a refused type against
+// `OpaqueDecode`. The message of `OpaqueDecode` says what one `Ciphertext`
+// decrypts into, and what to use instead. Without the attribute, the
+// compiler reports the bound below that failed, in Vitamin C's terms.
+#[diagnostic::do_not_recommend]
 impl<P: ScalarTarget + Zeroize + Send + 'static> OpaqueDecode for P {}
 
 /// One opaque ciphertext, with no exposed structural node variants.

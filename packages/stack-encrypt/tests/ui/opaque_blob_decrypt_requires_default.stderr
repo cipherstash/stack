@@ -1,9 +1,16 @@
-error[E0277]: the trait bound `OpaqueBlob<NoDefault>: OpaqueDecode` is not satisfied
+error[E0277]: `OpaqueBlob<NoDefault>` cannot be decrypted from one `Ciphertext`
   --> tests/ui/opaque_blob_decrypt_requires_default.rs:16:50
    |
 16 |     let _refused: OpaqueBlob<NoDefault> = keyset.decrypt(ct).await.unwrap();
-   |                                                  ^^^^^^^ the trait `OpaqueDecode` is not implemented for `OpaqueBlob<NoDefault>`
+   |                                                  ^^^^^^^ one `Ciphertext` decrypts into one owned value
    |
+   = help: the trait `OpaqueDecode` is not implemented for `OpaqueBlob<NoDefault>`
+   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or an integer other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype that derives `Decrypt` over one of these.
+   = note: the type must also implement `Zeroize`, so that a decrypted value can be wiped when a later decrypt in the same call fails.
+   = note: the type must also be `Send` and `'static`. A type that borrows data is not `'static`.
+   = note: to decrypt a `Vec<Ciphertext>` into a `Vec`, with one element from each `Ciphertext`, use `DecryptFrom`.
+   = note: to decrypt a sequence, a map, or a struct that derives `Decrypt`, use `keyset.decrypt_tree`. `keyset.encrypt_tree` makes the tree of ciphertexts that it reads.
+   = note: to decrypt a whole `Deserialize` value from one `Ciphertext`, decrypt into `OpaqueBlob<T>`. `T` must also implement `Default` and `Zeroize`.
 help: the trait `OpaqueDecode` is implemented for `OpaqueBlob<T>`
   --> src/blob.rs
    |

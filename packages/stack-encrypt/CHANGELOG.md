@@ -597,8 +597,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     implement `ScalarTarget` directly. A type is a `ScalarTarget` when it
     is built from one scalar. The compiler derives that from how the type
     decrypts.
-  - The compile error says that one ciphertext contains one value, and
-    names what to decrypt instead.
+  - The compile error names the type that you wrote, such as
+    `Vec<String>`. The error says what one `Ciphertext` decrypts into, and
+    what to use for the other types.
   - A sequence, a map, or a struct is stored as a tree of encrypted
     scalars: a `StackCipherText`. Decrypt one with `keyset.decrypt_tree`.
   - A column of ciphertexts is a `Vec<Ciphertext>`. A `Vec<Ciphertext>`

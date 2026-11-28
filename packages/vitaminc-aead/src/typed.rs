@@ -352,16 +352,24 @@ impl<T: FromScalar> Decrypt for T {
 /// A target with a hand-written sink is a `ScalarTarget` when that sink
 /// implements [`TakesScalar`].
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` cannot be decrypted from one ciphertext",
-    label = "one ciphertext contains one value, and this target needs more",
-    note = "one ciphertext decrypts into a scalar such as `String`, `i64`, or `Vec<u8>`, or into an `Option`, a `Protected`, or a derived newtype of a scalar",
-    note = "to decrypt many values, decrypt a `Vec<Ciphertext>`: each ciphertext becomes one element",
-    note = "to decrypt a sequence, a map, or a struct that was encrypted as a tree, use `decrypt_tree`"
+    message = "`{Self}` is not built from one scalar",
+    label = "this decrypt target is not a `ScalarTarget`",
+    note = "a scalar target is a `FromScalar` type, such as `String`, `i64`, or `Vec<u8>`. An \
+            `Option` or a `Protected` of one is a scalar target too. So is a newtype that \
+            derives `Decrypt` over one.",
+    note = "a sequence, a map, and a struct with named fields each need a container. So none of \
+            them is a scalar target.",
+    note = "a target with a hand-written sink is a scalar target when that sink implements \
+            `TakesScalar`."
 )]
 pub trait ScalarTarget: Decrypt + sealed::SinkTakesScalar {}
 
 /// The only impl of [`ScalarTarget`]: for a target whose sink implements
 /// [`TakesScalar`].
+// `do_not_recommend` makes the compiler report a refused target against
+// `ScalarTarget`, and name the target. Without the attribute, the compiler
+// reports the bound on the sink, and names the sink.
+#[diagnostic::do_not_recommend]
 impl<T: Decrypt> ScalarTarget for T where T::Sink: TakesScalar {}
 
 mod sealed {
@@ -382,8 +390,18 @@ mod sealed {
     /// module cannot name `SinkTakesScalar`, so that code cannot implement
     /// it. The only impl is for a target whose sink implements `TakesScalar`.
     /// So the compiler rejects the second impl of `ScalarTarget`.
+    #[diagnostic::on_unimplemented(
+        message = "`ScalarTarget` cannot be implemented for `{Self}`",
+        label = "the sink of this target does not implement `TakesScalar`",
+        note = "a target is a `ScalarTarget` when its sink, `Decrypt::Sink`, implements \
+                `TakesScalar`. No other impl is accepted."
+    )]
     pub trait SinkTakesScalar {}
 
+    // `do_not_recommend` makes the compiler report a refused impl of
+    // `ScalarTarget` against `SinkTakesScalar`. The message above then says
+    // why the impl is refused.
+    #[diagnostic::do_not_recommend]
     impl<T: Decrypt> SinkTakesScalar for T where T::Sink: TakesScalar {}
 }
 
@@ -472,12 +490,12 @@ mod sealed {
 /// # Ok::<(), DecodeError>(())
 /// ```
 #[diagnostic::on_unimplemented(
-    message = "this target cannot be decrypted from one ciphertext",
-    label = "one ciphertext contains one value, and this target needs more",
-    note = "`{Self}` is the sink that builds this target, and that sink does not build its value from one scalar",
-    note = "one ciphertext decrypts into a scalar such as `String`, `i64`, or `Vec<u8>`, or into an `Option`, a `Protected`, or a derived newtype of a scalar",
-    note = "to decrypt many values, decrypt a `Vec<Ciphertext>`: each ciphertext becomes one element",
-    note = "to decrypt a sequence, a map, or a struct that was encrypted as a tree, use `decrypt_tree`"
+    message = "`{Self}` does not build its value from one scalar",
+    label = "this sink does not implement `TakesScalar`",
+    note = "the sinks of this crate that read one scalar implement `TakesScalar`. The sinks that \
+            need a sequence or a map do not.",
+    note = "implement `TakesScalar` for a sink of your own only when its `scalar` method can \
+            succeed."
 )]
 pub trait TakesScalar: Sink {}
 
