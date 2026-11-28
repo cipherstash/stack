@@ -39,9 +39,9 @@ describe('a stand-in wrapper class', () => {
   it('throws a TypeError for an argument that is not a string', () => {
     const RcDate = standInWrapper<object>('RcDate')
     for (const argument of [20261123, undefined, null, {}, ['2026-11-23']]) {
-      // @ts-expect-error: the constructor takes a string.
+      // @ts-expect-error: the constructor accepts only a string.
       expect(() => new RcDate(argument)).toThrow(
-        new TypeError('RcDate takes a string'),
+        new TypeError('RcDate accepts only a string'),
       )
     }
   })

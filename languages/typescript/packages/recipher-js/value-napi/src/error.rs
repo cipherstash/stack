@@ -61,7 +61,7 @@ pub enum Refusal {
     #[diagnostic(code(recipher_js::unpaired_surrogate))]
     UnpairedSurrogate,
     /// A value that a JSON document cannot contain.
-    #[error("a JSON document cannot hold {0}")]
+    #[error("a JSON document cannot contain {0}")]
     #[diagnostic(code(recipher_js::not_json))]
     NotJson(NoJsonForm),
     /// A scalar outside what its type holds. A `TypeError` with the same
@@ -85,18 +85,18 @@ pub enum NoJsonForm {
     /// A whole `number` from 2^53 up to 2^64, either side of zero. A
     /// `number` that large may not have the digits that were written.
     #[error(
-        "a whole number from 2^53 up to 2^64 held as a `number`, whose digits may not be the \
-         ones written; give it as a `bigint`"
+        "a whole `number` from 2^53 up to 2^64, either side of zero. A `number` that large may \
+         not keep the digits that were written. Pass a `bigint` instead."
     )]
     UnsafeInteger,
     /// A `bigint` below -2^63 or above 2^64 - 1.
-    #[error("a `bigint` outside the 64-bit range (below -2^63 or above 2^64 - 1)")]
+    #[error("a `bigint` outside the 64-bit range. The range is from -2^63 to 2^64 - 1.")]
     BigIntRange,
     /// A `Buffer`, a typed array, or a `DataView`.
     #[error("bytes")]
     Bytes,
     /// A `Date` or a wrapper class instance.
-    #[error("a date, a timestamp, a decimal or a UUID; write it as text")]
+    #[error("a date, a timestamp, a decimal, or a UUID. Write the value as a string instead.")]
     Typed,
 }
 

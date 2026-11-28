@@ -34,7 +34,7 @@ use stack_encrypt::ErrorPayload;
 #[derive(Debug, thiserror::Error, Diagnostic)]
 pub(crate) enum Error {
     /// `undefined` given as a value.
-    #[error("`undefined` is not a value")]
+    #[error("`undefined` cannot be encrypted")]
     #[diagnostic(
         code(recipher_js::undefined),
         help("Use `null` for a value that is not there.")
@@ -42,8 +42,8 @@ pub(crate) enum Error {
     Undefined,
     /// An `RcUuid`. The engine's value model, the set of value types the
     /// engine reads, has no UUID type.
-    #[error("a UUID cannot be encrypted yet: the engine's value model does not hold one")]
-    #[diagnostic(code(recipher_js::uuid), help("Encrypt its text instead."))]
+    #[error("a UUID cannot be encrypted yet, because the engine has no UUID type")]
+    #[diagnostic(code(recipher_js::uuid), help("Encrypt the UUID as a string instead."))]
     Uuid,
     /// A value outside the engine's value model, or a value that Node-API
     /// failed to read.
@@ -57,19 +57,25 @@ pub(crate) enum Error {
     #[diagnostic(code(recipher_js::threw))]
     Threw,
     /// An array inside an array, given as one value.
-    #[error("an array inside an array is not a value")]
-    #[diagnostic(code(recipher_js::not_a_scalar), help("Wrap it in json(..)."))]
+    #[error("an array inside an array cannot be encrypted as one value")]
+    #[diagnostic(
+        code(recipher_js::not_a_scalar),
+        help("To encrypt the inner array as a JSON document, wrap it in `json(..)`.")
+    )]
     NotAScalar,
     /// An object given as one value.
-    #[error("an object is not a value")]
-    #[diagnostic(code(recipher_js::plain_object), help("Wrap it in json(..)."))]
+    #[error("a plain object cannot be encrypted as one value")]
+    #[diagnostic(
+        code(recipher_js::plain_object),
+        help("To encrypt the object as a JSON document, wrap it in `json(..)`.")
+    )]
     PlainObject,
     /// The engine refused to encrypt a value in the form it was given.
-    #[error("the engine could not seal the value as given")]
+    #[error("the engine could not encrypt the value in the form it was given")]
     #[diagnostic(code(recipher_js::not_sealed))]
     NotSealed,
     /// `decrypt` given something that is not a `Ciphertext`.
-    #[error("decrypt takes a Ciphertext, or an array of them")]
+    #[error("decrypt accepts a Ciphertext, or an array of ciphertexts")]
     #[diagnostic(
         code(recipher_js::not_a_ciphertext),
         help("Read stored bytes with Ciphertext.fromBytes.")
@@ -80,15 +86,18 @@ pub(crate) enum Error {
     #[diagnostic(code(recipher_js::not_bytes))]
     NotBytes,
     /// A kind that is not one of `kinds`.
-    #[error("a ciphertext opens as one of `kinds`, such as `kinds.string`")]
-    #[diagnostic(code(recipher_js::not_a_kind))]
+    #[error("the kind is not one of `kinds`")]
+    #[diagnostic(
+        code(recipher_js::not_a_kind),
+        help("Pass a kind that the package exports, such as `kinds.string`.")
+    )]
     NotAKind,
     /// A ciphertext that decrypted to another kind than the one named.
-    #[error("the value opened, but it was not sealed as the kind named, {kind}")]
+    #[error("the value decrypted, but it was not encrypted as `{kind}`, the kind given for the ciphertext")]
     #[diagnostic(code(recipher_js::opened_type))]
     OpenedType { kind: ValueKind },
     /// A ciphertext named as JSON that decrypted to text that is not JSON.
-    #[error("the value opened, but it is not a JSON document")]
+    #[error("the value decrypted, but it is not a JSON document")]
     #[diagnostic(code(recipher_js::not_a_document))]
     NotADocument,
     /// A test cipher's seed that is not 32 bytes.
@@ -498,7 +507,7 @@ mod tests {
     fn an_error_of_the_sdks_own_has_its_code_message_and_help() {
         let error = RecipherErrorFields::from(Error::Undefined);
         assert_eq!(error.code, "recipher_js::undefined");
-        assert_eq!(error.message, "`undefined` is not a value");
+        assert_eq!(error.message, "`undefined` cannot be encrypted");
         assert_eq!(
             error.help.as_deref(),
             Some("Use `null` for a value that is not there.")
@@ -679,9 +688,17 @@ mod tests {
     fn help_of(error: &Error) -> Option<&'static str> {
         match error {
             Error::Undefined => Some("Use `null` for a value that is not there."),
-            Error::Uuid => Some("Encrypt its text instead."),
-            Error::NotAScalar | Error::PlainObject => Some("Wrap it in json(..)."),
+            Error::Uuid => Some("Encrypt the UUID as a string instead."),
+            Error::NotAScalar => {
+                Some("To encrypt the inner array as a JSON document, wrap it in `json(..)`.")
+            }
+            Error::PlainObject => {
+                Some("To encrypt the object as a JSON document, wrap it in `json(..)`.")
+            }
             Error::NotACiphertext => Some("Read stored bytes with Ciphertext.fromBytes."),
+            Error::NotAKind => {
+                Some("Pass a kind that the package exports, such as `kinds.string`.")
+            }
             Error::NoTesting => {
                 Some("Build it with `pnpm --filter @cipherstash/recipher build:debug`.")
             }
@@ -701,7 +718,6 @@ mod tests {
             | Error::Threw
             | Error::NotSealed
             | Error::NotBytes
-            | Error::NotAKind
             | Error::OpenedType { .. }
             | Error::NotADocument
             | Error::TestingSeed
