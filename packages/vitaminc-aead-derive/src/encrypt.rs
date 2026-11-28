@@ -7,6 +7,11 @@
 //! `Vec<T>` does its leftover elements. The impl for `&Name` walks the
 //! fields by reference and moves nothing; it is what a `Protected<Name>`
 //! walks through, so the struct stays wrapped and is zeroized whole.
+//!
+//! A leaf is one sealed value. A newtype or a fieldless enum is one leaf.
+//! So the derive also implements the `Scalar` marker for it, by value and
+//! by reference, as every built-in leaf type has. A newtype is a `Scalar`
+//! only when its inner type is one.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -88,6 +93,14 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         visit_check,
     } = depth(krate, &input, &shape, attrs.recursive);
     let (fixed, ref_fixed) = fixed(krate, &input, &shape, attrs.recursive);
+    let scalar = scalar(
+        krate,
+        &input,
+        &shape,
+        attrs.recursive,
+        &generics,
+        &ref_generics,
+    );
 
     Ok(quote! {
         #[automatically_derived]
@@ -118,8 +131,63 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
             }
         }
 
+        #scalar
+
         #item_check
     })
+}
+
+/// The `Scalar` impls for a type that encrypts as one leaf. Two kinds of
+/// type do: a newtype whose inner type is a `Scalar`, and a fieldless enum.
+/// A fieldless enum is always one `u32` leaf. A struct with fields is a
+/// map, so it gets no impl. A recursive newtype has no fixed depth, so it
+/// gets none either.
+///
+/// Each impl for a newtype has a bound: the inner type is a `Scalar`. So a
+/// newtype over a container, such as `Tags(Vec<String>)`, still derives
+/// `Encrypt`. The newtype is not a `Scalar`.
+///
+/// The compiler checks a bound that names no generic parameter where the
+/// impl is written. A false bound of that kind is an error. So the
+/// borrowed impl's bound names the borrow's lifetime `'__r`. The owned
+/// impl's bound is inside a `for<'__s>` binder. The compiler then checks
+/// each bound only where code asks for the `Scalar` impl.
+fn scalar(
+    krate: &syn::Path,
+    input: &DeriveInput,
+    shape: &Shape,
+    recursive: bool,
+    generics: &syn::Generics,
+    ref_generics: &syn::Generics,
+) -> TokenStream {
+    let name = &input.ident;
+    let mut owned = generics.clone();
+    let mut by_ref = ref_generics.clone();
+    match shape {
+        Shape::Newtype(_) if recursive || names_itself(name, shape) => return TokenStream::new(),
+        Shape::Newtype(field) => {
+            let ty = &field.ty;
+            owned
+                .make_where_clause()
+                .predicates
+                .push(parse_quote!(for<'__s> #ty: #krate::Scalar));
+            by_ref
+                .make_where_clause()
+                .predicates
+                .push(parse_quote!(&'__r #ty: #krate::Scalar));
+        }
+        Shape::Enum(_) => {}
+        Shape::Map(_) | Shape::Empty => return TokenStream::new(),
+    }
+    let (impl_generics, ty_generics, where_clause) = owned.split_for_impl();
+    let (ref_impl_generics, _, ref_where_clause) = by_ref.split_for_impl();
+    quote! {
+        #[automatically_derived]
+        impl #impl_generics #krate::Scalar for #name #ty_generics #where_clause {}
+
+        #[automatically_derived]
+        impl #ref_impl_generics #krate::Scalar for &'__r #name #ty_generics #ref_where_clause {}
+    }
 }
 
 /// The `DEPTH` constants for both impls, and the check that the type fits
@@ -1128,6 +1196,138 @@ mod tests {
             }
         });
         assert_contains(&out, quote!(const DEPTH));
+    }
+
+    /// A newtype is a `Scalar` when its inner type is one. The derive
+    /// implements `Scalar` by value and by reference. Each impl has the
+    /// inner type's `Scalar` as its bound.
+    ///
+    /// The owned bound is inside a
+    /// binder, and the borrowed bound names the borrow's lifetime. So the
+    /// compiler does not check either bound where the impl is written. A
+    /// newtype over a container still derives.
+    #[test]
+    fn a_newtype_is_a_scalar_when_its_inner_type_is() {
+        let out = expand(parse_quote!(
+            struct Email(String);
+        ));
+        assert_contains(
+            &out,
+            quote!(impl ::vitaminc_aead::Scalar for Email
+                where for<'__s> String: ::vitaminc_aead::Scalar {}),
+        );
+        assert_contains(
+            &out,
+            quote!(
+                impl<'__r> ::vitaminc_aead::Scalar for &'__r Email where &'__r String: ::vitaminc_aead::Scalar {}
+            ),
+        );
+
+        let out = expand(parse_quote!(
+            struct Tags(Vec<String>);
+        ));
+        assert_contains(
+            &out,
+            quote!(impl ::vitaminc_aead::Scalar for Tags
+                where for<'__s> Vec<String>: ::vitaminc_aead::Scalar {}),
+        );
+        assert_contains(
+            &out,
+            quote!(
+                impl<'__r> ::vitaminc_aead::Scalar for &'__r Tags where &'__r Vec<String>: ::vitaminc_aead::Scalar {}
+            ),
+        );
+    }
+
+    /// A generic newtype's `Scalar` impls keep the bounds of its `Encrypt`
+    /// impls. Each also has the inner type's `Scalar` as a bound.
+    #[test]
+    #[rustfmt::skip]
+    fn a_generic_newtype_is_a_scalar_when_its_parameter_is() {
+        let out = expand(parse_quote!(
+            struct Wrapper<T>(T);
+        ));
+        assert_contains(
+            &out,
+            quote!(
+                impl<T: ::vitaminc_aead::Encrypt> ::vitaminc_aead::Scalar for Wrapper<T> where
+                    for<'__s> T: ::vitaminc_aead::Scalar
+                {
+                }
+            ),
+        );
+        assert_contains(
+            &out,
+            quote!(
+                impl<'__r, T> ::vitaminc_aead::Scalar for &'__r Wrapper<T>
+                where
+                    T: ::vitaminc_aead::EncryptRef,
+                    &'__r T: ::vitaminc_aead::Scalar
+                {
+                }
+            ),
+        );
+    }
+
+    /// A fieldless enum is always one `u32` leaf. So its `Scalar` impls
+    /// have no bound.
+    #[test]
+    fn a_fieldless_enum_is_a_scalar() {
+        let out = expand(parse_quote! {
+            enum Status {
+                Active,
+            }
+        });
+        assert_contains(&out, quote!(impl ::vitaminc_aead::Scalar for Status {}));
+        assert_contains(
+            &out,
+            quote!(
+                impl<'__r> ::vitaminc_aead::Scalar for &'__r Status {}
+            ),
+        );
+    }
+
+    /// A struct with fields and a struct with none each encrypt as a map. A
+    /// recursive newtype has no fixed depth. So none of them is a `Scalar`.
+    #[test]
+    fn a_map_or_a_recursive_type_is_not_a_scalar() {
+        for input in [
+            parse_quote! {
+                struct User {
+                    name: String,
+                }
+            },
+            parse_quote!(
+                struct Pair(String, u32);
+            ),
+            parse_quote!(
+                struct Marker {}
+            ),
+            parse_quote!(
+                struct Wrapped(Vec<Wrapped>);
+            ),
+            parse_quote!(
+                #[aead(recursive)]
+                struct Even(Option<Box<Odd>>);
+            ),
+        ] {
+            assert_lacks(&expand(input), quote!(::vitaminc_aead::Scalar));
+        }
+    }
+
+    /// The `Scalar` path uses the crate named by the `crate` attribute, as
+    /// every other path does.
+    #[test]
+    fn the_marker_follows_the_crate_attribute() {
+        let out = expand(parse_quote! {
+            #[aead(crate = "::vitaminc::aead")]
+            struct Email(String);
+        });
+        assert_contains(&out, quote!(::vitaminc::aead::Scalar for Email));
+        assert!(
+            !out.contains("vitaminc_aead"),
+            "expansion still references the default crate path:\n{out}"
+        );
     }
 
     #[test]

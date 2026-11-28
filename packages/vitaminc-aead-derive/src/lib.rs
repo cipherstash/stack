@@ -52,6 +52,8 @@
 //! - A **newtype** struct (exactly one unnamed field) is *transparent*: it
 //!   encrypts and decrypts exactly as its inner type, adding nothing to the
 //!   ciphertext. This mirrors serde, and matches how `Protected<T>` behaves.
+//!   A newtype is also a `Scalar`, one leaf, when its inner type is one.
+//!   So `Email(String)` is a `Scalar`. `Tags(Vec<String>)` is not.
 //! - A unit struct — or a struct with no fields — encrypts to the
 //!   authenticated empty-map marker.
 //!
@@ -69,6 +71,8 @@
 //! refused. Pin the discriminants with `= n` before storing anything, since
 //! reordering variants otherwise changes them. Variants take no
 //! `#[aead(...)]` attributes.
+//! A fieldless enum is a `Scalar`, by value and by reference, because it
+//! is one leaf.
 //!
 //! Enums with fields are not supported. Their payload has no agreed layout
 //! (internally or externally tagged, per-variant AAD), so model the choice

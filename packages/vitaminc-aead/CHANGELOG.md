@@ -41,6 +41,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Code that names `FrameWriter<'_>` is unchanged.
   The decrypt sink of `OwnedFrame` writes through them, reporting `DecodeError`.
 - `DecodeError` implements `From<FrameWriteError>`: a scalar its logical type does not admit is `DecodeError::Expected`, a source's failure is `DecodeError::Source`, and any other refusal is `DecodeError::Source` with the writer's error as its source.
+- `#[derive(Encrypt)]` implements `Scalar`, by value and by reference, for two kinds of type.
+  The first is a newtype whose inner type is a `Scalar`.
+  The second is a fieldless enum.
+  So `struct Email(String)` needs no `Scalar` impl of its own.
+  A `Protected<Email>` is a `Scalar` too.
+  `struct Tags(Vec<String>)` still derives `Encrypt`, but it is not a `Scalar`.
+  A `Scalar` impl you wrote for such a type now conflicts with the derived impl, so delete it.
 
 ## [0.10.0] - 2026-11-19
 
