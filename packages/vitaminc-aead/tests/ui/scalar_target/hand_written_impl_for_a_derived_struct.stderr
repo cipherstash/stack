@@ -1,17 +1,18 @@
-error[E0277]: one ciphertext holds one value, and this decrypt target is not built from one value
-  --> tests/ui/scalar_target/hand_written_impl_for_a_derived_struct.rs:12:23
+error[E0277]: this target cannot be decrypted from one ciphertext
+  --> tests/ui/scalar_target/hand_written_impl_for_a_derived_struct.rs:13:23
    |
-12 | impl ScalarTarget for Account {}
-   |                       ^^^^^^^ this target cannot be decrypted from one ciphertext
+13 | impl ScalarTarget for Account {}
+   |                       ^^^^^^^ one ciphertext contains one value, and this target needs more
    |
 help: the trait `TakesScalar` is not implemented for `__AccountDecryptSink`
-  --> tests/ui/scalar_target/hand_written_impl_for_a_derived_struct.rs:7:10
+  --> tests/ui/scalar_target/hand_written_impl_for_a_derived_struct.rs:8:10
    |
- 7 | #[derive(Decrypt)]
+ 8 | #[derive(Decrypt)]
    |          ^^^^^^^
-   = note: `__AccountDecryptSink` is the target's sink, and it does not read a single scalar
-   = note: a single ciphertext decrypts into a scalar such as `String`, `i64` or `Vec<u8>`, an `Option` or a `Protected` of one, or a newtype that derives `Decrypt` over one
-   = note: to decrypt many values, decrypt a `Vec<Ciphertext>`, which opens each ciphertext into one element; to decrypt a sequence, a map or a struct that was encrypted as a tree, use `decrypt_tree`
+   = note: `__AccountDecryptSink` is the sink that builds this target, and that sink does not build its value from one scalar
+   = note: one ciphertext decrypts into a scalar such as `String`, `i64`, or `Vec<u8>`, or into an `Option`, a `Protected`, or a derived newtype of a scalar
+   = note: to decrypt many values, decrypt a `Vec<Ciphertext>`: each ciphertext becomes one element
+   = note: to decrypt a sequence, a map, or a struct that was encrypted as a tree, use `decrypt_tree`
    = help: the following other types implement trait `TakesScalar`:
              Optional<T>
              OwnedFrameSink

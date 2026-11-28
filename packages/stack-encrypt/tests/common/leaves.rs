@@ -1,10 +1,13 @@
-//! Opening a sealed leaf to the plaintext sealed in it.
+//! Read the plaintext of a sealed leaf.
 //!
-//! A sealed leaf carries a random AES-GCM nonce, so two ciphertexts of one
-//! value never have the same bytes. What a test can compare is the
-//! plaintext each leaf was sealed with. [`kept_cipher`] is a cipher over
-//! [`DeterministicSource`] that keeps each data key it generates, and
-//! [`reveal`] opens leaves with those keys and the engine's leaf AAD.
+//! A sealed leaf is one encrypted scalar inside a ciphertext. Each sealed
+//! leaf has a random AES-GCM nonce, so two ciphertexts of one value never
+//! have the same bytes. A test can compare the plaintext that each leaf was
+//! sealed with.
+//!
+//! [`kept_cipher`] is a cipher over [`DeterministicSource`] that keeps each
+//! data key it generates. [`reveal`] opens leaves with those keys, and with
+//! the additional authenticated data (AAD) that the engine uses for a leaf.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -24,11 +27,12 @@ use vitaminc_protected::{Buffer, Controlled as _, Protected};
 
 use super::{hex, DeterministicSource};
 
-/// The data keys a [`KeptKeys`] source generated, by IV.
+/// The data keys that a [`KeptKeys`] source generated, by IV.
 pub type Kept = Mutex<HashMap<Vec<u8>, [u8; 32]>>;
 
-/// [`DeterministicSource`], keeping each data key it generates by its IV,
-/// so a test can open the leaves sealed under them without the engine.
+/// [`DeterministicSource`], with each data key it generates kept by its IV.
+/// A test can then open the leaves sealed under those keys without the
+/// engine.
 pub struct KeptKeys {
     inner: DeterministicSource,
     keys: Arc<Kept>,
@@ -91,10 +95,17 @@ pub async fn kept_cipher(seed: [u8; 32]) -> (StackCipher<KeptKeys>, Arc<Kept>) {
     (cipher, keys)
 }
 
-/// A vitaminc cipher that opens a stored leaf with its kept key, under the
-/// AAD the engine binds a leaf to (`stack-encrypt/leaf`, the format version,
-/// the keyset, the AAD of the leaf's place and the key tag, as a PAE), and
-/// keeps each plaintext it opened, in walk order.
+/// A vitaminc cipher that opens a stored leaf with its kept key, and keeps
+/// each plaintext it opened, in walk order.
+///
+/// The cipher opens the leaf under the AAD that the engine binds a leaf to.
+/// That AAD is a pre-authentication encoding (PAE) of five parts:
+///
+/// - the text `stack-encrypt/leaf`
+/// - the format version
+/// - the keyset
+/// - the AAD of the leaf's place
+/// - the key tag
 struct Reveal<'k> {
     keys: &'k HashMap<Vec<u8>, [u8; 32]>,
     opened: RefCell<Vec<String>>,
@@ -130,8 +141,9 @@ impl Cipher for Reveal<'_> {
 }
 
 /// The plaintext of every leaf of `tree`, sealed under `context`, in walk
-/// order: a scalar's tagged bytes, a typed null's padded bytes, and an empty
-/// container's marker as the empty string.
+/// order. The plaintext of a scalar is its tagged bytes. The plaintext of a
+/// typed null is its padded bytes. The plaintext of an empty container is
+/// its marker, shown as the empty string.
 pub fn reveal<'c>(
     keys: &Kept,
     tree: StackCipherText,
@@ -158,27 +170,28 @@ pub fn reveal<'c>(
     reveal.opened.into_inner()
 }
 
-/// Everything of a single ciphertext that does not depend on its leaf's
-/// nonce. Two ciphertexts of one value, sealed under the same data key and
-/// context, have the same parts and different bytes.
+/// Every part of a single ciphertext that does not depend on the nonce of
+/// its leaf. Two ciphertexts of one value, sealed under the same data key
+/// and context, have the same parts and different bytes.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Parts {
-    /// The ciphertext's bytes before the leaf's AEAD output, in hex: the
-    /// format version, the keyset, the data key's IV, and its tag with the
-    /// tag's length.
+    /// The bytes of the ciphertext before the output of the leaf's
+    /// authenticated encryption (AEAD), in hex. Those bytes are the format
+    /// version, the keyset, the IV of the data key, and the key tag with its
+    /// length.
     pub header: String,
     /// The length of the whole ciphertext in bytes.
     pub len: usize,
-    /// The plaintext the leaf was sealed with, in hex: its tag and payload.
+    /// The plaintext that the leaf was sealed with, in hex: its tag and payload.
     pub leaf: String,
 }
 
-/// The parts of `ciphertext`, sealed under `context`, opened with the keys
-/// `keys` kept.
+/// The parts of `ciphertext`, a ciphertext sealed under `context`. The kept
+/// keys in `keys` open its leaf.
 pub fn parts<'c>(keys: &Kept, ciphertext: Ciphertext, context: impl IntoContext<'c>) -> Parts {
     let bytes = ciphertext.to_bytes();
-    // The leaf's AEAD output is the last part of the bytes: its nonce, the
-    // encrypted plaintext and the authentication tag.
+    // The AEAD output of the leaf is the last part of the bytes: the nonce,
+    // the encrypted plaintext, and the authentication tag.
     let (_, _, _, sealed) = SealedValue::from(ciphertext.clone()).into_parts();
     let header = hex(&bytes[..bytes.len() - sealed.len()]);
     let leaf = SealedValue::from(ciphertext);

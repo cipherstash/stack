@@ -1,8 +1,11 @@
-//! The shared single-value profile: one value as one ciphertext through the
-//! run-time interface, with what it seals held to the typed interface and
-//! to frozen artifacts. See conformance/stack-encrypt/single-value-contract.md.
-// The typed `Uuid` reference needs the `uuid` feature, which `dynamic` does
-// not turn on.
+//! The runner for the shared single-value conformance profile.
+//!
+//! The profile encrypts one value as one ciphertext through the run-time
+//! interface. The runner compares each result with the typed interface and
+//! with the frozen artifacts. See
+//! `conformance/stack-encrypt/single-value-contract.md`.
+// The typed `Uuid` reference needs the `uuid` feature. The `dynamic`
+// feature does not turn `uuid` on.
 #![cfg(all(feature = "dynamic", feature = "uuid"))]
 mod common;
 
@@ -29,8 +32,9 @@ use vitaminc_aead::plaintext::{FixedType, Width};
 
 const PROFILE: &str = "single-value-v1";
 
-/// The values an input of type `shape` names: what `{type, text}` cannot
-/// spell. A name outside this list is a corpus error.
+/// The values that an input of type `shape` can name. The `{type, text}`
+/// form cannot spell these values. A name outside this list is a corpus
+/// error.
 const SHAPES: [&str; 5] = [
     "array",
     "empty_array",
@@ -54,18 +58,19 @@ struct Corpus {
 #[serde(deny_unknown_fields)]
 struct Case {
     id: String,
-    /// The declared kind's name, or empty for none.
+    /// The name of the declared kind, or empty for none.
     kind: String,
-    /// The context's parts, or empty for the empty context.
+    /// The parts of the context, or empty for the empty context.
     context: Vec<String>,
     input: Input,
-    /// The value the ciphertext holds, where it is not the input: a number
-    /// converted to the declared kind, or a document's compact JSON text.
+    /// The value in the ciphertext, where it differs from the input. That is
+    /// a number converted to the declared kind, or the compact JSON text of a
+    /// document.
     stored: Option<Input>,
-    /// Kinds the ciphertext must refuse to open as.
+    /// Kinds that the ciphertext must not decrypt as.
     refused_as: Option<Vec<String>>,
-    /// Kinds the ciphertext must open as, beside the declared one, each
-    /// with the value it opens to.
+    /// Kinds that the ciphertext must decrypt as, other than the declared
+    /// kind. Each has the value that the ciphertext decrypts to.
     opens_as: Option<Vec<OpensAs>>,
     expected_error: Option<ExpectedError>,
 }
@@ -86,7 +91,7 @@ struct Batch {
     kinds: Vec<String>,
     context: Vec<String>,
     inputs: Vec<Input>,
-    /// The values the ciphertexts hold, where they are not the inputs.
+    /// The values in the ciphertexts, where they differ from the inputs.
     stored: Option<Vec<Input>>,
     expected_error: Option<ExpectedError>,
 }
@@ -110,10 +115,10 @@ struct Artifacts {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Artifact {
-    /// The input's transport frame.
+    /// The frame of the input: the value written as bytes.
     frame: String,
-    /// The plaintext the leaf is sealed with: its tag and payload. Absent
-    /// for a refused case.
+    /// The plaintext that the leaf is sealed with: its tag and payload.
+    /// Absent for a refused case.
     #[serde(skip_serializing_if = "Option::is_none")]
     leaf: Option<String>,
     /// A ciphertext of the value, frozen. Absent for a refused case.
@@ -125,7 +130,7 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../conformance/stack-encrypt/v1")
 }
 
-/// The value an input of type `shape` names.
+/// The value that an input of type `shape` names.
 fn shape(name: &str) -> OwnedFrame {
     assert!(
         SHAPES.contains(&name),
@@ -144,8 +149,8 @@ fn shape(name: &str) -> OwnedFrame {
     }
 }
 
-/// The frame an input names: a shape, or a value in the corpus's
-/// `{type, text}` form.
+/// The frame that an input names: a shape, or a value in the
+/// `{type, text}` form of the corpus.
 fn input(input: &Input) -> OwnedFrame {
     match input.kind.as_str() {
         "shape" => shape(&input.text),
@@ -157,7 +162,7 @@ fn declared(kind: &str) -> Option<ValueKind> {
     (!kind.is_empty()).then(|| kind.parse().expect("a kind's name"))
 }
 
-/// A case's context, as a binding hands one over: a frame of its parts.
+/// The context of a case, as a binding passes one: a frame of its parts.
 fn piece(parts: &[String]) -> ContextPiece<'static> {
     let frame = recipher_frame::serde::to_vec(&parts).expect("a context frames");
     dynamic::context(frame.as_protected_ref())
@@ -165,8 +170,8 @@ fn piece(parts: &[String]) -> ContextPiece<'static> {
         .into_inner()
 }
 
-/// The run-time encrypt: the form with no context for an empty context,
-/// and the form with one otherwise.
+/// The run-time encrypt. An empty context uses the form with no context. Any
+/// other context uses the form with a context.
 fn seal<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     value: Frame<'_>,
@@ -180,9 +185,10 @@ fn seal<'a, K: 'static>(
     }
 }
 
-/// A batch, as a binding seals one: one single-value call for each value,
-/// each with its own declared kind, merged into one key request. A refused
-/// value is the batch's refusal, and nothing is merged.
+/// A batch, as a binding encrypts one. The binding makes one single-value
+/// call for each value, each with its own declared kind. The binding then
+/// merges the calls into one key request. A refused value refuses the whole
+/// batch. No call is merged.
 fn seal_all<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     values: &[OwnedFrame],
@@ -210,8 +216,9 @@ fn open<'a, K: 'static>(
     }
 }
 
-/// A batch, as a binding opens one: one single-value call for each
-/// ciphertext, each with its own declared kind, merged into one key request.
+/// A batch, as a binding decrypts one. The binding makes one single-value
+/// call for each ciphertext, each with its own declared kind. The binding
+/// then merges the calls into one key request.
 fn open_all<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     ciphertexts: Vec<Ciphertext>,
@@ -226,8 +233,8 @@ fn open_all<'a, K: 'static>(
     Pending::all(keyset, calls)
 }
 
-/// The context `ciphertext`'s leaf is sealed under, for opening the leaf
-/// with a kept key.
+/// The context that the leaf of `ciphertext` is sealed under. Opening the
+/// leaf with a kept key needs this context.
 fn sealed_under(context: &[String]) -> ContextPiece<'static> {
     if context.is_empty() {
         ().into_context()
@@ -236,9 +243,9 @@ fn sealed_under(context: &[String]) -> ContextPiece<'static> {
     }
 }
 
-/// The Rust types the typed interface spells a kind with. `$run` is handed
-/// the type for `name`, or the match is `None` for a kind no Rust type
-/// spells: a lone 8-bit unsigned integer.
+/// The Rust type that the typed interface uses for each kind. `$run`
+/// receives the type for `name`. The match is `None` for the one kind that
+/// no Rust type spells: a lone 8-bit unsigned integer.
 macro_rules! with_rust_type {
     ($name:expr, $run:ident) => {
         match $name {
@@ -267,8 +274,8 @@ macro_rules! with_rust_type {
     };
 }
 
-/// The typed call's ciphertext of the value `stored` holds, as the Rust
-/// type `name` names.
+/// The ciphertext that the typed call makes for the value in `stored`, as
+/// the Rust type that `name` names.
 async fn typed_seal<K>(
     keyset: &KeysetCipher<'_, K>,
     name: &str,
@@ -294,8 +301,8 @@ where
     with_rust_type!(name, seal_as)
 }
 
-/// The value the typed call opens `ciphertext` to, as the Rust type `name`
-/// names, written as a frame.
+/// The value that the typed call decrypts `ciphertext` to, as the Rust type
+/// that `name` names. The value is written as a frame.
 async fn typed_open<K>(
     keyset: &KeysetCipher<'_, K>,
     name: &str,
@@ -363,8 +370,8 @@ fn is_forbidden<T>(result: &Result<T, Error>) -> bool {
     )
 }
 
-/// One accepted case: what the run-time call seals is what the typed call
-/// seals and what the artifact froze, and every reader opens it.
+/// One accepted case. The run-time call must seal what the typed call seals
+/// and what the artifact froze. Every reader must open the result.
 async fn accepted(
     seed: [u8; 32],
     case: &Case,
@@ -387,8 +394,8 @@ async fn accepted(
         .unwrap_or_else(|error| panic!("{id}: the value does not seal: {error}"));
     let fresh_parts = parts(&keys, fresh.clone(), sealed_under(context));
 
-    // The typed call, over a fresh source of the same seed, so that its
-    // data key is the one the run-time call was given.
+    // The typed call, over a new source of the same seed. The typed call
+    // then gets the data key that the run-time call was given.
     let typed_name = if case.kind == "json" {
         "json"
     } else {
@@ -407,8 +414,8 @@ async fn accepted(
     artifact.leaf = Some(fresh_parts.leaf.clone());
     artifact.ciphertext = Some(hex(&typed.unwrap_or_else(|| fresh.clone()).to_bytes()));
     // An update keeps the frozen ciphertext of a case whose leaf has not
-    // changed. So a ciphertext stays frozen from one update to the next,
-    // and the checks below hold the kept one to today's engine.
+    // changed. So a ciphertext stays frozen from one update to the next. The
+    // checks below test the kept ciphertext against the current engine.
     if let Some(kept) = kept.filter(|kept| kept.leaf == artifact.leaf && kept.ciphertext.is_some())
     {
         artifact.ciphertext.clone_from(&kept.ciphertext);
@@ -431,7 +438,7 @@ async fn accepted(
         "{id}: the frozen ciphertext differs from a fresh one in a part that is not the nonce"
     );
 
-    // Under the `json` kind a document opens as its text in a bytes leaf.
+    // With the `json` kind, a document decrypts as its text in a bytes value.
     let opened_as_declared = if case.kind == "json" {
         frame(stored_input.text.as_bytes().to_vec())
     } else {

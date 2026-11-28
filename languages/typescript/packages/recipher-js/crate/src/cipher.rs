@@ -300,8 +300,7 @@ pub(crate) async fn open_in(
     })
 }
 
-/// Returns `value`, if it is one string. This build encrypts a string
-/// only.
+/// Returns `value` when it is one string. This build only encrypts strings.
 ///
 /// # Errors
 ///
@@ -314,14 +313,13 @@ pub(crate) fn a_string(value: OwnedFrame) -> Outcome<OwnedFrame> {
     }
 }
 
-/// Encrypts strings under `keyset`, through the engine's run-time
-/// single-value encrypt. Each value becomes one ciphertext with its own
-/// data key. Rust's `keyset.encrypt(value)` returns the same ciphertext for
-/// the same value. The calls are merged, so all the values use one key
-/// request, however many there are.
+/// Encrypts strings under `keyset`, with the engine's
+/// `dynamic::value::encrypt`. Each value becomes one ciphertext with its own
+/// data key. Rust's `keyset.decrypt::<String>` decrypts each ciphertext. The
+/// function merges the calls, so all the values use one key request.
 ///
-/// The engine checks each value again: a value that is not one string is
-/// refused with the engine's own error, before any key request.
+/// The engine checks each value again. The engine refuses a value that is
+/// not one string with its own error, before any key request.
 pub(crate) async fn seal<K>(
     keyset: &KeysetCipher<'_, K>,
     values: Vec<OwnedFrame>,
@@ -334,8 +332,8 @@ where
         .map(|value| value::encrypt(keyset, value.frame(), Some(ValueKind::String)))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| RecipherErrorFields::engine(&error))?;
-    // The engine has read every value. Dropping the frames wipes them, so
-    // no value waits in a frame for the key request.
+    // The engine has read every value. `drop` wipes the frames, so no value
+    // stays in a frame during the key request.
     drop(values);
     Pending::all(keyset, calls)
         .await
@@ -346,10 +344,10 @@ where
 /// The function makes one key request for each keyset the ciphertexts
 /// were made under.
 ///
-/// Each value comes back as it was encrypted, in a frame. A call has no
-/// kind to check at run time: the type of a `Ciphertext<T>` is known to
-/// TypeScript alone. So this is the engine's typed decrypt into frames,
-/// which checks no kind.
+/// Each value comes back in a frame, as it was encrypted. A call has no
+/// kind to check at run time, because the type of a `Ciphertext<T>` exists
+/// only in TypeScript. So this function uses the engine's typed decrypt
+/// into frames. That decrypt checks no kind.
 pub(crate) async fn unseal<'c, K>(
     cipher: impl Into<CipherRef<'c, K>>,
     sealed: Vec<stack_encrypt::Ciphertext>,

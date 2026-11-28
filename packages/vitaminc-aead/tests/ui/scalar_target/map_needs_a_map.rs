@@ -1,5 +1,5 @@
-//! A map target reads a map, one leaf per value, so one scalar does not
-//! build it.
+//! A map target reads a map with one leaf for each value. So one scalar does
+//! not build it.
 
 use std::collections::{BTreeMap, HashMap};
 

@@ -44,8 +44,8 @@ these rules.
 | `record-values-v1.cases.json` | cases | `tests/value_conformance.rs` | `value_conformance_test.go` |
 | `record-query-refusals-v1.cases.json` | cases | `tests/query_refusal_conformance.rs` | `query_refusal_conformance_test.go` |
 | `record-raw-frames-v1.cases.json` | cases | `tests/raw_frame_conformance.rs` | `raw_frame_conformance_test.go` |
-| `single-value-v1.cases.json` | cases | `tests/single_value_conformance.rs` | — (pending, #2010) |
-| `single-value-v1.expected.rust-native.json` | expected | `tests/single_value_conformance.rs` (writes it) | — (pending, #2010) |
+| `single-value-v1.cases.json` | cases | `tests/single_value_conformance.rs` | — (pending, issue #2010) |
+| `single-value-v1.expected.rust-native.json` | expected | `tests/single_value_conformance.rs` (writes it) | — (pending, issue #2010) |
 | `artifact-exchange-v1.cases.json` | cases | `tests/exchange_conformance.rs`, run by `scripts/stack-exchange-conformance.mjs` | `exchange_conformance_test.go`, run by `scripts/stack-exchange-conformance.mjs` |
 | `eql-json-v1.cases.json` | cases | `tests/json_operators.rs`; EQL's `tests/encryption/tests/json_tree_data_plan.rs` | `json_conformance_test.go` |
 | `eql-json-v1.enrollment.json` | enrollment | `scripts/stack-eql-conformance.mjs` runs the tests it names | `scripts/stack-eql-conformance.mjs` runs the tests it names |
@@ -88,10 +88,12 @@ The same task runs the shared declaration acceptance/rejection corpus in both
 languages, with native observations of normalization. It also runs the shared
 runtime, read, context, value-boundary, query-refusal and raw-frame cases, and
 enrolls the existing value-kind, context-field and query-operator
-fixtures described below. It runs the single-value cases in native Rust
-only: their Go runner is pending. It ends with the fresh artifact exchange in both
+fixtures described below. It ends with the fresh artifact exchange in both
 directions (`test:conformance:exchange`, which also needs the deterministic
 EQL guest). Set no fixture-update variables when checking conformance.
+
+The task runs the single-value cases in native Rust only, because the Go
+runner of that profile is pending.
 
 The Rust runner is `packages/stack-encrypt/tests/conformance.rs`; the Go runner
 is `languages/golang/encrypt/conformance_test.go`. Go calls the record interface
@@ -183,19 +185,27 @@ six.
 ## Single values
 
 The [single-value contract](single-value-contract.md) defines
-`single-value-v1` in `v1/single-value-v1.cases.json`: one value encrypted into
-one ciphertext through the engine's run-time interface, and decrypted from
-one. The cases give a value, the kind declared for it and a context. They
-cover every scalar kind, the exact conversions a declared kind makes, JSON
-documents, the one stored form a string and a document share, batches of
-single-value calls merged into one key request, and
-the refusals of an array, an object, a passthrough, a null, `undefined` and a
-value of another kind.
-`v1/single-value-v1.expected.rust-native.json` freezes each input's frame, the
-plaintext each leaf is sealed with, and a ciphertext every runner must open.
-The native runner is `single_value_conformance` in the Rust crate, which
-`test:conformance` runs. It also holds the run-time interface to the typed
-one. The Go runner comes with the Go SDK's single-value calls (#2010).
+`single-value-v1` in `v1/single-value-v1.cases.json`, and the terms used here.
+The profile encrypts one value as one ciphertext through the run-time
+interface of the engine, and decrypts it again. Each case gives a value, the
+kind declared for it, and a context. The cases cover:
+
+- every scalar kind
+- the exact conversions that a declared kind makes
+- JSON documents
+- the one stored form of a string and a document
+- batches of single-value calls merged into one key request
+- the refusals of an array, an object, a passthrough, a null, `undefined`,
+  and a value of another kind
+
+`v1/single-value-v1.expected.rust-native.json` freezes three things for each
+case: the frame of the input, the plaintext that the leaf is sealed with, and
+a ciphertext that every runner must open.
+
+The native runner is `single_value_conformance` in the Rust crate.
+`test:conformance` runs it. The runner also compares the run-time interface
+with the typed interface. The Go runner is pending. The Go runner will be
+written with the single-value calls of the Go SDK (issue #2010).
 
 ## `record-reads-v1` contract
 

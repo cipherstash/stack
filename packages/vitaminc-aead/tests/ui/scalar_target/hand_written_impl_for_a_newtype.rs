@@ -1,6 +1,7 @@
-//! No one implements `ScalarTarget` by hand. A target is one when its sink
-//! is marked. A derived newtype's sink is this crate's, so an impl written
-//! for a newtype of a sequence conflicts with the one impl there is.
+//! No one implements `ScalarTarget` directly. A target is a `ScalarTarget`
+//! when its sink implements `TakesScalar`. The sink of a derived newtype is
+//! defined in vitaminc-aead. So an impl of `ScalarTarget` for a newtype of a
+//! sequence conflicts with the blanket impl.
 
 use vitaminc_aead::{Decrypt, ScalarTarget};
 

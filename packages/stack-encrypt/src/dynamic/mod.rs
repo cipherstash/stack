@@ -32,10 +32,11 @@
 //! * [`frame::OwnedFrame`] — the engine's plaintext for a value whose type
 //!   is known only at run time: vitaminc's, re-exported with the rest of the
 //!   frame.
-//! * [`value`] — one value as one [`Ciphertext`](crate::Ciphertext), and
-//!   back: what [`KeysetCipher::encrypt`](crate::KeysetCipher::encrypt) and
-//!   [`KeysetCipher::decrypt`](crate::KeysetCipher::decrypt) do for a value
-//!   of a Rust type, for a value in a frame.
+//! * [`value`] — encrypts one value in a frame as one
+//!   [`Ciphertext`](crate::Ciphertext), and decrypts it again.
+//!   [`KeysetCipher::encrypt`](crate::KeysetCipher::encrypt) and
+//!   [`KeysetCipher::decrypt`](crate::KeysetCipher::decrypt) do the same for
+//!   a value of a Rust type.
 //! * [`term`](term()) — one index term for a value, derived at the one
 //!   scalar it is walked to.
 //! * [`record`] — a record's declaration as data, *lowered* into the
@@ -63,13 +64,15 @@
 //!
 //! # What is not here
 //!
-//! Encrypting a whole value as a tree of leaves is not: an
-//! [`OwnedFrame`](frame::OwnedFrame), like any source,
-//! implements `Encrypt` already, so `keyset.encrypt_tree(value, aad)` is the whole
-//! of it and needs nothing from this module. ([`value`] encrypts one scalar
-//! as one opaque ciphertext, which is a different stored form.) Nor is a second executor: nothing here calls
-//! the term functions or the seal path to produce a record. A capability a
-//! data plan needs and the combinators lack is added to the combinators,
+//! Encrypting a whole value as a tree of leaves is not here. An
+//! [`OwnedFrame`](frame::OwnedFrame) implements `Encrypt` already, like any
+//! source. So `keyset.encrypt_tree(value, aad)` encrypts it, and needs
+//! nothing from this module. [`value`] encrypts one scalar as one opaque
+//! ciphertext. That is a different stored form.
+//!
+//! A second executor is not here either: nothing in this module calls the
+//! term functions or the seal path to produce a record. When a data plan
+//! needs a capability that the combinators lack, add it to the combinators,
 //! once.
 //!
 //! # Stability

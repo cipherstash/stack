@@ -10,60 +10,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Encrypt and decrypt one value whose type is known only at run time**
-  (#2009). `dynamic::value` does for a value in a frame what
-  `keyset.encrypt` and `keyset.decrypt` do for a value of a Rust type. A
-  language SDK holds a value as a frame, and knows the value's kind only
-  when the code runs.
+  (#2009). `dynamic::value` has two functions for a value in a frame. The
+  two functions are the run-time counterparts of the typed `keyset.encrypt`
+  and `keyset.decrypt`. A frame is one value written as bytes. A language
+  SDK has each value as a frame. The kind of the value is only known when
+  the code runs.
   - `dynamic::value::encrypt(&keyset, frame, kind)` takes a borrowed
-    `Frame` and an optional declared `ValueKind`. It returns the
-    `Ciphertext` that `keyset.encrypt` returns for the same value: the same
-    leaf, under the same key request and the same context. So
-    `keyset.decrypt::<T>` opens it, and each language opens what another
-    wrote.
-  - `dynamic::value::decrypt(cipher, ciphertext, kind)` opens a ciphertext
-    into an `OwnedFrame` that holds one scalar. Pass `&keyset` to open only
-    that keyset's ciphertexts, or `&cipher` to open a ciphertext of any
-    keyset.
-  - Each has a form with a context: `encrypt_with_context` and
+    `Frame` and an optional declared `ValueKind`. The call returns a
+    `Ciphertext` that `keyset.decrypt::<T>` decrypts. So each language can
+    decrypt what another language encrypted.
+  - `dynamic::value::decrypt(cipher, ciphertext, kind)` decrypts a
+    ciphertext into an `OwnedFrame` of one scalar. Pass `&keyset` to
+    decrypt only the ciphertexts of that keyset. Pass `&cipher` to decrypt
+    a ciphertext of any keyset.
+  - Each function has a form with a context: `encrypt_with_context` and
     `decrypt_with_context`.
-  - There is no batch call. Each call returns a `Pending`, which has not
-    sent its key request. To encrypt or decrypt many values, make one call
-    for each value and merge them with `Pending::all`: awaiting the merged
-    call makes one key request, and the results come back in order. Each
-    value keeps its own declared kind, so one batch can hold values of
-    different kinds.
+  - There is no batch call. Each call returns a `Pending`. A `Pending` does
+    not send its key request until it is awaited. To encrypt or decrypt
+    many values, make one call for each value. Then merge the calls with
+    `Pending::all`. Awaiting the merged call makes one key request, and
+    returns the results in order.
+  - Each value keeps its own declared kind, so one merged call can contain
+    values of different kinds.
   - On encrypt, a declared kind converts a number of another width or kind
-    when the conversion is exact, by the rules a record's typed field uses.
-    With no declared kind, the scalar is sealed as it arrived.
-  - On decrypt, a declared kind is the kind the value must open as.
-    Nothing is converted. A value of another kind is `Error::OpenedType`,
-    which names the kind that was expected and never says what the value
-    opened as.
-  - The kind `json` takes a document as its JSON text, in a text leaf or a
-    bytes leaf. The engine checks the text and seals the document as
-    `JsonPlaintext` is sealed. On decrypt, `json` returns the document's
-    text in a bytes leaf, as a record's `json` field opens.
-  - `json` is a declared kind, and not a stored one. A document is stored
-    as a text leaf, as a string is, so a kind check cannot tell them
-    apart. A sealed document opens as `string`. A sealed string whose
-    text is a JSON document opens as `json`, which checks that the text
-    parses and returns it as the engine writes the document.
-  - A ciphertext holds one scalar. `encrypt` refuses an array, an object, a
-    passthrough and a null, plain or typed, before any key is requested.
-    The refusal is a new variant, `dynamic::Error::Value`, with the code
-    `stack_encrypt::dynamic_value`. It names no field, and its message is
-    about one value. It carries one of three new reasons, `Reason::Array`,
-    `Reason::Object` and `Reason::Null`, or `Reason::Passthrough`. JavaScript's `undefined` is refused with
-    `Reason::Undefined`, with a declared kind and with none: it is most
-    often a property name spelt wrong, and no typed call could read it
-    back. A value of another kind is `Reason::FieldType`.
+    when the conversion is exact. The rules are those of a typed field of a
+    record. With no declared kind, the scalar is stored as it arrived.
+  - On decrypt, a declared kind is the kind that the value must have been
+    stored as. Nothing is converted. A value of another kind is
+    `Error::OpenedType`. That error names the kind that was expected, and
+    never says what kind the value had.
+  - The kind `json` takes a document as its JSON text, as a text value or a
+    bytes value. The engine checks the text, and stores the document as it
+    stores a `JsonPlaintext`. On decrypt, `json` returns the text of the
+    document as a bytes value. A `json` field of a record decrypts to the
+    same form.
+  - `json` is a declared kind and not a stored kind. The engine stores a
+    document as text, as it stores a string. So a check of the stored kind
+    cannot distinguish them. An encrypted document decrypts as `string`. An
+    encrypted string whose text is a JSON document decrypts as `json`.
+  - Decrypt as `json` checks that the text parses, and returns the document
+    as the engine writes it.
+  - A ciphertext contains one scalar. `encrypt` refuses an array, an
+    object, a passthrough, and a null before it requests any key. The null
+    can be plain or typed.
+  - The refusal is a new variant, `dynamic::Error::Value`, with the code
+    `stack_encrypt::dynamic_value`. The error names no field, and its
+    message is about one value. The reason is `Reason::Passthrough`, or one
+    of three new reasons: `Reason::Array`, `Reason::Object`, and
+    `Reason::Null`.
+  - `encrypt` refuses JavaScript's `undefined` with `Reason::Undefined`,
+    with a declared kind and with none. An `undefined` value is most often
+    a misspelt property name. No typed call could read it back. A value of
+    another kind is `Reason::FieldType`.
   - Two ciphertexts of one value never have the same bytes, because each
-    sealed leaf has a random nonce. The two interfaces agree on every
+    encrypted scalar has a random nonce. The two interfaces agree on every
     other part: the keyset, the data key, the length, and the plaintext of
-    the leaf. `tests/single_value.rs` holds them to that for every kind.
-  - The conformance profile `single-value-v1`
-    (`conformance/stack-encrypt/single-value-contract.md`) has the shared
-    cases.
+    the encrypted scalar. `tests/single_value.rs` tests that for every
+    kind.
+  - The conformance profile `single-value-v1` has the shared cases. The
+    contract of the profile is
+    `conformance/stack-encrypt/single-value-contract.md`.
   - `ScalarTarget` is re-exported from Vitamin C at the crate root.
 
 - **Encrypt a UUID as a UUID** (#1833). `value::Uuid` is vitaminc's
@@ -561,34 +567,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
-- **A `Ciphertext` decrypts only into a type that one scalar builds**
+- **A `Ciphertext` decrypts only into a type that is built from one scalar**
   (#2009). `OpaqueDecode` was implemented for every `Decrypt` type that is
   `Zeroize`. So `keyset.decrypt::<Vec<String>>(ciphertext)` compiled,
   requested a key, decrypted, and only then failed with
-  `Error::OpenedType`. It could never succeed, because a ciphertext holds
-  one scalar. `OpaqueDecode` is now bounded on Vitamin C's `ScalarTarget`,
-  so such a call does not compile. This applies to `keyset.decrypt`,
-  `keyset.decrypt_with_context`, `T::decrypt_from(ciphertext, ..)` and a
-  `Ciphertext` field of a derived record.
-  - Still accepted: every scalar (`bool`, the integers, the floats,
-    `String`, `Vec<u8>`, `[u8; N]`, `value::Date`, `value::Timestamp`,
-    `value::Decimal`, `value::Uuid`), `JsonPlaintext`, a `Protected` or an
-    `Option` of one, `OwnedFrame`, a newtype that derives `Decrypt` over
-    one, such as `struct Email(String)`, and any type of your own that
-    implements `FromScalar`. `OpaqueBlob<T>` keeps its own way in.
-  - No longer accepted: a `Vec` of anything but bytes, a `HashMap` or a
-    `BTreeMap`, a struct that derives `Decrypt` with named fields, and a
-    newtype, a `Protected` or an `Option` of one of those.
-  - You write nothing to make a type of your own a target, and you
-    cannot: no one implements `ScalarTarget` by hand. A type is one when
-    one scalar builds it, which the compiler works out from how the type
+  `Error::OpenedType`. That call could never succeed, because a ciphertext
+  contains one scalar. `OpaqueDecode` is now bounded on Vitamin C's
+  `ScalarTarget`, so such a call does not compile.
+  - The bound applies to `keyset.decrypt`, `keyset.decrypt_with_context`,
+    `T::decrypt_from(ciphertext, ..)`, and a `Ciphertext` field of a derived
+    record.
+  - Still accepted:
+    - every scalar: `bool`, the integers, the floats, `String`, `Vec<u8>`,
+      `[u8; N]`, `value::Date`, `value::Timestamp`, `value::Decimal`, and
+      `value::Uuid`
+    - `JsonPlaintext`
+    - a `Protected` or an `Option` of a scalar
+    - `OwnedFrame`
+    - a newtype that derives `Decrypt` over a scalar, such as
+      `struct Email(String)`
+    - any type of your own that implements `FromScalar`
+    - `OpaqueBlob<T>`, through its own impl
+  - No longer accepted:
+    - a `Vec` of anything but bytes
+    - a `HashMap` or a `BTreeMap`
+    - a struct that derives `Decrypt` with named fields
+    - a newtype, a `Protected`, or an `Option` of one of those
+  - You write no code to make a type of your own a target. You cannot
+    implement `ScalarTarget` directly. A type is a `ScalarTarget` when it
+    is built from one scalar. The compiler derives that from how the type
     decrypts.
-  - The compile error says that one ciphertext holds one value, and what
-    to decrypt instead.
-  - A sequence, a map or a struct is a tree of leaves, which is a
-    `StackCipherText`. Decrypt one with `keyset.decrypt_tree`. A column of
-    ciphertexts is a `Vec<Ciphertext>`, which still decrypts into a `Vec`
-    with `Vec::<T>::decrypt_from`.
+  - The compile error says that one ciphertext contains one value, and
+    names what to decrypt instead.
+  - A sequence, a map, or a struct is stored as a tree of encrypted
+    scalars: a `StackCipherText`. Decrypt one with `keyset.decrypt_tree`.
+  - A column of ciphertexts is a `Vec<Ciphertext>`. A `Vec<Ciphertext>`
+    still decrypts into a `Vec` with `Vec::<T>::decrypt_from`.
   - No stored byte changes. Every ciphertext that decrypted before still
     decrypts into the same type.
 

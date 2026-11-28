@@ -1,5 +1,5 @@
-//! A derived newtype reads what its inner type reads. Over a sequence it
-//! needs a sequence, so one scalar does not build it.
+//! A derived newtype reads what its inner type reads. A newtype of a
+//! sequence needs a sequence, so one scalar does not build it.
 
 use vitaminc_aead::{Decrypt, ScalarTarget};
 

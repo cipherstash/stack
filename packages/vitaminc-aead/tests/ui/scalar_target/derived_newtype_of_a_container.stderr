@@ -1,13 +1,14 @@
-error[E0277]: one ciphertext holds one value, and this decrypt target is not built from one value
+error[E0277]: this target cannot be decrypted from one ciphertext
   --> tests/ui/scalar_target/derived_newtype_of_a_container.rs:12:22
    |
 12 |     opens_one_leaf::<Tags>();
-   |                      ^^^^ this target cannot be decrypted from one ciphertext
+   |                      ^^^^ one ciphertext contains one value, and this target needs more
    |
    = help: the trait `TakesScalar` is not implemented for `vitaminc_aead::typed::List<std::string::String>`
-   = note: `vitaminc_aead::typed::List<std::string::String>` is the target's sink, and it does not read a single scalar
-   = note: a single ciphertext decrypts into a scalar such as `String`, `i64` or `Vec<u8>`, an `Option` or a `Protected` of one, or a newtype that derives `Decrypt` over one
-   = note: to decrypt many values, decrypt a `Vec<Ciphertext>`, which opens each ciphertext into one element; to decrypt a sequence, a map or a struct that was encrypted as a tree, use `decrypt_tree`
+   = note: `vitaminc_aead::typed::List<std::string::String>` is the sink that builds this target, and that sink does not build its value from one scalar
+   = note: one ciphertext decrypts into a scalar such as `String`, `i64`, or `Vec<u8>`, or into an `Option`, a `Protected`, or a derived newtype of a scalar
+   = note: to decrypt many values, decrypt a `Vec<Ciphertext>`: each ciphertext becomes one element
+   = note: to decrypt a sequence, a map, or a struct that was encrypted as a tree, use `decrypt_tree`
    = help: the following other types implement trait `TakesScalar`:
              Optional<T>
              OwnedFrameSink

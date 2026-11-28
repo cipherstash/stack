@@ -1,5 +1,5 @@
-//! A derived struct reads a map, one leaf per field, so one scalar does
-//! not build it, even with a single field.
+//! A derived struct reads a map with one leaf for each field. So one scalar
+//! does not build it, even when the struct has a single field.
 
 use vitaminc_aead::{Decrypt, ScalarTarget};
 

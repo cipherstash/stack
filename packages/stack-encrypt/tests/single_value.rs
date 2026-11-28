@@ -1,17 +1,26 @@
-//! One value as one ciphertext through the run-time interface
-//! (`dynamic::value`), held to the typed one (`keyset.encrypt`,
-//! `keyset.decrypt`).
+//! Tests that the run-time interface (`dynamic::value`) and the typed
+//! interface (`keyset.encrypt`, `keyset.decrypt`) agree on one value as one
+//! ciphertext.
 //!
-//! A sealed leaf carries a random AES-GCM nonce, so two ciphertexts of one
-//! value never have the same bytes. What the two interfaces must agree on
-//! is everything else: the bytes before the leaf's AEAD output (the format
-//! version, the keyset, and the data key's IV and tag), the ciphertext's
-//! length, and the plaintext the leaf was sealed with. The tests here seal
-//! each value through both interfaces, each over a fresh deterministic key
-//! source of one seed, and compare those parts. They also open each
-//! interface's ciphertext through the other.
-// The typed `Uuid` case needs the `uuid` feature, which `dynamic` does not
-// turn on.
+//! In these tests, "seal" means encrypt and authenticate a value. "Open"
+//! means decrypt a ciphertext and check it. A leaf is the one sealed scalar
+//! inside a ciphertext.
+//!
+//! Each sealed leaf has a random AES-GCM nonce, so two ciphertexts of one
+//! value never have the same bytes. The two interfaces must agree on every
+//! other part:
+//!
+//! - the bytes before the output of the leaf's authenticated encryption:
+//!   the format version, the keyset, and the IV and tag of the data key
+//! - the length of the ciphertext
+//! - the plaintext that the leaf was sealed with
+//!
+//! The tests seal each value through both interfaces, and compare those
+//! parts. Each interface gets a new deterministic key source with the same
+//! seed. The tests also open the ciphertext of each interface through the
+//! other interface.
+// The typed `Uuid` case needs the `uuid` feature. The `dynamic` feature
+// does not turn `uuid` on.
 #![cfg(all(feature = "dynamic", feature = "uuid"))]
 
 mod common;
@@ -33,17 +42,17 @@ use vitaminc_aead::plaintext::{FixedType, Int, Logical, Physical, Raw, Width};
 
 const SEED: [u8; 32] = *b"stack-encrypt single value v1   ";
 
-/// A context a test seals under, beside the empty one.
+/// A context that a test seals under, other than the empty context.
 fn column() -> ContextPiece<'static> {
     ("users", "value").into_context().into_owned()
 }
 
-/// The empty context, which `keyset.encrypt` and `value::encrypt` use.
+/// The empty context. `keyset.encrypt` and `value::encrypt` use it.
 fn no_context() -> ContextPiece<'static> {
     ().into_context()
 }
 
-/// `value` sealed by the typed call, over a fresh key source of the seed.
+/// `value` sealed by the typed call, over a new key source of the seed.
 async fn typed<S: OpaqueEncode>(value: S, context: &ContextPiece<'static>) -> (Ciphertext, Parts) {
     let (cipher, keys) = kept_cipher(SEED).await;
     let sealed = cipher
@@ -54,7 +63,7 @@ async fn typed<S: OpaqueEncode>(value: S, context: &ContextPiece<'static>) -> (C
     (sealed.clone(), parts(&keys, sealed, context.clone()))
 }
 
-/// `value` sealed by the run-time call, over a fresh key source of the seed.
+/// `value` sealed by the run-time call, over a new key source of the seed.
 async fn run_time(
     value: &OwnedFrame,
     kind: Option<ValueKind>,
@@ -73,10 +82,10 @@ async fn run_time(
     (sealed.clone(), parts(&keys, sealed, context.clone()))
 }
 
-/// The run-time call and the typed call seal the same ciphertext for one
-/// value, and each opens the other's. `typed_value` builds the typed value,
-/// `frame_of` the frame a binding hands over, and `stored` the frame the
-/// value opens as.
+/// The run-time call and the typed call seal the same parts for one value,
+/// and each call opens the ciphertext of the other. `typed_value` builds the
+/// typed value. `frame_of` builds the frame that a binding passes. `stored`
+/// builds the frame that the value opens as.
 async fn assert_same_ciphertext<S, T>(
     name: &str,
     typed_value: impl Fn() -> S,
@@ -156,8 +165,8 @@ fn uuid_value() -> UuidValue {
 mod the_run_time_ciphertext_is_the_typed_one {
     use super::*;
 
-    /// A value of a Rust type whose frame is of the same kind, with the
-    /// kind declared and with none.
+    /// A value of a Rust type whose frame is of the same kind. The test
+    /// runs with the kind declared and with no declared kind.
     macro_rules! same {
         ($name:literal, $kind:expr, $ty:ty, $value:expr) => {{
             let stored = frame($value);
@@ -199,8 +208,8 @@ mod the_run_time_ciphertext_is_the_typed_one {
     }
 
     /// No Rust type spells a lone `u8`: a `Vec<u8>` is a byte string. So
-    /// the run-time leaf is compared with the leaf the cipher seals for the
-    /// same scalar walked as a tree.
+    /// the test compares the run-time leaf with another leaf: the one that
+    /// the cipher seals for the same scalar walked as a tree.
     #[tokio::test]
     async fn for_an_unsigned_8_bit_integer() {
         let context = column();
@@ -224,8 +233,9 @@ mod the_run_time_ciphertext_is_the_typed_one {
         }
     }
 
-    /// A number of another width or kind seals as the declared kind's
-    /// value, which is the ciphertext the typed call makes for that value.
+    /// A number of another width or kind seals as the value of the
+    /// declared kind. The typed call makes the same ciphertext parts for
+    /// that value.
     #[tokio::test]
     async fn for_a_number_converted_to_its_declared_kind() {
         assert_same_ciphertext(
@@ -266,13 +276,14 @@ mod the_run_time_ciphertext_is_the_typed_one {
         .await;
     }
 
-    /// A document's JSON text, in a text leaf or a bytes leaf, seals as
-    /// the typed call seals the document: as its compact JSON text.
+    /// A document arrives as JSON text, as a text value or a bytes value.
+    /// `encrypt` seals it as the typed call seals the document: as its
+    /// compact JSON text.
     #[tokio::test]
     async fn for_a_json_document() {
         let text = r#"{ "b": [1, 2.5, null], "a": "é" }"#;
         let document = || JsonPlaintext::parse(text).expect("a document");
-        // What a `String` reads back: the text the document was sealed as.
+        // What a `String` reads back: the text that the document was sealed as.
         let sealed_text = frame(r#"{"a":"é","b":[1,2.5,null]}"#);
         for (name, crossing) in [
             ("json as text", frame(text)),
@@ -293,8 +304,9 @@ mod the_run_time_ciphertext_is_the_typed_one {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(48))]
 
-        /// For any scalar, any declared kind that is the scalar's own, and
-        /// any context, the run-time ciphertext is the typed one.
+        /// For any scalar, any context, and the scalar's own kind as the
+        /// declared kind, the run-time ciphertext has the parts of the typed
+        /// ciphertext.
         #[test]
         fn for_any_generated_scalar(
             scalar in any_scalar(),
@@ -323,7 +335,7 @@ mod the_run_time_ciphertext_is_the_typed_one {
         }
     }
 
-    /// One generated scalar, of a kind a Rust type spells.
+    /// One generated scalar, of a kind that a Rust type spells.
     #[derive(Debug, Clone)]
     enum Scalar {
         Bool(bool),
@@ -381,7 +393,7 @@ mod the_run_time_ciphertext_is_the_typed_one {
     }
 }
 
-/// A frame the hand writes: a passthrough of the text `clear`.
+/// A frame written by hand: a passthrough of the text `clear`.
 fn passthrough() -> OwnedFrame {
     let mut bytes = vec![PASSTHROUGH];
     bytes.extend_from_slice(frame("clear").frame().as_bytes());
@@ -396,8 +408,8 @@ fn undefined() -> OwnedFrame {
     frame(Raw(Some(Logical::Undefined), Physical::Null))
 }
 
-/// The refusal `value::encrypt` makes for `value` under `kind`, with a
-/// check that it made no key request.
+/// The refusal that `value::encrypt` makes for `value` under `kind`. Also
+/// checks that the call made no key request.
 async fn refused(value: &OwnedFrame, kind: Option<ValueKind>) -> dynamic::Error {
     let (cipher, generates, retrieves) = common::counting_cipher().await;
     let keyset = cipher.default_keyset();
@@ -428,8 +440,8 @@ async fn refused(value: &OwnedFrame, kind: Option<ValueKind>) -> dynamic::Error 
     single
 }
 
-/// A single-value refusal: its own variant and code, the reason, and a
-/// message about one value, with no record, plan or field in it.
+/// A single-value refusal has its own variant and code, the reason, and a
+/// message about one value. The message mentions no record, plan, or field.
 fn assert_value_refusal(error: &dynamic::Error, reason: Reason, what: &str) {
     use stack_encrypt::ErrorPayload as _;
     assert!(
@@ -451,13 +463,11 @@ fn assert_value_refusal(error: &dynamic::Error, reason: Reason, what: &str) {
         Some(reason.as_str()),
         "{what}: the payload carries the reason"
     );
-    // Two reasons have phrases written for a record's field. One value has
-    // no field, so its refusal words them for a value.
+    // The display text of two reasons mentions a field of a record. One
+    // value has no field, so `Error::Value` has its own text for those
+    // reasons.
     let found = match reason {
-        Reason::FieldType => {
-            "it is not of the kind declared for it, and does not convert to that kind exactly"
-                .to_owned()
-        }
+        Reason::FieldType => "it does not convert exactly to the declared kind".to_owned(),
         Reason::Undefined => "it is undefined".to_owned(),
         found => found.to_string(),
     };
@@ -493,8 +503,8 @@ mod encrypt_refuses_before_any_key_request {
             ("a typed null", typed_null(), Reason::Null),
         ];
         for (what, value, reason) in &cases {
-            // With no declared kind, and with a kind of each shape: what
-            // was found is reported, whatever was declared.
+            // With no declared kind, and with a kind of each shape. The refusal
+            // reports what was found, whatever kind was declared.
             for kind in [
                 None,
                 Some(ValueKind::Int64),
@@ -508,8 +518,8 @@ mod encrypt_refuses_before_any_key_request {
         }
     }
 
-    /// `undefined` is most often a property name spelt wrong, and no typed
-    /// call could read it back. So it is refused with a declared kind and
+    /// `undefined` is most often a misspelt property name. No typed call
+    /// could read it back. So `encrypt` refuses it with a declared kind and
     /// with none.
     #[tokio::test]
     async fn undefined_whatever_kind_is_declared() {
@@ -571,7 +581,8 @@ mod encrypt_refuses_before_any_key_request {
         }
     }
 
-    /// A refusal says what kind of value was found, and nothing of it.
+    /// A refusal names the kind of value that was found, and contains no
+    /// part of the value.
     #[tokio::test]
     async fn without_any_of_the_value_in_the_error() {
         let secret = "sk_live_4242424242";
@@ -600,16 +611,16 @@ mod encrypt_refuses_before_any_key_request {
 mod encrypt_with_no_declared_kind {
     use super::*;
 
-    /// A scalar of a logical type this build does not know: the frame and
-    /// the leaf carry its type id, and no kind names it.
+    /// A scalar of a logical type that this build does not define. The frame
+    /// and the leaf record the id of the type, and no kind names it.
     fn unknown_logical() -> OwnedFrame {
         let unknown = Logical::from_wire(200, 9).expect("an id no build knows yet");
         frame(Raw(Some(unknown), Physical::Int(Int::I32(7))))
     }
 
-    /// The leaf format carries a logical type it does not know, so a value
-    /// of a newer type survives an older build. The value is one scalar,
-    /// and it is sealed as it arrived.
+    /// The leaf format records a logical type that this build does not
+    /// define. So an older build can store a value of a newer type. The
+    /// value is one scalar. `encrypt` seals it as it arrived.
     #[tokio::test]
     async fn seals_a_scalar_of_an_unknown_logical_type_as_it_arrived() {
         let cipher = common::stack_cipher().await;
@@ -629,7 +640,7 @@ mod encrypt_with_no_declared_kind {
             "the value opens with its type id"
         );
 
-        // It opens as no declared kind, and as no Rust type.
+        // The ciphertext opens as no declared kind, and as no Rust type.
         let as_int = value::decrypt(&keyset, sealed.clone(), Some(ValueKind::Int32)).await;
         assert!(
             matches!(as_int, Err(Error::OpenedType { expected: "int32" })),
@@ -654,9 +665,10 @@ mod encrypt_with_no_declared_kind {
         }
     }
 
-    /// A known logical type over a value it does not admit never reaches
-    /// `encrypt`: no frame holds one. The frame writer refuses to write it,
-    /// and the frame reader refuses bytes that spell it.
+    /// A known logical type over a value that the type does not admit never
+    /// reaches `encrypt`, because no frame can contain one. The frame
+    /// writer refuses to write it. The frame reader refuses bytes that spell
+    /// it.
     #[test]
     fn a_logical_type_over_a_value_it_does_not_admit_is_not_a_frame() {
         let short_uuid = Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 15]));
@@ -664,8 +676,8 @@ mod encrypt_with_no_declared_kind {
             OwnedFrame::of(short_uuid).is_err(),
             "the writer must refuse a UUID of fifteen bytes"
         );
-        // A real UUID's frame, with one byte taken off the payload and off
-        // the length.
+        // The frame of a real UUID, with one byte removed from the payload and
+        // from the length.
         let uuid = frame(Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 16])));
         let mut bytes = uuid.frame().as_bytes().to_vec();
         let length = bytes.len() - 16 - 4;
@@ -745,7 +757,7 @@ mod encrypt_with_a_context {
         );
     }
 
-    /// The call shows the context it will use, as the typed call does.
+    /// The call shows the context that it will use, as the typed call does.
     #[tokio::test]
     async fn runs_under_the_context_the_typed_call_runs_under() {
         let cipher = common::stack_cipher().await;
@@ -770,8 +782,8 @@ mod encrypt_with_a_context {
 }
 
 /// The run-time interface has no batch call. A binding makes one call for
-/// each value and merges them with `Pending::all`, which sends one key
-/// request.
+/// each value, and merges the calls with `Pending::all`. The merged call
+/// sends one key request.
 mod many_values_merged_with_pending_all {
     use super::*;
 
@@ -779,7 +791,8 @@ mod many_values_merged_with_pending_all {
     async fn seal_and_open_in_one_key_request_each_and_keep_their_order() {
         let (cipher, generates, retrieves) = common::counting_cipher().await;
         let keyset = cipher.default_keyset();
-        // Each value has its own declared kind, and the last its own context.
+        // Each value has its own declared kind. The last value also has its own
+        // context.
         let values = [frame(1.0f64), frame("two"), frame(true), frame(4i64)];
         let kinds = [
             Some(ValueKind::UInt32),
@@ -843,7 +856,7 @@ mod many_values_merged_with_pending_all {
             );
         }
 
-        // The value sealed under a context opens only under it.
+        // A value sealed under a context opens only under that context.
         let without = value::decrypt(&keyset, sealed[3].clone(), kinds[3]).await;
         assert!(
             matches!(without, Err(Error::Aead)),
@@ -936,8 +949,8 @@ mod decrypt {
             .expect("a uint64 opens as uint64");
         assert_eq!(opened.frame(), frame(34u64).frame(), "the sealed value");
 
-        // An integer of another width is another kind: decrypt converts
-        // nothing, as a record's typed field converts nothing when it opens.
+        // An integer of another width is another kind. `decrypt` converts
+        // nothing, as a typed field of a record converts nothing when it opens.
         let narrower = value::decrypt(&keyset, sealed, Some(ValueKind::UInt32)).await;
         assert!(
             matches!(narrower, Err(Error::OpenedType { expected: "uint32" })),
@@ -945,8 +958,8 @@ mod decrypt {
         );
     }
 
-    /// A refusal names the kind that was expected. It never says what the
-    /// value opened as.
+    /// A refusal names the kind that was expected. A refusal never says
+    /// what the value opened as.
     #[tokio::test]
     async fn refuses_another_kind_without_saying_what_the_value_is() {
         let cipher = common::stack_cipher().await;
@@ -1052,7 +1065,7 @@ mod decrypt {
 mod decrypt_a_json_document {
     use super::*;
 
-    /// The frame a `json` value opens as: its JSON text in a bytes leaf.
+    /// The frame that a `json` value opens as: its JSON text as a bytes value.
     fn document(text: &str) -> OwnedFrame {
         frame(text.as_bytes().to_vec())
     }
@@ -1081,7 +1094,7 @@ mod decrypt_a_json_document {
             "the frame a record's json field opens as"
         );
 
-        // With no declared kind the leaf comes back as it was sealed: text.
+        // With no declared kind, the leaf comes back as it was sealed: as text.
         let as_sealed = value::decrypt(&keyset, sealed, None)
             .await
             .expect("it opens");
@@ -1133,7 +1146,8 @@ mod decrypt_a_json_document {
                 keyset.encrypt(String::from("{not json")).await,
             ),
             ("an integer", keyset.encrypt(7i64).await),
-            // The typed document reads a text leaf alone, and so does this.
+            // The typed document reads only a text leaf. `decrypt` as `json` does the
+            // same.
             (
                 "JSON text in a bytes leaf",
                 keyset.encrypt(b"{}".to_vec()).await,
@@ -1149,9 +1163,9 @@ mod decrypt_a_json_document {
         }
     }
 
-    /// `json` is a declared kind, and a document is stored as text. So a
-    /// string and a document share one stored form, and a kind check
-    /// cannot tell them apart.
+    /// `json` is a declared kind, and the engine stores a document as text.
+    /// So a string and a document have one stored form. A kind check cannot
+    /// distinguish them.
     #[tokio::test]
     async fn opens_a_string_that_holds_json_text_and_returns_it_as_the_engine_writes_it() {
         let cipher = common::stack_cipher().await;

@@ -170,8 +170,8 @@ impl From<FrameWriteError> for DecodeError {
 /// written.
 pub struct OwnedFrameSink(());
 
-/// One scalar always builds a frame: the frame of that scalar, or of the
-/// null. So an [`OwnedFrame`] is a target one leaf builds.
+/// One scalar always builds a frame: the frame of that scalar, or the null
+/// frame. So one leaf can be decrypted into an [`OwnedFrame`].
 impl TakesScalar for OwnedFrameSink {}
 
 /// A container an [`OwnedFrameSink`] is opening: a sequence or a map

@@ -182,12 +182,17 @@ case needs a trait for "a scalar, or a `Protected` of one". Rust allows
 that trait to be implemented for both only in Vitamin C, the crate that
 defines `FromScalar`.
 
-> **Amended 2026-11-28 (#2011).** Vitamin C now has that trait,
-> `ScalarTarget`: a decrypt target that one scalar builds. No one
-> implements it by hand. A target is one when its sink is one that a scalar
-> satisfies, which Vitamin C marks on its own sinks. So every `FromScalar`
-> type is one, and so are an `Option`, a `Protected` or a derived newtype
-> of one, and `OwnedFrame`.
+> **Amended 2026-11-28 (pull request #2011).** Vitamin C now has that
+> trait, `ScalarTarget`: a decrypt target that is built from one scalar.
+> No one implements `ScalarTarget` directly.
+>
+> A sink is the type that builds a decrypt target. Vitamin C marks each of
+> its sinks that builds its value from one scalar. A target is a
+> `ScalarTarget` when its sink has that mark.
+>
+> So every `FromScalar` type is a `ScalarTarget`. An `Option`, a
+> `Protected`, and a derived newtype of a scalar target are `ScalarTarget`s
+> too. `OwnedFrame` is also one.
 >
 > The bound of a single `Ciphertext`'s target is now
 > `ScalarTarget + Zeroize`, and no longer `Decrypt + Zeroize`. So a target

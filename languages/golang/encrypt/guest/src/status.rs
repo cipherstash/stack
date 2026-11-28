@@ -189,7 +189,7 @@ pub fn status_for_dynamic(error: &stack_encrypt::dynamic::Error) -> u32 {
         | Error::Plan { .. }
         | Error::UntypedIndex { .. }
         | Error::Source { .. }
-        // One value that a single ciphertext cannot hold: an array, an
+        // One value that a single ciphertext cannot contain: an array, an
         // object, a null, or a value of another kind than the one declared.
         | Error::Value { .. }
         | Error::Record { .. }

@@ -1,9 +1,14 @@
-//! The targets one `Ciphertext` decrypts into, which must compile: every
-//! scalar, a `Protected` of one, a nullable one, a JSON document, the date,
-//! timestamp, decimal and UUID values, a derived newtype of one with no
-//! marker written for it, an opaque blob and a frame.
+//! The targets that one `Ciphertext` decrypts into. Each must compile:
+//!
+//! - every scalar
+//! - a `Protected` of a scalar, and a nullable scalar
+//! - a JSON document
+//! - the date, timestamp, decimal, and UUID values
+//! - a derived newtype of a scalar, with no marker impl written for it
+//! - an opaque blob, and a frame
+//!
 //! `tests/ui/scalar_decrypt_into_a_container.rs` pins the targets that must
-//! not.
+//! not compile.
 use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::json::JsonPlaintext;
 use stack_encrypt::value::{Date, Decimal, Timestamp, Uuid};
@@ -14,12 +19,12 @@ use stack_encrypt::{
 use stack_kms::FakeDataKeySource;
 
 /// A newtype that derives `Decrypt` over a scalar decrypts from one
-/// ciphertext as it is. Nothing else is written for it.
+/// ciphertext with no extra code.
 #[derive(Decrypt, zeroize::Zeroize)]
 struct Email(String);
 
-/// The same over an integer, over another newtype, and over a nullable
-/// scalar.
+/// The same is true for a newtype of an integer, of another newtype, and of
+/// a nullable scalar.
 #[derive(Decrypt, zeroize::Zeroize)]
 struct UserId(u64);
 #[derive(Decrypt, zeroize::Zeroize)]
@@ -27,7 +32,8 @@ struct PrimaryEmail(Email);
 #[derive(Decrypt, zeroize::Zeroize)]
 struct Nickname(Option<String>);
 
-/// A whole value stored as one blob keeps its own way in.
+/// A whole value stored as one blob decrypts through `OpaqueBlob`.
+/// `OpaqueBlob` has its own impl of `OpaqueDecode`.
 #[derive(Default, serde::Deserialize, zeroize::Zeroize)]
 struct Profile {
     name: String,
@@ -86,7 +92,8 @@ async fn calls(
     let _ = OwnedFrame::decrypt_from(ciphertext.clone(), cipher).await?;
     let _ = Email::decrypt_from(ciphertext.clone(), cipher).await?;
     let _: UserId = keyset.decrypt(ciphertext.clone()).await?;
-    // A column of ciphertexts is a `Vec` of them, one scalar each.
+    // A column of ciphertexts is a `Vec<Ciphertext>`, with one scalar in
+    // each ciphertext.
     let _ = Vec::<String>::decrypt_from(vec![ciphertext], keyset).await?;
     Ok(())
 }

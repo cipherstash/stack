@@ -202,9 +202,10 @@ fn parse_timestamp(text: &str) -> i128 {
     ((days * 86_400 + hour * 3_600 + minute * 60 + second) * 1_000_000_000) + nanos
 }
 
-/// The sixteen bytes of a UUID from its canonical text: lowercase hex in
-/// groups of 8, 4, 4, 4 and 12 digits, with `-` between them. Any other
-/// spelling (uppercase, braces, no hyphens) is a corpus error.
+/// The sixteen bytes of a UUID, from its canonical text. The canonical text
+/// is lowercase hex in groups of 8, 4, 4, 4, and 12 digits, with `-` between
+/// the groups. Any other spelling is a corpus error: uppercase, braces, or
+/// no hyphens.
 fn parse_uuid(text: &str) -> [u8; 16] {
     let groups: Vec<&str> = text.split('-').collect();
     let lengths: Vec<usize> = groups.iter().map(|group| group.len()).collect();

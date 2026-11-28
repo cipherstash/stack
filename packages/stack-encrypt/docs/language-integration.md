@@ -177,34 +177,38 @@ encrypts one value into one [`crate::Ciphertext`], with no plan. A binding
 does the same through [`crate::dynamic::value`]:
 
 - [`crate::dynamic::value::encrypt`] takes the value as a
-  [`crate::dynamic::frame::Frame`] and an optional declared kind
-  ([`crate::dynamic::ValueKind`]). It settles to the ciphertext the typed
-  Rust call makes for the same value, so every language reads what any
-  language wrote.
-- [`crate::dynamic::value::decrypt`] takes a ciphertext and an optional
-  kind the value must open as. It settles to the value's frame.
+  [`crate::dynamic::frame::Frame`], and an optional declared kind
+  ([`crate::dynamic::ValueKind`]). The call settles to a ciphertext that the
+  typed Rust call can decrypt. So every language can read what any language
+  wrote.
+- [`crate::dynamic::value::decrypt`] takes a ciphertext, and an optional
+  kind that the value must have been stored as. The call settles to the
+  frame of the value.
 
-Each has a form that takes a context. A declared kind reads the value by
-the rules a record's typed field uses, so a binding passes a language's own
-number. The kind `json` takes a document as its JSON text.
+Each function has a form that takes a context. A declared kind reads the
+value by the rules that a typed field of a record uses. So a binding can
+pass a number in the form that its language uses. The kind `json` takes a
+document as its JSON text.
 
-There is no batch call. Each call returns a [`crate::Pending`], so a binding
-makes one call for each value and merges them with [`crate::Pending::all`].
-Awaiting the merged call makes one key request, and each value keeps its own
-declared kind.
+There is no batch call. Each call returns a [`crate::Pending`]. So a binding
+makes one call for each value, and merges the calls with
+[`crate::Pending::all`]. Awaiting the merged call makes one key request.
+Each value keeps its own declared kind.
 
-A ciphertext holds one scalar. An array, an object, a passthrough and a null
-are refused before any key is requested. The refusal is
+A ciphertext contains one scalar. The engine refuses an array, an object, a
+passthrough, and a null before it requests any key. The refusal is
 [`crate::dynamic::Error::Value`], with the code
-`stack_encrypt::dynamic_value` and a reason that says which was found
-(`array`, `object`, `passthrough`, `null`). An SDK stores an absent
-value as a database `NULL`. JavaScript's `undefined` is refused too
-(`undefined`), whatever kind is declared.
+`stack_encrypt::dynamic_value`. The reason of the refusal names what was
+found: `array`, `object`, `passthrough`, or `null`. An SDK stores an absent
+value as a database `NULL`.
 
-`json` is a declared kind, and a document is stored as text. So a `string`
-and a document share one stored form, and a kind check cannot tell them
-apart: a sealed document opens as `string`, and a sealed string whose text
-is a JSON document opens as `json`.
+The engine also refuses JavaScript's `undefined`, with any declared kind.
+The reason is `undefined`.
+
+`json` is a declared kind, and the engine stores a document as text. So a
+`string` and a document have one stored form. A check of the stored kind
+cannot distinguish them. A stored document decrypts as `string`. A stored
+string whose text is a JSON document decrypts as `json`.
 
 ### Scopes and bindings
 
@@ -866,16 +870,29 @@ lists every profile and its Rust and Go runners. Before a binding is called
 done:
 
 1. **The conformance profiles pass in your language.** Write a runner for
-   each profile in `conformance/stack-encrypt/v1`, as
-   `languages/golang/encrypt/*conformance_test.go` does for Go: scalar
-   records, declarations, reads, runtime and nulls, contexts and bindings,
-   value boundaries, query refusals, raw frames and, if your
-   binding links the EQL types, EQL and JSON. Write one for the single-value
-   profile too, if your SDK encrypts one value into one ciphertext. Only
-   Rust runs that profile today: the Go runner is not written yet, so
-   `packages/stack-encrypt/tests/single_value_conformance.rs` is the
-   runner to follow. Read the frozen expectations; never
-   regenerate them to pass. A profile you have not run is not a pass.
+   each profile in `conformance/stack-encrypt/v1`. The files
+   `languages/golang/encrypt/*conformance_test.go` are the Go runners. The
+   profiles are:
+
+   - scalar records
+   - declarations
+   - reads
+   - runtime and nulls
+   - contexts and bindings
+   - value boundaries
+   - query refusals
+   - raw frames
+
+   If your binding links the EQL types, the EQL and JSON profiles apply
+   too.
+
+   If your SDK encrypts one value into one ciphertext, write a runner for
+   the single-value profile too. Only Rust runs that profile today, because
+   the Go runner is not written yet. So follow
+   `packages/stack-encrypt/tests/single_value_conformance.rs`.
+
+   Read the frozen expectations. Never regenerate them to make a run pass.
+   A profile that you have not run is not a pass.
 2. **Fresh artifacts cross both ways.** The exchange profile
    (`conformance/stack-encrypt/exchange-contract.md`) has your binding open
    what Rust wrote in the same run, and Rust open what your binding wrote,

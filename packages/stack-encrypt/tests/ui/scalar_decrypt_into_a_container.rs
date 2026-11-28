@@ -1,8 +1,8 @@
-//! A `Ciphertext` holds one scalar, so it decrypts only into a target that
-//! one scalar builds. A sequence, a map, a derived struct, a derived
-//! newtype of a sequence and a protected sequence each need a container,
-//! and do not compile.
-//! `tests/ui/pass/scalar_decrypt_targets.rs` pins the targets that do.
+//! A `Ciphertext` contains one scalar. So its target must be built from one
+//! scalar. A target that needs a container does not compile. These tests
+//! cover a sequence, a map, a derived struct, a derived newtype of a
+//! sequence, and a protected sequence.
+//! `tests/ui/pass/scalar_decrypt_targets.rs` pins the targets that compile.
 use std::collections::{BTreeMap, HashMap};
 
 use stack_encrypt::{Ciphertext, Decrypt, DecryptFrom, KeysetCipher, Protected};

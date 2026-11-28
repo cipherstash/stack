@@ -112,48 +112,57 @@ pub trait OpaqueEncode: sealed::Encode + Zeroize + Send + 'static {}
 
 /// A plaintext type that one opaque [`Ciphertext`] decrypts to.
 ///
-/// A `Ciphertext` holds one scalar. So `OpaqueDecode` is implemented for
-/// every type that one scalar builds, Vitamin C's [`ScalarTarget`], that
-/// also implements [`Zeroize`]:
+/// A `Ciphertext` contains one scalar. So `OpaqueDecode` is implemented for
+/// every type that is built from one scalar and that implements [`Zeroize`].
+/// Vitamin C names a type that is built from one scalar a [`ScalarTarget`].
+/// The `OpaqueDecode` types are:
 ///
-/// - each scalar: `bool`, the integers, the floats, `String`, `Vec<u8>` and
-///   `[u8; N]`, and the date, timestamp, decimal and UUID
-///   [values](crate::value)
+/// - each scalar: `bool`, the integers, the floats, `String`, `Vec<u8>`, and
+///   `[u8; N]`
+/// - the date, timestamp, decimal, and UUID [values](crate::value)
 /// - [`JsonPlaintext`](crate::json::JsonPlaintext), a JSON document
 /// - a [`Protected`](vitaminc_protected::Protected) of one, such as
 ///   `Protected<String>`
-/// - an `Option` of one, such as `Option<i64>`, which reads a sealed null
-///   as `None`
+/// - an `Option` of one, such as `Option<i64>`. An encrypted null decrypts
+///   as `None`.
 /// - a newtype that derives [`Decrypt`](crate::Decrypt) over one, such as
 ///   `struct Email(String)`
-/// - an `OwnedFrame`, the value as a frame, for a caller that learns the
-///   value's kind only when the code runs
+/// - an `OwnedFrame`: the value written as bytes, for a caller that only
+///   learns the kind of the value when the code runs
 ///
 /// [`OpaqueBlob<T>`](crate::OpaqueBlob) is an `OpaqueDecode` type too. The
 /// trait is sealed, as `OpaqueEncode` is.
 ///
-/// A target that needs a container does not compile: a `Vec` of anything
-/// but bytes, a map, or a struct that derives `Decrypt`. Each of them reads
-/// a tree of leaves, which is a
-/// [`StackCipherText`](crate::StackCipherText). Decrypt one with
-/// [`KeysetCipher::decrypt_tree`]. A column of ciphertexts is a
-/// `Vec<Ciphertext>`, which decrypts into a `Vec` through
-/// [`DecryptFrom`]. The [crate docs on collections](crate#collections)
-/// explain how.
+/// A target that needs a container does not compile:
+///
+/// - a `Vec` of anything but bytes
+/// - a map
+/// - a struct that derives `Decrypt` with named fields
+///
+/// Each of those targets reads a tree of leaves. A leaf is one encrypted
+/// scalar. A tree of leaves is a
+/// [`StackCipherText`](crate::StackCipherText), and
+/// [`KeysetCipher::decrypt_tree`] decrypts it.
+///
+/// A column of ciphertexts is a `Vec<Ciphertext>`. A `Vec<Ciphertext>`
+/// decrypts into a `Vec` through [`DecryptFrom`]. The
+/// [crate docs on collections](crate#collections) explain how.
 ///
 /// ```compile_fail,E0277
 /// # fn example<K: 'static>(keyset: &stack_encrypt::KeysetCipher<'_, K>, ciphertext: stack_encrypt::Ciphertext) {
-/// // A ciphertext holds one scalar, never a sequence.
+/// // A ciphertext contains one scalar, never a sequence.
 /// let _ = keyset.decrypt::<Vec<String>>(ciphertext);
 /// # }
 /// ```
 ///
-/// A type of your own is an `OpaqueDecode` type when one scalar builds it
-/// and it implements `Zeroize`. You write no marker for that, and you
-/// cannot: `ScalarTarget` follows from how the type decrypts. A newtype
-/// that derives `Decrypt` over a scalar works as it is, and so does a type
-/// that implements Vitamin C's `FromScalar`. The derive is Vitamin C's, so
-/// your crate needs `vitaminc-aead` as a dependency to use it.
+/// A type of your own is an `OpaqueDecode` type when it is built from one
+/// scalar and implements `Zeroize`. You cannot implement `ScalarTarget` for
+/// it: a type is a `ScalarTarget` because of how it decrypts. A newtype that
+/// derives `Decrypt` over a scalar needs no extra code. Neither does a type
+/// that implements Vitamin C's `FromScalar`.
+///
+/// The derive is Vitamin C's, so your crate needs `vitaminc-aead` as a
+/// dependency to use it.
 ///
 /// ```
 /// # async fn example() -> Result<(), stack_encrypt::Error> {

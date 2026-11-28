@@ -1,6 +1,6 @@
-//! A `Vec<T>` of a scalar target reads a sequence, one leaf per element,
-//! so one scalar does not build it. (`Vec<u8>` is the byte leaf, and one
-//! scalar does build it.)
+//! A `Vec<T>` of a scalar target reads a sequence with one leaf for each
+//! element. So one scalar does not build it. `Vec<u8>` is different: it is
+//! the bytes scalar, so one scalar builds it.
 
 use vitaminc_aead::ScalarTarget;
 

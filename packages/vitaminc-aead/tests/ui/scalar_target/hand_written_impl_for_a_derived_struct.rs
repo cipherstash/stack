@@ -1,6 +1,7 @@
-//! No one implements `ScalarTarget` by hand. A derived struct's sink is
-//! generated beside the struct, and it is not marked, because it reads a
-//! map. An impl written for the struct is refused for that reason.
+//! No one implements `ScalarTarget` directly. The sink of a derived struct
+//! is generated beside the struct. That sink reads a map, so it does not
+//! implement `TakesScalar`. So the compiler rejects an impl of
+//! `ScalarTarget` for the struct.
 
 use vitaminc_aead::{Decrypt, ScalarTarget};
 

@@ -1,14 +1,18 @@
-//! `ScalarTarget`, the decrypt-side marker for a target that one scalar
-//! builds: the counterpart of `Scalar`.
+//! Tests of `ScalarTarget`: the trait of a decrypt target that is built from
+//! one scalar. `ScalarTarget` is the decrypt-side counterpart of `Scalar`.
 //!
-//! No target implements the marker itself: a target carries it when its
-//! sink is one a scalar satisfies (`TakesScalar`). The marker is only worth
-//! having if it agrees with the sinks. So for every kind of target that
-//! carries it, these tests walk one scalar into the target's sink and check
-//! what it builds. The compile-fail half lives in `tests/ui/scalar_target/`:
-//! a sequence, a map, a derived struct, a newtype of a sequence and a
-//! protected sequence do not carry the marker, and no one can give it to
-//! them by hand.
+//! No target implements `ScalarTarget` itself. A target has it when its sink
+//! implements `TakesScalar`: when the sink builds its value from one scalar.
+//!
+//! The trait is only useful if it agrees with what the sinks do. So these
+//! tests take every kind of target that has the trait. Each test passes one
+//! scalar to the sink of the target, and checks what the sink builds.
+//!
+//! The compile-fail tests are in `tests/ui/scalar_target/`. Those tests
+//! check that a target that needs a container does not have the trait. The
+//! targets are a sequence, a map, a derived struct, a newtype of a sequence,
+//! and a protected sequence. The same tests check that no one can implement
+//! the trait for such a target directly.
 
 use vitaminc_aead::plaintext::Raw;
 use vitaminc_aead::{
@@ -17,15 +21,16 @@ use vitaminc_aead::{
 };
 use vitaminc_protected::{Controlled, Protected};
 
-/// What a caller that opens exactly one leaf asks for: the target says one
-/// scalar builds it, and the scalar `source` does.
+/// The bound that code asks for when it decrypts exactly one leaf. The bound
+/// says that one scalar builds the target. This function then checks that
+/// the scalar `source` builds it.
 fn built_by_one_scalar<T: ScalarTarget>(source: impl Encrypt) -> T {
     source
         .visit(T::sink())
         .expect("one scalar builds a scalar target")
 }
 
-/// A null, as a leaf holds one.
+/// A null, as a leaf contains one.
 fn null() -> Raw<'static> {
     Raw(None, Physical::Null)
 }
@@ -125,7 +130,8 @@ fn an_owned_frame_is_built_by_any_scalar_and_by_a_null() {
     );
 }
 
-/// A scalar target written by hand gets the marker from `FromScalar`.
+/// A hand-written scalar target has the trait because it implements
+/// `FromScalar`.
 #[test]
 fn a_hand_written_scalar_target_carries_the_marker() {
     #[derive(Debug, PartialEq)]
@@ -144,8 +150,9 @@ fn a_hand_written_scalar_target_carries_the_marker() {
     );
 }
 
-/// A derived newtype reads what its inner type reads. Its sink wraps the
-/// inner type's sink, so it is a scalar target with no code of its own.
+/// A derived newtype reads what its inner type reads. The sink of the
+/// newtype wraps the sink of the inner type. So the newtype is a scalar
+/// target with no code of its own.
 #[test]
 fn a_derived_newtype_of_a_scalar_target_is_one_as_it_is() {
     #[derive(Decrypt, Debug, PartialEq)]
@@ -187,9 +194,10 @@ fn a_derived_newtype_of_a_scalar_target_is_one_as_it_is() {
     );
 }
 
-/// A newtype decrypts into `Protected` once its author says how. `Wrap`
-/// moves what the newtype's own sink builds into the wrapper, and a scalar
-/// satisfies it when it satisfies that sink.
+/// A newtype decrypts into `Protected` when its author implements
+/// `DecryptProtected` for it. `Wrap` moves the value that the newtype's own
+/// sink builds into `Protected`. `Wrap` builds its value from one scalar
+/// when that sink does.
 #[test]
 fn a_protected_newtype_is_a_scalar_target_through_wrap() {
     use vitaminc_aead::typed::Wrap;
@@ -212,8 +220,8 @@ fn a_protected_newtype_is_a_scalar_target_through_wrap() {
     );
 }
 
-/// A target with a sink of its own is a scalar target once that sink is
-/// marked as one a scalar satisfies.
+/// A target with a sink of its own is a scalar target when that sink
+/// implements `TakesScalar`.
 #[test]
 fn a_hand_written_sink_opts_in_by_its_marker() {
     use vitaminc_aead::typed::{Never, TakesScalar};
@@ -261,8 +269,8 @@ fn a_hand_written_sink_opts_in_by_its_marker() {
     );
 }
 
-/// A derived fieldless enum reads an int leaf through `FromScalar`, so it
-/// carries the marker with no impl of its own.
+/// A derived fieldless enum reads an int leaf through `FromScalar`. So the
+/// enum is a scalar target with no impl of its own.
 #[test]
 fn a_derived_fieldless_enum_carries_the_marker() {
     #[derive(Encrypt, Decrypt, Debug, PartialEq, Clone, Copy)]
@@ -325,8 +333,8 @@ fn the_uuid_targets_are_built_by_one_scalar() {
     assert_eq!(wiped.to_uuid(), id, "this crate's Uuid");
 }
 
-// `trybuild` launches rustc and inspects the filesystem, neither of which can
-// run inside Miri's isolated interpreter.
+// `trybuild` starts rustc and reads the filesystem. Neither can run inside
+// Miri's isolated interpreter.
 #[cfg(not(miri))]
 #[test]
 fn containers_are_not_scalar_targets() {
