@@ -7,6 +7,7 @@ import type {
   RcDate,
   RcDecimal,
   RcTimestamp,
+  RcUuid,
   RecipherError,
   Result,
   Stored,
@@ -69,6 +70,7 @@ const all = record('all', {
   at: encrypt(kinds.timestamp),
   blob: encrypt(kinds.bytes),
   small: encrypt(kinds.uint8),
+  id: encrypt(kinds.uuid, { index: ['equality'] }),
 })
 check<
   Exact<
@@ -81,6 +83,7 @@ check<
       at: Date | RcTimestamp
       blob: Uint8Array
       small: bigint
+      id: RcUuid
     }
   >
 >()

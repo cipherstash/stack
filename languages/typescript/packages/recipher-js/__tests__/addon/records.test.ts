@@ -9,6 +9,7 @@ import {
   passthrough,
   RcDate,
   RcDecimal,
+  RcUuid,
   record,
 } from '../../src/index'
 import { testCipher } from '../../src/testing'
@@ -125,6 +126,132 @@ describe('a record', () => {
       row.at instanceof Date ? row.at.getTime() : 0,
     )
     expect(Buffer.from(opened.blob)).toEqual(Buffer.from([1, 2, 3]))
+  })
+})
+
+describe('a UUID field', () => {
+  const device = record('devices', {
+    id: encrypt(kinds.uuid, { index: ['equality'] }),
+    name: encrypt(kinds.string),
+  })
+  const text = '123e4567-e89b-12d3-a456-426614174000'
+
+  it('is stored, found by equality, and read back as an RcUuid', async () => {
+    const c = await cipher()
+    const keyset = c.defaultKeyset()
+    const row = { id: new RcUuid(text), name: 'sensor' }
+    const stored = (await keyset.encrypt(device, row)).unwrap()
+    expect(Object.keys(stored.id).sort()).toEqual(['ciphertext', 'equality'])
+
+    // A query term for the same UUID matches the stored term. A query term
+    // for another UUID does not.
+    const same = (
+      await keyset.encryptField(device, 'id', new RcUuid(text))
+    ).unwrap()
+    const other = (
+      await keyset.encryptField(
+        device,
+        'id',
+        new RcUuid('123e4567-e89b-12d3-a456-426614174001'),
+      )
+    ).unwrap()
+    expect(Buffer.from(same.equality)).toEqual(Buffer.from(stored.id.equality))
+    expect(Buffer.from(other.equality)).not.toEqual(
+      Buffer.from(stored.id.equality),
+    )
+
+    const opened = (await c.decrypt(device, stored)).unwrap()
+    expect(opened.id).toBeInstanceOf(RcUuid)
+    expect(opened.id.value).toBe(text)
+    expect(opened.name).toBe('sensor')
+  })
+
+  it('refuses UUID text that is not hyphenated hex, naming the field', async () => {
+    const keyset = (await cipher()).defaultKeyset()
+    for (const bad of [
+      '123e4567-e89b-12d3-a456-42661417400',
+      '{123e4567-e89b-12d3-a456-426614174000}',
+      '123e4567-e89b-12d3-a456-42661417400g',
+    ]) {
+      const result = await keyset.encrypt(device, {
+        id: new RcUuid(bad),
+        name: 'sensor',
+      })
+      expect(result.isErr(), bad).toBe(true)
+      expect(result.err()?.code, bad).toBe('ERR_INVALID_UUID')
+      expect(result.err()?.field, bad).toBe('id')
+      expect(result.err()?.record, bad).toBe('devices')
+    }
+  })
+
+  it('stores and decrypts a null under each null setting, and refuses one by default', async () => {
+    const nullable = record('nullable_devices', {
+      sealed: encrypt(kinds.uuid, { index: ['equality'], null: 'sealed' }),
+      sql: encrypt(kinds.uuid, { null: 'sql' }),
+      required: encrypt(kinds.uuid),
+    })
+    const c = await cipher()
+    const keyset = c.defaultKeyset()
+    const id = new RcUuid(text)
+
+    const empty = { sealed: null, sql: null, required: id }
+    const stored = (await keyset.encrypt(nullable, empty)).unwrap()
+    // A sealed null is stored like a value, padded to a value's length.
+    // A SQL null is stored as null.
+    const full = (
+      await keyset.encrypt(nullable, { sealed: id, sql: id, required: id })
+    ).unwrap()
+    expect(stored.sealed).not.toBeNull()
+    expect(stored.sealed.ciphertext.length).toBe(full.sealed.ciphertext.length)
+    expect(Buffer.from(stored.sealed.equality)).not.toEqual(
+      Buffer.from(full.sealed.equality),
+    )
+    expect(stored.sql).toBeNull()
+
+    const opened = (await c.decrypt(nullable, stored)).unwrap()
+    expect(opened.sealed).toBeNull()
+    expect(opened.sql).toBeNull()
+    expect(opened.required.value).toBe(text)
+
+    // A field with the default null setting accepts no null.
+    // @ts-expect-error: `required` has no null setting, so it accepts no null.
+    const refused = await keyset.encrypt(nullable, {
+      sealed: id,
+      sql: id,
+      required: null,
+    })
+    expect(refused.err()?.code).toBe('stack_encrypt::dynamic_source')
+    expect(refused.err()?.field).toBe('required')
+    expect(refused.err()?.record).toBe('nullable_devices')
+  })
+
+  it('refuses the UUID as a string', async () => {
+    const keyset = (await cipher()).defaultKeyset()
+    const result = await keyset.encrypt(device, {
+      // @ts-expect-error: a UUID field accepts an RcUuid, not its text.
+      id: text,
+      name: 'sensor',
+    })
+    expect(result.isErr()).toBe(true)
+    expect(result.err()?.code).toBe('recipher_js::field_type')
+    expect(result.err()?.field).toBe('id')
+    expect(result.err()?.record).toBe('devices')
+  })
+
+  it('refuses an order index when the declaration is checked', async () => {
+    for (const index of ['ore', 'ope'] as const) {
+      const ordered = record('devices', {
+        id: encrypt(kinds.uuid, { index: [index] }),
+      })
+      const checked = checkDeclarations([ordered])
+      expect(checked.err()?.code).toBe('stack_encrypt::dynamic_plan')
+      expect(checked.err()?.fields.reason).toBe('index_not_admitted')
+      expect(checked.err()?.field).toBe('id')
+      expect(checked.err()?.record).toBe('devices')
+
+      const result = await Cipher.create({ records: [ordered] })
+      expect(result.err()?.fields.reason).toBe('index_not_admitted')
+    }
   })
 })
 

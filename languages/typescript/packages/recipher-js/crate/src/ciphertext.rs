@@ -192,6 +192,7 @@ fn readable(kind: ValueKind) -> bool {
                 | ValueKind::Date
                 | ValueKind::Timestamp
                 | ValueKind::Bytes
+                | ValueKind::Uuid
                 | ValueKind::Json
         )
 }
@@ -276,12 +277,13 @@ mod tests {
             "date",
             "timestamp",
             "bytes",
+            "uuid",
             "json",
         ] {
             assert!(readable(name.parse::<ValueKind>().unwrap()), "{name}");
         }
         // The engine names these kinds, and no ciphertext decrypts as one.
-        for kind in [ValueKind::Uuid, ValueKind::Array, ValueKind::Object] {
+        for kind in [ValueKind::Array, ValueKind::Object] {
             assert!(!readable(kind), "{kind}");
         }
     }

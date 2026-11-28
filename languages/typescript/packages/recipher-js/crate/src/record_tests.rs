@@ -248,6 +248,88 @@ fn the_engine_refuses_a_declaration_naming_the_record_and_the_field() {
     assert_eq!(unknown.code, "recipher_js::kind");
 }
 
+fn devices() -> Arc<RecordPlan> {
+    plan(json!({
+        "type": "record",
+        "name": "devices",
+        "fields": {
+            "id": { "type": "sealed", "kind": { "name": "uuid" }, "index": ["equality"] },
+        },
+    }))
+    .unwrap()
+}
+
+fn device_row(id: Uuid) -> OwnedFrame {
+    let id = OwnedFrame::of(stack_encrypt::value::Uuid::new(id)).unwrap();
+    let frame = OwnedFrame::of(&Map(vec![("id", Entry::Value(&id))])).unwrap();
+    conform_row(&devices(), &frame).unwrap()
+}
+
+/// The `equality` term of the field `name` of a stored row.
+fn equality_of(stored: &OwnedFrame, name: &str) -> Vec<u8> {
+    let field = field_value(stored, name).unwrap();
+    let (_, term) = entries(&field)
+        .unwrap()
+        .into_iter()
+        .find(|(key, _)| key == "equality")
+        .unwrap();
+    term.frame().as_bytes().to_vec()
+}
+
+#[tokio::test]
+async fn a_uuid_field_is_stored_found_by_equality_and_read_back() {
+    let cipher = engine().await;
+    let keyset = cipher.default_keyset();
+    let id = Uuid::from_u128(0x123e_4567_e89b_12d3_a456_4266_1417_4000);
+    let other = Uuid::from_u128(0x123e_4567_e89b_12d3_a456_4266_1417_4001);
+    let stored = seal_rows(&keyset, devices(), vec![device_row(id)])
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(
+        keys(&field_value(&stored, "id").unwrap()),
+        ["ciphertext", "equality"]
+    );
+
+    // A query for the same UUID derives the stored term. A query for
+    // another UUID does not.
+    let field = devices().field("id").unwrap();
+    let query = |id: Uuid| {
+        let value = OwnedFrame::of(stack_encrypt::value::Uuid::new(id)).unwrap();
+        conform_row(&field, &one_field_row("id", &value).unwrap()).unwrap()
+    };
+    let found = seal_rows(&keyset, Arc::clone(&field), vec![query(id), query(other)])
+        .await
+        .unwrap();
+    assert_eq!(equality_of(&found[0], "id"), equality_of(&stored, "id"));
+    assert_ne!(equality_of(&found[1], "id"), equality_of(&stored, "id"));
+
+    let opened = open_rows(&cipher, devices(), vec![stored])
+        .await
+        .unwrap()
+        .remove(0);
+    let expected = OwnedFrame::of(stack_encrypt::value::Uuid::new(id)).unwrap();
+    assert_eq!(
+        field_value(&opened, "id").unwrap().frame(),
+        expected.frame()
+    );
+}
+
+#[test]
+fn an_order_index_on_a_uuid_field_is_refused_when_the_plan_is_built() {
+    for index in ["ore", "ope"] {
+        let refused = plan(json!({
+            "type": "record",
+            "name": "t",
+            "fields": { "id": { "type": "sealed", "kind": { "name": "uuid" }, "index": [index] } },
+        }))
+        .unwrap_err();
+        assert_eq!(refused.code, "stack_encrypt::dynamic_plan", "{index}");
+        assert_eq!(refused.reason(), Some("index_not_admitted"), "{index}");
+        assert_eq!(refused.field.as_deref(), Some("id"), "{index}");
+    }
+}
+
 #[test]
 fn a_json_field_needs_the_eql_extension() {
     let refused = plan(json!({

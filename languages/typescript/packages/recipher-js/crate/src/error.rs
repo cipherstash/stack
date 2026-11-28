@@ -40,11 +40,6 @@ pub(crate) enum Error {
         help("Use `null` for a value that is not there.")
     )]
     Undefined,
-    /// An `RcUuid`. The engine accepts a UUID, but this version of the SDK
-    /// has no kind and no TypeScript type for one, so it refuses an `RcUuid`.
-    #[error("this version of the SDK does not encrypt a UUID yet")]
-    #[diagnostic(code(recipher_js::uuid), help("Encrypt the UUID as a string instead."))]
-    Uuid,
     /// A value outside the engine's value model, or a value that Node-API
     /// failed to read.
     #[error("the value cannot be encrypted: it is not one the engine reads")]
@@ -613,7 +608,6 @@ mod tests {
         let name = || "x".to_owned();
         let all = vec![
             Error::Undefined,
-            Error::Uuid,
             Error::Value,
             Error::Threw,
             Error::NotAScalar,
@@ -649,7 +643,6 @@ mod tests {
         for error in &all {
             match error {
                 Error::Undefined
-                | Error::Uuid
                 | Error::Value
                 | Error::Threw
                 | Error::NotAScalar
@@ -688,7 +681,6 @@ mod tests {
     fn help_of(error: &Error) -> Option<&'static str> {
         match error {
             Error::Undefined => Some("Use `null` for a value that is not there."),
-            Error::Uuid => Some("Encrypt the UUID as a string instead."),
             Error::NotAScalar => {
                 Some("To encrypt the inner array as a JSON document, wrap it in `json(..)`.")
             }

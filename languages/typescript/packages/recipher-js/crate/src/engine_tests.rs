@@ -13,7 +13,7 @@ use stack_encrypt::kms::{
     IdentifiedBy, IndexKey, IndexKeySource, KeySourceKind, OwnIdentity, RetrieveKeyPayload,
     UnverifiedContext,
 };
-use stack_encrypt::value::{Decimal, Timestamp};
+use stack_encrypt::value::{Decimal, Timestamp, Uuid as EngineUuid};
 use stack_encrypt::{Encrypt, StackCipher};
 use uuid::Uuid;
 
@@ -77,6 +77,9 @@ async fn the_sdk_opens_what_the_engine_sealed_of_every_type() {
     let decimal = Decimal::new(rust_decimal::Decimal::new(150, 2));
     let timestamp_frame = OwnedFrame::of(&timestamp).unwrap();
     let decimal_frame = OwnedFrame::of(&decimal).unwrap();
+    let id = EngineUuid::new(Uuid::from_u128(0x123e_4567_e89b_12d3_a456_4266_1417_4000));
+    let uuid_frame = OwnedFrame::of(&id).unwrap();
+    assert_eq!(uuid_frame.frame().kind(), Some(ValueKind::Uuid));
     let cases: Vec<(stack_encrypt::Ciphertext, OwnedFrame)> = vec![
         (
             keyset.encrypt("text".to_owned()).await.unwrap(),
@@ -96,11 +99,29 @@ async fn the_sdk_opens_what_the_engine_sealed_of_every_type() {
         ),
         (keyset.encrypt(timestamp).await.unwrap(), timestamp_frame),
         (keyset.encrypt(decimal).await.unwrap(), decimal_frame),
+        (keyset.encrypt(id).await.unwrap(), uuid_frame),
     ];
     for (sealed, expected) in cases {
         let stored = stack_encrypt::Ciphertext::from_bytes(&sealed.to_bytes()).unwrap();
         assert_eq!(sdk_open(stored).await.frame(), expected.frame());
     }
+}
+
+/// The engine decrypts a UUID that the SDK encrypted. The ciphertext is
+/// read back from its stored bytes. The engine decrypts it as the engine's
+/// own UUID type. The other direction is a case of the test above.
+#[tokio::test]
+async fn the_engine_opens_a_uuid_the_sdk_sealed_from_its_stored_bytes() {
+    let id = Uuid::from_u128(0x123e_4567_e89b_12d3_a456_4266_1417_4000);
+    let sealed = sdk_seal(vec![one(EngineUuid::new(id))]).await.remove(0);
+    let stored = stack_encrypt::Ciphertext::from_bytes(&sealed.to_bytes()).unwrap();
+    let opened: EngineUuid = engine()
+        .await
+        .default_keyset()
+        .decrypt(stored)
+        .await
+        .unwrap();
+    assert_eq!(opened.to_uuid(), id);
 }
 
 #[tokio::test]

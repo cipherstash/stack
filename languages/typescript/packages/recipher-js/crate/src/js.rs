@@ -30,7 +30,7 @@
 use napi::bindgen_prelude::{FromNapiValue, JsObjectValue, JsValue, Object, Unknown};
 use napi::{Env, Status, ValueType};
 use napi::{Property, PropertyAttributes};
-use recipher_value_napi::{JsBuilder, JsFault, JsRef, Refusal, Wrapper, Wrappers};
+use recipher_value_napi::{JsBuilder, JsFault, JsRef, Refusal, Wrappers};
 use stack_encrypt::dynamic::frame::OwnedFrame;
 use vitaminc_protected::Buffer;
 
@@ -45,7 +45,6 @@ use crate::outcome::not_made;
 /// Returns one of these errors:
 ///
 /// - `recipher_js::undefined` for `undefined`;
-/// - `recipher_js::uuid` for an `RcUuid`;
 /// - `recipher_js::value` when the bridge's bytes are not one well-formed
 ///   frame the engine reads (`FrameError`);
 /// - `recipher_js::threw` when reading the value threw;
@@ -53,9 +52,6 @@ use crate::outcome::not_made;
 pub fn read(env: &Env, value: Unknown<'_>) -> Result<OwnedFrame, RecipherErrorFields> {
     if value.get_type().ok() == Some(ValueType::Undefined) {
         return Err(Error::Undefined.into());
-    }
-    if is_uuid(env, &value) {
-        return Err(Error::Uuid.into());
     }
     let frame = JsRef::new(value)
         .to_frame()
@@ -175,13 +171,6 @@ fn not_built(env: &Env, fault: &JsFault) -> RecipherErrorFields {
         Some(refusal @ Refusal::ReservedKey) => RecipherErrorFields::diagnostic(&refusal, None),
         _ => Error::BuildValue.into(),
     }
-}
-
-/// Returns whether `value` is an `RcUuid`.
-fn is_uuid(env: &Env, value: &Unknown<'_>) -> bool {
-    Wrappers::get(env)
-        .and_then(|wrappers| wrappers.classify(value))
-        .is_ok_and(|wrapper| wrapper == Some(Wrapper::Uuid))
 }
 
 /// Returns the property `name` of `value`. Returns `None` when `value` is not

@@ -16,6 +16,7 @@
  * | `RcTimestamp` | a timestamp, in nanoseconds | `Date` when it is whole milliseconds, else `RcTimestamp` |
  * | `RcDate` | a calendar date | `RcDate` |
  * | `RcDecimal` | a decimal, with its scale | `RcDecimal` |
+ * | `RcUuid` | a UUID | `RcUuid` |
  * | `null` | null | `null` |
  * | `json(value)` | a JSON document, as its text | the document |
  *
@@ -134,9 +135,19 @@ export const RcDecimal: WrapperConstructor<RcDecimal> =
 export type RcDecimal = Types.RcDecimal
 
 /**
- * A universally unique identifier (UUID). This version of the SDK does not
- * encrypt a UUID yet. Encrypting an `RcUuid` is an `Err` with the code
- * `recipher_js::uuid`. `RcUuid` is not a `Scalar`.
+ * A universally unique identifier (UUID), such as
+ * `new RcUuid('123e4567-e89b-12d3-a456-426614174000')`.
+ *
+ * The text must be hyphenated hex, in upper or lower case. Encrypting other
+ * text is an `Err` with the code `ERR_INVALID_UUID`. Examples of other text
+ * are:
+ *
+ * - text in braces;
+ * - text of the wrong length;
+ * - text with a digit that is not hex.
+ *
+ * A decrypted `RcUuid` contains lowercase hyphenated hex, whatever case it
+ * was built with.
  */
 export const RcUuid: WrapperConstructor<RcUuid> = wrapperClass('RcUuid')
 export type RcUuid = Types.RcUuid

@@ -8,7 +8,13 @@
  * type. The kind's TypeScript type records the type of the kind's values. An
  * integer kind's values are a `bigint` at every width.
  */
-import type { OpenedJson, RcDate, RcDecimal, RcTimestamp } from './value-types'
+import type {
+  OpenedJson,
+  RcDate,
+  RcDecimal,
+  RcTimestamp,
+  RcUuid,
+} from './value-types'
 
 /** A kind: the type of a value, by the engine's name for it. */
 export interface Kind<Name extends string = string, T = unknown> {
@@ -49,5 +55,6 @@ export const kinds = Object.freeze({
   date: kind<'date', RcDate>('date'),
   timestamp: kind<'timestamp', Date | RcTimestamp>('timestamp'),
   bytes: kind<'bytes', Uint8Array>('bytes'),
+  uuid: kind<'uuid', RcUuid>('uuid'),
   json: kind<'json', OpenedJson>('json'),
 })

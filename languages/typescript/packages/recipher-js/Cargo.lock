@@ -3793,6 +3793,7 @@ dependencies = [
  "rust_decimal",
  "serde",
  "thiserror 2.0.21",
+ "uuid",
  "vitaminc-aead-derive 0.10.0",
  "vitaminc-context 0.10.0",
  "vitaminc-protected 0.10.0",

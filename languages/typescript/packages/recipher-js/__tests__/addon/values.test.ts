@@ -37,6 +37,7 @@ async function encryptOne(
     | RcDate
     | RcTimestamp
     | RcDecimal
+    | RcUuid
     | null,
 ) {
   return (await c.defaultKeyset().encrypt(value)).unwrap()
@@ -104,6 +105,22 @@ describe('every value in the mapping round-trips', () => {
     const price = await roundTrip(new RcDecimal('1.50'))
     expect(price).toBeInstanceOf(RcDecimal)
     expect((price as RcDecimal).value).toBe('1.50')
+  })
+
+  it('a UUID, as an RcUuid', async () => {
+    const id = await roundTrip(
+      new RcUuid('123e4567-e89b-12d3-a456-426614174000'),
+    )
+    expect(id).toBeInstanceOf(RcUuid)
+    expect((id as RcUuid).value).toBe('123e4567-e89b-12d3-a456-426614174000')
+  })
+
+  it('a UUID built in uppercase, which decrypts as lowercase', async () => {
+    const id = await roundTrip(
+      new RcUuid('123E4567-E89B-12D3-A456-426614174ABC'),
+    )
+    expect(id).toBeInstanceOf(RcUuid)
+    expect((id as RcUuid).value).toBe('123e4567-e89b-12d3-a456-426614174abc')
   })
 
   it('null', async () => {
@@ -607,6 +624,23 @@ describe('a ciphertext read back with a kind', () => {
     expect(opened).toBe(42n)
   })
 
+  it('opens a UUID with kinds.uuid, and refuses its text', async () => {
+    const c = await cipher()
+    const keyset = c.defaultKeyset()
+    const text = '123e4567-e89b-12d3-a456-426614174000'
+    const sealed = (await keyset.encrypt(new RcUuid(text))).unwrap()
+    const stored = Ciphertext.fromBytes(sealed.toBytes(), kinds.uuid).unwrap()
+    const opened: RcUuid = (await c.decrypt(stored)).unwrap()
+    expect(opened.value).toBe(text)
+
+    // The same UUID as a string is text, not a UUID.
+    const asText = (await keyset.encrypt(text)).unwrap()
+    const refused = await c.decrypt(
+      Ciphertext.fromBytes(asText.toBytes(), kinds.uuid).unwrap(),
+    )
+    expect(refused.err()?.code).toBe('recipher_js::opened_type')
+  })
+
   it('refuses a value sealed as another type', async () => {
     const c = await cipher()
     const sealed = (await c.defaultKeyset().encrypt('text')).unwrap()
@@ -641,15 +675,27 @@ describe('a ciphertext read back with a kind', () => {
 })
 
 describe('refusals', () => {
-  it('a UUID: this version of the SDK does not encrypt one yet', async () => {
+  it('UUID text that is not hyphenated hex, as an Err', async () => {
     const keyset = (await cipher()).defaultKeyset()
-    const uuid = new RcUuid('123e4567-e89b-12d3-a456-426614174000')
-    // @ts-expect-error: a UUID is not a `Scalar` in this version of the SDK.
-    const result = await keyset.encrypt(uuid)
-    expect(result.err()?.code).toBe('recipher_js::uuid')
-    expect(result.err()?.message).toContain(
-      'this version of the SDK does not encrypt a UUID yet',
-    )
+    for (const text of [
+      // One digit short.
+      '123e4567-e89b-12d3-a456-42661417400',
+      // In braces.
+      '{123e4567-e89b-12d3-a456-426614174000}',
+      // A digit that is not hex.
+      '123e4567-e89b-12d3-a456-42661417400g',
+    ]) {
+      const pending = keyset.encrypt(new RcUuid(text))
+      // A synchronous throw would fail the line above. This line fails if
+      // `encrypt` returns a settled `Result` instead of a promise. `await`
+      // passes a value that is not a promise through unchanged, so the
+      // assertions below would still pass.
+      expect(pending, text).toBeInstanceOf(Promise)
+      const result = await pending
+      expect(result.isErr(), text).toBe(true)
+      expect(result.err()?.code, text).toBe('ERR_INVALID_UUID')
+      expect(result.err()?.message, text).not.toContain(text)
+    }
   })
 
   it('a bigint outside 128 bits, with the code ERR_INTEGER_RANGE', async () => {

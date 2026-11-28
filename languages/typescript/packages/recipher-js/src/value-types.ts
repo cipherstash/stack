@@ -34,12 +34,22 @@ export interface RcDecimal {
 }
 
 /**
- * A universally unique identifier (UUID).
- * This version of the SDK does not encrypt a UUID yet. Encrypting an `RcUuid`
- * is an `Err` with the code `recipher_js::uuid`. `RcUuid` is not a `Scalar`.
+ * A universally unique identifier (UUID), such as
+ * `new RcUuid('123e4567-e89b-12d3-a456-426614174000')`.
+ *
+ * The text must be hyphenated hex, in upper or lower case. Encrypting other
+ * text is an `Err` with the code `ERR_INVALID_UUID`. Examples of other text
+ * are:
+ *
+ * - text in braces;
+ * - text of the wrong length;
+ * - text with a digit that is not hex.
+ *
+ * A decrypted `RcUuid` contains lowercase hyphenated hex, whatever case it
+ * was built with.
  */
 export interface RcUuid {
-  /** The UUID as hyphenated hex. */
+  /** The UUID as hyphenated hex: as given, or lowercase when decrypted. */
   readonly value: string
   toJSON(): string
   readonly [wrapper]: 'RcUuid'
@@ -56,6 +66,7 @@ export type Scalar =
   | RcTimestamp
   | RcDate
   | RcDecimal
+  | RcUuid
   | null
 
 /**
@@ -124,11 +135,13 @@ export type Opened<V> = V extends string
                 ? RcDate
                 : V extends RcDecimal
                   ? RcDecimal
-                  : V extends null
-                    ? null
-                    : V extends JsonMarker
-                      ? OpenedJson
-                      : never
+                  : V extends RcUuid
+                    ? RcUuid
+                    : V extends null
+                      ? null
+                      : V extends JsonMarker
+                        ? OpenedJson
+                        : never
 
 /** Any scalar type that a stored ciphertext can decrypt to. */
 export type OpenedScalar = Opened<Scalar>
