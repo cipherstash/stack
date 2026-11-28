@@ -16,6 +16,7 @@ on:
       - packages/stack-kms/**
       - packages/stack-encrypt/**
       - packages/stack-encrypt-derive/**
+      - packages/stack-encrypt-downstream/**
       - packages/stack-encrypt-jsonpath/**
       - packages/stack-guest-abi/**
       - packages/vitaminc-aead/**
@@ -38,6 +39,7 @@ on:
       - packages/stack-kms/**
       - packages/stack-encrypt/**
       - packages/stack-encrypt-derive/**
+      - packages/stack-encrypt-downstream/**
       - packages/stack-encrypt-jsonpath/**
       - packages/stack-guest-abi/**
       - packages/vitaminc-aead/**
