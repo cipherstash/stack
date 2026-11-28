@@ -29,12 +29,7 @@
  */
 import type * as Native from '../native'
 import { type Binding, binding } from './binding'
-import type {
-  RcDate as RcDateValue,
-  RcDecimal as RcDecimalValue,
-  RcTimestamp as RcTimestampValue,
-  RcUuid as RcUuidValue,
-} from './value-types'
+import type * as Types from './value-types'
 
 export type {
   JsonValue,
@@ -44,19 +39,6 @@ export type {
   Scalar,
   Value,
 } from './value-types'
-
-/** A calendar date, such as `new RcDate('2026-11-23')`. */
-export type RcDate = RcDateValue
-/** A UTC instant, to the nanosecond. */
-export type RcTimestamp = RcTimestampValue
-/** A decimal with its scale, such as `new RcDecimal('1.50')`. */
-export type RcDecimal = RcDecimalValue
-/**
- * A universally unique identifier (UUID).
- * The engine has no plaintext type for a UUID yet. Encrypting an `RcUuid` is
- * an `Err` with the code `recipher_js::uuid`. `RcUuid` is not a `Scalar`.
- */
-export type RcUuid = RcUuidValue
 
 /** The constructor of a wrapper class. */
 export interface WrapperConstructor<W> {
@@ -92,16 +74,35 @@ function wrapperClass<W>(name: WrapperName): WrapperConstructor<W> {
   return Object.freeze(StandIn) as unknown as WrapperConstructor<W>
 }
 
-/** A calendar date. */
+// A class is a constant and a type of one name. `./value-types` declares the
+// types, because the addon's declarations name them, and a module cannot
+// export a type from another module and a constant under the same name. So
+// each constant here has its type beside it.
+
+/** A calendar date, such as `new RcDate('2026-11-23')`. */
 export const RcDate: WrapperConstructor<RcDate> = wrapperClass('RcDate')
-/** A UTC instant to the nanosecond. */
+export type RcDate = Types.RcDate
+
+/**
+ * A UTC instant, to the nanosecond, such as
+ * `new RcTimestamp('2026-11-23T01:02:03.000000001Z')`.
+ */
 export const RcTimestamp: WrapperConstructor<RcTimestamp> =
   wrapperClass('RcTimestamp')
-/** A decimal with its scale. */
+export type RcTimestamp = Types.RcTimestamp
+
+/** A decimal with its scale, such as `new RcDecimal('1.50')`. */
 export const RcDecimal: WrapperConstructor<RcDecimal> =
   wrapperClass('RcDecimal')
-/** A UUID. */
+export type RcDecimal = Types.RcDecimal
+
+/**
+ * A universally unique identifier (UUID). The engine has no plaintext type
+ * for a UUID yet. Encrypting an `RcUuid` is an `Err` with the code
+ * `recipher_js::uuid`. `RcUuid` is not a `Scalar`.
+ */
 export const RcUuid: WrapperConstructor<RcUuid> = wrapperClass('RcUuid')
+export type RcUuid = Types.RcUuid
 
 /**
  * A JSON document to encrypt as one ciphertext, as its JSON text. Make one
