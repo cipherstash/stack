@@ -88,7 +88,7 @@ export declare class Cipher {
  * with its own data key. A data key is the key that encrypts one value.
  *
  * The ciphertext's bytes are the engine's format for an encrypted value.
- * The Rust and Go SDKs write the same bytes. `toString()` and Node's
+ * Rust's `keyset.encrypt` writes the same bytes. `toString()` and Node's
  * `inspect` hide the bytes, because the object has no own properties.
  *
  * The SDK uses a class rather than plain bytes for two reasons. First,

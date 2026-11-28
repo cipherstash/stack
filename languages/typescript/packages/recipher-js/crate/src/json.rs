@@ -2,8 +2,8 @@
 //!
 //! The engine is the Stack Encrypt engine, the `stack-encrypt` crate. It
 //! encrypts a JSON document as the document's JSON text, through its
-//! [`JsonPlaintext`] type. Rust and Go encrypt a document the same way, so
-//! each SDK decrypts the documents of the others.
+//! [`JsonPlaintext`] type. Rust's `keyset.encrypt` of a `JsonPlaintext`
+//! writes the same ciphertext, so each side decrypts the other's documents.
 //!
 //! The value bridge, the `recipher-value-napi` crate, converts between a
 //! JavaScript value and a JSON document. This module converts nothing. It
