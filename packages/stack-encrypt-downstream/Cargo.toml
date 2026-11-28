@@ -10,9 +10,11 @@ license-file = "../stack-encrypt/LICENSE"
 # A test of how another crate uses stack-encrypt, never a release of its own.
 publish = false
 
-# stack-encrypt is the only dependency. `tests/manifest.rs` fails if another
-# dependency is added to this table. It also fails if any table here names
-# one of the AEAD crates that stack-encrypt is built on.
+# stack-encrypt is the only dependency. `tests/manifest.rs` fails if a
+# dependency table other than `[dev-dependencies]` lists another crate. That
+# includes `[build-dependencies]` and the tables under `[target.<cfg>]`. The
+# test also fails if any table here names one of the AEAD crates that
+# stack-encrypt is built on.
 [dependencies]
 stack-encrypt = { path = "../stack-encrypt" }
 
@@ -23,3 +25,6 @@ tokio = { workspace = true, features = ["rt", "macros"] }
 # The compile-fail tests in `tests/ui`. They pin the errors that a user of
 # stack-encrypt reads when a derive is refused.
 trybuild = "1"
+# `tests/manifest.rs` parses this manifest, so that it reads every form of
+# dependency table.
+toml = "1"

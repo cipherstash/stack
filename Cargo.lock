@@ -3693,6 +3693,7 @@ version = "0.0.0"
 dependencies = [
  "stack-encrypt",
  "tokio",
+ "toml 1.1.8+spec-1.1.0",
  "trybuild",
 ]
 
