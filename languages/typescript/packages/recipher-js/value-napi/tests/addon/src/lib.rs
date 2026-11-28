@@ -109,8 +109,30 @@ fn refusal_code(refusal: &Refusal) -> String {
 pub fn json_value<'e>(env: &'e Env, text: String) -> Result<Object<'e>> {
     let document: serde_json::Value =
         serde_json::from_str(&text).map_err(|_| Error::from_reason("not JSON text"))?;
+    json_built(env, &document)
+}
+
+/// `levels` JSON containers of one `wrap` kind ("array" or "object")
+/// around `true`, built here and then built as a JavaScript value. A
+/// parser would refuse the deepest of these documents, so the build's own
+/// depth limit is what applies.
+#[napi(ts_return_type = "{ value: unknown } | { code: string; message: string }")]
+pub fn json_nested_value<'e>(env: &'e Env, levels: u32, wrap: String) -> Result<Object<'e>> {
+    let mut document = serde_json::Value::Bool(true);
+    for _ in 0..levels {
+        document = match wrap.as_str() {
+            "array" => serde_json::Value::Array(vec![document]),
+            _ => serde_json::Value::Object([("k".to_owned(), document)].into_iter().collect()),
+        };
+    }
+    json_built(env, &document)
+}
+
+/// The JavaScript value of `document` as `{ value }`, or its refusal as
+/// `{ code, message }`.
+fn json_built<'e>(env: &'e Env, document: &serde_json::Value) -> Result<Object<'e>> {
     let mut out = Object::new(env)?;
-    match JsBuilder::build_json(env, &document) {
+    match JsBuilder::build_json(env, document) {
         Ok(value) => out.set_named_property("value", value)?,
         Err(fault) => match fault.refusal() {
             Some(refusal) => {

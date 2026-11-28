@@ -416,6 +416,20 @@ assert.equal({}.polluted, undefined)
 
 // A document nested as deep as the engine reads is built.
 assert.ok(Array.isArray(built('['.repeat(DEPTH) + ']'.repeat(DEPTH))))
+// The build has a limit of its own, 128 levels as for any value, for a
+// document that no parser has bounded. Arrays and objects both count.
+for (const wrap of ['array', 'object']) {
+  let deepest = addon.jsonNestedValue(128, wrap).value
+  assert.notEqual(deepest, undefined, wrap)
+  for (let level = 0; level < 128; level++) {
+    deepest = wrap === 'array' ? deepest[0] : deepest.k
+  }
+  assert.strictEqual(deepest, true)
+  const tooDeep = addon.jsonNestedValue(129, wrap)
+  assert.equal(tooDeep.value, undefined, wrap)
+  assert.equal(tooDeep.code, 'recipher_js::too_deep', wrap)
+  assert.equal(tooDeep.message, 'the value is nested deeper than 128 levels')
+}
 
 // --- What napi-rs's own conversion does ---
 //
