@@ -110,6 +110,9 @@ struct Odd {
 # assert!(even.next[0].next.is_empty());
 ```
 
+A fieldless enum has no fields, so it cannot be part of a cycle. The derive
+ignores `recursive` on a fieldless enum: the enum is still one `u32` leaf.
+
 A type that contains a recursive type is not checked either, since its depth
 depends on the recursive part. A generic type is checked once it is used at a
 concrete type, under `cargo build` rather than `cargo check`.

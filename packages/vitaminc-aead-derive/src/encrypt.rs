@@ -27,6 +27,9 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let krate = &attrs.krate;
     let shape = Shape::parse(&input)?;
     let name = &input.ident;
+    // A fieldless enum has no fields, so it cannot contain itself. It is one
+    // `u32` leaf, with a fixed depth, even when it is marked `recursive`.
+    let recursive = attrs.recursive && !matches!(shape, Shape::Enum(_));
 
     // Bound every type parameter, serde-style: a field of type `Vec<T>` then
     // picks up `Vec<T>: Encrypt` from the blanket impl in `vitaminc_aead`.
@@ -91,16 +94,9 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         by_ref: ref_depth,
         item_check,
         visit_check,
-    } = depth(krate, &input, &shape, attrs.recursive);
-    let (fixed, ref_fixed) = fixed(krate, &input, &shape, attrs.recursive);
-    let scalar = scalar(
-        krate,
-        &input,
-        &shape,
-        attrs.recursive,
-        &generics,
-        &ref_generics,
-    );
+    } = depth(krate, &input, &shape, recursive);
+    let (fixed, ref_fixed) = fixed(krate, &input, &shape, recursive);
+    let scalar = scalar(krate, &input, &shape, recursive, &generics, &ref_generics);
 
     Ok(quote! {
         #[automatically_derived]
@@ -1278,6 +1274,40 @@ mod tests {
                 Active,
             }
         });
+        assert_contains(&out, quote!(impl ::vitaminc_aead::Scalar for Status {}));
+        assert_contains(
+            &out,
+            quote!(
+                impl<'__r> ::vitaminc_aead::Scalar for &'__r Status {}
+            ),
+        );
+    }
+
+    /// A fieldless enum cannot contain itself, so `recursive` changes
+    /// nothing. The enum still declares a scalar depth and a `u32` fixed
+    /// type, and it is still a `Scalar`.
+    #[test]
+    fn a_recursive_fieldless_enum_is_still_one_leaf() {
+        let out = expand(parse_quote! {
+            #[aead(recursive)]
+            enum Status {
+                Active,
+            }
+        });
+        assert_contains(
+            &out,
+            quote!(
+                const DEPTH: ::core::option::Option<usize> =
+                    ::vitaminc_aead::plaintext::depth::SCALAR;
+            ),
+        );
+        assert_contains(
+            &out,
+            quote!(
+                const FIXED: ::core::option::Option<::vitaminc_aead::FixedType> =
+                    ::vitaminc_aead::FixedType::plain(::vitaminc_aead::Width::U32);
+            ),
+        );
         assert_contains(&out, quote!(impl ::vitaminc_aead::Scalar for Status {}));
         assert_contains(
             &out,
