@@ -35,9 +35,9 @@
  * refuses the same arguments as the class's constructor. `encrypt` then
  * resolves to the `Err` that says why the addon did not load.
  *
- * A wrapper class's constructor takes a string. The constructor throws a
- * `TypeError` for any other argument. The text is checked later, when the
- * value is encrypted.
+ * A wrapper class's constructor accepts only a string. The constructor
+ * throws a `TypeError` for any other argument. The text is checked later,
+ * when the value is encrypted.
  */
 import type * as Native from '../native'
 import { type Binding, binding } from './binding'
@@ -66,8 +66,8 @@ type WrapperName = 'RcDate' | 'RcTimestamp' | 'RcDecimal' | 'RcUuid'
  * A stand-in for the wrapper class `name`, for when the native addon did not
  * load. The stand-in matches the addon's class in these ways:
  *
- * - The constructor takes a string, and throws a `TypeError` for anything
- *   else.
+ * - The constructor accepts only a string, and throws a `TypeError` for
+ *   anything else.
  * - A read-only `value` contains the text.
  * - The class, its prototype, and each instance are frozen.
  * - `String`, `JSON.stringify`, and Node's `inspect` get the same text as
@@ -78,7 +78,7 @@ export function standInWrapper<W>(name: WrapperName): WrapperConstructor<W> {
     readonly value: string
     constructor(text: string) {
       if (typeof text !== 'string') {
-        throw new TypeError(`${name} takes a string`)
+        throw new TypeError(`${name} accepts only a string`)
       }
       this.value = text
       Object.freeze(this)

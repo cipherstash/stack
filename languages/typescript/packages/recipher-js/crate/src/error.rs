@@ -34,7 +34,7 @@ use stack_encrypt::ErrorPayload;
 #[derive(Debug, thiserror::Error, Diagnostic)]
 pub(crate) enum Error {
     /// `undefined` given as a value.
-    #[error("`undefined` is not a value")]
+    #[error("`undefined` cannot be encrypted")]
     #[diagnostic(
         code(recipher_js::undefined),
         help("Use `null` for a value that is not there.")
@@ -52,19 +52,25 @@ pub(crate) enum Error {
     #[diagnostic(code(recipher_js::threw))]
     Threw,
     /// An array inside an array, given as one value.
-    #[error("an array inside an array is not a value")]
-    #[diagnostic(code(recipher_js::not_a_scalar), help("Wrap it in json(..)."))]
+    #[error("an array inside an array cannot be encrypted as one value")]
+    #[diagnostic(
+        code(recipher_js::not_a_scalar),
+        help("To encrypt the inner array as a JSON document, wrap it in `json(..)`.")
+    )]
     NotAScalar,
     /// An object given as one value.
-    #[error("an object is not a value")]
-    #[diagnostic(code(recipher_js::plain_object), help("Wrap it in json(..)."))]
+    #[error("a plain object cannot be encrypted as one value")]
+    #[diagnostic(
+        code(recipher_js::plain_object),
+        help("To encrypt the object as a JSON document, wrap it in `json(..)`.")
+    )]
     PlainObject,
     /// The engine refused to encrypt a value in the form it was given.
-    #[error("the engine could not seal the value as given")]
+    #[error("the engine could not encrypt the value in the form it was given")]
     #[diagnostic(code(recipher_js::not_sealed))]
     NotSealed,
     /// `decrypt` given something that is not a `Ciphertext`.
-    #[error("decrypt takes a Ciphertext, or an array of them")]
+    #[error("decrypt accepts a Ciphertext, or an array of ciphertexts")]
     #[diagnostic(
         code(recipher_js::not_a_ciphertext),
         help("Read stored bytes with Ciphertext.fromBytes.")
@@ -75,15 +81,18 @@ pub(crate) enum Error {
     #[diagnostic(code(recipher_js::not_bytes))]
     NotBytes,
     /// A kind that is not one of `kinds`.
-    #[error("a ciphertext opens as one of `kinds`, such as `kinds.string`")]
-    #[diagnostic(code(recipher_js::not_a_kind))]
+    #[error("the kind is not one of `kinds`")]
+    #[diagnostic(
+        code(recipher_js::not_a_kind),
+        help("Pass a kind that the package exports, such as `kinds.string`.")
+    )]
     NotAKind,
     /// A ciphertext that decrypted to another kind than the one named.
-    #[error("the value opened, but it was not sealed as the kind named, {kind}")]
+    #[error("the value decrypted, but it was not encrypted as `{kind}`, the kind given for the ciphertext")]
     #[diagnostic(code(recipher_js::opened_type))]
     OpenedType { kind: ValueKind },
     /// A ciphertext named as JSON that decrypted to text that is not JSON.
-    #[error("the value opened, but it is not a JSON document")]
+    #[error("the value decrypted, but it is not a JSON document")]
     #[diagnostic(code(recipher_js::not_a_document))]
     NotADocument,
     /// A test cipher's seed that is not 32 bytes.
@@ -100,22 +109,22 @@ pub(crate) enum Error {
     )]
     NoTesting,
     /// A declaration that `record(..)` did not make.
-    #[error("the value is not a record")]
+    #[error("the value given as a record is not a record declaration")]
     #[diagnostic(
         code(recipher_js::not_a_record),
-        help("Declare a record with record(..).")
+        help("Declare a record with `record(..)`.")
     )]
     NotARecord,
     /// A field declared with something other than `encrypt(..)` or
     /// `passthrough()`.
-    #[error("a field is declared with encrypt(..) or passthrough()")]
+    #[error("the field is not declared with `encrypt(..)` or `passthrough()`")]
     #[diagnostic(code(recipher_js::declaration))]
     Declaration,
     /// A field whose name the engine reserves.
-    #[error("the field's name is one the engine reserves")]
+    #[error("the field's name is one that the engine reserves")]
     #[diagnostic(
         code(recipher_js::reserved_field),
-        help("Name the field something else.")
+        help("Give the field another name.")
     )]
     ReservedField,
     /// A field's kind that is not one of `kinds`.
@@ -136,32 +145,32 @@ pub(crate) enum Error {
     /// A context is a value that a ciphertext is bound to, and decrypting
     /// needs the same context. A field's context is its field path: the
     /// record's name, then the field's name.
-    #[error("the field path could not be written")]
+    #[error("the record's name and the field's name could not be written as a field path")]
     #[diagnostic(code(recipher_js::context))]
     Context,
     /// A record name the engine refuses as a segment of a field path.
-    #[error("the record name is not a plain segment of a field path")]
+    #[error("the engine refuses the record name as the first part of a field path")]
     #[diagnostic(
         code(recipher_js::record_name),
-        help("Use a record name that is not empty and holds no character the engine refuses in a field path, such as `/`.")
+        help("Use a record name that is not empty and contains no character that the engine refuses in a field path, such as `/`.")
     )]
     RecordName,
     /// A field name that the record does not encrypt. The record does not
     /// declare the name, the name is a passthrough field's, or the name is
     /// not a string. A passthrough field is stored as given, without
     /// encryption.
-    #[error("the record declares no sealed field of that name")]
+    #[error("the record declares no encrypted field of that name")]
     #[diagnostic(
         code(recipher_js::no_field),
-        help("Name a field the record declares with encrypt(..). A passthrough field has no ciphertext.")
+        help("Name a field that the record declares with `encrypt(..)`. A passthrough field has no ciphertext.")
     )]
     NoField,
     /// A row that is not an object of the record's fields.
-    #[error("a row is an object of the record's fields")]
+    #[error("the row is not an object with the record's fields")]
     #[diagnostic(code(recipher_js::not_a_row))]
     NotARow,
     /// A row's value that is not of its field's kind.
-    #[error("the value is not of the field's kind, {kind}, or does not fit it")]
+    #[error("the value is not of the field's kind, `{kind}`, or does not fit that kind")]
     #[diagnostic(code(recipher_js::field_type))]
     FieldType { kind: ValueKind },
     /// A stored row that does not have the record's shape. A stored row is
@@ -170,7 +179,7 @@ pub(crate) enum Error {
     #[diagnostic(code(recipher_js::not_a_stored_row))]
     NotAStoredRow { what: &'static str },
     /// A stored row from the engine that the SDK cannot read.
-    #[error("the engine's stored row does not have the shape the SDK reads: {what}")]
+    #[error("the engine's stored row does not have the shape that the SDK reads: {what}")]
     #[diagnostic(
         code(recipher_js::engine_result),
         help("Report this as a bug in @cipherstash/recipher.")
@@ -493,7 +502,7 @@ mod tests {
     fn an_error_of_the_sdks_own_has_its_code_message_and_help() {
         let error = RecipherErrorFields::from(Error::Undefined);
         assert_eq!(error.code, "recipher_js::undefined");
-        assert_eq!(error.message, "`undefined` is not a value");
+        assert_eq!(error.message, "`undefined` cannot be encrypted");
         assert_eq!(
             error.help.as_deref(),
             Some("Use `null` for a value that is not there.")
@@ -672,19 +681,27 @@ mod tests {
     fn help_of(error: &Error) -> Option<&'static str> {
         match error {
             Error::Undefined => Some("Use `null` for a value that is not there."),
-            Error::NotAScalar | Error::PlainObject => Some("Wrap it in json(..)."),
+            Error::NotAScalar => {
+                Some("To encrypt the inner array as a JSON document, wrap it in `json(..)`.")
+            }
+            Error::PlainObject => {
+                Some("To encrypt the object as a JSON document, wrap it in `json(..)`.")
+            }
             Error::NotACiphertext => Some("Read stored bytes with Ciphertext.fromBytes."),
+            Error::NotAKind => {
+                Some("Pass a kind that the package exports, such as `kinds.string`.")
+            }
             Error::NoTesting => {
                 Some("Build it with `pnpm --filter @cipherstash/recipher build:debug`.")
             }
-            Error::NotARecord => Some("Declare a record with record(..)."),
-            Error::ReservedField => Some("Name the field something else."),
+            Error::NotARecord => Some("Declare a record with `record(..)`."),
+            Error::ReservedField => Some("Give the field another name."),
             Error::Null { .. } => Some("A null mode is `sealed` or `sql`."),
             Error::RecordName => Some(
-                "Use a record name that is not empty and holds no character the engine refuses in a field path, such as `/`.",
+                "Use a record name that is not empty and contains no character that the engine refuses in a field path, such as `/`.",
             ),
             Error::NoField => Some(
-                "Name a field the record declares with encrypt(..). A passthrough field has no ciphertext.",
+                "Name a field that the record declares with `encrypt(..)`. A passthrough field has no ciphertext.",
             ),
             Error::EngineResult { .. } | Error::NoResult | Error::BuildValue => {
                 Some("Report this as a bug in @cipherstash/recipher.")
@@ -693,7 +710,6 @@ mod tests {
             | Error::Threw
             | Error::NotSealed
             | Error::NotBytes
-            | Error::NotAKind
             | Error::OpenedType { .. }
             | Error::NotADocument
             | Error::TestingSeed

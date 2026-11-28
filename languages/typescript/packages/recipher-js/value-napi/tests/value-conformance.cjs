@@ -195,7 +195,7 @@ assert.throws(
   /sparse arrays are not supported/,
 )
 assert.throws(() => addon.encode('\ud800'))
-// A wrapper takes a string and nothing else; the text itself is checked
+// A wrapper accepts only a string; the text itself is checked
 // when the value is encrypted, so one rule applies however it was made.
 for (const Wrapper of [RcDate, RcTimestamp, RcDecimal, RcUuid]) {
   for (const payload of [

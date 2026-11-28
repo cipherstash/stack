@@ -146,7 +146,7 @@ describe('a wrapper class', () => {
     const instance = new cls(text)
     let thrown: unknown
     try {
-      // @ts-expect-error: the constructor takes a string.
+      // @ts-expect-error: the constructor accepts only a string.
       new cls(20261123)
     } catch (error) {
       thrown = error
@@ -170,9 +170,9 @@ describe('a wrapper class', () => {
     }
   }
 
-  it('takes a string, and throws a TypeError for anything else', () => {
+  it('accepts only a string, and throws a TypeError for anything else', () => {
     for (const name of names) {
-      // @ts-expect-error: the constructor takes a string.
+      // @ts-expect-error: the constructor accepts only a string.
       expect(() => new classes[name](20261123)).toThrow(TypeError)
       expect(new classes[name](texts[name]).value).toBe(texts[name])
     }

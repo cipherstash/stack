@@ -136,7 +136,7 @@ describe('failures are values', () => {
 
   it('refuses a decrypt of something that is not a ciphertext', async () => {
     const c = await cipher()
-    // @ts-expect-error: decrypt takes a Ciphertext.
+    // @ts-expect-error: decrypt accepts a Ciphertext.
     const result = await c.decrypt(new Uint8Array(8))
     expect(result.err()?.code).toBe('recipher_js::not_a_ciphertext')
   })

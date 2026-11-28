@@ -69,7 +69,7 @@ The value bridge converts JavaScript values in both directions:
 
 - `RcTimestamp`, `RcDate`, `RcDecimal`, and `RcUuid` are wrapper classes.
   A wrapper class represents a type that JavaScript does not have.
-  The constructor of a wrapper class takes the value as text.
+  The constructor of a wrapper class accepts the value as text.
 - Integers are a `bigint`.
   A `number` is a float.
   The `number` `5` does not equal the integer `5n`.
@@ -282,7 +282,7 @@ const opened = await Promise.all(
 A static method, such as `Ciphertext.fromBytes`, works on its own.
 
 A wrapper class's constructor throws too.
-The constructor takes a string, so `new RcDate(20261123)` throws a `TypeError`.
+The constructor accepts only a string, so `new RcDate(20261123)` throws a `TypeError`.
 The constructor does not check the text.
 `encrypt` returns an `Err` for text that is not a date.
 

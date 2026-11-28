@@ -543,15 +543,19 @@ fn stored_tree(plan: &RecordPlan, row: &OwnedFrame) -> Outcome<StackCipherText> 
             .in_record(&plan.name)
             .at_field(field)
     };
-    let stored = entries(row)
-        .ok_or_else(|| misfit(None, "a stored row is an object of the record's fields"))?;
+    let stored = entries(row).ok_or_else(|| {
+        misfit(
+            None,
+            "the stored row is not an object with the record's fields",
+        )
+    })?;
     let mut tree = Vec::with_capacity(stored.len());
     for (name, value) in stored {
         let field = plan
             .fields
             .iter()
             .find(|field| field.name == name)
-            .ok_or_else(|| misfit(Some(&name), "a field the record does not declare"))?;
+            .ok_or_else(|| misfit(Some(&name), "the record does not declare this field"))?;
         if field.passthrough {
             let node = CipherText::Passthrough(PassthroughFrame(value.frame().as_bytes().to_vec()));
             tree.push((
@@ -567,13 +571,14 @@ fn stored_tree(plan: &RecordPlan, row: &OwnedFrame) -> Outcome<StackCipherText> 
         let outputs = entries(&value).ok_or_else(|| {
             misfit(
                 Some(&name),
-                "a sealed field is an object of its ciphertext and its terms",
+                "an encrypted field is not an object with its ciphertext and its index terms",
             )
         })?;
         let mut nodes = Vec::with_capacity(outputs.len());
         for (key, output) in outputs {
-            let bytes = bytes_of(&output)
-                .ok_or_else(|| misfit(Some(&name), "an output that is not bytes"))?;
+            let bytes = bytes_of(&output).ok_or_else(|| {
+                misfit(Some(&name), "a property of an encrypted field is not bytes")
+            })?;
             if key == CIPHERTEXT {
                 let ciphertext =
                     stack_encrypt::Ciphertext::from_bytes(&bytes).map_err(|error| {
@@ -592,10 +597,13 @@ fn stored_tree(plan: &RecordPlan, row: &OwnedFrame) -> Outcome<StackCipherText> 
                 .iter()
                 .find(|index| index_name(index) == Some(key.as_str()))
                 .ok_or_else(|| {
-                    misfit(Some(&name), "a term of an index the field does not declare")
+                    misfit(
+                        Some(&name),
+                        "an index term is for an index that the field does not declare",
+                    )
                 })?;
             let term = vitaminc_aead::to_frame(bytes.as_slice())
-                .map_err(|_| misfit(Some(&name), "a term that is not bytes"))?;
+                .map_err(|_| misfit(Some(&name), "an index term could not be read"))?;
             nodes.push((
                 index.key().to_owned(),
                 CipherText::Passthrough(PassthroughFrame(term.risky_ref().to_vec())),

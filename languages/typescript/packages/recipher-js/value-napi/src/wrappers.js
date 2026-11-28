@@ -52,7 +52,7 @@
       [name]: class {
         constructor(value) {
           if (typeof value !== 'string') {
-            throw new TypeError(`${name} takes a string`)
+            throw new TypeError(`${name} accepts only a string`)
           }
           defineProperty(this, 'value', {
             __proto__: null,
