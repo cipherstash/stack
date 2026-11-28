@@ -153,7 +153,7 @@ pub enum Error {
     ///   field spec is the entry that describes one field.
     /// - A field has no output, or lists an output twice.
     /// - A field spec has a key that is not `"context"`, `"outputs"`,
-    ///   `"target"`, or `"type"`.
+    ///   `"target"`, `"type"`, or `"null"`.
     /// - A field names a type that does not exist.
     /// - A field asks for an index that is not defined for its declared
     ///   type.
