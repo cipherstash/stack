@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     bytes leaf. The engine checks the text and seals the document as
     `JsonPlaintext` is sealed. On decrypt, `json` returns the document's
     text in a bytes leaf, as a record's `json` field opens.
+  - `json` is a declared kind, and not a stored one. A document is stored
+    as a text leaf, as a string is, so a kind check cannot tell them
+    apart. A sealed document opens as `string`. A sealed string whose
+    text is a JSON document opens as `json`, which checks that the text
+    parses and returns it as the engine writes the document.
   - A ciphertext holds one scalar. `encrypt` refuses an array, an object, a
     passthrough and a null, plain or typed, before any key is requested.
     The refusal is `dynamic::Error::Source` with one of three new reasons,

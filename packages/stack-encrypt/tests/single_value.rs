@@ -1138,6 +1138,66 @@ mod decrypt_a_json_document {
         }
     }
 
+    /// `json` is a declared kind, and a document is stored as text. So a
+    /// string and a document share one stored form, and a kind check
+    /// cannot tell them apart.
+    #[tokio::test]
+    async fn opens_a_string_that_holds_json_text_and_returns_it_as_the_engine_writes_it() {
+        let cipher = common::stack_cipher().await;
+        let keyset = cipher.default_keyset();
+        let cases = [
+            ("42", "42"),
+            (r#""ada""#, r#""ada""#),
+            (
+                r#"{ "b" : [ 1 , null ], "a" : true }"#,
+                r#"{"a":true,"b":[1,null]}"#,
+            ),
+        ];
+        for (sealed_text, opened_text) in cases {
+            let sealed = keyset
+                .encrypt(String::from(sealed_text))
+                .await
+                .expect("a string seals");
+            let opened = value::decrypt(&keyset, sealed.clone(), Some(ValueKind::Json))
+                .await
+                .unwrap_or_else(|error| {
+                    panic!("the string {sealed_text} holds JSON text and opens as json: {error}")
+                });
+            assert_eq!(
+                opened.frame(),
+                document(opened_text).frame(),
+                "the string {sealed_text} opens as json to the text the engine writes"
+            );
+            // The same ciphertext still opens as the string that was sealed.
+            let as_string = value::decrypt(&keyset, sealed, Some(ValueKind::String))
+                .await
+                .expect("a string opens as string");
+            assert_eq!(
+                as_string.frame(),
+                frame(sealed_text).frame(),
+                "the string {sealed_text} opens as string unchanged"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn opens_a_sealed_document_as_a_string() {
+        let cipher = common::stack_cipher().await;
+        let keyset = cipher.default_keyset();
+        let sealed = keyset
+            .encrypt(JsonPlaintext::from(json!({"name": "Ada", "n": [1.5, -2]})))
+            .await
+            .expect("a document seals");
+        let opened = value::decrypt(&keyset, sealed, Some(ValueKind::String))
+            .await
+            .expect("a document is stored as text, so it opens as string");
+        assert_eq!(
+            opened.frame(),
+            frame(r#"{"n":[1.5,-2],"name":"Ada"}"#).frame(),
+            "the frame holds the JSON text that was sealed, in a text leaf"
+        );
+    }
+
     #[tokio::test]
     async fn opens_a_batch_of_documents_in_order() {
         let cipher = common::stack_cipher().await;

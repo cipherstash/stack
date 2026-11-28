@@ -17,7 +17,7 @@
         "type": "string",
         "text": "ada@example.com"
       },
-      "refused_as": ["int64", "bytes", "json"]
+      "refused_as": ["int64", "bytes"]
     },
     {
       "id": "as-is-empty-string",
@@ -93,6 +93,59 @@
         "type": "string",
         "text": "ada@example.com"
       }
+    },
+    {
+      "id": "string-json-number-text",
+      "kind": "",
+      "context": [],
+      "input": {
+        "type": "string",
+        "text": "42"
+      },
+      "opens_as": [
+        {
+          "kind": "json",
+          "value": {
+            "type": "bytes",
+            "text": "3432"
+          }
+        },
+        {
+          "kind": "string",
+          "value": {
+            "type": "string",
+            "text": "42"
+          }
+        }
+      ]
+    },
+    {
+      "id": "string-json-spaced-text",
+      "kind": "string",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "string",
+        "text": "{ \"b\" : [ 1 , null ], \"a\" : true }"
+      },
+      "opens_as": [
+        {
+          "kind": "json",
+          "value": {
+            "type": "bytes",
+            "text": "7b2261223a747275652c2262223a5b312c6e756c6c5d7d"
+          }
+        }
+      ]
+    },
+    {
+      "id": "string-not-json-text",
+      "kind": "",
+      "context": [],
+      "input": {
+        "type": "string",
+        "text": "ada@example.com"
+      },
+      "refused_as": ["json"]
     },
     {
       "id": "bool-false",
@@ -356,6 +409,15 @@
         "type": "string",
         "text": "{\"a\":\"é\",\"b\":[1,2.5,null]}"
       },
+      "opens_as": [
+        {
+          "kind": "string",
+          "value": {
+            "type": "string",
+            "text": "{\"a\":\"é\",\"b\":[1,2.5,null]}"
+          }
+        }
+      ],
       "refused_as": ["int64", "bytes"]
     },
     {

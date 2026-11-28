@@ -27,6 +27,7 @@ list of `batches`. Each case has:
 | `context` | The context's parts, or an empty list for the empty context |
 | `input` | The value, in the `{type, text}` form the [value profile](values-contract.md#cases) defines |
 | `stored` | The value the ciphertext holds, where it is not the input |
+| `opens_as` | Kinds the ciphertext must open as, beside the declared one, each with the `value` it opens to |
 | `refused_as` | Kinds the ciphertext must refuse to open as |
 | `expected_error` | For a refused case, the refusal's `code` and `reason` |
 
@@ -92,10 +93,11 @@ For a case with no `expected_error`:
      no `stored`);
    - with the declared kind, to the same value. Under `json` it opens to the
      stored JSON text in a bytes leaf.
-5. Each ciphertext is refused when opened as a kind in `refused_as`. The
+5. Each ciphertext opens as each kind in `opens_as`, to that entry's `value`.
+6. Each ciphertext is refused when opened as a kind in `refused_as`. The
    refusal's code is `stack_encrypt::opened_type`, and its `expected` field is
    the kind's name. The refusal never says what the value opened as.
-6. Each ciphertext is refused under the context `["conformance", "wrong"]`.
+7. Each ciphertext is refused under the context `["conformance", "wrong"]`.
    The deterministic provider refuses the key request as forbidden, which
    models ZeroKMS. Other providers may report a wrong context differently.
 
@@ -106,6 +108,20 @@ A case with `stored` is a conversion. A number of another width or kind is
 sealed as the declared kind's value when the conversion is exact, by the rules
 a record's typed field uses. A document under `json` is sealed as its compact
 JSON text, in a text leaf.
+
+`json` is a declared kind, and not a stored one. A `string` and a document
+share one stored form, a text leaf, so a kind check cannot tell them apart.
+Three cases pin what follows from that:
+
+- `json-given-string`: a sealed document opens as `string`, to the JSON text
+  that was sealed.
+- `string-json-number-text` and `string-json-spaced-text`: a sealed string
+  whose text is a JSON document opens as `json`. Decrypt as `json` checks that
+  the text parses, and returns the document as the engine writes it, in a
+  bytes leaf. So `{ "b" : [ 1 , null ], "a" : true }` comes back as
+  `{"a":true,"b":[1,null]}`.
+- `string-not-json-text`: a sealed string whose text is not a JSON document is
+  refused as `json`.
 
 For a case with `expected_error`, the run-time encrypt refuses the value
 before any key request, with the diagnostic `code` and `reason`. The refusal

@@ -64,7 +64,17 @@ struct Case {
     stored: Option<Input>,
     /// Kinds the ciphertext must refuse to open as.
     refused_as: Option<Vec<String>>,
+    /// Kinds the ciphertext must open as, beside the declared one, each
+    /// with the value it opens to.
+    opens_as: Option<Vec<OpensAs>>,
     expected_error: Option<ExpectedError>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OpensAs {
+    kind: String,
+    value: Input,
 }
 
 #[derive(Deserialize)]
@@ -454,6 +464,22 @@ async fn accepted(
                 "{id}: the typed call reads another value from the {origin} ciphertext"
             );
         }
+        for also in case.opens_as.iter().flatten() {
+            let opened = open(&keyset, ciphertext.clone(), declared(&also.kind), context)
+                .await
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{id}: the {origin} ciphertext does not open as {}: {error}",
+                        also.kind
+                    )
+                });
+            assert_eq!(
+                opened.frame(),
+                input(&also.value).frame(),
+                "{id}: the {origin} ciphertext opens as {} to another value",
+                also.kind
+            );
+        }
         for name in case.refused_as.iter().flatten() {
             let other = declared(name);
             let refused = open(&keyset, ciphertext.clone(), other, context).await;
@@ -555,7 +581,7 @@ async fn shared_single_value_profile() {
         match &case.expected_error {
             Some(expected) => {
                 assert!(
-                    case.stored.is_none() && case.refused_as.is_none(),
+                    case.stored.is_none() && case.refused_as.is_none() && case.opens_as.is_none(),
                     "{}: a refused case stores nothing",
                     case.id
                 );

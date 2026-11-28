@@ -32,8 +32,8 @@
 //! the scalar is sealed as it arrived.
 //!
 //! On decrypt, a declared kind is the kind the value must open as. Nothing
-//! is converted: a value of another kind is refused. With no declared
-//! kind, the value comes back as it was sealed.
+//! is converted: a value stored as another kind is refused. With no
+//! declared kind, the value comes back as it was sealed.
 //!
 //! # A JSON document
 //!
@@ -44,6 +44,24 @@
 //! `keyset.encrypt(JsonPlaintext)` returns. On decrypt, the frame holds
 //! the document's JSON text in a bytes leaf, as a record's `json` field
 //! opens ([`json_frame`](super::json_frame)).
+//!
+//! `json` is a declared kind, and not a stored one. A document is stored
+//! as a text leaf that holds its JSON text, which is how a `string` is
+//! stored too. So `string` and `json` share one stored form, and a kind
+//! check cannot tell them apart:
+//!
+//! - A sealed document opens as `string`. The frame holds the JSON text
+//!   that was sealed.
+//! - A sealed string opens as `json` when its text is a JSON document. The
+//!   string `42` is one, and so is `"ada"` with its quotes. The string
+//!   `ada` is not, and is refused.
+//!
+//! Decrypt as `json` checks that the text parses by the engine's JSON
+//! rules. It then returns the document as the engine writes it, which is
+//! the text a document is sealed as: no whitespace between tokens, and
+//! each number in its shortest form. So for a value that was sealed as a
+//! string, the text that comes back can differ from the text that was
+//! sealed.
 //!
 //! # What is refused
 //!
@@ -273,6 +291,11 @@ pub fn encrypt_all_with_context<'a, 'f, 'c, K: 'static>(
 /// sealed. With [`ValueKind::Json`], the frame holds the document's JSON
 /// text in a bytes leaf.
 ///
+/// `string` and `json` share one stored form, a text leaf. So a sealed
+/// document opens as `string`, and a sealed string whose text is a JSON
+/// document opens as `json`. The [module docs](self#a-json-document) say
+/// what `json` checks and returns.
+///
 /// Pass `&keyset` to open only a ciphertext of that keyset: a ciphertext
 /// of another keyset is refused before any key is retrieved. Pass
 /// `&cipher` to open a ciphertext of any keyset the client can use.
@@ -320,11 +343,12 @@ pub fn encrypt_all_with_context<'a, 'f, 'c, K: 'static>(
 /// [`Aead`](crate::Error::Aead) for a wrong context or an altered
 /// ciphertext.
 ///
-/// A value that opens as another kind than `kind` is
-/// [`OpenedType`](crate::Error::OpenedType). The error names the kind that
-/// was expected. It never says what the value opened as. An array or an
-/// object is refused the same way, before any key is retrieved: a
-/// ciphertext never holds one.
+/// A value that was stored as another kind than `kind` is
+/// [`OpenedType`](crate::Error::OpenedType). So is text that is not a JSON
+/// document, opened as `json`. The error names the kind that was expected.
+/// It never says what the value opened as. An array or an object is
+/// refused the same way, before any key is retrieved: a ciphertext never
+/// holds one.
 ///
 /// [`KeysetCipher::encrypt`]: crate::KeysetCipher::encrypt
 /// [`KeysetCipher::decrypt`]: crate::KeysetCipher::decrypt

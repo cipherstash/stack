@@ -195,6 +195,11 @@ found (`array`, `object`, `passthrough`, `null`). An SDK stores an absent
 value as a database `NULL`. JavaScript's `undefined` is refused too
 (`undefined`), whatever kind is declared.
 
+`json` is a declared kind, and a document is stored as text. So a `string`
+and a document share one stored form, and a kind check cannot tell them
+apart: a sealed document opens as `string`, and a sealed string whose text
+is a JSON document opens as `json`.
+
 ### Scopes and bindings
 
 A field is sealed under its label, `["profiles", "age"]`. A caller adds to
