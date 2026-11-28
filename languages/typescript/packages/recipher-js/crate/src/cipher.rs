@@ -16,16 +16,15 @@ use std::sync::Arc;
 use napi::bindgen_prelude::{JavaScriptClassExt, JsValue, Object, PromiseRaw, Unknown};
 use napi::Env;
 use napi_derive::napi;
-use stack_encrypt::dynamic::frame::OwnedFrame;
+use stack_encrypt::dynamic::{frame::OwnedFrame, value, ValueKind};
 use stack_encrypt::kms::{DataKeySource, IndexKeySource, StackKms};
-use stack_encrypt::{CipherRef, DecryptFrom, EncryptInto, KeysetCipher, StackCipher};
+use stack_encrypt::{CipherRef, KeysetCipher, StackCipher};
 use vitaminc_protected::OpaqueDebug;
 
 use crate::ciphertext::Ciphertext;
 use crate::error::{Error, RecipherErrorFields};
 use crate::js;
 use crate::outcome::{not_made, refused, spawn, Outcome};
-use crate::value::OneValue;
 
 /// The engine's cipher, with the key source it was built with. A napi class
 /// cannot be generic, so each key source is one variant.
@@ -155,7 +154,7 @@ impl Keyset {
         env: &'e Env,
         value: Unknown<'_>,
     ) -> napi::Result<PromiseRaw<'e, Object<'e>>> {
-        let value = match js::read(env, value).and_then(OneValue::new) {
+        let value = match js::read(env, value).and_then(a_string) {
             Ok(value) => value,
             Err(error) => return refused(env, error),
         };
@@ -301,18 +300,45 @@ pub(crate) async fn open_in(
     })
 }
 
-/// Encrypts values under `keyset`. Each value becomes one ciphertext with
-/// its own data key. All the values use one key request, however many
-/// there are.
+/// Returns `value`, if it is one string. This build encrypts a string
+/// only.
+///
+/// # Errors
+///
+/// Returns `recipher_js::not_a_string` for any other value.
+pub(crate) fn a_string(value: OwnedFrame) -> Outcome<OwnedFrame> {
+    if value.frame().kind() == Some(ValueKind::String) {
+        Ok(value)
+    } else {
+        Err(Error::NotAString.into())
+    }
+}
+
+/// Encrypts strings under `keyset`, through the engine's run-time
+/// single-value encrypt. Each value becomes one ciphertext with its own
+/// data key. Rust's `keyset.encrypt(value)` returns the same ciphertext for
+/// the same value. All the values use one key request, however many there
+/// are.
+///
+/// The engine checks each value again: a value that is not one string is
+/// refused with the engine's own error, before any key request.
 pub(crate) async fn seal<K>(
     keyset: &KeysetCipher<'_, K>,
-    values: Vec<OneValue>,
+    values: Vec<OwnedFrame>,
 ) -> Outcome<Vec<stack_encrypt::Ciphertext>>
 where
     K: DataKeySource + IndexKeySource + Sync + 'static,
 {
-    values
-        .encrypt_into::<Vec<stack_encrypt::Ciphertext>, K>(keyset)
+    let pending = value::encrypt_all(
+        keyset,
+        values.iter().map(OwnedFrame::frame),
+        Some(ValueKind::String),
+    )
+    .map_err(|error| RecipherErrorFields::engine(&error))?;
+    // The engine has read every value. Dropping the frames wipes them, so
+    // no value waits in a frame for the key request.
+    drop(values);
+    pending
         .await
         .map_err(|error| RecipherErrorFields::engine(&error))
 }
@@ -320,6 +346,10 @@ where
 /// Decrypts ciphertexts through `cipher`: a cipher, or one keyset of it.
 /// The function makes one key request for each keyset the ciphertexts
 /// were made under.
+///
+/// It declares no kind, so each value comes back as it was encrypted. A
+/// call has no type to declare at run time: the type of a `Ciphertext<T>`
+/// is known to TypeScript alone.
 pub(crate) async fn unseal<'c, K>(
     cipher: impl Into<CipherRef<'c, K>>,
     sealed: Vec<stack_encrypt::Ciphertext>,
@@ -327,7 +357,7 @@ pub(crate) async fn unseal<'c, K>(
 where
     K: DataKeySource + IndexKeySource + Sync + 'static,
 {
-    Vec::<OwnedFrame>::decrypt_from(sealed, cipher)
+    value::decrypt_all(cipher, sealed, None)
         .await
         .map_err(|error| RecipherErrorFields::engine(&error))
 }
@@ -335,6 +365,25 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_string_is_taken_and_another_value_is_not() {
+        assert!(
+            a_string(OwnedFrame::of("text").unwrap()).is_ok(),
+            "a string is taken"
+        );
+        for other in [
+            OwnedFrame::of(5i64).unwrap(),
+            OwnedFrame::of(vec!["a", "b"]).unwrap(),
+            OwnedFrame::null(),
+        ] {
+            let refused = a_string(other).unwrap_err();
+            assert_eq!(
+                refused.code, "recipher_js::not_a_string",
+                "a value that is not a string is refused"
+            );
+        }
+    }
 
     #[test]
     fn a_build_without_the_test_cipher_says_how_to_get_one() {

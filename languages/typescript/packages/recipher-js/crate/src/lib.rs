@@ -55,7 +55,6 @@ mod ciphertext;
 mod error;
 mod js;
 mod outcome;
-mod value;
 
 #[cfg(all(test, feature = "testing"))]
 mod engine_tests;

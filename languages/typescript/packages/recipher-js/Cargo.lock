@@ -2510,7 +2510,6 @@ dependencies = [
  "tokio",
  "vitaminc-aead 0.10.0",
  "vitaminc-protected 0.10.0",
- "zeroize",
 ]
 
 [[package]]
