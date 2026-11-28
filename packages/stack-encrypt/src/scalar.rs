@@ -195,9 +195,9 @@ pub trait OpaqueEncode: sealed::Encode + Zeroize + Send + 'static {}
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be decrypted from one `Ciphertext`",
     label = "one `Ciphertext` decrypts into one owned value",
-    note = "one value is a `String`, a `bool`, a float, a `Vec<u8>`, or an integer other than \
-            `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype \
-            that derives `Decrypt` over one of these.",
+    note = "one value is a `String`, a `bool`, a float, a `Vec<u8>`, or a fixed-width integer \
+            other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is \
+            a newtype that derives `Decrypt` over one of these.",
     note = "the type must also implement `Zeroize`, so that a decrypted value can be wiped when \
             a later decrypt in the same call fails.",
     note = "the type must also be `Send` and `'static`. A type that borrows data is not \

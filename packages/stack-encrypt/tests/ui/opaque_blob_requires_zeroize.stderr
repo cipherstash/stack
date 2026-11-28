@@ -164,7 +164,7 @@ error[E0277]: `OpaqueBlob<Unwiped>` cannot be decrypted from one `Ciphertext`
    |                                                ^^^^^^^ one `Ciphertext` decrypts into one owned value
    |
    = help: the trait `OpaqueDecode` is not implemented for `OpaqueBlob<Unwiped>`
-   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or an integer other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype that derives `Decrypt` over one of these.
+   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or a fixed-width integer other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype that derives `Decrypt` over one of these.
    = note: the type must also implement `Zeroize`, so that a decrypted value can be wiped when a later decrypt in the same call fails.
    = note: the type must also be `Send` and `'static`. A type that borrows data is not `'static`.
    = note: to decrypt a `Vec<Ciphertext>` into a `Vec`, with one element from each `Ciphertext`, use `DecryptFrom`.

@@ -5,7 +5,7 @@ error[E0277]: `Vec<std::string::String>` cannot be decrypted from one `Ciphertex
    |                              ^^^^^^^^^^^ one `Ciphertext` decrypts into one owned value
    |
    = help: the trait `OpaqueDecode` is not implemented for `Vec<std::string::String>`
-   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or an integer other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype that derives `Decrypt` over one of these.
+   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or a fixed-width integer other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype that derives `Decrypt` over one of these.
    = note: the type must also implement `Zeroize`, so that a decrypted value can be wiped when a later decrypt in the same call fails.
    = note: the type must also be `Send` and `'static`. A type that borrows data is not `'static`.
    = note: to decrypt a `Vec<Ciphertext>` into a `Vec`, with one element from each `Ciphertext`, use `DecryptFrom`.
@@ -29,7 +29,7 @@ error[E0277]: `BTreeMap<std::string::String, i64>` cannot be decrypted from one 
    |                              ^^^^^^^^^^^^^^^^^^^^^ one `Ciphertext` decrypts into one owned value
    |
    = help: the trait `OpaqueDecode` is not implemented for `BTreeMap<std::string::String, i64>`
-   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or an integer other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype that derives `Decrypt` over one of these.
+   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or a fixed-width integer other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype that derives `Decrypt` over one of these.
    = note: the type must also implement `Zeroize`, so that a decrypted value can be wiped when a later decrypt in the same call fails.
    = note: the type must also be `Send` and `'static`. A type that borrows data is not `'static`.
    = note: to decrypt a `Vec<Ciphertext>` into a `Vec`, with one element from each `Ciphertext`, use `DecryptFrom`.
@@ -57,7 +57,7 @@ help: the trait `OpaqueDecode` is not implemented for `Account`
    |
 11 | struct Account {
    | ^^^^^^^^^^^^^^
-   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or an integer other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype that derives `Decrypt` over one of these.
+   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or a fixed-width integer other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype that derives `Decrypt` over one of these.
    = note: the type must also implement `Zeroize`, so that a decrypted value can be wiped when a later decrypt in the same call fails.
    = note: the type must also be `Send` and `'static`. A type that borrows data is not `'static`.
    = note: to decrypt a `Vec<Ciphertext>` into a `Vec`, with one element from each `Ciphertext`, use `DecryptFrom`.
@@ -85,7 +85,7 @@ help: the trait `OpaqueDecode` is not implemented for `Tags`
    |
 16 | struct Tags(Vec<String>);
    | ^^^^^^^^^^^
-   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or an integer other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype that derives `Decrypt` over one of these.
+   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or a fixed-width integer other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype that derives `Decrypt` over one of these.
    = note: the type must also implement `Zeroize`, so that a decrypted value can be wiped when a later decrypt in the same call fails.
    = note: the type must also be `Send` and `'static`. A type that borrows data is not `'static`.
    = note: to decrypt a `Vec<Ciphertext>` into a `Vec`, with one element from each `Ciphertext`, use `DecryptFrom`.
@@ -109,7 +109,7 @@ error[E0277]: `Protected<Vec<i64>>` cannot be decrypted from one `Ciphertext`
    |                              ^^^^^^^^^^^^^^^^^^^ one `Ciphertext` decrypts into one owned value
    |
    = help: the trait `OpaqueDecode` is not implemented for `Protected<Vec<i64>>`
-   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or an integer other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype that derives `Decrypt` over one of these.
+   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or a fixed-width integer other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype that derives `Decrypt` over one of these.
    = note: the type must also implement `Zeroize`, so that a decrypted value can be wiped when a later decrypt in the same call fails.
    = note: the type must also be `Send` and `'static`. A type that borrows data is not `'static`.
    = note: to decrypt a `Vec<Ciphertext>` into a `Vec`, with one element from each `Ciphertext`, use `DecryptFrom`.
@@ -133,7 +133,7 @@ error[E0277]: `HashMap<std::string::String, std::string::String>` cannot be decr
    |                                           ^^^^^^^^^^^^^^^^^^^^^^^ one `Ciphertext` decrypts into one owned value
    |
    = help: the trait `OpaqueDecode` is not implemented for `HashMap<std::string::String, std::string::String>`
-   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or an integer other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype that derives `Decrypt` over one of these.
+   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or a fixed-width integer other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype that derives `Decrypt` over one of these.
    = note: the type must also implement `Zeroize`, so that a decrypted value can be wiped when a later decrypt in the same call fails.
    = note: the type must also be `Send` and `'static`. A type that borrows data is not `'static`.
    = note: to decrypt a `Vec<Ciphertext>` into a `Vec`, with one element from each `Ciphertext`, use `DecryptFrom`.
@@ -157,7 +157,7 @@ error[E0277]: `Vec<i64>` cannot be decrypted from one `Ciphertext`
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ one `Ciphertext` decrypts into one owned value
    |
    = help: the trait `OpaqueDecode` is not implemented for `Vec<i64>`
-   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or an integer other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype that derives `Decrypt` over one of these.
+   = note: one value is a `String`, a `bool`, a float, a `Vec<u8>`, or a fixed-width integer other than `u8`. An `Option` or a `Protected` of one of these is one value too. So is a newtype that derives `Decrypt` over one of these.
    = note: the type must also implement `Zeroize`, so that a decrypted value can be wiped when a later decrypt in the same call fails.
    = note: the type must also be `Send` and `'static`. A type that borrows data is not `'static`.
    = note: to decrypt a `Vec<Ciphertext>` into a `Vec`, with one element from each `Ciphertext`, use `DecryptFrom`.
