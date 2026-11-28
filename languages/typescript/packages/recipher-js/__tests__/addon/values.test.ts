@@ -84,7 +84,7 @@ describe('every value in the mapping round-trips', () => {
     expect((opened as Date).getTime()).toBe(date.getTime())
   })
 
-  it("vitaminc's wrapper classes", async () => {
+  it('the wrapper classes', async () => {
     const day = await roundTrip(new RcDate('2026-11-23'))
     expect(day).toBeInstanceOf(RcDate)
     expect((day as RcDate).value).toBe('2026-11-23')
@@ -243,7 +243,7 @@ describe('a JSON document', () => {
     }
   })
 
-  it('refuses a property vitaminc reserves, naming the rule, both ways', async () => {
+  it('refuses a reserved property name, naming the rule, both ways', async () => {
     const c = await cipher()
     const keyset = c.defaultKeyset()
     for (const text of ['{"constructor":1}', '{"prototype":1}']) {
@@ -304,7 +304,7 @@ describe('refusals', () => {
     expect(result.err()?.message).toContain('UUID')
   })
 
-  it("an integer vitaminc cannot hold, with vitaminc's code", async () => {
+  it('a bigint outside 128 bits, with the code ERR_INTEGER_RANGE', async () => {
     const keyset = (await cipher()).defaultKeyset()
     const result = await keyset.encrypt(2n ** 128n)
     expect(result.isErr()).toBe(true)

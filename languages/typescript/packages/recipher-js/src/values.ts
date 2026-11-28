@@ -1,9 +1,9 @@
 /**
  * The values the SDK encrypts, and the types they decrypt to.
  *
- * A value's type decides how it is encrypted. The mapping is vitaminc's
- * mapping for JavaScript. vitaminc is the CipherStash Rust library that the
- * engine's plaintext types come from.
+ * A value's type decides how it is encrypted. The value bridge defines the
+ * mapping. The value bridge is the part of the native addon that converts
+ * JavaScript values.
  *
  * | Value | Encrypted as | Decrypts as |
  * |---|---|---|
@@ -45,20 +45,20 @@ export type {
   Value,
 } from './value-types'
 
-/** A calendar date, such as `new RcDate('2026-11-23')`. The class comes from vitaminc. */
+/** A calendar date, such as `new RcDate('2026-11-23')`. */
 export type RcDate = RcDateValue
-/** A UTC instant, to the nanosecond. The class comes from vitaminc. */
+/** A UTC instant, to the nanosecond. */
 export type RcTimestamp = RcTimestampValue
-/** A decimal with its scale, such as `new RcDecimal('1.50')`. The class comes from vitaminc. */
+/** A decimal with its scale, such as `new RcDecimal('1.50')`. */
 export type RcDecimal = RcDecimalValue
 /**
- * A universally unique identifier (UUID). The class comes from vitaminc.
+ * A universally unique identifier (UUID).
  * The engine has no plaintext type for a UUID yet. Encrypting an `RcUuid` is
  * an `Err` with the code `recipher_js::uuid`. `RcUuid` is not a `Scalar`.
  */
 export type RcUuid = RcUuidValue
 
-/** The constructor of one of vitaminc's wrapper classes. */
+/** The constructor of a wrapper class. */
 export interface WrapperConstructor<W> {
   new (text: string): W
   readonly prototype: W
@@ -69,7 +69,7 @@ type WrapperName = 'RcDate' | 'RcTimestamp' | 'RcDecimal' | 'RcUuid'
 /**
  * The class that the native addon defines. When the addon did not load, a
  * stand-in class instead. The stand-in keeps its text, is frozen, and
- * serialises to JSON as vitaminc's class does.
+ * serialises to JSON as the class does.
  */
 function wrapperClass<W>(name: WrapperName): WrapperConstructor<W> {
   if (binding.isOk()) {

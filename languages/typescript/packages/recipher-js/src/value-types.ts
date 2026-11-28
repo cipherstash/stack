@@ -9,7 +9,7 @@
 
 declare const wrapper: unique symbol
 
-/** A calendar date, such as `new RcDate('2026-11-23')`. The class comes from vitaminc. */
+/** A calendar date, such as `new RcDate('2026-11-23')`. */
 export interface RcDate {
   /** The date as `YYYY-MM-DD`. */
   readonly value: string
@@ -17,7 +17,7 @@ export interface RcDate {
   readonly [wrapper]: 'RcDate'
 }
 
-/** A UTC instant, to the nanosecond. The class comes from vitaminc. */
+/** A UTC instant, to the nanosecond. */
 export interface RcTimestamp {
   /** The instant as RFC 3339 text, with nanoseconds. */
   readonly value: string
@@ -25,7 +25,7 @@ export interface RcTimestamp {
   readonly [wrapper]: 'RcTimestamp'
 }
 
-/** A decimal with its scale, such as `new RcDecimal('1.50')`. The class comes from vitaminc. */
+/** A decimal with its scale, such as `new RcDecimal('1.50')`. */
 export interface RcDecimal {
   /** The decimal as text, with its scale. */
   readonly value: string
@@ -34,7 +34,7 @@ export interface RcDecimal {
 }
 
 /**
- * A universally unique identifier (UUID). The class comes from vitaminc.
+ * A universally unique identifier (UUID).
  * The engine has no plaintext type for a UUID yet. Encrypting an `RcUuid` is
  * an `Err` with the code `recipher_js::uuid`. `RcUuid` is not a `Scalar`.
  */

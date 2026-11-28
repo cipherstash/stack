@@ -160,9 +160,9 @@ impl Keyset {
     /// long it is. A key request is one request to ZeroKMS for data keys. If
     /// any value is refused, the whole array fails, before any request.
     ///
-    /// A value's type sets how it is encrypted. The mapping of JavaScript
-    /// types comes from vitaminc, CipherStash's cryptography library. A
-    /// `Json` from `json(..)` is encrypted as a JSON document.
+    /// A value's type sets how it is encrypted. The package's README lists
+    /// the mapping of JavaScript types. A `Json` from `json(..)` is
+    /// encrypted as a JSON document.
     ///
     /// A value that cannot be encrypted resolves to an `Err`. For example, a
     /// plain object is an `Err` with the code `recipher_js::plain_object`.

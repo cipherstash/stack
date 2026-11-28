@@ -121,7 +121,7 @@ describe('failures are values', () => {
     expect(result.err()?.code).toBe('recipher_js::unpaired_surrogate')
   })
 
-  it('names the rule vitaminc refused a value by', async () => {
+  it('names the rule a refused value broke', async () => {
     const keyset = (await cipher()).defaultKeyset()
     const cases: [unknown, string][] = [
       [new Map(), 'recipher_js::not_plain'],

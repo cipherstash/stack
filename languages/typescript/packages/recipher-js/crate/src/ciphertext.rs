@@ -198,10 +198,10 @@ fn as_kind(kind: ValueKind, value: OwnedFrame) -> Outcome<OwnedFrame> {
 /// Returns a copy of the bytes of a `Uint8Array`, or `None` for any other
 /// value. A `Buffer` is a `Uint8Array`.
 ///
-/// The function reads the bytes as a borrowed slice. That is how vitaminc,
-/// CipherStash's cryptography library, reads bytes. napi's owned
-/// `Uint8Array` is not used. When it refuses a typed array of another
-/// element type, it still keeps a reference to that array.
+/// The function reads the bytes as a borrowed slice. That is how the value
+/// bridge reads bytes. napi's owned `Uint8Array` is not used. When it
+/// refuses a typed array of another element type, it still keeps a
+/// reference to that array.
 pub(crate) fn bytes_of(value: Unknown<'_>) -> Option<Vec<u8>> {
     if !value.is_typedarray().unwrap_or(false) {
         return None;

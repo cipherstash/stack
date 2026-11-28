@@ -57,8 +57,8 @@ async fn the_engine_opens_what_the_sdk_sealed() {
     let sealed = sdk_seal(vec![one("from the sdk"), one(42i8), one(1.5f64)]).await;
     let mut sealed = sealed.into_iter();
     let text: String = keyset.decrypt(sealed.next().unwrap()).await.unwrap();
-    // vitaminc reads a `bigint` at its narrowest width. The engine decrypts
-    // it at any width that fits it.
+    // The value bridge reads a `bigint` at its narrowest width. The engine
+    // decrypts it at any width that fits it.
     let int: i64 = keyset.decrypt(sealed.next().unwrap()).await.unwrap();
     let float: f64 = keyset.decrypt(sealed.next().unwrap()).await.unwrap();
     assert_eq!((text.as_str(), int, float), ("from the sdk", 42, 1.5));

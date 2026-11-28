@@ -85,7 +85,7 @@ pub fn elements<'e>(
 ///
 /// Returns `recipher_js::reserved_key` for a value that JavaScript cannot
 /// represent in the form it was encrypted. That is a value with a map key
-/// that vitaminc, CipherStash's cryptography library, does not build.
+/// that the value bridge does not build.
 /// Returns `recipher_js::build_value` for any other failure.
 pub fn build(env: &Env, value: OwnedFrame) -> Result<Unknown<'_>, RecipherErrorFields> {
     JsBuilder::build(env, value.frame()).map_err(|error| not_built(env, &error))
@@ -102,7 +102,7 @@ fn not_built(env: &Env, fault: &JsFault) -> RecipherErrorFields {
     }
 }
 
-/// Returns whether `value` is a vitaminc `RcUuid`.
+/// Returns whether `value` is an `RcUuid`.
 fn is_uuid(env: &Env, value: &Unknown<'_>) -> bool {
     Wrappers::get(env)
         .and_then(|wrappers| wrappers.classify(value))

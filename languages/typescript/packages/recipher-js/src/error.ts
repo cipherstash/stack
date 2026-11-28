@@ -19,9 +19,9 @@ export type { ErrorCause, RecipherErrorFields, Severity }
  *
  * - `code` is the code to switch on. It is stable. It is one of these:
  *   - the engine's error code, such as `stack_encrypt::aead`;
- *   - vitaminc's code for a value it refused, such as `ERR_INTEGER_RANGE`.
- *     vitaminc is the CipherStash Rust library that the engine's plaintext
- *     types come from;
+ *   - the value bridge's code for a scalar it refused, such as
+ *     `ERR_INTEGER_RANGE`. The value bridge is the part of the addon that
+ *     converts JavaScript values;
  *   - the SDK's own code, such as `recipher_js::not_a_ciphertext`.
  * - `message` says what went wrong, in one line.
  * - `help` says what to do about it, where the error knows.

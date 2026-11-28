@@ -160,8 +160,8 @@ pub struct RecipherErrorFields {
     /// The code is one of three kinds:
     ///
     /// - a diagnostic's code, such as the engine's `stack_encrypt::aead`;
-    /// - the code of vitaminc, CipherStash's cryptography library, for a
-    ///   value it refused, such as `ERR_INTEGER_RANGE`;
+    /// - the value bridge's code for a scalar it refused, such as
+    ///   `ERR_INTEGER_RANGE`;
     /// - the SDK's own code, such as `recipher_js::not_a_ciphertext`.
     pub code: String,
     /// What went wrong, in one line.

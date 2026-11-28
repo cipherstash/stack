@@ -163,9 +163,9 @@ export declare class Keyset {
    * long it is. A key request is one request to ZeroKMS for data keys. If
    * any value is refused, the whole array fails, before any request.
    *
-   * A value's type sets how it is encrypted. The mapping of JavaScript
-   * types comes from vitaminc, CipherStash's cryptography library. A
-   * `Json` from `json(..)` is encrypted as a JSON document.
+   * A value's type sets how it is encrypted. The package's README lists
+   * the mapping of JavaScript types. A `Json` from `json(..)` is
+   * encrypted as a JSON document.
    *
    * A value that cannot be encrypted resolves to an `Err`. For example, a
    * plain object is an `Err` with the code `recipher_js::plain_object`.
@@ -257,8 +257,8 @@ export interface RecipherErrorFields {
    * The code is one of three kinds:
    *
    * - a diagnostic's code, such as the engine's `stack_encrypt::aead`;
-   * - the code of vitaminc, CipherStash's cryptography library, for a
-   *   value it refused, such as `ERR_INTEGER_RANGE`;
+   * - the value bridge's code for a scalar it refused, such as
+   *   `ERR_INTEGER_RANGE`;
    * - the SDK's own code, such as `recipher_js::not_a_ciphertext`.
    */
   code: string

@@ -47,9 +47,9 @@ const opened = await cipher.decrypt(sealed.value)
 ## Values
 
 A value's type decides how it is encrypted.
-vitaminc defines the mapping.
-vitaminc is the CipherStash Rust library that the engine's plaintext types come from.
-The `recipher-value-napi` crate, in `value-napi/`, converts JavaScript values by that mapping, in both directions:
+The value bridge defines the mapping.
+The value bridge is the `recipher-value-napi` crate, in `value-napi/`.
+It converts JavaScript values in both directions:
 
 | Value | Encrypted as | Decrypts as |
 |---|---|---|
@@ -73,7 +73,7 @@ The `recipher-value-napi` crate, in `value-napi/`, converts JavaScript values by
 - The package exports `RcUuid`, for a universally unique identifier (UUID).
   The engine has no plaintext type for a UUID yet.
   Encrypting an `RcUuid` is an `Err` with the code `recipher_js::uuid`.
-- vitaminc's rules refuse each of these values, with an error code for each:
+- The value bridge refuses each of these values, with an error code for each:
   - a `Map` or a `Set`;
   - a class instance;
   - a sparse array;
@@ -108,7 +108,7 @@ The document is encrypted as its JSON text, as the engine's `JsonPlaintext` type
 - A property named `__proto__`, `constructor`, or `prototype` cannot be encrypted.
   Another SDK can write a document with one of these properties.
   Decrypting that document here gives an `Err` with the code `recipher_js::reserved_key`.
-  The reason is that vitaminc does not build those properties in JavaScript.
+  The reason is that the value bridge does not build those properties in JavaScript.
 - **Read a stored document back with `kinds.json`.**
   The bytes do not record that a value is JSON.
   `Ciphertext.fromBytes(bytes, kinds.json)` decrypts to the document.
@@ -172,7 +172,7 @@ if (opened.isErr()) {
 
 | Property | What it contains |
 | --- | --- |
-| `code` | The code to switch on. It is stable. It is the engine's code (`stack_encrypt::aead`), vitaminc's code for a value it refused (`ERR_INTEGER_RANGE`), or the SDK's own (`recipher_js::not_a_ciphertext`). |
+| `code` | The code to switch on. It is stable. It is the engine's code (`stack_encrypt::aead`), the value bridge's code for a scalar it refused (`ERR_INTEGER_RANGE`), or the SDK's own (`recipher_js::not_a_ciphertext`). |
 | `message` | What went wrong, in one line. |
 | `help` | What to do about it, where the error knows. |
 | `url` | A documentation page for the error, where it has one. |
