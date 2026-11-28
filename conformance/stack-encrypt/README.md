@@ -44,6 +44,8 @@ these rules.
 | `record-values-v1.cases.json` | cases | `tests/value_conformance.rs` | `value_conformance_test.go` |
 | `record-query-refusals-v1.cases.json` | cases | `tests/query_refusal_conformance.rs` | `query_refusal_conformance_test.go` |
 | `record-raw-frames-v1.cases.json` | cases | `tests/raw_frame_conformance.rs` | `raw_frame_conformance_test.go` |
+| `single-value-v1.cases.json` | cases | `tests/single_value_conformance.rs` | — (pending, #2010) |
+| `single-value-v1.expected.rust-native.json` | expected | `tests/single_value_conformance.rs` (writes it) | — (pending, #2010) |
 | `artifact-exchange-v1.cases.json` | cases | `tests/exchange_conformance.rs`, run by `scripts/stack-exchange-conformance.mjs` | `exchange_conformance_test.go`, run by `scripts/stack-exchange-conformance.mjs` |
 | `eql-json-v1.cases.json` | cases | `tests/json_operators.rs`; EQL's `tests/encryption/tests/json_tree_data_plan.rs` | `json_conformance_test.go` |
 | `eql-json-v1.enrollment.json` | enrollment | `scripts/stack-eql-conformance.mjs` runs the tests it names | `scripts/stack-eql-conformance.mjs` runs the tests it names |
@@ -86,7 +88,8 @@ The same task runs the shared declaration acceptance/rejection corpus in both
 languages, with native observations of normalization. It also runs the shared
 runtime, read, context, value-boundary, query-refusal and raw-frame cases, and
 enrolls the existing value-kind, context-field and query-operator
-fixtures described below. It ends with the fresh artifact exchange in both
+fixtures described below. It runs the single-value cases in native Rust
+only: their Go runner is pending. It ends with the fresh artifact exchange in both
 directions (`test:conformance:exchange`, which also needs the deterministic
 EQL guest). Set no fixture-update variables when checking conformance.
 
@@ -176,6 +179,21 @@ invalid declaration, unsupported host conversion). The runners are
 in the Rust crate and `TestValueConformance`, `TestQueryRefusalConformance`
 and `TestRawFrameConformance` in the Go module; `test:conformance` runs all
 six.
+
+## Single values
+
+The [single-value contract](single-value-contract.md) defines
+`single-value-v1` in `v1/single-value-v1.cases.json`: one value encrypted into
+one ciphertext through the engine's run-time interface, and decrypted from
+one. The cases give a value, the kind declared for it and a context. They
+cover every scalar kind, the exact conversions a declared kind makes, JSON
+documents, batches, and the refusals of an array, an object, a passthrough, a
+null, `undefined` and a value of another kind.
+`v1/single-value-v1.expected.rust-native.json` freezes each input's frame, the
+plaintext each leaf is sealed with, and a ciphertext every runner must open.
+The native runner is `single_value_conformance` in the Rust crate, which
+`test:conformance` runs. It also holds the run-time interface to the typed
+one. The Go runner comes with the Go SDK's single-value calls (#2010).
 
 ## `record-reads-v1` contract
 

@@ -1,0 +1,909 @@
+{
+  "version": 1,
+  "profile": "single-value-v1",
+  "seed": "0000000000000000000000000000000000000000000000000000000000000000",
+  "required_capabilities": [
+    "single-value",
+    "value-kinds",
+    "context-binding",
+    "refusals"
+  ],
+  "cases": [
+    {
+      "id": "as-is-string",
+      "kind": "",
+      "context": [],
+      "input": {
+        "type": "string",
+        "text": "ada@example.com"
+      },
+      "refused_as": ["int64", "bytes", "json"]
+    },
+    {
+      "id": "as-is-empty-string",
+      "kind": "",
+      "context": [],
+      "input": {
+        "type": "string",
+        "text": ""
+      }
+    },
+    {
+      "id": "as-is-int64-above-js-safe",
+      "kind": "",
+      "context": [],
+      "input": {
+        "type": "int64",
+        "text": "9007199254740993"
+      },
+      "refused_as": ["int32", "uint64", "float64", "string"]
+    },
+    {
+      "id": "as-is-bool",
+      "kind": "",
+      "context": [],
+      "input": {
+        "type": "bool",
+        "text": "true"
+      }
+    },
+    {
+      "id": "as-is-bytes",
+      "kind": "",
+      "context": [],
+      "input": {
+        "type": "bytes",
+        "text": "00ff10"
+      },
+      "refused_as": ["string", "uuid"]
+    },
+    {
+      "id": "as-is-float64-negative-zero",
+      "kind": "",
+      "context": [],
+      "input": {
+        "type": "float64",
+        "text": "-0"
+      }
+    },
+    {
+      "id": "as-is-uint8",
+      "kind": "",
+      "context": [],
+      "input": {
+        "type": "uint8",
+        "text": "200"
+      }
+    },
+    {
+      "id": "as-is-uuid",
+      "kind": "",
+      "context": [],
+      "input": {
+        "type": "uuid",
+        "text": "123e4567-e89b-12d3-a456-426614174000"
+      },
+      "refused_as": ["bytes"]
+    },
+    {
+      "id": "as-is-undefined",
+      "kind": "",
+      "context": [],
+      "input": {
+        "type": "undefined",
+        "text": ""
+      },
+      "refused_as": ["int64"]
+    },
+    {
+      "id": "as-is-string-with-context",
+      "kind": "",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "string",
+        "text": "ada@example.com"
+      }
+    },
+    {
+      "id": "bool-false",
+      "kind": "bool",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "bool",
+        "text": "false"
+      }
+    },
+    {
+      "id": "int8-min",
+      "kind": "int8",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "int8",
+        "text": "-128"
+      }
+    },
+    {
+      "id": "int16-min",
+      "kind": "int16",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "int16",
+        "text": "-32768"
+      }
+    },
+    {
+      "id": "int32-min",
+      "kind": "int32",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "int32",
+        "text": "-2147483648"
+      }
+    },
+    {
+      "id": "int64-min",
+      "kind": "int64",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "int64",
+        "text": "-9223372036854775808"
+      }
+    },
+    {
+      "id": "int128-min",
+      "kind": "int128",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "int128",
+        "text": "-170141183460469231731687303715884105728"
+      }
+    },
+    {
+      "id": "uint8-max",
+      "kind": "uint8",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "uint8",
+        "text": "255"
+      }
+    },
+    {
+      "id": "uint16-max",
+      "kind": "uint16",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "uint16",
+        "text": "65535"
+      }
+    },
+    {
+      "id": "uint32-max",
+      "kind": "uint32",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "uint32",
+        "text": "4294967295"
+      }
+    },
+    {
+      "id": "uint64-max",
+      "kind": "uint64",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "uint64",
+        "text": "18446744073709551615"
+      }
+    },
+    {
+      "id": "uint128-max",
+      "kind": "uint128",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "uint128",
+        "text": "340282366920938463463374607431768211455"
+      }
+    },
+    {
+      "id": "float32-fraction",
+      "kind": "float32",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "float32",
+        "text": "1.5"
+      }
+    },
+    {
+      "id": "float64-infinity",
+      "kind": "float64",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "float64",
+        "text": "inf"
+      }
+    },
+    {
+      "id": "decimal-trailing-zeros",
+      "kind": "decimal",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "decimal",
+        "text": "-1234.5600"
+      }
+    },
+    {
+      "id": "date-leap-day",
+      "kind": "date",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "date",
+        "text": "2024-02-29"
+      }
+    },
+    {
+      "id": "timestamp-nanoseconds",
+      "kind": "timestamp",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "timestamp",
+        "text": "2026-10-17T01:02:03.123456789Z"
+      }
+    },
+    {
+      "id": "string-unicode",
+      "kind": "string",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "string",
+        "text": "café ☕"
+      }
+    },
+    {
+      "id": "bytes-empty",
+      "kind": "bytes",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "bytes",
+        "text": ""
+      }
+    },
+    {
+      "id": "uuid",
+      "kind": "uuid",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "uuid",
+        "text": "123e4567-e89b-12d3-a456-426614174000"
+      }
+    },
+    {
+      "id": "uint64-given-float64",
+      "kind": "uint64",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "float64",
+        "text": "34"
+      },
+      "stored": {
+        "type": "uint64",
+        "text": "34"
+      },
+      "refused_as": ["float64", "uint32"]
+    },
+    {
+      "id": "int8-given-int16",
+      "kind": "int8",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "int16",
+        "text": "1"
+      },
+      "stored": {
+        "type": "int8",
+        "text": "1"
+      }
+    },
+    {
+      "id": "int128-given-int64",
+      "kind": "int128",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "int64",
+        "text": "1"
+      },
+      "stored": {
+        "type": "int128",
+        "text": "1"
+      }
+    },
+    {
+      "id": "float32-given-float64",
+      "kind": "float32",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "float64",
+        "text": "1.5"
+      },
+      "stored": {
+        "type": "float32",
+        "text": "1.5"
+      }
+    },
+    {
+      "id": "float64-given-int32",
+      "kind": "float64",
+      "context": [],
+      "input": {
+        "type": "int32",
+        "text": "12"
+      },
+      "stored": {
+        "type": "float64",
+        "text": "12"
+      }
+    },
+    {
+      "id": "decimal-given-int64",
+      "kind": "decimal",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "int64",
+        "text": "5"
+      },
+      "stored": {
+        "type": "decimal",
+        "text": "5"
+      }
+    },
+    {
+      "id": "json-given-string",
+      "kind": "json",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "string",
+        "text": "{ \"b\": [1, 2.5, null], \"a\": \"é\" }"
+      },
+      "stored": {
+        "type": "string",
+        "text": "{\"a\":\"é\",\"b\":[1,2.5,null]}"
+      },
+      "refused_as": ["int64", "bytes"]
+    },
+    {
+      "id": "json-given-bytes",
+      "kind": "json",
+      "context": [],
+      "input": {
+        "type": "bytes",
+        "text": "6e756c6c"
+      },
+      "stored": {
+        "type": "string",
+        "text": "null"
+      }
+    },
+    {
+      "id": "json-scalar-string",
+      "kind": "json",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "string",
+        "text": "\"plain\""
+      },
+      "stored": {
+        "type": "string",
+        "text": "\"plain\""
+      }
+    },
+    {
+      "id": "array-no-kind",
+      "kind": "",
+      "context": [],
+      "input": {
+        "type": "shape",
+        "text": "array"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "array"
+      }
+    },
+    {
+      "id": "array-array",
+      "kind": "array",
+      "context": [],
+      "input": {
+        "type": "shape",
+        "text": "array"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "array"
+      }
+    },
+    {
+      "id": "array-int64",
+      "kind": "int64",
+      "context": [],
+      "input": {
+        "type": "shape",
+        "text": "array"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "array"
+      }
+    },
+    {
+      "id": "empty-array-no-kind",
+      "kind": "",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "shape",
+        "text": "empty_array"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "array"
+      }
+    },
+    {
+      "id": "object-no-kind",
+      "kind": "",
+      "context": [],
+      "input": {
+        "type": "shape",
+        "text": "object"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "object"
+      }
+    },
+    {
+      "id": "object-object",
+      "kind": "object",
+      "context": [],
+      "input": {
+        "type": "shape",
+        "text": "object"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "object"
+      }
+    },
+    {
+      "id": "object-json",
+      "kind": "json",
+      "context": [],
+      "input": {
+        "type": "shape",
+        "text": "object"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "object"
+      }
+    },
+    {
+      "id": "passthrough-no-kind",
+      "kind": "",
+      "context": [],
+      "input": {
+        "type": "shape",
+        "text": "passthrough"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "passthrough"
+      }
+    },
+    {
+      "id": "passthrough-string",
+      "kind": "string",
+      "context": [],
+      "input": {
+        "type": "shape",
+        "text": "passthrough"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "passthrough"
+      }
+    },
+    {
+      "id": "null-no-kind",
+      "kind": "",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "null"
+      }
+    },
+    {
+      "id": "null-int64",
+      "kind": "int64",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "null"
+      }
+    },
+    {
+      "id": "null-string",
+      "kind": "string",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "null"
+      }
+    },
+    {
+      "id": "null-bool",
+      "kind": "bool",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "null"
+      }
+    },
+    {
+      "id": "typed-null-no-kind",
+      "kind": "",
+      "context": [],
+      "input": {
+        "type": "shape",
+        "text": "typed_null"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "null"
+      }
+    },
+    {
+      "id": "typed-null-int64",
+      "kind": "int64",
+      "context": [],
+      "input": {
+        "type": "shape",
+        "text": "typed_null"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "null"
+      }
+    },
+    {
+      "id": "undefined-int32",
+      "kind": "int32",
+      "context": [],
+      "input": {
+        "type": "undefined",
+        "text": ""
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "undefined"
+      }
+    },
+    {
+      "id": "undefined-json",
+      "kind": "json",
+      "context": ["conformance", "value"],
+      "input": {
+        "type": "undefined",
+        "text": ""
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "undefined"
+      }
+    },
+    {
+      "id": "int64-given-string",
+      "kind": "int64",
+      "context": [],
+      "input": {
+        "type": "string",
+        "text": "34"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type"
+      }
+    },
+    {
+      "id": "uint64-given-fraction",
+      "kind": "uint64",
+      "context": [],
+      "input": {
+        "type": "float64",
+        "text": "34.5"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type"
+      }
+    },
+    {
+      "id": "int8-given-300",
+      "kind": "int8",
+      "context": [],
+      "input": {
+        "type": "int64",
+        "text": "300"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type"
+      }
+    },
+    {
+      "id": "date-given-int32",
+      "kind": "date",
+      "context": [],
+      "input": {
+        "type": "int32",
+        "text": "0"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type"
+      }
+    },
+    {
+      "id": "decimal-given-float64",
+      "kind": "decimal",
+      "context": [],
+      "input": {
+        "type": "float64",
+        "text": "1.5"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type"
+      }
+    },
+    {
+      "id": "string-given-int64",
+      "kind": "string",
+      "context": [],
+      "input": {
+        "type": "int64",
+        "text": "34"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type"
+      }
+    },
+    {
+      "id": "bytes-given-string",
+      "kind": "bytes",
+      "context": [],
+      "input": {
+        "type": "string",
+        "text": ""
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type"
+      }
+    },
+    {
+      "id": "array-given-string",
+      "kind": "array",
+      "context": [],
+      "input": {
+        "type": "string",
+        "text": "a"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type"
+      }
+    },
+    {
+      "id": "object-given-int64",
+      "kind": "object",
+      "context": [],
+      "input": {
+        "type": "int64",
+        "text": "1"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type"
+      }
+    },
+    {
+      "id": "json-given-int64",
+      "kind": "json",
+      "context": [],
+      "input": {
+        "type": "int64",
+        "text": "1"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type"
+      }
+    },
+    {
+      "id": "json-syntax",
+      "kind": "json",
+      "context": [],
+      "input": {
+        "type": "string",
+        "text": "{\"a\": "
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "json_syntax"
+      }
+    },
+    {
+      "id": "json-duplicate-key",
+      "kind": "json",
+      "context": [],
+      "input": {
+        "type": "string",
+        "text": "{\"a\":1,\"a\":2}"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "json_duplicate_key"
+      }
+    },
+    {
+      "id": "json-integer-range",
+      "kind": "json",
+      "context": [],
+      "input": {
+        "type": "bytes",
+        "text": "3138343436373434303733373039353531363136"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "json_integer_range"
+      }
+    }
+  ],
+  "batches": [
+    {
+      "id": "batch-strings",
+      "kind": "string",
+      "context": ["conformance", "value"],
+      "inputs": [
+        {
+          "type": "string",
+          "text": "ada"
+        },
+        {
+          "type": "string",
+          "text": ""
+        },
+        {
+          "type": "string",
+          "text": "grace"
+        }
+      ]
+    },
+    {
+      "id": "batch-converted",
+      "kind": "uint32",
+      "context": [],
+      "inputs": [
+        {
+          "type": "float64",
+          "text": "1"
+        },
+        {
+          "type": "int64",
+          "text": "2"
+        },
+        {
+          "type": "uint16",
+          "text": "3"
+        }
+      ],
+      "stored": [
+        {
+          "type": "uint32",
+          "text": "1"
+        },
+        {
+          "type": "uint32",
+          "text": "2"
+        },
+        {
+          "type": "uint32",
+          "text": "3"
+        }
+      ]
+    },
+    {
+      "id": "batch-mixed-no-kind",
+      "kind": "",
+      "context": [],
+      "inputs": [
+        {
+          "type": "int64",
+          "text": "1"
+        },
+        {
+          "type": "string",
+          "text": "two"
+        },
+        {
+          "type": "bool",
+          "text": "true"
+        }
+      ]
+    },
+    {
+      "id": "batch-empty",
+      "kind": "",
+      "context": [],
+      "inputs": []
+    },
+    {
+      "id": "batch-with-null",
+      "kind": "",
+      "context": ["conformance", "value"],
+      "inputs": [
+        {
+          "type": "string",
+          "text": "ada"
+        },
+        {
+          "type": "null",
+          "text": ""
+        },
+        {
+          "type": "string",
+          "text": "grace"
+        }
+      ],
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "null"
+      }
+    },
+    {
+      "id": "batch-with-mismatch",
+      "kind": "int64",
+      "context": [],
+      "inputs": [
+        {
+          "type": "int64",
+          "text": "1"
+        },
+        {
+          "type": "string",
+          "text": "two"
+        }
+      ],
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type"
+      }
+    }
+  ]
+}

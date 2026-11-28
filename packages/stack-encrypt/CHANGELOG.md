@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     sealed leaf has a random nonce. The two interfaces agree on every
     other part: the keyset, the data key, the length, and the plaintext of
     the leaf. `tests/single_value.rs` holds them to that for every kind.
+  - The conformance profile `single-value-v1`
+    (`conformance/stack-encrypt/single-value-contract.md`) has the shared
+    cases.
   - `ScalarTarget` is re-exported from Vitamin C at the crate root.
 
 - **Encrypt a UUID as a UUID** (#1833). `value::Uuid` is vitaminc's
