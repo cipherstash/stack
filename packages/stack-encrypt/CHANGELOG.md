@@ -578,9 +578,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `T::decrypt_from(ciphertext, ..)`, and a `Ciphertext` field of a derived
     record.
   - Still accepted:
-    - every scalar: `bool`, the integers, the floats, `String`, `Vec<u8>`,
-      `[u8; N]`, `value::Date`, `value::Timestamp`, `value::Decimal`, and
-      `value::Uuid`
+    - every scalar: `bool`, the fixed-width integers other than `u8`, the
+      floats, `String`, `Vec<u8>`, `[u8; N]`, `value::Date`,
+      `value::Timestamp`, `value::Decimal`, and `value::Uuid`
     - `JsonPlaintext`
     - a `Protected` or an `Option` of a scalar
     - `OwnedFrame`
@@ -593,10 +593,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - a `HashMap` or a `BTreeMap`
     - a struct that derives `Decrypt` with named fields
     - a newtype, a `Protected`, or an `Option` of one of those
-  - You write no code to make a type of your own a target. You cannot
-    implement `ScalarTarget` directly. A type is a `ScalarTarget` when it
-    is built from one scalar. The compiler derives that from how the type
-    decrypts.
+  - A type of your own is accepted when it is built from one scalar. The
+    type must also implement `Zeroize` and `Send`, and be `'static`. A
+    `'static` type borrows no data.
+  - You cannot implement `ScalarTarget` directly. A type is a
+    `ScalarTarget` when it is built from one scalar. The compiler derives
+    that from how the type decrypts.
   - The compile error names the type that you wrote, such as
     `Vec<String>`. The error says what one `Ciphertext` decrypts into, and
     what to use for the other types.

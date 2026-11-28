@@ -295,8 +295,8 @@ impl<T: FromScalar> Decrypt for T {
 ///
 /// So these targets are `ScalarTarget`s with no code of their own:
 ///
-/// - Every [`FromScalar`] type, such as `bool`, the integers except `u8`,
-///   the floats, `String`, `Vec<u8>`, and `[u8; N]`.
+/// - Every [`FromScalar`] type, such as `bool`, the fixed-width integers
+///   except `u8`, the floats, `String`, `Vec<u8>`, and `[u8; N]`.
 /// - The other `FromScalar` types of this crate: the date, timestamp,
 ///   decimal, and UUID values. The jiff, `rust_decimal`, and uuid types
 ///   behind their features are `FromScalar` types too.
