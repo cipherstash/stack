@@ -36,9 +36,8 @@ default-members = ["tests/sqlx"]
 dead_code = "deny"
 unused_imports = "deny"
 
-# vitaminc-aead 0.10 and its sibling crates live in this repository and are
-# not published from here yet. Build against the copies, as the root
-# workspace does (see its [patch.crates-io]).
+# vitaminc-aead 0.10 lives in this repository and is not published from
+# here yet. Build against the copy, as the root workspace does (see its
+# [patch.crates-io]).
 [patch.crates-io]
 vitaminc-aead = { path = "../vitaminc-aead" }
-vitaminc-aead-derive = { path = "../vitaminc-aead-derive" }

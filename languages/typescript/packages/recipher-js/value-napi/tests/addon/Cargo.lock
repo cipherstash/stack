@@ -1128,20 +1128,10 @@ dependencies = [
  "rust_decimal",
  "serde",
  "thiserror",
- "vitaminc-aead-derive",
  "vitaminc-context",
  "vitaminc-protected",
  "vitaminc-random",
  "zeroize",
-]
-
-[[package]]
-name = "vitaminc-aead-derive"
-version = "0.10.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.10",
 ]
 
 [[package]]
