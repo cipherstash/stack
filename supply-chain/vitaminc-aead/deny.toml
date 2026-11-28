@@ -1,15 +1,33 @@
-# cargo-deny configuration for vitaminc-aead and recipher-frame, and their
-# dependency graph ONLY. It does not cover the rest of the root workspace;
-# that is #1842.
+# cargo-deny configuration for three crates and their dependency graph ONLY:
+# vitaminc-aead, recipher-frame, and stack-encrypt-derive. The derive is here
+# because it writes every derived `Encrypt` and `Decrypt` impl. This file
+# does not cover the rest of the root workspace; that is #1842.
 #
 # CI (.github/workflows/supply-chain-vitaminc-aead.yml) runs it once per crate:
 #
-#   cargo deny --locked --config supply-chain/vitaminc-aead/deny.toml \
-#     --manifest-path packages/<crate>/Cargo.toml check
+#   cargo deny --locked --exclude stack-encrypt-derive \
+#     --config supply-chain/vitaminc-aead/deny.toml \
+#     --manifest-path packages/vitaminc-aead/Cargo.toml check
+#   cargo deny --locked --exclude stack-encrypt-derive \
+#     --config supply-chain/vitaminc-aead/deny.toml \
+#     --manifest-path packages/recipher-frame/Cargo.toml check
+#   cargo deny --locked --exclude-dev \
+#     --config supply-chain/vitaminc-aead/deny.toml \
+#     --manifest-path packages/stack-encrypt-derive/Cargo.toml check
 #
 # `--manifest-path` on a workspace member checks that package's graph, not
 # the workspace's. `cargo deny check` at the repository root does NOT read
 # this file.
+#
+# The derive's dev-dependencies include stack-encrypt, and stack-encrypt
+# reaches the rest of the workspace. So the derive is checked as the root of
+# its own graph, with `--exclude-dev`. That graph is the derive's normal
+# dependencies and theirs. The normal dependencies are syn, quote,
+# proc-macro2, and stack-encrypt-jsonpath.
+#
+# The tests of the other two crates use the derive, so their checks leave it
+# out with `--exclude`. Both are flags, not `[graph] exclude`, because cargo
+# deny cannot use an excluded crate as a root.
 #
 # What it holds the lockfile to:
 #   advisories  no RustSec advisory, no yanked version
@@ -23,11 +41,6 @@
 # Optional dependencies (jiff, uuid, rust_decimal, serde) are part of what
 # ships, so check the graph with every feature on.
 all-features = true
-# vitaminc-aead's tests use stack-encrypt-derive, a member of the root
-# workspace, whose own tests reach the rest of the workspace. Leaving it out
-# keeps the graph to the two crates and their dependencies, as cargo vet's
-# `filter-graph` does for every other workspace member.
-exclude = ["stack-encrypt-derive"]
 
 [output]
 feature-depth = 1
@@ -35,7 +48,7 @@ feature-depth = 1
 [advisories]
 db-path = "$CARGO_HOME/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-# Unmaintained advisories fail too, for crates the two depend on directly.
+# Unmaintained advisories fail too, for crates the three depend on directly.
 unmaintained = "workspace"
 yanked = "deny"
 # Each entry needs the advisory id and a reason. Prefer a bump to an ignore.
@@ -54,7 +67,13 @@ allow = [
   "Unlicense",
 ]
 confidence-threshold = 0.8
-exceptions = []
+# stack-encrypt-derive and stack-encrypt-jsonpath are this repository's own
+# crates, under its PolyForm Small Business licence. Each exception names one
+# crate, so a third-party crate under that licence still fails.
+exceptions = [
+  { crate = "stack-encrypt-derive", allow = ["PolyForm-Small-Business-1.0.0"] },
+  { crate = "stack-encrypt-jsonpath", allow = ["PolyForm-Small-Business-1.0.0"] },
+]
 
 [licenses.private]
 ignore = true
@@ -71,7 +90,7 @@ deny = []
 [bans.build]
 # A build script runs arbitrary code on every developer machine and in CI,
 # and a new one is the most common shape of a malicious release. This is
-# every crate in the two crates' graph with a build script today
+# every crate in the three crates' graphs with a build script today
 # (platform-specific ones included, because the graph is checked for every
 # target). A dependency change that adds one fails here, and the review
 # decides whether to add it.
