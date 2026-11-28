@@ -61,9 +61,12 @@ export type Scalar =
 /**
  * A JSON value. An integer outside the safe range of a `number` is a
  * `bigint`, within the 64-bit range (`-(2n ** 63n)` to `2n ** 64n - 1n`).
+ * The safe range is 2^53 - 1 either side of zero.
  *
- * `encrypt` refuses a whole `number` whose absolute value is at least 2^53
- * but less than 2^64. An integer was likely meant.
+ * A whole `number` in the safe range is stored as an integer, and any other
+ * `number` as a float. `encrypt` refuses a whole `number` whose absolute
+ * value is at least 2^53 but less than 2^64, because it may not keep the
+ * digits that were written. `encrypt` also refuses `NaN` and the infinities.
  */
 export type JsonValue =
   | null
@@ -74,7 +77,11 @@ export type JsonValue =
   | readonly JsonValue[]
   | { readonly [key: string]: JsonValue }
 
-/** A JSON document as it decrypts. */
+/**
+ * A JSON document as it decrypts. An integer is a `number` when it is in
+ * the safe range of a `number`, and a `bigint` otherwise. The members of an
+ * object are sorted by key.
+ */
 export type OpenedJson =
   | null
   | boolean

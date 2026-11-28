@@ -147,9 +147,22 @@ export type JsonFunction = Binding['json']
  * immediately, so a later change to the object does not change what is
  * encrypted.
  *
+ * ```ts
+ * const sealed = await keyset.encrypt(json({ name: 'Ada', visits: 3 }))
+ * ```
+ *
+ * A whole `number` within 2^53 - 1 of zero is stored as an integer, and any
+ * other `number` as a float. A whole `number` from 2^53 up to 2^64 is
+ * refused: give it as a `bigint`. A `bigint` is stored as its exact digits,
+ * within 64 bits.
+ *
+ * A decrypted integer is a `number` when it is within 2^53 - 1 of zero, and
+ * a `bigint` otherwise. So `json({ a: 5n })` decrypts as `{ a: 5 }`. A
+ * decrypted object lists its members sorted by key.
+ *
  * `json` never throws. A document that cannot be encrypted is an `Err` from
- * `encrypt`. Examples are a document that contains bytes or a `Date`, and a
- * document nested deeper than 127 levels.
+ * `encrypt`. Examples are a document that contains `undefined`, bytes or a
+ * `Date`, and a document nested deeper than 127 levels.
  */
 export const json: JsonFunction = binding.isOk()
   ? binding.value.json

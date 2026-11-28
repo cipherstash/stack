@@ -95,18 +95,49 @@ const opened = await cipher.decrypt(sealed.unwrap())
 
 `json(value)` encrypts a whole document as one ciphertext.
 The document is encrypted as its JSON text, as the engine's `JsonPlaintext` type does.
+Rust code that calls `keyset.decrypt::<JsonPlaintext>` decrypts it.
 
-- An integer outside a `number`'s safe range is a `bigint`.
-  The `bigint` must be in the 64-bit range that the engine's parser reads: `-(2n ** 63n)` to `2n ** 64n - 1n`.
-  A `bigint` outside that range is refused.
-- A whole `number` is refused when its absolute value is at least 2^53 but less than 2^64.
-  An integer was likely meant.
-  The `number` does not keep the digits that were written.
+```ts
+import { json } from '@cipherstash/recipher'
+
+const profile = json({ name: 'Ada', visits: 3, id: 2n ** 64n - 1n })
+const sealed = (await keyset.encrypt(profile)).unwrap()
+
+const opened = (await cipher.decrypt(sealed)).unwrap()
+// { id: 18446744073709551615n, name: 'Ada', visits: 3 }
+```
+
+A document is a plain object, an array, a string, a number, a `bigint`, a boolean, or `null`.
+It can nest 127 levels of arrays and objects.
+
+A number is stored and decrypted by these rules:
+
+| In the document | Stored as | Decrypts as |
+|---|---|---|
+| a whole `number` within 2^53 - 1 of zero, such as `5000000000` | the integer `5000000000` | `number` |
+| a whole `number` from 2^53 up to 2^64 | refused | |
+| any other `number`, such as `1.5` or `1e20` | a float | `number` |
+| a `bigint` within 2^53 - 1 of zero, such as `5n` | the integer `5` | `number` |
+| any other `bigint` from `-(2n ** 63n)` to `2n ** 64n - 1n` | an integer, with its exact digits | `bigint` |
+| a `bigint` outside that range | refused | |
+
+- A whole `number` is stored as an integer, as `JSON.stringify` writes it.
+  A millisecond timestamp from `Date.now()`, such as `1764288000000`, is stored as `1764288000000`.
+  It is never stored as `1764288000000.0`, which code in Rust or Go refuses for an integer field.
+- A whole `number` from 2^53 up to 2^64 is refused, either side of zero.
+  A `number` that large may not keep the digits you wrote.
   Use a `bigint` instead.
-  Any other finite `number`, such as `1e20`, is a float.
-- Bytes, a `Date`, the wrapper classes, and `undefined` have no JSON form.
-  The package refuses them.
-  The package also refuses a document nested deeper than 127 levels.
+- A `bigint` must be in the 64-bit range that the engine's parser reads.
+- An integer decrypts as a `number` when it is within 2^53 - 1 of zero, and as a `bigint` otherwise.
+  So no digit is lost, and `json({ a: 5n })` decrypts as `{ a: 5 }`.
+- The engine stores the members of an object sorted by key.
+  A decrypted object lists its members in that order, not in the order you wrote them.
+- `undefined`, `NaN`, the infinities, bytes, a `Date`, and the wrapper classes have no JSON form.
+  Each is an `Err` with the code `recipher_js::not_json`.
+  The package does not call a `toJSON` method.
+- A document nested deeper than 127 levels is an `Err` with the code `recipher_js::too_deep`.
+- A document is read by the same rules as any value.
+  A `Map`, a class instance, a sparse array, and a string with an unpaired surrogate are refused.
 - A property named `__proto__`, `constructor`, or `prototype` cannot be encrypted.
   Another SDK can write a document with one of these properties.
   Decrypting that document here gives an `Err` with the code `recipher_js::reserved_key`.
