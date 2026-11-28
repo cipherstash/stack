@@ -100,6 +100,36 @@ pub(crate) mod sealed {
 /// `struct Tags(Vec<String>)`, still derives `Encrypt`. So it can be a field
 /// of a struct. `keyset.encrypt` refuses it, as it refuses a `Vec<String>`.
 ///
+/// A fieldless enum that derives `Encrypt` encrypts as one `u32`, so it is
+/// one value too. But `#[derive(Zeroize)]` does not wipe a fieldless enum:
+/// its `zeroize` does nothing. So `keyset.encrypt` cannot wipe the variant
+/// from memory after it encrypts it. To have the variant wiped, give the
+/// enum a `#[default]` variant and implement `zeroize::DefaultIsZeroes` for
+/// it. Its `zeroize` then overwrites the value with the default variant.
+///
+/// ```
+/// use stack_encrypt::{Encrypt, KeysetCipher};
+/// use zeroize::Zeroize;
+///
+/// #[derive(Encrypt, Clone, Copy, Default, Debug, PartialEq)]
+/// enum Status {
+///     #[default]
+///     Active,
+///     Suspended = 7,
+/// }
+///
+/// impl zeroize::DefaultIsZeroes for Status {}
+///
+/// fn encrypt<K: 'static>(keyset: &KeysetCipher<'_, K>) {
+///     let _ = keyset.encrypt(Status::Suspended);
+/// }
+///
+/// let mut status = Status::Suspended;
+/// status.zeroize();
+/// assert_eq!(status, Status::Active, "zeroize writes the default variant");
+/// # let _ = encrypt::<stack_encrypt::kms::FakeDataKeySource>;
+/// ```
+///
 /// You can also write the `Encrypt` impl of a type yourself, with the items
 /// in [`plaintext`](crate::plaintext). Such a type is an `OpaqueEncode` type
 /// when you implement `Scalar` for its borrow.
@@ -115,6 +145,10 @@ pub(crate) mod sealed {
 /// `None`. `None` means that the depth depends on the value. `keyset.encrypt`
 /// checks the `DEPTH` when your program is built. A `Scalar` type whose
 /// borrow has any other `DEPTH` fails the build.
+///
+/// A newtype that derives `Encrypt` copies the `DEPTH` of the type it wraps.
+/// So when a derived newtype fails this check, fix the type it wraps. That
+/// is the innermost type whose `Encrypt` impl you wrote by hand.
 ///
 /// [`OpaqueBlob<T>`](crate::OpaqueBlob) is an `OpaqueEncode` type too. It
 /// encodes a whole `Serialize` value as one storage blob first.
@@ -170,14 +204,15 @@ pub(crate) mod sealed {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be encrypted into one `Ciphertext`",
     label = "this must be one owned value that can be wiped",
-    note = "to be encrypted into one `Ciphertext`, a type must meet three conditions.",
-    note = "first, its value must be one scalar, such as a `String`, a `bool`, a float, a \
-            `Vec<u8>`, or a fixed-width integer other than `u8`. A newtype that derives \
-            `Encrypt` over a scalar is a scalar too.",
+    note = "to be encrypted into one `Ciphertext`, a value must meet three conditions.",
+    note = "first, the value must be one scalar or an `OpaqueBlob<T>`. A scalar is a value such \
+            as a `String`, a `bool`, a float, a `Vec<u8>`, or a fixed-width integer other than \
+            `u8`. A newtype that derives `Encrypt` over a scalar is a scalar too.",
     note = "second, the value must be owned. A borrow, such as a `&str`, is not owned.",
     note = "third, the type must implement `Zeroize`, so that the value can be wiped after it \
-            is encrypted.",
-    note = "a value that is not one scalar needs another call. `EncryptInto` encrypts each \
+            is encrypted. For an `OpaqueBlob<T>`, `T` must implement `Zeroize` and \
+            `Serialize`.",
+    note = "these calls encrypt a value that is not one scalar. `EncryptInto` encrypts each \
             element of a `Vec` into its own `Ciphertext`. `keyset.encrypt_tree` encrypts an \
             `Option` or a struct into a tree of ciphertexts. `OpaqueBlob` encrypts a whole \
             `Serialize` value into one `Ciphertext`."
@@ -304,7 +339,8 @@ where
                 vitaminc_aead::plaintext::depth::is_scalar(<S as crate::EncryptRef>::REF_DEPTH),
                 "a type marked `Scalar` must encrypt as one value. Set \
                  `const DEPTH: Option<usize> = stack_encrypt::plaintext::depth::SCALAR;` in the \
-                 `Encrypt` impl of its borrow.",
+                 `Encrypt` impl that you wrote for its borrow. For a newtype that derives \
+                 `Encrypt`, set it on the innermost type whose `Encrypt` impl you wrote by hand.",
             )
         };
         crate::target::core::encrypt_opaque(self.lend(), cipher, context)

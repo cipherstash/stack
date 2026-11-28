@@ -1307,12 +1307,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A `Scalar` type that you write by hand must set its `DEPTH`** (#2012).
   `keyset.encrypt` now checks, when the program is built, that the borrow
-  of the type encrypts as one value. So the `Encrypt` impl of the borrow
-  must contain `const DEPTH: Option<usize> = depth::SCALAR;`. `depth` is
-  `stack_encrypt::plaintext::depth`. An impl that leaves `DEPTH` at its
-  default `None` compiled before. Now `cargo build` fails with `E0080`,
-  and the message names the line to add. `cargo check` does not run this
-  check.
+  of the type encrypts as one value. So the `Encrypt` impl that you wrote
+  for the borrow must contain `const DEPTH: Option<usize> = depth::SCALAR;`.
+  `depth` is `stack_encrypt::plaintext::depth`.
+  - An impl that leaves `DEPTH` at its default `None` compiled before. Now
+    `cargo build` fails with `E0080`, and the message names the line to
+    add. `cargo check` does not run this check.
+  - A newtype that derives `Encrypt` copies the `DEPTH` of the type it
+    wraps. So when the newtype fails this check, fix the type it wraps.
+    That is the innermost type whose `Encrypt` impl you wrote by hand.
 
 ### Added
 
@@ -1808,9 +1811,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`keyset.encrypt` encrypts a newtype that derives `Encrypt` over one
   value** (#2012). A newtype is a struct with exactly one unnamed field.
   `struct Email(String)` with `#[derive(Encrypt, Zeroize)]` now encrypts
-  with `keyset.encrypt(Email(..))`, with no other code. Before this
-  change, the newtype needed a hand-written `impl Scalar for &Email {}`.
-  That impl needed a dependency on the `Scalar` trait of `vitaminc-aead`.
+  with `keyset.encrypt(Email(..))`. You no longer write
+  `impl Scalar for &Email {}` by hand. Your crate needs no dependency
+  other than `stack-encrypt` to use the derive (#2013).
   - The newtype encrypts exactly as its inner value does. The leaf has the
     same plaintext and the same length. So `keyset.decrypt::<String>` opens
     what `Email` encrypted.
@@ -1820,7 +1823,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     such a newtype when the program compiles. `keyset.encrypt` also
     refuses a struct with named fields.
   - `keyset.encrypt` also encrypts a fieldless enum that derives
-    `Encrypt`, as one `u32` value.
+    `Encrypt`, as one `u32` value. But `#[derive(Zeroize)]` does not wipe a
+    fieldless enum: its `zeroize` does nothing. So `keyset.encrypt` cannot
+    wipe the variant from memory after it encrypts it. To have the variant
+    wiped, give the enum a `#[default]` variant and implement
+    `zeroize::DefaultIsZeroes` for it, as the `OpaqueEncode` docs show (see
+    #2015).
   - The compile error for a refused type now says that the type cannot be
     encrypted into one `Ciphertext`. The error says what `keyset.encrypt`
     needs, and what to use instead:

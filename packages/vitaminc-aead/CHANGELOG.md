@@ -6,8 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Wire format
+
+- A timestamp is always sealed in nanoseconds.
+  `leaf::write_leaf` and the encrypting sink convert a timestamp in seconds, milliseconds or microseconds to the same instant in nanoseconds, under the `TIMESTAMP` tag.
+  A typed null of a timestamp in any unit is sealed as a nanosecond timestamp's null, so it is as long as a value.
+  A leaf sealed in another unit by an earlier version still decrypts.
+- Transport frames are unchanged: a frame keeps the unit it was given.
+
 ### Breaking
 
+- **Breaking:** `#[derive(Encrypt)]` now implements `Scalar` for a newtype and for a fieldless enum.
+  A `Scalar` impl you wrote for such a type now conflicts with the derived impl, even when the inner type is not a `Scalar`.
+  The compiler reports `E0119`, conflicting implementations.
+  - For a fieldless enum, or for a newtype whose inner type is a `Scalar`, delete your impl.
+  - When the inner type is not a `Scalar`, but you know that its value is one leaf, stop deriving `Encrypt`.
+    Write `Encrypt` for the type and for its borrow by hand, with `const DEPTH: Option<usize> = depth::SCALAR;`, and keep your `Scalar` impl.
 - This crate no longer has derives of its own (#2013).
   `#[derive(Encrypt)]` and `#[derive(Decrypt)]` are Stack Encrypt's.
   `vitaminc_aead::Encrypt` and `vitaminc_aead::Decrypt` are now the traits alone.
@@ -18,14 +32,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The items that the derived code names are in the hidden `__derive` module.
   `stack_encrypt::__derive` re-exports that module.
   Neither module is an API.
-
-### Wire format
-
-- A timestamp is always sealed in nanoseconds.
-  `leaf::write_leaf` and the encrypting sink convert a timestamp in seconds, milliseconds or microseconds to the same instant in nanoseconds, under the `TIMESTAMP` tag.
-  A typed null of a timestamp in any unit is sealed as a nanosecond timestamp's null, so it is as long as a value.
-  A leaf sealed in another unit by an earlier version still decrypts.
-- Transport frames are unchanged: a frame keeps the unit it was given.
 
 ### Added
 
@@ -60,10 +66,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   So `struct Email(String)` needs no `Scalar` impl of its own.
   A `Protected<Email>` is a `Scalar` too.
   `struct Tags(Vec<String>)` still derives `Encrypt`, but it is not a `Scalar`.
-  A `Scalar` impl you wrote for such a type now conflicts with the derived impl, even when the inner type is not a `Scalar`.
-  For a fieldless enum, or for a newtype whose inner type is a `Scalar`, delete your impl.
-  When the inner type is not a `Scalar`, but you know that its value is one leaf, stop deriving `Encrypt`.
-  Write `Encrypt` for the type and for its borrow by hand, with `const DEPTH: Option<usize> = depth::SCALAR;`, and keep your `Scalar` impl.
+  The section above, under Breaking, says what to do with a `Scalar` impl you wrote for such a type.
 - The `Scalar` docs now say that a hand-written `Scalar` type must set `const DEPTH: Option<usize> = depth::SCALAR;`.
   A caller that checks `DEPTH` refuses a `Scalar` type whose `DEPTH` is the default `None`.
 

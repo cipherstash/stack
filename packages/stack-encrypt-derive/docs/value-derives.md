@@ -82,6 +82,30 @@ reordering the variants changes their discriminants. Variants take no
 `#[aead(...)]` attributes. A fieldless enum is a `Scalar`, by value and by
 reference, because it is one leaf.
 
+`#[derive(Zeroize)]` from the zeroize crate does not wipe a fieldless enum:
+its `zeroize` does nothing. So a caller that wipes the value after it
+encrypts it leaves the variant in memory. To have the variant wiped, give
+the enum a `#[default]` variant and implement `zeroize::DefaultIsZeroes`
+for it. Its `zeroize` then overwrites the value with the default variant.
+
+```rust
+use stack_encrypt::Encrypt;
+use zeroize::Zeroize;
+
+#[derive(Encrypt, Clone, Copy, Default, Debug, PartialEq)]
+enum Status {
+    #[default]
+    Active,
+    Suspended = 7,
+}
+
+impl zeroize::DefaultIsZeroes for Status {}
+
+let mut status = Status::Suspended;
+status.zeroize();
+assert_eq!(status, Status::Active, "zeroize writes the default variant");
+```
+
 An enum with fields cannot be derived. There is no agreed layout for the
 fields of a variant. Model the choice as a struct instead, with a
 fieldless enum for the variant and an `Option` field for each variant's
