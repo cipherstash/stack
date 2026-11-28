@@ -7,9 +7,9 @@ import {
   kinds,
   type Plaintext,
   passthrough,
+  RcDate,
+  RcDecimal,
   record,
-  VcDate,
-  VcDecimal,
 } from '../../src/index'
 import { testCipher } from '../../src/testing'
 
@@ -106,8 +106,8 @@ describe('a record', () => {
       small: 255n,
       big: -(2n ** 100n),
       real: 1.5,
-      price: new VcDecimal('1.50'),
-      day: new VcDate('2026-11-23'),
+      price: new RcDecimal('1.50'),
+      day: new RcDate('2026-11-23'),
       at: new Date('2026-11-23T01:02:03.456Z'),
       blob: new Uint8Array([1, 2, 3]),
     }
@@ -119,8 +119,8 @@ describe('a record', () => {
     expect(opened.small).toBe(255n)
     expect(opened.big).toBe(-(2n ** 100n))
     expect(opened.real).toBe(1.5)
-    expect((opened.price as VcDecimal).value).toBe('1.50')
-    expect((opened.day as VcDate).value).toBe('2026-11-23')
+    expect((opened.price as RcDecimal).value).toBe('1.50')
+    expect((opened.day as RcDate).value).toBe('2026-11-23')
     expect((opened.at as Date).getTime()).toBe(
       row.at instanceof Date ? row.at.getTime() : 0,
     )

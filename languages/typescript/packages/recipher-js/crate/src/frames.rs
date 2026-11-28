@@ -2,9 +2,8 @@
 //! in a given order.
 //!
 //! A frame is an [`OwnedFrame`]: a byte buffer that contains one value, in
-//! the encoding of vitaminc, CipherStash's cryptography library. A map frame
-//! contains a map. A sink receives a value from a frame one part at a time:
-//! one scalar, array or map.
+//! the engine's frame encoding. A map frame contains a map. A sink receives
+//! a value from a frame one part at a time: one scalar, array or map.
 //!
 //! The addon passes a record's row, and its stored row, between JavaScript
 //! and the engine as one map frame each. The engine is the `stack-encrypt`

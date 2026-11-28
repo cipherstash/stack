@@ -12,6 +12,7 @@ use napi_derive::napi;
 use serde::Deserialize;
 use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::dynamic::{read, ValueKind};
+use stack_encrypt::json::JsonPlaintext;
 use vitaminc_protected::OpaqueDebug;
 
 use crate::error::{Error, RecipherErrorFields};
@@ -22,7 +23,7 @@ use crate::outcome::{failed, not_made, settle, Outcome};
 /// with its own data key. A data key is the key that encrypts one value.
 ///
 /// The ciphertext's bytes are the engine's format for an encrypted value.
-/// The Rust and Go SDKs write the same bytes. `toString()` and Node's
+/// Rust's `keyset.encrypt` writes the same bytes. `toString()` and Node's
 /// `inspect` hide the bytes, because the object has no own properties.
 ///
 /// The SDK uses a class rather than plain bytes for two reasons. First,
@@ -34,6 +35,16 @@ use crate::outcome::{failed, not_made, settle, Outcome};
 pub struct Ciphertext {
     sealed: stack_encrypt::Ciphertext,
     opens_as: Option<ValueKind>,
+}
+
+/// A decrypted value, before the addon builds it in JavaScript. Both forms
+/// are plaintext, and both are wiped when they drop.
+#[derive(OpaqueDebug)]
+pub(crate) enum Opened {
+    /// A value of the engine's value model, in a frame.
+    Value(OwnedFrame),
+    /// A JSON document.
+    Document(JsonPlaintext),
 }
 
 impl Ciphertext {
@@ -66,11 +77,11 @@ impl Ciphertext {
     /// Returns `recipher_js::opened_type` for a value encrypted as another
     /// type. Returns `recipher_js::not_a_document` when the kind is JSON but
     /// the value is not a JSON document.
-    pub(crate) fn opened(&self, value: OwnedFrame) -> Outcome<OwnedFrame> {
+    pub(crate) fn opened(&self, value: OwnedFrame) -> Outcome<Opened> {
         match self.opens_as {
-            None => Ok(value),
-            Some(ValueKind::Json) => crate::json::opened(&value),
-            Some(kind) => as_kind(kind, value),
+            None => Ok(Opened::Value(value)),
+            Some(ValueKind::Json) => crate::json::opened(&value).map(Opened::Document),
+            Some(kind) => as_kind(kind, value).map(Opened::Value),
         }
     }
 }
@@ -153,9 +164,32 @@ fn kind_of(env: &Env, value: Option<Unknown<'_>>) -> Outcome<Option<ValueKind>> 
         .name
         .parse::<ValueKind>()
         .ok()
-        .filter(|kind| !matches!(kind, ValueKind::Array | ValueKind::Object))
+        .filter(|kind| readable(*kind))
         .ok_or(Error::NotAKind)?;
     Ok(Some(kind))
+}
+
+/// Returns whether a stored ciphertext can be read as `kind`: whether
+/// `kind` is one of the package's `kinds`.
+///
+/// The engine has names for more kinds than the package exports. The list
+/// here is the kinds a ciphertext decrypts as, so a kind the engine adds is
+/// refused until the package has it. A suite that loads the addon checks
+/// the list against `kinds`.
+fn readable(kind: ValueKind) -> bool {
+    integer(kind)
+        || matches!(
+            kind,
+            ValueKind::String
+                | ValueKind::Bool
+                | ValueKind::Float32
+                | ValueKind::Float64
+                | ValueKind::Decimal
+                | ValueKind::Date
+                | ValueKind::Timestamp
+                | ValueKind::Bytes
+                | ValueKind::Json
+        )
 }
 
 /// Returns whether `kind` is an integer kind.
@@ -198,10 +232,10 @@ fn as_kind(kind: ValueKind, value: OwnedFrame) -> Outcome<OwnedFrame> {
 /// Returns a copy of the bytes of a `Uint8Array`, or `None` for any other
 /// value. A `Buffer` is a `Uint8Array`.
 ///
-/// The function reads the bytes as a borrowed slice. That is how vitaminc,
-/// CipherStash's cryptography library, reads bytes. napi's owned
-/// `Uint8Array` is not used. When it refuses a typed array of another
-/// element type, it still keeps a reference to that array.
+/// The function reads the bytes as a borrowed slice. That is how the value
+/// bridge reads bytes. napi's owned `Uint8Array` is not used. When it
+/// refuses a typed array of another element type, it still keeps a
+/// reference to that array.
 pub(crate) fn bytes_of(value: Unknown<'_>) -> Option<Vec<u8>> {
     if !value.is_typedarray().unwrap_or(false) {
         return None;
@@ -213,9 +247,40 @@ pub(crate) fn bytes_of(value: Unknown<'_>) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::as_kind;
+    use super::{as_kind, readable};
     use stack_encrypt::dynamic::frame::OwnedFrame;
     use stack_encrypt::dynamic::ValueKind;
+
+    #[test]
+    fn a_ciphertext_is_read_as_a_kind_the_package_exports_and_no_other() {
+        for name in [
+            "string",
+            "bool",
+            "int8",
+            "int16",
+            "int32",
+            "int64",
+            "int128",
+            "uint8",
+            "uint16",
+            "uint32",
+            "uint64",
+            "uint128",
+            "float32",
+            "float64",
+            "decimal",
+            "date",
+            "timestamp",
+            "bytes",
+            "json",
+        ] {
+            assert!(readable(name.parse::<ValueKind>().unwrap()), "{name}");
+        }
+        // The engine names these kinds, and no ciphertext decrypts as one.
+        for kind in [ValueKind::Uuid, ValueKind::Array, ValueKind::Object] {
+            assert!(!readable(kind), "{kind}");
+        }
+    }
 
     #[test]
     fn an_integer_opens_at_any_width_that_holds_it() {

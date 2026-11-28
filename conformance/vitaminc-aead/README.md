@@ -64,7 +64,7 @@ than skipping the row:
 - `js_reencode`: Node has two projections. A Float32 becomes a Number and
   re-encodes as Float64. A timestamp that is a whole number of milliseconds
   is read as a `Date` and re-encodes as the `Timestamp(Millis)` envelope; a
-  finer one is read as a `VcTimestamp` and re-encodes in the nanosecond
+  finer one is read as an `RcTimestamp` and re-encodes in the nanosecond
   shorthand. As for Go, this is safe because `LeafTypeAad` binds the kind and
   the logical id but not the unit, and the equality terms put every unit in
   one timestamp domain.

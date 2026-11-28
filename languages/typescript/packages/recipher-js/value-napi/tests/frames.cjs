@@ -21,7 +21,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 const addon = require(path.resolve(process.argv[2]))
-const { VcDate, VcTimestamp, VcDecimal, VcUuid } = addon
+const { RcDate, RcTimestamp, RcDecimal, RcUuid } = addon
 
 const golden = path.join(__dirname, 'testdata/js-frames.json')
 const vendored = path.join(__dirname, 'testdata/corpus-frames.json')
@@ -151,72 +151,72 @@ const inputs = [
   ['Date 123', () => new Date(123)],
   ['Date -1', () => new Date(-1)],
   [
-    'VcDate 1970-01-01',
-    () => new VcDate('1970-01-01'),
+    'RcDate 1970-01-01',
+    () => new RcDate('1970-01-01'),
     'record-values-v1/date-epoch',
   ],
   [
-    'VcDate 1969-12-31',
-    () => new VcDate('1969-12-31'),
+    'RcDate 1969-12-31',
+    () => new RcDate('1969-12-31'),
     'record-values-v1/date-before-epoch',
   ],
   [
-    'VcDate 0001-01-01',
-    () => new VcDate('0001-01-01'),
+    'RcDate 0001-01-01',
+    () => new RcDate('0001-01-01'),
     'record-values-v1/date-year-one',
   ],
   [
-    'VcDate 9999-12-31',
-    () => new VcDate('9999-12-31'),
+    'RcDate 9999-12-31',
+    () => new RcDate('9999-12-31'),
     'record-values-v1/date-year-9999',
   ],
   [
-    'VcTimestamp epoch',
-    () => new VcTimestamp('1970-01-01T00:00:00Z'),
+    'RcTimestamp epoch',
+    () => new RcTimestamp('1970-01-01T00:00:00Z'),
     'record-values-v1/timestamp-epoch',
   ],
   [
-    'VcTimestamp one nanosecond',
-    () => new VcTimestamp('2026-10-17T01:02:03.000000001Z'),
+    'RcTimestamp one nanosecond',
+    () => new RcTimestamp('2026-10-17T01:02:03.000000001Z'),
     'record-values-v1/timestamp-nanosecond',
   ],
   [
-    'VcTimestamp before epoch',
-    () => new VcTimestamp('1969-12-31T23:59:59.999999999Z'),
+    'RcTimestamp before epoch',
+    () => new RcTimestamp('1969-12-31T23:59:59.999999999Z'),
     'record-values-v1/timestamp-before-epoch',
   ],
   [
-    'VcTimestamp nanoseconds',
-    () => new VcTimestamp('2026-10-17T01:02:03.123456789Z'),
+    'RcTimestamp nanoseconds',
+    () => new RcTimestamp('2026-10-17T01:02:03.123456789Z'),
     'record-values-v1/timestamp-microsecond-query',
   ],
   [
-    'VcTimestamp year 9999',
-    () => new VcTimestamp('9999-12-30T22:00:00.999999999Z'),
+    'RcTimestamp year 9999',
+    () => new RcTimestamp('9999-12-30T22:00:00.999999999Z'),
     'record-values-v1/timestamp-year-9999',
   ],
   [
-    'VcDecimal 42',
-    () => new VcDecimal('42'),
+    'RcDecimal 42',
+    () => new RcDecimal('42'),
     'record-values-v1/decimal-scale-0',
   ],
   [
-    'VcDecimal scale 28',
-    () => new VcDecimal('0.0000000000000000000000000001'),
+    'RcDecimal scale 28',
+    () => new RcDecimal('0.0000000000000000000000000001'),
     'record-values-v1/decimal-scale-28',
   ],
   [
-    'VcDecimal -1234.5600',
-    () => new VcDecimal('-1234.5600'),
+    'RcDecimal -1234.5600',
+    () => new RcDecimal('-1234.5600'),
     'record-values-v1/decimal-trailing-zeros',
   ],
   [
-    'VcDecimal max mantissa',
-    () => new VcDecimal('79228162514264337593543950335'),
+    'RcDecimal max mantissa',
+    () => new RcDecimal('79228162514264337593543950335'),
     'record-values-v1/decimal-max-mantissa',
   ],
-  ['VcDecimal -0.00', () => new VcDecimal('-0.00')],
-  ['VcUuid', () => new VcUuid('123e4567-e89b-12d3-a456-426614174000')],
+  ['RcDecimal -0.00', () => new RcDecimal('-0.00')],
+  ['RcUuid', () => new RcUuid('123e4567-e89b-12d3-a456-426614174000')],
   ['array empty', () => []],
   ['array of bigint and string', () => [1n, 'x']],
   ['array of null', () => [null]],

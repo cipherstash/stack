@@ -7,6 +7,8 @@ The `recipher-js` addon reads and builds every value through it.
 This crate is a copy of `vitaminc-aead-napi` 0.10.0, from
 [`cipherstash/vitaminc`](https://github.com/cipherstash/vitaminc) at commit
 `b3f69b12c1fde38faff2becec04f9e633dbd4f1c`, renamed. It is not published.
+Its wrapper classes are `RcDate`, `RcTimestamp`, `RcDecimal` and `RcUuid`.
+vitaminc names them `VcDate` and so on.
 `tests/testdata/value-conformance.json` is a copy of
 `conformance/vitaminc-aead/value-conformance.json`: the vectors the Rust,
 Node and Go bindings all check. The bridge's tests read the copy, so a run
@@ -27,6 +29,10 @@ the outgoing value. This crate supplies both sides of that conversion:
 - **`JsBuilder<'e>`** — a `Sink` that builds JavaScript values, for
   `decrypt_into(&cipher, ct, aad, JsBuilder::new(&env))`, or
   `JsBuilder::build(&env, frame)` for a frame.
+- **`JsRef::to_json`** and **`JsBuilder::build_json`** — a JSON document.
+  The first writes a JavaScript value as the text of a document, and the
+  second builds the JavaScript value of a `serde_json::Value`. See
+  [JSON documents](#json-documents).
 - **`JsCipherText<Leaf, P>`** — projects the generic `CipherText` container
   onto plain JS values (`{ t, v }` nodes with `Buffer` leaves) and back, as
   an in-memory/application-side representation. Durable cross-language
@@ -34,8 +40,8 @@ the outgoing value. This crate supplies both sides of that conversion:
   passthrough payload `P` converts through `NapiPassthrough`, implemented
   for `PassthroughFrame` (the sink-based tree's payload) and `()`, which
   applies the tree's nesting limit to the payload too.
-- **`Wrappers`** — the wrapper classes `VcDate`, `VcTimestamp`,
-  `VcDecimal` and `VcUuid`, defined once per environment and exported by an
+- **`Wrappers`** — the wrapper classes `RcDate`, `RcTimestamp`,
+  `RcDecimal` and `RcUuid`, defined once per environment and exported by an
   addon with `Wrappers::exports`. The crate keeps them in its own registry,
   keyed by the environment and released by an environment cleanup hook; the
   addon's instance data is untouched.
@@ -89,16 +95,16 @@ for integer values, as shown by `42n`; JavaScript `number` values are floats.
 | `string`                            | text                                     |
 | `Buffer`, `Uint8Array`              | bytes (any other view is refused)        |
 | `Date`                              | `Timestamp(Millis)` over the `i64` count |
-| `VcDate("YYYY-MM-DD")`              | `Date` over the day count                |
-| `VcTimestamp("RFC 3339, ns")`       | `Timestamp(Nanos)` over the count        |
-| `VcDecimal("1.50")`                 | `Decimal { scale }` over the mantissa    |
-| `VcUuid("hyphenated hex")`          | `Uuid` over sixteen bytes                |
+| `RcDate("YYYY-MM-DD")`              | `Date` over the day count                |
+| `RcTimestamp("RFC 3339, ns")`       | `Timestamp(Nanos)` over the count        |
+| `RcDecimal("1.50")`                 | `Decimal { scale }` over the mantissa    |
+| `RcUuid("hyphenated hex")`          | `Uuid` over sixteen bytes                |
 | `Array`                             | sequence                                 |
 | plain object                        | map, over own enumerable string keys     |
 
 And back: every int width is a `BigInt`; both float widths are a `number`
 (`f32` widens exactly); a timestamp in any unit is a `Date` when it is
-whole milliseconds and a `VcTimestamp` otherwise, so no precision is
+whole milliseconds and an `RcTimestamp` otherwise, so no precision is
 discarded; a calendar date, a decimal and a UUID are their wrapper. A
 `Date` is stored as its millisecond count and read back as the same
 count, never converted through seconds and nanoseconds. A logical type
@@ -118,7 +124,7 @@ on an `int64` field.
 
 JavaScript has no type of its own for a calendar date, a timestamp finer
 than a millisecond, a decimal or a UUID, so each is an instance of a small
-class holding its text: `new VcDecimal("1.50")`. The constructor takes a
+class holding its text: `new RcDecimal("1.50")`. The constructor takes a
 string and nothing else; the text is checked, and the scalar built from
 it, when the value is encrypted, so one rule applies however the instance
 was made. `value` is an own, read-only, enumerable property, so
@@ -145,6 +151,81 @@ Scalar failures throw a `TypeError` with a stable code: `ERR_INTEGER_RANGE`,
 `ERR_INVALID_DATE`, `ERR_INVALID_TIMESTAMP`, `ERR_INVALID_DECIMAL`,
 `ERR_NON_FINITE_DECIMAL` and `ERR_INVALID_UUID`.
 
+## JSON documents
+
+A JSON document is encrypted as its JSON text, so that Rust, Go and
+JavaScript all read the same document. `JsRef::to_json(max_depth)` writes
+the text of a JavaScript value, for encrypting. `JsBuilder::build_json(&env,
+&document)` builds the JavaScript value of a decrypted document.
+
+### Writing a document
+
+The walk is the one every value goes through, with every rule in
+[Safety notes](#safety-notes). It reads only what a JSON document holds:
+
+| JavaScript                              | In the document              |
+| --------------------------------------- | ---------------------------- |
+| `null`, `boolean`, `string`             | the same                     |
+| `Array`, plain object                   | an array, an object          |
+| whole `number` within 2^53 - 1 of zero  | an integer                   |
+| whole `number` from 2^53 up to 2^64     | refused                      |
+| any other finite `number`               | a float                      |
+| `bigint` within 64 bits                 | an integer, with its digits  |
+| anything else                           | refused                      |
+
+- **A whole number is an integer.** `5000000000` is written `5000000000`,
+  as `JSON.stringify` writes it, and never `5000000000.0`. Rust's
+  `serde_json` and Go's `encoding/json` refuse a number with a fraction for
+  an integer field. `-0` is written `0`.
+- **A whole number from 2^53 up to 2^64 is refused**, either side of zero.
+  A `number` that large may not have the digits that were written, and an
+  integer was probably meant. A `bigint` holds it exactly. A number of 2^64
+  or more is no integer that a reader takes, so it is a float.
+- **A `bigint` is its exact digits**, from -2^63 to 2^64 - 1. That is the
+  range a JSON parser in Rust or Go reads. A `bigint` outside it is
+  refused, whatever its size.
+- **Everything else is refused**: `undefined`, `NaN` and the infinities,
+  bytes (a `Buffer`, a typed array, a `DataView`), a `Date`, and a wrapper
+  class instance. Each has the code `recipher_js::not_json`, and a message
+  that names the kind of value and no part of it. A function and a symbol
+  are `recipher_js::not_a_value`, as for any value. Nothing calls a
+  `toJSON` method.
+- **`max_depth` is the reader's limit**, in levels of arrays and objects:
+  `[1]` is one level. A document nested deeper is `recipher_js::too_deep`.
+  The walk's own limit of 128 applies too.
+- **The text is written straight into a protected buffer.** The buffer
+  wipes each allocation it outgrows, and wipes itself when it is dropped.
+  No tree of the document is built on the way. An object's members are
+  written in the order JavaScript lists them.
+
+### Building a document
+
+| In the document                          | JavaScript  |
+| ---------------------------------------- | ----------- |
+| an integer within 2^53 - 1 of zero       | `number`    |
+| any other integer                        | `bigint`    |
+| a float                                  | `number`    |
+
+So an integer never loses a digit. A `bigint` that is in the safe range
+comes back as a `number`: `5n` is written `5`, and `5` is read as `5`.
+
+Each scalar is converted by napi-rs's own `serde_json` conversion, which
+has this number rule. An array and an object are built here, from own data
+properties, and a member named `__proto__`, `constructor` or `prototype`
+is refused. napi-rs's conversion of a whole document assigns each member
+(`object[key] = value`). An assignment gives a member named `__proto__` to
+the object as its prototype, and runs a setter that a polluted prototype
+defines, which then receives the decrypted value.
+
+`build_json` copies nothing out of the document. The caller owns the
+document, and wipes it.
+
+napi-rs's conversion in the other direction, from a JavaScript value to a
+`serde_json::Value`, is not used. It writes a whole number above 2^32 as a
+float and a wide `bigint` as a string. It drops a member that is
+`undefined`, and reads a `Date` as `{}`. It also reads inherited properties,
+and replaces an unpaired surrogate. `tests/json.cjs` pins each of these.
+
 ## Errors
 
 A getter that throws, a string with an unpaired surrogate, a `BigInt` out
@@ -161,8 +242,9 @@ which rule the value broke, as a `Refusal`: a diagnostic with a stable code
 (`recipher_js::sparse_array`, `ERR_INTEGER_RANGE`), a message and, where there
 is something to do, help. A caller reports the refusal from that, and never
 reads the reason's text. It is `None` for a failure of Node-API's own and
-for an exception the application threw. `JsRef::to_frame` and
-`JsBuilder::build` return the `JsFault` itself.
+for an exception the application threw. `JsRef::to_frame`,
+`JsRef::to_json`, `JsBuilder::build` and `JsBuilder::build_json` return the
+`JsFault` itself.
 
 This crate is a library consumed by the Node addon (cdylib/npm package);
 it is not itself loadable from Node.

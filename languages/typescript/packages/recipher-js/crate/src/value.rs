@@ -20,15 +20,15 @@ use crate::error::{Error, RecipherErrorFields};
 ///
 /// The engine encrypts the value through its opaque scalar path. That path
 /// encrypts a whole value as one leaf. Rust's `keyset.encrypt(value)` uses
-/// the same path. So each ciphertext has the form that Rust and Go write
-/// for the same value.
+/// the same path. So each ciphertext has the form that Rust's
+/// `keyset.encrypt` writes for the same value.
 ///
 /// The engine encrypts a value as one opaque leaf only when its type
-/// implements `Scalar`, a trait of vitaminc, CipherStash's cryptography
-/// library. An [`OwnedFrame`] can contain any value of the model, including
-/// an array or a map. So an [`OwnedFrame`] is not a `Scalar`. This type
-/// checks that the frame contains one scalar. The check runs once, before
-/// the engine reads the value.
+/// implements `Scalar`, a trait of the `vitaminc-aead` crate. An
+/// [`OwnedFrame`] can contain any value of the model, including an array or
+/// a map. So an [`OwnedFrame`] is not a `Scalar`. This type checks that the
+/// frame contains one scalar. The check runs once, before the engine reads
+/// the value.
 ///
 /// The opaque path also needs a value it can wipe (`Zeroize`). Wiping drops
 /// the value, and the value wipes its own buffer when it drops. `Debug`

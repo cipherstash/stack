@@ -228,9 +228,9 @@ impl Keyset {
     /// long it is. A key request is one request to ZeroKMS for data keys. If
     /// any value is refused, the whole array fails, before any request.
     ///
-    /// A value's type sets how it is encrypted. The mapping of JavaScript
-    /// types comes from vitaminc, CipherStash's cryptography library. A
-    /// `Json` from `json(..)` is encrypted as a JSON document.
+    /// A value's type sets how it is encrypted. The package's README lists
+    /// the mapping of JavaScript types. A `Json` from `json(..)` is
+    /// encrypted as a JSON document.
     ///
     /// A value that cannot be encrypted resolves to an `Err`. For example, a
     /// plain object is an `Err` with the code `recipher_js::plain_object`.
@@ -490,7 +490,7 @@ fn open<'e>(
         move |env, opened| {
             let mut values = opened
                 .into_iter()
-                .map(|value| js::build(env, value))
+                .map(|value| js::build_opened(env, value))
                 .collect::<Outcome<Vec<_>>>()?;
             if many {
                 return values.into_unknown(env).map_err(not_made);
@@ -602,8 +602,8 @@ fn one_or_array<'e>(
 }
 
 /// Reads a row of `plan`'s record, with each value read as its field's
-/// kind. When vitaminc refuses a value, the failure names the field the
-/// value was read from.
+/// kind. When the value bridge refuses a value, the failure names the field
+/// the value was read from.
 fn read_row(env: &Env, plan: &RecordPlan, row: Unknown<'_>) -> Outcome<OwnedFrame> {
     let not_a_row = || RecipherErrorFields::from(Error::NotARow).in_record(plan.name());
     if row.get_type().ok() != Some(napi::ValueType::Object) || row.is_array().unwrap_or(false) {

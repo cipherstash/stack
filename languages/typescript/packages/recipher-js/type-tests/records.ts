@@ -4,12 +4,12 @@ import type {
   Cipher,
   Keyset,
   Plaintext,
+  RcDate,
+  RcDecimal,
+  RcTimestamp,
   RecipherError,
   Result,
   Stored,
-  VcDate,
-  VcDecimal,
-  VcTimestamp,
 } from '../src/index'
 import { encrypt, kinds, passthrough, record } from '../src/index'
 
@@ -76,9 +76,9 @@ check<
     {
       flag: boolean
       real: number
-      price: VcDecimal
-      day: VcDate
-      at: Date | VcTimestamp
+      price: RcDecimal
+      day: RcDate
+      at: Date | RcTimestamp
       blob: Uint8Array
       small: bigint
     }

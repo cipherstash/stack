@@ -21,9 +21,12 @@
 //! checks it. So a value of the wrong type gives an `Err`, not an
 //! exception.
 //!
-//! The one call that throws is a method called without its object, as in
-//! `stored.map(cipher.decrypt)`. The JavaScript engine checks the object
+//! One call of the addon's throws: a method called without its object, as
+//! in `stored.map(cipher.decrypt)`. The JavaScript engine checks the object
 //! and throws a `TypeError` before any of the addon's code runs.
+//!
+//! The wrapper classes are the value bridge's JavaScript. Their
+//! constructors throw a `TypeError` for an argument that is not a string.
 //!
 //! The `ts_type`, `ts_args_type` and `ts_return_type` attributes give each
 //! method the signature the package exports. napi-rs writes them to
@@ -87,11 +90,10 @@ pub fn binding_interface() -> u32 {
     BINDING_INTERFACE
 }
 
-/// Exports the wrapper classes of vitaminc, CipherStash's cryptography
-/// library: `VcDate`, `VcTimestamp`, `VcDecimal` and `VcUuid`. Each class
-/// stands for a type that JavaScript does not have. The addon exports them
-/// so JavaScript can construct them, and so decrypted values are instances
-/// of them.
+/// Exports the value bridge's wrapper classes: `RcDate`, `RcTimestamp`,
+/// `RcDecimal` and `RcUuid`. Each class stands for a type that JavaScript
+/// does not have. The addon exports them so JavaScript can construct them,
+/// and so decrypted values are instances of them.
 // napi's module registration calls this function. `clippy --all-targets`
 // also builds the crate as a test, where nothing calls it.
 #[cfg_attr(test, allow(dead_code))]

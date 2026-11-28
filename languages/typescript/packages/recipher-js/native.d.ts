@@ -121,7 +121,7 @@ export declare class Cipher {
  * with its own data key. A data key is the key that encrypts one value.
  *
  * The ciphertext's bytes are the engine's format for an encrypted value.
- * The Rust and Go SDKs write the same bytes. `toString()` and Node's
+ * Rust's `keyset.encrypt` writes the same bytes. `toString()` and Node's
  * `inspect` hide the bytes, because the object has no own properties.
  *
  * The SDK uses a class rather than plain bytes for two reasons. First,
@@ -196,9 +196,9 @@ export declare class Keyset {
    * long it is. A key request is one request to ZeroKMS for data keys. If
    * any value is refused, the whole array fails, before any request.
    *
-   * A value's type sets how it is encrypted. The mapping of JavaScript
-   * types comes from vitaminc, CipherStash's cryptography library. A
-   * `Json` from `json(..)` is encrypted as a JSON document.
+   * A value's type sets how it is encrypted. The package's README lists
+   * the mapping of JavaScript types. A `Json` from `json(..)` is
+   * encrypted as a JSON document.
    *
    * A value that cannot be encrypted resolves to an `Err`. For example, a
    * plain object is an `Err` with the code `recipher_js::plain_object`.
@@ -307,14 +307,37 @@ export interface ErrorCause {
 export declare function installResult(classes: { Ok: typeof Ok; Err: typeof Err; RecipherError: typeof RecipherError }): boolean
 
 /**
- * Makes a JSON document to encrypt as one ciphertext. The document is a
- * plain object, an array, text, a number, a `bigint`, a boolean or `null`,
- * nested at most 127 levels.
+ * Makes a JSON document to encrypt as one ciphertext.
  *
- * Give an integer outside a `number`'s safe range as a `bigint`, within 64
- * bits. The safe range is at most 2^53 - 1 from zero. A whole `number`
- * between 2^53 and 2^64 from zero is refused, because the caller probably
- * meant an integer.
+ * ```ts
+ * const profile = json({ name: 'Ada', visits: 3, id: 2n ** 64n - 1n })
+ * const sealed = (await keyset.encrypt(profile)).unwrap()
+ * const opened = (await cipher.decrypt(sealed)).unwrap()
+ * // { id: 18446744073709551615n, name: 'Ada', visits: 3 }
+ * ```
+ *
+ * The document is a plain object, an array, text, a number, a `bigint`, a
+ * boolean or `null`. It nests at most 127 levels of arrays and objects.
+ *
+ * A number is stored by these rules:
+ *
+ * - A whole `number` within 2^53 - 1 of zero is an integer, as
+ *   `JSON.stringify` writes it. `5000000000` is stored as `5000000000`.
+ * - A whole `number` from 2^53 up to 2^64 is refused. Its digits may not
+ *   be the ones you wrote. Give it as a `bigint`.
+ * - Any other `number` is a float. `NaN` and the infinities are refused.
+ * - A `bigint` is its exact digits, from `-(2n ** 63n)` to
+ *   `2n ** 64n - 1n`. A `bigint` outside that range is refused.
+ *
+ * Decrypting gives an integer back as a `number` when it is within
+ * 2^53 - 1 of zero, and as a `bigint` otherwise. So `json({ a: 5n })`
+ * decrypts as `{ a: 5 }`.
+ *
+ * The engine stores an object's members sorted by key. A decrypted object
+ * lists its members in that order, not in the order you wrote them.
+ *
+ * `undefined`, bytes, a `Date` and the wrapper classes have no JSON form,
+ * and are refused.
  *
  * `json(..)` reads the document now. `json(..)` never throws: `encrypt`
  * returns an `Err` for a document that cannot be encrypted.
@@ -328,8 +351,8 @@ export interface RecipherErrorFields {
    * The code is one of three kinds:
    *
    * - a diagnostic's code, such as the engine's `stack_encrypt::aead`;
-   * - the code of vitaminc, CipherStash's cryptography library, for a
-   *   value it refused, such as `ERR_INTEGER_RANGE`;
+   * - the value bridge's code for a scalar it refused, such as
+   *   `ERR_INTEGER_RANGE`;
    * - the SDK's own code, such as `recipher_js::not_a_ciphertext`.
    */
   code: string

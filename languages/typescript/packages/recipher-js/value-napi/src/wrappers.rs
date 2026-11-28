@@ -1,4 +1,4 @@
-//! The wrapper classes: `VcDate`, `VcTimestamp`, `VcDecimal` and `VcUuid`.
+//! The wrapper classes: `RcDate`, `RcTimestamp`, `RcDecimal` and `RcUuid`.
 //!
 //! JavaScript has no type of its own for a calendar date, a timestamp finer
 //! than a millisecond, a decimal or a UUID, so the binding represents each
@@ -28,13 +28,13 @@ use napi::{Env, Error, Result, Status};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Wrapper {
-    /// `VcDate`: a calendar date as `YYYY-MM-DD`.
+    /// `RcDate`: a calendar date as `YYYY-MM-DD`.
     Date,
-    /// `VcTimestamp`: an instant as RFC 3339 text, to the nanosecond.
+    /// `RcTimestamp`: an instant as RFC 3339 text, to the nanosecond.
     Timestamp,
-    /// `VcDecimal`: a fixed-point decimal as text.
+    /// `RcDecimal`: a fixed-point decimal as text.
     Decimal,
-    /// `VcUuid`: a UUID as hyphenated hexadecimal.
+    /// `RcUuid`: a UUID as hyphenated hexadecimal.
     Uuid,
 }
 
@@ -50,10 +50,10 @@ impl Wrapper {
     /// The class name, as JavaScript sees it.
     pub fn class_name(self) -> &'static str {
         match self {
-            Wrapper::Date => "VcDate",
-            Wrapper::Timestamp => "VcTimestamp",
-            Wrapper::Decimal => "VcDecimal",
-            Wrapper::Uuid => "VcUuid",
+            Wrapper::Date => "RcDate",
+            Wrapper::Timestamp => "RcTimestamp",
+            Wrapper::Decimal => "RcDecimal",
+            Wrapper::Uuid => "RcUuid",
         }
     }
 }
@@ -114,7 +114,7 @@ impl<'e> Wrappers<'e> {
     }
 
     /// An object holding every class under its name, for an addon to
-    /// re-export: `VcDate`, `VcTimestamp`, `VcDecimal` and `VcUuid`.
+    /// re-export: `RcDate`, `RcTimestamp`, `RcDecimal` and `RcUuid`.
     pub fn exports(env: &'e Env) -> Result<Object<'e>> {
         let wrappers = Self::get(env)?;
         let mut exports = Object::new(env)?;
@@ -214,9 +214,9 @@ mod tests {
     #[test]
     fn every_wrapper_has_the_class_name_javascript_sees() {
         let names: Vec<&str> = Wrapper::ALL.iter().map(|w| w.class_name()).collect();
-        assert_eq!(names, ["VcDate", "VcTimestamp", "VcDecimal", "VcUuid"]);
+        assert_eq!(names, ["RcDate", "RcTimestamp", "RcDecimal", "RcUuid"]);
         for &wrapper in Wrapper::ALL {
-            assert_eq!(wrapper.class_name(), format!("Vc{wrapper:?}"));
+            assert_eq!(wrapper.class_name(), format!("Rc{wrapper:?}"));
         }
     }
 }

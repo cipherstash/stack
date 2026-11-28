@@ -9,40 +9,40 @@
 
 declare const wrapper: unique symbol
 
-/** A calendar date, such as `new VcDate('2026-11-23')`. The class comes from vitaminc. */
-export interface VcDate {
+/** A calendar date, such as `new RcDate('2026-11-23')`. */
+export interface RcDate {
   /** The date as `YYYY-MM-DD`. */
   readonly value: string
   toJSON(): string
-  readonly [wrapper]: 'VcDate'
+  readonly [wrapper]: 'RcDate'
 }
 
-/** A UTC instant, to the nanosecond. The class comes from vitaminc. */
-export interface VcTimestamp {
+/** A UTC instant, to the nanosecond. */
+export interface RcTimestamp {
   /** The instant as RFC 3339 text, with nanoseconds. */
   readonly value: string
   toJSON(): string
-  readonly [wrapper]: 'VcTimestamp'
+  readonly [wrapper]: 'RcTimestamp'
 }
 
-/** A decimal with its scale, such as `new VcDecimal('1.50')`. The class comes from vitaminc. */
-export interface VcDecimal {
+/** A decimal with its scale, such as `new RcDecimal('1.50')`. */
+export interface RcDecimal {
   /** The decimal as text, with its scale. */
   readonly value: string
   toJSON(): string
-  readonly [wrapper]: 'VcDecimal'
+  readonly [wrapper]: 'RcDecimal'
 }
 
 /**
- * A universally unique identifier (UUID). The class comes from vitaminc.
- * The engine has no plaintext type for a UUID yet. Encrypting a `VcUuid` is
- * an `Err` with the code `recipher_js::uuid`. `VcUuid` is not a `Scalar`.
+ * A universally unique identifier (UUID).
+ * The engine has no plaintext type for a UUID yet. Encrypting an `RcUuid` is
+ * an `Err` with the code `recipher_js::uuid`. `RcUuid` is not a `Scalar`.
  */
-export interface VcUuid {
+export interface RcUuid {
   /** The UUID as hyphenated hex. */
   readonly value: string
   toJSON(): string
-  readonly [wrapper]: 'VcUuid'
+  readonly [wrapper]: 'RcUuid'
 }
 
 /** A value that is one scalar: a single value, not a JSON document. */
@@ -53,17 +53,20 @@ export type Scalar =
   | bigint
   | Uint8Array
   | Date
-  | VcTimestamp
-  | VcDate
-  | VcDecimal
+  | RcTimestamp
+  | RcDate
+  | RcDecimal
   | null
 
 /**
  * A JSON value. An integer outside the safe range of a `number` is a
  * `bigint`, within the 64-bit range (`-(2n ** 63n)` to `2n ** 64n - 1n`).
+ * The safe range is 2^53 - 1 either side of zero.
  *
- * `encrypt` refuses a whole `number` whose absolute value is at least 2^53
- * but less than 2^64. An integer was likely meant.
+ * A whole `number` in the safe range is stored as an integer, and any other
+ * `number` as a float. `encrypt` refuses a whole `number` whose absolute
+ * value is at least 2^53 but less than 2^64, because it may not keep the
+ * digits that were written. `encrypt` also refuses `NaN` and the infinities.
  */
 export type JsonValue =
   | null
@@ -74,7 +77,11 @@ export type JsonValue =
   | readonly JsonValue[]
   | { readonly [key: string]: JsonValue }
 
-/** A JSON document as it decrypts. */
+/**
+ * A JSON document as it decrypts. An integer is a `number` when it is in
+ * the safe range of a `number`, and a `bigint` otherwise. The members of an
+ * object are sorted by key.
+ */
 export type OpenedJson =
   | null
   | boolean
@@ -108,12 +115,12 @@ export type Opened<V> = V extends string
           ? Uint8Array
           : V extends Date
             ? Date
-            : V extends VcTimestamp
-              ? Date | VcTimestamp
-              : V extends VcDate
-                ? VcDate
-                : V extends VcDecimal
-                  ? VcDecimal
+            : V extends RcTimestamp
+              ? Date | RcTimestamp
+              : V extends RcDate
+                ? RcDate
+                : V extends RcDecimal
+                  ? RcDecimal
                   : V extends null
                     ? null
                     : V extends JsonMarker

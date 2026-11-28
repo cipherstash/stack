@@ -2526,6 +2526,8 @@ dependencies = [
  "mutants",
  "napi",
  "rust_decimal",
+ "serde",
+ "serde_json",
  "thiserror 2.0.21",
  "vitaminc-aead 0.10.0",
  "vitaminc-protected 0.10.0",

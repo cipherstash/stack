@@ -47,9 +47,9 @@ const opened = await cipher.decrypt(sealed.value)
 ## Values
 
 A value's type decides how it is encrypted.
-vitaminc defines the mapping.
-vitaminc is the CipherStash Rust library that the engine's plaintext types come from.
-The `recipher-value-napi` crate, in `value-napi/`, converts JavaScript values by that mapping, in both directions:
+The value bridge defines the mapping.
+The value bridge is the `recipher-value-napi` crate, in `value-napi/`.
+It converts JavaScript values in both directions:
 
 | Value | Encrypted as | Decrypts as |
 |---|---|---|
@@ -59,21 +59,23 @@ The `recipher-value-napi` crate, in `value-napi/`, converts JavaScript values by
 | `bigint` | an integer, at the narrowest width that holds it | `bigint` |
 | `Uint8Array`, `Buffer` | bytes | `Uint8Array` |
 | `Date` | a timestamp | `Date` |
-| `new VcTimestamp('2026-11-23T01:02:03.000000001Z')` | a timestamp, in nanoseconds | `Date` when it is whole milliseconds, else `VcTimestamp` |
-| `new VcDate('2026-11-23')` | a calendar date | `VcDate` |
-| `new VcDecimal('1.50')` | a decimal, with its scale | `VcDecimal` |
+| `new RcTimestamp('2026-11-23T01:02:03.000000001Z')` | a timestamp, in nanoseconds | `Date` when it is whole milliseconds, else `RcTimestamp` |
+| `new RcDate('2026-11-23')` | a calendar date | `RcDate` |
+| `new RcDecimal('1.50')` | a decimal, with its scale | `RcDecimal` |
 | `null` | null | `null` |
 | `json(value)` | a JSON document, as its JSON text | the document, from the `Ciphertext` that `encrypt` returned or one read with `kinds.json` |
 
 - Integers are a `bigint`.
   A `number` is a float.
   The `number` `5` does not equal the integer `5n`.
-- A plain object is refused.
-  Wrap it in `json(..)`.
-- The package exports `VcUuid`, for a universally unique identifier (UUID).
+- A plain object is refused, because an object has no single stored form.
+  You choose the form.
+  `json(..)` encrypts the object as a JSON document.
+  `opaque(..)` will encrypt a whole object in the engine's own format, and is not built yet.
+- The package exports `RcUuid`, for a universally unique identifier (UUID).
   The engine has no plaintext type for a UUID yet.
-  Encrypting a `VcUuid` is an `Err` with the code `recipher_js::uuid`.
-- vitaminc's rules refuse each of these values, with an error code for each:
+  Encrypting an `RcUuid` is an `Err` with the code `recipher_js::uuid`.
+- The value bridge refuses each of these values, with an error code for each:
   - a `Map` or a `Set`;
   - a class instance;
   - a sparse array;
@@ -93,22 +95,53 @@ const opened = await cipher.decrypt(sealed.unwrap())
 
 `json(value)` encrypts a whole document as one ciphertext.
 The document is encrypted as its JSON text, as the engine's `JsonPlaintext` type does.
+Rust code that calls `keyset.decrypt::<JsonPlaintext>` decrypts it.
 
-- An integer outside a `number`'s safe range is a `bigint`.
-  The `bigint` must be in the 64-bit range that the engine's parser reads: `-(2n ** 63n)` to `2n ** 64n - 1n`.
-  A `bigint` outside that range is refused.
-- A whole `number` is refused when its absolute value is at least 2^53 but less than 2^64.
-  An integer was likely meant.
-  The `number` does not keep the digits that were written.
+```ts
+import { json } from '@cipherstash/recipher'
+
+const profile = json({ name: 'Ada', visits: 3, id: 2n ** 64n - 1n })
+const sealed = (await keyset.encrypt(profile)).unwrap()
+
+const opened = (await cipher.decrypt(sealed)).unwrap()
+// { id: 18446744073709551615n, name: 'Ada', visits: 3 }
+```
+
+A document is a plain object, an array, a string, a number, a `bigint`, a boolean, or `null`.
+It can nest 127 levels of arrays and objects.
+
+A number is stored and decrypted by these rules:
+
+| In the document | Stored as | Decrypts as |
+|---|---|---|
+| a whole `number` within 2^53 - 1 of zero, such as `5000000000` | the integer `5000000000` | `number` |
+| a whole `number` from 2^53 up to 2^64 | refused | |
+| any other `number`, such as `1.5` or `1e20` | a float | `number` |
+| a `bigint` within 2^53 - 1 of zero, such as `5n` | the integer `5` | `number` |
+| any other `bigint` from `-(2n ** 63n)` to `2n ** 64n - 1n` | an integer, with its exact digits | `bigint` |
+| a `bigint` outside that range | refused | |
+
+- A whole `number` is stored as an integer, as `JSON.stringify` writes it.
+  A millisecond timestamp from `Date.now()`, such as `1764288000000`, is stored as `1764288000000`.
+  It is never stored as `1764288000000.0`, which code in Rust or Go refuses for an integer field.
+- A whole `number` from 2^53 up to 2^64 is refused, either side of zero.
+  A `number` that large may not keep the digits you wrote.
   Use a `bigint` instead.
-  Any other finite `number`, such as `1e20`, is a float.
-- Bytes, a `Date`, the wrapper classes, and `undefined` have no JSON form.
-  The package refuses them.
-  The package also refuses a document nested deeper than 127 levels.
+- A `bigint` must be in the 64-bit range that the engine's parser reads.
+- An integer decrypts as a `number` when it is within 2^53 - 1 of zero, and as a `bigint` otherwise.
+  So no digit is lost, and `json({ a: 5n })` decrypts as `{ a: 5 }`.
+- The engine stores the members of an object sorted by key.
+  A decrypted object lists its members in that order, not in the order you wrote them.
+- `undefined`, `NaN`, the infinities, bytes, a `Date`, and the wrapper classes have no JSON form.
+  Each is an `Err` with the code `recipher_js::not_json`.
+  The package does not call a `toJSON` method.
+- A document nested deeper than 127 levels is an `Err` with the code `recipher_js::too_deep`.
+- A document is read by the same rules as any value.
+  A `Map`, a class instance, a sparse array, and a string with an unpaired surrogate are refused.
 - A property named `__proto__`, `constructor`, or `prototype` cannot be encrypted.
   Another SDK can write a document with one of these properties.
   Decrypting that document here gives an `Err` with the code `recipher_js::reserved_key`.
-  The reason is that vitaminc does not build those properties in JavaScript.
+  The reason is that the value bridge does not build those properties in JavaScript.
 - **Read a stored document back with `kinds.json`.**
   The bytes do not record that a value is JSON.
   `Ciphertext.fromBytes(bytes, kinds.json)` decrypts to the document.
@@ -232,6 +265,11 @@ const opened = await Promise.all(
 
 A static method, such as `Ciphertext.fromBytes`, works on its own.
 
+A wrapper class's constructor throws too.
+The constructor takes a string, so `new RcDate(20261123)` throws a `TypeError`.
+The constructor does not check the text.
+`encrypt` returns an `Err` for text that is not a date.
+
 A `RecipherError` is an error report that a call returns as a value.
 Most errors come from the engine.
 The SDK's own errors have a code that starts with `recipher_js::`.
@@ -248,7 +286,7 @@ if (opened.isErr()) {
 
 | Property | What it contains |
 | --- | --- |
-| `code` | The code to switch on. It is stable. It is the engine's code (`stack_encrypt::aead`), vitaminc's code for a value it refused (`ERR_INTEGER_RANGE`), or the SDK's own (`recipher_js::not_a_ciphertext`). |
+| `code` | The code to switch on. It is stable. It is the engine's code (`stack_encrypt::aead`), the value bridge's code for a scalar it refused (`ERR_INTEGER_RANGE`), or the SDK's own (`recipher_js::not_a_ciphertext`). |
 | `message` | What went wrong, in one line. |
 | `help` | What to do about it, where the error knows. |
 | `url` | A documentation page for the error, where it has one. |
