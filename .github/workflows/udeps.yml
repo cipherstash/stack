@@ -20,7 +20,6 @@ on:
       - packages/stack-guest-abi/**
       - packages/vitaminc-aead/**
       - packages/recipher-frame/**
-      - packages/vitaminc-aead-derive/**
       - languages/typescript/packages/auth/**
       - languages/typescript/packages/profile/**
       - languages/typescript/packages/stack-auth-wasm/**
@@ -43,7 +42,6 @@ on:
       - packages/stack-guest-abi/**
       - packages/vitaminc-aead/**
       - packages/recipher-frame/**
-      - packages/vitaminc-aead-derive/**
       - languages/typescript/packages/auth/**
       - languages/typescript/packages/profile/**
       - languages/typescript/packages/stack-auth-wasm/**

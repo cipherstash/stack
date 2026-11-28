@@ -17,14 +17,15 @@
 //!   [`Logical`] type, rather than a method per kind. See [`kinds`].
 //!
 //! `Sink` is implemented inside vitaminc and its host bindings. Application
-//! code implements `Encrypt`, usually by derive.
+//! code implements `Encrypt`, usually with Stack Encrypt's derive,
+//! `#[derive(stack_encrypt::Encrypt)]`.
 
 pub mod depth;
 #[cfg(test)]
 mod encrypt_ref_tests;
 pub mod kinds;
 mod path;
-mod sources;
+pub(crate) mod sources;
 mod tee;
 mod value_kind;
 
@@ -38,11 +39,6 @@ pub use path::render;
 pub use path::{Path, Step};
 pub use sources::{Bytes, Raw};
 
-/// What `#[derive(Encrypt)]`'s expansion needs by path. Not an API.
-#[doc(hidden)]
-pub mod __private {
-    pub use super::sources::discard_one;
-}
 pub use tee::Tee;
 pub use value_kind::{ParseValueKindError, SealedNull, ValueKind};
 
@@ -216,9 +212,9 @@ impl<T: ?Sized + EncryptRef> Encrypt for &Lent<'_, T> {
 /// that bounds on `Scalar` asks for a value that is present, and decides
 /// for itself how to seal an absent one.
 ///
-/// `#[derive(Encrypt)]` implements `Scalar`, by value and by reference, for
-/// a derived type that encrypts as one leaf. So you write no impl for such
-/// a type.
+/// Stack Encrypt's `#[derive(Encrypt)]` implements `Scalar`, by value and
+/// by reference, for a derived type that encrypts as one leaf. So you write
+/// no impl for such a type.
 ///
 /// - A newtype is a struct with exactly one unnamed field. A newtype is a
 ///   `Scalar` when its inner type is one. So `struct Email(String)` is a
@@ -229,9 +225,13 @@ impl<T: ?Sized + EncryptRef> Encrypt for &Lent<'_, T> {
 /// - A struct with fields is a map, so it is never a `Scalar`.
 ///
 /// ```
-/// use vitaminc_aead::{Encrypt, Scalar};
+/// use stack_encrypt_derive::Encrypt;
+/// use vitaminc_aead::Scalar;
 ///
 /// #[derive(Encrypt)]
+/// // `stack-encrypt` depends on this crate, so this example points the
+/// // derive at this crate instead.
+/// #[aead(crate = "::vitaminc_aead")]
 /// struct Email(String);
 ///
 /// fn seals_one_leaf<S: Scalar>(value: S) -> S {

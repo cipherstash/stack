@@ -1,12 +1,11 @@
 # Supply-chain checks for the vitaminc-aead crates
 
 This directory holds the `cargo deny` config and the `cargo vet` store for
-`vitaminc-aead`, `recipher-frame` and `vitaminc-aead-derive`, and their
-dependency graph **only**. Nothing here checks the rest of the root
+`vitaminc-aead` and `recipher-frame`, and their dependency graph **only**. Nothing here checks the rest of the root
 workspace; that is #1842.
 
 CI runs both in `.github/workflows/supply-chain-vitaminc-aead.yml`, on pull
-requests that change the three crates, `Cargo.lock`, `Cargo.toml` or this
+requests that change the two crates, `Cargo.lock`, `Cargo.toml`, or this
 directory. `cargo deny` also runs nightly, for advisories published against
 versions already in the lockfile.
 
@@ -16,13 +15,13 @@ versions already in the lockfile.
   started as `cipherstash/vitaminc`'s, with its audits and imported
   registries. The policies name every root workspace member, because cargo
   vet checks policies against the whole workspace before it applies the
-  filter; naming one does not vet it. The three crates' policies set
+  filter; naming one does not vet it. The two crates' policies set
   `criteria = "safe-to-deploy"`: they are not roots of the workspace graph
   (stack-encrypt depends on them), and once the filter drops their
   dependents nothing else would require more than `safe-to-run` of their
   runtime dependencies.
 - `filter-graph`: the `--filter-graph` expression that drops every other
-  root workspace member, so the graph vetted is the three crates and their
+  root workspace member, so the graph vetted is the two crates and their
   dependencies.
 
 ## Commands

@@ -1,14 +1,14 @@
 name: Supply chain (vitaminc-aead)
 
-# cargo deny and cargo vet over vitaminc-aead, recipher-frame and
-# vitaminc-aead-derive and their dependency graph ONLY. Their config is
-# supply-chain/vitaminc-aead/ (see its README.md). The rest of the root
+# cargo deny and cargo vet over vitaminc-aead and recipher-frame and their
+# dependency graph ONLY. Their config is supply-chain/vitaminc-aead/ (see its
+# README.md). The rest of the root
 # workspace is not checked by either tool; that is #1842.
 #
 # Neither tool compiles anything: both read `cargo metadata` and Cargo.lock,
 # so each job takes about a minute, most of it setup.
 #
-# Pull requests that change the three crates, the lockfile or the config
+# Pull requests that change the two crates, the lockfile or the config
 # run both jobs. The nightly schedule runs cargo deny only, on the default
 # branch: a RustSec advisory published against a version already in
 # Cargo.lock has no pull request to fail. cargo vet reads only the tree, so
@@ -21,7 +21,6 @@ on:
     paths:
       - packages/vitaminc-aead/**
       - packages/recipher-frame/**
-      - packages/vitaminc-aead-derive/**
       - supply-chain/vitaminc-aead/**
       - Cargo.toml
       - Cargo.lock
@@ -77,7 +76,7 @@ jobs:
       - name: cargo deny check, one crate at a time
         run: |
           status=0
-          for crate in vitaminc-aead recipher-frame vitaminc-aead-derive; do
+          for crate in vitaminc-aead recipher-frame; do
             echo "::group::$crate"
             cargo deny --locked --config supply-chain/vitaminc-aead/deny.toml \
               --manifest-path "packages/$crate/Cargo.toml" check || status=1
@@ -106,7 +105,7 @@ jobs:
           cache_key_prefix: mise-v1-ubuntu-2404
 
       # The filter drops every other root workspace member, so the graph
-      # vetted is the three crates and their dependencies. `--locked` reads
+      # vetted is the two crates and their dependencies. `--locked` reads
       # imports.lock as committed rather than fetching the registries.
       - name: cargo vet
         id: vet

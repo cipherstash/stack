@@ -44,10 +44,6 @@ audit-as-crates-io = false
 [policy.temp-env]
 audit-as-crates-io = false
 
-[policy."vitaminc-aead-derive:0.10.0"]
-audit-as-crates-io = false
-criteria = "safe-to-deploy"
-
 [policy."vitaminc-aead:0.10.0"]
 audit-as-crates-io = false
 criteria = "safe-to-deploy"

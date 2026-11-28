@@ -1,6 +1,6 @@
-# cargo-deny configuration for vitaminc-aead, recipher-frame and
-# vitaminc-aead-derive, and their dependency graph ONLY. It does not cover
-# the rest of the root workspace; that is #1842.
+# cargo-deny configuration for vitaminc-aead and recipher-frame, and their
+# dependency graph ONLY. It does not cover the rest of the root workspace;
+# that is #1842.
 #
 # CI (.github/workflows/supply-chain-vitaminc-aead.yml) runs it once per crate:
 #
@@ -23,6 +23,11 @@
 # Optional dependencies (jiff, uuid, rust_decimal, serde) are part of what
 # ships, so check the graph with every feature on.
 all-features = true
+# vitaminc-aead's tests use stack-encrypt-derive, a member of the root
+# workspace, whose own tests reach the rest of the workspace. Leaving it out
+# keeps the graph to the two crates and their dependencies, as cargo vet's
+# `filter-graph` does for every other workspace member.
+exclude = ["stack-encrypt-derive"]
 
 [output]
 feature-depth = 1
@@ -30,7 +35,7 @@ feature-depth = 1
 [advisories]
 db-path = "$CARGO_HOME/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-# Unmaintained advisories fail too, for crates the three depend on directly.
+# Unmaintained advisories fail too, for crates the two depend on directly.
 unmaintained = "workspace"
 yanked = "deny"
 # Each entry needs the advisory id and a reason. Prefer a bump to an ignore.
@@ -66,7 +71,7 @@ deny = []
 [bans.build]
 # A build script runs arbitrary code on every developer machine and in CI,
 # and a new one is the most common shape of a malicious release. This is
-# every crate in the three crates' graph with a build script today
+# every crate in the two crates' graph with a build script today
 # (platform-specific ones included, because the graph is checked for every
 # target). A dependency change that adds one fails here, and the review
 # decides whether to add it.

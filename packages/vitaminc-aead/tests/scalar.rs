@@ -15,6 +15,9 @@
 
 use std::convert::Infallible;
 
+// Stack Encrypt's derives. stack-encrypt depends on this crate, so each
+// derive here names this crate with `#[aead(crate = "::vitaminc_aead")]`.
+use stack_encrypt_derive::Encrypt;
 use vitaminc_aead::plaintext::{depth, Bytes, Raw};
 use vitaminc_aead::{plan, CipherText, Encrypt, Int, Physical, Scalar};
 use vitaminc_protected::{AsProtectedRef, Protected, ProtectedRef};
@@ -114,18 +117,23 @@ fn an_empty_text_or_byte_value_is_still_one_leaf() {
 /// implements `Scalar` for it too. These types have no `Scalar` impl
 /// written by hand.
 #[derive(Encrypt, zeroize::Zeroize)]
+#[aead(crate = "::vitaminc_aead")]
 struct Email(String);
 
 #[derive(Encrypt, zeroize::Zeroize)]
+#[aead(crate = "::vitaminc_aead")]
 struct Contact(Email);
 
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Wrapper<T>(T);
 
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Name<'a>(&'a str);
 
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 enum Status {
     Active,
 }

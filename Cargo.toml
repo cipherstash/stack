@@ -15,14 +15,14 @@ members = [
   "packages/stack-encrypt-derive",
   "packages/stack-encrypt-jsonpath",
   "packages/stack-guest-abi",
-  # The AEAD crates moved from cipherstash/vitaminc. vitaminc-aead and
-  # vitaminc-aead-derive keep their crates.io names, and are not published
-  # from here yet; see the patch table at the end. recipher-frame was
-  # vitaminc-aead-frame: only crates in this repository depend on it, so it
-  # could take a name of its own.
+  # The AEAD crates moved from cipherstash/vitaminc. vitaminc-aead keeps
+  # its crates.io name. It is not published from here yet: see the patch
+  # table at the end. recipher-frame was vitaminc-aead-frame. Only crates in
+  # this repository depend on it, so it could take a name of its own.
+  # The vitaminc-aead crate has no derives of its own. The `Encrypt` and
+  # `Decrypt` derives of stack-encrypt-derive implement its traits.
   "packages/vitaminc-aead",
   "packages/recipher-frame",
-  "packages/vitaminc-aead-derive",
   "languages/typescript/packages/auth",
   "languages/typescript/packages/profile",
   "languages/typescript/packages/stack-auth-wasm",
@@ -173,8 +173,8 @@ vitaminc-ore = { version = "0.10.0", features = ["prf"] }
 vitaminc-prf = { version = "0.10.0", features = ["normalize"] }
 vitaminc-protected = "0.10.0"
 
-# vitaminc-aead and vitaminc-aead-derive moved here from cipherstash/vitaminc
-# and are not published from here yet. The vitaminc crates that stay on
+# vitaminc-aead moved here from cipherstash/vitaminc and is not published
+# from here yet. The vitaminc crates that stay on
 # crates.io (the `vitaminc` umbrella, vitaminc-normalize, -prf, -ore and
 # -encrypt) and the order schemes clww-ore and ore-rs depend on vitaminc-aead
 # 0.10. This table makes
@@ -185,4 +185,3 @@ vitaminc-protected = "0.10.0"
 # resolves these crates carries the same table.
 [patch.crates-io]
 vitaminc-aead = { path = "./packages/vitaminc-aead" }
-vitaminc-aead-derive = { path = "./packages/vitaminc-aead-derive" }

@@ -21,7 +21,7 @@
 //! protected target is built inside its wrapper from the start, so a walk
 //! that fails part way wipes whatever it had already decoded.
 //!
-//! A struct's sink is what `#[derive(Decrypt)]` generates, out of the
+//! A struct's sink is what Stack Encrypt's `#[derive(Decrypt)]` generates, out of the
 //! pieces here: a map sink with one slot per field, whose `entry` hands
 //! back [`Either`] of the fields' own sinks ([`Forward`] for a sealed
 //! field, [`Clear`] for a passthrough one). A newtype's sink is its inner
@@ -47,13 +47,6 @@ use crate::plaintext::{
 use crate::seal::{AsyncCipher, Cipher, Node};
 use crate::walk::{decrypt_into, decrypt_into_async, DecryptError};
 use crate::IntoAad;
-
-/// Derive [`Decrypt`] for a struct or a fieldless enum: the sink that builds
-/// it. A struct reads a map keyed by field name; a fieldless enum reads an
-/// int leaf holding the variant's discriminant. Takes the same
-/// `#[aead(...)]` attributes as [`Encrypt`](macro@crate::Encrypt).
-#[doc(inline)]
-pub use vitaminc_aead_derive::Decrypt;
 
 /// Why a typed target refused what it was given.
 ///

@@ -62,12 +62,6 @@ pub use plaintext::{
     ParseValueKindError, Physical, Raw, Scalar, SealedNull, SeqSink, Sink, SourceError, Tee,
     TimeUnit, UnknownLogical, UnknownLogicalId, ValueKind, Width,
 };
-/// Derive [`Encrypt`] for a struct or a fieldless enum. A struct walks as
-/// a map keyed by field name; a fieldless enum as an int leaf holding the
-/// variant's discriminant. Pair it with [`Decrypt`] to read the value back.
-/// Inlined so the `#[aead(...)]` reference renders here.
-#[doc(inline)]
-pub use vitaminc_aead_derive::Encrypt;
 // Encryption: the sink, the ciphers and the entry points.
 #[doc(inline)]
 pub use encrypt_sink::{encrypt, encrypt_async, plan, EncryptError, EncryptSink};
@@ -110,3 +104,20 @@ pub use context::ContextTag;
 pub use nonce::{Nonce, NonceGenerator, RandomNonceGenerator};
 #[doc(inline)]
 pub use unspecified::Unspecified;
+
+/// The items that the code of Stack Encrypt's `#[derive(Encrypt)]` and
+/// `#[derive(Decrypt)]` names. Not an API: `stack_encrypt` re-exports this
+/// module, and the generated code reaches it as `stack_encrypt::__derive`.
+/// The module contains exactly what the generated code uses, so the derives
+/// reach nothing else in this crate.
+#[doc(hidden)]
+pub mod __derive {
+    pub use crate::plaintext::sources::discard_one;
+    pub use crate::plaintext::{
+        depth, Encrypt, EncryptRef, FixedType, Int, Logical, MapSink, Physical, Scalar, Sink, Width,
+    };
+    pub use crate::typed::{
+        Clear, DecodeError, Decrypt, Either, Forward, FromScalar, Never, Nothing, Rewrap, Slot,
+        Wrapped,
+    };
+}

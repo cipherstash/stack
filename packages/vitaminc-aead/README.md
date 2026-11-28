@@ -313,6 +313,8 @@ gets exactly that path — no hand-written impl is needed to keep key material w
 
 ### Deriving `Encrypt` and `Decrypt`
 
+This crate has no derives of its own. Stack Encrypt's `#[derive(Encrypt)]` and `#[derive(Decrypt)]` implement both traits: import them from `stack_encrypt`, and see the `stack-encrypt-derive` docs. The example below points the derive at this crate with `#[aead(crate = "::vitaminc_aead")]`, because `stack-encrypt` depends on this crate.
+
 A struct walks as a map keyed by field name, each value sealed under its key, and decodes strictly: an unknown key, a duplicate key or a missing field is refused. A fieldless enum is one int leaf holding the variant's discriminant.
 
 ```rust
@@ -331,15 +333,18 @@ A struct walks as a map keyed by field name, each value sealed under its key, an
 #     }
 # }
 # let cipher = Clear;
-use vitaminc_aead::{decrypt, encrypt, CipherText, Decrypt, Encrypt};
+use stack_encrypt_derive::{Decrypt, Encrypt};
+use vitaminc_aead::{decrypt, encrypt, CipherText};
 
 #[derive(Debug, PartialEq, Encrypt, Decrypt)]
+#[aead(crate = "::vitaminc_aead")]
 enum Role {
     Admin = 1,
     Member = 2,
 }
 
 #[derive(Debug, PartialEq, Encrypt, Decrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct User {
     #[aead(passthrough)]
     id: u64,                 // stored in the clear, readable without the key
@@ -360,11 +365,11 @@ assert_eq!(back, User { id: 42, email: "ada@example.com".into(), role: Role::Adm
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-The attributes are documented on the derives: `rename`, `passthrough`, `skip`, `take` (for a type that implements `Drop`, such as one deriving `ZeroizeOnDrop`) and `crate`. A field's type must be at least as visible as the struct, since the generated sink names it.
+The docs of Stack Encrypt's derives describe the attributes: `rename`, `passthrough`, `skip`, `take`, and `crate`. `take` is for a type that implements `Drop`, such as one that derives `ZeroizeOnDrop`. A field's type must be at least as visible as the struct, since the generated sink names it.
 
 ### Custom types
 
-A hand-written source implements [`Encrypt`] by walking itself into the sink, and a hand-written target implements [`Decrypt`] by naming a sink that builds it. Most types need neither; derive both. A source that is a thin view of something else, such as a frame or a host value, is where the trait is written by hand:
+A hand-written source implements [`Encrypt`] by walking itself into the sink, and a hand-written target implements [`Decrypt`] by naming a sink that builds it. Most types need neither: derive both with Stack Encrypt's derives. Write the trait by hand for a source that is a view of another value, such as a frame or a host value:
 
 ```rust
 use vitaminc_aead::{MapSink, Encrypt, SeqSink, Sink};

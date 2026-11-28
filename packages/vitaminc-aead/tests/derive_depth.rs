@@ -13,6 +13,9 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+// Stack Encrypt's derives. stack-encrypt depends on this crate, so each
+// derive here names this crate with `#[aead(crate = "::vitaminc_aead")]`.
+use stack_encrypt_derive::Encrypt;
 use vitaminc_aead::frame::MAX_DEPTH;
 use vitaminc_aead::plaintext::depth;
 use vitaminc_aead::{plan, Encrypt, EncryptError, MapSink, Sink, Unencryptable};
@@ -90,6 +93,7 @@ fn the_walk_agrees_with_depth_at_the_limit_for_sequences() {
 /// A derived struct is a map: one level for the struct, then its deepest
 /// field.
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct JustFits {
     shallow: u32,
     deep: V127<u32>,
@@ -108,6 +112,7 @@ fn a_derived_struct_is_one_deeper_than_its_deepest_field() {
 /// A passthrough field's frame starts one level below the passthrough node,
 /// so it counts one deeper than the same field encrypted.
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct PassesThrough {
     sealed: u32,
     #[aead(passthrough)]
@@ -143,14 +148,17 @@ fn the_walk_agrees_with_depth_at_the_limit_for_passthrough() {
 /// A newtype is transparent, a fieldless enum is one leaf, and a skipped
 /// field is not walked, so none of them adds a level.
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Wrapper(Vec<u32>);
 
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 enum Status {
     Active,
 }
 
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Skips {
     kept: u32,
     #[aead(skip)]
@@ -168,6 +176,7 @@ fn newtypes_enums_and_skipped_fields_add_nothing() {
 
 /// A generic type's depth follows its parameter.
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Holder<T> {
     value: T,
 }
@@ -181,12 +190,14 @@ fn a_generic_type_takes_its_depth_from_its_parameter() {
 /// A type that names itself has no fixed depth; the derive sees that and
 /// leaves `DEPTH` as `None` rather than writing a cycle.
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Tree {
     label: u32,
     children: Vec<Tree>,
 }
 
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct List {
     head: u32,
     tail: Option<Vec<Self>>,
@@ -195,12 +206,14 @@ struct List {
 /// Mutual recursion goes through another type, which the derive cannot see
 /// into, so both sides say so.
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 #[aead(recursive)]
 struct Even {
     next: Vec<Odd>,
 }
 
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 #[aead(recursive)]
 struct Odd {
     next: Vec<Even>,
@@ -209,6 +222,7 @@ struct Odd {
 /// A recursive type inside an ordinary one makes the outer depth unknown
 /// too, so the check passes it to the walk.
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Forest {
     trees: Vec<Tree>,
 }

@@ -69,9 +69,9 @@ pub(crate) mod sealed {
 /// derive marks the newtype `Scalar` when its inner type is a `Scalar`.
 ///
 /// The newtype encrypts exactly as its inner value does. So
-/// `keyset.decrypt::<String>` opens what an `Email` encrypted. The derive
-/// comes from Vitamin C, so your crate needs `vitaminc-aead` as a
-/// dependency to use it.
+/// `keyset.decrypt::<String>` opens what an `Email` encrypted. The derive is
+/// Stack Encrypt's, so your crate needs no dependency other than
+/// `stack-encrypt` to use it.
 ///
 /// ```
 /// # async fn example() -> Result<(), stack_encrypt::Error> {

@@ -4538,7 +4538,7 @@ checksum = "62cacd4dae485e98cfe5407e919187a8468dd933ea4234be5115b7d13a30f3c6"
 dependencies = [
  "bytes",
  "serde",
- "vitaminc-aead-derive 0.5.1",
+ "vitaminc-aead-derive",
  "vitaminc-context 0.5.1",
  "vitaminc-protected 0.5.1",
  "vitaminc-random 0.5.1",
@@ -4558,10 +4558,10 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
+ "stack-encrypt-derive",
  "thiserror 2.0.18",
  "trybuild",
  "uuid",
- "vitaminc-aead-derive 0.10.0",
  "vitaminc-context 0.10.0",
  "vitaminc-prf",
  "vitaminc-protected 0.10.0",
@@ -4578,18 +4578,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
-]
-
-[[package]]
-name = "vitaminc-aead-derive"
-version = "0.10.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.9",
- "vitaminc 0.10.0",
- "vitaminc-aead 0.10.0",
- "zeroize",
 ]
 
 [[package]]

@@ -1,4 +1,15 @@
-//! Derive the declarations of encrypted records.
+//! Derive the declarations of encrypted records, and the description of a
+//! plaintext value.
+//!
+//! Stack Encrypt re-exports every macro here, so depend on `stack-encrypt`
+//! and import them from `stack_encrypt`. The macros come in two families:
+//!
+//! - `#[derive(Encrypt)]` and `#[derive(Decrypt)]` describe a plaintext
+//!   value of your own type, read `#[aead(...)]` attributes, and are
+//!   documented on each macro. See [`Encrypt`](macro@Encrypt).
+//! - `#[derive(EncryptTarget)]` and `#[derive(DecryptSource)]` declare a
+//!   stored record, read `#[stash(...)]` attributes, and are documented
+//!   below.
 //!
 //! Derive `EncryptTarget<P>` and `DecryptSource<P>` on the struct that holds
 //! the encrypted form of a plaintext `P`. Then:
@@ -329,6 +340,36 @@ mod owned_decrypt;
 mod owned_encrypt;
 mod predicate;
 mod shape;
+mod value;
+
+/// Derive `Encrypt` for a struct or a fieldless enum: how a value of the type
+/// is walked into a sink. A struct walks as a map keyed by field name. A
+/// fieldless enum walks as one integer leaf, its discriminant. Pair it with
+/// [`Decrypt`](macro@Decrypt) to read the value back.
+///
+/// The derive also implements `Scalar` for a type that encrypts as one leaf:
+/// a newtype over a `Scalar`, and a fieldless enum.
+#[doc = include_str!("../docs/value-derives.md")]
+#[doc = include_str!("../docs/value-attributes.md")]
+#[proc_macro_derive(Encrypt, attributes(aead))]
+pub fn derive_encrypt(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    value::encrypt::derive(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Derive `Decrypt` for a struct or a fieldless enum: the sink that builds
+/// the type back from what [`Encrypt`](macro@Encrypt) walked. The wire shape
+/// and the attributes are the same as for `Encrypt`. The docs of
+/// [`Encrypt`](macro@Encrypt) describe them.
+#[proc_macro_derive(Decrypt, attributes(aead))]
+pub fn derive_decrypt(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    value::decrypt::derive(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
 
 /// Derive the owned `EncryptTarget` declaration for a record struct. See
 /// the [crate documentation](crate) for what the derive emits. The attributes

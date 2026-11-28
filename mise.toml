@@ -1,5 +1,5 @@
 # The repository root is the root of the Rust and Go toolchains: the Cargo
-# workspace in Cargo.toml (the stack-* crates, the three AEAD crates moved from
+# workspace in Cargo.toml (the stack-* crates, the two AEAD crates moved from
 # vitaminc, and the three node bindings) and the Go module in languages/golang.
 #
 # EQL (packages/eql) and protect-ffi (languages/typescript/packages/protect-ffi)
@@ -12,11 +12,11 @@ includes = [
   "packages/stack-kms/tasks.toml",
   "packages/stack-profile/tasks.toml",
   "packages/stack-encrypt/tasks.toml",
+  "packages/stack-encrypt-derive/tasks.toml",
   "packages/stack-encrypt-jsonpath/tasks.toml",
   "packages/stack-guest-abi/tasks.toml",
   "packages/vitaminc-aead/tasks.toml",
   "packages/recipher-frame/tasks.toml",
-  "packages/vitaminc-aead-derive/tasks.toml",
 ]
 
 [tools]

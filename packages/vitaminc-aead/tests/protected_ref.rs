@@ -4,6 +4,9 @@
 //! back. Sealing goes through a cipher that keeps the plaintext in the
 //! clear, so a leaf's length is its plaintext's.
 
+// Stack Encrypt's derives. stack-encrypt depends on this crate, so each
+// derive here names this crate with `#[aead(crate = "::vitaminc_aead")]`.
+use stack_encrypt_derive::{Decrypt, Encrypt};
 use vitaminc_aead::{decrypt, encrypt, tags, CipherText, Context, Decrypt, Encrypt, Node};
 use vitaminc_protected::{AsProtectedRef, Controlled, Protected, ProtectedRef};
 
@@ -124,12 +127,14 @@ fn a_fixed_width_value_behind_a_protected_ref_hides_absence() {
 }
 
 #[derive(Encrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Profile<'a> {
     name: ProtectedRef<'a, String>,
     born: Option<ProtectedRef<'a, i32>>,
 }
 
 #[derive(Decrypt, Debug, PartialEq)]
+#[aead(crate = "::vitaminc_aead")]
 struct ProfileRead {
     name: String,
     born: Option<i32>,

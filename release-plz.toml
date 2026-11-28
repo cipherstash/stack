@@ -85,8 +85,10 @@ publish = false
 
 # The AEAD crates moved here from cipherstash/vitaminc. crates.io's 0.10.0
 # was published from vitaminc. They publish from here before the next
-# stack-encrypt release: vitaminc-aead and vitaminc-aead-derive under the same
-# names, and the frame crate as recipher-frame (it was vitaminc-aead-frame).
+# stack-encrypt release: vitaminc-aead under the same name, and the frame
+# crate as recipher-frame (it was vitaminc-aead-frame). The derives of
+# vitaminc-aead are in stack-encrypt-derive. That crate releases with
+# stack-encrypt.
 # Until then they are listed here so that release-plz neither bumps nor
 # publishes them.
 [[package]]
@@ -96,10 +98,5 @@ publish = false
 
 [[package]]
 name = "recipher-frame"
-release = false
-publish = false
-
-[[package]]
-name = "vitaminc-aead-derive"
 release = false
 publish = false

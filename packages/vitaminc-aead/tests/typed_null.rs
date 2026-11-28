@@ -5,6 +5,9 @@
 //! leaf's length is its plaintext's; AES-GCM adds the same nonce and tag
 //! to every leaf.
 
+// Stack Encrypt's derives. stack-encrypt depends on this crate, so each
+// derive here names this crate with `#[aead(crate = "::vitaminc_aead")]`.
+use stack_encrypt_derive::{Decrypt, Encrypt};
 use vitaminc_aead::{
     decrypt, decrypt_to_frame, encrypt, tags, to_frame, CipherText, Context, DecodeError, Decrypt,
     DecryptError, Encrypt, FixedType, Frame, IntoAad, Node, Width,
@@ -125,12 +128,14 @@ fn a_decimal_hides_absence_whatever_its_scale() {
 }
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq, Clone, Copy)]
+#[aead(crate = "::vitaminc_aead")]
 enum Status {
     Active,
     Suspended = 7,
 }
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq, Clone, Copy)]
+#[aead(crate = "::vitaminc_aead")]
 struct Age(u32);
 
 #[test]
@@ -156,6 +161,7 @@ fn a_derived_enum_and_newtype_hide_absence() {
 }
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq, Clone)]
+#[aead(crate = "::vitaminc_aead")]
 struct Profile {
     name: String,
     born: Option<i32>,
@@ -226,6 +232,7 @@ fn a_frame_reads_a_typed_null_and_writes_the_plain_null() {
 }
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq, Clone)]
+#[aead(crate = "::vitaminc_aead")]
 struct Row {
     #[aead(passthrough)]
     rank: Option<u32>,

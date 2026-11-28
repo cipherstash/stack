@@ -17,7 +17,7 @@
 //! Passthrough values travel in the clear and are **not authenticated** —
 //! use them for non-sensitive routing/display data only.
 //!
-//! This is the *cipher-directed* layer — vitaminc's `Encrypt` / `Decrypt`
+//! This is the *cipher-directed* layer — the `Encrypt` / `Decrypt`
 //! derives, sealed through the keyset directly — one level below
 //! `#[derive(EncryptTarget)]`, which the
 //! `encrypted_record` example uses. Reach for this layer when a value needs
@@ -37,8 +37,7 @@
 //! `CS_WORKSPACE_CRN` and `CS_CLIENT_ID` / `CS_CLIENT_KEY` instead (see the
 //! `zerokms_auth` example for the lookup order).
 
-use stack_encrypt::{CipherText, Label, StackCipher, StackCipherText};
-use vitaminc_aead::{Decrypt, Encrypt};
+use stack_encrypt::{CipherText, Decrypt, Encrypt, Label, StackCipher, StackCipherText};
 
 // --- The record type ---------------------------------------------------------
 

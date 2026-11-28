@@ -5,6 +5,9 @@
 
 use std::collections::BTreeMap;
 
+// Stack Encrypt's derives. stack-encrypt depends on this crate, so each
+// derive here names this crate with `#[aead(crate = "::vitaminc_aead")]`.
+use stack_encrypt_derive::{Decrypt, Encrypt};
 use vitaminc_aead::{
     decrypt, encrypt, Bytes, Context, DecodeError, Decrypt, DecryptError, Encrypt, EncryptRef,
     FixedType, Int, IntoAad, Logical, MapSink, Physical, Raw, SeqSink, Sink, SourceError,
@@ -170,6 +173,7 @@ fn refusal<T>(r: Result<T, DecryptError<DecodeError, Refused>>) -> DecodeError {
 // The ADR's section 1 example, derived and by hand.
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq, Clone, zeroize::Zeroize)]
+#[aead(crate = "::vitaminc_aead")]
 struct User {
     email: String,
     age: u32,
@@ -237,6 +241,7 @@ fn a_derived_struct_round_trips() {
 }
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq, Clone)]
+#[aead(crate = "::vitaminc_aead")]
 struct Account {
     owner: User,
     aliases: Vec<String>,
@@ -387,6 +392,7 @@ fn a_repeated_key_is_refused_by_the_sink_itself() {
 // Passthrough, skip and take.
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq, Clone)]
+#[aead(crate = "::vitaminc_aead")]
 struct Row {
     #[aead(passthrough)]
     tenant: String,
@@ -492,6 +498,7 @@ fn an_entry_under_a_skipped_key_is_refused() {
 /// out; `take` swaps each for its default instead, and the empty value is
 /// wiped harmlessly when `self` drops.
 #[derive(Encrypt, Decrypt, ZeroizeOnDrop, Debug, PartialEq)]
+#[aead(crate = "::vitaminc_aead")]
 struct Secret {
     #[aead(take)]
     token: String,
@@ -500,6 +507,7 @@ struct Secret {
 }
 
 #[derive(Encrypt, Decrypt, ZeroizeOnDrop, Debug, PartialEq)]
+#[aead(crate = "::vitaminc_aead")]
 struct Token(#[aead(take)] String);
 
 #[test]
@@ -518,6 +526,7 @@ fn take_lets_a_drop_type_derive() {
 /// A passthrough field is lent to the sink in place, so a `Drop` type needs
 /// no `take` on it, and its type needs no `Default`.
 #[derive(Encrypt, Decrypt, ZeroizeOnDrop, Debug, PartialEq)]
+#[aead(crate = "::vitaminc_aead")]
 struct TenantSecret {
     #[aead(passthrough)]
     tenant: NoDefault,
@@ -527,6 +536,7 @@ struct TenantSecret {
 
 /// A passthrough column type with no `Default`, which `take` would need.
 #[derive(Encrypt, Decrypt, Debug, PartialEq, zeroize::Zeroize)]
+#[aead(crate = "::vitaminc_aead")]
 struct NoDefault(u32);
 
 #[test]
@@ -547,18 +557,23 @@ fn a_drop_type_lends_a_passthrough_field_without_take() {
 // Newtypes, tuple structs, empty structs and enums.
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq)]
+#[aead(crate = "::vitaminc_aead")]
 struct Wrapper(Vec<u16>);
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq)]
+#[aead(crate = "::vitaminc_aead")]
 struct Pair(String, u32);
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq)]
+#[aead(crate = "::vitaminc_aead")]
 struct Marker;
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq)]
+#[aead(crate = "::vitaminc_aead")]
 struct Braced {}
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq, Clone, Copy)]
+#[aead(crate = "::vitaminc_aead")]
 enum Status {
     Active,
     Suspended = 7,
@@ -669,6 +684,7 @@ fn every_variant_seals_to_the_same_length() {
 // `Either` chain, for every kind of child.
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq, Clone)]
+#[aead(crate = "::vitaminc_aead")]
 struct Mixed {
     first: u32,
     second: BTreeMap<String, u32>,
@@ -678,6 +694,7 @@ struct Mixed {
 }
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq, Clone)]
+#[aead(crate = "::vitaminc_aead")]
 struct Named(BTreeMap<String, Vec<u32>>);
 
 #[test]
@@ -720,6 +737,7 @@ fn a_newtype_over_a_container_is_transparent_and_refuses_a_passthrough() {
 // Generics and the crate attribute.
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq)]
+#[aead(crate = "::vitaminc_aead")]
 struct Holder<T, const N: usize> {
     value: T,
     bytes: [u8; N],
@@ -747,7 +765,7 @@ mod umbrella {
     }
 }
 
-#[derive(umbrella::aead::Encrypt, umbrella::aead::Decrypt, Debug, PartialEq)]
+#[derive(Encrypt, Decrypt, Debug, PartialEq)]
 #[aead(crate = "crate::umbrella::aead")]
 struct Renamed {
     value: u32,
@@ -789,6 +807,7 @@ fn the_by_reference_walk_makes_the_same_calls_as_the_by_value_walk() {
 /// too, and walks the same by reference as by value: a borrowed field is
 /// then visited as `&&'a str`, `&Option<&'a str>` and so on.
 #[derive(Encrypt, Clone)]
+#[aead(crate = "::vitaminc_aead")]
 struct NewUser<'a> {
     email: &'a str,
     nickname: Option<&'a str>,
@@ -849,6 +868,7 @@ impl Encrypt for &Counted {
 }
 
 #[derive(Encrypt, zeroize::Zeroize)]
+#[aead(crate = "::vitaminc_aead")]
 struct Three {
     a: Counted,
     b: Counted,
@@ -986,6 +1006,7 @@ fn a_struct_inside_protected_stays_wrapped_and_is_wiped_whole() {
 // straight back into `Protected` on the way out.
 
 #[derive(Encrypt, Decrypt)]
+#[aead(crate = "::vitaminc_aead")]
 struct Keyed {
     key: Protected<[u8; 4]>,
     label: String,
@@ -1008,6 +1029,7 @@ fn protected_fields_stay_wrapped() {
 // unchanged: the generated sink repeats the struct's generics as written.
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq, Clone)]
+#[aead(crate = "::vitaminc_aead")]
 struct Window<const N: u32> {
     start: i64,
 }
@@ -1026,12 +1048,14 @@ fn a_const_generic_of_a_non_usize_type_round_trips() {
 
 #[cfg(feature = "jiff")]
 #[derive(Encrypt, Decrypt, Debug, PartialEq)]
+#[aead(crate = "::vitaminc_aead")]
 struct Stamped {
     at: vitaminc_aead::Timestamp,
 }
 
 #[cfg(feature = "jiff")]
 #[derive(Encrypt, Decrypt, Debug, PartialEq, Clone)]
+#[aead(crate = "::vitaminc_aead")]
 struct EventAsJiff {
     at: jiff::Timestamp,
 }
@@ -1055,6 +1079,7 @@ fn a_timestamp_field_round_trips_and_reads_as_a_jiff_timestamp() {
 
 #[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
 #[derive(Encrypt, Decrypt, Debug, PartialEq)]
+#[aead(crate = "::vitaminc_aead")]
 struct Wiped {
     day: vitaminc_aead::Date,
     price: vitaminc_aead::Decimal,
@@ -1064,6 +1089,7 @@ struct Wiped {
 
 #[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
 #[derive(Encrypt, Decrypt, Debug, PartialEq)]
+#[aead(crate = "::vitaminc_aead")]
 struct Foreign {
     day: jiff::civil::Date,
     price: rust_decimal::Decimal,
@@ -1103,6 +1129,7 @@ fn wipeable_scalar_fields_round_trip_and_read_as_their_foreign_types() {
 
 #[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
 #[derive(Encrypt, Decrypt, Debug, PartialEq)]
+#[aead(crate = "::vitaminc_aead")]
 struct MaybeWiped {
     day: Option<vitaminc_aead::Date>,
     price: Option<vitaminc_aead::Decimal>,
@@ -1111,6 +1138,7 @@ struct MaybeWiped {
 
 #[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
 #[derive(Encrypt, Decrypt, Debug, PartialEq)]
+#[aead(crate = "::vitaminc_aead")]
 struct MaybeForeign {
     day: Option<jiff::civil::Date>,
     price: Option<rust_decimal::Decimal>,
