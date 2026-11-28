@@ -64,7 +64,7 @@ if (many.isOk()) {
 // A plain object needs json(..).
 // @ts-expect-error: a plain object is not a value.
 void keyset.encrypt({ name: 'Ada' })
-// A UUID is not in the engine's value model yet.
+// This version of the SDK does not encrypt a UUID yet.
 declare const uuid: RcUuid
 // @ts-expect-error: a UUID is not a value.
 void keyset.encrypt(uuid)

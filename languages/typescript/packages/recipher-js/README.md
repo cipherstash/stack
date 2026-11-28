@@ -77,7 +77,7 @@ The value bridge converts JavaScript values in both directions:
   `json(..)` encrypts the object as a JSON document.
   `opaque(..)`, for a whole object in the engine's own format, is not built yet.
 - The package exports `RcUuid`, for a universally unique identifier (UUID).
-  The engine has no plaintext type for a UUID yet.
+  This version of the SDK does not encrypt a UUID yet.
   Encrypting an `RcUuid` is an `Err` with the code `recipher_js::uuid`.
 - The value bridge refuses each of these values, with an error code for each:
   - a `Map` or a `Set`;

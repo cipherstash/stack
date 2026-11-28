@@ -35,8 +35,8 @@ export interface RcDecimal {
 
 /**
  * A universally unique identifier (UUID).
- * The engine has no plaintext type for a UUID yet. Encrypting an `RcUuid` is
- * an `Err` with the code `recipher_js::uuid`. `RcUuid` is not a `Scalar`.
+ * This version of the SDK does not encrypt a UUID yet. Encrypting an `RcUuid`
+ * is an `Err` with the code `recipher_js::uuid`. `RcUuid` is not a `Scalar`.
  */
 export interface RcUuid {
   /** The UUID as hyphenated hex. */

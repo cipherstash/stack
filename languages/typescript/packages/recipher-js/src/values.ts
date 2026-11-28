@@ -132,8 +132,8 @@ export const RcDecimal: WrapperConstructor<RcDecimal> =
 export type RcDecimal = Types.RcDecimal
 
 /**
- * A universally unique identifier (UUID). The engine has no plaintext type
- * for a UUID yet. Encrypting an `RcUuid` is an `Err` with the code
+ * A universally unique identifier (UUID). This version of the SDK does not
+ * encrypt a UUID yet. Encrypting an `RcUuid` is an `Err` with the code
  * `recipher_js::uuid`. `RcUuid` is not a `Scalar`.
  */
 export const RcUuid: WrapperConstructor<RcUuid> = wrapperClass('RcUuid')

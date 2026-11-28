@@ -641,13 +641,15 @@ describe('a ciphertext read back with a kind', () => {
 })
 
 describe('refusals', () => {
-  it('a UUID, which the engine does not hold yet', async () => {
+  it('a UUID: this version of the SDK does not encrypt one yet', async () => {
     const keyset = (await cipher()).defaultKeyset()
     const uuid = new RcUuid('123e4567-e89b-12d3-a456-426614174000')
-    // @ts-expect-error: a UUID is not a scalar of the engine's value model.
+    // @ts-expect-error: a UUID is not a `Scalar` in this version of the SDK.
     const result = await keyset.encrypt(uuid)
     expect(result.err()?.code).toBe('recipher_js::uuid')
-    expect(result.err()?.message).toContain('UUID')
+    expect(result.err()?.message).toContain(
+      'this version of the SDK does not encrypt a UUID yet',
+    )
   })
 
   it('a bigint outside 128 bits, with the code ERR_INTEGER_RANGE', async () => {

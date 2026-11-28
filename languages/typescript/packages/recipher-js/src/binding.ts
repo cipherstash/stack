@@ -31,9 +31,13 @@ import { Err, err, Ok, ok, type Result } from './result'
 
 /**
  * The binding interface version of this TypeScript. The addon must report
- * the same number.
+ * the same number, `BINDING_INTERFACE` in `crate/src/lib.rs`. So `load`
+ * refuses an addon built from older or newer code, instead of calling a
+ * method whose arguments or result changed shape. Add 1 to the number here
+ * and in the crate whenever a class, a method, or a returned value of the
+ * addon changes shape.
  */
-export const BINDING_INTERFACE = 1
+export const BINDING_INTERFACE = 2
 
 /** The native addon's exports, as `native.d.ts` declares them. */
 export type Binding = typeof Native
