@@ -26,6 +26,22 @@
 //! of range or a `Date` outside the wire's range stops the walk through
 //! [`Error::source`](vitaminc_aead::plaintext::Error::source), and comes
 //! back to JavaScript as that error: see [`JsFault`].
+//!
+//! # A JSON document
+//!
+//! [`JsRef::to_json`] walks a value as a JSON document. The walk is the
+//! same one, with the same safety rules, but it reads only what a JSON
+//! document holds:
+//!
+//! | JavaScript                           | In the document                 |
+//! | ------------------------------------ | ------------------------------- |
+//! | `null`, `boolean`, `string`          | the same                        |
+//! | `Array`, plain object                | an array, an object             |
+//! | whole `number` within 2^53 - 1       | an integer                      |
+//! | whole `number` from 2^53 up to 2^64  | refused                         |
+//! | any other finite `number`            | a float                         |
+//! | `bigint` within 64 bits              | an integer, with its digits     |
+//! | anything else                        | refused                         |
 
 use napi::bindgen_prelude::{
     Array, BigInt, FromNapiValue, JsObjectValue, JsValue, Object, Uint8ArraySlice, Unknown,
@@ -38,10 +54,10 @@ use vitaminc_aead::{
 };
 use vitaminc_protected::Buffer;
 
-use crate::error::{JsFault, Refusal};
+use crate::error::{JsFault, NoJsonForm, Refusal};
 use crate::js::{
-    depth_error, forbidden_key, forbidden_key_error, get_own, lossless_string, not_plain_error,
-    own_enumerable_keys, MAX_DEPTH,
+    depth_error, forbidden_key, forbidden_key_error, get_own, lossless_string, not_json_error,
+    not_plain_error, own_enumerable_keys, MAX_DEPTH,
 };
 use crate::scalar::{self, ConversionError};
 use crate::wrappers::{Wrapper, Wrappers};
@@ -50,6 +66,15 @@ use crate::wrappers::{Wrapper, Wrappers};
 pub struct JsRef<'e> {
     value: Unknown<'e>,
     depth: usize,
+}
+
+/// Which values a walk reads.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Model {
+    /// Every value in the module's first table.
+    Value,
+    /// Only what a JSON document holds: the module's second table.
+    Json,
 }
 
 impl<'e> JsRef<'e> {
@@ -62,6 +87,13 @@ impl<'e> JsRef<'e> {
     /// the nesting limit counts the whole structure.
     pub(crate) fn at_depth(value: Unknown<'e>, depth: usize) -> Self {
         Self { value, depth }
+    }
+
+    /// Walk the value into `sink` as a JSON document: the sink receives
+    /// only nulls, booleans, 64-bit integers, finite floats, text, sequences
+    /// and maps.
+    pub(crate) fn visit_json<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        js_walk(self.value, self.depth, Model::Json, sink)
     }
 
     /// Snapshot the value as a frame, on the JavaScript thread, so it can be
@@ -79,7 +111,7 @@ impl<'e> JsRef<'e> {
 
 impl Encrypt for JsRef<'_> {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        js_walk(self.value, self.depth, sink)
+        js_walk(self.value, self.depth, Model::Value, sink)
     }
 }
 
@@ -106,26 +138,68 @@ fn js_conversion<S: Sink>(env: &Env, error: ConversionError) -> S::Error {
     }
 }
 
-fn js_walk<S: Sink>(value: Unknown<'_>, depth: usize, sink: S) -> Result<S::Ok, S::Error> {
+/// The refusal of a value with no form in a JSON document, as the sink's
+/// error.
+fn no_json_form<S: Sink>(form: NoJsonForm) -> S::Error {
+    js_fault::<S>(not_json_error(form))
+}
+
+/// Walk one value. This function, [`js_object`], [`js_array`] and
+/// [`js_map`] are the walk's recursion: a nested level costs one frame of
+/// each. So they hold as little as they can, and everything that reads a
+/// scalar or builds a refusal is in a helper whose frame is gone before a
+/// container recurses. A document at the depth limit then walks in a debug
+/// build too.
+fn js_walk<S: Sink>(
+    value: Unknown<'_>,
+    depth: usize,
+    model: Model,
+    sink: S,
+) -> Result<S::Ok, S::Error> {
     if depth > MAX_DEPTH {
         return Err(js_fault::<S>(depth_error()));
     }
     match value.get_type().map_err(js_fault::<S>)? {
+        ValueType::Object => js_object(value, depth, model, sink),
+        ty => js_primitive(value, ty, model, sink),
+    }
+}
+
+/// A value of type `ty`, which is not an object.
+fn js_primitive<S: Sink>(
+    value: Unknown<'_>,
+    ty: ValueType,
+    model: Model,
+    sink: S,
+) -> Result<S::Ok, S::Error> {
+    match ty {
         ValueType::Null => sink.scalar(None, Physical::Null),
-        ValueType::Undefined => sink.scalar(Some(Logical::Undefined), Physical::Null),
+        ValueType::Undefined => match model {
+            Model::Value => sink.scalar(Some(Logical::Undefined), Physical::Null),
+            Model::Json => Err(no_json_form::<S>(NoJsonForm::Undefined)),
+        },
         ValueType::Boolean => {
             let b = bool::from_unknown(value).map_err(js_fault::<S>)?;
             sink.scalar(None, Physical::Bool(b))
         }
         ValueType::Number => {
             let n = f64::from_unknown(value).map_err(js_fault::<S>)?;
-            sink.scalar(None, Physical::Float(Float::F64(n)))
+            let number = match model {
+                Model::Value => Physical::Float(Float::F64(n)),
+                Model::Json => scalar::json_number(n).map_err(no_json_form::<S>)?,
+            };
+            sink.scalar(None, number)
         }
         ValueType::BigInt => {
             let env = Env::from_raw(value.value().env);
             let big = BigInt::from_unknown(value).map_err(js_fault::<S>)?;
-            let int = scalar::bigint(big.sign_bit, &big.words)
-                .map_err(|e| js_conversion::<S>(&env, e))?;
+            let int = match model {
+                Model::Value => scalar::bigint(big.sign_bit, &big.words)
+                    .map_err(|e| js_conversion::<S>(&env, e))?,
+                Model::Json => {
+                    scalar::json_bigint(big.sign_bit, &big.words).map_err(no_json_form::<S>)?
+                }
+            };
             sink.scalar(None, Physical::Int(int))
         }
         ValueType::String => {
@@ -134,7 +208,6 @@ fn js_walk<S: Sink>(value: Unknown<'_>, depth: usize, sink: S) -> Result<S::Ok, 
             let text = lossless_string(value, "string").map_err(js_fault::<S>)?;
             sink.scalar(None, Physical::Text(&text))
         }
-        ValueType::Object => js_object(value, depth, sink),
         other => Err(js_fault::<S>(JsFault::refused(
             Refusal::NotAValue,
             format!("JS type cannot be encrypted: {other}"),
@@ -142,29 +215,71 @@ fn js_walk<S: Sink>(value: Unknown<'_>, depth: usize, sink: S) -> Result<S::Ok, 
     }
 }
 
-/// Dispatch an object. The scalar shapes are read in helpers whose frames
-/// are gone before the containers recurse, so the stack a nested level
-/// costs is the recursion's own and a document at the depth limit walks
-/// in a debug build too.
-fn js_object<S: Sink>(value: Unknown<'_>, depth: usize, sink: S) -> Result<S::Ok, S::Error> {
+/// What an object is, to the walk.
+enum Shape {
+    /// A `Buffer` or a typed array.
+    Bytes,
+    /// An array.
+    Array,
+    /// A `Date`.
+    Date,
+    /// An instance of a wrapper class.
+    Wrapped(Wrapper),
+    /// A plain object.
+    Map,
+}
+
+/// What `value` is, or the refusal of an object the walk does not read.
+///
+/// A JSON document holds none of the scalar shapes: bytes, a `Date` and a
+/// wrapper class instance. Each is refused here by what it is, before it
+/// is read.
+fn js_shape(value: Unknown<'_>, model: Model) -> Result<Shape, JsFault> {
+    let json = model == Model::Json;
     // Typed arrays before anything else: `napi_is_buffer` is true for every
     // `ArrayBufferView`, so a `Buffer` check first would take a
     // `Float64Array` as raw bytes.
-    if value.is_typedarray().map_err(js_fault::<S>)? {
-        return js_bytes(value, sink);
+    if value.is_typedarray()? {
+        if json {
+            return Err(not_json_error(NoJsonForm::Bytes));
+        }
+        return Ok(Shape::Bytes);
     }
-    if value.is_dataview().map_err(js_fault::<S>)? {
-        return Err(js_fault::<S>(not_bytes_error("DataView")));
+    if value.is_dataview()? {
+        if json {
+            return Err(not_json_error(NoJsonForm::Bytes));
+        }
+        return Err(not_bytes_error("DataView"));
     }
-    if value.is_array().map_err(js_fault::<S>)? {
-        return js_array(value, depth, sink);
+    if value.is_array()? {
+        return Ok(Shape::Array);
     }
-    if value.is_date().map_err(js_fault::<S>)? {
-        return js_date(value, sink);
+    if value.is_date()? {
+        if json {
+            return Err(not_json_error(NoJsonForm::Typed));
+        }
+        return Ok(Shape::Date);
     }
-    match js_classify(value).map_err(js_fault::<S>)? {
-        Some(wrapper) => js_wrapped(value, wrapper, sink),
-        None => js_map(value, depth, sink),
+    match js_classify(value)? {
+        Some(_) if json => Err(not_json_error(NoJsonForm::Typed)),
+        Some(wrapper) => Ok(Shape::Wrapped(wrapper)),
+        None => Ok(Shape::Map),
+    }
+}
+
+/// Dispatch an object by its shape.
+fn js_object<S: Sink>(
+    value: Unknown<'_>,
+    depth: usize,
+    model: Model,
+    sink: S,
+) -> Result<S::Ok, S::Error> {
+    match js_shape(value, model).map_err(js_fault::<S>)? {
+        Shape::Bytes => js_bytes(value, sink),
+        Shape::Array => js_array(value, depth, model, sink),
+        Shape::Date => js_date(value, sink),
+        Shape::Wrapped(wrapper) => js_wrapped(value, wrapper, sink),
+        Shape::Map => js_map(value, depth, model, sink),
     }
 }
 
@@ -218,7 +333,12 @@ fn js_classify(value: Unknown<'_>) -> Result<Option<Wrapper>, JsFault> {
     }
 }
 
-fn js_map<S: Sink>(value: Unknown<'_>, depth: usize, sink: S) -> Result<S::Ok, S::Error> {
+fn js_map<S: Sink>(
+    value: Unknown<'_>,
+    depth: usize,
+    model: Model,
+    sink: S,
+) -> Result<S::Ok, S::Error> {
     let obj = Object::from_unknown(value).map_err(js_fault::<S>)?;
     let keys = own_enumerable_keys(&obj).map_err(js_fault::<S>)?;
     let mut map = sink.map(Some(keys.len()))?;
@@ -229,12 +349,17 @@ fn js_map<S: Sink>(value: Unknown<'_>, depth: usize, sink: S) -> Result<S::Ok, S
         // Raw fetch so an explicit `undefined` value survives as
         // `Undefined` instead of reading as a missing property.
         let value = get_own(&obj, &key).map_err(js_fault::<S>)?;
-        js_walk(value, depth + 1, map.entry(&key.name)?)?;
+        js_walk(value, depth + 1, model, map.entry(&key.name)?)?;
     }
     map.end()
 }
 
-fn js_array<S: Sink>(value: Unknown<'_>, depth: usize, sink: S) -> Result<S::Ok, S::Error> {
+fn js_array<S: Sink>(
+    value: Unknown<'_>,
+    depth: usize,
+    model: Model,
+    sink: S,
+) -> Result<S::Ok, S::Error> {
     let arr = Array::from_unknown(value).map_err(js_fault::<S>)?;
     // The same JS value seen as an object, for per-index own-property
     // checks: `Array::get` wraps every in-bounds hole in `Some(undefined)`,
@@ -258,7 +383,7 @@ fn js_array<S: Sink>(value: Unknown<'_>, depth: usize, sink: S) -> Result<S::Ok,
             .get(i)
             .map_err(js_fault::<S>)?
             .ok_or_else(|| js_fault::<S>(sparse()))?;
-        js_walk(element, depth + 1, seq.element()?)?;
+        js_walk(element, depth + 1, model, seq.element()?)?;
     }
     seq.end()
 }
@@ -316,7 +441,10 @@ mod tests {
             too_deep.reason().contains("nested too deeply"),
             "{too_deep}"
         );
-        assert_eq!(too_deep.refusal(), Some(Refusal::TooDeep));
+        assert_eq!(
+            too_deep.refusal(),
+            Some(Refusal::TooDeep { limit: MAX_DEPTH })
+        );
 
         let too_long = frame_error(FrameWriteError::TooLong);
         assert_eq!(too_long.status(), Status::InvalidArg);
