@@ -2,14 +2,16 @@
 //! in a given order.
 //!
 //! A frame is an [`OwnedFrame`]: a byte buffer that contains one value, in
-//! the engine's frame encoding. A map frame contains a map. A sink receives
-//! a value from a frame one part at a time: one scalar, array or map.
+//! the engine's frame encoding. A map frame contains a map. A sink receives a
+//! value from a frame one part at a time: one scalar, array, or map.
 //!
-//! The addon passes a record's row, and its stored row, between JavaScript
-//! and the engine as one map frame each. The engine is the `stack-encrypt`
-//! crate. The map has one entry for each of the record's fields. These
-//! helpers split such a frame into one frame for each entry. They also
-//! write entries back as one map, in the order given.
+//! The addon passes a record's row between JavaScript and the engine as one
+//! map frame. The addon passes a stored row in the same way. The engine is
+//! the `stack-encrypt` crate. The map has one entry for each of the record's
+//! fields.
+//!
+//! These helpers split such a frame into one frame for each entry. The
+//! helpers also write entries back as one map, in the order given.
 
 use stack_encrypt::dynamic::frame::OwnedFrame;
 use stack_encrypt::dynamic::plaintext::{

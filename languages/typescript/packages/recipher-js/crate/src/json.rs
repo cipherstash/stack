@@ -1,19 +1,19 @@
 //! JSON documents: the [`Json`] class that `json(..)` makes.
 //!
-//! The engine is the Stack Encrypt engine, the `stack-encrypt` crate. It
-//! encrypts a JSON document as the document's JSON text, through its
+//! The engine is the Stack Encrypt engine, the `stack-encrypt` crate. The
+//! engine encrypts a JSON document as the document's JSON text, through its
 //! [`JsonPlaintext`] type. Rust's `keyset.encrypt` of a `JsonPlaintext`
 //! writes the same ciphertext, so each side decrypts the other's documents.
 //!
 //! The value bridge, the `recipher-value-napi` crate, converts between a
-//! JavaScript value and a JSON document. This module converts nothing. It
-//! passes the document between the bridge and the engine:
+//! JavaScript value and a JSON document. This module converts nothing. This
+//! module passes the document between the bridge and the engine:
 //!
-//! - Encrypting. `json(..)` asks the bridge for the document's JSON text,
+//! - To encrypt, `json(..)` asks the bridge for the document's JSON text,
 //!   and keeps the text in a [`Json`]. `encrypt` gives the text to the
-//!   engine's parser, which makes the [`JsonPlaintext`] that the engine
-//!   encrypts.
-//! - Decrypting. [`opened`] gives the decrypted text to the engine's
+//!   engine's parser. The parser makes the [`JsonPlaintext`] that the
+//!   engine encrypts.
+//! - To decrypt, [`opened`] gives the decrypted text to the engine's
 //!   parser. The bridge then builds the JavaScript value of the document.
 //!
 //! The text and the document are plaintext. Each is wiped when it is
@@ -64,22 +64,23 @@ impl Json {
 }
 
 impl Json {
-    /// Returns the document that `value` holds, when `value` is a `Json`.
+    /// Returns the document in `value`, when `value` is a `Json`.
     ///
-    /// The result answers two questions, so it has three cases:
+    /// The result records two facts, so it has three cases:
     ///
     /// - `None`: `value` is not a `Json`. That is not a failure. The caller
     ///   reads `value` as any other value.
     /// - `Some(Err(..))`: `value` is a `Json`, and `json(..)` refused its
     ///   document. `json(..)` never throws, so it kept the refusal for
     ///   `encrypt` to return.
-    /// - `Some(Ok(..))`: `value` is a `Json`, and this is its document.
+    /// - `Some(Ok(..))`: `value` is a `Json`. The result contains its
+    ///   document.
     ///
-    /// The `Option` says whether `value` is a `Json`. The `Result` says
-    /// whether that `Json`'s document can be encrypted. A single `Result`
+    /// The `Option` is `Some` when `value` is a `Json`. The `Result` is `Ok`
+    /// when that `Json`'s document can be encrypted. A single `Result`
     /// could not tell "not a `Json`" from "a `Json` that was refused".
     ///
-    /// `encrypt` calls it to choose how to read each value:
+    /// `encrypt` calls this function to choose how to read each value:
     ///
     /// ```ignore
     /// let leaf = match Json::of(env, value) {
@@ -123,14 +124,15 @@ impl Json {
 /// ```
 ///
 /// The document is a plain object, an array, text, a number, a `bigint`, a
-/// boolean or `null`. It nests at most 127 levels of arrays and objects.
+/// boolean, or `null`. A document nests at most 127 levels of arrays and
+/// objects.
 ///
-/// A number is stored by these rules:
+/// These rules decide how a number is stored:
 ///
 /// - A whole `number` within 2^53 - 1 of zero is an integer, as
 ///   `JSON.stringify` writes it. `5000000000` is stored as `5000000000`.
-/// - A whole `number` from 2^53 up to 2^64 is refused. Its digits may not
-///   be the ones you wrote. Give it as a `bigint`.
+/// - A whole `number` from 2^53 up to 2^64 is refused. A `number` that
+///   large may not keep the digits you wrote. Pass a `bigint` instead.
 /// - Any other `number` is a float. `NaN` and the infinities are refused.
 /// - A `bigint` is its exact digits, from `-(2n ** 63n)` to
 ///   `2n ** 64n - 1n`. A `bigint` outside that range is refused.
@@ -142,11 +144,11 @@ impl Json {
 /// The engine stores an object's members sorted by key. A decrypted object
 /// lists its members in that order, not in the order you wrote them.
 ///
-/// `undefined`, bytes, a `Date` and the wrapper classes have no JSON form,
-/// and are refused.
+/// `undefined`, bytes, a `Date`, and the wrapper classes have no JSON form.
+/// Each one is refused.
 ///
-/// `json(..)` reads the document now. `json(..)` never throws: `encrypt`
-/// returns an `Err` for a document that cannot be encrypted.
+/// `json(..)` reads the document when you call it. `json(..)` never throws.
+/// For a document that cannot be encrypted, `encrypt` returns an `Err`.
 #[napi(js_name = "json", ts_args_type = "document: JsonValue")]
 pub fn json_document(env: &Env, document: Unknown<'_>) -> Json {
     Json {
@@ -154,8 +156,8 @@ pub fn json_document(env: &Env, document: Unknown<'_>) -> Json {
     }
 }
 
-/// Returns the document that `text` is the JSON text of, as the value the
-/// engine encrypts.
+/// Parses `text`, the JSON text of a document, into the value the engine
+/// encrypts.
 ///
 /// # Errors
 ///
@@ -168,7 +170,7 @@ pub(crate) fn plaintext(text: &[u8]) -> Result<JsonPlaintext, RecipherErrorField
         .ok_or_else(|| Error::NotSealed.into())
 }
 
-/// Returns the document in a decrypted value: the value is the document's
+/// Returns the document in a decrypted value. The value is the document's
 /// JSON text.
 ///
 /// # Errors

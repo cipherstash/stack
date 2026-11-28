@@ -140,9 +140,9 @@ async fn a_json_document_the_engine_sealed_opens_as_that_document() {
     assert_eq!(opened.value(), &serde_json::json!({"id": u64::MAX, "n": 5}));
 }
 
-/// Encrypts the document that `text` is the JSON text of, through the
-/// crate, as `keyset.encrypt(json(..))` does once the bridge has written
-/// the text.
+/// Encrypts a document through the crate. `text` is the document's JSON
+/// text. `keyset.encrypt(json(..))` does the same, after the bridge has
+/// written the text.
 async fn sdk_seal_json(text: &str) -> stack_encrypt::Ciphertext {
     let document = crate::json::plaintext(text.as_bytes()).unwrap();
     sdk_seal(vec![OneValue::json(document)]).await.remove(0)

@@ -30,7 +30,7 @@ pub(crate) fn depth_error() -> JsFault {
     too_deep(MAX_DEPTH)
 }
 
-/// The refusal of a value that a JSON document cannot hold.
+/// The refusal of a value that a JSON document cannot contain.
 pub(crate) fn not_json_error(form: NoJsonForm) -> JsFault {
     let refusal = Refusal::NotJson(form);
     JsFault::refused(refusal, refusal.to_string())

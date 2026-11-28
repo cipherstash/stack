@@ -33,8 +33,8 @@ check<
   >
 >()
 
-// A field that takes a null may be null; a sealed null is stored like a
-// value, a SQL null is a null in the stored row.
+// A field that accepts a null may be null. A sealed null is stored like a
+// value. A SQL null is a null in the stored row.
 const nullable = record('n', {
   sealed: encrypt(kinds.int64, { index: ['equality'], null: 'sealed' }),
   sql: encrypt(kinds.string, { null: 'sql' }),
@@ -98,7 +98,7 @@ const row: Plaintext<typeof user> = {
   notes: 'c',
 }
 
-// encrypt and decrypt carry the record's types, one row or many.
+// encrypt and decrypt keep the record's types, for one row or for an array.
 const one = await keyset.encrypt(user, row)
 check<Exact<typeof one, Result<Stored<typeof user>, RecipherError>>>()
 const many = await keyset.encrypt(user, [row, row])

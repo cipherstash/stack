@@ -236,9 +236,9 @@ pub struct RecipherErrorFields {
     /// diagnostic states another one.
     pub severity: Severity,
     /// The error's structured fields, keyed by `snake_case` name. For
-    /// example, a refused plan has `field` and `reason`, and a ZeroKMS
-    /// failure has `request_kind`. A plan is the engine's rules for
-    /// encrypting a record. The map is empty when the error has no fields.
+    /// example, a refused plan has `field` and `reason`. A ZeroKMS failure
+    /// has `request_kind`. A plan is the engine's rules for encrypting a
+    /// record. The map is empty when the error has no fields.
     #[napi(ts_type = "Record<string, unknown>")]
     pub fields: serde_json::Map<String, serde_json::Value>,
     /// The errors that caused this one, outermost first.

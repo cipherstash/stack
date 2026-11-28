@@ -38,7 +38,7 @@ pub struct Ciphertext {
 }
 
 /// A decrypted value, before the addon builds it in JavaScript. Both forms
-/// are plaintext, and both are wiped when they drop.
+/// are plaintext. Both are wiped when they drop.
 #[derive(OpaqueDebug)]
 pub(crate) enum Opened {
     /// A value of the engine's value model, in a frame.
@@ -75,8 +75,8 @@ impl Ciphertext {
     /// # Errors
     ///
     /// Returns `recipher_js::opened_type` for a value encrypted as another
-    /// type. Returns `recipher_js::not_a_document` when the kind is JSON but
-    /// the value is not a JSON document.
+    /// type. Returns `recipher_js::not_a_document` for a JSON kind whose
+    /// value is not a JSON document.
     pub(crate) fn opened(&self, value: OwnedFrame) -> Outcome<Opened> {
         match self.opens_as {
             None => Ok(Opened::Value(value)),
@@ -88,21 +88,25 @@ impl Ciphertext {
 
 #[napi]
 impl Ciphertext {
-    /// Reads a ciphertext from stored bytes, a `Uint8Array` or a `Buffer`.
-    /// This method checks only the shape of the bytes. Decrypting is what
-    /// checks that they are authentic. A failure does not quote the bytes.
+    /// Reads a ciphertext from stored bytes. The bytes are a `Uint8Array`
+    /// or a `Buffer`. This method checks only the format of the bytes.
+    /// Decrypting checks that the bytes are authentic. A failure does not
+    /// quote the bytes.
     ///
-    /// Give a kind, such as `kinds.string`, to decrypt the value as that
-    /// kind. Decrypting then refuses a value encrypted as another type.
+    /// A kind names the type that a ciphertext decrypts to. To decrypt the
+    /// value as one kind, pass that kind, such as `kinds.string`. `decrypt`
+    /// then refuses a value that was encrypted as another type.
     /// `kinds.json` decrypts a JSON document.
     ///
     /// With no kind, the value decrypts as the type it was encrypted as. A
     /// JSON document then decrypts as its JSON text. `JSON.parse` of that
     /// text loses the digits of an integer outside a `number`'s safe range.
     ///
-    /// Returns an `Err` with the code `recipher_js::not_bytes` when the
-    /// bytes are not a `Uint8Array`, and `recipher_js::not_a_kind` when the
-    /// kind is not one of `kinds`. Does not throw.
+    /// This method does not throw. The method returns an `Err` with one of
+    /// two codes:
+    ///
+    /// - `recipher_js::not_bytes`, when the bytes are not a `Uint8Array`;
+    /// - `recipher_js::not_a_kind`, when the kind is not one of `kinds`.
     #[napi(
         ts_type = "<K extends Kind>(bytes: Uint8Array, kind: K): Result<Ciphertext<ValueOf<K>>, RecipherError>
 static fromBytes(bytes: Uint8Array): Result<Ciphertext, RecipherError>"
@@ -234,9 +238,9 @@ fn as_kind(kind: ValueKind, value: OwnedFrame) -> Outcome<OwnedFrame> {
 /// value. A `Buffer` is a `Uint8Array`.
 ///
 /// The function reads the bytes as a borrowed slice. That is how the value
-/// bridge reads bytes. napi's owned `Uint8Array` is not used. When it
-/// refuses a typed array of another element type, it still keeps a
-/// reference to that array.
+/// bridge reads bytes. This function does not use napi's owned
+/// `Uint8Array`. When that type refuses a typed array of another element
+/// type, it still keeps a reference to that array.
 pub(crate) fn bytes_of(value: Unknown<'_>) -> Option<Vec<u8>> {
     if !value.is_typedarray().unwrap_or(false) {
         return None;

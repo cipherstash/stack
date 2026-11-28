@@ -267,13 +267,14 @@ describe('one field', () => {
       'new@example.com',
     )
 
-    // Its equality term is the term a whole row stores for the value.
+    // The field's equality term is the term that a whole row stores for the
+    // value.
     const row = (
       await keyset.encrypt(user, { ...ada, email: 'new@example.com' })
     ).unwrap()
     expect(Buffer.from(email.equality)).toEqual(Buffer.from(row.email.equality))
 
-    // And a whole row takes the field in place of its own.
+    // A whole row accepts the field in place of its own field.
     const updated = { ...row, email }
     expect((await c.decrypt(user, updated)).unwrap().email).toBe(
       'new@example.com',
@@ -297,13 +298,15 @@ describe('one field', () => {
     const row = (
       await c.defaultKeyset().encrypt(pair, { a: 'x', b: 'y' })
     ).unwrap()
-    // Same shape, so this compiles and the engine reads it; only the context
-    // differs. The key service refuses the key, which it binds to the
-    // field path the value was sealed under.
+    // The two fields have the same shape, so this compiles and the engine
+    // reads it. Only the context differs. The key service refuses the key.
+    // The key service binds a key to the field path that the value was
+    // encrypted under.
     const result = await c.decryptField(pair, 'a', row.b)
     expect(result.err()?.code).toBe('stack_kms::retrieve_key_failed')
 
-    // A row opened under a record of another name is refused the same way.
+    // A row decrypted under a record of another name is refused the same
+    // way.
     const other = record('other', pair.fields)
     const moved = await c.decrypt(other, row)
     expect(moved.err()?.code).toBe('stack_kms::retrieve_key_failed')

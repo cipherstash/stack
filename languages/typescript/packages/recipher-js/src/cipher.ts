@@ -24,9 +24,12 @@ export type { CipherOptions } from './record-types'
  * One encrypted value: opaque bytes, encrypted with a data key of its own.
  *
  * `T` is the type the ciphertext decrypts to. For example,
- * `keyset.encrypt('..')` returns a `Ciphertext<string>`. A ciphertext read
- * from stored bytes with no kind named decrypts to whatever type was
- * encrypted, so its type allows any scalar.
+ * `keyset.encrypt('..')` returns a `Ciphertext<string>`.
+ *
+ * A kind names the type that a stored ciphertext decrypts to, such as
+ * `kinds.string`. A ciphertext read from stored bytes with no kind decrypts
+ * to whatever type was encrypted. So its type allows any scalar. A scalar is
+ * a single value, not a JSON document.
  */
 export type Ciphertext<T = OpenedScalar> = Native.Ciphertext<T>
 /** A cipher: the Stack Encrypt engine, and the keysets it can use. */
