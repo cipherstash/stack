@@ -1,7 +1,21 @@
-//! What a value an input error is about is, read from the value itself:
-//! [`Found`] for a scalar a source describes, a frame, or one entry of an
-//! object frame, and the keys of an object frame. The sinks here read past
-//! every value and copy none of it.
+//! Finds the kind of a value for an input error, without copying the value.
+//!
+//! An input error names the kind of value that the caller passed, as a
+//! [`Found`]. This module reads that kind from three places:
+//!
+//! - A scalar, as a record source describes it ([`Found::scalar`]).
+//! - A frame ([`Found::of_frame`]). A frame is the binary encoding of one
+//!   value.
+//! - One entry of a frame that is an object ([`Found::of_entry`]).
+//!
+//! The module also lists the keys of a frame that is an object
+//! ([`object_keys`]).
+//!
+//! The code reads each value through vitaminc's [`Sink`] trait. A value
+//! describes itself by calling the methods of a `Sink`. The two sinks in
+//! this module are [`Probe`] and [`Lookup`]. Both sinks record the kind of
+//! a value and the keys of an object. Neither sink copies any part of a
+//! value.
 
 use std::cell::{Cell, RefCell};
 
@@ -13,10 +27,15 @@ use vitaminc_aead::plaintext::{
 use crate::refusal::Found;
 
 impl Found {
-    /// What a scalar is, from how it describes itself: its kind, or
-    /// `undefined`, or a logical type this build does not know. A logical
-    /// type over a value it does not admit is named by the value's own
-    /// physical kind, as null, a string, an int32 and so on.
+    /// The kind of a scalar, from the logical type and the physical value
+    /// that the scalar reports.
+    ///
+    /// The result is the scalar's [`ValueKind`], [`Found::Undefined`], or
+    /// [`Found::Unknown`] for a logical type that this build does not
+    /// define. A logical type can come with a physical value that the type
+    /// does not allow, such as a date with a string value. The result is
+    /// then the kind of the physical value, such as a null, a string, or an
+    /// int32.
     pub(crate) fn scalar(logical: Option<Logical>, value: &Physical<'_>) -> Self {
         if let Some(kind) = ValueKind::of(logical, value) {
             return Self::Kind(kind);
@@ -28,7 +47,8 @@ impl Found {
         }
     }
 
-    /// What a frame holds, reading no more of it than its first node.
+    /// The kind of the value in a frame. Reads only the first node of the
+    /// frame.
     pub(crate) fn of_frame(frame: Frame<'_>) -> Self {
         if let Some(kind) = frame.kind() {
             return Self::Kind(kind);
@@ -36,16 +56,21 @@ impl Found {
         if frame.is_null() {
             return Self::Null;
         }
-        // A passthrough, `undefined` or a logical type this build does not
-        // know: one node, which the probe reads without walking inside it.
+        // The frame is a passthrough, `undefined`, or a scalar of a logical
+        // type that this build does not define. Each is one node. `Probe`
+        // records the kind of the node and reads nothing inside it.
         let found = Cell::new(None);
         let _ = frame.visit(Probe::noting(&found, None));
         found.get().unwrap_or(Self::Unknown)
     }
 
-    /// What the entry under `key` holds, for a frame that is an object with
-    /// one, and the entry's own keys, in order, when it is an object too.
-    /// `None` for a frame that is not an object or has no such key.
+    /// The kind of the value under `key` in a frame that is an object.
+    ///
+    /// When that value is an object too, the result also lists its keys, in
+    /// order. For a value of any other kind, the list of keys is empty.
+    ///
+    /// Returns `None` when the frame is not an object, or has no entry
+    /// under `key`.
     pub(crate) fn of_entry(frame: Frame<'_>, key: &str) -> Option<(Self, Vec<String>)> {
         let found = Cell::new(None);
         let keys = RefCell::new(Vec::new());
@@ -58,9 +83,13 @@ impl Found {
     }
 }
 
-/// The keys of an object frame, in order; `None` for a frame that is not an
-/// object. Read with the probe, so a value the frame reader refuses to read,
-/// such as a typed null, does not hide the keys beside it.
+/// The keys of a frame that is an object, in order. Returns `None` when
+/// the frame is not an object.
+///
+/// The function reads the frame with [`Probe`], and not with the serde
+/// frame reader. The serde frame reader returns an error at a value that it
+/// does not read. An example is a typed null: a null that records a type.
+/// `Probe` reads every value, so the function returns every key.
 pub(crate) fn object_keys(frame: Frame<'_>) -> Option<Vec<String>> {
     let found = Cell::new(None);
     let keys = RefCell::new(Vec::new());
@@ -68,17 +97,22 @@ pub(crate) fn object_keys(frame: Frame<'_>) -> Option<Vec<String>> {
     (found.get() == Some(Found::Kind(ValueKind::Object))).then(|| keys.into_inner())
 }
 
-/// A sink that reads past a value and keeps none of it: where it is given
-/// a cell, it notes what kind of value the node is, and where it is given
-/// a list, the keys of an object it is. Children are read past with
-/// neither, so nothing inside a container is noted, and no value is copied.
+/// A [`Sink`] that reads a value and copies no part of it.
+///
+/// - With `found` set, the probe stores the kind of the value there.
+/// - With `keys` set, the probe adds the keys of the value there, when the
+///   value is an object.
+///
+/// The probe reads the children of a list or an object with neither set.
+/// So the probe records nothing about a value inside a container.
 struct Probe<'c> {
     found: Option<&'c Cell<Option<Found>>>,
     keys: Option<&'c RefCell<Vec<String>>>,
 }
 
 impl<'c> Probe<'c> {
-    /// A probe that notes the node's kind, and its keys if `keys` is given.
+    /// A probe that stores the kind of the value in `found`. With `keys`
+    /// given, the probe also stores the keys of an object there.
     fn noting(found: &'c Cell<Option<Found>>, keys: Option<&'c RefCell<Vec<String>>>) -> Self {
         Self {
             found: Some(found),
@@ -86,7 +120,7 @@ impl<'c> Probe<'c> {
         }
     }
 
-    /// A probe that reads past a node and notes nothing.
+    /// A probe that reads a value and records nothing.
     fn past() -> Self {
         Self {
             found: None,
@@ -124,7 +158,8 @@ impl<'c> Sink for Probe<'c> {
 
     fn map(self, _: Option<usize>) -> Result<Probe<'c>, FrameWriteError> {
         self.note(Found::Kind(ValueKind::Object));
-        // The map's entries are read with the keys list, to note their keys.
+        // The probe for the entries has the `keys` list, so that it records
+        // each key.
         Ok(Probe {
             found: None,
             keys: self.keys,
@@ -174,8 +209,11 @@ impl<'c> MapSink for Probe<'c> {
     }
 }
 
-/// A sink that notes what kind of value one entry of an object is, and its
-/// keys if it is an object, and reads past everything else.
+/// A [`Sink`] for an object that records one entry: the entry under `key`.
+///
+/// The sink stores the kind of the value of that entry in `found`. When
+/// the value is an object, the sink stores its keys in `keys`. The sink
+/// reads every other entry and records nothing about it.
 struct Lookup<'k, 'c> {
     key: &'k str,
     found: &'c Cell<Option<Found>>,
@@ -235,9 +273,11 @@ mod tests {
     use super::*;
     use vitaminc_aead::plaintext::{Int, Raw};
 
-    /// A scalar is named by its kind, `undefined`, or a logical type this
-    /// build does not know. A known logical type over a value it does not
-    /// admit is named by the value's own physical kind, never as unknown.
+    /// [`Found::scalar`] returns the kind of a scalar, `Undefined`, or
+    /// `Unknown` for a logical type that this build does not define. For a
+    /// known logical type with a physical value that the type does not
+    /// allow, the result is the kind of the physical value. The result is
+    /// never `Unknown`.
     #[test]
     fn a_scalar_is_named_by_what_it_is() {
         let unknown = Logical::from_wire(200, 0).expect("an unknown logical type");
@@ -271,8 +311,9 @@ mod tests {
         }
     }
 
-    /// Through a record source: a batch row that is a date over a null is
-    /// a null, not a value of a type this build does not know.
+    /// The same rule applies through a record source. A row of a batch has
+    /// the logical type date and a null value. `split_source` reports the
+    /// row as a null, and not as `Unknown`.
     #[test]
     fn a_row_that_is_a_known_logical_over_a_null_is_a_null() {
         struct Rows;

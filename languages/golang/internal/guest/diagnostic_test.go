@@ -319,8 +319,9 @@ func TestConstructAndAtReadARefusedPredicate(t *testing.T) {
 	}
 }
 
-// A refusal of a value that is not an object reads its row of a batch and
-// what it found, as decoded; an error with neither gives none.
+// Row and Found read the row and the kind from the decoded fields of an
+// error about a value that is not an object. For an error with neither
+// field, Row returns ok false and Found returns "".
 func TestRowAndFoundReadARefusedShape(t *testing.T) {
 	d := &guest.Diagnostic{Fields: map[string]any{"reason": "not_an_object", "row": uint64(2), "found": "null"}}
 	if row, ok := d.Row(); !ok || row != 2 {

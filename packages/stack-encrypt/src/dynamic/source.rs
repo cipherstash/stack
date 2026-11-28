@@ -17,19 +17,23 @@
 //! * A sequence is a batch. Each element of the sequence is one record.
 //! * Anything else is not a record: a single value, a null, a passthrough
 //!   value, or a sequence inside a batch. The entry for that value is the
-//!   kind of value it is ([`Found`]). Nothing inside the value is copied or
-//!   checked.
+//!   kind of the value, as a [`Found`]. Nothing inside the value is copied
+//!   or checked.
 //!
 //! This module does not compare the fields with the plan. The caller,
 //! `record::source_rows`, refuses a value that is not a record, a missing
 //! field, an extra field, and a value of the wrong type.
 //!
-//! [`split_source`] fails when the frame writer refuses a field's value,
-//! such as a date out of range or a map that repeats a key, or when the
-//! source fails to describe itself, such as a host getter that throws. The
-//! error names the field whose value was being written, and the row of a
-//! batch, so the caller can report where it happened. A source that fails
-//! outside any field's value names no field.
+//! [`split_source`] returns an error in two cases:
+//!
+//! * The split cannot write a field's value into a frame. Examples are a
+//!   date out of range, and a map that repeats a key.
+//! * The value returns an error of its own while the split reads it. An
+//!   example is a property getter in the caller's language that throws.
+//!
+//! The error names the row of a batch and the field whose value the split
+//! was writing. So the caller can report where the error happened. An
+//! error that happens outside the value of any field names no field.
 
 use std::cell::{Cell, RefCell};
 
@@ -41,9 +45,13 @@ use vitaminc_protected::Buffer;
 
 use crate::refusal::Found;
 
-/// One record's fields, each name with its value in a frame of its own, in
-/// the order the source lists them. The kind of value the source gave
-/// instead, when it is not a map, so is not a record.
+/// One entry of the result: a record, or the kind of a value that is not
+/// a record.
+///
+/// `Ok` contains the fields of one record, in the order the source lists
+/// them. Each field is a name and a value. Each value is in a frame of its
+/// own. `Err` contains the kind of a value that is not a map, so is not a
+/// record.
 pub(super) type SourceRecord = Result<Vec<(String, OwnedFrame)>, Found>;
 
 /// A source split by [`split_source`]: one record, or a batch of them.
@@ -54,9 +62,15 @@ pub(super) enum SplitSource {
     Batch(Vec<SourceRecord>),
 }
 
-/// Why [`split_source`] failed: the error from the frame writer, or the
-/// source's own, the row of a batch the split was in, and the field whose
-/// value it was writing, if it was writing one.
+/// Why [`split_source`] failed, and where.
+///
+/// - `error` is the error from [`FrameWriter`], or the error that the
+///   source returned. `FrameWriter` writes a value into a frame.
+/// - `row` is the position of the row that the split was reading, counted
+///   from 0. `None` when the source is not a batch, or the split was
+///   between two rows.
+/// - `field` is the field whose value the split was writing. `None` when
+///   the split was not writing the value of a field.
 #[derive(Debug)]
 pub(super) struct SplitRefusal {
     pub(super) row: Option<usize>,
@@ -76,12 +90,18 @@ pub(super) fn split_source<P: Encrypt>(source: P) -> Result<SplitSource, SplitRe
     })
 }
 
-/// Where the split is: the row of a batch it is reading, and the field
-/// whose value it is writing. Each is set when the source begins it and
-/// cleared when the source finishes it, so a failure between two rows, or
-/// between two fields, names neither. Shared by every sink in a split.
-/// Field names are not secret: the plan and the stored record both contain
-/// them unencrypted. So the name is not wiped.
+/// The current position of the split in the source.
+///
+/// `row` is the row of a batch that the split is reading. `field` is the
+/// field whose value the split is writing.
+///
+/// The split sets each one when the source starts it, and clears it when
+/// the source finishes it. So an error between two rows names no row, and
+/// an error between two fields names no field. Every sink in one split
+/// shares one `Place`.
+///
+/// Field names are not secret. The plan and the stored record both contain
+/// them unencrypted. So the code does not wipe the name.
 #[derive(Default)]
 struct Place {
     row: Cell<Option<usize>>,
@@ -89,7 +109,7 @@ struct Place {
 }
 
 impl Place {
-    /// The field being written is finished.
+    /// Clears the field, because the source has finished writing its value.
     fn field_done(&self) {
         *self.field.borrow_mut() = None;
     }
@@ -112,7 +132,8 @@ impl PutRecord for TopRecord {
     }
 }
 
-/// The next record of a batch. Putting it finishes its row.
+/// The next record of a batch. [`put`](PutRecord::put) adds the record to
+/// the batch and clears the row in [`Place`], because the row is finished.
 struct BatchRecord<'s> {
     records: &'s mut Vec<SourceRecord>,
     place: &'s Place,
@@ -164,9 +185,13 @@ impl<'f> Sink for TopSink<'f> {
     }
 }
 
-/// A batch: one record for each element. `begun` counts the elements the
-/// source began, so an element whose sink it dropped unwritten, leaving no
-/// record, is refused rather than shifting the rows after it.
+/// A batch: one record for each element.
+///
+/// `begun` counts the elements that the source started. A source can start
+/// an element and then drop its sink without writing a value. That element
+/// leaves no record, so every later row would move up one position. The
+/// split returns an error for that batch instead
+/// ([`check_written`](Self::check_written)).
 struct BatchSink<'f> {
     place: &'f Place,
     records: Vec<SourceRecord>,
@@ -174,8 +199,9 @@ struct BatchSink<'f> {
 }
 
 impl BatchSink<'_> {
-    /// Refuse a batch whose last element begun put no record: its sink was
-    /// dropped unwritten.
+    /// Returns an error when the last element that the source started left
+    /// no record, because the source dropped its sink without writing a
+    /// value. The error names the row of that element.
     fn check_written(&self) -> Result<(), FrameWriteError> {
         if self.records.len() == self.begun {
             return Ok(());
@@ -253,7 +279,8 @@ impl<'f, 's> Sink for ElementSink<'f, 's> {
 
 /// A batch element that is a sequence, so is not a record. The source still
 /// describes its elements, and [`Discard`] reads past them without copying
-/// them. When the sequence ends, the batch notes that it was an array.
+/// them. When the sequence ends, the batch records that the element was an
+/// array.
 struct NotARecord<'s> {
     record: BatchRecord<'s>,
 }
@@ -397,10 +424,11 @@ impl<'f, O: PutRecord> MapSink for RecordMap<'f, O> {
     }
 }
 
-/// One field's value, written into its own frame. It forwards to the frame
-/// writer, and once the value is complete it marks the field finished, so a
-/// source that fails after one field's value and before the next names
-/// neither.
+/// Writes the value of one field into a frame of its own.
+///
+/// The writer passes every call on to [`FrameWriter`]. When the value is
+/// complete, the writer clears the field in [`Place`]. So an error after
+/// the value of one field and before the next names no field.
 struct FieldWriter<'s, 'f> {
     writer: FrameWriter<'s>,
     place: &'f Place,
@@ -445,7 +473,8 @@ impl<'s, 'f> Sink for FieldWriter<'s, 'f> {
     }
 }
 
-/// A field's value that is a sequence: finished when the sequence ends.
+/// A field's value that is a sequence. The field is finished when the
+/// sequence ends.
 struct FieldSeq<'s, 'f> {
     inner: FrameSeq<'s>,
     place: &'f Place,
@@ -470,7 +499,8 @@ impl<'s> SeqSink for FieldSeq<'s, '_> {
     }
 }
 
-/// A field's value that is a map: finished when the map ends.
+/// A field's value that is a map. The field is finished when the map
+/// ends.
 struct FieldMap<'s, 'f> {
     inner: FrameMap<'s>,
     place: &'f Place,
@@ -515,8 +545,8 @@ mod tests {
         )
     }
 
-    /// A record's fields as their frames' bytes, in source order, or what
-    /// the value was instead of a record.
+    /// The fields of a record as the bytes of their frames, in source
+    /// order. For a value that is not a record, the kind of that value.
     fn bytes(record: &SourceRecord) -> Result<Vec<(String, Vec<u8>)>, Found> {
         record.as_ref().map_err(|found| *found).map(|entries| {
             entries
@@ -556,8 +586,9 @@ mod tests {
         );
     }
 
-    /// A value that is not a map is not a record: the split notes what
-    /// kind of value it is, at the top or as an element of a batch.
+    /// A value that is not a map is not a record. The split reports the
+    /// kind of that value, at the top of the source and as an element of a
+    /// batch.
     #[test]
     fn a_sequence_is_a_batch_and_what_is_not_a_map_is_not_a_record() {
         let ty = FixedType::new(Some(Logical::Date), Width::I32).expect("fixed");
@@ -622,8 +653,8 @@ mod tests {
         );
     }
 
-    /// A refusal names the field whose value the writer refused, and the
-    /// row of a batch it is in.
+    /// When the frame writer refuses a value, the error names the field of
+    /// that value. For a batch, the error also names the row.
     #[test]
     fn a_refusal_names_the_field_and_row_being_written() {
         let refused = |source: &Tree| split_source(source).err().expect("refused");
@@ -677,13 +708,15 @@ mod tests {
         );
     }
 
-    /// A source that fails as it describes itself keeps its own error, and
-    /// the split names the field and the row it was reading. A failure
-    /// after a record's fields are written names no field.
+    /// When a source returns an error of its own, the split keeps that
+    /// error. The split also names the field and the row that it was
+    /// reading. An error after the fields of a record are written names no
+    /// field.
     #[test]
     fn a_source_failure_names_the_field_and_row_it_was_reading() {
-        /// Describes a batch of `rows` records of one field `a`, and fails
-        /// in the last one: inside `a`'s value, or after the record ends.
+        /// A batch of `rows` records, each with one field `a`. The source
+        /// returns an error in the last record: inside the value of `a`, or
+        /// after the record ends.
         struct Fails {
             rows: usize,
             after_the_record: bool,
@@ -739,22 +772,28 @@ mod tests {
         assert_eq!(after.row, None, "every row begun is finished");
     }
 
-    /// Where a source fails decides what the refusal names: a field only
-    /// while its value is being written, and a row only while it is being
-    /// read. A failure between two fields, after a field's container ends,
-    /// or between two rows names neither.
+    /// The place where a source returns an error decides what the error
+    /// names. The error names a field only while the split is writing the
+    /// value of that field. The error names a row only while the split is
+    /// reading that row. An error names no field when it happens between
+    /// two fields, or after the list or map of a field ends. An error
+    /// between two rows names no field and no row.
     #[test]
     fn a_source_failure_names_only_the_field_and_row_still_open() {
-        /// Where the source fails, in a batch of records.
+        /// The place in a batch of records where the source returns an
+        /// error.
         #[derive(Clone, Copy, Debug)]
         enum At {
-            /// In row 0, after `age` is written and before `email` begins.
+            /// The error happens in row 0, after `age` is written and before
+            /// `email` starts.
             BetweenFields,
-            /// In row 0, inside `tags`, a list, after its first element.
+            /// The error happens in row 0, inside the list `tags`, after its
+            /// first element.
             InsideAList,
-            /// In row 0, after `tags`, a map, has ended.
+            /// The error happens in row 0, after the map `tags` has ended.
             AfterAMap,
-            /// After row 0 is finished and before row 1 begins.
+            /// The error happens after row 0 is finished, before row 1
+            /// starts.
             BetweenRows,
         }
         impl Encrypt for &At {
@@ -806,12 +845,14 @@ mod tests {
         }
     }
 
-    /// A batch element whose sink the source dropped unwritten leaves no
-    /// record: the batch is refused naming that row, before or at its end,
-    /// rather than shifting the rows after it.
+    /// A source can start a batch element and drop its sink without
+    /// writing a value. That element leaves no record. The split returns an
+    /// error that names the row, when the next element starts or when the
+    /// batch ends. The split does not move the later rows up one position.
     #[test]
     fn a_batch_element_left_unwritten_is_refused_naming_its_row() {
-        /// A batch of two rows whose row `dropped` is begun and dropped.
+        /// A batch of two rows. The source starts row `dropped` and drops
+        /// its sink without writing a value.
         struct DropsARow {
             dropped: usize,
         }

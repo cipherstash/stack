@@ -58,32 +58,55 @@ use crate::target::IndexSpec;
 /// [`read`](crate::dynamic::read)); [`in_field`](Self::in_field) names it
 /// from the caller's side.
 ///
-/// Where a plan, a record to encrypt or a stored record is not the object
-/// the operation takes, the error says what it found instead: its kind
-/// ([`Found`]), never the value. It is in the message, in
-/// [`found`](Self::found) and in the payload (`found`). The kind is always
-/// one the caller sent, or one the stored record's own structure shows; an
-/// error about a decrypted value never names what it opened as. Where the
-/// error is about one row of a batch's shape, or about a value the source
-/// failed or the frame writer refused while the rows were read, it names
-/// the row by its position, from 0: in the message, in [`row`](Self::row)
-/// and in the payload (`row`). A field's own misfit (missing, unknown, of
-/// another type) names the field and not the row.
+/// Some operations take an object: a plan, a record to encrypt, or a
+/// stored record to decrypt. When the caller passes another kind of value,
+/// the error names that kind as a [`Found`]. For example, the error says
+/// that the record is a null or an array. The error never includes the
+/// value. The kind is in the message, in [`found`](Self::found), and in the
+/// payload field `found`.
 ///
-/// Not every variant has a [`Reason`]. [`Context`](Error::Context),
-/// [`Plan`](Error::Plan), [`Source`](Error::Source),
-/// [`SourceFailed`](Error::SourceFailed), [`Record`](Error::Record) and
-/// [`Predicate`](Error::Predicate) do: it is
-/// in the message, in [`reason`](Self::reason) and in the payload
+/// An error names a kind only when the engine can read that kind without
+/// decrypting anything. There are two such kinds:
+///
+/// - The kind of a value the caller sent.
+/// - The kind of a node in the unencrypted structure of a stored record,
+///   such as a list, an encrypted value, or a passthrough. A passthrough
+///   is a value stored without encryption.
+///
+/// An error about a decrypted value never names the kind that the value
+/// decrypted to. That kind was inside the ciphertext, so the kind is part
+/// of the plaintext.
+///
+/// When the input is a batch, some errors name the row by its position,
+/// counted from 0. The row is in the message, in [`row`](Self::row), and in
+/// the payload field `row`. An error names the row in any of these cases:
+///
+/// - The row is not an object.
+/// - A value in the row returned an error of its own while the engine read
+///   it ([`SourceFailed`](Error::SourceFailed)).
+/// - The engine could not copy a value in the row. For example, the value
+///   repeats a map key, does not fit its logical type, or is nested too
+///   deep.
+///
+/// An error from comparing the fields of a row with the plan names the
+/// field and no row. Examples are a missing field, a field that the plan
+/// does not name, and a value of another type than the field declares.
+///
+/// Not every variant has a [`Reason`]. These variants have one:
+/// [`Context`](Error::Context), [`Plan`](Error::Plan),
+/// [`Source`](Error::Source), [`SourceFailed`](Error::SourceFailed),
+/// [`Record`](Error::Record), and [`Predicate`](Error::Predicate). The
+/// reason is in the message, in [`reason`](Self::reason), and in the payload
 /// (`reason`). The others carry their own payload fields instead:
 /// [`Term`](Error::Term) names the index it was asked for (`index`),
 /// [`UntypedIndex`](Error::UntypedIndex) the field (`field`), `Target` and
 /// `Cipher` carry the payload of the error they hold, and `Internal` carries
 /// none. A binding reads `reason` when it is there, and does not require it.
 ///
-/// `Debug` shows every field as a derived `Debug` would, except the cause of
-/// [`SourceFailed`](Error::SourceFailed), which it shows as `SourceError(..)`:
-/// a host's error can quote the value it failed on.
+/// `Debug` prints every field as a derived `Debug` would, with one
+/// exception. For [`SourceFailed`](Error::SourceFailed), `Debug` prints the
+/// cause as `SourceError(..)`. The cause is an error from the caller's own
+/// code. The text of that error can include the value that failed.
 #[derive(thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum Error {
@@ -121,14 +144,23 @@ pub enum Error {
         kind: IndexSpec,
     },
 
-    /// A record plan is malformed: not one transport frame, not an object
-    /// of field specs, empty, missing or duplicating an output, carrying a
-    /// key that is not `"context"`, `"outputs"`, `"target"` or `"type"`,
-    /// naming a type that
-    /// is not one, asking for an index its declared type is not defined
-    /// for, giving a field a context that is not a label a plan can
-    /// seal it under, or declaring what no plan allows (two fields
-    /// under one identity, fields under different contexts).
+    /// A record plan is malformed. The [`Reason`] names the rule that the
+    /// plan breaks. For example:
+    ///
+    /// - The bytes are not one transport frame. A transport frame is the
+    ///   binary encoding of one value.
+    /// - The plan is not an object of field specs, or the plan is empty. A
+    ///   field spec is the entry that describes one field.
+    /// - A field has no output, or lists an output twice.
+    /// - A field spec has a key that is not `"context"`, `"outputs"`,
+    ///   `"target"`, or `"type"`.
+    /// - A field names a type that does not exist.
+    /// - A field asks for an index that is not defined for its declared
+    ///   type.
+    /// - A field's context is not a label that a plan can encrypt the field
+    ///   under.
+    /// - The plan declares two fields under one identity, or fields under
+    ///   different contexts. No plan allows either.
     #[error(
         "record plan is malformed: {}",
         misfit_text(Subject::Plan, *reason, *found, None, field)
@@ -139,8 +171,9 @@ pub enum Error {
         field: Option<String>,
         /// What was wrong with the plan.
         reason: Reason,
-        /// What the plan, or the field's spec, is instead of an object:
-        /// set with [`Reason::NotAnObject`].
+        /// The kind of value that the plan or the field spec is, when it
+        /// is not an object. `Some` only when `reason` is
+        /// [`Reason::NotAnObject`].
         found: Option<Found>,
     },
 
@@ -161,65 +194,102 @@ pub enum Error {
         field: String,
     },
 
-    /// A record source does not fit its plan: not an object (or an array of
-    /// them, the row then named), a field the plan does not name, a plan
-    /// field the source does not carry or carries twice, or a passthrough or a repeated map key
-    /// under a field the plan seals, or a value of another type than its
-    /// field declares that does not convert to it exactly, or `undefined`
-    /// for a field that declares a type. Also a query its field does not answer: an operator
-    /// the field's type does not answer, an input that cannot be read as the
-    /// field's type ([`read`](crate::dynamic::read)) or is not the pair a range takes, a page of
-    /// values to verify that holds a value of another type, or statistics
-    /// or a term that are not what [`target_limit`](crate::dynamic::target_limit) reads — the same shape of
-    /// refusal as a mistyped field, naming the field.
+    /// A record source, or the input of a query, does not match the plan.
+    ///
+    /// A record source is the value that the caller asks to encrypt: one
+    /// record, or an array of records. A record source gets this error in
+    /// any of these cases:
+    ///
+    /// - The source is not an object or an array of objects. For an array,
+    ///   the error names the row that is not an object.
+    /// - The source has a field that the plan does not name.
+    /// - The source lacks a field that the plan names, or has that field
+    ///   twice.
+    /// - A field that the plan encrypts contains a passthrough, or a map
+    ///   that repeats a key. A passthrough is a value marked to be stored
+    ///   without encryption.
+    /// - A value has another type than its field declares, with no exact
+    ///   conversion to that type.
+    /// - A field that declares a type has the value `undefined`.
+    ///
+    /// The input of a query also gets this error. The error names the
+    /// field. The cases are:
+    ///
+    /// - The field's type does not support the operator.
+    /// - The input cannot be read as the field's type
+    ///   ([`read`](crate::dynamic::read)), or is not the pair of values
+    ///   that a range takes.
+    /// - A page of values to verify contains a value of another type.
+    /// - The statistics or the term are not the ones that
+    ///   [`target_limit`](crate::dynamic::target_limit) reads.
     #[error("{}", source_text(*reason, *found, *row, field))]
     #[diagnostic(code(stack_encrypt::dynamic_source))]
     Source {
         /// The source field at fault, if the fault is one field's.
         field: Option<String>,
-        /// The row of a batch at fault, from 0, if the fault is one row's
-        /// shape or a value the frame writer refused as the rows were read.
+        /// The position of the row in a batch, counted from 0. `Some` when
+        /// the row is not an object, or when the engine could not copy a
+        /// value in the row.
         row: Option<usize>,
         /// What was wrong with the source.
         reason: Reason,
-        /// What the source, or the row, is instead of an object of fields,
-        /// or what a match's vars are: set with [`Reason::NotAnObject`] and
+        /// The kind of value that the source or the row is, when it is not
+        /// an object of fields. Also the kind of value that the vars of a
+        /// `match` are, when they are not a JSON object. `Some` only when
+        /// `reason` is [`Reason::NotAnObject`] or
         /// [`Reason::JsonVarsNotObject`].
         found: Option<Found>,
     },
 
-    /// A record source failed while it was read: a value reported a failure
-    /// of its own as it described itself, such as a host getter that threw,
-    /// or a JSON document nested too deep. The value's own error is the
-    /// cause ([`source`](std::error::Error::source)). It is not in the
-    /// message, because a host's error can quote the value it failed on,
-    /// nor in `Debug`, which shows it as `SourceError(..)`. Its reason is
-    /// [`Reason::SourceFailed`].
+    /// A value in the record source returned an error of its own while the
+    /// engine read it.
+    ///
+    /// Examples are a property getter in the caller's language that throws,
+    /// and a JSON document that is nested too deep. The value's error is
+    /// the cause of this error, and
+    /// [`source`](std::error::Error::source) returns it.
+    ///
+    /// The message and `Debug` leave the cause out, because the text of the
+    /// caller's error can include the value. `Debug` prints the cause as
+    /// `SourceError(..)`. The reason is [`Reason::SourceFailed`].
     #[error("record source failed while it was read{}", place_text(*row, field))]
     #[diagnostic(
         code(stack_encrypt::dynamic_source_failed),
         help("The value's own error is this error's cause. It is left out of the message, because it can quote the value.")
     )]
     SourceFailed {
-        /// The field whose value was being read, if one was.
+        /// The field whose value the engine was reading. `None` when the
+        /// error happened outside the value of any field.
         field: Option<String>,
-        /// The row of a batch being read, from 0, if the source is a batch.
+        /// The position of the row that the engine was reading, counted
+        /// from 0. `None` when the source is one record, or when the error
+        /// happened between two rows.
         row: Option<usize>,
-        /// The value's own error.
+        /// The error that the value returned.
         #[source]
         cause: vitaminc_aead::plaintext::SourceError,
     },
 
-    /// A stored record does not fit its plan: not a map (or a sequence of
-    /// them, the row then named), a ciphertext-bearing field that is absent
-    /// or given twice, or has no `"c"` node or two of them, a repeated map key under `"c"`, a
-    /// passthrough under `"c"` — which would hand back unauthenticated
-    /// bytes as if they had been opened — or a passthrough field that is
-    /// absent, carries no `"passthrough"` node, or carries a value of
-    /// another type than it declares. A sealed field that opens to a value
-    /// of another type than it declares fails the pending instead
-    /// ([`PlanError::FieldType`](crate::PlanError::FieldType)): the type tag
-    /// is inside the AEAD envelope.
+    /// A stored record to decrypt does not match the plan, in one of these
+    /// ways:
+    ///
+    /// - The record is not a map or a sequence of maps. For a sequence, the
+    ///   error names the row that is not a map.
+    /// - A field with a ciphertext output is absent, or is given twice.
+    /// - A field with a ciphertext output has no `"c"` node, or has two.
+    ///   The `"c"` node contains the ciphertext.
+    /// - A map under `"c"` repeats a key.
+    /// - A passthrough is under `"c"`. A passthrough is an unencrypted
+    ///   value. The engine refuses it, because the caller would get
+    ///   unauthenticated bytes back as if the engine had decrypted them.
+    /// - A passthrough field is absent, has no `"passthrough"` node, or has
+    ///   a value of another type than the field declares.
+    ///
+    /// An encrypted field can decrypt to a value of another type than the
+    /// field declares. That fault is not this error, because the type tag
+    /// is inside the ciphertext. The [`Pending`](crate::Pending) operation
+    /// fails with [`PlanError::FieldType`](crate::PlanError::FieldType)
+    /// instead.
     #[error(
         "stored record does not fit the plan: {}",
         misfit_text(Subject::Record, *reason, *found, *row, field)
@@ -228,13 +298,14 @@ pub enum Error {
     Record {
         /// The stored field at fault, if the fault is one field's.
         field: Option<String>,
-        /// The row of a batch at fault, from 0, if the fault is one row's
-        /// shape.
+        /// The position of the row in a batch, counted from 0. `Some` when
+        /// the row is not a map.
         row: Option<usize>,
         /// What was wrong with the stored record.
         reason: Reason,
-        /// What the stored record, or the row, is instead of an object of
-        /// stored fields: set with [`Reason::NotAnObject`].
+        /// The kind of node that the stored record or the row is, when it
+        /// is not a map of stored fields. `Some` only when `reason` is
+        /// [`Reason::NotAnObject`].
         found: Option<Found>,
     },
 
@@ -328,8 +399,9 @@ impl fmt::Debug for Error {
                 .field("reason", reason)
                 .field("found", found)
                 .finish(),
-            // The cause is the host's own error, which can quote the value
-            // it failed on: it is reached through `source()`, never shown.
+            // The cause comes from the caller's code, and its text can
+            // include the value that failed. `Debug` prints a placeholder
+            // for the cause. A caller gets the cause from `source()`.
             Self::SourceFailed { field, row, .. } => f
                 .debug_struct("SourceFailed")
                 .field("field", field)
@@ -376,8 +448,10 @@ fn in_field_text(field: &Option<String>) -> String {
         .unwrap_or_default()
 }
 
-/// ` (row 2, field "age")`, ` (row 2)`, ` (field "age")`, or nothing: the
-/// tail of an error that can name a row of a batch.
+/// The end of the message of an error that can name a row and a field.
+///
+/// The text is ` (row 2, field "age")`, ` (row 2)`, ` (field "age")`, or an
+/// empty string when the error names neither.
 fn place_text(row: Option<usize>, field: &Option<String>) -> String {
     match (row, field.as_deref()) {
         (Some(row), Some(field)) => format!(" (row {row}, field {field:?})"),
@@ -386,9 +460,12 @@ fn place_text(row: Option<usize>, field: &Option<String>) -> String {
     }
 }
 
-/// A source error's message: "query input does not fit the field" for a
-/// refusal only a query's input meets ([`answers_a_query`]), and "record
-/// source does not fit the plan" for the rest.
+/// The message of an [`Error::Source`].
+///
+/// The message starts with "query input does not fit the field" when only
+/// the input of a query can cause the reason ([`answers_a_query`]). For
+/// every other reason, the message starts with "record source does not fit
+/// the plan".
 fn source_text(
     reason: Reason,
     found: Option<Found>,
@@ -406,11 +483,14 @@ fn source_text(
     )
 }
 
-/// Whether a source refusal's reason is one only a query's input meets: an
-/// operator, a range, a term, statistics, a null query, or a JSON
-/// operator's input. A value that cannot be read as the field's type is
-/// [`Reason::FieldType`] for a query and a record alike, and keeps the
-/// record's words.
+/// Returns `true` when only the input of a query can cause `reason`.
+///
+/// Those reasons are about an operator, a range, a term, statistics, a
+/// null query, or the input of a JSON operator.
+///
+/// [`Reason::FieldType`] returns `false`. A query and a record both get
+/// that reason for a value that cannot be read as the field's type. So the
+/// message for that reason keeps the wording for a record.
 fn answers_a_query(reason: Reason) -> bool {
     use Reason::*;
     matches!(
@@ -436,7 +516,8 @@ fn answers_a_query(reason: Reason) -> bool {
     )
 }
 
-/// What a plan, source or stored-record error is about.
+/// The input that an error message is about: the plan, the record source,
+/// or the stored record.
 #[derive(Clone, Copy)]
 enum Subject {
     Plan,
@@ -444,9 +525,14 @@ enum Subject {
     Record,
 }
 
-/// The body of a plan, source or stored-record error's message. With
-/// [`Found`], a sentence that says what was there, where, and what the
-/// operation takes; without, the reason and where it was.
+/// The main part of the message of an error about a plan, a record
+/// source, or a stored record.
+///
+/// With a [`Found`], the text is a sentence that names the input, the kind
+/// of value the input is, and the kind the operation takes. An example is
+/// `row 2 of the records to encrypt is null, not an object of fields`.
+/// Without a [`Found`], the text is the reason, then the row and the field
+/// if the error names them.
 fn misfit_text(
     subject: Subject,
     reason: Reason,
@@ -592,11 +678,18 @@ impl Error {
         }
     }
 
-    /// The row of a batch an input error is about, from 0: a row of a
-    /// record source or a stored record that is not an object, the row a
-    /// source failed in, or the row of a value the frame writer refused as
-    /// the source's rows were read. `None` for a single record, and for
-    /// every other error.
+    /// The position of the row in a batch that the error is about, counted
+    /// from 0.
+    ///
+    /// `Some` in any of these cases:
+    ///
+    /// - A row of a record source or of a stored record is not an object.
+    /// - A value in the row returned an error of its own
+    ///   ([`SourceFailed`](Error::SourceFailed)).
+    /// - The engine could not copy a value in the row of a record source.
+    ///
+    /// `None` when the input is one record and not a batch, and for every
+    /// other error.
     pub fn row(&self) -> Option<usize> {
         match self {
             Self::Source { row, .. }
@@ -606,10 +699,13 @@ impl Error {
         }
     }
 
-    /// What a plan, a field's spec, a record source or a stored record was
-    /// where the operation takes an object ([`Reason::NotAnObject`]), or
-    /// what a match's vars were ([`Reason::JsonVarsNotObject`]). `None` for
-    /// every other error.
+    /// The kind of value that the caller passed where the operation takes
+    /// an object.
+    ///
+    /// For [`Reason::NotAnObject`], the value is a plan, a field spec, a
+    /// record source, a stored record, or a row of a batch. For
+    /// [`Reason::JsonVarsNotObject`], the value is the vars of a `match`
+    /// query. `None` for every other error.
     pub fn found(&self) -> Option<Found> {
         match self {
             Self::Plan { found, .. } | Self::Source { found, .. } | Self::Record { found, .. } => {
@@ -697,9 +793,9 @@ reasons! {
     #[non_exhaustive]
     pub enum Reason {
         /// A plan, field spec, source or stored record is not an object (a
-        /// map), or a list of them, where one is expected. The error says
-        /// what it is instead ([`Error::found`]), and which row of a batch
-        /// ([`Error::row`]).
+        /// map), or a list of them, where one is expected.
+        /// [`Error::found`] returns the kind of that value. For a batch,
+        /// [`Error::row`] returns the position of the row.
         NotAnObject => "not_an_object", "not an object where one is expected";
         /// A context value is of a kind a context cannot hold: a boolean,
         /// float, null, object or passthrough.
@@ -921,11 +1017,12 @@ reasons! {
         /// than the engine reads, or names a path with more steps than a
         /// document has levels.
         JsonPredicateTooDeep => "json_predicate_too_deep", "the predicate nests too deep";
-        /// Bytes given as a plan are not one transport frame: empty, cut
-        /// short, holding a repeated key at any depth, or with bytes after
-        /// the value. A plan sent as JSON text is refused so.
+        /// The bytes given as a plan are not one transport frame. A
+        /// transport frame is the binary encoding of one value. The bytes
+        /// are empty, end early, repeat a key at any depth, or continue
+        /// after the value ends. A plan sent as JSON text gets this reason.
         NotAFrame => "not_a_frame", "the bytes are not one transport frame";
-        /// A value failed while it was read, with an error of its own
+        /// A value returned an error of its own while the engine read it
         /// ([`Error::SourceFailed`]).
         SourceFailed => "source_failed", "a value failed while it was read";
         /// A `match` query's `vars` are not a JSON object: a list, a
@@ -948,34 +1045,41 @@ impl fmt::Display for Reason {
     }
 }
 
-/// What an input error found where it expected an object: a value's kind,
-/// never the value. A binding reads [`as_str`](Self::as_str), the name in
-/// the payload's `found` field; `Display` is the phrase the message uses.
+/// The kind of value that the caller passed where the operation takes an
+/// object.
 ///
-/// `#[non_exhaustive]`: a kind added later is not a break, and a binding
-/// that switches on one keeps a fallback.
+/// A `Found` names the kind of a value and never contains the value.
+/// [`as_str`](Self::as_str) returns the name in the payload field `found`,
+/// for a binding to read. `Display` writes the phrase that the error
+/// message uses, such as "a passthrough value".
+///
+/// The enum is `#[non_exhaustive]`, so a later version can add a kind
+/// without a breaking change. A binding that matches on the kind needs a
+/// fallback case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Found {
-    /// A null, plain or typed: `"null"`.
+    /// A null, with or without a declared type. The name is `"null"`.
     Null,
-    /// JavaScript's `undefined`: `"undefined"`.
+    /// JavaScript's `undefined`. The name is `"undefined"`.
     Undefined,
-    /// A passthrough, a value that travels in the clear: `"passthrough"`.
+    /// A passthrough: a value marked to be stored without encryption. The
+    /// name is `"passthrough"`.
     Passthrough,
-    /// A sealed value where a stored record or a row of one should be: a
-    /// ciphertext leaf, or the marker of a sealed empty list or map.
-    /// `"sealed"`.
+    /// An encrypted value in the place of a stored record or of a row. The
+    /// value is one ciphertext, or the marker of an encrypted empty list or
+    /// map. The name is `"sealed"`.
     Sealed,
-    /// A value of this kind: its schema name, such as `"string"`,
-    /// `"uint32"` or `"array"`.
+    /// A value of this [`ValueKind`]. The name is the schema name of the
+    /// kind, such as `"string"`, `"uint32"`, or `"array"`.
     Kind(ValueKind),
-    /// A scalar of a logical type this build does not know: `"unknown"`.
+    /// A scalar whose logical type this build does not define. The name is
+    /// `"unknown"`.
     Unknown,
 }
 
 impl Found {
-    /// The name a binding reports in its payload's `found` field.
+    /// The name of the kind, as the payload field `found` contains it.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Null => "null",

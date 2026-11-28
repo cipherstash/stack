@@ -165,12 +165,15 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
 
 /// A dynamic-path error as a status code.
 ///
-/// The split the library draws is the one the ABI needs: `Context`, `Term`,
-/// `Plan`, `UntypedIndex`, `Source`, `SourceFailed`, `Record` and
-/// `Predicate` are each a statement about the caller's input, decided
-/// before any key is minted or retrieved, so they are
-/// [`STATUS_ENCODING`] — named one by one, because that verdict is the
-/// host's to act on and must be given deliberately. `Cipher` defers to
+/// The library separates errors about the caller's input from every other
+/// error, and the ABI needs the same separation. `Context`, `Term`, `Plan`,
+/// `UntypedIndex`, `Source`, `SourceFailed`, `Record`, and `Predicate` are
+/// each about the caller's input. The library decides each one before any
+/// key is minted or retrieved. So each one is [`STATUS_ENCODING`]. The
+/// match names them one by one, because the host acts on that status, so
+/// the choice must be deliberate.
+///
+/// `Cipher` defers to
 /// [`status_for_error`]; `Internal` is the library's own invariant failing
 /// — a slot count that did not line up, a re-proof that could not fail —
 /// and is [`STATUS_INTERNAL`], never a verdict on the input.
