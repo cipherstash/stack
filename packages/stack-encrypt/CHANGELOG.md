@@ -1774,9 +1774,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`keyset.encrypt` encrypts a newtype that derives `Encrypt` over one
   value** (#2012). A newtype is a struct with exactly one unnamed field.
   `struct Email(String)` with `#[derive(Encrypt, Zeroize)]` now encrypts
-  with `keyset.encrypt(Email(..))`, with no other code. Before this
-  change, the newtype needed a hand-written `impl Scalar for &Email {}`.
-  That impl needed a dependency on the `Scalar` trait of `vitaminc-aead`.
+  with `keyset.encrypt(Email(..))`. You no longer write
+  `impl Scalar for &Email {}` by hand. Your crate still needs
+  `vitaminc-aead` as a dependency to use the derive, because the derived
+  code names `vitaminc_aead` (#2013).
   - The newtype encrypts exactly as its inner value does. The leaf has the
     same plaintext and the same length. So `keyset.decrypt::<String>` opens
     what `Email` encrypted.
