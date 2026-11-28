@@ -1278,12 +1278,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it needs a `_` arm. To migrate code that names `recipher`, see the
   stack-kms CHANGELOG.
 
-- **Delete a `Scalar` impl you wrote for a derived newtype or a fieldless
-  enum** (#2012). `#[derive(Encrypt)]` now implements Vitamin C's `Scalar`
-  marker for these types. So an `impl Scalar for &Email {}` of your own no
-  longer compiles. The compiler reports `E0119`, conflicting
-  implementations. After you delete the impl, `keyset.encrypt` still
-  encrypts the type.
+- **A `Scalar` impl you wrote for a derived newtype or a fieldless enum no
+  longer compiles** (#2012). `#[derive(Encrypt)]` now implements Vitamin
+  C's `Scalar` marker for these types. So an `impl Scalar for &Email {}` of
+  your own conflicts with it. The compiler reports `E0119`, conflicting
+  implementations. The compiler reports it even when the inner type is not
+  a `Scalar`. What to do depends on the inner type.
+  - For a fieldless enum, or for a newtype whose inner type is one value,
+    such as a `String`, delete your impl. `keyset.encrypt` still encrypts
+    the type.
+  - When the inner type is not a `Scalar`, but you know that its value is
+    one leaf, stop deriving `Encrypt` for the type. Write `Encrypt` for the
+    type and for its borrow by hand, with
+    `const DEPTH: Option<usize> = depth::SCALAR;`. Then keep your `Scalar`
+    impl. An example is a newtype over a frame that you check holds one
+    value.
+
+- **A `Scalar` type that you write by hand must set its `DEPTH`** (#2012).
+  `keyset.encrypt` now checks, when the program is built, that the borrow
+  of the type encrypts as one value. So the `Encrypt` impl of the borrow
+  must contain `const DEPTH: Option<usize> = depth::SCALAR;`. `depth` is
+  `vitaminc_aead::plaintext::depth`. An impl that leaves `DEPTH` at its
+  default `None` compiled before. Now `cargo build` fails with `E0080`,
+  and the message names the line to add. `cargo check` does not run this
+  check.
 
 ### Added
 
@@ -1771,16 +1789,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Encrypt`, as one `u32` value.
   - The compile error for a refused type now says that the type cannot be
     encrypted into one `Ciphertext`. The error says what `keyset.encrypt`
-    encrypts, and what to use instead:
+    needs, and what to use instead:
     - `EncryptInto`, for each element of a `Vec`
     - `keyset.encrypt_tree`, for an `Option` or a struct
     - `OpaqueBlob`, for a whole `Serialize` value
 
-    The error no longer names the `Scalar` or `Zeroize` bound that the type
-    did not meet.
-  - `keyset.encrypt` now checks, when the program is built, a `Scalar`
-    impl written by hand. If the type's borrow encrypts as a container,
-    the build fails with `E0080`. `cargo check` does not run this check.
+    The error no longer names Vitamin C's `Scalar` trait. When the only
+    missing condition is `Zeroize`, the error still says so.
 
 - **A query on an EQL type whose twin carries every term is refused for
   what any of its indexes refuses, before any key is requested** (#1668).

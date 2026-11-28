@@ -47,7 +47,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   So `struct Email(String)` needs no `Scalar` impl of its own.
   A `Protected<Email>` is a `Scalar` too.
   `struct Tags(Vec<String>)` still derives `Encrypt`, but it is not a `Scalar`.
-  A `Scalar` impl you wrote for such a type now conflicts with the derived impl, so delete it.
+  A `Scalar` impl you wrote for such a type now conflicts with the derived impl, even when the inner type is not a `Scalar`.
+  For a fieldless enum, or for a newtype whose inner type is a `Scalar`, delete your impl.
+  When the inner type is not a `Scalar`, but you know that its value is one leaf, stop deriving `Encrypt`.
+  Write `Encrypt` for the type and for its borrow by hand, with `const DEPTH: Option<usize> = depth::SCALAR;`, and keep your `Scalar` impl.
+- The `Scalar` docs now say that a hand-written `Scalar` type must set `const DEPTH: Option<usize> = depth::SCALAR;`.
+  A caller that checks `DEPTH` refuses a `Scalar` type whose `DEPTH` is the default `None`.
 
 ## [0.10.0] - 2026-11-19
 
