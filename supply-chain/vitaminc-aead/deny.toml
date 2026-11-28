@@ -68,8 +68,10 @@ allow = [
 ]
 confidence-threshold = 0.8
 # stack-encrypt-derive and stack-encrypt-jsonpath are this repository's own
-# crates, under its PolyForm Small Business licence. Each exception names one
-# crate, so a third-party crate under that licence still fails.
+# crates. Their LICENSE file is the PolyForm Internal Use License 1.0.0. SPDX
+# has no identifier for that licence, and cargo-deny reads its text as
+# PolyForm-Small-Business-1.0.0, the closest licence it knows. Each exception
+# names one crate, so a third-party crate under that licence still fails.
 exceptions = [
   { crate = "stack-encrypt-derive", allow = ["PolyForm-Small-Business-1.0.0"] },
   { crate = "stack-encrypt-jsonpath", allow = ["PolyForm-Small-Business-1.0.0"] },
