@@ -103,11 +103,11 @@ use crate::target::IndexSpec;
 /// `Cipher` carry the payload of the error they hold, and `Internal` carries
 /// none. A binding reads `reason` when it is there, and does not require it.
 ///
-/// `Debug` prints every field as a derived `Debug` would, with one
-/// exception. For [`SourceFailed`](Error::SourceFailed), `Debug` prints the
-/// cause as `SourceError(..)`. The cause is an error from the caller's own
-/// code. The text of that error can include the value that failed.
-#[derive(thiserror::Error, miette::Diagnostic)]
+/// `Debug` prints no text from the caller's own code. The cause of a
+/// [`SourceFailed`](Error::SourceFailed) is a
+/// [`SourceError`](vitaminc_aead::plaintext::SourceError), and its `Debug`
+/// prints `SourceError(..)`.
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum Error {
     /// A value used as an encryption context is not one — a boolean, float,
@@ -365,86 +365,6 @@ pub enum Error {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Cipher(#[from] crate::Error),
-}
-
-impl fmt::Debug for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Context { field, reason } => f
-                .debug_struct("Context")
-                .field("field", field)
-                .field("reason", reason)
-                .finish(),
-            Self::Term { field, kind } => f
-                .debug_struct("Term")
-                .field("field", field)
-                .field("kind", kind)
-                .finish(),
-            Self::Plan {
-                field,
-                reason,
-                found,
-            } => f
-                .debug_struct("Plan")
-                .field("field", field)
-                .field("reason", reason)
-                .field("found", found)
-                .finish(),
-            Self::UntypedIndex { field } => f
-                .debug_struct("UntypedIndex")
-                .field("field", field)
-                .finish(),
-            Self::Source {
-                field,
-                row,
-                reason,
-                found,
-            } => f
-                .debug_struct("Source")
-                .field("field", field)
-                .field("row", row)
-                .field("reason", reason)
-                .field("found", found)
-                .finish(),
-            // The cause comes from the caller's code, and its text can
-            // include the value that failed. `Debug` prints a placeholder
-            // for the cause. A caller gets the cause from `source()`.
-            Self::SourceFailed { field, row, .. } => f
-                .debug_struct("SourceFailed")
-                .field("field", field)
-                .field("row", row)
-                .field("cause", &format_args!("SourceError(..)"))
-                .finish(),
-            Self::Record {
-                field,
-                row,
-                reason,
-                found,
-            } => f
-                .debug_struct("Record")
-                .field("field", field)
-                .field("row", row)
-                .field("reason", reason)
-                .field("found", found)
-                .finish(),
-            Self::Predicate {
-                field,
-                reason,
-                construct,
-                at,
-            } => f
-                .debug_struct("Predicate")
-                .field("field", field)
-                .field("reason", reason)
-                .field("construct", construct)
-                .field("at", at)
-                .finish(),
-            Self::Internal => f.write_str("Internal"),
-            #[cfg(feature = "dynamic")]
-            Self::Target(error) => f.debug_tuple("Target").field(error).finish(),
-            Self::Cipher(error) => f.debug_tuple("Cipher").field(error).finish(),
-        }
-    }
 }
 
 /// ` (field "age")`, or nothing: the tail of an input error's message.

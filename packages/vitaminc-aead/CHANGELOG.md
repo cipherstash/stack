@@ -42,6 +42,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The decrypt sink of `OwnedFrame` writes through them, reporting `DecodeError`.
 - `DecodeError` implements `From<FrameWriteError>`: a scalar its logical type does not admit is `DecodeError::Expected`, a source's failure is `DecodeError::Source`, and any other refusal is `DecodeError::Source` with the writer's error as its source.
 
+### Security
+
+- `plaintext::SourceError` prints `SourceError(..)` in `Debug`, and none of the error it wraps.
+  The wrapped error comes from the caller's code, and its text can include the value that failed.
+  Before, `Debug` printed that text, so `{:?}`, a log line, or a panic from `unwrap` could print the value.
+  The errors that contain a `SourceError` now print the same placeholder in `Debug`: `EncryptError::Source`, `DecodeError::Source`, and `FrameWriteError::Source`.
+  `Display`, `inner`, and `source()` are unchanged, so a caller that needs the text still gets it.
+
 ## [0.10.0] - 2026-11-19
 
 ### Wire format
