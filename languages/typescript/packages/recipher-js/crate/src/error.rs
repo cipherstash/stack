@@ -545,6 +545,41 @@ mod tests {
         all
     }
 
+    /// Returns the help that `error` states, or `None` for an error that
+    /// leaves nothing for the caller to do. The match has no wildcard, so a
+    /// new variant needs an entry here.
+    fn help_of(error: &Error) -> Option<&'static str> {
+        match error {
+            Error::Undefined => Some("Use `null` for a value that is not there."),
+            Error::Uuid => Some("Encrypt its text instead."),
+            Error::NotAScalar | Error::PlainObject => Some("Wrap it in json(..)."),
+            Error::NotACiphertext => Some("Read stored bytes with Ciphertext.fromBytes."),
+            Error::NoTesting => {
+                Some("Build it with `pnpm --filter @cipherstash/recipher build:debug`.")
+            }
+            Error::NoResult | Error::BuildValue => {
+                Some("Report this as a bug in @cipherstash/recipher.")
+            }
+            Error::Value
+            | Error::Threw
+            | Error::NotSealed
+            | Error::NotBytes
+            | Error::NotAKind
+            | Error::OpenedType { .. }
+            | Error::NotADocument
+            | Error::TestingSeed => None,
+        }
+    }
+
+    #[test]
+    fn every_error_states_its_help_and_no_other() {
+        for error in every_error() {
+            let help = help_of(&error);
+            let fields = RecipherErrorFields::from(error);
+            assert_eq!(fields.help.as_deref(), help, "{}", fields.code);
+        }
+    }
+
     #[test]
     fn every_error_has_a_recipher_code_of_its_own() {
         let mut codes = std::collections::BTreeSet::new();
