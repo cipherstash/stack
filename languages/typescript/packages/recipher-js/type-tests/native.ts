@@ -8,7 +8,10 @@ import {
   Cipher,
   Ciphertext,
   type CiphertextClass,
+  type Json,
+  type json,
   Keyset,
+  type OpenedScalar,
   type RecipherError,
   type Result,
 } from '../src/index'
@@ -24,9 +27,11 @@ type Equal<A, B> =
 check<Equal<Cipher, Native.Cipher>>()
 check<Equal<Keyset, Native.Keyset>>()
 check<Equal<Ciphertext<number>, Native.Ciphertext<number>>>()
-// A ciphertext with no type named decrypts to a string, as this build
-// encrypts strings only.
-check<Equal<Ciphertext, Ciphertext<string>>>()
+check<Equal<Json, Native.Json>>()
+check<Equal<typeof json, typeof Native.json>>()
+// A ciphertext with no type named, as one read from stored bytes with no
+// kind, decrypts to any scalar.
+check<Equal<Ciphertext, Ciphertext<OpenedScalar>>>()
 
 // The static methods are the generated ones.
 check<Equal<CiphertextClass['fromBytes'], typeof Native.Ciphertext.fromBytes>>()

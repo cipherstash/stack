@@ -52,7 +52,7 @@
       [name]: class {
         constructor(value) {
           if (typeof value !== 'string') {
-            throw new TypeError(`${name} takes a string`)
+            throw new TypeError(`${name} accepts only a string`)
           }
           defineProperty(this, 'value', {
             __proto__: null,
@@ -77,10 +77,10 @@
   }
   return freeze({
     __proto__: null,
-    VcDate: define('VcDate'),
-    VcTimestamp: define('VcTimestamp'),
-    VcDecimal: define('VcDecimal'),
-    VcUuid: define('VcUuid'),
+    RcDate: define('RcDate'),
+    RcTimestamp: define('RcTimestamp'),
+    RcDecimal: define('RcDecimal'),
+    RcUuid: define('RcUuid'),
     // Whether a value is a plain object: prototype `Object.prototype` or
     // `null`. Asked through `Object.getPrototypeOf`, not `napi_get_prototype`,
     // because the latter reads a Proxy's own map and reports `null` for

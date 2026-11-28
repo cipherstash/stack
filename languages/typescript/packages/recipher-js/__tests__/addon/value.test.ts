@@ -116,19 +116,12 @@ describe('failures are values', () => {
     expect(opened.isErr()).toBe(true)
   })
 
-  it('refuses a value that is not a string', async () => {
-    const keyset = (await cipher()).defaultKeyset()
-    // @ts-expect-error: this build encrypts a string.
-    const result = await keyset.encrypt(5)
-    expect(result.err()?.code).toBe('recipher_js::not_a_string')
-  })
-
   it('refuses a string with an unpaired surrogate, with a code of its own', async () => {
     const result = await (await cipher()).defaultKeyset().encrypt('\uD800')
     expect(result.err()?.code).toBe('recipher_js::unpaired_surrogate')
   })
 
-  it('names the rule vitaminc refused a value by', async () => {
+  it('names the rule a refused value broke', async () => {
     const keyset = (await cipher()).defaultKeyset()
     const cases: [unknown, string][] = [
       [new Map(), 'recipher_js::not_plain'],
@@ -143,7 +136,7 @@ describe('failures are values', () => {
 
   it('refuses a decrypt of something that is not a ciphertext', async () => {
     const c = await cipher()
-    // @ts-expect-error: decrypt takes a Ciphertext.
+    // @ts-expect-error: decrypt accepts a Ciphertext.
     const result = await c.decrypt(new Uint8Array(8))
     expect(result.err()?.code).toBe('recipher_js::not_a_ciphertext')
   })
@@ -211,9 +204,7 @@ describe('every other call returns or resolves to a Result', () => {
       encrypt(...args: unknown[]): ReturnType<Keyset['encrypt']>
       decrypt(...args: unknown[]): ReturnType<Keyset['decrypt']>
     }
-    expect((await loose.encrypt()).err()?.code).toBe(
-      'recipher_js::not_a_string',
-    )
+    expect((await loose.encrypt()).err()?.code).toBe('recipher_js::undefined')
     expect((await loose.decrypt()).err()?.code).toBe(
       'recipher_js::not_a_ciphertext',
     )
@@ -226,19 +217,19 @@ describe('every other call returns or resolves to a Result', () => {
   it('arguments of every wrong type resolve to an Err', async () => {
     const c = await cipher()
     const keyset = c.defaultKeyset()
-    const wrong: unknown[] = [
+    const notValues: unknown[] = [
       undefined,
-      null,
-      0,
       {},
-      [],
       Symbol('s'),
       () => 1,
       new Map(),
     ]
-    for (const value of wrong) {
+    for (const value of notValues) {
+      expect((await keyset.encrypt(value as never)).isErr()).toBe(true)
+    }
+    const notCiphertexts: unknown[] = [...notValues, null, 0, 'text', [1]]
+    for (const value of notCiphertexts) {
       const anyValue = value as never
-      expect((await keyset.encrypt(anyValue)).isErr()).toBe(true)
       expect((await keyset.decrypt(anyValue)).isErr()).toBe(true)
       expect((await c.decrypt(anyValue)).isErr()).toBe(true)
       expect(Ciphertext.fromBytes(anyValue).isErr()).toBe(true)

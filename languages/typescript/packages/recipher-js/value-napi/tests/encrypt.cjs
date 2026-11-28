@@ -5,7 +5,7 @@
 const assert = require('node:assert/strict')
 const path = require('node:path')
 const addon = require(path.resolve(process.argv[2]))
-const { VcDate, VcTimestamp, VcDecimal, VcUuid } = addon
+const { RcDate, RcTimestamp, RcDecimal, RcUuid } = addon
 const aad = 'section-6'
 
 const rows = {
@@ -25,14 +25,14 @@ const rows = {
   'plain object': {
     name: 'Ada',
     tags: ['math'],
-    born: new VcDate('1815-12-10'),
+    born: new RcDate('1815-12-10'),
     x: undefined,
   },
   'null prototype': Object.assign(Object.create(null), { k: 'v' }),
-  VcDate: new VcDate('2024-02-29'),
-  VcTimestamp: new VcTimestamp('1969-12-31T23:59:59.999999999Z'),
-  VcDecimal: new VcDecimal('-1.50'),
-  VcUuid: new VcUuid('123e4567-e89b-12d3-a456-426614174000'),
+  RcDate: new RcDate('2024-02-29'),
+  RcTimestamp: new RcTimestamp('1969-12-31T23:59:59.999999999Z'),
+  RcDecimal: new RcDecimal('-1.50'),
+  RcUuid: new RcUuid('123e4567-e89b-12d3-a456-426614174000'),
   'empty array': [],
   'empty object': {},
 }

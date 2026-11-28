@@ -3,21 +3,38 @@
    The header is `native-header.d.ts`: the types the generated signatures
    take from the package's TypeScript. */
 
-// biome-ignore lint/correctness/noUnusedImports: the generated signatures after this header use it.
+// biome-ignore-start lint/correctness/noUnusedImports: the generated signatures after this header use these imports.
 import type { RecipherError } from './src/error'
-// biome-ignore lint/correctness/noUnusedImports: the generated signatures after this header use them.
+import type { Kind, ValueOf } from './src/kinds'
 import type { Err, Ok, Result } from './src/result'
+import type {
+  JsonMarker,
+  JsonValue,
+  Opened,
+  OpenedScalar,
+  Value,
+} from './src/value-types'
+
+// biome-ignore-end lint/correctness/noUnusedImports: the generated signatures after this header use these imports.
 
 declare const opens: unique symbol
 
 /**
  * `T` is the type the ciphertext decrypts to. For example,
  * `keyset.encrypt('..')` returns a `Ciphertext<string>`.
+ *
+ * A kind names the type that a stored ciphertext decrypts to, such as
+ * `kinds.string`. A ciphertext read from stored bytes with no kind decrypts
+ * to whatever type was encrypted. So its type allows any scalar. A scalar is
+ * a single value, not a JSON document.
  */
-export interface Ciphertext<T = string> {
+export interface Ciphertext<T = OpenedScalar> {
   /** Stores `T` for the type checker. The property never exists at run time. */
   readonly [opens]?: T
 }
+
+/** The marker stops any other object type-checking as a `Json`. */
+export interface Json extends JsonMarker {}
 
 /**
  * A cipher: the engine, and the keysets it can use. A keyset is a group
@@ -55,10 +72,16 @@ export declare class Cipher {
    * Decrypts a ciphertext made under any of this cipher's keysets. The
    * value decrypts as the type it was encrypted as.
    *
+   * An array of ciphertexts returns an array of values, in the same
+   * order. The cipher makes one key request for each keyset the
+   * ciphertexts were made under.
+   *
    * Resolves to an `Err` with the code `recipher_js::not_a_ciphertext`
-   * when the argument is not a `Ciphertext`. The promise does not reject.
+   * when the argument, or an element of the array, is not a
+   * `Ciphertext`. The promise does not reject.
    */
   decrypt<T>(ciphertext: Ciphertext<T>): Promise<Result<T, RecipherError>>
+  decrypt<T>(ciphertexts: readonly Ciphertext<T>[]): Promise<Result<T[], RecipherError>>
   /** Returns the type's name. */
   toString(): string
 }
@@ -68,21 +91,37 @@ export declare class Cipher {
  * with its own data key. A data key is the key that encrypts one value.
  *
  * The ciphertext's bytes are the engine's format for an encrypted value.
- * The Rust and Go SDKs write the same bytes. `toString()` and Node's
+ * Rust's `keyset.encrypt` writes the same bytes. `toString()` and Node's
  * `inspect` hide the bytes, because the object has no own properties.
  *
- * The SDK uses a class rather than plain bytes so that `decrypt` can tell a
- * ciphertext from any other value.
+ * The SDK uses a class rather than plain bytes for two reasons. First,
+ * `decrypt` can tell a ciphertext from any other value. Second, the class
+ * records the type the value decrypts as. A JSON document is encrypted as
+ * its JSON text, and nothing in the bytes says that it is JSON.
  */
 export declare class Ciphertext {
   /**
-   * Reads a ciphertext from stored bytes, a `Uint8Array` or a `Buffer`.
-   * This method checks only the shape of the bytes. Decrypting is what
-   * checks that they are authentic. A failure does not quote the bytes.
+   * Reads a ciphertext from stored bytes. The bytes are a `Uint8Array`
+   * or a `Buffer`. This method checks only the format of the bytes.
+   * Decrypting checks that the bytes are authentic. A failure does not
+   * quote the bytes.
    *
-   * Returns an `Err` with the code `recipher_js::not_bytes` when the
-   * argument is not a `Uint8Array`. Does not throw.
+   * A kind names the type that a ciphertext decrypts to. To decrypt the
+   * value as one kind, pass that kind, such as `kinds.string`. `decrypt`
+   * then refuses a value that was encrypted as another type.
+   * `kinds.json` decrypts a JSON document.
+   *
+   * With no kind, the value decrypts as the type it was encrypted as. A
+   * JSON document then decrypts as its JSON text. `JSON.parse` of that
+   * text loses the digits of an integer outside a `number`'s safe range.
+   *
+   * This method does not throw. The method returns an `Err` with one of
+   * two codes:
+   *
+   * - `recipher_js::not_bytes`, when the bytes are not a `Uint8Array`;
+   * - `recipher_js::not_a_kind`, when the kind is not one of `kinds`.
    */
+  static fromBytes<K extends Kind>(bytes: Uint8Array, kind: K): Result<Ciphertext<ValueOf<K>>, RecipherError>
   static fromBytes(bytes: Uint8Array): Result<Ciphertext, RecipherError>
   /**
    * Returns the bytes to store. They are a copy, so changing them does
@@ -90,6 +129,22 @@ export declare class Ciphertext {
    */
   toBytes(): Uint8Array
   /** Returns the type's name, and hides the bytes. */
+  toString(): string
+}
+
+/**
+ * A JSON document to encrypt as one ciphertext, as its JSON text. Nothing
+ * inside the document can be searched. Make one with `json(..)`.
+ *
+ * `json(..)` reads the document when it makes the `Json`. So a later
+ * change to the object does not change what is encrypted. If the document
+ * cannot be encrypted, the `Json` keeps the failure, and `encrypt` returns
+ * that failure. `toString()` and Node's `inspect` hide the document.
+ *
+ * The class has no constructor.
+ */
+export declare class Json {
+  /** Returns the type's name, and hides the document. */
   toString(): string
 }
 
@@ -106,20 +161,33 @@ export declare class Ciphertext {
  */
 export declare class Keyset {
   /**
-   * Encrypts a string as one ciphertext with its own data key, with no
+   * Encrypts a value as one ciphertext with its own data key, with no
    * context. A context is a value that a ciphertext is bound to, and
    * decrypting needs the same context.
    *
-   * Resolves to an `Err` with the code `recipher_js::not_a_string` when
-   * the value is not a string. The promise does not reject.
+   * An array of values returns an array of ciphertexts, in the same
+   * order. The keyset makes one key request for the whole array, however
+   * long it is. A key request is one request to ZeroKMS for data keys. If
+   * any value is refused, the whole array fails, before any request.
+   *
+   * A value's type sets how it is encrypted. The package's README lists
+   * the mapping of JavaScript types. A `Json` from `json(..)` is
+   * encrypted as a JSON document.
+   *
+   * A value that cannot be encrypted resolves to an `Err`. For example, a
+   * plain object is an `Err` with the code `recipher_js::plain_object`.
+   * The promise does not reject.
    */
-  encrypt(value: string): Promise<Result<Ciphertext<string>, RecipherError>>
+  encrypt<V extends Value>(value: V): Promise<Result<Ciphertext<Opened<V>>, RecipherError>>
+  encrypt<V extends Value>(values: readonly V[]): Promise<Result<Ciphertext<Opened<V>>[], RecipherError>>
   /**
-   * Decrypts a ciphertext made under this keyset. A ciphertext of another
-   * keyset fails with the code `stack_encrypt::foreign_keyset`, before
-   * any key is requested. The promise does not reject.
+   * Decrypts a ciphertext made under this keyset, or an array of them. A
+   * ciphertext of another keyset fails with the code
+   * `stack_encrypt::foreign_keyset`, before any key is requested. The
+   * promise does not reject.
    */
   decrypt<T>(ciphertext: Ciphertext<T>): Promise<Result<T, RecipherError>>
+  decrypt<T>(ciphertexts: readonly Ciphertext<T>[]): Promise<Result<T[], RecipherError>>
   /** Returns the type's name. */
   toString(): string
 }
@@ -174,6 +242,45 @@ export interface ErrorCause {
  */
 export declare function installResult(classes: { Ok: typeof Ok; Err: typeof Err; RecipherError: typeof RecipherError }): boolean
 
+/**
+ * Makes a JSON document to encrypt as one ciphertext.
+ *
+ * ```ts
+ * const profile = json({ name: 'Ada', visits: 3, id: 2n ** 64n - 1n })
+ * const sealed = (await keyset.encrypt(profile)).unwrap()
+ * const opened = (await cipher.decrypt(sealed)).unwrap()
+ * // { id: 18446744073709551615n, name: 'Ada', visits: 3 }
+ * ```
+ *
+ * The document is a plain object, an array, text, a number, a `bigint`, a
+ * boolean, or `null`. A document nests at most 127 levels of arrays and
+ * objects.
+ *
+ * These rules decide how a number is stored:
+ *
+ * - A whole `number` within 2^53 - 1 of zero is an integer, as
+ *   `JSON.stringify` writes it. `5000000000` is stored as `5000000000`.
+ * - A whole `number` from 2^53 up to 2^64 is refused. A `number` that
+ *   large may not keep the digits you wrote. Pass a `bigint` instead.
+ * - Any other `number` is a float. `NaN` and the infinities are refused.
+ * - A `bigint` is its exact digits, from `-(2n ** 63n)` to
+ *   `2n ** 64n - 1n`. A `bigint` outside that range is refused.
+ *
+ * Decrypting gives an integer back as a `number` when it is within
+ * 2^53 - 1 of zero, and as a `bigint` otherwise. So `json({ a: 5n })`
+ * decrypts as `{ a: 5 }`.
+ *
+ * The engine stores an object's members sorted by key. A decrypted object
+ * lists its members in that order, not in the order you wrote them.
+ *
+ * `undefined`, bytes, a `Date`, and the wrapper classes have no JSON form.
+ * Each one is refused.
+ *
+ * `json(..)` reads the document when you call it. `json(..)` never throws.
+ * For a document that cannot be encrypted, `encrypt` returns an `Err`.
+ */
+export declare function json(document: JsonValue): Json
+
 /** A failure, as JavaScript receives it. */
 export interface RecipherErrorFields {
   /**
@@ -181,8 +288,8 @@ export interface RecipherErrorFields {
    * The code is one of three kinds:
    *
    * - a diagnostic's code, such as the engine's `stack_encrypt::aead`;
-   * - the code of vitaminc, CipherStash's cryptography library, for a
-   *   value it refused, such as `ERR_INTEGER_RANGE`;
+   * - the value bridge's code for a scalar it refused, such as
+   *   `ERR_INTEGER_RANGE`;
    * - the SDK's own code, such as `recipher_js::not_a_ciphertext`.
    */
   code: string

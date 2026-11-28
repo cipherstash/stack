@@ -6,7 +6,7 @@
 use napi::bindgen_prelude::{AsyncTask, Buffer, JsObjectValue, Object, Unknown};
 use napi::{Env, Error, Result, Status, Task};
 use napi_derive::napi;
-use recipher_value_napi::{JsBuilder, JsCipherText, JsFault, JsRef, Wrappers};
+use recipher_value_napi::{JsBuilder, JsCipherText, JsFault, JsRef, Refusal, Wrappers};
 use vitaminc_aead::seal::Cipher;
 use vitaminc_aead::{
     decrypt, decrypt_into, encrypt, to_frame, CipherText, Context, DecryptError, Encrypt,
@@ -20,7 +20,7 @@ use vitaminc_protected::{Controlled, Protected};
 #[napi(module_exports)]
 fn init(mut exports: Object<'_>, env: Env) -> Result<()> {
     let wrappers = Wrappers::exports(&env)?;
-    for name in ["VcDate", "VcTimestamp", "VcDecimal", "VcUuid"] {
+    for name in ["RcDate", "RcTimestamp", "RcDecimal", "RcUuid"] {
         exports.set_named_property(name, wrappers.get_named_property::<Unknown>(name)?)?;
     }
     Ok(())
@@ -71,6 +71,92 @@ type Ct = JsCipherText<LocalCipherText, PassthroughFrame>;
 pub fn encode(value: Unknown<'_>) -> Result<Buffer> {
     let frame = JsRef::new(value).to_frame()?;
     Ok(Buffer::from(frame.risky_ref().to_vec()))
+}
+
+/// Write a JavaScript value as the text of a JSON document, nested at most
+/// `max_depth` levels. A refused value comes back as `{ code, message }`,
+/// the refusal's diagnostic code and message. Any other failure throws.
+#[napi(ts_return_type = "{ text: string } | { code: string; message: string }")]
+pub fn json_text<'e>(env: &'e Env, value: Unknown<'_>, max_depth: u32) -> Result<Object<'e>> {
+    let mut out = Object::new(env)?;
+    match JsRef::new(value).to_json(max_depth as usize) {
+        Ok(text) => {
+            let text = std::str::from_utf8(text.risky_ref())
+                .map_err(|_| Error::from_reason("JSON text is not UTF-8"))?;
+            out.set_named_property("text", text)?;
+        }
+        Err(fault) => match fault.refusal() {
+            Some(refusal) => {
+                out.set_named_property("code", refusal_code(&refusal))?;
+                out.set_named_property("message", refusal.to_string())?;
+            }
+            None => return Err(fault.into()),
+        },
+    }
+    Ok(out)
+}
+
+fn refusal_code(refusal: &Refusal) -> String {
+    use miette::Diagnostic;
+    refusal
+        .code()
+        .map_or_else(String::new, |code| code.to_string())
+}
+
+/// Build the JavaScript value of the JSON document `text`. A refused
+/// document comes back as `{ code, message }`. Any other failure throws.
+#[napi(ts_return_type = "{ value: unknown } | { code: string; message: string }")]
+pub fn json_value<'e>(env: &'e Env, text: String) -> Result<Object<'e>> {
+    let document: serde_json::Value =
+        serde_json::from_str(&text).map_err(|_| Error::from_reason("not JSON text"))?;
+    json_built(env, &document)
+}
+
+/// Nest `true` inside `levels` JSON containers, then build the document as a
+/// JavaScript value. `wrap` names the kind of container: "array" or "object".
+/// A parser would refuse the deepest of these documents, so the build's own
+/// depth limit applies.
+#[napi(ts_return_type = "{ value: unknown } | { code: string; message: string }")]
+pub fn json_nested_value<'e>(env: &'e Env, levels: u32, wrap: String) -> Result<Object<'e>> {
+    let mut document = serde_json::Value::Bool(true);
+    for _ in 0..levels {
+        document = match wrap.as_str() {
+            "array" => serde_json::Value::Array(vec![document]),
+            _ => serde_json::Value::Object([("k".to_owned(), document)].into_iter().collect()),
+        };
+    }
+    json_built(env, &document)
+}
+
+/// The JavaScript value of `document` as `{ value }`, or its refusal as
+/// `{ code, message }`.
+fn json_built<'e>(env: &'e Env, document: &serde_json::Value) -> Result<Object<'e>> {
+    let mut out = Object::new(env)?;
+    match JsBuilder::build_json(env, document) {
+        Ok(value) => out.set_named_property("value", value)?,
+        Err(fault) => match fault.refusal() {
+            Some(refusal) => {
+                out.set_named_property("code", refusal_code(&refusal))?;
+                out.set_named_property("message", refusal.to_string())?;
+            }
+            None => return Err(fault.into()),
+        },
+    }
+    Ok(out)
+}
+
+/// napi-rs's own conversion of a JavaScript value to a `serde_json::Value`,
+/// as the JSON text of what it read. The bridge does not use it.
+#[napi]
+pub fn napi_json_text(value: serde_json::Value) -> String {
+    value.to_string()
+}
+
+/// napi-rs's own conversion of a `serde_json::Value` to a JavaScript value.
+/// The bridge uses it for scalars only.
+#[napi]
+pub fn napi_json_value(text: String) -> Result<serde_json::Value> {
+    serde_json::from_str(&text).map_err(|_| Error::from_reason("not JSON text"))
 }
 
 /// Walk a JavaScript value and drop the frame, to test the walk alone.

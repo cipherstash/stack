@@ -9,7 +9,9 @@ use std::fmt;
 use jiff::fmt::temporal::Pieces;
 use rust_decimal::Decimal;
 use vitaminc_aead::plaintext::kinds::{decimal as kinds_decimal, jiff as kinds_jiff};
-use vitaminc_aead::{Int, Logical, TimeUnit};
+use vitaminc_aead::{Float, Int, Logical, Physical, TimeUnit};
+
+use crate::error::NoJsonForm;
 
 /// Host scalar conversion errors. Node receives a TypeError with the same
 /// stable code; errors contain no user plaintext.
@@ -114,6 +116,63 @@ fn unsigned(value: u128) -> Int {
     } else {
         Int::U128(value)
     }
+}
+
+/// The largest whole number that a JavaScript `number` stores exactly: 2^53 -
+/// 1, `Number.MAX_SAFE_INTEGER`.
+const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+
+/// 2^64: the least magnitude above every 64-bit integer.
+const TWO_TO_64: f64 = 18_446_744_073_709_551_616.0;
+
+/// A JavaScript `number` as a JSON document stores it.
+///
+/// The safe range is 2^53 - 1 either side of zero. A whole number within the
+/// safe range is an integer, as `JSON.stringify` writes it: `5`, not `5.0`.
+/// So a reader in another language can read it into an integer field. `-0` is
+/// the integer `0`.
+///
+/// A whole number from 2^53 up to 2^64 is refused. A `number` that large may
+/// not have the digits that were written. An integer was probably meant, and
+/// a `bigint` stores an integer exactly. Any other finite number is a float:
+/// a number with a fraction, or a number of 2^64 or more.
+pub(crate) fn json_number(value: f64) -> Result<Physical<'static>, NoJsonForm> {
+    if !value.is_finite() {
+        return Err(NoJsonForm::NonFinite);
+    }
+    let magnitude = value.abs();
+    if value.fract() == 0.0 && magnitude < TWO_TO_64 {
+        if magnitude > MAX_SAFE_INTEGER {
+            return Err(NoJsonForm::UnsafeInteger);
+        }
+        // A whole number in the safe range is an `i64` exactly.
+        return Ok(Physical::Int(Int::I64(value as i64)));
+    }
+    Ok(Physical::Float(Float::F64(value)))
+}
+
+/// A JavaScript `bigint` as a JSON document stores it: a signed or an
+/// unsigned 64-bit integer. A JSON parser in Rust or Go reads no wider
+/// integer. So a `bigint` outside that range is refused, whatever its size.
+pub(crate) fn json_bigint(negative: bool, words: &[u64]) -> Result<Int, NoJsonForm> {
+    if words
+        .get(1..)
+        .is_some_and(|tail| tail.iter().any(|&word| word != 0))
+    {
+        return Err(NoJsonForm::BigIntRange);
+    }
+    let magnitude = words.first().copied().unwrap_or(0);
+    if negative && magnitude != 0 {
+        // -2^63 is the least `i64`. 2^63 does not fit an `i64`, so negate as
+        // an `i128`.
+        return i64::try_from(-i128::from(magnitude))
+            .map(Int::I64)
+            .map_err(|_| NoJsonForm::BigIntRange);
+    }
+    Ok(match i64::try_from(magnitude) {
+        Ok(value) => Int::I64(value),
+        Err(_) => Int::U64(magnitude),
+    })
 }
 
 /// A nanosecond count as the narrowest int the leaf codec can carry it in.
@@ -262,7 +321,7 @@ pub(crate) fn timestamp_js_millis(unit: TimeUnit, count: Int) -> Option<f64> {
 }
 
 /// A stored timestamp as RFC 3339 text with nanoseconds, for the
-/// `VcTimestamp` wrapper.
+/// `RcTimestamp` wrapper.
 pub(crate) fn timestamp_text(unit: TimeUnit, count: Int) -> Option<String> {
     kinds_jiff::timestamp(unit, count).map(|instant| format!("{instant:.9}"))
 }
@@ -296,7 +355,7 @@ pub(crate) fn decimal(text: &str) -> Result<(u8, Int), ConversionError> {
     Ok((scale, Int::I128(mantissa)))
 }
 
-/// A stored decimal as fixed-point text with its scale, for the `VcDecimal`
+/// A stored decimal as fixed-point text with its scale, for the `RcDecimal`
 /// wrapper.
 pub(crate) fn decimal_text(scale: u8, mantissa: Int) -> Option<String> {
     kinds_decimal::decimal(scale, mantissa).map(|value| value.to_string())
@@ -340,6 +399,127 @@ pub(crate) fn uuid_text(bytes: &[u8]) -> Option<String> {
 mod tests {
     use super::*;
     use vitaminc_aead::plaintext::kinds::{MAX_TIMESTAMP_NANOS, MIN_TIMESTAMP_NANOS};
+
+    #[test]
+    fn a_whole_number_in_the_safe_range_is_a_json_integer() {
+        for (number, integer) in [
+            (0.0, 0i64),
+            (5.0, 5),
+            (-5.0, -5),
+            // Above 2^32, where a float would be written `5000000000.0`.
+            (5_000_000_000.0, 5_000_000_000),
+            (-5_000_000_000.0, -5_000_000_000),
+            // A millisecond timestamp.
+            (1_764_288_000_000.0, 1_764_288_000_000),
+            (MAX_SAFE_INTEGER, 9_007_199_254_740_991),
+            (-MAX_SAFE_INTEGER, -9_007_199_254_740_991),
+        ] {
+            assert_eq!(
+                json_number(number),
+                Ok(Physical::Int(Int::I64(integer))),
+                "{number}"
+            );
+        }
+        // `JSON.stringify(-0)` is `0`.
+        assert_eq!(json_number(-0.0), Ok(Physical::Int(Int::I64(0))));
+    }
+
+    #[test]
+    fn a_whole_number_from_2_53_up_to_2_64_is_refused() {
+        // 2^53, the next number a `number` can store, the largest `number`
+        // below 2^64, and the same three below zero.
+        for number in [
+            9_007_199_254_740_992.0,
+            9_007_199_254_740_994.0,
+            1e17,
+            18_446_744_073_709_549_568.0,
+            -9_007_199_254_740_992.0,
+            -18_446_744_073_709_549_568.0,
+        ] {
+            assert_eq!(
+                json_number(number),
+                Err(NoJsonForm::UnsafeInteger),
+                "{number}"
+            );
+        }
+    }
+
+    #[test]
+    fn any_other_finite_number_is_a_json_float() {
+        for number in [
+            0.5,
+            -1.5,
+            5e-324,
+            // The largest `number` below 2^53 that is not whole.
+            4_503_599_627_370_495.5,
+            // 2^64 and above: not an integer that the document's readers
+            // accept.
+            TWO_TO_64,
+            -TWO_TO_64,
+            1e20,
+            f64::MAX,
+            f64::MIN,
+        ] {
+            assert_eq!(
+                json_number(number),
+                Ok(Physical::Float(Float::F64(number))),
+                "{number}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_number_that_is_not_finite_is_refused() {
+        for number in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(json_number(number), Err(NoJsonForm::NonFinite));
+        }
+    }
+
+    #[test]
+    fn a_bigint_within_64_bits_is_a_json_integer() {
+        assert_eq!(json_bigint(false, &[]), Ok(Int::I64(0)));
+        assert_eq!(json_bigint(false, &[0]), Ok(Int::I64(0)));
+        // `-0n` is `0n`, whatever its sign bit.
+        assert_eq!(json_bigint(true, &[0]), Ok(Int::I64(0)));
+        assert_eq!(json_bigint(false, &[5]), Ok(Int::I64(5)));
+        assert_eq!(json_bigint(true, &[5]), Ok(Int::I64(-5)));
+        assert_eq!(json_bigint(false, &[5, 0, 0]), Ok(Int::I64(5)));
+        assert_eq!(
+            json_bigint(false, &[i64::MAX as u64]),
+            Ok(Int::I64(i64::MAX))
+        );
+        assert_eq!(
+            json_bigint(false, &[1 << 63]),
+            Ok(Int::U64(1 << 63)),
+            "2^63 is no i64"
+        );
+        assert_eq!(json_bigint(false, &[u64::MAX]), Ok(Int::U64(u64::MAX)));
+        assert_eq!(json_bigint(true, &[1 << 63]), Ok(Int::I64(i64::MIN)));
+        assert_eq!(
+            json_bigint(true, &[(1 << 63) - 1]),
+            Ok(Int::I64(i64::MIN + 1))
+        );
+    }
+
+    #[test]
+    fn a_bigint_outside_64_bits_is_refused_whatever_its_size() {
+        for (negative, words) in [
+            // 2^64, and -(2^63) - 1.
+            (false, &[0, 1][..]),
+            (true, &[(1 << 63) + 1][..]),
+            (true, &[u64::MAX][..]),
+            (true, &[0, 1][..]),
+            // Past 128 bits, where `bigint` refuses with another error.
+            (false, &[0, 0, 1][..]),
+            (true, &[0, 0, 0, 1][..]),
+        ] {
+            assert_eq!(
+                json_bigint(negative, words),
+                Err(NoJsonForm::BigIntRange),
+                "{negative} {words:?}"
+            );
+        }
+    }
 
     fn width(int: Int) -> &'static str {
         match int {

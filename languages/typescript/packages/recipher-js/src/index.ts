@@ -16,13 +16,18 @@
  * const opened = await cipher.decrypt(sealed.value)
  * ```
  *
- * Every call returns, or resolves to, a `Result`, and no promise rejects. A
- * call with an argument of the wrong type is an `Err`, not an exception.
+ * Every call returns, or resolves to, a `Result`. No promise rejects. A call
+ * with an argument of the wrong type is an `Err`, not an exception.
  *
- * The one exception is a method called without its object, as in
+ * One exception is a method called without its object, as in
  * `stored.map(cipher.decrypt)`. The JavaScript engine throws a `TypeError`
  * for it, before any of the package's code runs. Call each method on its
  * object: `stored.map((ciphertext) => cipher.decrypt(ciphertext))`.
+ *
+ * A wrapper class represents a type that JavaScript does not have, such as
+ * `RcDate` for a calendar date. A wrapper class's constructor, such as
+ * `new RcDate(..)`, also throws a `TypeError` when its argument is not a
+ * string.
  */
 export {
   Cipher,
@@ -38,4 +43,21 @@ export {
   type RecipherErrorFields,
   type Severity,
 } from './error'
+export { type Kind, kinds, type ValueOf } from './kinds'
 export { Err, err, Ok, ok, type Result } from './result'
+export {
+  type Json,
+  type JsonFunction,
+  type JsonValue,
+  json,
+  type Opened,
+  type OpenedJson,
+  type OpenedScalar,
+  RcDate,
+  RcDecimal,
+  RcTimestamp,
+  RcUuid,
+  type Scalar,
+  type Value,
+  type WrapperConstructor,
+} from './values'

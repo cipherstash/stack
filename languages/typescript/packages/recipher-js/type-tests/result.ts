@@ -61,7 +61,5 @@ function describe(error: RecipherError): string {
 void describe
 
 declare const keyset: Keyset
-// @ts-expect-error: this build encrypts a string only.
-void keyset.encrypt(42n)
 // @ts-expect-error: a plain object is not a value.
 void keyset.encrypt({ name: 'Ada' })

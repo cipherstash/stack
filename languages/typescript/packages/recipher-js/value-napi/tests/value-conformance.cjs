@@ -9,7 +9,7 @@ const addon = require(path.resolve(process.argv[2]))
 const corpus = JSON.parse(
   fs.readFileSync(path.join(__dirname, 'testdata/value-conformance.json')),
 )
-const { VcDate, VcTimestamp, VcDecimal, VcUuid } = addon
+const { RcDate, RcTimestamp, RcDecimal, RcUuid } = addon
 function expected(row, value = row.value) {
   if (/^(u?int)/.test(row.kind)) return BigInt(value)
   switch (row.kind) {
@@ -18,13 +18,13 @@ function expected(row, value = row.value) {
     case 'bytes':
       return Buffer.from(value, 'hex')
     case 'date':
-      return new VcDate(value)
+      return new RcDate(value)
     case 'decimal':
-      return new VcDecimal(value)
+      return new RcDecimal(value)
     case 'timestamp':
-      return row.js_date ? new Date(value) : new VcTimestamp(value)
+      return row.js_date ? new Date(value) : new RcTimestamp(value)
     case 'uuid':
-      return new VcUuid(value)
+      return new RcUuid(value)
     default:
       return value
   }
@@ -125,25 +125,25 @@ for (const value of [1n << 128n, -(1n << 127n) - 1n])
     code: 'ERR_INTEGER_RANGE',
   })
 for (const decimal of ['NaN', 'Infinity', '-Infinity', '+inf'])
-  assert.throws(() => addon.encode(new VcDecimal(decimal)), {
+  assert.throws(() => addon.encode(new RcDecimal(decimal)), {
     name: 'TypeError',
     code: 'ERR_NON_FINITE_DECIMAL',
   })
 assert.throws(
-  () => addon.encode(new VcDecimal('79228162514264337593543950336')),
+  () => addon.encode(new RcDecimal('79228162514264337593543950336')),
   { code: 'ERR_INVALID_DECIMAL' },
 )
-assert.throws(() => addon.encode(new VcDate('2023-02-29')), {
+assert.throws(() => addon.encode(new RcDate('2023-02-29')), {
   code: 'ERR_INVALID_DATE',
 })
-assert.throws(() => addon.encode(new VcUuid('not-a-uuid')), {
+assert.throws(() => addon.encode(new RcUuid('not-a-uuid')), {
   code: 'ERR_INVALID_UUID',
 })
 assert.throws(() => addon.encode(new Date(NaN)), {
   code: 'ERR_INVALID_TIMESTAMP',
 })
 // A leap second has no count since the epoch and is refused (ADR 0001 section 3).
-assert.throws(() => addon.encode(new VcTimestamp('2016-12-31T23:59:60Z')), {
+assert.throws(() => addon.encode(new RcTimestamp('2016-12-31T23:59:60Z')), {
   code: 'ERR_INVALID_TIMESTAMP',
 })
 assert.deepEqual(addon.decode(addon.encode(new Date(-1))), new Date(-1))
@@ -158,7 +158,7 @@ assert.equal(
   'f3030105ffffffffffffffff',
 )
 // A UUID is sixteen bytes under its logical type, in the envelope too.
-const uuid = new VcUuid('123e4567-e89b-12d3-a456-426614174000')
+const uuid = new RcUuid('123e4567-e89b-12d3-a456-426614174000')
 assert.equal(
   addon.encode(uuid).toString('hex'),
   'f305000b10000000123e4567e89b12d3a456426614174000',
@@ -166,15 +166,15 @@ assert.equal(
 assert.deepEqual(addon.decode(addon.encode(uuid)), uuid)
 assert.deepEqual(
   addon.decode(
-    addon.encode(new VcUuid('123E4567-E89B-12D3-A456-426614174000')),
+    addon.encode(new RcUuid('123E4567-E89B-12D3-A456-426614174000')),
   ),
   uuid,
 )
 const nested = {
   items: [
     1n,
-    new VcDate('2024-02-29'),
-    new VcDecimal('1.50'),
+    new RcDate('2024-02-29'),
+    new RcDecimal('1.50'),
     new Date(0),
     uuid,
   ],
@@ -195,9 +195,9 @@ assert.throws(
   /sparse arrays are not supported/,
 )
 assert.throws(() => addon.encode('\ud800'))
-// A wrapper takes a string and nothing else; the text itself is checked
+// A wrapper accepts only a string; the text itself is checked
 // when the value is encrypted, so one rule applies however it was made.
-for (const Wrapper of [VcDate, VcTimestamp, VcDecimal, VcUuid]) {
+for (const Wrapper of [RcDate, RcTimestamp, RcDecimal, RcUuid]) {
   for (const payload of [
     new Date(0),
     { y: 2024 },
@@ -215,10 +215,10 @@ for (const Wrapper of [VcDate, VcTimestamp, VcDecimal, VcUuid]) {
   }
 }
 for (const [Wrapper, code] of [
-  [VcDate, 'ERR_INVALID_DATE'],
-  [VcTimestamp, 'ERR_INVALID_TIMESTAMP'],
-  [VcDecimal, 'ERR_INVALID_DECIMAL'],
-  [VcUuid, 'ERR_INVALID_UUID'],
+  [RcDate, 'ERR_INVALID_DATE'],
+  [RcTimestamp, 'ERR_INVALID_TIMESTAMP'],
+  [RcDecimal, 'ERR_INVALID_DECIMAL'],
+  [RcUuid, 'ERR_INVALID_UUID'],
 ]) {
   // An instance made without the constructor has no text.
   assert.throws(
@@ -243,37 +243,37 @@ for (const timestamp of [
   '9999-12-30T22:00:00.999999999Z',
 ]) {
   assert.deepEqual(
-    addon.decode(addon.encode(new VcTimestamp(timestamp))),
-    new VcTimestamp(timestamp),
+    addon.decode(addon.encode(new RcTimestamp(timestamp))),
+    new RcTimestamp(timestamp),
   )
 }
 // Past the range, a value is refused, whichever way it is given.
 assert.throws(
-  () => addon.encode(new VcTimestamp('+012000-01-01T00:00:00.000000001Z')),
+  () => addon.encode(new RcTimestamp('+012000-01-01T00:00:00.000000001Z')),
   { code: 'ERR_INVALID_TIMESTAMP' },
 )
-assert.throws(() => addon.encode(new VcTimestamp('9999-12-30T22:00:01Z')), {
+assert.throws(() => addon.encode(new RcTimestamp('9999-12-30T22:00:01Z')), {
   code: 'ERR_INVALID_TIMESTAMP',
 })
 assert.throws(() => addon.encode(new Date('+012000-01-01T00:00:00Z')), {
   code: 'ERR_INVALID_TIMESTAMP',
 })
-assert.throws(() => addon.encode(new VcDate('+010000-01-01')), {
+assert.throws(() => addon.encode(new RcDate('+010000-01-01')), {
   code: 'ERR_INVALID_DATE',
 })
 assert.deepEqual(
   addon.decode(addon.encode(new Date('-009999-01-02T01:59:59Z'))),
   new Date('-009999-01-02T01:59:59Z'),
 )
-// A whole-millisecond timestamp written by another binding is a Date here;
-// a finer one is a VcTimestamp, so no precision is discarded.
+// A whole-millisecond timestamp written by another binding is a Date here. A
+// finer timestamp is an RcTimestamp, so no precision is discarded.
 assert.deepEqual(
   addon.decode(Buffer.from('130000000000000000c0d45407', 'hex')),
   new Date(123),
 )
 assert.deepEqual(
   addon.decode(Buffer.from('13ffffffffffffffffffc99a3b', 'hex')),
-  new VcTimestamp('1969-12-31T23:59:59.999999999Z'),
+  new RcTimestamp('1969-12-31T23:59:59.999999999Z'),
 )
 // A one-key object is ordinary data, whichever language wrote it (#382):
 // only a wrapper instance is a wrapper.
@@ -288,7 +288,7 @@ for (const ordinary of [
 }
 // The wrappers hold their text as an own, read-only, enumerable `value`,
 // and serialize as that text.
-const date = new VcDate('2024-02-29')
+const date = new RcDate('2024-02-29')
 assert.equal(date.value, '2024-02-29')
 assert.equal(JSON.stringify({ date }), '{"date":"2024-02-29"}')
 assert.equal(String(date), '2024-02-29')

@@ -31,9 +31,13 @@ import { Err, err, Ok, ok, type Result } from './result'
 
 /**
  * The binding interface version of this TypeScript. The addon must report
- * the same number.
+ * the same number, `BINDING_INTERFACE` in `crate/src/lib.rs`. So `load`
+ * refuses an addon built from older or newer code, instead of calling a
+ * method whose arguments or result changed shape. Add 1 to the number here
+ * and in the crate whenever a class, a method, or a returned value of the
+ * addon changes shape.
  */
-export const BINDING_INTERFACE = 1
+export const BINDING_INTERFACE = 2
 
 /** The native addon's exports, as `native.d.ts` declares them. */
 export type Binding = typeof Native
@@ -43,9 +47,15 @@ const EXPORTS = [
   'Cipher',
   'Keyset',
   'Ciphertext',
+  'Json',
   'bindingInterface',
   'createTesting',
   'installResult',
+  'json',
+  'RcDate',
+  'RcTimestamp',
+  'RcDecimal',
+  'RcUuid',
 ] as const
 
 /**
@@ -112,7 +122,12 @@ export function load(
       ),
     )
   }
-  for (const cls of [binding.Cipher, binding.Keyset, binding.Ciphertext]) {
+  for (const cls of [
+    binding.Cipher,
+    binding.Keyset,
+    binding.Ciphertext,
+    binding.Json,
+  ]) {
     Object.freeze(cls.prototype)
     Object.freeze(cls)
   }

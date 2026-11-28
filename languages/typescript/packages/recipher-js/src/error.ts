@@ -17,25 +17,28 @@ export type { ErrorCause, RecipherErrorFields, Severity }
  * A failure, as a value. Every call that fails returns, or resolves to, an
  * `Err` that contains a `RecipherError`.
  *
- * - `code` is the code to switch on. It is stable. It is one of these:
- *   - the engine's error code, such as `stack_encrypt::aead`;
- *   - vitaminc's code for a value it refused, such as `ERR_INTEGER_RANGE`.
- *     vitaminc is the CipherStash Rust library that the engine's plaintext
- *     types come from;
+ * - `code` is the code to switch on. A code is stable. A code is one of
+ *   these:
+ *   - the engine's error code, such as `stack_encrypt::aead`. The engine is
+ *     Stack Encrypt, CipherStash's encryption engine;
+ *   - the value bridge's code for a scalar it refused, such as
+ *     `ERR_INTEGER_RANGE`. The value bridge is the part of the addon that
+ *     converts JavaScript values;
  *   - the SDK's own code, such as `recipher_js::not_a_ciphertext`.
  * - `message` says what went wrong, in one line.
- * - `help` says what to do about it, where the error knows.
+ * - `help` says what to do about the failure, when the error has that
+ *   advice.
  * - `url` is a documentation page for the error, where it has one.
- * - `severity` is `error`, unless the engine's error report states
- *   `warning` or `advice`.
+ * - `severity` is `error`, unless the engine's error report states `warning`
+ *   or `advice`.
  * - `fields` contains the error's structured fields, by `snake_case` name.
- *   An example is a ZeroKMS failure's `request_kind`. `fields` is empty
- *   when the error has no structured fields.
+ *   An example is a ZeroKMS failure's `request_kind`. `fields` is empty when
+ *   the error has no structured fields.
  * - `field` names the field at fault, where one is known.
  * - `record` names the record that the failed declaration, row, or stored
  *   row belongs to.
- * - `causes` lists the errors behind this one, outermost first. A cause
- *   from another library has no code, and a fixed message.
+ * - `causes` lists the errors behind this one, outermost first. A cause from
+ *   another library has no code, and a fixed message.
  *
  * No property, and no text that the error gives, contains a plaintext, a
  * key, a token, or a ciphertext.
