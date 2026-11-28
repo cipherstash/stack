@@ -14,17 +14,24 @@
  * })
  * ```
  *
- * A declaration is a plain, frozen object: `{ type: 'record', name, fields }`,
- * with a declaration for each field. The native addon reads the declaration
- * and builds the engine's plan from it, once. The engine checks the
- * declaration at that time. That happens when a cipher first uses the
- * declaration, or when `Cipher.create({ records })` or
- * `checkDeclarations(..)` is called.
+ * A declaration is a plain, frozen object:
+ * `{ type: 'record', name, fields }`, with a declaration for each field.
+ *
+ * The engine is Stack Encrypt, CipherStash's encryption engine. A plan is
+ * the engine's description of how to encrypt each field of a row. The native
+ * addon reads a declaration once, and builds the engine's plan from it. The
+ * engine checks the declaration when the addon builds the plan. The addon
+ * builds the plan at the first of these events:
+ *
+ * - a cipher uses the declaration;
+ * - `Cipher.create({ records })` is called with the declaration;
+ * - `checkDeclarations(..)` is called with the declaration.
  *
  * TypeScript checks a row against the types below.
  *
- * The types are in `record-types.ts`, which never loads the addon, because
- * the addon's generated declarations (`native.d.ts`) import them.
+ * The types are in `record-types.ts`. That module never loads the addon,
+ * because the addon's generated declarations (`native.d.ts`) import the
+ * types.
  */
 import { type Binding, binding } from './binding'
 import type { RecipherError } from './error'
@@ -82,9 +89,9 @@ export function passthrough<T>(): PassthroughField<T> {
 }
 
 /**
- * A record named `name`, with `fields`. Each field's context is its field
- * path: the record's name, then the field's name. A context is data that a
- * ciphertext is bound to. The ciphertext decrypts only under the same
+ * Makes a record named `name`, with `fields`. Each field's context is its
+ * field path: the record's name, then the field's name. A context is data
+ * that a ciphertext is bound to. The ciphertext decrypts only under the same
  * context.
  */
 export function record<
@@ -99,8 +106,9 @@ export function record<
 }
 
 /**
- * Check declarations with the engine, with no credentials and no network
- * request. Use it in a test or a continuous integration (CI) step.
+ * Checks declarations with the engine. The check needs no credentials, and
+ * makes no network request. Use it in a test or a continuous integration
+ * (CI) step.
  *
  * The `Err` is the first refusal. The error names the record and, where
  * there is one, the field. When the native addon did not load, the `Err`

@@ -186,13 +186,15 @@ const stored = await keyset.encrypt(user, row)
 const opened = await cipher.decrypt(user, stored.unwrap())
 ```
 
+- `keyset.encrypt(user, row)` returns a stored row.
+  A stored row is the encrypted form of a row.
 - A declaration is a plain, frozen object: `{ type: 'record', name, fields }`.
   A library can read the record's name, its fields, and each field's declaration from it.
 - The package has an ECMAScript module (ESM) build and a CommonJS build.
   A declaration made by either build works with a cipher from the other.
 - Each encrypted field names its kind, by the engine's name for it.
   The kinds are `kinds.string`, `kinds.boolean`, `kinds.int8` to `kinds.int128`, `kinds.uint8` to `kinds.uint128`, `kinds.float32`, `kinds.float64`, `kinds.decimal`, `kinds.date`, `kinds.timestamp`, and `kinds.bytes`.
-- An integer field takes a `bigint` at every width.
+- An integer field accepts a `bigint` at every width.
   The field refuses a `bigint` outside its range.
 - A context is data that a ciphertext is bound to.
   The ciphertext decrypts only under the same context.

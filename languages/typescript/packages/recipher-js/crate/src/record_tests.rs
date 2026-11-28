@@ -376,9 +376,9 @@ fn a_plan_is_built_once_for_a_declaration() {
     ));
 }
 
-/// `keyset.decrypt` of a stored row is confined to its keyset and
-/// `cipher.decrypt` is not, as for a ciphertext. The two differ only in the
-/// `Confined` they pass to `open_rows_in`.
+/// `keyset.decrypt` of a stored row is confined to its keyset.
+/// `cipher.decrypt` is not. A ciphertext has the same rule. The two calls
+/// differ only in the `Confined` they pass to `open_rows_in`.
 #[tokio::test]
 async fn a_keyset_refuses_another_keysets_row_and_the_cipher_opens_it() {
     let cipher = engine().await;

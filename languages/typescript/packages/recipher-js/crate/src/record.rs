@@ -12,17 +12,17 @@
 //! A declaration is the plain object that `record(..)` makes:
 //! `{ type: "record", name, fields }`. Each field is one of these:
 //!
-//! - `{ type: "sealed", kind: { name }, index: [..], null? }`, a sealed
-//!   field, which the engine encrypts;
-//! - `{ type: "passthrough" }`, a passthrough field, which the engine
-//!   stores as given, without encryption.
+//! - `{ type: "sealed", kind: { name }, index: [..], null? }` is a sealed
+//!   field. The engine encrypts a sealed field.
+//! - `{ type: "passthrough" }` is a passthrough field. The engine stores a
+//!   passthrough field as given, without encryption.
 //!
 //! Each field's context is its field path: the record's name, then the
 //! field's name. A context is a value that a ciphertext is bound to, and
 //! decrypting needs the same context.
 //!
 //! The addon builds the plan from the declaration with the engine's own
-//! types: [`FieldPlan`], [`Output`], [`IndexSpec`], [`NullMode`] and
+//! types: [`FieldPlan`], [`Output`], [`IndexSpec`], [`NullMode`], and
 //! [`ValueKind`]. So the engine checks the plan, and the refusals are the
 //! engine's. The addon builds a plan once for each declaration, and keeps
 //! it for the life of the process.

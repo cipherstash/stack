@@ -44,9 +44,9 @@ export interface Ciphertext<T = OpenedScalar> {
 export interface Json extends JsonMarker {}
 
 /**
- * A value that `encrypt` takes: one scalar, or a `Json` document from
- * `json(..)`. It is declared here, beside the `Json` class, so a type error
- * names `Json` and `Value`.
+ * A value that `encrypt` accepts: one scalar, or a `Json` document from
+ * `json(..)`. The type is declared here, beside the `Json` class, so a type
+ * error names `Json` and `Value`.
  */
 export type Value = Scalar | Json
 
@@ -75,8 +75,9 @@ export declare class Cipher {
    * - ZeroKMS refuses to load the default keyset.
    *
    * `options.records` lists record declarations to check now, before the
-   * engine looks for credentials. If the engine refuses a declaration,
-   * the promise resolves to an `Err` that names the record.
+   * engine looks for credentials. A record declaration lists a record's
+   * fields and how to store each one. If the engine refuses a
+   * declaration, the promise resolves to an `Err` that names the record.
    *
    * The promise does not reject.
    */
@@ -95,14 +96,14 @@ export declare class Cipher {
    * ciphertexts were made under. A key request is one request to ZeroKMS
    * for data keys.
    *
-   * With a record declaration as the first argument, decrypts a stored
-   * row of that record, or an array of stored rows. A stored row is what
-   * `keyset.encrypt` returns for a row. Node's `inspect` shows a
-   * decrypted row's field names and hides their values.
+   * With a record declaration as the first argument, `decrypt` decrypts
+   * a stored row of that record, or an array of stored rows. A stored
+   * row is what `keyset.encrypt` returns for a row. Node's `inspect`
+   * shows a decrypted row's field names and hides their values.
    *
-   * Resolves to an `Err` with the code `recipher_js::not_a_ciphertext`
-   * when the argument, or an element of the array, is not a
-   * `Ciphertext`. The promise does not reject.
+   * The promise resolves to an `Err` with the code
+   * `recipher_js::not_a_ciphertext` when the argument, or an element of
+   * the array, is not a `Ciphertext`. The promise does not reject.
    */
   decrypt<T>(ciphertext: Ciphertext<T>): Promise<Result<T, RecipherError>>
   decrypt<T>(ciphertexts: readonly Ciphertext<T>[]): Promise<Result<T[], RecipherError>>
@@ -200,21 +201,22 @@ export declare class Keyset {
    *
    * An array of values returns an array of ciphertexts, in the same
    * order. The keyset makes one key request for the whole array, however
-   * long it is. A key request is one request to ZeroKMS for data keys. If
-   * any value is refused, the whole array fails, before any request.
+   * long it is. A key request is one request to ZeroKMS for data keys.
+   * If any value is refused, the whole array fails, before any request.
    *
    * A value's type sets how it is encrypted. The package's README lists
    * the mapping of JavaScript types. A `Json` from `json(..)` is
    * encrypted as a JSON document.
    *
-   * A value that cannot be encrypted resolves to an `Err`. For example, a
-   * plain object is an `Err` with the code `recipher_js::plain_object`.
+   * A value that cannot be encrypted resolves to an `Err`. For example,
+   * a plain object is an `Err` with the code
+   * `recipher_js::plain_object`.
    *
-   * With a record declaration as the first argument, encrypts a row of
-   * that record, or an array of rows in one key request. Each field is
-   * encrypted under its field path: the record's name, then the field's
-   * name. For each encrypted field, the stored row has the field's
-   * ciphertext and its index terms.
+   * With a record declaration as the first argument, `encrypt` encrypts
+   * a row of that record, or an array of rows in one key request. Each
+   * field is encrypted under its field path: the record's name, then the
+   * field's name. For each encrypted field, the stored row has the
+   * field's ciphertext and its index terms.
    *
    * The promise does not reject.
    */
@@ -227,8 +229,8 @@ export declare class Keyset {
    * ciphertext of another keyset fails with the code
    * `stack_encrypt::foreign_keyset`, before any key is requested.
    *
-   * With a record declaration as the first argument, decrypts a stored
-   * row of that record, or an array of stored rows.
+   * With a record declaration as the first argument, `decrypt` decrypts
+   * a stored row of that record, or an array of stored rows.
    *
    * The promise does not reject.
    */
@@ -266,7 +268,7 @@ export declare function bindingInterface(): number
  * Checks record declarations with the engine, without credentials and
  * without any request. Use it in a test or a continuous integration (CI)
  * step. The `Err` is the engine's first refusal. The error names the
- * record and, where there is one, the field. Does not throw.
+ * record and, where there is one, the field. This function does not throw.
  */
 export declare function checkDeclarations(declarations: readonly RecordDeclaration[]): Result<void, RecipherError>
 
@@ -377,9 +379,9 @@ export interface RecipherErrorFields {
   severity: Severity
   /**
    * The error's structured fields, keyed by `snake_case` name. For
-   * example, a refused plan has `field` and `reason`, and a ZeroKMS
-   * failure has `request_kind`. A plan is the engine's rules for
-   * encrypting a record. The map is empty when the error has no fields.
+   * example, a refused plan has `field` and `reason`. A ZeroKMS failure
+   * has `request_kind`. A plan is the engine's rules for encrypting a
+   * record. The map is empty when the error has no fields.
    */
   fields: Record<string, unknown>
   /** The errors that caused this one, outermost first. */

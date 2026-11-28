@@ -1,11 +1,11 @@
 /**
- * The types of record declarations, rows, stored rows and `Cipher.create`'s
- * options.
+ * The types of record declarations, rows, stored rows, and the options of
+ * `Cipher.create`.
  *
- * This module holds types only, and imports types only. The addon's
+ * This module contains types only, and imports types only. The addon's
  * generated declarations (`native.d.ts`) name these types in their
- * signatures, so a module here that loaded the addon would make the
- * declarations import themselves.
+ * signatures. If a module here loaded the addon, the declarations would
+ * import themselves.
  */
 import type { Kind, ValueOf } from './kinds'
 
@@ -19,10 +19,11 @@ export type Index = 'equality' | 'match' | 'ore' | 'ope'
 /**
  * How a field stores a missing value.
  *
- * - `sealed`: the null is encrypted like a value, to the same length as a
- *   value. The stored row does not show which rows have no value. Only for
- *   a field of fixed width whose only index is `equality`. The fixed-width
- *   fields are a boolean, a number, a date, a timestamp, and a decimal.
+ * - `sealed`: the engine encrypts the null like a value, to the same length
+ *   as a value. The stored row does not show which rows have no value. This
+ *   mode is only for a field of fixed width whose only index is `equality`.
+ *   The fixed-width fields are a boolean, a number, a date, a timestamp, and
+ *   a decimal.
  * - `sql`: the stored row has `null` for the field, as SQL `NULL` does.
  */
 export type NullMode = 'sealed' | 'sql'
@@ -50,7 +51,7 @@ export interface SealedField<
  */
 export interface PassthroughField<T = unknown> {
   readonly type: 'passthrough'
-  /** Carries `T` for the type checker. The property never exists at run time. */
+  /** Stores `T` for the type checker. The property never exists at run time. */
   readonly __value?: T
 }
 
@@ -80,7 +81,8 @@ export interface RecordDeclaration<
 > {
   /**
    * Marks the object as a declaration. Every copy of the package reads this
-   * marker, including the ESM build and the CommonJS build.
+   * marker, including the ECMAScript module (ESM) build and the CommonJS
+   * build.
    */
   readonly type: 'record'
   /** The record's name: the first part of each field's context. */
@@ -89,7 +91,9 @@ export interface RecordDeclaration<
   readonly fields: F
 }
 
-/** The plaintext row of a record. A field that takes a null can be `null`. */
+/**
+ * The plaintext row of a record. A field that accepts a null can be `null`.
+ */
 export type Plaintext<R> =
   R extends RecordDeclaration<string, infer F>
     ? {
@@ -143,9 +147,10 @@ export type SealedFieldName<R> =
 /** Options for `Cipher.create`. */
 export interface CipherOptions {
   /**
-   * Records to check when the cipher is created, before any credentials are
-   * looked for. A declaration that the engine refuses then gives an `Err`
-   * here, not at its first use.
+   * Records to check when the cipher is created, before `Cipher.create`
+   * looks for any credentials. If the engine refuses a declaration,
+   * `Cipher.create` resolves to the `Err`. Without this option, the `Err`
+   * comes from the first use of the declaration.
    */
   records?: readonly RecordDeclaration[]
 }

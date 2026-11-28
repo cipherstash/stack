@@ -1,7 +1,8 @@
-// The type errors a caller sees. A wrong argument to `encrypt` must name the
-// public types, `Value` and `Json`, and never the marker that brands a
-// `Json`. `type-tests/` checks that the code does not compile; this suite
-// compiles a snippet with the TypeScript compiler and reads the message.
+// The type errors that a caller reads. A wrong argument to `encrypt` must
+// name the public types: `Value` and `Json`. The error must never name the
+// marker type of a `Json`. `type-tests/` checks that the code does not
+// compile. This suite compiles a snippet with the TypeScript compiler and
+// reads the message.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'

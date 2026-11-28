@@ -44,8 +44,8 @@ export interface Ciphertext<T = OpenedScalar> {
 export interface Json extends JsonMarker {}
 
 /**
- * A value that `encrypt` takes: one scalar, or a `Json` document from
- * `json(..)`. It is declared here, beside the `Json` class, so a type error
- * names `Json` and `Value`.
+ * A value that `encrypt` accepts: one scalar, or a `Json` document from
+ * `json(..)`. The type is declared here, beside the `Json` class, so a type
+ * error names `Json` and `Value`.
  */
 export type Value = Scalar | Json

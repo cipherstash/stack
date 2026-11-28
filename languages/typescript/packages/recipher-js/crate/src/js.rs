@@ -184,8 +184,8 @@ fn is_uuid(env: &Env, value: &Unknown<'_>) -> bool {
         .is_ok_and(|wrapper| wrapper == Some(Wrapper::Uuid))
 }
 
-/// Returns the property `name` of `value`, when `value` is an object and
-/// the property is not `undefined`.
+/// Returns the property `name` of `value`. Returns `None` when `value` is not
+/// an object, or when the property is `undefined`.
 ///
 /// # Errors
 ///
@@ -283,9 +283,9 @@ pub(crate) fn hidden<'e>(
         .with_name(env, key)
         .map_err(not_made)?
         .with_value(&inspect)
-        // The property is not enumerable, writable or configurable. So a
-        // copy, spread or comparison of the row does not include it, and
-        // nothing can replace it.
+        // The property is not enumerable, writable, or configurable. So a
+        // copy, a spread, or a comparison of the row does not include the
+        // property. No code can replace the property.
         .with_property_attributes(PropertyAttributes::Default);
     object.define_properties(&[property]).map_err(not_made)?;
     Ok(row)
