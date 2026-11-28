@@ -863,8 +863,12 @@ done:
    each profile in `conformance/stack-encrypt/v1`, as
    `languages/golang/encrypt/*conformance_test.go` does for Go: scalar
    records, declarations, reads, runtime and nulls, contexts and bindings,
-   value boundaries, query refusals, raw frames, single values and, if your
-   binding links the EQL types, EQL and JSON. Read the frozen expectations; never
+   value boundaries, query refusals, raw frames and, if your
+   binding links the EQL types, EQL and JSON. Write one for the single-value
+   profile too, if your SDK encrypts one value into one ciphertext. Only
+   Rust runs that profile today: the Go runner is not written yet, so
+   `packages/stack-encrypt/tests/single_value_conformance.rs` is the
+   runner to follow. Read the frozen expectations; never
    regenerate them to pass. A profile you have not run is not a pass.
 2. **Fresh artifacts cross both ways.** The exchange profile
    (`conformance/stack-encrypt/exchange-contract.md`) has your binding open

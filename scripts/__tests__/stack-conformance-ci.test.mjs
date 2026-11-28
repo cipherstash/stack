@@ -31,7 +31,7 @@ function goSelection(script) {
 }
 
 describe('shared Stack Encrypt conformance is required in CI', () => {
-  it('the conformance task runs all profiles in both languages', () => {
+  it('the conformance task runs every profile that has both runners in both languages', () => {
     const script = readFileSync(
       join(REPO_ROOT, 'scripts/stack-conformance.sh'),
       'utf8',
@@ -58,13 +58,25 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
       /cargo nextest run[^\n]*--test raw_frame_conformance/,
     )
     expect(script).toMatch(/cargo nextest run[^\n]*--test binding_conformance/)
-    expect(script).toMatch(
-      /cargo nextest run[^\n]*--test single_value_conformance/,
-    )
     const selected = goSelection(script)
     for (const test of coreGoTests) {
       expect(selected.test(test), test).toBe(true)
     }
+  })
+
+  it('the conformance task runs the single-value profile in Rust, which has no Go runner yet', () => {
+    const script = conformanceScript()
+    expect(script).toMatch(
+      /cargo nextest run[^\n]*--test single_value_conformance/,
+    )
+    // When the Go runner is written, add it to `coreGoTests`, move the
+    // assertion above into the test of both languages, and delete this one.
+    const selected = goSelection(script)
+    expect(coreGoTests.some((test) => /SingleValue/.test(test))).toBe(false)
+    expect(selected.test('TestSingleValueConformance')).toBe(false)
+    expect(readRepo('conformance/stack-encrypt/README.md')).toMatch(
+      /single-value-v1\.cases\.json[^\n]*pending/,
+    )
   })
 
   it('selects exactly the core runners and indexed fixture tests', () => {
