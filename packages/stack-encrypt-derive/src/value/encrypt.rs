@@ -205,6 +205,21 @@ struct Depth {
     visit_check: TokenStream,
 }
 
+/// The path to `MAX_DEPTH` for the too-deep message, as text. The text
+/// starts at the crate path that the expansion names every item through, so
+/// it follows `#[aead(crate = "...")]`. `aead` is that crate path followed
+/// by `__derive`.
+fn max_depth_path(aead: &syn::Path) -> String {
+    let krate = aead
+        .segments
+        .iter()
+        .take(aead.segments.len().saturating_sub(1))
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::");
+    format!("{krate}::plaintext::depth::MAX_DEPTH")
+}
+
 /// Work out the type's depth from its fields' depths, the way the encrypting
 /// sink counts nesting. A recursive type has no fixed depth, and naming its
 /// own `DEPTH` would be a cycle, so it keeps the default `None` and the
@@ -257,10 +272,10 @@ fn depth(aead: &syn::Path, input: &DeriveInput, shape: &Shape, fixed_depth: bool
     let owned = expr(false);
     let by_ref = expr(true);
 
+    let limit = max_depth_path(aead);
     let message = format!(
-        "`{name}` nests deeper than `stack_encrypt::plaintext::depth::MAX_DEPTH` levels. Stack \
-         Encrypt refuses to encrypt a value nested that deeply, so it would refuse every full \
-         value of this type"
+        "`{name}` nests deeper than `{limit}` levels. Stack Encrypt refuses to encrypt a value \
+         nested that deeply, so it would refuse every full value of this type"
     );
     let check = |ty: TokenStream| {
         quote!(::core::assert!(#depth::within_limit(<#ty as #aead::Encrypt>::DEPTH), #message))
@@ -1111,6 +1126,46 @@ mod tests {
             quote!(#depth::within_limit(<&'static Row<'static, 'static> as ::stack_encrypt::__derive::Encrypt>::DEPTH)),
         );
         assert!(!out.contains("const {"), "{out}");
+    }
+
+    /// The too-deep message names `MAX_DEPTH` through the crate path the
+    /// expansion uses, so the path in the message resolves in the deriving
+    /// crate.
+    #[test]
+    fn the_too_deep_message_follows_the_crate_path() {
+        let message = |krate: &str| {
+            format!(
+                "`User` nests deeper than `{krate}::plaintext::depth::MAX_DEPTH` levels. Stack \
+                 Encrypt refuses to encrypt a value nested that deeply, so it would refuse every \
+                 full value of this type"
+            )
+        };
+        let quoted = |text: String| quote!(#text).to_string();
+
+        let out = expand(parse_quote! {
+            struct User {
+                name: String,
+            }
+        });
+        assert!(
+            out.contains(&quoted(message("stack_encrypt"))),
+            "the default message does not name `stack_encrypt`'s `MAX_DEPTH`:\n{out}"
+        );
+
+        let out = expand(parse_quote! {
+            #[aead(crate = "::vitaminc_aead")]
+            struct User {
+                name: String,
+            }
+        });
+        assert!(
+            out.contains(&quoted(message("vitaminc_aead"))),
+            "the message does not follow `crate = \"::vitaminc_aead\"`:\n{out}"
+        );
+        assert!(
+            !out.contains("stack_encrypt"),
+            "the message still names the default crate path:\n{out}"
+        );
     }
 
     /// A generic type's depth is known only at a concrete type, so it is

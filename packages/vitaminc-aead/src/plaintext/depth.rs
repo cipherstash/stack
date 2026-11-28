@@ -114,7 +114,9 @@
 //! # fn main() {}
 //! ```
 
-use crate::frame::MAX_DEPTH;
+// Also reachable here, so the too-deep message of a type derived with
+// `#[aead(crate = "::vitaminc_aead")]` names a path that resolves.
+pub use crate::frame::MAX_DEPTH;
 
 /// A scalar: nothing below it.
 pub const SCALAR: Option<usize> = Some(0);

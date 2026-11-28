@@ -70,6 +70,9 @@ error[E0080]: evaluation panicked: `TooDeep` nests deeper than
               of this type
 ```
 
+The path in the message starts at the `crate` path, when the type names
+one.
+
 A recursive type has no fixed depth: a tree can be as deep as its data. For a
 type that names itself in a field, directly or as `Self`, the derive sees this
 and leaves the check to the walk, which refuses a value that is too deep when
