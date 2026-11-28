@@ -62,8 +62,8 @@ written by the Rust runner:
   leaf's type tag and its payload. Only an accepted case has one.
 - `ciphertext`: a ciphertext of the value, in hex. Only an accepted case has
   one. The typed Rust interface made it, where a Rust type spells the stored
-  value. No Rust type spells a lone `uint8` or JavaScript's `undefined`, so
-  the run-time interface made those two.
+  value. No Rust type spells a lone `uint8`, so the run-time interface made
+  that one.
 
 Ciphertext bytes are never compared whole. Each sealed leaf carries a random
 AES-GCM nonce, so two ciphertexts of one value differ. A runner compares the
@@ -73,7 +73,10 @@ The deterministic provider derives a data key from the seed, the context and
 a counter. So a runner makes a fresh provider for each ciphertext it compares.
 
 Regenerate the artifacts deliberately, with `STACK_ENCRYPT_UPDATE_FIXTURES=1`
-and the native runner, and review the case and artifact diff together.
+and the native runner, and review the case and artifact diff together. An
+update keeps the frozen ciphertext of a case whose frame and leaf have not
+changed, and checks it as any run does. So a ciphertext stays frozen from one
+update to the next, and the diff shows only the cases that changed.
 
 ## Required behavior
 
@@ -111,14 +114,15 @@ names no field. The cases cover:
 - an array, an object, a passthrough, a plain null and a typed null, each with
   no declared kind and with one: the reason says what was found (`array`,
   `object`, `passthrough`, `null`);
-- JavaScript's `undefined` under a declared kind (`undefined`);
+- JavaScript's `undefined`, with a declared kind and with none (`undefined`);
 - a value of another kind that does not convert exactly (`field_type`);
 - text that is not a JSON document, under `json` (`json_syntax`,
   `json_duplicate_key`, `json_integer_range`).
 
-With no declared kind, `undefined` is a scalar and is sealed as it arrived.
-The case `as-is-undefined` pins that. A host with no `undefined` checks the
-case's shape and skips it.
+`undefined` is refused whatever kind is declared. It is most often a property
+name spelt wrong, and no typed call could read it back. A host with no
+`undefined` sends the frame the artifact file records for those cases, or
+checks their shape and skips them.
 
 ## Batches
 
@@ -137,6 +141,9 @@ The profile covers every scalar kind, the exact conversions, JSON documents
 and the refusals of the run-time encrypt. It does not cover:
 
 - a ciphertext that holds a null, which only the tree interface seals;
+- a scalar of a logical type the engine does not know, which `{type, text}`
+  cannot spell. With no declared kind the engine seals it as it arrived, and
+  `packages/stack-encrypt/tests/single_value.rs` pins that natively;
 - keyset confinement on decrypt, which
   `packages/stack-encrypt/tests/single_value.rs` covers natively;
 - fresh ciphertexts exchanged between languages. That comes with the first

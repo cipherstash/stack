@@ -55,11 +55,6 @@
       "leaf": "0dc8",
       "ciphertext": "0100000000000000000000000000000000953d2c5d27e5e549f2d84c34dffa03f4200046e77e88ca69bc28c79328ea2e7022660434e03342f93f07f852ccdcf45765de0282a2279d098f66f8776c5750e57acd502a6c3ecbbf4f77fa32e92a8aca60"
     },
-    "as-is-undefined": {
-      "frame": "01",
-      "leaf": "01",
-      "ciphertext": "0100000000000000000000000000000000953d2c5d27e5e549f2d84c34dffa03f4200046e77e88ca69bc28c79328ea2e7022660434e03342f93f07f852ccdcf45765de0222594e69e4a84eaed73cb6d3d6d595a94e3d1894ad2e840642632adb9e"
-    },
     "as-is-uuid": {
       "frame": "f305000b10000000123e4567e89b12d3a456426614174000",
       "leaf": "f305000b123e4567e89b12d3a456426614174000",
@@ -276,6 +271,9 @@
       "frame": "01"
     },
     "undefined-json": {
+      "frame": "01"
+    },
+    "undefined-no-kind": {
       "frame": "01"
     },
     "uuid": {

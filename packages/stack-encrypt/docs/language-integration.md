@@ -192,7 +192,8 @@ kind `json` takes a document as its JSON text.
 A ciphertext holds one scalar. An array, an object, a passthrough and a null
 are refused before any key is requested, with a reason that says which was
 found (`array`, `object`, `passthrough`, `null`). An SDK stores an absent
-value as a database `NULL`.
+value as a database `NULL`. JavaScript's `undefined` is refused too
+(`undefined`), whatever kind is declared.
 
 ### Scopes and bindings
 

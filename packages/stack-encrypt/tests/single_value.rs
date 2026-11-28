@@ -474,11 +474,24 @@ mod encrypt_refuses_before_any_key_request {
         }
     }
 
+    /// `undefined` is most often a property name spelt wrong, and no typed
+    /// call could read it back. So it is refused with a declared kind and
+    /// with none.
     #[tokio::test]
-    async fn undefined_under_a_declared_kind() {
-        for kind in [ValueKind::Int64, ValueKind::String, ValueKind::Json] {
-            let error = refused(&undefined(), Some(kind)).await;
-            assert_source_refusal(&error, Reason::Undefined, &format!("undefined as {kind}"));
+    async fn undefined_whatever_kind_is_declared() {
+        for kind in [
+            None,
+            Some(ValueKind::Int64),
+            Some(ValueKind::String),
+            Some(ValueKind::Json),
+            Some(ValueKind::Array),
+        ] {
+            let error = refused(&undefined(), kind).await;
+            assert_source_refusal(
+                &error,
+                Reason::Undefined,
+                &format!("undefined under {kind:?}"),
+            );
         }
     }
 
@@ -553,23 +566,91 @@ mod encrypt_refuses_before_any_key_request {
 mod encrypt_with_no_declared_kind {
     use super::*;
 
-    /// `undefined` is a scalar. With no declared kind it is sealed as it
-    /// arrived, as a field that declares no type keeps one.
+    /// A scalar of a logical type this build does not know: the frame and
+    /// the leaf carry its type id, and no kind names it.
+    fn unknown_logical() -> OwnedFrame {
+        let unknown = Logical::from_wire(200, 9).expect("an id no build knows yet");
+        frame(Raw(Some(unknown), Physical::Int(Int::I32(7))))
+    }
+
+    /// The leaf format carries a logical type it does not know, so a value
+    /// of a newer type survives an older build. The value is one scalar,
+    /// and it is sealed as it arrived.
     #[tokio::test]
-    async fn seals_undefined_as_it_arrived() {
+    async fn seals_a_scalar_of_an_unknown_logical_type_as_it_arrived() {
         let cipher = common::stack_cipher().await;
         let keyset = cipher.default_keyset();
-        let sealed = value::encrypt(&keyset, undefined().frame(), None)
-            .expect("undefined with no declared kind is taken")
+        let value = unknown_logical();
+        assert_eq!(value.frame().kind(), None, "no kind names the type");
+        let sealed = value::encrypt(&keyset, value.frame(), None)
+            .expect("a scalar of an unknown logical type is one scalar")
             .await
             .expect("it seals");
-        let opened = value::decrypt(&keyset, sealed, None)
+        let opened = value::decrypt(&keyset, sealed.clone(), None)
             .await
-            .expect("it opens");
+            .expect("it opens with no declared kind");
         assert_eq!(
             opened.frame(),
-            undefined().frame(),
-            "undefined opens as undefined"
+            value.frame(),
+            "the value opens with its type id"
+        );
+
+        // It opens as no declared kind, and as no Rust type.
+        let as_int = value::decrypt(&keyset, sealed.clone(), Some(ValueKind::Int32)).await;
+        assert!(
+            matches!(as_int, Err(Error::OpenedType { expected: "int32" })),
+            "an unknown logical type is not an int32, got: {as_int:?}"
+        );
+        let typed = keyset.decrypt::<i32>(sealed).await;
+        assert!(
+            matches!(typed, Err(Error::OpenedType { .. })),
+            "no Rust type reads an unknown logical type, got: {typed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn refuses_an_unknown_logical_type_under_a_declared_kind() {
+        for kind in [ValueKind::Int32, ValueKind::Date, ValueKind::Json] {
+            let error = refused(&unknown_logical(), Some(kind)).await;
+            assert_source_refusal(
+                &error,
+                Reason::FieldType,
+                &format!("an unknown logical type as {kind}"),
+            );
+        }
+    }
+
+    /// A known logical type over a value it does not admit never reaches
+    /// `encrypt`: no frame holds one. The frame writer refuses to write it,
+    /// and the frame reader refuses bytes that spell it.
+    #[test]
+    fn a_logical_type_over_a_value_it_does_not_admit_is_not_a_frame() {
+        let short_uuid = Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 15]));
+        assert!(
+            OwnedFrame::of(short_uuid).is_err(),
+            "the writer must refuse a UUID of fifteen bytes"
+        );
+        // A real UUID's frame, with one byte taken off the payload and off
+        // the length.
+        let uuid = frame(Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 16])));
+        let mut bytes = uuid.frame().as_bytes().to_vec();
+        let length = bytes.len() - 16 - 4;
+        assert_eq!(
+            bytes[length..length + 4],
+            16u32.to_le_bytes(),
+            "the payload's length sits before the payload"
+        );
+        bytes[length..length + 4].copy_from_slice(&15u32.to_le_bytes());
+        let _ = bytes.pop();
+        assert!(
+            vitaminc_aead::Frame::parse(&bytes).is_err(),
+            "the reader must refuse a UUID of fifteen bytes"
+        );
+
+        let out_of_range = Raw(Some(Logical::Date), Physical::Int(Int::I64(i64::MAX)));
+        assert!(
+            OwnedFrame::of(out_of_range).is_err(),
+            "the writer must refuse a date outside the range"
         );
     }
 

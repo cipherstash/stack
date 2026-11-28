@@ -86,16 +86,6 @@
       "refused_as": ["bytes"]
     },
     {
-      "id": "as-is-undefined",
-      "kind": "",
-      "context": [],
-      "input": {
-        "type": "undefined",
-        "text": ""
-      },
-      "refused_as": ["int64"]
-    },
-    {
       "id": "as-is-string-with-context",
       "kind": "",
       "context": ["conformance", "value"],
@@ -587,6 +577,19 @@
       "expected_error": {
         "code": "stack_encrypt::dynamic_source",
         "reason": "null"
+      }
+    },
+    {
+      "id": "undefined-no-kind",
+      "kind": "",
+      "context": [],
+      "input": {
+        "type": "undefined",
+        "text": ""
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "undefined"
       }
     },
     {

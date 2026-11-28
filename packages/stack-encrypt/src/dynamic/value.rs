@@ -40,10 +40,10 @@
 //! The kind [`ValueKind::Json`] is a JSON document. On encrypt, the frame
 //! holds the document's JSON text, in a text leaf or a bytes leaf. The
 //! engine checks the text by its own JSON rules and seals the document as
-//! [`JsonPlaintext`] is sealed, so the
-//! ciphertext is the one `keyset.encrypt(JsonPlaintext)` returns. On
-//! decrypt, the frame holds the document's JSON text in a bytes leaf, as a
-//! record's `json` field opens ([`json_frame`](super::json_frame)).
+//! [`JsonPlaintext`] is sealed, so the ciphertext is the one
+//! `keyset.encrypt(JsonPlaintext)` returns. On decrypt, the frame holds
+//! the document's JSON text in a bytes leaf, as a record's `json` field
+//! opens ([`json_frame`](super::json_frame)).
 //!
 //! # What is refused
 //!
@@ -53,6 +53,16 @@
 //! [`OpaqueEncode`](crate::OpaqueEncode) type. Store an absent value as a
 //! database `NULL`, or seal it in a record whose field declares how
 //! ([`NullMode`](super::NullMode)).
+//!
+//! [`encrypt`] also refuses JavaScript's `undefined`, whatever kind is
+//! declared. `undefined` is most often a property name spelt wrong, and no
+//! typed call could read it back.
+//!
+//! A scalar of a logical type that this build does not know has no kind.
+//! The frame and the leaf carry such a type by its id, so that a value of
+//! a newer type survives an older build. With no declared kind, it is
+//! sealed as it arrived, and it opens only with no declared kind. With a
+//! declared kind, it is refused.
 //!
 //! A refusal says which kind of value was found, and never the value.
 //!
@@ -123,8 +133,8 @@ use crate::{Ciphertext, ContextPiece, DecryptFrom, KeysetCipher};
 /// - [`Reason::Array`], [`Reason::Object`], [`Reason::Passthrough`] or
 ///   [`Reason::Null`] for a value that is not one scalar. A typed null is a
 ///   null.
-/// - [`Reason::Undefined`] for JavaScript's `undefined` with a declared
-///   kind. With no declared kind, `undefined` is sealed as it arrived.
+/// - [`Reason::Undefined`] for JavaScript's `undefined`, with a declared
+///   kind or with none.
 /// - [`Reason::FieldType`] for a value that is not of the declared kind and
 ///   does not convert to it exactly.
 /// - [`Reason::JsonSyntax`], [`Reason::JsonDuplicateKey`] or
@@ -391,19 +401,32 @@ pub fn decrypt_all_with_context<'a, 'c, K: 'static>(
 /// # Errors
 ///
 /// [`Error::Source`] with the reason that names what was found: an array,
-/// an object, a null or a passthrough.
+/// an object, a null, a passthrough or `undefined`.
 fn one_scalar(value: Frame<'_>) -> Result<(), Error> {
     let found = match value.kind() {
         Some(ValueKind::Array) => Reason::Array,
         Some(ValueKind::Object) => Reason::Object,
         Some(_) => return Ok(()),
-        // No kind: a null, a passthrough, `undefined`, or a scalar of a
-        // logical type this build does not know. The last two are scalars.
+        // A value of no kind is a null, a passthrough, `undefined`, or a
+        // scalar of a logical type this build does not know.
         None if value.is_null() => Reason::Null,
         None if value.has_passthrough() => Reason::Passthrough,
+        None if is_undefined(value) => Reason::Undefined,
+        // The leaf format carries a logical type it does not know, so that
+        // a value of a newer type survives an older build. It is one
+        // scalar, and it seals as it arrived.
         None => return Ok(()),
     };
     Err(Error::bad_source(found))
+}
+
+/// Whether `value` is JavaScript's `undefined`.
+fn is_undefined(value: Frame<'_>) -> bool {
+    value
+        .visit(OneScalar::new(|ty: Option<Logical>, _: Physical<'_>| {
+            Ok(ty == Some(Logical::Undefined))
+        }))
+        .unwrap_or(false)
 }
 
 /// Plan the seal of one value under `context`, as the typed call plans it:
@@ -418,16 +441,14 @@ fn seal<'a, K: 'static>(
     let sealed = match kind {
         None => encrypt_opaque(value, keyset, context),
         Some(ValueKind::Json) => {
-            // A document crosses as text or bytes, so this converts nothing.
-            // It refuses `undefined`, and a value that is neither.
-            let _ = convert(ValueKind::Json, value)?;
+            // A document crosses as text or bytes, so nothing is converted.
             let document = read_json(value).map_err(not_a_document)?;
             // The document is sealed through a borrow and wiped when it
             // drops here, as the typed call's owned document is.
             encrypt_opaque(&document, keyset, context)
         }
-        // The conversion also refuses `undefined`, and a value that is not
-        // of the declared kind. A converted value is wiped when it drops.
+        // The conversion also refuses a value that is not of the declared
+        // kind. A converted value is wiped when it drops.
         Some(kind) => match convert(kind, value)? {
             Some(converted) => encrypt_opaque(converted.frame(), keyset, context),
             None => encrypt_opaque(value, keyset, context),

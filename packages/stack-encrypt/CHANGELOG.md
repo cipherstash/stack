@@ -43,9 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     passthrough and a null, plain or typed, before any key is requested.
     The refusal is `dynamic::Error::Source` with one of three new reasons,
     `Reason::Array`, `Reason::Object` and `Reason::Null`, or with
-    `Reason::Passthrough`. `undefined` under a declared kind is
-    `Reason::Undefined`, and a value of another kind is
-    `Reason::FieldType`.
+    `Reason::Passthrough`. JavaScript's `undefined` is refused with
+    `Reason::Undefined`, with a declared kind and with none: it is most
+    often a property name spelt wrong, and no typed call could read it
+    back. A value of another kind is `Reason::FieldType`.
   - Two ciphertexts of one value never have the same bytes, because each
     sealed leaf has a random nonce. The two interfaces agree on every
     other part: the keyset, the data key, the length, and the plaintext of

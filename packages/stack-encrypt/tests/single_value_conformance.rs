@@ -220,7 +220,7 @@ fn sealed_under(context: &[String]) -> ContextPiece<'static> {
 
 /// The Rust types the typed interface spells a kind with. `$run` is handed
 /// the type for `name`, or the match is `None` for a kind no Rust type
-/// spells: a lone 8-bit unsigned integer, and JavaScript's `undefined`.
+/// spells: a lone 8-bit unsigned integer.
 macro_rules! with_rust_type {
     ($name:expr, $run:ident) => {
         match $name {
@@ -243,7 +243,7 @@ macro_rules! with_rust_type {
             "decimal" => Some($run!(Decimal)),
             "uuid" => Some($run!(Uuid)),
             "json" => Some($run!(JsonPlaintext)),
-            "uint8" | "undefined" => None,
+            "uint8" => None,
             other => panic!("{other}: no typed form is listed for this kind"),
         }
     };
@@ -353,6 +353,7 @@ async fn accepted(
     value: &OwnedFrame,
     artifact: &mut Artifact,
     baseline: Option<&Artifact>,
+    kept: Option<&Artifact>,
 ) {
     let id = &case.id;
     let kind = declared(&case.kind);
@@ -387,6 +388,13 @@ async fn accepted(
 
     artifact.leaf = Some(fresh_parts.leaf.clone());
     artifact.ciphertext = Some(hex(&typed.unwrap_or_else(|| fresh.clone()).to_bytes()));
+    // An update keeps the frozen ciphertext of a case whose leaf has not
+    // changed. So a ciphertext stays frozen from one update to the next,
+    // and the checks below hold the kept one to today's engine.
+    if let Some(kept) = kept.filter(|kept| kept.leaf == artifact.leaf && kept.ciphertext.is_some())
+    {
+        artifact.ciphertext.clone_from(&kept.ciphertext);
+    }
     let reference: &Artifact = baseline.unwrap_or(artifact);
     assert_eq!(
         artifact.leaf, reference.leaf,
@@ -519,6 +527,12 @@ async fn shared_single_value_profile() {
         artifacts
     });
 
+    // On an update, the artifacts already written, if there are any.
+    let previous: Option<Artifacts> = update
+        .then(|| std::fs::read(&path).ok())
+        .flatten()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+
     let mut output = BTreeMap::new();
     for case in &corpus.cases {
         eprintln!("single value: {}", case.id);
@@ -573,7 +587,13 @@ async fn shared_single_value_profile() {
                     );
                 }
             }
-            None => accepted(seed, case, &value, &mut artifact, reference).await,
+            None => {
+                let kept = previous
+                    .as_ref()
+                    .and_then(|artifacts| artifacts.cases.get(&case.id))
+                    .filter(|kept| kept.frame == artifact.frame);
+                accepted(seed, case, &value, &mut artifact, reference, kept).await;
+            }
         }
         let _ = output.insert(case.id.clone(), artifact);
     }
